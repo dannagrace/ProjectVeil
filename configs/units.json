@@ -1,0 +1,28 @@
+{
+  "templates": [
+    {
+      "id": "hero_guard_basic",
+      "stackName": "凯琳卫队",
+      "faction": "crown",
+      "rarity": "common",
+      "initiative": 9,
+      "attack": 4,
+      "defense": 4,
+      "minDamage": 2,
+      "maxDamage": 4,
+      "maxHp": 10
+    },
+    {
+      "id": "wolf_pack",
+      "stackName": "恶狼",
+      "faction": "wild",
+      "rarity": "elite",
+      "initiative": 10,
+      "attack": 6,
+      "defense": 4,
+      "minDamage": 2,
+      "maxDamage": 4,
+      "maxHp": 8
+    }
+  ]
+}

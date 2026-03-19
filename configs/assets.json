@@ -1,0 +1,74 @@
+{
+  "terrain": {
+    "grass": {
+      "default": "/assets/terrain/grass-tile.svg",
+      "variants": ["/assets/terrain/grass-tile.svg", "/assets/terrain/grass-tile-alt.svg"]
+    },
+    "dirt": {
+      "default": "/assets/terrain/dirt-tile.svg",
+      "variants": ["/assets/terrain/dirt-tile.svg", "/assets/terrain/dirt-tile-alt.svg"]
+    },
+    "sand": {
+      "default": "/assets/terrain/sand-tile.svg",
+      "variants": ["/assets/terrain/sand-tile.svg", "/assets/terrain/sand-tile-alt.svg"]
+    },
+    "water": {
+      "default": "/assets/terrain/water-tile.svg",
+      "variants": ["/assets/terrain/water-tile.svg", "/assets/terrain/water-tile-alt.svg"]
+    },
+    "unknown": {
+      "default": "/assets/terrain/fog-tile.svg",
+      "variants": ["/assets/terrain/fog-tile.svg"]
+    }
+  },
+  "resources": {
+    "gold": "/assets/resources/gold-pile.svg",
+    "wood": "/assets/resources/wood-stack.svg",
+    "ore": "/assets/resources/ore-crate.svg"
+  },
+  "units": {
+    "hero_guard_basic": {
+      "portrait": {
+        "idle": "/assets/units/hero-guard-basic.svg",
+        "selected": "/assets/units/hero-guard-basic-selected.svg",
+        "hit": "/assets/units/hero-guard-basic-hit.svg"
+      },
+      "frame": "/assets/frames/unit-frame-ally.svg"
+    },
+    "wolf_pack": {
+      "portrait": {
+        "idle": "/assets/units/wolf-pack.svg",
+        "selected": "/assets/units/wolf-pack-selected.svg",
+        "hit": "/assets/units/wolf-pack-hit.svg"
+      },
+      "frame": "/assets/frames/unit-frame-enemy.svg"
+    }
+  },
+  "markers": {
+    "hero": {
+      "idle": "/assets/markers/hero-marker.svg",
+      "selected": "/assets/markers/hero-marker-selected.svg",
+      "hit": "/assets/markers/hero-marker-hit.svg"
+    },
+    "neutral": {
+      "idle": "/assets/markers/neutral-marker.svg",
+      "selected": "/assets/markers/neutral-marker-selected.svg",
+      "hit": "/assets/markers/neutral-marker-hit.svg"
+    }
+  },
+  "badges": {
+    "factions": {
+      "crown": "/assets/badges/faction-crown.svg",
+      "wild": "/assets/badges/faction-wild.svg"
+    },
+    "rarities": {
+      "common": "/assets/badges/rarity-common.svg",
+      "elite": "/assets/badges/rarity-elite.svg"
+    },
+    "interactions": {
+      "move": "/assets/badges/interaction-move.svg",
+      "pickup": "/assets/badges/interaction-pickup.svg",
+      "battle": "/assets/badges/interaction-battle.svg"
+    }
+  }
+}

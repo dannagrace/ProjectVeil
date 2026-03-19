@@ -1,0 +1,47 @@
+{
+  "width": 8,
+  "height": 8,
+  "heroes": [
+    {
+      "id": "hero-1",
+      "playerId": "player-1",
+      "name": "凯琳",
+      "position": { "x": 1, "y": 1 },
+      "vision": 2,
+      "move": { "total": 6, "remaining": 6 },
+      "stats": {
+        "attack": 2,
+        "defense": 2,
+        "power": 1,
+        "knowledge": 1,
+        "hp": 30,
+        "maxHp": 30
+      },
+      "armyTemplateId": "hero_guard_basic",
+      "armyCount": 12
+    },
+    {
+      "id": "hero-2",
+      "playerId": "player-2",
+      "name": "罗安",
+      "position": { "x": 6, "y": 6 },
+      "vision": 2,
+      "move": { "total": 6, "remaining": 6 },
+      "stats": {
+        "attack": 2,
+        "defense": 2,
+        "power": 1,
+        "knowledge": 1,
+        "hp": 30,
+        "maxHp": 30
+      },
+      "armyTemplateId": "hero_guard_basic",
+      "armyCount": 10
+    }
+  ],
+  "resourceSpawn": {
+    "goldChance": 0.06,
+    "woodChance": 0.06,
+    "oreChance": 0.06
+  }
+}

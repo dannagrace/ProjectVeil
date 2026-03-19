@@ -51,3 +51,53 @@
 彻底摒弃手工维护 Excel 表格的传统模式。 搭建轻量级的可视化 Web 配置中心，管理几百种兵种、地图物件和数值。
 
 将配置直接导出为强类型的 JSON。这种“数据即配置”的流水线可以有效避免多人协作时的版本冲突，并实现热更新的丝滑接入。
+
+---
+
+## 当前仓库落地内容
+
+本仓库已经按 Phase 1 要求初始化为一个全栈 TypeScript monorepo：
+
+- `packages/shared`
+  - 共享世界状态、战斗状态、Action 协议。
+  - 地图生成、玩家私有迷雾、A* 路径校验、移动路径规划、资源拾取纯函数。
+  - 战斗回合排序、攻击/等待/防御、反击与确定性伤害结算纯函数。
+- `configs`
+  - `phase1-world.json` 管理地图尺寸、初始英雄、中立怪与资源刷率。
+- `apps/server`
+  - 权威房间状态骨架。
+  - 玩家视角裁剪快照与 Action 校验。
+  - 统一通过共享 reducer 处理客户端 Action，并在接触明雷时生成战斗快照。
+  - 战斗结束后回写世界状态，胜利移除明雷并发放奖励，失败施加英雄惩罚。
+- `apps/client`
+  - 客户端渲染器骨架。
+  - 当前以文本渲染示例验证“客户端只负责展示玩家可见状态”的边界。
+- `docs/phase1-design.md`
+  - 更细的产品、技术与小程序部署方案。
+
+## 建议的下一步
+
+1. 将 `apps/client` 替换为 Cocos Creator 小游戏工程外壳。
+2. 在 `apps/server` 接入 Colyseus 房间与消息协议。
+3. 补 `configs/` 目录和 JSON 校验脚本，开始数值与地图配置生产。
+4. 为共享模块添加单元测试，锁住移动和战斗结算行为。
+
+## 本地运行
+
+- 安装依赖：`npm install`
+- 本地 WebSocket 服务：`npm run dev:server`
+- 终端逻辑演示：`npm run demo:flow`
+- 本地 H5 开发服务：`npm run dev:client`
+- H5 构建验证：`npm run build:client`
+- 当前 H5 原型已支持：地图点击移动、可达格高亮、悬停路径预览、资源/明雷信息提示、轻量路径播放反馈、可视化战斗单位面板、目标选中、伤害飘字与战后结果弹窗。
+- H5 会优先连接 `ws://127.0.0.1:2567` 的本地会话服务；若服务未启动，则自动回退到浏览器内嵌房间模式。
+- 本地会话服务已支持房间内 `session.state` 推送同步，后续可在此基础上继续扩展多人联机。
+- 多人原型已支持双英雄同房间联调，以及踩到敌方英雄格时触发玩家对玩家遭遇战。
+- 当前美术接入方式为 `configs/assets.json` + `apps/client/public/assets/` 占位素材，逻辑对象已通过稳定资源 key 映射到前端表现层。
+- `assets.json` 已支持多状态资源描述，当前单位和标记可按 `idle / selected / hit` 状态切换占位素材。
+- 地形资源已支持稳定多变体切换，单位资源也已拆成 `portrait + frame` 槽位，后续可直接替换成正式美术素材而不改逻辑层 key。
+- `units.json` 现已补上 `faction / rarity` 元数据，前端会自动挂载阵营与品质 badge，占位资源层已经具备继续细化正式 UI 的结构。
+- 地图对象也已拆出独立视觉元数据配置，悬停地图时会通过统一对象卡片展示 `interactionType / faction / rarity` 等信息。
+- 双开联调示例：
+  - `http://127.0.0.1:4173/?roomId=test-room&playerId=player-1`
+  - `http://127.0.0.1:4173/?roomId=test-room&playerId=player-2`

@@ -1,0 +1,22 @@
+{
+  "neutralArmies": [
+    {
+      "id": "neutral-1",
+      "position": { "x": 5, "y": 4 },
+      "reward": { "kind": "gold", "amount": 300 },
+      "stacks": [
+        {
+          "templateId": "wolf_pack",
+          "count": 8
+        }
+      ]
+    }
+  ],
+  "guaranteedResources": [
+    {
+      "position": { "x": 2, "y": 1 },
+      "resource": { "kind": "wood", "amount": 5 }
+    }
+  ]
+}
+

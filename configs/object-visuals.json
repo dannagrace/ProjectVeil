@@ -1,0 +1,42 @@
+{
+  "empty": {
+    "title": "空地",
+    "subtitle": "当前格子没有可交互物件。",
+    "interactionType": "move",
+    "rarity": "common"
+  },
+  "hero": {
+    "title": "敌方英雄",
+    "subtitle": "接触后会进入玩家对玩家遭遇战。",
+    "interactionType": "battle",
+    "faction": "crown",
+    "rarity": "elite"
+  },
+  "neutral": {
+    "title": "明雷守军",
+    "subtitle": "需要通过战斗才能占领或穿越该格。",
+    "interactionType": "battle",
+    "faction": "wild",
+    "rarity": "elite"
+  },
+  "resources": {
+    "gold": {
+      "title": "金币堆",
+      "subtitle": "拾取后立刻结算为金币资源。",
+      "interactionType": "pickup",
+      "rarity": "elite"
+    },
+    "wood": {
+      "title": "木材堆",
+      "subtitle": "地图基础资源点，可直接采集。",
+      "interactionType": "pickup",
+      "rarity": "common"
+    },
+    "ore": {
+      "title": "矿石堆",
+      "subtitle": "地图基础资源点，可直接采集。",
+      "interactionType": "pickup",
+      "rarity": "common"
+    }
+  }
+}

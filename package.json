@@ -1,0 +1,25 @@
+{
+  "name": "project-veil",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.8.1",
+  "scripts": {
+    "dev:server": "node --import tsx ./apps/server/src/dev-server.ts",
+    "dev:client": "vite --config apps/client/vite.config.ts",
+    "build:client": "vite build --config apps/client/vite.config.ts",
+    "demo:flow": "node --import tsx ./scripts/demo.ts",
+    "typecheck": "tsc -p tsconfig.base.json --noEmit",
+    "typecheck:shared": "tsc -p packages/shared/tsconfig.json --noEmit",
+    "typecheck:server": "tsc -p apps/server/tsconfig.json --noEmit",
+    "typecheck:client": "tsc -p apps/client/tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.25.12",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.4.1",
+    "ws": "^8.18.3"
+  }
+}
