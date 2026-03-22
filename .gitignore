@@ -3,4 +3,12 @@ dist
 .turbo
 coverage
 *.log
-
+.env
+.env.local
+.env.development
+playwright-report
+test-results
+apps/cocos-client/library
+apps/cocos-client/local
+apps/cocos-client/profiles
+apps/cocos-client/temp

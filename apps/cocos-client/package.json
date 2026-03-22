@@ -1,0 +1,10 @@
+{
+  "name": "@project-veil/cocos-client",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cocos Creator shell for Project Veil",
+  "creator": {
+    "version": "3.8.8"
+  },
+  "uuid": "533289ad-f528-4d1a-8071-ac4b2862b483"
+}

@@ -2,19 +2,28 @@ import type {
   BattleOutcome,
   FogState,
   HeroState,
+  HeroConfig,
   MovementPlan,
   NeutralArmyState,
   OccupantState,
   PlayerTileView,
+  PlayerWorldPrediction,
   PlayerWorldView,
+  ResourceLedger,
   ResourceKind,
   TileState,
   Vec2,
   ValidationResult,
   WorldAction,
   WorldActionOutcome,
+  WorldEvent,
   WorldMapState,
+  WorldResourceLedger,
   WorldState
+} from "./models";
+import {
+  normalizeHeroState,
+  totalExperienceRequiredForLevel
 } from "./models";
 import { getDefaultMapObjectsConfig, getDefaultWorldConfig } from "./world-config";
 
@@ -84,6 +93,103 @@ function createResourceNode(
   return { kind: "ore", amount: 5 };
 }
 
+function createEmptyResourceLedger(): ResourceLedger {
+  return {
+    gold: 0,
+    wood: 0,
+    ore: 0
+  };
+}
+
+function createWorldResourceLedger(heroes: HeroState[]): WorldResourceLedger {
+  return Object.fromEntries(
+    Array.from(new Set(heroes.map((hero) => hero.playerId))).map((playerId) => [playerId, createEmptyResourceLedger()])
+  );
+}
+
+function normalizeHeroes<T extends HeroConfig | HeroState>(heroes: T[]): HeroState[] {
+  return heroes.map((hero) => normalizeHeroState(hero));
+}
+
+function neutralBattleExperience(army: NeutralArmyState): number {
+  return army.stacks.reduce((total, stack) => total + stack.count * 15, 0);
+}
+
+function heroBattleExperience(hero: HeroState): number {
+  return Math.max(100, hero.armyCount * 12 + hero.progression.level * 20);
+}
+
+function applyHeroExperience(
+  hero: HeroState,
+  experienceGained: number,
+  battleKind: "neutral" | "hero"
+): {
+  hero: HeroState;
+  experienceGained: number;
+  levelsGained: number;
+} {
+  const safeExperience = Math.max(0, Math.floor(experienceGained));
+  if (safeExperience === 0) {
+    return {
+      hero,
+      experienceGained: 0,
+      levelsGained: 0
+    };
+  }
+
+  const totalExperience = hero.progression.experience + safeExperience;
+  let nextLevel = hero.progression.level;
+  while (totalExperience >= totalExperienceRequiredForLevel(nextLevel + 1)) {
+    nextLevel += 1;
+  }
+
+  const levelsGained = nextLevel - hero.progression.level;
+
+  return {
+    hero: {
+      ...hero,
+      stats: {
+        ...hero.stats,
+        attack: hero.stats.attack + levelsGained,
+        defense: hero.stats.defense + levelsGained,
+        maxHp: hero.stats.maxHp + levelsGained * 2
+      },
+      progression: {
+        ...hero.progression,
+        level: nextLevel,
+        experience: totalExperience,
+        battlesWon: hero.progression.battlesWon + 1,
+        neutralBattlesWon: hero.progression.neutralBattlesWon + (battleKind === "neutral" ? 1 : 0),
+        pvpBattlesWon: hero.progression.pvpBattlesWon + (battleKind === "hero" ? 1 : 0)
+      }
+    },
+    experienceGained: safeExperience,
+    levelsGained
+  };
+}
+
+function getPlayerResources(resources: WorldResourceLedger, playerId: string): ResourceLedger {
+  return {
+    ...createEmptyResourceLedger(),
+    ...(resources[playerId] ?? {})
+  };
+}
+
+function grantResource(
+  resources: WorldResourceLedger,
+  playerId: string,
+  resource: { kind: ResourceKind; amount: number }
+): WorldResourceLedger {
+  const next = getPlayerResources(resources, playerId);
+  return {
+    ...resources,
+    [playerId]: {
+      ...next,
+      [resource.kind]: (next[resource.kind] ?? 0) + resource.amount
+    }
+  };
+}
+
 function findTile(map: WorldMapState, position: Vec2): TileState | undefined {
   if (!inBounds(map, position)) {
     return undefined;
@@ -92,8 +198,50 @@ function findTile(map: WorldMapState, position: Vec2): TileState | undefined {
   return map.tiles[tileIndex(map, position)];
 }
 
+function findPlayerTile(view: PlayerWorldView, position: Vec2): PlayerTileView | undefined {
+  if (position.x < 0 || position.y < 0 || position.x >= view.map.width || position.y >= view.map.height) {
+    return undefined;
+  }
+
+  return view.map.tiles[position.y * view.map.width + position.x];
+}
+
 function getFogAt(visibility: FogState[] | undefined, index: number): FogState {
   return visibility?.[index] ?? "hidden";
+}
+
+function getPlayerNeighbors(view: PlayerWorldView, position: Vec2): Vec2[] {
+  const candidates = [
+    { x: position.x + 1, y: position.y },
+    { x: position.x - 1, y: position.y },
+    { x: position.x, y: position.y + 1 },
+    { x: position.x, y: position.y - 1 }
+  ];
+
+  return candidates.filter((item) => item.x >= 0 && item.y >= 0 && item.x < view.map.width && item.y < view.map.height);
+}
+
+function isBlockedForPlayerView(view: PlayerWorldView, heroId: string, position: Vec2, destination: Vec2): boolean {
+  const tile = findPlayerTile(view, position);
+  if (!tile || tile.fog === "hidden" || !tile.walkable) {
+    return true;
+  }
+
+  const occupant = tile.occupant;
+  if ((occupant?.kind === "neutral" || occupant?.kind === "building") && !samePosition(position, destination)) {
+    return true;
+  }
+
+  const occupiedByOtherOwnedHero = view.ownHeroes.some(
+    (hero) => hero.id !== heroId && samePosition(hero.position, position) && !samePosition(position, destination)
+  );
+  if (occupiedByOtherOwnedHero) {
+    return true;
+  }
+
+  return view.visibleHeroes.some(
+    (hero) => hero.id !== heroId && samePosition(hero.position, position) && !samePosition(position, destination)
+  );
 }
 
 function updateVisibilityByPlayer(map: WorldMapState, heroes: HeroState[], state: WorldState): Record<string, FogState[]> {
@@ -278,13 +426,93 @@ export function planHeroMovement(state: WorldState, heroId: string, destination:
   return getMovementPlan(state, heroId, destination);
 }
 
+export function planPlayerViewMovement(
+  view: PlayerWorldView,
+  heroId: string,
+  destination: Vec2
+): MovementPlan | undefined {
+  const hero = view.ownHeroes.find((item) => item.id === heroId);
+  if (!hero) {
+    return undefined;
+  }
+
+  if (samePosition(hero.position, destination)) {
+    return {
+      heroId,
+      destination,
+      path: [hero.position],
+      travelPath: [hero.position],
+      moveCost: 0,
+      endsInEncounter: false,
+      encounterKind: "none"
+    };
+  }
+
+  const destinationTile = findPlayerTile(view, destination);
+  if (!destinationTile || destinationTile.fog === "hidden" || !destinationTile.walkable) {
+    return undefined;
+  }
+
+  const openSet: Vec2[] = [hero.position];
+  const cameFrom = new Map<string, Vec2>();
+  const gScore = new Map<string, number>([[tileKey(hero.position), 0]]);
+  const fScore = new Map<string, number>([[tileKey(hero.position), distance(hero.position, destination)]]);
+
+  while (openSet.length > 0) {
+    openSet.sort((a, b) => (fScore.get(tileKey(a)) ?? Number.POSITIVE_INFINITY) - (fScore.get(tileKey(b)) ?? Number.POSITIVE_INFINITY));
+    const current = openSet.shift()!;
+    if (samePosition(current, destination)) {
+      const path = reconstructPath(cameFrom, current);
+      const encounterKind =
+        destinationTile.occupant?.kind === "neutral"
+          ? "neutral"
+          : destinationTile.occupant?.kind === "hero"
+            ? "hero"
+            : "none";
+      const endsInEncounter = encounterKind !== "none";
+      const travelPath = endsInEncounter ? path.slice(0, -1) : path;
+      const moveCost = Math.max(0, travelPath.length - 1);
+      return {
+        heroId,
+        destination,
+        path,
+        travelPath,
+        moveCost,
+        endsInEncounter,
+        encounterKind,
+        ...(destinationTile.occupant?.refId ? { encounterRefId: destinationTile.occupant.refId } : {})
+      };
+    }
+
+    for (const neighbor of getPlayerNeighbors(view, current)) {
+      if (isBlockedForPlayerView(view, heroId, neighbor, destination)) {
+        continue;
+      }
+
+      const tentative = (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + 1;
+      if (tentative >= (gScore.get(tileKey(neighbor)) ?? Number.POSITIVE_INFINITY)) {
+        continue;
+      }
+
+      cameFrom.set(tileKey(neighbor), current);
+      gScore.set(tileKey(neighbor), tentative);
+      fScore.set(tileKey(neighbor), tentative + distance(neighbor, destination));
+      if (!openSet.some((item) => samePosition(item, neighbor))) {
+        openSet.push(neighbor);
+      }
+    }
+  }
+
+  return undefined;
+}
+
 export function createInitialWorldState(seed = 1001, roomId = "room-alpha"): WorldState {
   const rng = makeRng(seed);
   const config = getDefaultWorldConfig();
   const mapObjects = getDefaultMapObjectsConfig();
   const width = config.width;
   const height = config.height;
-  const heroes: HeroState[] = config.heroes.map((hero) => ({ ...hero }));
+  const heroes: HeroState[] = normalizeHeroes(config.heroes);
 
   const tiles: TileState[] = [];
   for (let y = 0; y < height; y += 1) {
@@ -314,11 +542,7 @@ export function createInitialWorldState(seed = 1001, roomId = "room-alpha"): Wor
     map: initialMap,
     heroes,
     neutralArmies,
-    resources: {
-      gold: 0,
-      wood: 0,
-      ore: 0
-    },
+    resources: createWorldResourceLedger(heroes),
     visibilityByPlayer: {}
   };
 
@@ -340,6 +564,202 @@ export function listReachableTiles(state: WorldState, heroId: string): Vec2[] {
       return Boolean(plan && plan.moveCost <= hero.move.remaining);
     })
     .map((tile) => tile.position);
+}
+
+export function listReachableTilesInPlayerView(view: PlayerWorldView, heroId: string): Vec2[] {
+  const hero = view.ownHeroes.find((item) => item.id === heroId);
+  if (!hero) {
+    return [];
+  }
+
+  return view.map.tiles
+    .filter((tile) => {
+      const plan = planPlayerViewMovement(view, heroId, tile.position);
+      return Boolean(plan && plan.moveCost <= hero.move.remaining);
+    })
+    .map((tile) => tile.position);
+}
+
+export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAction): PlayerWorldPrediction {
+  if (action.type === "turn.endDay") {
+    return {
+      world: view,
+      movementPlan: null,
+      reachableTiles: [],
+      reason: "prediction_not_supported"
+    };
+  }
+
+  const hero = view.ownHeroes.find((item) => item.id === action.heroId);
+  if (!hero) {
+    return {
+      world: view,
+      movementPlan: null,
+      reachableTiles: [],
+      reason: "hero_not_found"
+    };
+  }
+
+  if (action.type === "hero.move") {
+    const destinationTile = findPlayerTile(view, action.destination);
+    if (!destinationTile) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "destination_not_found"
+      };
+    }
+
+    if (!destinationTile.walkable || destinationTile.fog === "hidden") {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "destination_blocked"
+      };
+    }
+
+    const occupiedByOtherHero = view.ownHeroes.find(
+      (item) => item.id !== hero.id && samePosition(item.position, action.destination)
+    );
+    if (occupiedByOtherHero && occupiedByOtherHero.playerId === view.playerId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "destination_occupied"
+      };
+    }
+
+    const plan = planPlayerViewMovement(view, hero.id, action.destination);
+    if (!plan) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "path_not_found"
+      };
+    }
+
+    if (plan.moveCost > hero.move.remaining) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "not_enough_move_points"
+      };
+    }
+
+    const nextPosition = plan.travelPath[plan.travelPath.length - 1] ?? hero.position;
+    const nextHeroes = view.ownHeroes.map((item) =>
+      item.id === hero.id
+        ? {
+            ...item,
+            position: nextPosition,
+            move: {
+              ...item.move,
+              remaining: clamp(item.move.remaining - plan.moveCost, 0, item.move.total)
+            }
+          }
+        : item
+    );
+
+    const nextTiles: PlayerTileView[] = view.map.tiles.map((tile) => {
+      if (samePosition(tile.position, hero.position) && tile.occupant?.kind === "hero" && tile.occupant.refId === hero.id) {
+        return {
+          ...tile,
+          occupant: undefined
+        };
+      }
+
+      if (
+        samePosition(tile.position, nextPosition) &&
+        !plan.endsInEncounter &&
+        tile.fog === "visible"
+      ) {
+        return {
+          ...tile,
+          occupant: {
+            kind: "hero",
+            refId: hero.id
+          }
+        };
+      }
+
+      return tile;
+    });
+
+    const predictedWorld: PlayerWorldView = {
+      ...view,
+      ownHeroes: nextHeroes,
+      map: {
+        ...view.map,
+        tiles: nextTiles
+      }
+    };
+
+    return {
+      world: predictedWorld,
+      movementPlan: plan,
+      reachableTiles: plan.endsInEncounter ? [] : listReachableTilesInPlayerView(predictedWorld, hero.id)
+    };
+  }
+
+  const tile = findPlayerTile(view, action.position);
+  if (!tile) {
+    return {
+      world: view,
+      movementPlan: null,
+      reachableTiles: [],
+      reason: "resource_tile_not_found"
+    };
+  }
+
+  if (!samePosition(hero.position, action.position)) {
+    return {
+      world: view,
+      movementPlan: null,
+      reachableTiles: [],
+      reason: "hero_not_on_tile"
+    };
+  }
+
+  if (!tile.resource) {
+    return {
+      world: view,
+      movementPlan: null,
+      reachableTiles: [],
+      reason: "resource_missing"
+    };
+  }
+
+  const nextTiles = view.map.tiles.map((item) =>
+    samePosition(item.position, action.position)
+      ? {
+          ...item,
+          resource: undefined
+        }
+      : item
+  );
+
+  const predictedWorld: PlayerWorldView = {
+    ...view,
+    map: {
+      ...view.map,
+      tiles: nextTiles
+    },
+    resources: {
+      ...view.resources,
+      [tile.resource.kind]: view.resources[tile.resource.kind] + tile.resource.amount
+    }
+  };
+
+  return {
+    world: predictedWorld,
+    movementPlan: null,
+    reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+  };
 }
 
 export function validateWorldAction(state: WorldState, action: WorldAction): ValidationResult {
@@ -450,7 +870,7 @@ export function createPlayerWorldView(state: WorldState, playerId: string): Play
         name: hero.name,
         position: hero.position
       })),
-    resources: state.resources,
+    resources: getPlayerResources(state.resources, playerId),
     playerId
   };
 }
@@ -554,10 +974,7 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
   const nextState = {
     ...state,
     map: { ...state.map, tiles: nextTiles },
-    resources: {
-      ...state.resources,
-      [resource.kind]: (state.resources[resource.kind] ?? 0) + resource.amount
-    }
+    resources: grantResource(state.resources, hero.playerId, resource)
   };
 
   return {
@@ -576,6 +993,31 @@ export function applyWorldAction(state: WorldState, action: WorldAction): WorldS
   return resolveWorldAction(state, action).state;
 }
 
+export function filterWorldEventsForPlayer(
+  state: WorldState,
+  playerId: string,
+  events: WorldEvent[]
+): WorldEvent[] {
+  const ownsHero = (heroId: string | undefined): boolean =>
+    Boolean(heroId && state.heroes.some((hero) => hero.id === heroId && hero.playerId === playerId));
+
+  return events.filter((event) => {
+    switch (event.type) {
+      case "turn.advanced":
+        return true;
+      case "hero.moved":
+      case "hero.collected":
+      case "hero.progressed":
+        return ownsHero(event.heroId);
+      case "battle.started":
+      case "battle.resolved":
+        return ownsHero(event.heroId) || ownsHero(event.defenderHeroId);
+      default:
+        return false;
+    }
+  });
+}
+
 export function applyBattleOutcomeToWorld(
   state: WorldState,
   battleId: string,
@@ -592,13 +1034,15 @@ export function applyBattleOutcomeToWorld(
   const attackerHero = state.heroes.find((hero) => hero.id === heroId);
   const pvpMatch = battleId.match(/^battle-(.+)-vs-(.+)$/);
   if (pvpMatch) {
-    const [, attackerId, defenderId] = pvpMatch;
+    const attackerId = pvpMatch[1]!;
+    const defenderId = pvpMatch[2]!;
     const defenderHero = state.heroes.find((hero) => hero.id === defenderId);
     if (!attackerHero || !defenderHero) {
       return { state, events: [] };
     }
 
     if (outcome.status === "defender_victory") {
+      const awardedDefender = applyHeroExperience(defenderHero, heroBattleExperience(attackerHero), "hero");
       const heroes = state.heroes.map((hero) =>
         hero.id === attackerId
           ? {
@@ -606,11 +1050,31 @@ export function applyBattleOutcomeToWorld(
               stats: { ...hero.stats, hp: Math.max(1, Math.floor(hero.stats.hp * 0.5)) },
               move: { ...hero.move, remaining: 0 }
             }
+          : hero.id === defenderId
+            ? awardedDefender.hero
           : hero
       );
       return {
         state: buildNextWorldState(state, heroes, state.neutralArmies),
-        events: [{ type: "battle.resolved", heroId, battleId, result: "defender_victory" }]
+        events: [
+          {
+            type: "battle.resolved",
+            heroId,
+            battleId,
+            ...(defenderId ? { defenderHeroId: defenderId } : {}),
+            result: "defender_victory"
+          },
+          {
+            type: "hero.progressed",
+            heroId: defenderId,
+            battleId,
+            battleKind: "hero",
+            experienceGained: awardedDefender.experienceGained,
+            totalExperience: awardedDefender.hero.progression.experience,
+            level: awardedDefender.hero.progression.level,
+            levelsGained: awardedDefender.levelsGained
+          }
+        ]
       };
     }
 
@@ -625,10 +1089,11 @@ export function applyBattleOutcomeToWorld(
       return tile?.walkable && !occupied.has(tileKey(pos)) && !samePosition(pos, defenderHero.position);
     }) ?? defenderHero.position;
 
+    const awardedAttacker = applyHeroExperience(attackerHero, heroBattleExperience(defenderHero), "hero");
     const heroes = state.heroes.map((hero) => {
       if (hero.id === attackerId) {
         return {
-          ...hero,
+          ...awardedAttacker.hero,
           position: defenderHero.position
         };
       }
@@ -647,13 +1112,31 @@ export function applyBattleOutcomeToWorld(
 
     return {
       state: buildNextWorldState(state, heroes, state.neutralArmies),
-      events: [{ type: "battle.resolved", heroId, battleId, result: "attacker_victory" }]
-    };
+      events: [
+          {
+            type: "battle.resolved",
+            heroId,
+            battleId,
+            ...(defenderId ? { defenderHeroId: defenderId } : {}),
+            result: "attacker_victory"
+          },
+          {
+            type: "hero.progressed",
+            heroId: attackerId,
+            battleId,
+            battleKind: "hero",
+            experienceGained: awardedAttacker.experienceGained,
+            totalExperience: awardedAttacker.hero.progression.experience,
+            level: awardedAttacker.hero.progression.level,
+            levelsGained: awardedAttacker.levelsGained
+          }
+        ]
+      };
   }
 
   const neutralArmyId = battleId.replace(/^battle-/, "");
   const neutralArmy = state.neutralArmies[neutralArmyId];
-  if (!neutralArmy) {
+  if (!neutralArmy || !attackerHero) {
     return {
       state,
       events: []
@@ -689,12 +1172,13 @@ export function applyBattleOutcomeToWorld(
     };
   }
 
+  const awardedAttacker = applyHeroExperience(attackerHero, neutralBattleExperience(neutralArmy), "neutral");
   const nextNeutralArmies = { ...state.neutralArmies };
   delete nextNeutralArmies[neutralArmyId];
   const heroes = state.heroes.map((hero) =>
     hero.id === heroId
       ? {
-          ...hero,
+          ...awardedAttacker.hero,
           position: neutralArmy.position
         }
       : hero
@@ -702,10 +1186,7 @@ export function applyBattleOutcomeToWorld(
   const nextStateBase: WorldState = {
     ...state,
     resources: neutralArmy.reward
-      ? {
-          ...state.resources,
-          [neutralArmy.reward.kind]: (state.resources[neutralArmy.reward.kind] ?? 0) + neutralArmy.reward.amount
-        }
+      ? grantResource(state.resources, attackerHero.playerId, neutralArmy.reward)
       : state.resources
   };
   const nextState = buildNextWorldState(nextStateBase, heroes, nextNeutralArmies);
@@ -718,6 +1199,16 @@ export function applyBattleOutcomeToWorld(
         heroId,
         battleId,
         result: "attacker_victory"
+      },
+      {
+        type: "hero.progressed" as const,
+        heroId,
+        battleId,
+        battleKind: "neutral" as const,
+        experienceGained: awardedAttacker.experienceGained,
+        totalExperience: awardedAttacker.hero.progression.experience,
+        level: awardedAttacker.hero.progression.level,
+        levelsGained: awardedAttacker.levelsGained
       },
       ...(neutralArmy.reward
         ? [

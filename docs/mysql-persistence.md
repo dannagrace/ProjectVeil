@@ -1,0 +1,130 @@
+# MySQL Persistence
+
+## Overview
+
+Project Veil now persists authoritative room snapshots to MySQL so a room can be recovered after a server restart.
+
+The current persistence scope is:
+
+- World state snapshot
+- All active battle snapshots in the room
+- Per-player room progress snapshot
+- Config center documents for `world`, `mapObjects`, and `units`
+
+Snapshots are stored as serialized JSON strings for compatibility with older MySQL versions.
+
+## Environment Variables
+
+The server reads these variables on startup:
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `VEIL_MYSQL_HOST` | Yes | - | MySQL host |
+| `VEIL_MYSQL_PORT` | No | `3306` | MySQL port |
+| `VEIL_MYSQL_USER` | Yes | - | MySQL username |
+| `VEIL_MYSQL_PASSWORD` | Yes | - | MySQL password |
+| `VEIL_MYSQL_DATABASE` | No | `project_veil` | Database name |
+| `VEIL_MYSQL_SNAPSHOT_TTL_HOURS` | No | `72` | Snapshot retention window in hours. Set `0` or a negative value to disable expiry |
+| `VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES` | No | `30` | Periodic cleanup interval in minutes. Set `0` or a negative value to disable scheduled cleanup |
+
+## Database And Table
+
+### Database
+
+- Name: `project_veil`
+- Character set: `utf8mb4`
+- Collation: `utf8mb4_unicode_ci`
+
+### Table: `room_snapshots`
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `room_id` | `VARCHAR(191)` | No | - | Logical room id, primary key |
+| `state_json` | `LONGTEXT` | No | - | Serialized `WorldState` JSON |
+| `battles_json` | `LONGTEXT` | No | - | Serialized active `BattleState[]` JSON |
+| `version` | `BIGINT UNSIGNED` | No | `1` | Incremented on every upsert |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | First persistence time |
+| `updated_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Last persistence time |
+
+Recommended index:
+
+- `idx_room_snapshots_updated_at` on `updated_at`
+
+### Table: `player_room_profiles`
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `room_id` | `VARCHAR(191)` | No | - | Logical room id |
+| `player_id` | `VARCHAR(191)` | No | - | Player id inside the room |
+| `heroes_json` | `LONGTEXT` | No | - | Serialized owned `HeroState[]`, including hero progression fields such as `level`, `experience`, and battle win counters |
+| `resources_json` | `LONGTEXT` | No | - | Serialized per-player resource ledger |
+| `version` | `BIGINT UNSIGNED` | No | `1` | Incremented on every upsert |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | First persistence time |
+| `updated_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Last persistence time |
+
+Recommended index:
+
+- `idx_player_room_profiles_updated_at` on `updated_at`
+
+When loading older snapshots that predate hero progression, the server will backfill default progression values before the room is restored.
+
+### Table: `config_documents`
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `document_id` | `VARCHAR(64)` | No | - | Config document id, currently `world`, `mapObjects`, or `units` |
+| `content_json` | `LONGTEXT` | No | - | Serialized config JSON |
+| `version` | `BIGINT UNSIGNED` | No | `1` | Incremented on every successful save |
+| `exported_at` | `DATETIME` | Yes | `NULL` | Last time this row was exported back to `configs/*.json` |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | First persistence time |
+| `updated_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Last persistence time |
+
+Recommended index:
+
+- `idx_config_documents_updated_at` on `updated_at`
+
+The config center uses this table as the source of truth when MySQL is enabled. On startup, the server loads these rows, applies them to runtime, and exports the normalized JSON back to the local `configs/` directory.
+
+## Cleanup Strategy
+
+The current cleanup strategy is:
+
+- Load-time expiry: if a snapshot is older than the configured TTL, it is treated as expired and deleted before the room can be restored.
+- Startup cleanup: when the server starts, it immediately prunes expired snapshots.
+- Periodic cleanup: the server keeps deleting expired snapshots on a fixed interval.
+
+Default behavior:
+
+- Keep snapshots for `72` hours
+- Run cleanup every `30` minutes
+
+This gives us a safe recovery window after server restarts without letting `room_snapshots` grow forever.
+
+## Initialization
+
+The repository includes a SQL file and an init script:
+
+- SQL: `docs/mysql-persistence.sql`
+- Script: `npm run db:init:mysql`
+
+Running the init script creates the database, `room_snapshots`, `player_room_profiles`, and `config_documents` if they do not already exist.
+
+## Manual Operations
+
+The repository includes manual room snapshot management commands:
+
+- `npm run db:snapshots:list -- --limit 20`
+- `npm run db:snapshots:delete -- --roomId test-room`
+- `npm run db:snapshots:prune`
+
+These commands are useful when you want to inspect retained rooms, delete a specific room snapshot, or force a cleanup immediately.
+
+The repository also includes manual player profile management commands:
+
+- `npm run db:profiles:list -- --limit 20`
+- `npm run db:profiles:list -- --roomId test-room`
+- `npm run db:profiles:list -- --playerId player-1`
+- `npm run db:profiles:delete -- --roomId test-room --playerId player-1`
+- `npm run db:profiles:prune`
+
+These commands are useful when you want to inspect retained per-player room progress, delete a specific player profile row, or force profile cleanup immediately.

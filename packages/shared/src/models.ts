@@ -2,6 +2,8 @@ export type TerrainType = "grass" | "dirt" | "sand" | "water";
 export type FogState = "hidden" | "explored" | "visible";
 export type ResourceKind = "gold" | "wood" | "ore";
 export type OccupantKind = "hero" | "neutral" | "building";
+export type ResourceLedger = Record<ResourceKind, number>;
+export type WorldResourceLedger = Record<string, ResourceLedger>;
 
 export interface Vec2 {
   x: number;
@@ -22,6 +24,14 @@ export interface MovePoints {
   remaining: number;
 }
 
+export interface HeroProgression {
+  level: number;
+  experience: number;
+  battlesWon: number;
+  neutralBattlesWon: number;
+  pvpBattlesWon: number;
+}
+
 export interface HeroState {
   id: string;
   playerId: string;
@@ -30,6 +40,7 @@ export interface HeroState {
   vision: number;
   move: MovePoints;
   stats: HeroStats;
+  progression: HeroProgression;
   armyTemplateId: string;
   armyCount: number;
 }
@@ -69,7 +80,7 @@ export interface WorldState {
   map: WorldMapState;
   heroes: HeroState[];
   neutralArmies: Record<string, NeutralArmyState>;
-  resources: Record<string, number>;
+  resources: WorldResourceLedger;
   visibilityByPlayer: Record<string, FogState[]>;
 }
 
@@ -108,8 +119,15 @@ export interface PlayerWorldView {
     name: string;
     position: Vec2;
   }>;
-  resources: Record<string, number>;
+  resources: ResourceLedger;
   playerId: string;
+}
+
+export interface PlayerWorldPrediction {
+  world: PlayerWorldView;
+  movementPlan: MovementPlan | null;
+  reachableTiles: Vec2[];
+  reason?: string;
 }
 
 export interface MovementPlan {
@@ -207,6 +225,16 @@ export type WorldEvent =
       resource: ResourceNode;
     }
   | {
+      type: "hero.progressed";
+      heroId: string;
+      battleId: string;
+      battleKind: "neutral" | "hero";
+      experienceGained: number;
+      totalExperience: number;
+      level: number;
+      levelsGained: number;
+    }
+  | {
       type: "battle.started";
       heroId: string;
       encounterKind: "neutral" | "hero";
@@ -223,6 +251,7 @@ export type WorldEvent =
   | {
       type: "battle.resolved";
       heroId: string;
+      defenderHeroId?: string;
       battleId: string;
       result: "attacker_victory" | "defender_victory";
     };
@@ -256,8 +285,68 @@ export interface HeroConfig {
   vision: number;
   move: MovePoints;
   stats: HeroStats;
+  progression?: Partial<HeroProgression>;
   armyTemplateId: string;
   armyCount: number;
+}
+
+export function createDefaultHeroProgression(): HeroProgression {
+  return {
+    level: 1,
+    experience: 0,
+    battlesWon: 0,
+    neutralBattlesWon: 0,
+    pvpBattlesWon: 0
+  };
+}
+
+export function normalizeHeroProgression(
+  progression?: Partial<HeroProgression> | null
+): HeroProgression {
+  const experience = Math.max(0, Math.floor(progression?.experience ?? 0));
+  const minimumLevelFromExperience = levelForExperience(experience);
+
+  return {
+    ...createDefaultHeroProgression(),
+    ...progression,
+    level: Math.max(Math.max(1, Math.floor(progression?.level ?? 1)), minimumLevelFromExperience),
+    experience,
+    battlesWon: Math.max(0, Math.floor(progression?.battlesWon ?? 0)),
+    neutralBattlesWon: Math.max(0, Math.floor(progression?.neutralBattlesWon ?? 0)),
+    pvpBattlesWon: Math.max(0, Math.floor(progression?.pvpBattlesWon ?? 0))
+  };
+}
+
+export function experienceRequiredForNextLevel(level: number): number {
+  const safeLevel = Math.max(1, Math.floor(level));
+  return 100 + (safeLevel - 1) * 75;
+}
+
+export function totalExperienceRequiredForLevel(level: number): number {
+  let total = 0;
+  for (let currentLevel = 1; currentLevel < Math.max(1, Math.floor(level)); currentLevel += 1) {
+    total += experienceRequiredForNextLevel(currentLevel);
+  }
+  return total;
+}
+
+export function levelForExperience(experience: number): number {
+  const safeExperience = Math.max(0, Math.floor(experience));
+  let level = 1;
+  while (safeExperience >= totalExperienceRequiredForLevel(level + 1)) {
+    level += 1;
+  }
+  return level;
+}
+
+export function normalizeHeroState<T extends HeroConfig | HeroState>(hero: T): HeroState {
+  return {
+    ...hero,
+    position: { ...hero.position },
+    move: { ...hero.move },
+    stats: { ...hero.stats },
+    progression: normalizeHeroProgression(hero.progression)
+  };
 }
 
 export interface NeutralArmyConfig {

@@ -1,0 +1,950 @@
+import { sys } from "cc";
+
+export interface Vec2 {
+  x: number;
+  y: number;
+}
+
+export interface ResourceLedger {
+  gold: number;
+  wood: number;
+  ore: number;
+}
+
+export type FogState = "hidden" | "explored" | "visible";
+export type TerrainType = "grass" | "dirt" | "sand" | "water" | "unknown";
+export type OccupantKind = "hero" | "neutral" | "building";
+
+export interface HeroProgression {
+  level: number;
+  experience: number;
+  battlesWon: number;
+  neutralBattlesWon: number;
+  pvpBattlesWon: number;
+}
+
+export interface HeroStats {
+  attack: number;
+  defense: number;
+  power: number;
+  knowledge: number;
+  hp: number;
+  maxHp: number;
+}
+
+export interface HeroView {
+  id: string;
+  playerId: string;
+  name: string;
+  position: Vec2;
+  vision: number;
+  move: {
+    total: number;
+    remaining: number;
+  };
+  stats: HeroStats;
+  progression: HeroProgression;
+  armyCount: number;
+  armyTemplateId: string;
+}
+
+export interface PlayerWorldView {
+  meta: {
+    roomId: string;
+    seed: number;
+    day: number;
+  };
+  map: {
+    width: number;
+    height: number;
+    tiles: PlayerTileView[];
+  };
+  ownHeroes: HeroView[];
+  visibleHeroes: Array<{
+    id: string;
+    playerId: string;
+    name: string;
+    position: Vec2;
+  }>;
+  resources: ResourceLedger;
+  playerId: string;
+}
+
+export interface OccupantState {
+  kind: OccupantKind;
+  refId: string;
+}
+
+export interface UnitStack {
+  id: string;
+  templateId: string;
+  camp: "attacker" | "defender";
+  stackName: string;
+  initiative: number;
+  attack: number;
+  defense: number;
+  minDamage: number;
+  maxDamage: number;
+  count: number;
+  currentHp: number;
+  maxHp: number;
+  hasRetaliated: boolean;
+  defending: boolean;
+}
+
+export interface DeterministicRngState {
+  seed: number;
+  cursor: number;
+}
+
+export interface ResourceNode {
+  kind: keyof ResourceLedger;
+  amount: number;
+}
+
+export interface PlayerTileView {
+  position: Vec2;
+  fog: FogState;
+  terrain: TerrainType;
+  walkable: boolean;
+  resource: ResourceNode | undefined;
+  occupant: OccupantState | undefined;
+}
+
+export interface BattleState {
+  id: string;
+  round: number;
+  activeUnitId: string | null;
+  turnOrder: string[];
+  units: Record<string, UnitStack>;
+  log: string[];
+  rng: DeterministicRngState;
+  worldHeroId?: string;
+  neutralArmyId?: string;
+  defenderHeroId?: string;
+  encounterPosition?: Vec2;
+}
+
+export interface MovementPlan {
+  heroId: string;
+  destination: Vec2;
+  path: Vec2[];
+  travelPath: Vec2[];
+  moveCost: number;
+  endsInEncounter: boolean;
+  encounterKind: "none" | "neutral" | "hero";
+  encounterRefId?: string;
+}
+
+export type WorldEvent =
+  | {
+      type: "hero.moved";
+      heroId: string;
+      path: Vec2[];
+      moveCost: number;
+    }
+  | {
+      type: "hero.collected";
+      heroId: string;
+      resource: ResourceNode;
+    }
+  | {
+      type: "hero.progressed";
+      heroId: string;
+      battleId: string;
+      battleKind: "neutral" | "hero";
+      experienceGained: number;
+      totalExperience: number;
+      level: number;
+      levelsGained: number;
+    }
+  | {
+      type: "battle.started";
+      heroId: string;
+      encounterKind: "neutral" | "hero";
+      neutralArmyId?: string;
+      defenderHeroId?: string;
+      battleId: string;
+      path: Vec2[];
+      moveCost: number;
+    }
+  | {
+      type: "turn.advanced";
+      day: number;
+    }
+  | {
+      type: "battle.resolved";
+      heroId: string;
+      defenderHeroId?: string;
+      battleId: string;
+      result: "attacker_victory" | "defender_victory";
+    };
+
+export interface SessionUpdate {
+  world: PlayerWorldView;
+  battle: BattleState | null;
+  events: WorldEvent[];
+  movementPlan: MovementPlan | null;
+  reachableTiles: Vec2[];
+  reason?: string;
+}
+
+export type ConnectionEvent = "reconnecting" | "reconnected" | "reconnect_failed";
+
+export interface VeilCocosSessionOptions {
+  remoteUrl?: string;
+  onPushUpdate?: (update: SessionUpdate) => void;
+  onConnectionEvent?: (event: ConnectionEvent) => void;
+}
+
+interface ColyseusCloseCodes {
+  CONSENTED: number;
+  FAILED_TO_RECONNECT: number;
+  MAY_TRY_RECONNECT: number;
+}
+
+interface ColyseusRoomLike {
+  reconnectionToken?: string;
+  onMessage(type: string, callback: (type: string, payload: unknown) => void): void;
+  onDrop(callback: () => void): void;
+  onReconnect(callback: () => void): void;
+  onLeave(callback: (code: number) => void): void;
+  leave(): Promise<unknown>;
+  send(type: string, payload: unknown): void;
+}
+
+interface ColyseusClientLike {
+  reconnect(reconnectionToken: string): Promise<ColyseusRoomLike>;
+  joinOrCreate(roomName: string, options: {
+    logicalRoomId: string;
+    playerId: string;
+    seed: number;
+  }): Promise<ColyseusRoomLike>;
+}
+
+interface ColyseusSdkRuntime {
+  Client: new (endpoint: string) => ColyseusClientLike;
+  CloseCode: ColyseusCloseCodes;
+}
+
+type WorldAction =
+  | {
+      type: "hero.move";
+      heroId: string;
+      destination: Vec2;
+    }
+  | {
+      type: "hero.collect";
+      heroId: string;
+      position: Vec2;
+    };
+
+export type BattleAction =
+  | {
+      type: "battle.attack";
+      attackerId: string;
+      defenderId: string;
+    }
+  | {
+      type: "battle.wait";
+      unitId: string;
+    }
+  | {
+      type: "battle.defend";
+      unitId: string;
+    };
+
+type ClientMessage =
+  | {
+      type: "connect";
+      requestId: string;
+      roomId: string;
+      playerId: string;
+    }
+  | {
+      type: "world.action";
+      requestId: string;
+      action: WorldAction;
+    }
+  | {
+      type: "battle.action";
+      requestId: string;
+      action: BattleAction;
+    }
+  | {
+      type: "world.reachable";
+      requestId: string;
+      heroId: string;
+    };
+
+interface SessionStatePayload {
+  world: PlayerWorldView;
+  battle: BattleState | null;
+  events: WorldEvent[];
+  movementPlan: MovementPlan | null;
+  reachableTiles: Vec2[];
+  reason?: string;
+}
+
+type ServerMessage =
+  | {
+      type: "session.state";
+      requestId: string;
+      delivery?: "reply" | "push";
+      payload: SessionStatePayload;
+    }
+  | {
+      type: "world.reachable";
+      requestId: string;
+      reachableTiles: Vec2[];
+    }
+  | {
+      type: "error";
+      requestId: string;
+      reason: string;
+    };
+
+const RECONNECTION_TOKEN_PREFIX = "project-veil:cocos:reconnection";
+const SESSION_REPLAY_PREFIX = "project-veil:cocos:session-replay";
+const SESSION_REPLAY_VERSION = 1;
+const REMOTE_CONNECT_TIMEOUT_MS = 1500;
+const REMOTE_RECOVERY_RETRY_MS = 1500;
+const REMOTE_REQUEST_TIMEOUT_MS = 3000;
+let cachedColyseusSdkPromise: Promise<ColyseusSdkRuntime> | null = null;
+
+interface StoredSessionReplayEnvelope {
+  version: number;
+  storedAt: number;
+  update: SessionUpdate;
+}
+
+function fromPayload(payload: SessionStatePayload): SessionUpdate {
+  return {
+    world: payload.world,
+    battle: payload.battle,
+    events: payload.events,
+    movementPlan: payload.movementPlan,
+    reachableTiles: payload.reachableTiles,
+    ...(payload.reason ? { reason: payload.reason } : {})
+  };
+}
+
+function getStorage(): Storage | null {
+  try {
+    return sys.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function getRemoteUrl(explicitUrl?: string): string {
+  if (explicitUrl && explicitUrl.trim() !== "") {
+    return explicitUrl;
+  }
+
+  const locationLike = globalThis.location;
+  if (locationLike?.hostname) {
+    const protocol = locationLike.protocol === "https:" ? "https" : "http";
+    return `${protocol}://${locationLike.hostname}:2567`;
+  }
+
+  return "http://127.0.0.1:2567";
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+  });
+}
+
+function isRecoverableSessionError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message === "room_left" || error.message === "connect_failed" || error.message === "connect_timeout")
+  );
+}
+
+function getReconnectionStorageKey(roomId: string, playerId: string): string {
+  return `${RECONNECTION_TOKEN_PREFIX}:${roomId}:${playerId}`;
+}
+
+function getSessionReplayStorageKey(roomId: string, playerId: string): string {
+  return `${SESSION_REPLAY_PREFIX}:${roomId}:${playerId}`;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isVec2Like(value: unknown): value is Vec2 {
+  return isObjectRecord(value) && typeof value.x === "number" && typeof value.y === "number";
+}
+
+function isSessionUpdateLike(value: unknown): value is SessionUpdate {
+  if (!isObjectRecord(value) || !isObjectRecord(value.world) || !isObjectRecord(value.world.meta) || !isObjectRecord(value.world.map)) {
+    return false;
+  }
+
+  if (
+    typeof value.world.meta.roomId !== "string" ||
+    typeof value.world.meta.seed !== "number" ||
+    typeof value.world.meta.day !== "number" ||
+    typeof value.world.playerId !== "string"
+  ) {
+    return false;
+  }
+
+  if (
+    typeof value.world.map.width !== "number" ||
+    typeof value.world.map.height !== "number" ||
+    !Array.isArray(value.world.map.tiles) ||
+    !Array.isArray(value.world.ownHeroes) ||
+    !Array.isArray(value.world.visibleHeroes) ||
+    !isObjectRecord(value.world.resources)
+  ) {
+    return false;
+  }
+
+  if (
+    typeof value.world.resources.gold !== "number" ||
+    typeof value.world.resources.wood !== "number" ||
+    typeof value.world.resources.ore !== "number" ||
+    !Array.isArray(value.events) ||
+    !Array.isArray(value.reachableTiles)
+  ) {
+    return false;
+  }
+
+  return value.reachableTiles.every((node) => isVec2Like(node));
+}
+
+function asStoredSessionReplayEnvelope(value: unknown): StoredSessionReplayEnvelope | null {
+  if (isSessionUpdateLike(value)) {
+    return {
+      version: SESSION_REPLAY_VERSION,
+      storedAt: 0,
+      update: value
+    };
+  }
+
+  if (
+    !isObjectRecord(value) ||
+    typeof value.version !== "number" ||
+    typeof value.storedAt !== "number" ||
+    !isSessionUpdateLike(value.update)
+  ) {
+    return null;
+  }
+
+  return {
+    version: value.version,
+    storedAt: value.storedAt,
+    update: value.update
+  };
+}
+
+function readReconnectionToken(roomId: string, playerId: string): string | null {
+  return getStorage()?.getItem(getReconnectionStorageKey(roomId, playerId)) ?? null;
+}
+
+function writeReconnectionToken(roomId: string, playerId: string, token: string): void {
+  getStorage()?.setItem(getReconnectionStorageKey(roomId, playerId), token);
+}
+
+function clearReconnectionToken(roomId: string, playerId: string): void {
+  getStorage()?.removeItem(getReconnectionStorageKey(roomId, playerId));
+}
+
+function readSessionReplay(roomId: string, playerId: string): SessionUpdate | null {
+  const raw = getStorage()?.getItem(getSessionReplayStorageKey(roomId, playerId));
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return asStoredSessionReplayEnvelope(JSON.parse(raw))?.update ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionReplay(roomId: string, playerId: string, update: SessionUpdate): void {
+  const storage = getStorage();
+  if (!storage) {
+    return;
+  }
+
+  const envelope: StoredSessionReplayEnvelope = {
+    version: SESSION_REPLAY_VERSION,
+    storedAt: Date.now(),
+    update
+  };
+
+  storage.setItem(getSessionReplayStorageKey(roomId, playerId), JSON.stringify(envelope));
+}
+
+function clearSessionReplay(roomId: string, playerId: string): void {
+  getStorage()?.removeItem(getSessionReplayStorageKey(roomId, playerId));
+}
+
+class RemoteGameSession {
+  private readonly pendingRequests = new Map<
+    string,
+    {
+      expectedType: ServerMessage["type"];
+      resolve: (message: ServerMessage) => void;
+      reject: (error: Error) => void;
+    }
+  >();
+
+  private requestCounter = 0;
+
+  constructor(
+    private readonly room: ColyseusRoomLike,
+    private readonly roomId: string,
+    private readonly playerId: string,
+    private readonly closeCodes: ColyseusCloseCodes,
+    private readonly options?: VeilCocosSessionOptions
+  ) {
+    this.persistReconnectionToken();
+
+    this.room.onMessage("*", (type, payload) => {
+      if (typeof type !== "string") {
+        return;
+      }
+
+      const message = { type, ...(payload as object) } as ServerMessage;
+      if (message.type === "session.state" && message.delivery === "push") {
+        const update = fromPayload(message.payload);
+        writeSessionReplay(this.roomId, this.playerId, update);
+        this.options?.onPushUpdate?.(update);
+        return;
+      }
+
+      const pending = "requestId" in message ? this.pendingRequests.get(message.requestId) : undefined;
+      if (!pending) {
+        return;
+      }
+
+      this.pendingRequests.delete(message.requestId);
+
+      if (message.type === "error") {
+        pending.reject(new Error(message.reason));
+        return;
+      }
+
+      if (message.type !== pending.expectedType) {
+        pending.reject(new Error(`Unexpected response type: ${message.type}`));
+        return;
+      }
+
+      pending.resolve(message);
+    });
+
+    this.room.onDrop(() => {
+      this.options?.onConnectionEvent?.("reconnecting");
+    });
+
+    this.room.onReconnect(() => {
+      this.persistReconnectionToken();
+      this.options?.onConnectionEvent?.("reconnected");
+    });
+
+    this.room.onLeave((code) => {
+      if (code === this.closeCodes.CONSENTED) {
+        clearReconnectionToken(this.roomId, this.playerId);
+        clearSessionReplay(this.roomId, this.playerId);
+      } else if (code === this.closeCodes.FAILED_TO_RECONNECT) {
+        this.options?.onConnectionEvent?.("reconnect_failed");
+      }
+
+      for (const pending of this.pendingRequests.values()) {
+        pending.reject(new Error("room_left"));
+      }
+      this.pendingRequests.clear();
+    });
+  }
+
+  async dispose(): Promise<void> {
+    clearReconnectionToken(this.roomId, this.playerId);
+    await this.room.leave();
+  }
+
+  async snapshot(): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "connect",
+        requestId: this.nextRequestId(),
+        roomId: this.roomId,
+        playerId: this.playerId
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload);
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
+  async moveHero(heroId: string, destination: Vec2): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.move",
+          heroId,
+          destination
+        }
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload);
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
+  async collect(heroId: string, position: Vec2): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.collect",
+          heroId,
+          position
+        }
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload);
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
+  async actInBattle(action: BattleAction): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "battle.action",
+        requestId: this.nextRequestId(),
+        action
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload);
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
+  async listReachable(heroId: string): Promise<Vec2[]> {
+    const response = await this.send<Extract<ServerMessage, { type: "world.reachable" }>>(
+      {
+        type: "world.reachable",
+        requestId: this.nextRequestId(),
+        heroId
+      },
+      "world.reachable"
+    );
+
+    return response.reachableTiles;
+  }
+
+  private persistReconnectionToken(): void {
+    if (this.room.reconnectionToken) {
+      writeReconnectionToken(this.roomId, this.playerId, this.room.reconnectionToken);
+    }
+  }
+
+  private nextRequestId(): string {
+    this.requestCounter += 1;
+    return `cocos-req-${this.requestCounter}`;
+  }
+
+  private send<T extends ServerMessage>(message: ClientMessage, expectedType: T["type"]): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = globalThis.setTimeout(() => {
+        this.pendingRequests.delete(message.requestId);
+        reject(new Error(`${message.type}_timeout`));
+      }, REMOTE_REQUEST_TIMEOUT_MS);
+
+      this.pendingRequests.set(message.requestId, {
+        expectedType,
+        resolve: (payload) => {
+          globalThis.clearTimeout(timer);
+          resolve(payload as T);
+        },
+        reject: (error) => {
+          globalThis.clearTimeout(timer);
+          reject(error);
+        }
+      });
+
+      this.room.send(message.type, message);
+    });
+  }
+}
+
+async function connectRemoteGameSession(
+  roomId: string,
+  playerId: string,
+  seed: number,
+  options?: VeilCocosSessionOptions,
+  useStoredToken = true
+): Promise<{ session: RemoteGameSession; recoveredFromStoredToken: boolean }> {
+  const sdk = await loadColyseusSdk();
+  const client = new sdk.Client(getRemoteUrl(options?.remoteUrl));
+  const reconnectionToken = useStoredToken ? readReconnectionToken(roomId, playerId) : null;
+  let recoveredFromStoredToken = false;
+
+  const room = await new Promise<ColyseusRoomLike>((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => {
+      reject(new Error("connect_timeout"));
+    }, REMOTE_CONNECT_TIMEOUT_MS);
+
+    const tryJoin = async (): Promise<ColyseusRoomLike> => {
+      if (reconnectionToken) {
+        try {
+          const recoveredRoom = await client.reconnect(reconnectionToken);
+          recoveredFromStoredToken = true;
+          return recoveredRoom;
+        } catch {
+          clearReconnectionToken(roomId, playerId);
+        }
+      }
+
+      return client.joinOrCreate("veil", {
+        logicalRoomId: roomId,
+        playerId,
+        seed
+      });
+    };
+
+    tryJoin()
+      .then((joinedRoom) => {
+        globalThis.clearTimeout(timer);
+        resolve(joinedRoom);
+      })
+      .catch(() => {
+        globalThis.clearTimeout(timer);
+        reject(new Error("connect_failed"));
+      });
+  });
+
+  return {
+    session: new RemoteGameSession(room, roomId, playerId, sdk.CloseCode, options),
+    recoveredFromStoredToken
+  };
+}
+
+class RecoverableRemoteGameSession {
+  private currentSession!: RemoteGameSession;
+  private recoveryPromise: Promise<void> | null = null;
+
+  private constructor(
+    private readonly roomId: string,
+    private readonly playerId: string,
+    private readonly seed: number,
+    private readonly options?: VeilCocosSessionOptions
+  ) {}
+
+  static async create(
+    roomId: string,
+    playerId: string,
+    seed: number,
+    options?: VeilCocosSessionOptions
+  ): Promise<RecoverableRemoteGameSession> {
+    const session = new RecoverableRemoteGameSession(roomId, playerId, seed, options);
+    const { session: remoteSession, recoveredFromStoredToken } = await session.openRemoteSession(true);
+    session.currentSession = remoteSession;
+
+    if (recoveredFromStoredToken) {
+      options?.onConnectionEvent?.("reconnected");
+    }
+
+    return session;
+  }
+
+  async dispose(): Promise<void> {
+    if (this.recoveryPromise) {
+      await this.recoveryPromise.catch(() => undefined);
+    }
+
+    await this.currentSession.dispose();
+  }
+
+  async snapshot(reason?: string): Promise<SessionUpdate> {
+    const update = await this.runWithSession((session) => session.snapshot());
+    return reason ? { ...update, reason } : update;
+  }
+
+  async moveHero(heroId: string, destination: Vec2): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.moveHero(heroId, destination));
+  }
+
+  async collect(heroId: string, position: Vec2): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.collect(heroId, position));
+  }
+
+  async actInBattle(action: BattleAction): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.actInBattle(action));
+  }
+
+  async listReachable(heroId: string): Promise<Vec2[]> {
+    return this.runWithSession((session) => session.listReachable(heroId));
+  }
+
+  private async openRemoteSession(
+    useStoredToken: boolean
+  ): Promise<{ session: RemoteGameSession; recoveredFromStoredToken: boolean }> {
+    const nestedOptions: VeilCocosSessionOptions = {
+      ...(this.options?.remoteUrl ? { remoteUrl: this.options.remoteUrl } : {}),
+      ...(this.options?.onPushUpdate ? { onPushUpdate: this.options.onPushUpdate } : {}),
+      onConnectionEvent: (event) => this.handleConnectionEvent(event)
+    };
+
+    return connectRemoteGameSession(this.roomId, this.playerId, this.seed, nestedOptions, useStoredToken);
+  }
+
+  private handleConnectionEvent(event: ConnectionEvent): void {
+    if (event === "reconnect_failed") {
+      this.options?.onConnectionEvent?.("reconnect_failed");
+      void this.beginRecovery();
+      return;
+    }
+
+    this.options?.onConnectionEvent?.(event);
+  }
+
+  private beginRecovery(): Promise<void> {
+    if (this.recoveryPromise) {
+      return this.recoveryPromise;
+    }
+
+    this.recoveryPromise = (async () => {
+      clearReconnectionToken(this.roomId, this.playerId);
+
+      while (true) {
+        try {
+          const { session } = await this.openRemoteSession(false);
+          this.currentSession = session;
+          const snapshot = await session.snapshot();
+          this.options?.onPushUpdate?.(snapshot);
+          this.options?.onConnectionEvent?.("reconnected");
+          return;
+        } catch {
+          await wait(REMOTE_RECOVERY_RETRY_MS);
+        }
+      }
+    })().finally(() => {
+      this.recoveryPromise = null;
+    });
+
+    return this.recoveryPromise;
+  }
+
+  private async getActiveSession(): Promise<RemoteGameSession> {
+    if (this.recoveryPromise) {
+      await this.recoveryPromise;
+    }
+
+    return this.currentSession;
+  }
+
+  private async runWithSession<T>(operation: (session: RemoteGameSession) => Promise<T>): Promise<T> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const session = await this.getActiveSession();
+      try {
+        return await operation(session);
+      } catch (error) {
+        if (!isRecoverableSessionError(error)) {
+          throw error;
+        }
+
+        await this.beginRecovery();
+      }
+    }
+
+    throw new Error("session_unavailable");
+  }
+}
+
+export class VeilCocosSession {
+  private constructor(private readonly remoteSession: RecoverableRemoteGameSession) {}
+
+  static readStoredReplay(roomId: string, playerId: string): SessionUpdate | null {
+    return readSessionReplay(roomId, playerId);
+  }
+
+  static async create(
+    roomId: string,
+    playerId: string,
+    seed = 1001,
+    options?: VeilCocosSessionOptions
+  ): Promise<VeilCocosSession> {
+    const remoteSession = await RecoverableRemoteGameSession.create(roomId, playerId, seed, options);
+    return new VeilCocosSession(remoteSession);
+  }
+
+  async snapshot(reason?: string): Promise<SessionUpdate> {
+    return this.remoteSession.snapshot(reason);
+  }
+
+  async moveHero(heroId: string, destination: Vec2): Promise<SessionUpdate> {
+    return this.remoteSession.moveHero(heroId, destination);
+  }
+
+  async collect(heroId: string, position: Vec2): Promise<SessionUpdate> {
+    return this.remoteSession.collect(heroId, position);
+  }
+
+  async actInBattle(action: BattleAction): Promise<SessionUpdate> {
+    return this.remoteSession.actInBattle(action);
+  }
+
+  async listReachable(heroId: string): Promise<Vec2[]> {
+    return this.remoteSession.listReachable(heroId);
+  }
+
+  async dispose(): Promise<void> {
+    await this.remoteSession.dispose();
+  }
+}
+
+async function loadColyseusSdk(): Promise<ColyseusSdkRuntime> {
+  if (!cachedColyseusSdkPromise) {
+    cachedColyseusSdkPromise = (async () => {
+      const globalRecord = globalThis as Record<string, unknown>;
+      const originalAddEventListener = globalRecord.addEventListener;
+      const originalRemoveEventListener = globalRecord.removeEventListener;
+      let patched = false;
+
+      try {
+        if (typeof originalAddEventListener === "function" && typeof originalRemoveEventListener === "function") {
+          globalRecord.addEventListener = undefined;
+          globalRecord.removeEventListener = undefined;
+          patched = true;
+        }
+      } catch {
+        patched = false;
+      }
+
+      try {
+        const sdk = await import("@colyseus/sdk");
+        return {
+          Client: sdk.Client as unknown as ColyseusSdkRuntime["Client"],
+          CloseCode: sdk.CloseCode as ColyseusCloseCodes
+        };
+      } finally {
+        if (patched) {
+          globalRecord.addEventListener = originalAddEventListener;
+          globalRecord.removeEventListener = originalRemoveEventListener;
+        }
+      }
+    })();
+  }
+
+  return cachedColyseusSdkPromise;
+}

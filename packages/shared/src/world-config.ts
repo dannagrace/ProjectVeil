@@ -8,6 +8,28 @@ import type {
   WorldGenerationConfig
 } from "./models";
 
+let runtimeWorldConfig: WorldGenerationConfig = structuredClone(defaultWorldConfig as WorldGenerationConfig);
+let runtimeMapObjectsConfig: MapObjectsConfig = structuredClone(defaultMapObjectsConfig as MapObjectsConfig);
+let runtimeUnitCatalog: UnitCatalogConfig = structuredClone(defaultUnitsConfig as UnitCatalogConfig);
+
+export interface RuntimeConfigBundle {
+  world: WorldGenerationConfig;
+  mapObjects: MapObjectsConfig;
+  units: UnitCatalogConfig;
+}
+
+function cloneWorldConfig(config: WorldGenerationConfig): WorldGenerationConfig {
+  return structuredClone(config);
+}
+
+function cloneMapObjectsConfig(config: MapObjectsConfig): MapObjectsConfig {
+  return structuredClone(config);
+}
+
+function cloneUnitCatalog(config: UnitCatalogConfig): UnitCatalogConfig {
+  return structuredClone(config);
+}
+
 function isResourceNode(value: unknown): value is ResourceNode | undefined {
   if (value === undefined) {
     return true;
@@ -40,6 +62,16 @@ export function validateWorldConfig(config: WorldGenerationConfig): void {
 
     if (hero.position.x >= config.width || hero.position.y >= config.height) {
       throw new Error(`Hero ${hero.id} position exceeds map bounds`);
+    }
+
+    if (hero.progression) {
+      if ((hero.progression.level ?? 1) < 1) {
+        throw new Error(`Hero ${hero.id} level must be at least 1`);
+      }
+
+      if ((hero.progression.experience ?? 0) < 0) {
+        throw new Error(`Hero ${hero.id} experience cannot be negative`);
+      }
     }
   }
 }
@@ -90,20 +122,59 @@ export function validateUnitCatalog(config: UnitCatalogConfig): void {
 }
 
 export function getDefaultWorldConfig(): WorldGenerationConfig {
-  const config = defaultWorldConfig as WorldGenerationConfig;
+  const config = cloneWorldConfig(runtimeWorldConfig);
   validateWorldConfig(config);
   return config;
 }
 
 export function getDefaultMapObjectsConfig(): MapObjectsConfig {
   const world = getDefaultWorldConfig();
-  const config = defaultMapObjectsConfig as MapObjectsConfig;
+  const config = cloneMapObjectsConfig(runtimeMapObjectsConfig);
   validateMapObjectsConfig(config, world);
   return config;
 }
 
 export function getDefaultUnitCatalog(): UnitCatalogConfig {
-  const config = defaultUnitsConfig as UnitCatalogConfig;
+  const config = cloneUnitCatalog(runtimeUnitCatalog);
   validateUnitCatalog(config);
   return config;
+}
+
+export function setWorldConfig(config: WorldGenerationConfig): void {
+  const nextConfig = cloneWorldConfig(config);
+  validateWorldConfig(nextConfig);
+  validateMapObjectsConfig(runtimeMapObjectsConfig, nextConfig);
+  runtimeWorldConfig = nextConfig;
+}
+
+export function setMapObjectsConfig(config: MapObjectsConfig): void {
+  const nextConfig = cloneMapObjectsConfig(config);
+  validateMapObjectsConfig(nextConfig, runtimeWorldConfig);
+  runtimeMapObjectsConfig = nextConfig;
+}
+
+export function setUnitCatalog(config: UnitCatalogConfig): void {
+  const nextConfig = cloneUnitCatalog(config);
+  validateUnitCatalog(nextConfig);
+  runtimeUnitCatalog = nextConfig;
+}
+
+export function replaceRuntimeConfigs(configs: RuntimeConfigBundle): void {
+  const nextWorld = cloneWorldConfig(configs.world);
+  const nextMapObjects = cloneMapObjectsConfig(configs.mapObjects);
+  const nextUnits = cloneUnitCatalog(configs.units);
+
+  validateWorldConfig(nextWorld);
+  validateMapObjectsConfig(nextMapObjects, nextWorld);
+  validateUnitCatalog(nextUnits);
+
+  runtimeWorldConfig = nextWorld;
+  runtimeMapObjectsConfig = nextMapObjects;
+  runtimeUnitCatalog = nextUnits;
+}
+
+export function resetRuntimeConfigs(): void {
+  runtimeWorldConfig = structuredClone(defaultWorldConfig as WorldGenerationConfig);
+  runtimeMapObjectsConfig = structuredClone(defaultMapObjectsConfig as MapObjectsConfig);
+  runtimeUnitCatalog = structuredClone(defaultUnitsConfig as UnitCatalogConfig);
 }

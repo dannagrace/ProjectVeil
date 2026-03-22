@@ -7,13 +7,29 @@
     "dev:server": "node --import tsx ./apps/server/src/dev-server.ts",
     "dev:client": "vite --config apps/client/vite.config.ts",
     "build:client": "vite build --config apps/client/vite.config.ts",
+    "db:init:mysql": "node --import tsx ./scripts/init-mysql.ts",
+    "db:snapshots:list": "node --import tsx ./scripts/manage-room-snapshots.ts list",
+    "db:snapshots:delete": "node --import tsx ./scripts/manage-room-snapshots.ts delete",
+    "db:snapshots:prune": "node --import tsx ./scripts/manage-room-snapshots.ts prune",
+    "db:profiles:list": "node --import tsx ./scripts/manage-player-room-profiles.ts list",
+    "db:profiles:delete": "node --import tsx ./scripts/manage-player-room-profiles.ts delete",
+    "db:profiles:prune": "node --import tsx ./scripts/manage-player-room-profiles.ts prune",
     "demo:flow": "node --import tsx ./scripts/demo.ts",
+    "test": "node --import tsx --test ./packages/shared/test/shared-core.test.ts ./apps/server/test/authoritative-room.test.ts ./apps/server/test/room-persistence.test.ts ./apps/server/test/player-room-profiles.test.ts ./apps/server/test/persistence-retention.test.ts ./apps/server/test/colyseus-persistence-recovery.test.ts ./apps/server/test/config-center.test.ts ./apps/client/test/reconnection-storage.test.ts ./apps/cocos-client/test/unit-animation-config.test.ts ./apps/cocos-client/test/cocos-ui-formatters.test.ts ./apps/cocos-client/test/cocos-battle-panel-model.test.ts ./apps/cocos-client/test/cocos-map-visuals.test.ts ./apps/cocos-client/test/cocos-object-visuals.test.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:all": "npm run test:e2e && npm run test:e2e:multiplayer",
+    "test:e2e:multiplayer": "playwright test --config=playwright.multiplayer.config.ts",
+    "test:e2e:multiplayer:headed": "playwright test --config=playwright.multiplayer.config.ts --headed",
+    "test:shared": "node --import tsx --test ./packages/shared/test/shared-core.test.ts",
     "typecheck": "tsc -p tsconfig.base.json --noEmit",
+    "typecheck:cocos": "tsc -p apps/cocos-client/tsconfig.json --noEmit",
     "typecheck:shared": "tsc -p packages/shared/tsconfig.json --noEmit",
     "typecheck:server": "tsc -p apps/server/tsconfig.json --noEmit",
     "typecheck:client": "tsc -p apps/client/tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/node": "^24.5.2",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.25.12",
@@ -21,5 +37,11 @@
     "typescript": "^5.8.2",
     "vite": "^6.4.1",
     "ws": "^8.18.3"
+  },
+  "dependencies": {
+    "@colyseus/sdk": "^0.17.35",
+    "colyseus": "^0.17.8",
+    "dotenv": "^17.3.1",
+    "mysql2": "^3.20.0"
   }
 }

@@ -3,9 +3,11 @@ import {
   applyBattleOutcomeToWorld,
   createHeroBattleState,
   createNeutralBattleState,
+  filterWorldEventsForPlayer,
   createPlayerWorldView,
   createInitialWorldState,
   getBattleOutcome,
+  normalizeHeroState,
   resolveWorldAction,
   validateWorldAction,
   validateBattleAction,
@@ -41,11 +43,33 @@ export interface BattleDispatchResult {
   events?: WorldEvent[];
 }
 
+export interface RoomPersistenceSnapshot {
+  state: WorldState;
+  battles: BattleState[];
+}
+
 export class AuthoritativeWorldRoom {
   private state: WorldState;
-  private activeBattle: BattleState | null = null;
+  private readonly battles = new Map<string, BattleState>();
+  private readonly battleIdByHeroId = new Map<string, string>();
 
-  constructor(roomId: string, seed = 1001) {
+  constructor(roomId: string, seed = 1001, snapshot?: RoomPersistenceSnapshot) {
+    if (snapshot) {
+      this.state = {
+        ...snapshot.state,
+        heroes: snapshot.state.heroes.map((hero) => normalizeHeroState(hero)),
+        meta: {
+          ...snapshot.state.meta,
+          roomId
+        }
+      };
+
+      for (const battle of snapshot.battles) {
+        this.setBattle(battle);
+      }
+      return;
+    }
+
     this.state = createInitialWorldState(seed, roomId);
   }
 
@@ -53,8 +77,69 @@ export class AuthoritativeWorldRoom {
     return this.state;
   }
 
-  getActiveBattle(): BattleState | null {
-    return this.activeBattle;
+  getActiveBattles(): BattleState[] {
+    return Array.from(this.battles.values());
+  }
+
+  private getBattleById(battleId: string): BattleState | undefined {
+    return this.battles.get(battleId);
+  }
+
+  private getBattleIdForHero(heroId: string): string | undefined {
+    return this.battleIdByHeroId.get(heroId);
+  }
+
+  getBattleForPlayer(playerId: string): BattleState | null {
+    const ownedHeroes = this.state.heroes.filter((hero) => hero.playerId === playerId);
+    for (const hero of ownedHeroes) {
+      const battleId = this.getBattleIdForHero(hero.id);
+      if (!battleId) {
+        continue;
+      }
+
+      const battle = this.getBattleById(battleId);
+      if (battle) {
+        return battle;
+      }
+    }
+
+    return null;
+  }
+
+  private getControllingCamp(playerId: string, battle: BattleState): "attacker" | "defender" | null {
+    const attackerHero =
+      battle.worldHeroId ? this.state.heroes.find((hero) => hero.id === battle.worldHeroId) : undefined;
+    if (attackerHero?.playerId === playerId) {
+      return "attacker";
+    }
+
+    const defenderHero =
+      battle.defenderHeroId ? this.state.heroes.find((hero) => hero.id === battle.defenderHeroId) : undefined;
+    if (defenderHero?.playerId === playerId) {
+      return "defender";
+    }
+
+    return null;
+  }
+
+  private setBattle(battle: BattleState): void {
+    this.battles.set(battle.id, battle);
+    if (battle.worldHeroId) {
+      this.battleIdByHeroId.set(battle.worldHeroId, battle.id);
+    }
+    if (battle.defenderHeroId) {
+      this.battleIdByHeroId.set(battle.defenderHeroId, battle.id);
+    }
+  }
+
+  private clearBattle(battle: BattleState): void {
+    this.battles.delete(battle.id);
+    if (battle.worldHeroId) {
+      this.battleIdByHeroId.delete(battle.worldHeroId);
+    }
+    if (battle.defenderHeroId) {
+      this.battleIdByHeroId.delete(battle.defenderHeroId);
+    }
   }
 
   getSnapshot(playerId: string): RoomSnapshot {
@@ -65,6 +150,65 @@ export class AuthoritativeWorldRoom {
     };
   }
 
+  filterEventsForPlayer(playerId: string, events: WorldEvent[]): WorldEvent[] {
+    return filterWorldEventsForPlayer(this.state, playerId, events);
+  }
+
+  serializePersistenceSnapshot(): RoomPersistenceSnapshot {
+    return {
+      state: this.state,
+      battles: this.getActiveBattles()
+    };
+  }
+
+  private resolveAutomatedBattleTurns(battleId: string): WorldEvent[] {
+    const events: WorldEvent[] = [];
+
+    while (true) {
+      const battle = this.getBattleById(battleId);
+      if (!battle) {
+        break;
+      }
+
+      const outcome = getBattleOutcome(battle);
+      if (outcome.status !== "in_progress") {
+        if (battle.worldHeroId) {
+          const worldOutcome = applyBattleOutcomeToWorld(
+            this.state,
+            battle.id,
+            battle.worldHeroId,
+            outcome
+          );
+          this.state = worldOutcome.state;
+          this.clearBattle(battle);
+          events.push(...worldOutcome.events);
+        }
+        break;
+      }
+
+      const activeUnitId = battle.activeUnitId;
+      const activeUnit = activeUnitId ? battle.units[activeUnitId] : undefined;
+      if (!activeUnit || activeUnit.count <= 0 || activeUnit.camp !== "defender" || battle.defenderHeroId) {
+        break;
+      }
+
+      const target = Object.values(battle.units).find((unit) => unit.camp === "attacker" && unit.count > 0);
+      if (!target) {
+        break;
+      }
+
+      this.setBattle(
+        applyBattleAction(battle, {
+        type: "battle.attack",
+        attackerId: activeUnit.id,
+        defenderId: target.id
+        })
+      );
+    }
+
+    return events;
+  }
+
   dispatch(playerId: string, action: WorldAction): DispatchResult {
     if ("heroId" in action) {
       const hero = this.state.heroes.find((item) => item.id === action.heroId);
@@ -73,6 +217,15 @@ export class AuthoritativeWorldRoom {
           ok: false,
           reason: "hero_not_owned_by_player",
           snapshot: this.getSnapshot(playerId)
+        };
+      }
+
+      if (this.getBattleIdForHero(hero.id)) {
+        return {
+          ok: false,
+          reason: "hero_in_battle",
+          snapshot: this.getSnapshot(playerId),
+          ...(this.getBattleForPlayer(playerId) ? { battle: this.getBattleForPlayer(playerId)! } : {})
         };
       }
     }
@@ -90,36 +243,44 @@ export class AuthoritativeWorldRoom {
     this.state = outcome.state;
 
     const battleEvent = outcome.events.find((event) => event.type === "battle.started");
+    let startedBattleId: string | null = null;
     if (battleEvent?.type === "battle.started") {
       const hero = this.state.heroes.find((item) => item.id === battleEvent.heroId);
       if (hero && battleEvent.encounterKind === "neutral" && battleEvent.neutralArmyId) {
         const neutralArmy = this.state.neutralArmies[battleEvent.neutralArmyId];
         if (neutralArmy) {
-          this.activeBattle = createNeutralBattleState(hero, neutralArmy, this.state.meta.seed + this.state.meta.day);
+          const battle = createNeutralBattleState(hero, neutralArmy, this.state.meta.seed + this.state.meta.day);
+          this.setBattle(battle);
+          startedBattleId = battle.id;
         }
       }
 
       if (hero && battleEvent.encounterKind === "hero" && battleEvent.defenderHeroId) {
         const defenderHero = this.state.heroes.find((item) => item.id === battleEvent.defenderHeroId);
         if (defenderHero) {
-          this.activeBattle = createHeroBattleState(hero, defenderHero, this.state.meta.seed + this.state.meta.day);
+          const battle = createHeroBattleState(hero, defenderHero, this.state.meta.seed + this.state.meta.day);
+          this.setBattle(battle);
+          startedBattleId = battle.id;
         }
       }
-    } else {
-      this.activeBattle = null;
     }
+
+    const automatedEvents = startedBattleId ? this.resolveAutomatedBattleTurns(startedBattleId) : [];
+    const events = outcome.events.concat(automatedEvents);
+    const playerBattle = this.getBattleForPlayer(playerId);
 
     return {
       ok: true,
       snapshot: this.getSnapshot(playerId),
-      ...(outcome.events.length > 0 ? { events: outcome.events } : {}),
+      ...(events.length > 0 ? { events } : {}),
       ...(outcome.movementPlan ? { movementPlan: outcome.movementPlan } : {}),
-      ...(this.activeBattle ? { battle: this.activeBattle } : {})
+      ...(playerBattle ? { battle: playerBattle } : {})
     };
   }
 
   dispatchBattle(playerId: string, action: BattleAction): BattleDispatchResult {
-    if (!this.activeBattle) {
+    const activeBattle = this.getBattleForPlayer(playerId);
+    if (!activeBattle) {
       return {
         ok: false,
         reason: "battle_not_active",
@@ -127,9 +288,8 @@ export class AuthoritativeWorldRoom {
       };
     }
 
-    const worldHeroId = this.activeBattle.worldHeroId;
-    const hero = worldHeroId ? this.state.heroes.find((item) => item.id === worldHeroId) : undefined;
-    if (!hero || hero.playerId !== playerId) {
+    const controllingCamp = this.getControllingCamp(playerId, activeBattle);
+    if (!controllingCamp) {
       return {
         ok: false,
         reason: "battle_not_owned_by_player",
@@ -137,42 +297,47 @@ export class AuthoritativeWorldRoom {
       };
     }
 
-    const validation = validateBattleAction(this.activeBattle, action);
-    if (!validation.valid) {
+    const actingUnitId = action.type === "battle.attack" ? action.attackerId : action.unitId;
+    const actingUnit = activeBattle.units[actingUnitId];
+    if (!actingUnit || actingUnit.camp !== controllingCamp) {
       return {
         ok: false,
-        ...(validation.reason ? { reason: validation.reason } : {}),
-        battle: this.activeBattle,
+        reason: "unit_not_player_controlled",
+        battle: activeBattle,
         snapshot: this.getSnapshot(playerId)
       };
     }
 
-    this.activeBattle = applyBattleAction(this.activeBattle, action);
-    const outcome = getBattleOutcome(this.activeBattle);
-    if (outcome.status !== "in_progress" && this.activeBattle.worldHeroId) {
-      const worldOutcome = applyBattleOutcomeToWorld(
-        this.state,
-        this.activeBattle.id,
-        this.activeBattle.worldHeroId,
-        outcome
-      );
-      this.state = worldOutcome.state;
-      this.activeBattle = null;
+    const validation = validateBattleAction(activeBattle, action);
+    if (!validation.valid) {
+      return {
+        ok: false,
+        ...(validation.reason ? { reason: validation.reason } : {}),
+        battle: activeBattle,
+        snapshot: this.getSnapshot(playerId)
+      };
+    }
+
+    const nextBattle = applyBattleAction(activeBattle, action);
+    this.setBattle(nextBattle);
+    const automatedEvents = this.resolveAutomatedBattleTurns(nextBattle.id);
+    const playerBattle = this.getBattleForPlayer(playerId);
+    if (!playerBattle) {
       return {
         ok: true,
         snapshot: this.getSnapshot(playerId),
-        ...(worldOutcome.events.length > 0 ? { events: worldOutcome.events } : {})
+        ...(automatedEvents.length > 0 ? { events: automatedEvents } : {})
       };
     }
 
     return {
       ok: true,
-      battle: this.activeBattle,
+      battle: playerBattle,
       snapshot: this.getSnapshot(playerId)
     };
   }
 }
 
-export function createRoom(roomId: string, seed?: number): AuthoritativeWorldRoom {
-  return new AuthoritativeWorldRoom(roomId, seed);
+export function createRoom(roomId: string, seed?: number, snapshot?: RoomPersistenceSnapshot): AuthoritativeWorldRoom {
+  return new AuthoritativeWorldRoom(roomId, seed, snapshot);
 }

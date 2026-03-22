@@ -72,6 +72,9 @@
 - `apps/client`
   - 客户端渲染器骨架。
   - 当前以文本渲染示例验证“客户端只负责展示玩家可见状态”的边界。
+- `apps/cocos-client`
+  - Cocos Creator 3.x 前端壳子。
+  - 当前已能连接现有 Colyseus 房间、显示玩家快照，并用点击屏幕验证英雄移动链路。
 - `docs/phase1-design.md`
   - 更细的产品、技术与小程序部署方案。
 
@@ -89,7 +92,30 @@
 - 终端逻辑演示：`npm run demo:flow`
 - 本地 H5 开发服务：`npm run dev:client`
 - H5 构建验证：`npm run build:client`
+- Cocos 壳子类型检查：`npm run typecheck:cocos`
 - 当前 H5 原型已支持：地图点击移动、可达格高亮、悬停路径预览、资源/明雷信息提示、轻量路径播放反馈、可视化战斗单位面板、目标选中、伤害飘字与战后结果弹窗。
+- 当前 H5 联机体验已支持：客户端预测、断线自动重连、刷新后本地快照首帧回放，再由权威房间状态收敛。
+- 当前已补上 Cocos Creator 工程壳子：
+  - 工程目录：`apps/cocos-client`
+  - 入口脚本：`apps/cocos-client/assets/scripts/VeilRoot.ts`
+  - 组件拆分：`VeilRoot` 负责联机流程编排，`VeilHudPanel` 负责 HUD，`VeilMapBoard` 负责地图与点击交互，`VeilBattlePanel / VeilTimelinePanel` 负责右侧信息与战斗面板
+  - `VeilBattlePanel` 现已按 `战况摘要 / 待动序列 / 我方单位 / 敌方目标 / 指令操作` 分区渲染，并支持按回合归属自动启停 `attack / wait / defend`
+  - 当前支持：连接现有 Colyseus 服务、显示 HUD、优先驱动 `TiledMap` 图层渲染地图；未绑定资源时回退到文字版网格，并保持点击移动/采集
+  - Tilemap 现已支持可选 `fogEdge` 迷雾过渡层，以及地图事件反馈标记（如 `MOVE / +WOOD / XP / PVE / VICTORY`）
+  - `VeilRoot` 现已支持低成本动态迷雾脉冲，未接正式 shader 前也能先得到持续变化的 fog / fogEdge 表现
+  - 非 Tilemap 回退模式现已补上独立 `VeilFogOverlay` 迷雾覆盖层，会随迷雾相位切换透明度与字符遮罩
+  - Cocos 地图层现已开始复用对象配置，资源点/守军/敌方英雄会显示稳定的小标签覆盖层，并在拾取/接敌时给出轻量回弹反馈
+  - 当前已同步接入客户端预测，Cocos 点击移动也会先本地预演再等待服务端确认
+  - 当前也支持断线重连时读取最近快照，先回放本地缓存再等待房间同步
+  - `VeilUnitAnimator` 现已支持按状态配置 Spine / Animation 名称，并可为一次性动作设置自动回到 `idle` 的时长
+  - 已补骨架：Tilemap 增量渲染、单位动画适配层（Spine/Animation/文字占位）、战斗转场控制器
+  - 详细接入步骤见：`apps/cocos-client/README.md`
+- 当前已补上配置中心 MVP：
+  - 前端入口：`http://127.0.0.1:4173/config-center.html`
+  - 后端 API：`/api/config-center/configs`
+  - 当前支持编辑 `phase1-world.json / phase1-map-objects.json / units.json`
+  - 未配置 MySQL 时走文件系统存储；配置 `VEIL_MYSQL_*` 后切换到 MySQL 主存储
+  - 保存后会同时导出到 `configs/*.json`，并同步刷新服务端运行时配置，新建房间和战斗逻辑会直接读取新值
 - H5 会优先连接 `ws://127.0.0.1:2567` 的本地会话服务；若服务未启动，则自动回退到浏览器内嵌房间模式。
 - 本地会话服务已支持房间内 `session.state` 推送同步，后续可在此基础上继续扩展多人联机。
 - 多人原型已支持双英雄同房间联调，以及踩到敌方英雄格时触发玩家对玩家遭遇战。

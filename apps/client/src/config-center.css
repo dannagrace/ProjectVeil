@@ -1,0 +1,275 @@
+:root {
+  --shell-bg: #f4efe4;
+  --panel-bg: rgba(255, 251, 244, 0.92);
+  --panel-border: rgba(85, 61, 39, 0.12);
+  --accent: #8a5a2b;
+  --accent-strong: #6b431b;
+  --text-main: #2f2418;
+  --text-muted: #7b6a58;
+  --danger: #b2452f;
+  --success: #2d7a4a;
+  --shadow: 0 16px 40px rgba(64, 44, 26, 0.08);
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  color: var(--text-main);
+  background:
+    radial-gradient(circle at top right, rgba(196, 146, 90, 0.22), transparent 28%),
+    linear-gradient(180deg, #f8f4eb 0%, #efe5d4 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.config-shell {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.config-frame {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 20px;
+}
+
+.config-sidebar,
+.config-main {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+}
+
+.config-sidebar {
+  padding: 20px;
+}
+
+.config-main {
+  padding: 20px;
+}
+
+.config-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.config-title {
+  margin: 8px 0 6px;
+  font-size: 36px;
+  line-height: 1.05;
+}
+
+.config-lead {
+  margin: 0 0 18px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.config-storage-pill {
+  display: inline-flex;
+  margin-bottom: 18px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(138, 90, 43, 0.12);
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.config-list {
+  display: grid;
+  gap: 12px;
+}
+
+.config-card {
+  width: 100%;
+  border: 1px solid rgba(138, 90, 43, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 14px;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.config-card.is-active {
+  border-color: rgba(138, 90, 43, 0.48);
+  background: linear-gradient(180deg, rgba(255, 247, 235, 0.95), rgba(246, 228, 201, 0.84));
+}
+
+.config-card strong {
+  display: block;
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.config-card span,
+.config-card small {
+  display: block;
+  color: var(--text-muted);
+}
+
+.config-main-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.config-main-head h2 {
+  margin: 0 0 8px;
+  font-size: 30px;
+}
+
+.config-main-head p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.config-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.config-button {
+  border: none;
+  border-radius: 999px;
+  padding: 11px 16px;
+  cursor: pointer;
+  color: #fff8ef;
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+  font: inherit;
+}
+
+.config-button.is-secondary {
+  color: var(--text-main);
+  background: rgba(138, 90, 43, 0.12);
+}
+
+.config-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.config-status {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(138, 90, 43, 0.08);
+  color: var(--text-main);
+}
+
+.config-status.tone-error {
+  background: rgba(178, 69, 47, 0.12);
+  color: var(--danger);
+}
+
+.config-status.tone-success {
+  background: rgba(45, 122, 74, 0.12);
+  color: var(--success);
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
+  gap: 16px;
+}
+
+.config-editor,
+.config-preview {
+  border: 1px solid rgba(138, 90, 43, 0.14);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 16px;
+}
+
+.config-editor-head,
+.config-preview-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.config-editor-head h3,
+.config-preview-head h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.config-meta {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.config-textarea {
+  width: 100%;
+  min-height: 62vh;
+  resize: vertical;
+  border: 1px solid rgba(138, 90, 43, 0.12);
+  border-radius: 16px;
+  padding: 16px;
+  background: #fffdf9;
+  color: #2f2418;
+  font: 13px/1.55 "SFMono-Regular", "Menlo", "Monaco", monospace;
+}
+
+.config-preview dl {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.config-preview dt {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.config-preview dd {
+  margin: 4px 0 0;
+  font-size: 16px;
+}
+
+.config-badge-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.config-badge {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(138, 90, 43, 0.12);
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.config-hint {
+  margin-top: 14px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+@media (max-width: 1024px) {
+  .config-frame,
+  .config-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .config-textarea {
+    min-height: 48vh;
+  }
+}
