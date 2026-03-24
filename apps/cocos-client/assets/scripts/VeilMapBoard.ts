@@ -17,6 +17,9 @@ const FEEDBACK_NODE_PREFIX = "TileFeedback";
 const OBJECT_NODE_PREFIX = "TileObject";
 const FOG_OVERLAY_NODE_NAME = "FogOverlay";
 const INPUT_OVERLAY_NODE_NAME = "MapInputOverlay";
+const EMPTY_STATE_NODE_NAME = "MapEmptyState";
+const DEFAULT_MAP_WIDTH_TILES = 8;
+const DEFAULT_MAP_HEIGHT_TILES = 8;
 const MAP_BG = new Color(18, 28, 42, 194);
 const MAP_INNER_BG = new Color(62, 82, 108, 42);
 const MAP_BORDER = new Color(220, 232, 245, 78);
@@ -45,6 +48,8 @@ export class VeilMapBoard extends Component {
   private fogPulsePhase = 0;
   private heroNode: Node | null = null;
   private inputOverlayNode: Node | null = null;
+  private emptyStateNode: Node | null = null;
+  private emptyStateLabel: Label | null = null;
   private heroIconNode: Node | null = null;
   private heroIconSprite: Sprite | null = null;
   private heroIconOpacity: UIOpacity | null = null;
@@ -90,7 +95,16 @@ export class VeilMapBoard extends Component {
   render(update: SessionUpdate | null): void {
     this.currentUpdate = update;
     if (!update?.world) {
-      this.node.active = false;
+      this.node.active = true;
+      this.ensureHeroNode();
+      this.tilemapRenderer = this.node.getComponent(VeilTilemapRenderer) ?? this.node.addComponent(VeilTilemapRenderer);
+      const width = DEFAULT_MAP_WIDTH_TILES * this.tileSize;
+      const height = DEFAULT_MAP_HEIGHT_TILES * this.tileSize;
+      const mapTransform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
+      mapTransform.setContentSize(width, height);
+      this.syncChrome(width, height);
+      this.hideMapContent();
+      this.renderEmptyState(width, height, "等待房间状态...\n若长时间无响应，请检查本地开发服务。");
       this.hideFeedbackNodes();
       return;
     }
@@ -105,6 +119,7 @@ export class VeilMapBoard extends Component {
     const mapTransform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     mapTransform.setContentSize(width, height);
     this.syncChrome(width, height);
+    this.hideEmptyState();
     this.ensureInputOverlay(width, height);
 
     const usesTilemapRenderer =
@@ -449,6 +464,65 @@ export class VeilMapBoard extends Component {
     overlayTransform.setContentSize(width, height);
     this.inputOverlayNode.setPosition(0, 0, 9);
     this.inputOverlayNode.active = true;
+  }
+
+  private ensureEmptyStateNode(): void {
+    if (!this.emptyStateNode) {
+      let emptyNode = this.node.getChildByName(EMPTY_STATE_NODE_NAME);
+      if (!emptyNode) {
+        emptyNode = new Node(EMPTY_STATE_NODE_NAME);
+        emptyNode.parent = this.node;
+      }
+      assignUiLayer(emptyNode);
+      const transform = emptyNode.getComponent(UITransform) ?? emptyNode.addComponent(UITransform);
+      transform.setContentSize(this.tileSize * 6, this.tileSize * 2);
+      const label = emptyNode.getComponent(Label) ?? emptyNode.addComponent(Label);
+      label.fontSize = Math.max(14, Math.floor(this.tileSize * 0.22));
+      label.lineHeight = Math.max(20, Math.floor(this.tileSize * 0.3));
+      label.color = new Color(232, 239, 247, 212);
+      label.string = "";
+      this.emptyStateNode = emptyNode;
+      this.emptyStateLabel = label;
+    }
+  }
+
+  private renderEmptyState(width: number, height: number, message: string): void {
+    this.ensureEmptyStateNode();
+    if (!this.emptyStateNode || !this.emptyStateLabel) {
+      return;
+    }
+
+    const transform = this.emptyStateNode.getComponent(UITransform) ?? this.emptyStateNode.addComponent(UITransform);
+    transform.setContentSize(Math.max(this.tileSize * 5.6, width - 72), Math.max(this.tileSize * 1.9, 128));
+    this.emptyStateNode.setPosition(0, 0, 8);
+    this.emptyStateNode.active = true;
+    this.emptyStateLabel.fontSize = Math.max(16, Math.floor(this.tileSize * 0.22));
+    this.emptyStateLabel.lineHeight = Math.max(24, Math.floor(this.tileSize * 0.32));
+    this.emptyStateLabel.string = message;
+  }
+
+  private hideEmptyState(): void {
+    if (this.emptyStateNode) {
+      this.emptyStateNode.active = false;
+    }
+  }
+
+  private hideMapContent(): void {
+    for (const tileNode of this.tileNodes.values()) {
+      tileNode.node.active = false;
+    }
+
+    for (const objectNode of this.objectNodes.values()) {
+      objectNode.node.active = false;
+    }
+
+    this.tilemapRenderer?.clear();
+    if (this.heroNode) {
+      this.heroNode.active = false;
+    }
+    if (this.inputOverlayNode) {
+      this.inputOverlayNode.active = false;
+    }
   }
 
   private bringInputOverlayToFront(): void {

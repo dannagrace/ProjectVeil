@@ -141,10 +141,34 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
   assert.equal(view.orderLines[0], "行动顺序");
   assert.equal(view.orderLines[1], "> Guard x12");
   assert.equal(view.orderLines[2], "2. Orc x8 (DEF/RET)");
+  assert.deepEqual(view.orderItems[0], {
+    id: "hero-1-stack",
+    title: "Guard x12",
+    meta: "进攻方 · 准备中",
+    badge: "行动中",
+    active: true
+  });
+  assert.deepEqual(view.orderItems[1], {
+    id: "neutral-1-stack",
+    title: "Orc x8",
+    meta: "防守方 · (DEF/RET)",
+    badge: "2",
+    active: false
+  });
   assert.equal(view.friendlyLines[0], "我方单位");
   assert.match(view.friendlyLines[1]!, /\[RDY\] Guard x12 生命 10\/10/);
+  assert.deepEqual(view.friendlyItems[0], {
+    id: "hero-1-stack",
+    title: "Guard x12",
+    meta: "生命 10/10",
+    badge: "待命"
+  });
   assert.match(view.enemyTargets[0]!.label, /^> Orc x8 生命 9\/9/);
+  assert.equal(view.enemyTargets[0]!.title, "Orc x8");
+  assert.equal(view.enemyTargets[0]!.meta, "生命 9/9");
+  assert.equal(view.enemyTargets[0]!.badge, "已选中");
   assert.equal(view.actions[0]!.enabled, true);
+  assert.equal(view.actions[0]!.subtitle, "目标：Orc");
   assert.deepEqual(view.actions[0]!.action, {
     type: "battle.attack",
     attackerId: "hero-1-stack",
@@ -212,5 +236,7 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
 
   assert.equal(view.summaryLines[2], "阶段：轮到对方");
   assert.equal(view.orderLines[1], "> Raider x11");
+  assert.equal(view.orderItems[0]!.badge, "行动中");
+  assert.equal(view.orderItems[1]!.badge, "2");
   assert.equal(view.actions.every((action) => action.enabled === false), true);
 });

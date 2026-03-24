@@ -11,10 +11,11 @@ import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos
 
 const { ccclass } = _decorator;
 
-const PANEL_WIDTH = 280;
+const PANEL_WIDTH = 272;
 const PANEL_PADDING = 16;
 const PANEL_CONTENT_WIDTH = PANEL_WIDTH - PANEL_PADDING * 2;
 const H_ALIGN_LEFT = 0;
+const H_ALIGN_CENTER = 1;
 const V_ALIGN_TOP = 0;
 const V_ALIGN_CENTER = 1;
 const OVERFLOW_RESIZE_HEIGHT = 3;
@@ -23,8 +24,12 @@ const PANEL_BORDER = new Color(231, 240, 248, 78);
 const PANEL_INNER = new Color(43, 56, 77, 84);
 const PANEL_ACCENT = new Color(210, 117, 88, 255);
 const PANEL_ACCENT_SOFT = new Color(235, 163, 128, 96);
+const IDLE_SUMMARY_FILL = new Color(49, 58, 81, 156);
+const IDLE_TIPS_FILL = new Color(36, 47, 66, 136);
 const TARGET_NODE_PREFIX = "BattleTarget";
 const ACTION_NODE_PREFIX = "BattleAction";
+const ORDER_ITEM_PREFIX = "BattleOrderItem";
+const FRIENDLY_ITEM_PREFIX = "BattleFriendlyItem";
 const TITLE_NODE_NAME = "BattleTitle";
 const SUMMARY_NODE_NAME = "BattleSummary";
 const ORDER_NODE_NAME = "BattleOrder";
@@ -54,8 +59,10 @@ export class VeilBattlePanel extends Component {
   private actionHeaderLabel: Label | null = null;
   private idleHintLabel: Label | null = null;
   private idleBadgeLabel: Label | null = null;
-  private readonly targetNodes = new Map<string, { node: Node; label: Label }>();
-  private readonly actionNodes = new Map<string, { node: Node; label: Label }>();
+  private readonly targetNodes = new Map<string, { node: Node; title: Label; meta: Label; badge: Label }>();
+  private readonly actionNodes = new Map<string, { node: Node; title: Label; meta: Label }>();
+  private readonly orderItemNodes = new Map<string, { node: Node; title: Label; meta: Label; badge: Label }>();
+  private readonly friendlyItemNodes = new Map<string, { node: Node; title: Label; meta: Label; badge: Label }>();
   private headerIconSprite: Sprite | null = null;
   private headerIconOpacity: UIOpacity | null = null;
   private currentState: VeilBattlePanelState | null = null;
@@ -76,30 +83,34 @@ export class VeilBattlePanel extends Component {
     const model = buildBattlePanelViewModel(state);
     this.syncChrome();
     this.ensureSectionLabels();
+    this.sanitizePassiveLabels();
     this.syncWatermark(model.idle);
     this.clearSectionCards();
 
     const panelHeight = this.node.getComponent(UITransform)?.height ?? 320;
-    let cursorY = panelHeight / 2 - 44;
+    let cursorY = panelHeight / 2 - 42;
     cursorY = this.renderTextBlock(this.titleLabel, [model.title], cursorY, 16, 20, 12);
+    this.tightenTitleLayout();
 
     if (model.idle) {
-      this.hideSection(this.summaryLabel);
-      this.syncIdleBadge(true, panelHeight / 2 - 76, "遭遇待命");
-      cursorY = this.renderTextBlock(
-        this.idleHintLabel,
-        ["当前没有战斗。", "", "继续探索地图", "即可触发战斗"],
-        cursorY - 6,
-        14,
-        19,
-        0
+      this.syncIdleBadge(false, 0, "");
+      cursorY = this.renderCardTextBlock(
+        this.summaryLabel,
+        "IdleSummary",
+        ["当前没有战斗。", "继续探索即可触发遭遇。"],
+        cursorY - 4,
+        12,
+        16,
+        0,
+        IDLE_SUMMARY_FILL
       );
-      const idleHeight = Math.max(128, panelHeight / 2 - cursorY + 28);
-      this.renderSectionCard("Idle", cursorY + idleHeight / 2 - 10, idleHeight, new Color(41, 52, 72, 138));
+      this.hideSection(this.idleHintLabel);
       this.hideSection(this.orderLabel);
       this.hideSection(this.friendlyLabel);
       this.hideSection(this.enemyHeaderLabel);
       this.hideSection(this.actionHeaderLabel);
+      this.hideOrderItems();
+      this.hideFriendlyItems();
       this.hideTargetNodes();
       this.hideActionNodes();
       return;
@@ -107,8 +118,10 @@ export class VeilBattlePanel extends Component {
 
     this.syncIdleBadge(false, 0, "");
     cursorY = this.renderCardTextBlock(this.summaryLabel, "Summary", model.summaryLines, cursorY, 14, 18, 14);
-    cursorY = this.renderCardTextBlock(this.orderLabel, "Order", model.orderLines, cursorY, 14, 18, 12);
-    cursorY = this.renderCardTextBlock(this.friendlyLabel, "Friendly", model.friendlyLines, cursorY, 14, 18, 12);
+    cursorY = this.renderTextBlock(this.orderLabel, ["行动顺序"], cursorY, 14, 18, 6);
+    cursorY = this.renderOrderItems(model.orderItems, cursorY);
+    cursorY = this.renderTextBlock(this.friendlyLabel, ["我方单位"], cursorY, 14, 18, 6);
+    cursorY = this.renderFriendlyItems(model.friendlyItems, cursorY);
     cursorY = this.renderTextBlock(this.enemyHeaderLabel, ["目标选择"], cursorY, 14, 18, 6);
     cursorY = this.renderTargetNodes(model.enemyTargets, cursorY);
     cursorY = this.renderTextBlock(this.actionHeaderLabel, ["战斗指令"], cursorY, 14, 18, 6);
@@ -135,6 +148,8 @@ export class VeilBattlePanel extends Component {
         allowedNames.has(child.name)
         || child.name.startsWith(TARGET_NODE_PREFIX)
         || child.name.startsWith(ACTION_NODE_PREFIX)
+        || child.name.startsWith(ORDER_ITEM_PREFIX)
+        || child.name.startsWith(FRIENDLY_ITEM_PREFIX)
         || child.name.startsWith(`${SECTION_CARD_PREFIX}-`);
       if (!keep) {
         child.destroy();
@@ -153,13 +168,35 @@ export class VeilBattlePanel extends Component {
 
   private ensureSectionLabels(): void {
     this.titleLabel = this.ensureLabelNode(TITLE_NODE_NAME, 20, 24, 32);
-    this.summaryLabel = this.ensureLabelNode(SUMMARY_NODE_NAME, 15, 19, 88);
+    this.summaryLabel = this.ensureLabelNode(SUMMARY_NODE_NAME, 15, 19, 72);
     this.orderLabel = this.ensureLabelNode(ORDER_NODE_NAME, 14, 18, 88);
     this.friendlyLabel = this.ensureLabelNode(FRIENDLY_NODE_NAME, 14, 18, 72);
     this.enemyHeaderLabel = this.ensureLabelNode(ENEMY_HEADER_NODE_NAME, 14, 18, 18);
     this.actionHeaderLabel = this.ensureLabelNode(ACTION_HEADER_NODE_NAME, 14, 18, 18);
-    this.idleHintLabel = this.ensureLabelNode(IDLE_HINT_NODE_NAME, 13, 18, 40);
+    this.idleHintLabel = this.ensureLabelNode(IDLE_HINT_NODE_NAME, 12, 16, 28);
     this.idleBadgeLabel = this.ensureLabelNode(IDLE_BADGE_NODE_NAME, 11, 14, 16);
+  }
+
+  private sanitizePassiveLabels(): void {
+    const passiveLabels = [
+      this.titleLabel,
+      this.summaryLabel,
+      this.orderLabel,
+      this.friendlyLabel,
+      this.enemyHeaderLabel,
+      this.actionHeaderLabel,
+      this.idleHintLabel
+    ];
+    for (const label of passiveLabels) {
+      const node = label?.node;
+      if (!node) {
+        continue;
+      }
+      const legacyGraphics = node.getComponent(Graphics);
+      if (legacyGraphics) {
+        node.removeComponent(legacyGraphics);
+      }
+    }
   }
 
   private renderTextBlock(
@@ -192,7 +229,8 @@ export class VeilBattlePanel extends Component {
     topY: number,
     fontSize: number,
     lineHeight: number,
-    bottomGap: number
+    bottomGap: number,
+    fillColor: Color = new Color(33, 46, 66, 138)
   ): number {
     const nextY = this.renderTextBlock(label, lines, topY, fontSize, lineHeight, bottomGap);
     if (!label) {
@@ -200,48 +238,71 @@ export class VeilBattlePanel extends Component {
     }
 
     const transform = label.node.getComponent(UITransform) ?? label.node.addComponent(UITransform);
-    this.renderSectionCard(cardName, label.node.position.y, transform.height + 22);
+    this.renderSectionCard(cardName, label.node.position.y, transform.height + 22, fillColor);
     return nextY;
+  }
+
+  private tightenTitleLayout(): void {
+    if (!this.titleLabel) {
+      return;
+    }
+
+    const transform = this.titleLabel.node.getComponent(UITransform) ?? this.titleLabel.node.addComponent(UITransform);
+    transform.setContentSize(PANEL_CONTENT_WIDTH - 34, transform.height);
+    this.titleLabel.node.setPosition(
+      -PANEL_WIDTH / 2 + PANEL_PADDING + (PANEL_CONTENT_WIDTH - 34) / 2 + 18,
+      this.titleLabel.node.position.y,
+      0
+    );
   }
 
   private renderTargetNodes(
     targets: Array<{
       id: string;
       label: string;
+      title: string;
+      meta: string;
+      badge: string;
       selected: boolean;
       selectable: boolean;
     }>,
     topY: number
   ): number {
-    const rowHeight = 22;
-    const gap = 4;
+    const rowHeight = 54;
+    const gap = 10;
     const used = new Set<string>();
     let cursorY = topY;
 
     if (targets.length === 0) {
       const emptyTarget = this.ensureTargetNode("empty");
       emptyTarget.node.active = true;
-      emptyTarget.label.string = "  暂无敌方目标";
+      emptyTarget.title.string = "暂无敌方目标";
+      emptyTarget.meta.string = "等待新的敌方单位出现";
+      emptyTarget.badge.string = "空";
       const transform = emptyTarget.node.getComponent(UITransform) ?? emptyTarget.node.addComponent(UITransform);
       transform.setContentSize(PANEL_CONTENT_WIDTH, rowHeight);
       emptyTarget.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, cursorY - rowHeight / 2, 0);
+      this.styleTargetNode(emptyTarget.node, emptyTarget.title, emptyTarget.meta, emptyTarget.badge, false, false);
       used.add("empty");
       cursorY -= rowHeight + gap;
     } else {
       targets.forEach((target) => {
         const targetNode = this.ensureTargetNode(target.id);
         targetNode.node.active = true;
-        targetNode.label.string = target.label;
+        targetNode.title.string = target.title;
+        targetNode.meta.string = target.meta;
+        targetNode.badge.string = target.badge;
         const transform = targetNode.node.getComponent(UITransform) ?? targetNode.node.addComponent(UITransform);
         transform.setContentSize(PANEL_CONTENT_WIDTH, rowHeight);
         targetNode.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, cursorY - rowHeight / 2, 0);
+        this.styleTargetNode(targetNode.node, targetNode.title, targetNode.meta, targetNode.badge, target.selected, target.selectable);
         used.add(target.id);
         cursorY -= rowHeight + gap;
       });
     }
 
-    const contentHeight = Math.max(36, topY - cursorY + 8);
-    this.renderSectionCard("Targets", topY - contentHeight / 2 + 10, contentHeight);
+    const contentHeight = Math.max(52, topY - cursorY + 12);
+    this.renderSectionCard("Targets", topY - contentHeight / 2 + 12, contentHeight, new Color(39, 51, 72, 142));
 
     for (const [key, targetNode] of this.targetNodes) {
       if (!used.has(key)) {
@@ -253,15 +314,16 @@ export class VeilBattlePanel extends Component {
   }
 
   private renderActionNodes(actions: BattlePanelActionView[], topY: number): void {
-    const rowHeight = 22;
-    const gap = 4;
+    const rowHeight = 48;
+    const gap = 10;
     const used = new Set<string>();
     let cursorY = topY;
 
     actions.forEach((entry) => {
       const actionNode = this.ensureActionNode(entry.key);
       actionNode.node.active = true;
-      actionNode.label.string = `${entry.enabled ? "[tap]" : "[--]"} ${entry.label}`;
+      actionNode.title.string = entry.label;
+      actionNode.meta.string = entry.subtitle;
       const transform = actionNode.node.getComponent(UITransform) ?? actionNode.node.addComponent(UITransform);
       transform.setContentSize(PANEL_CONTENT_WIDTH, rowHeight);
       actionNode.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, cursorY - rowHeight / 2, 0);
@@ -275,18 +337,135 @@ export class VeilBattlePanel extends Component {
         },
         this
       );
+      this.styleActionNode(actionNode.node, actionNode.title, actionNode.meta, entry);
       used.add(entry.key);
       cursorY -= rowHeight + gap;
     });
 
-    const contentHeight = Math.max(36, topY - cursorY + 8);
-    this.renderSectionCard("Actions", topY - contentHeight / 2 + 10, contentHeight);
+    const contentHeight = Math.max(48, topY - cursorY + 12);
+    this.renderSectionCard("Actions", topY - contentHeight / 2 + 12, contentHeight, new Color(36, 48, 66, 142));
 
     for (const [key, actionNode] of this.actionNodes) {
       if (!used.has(key)) {
         actionNode.node.active = false;
       }
     }
+  }
+
+  private renderOrderItems(
+    items: Array<{
+      id: string;
+      title: string;
+      meta: string;
+      badge: string;
+      active: boolean;
+    }>,
+    topY: number
+  ): number {
+    const rowHeight = 48;
+    const gap = 8;
+    const used = new Set<string>();
+    let cursorY = topY;
+
+    if (items.length === 0) {
+      const emptyItem = this.ensureOrderItemNode("empty");
+      emptyItem.node.active = true;
+      emptyItem.title.string = "等待行动顺序";
+      emptyItem.meta.string = "进入战斗后显示单位队列";
+      emptyItem.badge.string = "--";
+      const transform = emptyItem.node.getComponent(UITransform) ?? emptyItem.node.addComponent(UITransform);
+      transform.setContentSize(PANEL_CONTENT_WIDTH, rowHeight);
+      emptyItem.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, cursorY - rowHeight / 2, 0);
+      this.styleRosterNode(emptyItem.node, emptyItem.title, emptyItem.meta, emptyItem.badge, false, new Color(90, 109, 148, 170));
+      used.add("empty");
+      cursorY -= rowHeight + gap;
+    } else {
+      for (const item of items) {
+        const itemNode = this.ensureOrderItemNode(item.id);
+        itemNode.node.active = true;
+        itemNode.title.string = item.title;
+        itemNode.meta.string = item.meta;
+        itemNode.badge.string = item.badge;
+        const transform = itemNode.node.getComponent(UITransform) ?? itemNode.node.addComponent(UITransform);
+        transform.setContentSize(PANEL_CONTENT_WIDTH, rowHeight);
+        itemNode.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, cursorY - rowHeight / 2, 0);
+        this.styleRosterNode(
+          itemNode.node,
+          itemNode.title,
+          itemNode.meta,
+          itemNode.badge,
+          item.active,
+          item.active ? new Color(234, 183, 124, 220) : new Color(98, 121, 164, 176)
+        );
+        used.add(item.id);
+        cursorY -= rowHeight + gap;
+      }
+    }
+
+    const contentHeight = Math.max(46, topY - cursorY + 10);
+    this.renderSectionCard("OrderItems", topY - contentHeight / 2 + 12, contentHeight, new Color(34, 47, 68, 138));
+
+    for (const [key, itemNode] of this.orderItemNodes) {
+      if (!used.has(key)) {
+        itemNode.node.active = false;
+      }
+    }
+
+    return cursorY - 6;
+  }
+
+  private renderFriendlyItems(
+    items: Array<{
+      id: string;
+      title: string;
+      meta: string;
+      badge: string;
+    }>,
+    topY: number
+  ): number {
+    const rowHeight = 50;
+    const gap = 8;
+    const used = new Set<string>();
+    let cursorY = topY;
+
+    if (items.length === 0) {
+      const emptyItem = this.ensureFriendlyItemNode("empty");
+      emptyItem.node.active = true;
+      emptyItem.title.string = "暂无我方单位";
+      emptyItem.meta.string = "等待战斗单位入场";
+      emptyItem.badge.string = "--";
+      const transform = emptyItem.node.getComponent(UITransform) ?? emptyItem.node.addComponent(UITransform);
+      transform.setContentSize(PANEL_CONTENT_WIDTH, rowHeight);
+      emptyItem.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, cursorY - rowHeight / 2, 0);
+      this.styleRosterNode(emptyItem.node, emptyItem.title, emptyItem.meta, emptyItem.badge, false, new Color(102, 126, 166, 164));
+      used.add("empty");
+      cursorY -= rowHeight + gap;
+    } else {
+      for (const item of items) {
+        const itemNode = this.ensureFriendlyItemNode(item.id);
+        itemNode.node.active = true;
+        itemNode.title.string = item.title;
+        itemNode.meta.string = item.meta;
+        itemNode.badge.string = item.badge;
+        const transform = itemNode.node.getComponent(UITransform) ?? itemNode.node.addComponent(UITransform);
+        transform.setContentSize(PANEL_CONTENT_WIDTH, rowHeight);
+        itemNode.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, cursorY - rowHeight / 2, 0);
+        this.styleRosterNode(itemNode.node, itemNode.title, itemNode.meta, itemNode.badge, false, badgeAccentForFriendly(item.badge));
+        used.add(item.id);
+        cursorY -= rowHeight + gap;
+      }
+    }
+
+    const contentHeight = Math.max(48, topY - cursorY + 10);
+    this.renderSectionCard("FriendlyItems", topY - contentHeight / 2 + 12, contentHeight, new Color(35, 48, 70, 134));
+
+    for (const [key, itemNode] of this.friendlyItemNodes) {
+      if (!used.has(key)) {
+        itemNode.node.active = false;
+      }
+    }
+
+    return cursorY - 6;
   }
 
   private hideSection(label: Label | null): void {
@@ -305,6 +484,18 @@ export class VeilBattlePanel extends Component {
   private hideActionNodes(): void {
     for (const actionNode of this.actionNodes.values()) {
       actionNode.node.active = false;
+    }
+  }
+
+  private hideOrderItems(): void {
+    for (const itemNode of this.orderItemNodes.values()) {
+      itemNode.node.active = false;
+    }
+  }
+
+  private hideFriendlyItems(): void {
+    for (const itemNode of this.friendlyItemNodes.values()) {
+      itemNode.node.active = false;
     }
   }
 
@@ -411,7 +602,7 @@ export class VeilBattlePanel extends Component {
     return label;
   }
 
-  private ensureTargetNode(unitId: string): { node: Node; label: Label } {
+  private ensureTargetNode(unitId: string): { node: Node; title: Label; meta: Label; badge: Label } {
     const existing = this.targetNodes.get(unitId);
     if (existing) {
       return existing;
@@ -421,15 +612,52 @@ export class VeilBattlePanel extends Component {
     node.parent = this.node;
     assignUiLayer(node);
     const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
-    transform.setContentSize(PANEL_CONTENT_WIDTH, 22);
-    const label = node.getComponent(Label) ?? node.addComponent(Label);
-    label.fontSize = 14;
-    label.lineHeight = 18;
-    label.horizontalAlign = H_ALIGN_LEFT;
-    label.verticalAlign = V_ALIGN_CENTER;
-    label.overflow = OVERFLOW_RESIZE_HEIGHT;
-    label.enableWrapText = true;
-    label.string = "";
+    transform.setContentSize(PANEL_CONTENT_WIDTH, 54);
+
+    const titleNode = new Node(`${node.name}-title`);
+    titleNode.parent = node;
+    assignUiLayer(titleNode);
+    const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform);
+    titleTransform.setContentSize(PANEL_CONTENT_WIDTH - 92, 18);
+    titleNode.setPosition(-28, 10, 1);
+    const title = titleNode.getComponent(Label) ?? titleNode.addComponent(Label);
+    title.fontSize = 13;
+    title.lineHeight = 16;
+    title.horizontalAlign = H_ALIGN_LEFT;
+    title.verticalAlign = V_ALIGN_CENTER;
+    title.overflow = OVERFLOW_RESIZE_HEIGHT;
+    title.enableWrapText = false;
+    title.string = "";
+
+    const metaNode = new Node(`${node.name}-meta`);
+    metaNode.parent = node;
+    assignUiLayer(metaNode);
+    const metaTransform = metaNode.getComponent(UITransform) ?? metaNode.addComponent(UITransform);
+    metaTransform.setContentSize(PANEL_CONTENT_WIDTH - 92, 16);
+    metaNode.setPosition(-28, -12, 1);
+    const meta = metaNode.getComponent(Label) ?? metaNode.addComponent(Label);
+    meta.fontSize = 11;
+    meta.lineHeight = 14;
+    meta.horizontalAlign = H_ALIGN_LEFT;
+    meta.verticalAlign = V_ALIGN_CENTER;
+    meta.overflow = OVERFLOW_RESIZE_HEIGHT;
+    meta.enableWrapText = false;
+    meta.string = "";
+
+    const badgeNode = new Node(`${node.name}-badge`);
+    badgeNode.parent = node;
+    assignUiLayer(badgeNode);
+    const badgeTransform = badgeNode.getComponent(UITransform) ?? badgeNode.addComponent(UITransform);
+    badgeTransform.setContentSize(58, 18);
+    badgeNode.setPosition(PANEL_CONTENT_WIDTH / 2 - 44, 0, 1);
+    const badge = badgeNode.getComponent(Label) ?? badgeNode.addComponent(Label);
+    badge.fontSize = 10;
+    badge.lineHeight = 12;
+    badge.horizontalAlign = H_ALIGN_CENTER;
+    badge.verticalAlign = V_ALIGN_CENTER;
+    badge.overflow = OVERFLOW_RESIZE_HEIGHT;
+    badge.enableWrapText = false;
+    badge.string = "";
     node.on(
       Node.EventType.TOUCH_END,
       () => {
@@ -440,12 +668,12 @@ export class VeilBattlePanel extends Component {
       this
     );
 
-    const created = { node, label };
+    const created = { node, title, meta, badge };
     this.targetNodes.set(unitId, created);
     return created;
   }
 
-  private ensureActionNode(key: string): { node: Node; label: Label } {
+  private ensureActionNode(key: string): { node: Node; title: Label; meta: Label } {
     const existing = this.actionNodes.get(key);
     if (existing) {
       return existing;
@@ -455,19 +683,118 @@ export class VeilBattlePanel extends Component {
     node.parent = this.node;
     assignUiLayer(node);
     const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
-    transform.setContentSize(PANEL_CONTENT_WIDTH, 22);
-    const label = node.getComponent(Label) ?? node.addComponent(Label);
-    label.fontSize = 14;
-    label.lineHeight = 18;
-    label.horizontalAlign = H_ALIGN_LEFT;
-    label.verticalAlign = V_ALIGN_CENTER;
-    label.overflow = OVERFLOW_RESIZE_HEIGHT;
-    label.enableWrapText = true;
-    label.string = "";
+    transform.setContentSize(PANEL_CONTENT_WIDTH, 48);
 
-    const created = { node, label };
+    const titleNode = new Node(`${node.name}-title`);
+    titleNode.parent = node;
+    assignUiLayer(titleNode);
+    const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform);
+    titleTransform.setContentSize(PANEL_CONTENT_WIDTH - 40, 18);
+    titleNode.setPosition(0, 10, 1);
+    const title = titleNode.getComponent(Label) ?? titleNode.addComponent(Label);
+    title.fontSize = 13;
+    title.lineHeight = 16;
+    title.horizontalAlign = H_ALIGN_CENTER;
+    title.verticalAlign = V_ALIGN_CENTER;
+    title.overflow = OVERFLOW_RESIZE_HEIGHT;
+    title.enableWrapText = false;
+    title.string = "";
+
+    const metaNode = new Node(`${node.name}-meta`);
+    metaNode.parent = node;
+    assignUiLayer(metaNode);
+    const metaTransform = metaNode.getComponent(UITransform) ?? metaNode.addComponent(UITransform);
+    metaTransform.setContentSize(PANEL_CONTENT_WIDTH - 48, 14);
+    metaNode.setPosition(0, -11, 1);
+    const meta = metaNode.getComponent(Label) ?? metaNode.addComponent(Label);
+    meta.fontSize = 10;
+    meta.lineHeight = 12;
+    meta.horizontalAlign = H_ALIGN_CENTER;
+    meta.verticalAlign = V_ALIGN_CENTER;
+    meta.overflow = OVERFLOW_RESIZE_HEIGHT;
+    meta.enableWrapText = false;
+    meta.string = "";
+
+    const created = { node, title, meta };
     this.actionNodes.set(key, created);
     return created;
+  }
+
+  private ensureOrderItemNode(id: string): { node: Node; title: Label; meta: Label; badge: Label } {
+    const existing = this.orderItemNodes.get(id);
+    if (existing) {
+      return existing;
+    }
+
+    const created = this.createRosterNode(`${ORDER_ITEM_PREFIX}-${id}`);
+    this.orderItemNodes.set(id, created);
+    return created;
+  }
+
+  private ensureFriendlyItemNode(id: string): { node: Node; title: Label; meta: Label; badge: Label } {
+    const existing = this.friendlyItemNodes.get(id);
+    if (existing) {
+      return existing;
+    }
+
+    const created = this.createRosterNode(`${FRIENDLY_ITEM_PREFIX}-${id}`);
+    this.friendlyItemNodes.set(id, created);
+    return created;
+  }
+
+  private createRosterNode(name: string): { node: Node; title: Label; meta: Label; badge: Label } {
+    const node = new Node(name);
+    node.parent = this.node;
+    assignUiLayer(node);
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(PANEL_CONTENT_WIDTH, 50);
+
+    const titleNode = new Node(`${name}-title`);
+    titleNode.parent = node;
+    assignUiLayer(titleNode);
+    const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform);
+    titleTransform.setContentSize(PANEL_CONTENT_WIDTH - 92, 18);
+    titleNode.setPosition(-28, 10, 1);
+    const title = titleNode.getComponent(Label) ?? titleNode.addComponent(Label);
+    title.fontSize = 13;
+    title.lineHeight = 16;
+    title.horizontalAlign = H_ALIGN_LEFT;
+    title.verticalAlign = V_ALIGN_CENTER;
+    title.overflow = OVERFLOW_RESIZE_HEIGHT;
+    title.enableWrapText = false;
+    title.string = "";
+
+    const metaNode = new Node(`${name}-meta`);
+    metaNode.parent = node;
+    assignUiLayer(metaNode);
+    const metaTransform = metaNode.getComponent(UITransform) ?? metaNode.addComponent(UITransform);
+    metaTransform.setContentSize(PANEL_CONTENT_WIDTH - 92, 16);
+    metaNode.setPosition(-28, -12, 1);
+    const meta = metaNode.getComponent(Label) ?? metaNode.addComponent(Label);
+    meta.fontSize = 11;
+    meta.lineHeight = 14;
+    meta.horizontalAlign = H_ALIGN_LEFT;
+    meta.verticalAlign = V_ALIGN_CENTER;
+    meta.overflow = OVERFLOW_RESIZE_HEIGHT;
+    meta.enableWrapText = false;
+    meta.string = "";
+
+    const badgeNode = new Node(`${name}-badge`);
+    badgeNode.parent = node;
+    assignUiLayer(badgeNode);
+    const badgeTransform = badgeNode.getComponent(UITransform) ?? badgeNode.addComponent(UITransform);
+    badgeTransform.setContentSize(58, 18);
+    badgeNode.setPosition(PANEL_CONTENT_WIDTH / 2 - 44, 0, 1);
+    const badge = badgeNode.getComponent(Label) ?? badgeNode.addComponent(Label);
+    badge.fontSize = 10;
+    badge.lineHeight = 12;
+    badge.horizontalAlign = H_ALIGN_CENTER;
+    badge.verticalAlign = V_ALIGN_CENTER;
+    badge.overflow = OVERFLOW_RESIZE_HEIGHT;
+    badge.enableWrapText = false;
+    badge.string = "";
+
+    return { node, title, meta, badge };
   }
 
   private renderSectionCard(name: string, centerY: number, height: number, fillColor: Color = new Color(33, 46, 66, 138)): void {
@@ -490,6 +817,23 @@ export class VeilBattlePanel extends Component {
     graphics.roundRect(-PANEL_CONTENT_WIDTH / 2, -height / 2, PANEL_CONTENT_WIDTH, height, 14);
     graphics.fill();
     graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, 14);
+    graphics.roundRect(-PANEL_CONTENT_WIDTH / 2 + 10, height / 2 - 16, PANEL_CONTENT_WIDTH - 20, 6, 4);
+    graphics.fill();
+    graphics.fillColor = accentForSection(name);
+    graphics.roundRect(-PANEL_CONTENT_WIDTH / 2 + 12, height / 2 - 14, Math.min(84, PANEL_CONTENT_WIDTH * 0.34), 3, 2);
+    graphics.fill();
+    if (name === "IdleTips") {
+      graphics.fillColor = new Color(255, 255, 255, 12);
+      graphics.roundRect(-PANEL_CONTENT_WIDTH / 2 + 12, 0, 5, height - 30, 3);
+      graphics.fill();
+      for (let index = 0; index < 3; index += 1) {
+        const bulletY = height / 2 - 34 - index * 18;
+        graphics.fillColor = new Color(235, 163, 128, 164);
+        graphics.circle(-PANEL_CONTENT_WIDTH / 2 + 22, bulletY, 2.5);
+        graphics.fill();
+      }
+    }
   }
 
   private syncIdleBadge(active: boolean, centerY: number, text: string): void {
@@ -512,18 +856,157 @@ export class VeilBattlePanel extends Component {
     label.enableWrapText = false;
 
     const transform = label.node.getComponent(UITransform) ?? label.node.addComponent(UITransform);
-    transform.setContentSize(96, 18);
-    label.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + 54, centerY, 1);
+    transform.setContentSize(64, 18);
+    label.node.setPosition(PANEL_WIDTH / 2 - PANEL_PADDING - 40, centerY, 1);
 
     const graphics = label.node.getComponent(Graphics) ?? label.node.addComponent(Graphics);
     graphics.clear();
     graphics.fillColor = new Color(210, 117, 88, 38);
     graphics.strokeColor = new Color(233, 181, 142, 126);
     graphics.lineWidth = 2;
-    graphics.roundRect(-48, -9, 96, 18, 9);
+    graphics.roundRect(-32, -9, 64, 18, 9);
     graphics.fill();
     graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, 18);
+    graphics.roundRect(-24, 2, 48, 4, 3);
+    graphics.fill();
+  }
+
+  private styleTargetNode(node: Node, title: Label, meta: Label, badge: Label, selected: boolean, selectable: boolean): void {
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    const width = transform.width;
+    const height = transform.height;
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = selected
+      ? new Color(83, 101, 142, 168)
+      : selectable
+        ? new Color(33, 45, 64, 156)
+        : new Color(30, 40, 57, 122);
+    graphics.strokeColor = selected
+      ? new Color(238, 225, 175, 156)
+      : new Color(221, 233, 247, 58);
+    graphics.lineWidth = selected ? 3 : 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 12);
+    graphics.fill();
+    graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, selected ? 20 : 10);
+    graphics.roundRect(-width / 2 + 10, height / 2 - 14, width - 20, 5, 3);
+    graphics.fill();
+    graphics.fillColor = selected ? new Color(245, 217, 146, 206) : new Color(117, 139, 188, selectable ? 112 : 48);
+    graphics.roundRect(-width / 2 + 10, height / 2 - 19, 5, height - 20, 3);
+    graphics.fill();
+    title.color = selected ? new Color(250, 246, 226, 255) : new Color(236, 243, 250, selectable ? 255 : 170);
+    meta.color = selected ? new Color(236, 222, 188, 255) : new Color(198, 210, 225, selectable ? 220 : 132);
+    badge.color = selected ? new Color(76, 51, 22, 255) : new Color(233, 240, 248, selectable ? 220 : 128);
+    this.styleBadgeNode(badge.node, selected ? new Color(240, 209, 132, 255) : new Color(82, 98, 136, selectable ? 186 : 90));
+  }
+
+  private styleActionNode(node: Node, title: Label, meta: Label, action: BattlePanelActionView): void {
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    const width = transform.width;
+    const height = transform.height;
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    const accent =
+      action.key === "attack"
+        ? new Color(194, 102, 83, 236)
+        : action.key === "wait"
+          ? new Color(117, 139, 188, 236)
+          : new Color(102, 162, 124, 236);
+    graphics.clear();
+    graphics.fillColor = action.enabled
+      ? new Color(accent.r, accent.g, accent.b, 52)
+      : new Color(38, 49, 68, 132);
+    graphics.strokeColor = action.enabled
+      ? new Color(accent.r, accent.g, accent.b, 160)
+      : new Color(221, 232, 244, 54);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 12);
+    graphics.fill();
+    graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, action.enabled ? 18 : 10);
+    graphics.roundRect(-width / 2 + 12, height / 2 - 16, width - 24, 5, 3);
+    graphics.fill();
+    graphics.fillColor = action.enabled ? new Color(accent.r, accent.g, accent.b, 126) : new Color(74, 86, 110, 82);
+    graphics.roundRect(-width / 2 + 12, height / 2 - 18, width - 24, 4, 3);
+    graphics.fill();
+    title.color = action.enabled ? new Color(246, 249, 252, 255) : new Color(201, 211, 223, 140);
+    meta.color = action.enabled ? new Color(224, 232, 240, 210) : new Color(182, 192, 208, 104);
+  }
+
+  private styleBadgeNode(node: Node, fillColor: Color): void {
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    const width = transform.width;
+    const height = transform.height;
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = fillColor;
+    graphics.strokeColor = new Color(245, 247, 250, 70);
+    graphics.lineWidth = 1.5;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 8);
+    graphics.fill();
+    graphics.stroke();
+  }
+
+  private styleRosterNode(
+    node: Node,
+    title: Label,
+    meta: Label,
+    badge: Label,
+    active: boolean,
+    badgeFill: Color
+  ): void {
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    const width = transform.width;
+    const height = transform.height;
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = active ? new Color(71, 87, 122, 166) : new Color(32, 44, 63, 150);
+    graphics.strokeColor = active ? new Color(243, 219, 155, 148) : new Color(221, 233, 247, 50);
+    graphics.lineWidth = active ? 3 : 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 12);
+    graphics.fill();
+    graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, active ? 18 : 10);
+    graphics.roundRect(-width / 2 + 10, height / 2 - 14, width - 20, 5, 3);
+    graphics.fill();
+    graphics.fillColor = active ? new Color(238, 195, 116, 178) : new Color(108, 129, 170, 112);
+    graphics.roundRect(-width / 2 + 10, height / 2 - 18, 5, height - 20, 3);
+    graphics.fill();
+    title.color = active ? new Color(250, 246, 226, 255) : new Color(236, 243, 250, 244);
+    meta.color = active ? new Color(236, 222, 188, 255) : new Color(194, 207, 224, 214);
+    badge.color = active ? new Color(61, 44, 20, 255) : new Color(236, 241, 248, 224);
+    this.styleBadgeNode(badge.node, badgeFill);
   }
 }
 
 export type { BattleCamp };
+
+function badgeAccentForFriendly(badge: string): Color {
+  if (badge === "防御") {
+    return new Color(100, 160, 124, 196);
+  }
+  if (badge === "已反击") {
+    return new Color(188, 115, 98, 204);
+  }
+  return new Color(102, 126, 166, 176);
+}
+
+function accentForSection(name: string): Color {
+  if (name.includes("Idle")) {
+    return new Color(210, 117, 88, 156);
+  }
+  if (name.includes("Targets")) {
+    return new Color(223, 191, 128, 144);
+  }
+  if (name.includes("Actions")) {
+    return new Color(133, 170, 224, 144);
+  }
+  if (name.includes("Friendly")) {
+    return new Color(119, 170, 129, 144);
+  }
+  if (name.includes("Order")) {
+    return new Color(181, 151, 97, 144);
+  }
+  return new Color(235, 163, 128, 132);
+}

@@ -1,4 +1,4 @@
-import { _decorator, Color, Component, EventMouse, EventTouch, Graphics, input, Input, Label, Node, Sprite, UIOpacity, UITransform, view } from "cc";
+import { _decorator, Color, Component, Graphics, Label, Node, Sprite, UIOpacity, UITransform } from "cc";
 import type { SessionUpdate } from "./VeilCocosSession.ts";
 import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
@@ -14,6 +14,9 @@ const HUD_INNER = new Color(39, 53, 74, 88);
 const HUD_BORDER = new Color(238, 244, 252, 78);
 const HUD_ACCENT = new Color(214, 184, 124, 255);
 const HUD_ACCENT_SOFT = new Color(244, 225, 179, 96);
+const HUD_CARD_RESOURCE = new Color(84, 118, 160, 176);
+const HUD_CARD_HERO = new Color(132, 112, 176, 172);
+const HUD_CARD_STATUS = new Color(204, 170, 106, 182);
 const TITLE_NODE_NAME = "HudTitle";
 const RESOURCE_NODE_NAME = "HudResources";
 const HERO_NODE_NAME = "HudHero";
@@ -25,6 +28,7 @@ const ACTIONS_NODE_NAME = "HudActions";
 const CARD_PREFIX = "HudCard";
 const CHIP_PREFIX = "HudChip";
 const BADGE_PREFIX = "HudBadge";
+const HERO_METER_PREFIX = "HudHeroMeter";
 
 interface HudActionButtonState {
   name: string;
@@ -60,14 +64,12 @@ export class VeilHudPanel extends Component {
   private requestedIcons = false;
   private onNewRun: (() => void) | undefined;
   private onRefresh: (() => void) | undefined;
-  private globalActionBound = false;
-  private readonly actionBounds = new Map<string, { x: number; y: number; width: number; height: number; callback: (() => void) | null }>();
 
   configure(options: VeilHudPanelOptions): void {
     this.onNewRun = options.onNewRun;
     this.onRefresh = options.onRefresh;
     this.ensureActionButtons();
-    this.ensureGlobalActionBinding();
+    this.syncActionButtons();
   }
 
   render(state: VeilHudRenderState): void {
@@ -100,9 +102,9 @@ export class VeilHudPanel extends Component {
           ? "今天已经没有移动点了。"
           : "点击地块移动，点击脚下资源即可采集。");
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
-    const cardWidth = Math.max(120, transform.width - 40);
-    const leftX = -transform.width / 2 + 20 + cardWidth / 2;
-    let cursorY = transform.height / 2 - 132;
+    const cardWidth = Math.max(168, transform.width - 28);
+    const leftX = -transform.width / 2 + 14 + cardWidth / 2;
+    let cursorY = transform.height / 2 - 134;
 
     cursorY = this.renderCardBlock(
       this.titleLabel,
@@ -112,23 +114,25 @@ export class VeilHudPanel extends Component {
         world ? `可达 ${reachableAhead}` : "可达 --"
       ],
       cursorY,
-      22,
-      28,
+      16,
+      20,
       cardWidth,
       leftX,
-      10
+      4,
+      54
     );
 
     cursorY = this.renderCardBlock(
       this.resourceLabel,
       `${CARD_PREFIX}-resources`,
-      ["资源", "", ""],
+      ["资源", "", "", ""],
       cursorY,
+      14,
       18,
-      24,
       cardWidth,
       leftX,
-      10
+      4,
+      88
     );
 
     cursorY = this.renderCardBlock(
@@ -137,17 +141,19 @@ export class VeilHudPanel extends Component {
       hero
         ? [
             `英雄  ${hero.name}`,
-            `坐标 (${hero.position.x},${hero.position.y})  移动力 ${hero.move.remaining}/${hero.move.total}`,
+            `坐标 (${hero.position.x},${hero.position.y})`,
             `等级 ${hero.progression.level}  经验 ${hero.progression.experience}`,
-            `生命 ${hero.stats.hp}/${hero.stats.maxHp}  兵力 ${hero.armyCount}`
+            "",
+            ""
           ]
-        : ["英雄", "等待房间状态..."],
+        : ["英雄", "等待房间状态...", "", "", ""],
       cursorY,
+      14,
       18,
-      24,
       cardWidth,
       leftX,
-      10
+      6,
+      116
     );
 
     cursorY = this.renderCardBlock(
@@ -155,11 +161,12 @@ export class VeilHudPanel extends Component {
       `${CARD_PREFIX}-status`,
       [statusTitle, statusDetail],
       cursorY,
+      12,
       16,
-      20,
       cardWidth,
       leftX,
-      0
+      2,
+      62
     );
 
     if (resources) {
@@ -170,9 +177,11 @@ export class VeilHudPanel extends Component {
 
     if (hero) {
       this.renderHeroBadge(`${CARD_PREFIX}-hero`, `Lv ${hero.progression.level}`);
+      this.renderHeroMeters(`${CARD_PREFIX}-hero`, hero.move.remaining, hero.move.total, hero.stats.hp, hero.stats.maxHp, hero.armyCount);
       this.tightenHeroLabelLayout(leftX, cardWidth);
     } else {
       this.hideCardDecorations(`${CARD_PREFIX}-hero`, BADGE_PREFIX);
+      this.hideCardDecorations(`${CARD_PREFIX}-hero`, `${CHIP_PREFIX}-${HERO_METER_PREFIX}`);
     }
 
     this.renderStatusBadge(`${CARD_PREFIX}-status`, statusBadge);
@@ -261,13 +270,14 @@ export class VeilHudPanel extends Component {
     lineHeight: number,
     width: number,
     centerX: number,
-    bottomGap: number
+    bottomGap: number,
+    minHeight = 0
   ): number {
     if (!label) {
       return topY;
     }
 
-    const height = Math.max(lineHeight, lines.length * lineHeight);
+    const height = Math.max(lineHeight, lines.length * lineHeight, minHeight);
     const labelTransform = label.node.getComponent(UITransform) ?? label.node.addComponent(UITransform);
     labelTransform.setContentSize(width - 28, height);
     label.fontSize = fontSize;
@@ -275,8 +285,8 @@ export class VeilHudPanel extends Component {
     label.string = lines.join("\n");
     label.node.setPosition(centerX, topY - height / 2, 1);
 
-    this.renderSectionCard(cardName, centerX, label.node.position.y, width, height + 24);
-    return topY - height - 24 - bottomGap;
+    this.renderSectionCard(cardName, centerX, label.node.position.y, width, height + 16);
+    return topY - height - 16 - bottomGap;
   }
 
   private renderSectionCard(name: string, centerX: number, centerY: number, width: number, height: number): void {
@@ -301,18 +311,32 @@ export class VeilHudPanel extends Component {
           : cardRole === "hero"
             ? new Color(43, 51, 72, 152)
             : cardRole === "status"
-              ? new Color(52, 58, 77, 156)
+            ? new Color(52, 58, 77, 156)
               : new Color(33, 46, 66, 138);
     const strokeColor =
       cardRole === "status"
         ? new Color(233, 206, 144, 70)
         : new Color(226, 236, 248, 46);
+    const accentColor =
+      cardRole === "resources"
+        ? HUD_CARD_RESOURCE
+        : cardRole === "hero"
+          ? HUD_CARD_HERO
+          : cardRole === "status"
+            ? HUD_CARD_STATUS
+            : new Color(HUD_ACCENT.r, HUD_ACCENT.g, HUD_ACCENT.b, 178);
     graphics.fillColor = fillColor;
     graphics.strokeColor = strokeColor;
     graphics.lineWidth = 2;
     graphics.roundRect(-width / 2, -height / 2, width, height, 16);
     graphics.fill();
     graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, 16);
+    graphics.roundRect(-width / 2 + 12, height / 2 - 18, width - 24, 7, 4);
+    graphics.fill();
+    graphics.fillColor = accentColor;
+    graphics.roundRect(-width / 2 + 14, height / 2 - 16, Math.min(88, width * 0.34), 4, 3);
+    graphics.fill();
   }
 
   private renderResourceChips(cardName: string, gold: number, wood: number, ore: number): void {
@@ -322,16 +346,17 @@ export class VeilHudPanel extends Component {
     }
 
     const frameSet = getPlaceholderSpriteAssets()?.icons;
-    const chipWidth = 62;
-    const chipHeight = 28;
-    const gap = 8;
+    const cardTransform = cardNode.getComponent(UITransform) ?? cardNode.addComponent(UITransform);
+    const gap = 6;
+    const chipWidth = Math.max(46, Math.floor((cardTransform.width - 22 - gap * 2) / 3));
+    const chipHeight = 30;
     const totalWidth = chipWidth * 3 + gap * 2;
     const startX = -totalWidth / 2 + chipWidth / 2;
-    const y = -8;
+    const y = -10;
 
-    this.renderMetricChip(cardNode, "gold", startX, y, chipWidth, chipHeight, frameSet?.gold ?? null, `金币 ${gold}`, new Color(183, 142, 72, 236));
-    this.renderMetricChip(cardNode, "wood", startX + chipWidth + gap, y, chipWidth, chipHeight, frameSet?.wood ?? null, `木材 ${wood}`, new Color(90, 128, 92, 236));
-    this.renderMetricChip(cardNode, "ore", startX + (chipWidth + gap) * 2, y, chipWidth, chipHeight, frameSet?.ore ?? null, `矿石 ${ore}`, new Color(96, 118, 144, 236));
+    this.renderMetricChip(cardNode, "gold", startX, y, chipWidth, chipHeight, frameSet?.gold ?? null, "金币", `${gold}`, new Color(183, 142, 72, 236));
+    this.renderMetricChip(cardNode, "wood", startX + chipWidth + gap, y, chipWidth, chipHeight, frameSet?.wood ?? null, "木材", `${wood}`, new Color(90, 128, 92, 236));
+    this.renderMetricChip(cardNode, "ore", startX + (chipWidth + gap) * 2, y, chipWidth, chipHeight, frameSet?.ore ?? null, "矿石", `${ore}`, new Color(96, 118, 144, 236));
   }
 
   private renderMetricChip(
@@ -342,7 +367,8 @@ export class VeilHudPanel extends Component {
     width: number,
     height: number,
     frame: Sprite | null | unknown,
-    labelText: string,
+    titleText: string,
+    valueText: string,
     accent: Color
   ): void {
     const chipName = `${CHIP_PREFIX}-${key}`;
@@ -359,12 +385,18 @@ export class VeilHudPanel extends Component {
     chipNode.setPosition(centerX, centerY, 0.5);
     const graphics = chipNode.getComponent(Graphics) ?? chipNode.addComponent(Graphics);
     graphics.clear();
-    graphics.fillColor = new Color(accent.r, accent.g, accent.b, 34);
-    graphics.strokeColor = new Color(accent.r, accent.g, accent.b, 112);
+    graphics.fillColor = new Color(accent.r, accent.g, accent.b, 68);
+    graphics.strokeColor = new Color(accent.r, accent.g, accent.b, 164);
     graphics.lineWidth = 2;
     graphics.roundRect(-width / 2, -height / 2, width, height, 10);
     graphics.fill();
     graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, 18);
+    graphics.roundRect(-width / 2 + 8, height / 2 - 13, width - 16, 6, 4);
+    graphics.fill();
+    graphics.fillColor = new Color(accent.r, accent.g, accent.b, 160);
+    graphics.roundRect(-width / 2 + 10, height / 2 - 11, Math.min(34, width * 0.42), 3, 2);
+    graphics.fill();
 
     let iconNode = chipNode.getChildByName("Icon");
     if (!iconNode) {
@@ -373,31 +405,49 @@ export class VeilHudPanel extends Component {
     }
     assignUiLayer(iconNode);
     const iconTransform = iconNode.getComponent(UITransform) ?? iconNode.addComponent(UITransform);
-    iconTransform.setContentSize(16, 16);
-    iconNode.setPosition(-width / 2 + 14, 0, 1);
+    iconTransform.setContentSize(14, 14);
+    iconNode.setPosition(-width / 2 + 14, 5, 1);
     const iconSprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite);
     iconNode.active = Boolean(frame);
     if (frame) {
       iconSprite.spriteFrame = frame as never;
     }
 
-    let labelNode = chipNode.getChildByName("Label");
-    if (!labelNode) {
-      labelNode = new Node("Label");
-      labelNode.parent = chipNode;
+    let titleNode = chipNode.getChildByName("Title");
+    if (!titleNode) {
+      titleNode = new Node("Title");
+      titleNode.parent = chipNode;
     }
-    assignUiLayer(labelNode);
-    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
-    labelTransform.setContentSize(width - 14, height - 6);
-    labelNode.setPosition(frame ? 8 : 0, 0, 1);
-    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
-    label.string = labelText;
-    label.fontSize = 11;
-    label.lineHeight = 14;
-    label.horizontalAlign = H_ALIGN_CENTER;
-    label.verticalAlign = V_ALIGN_MIDDLE;
-    label.enableWrapText = false;
-    label.color = new Color(244, 247, 251, 255);
+    assignUiLayer(titleNode);
+    const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform);
+    titleTransform.setContentSize(width - 18, 10);
+    titleNode.setPosition(frame ? 7 : 0, 7, 1);
+    const title = titleNode.getComponent(Label) ?? titleNode.addComponent(Label);
+    title.string = titleText;
+    title.fontSize = 8;
+    title.lineHeight = 10;
+    title.horizontalAlign = H_ALIGN_CENTER;
+    title.verticalAlign = V_ALIGN_MIDDLE;
+    title.enableWrapText = false;
+    title.color = new Color(229, 236, 244, 220);
+
+    let valueNode = chipNode.getChildByName("Value");
+    if (!valueNode) {
+      valueNode = new Node("Value");
+      valueNode.parent = chipNode;
+    }
+    assignUiLayer(valueNode);
+    const valueTransform = valueNode.getComponent(UITransform) ?? valueNode.addComponent(UITransform);
+    valueTransform.setContentSize(width - 14, 15);
+    valueNode.setPosition(frame ? 7 : 0, -7, 1);
+    const value = valueNode.getComponent(Label) ?? valueNode.addComponent(Label);
+    value.string = valueText;
+    value.fontSize = 11;
+    value.lineHeight = 12;
+    value.horizontalAlign = H_ALIGN_CENTER;
+    value.verticalAlign = V_ALIGN_MIDDLE;
+    value.enableWrapText = false;
+    value.color = new Color(244, 247, 251, 255);
   }
 
   private renderHeroBadge(cardName: string, badgeText: string): void {
@@ -407,6 +457,7 @@ export class VeilHudPanel extends Component {
     }
 
     const frame = getPlaceholderSpriteAssets()?.icons.hero ?? null;
+    const cardTransform = cardNode.getComponent(UITransform) ?? cardNode.addComponent(UITransform);
     let badgeNode = cardNode.getChildByName(`${BADGE_PREFIX}-hero`);
     if (!badgeNode) {
       badgeNode = new Node(`${BADGE_PREFIX}-hero`);
@@ -415,16 +466,19 @@ export class VeilHudPanel extends Component {
     assignUiLayer(badgeNode);
     badgeNode.active = true;
     const badgeTransform = badgeNode.getComponent(UITransform) ?? badgeNode.addComponent(UITransform);
-    badgeTransform.setContentSize(54, 54);
-    badgeNode.setPosition(84, 8, 1);
+    badgeTransform.setContentSize(24, 24);
+    badgeNode.setPosition(cardTransform.width / 2 - 24, 16, 1);
     const graphics = badgeNode.getComponent(Graphics) ?? badgeNode.addComponent(Graphics);
     graphics.clear();
     graphics.fillColor = new Color(40, 51, 73, 232);
     graphics.strokeColor = new Color(225, 205, 146, 120);
     graphics.lineWidth = 2;
-    graphics.roundRect(-27, -27, 54, 54, 16);
+    graphics.roundRect(-12, -12, 24, 24, 8);
     graphics.fill();
     graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, 18);
+    graphics.roundRect(-8, 4, 16, 3, 2);
+    graphics.fill();
 
     let iconNode = badgeNode.getChildByName("Icon");
     if (!iconNode) {
@@ -433,8 +487,8 @@ export class VeilHudPanel extends Component {
     }
     assignUiLayer(iconNode);
     const iconTransform = iconNode.getComponent(UITransform) ?? iconNode.addComponent(UITransform);
-    iconTransform.setContentSize(24, 24);
-    iconNode.setPosition(0, 8, 1);
+    iconTransform.setContentSize(10, 10);
+    iconNode.setPosition(0, 3, 1);
     const iconSprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite);
     iconNode.active = Boolean(frame);
     if (frame) {
@@ -448,12 +502,12 @@ export class VeilHudPanel extends Component {
     }
     assignUiLayer(labelNode);
     const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
-    labelTransform.setContentSize(48, 14);
-    labelNode.setPosition(0, -15, 1);
+    labelTransform.setContentSize(22, 8);
+    labelNode.setPosition(0, -6, 1);
     const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
     label.string = badgeText;
-    label.fontSize = 10;
-    label.lineHeight = 12;
+    label.fontSize = 6;
+    label.lineHeight = 7;
     label.horizontalAlign = H_ALIGN_CENTER;
     label.verticalAlign = V_ALIGN_MIDDLE;
     label.enableWrapText = false;
@@ -474,8 +528,9 @@ export class VeilHudPanel extends Component {
     assignUiLayer(badgeNode);
     badgeNode.active = true;
     const badgeTransform = badgeNode.getComponent(UITransform) ?? badgeNode.addComponent(UITransform);
-    badgeTransform.setContentSize(88, 24);
-    badgeNode.setPosition(60, 20, 1);
+    const cardTransform = cardNode.getComponent(UITransform) ?? cardNode.addComponent(UITransform);
+    badgeTransform.setContentSize(56, 17);
+    badgeNode.setPosition(cardTransform.width / 2 - 36, 12, 1);
     const graphics = badgeNode.getComponent(Graphics) ?? badgeNode.addComponent(Graphics);
     const exhausted = badgeText.includes("耗尽");
     const inBattle = badgeText.includes("战斗");
@@ -484,9 +539,12 @@ export class VeilHudPanel extends Component {
     graphics.fillColor = new Color(accent.r, accent.g, accent.b, 40);
     graphics.strokeColor = new Color(accent.r, accent.g, accent.b, 126);
     graphics.lineWidth = 2;
-    graphics.roundRect(-44, -12, 88, 24, 12);
+    graphics.roundRect(-28, -8.5, 56, 17, 8);
     graphics.fill();
     graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, 16);
+    graphics.roundRect(-22, 2, 44, 3, 2);
+    graphics.fill();
 
     let labelNode = badgeNode.getChildByName("Label");
     if (!labelNode) {
@@ -495,16 +553,42 @@ export class VeilHudPanel extends Component {
     }
     assignUiLayer(labelNode);
     const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
-    labelTransform.setContentSize(82, 18);
+    labelTransform.setContentSize(50, 13);
     labelNode.setPosition(0, 0, 1);
     const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
     label.string = badgeText;
-    label.fontSize = 11;
-    label.lineHeight = 13;
+    label.fontSize = 7;
+    label.lineHeight = 9;
     label.horizontalAlign = H_ALIGN_CENTER;
     label.verticalAlign = V_ALIGN_MIDDLE;
     label.enableWrapText = false;
     label.color = new Color(243, 248, 252, 255);
+  }
+
+  private renderHeroMeters(
+    cardName: string,
+    moveRemaining: number,
+    moveTotal: number,
+    hp: number,
+    maxHp: number,
+    armyCount: number
+  ): void {
+    const cardNode = this.node.getChildByName(cardName);
+    if (!cardNode) {
+      return;
+    }
+
+    const cardTransform = cardNode.getComponent(UITransform) ?? cardNode.addComponent(UITransform);
+    const gap = 6;
+    const chipWidth = Math.max(46, Math.floor((cardTransform.width - 22 - gap * 2) / 3));
+    const chipHeight = 28;
+    const totalWidth = chipWidth * 3 + gap * 2;
+    const startX = -totalWidth / 2 + chipWidth / 2;
+    const y = -30;
+
+    this.renderMetricChip(cardNode, `${HERO_METER_PREFIX}-move`, startX, y, chipWidth, chipHeight, null, "移动", `${moveRemaining}/${moveTotal}`, new Color(112, 152, 220, 224));
+    this.renderMetricChip(cardNode, `${HERO_METER_PREFIX}-hp`, startX + chipWidth + gap, y, chipWidth, chipHeight, null, "生命", `${hp}/${maxHp}`, new Color(122, 180, 124, 224));
+    this.renderMetricChip(cardNode, `${HERO_METER_PREFIX}-army`, startX + (chipWidth + gap) * 2, y, chipWidth, chipHeight, null, "兵力", `${armyCount}`, new Color(204, 168, 92, 224));
   }
 
   private tightenHeroLabelLayout(centerX: number, cardWidth: number): void {
@@ -513,8 +597,8 @@ export class VeilHudPanel extends Component {
     }
 
     const transform = this.heroLabel.node.getComponent(UITransform) ?? this.heroLabel.node.addComponent(UITransform);
-    transform.setContentSize(cardWidth - 84, transform.height);
-    this.heroLabel.node.setPosition(centerX - 18, this.heroLabel.node.position.y, 1);
+    transform.setContentSize(cardWidth - 40, transform.height);
+    this.heroLabel.node.setPosition(centerX - 8, this.heroLabel.node.position.y + 10, 1);
   }
 
   private hideCardDecorations(cardName: string, prefix: string): void {
@@ -540,8 +624,8 @@ export class VeilHudPanel extends Component {
     assignUiLayer(iconNode);
 
     const iconTransform = iconNode.getComponent(UITransform) ?? iconNode.addComponent(UITransform);
-    iconTransform.setContentSize(28, 28);
-    iconNode.setPosition(-transform.width / 2 + 50, transform.height / 2 - 76, 1);
+    iconTransform.setContentSize(26, 26);
+    iconNode.setPosition(-transform.width / 2 + 46, transform.height / 2 - 74, 1);
     this.headerIconSprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite);
     this.headerIconOpacity = iconNode.getComponent(UIOpacity) ?? iconNode.addComponent(UIOpacity);
 
@@ -571,8 +655,8 @@ export class VeilHudPanel extends Component {
     }
     assignUiLayer(watermarkNode);
     const watermarkTransform = watermarkNode.getComponent(UITransform) ?? watermarkNode.addComponent(UITransform);
-    watermarkTransform.setContentSize(96, 96);
-    watermarkNode.setPosition(transform.width / 2 - 80, transform.height / 2 - 122, 0.5);
+    watermarkTransform.setContentSize(84, 84);
+    watermarkNode.setPosition(transform.width / 2 - 72, transform.height / 2 - 118, 0.5);
     const watermarkSprite = watermarkNode.getComponent(Sprite) ?? watermarkNode.addComponent(Sprite);
     const watermarkOpacity = watermarkNode.getComponent(UIOpacity) ?? watermarkNode.addComponent(UIOpacity);
     watermarkNode.active = true;
@@ -612,12 +696,8 @@ export class VeilHudPanel extends Component {
     }
     assignUiLayer(actionsNode);
 
-    this.ensureActionButton(actionsNode, "HudNewRun", "新开一局", () => {
-      this.onNewRun?.();
-    });
-    this.ensureActionButton(actionsNode, "HudRefresh", "刷新状态", () => {
-      this.onRefresh?.();
-    });
+    this.ensureActionButton(actionsNode, "HudNewRun", "新开一局");
+    this.ensureActionButton(actionsNode, "HudRefresh", "刷新状态");
   }
 
   private syncActionButtons(): void {
@@ -629,7 +709,7 @@ export class VeilHudPanel extends Component {
     }
 
     const actionsTransform = actionsNode.getComponent(UITransform) ?? actionsNode.addComponent(UITransform);
-    actionsTransform.setContentSize(Math.max(120, transform.width - 48), 76);
+    actionsTransform.setContentSize(Math.max(164, transform.width - 28), 78);
     actionsNode.setPosition(0, transform.height / 2 - 100, 1);
 
     const buttons: HudActionButtonState[] = [
@@ -644,49 +724,47 @@ export class VeilHudPanel extends Component {
       }
 
       const buttonTransform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
-      const buttonWidth = actionsTransform.width;
-      const buttonHeight = index === 0 ? 34 : 26;
+      const buttonWidth = Math.floor(actionsTransform.width - 8);
+      const buttonHeight = 28;
       buttonTransform.setContentSize(buttonWidth, buttonHeight);
-      node.setPosition(0, index === 0 ? 16 : -14, 0);
-      this.actionBounds.set(button.name, {
-        x: node.position.x,
-        y: actionsNode.position.y + node.position.y,
-        width: buttonWidth,
-        height: buttonHeight,
-        callback: button.callback
-      });
+      const buttonY = index === 0 ? 18 : -18;
+      node.setPosition(0, buttonY, 0);
 
       const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
       graphics.clear();
       graphics.fillColor = index === 0 ? new Color(78, 102, 140, 236) : new Color(51, 70, 99, 228);
       graphics.strokeColor = index === 0 ? new Color(245, 248, 252, 158) : new Color(218, 229, 242, 112);
       graphics.lineWidth = 2;
-      graphics.roundRect(-buttonWidth / 2, -buttonHeight / 2, buttonWidth, buttonHeight, 12);
+      graphics.roundRect(-buttonWidth / 2, -buttonHeight / 2, buttonWidth, buttonHeight, 10);
       graphics.fill();
       graphics.stroke();
+      graphics.fillColor = new Color(255, 255, 255, index === 0 ? 22 : 14);
+      graphics.roundRect(-buttonWidth / 2 + 12, buttonHeight / 2 - 9, buttonWidth - 24, 3, 2);
+      graphics.fill();
 
       const label = node.getComponent(Label) ?? node.addComponent(Label);
       label.string = button.label;
-      label.fontSize = index === 0 ? 15 : 13;
-      label.lineHeight = index === 0 ? 18 : 16;
+      label.fontSize = 13;
+      label.lineHeight = 15;
       label.horizontalAlign = H_ALIGN_CENTER;
       label.verticalAlign = V_ALIGN_MIDDLE;
       label.enableWrapText = false;
       label.color = new Color(243, 247, 252, 255);
+
+      node.off(Node.EventType.TOUCH_END);
+      node.off(Node.EventType.MOUSE_UP);
+      if (button.callback) {
+        node.on(Node.EventType.TOUCH_END, () => {
+          button.callback?.();
+        });
+        node.on(Node.EventType.MOUSE_UP, () => {
+          button.callback?.();
+        });
+      }
     });
   }
 
-  onDestroy(): void {
-    if (!this.globalActionBound) {
-      return;
-    }
-
-    input.off(Input.EventType.TOUCH_END, this.handleGlobalActionInput, this);
-    input.off(Input.EventType.MOUSE_UP, this.handleGlobalActionInput, this);
-    this.globalActionBound = false;
-  }
-
-  private ensureActionButton(parent: Node, name: string, labelText: string, callback: () => void): void {
+  private ensureActionButton(parent: Node, name: string, labelText: string): void {
     let buttonNode = parent.getChildByName(name);
     if (!buttonNode) {
       buttonNode = new Node(name);
@@ -695,43 +773,5 @@ export class VeilHudPanel extends Component {
     assignUiLayer(buttonNode);
     const label = buttonNode.getComponent(Label) ?? buttonNode.addComponent(Label);
     label.string = labelText;
-    buttonNode.off(Node.EventType.TOUCH_END);
-    buttonNode.off(Node.EventType.MOUSE_UP);
-    buttonNode.on(Node.EventType.TOUCH_END, callback, this);
-    buttonNode.on(Node.EventType.MOUSE_UP, callback, this);
-  }
-
-  private ensureGlobalActionBinding(): void {
-    if (this.globalActionBound) {
-      return;
-    }
-
-    input.on(Input.EventType.TOUCH_END, this.handleGlobalActionInput, this);
-    input.on(Input.EventType.MOUSE_UP, this.handleGlobalActionInput, this);
-    this.globalActionBound = true;
-  }
-
-  private handleGlobalActionInput(...args: unknown[]): void {
-    const event = args[0] as EventTouch | EventMouse | undefined;
-    if (!event || this.actionBounds.size === 0) {
-      return;
-    }
-
-    const uiPoint = event.getUILocation();
-    const visibleSize = view.getVisibleSize();
-    const centeredX = uiPoint.x - visibleSize.width / 2;
-    const centeredY = uiPoint.y - visibleSize.height / 2;
-    const panelPosition = this.node.position;
-    const localX = centeredX - panelPosition.x;
-    const localY = centeredY - panelPosition.y;
-
-    for (const bounds of this.actionBounds.values()) {
-      const withinX = localX >= bounds.x - bounds.width / 2 && localX <= bounds.x + bounds.width / 2;
-      const withinY = localY >= bounds.y - bounds.height / 2 && localY <= bounds.y + bounds.height / 2;
-      if (withinX && withinY) {
-        bounds.callback?.();
-        return;
-      }
-    }
   }
 }

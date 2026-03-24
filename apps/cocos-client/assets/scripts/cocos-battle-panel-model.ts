@@ -13,6 +13,9 @@ export interface BattlePanelInput {
 export interface BattlePanelUnitView {
   id: string;
   label: string;
+  title: string;
+  meta: string;
+  badge: string;
   selected: boolean;
   selectable: boolean;
 }
@@ -20,8 +23,24 @@ export interface BattlePanelUnitView {
 export interface BattlePanelActionView {
   key: "attack" | "wait" | "defend";
   label: string;
+  subtitle: string;
   enabled: boolean;
   action: BattleAction | null;
+}
+
+export interface BattlePanelOrderItem {
+  id: string;
+  title: string;
+  meta: string;
+  badge: string;
+  active: boolean;
+}
+
+export interface BattlePanelFriendlyItem {
+  id: string;
+  title: string;
+  meta: string;
+  badge: string;
 }
 
 export interface BattlePanelViewModel {
@@ -29,6 +48,8 @@ export interface BattlePanelViewModel {
   summaryLines: string[];
   orderLines: string[];
   friendlyLines: string[];
+  orderItems: BattlePanelOrderItem[];
+  friendlyItems: BattlePanelFriendlyItem[];
   enemyTargets: BattlePanelUnitView[];
   actions: BattlePanelActionView[];
   idle: boolean;
@@ -42,6 +63,8 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
       summaryLines: ["当前没有战斗。"],
       orderLines: [],
       friendlyLines: [],
+      orderItems: [],
+      friendlyItems: [],
       enemyTargets: [],
       actions: [],
       idle: true
@@ -71,7 +94,10 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     id: unit.id,
     selected: unit.id === selectedTargetId,
     selectable: true,
-    label: `${unit.id === selectedTargetId ? ">" : " "} ${formatEnemyUnitLine(unit)}`
+    label: `${unit.id === selectedTargetId ? ">" : " "} ${formatEnemyUnitLine(unit)}`,
+    title: `${unit.stackName} x${unit.count}`,
+    meta: `生命 ${unit.currentHp}/${unit.maxHp}`,
+    badge: unit.id === selectedTargetId ? "已选中" : "可攻击"
   }));
   const canAct = Boolean(activeUnit && friendlyCamp && activeUnit.camp === friendlyCamp && !state.actionPending);
   const attackTarget = enemyUnits.find((unit) => unit.id === selectedTargetId) ?? enemyUnits[0] ?? null;
@@ -85,6 +111,32 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     const activeMarker = unit.id === battle.activeUnitId ? ">" : `${index + 1}.`;
     return `${activeMarker} ${unit.stackName} x${unit.count}${formatInlineTags(unit)}`;
   });
+  const orderItems = battle.turnOrder
+    .map((unitId, index) => {
+      const unit = battle.units[unitId];
+      if (!unit || unit.count <= 0) {
+        return null;
+      }
+
+      const active = unit.id === battle.activeUnitId;
+      const inlineTags = formatInlineTags(unit).trim();
+      return {
+        id: unit.id,
+        title: `${unit.stackName} x${unit.count}`,
+        meta: `${unit.camp === "attacker" ? "进攻方" : "防守方"} · ${inlineTags || "准备中"}`,
+        badge: active ? "行动中" : `${index + 1}`,
+        active
+      };
+    })
+    .filter((item): item is BattlePanelOrderItem => Boolean(item));
+  const friendlyItems = friendlyCamp
+    ? collectUnitsForCamp(battle, friendlyCamp).map((unit) => ({
+        id: unit.id,
+        title: `${unit.stackName} x${unit.count}`,
+        meta: `生命 ${unit.currentHp}/${unit.maxHp}`,
+        badge: unit.defending ? "防御" : unit.hasRetaliated ? "已反击" : "待命"
+      }))
+    : [];
 
   return {
     title: "战斗面板",
@@ -96,6 +148,8 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     ],
     orderLines: ["行动顺序", ...(orderLines.length > 0 ? orderLines : ["等待中"])],
     friendlyLines: ["我方单位", ...friendlyUnits],
+    orderItems,
+    friendlyItems,
     enemyTargets,
     actions,
     idle: false
@@ -168,6 +222,7 @@ function buildActions(
     {
       key: "attack",
       label: attackTarget ? `攻击 ${attackTarget.stackName}` : "攻击 --",
+      subtitle: attackTarget ? `目标：${attackTarget.stackName}` : "请选择一个目标",
       enabled: Boolean(canAct && activeUnitId && attackTarget),
       action:
         canAct && activeUnitId && attackTarget
@@ -181,6 +236,7 @@ function buildActions(
     {
       key: "wait",
       label: "等待",
+      subtitle: "延后到本轮稍后行动",
       enabled: Boolean(canAct && activeUnitId),
       action:
         canAct && activeUnitId
@@ -193,6 +249,7 @@ function buildActions(
     {
       key: "defend",
       label: "防御",
+      subtitle: "本回合提升防御姿态",
       enabled: Boolean(canAct && activeUnitId),
       action:
         canAct && activeUnitId

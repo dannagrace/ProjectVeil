@@ -339,13 +339,13 @@ export class VeilRoot extends Component {
     timelineHeight: number;
   } {
     const visibleSize = view.getVisibleSize();
-    const hudWidth = Math.max(240, Math.min(320, Math.floor(visibleSize.width * 0.24)));
-    const rightWidth = Math.max(240, Math.min(320, Math.floor(visibleSize.width * 0.24)));
+    const hudWidth = Math.max(228, Math.min(264, Math.floor(visibleSize.width * 0.215)));
+    const rightWidth = Math.max(244, Math.min(276, Math.floor(visibleSize.width * 0.205)));
     const effectiveTileSize = this.computeEffectiveTileSize(hudWidth, rightWidth);
     const mapWidth = this.currentMapPixelWidth(effectiveTileSize);
-    const hudHeight = Math.max(320, visibleSize.height - 48);
-    const battleHeight = Math.max(220, Math.floor((visibleSize.height - 72) * 0.42));
-    const timelineHeight = Math.max(220, visibleSize.height - battleHeight - 72);
+    const hudHeight = Math.max(318, visibleSize.height - 52);
+    const battleHeight = Math.max(132, Math.floor((visibleSize.height - 72) * 0.23));
+    const timelineHeight = Math.max(226, visibleSize.height - battleHeight - 74);
 
     return {
       effectiveTileSize,
@@ -406,7 +406,7 @@ export class VeilRoot extends Component {
     if (hudNode) {
       const hudTransform = hudNode.getComponent(UITransform) ?? hudNode.addComponent(UITransform);
       hudTransform.setContentSize(hudWidth, hudHeight);
-      hudNode.setPosition(-visibleSize.width / 2 + margin + hudWidth / 2, 42, 0);
+      hudNode.setPosition(-visibleSize.width / 2 + margin + hudWidth / 2, 56, 0);
       this.hudPanel?.configure({
         onNewRun: () => {
           void this.startNewRun();
@@ -429,7 +429,7 @@ export class VeilRoot extends Component {
       battleTransform.setContentSize(rightWidth, battleHeight);
       battleNode.setPosition(
         visibleSize.width / 2 - margin - rightWidth / 2,
-        visibleSize.height / 2 - margin - battleHeight / 2,
+        visibleSize.height / 2 - margin - battleHeight / 2 + 2,
         0
       );
     }
@@ -439,7 +439,7 @@ export class VeilRoot extends Component {
       timelineTransform.setContentSize(rightWidth, timelineHeight);
       timelineNode.setPosition(
         visibleSize.width / 2 - margin - rightWidth / 2,
-        -visibleSize.height / 2 + margin + timelineHeight / 2,
+        -visibleSize.height / 2 + margin + timelineHeight / 2 + 8,
         0
       );
     }
@@ -472,8 +472,7 @@ export class VeilRoot extends Component {
     const centeredY = uiY - visibleSize.height / 2;
     const hudNode = this.node.getChildByName(HUD_NODE_NAME);
     const hudTransform = hudNode?.getComponent(UITransform) ?? null;
-    const actionsNode = hudNode?.getChildByName("HudActions") ?? null;
-    if (!hudNode || !hudTransform || !actionsNode) {
+    if (!hudNode || !hudTransform) {
       return null;
     }
 
@@ -489,50 +488,23 @@ export class VeilRoot extends Component {
       return null;
     }
 
-    const actionsLocalX = hudLocalX - actionsNode.position.x;
-    const actionsLocalY = hudLocalY - actionsNode.position.y;
+    const buttonBandCenterY = hudTransform.height / 2 - 96;
+    const buttonBandHeight = 72;
+    const gutter = 14;
+    const sideWidth = Math.max(88, hudTransform.width / 2 - gutter * 1.5);
+    const leftCenterX = -hudTransform.width / 4;
+    const rightCenterX = hudTransform.width / 4;
 
-    const newRunNode = actionsNode.getChildByName("HudNewRun");
-    if (newRunNode) {
-      const transform = newRunNode.getComponent(UITransform) ?? newRunNode.addComponent(UITransform);
-      if (
-        this.pointInRect(
-          actionsLocalX,
-          actionsLocalY,
-          newRunNode.position.x,
-          newRunNode.position.y,
-          transform.width + 36,
-          transform.height + 96
-        )
-      ) {
-        return "new-run";
-      }
+    if (this.pointInRect(hudLocalX, hudLocalY, leftCenterX, buttonBandCenterY, sideWidth, buttonBandHeight)) {
+      return "new-run";
     }
 
-    const refreshNode = actionsNode.getChildByName("HudRefresh");
-    if (refreshNode) {
-      const transform = refreshNode.getComponent(UITransform) ?? refreshNode.addComponent(UITransform);
-      if (
-        this.pointInRect(
-          actionsLocalX,
-          actionsLocalY,
-          refreshNode.position.x,
-          refreshNode.position.y,
-          transform.width + 36,
-          transform.height + 96
-        )
-      ) {
-        return "refresh";
-      }
-    }
-
-    const buttonBandTop = hudTransform.height / 2 - 86;
-    const buttonBandBottom = hudTransform.height / 2 - 206;
-    if (hudLocalY <= buttonBandTop && hudLocalY >= buttonBandBottom) {
-      return hudLocalY >= actionsNode.position.y ? "new-run" : "refresh";
+    if (this.pointInRect(hudLocalX, hudLocalY, rightCenterX, buttonBandCenterY, sideWidth, buttonBandHeight)) {
+      return "refresh";
     }
 
     return null;
+
   }
 
   private pointInRect(x: number, y: number, centerX: number, centerY: number, width: number, height: number): boolean {

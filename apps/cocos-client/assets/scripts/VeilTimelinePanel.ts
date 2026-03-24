@@ -14,6 +14,13 @@ const PANEL_ACCENT_SOFT = new Color(186, 223, 247, 92);
 const CONTENT_NODE_NAME = "TimelineContent";
 const HEADER_ICON_NODE_NAME = "TimelineHeaderIcon";
 const WATERMARK_NODE_NAME = "TimelineWatermark";
+const ENTRY_PREFIX = "TimelineEntry";
+
+interface TimelineEntryView {
+  tone: "system" | "event";
+  badge: string;
+  body: string;
+}
 
 export interface VeilTimelinePanelState {
   entries: string[];
@@ -26,6 +33,7 @@ export class VeilTimelinePanel extends Component {
   private headerIconOpacity: UIOpacity | null = null;
   private currentState: VeilTimelinePanelState | null = null;
   private requestedIcons = false;
+  private readonly entryNodes = new Map<string, { node: Node; label: Label }>();
 
   render(state: VeilTimelinePanelState): void {
     this.currentState = state;
@@ -37,13 +45,14 @@ export class VeilTimelinePanel extends Component {
     this.syncWatermark(state.entries.length === 0);
 
     if (state.entries.length === 0) {
+      this.hideEntryNodes();
       lines.push("等待房间动态...");
       label.string = lines.join("\n");
       return;
     }
 
-    lines.push(...state.entries.slice(0, 5).map((entry) => `• ${entry}`));
     label.string = lines.join("\n");
+    this.renderEntries(state.entries.slice(0, 3));
   }
 
   private ensureLabel(): Label {
@@ -162,9 +171,164 @@ export class VeilTimelinePanel extends Component {
     const allowedNames = new Set<string>([CONTENT_NODE_NAME, HEADER_ICON_NODE_NAME, WATERMARK_NODE_NAME]);
     const childNodes = (this.node as unknown as { children?: Node[] }).children ?? [];
     for (const child of childNodes) {
-      if (!allowedNames.has(child.name)) {
+      if (!allowedNames.has(child.name) && !child.name.startsWith(ENTRY_PREFIX)) {
         child.destroy();
       }
     }
   }
+
+  private renderEntries(entries: string[]): void {
+    const used = new Set<string>();
+    const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
+    const entryWidth = Math.max(124, transform.width - 34);
+    const rowHeight = 44;
+    const gap = 8;
+    let cursorY = transform.height / 2 - 92;
+
+    entries.forEach((entry, index) => {
+      const key = `${ENTRY_PREFIX}-${index}`;
+      const entryNode = this.ensureEntryNode(key);
+      const view = parseTimelineEntry(entry);
+      const rowTransform = entryNode.node.getComponent(UITransform) ?? entryNode.node.addComponent(UITransform);
+      rowTransform.setContentSize(entryWidth, rowHeight);
+      entryNode.node.setPosition(-transform.width / 2 + entryWidth / 2 + 20, cursorY - rowHeight / 2, 0.5);
+      entryNode.node.active = true;
+      entryNode.label.string = view.body;
+      this.styleEntryNode(entryNode.node, entryNode.label, view);
+      used.add(key);
+      cursorY -= rowHeight + gap;
+    });
+
+    for (const [key, entryNode] of this.entryNodes) {
+      if (!used.has(key)) {
+        entryNode.node.active = false;
+      }
+    }
+  }
+
+  private ensureEntryNode(name: string): { node: Node; label: Label } {
+    const existing = this.entryNodes.get(name);
+    if (existing) {
+      return existing;
+    }
+
+    const node = new Node(name);
+    node.parent = this.node;
+    assignUiLayer(node);
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(220, 44);
+
+    const labelNode = new Node(`${name}-Label`);
+    labelNode.parent = node;
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(180, 30);
+    labelNode.setPosition(0, 0, 1);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
+    label.fontSize = 11;
+    label.lineHeight = 15;
+    label.horizontalAlign = H_ALIGN_LEFT;
+    label.verticalAlign = V_ALIGN_TOP;
+    label.overflow = OVERFLOW_RESIZE_HEIGHT;
+    label.enableWrapText = true;
+    label.string = "";
+
+    const created = { node, label };
+    this.entryNodes.set(name, created);
+    return created;
+  }
+
+  private styleEntryNode(node: Node, label: Label, entry: TimelineEntryView): void {
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    const width = transform.width;
+    const height = transform.height;
+    const isSystem = entry.tone === "system";
+    const accent = isSystem ? new Color(114, 144, 184, 220) : new Color(118, 174, 215, 220);
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(accent.r, accent.g, accent.b, isSystem ? 28 : 36);
+    graphics.strokeColor = new Color(accent.r, accent.g, accent.b, isSystem ? 92 : 118);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 12);
+    graphics.fill();
+    graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, 14);
+    graphics.roundRect(-width / 2 + 12, height / 2 - 12, width - 24, 4, 3);
+    graphics.fill();
+    graphics.fillColor = new Color(accent.r, accent.g, accent.b, 148);
+    graphics.roundRect(-width / 2 + 12, height / 2 - 16, Math.min(68, width * 0.24), 4, 3);
+    graphics.fill();
+
+    let badgeNode = node.getChildByName("Badge");
+    if (!badgeNode) {
+      badgeNode = new Node("Badge");
+      badgeNode.parent = node;
+    }
+    assignUiLayer(badgeNode);
+    const badgeTransform = badgeNode.getComponent(UITransform) ?? badgeNode.addComponent(UITransform);
+    badgeTransform.setContentSize(34, 16);
+    badgeNode.setPosition(-width / 2 + 28, 0, 1);
+    const badgeGraphics = badgeNode.getComponent(Graphics) ?? badgeNode.addComponent(Graphics);
+    badgeGraphics.clear();
+    badgeGraphics.fillColor = new Color(accent.r, accent.g, accent.b, 148);
+    badgeGraphics.strokeColor = new Color(243, 247, 252, 48);
+    badgeGraphics.lineWidth = 1.5;
+    badgeGraphics.roundRect(-17, -8, 34, 16, 7);
+    badgeGraphics.fill();
+    badgeGraphics.stroke();
+
+    let badgeLabelNode = badgeNode.getChildByName("Label");
+    if (!badgeLabelNode) {
+      badgeLabelNode = new Node("Label");
+      badgeLabelNode.parent = badgeNode;
+    }
+    assignUiLayer(badgeLabelNode);
+    const badgeLabelTransform = badgeLabelNode.getComponent(UITransform) ?? badgeLabelNode.addComponent(UITransform);
+    badgeLabelTransform.setContentSize(30, 12);
+    badgeLabelNode.setPosition(0, 0, 1);
+    const badgeLabel = badgeLabelNode.getComponent(Label) ?? badgeLabelNode.addComponent(Label);
+    badgeLabel.string = entry.badge;
+    badgeLabel.fontSize = 9;
+    badgeLabel.lineHeight = 10;
+    badgeLabel.horizontalAlign = H_ALIGN_LEFT;
+    badgeLabel.verticalAlign = V_ALIGN_TOP;
+    badgeLabel.overflow = OVERFLOW_RESIZE_HEIGHT;
+    badgeLabel.enableWrapText = false;
+    badgeLabel.color = new Color(246, 250, 253, 255);
+
+    const labelTransform = label.node.getComponent(UITransform) ?? label.node.addComponent(UITransform);
+    labelTransform.setContentSize(width - 62, 30);
+    label.node.setPosition(12, 0, 1);
+    label.color = new Color(242, 247, 252, 255);
+  }
+
+  private hideEntryNodes(): void {
+    for (const entryNode of this.entryNodes.values()) {
+      entryNode.node.active = false;
+    }
+  }
+}
+
+function parseTimelineEntry(entry: string): TimelineEntryView {
+  if (entry.startsWith("系统：")) {
+    return {
+      tone: "system",
+      badge: "系统",
+      body: entry.replace(/^系统：\s*/, "")
+    };
+  }
+
+  if (entry.startsWith("事件：")) {
+    return {
+      tone: "event",
+      badge: "事件",
+      body: entry.replace(/^事件：\s*/, "")
+    };
+  }
+
+  return {
+    tone: "event",
+    badge: "记录",
+    body: entry
+  };
 }

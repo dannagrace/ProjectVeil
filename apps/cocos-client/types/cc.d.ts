@@ -29,6 +29,7 @@ declare module "cc" {
 
     addComponent<T>(type: new () => T): T;
     getComponent<T>(type: new () => T): T | null;
+    removeComponent<T>(component: T): void;
     getChildByName(name: string): Node | null;
     destroy(): void;
     setPosition(x: number, y: number, z?: number): void;
