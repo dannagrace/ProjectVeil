@@ -15,6 +15,8 @@ export type ClientMessage =
       requestId: string;
       roomId: string;
       playerId: string;
+      displayName?: string;
+      authToken?: string;
       seed?: number;
     }
   | {

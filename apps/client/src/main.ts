@@ -12,10 +12,49 @@ import {
 import { createGameSession, readStoredSessionReplay, type SessionUpdate } from "./local-session";
 import { markerAsset, objectBadgeAssets, resourceAsset, terrainAsset, unitAsset, unitBadgeAssets, unitFrameAsset } from "./assets";
 import { describeTileObject } from "./object-visuals";
+import {
+  clearCurrentAuthSession,
+  loginGuestAuthSession,
+  loginPasswordAuthSession,
+  readStoredAuthSession,
+  syncCurrentAuthSession,
+  type StoredAuthSession
+} from "./auth-session";
+import {
+  createLobbyPreferences,
+  loadLobbyRooms,
+  saveLobbyPreferences,
+  type LobbyRoomSummary
+} from "./lobby-preferences";
+import {
+  createFallbackPlayerAccountProfile as createLocalAccountProfile,
+  bindPlayerAccountCredentials as bindAccountCredentials,
+  loadPlayerAccountProfile as loadAccountProfile,
+  rememberPreferredPlayerDisplayName,
+  readPreferredPlayerDisplayName as readLocalPreferredDisplayName,
+  savePlayerAccountDisplayName as saveAccountDisplayName,
+  type PlayerAccountProfile as ClientPlayerAccountProfile
+} from "./player-account";
 
 const params = new URLSearchParams(window.location.search);
-const roomId = params.get("roomId") ?? "local-room";
-const playerId = params.get("playerId") ?? "player-1";
+const queryRoomId = params.get("roomId")?.trim() ?? "";
+const queryPlayerId = params.get("playerId")?.trim() ?? "";
+const storedAuthSession = readStoredAuthSession();
+const resolvedBootPlayerId = queryPlayerId || storedAuthSession?.playerId || "";
+const shouldBootGame = Boolean(queryRoomId && resolvedBootPlayerId);
+const initialLobbyPreferences = createLobbyPreferences({
+  ...(queryRoomId ? { roomId: queryRoomId } : {}),
+  ...(resolvedBootPlayerId ? { playerId: resolvedBootPlayerId } : {})
+});
+const roomId = shouldBootGame ? queryRoomId : initialLobbyPreferences.roomId;
+const playerId = shouldBootGame ? resolvedBootPlayerId : initialLobbyPreferences.playerId;
+const initialAccountDisplayName =
+  storedAuthSession?.playerId === playerId ? storedAuthSession.displayName : readLocalPreferredDisplayName(playerId);
+const initialLobbyDisplayName =
+  storedAuthSession?.playerId === initialLobbyPreferences.playerId
+    ? storedAuthSession.displayName
+    : readLocalPreferredDisplayName(initialLobbyPreferences.playerId);
+const initialLobbyLoginId = storedAuthSession?.loginId ?? "";
 
 interface BattleModalState {
   visible: boolean;
@@ -35,9 +74,30 @@ interface TimelineEntry {
   text: string;
 }
 
+interface LobbyViewState {
+  playerId: string;
+  roomId: string;
+  displayName: string;
+  loginId: string;
+  password: string;
+  authSession: StoredAuthSession | null;
+  rooms: LobbyRoomSummary[];
+  loading: boolean;
+  entering: boolean;
+  status: string;
+}
+
 interface AppState {
   world: PlayerWorldView;
   battle: BattleState | null;
+  account: ClientPlayerAccountProfile;
+  lobby: LobbyViewState;
+  accountDraftName: string;
+  accountLoginId: string;
+  accountPassword: string;
+  accountSaving: boolean;
+  accountBinding: boolean;
+  accountStatus: string;
   selectedHeroId: string | null;
   selectedTile: { x: number; y: number } | null;
   hoveredTile: { x: number; y: number } | null;
@@ -55,6 +115,10 @@ interface AppState {
   predictionStatus: string;
 }
 
+type BattleUnitView = BattleState["units"][string];
+type BattleSkillView = NonNullable<BattleUnitView["skills"]>[number];
+type BattleStatusView = NonNullable<BattleUnitView["statusEffects"]>[number];
+
 const state: AppState = {
   world: {
     meta: { roomId: "booting", seed: 0, day: 0 },
@@ -65,6 +129,25 @@ const state: AppState = {
     playerId
   },
   battle: null,
+  account: createLocalAccountProfile(playerId, roomId, initialAccountDisplayName),
+  lobby: {
+    playerId: initialLobbyPreferences.playerId,
+    roomId: initialLobbyPreferences.roomId,
+    displayName: initialLobbyDisplayName,
+    loginId: initialLobbyLoginId,
+    password: "",
+    authSession: storedAuthSession,
+    rooms: [],
+    loading: false,
+    entering: false,
+    status: shouldBootGame ? "" : "优先展示活跃房间，也支持直接输入新房间 ID 创建实例。"
+  },
+  accountDraftName: initialAccountDisplayName,
+  accountLoginId: storedAuthSession?.loginId ?? "",
+  accountPassword: "",
+  accountSaving: false,
+  accountBinding: false,
+  accountStatus: "游客账号资料将在连接后自动同步。",
   selectedHeroId: null,
   selectedTile: null,
   hoveredTile: null,
@@ -100,24 +183,89 @@ interface PendingPrediction {
 
 let pendingPrediction: PendingPrediction | null = null;
 
-let sessionPromise = createGameSession(roomId, playerId, 1001, {
-  onPushUpdate: (update) => {
-    state.log.unshift("收到房间同步推送");
-    state.log = state.log.slice(0, 12);
-    applyUpdate(update, "push");
-  },
-  onConnectionEvent: (event) => {
-    state.log.unshift(
-      event === "reconnecting"
-        ? "连接中断，正在尝试重连..."
-        : event === "reconnected"
-          ? "连接已恢复"
-          : "旧连接恢复失败，正在尝试从持久化快照恢复房间..."
-    );
-    state.log = state.log.slice(0, 12);
-    render();
+let sessionPromise: ReturnType<typeof createGameSession> | null = shouldBootGame
+  ? createGameSession(roomId, playerId, 1001, {
+      getDisplayName: () => state.accountDraftName,
+      getAuthToken: () => state.lobby.authSession?.token ?? null,
+      onPushUpdate: (update) => {
+        state.log.unshift("收到房间同步推送");
+        state.log = state.log.slice(0, 12);
+        applyUpdate(update, "push");
+      },
+      onConnectionEvent: (event) => {
+        state.log.unshift(
+          event === "reconnecting"
+            ? "连接中断，正在尝试重连..."
+            : event === "reconnected"
+              ? "连接已恢复"
+              : "旧连接恢复失败，正在尝试从持久化快照恢复房间..."
+        );
+        state.log = state.log.slice(0, 12);
+        render();
+      }
+    })
+  : null;
+
+async function getSession() {
+  if (!sessionPromise) {
+    throw new Error("session_not_ready");
   }
-});
+
+  return sessionPromise;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function formatAccountSource(account: ClientPlayerAccountProfile): string {
+  return account.source === "remote" ? "云端账号" : "本地游客档";
+}
+
+function formatAuthModeLabel(session: StoredAuthSession | null): string {
+  if (!session) {
+    return "未登录";
+  }
+
+  if (session.authMode === "account") {
+    return session.loginId ? `账号模式 · ${session.loginId}` : "账号模式";
+  }
+
+  return "游客模式";
+}
+
+function formatCredentialBinding(account: ClientPlayerAccountProfile): string {
+  if (!account.loginId) {
+    return "尚未绑定口令账号，可把当前游客档升级成长期账号。";
+  }
+
+  if (!account.credentialBoundAt) {
+    return `已绑定登录 ID：${account.loginId}`;
+  }
+
+  const date = new Date(account.credentialBoundAt);
+  const label = Number.isNaN(date.getTime()) ? account.credentialBoundAt : date.toLocaleString();
+  return `已绑定登录 ID：${account.loginId} · ${label}`;
+}
+
+function formatAccountLastSeen(account: ClientPlayerAccountProfile): string {
+  if (!account.lastSeenAt) {
+    return account.lastRoomId ? `最近房间 ${account.lastRoomId}` : "尚未记录活跃时间";
+  }
+
+  const date = new Date(account.lastSeenAt);
+  const label = Number.isNaN(date.getTime()) ? account.lastSeenAt : date.toLocaleString();
+  return account.lastRoomId ? `${label} · ${account.lastRoomId}` : label;
+}
+
+function formatLobbyRoomUpdatedAt(updatedAt: string): string {
+  const date = new Date(updatedAt);
+  return Number.isNaN(date.getTime()) ? updatedAt : date.toLocaleString();
+}
 
 function tileLabel(tile: PlayerTileView): string {
   if (tile.fog === "hidden") {
@@ -127,7 +275,8 @@ function tileLabel(tile: PlayerTileView): string {
   const terrain = tile.terrain.slice(0, 1).toUpperCase();
   const occupant = tile.occupant?.kind === "neutral" ? "M" : tile.occupant?.kind === "hero" ? "H" : "";
   const resource = tile.resource ? tile.resource.kind.slice(0, 1).toUpperCase() : "";
-  return `${terrain}${occupant}${resource}`;
+  const building = tile.building ? "B" : "";
+  return `${terrain}${occupant}${resource}${building}`;
 }
 
 function markerStateForTile(tile: PlayerTileView): "idle" | "selected" | "hit" {
@@ -152,11 +301,13 @@ function renderTileMedia(tile: PlayerTileView): string {
       : tile.occupant?.kind === "neutral"
         ? markerAsset("neutral", markerState)
         : null;
+  const buildingBadge = tile.building ? `<span class="tile-building-badge">B</span>` : "";
 
   return `
     <img class="tile-terrain" src="${terrainSrc}" alt="${tile.terrain}" />
     ${resourceSrc ? `<img class="tile-resource" src="${resourceSrc}" alt="${tile.resource?.kind ?? "resource"}" />` : ""}
     ${markerSrc ? `<img class="tile-marker" src="${markerSrc}" alt="${tile.occupant?.kind ?? "marker"}" />` : ""}
+    ${buildingBadge}
   `;
 }
 
@@ -185,6 +336,33 @@ function formatHeroExperience(hero: PlayerWorldView["ownHeroes"][number] | null)
   const currentLevelXp = Math.max(0, hero.progression.experience - currentLevelBase);
   const nextLevelXp = experienceRequiredForNextLevel(hero.progression.level);
   return `XP ${currentLevelXp}/${nextLevelXp}`;
+}
+
+function formatResourceKindLabel(kind: "gold" | "wood" | "ore"): string {
+  return kind === "gold" ? "金币" : kind === "wood" ? "木材" : "矿石";
+}
+
+function formatDailyIncome(kind: "gold" | "wood" | "ore", amount: number): string {
+  return `${formatResourceKindLabel(kind)} +${amount}/天`;
+}
+
+function formatHeroCoreStats(hero: PlayerWorldView["ownHeroes"][number] | null): string {
+  if (!hero) {
+    return "ATK 0 · DEF 0 · POW 0 · KNW 0";
+  }
+
+  return `ATK ${hero.stats.attack} · DEF ${hero.stats.defense} · POW ${hero.stats.power} · KNW ${hero.stats.knowledge}`;
+}
+
+function formatHeroStatBonus(bonus: { attack: number; defense: number; power: number; knowledge: number }): string {
+  const parts = [
+    bonus.attack > 0 ? `攻击 +${bonus.attack}` : "",
+    bonus.defense > 0 ? `防御 +${bonus.defense}` : "",
+    bonus.power > 0 ? `力量 +${bonus.power}` : "",
+    bonus.knowledge > 0 ? `知识 +${bonus.knowledge}` : ""
+  ].filter(Boolean);
+
+  return parts.join(" / ") || "属性提升";
 }
 
 function hoveredTileData(): PlayerTileView | null {
@@ -249,6 +427,134 @@ function opposingBattleCamp(camp: "attacker" | "defender" | null): "attacker" | 
   }
 
   return camp === "attacker" ? "defender" : "attacker";
+}
+
+function battleSkillKindLabel(kind: BattleSkillView["kind"]): string {
+  return kind === "active" ? "主动技能" : "被动技能";
+}
+
+function battleSkillTargetLabel(target: BattleSkillView["target"]): string {
+  return target === "enemy" ? "敌方单体" : "自身增益";
+}
+
+function battleSkillReadyLabel(skill: BattleSkillView): string {
+  if (skill.kind === "passive") {
+    return "被动常驻";
+  }
+
+  return skill.remainingCooldown > 0 ? `冷却 ${skill.remainingCooldown}/${skill.cooldown}` : "已就绪";
+}
+
+function battleStatusModifierParts(status: BattleStatusView): string[] {
+  const parts: string[] = [];
+
+  if (status.attackModifier !== 0) {
+    parts.push(`${status.attackModifier > 0 ? "+" : ""}${status.attackModifier} 攻击`);
+  }
+
+  if (status.defenseModifier !== 0) {
+    parts.push(`${status.defenseModifier > 0 ? "+" : ""}${status.defenseModifier} 防御`);
+  }
+
+  if (status.damagePerTurn > 0) {
+    parts.push(`每回合 ${status.damagePerTurn} 持续伤害`);
+  }
+
+  return parts;
+}
+
+function renderBattleDetailItem(title: string, meta: string, copy: string): string {
+  return `
+    <div class="battle-detail-item">
+      <strong>${title}</strong>
+      <span class="battle-detail-meta">${meta}</span>
+      <span class="battle-detail-copy">${copy}</span>
+    </div>
+  `;
+}
+
+function renderBattleSkillDetail(skill: BattleSkillView): string {
+  return renderBattleDetailItem(
+    skill.name,
+    `${battleSkillKindLabel(skill.kind)} · ${battleSkillTargetLabel(skill.target)} · ${battleSkillReadyLabel(skill)}`,
+    skill.description
+  );
+}
+
+function renderBattleStatusDetail(status: BattleStatusView): string {
+  const modifierText = battleStatusModifierParts(status);
+  return renderBattleDetailItem(
+    status.name,
+    [`剩余 ${status.durationRemaining} 回合`, ...modifierText].join(" · "),
+    status.description
+  );
+}
+
+function renderBattleFlagDetail(title: string, copy: string): string {
+  return renderBattleDetailItem(title, "战斗姿态", copy);
+}
+
+function renderBattleDetailGroup(title: string, items: string[], emptyMessage: string): string {
+  return `
+    <div class="battle-detail-group">
+      <div class="battle-detail-title">${title}</div>
+      <div class="battle-detail-list">
+        ${items.length > 0 ? items.join("") : `<div class="battle-detail-empty">${emptyMessage}</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function renderBattleIntelCard(
+  title: string,
+  eyebrow: string,
+  badge: string,
+  unit: BattleUnitView | null,
+  emptyMessage: string
+): string {
+  if (!unit) {
+    return `
+      <article class="battle-intel-card info-card">
+        <div class="battle-intel-card-head">
+          <div>
+            <div class="info-card-eyebrow">${eyebrow}</div>
+            <strong>${title}</strong>
+          </div>
+          <span class="status-pill">${badge}</span>
+        </div>
+        <div class="battle-detail-empty">${emptyMessage}</div>
+      </article>
+    `;
+  }
+
+  const flagDetails: string[] = [];
+  if (unit.defending) {
+    flagDetails.push(renderBattleFlagDetail("防御姿态", "本回合采取防守站位，承伤能力更稳。"));
+  }
+  if (unit.hasRetaliated) {
+    flagDetails.push(renderBattleFlagDetail("已完成反击", "本轮反击次数已消耗，再受击时不会再次反击。"));
+  }
+
+  return `
+    <article class="battle-intel-card info-card">
+      <div class="battle-intel-card-head">
+        <div>
+          <div class="info-card-eyebrow">${eyebrow}</div>
+          <strong>${title} · ${unit.stackName}</strong>
+        </div>
+        <span class="status-pill">${badge}</span>
+      </div>
+      <div class="battle-intel-stats">
+        <span class="battle-intel-chip">数量 x${unit.count}</span>
+        <span class="battle-intel-chip">HP ${unit.currentHp}/${unit.maxHp}</span>
+        <span class="battle-intel-chip">ATK ${unit.attack}</span>
+        <span class="battle-intel-chip">DEF ${unit.defense}</span>
+        <span class="battle-intel-chip">INIT ${unit.initiative}</span>
+      </div>
+      ${renderBattleDetailGroup("技能", (unit.skills ?? []).map(renderBattleSkillDetail), "当前没有可说明的技能。")}
+      ${renderBattleDetailGroup("状态", [...(unit.statusEffects ?? []).map(renderBattleStatusDetail), ...flagDetails], "当前没有持续状态。")}
+    </article>
+  `;
 }
 
 function didCurrentPlayerWinBattle(
@@ -380,12 +686,30 @@ function appendLog(update: SessionUpdate): void {
       state.log.unshift(
         event.encounterKind === "hero"
           ? `Encounter: enemy hero ${enemyHeroId ?? "unknown"}`
-          : `Encounter: ${event.neutralArmyId}`
+          : event.initiator === "neutral"
+            ? `Ambushed by neutral: ${event.neutralArmyId}`
+            : `Encounter: ${event.neutralArmyId}`
       );
     } else if (event.type === "battle.resolved") {
       state.log.unshift(`Battle resolved: ${didCurrentPlayerWinBattle(event, update.world) ? "victory" : "defeat"}`);
     } else if (event.type === "hero.collected") {
       state.log.unshift(`Collected ${event.resource.kind} +${event.resource.amount}`);
+    } else if (event.type === "hero.recruited") {
+      state.log.unshift(`Recruited ${event.unitTemplateId} x${event.count}`);
+    } else if (event.type === "hero.visited") {
+      state.log.unshift(`Visited ${event.buildingId}: ${formatHeroStatBonus(event.bonus)}`);
+    } else if (event.type === "hero.claimedMine") {
+      state.log.unshift(`Claimed mine: ${formatDailyIncome(event.resourceKind, event.income)}`);
+    } else if (event.type === "resource.produced") {
+      state.log.unshift(`Mine produced ${formatResourceKindLabel(event.resource.kind)} +${event.resource.amount}`);
+    } else if (event.type === "neutral.moved") {
+      state.log.unshift(
+        event.reason === "chase"
+          ? `Neutral ${event.neutralArmyId} is chasing toward (${event.to.x},${event.to.y})`
+          : event.reason === "return"
+            ? `Neutral ${event.neutralArmyId} returned toward guard point`
+            : `Neutral ${event.neutralArmyId} patrolled to (${event.to.x},${event.to.y})`
+      );
     } else if (event.type === "hero.progressed") {
       state.log.unshift(
         event.levelsGained > 0
@@ -462,6 +786,61 @@ function buildTimelineEntries(update: SessionUpdate, source: TimelineEntry["sour
       return;
     }
 
+    if (event.type === "hero.recruited") {
+      items.push({
+        id: `${stamp}-recruit-${index}`,
+        tone: "loot",
+        source,
+        text: `在招募所补充 ${event.count} 个 ${event.unitTemplateId}`
+      });
+      return;
+    }
+
+    if (event.type === "hero.visited") {
+      items.push({
+        id: `${stamp}-visit-${index}`,
+        tone: "loot",
+        source,
+        text: `访问属性建筑，获得 ${formatHeroStatBonus(event.bonus)}`
+      });
+      return;
+    }
+
+    if (event.type === "hero.claimedMine") {
+      items.push({
+        id: `${stamp}-mine-claim-${index}`,
+        tone: "loot",
+        source,
+        text: `占领资源产出点，改为每日产出 ${formatDailyIncome(event.resourceKind, event.income)}`
+      });
+      return;
+    }
+
+    if (event.type === "resource.produced") {
+      items.push({
+        id: `${stamp}-mine-income-${index}`,
+        tone: "loot",
+        source,
+        text: `${event.buildingId} 产出 ${formatResourceKindLabel(event.resource.kind)} +${event.resource.amount}`
+      });
+      return;
+    }
+
+    if (event.type === "neutral.moved") {
+      items.push({
+        id: `${stamp}-neutral-move-${index}`,
+        tone: event.reason === "chase" ? "battle" : "move",
+        source,
+        text:
+          event.reason === "chase"
+            ? `中立守军 ${event.neutralArmyId} 主动追向 (${event.to.x},${event.to.y})`
+            : event.reason === "return"
+              ? `中立守军 ${event.neutralArmyId} 返回守位`
+              : `中立守军 ${event.neutralArmyId} 沿巡逻路线移动`
+      });
+      return;
+    }
+
     if (event.type === "hero.progressed") {
       items.push({
         id: `${stamp}-progress-${index}`,
@@ -485,7 +864,9 @@ function buildTimelineEntries(update: SessionUpdate, source: TimelineEntry["sour
             ? ownedIds.has(event.heroId)
               ? "主动接触敌方英雄，进入遭遇战"
               : "被敌方英雄接触，进入遭遇战"
-            : "接触明雷守军，进入战斗"
+            : event.initiator === "neutral"
+              ? "中立守军主动袭来，进入战斗"
+              : "接触明雷守军，进入战斗"
       });
       return;
     }
@@ -593,11 +974,23 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
   }
   appendLog(update);
   pushTimeline(buildTimelineEntries(update, source));
-  state.feedbackTone = update.events.some((event) => event.type === "hero.collected")
+  state.feedbackTone = update.events.some(
+    (event) =>
+      event.type === "hero.collected" ||
+      event.type === "hero.recruited" ||
+      event.type === "hero.visited" ||
+      event.type === "hero.claimedMine" ||
+      event.type === "resource.produced"
+  )
     ? "loot"
-    : update.events.some((event) => event.type === "battle.started" || event.type === "battle.resolved")
+    : update.events.some(
+          (event) =>
+            event.type === "battle.started" ||
+            event.type === "battle.resolved" ||
+            (event.type === "neutral.moved" && event.reason === "chase")
+        )
       ? "battle"
-      : update.events.some((event) => event.type === "hero.moved")
+      : update.events.some((event) => event.type === "hero.moved" || event.type === "neutral.moved")
         ? "move"
         : "idle";
 
@@ -611,6 +1004,13 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
     triggerBattleFx(state.pendingBattleAction.unitId, "DEF");
   } else if (state.pendingBattleAction?.type === "battle.wait" && update.battle) {
     triggerBattleFx(state.pendingBattleAction.unitId, "WAIT");
+  } else if (state.pendingBattleAction?.type === "battle.skill" && update.battle) {
+    const targetUnitId = state.pendingBattleAction.targetId ?? state.pendingBattleAction.unitId;
+    const isEnemyTargeted = targetUnitId !== state.pendingBattleAction.unitId;
+    triggerBattleFx(
+      targetUnitId,
+      isEnemyTargeted ? extractDamageText(update.battle.log) ?? "SKILL" : "BUFF"
+    );
   }
 
   state.pendingBattleAction = null;
@@ -643,7 +1043,7 @@ async function previewTile(x: number, y: number): Promise<void> {
     return;
   }
 
-  const session = await sessionPromise;
+  const session = await getSession();
   state.previewPlan = await session.previewMovement(hero.id, { x, y });
   render();
 }
@@ -663,8 +1063,67 @@ async function onTileClick(x: number, y: number): Promise<void> {
   }
 
   const targetTile = state.world.map.tiles.find((tile) => tile.position.x === x && tile.position.y === y) ?? null;
-  const session = await sessionPromise;
+  const session = await getSession();
   if (hero.position.x === x && hero.position.y === y) {
+    if (targetTile?.building) {
+      const buildingAction =
+        targetTile.building.kind === "recruitment_post"
+          ? ({
+              type: "hero.recruit",
+              heroId: hero.id,
+              buildingId: targetTile.building.id
+            } as const)
+          : targetTile.building.kind === "attribute_shrine"
+            ? ({
+                type: "hero.visit",
+                heroId: hero.id,
+                buildingId: targetTile.building.id
+              } as const)
+            : ({
+                type: "hero.claimMine",
+                heroId: hero.id,
+                buildingId: targetTile.building.id
+              } as const);
+      const prediction = predictPlayerWorldAction(state.world, buildingAction);
+
+      if (!prediction.reason) {
+        applyPendingPrediction({
+          world: prediction.world,
+          movementPlan: prediction.movementPlan,
+          reachableTiles: prediction.reachableTiles,
+          status:
+            targetTile.building.kind === "recruitment_post"
+              ? `预演中：在 ${targetTile.building.label} 招募 ${targetTile.building.availableCount} 单位`
+              : targetTile.building.kind === "attribute_shrine"
+                ? `预演中：访问 ${targetTile.building.label}，获得 ${formatHeroStatBonus(targetTile.building.bonus)}`
+                : `预演中：占领 ${targetTile.building.label}，改为每日产出 ${formatDailyIncome(targetTile.building.resourceKind, targetTile.building.income)}`,
+          tone: "loot"
+        });
+        render();
+      }
+
+      try {
+        applyUpdate(
+          targetTile.building.kind === "recruitment_post"
+            ? await session.recruit(hero.id, targetTile.building.id)
+            : targetTile.building.kind === "attribute_shrine"
+              ? await session.visitBuilding(hero.id, targetTile.building.id)
+              : await session.claimMine(hero.id, targetTile.building.id)
+        );
+      } catch (error) {
+        rollbackPendingPrediction(
+          error instanceof Error
+            ? error.message
+            : targetTile.building.kind === "recruitment_post"
+              ? "recruit_failed"
+              : targetTile.building.kind === "attribute_shrine"
+                ? "visit_failed"
+                : "claim_failed"
+        );
+      }
+      return;
+    }
+
     if (targetTile?.resource) {
       const prediction = predictPlayerWorldAction(state.world, {
         type: "hero.collect",
@@ -684,10 +1143,14 @@ async function onTileClick(x: number, y: number): Promise<void> {
       }
     }
 
-    try {
-      applyUpdate(await session.collect(hero.id, { x, y }));
-    } catch (error) {
-      rollbackPendingPrediction(error instanceof Error ? error.message : "collect_failed");
+    if (targetTile?.resource) {
+      try {
+        applyUpdate(await session.collect(hero.id, { x, y }));
+      } catch (error) {
+        rollbackPendingPrediction(error instanceof Error ? error.message : "collect_failed");
+      }
+    } else {
+      render();
     }
     return;
   }
@@ -716,10 +1179,142 @@ async function onTileClick(x: number, y: number): Promise<void> {
   }
 }
 
+async function onEndDay(): Promise<void> {
+  if (state.battle) {
+    state.predictionStatus = "战斗中无法推进天数";
+    render();
+    return;
+  }
+
+  state.predictionStatus = "正在推进到下一天...";
+  render();
+
+  try {
+    const session = await getSession();
+    applyUpdate(await session.endDay());
+  } catch (error) {
+    state.predictionStatus = error instanceof Error ? error.message : "end_day_failed";
+    render();
+  }
+}
+
 async function onBattleAction(action: BattleAction): Promise<void> {
   state.pendingBattleAction = action;
-  const session = await sessionPromise;
+  const session = await getSession();
   applyUpdate(await session.actInBattle(action));
+}
+
+async function refreshLobbyRoomList(): Promise<void> {
+  state.lobby.loading = true;
+  state.lobby.status = "正在刷新可加入房间...";
+  render();
+
+  try {
+    const rooms = await loadLobbyRooms();
+    state.lobby.rooms = rooms;
+    state.lobby.loading = false;
+    state.lobby.status =
+      rooms.length > 0 ? `发现 ${rooms.length} 个活跃房间，可直接加入或继续创建新房间。` : "当前没有活跃房间，输入房间 ID 后即可直接创建新实例。";
+  } catch {
+    state.lobby.rooms = [];
+    state.lobby.loading = false;
+    state.lobby.status = "Lobby 服务暂不可达；仍可直接输入房间 ID，进入时会自动尝试远端房间并在失败后回退本地模式。";
+  }
+
+  render();
+}
+
+async function enterLobbyRoom(roomIdOverride?: string): Promise<void> {
+  const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
+  const displayName = rememberPreferredPlayerDisplayName(preferences.playerId, state.lobby.displayName);
+  state.lobby.playerId = preferences.playerId;
+  state.lobby.roomId = preferences.roomId;
+  state.lobby.displayName = displayName;
+  state.lobby.entering = true;
+  state.lobby.status = `正在登录游客账号并进入房间 ${preferences.roomId}...`;
+  render();
+
+  const authSession = await loginGuestAuthSession(preferences.playerId, displayName);
+  state.lobby.authSession = authSession;
+  state.lobby.playerId = authSession.playerId;
+  state.lobby.displayName = authSession.displayName;
+  state.lobby.status =
+    authSession.source === "remote"
+      ? `游客登录成功，正在进入房间 ${preferences.roomId}...`
+      : `登录服务暂不可达，正在以本地游客档进入房间 ${preferences.roomId}...`;
+  saveLobbyPreferences(authSession.playerId, preferences.roomId);
+
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.set("roomId", preferences.roomId);
+  nextUrl.searchParams.delete("playerId");
+  window.location.assign(nextUrl.toString());
+}
+
+async function loginLobbyAccount(roomIdOverride?: string): Promise<void> {
+  const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
+  const loginId = state.lobby.loginId.trim().toLowerCase();
+  if (!loginId) {
+    state.lobby.status = "请输入登录 ID 后再使用口令登录。";
+    render();
+    return;
+  }
+
+  if (!state.lobby.password.trim()) {
+    state.lobby.status = "请输入账号口令后再登录。";
+    render();
+    return;
+  }
+
+  state.lobby.entering = true;
+  state.lobby.status = `正在使用账号 ${loginId} 登录并进入房间 ${preferences.roomId}...`;
+  render();
+
+  try {
+    const authSession = await loginPasswordAuthSession(loginId, state.lobby.password);
+    state.lobby.authSession = authSession;
+    state.lobby.playerId = authSession.playerId;
+    state.lobby.displayName = authSession.displayName;
+    state.lobby.loginId = authSession.loginId ?? loginId;
+    state.lobby.password = "";
+    state.accountLoginId = authSession.loginId ?? loginId;
+    state.accountPassword = "";
+    state.lobby.status = `账号登录成功，正在进入房间 ${preferences.roomId}...`;
+    saveLobbyPreferences(authSession.playerId, preferences.roomId);
+
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set("roomId", preferences.roomId);
+    nextUrl.searchParams.delete("playerId");
+    window.location.assign(nextUrl.toString());
+  } catch (error) {
+    state.lobby.entering = false;
+    state.lobby.status =
+      error instanceof Error && error.message === "auth_request_failed:401"
+        ? "登录 ID 或口令不正确，请检查后重试。"
+        : error instanceof Error
+          ? error.message
+          : "account_login_failed";
+    render();
+  }
+}
+
+function returnToLobby(): void {
+  saveLobbyPreferences(playerId, roomId);
+  rememberPreferredPlayerDisplayName(playerId, state.accountDraftName);
+  const nextUrl = new URL(window.location.href);
+  nextUrl.search = "";
+  window.location.assign(nextUrl.toString());
+}
+
+function logoutGuestSession(): void {
+  clearCurrentAuthSession();
+  state.lobby.authSession = null;
+  state.lobby.loginId = "";
+  state.lobby.password = "";
+  state.lobby.entering = false;
+  state.lobby.status = "已退出当前游客会话，请重新选择或创建一个账号进入房间。";
+  const nextUrl = new URL(window.location.href);
+  nextUrl.search = "";
+  window.location.assign(nextUrl.toString());
 }
 
 function renderBattleActions(): string {
@@ -744,15 +1339,80 @@ function renderBattleActions(): string {
   const enemyCamp = opposingBattleCamp(playerCamp);
   const enemies = Object.values(state.battle.units).filter((unit) => unit.camp === enemyCamp && unit.count > 0);
   const selectedTarget = enemies.find((enemy) => enemy.id === state.selectedBattleTargetId) ?? enemies[0];
+  const skillButtons = (active.skills ?? [])
+    .filter((skill) => skill.kind === "active")
+    .map((skill) => {
+      const targetId = skill.target === "enemy" ? (selectedTarget?.id ?? "") : active.id;
+      const enabled = skill.target === "enemy" ? Boolean(selectedTarget) && skill.remainingCooldown === 0 : skill.remainingCooldown === 0;
+      const labelSuffix =
+        skill.target === "enemy"
+          ? selectedTarget
+            ? ` -> ${selectedTarget.stackName}`
+            : " -> 请选择目标"
+          : " -> 自身";
+      return `
+        <button
+          data-testid="battle-skill-${skill.id}"
+          data-battle-action="skill"
+          data-skill-id="${skill.id}"
+          data-unit="${active.id}"
+          data-target="${targetId}"
+          ${enabled ? "" : "disabled"}
+          title="${skill.description}"
+        >
+          ${skill.name}${skill.remainingCooldown > 0 ? ` (${skill.remainingCooldown})` : ""}${labelSuffix}
+        </button>
+      `;
+    })
+    .join("");
 
   return `
     <div class="battle-actions" data-testid="battle-actions">
       <button data-testid="battle-attack" data-battle-action="attack" data-attacker="${active.id}" data-defender="${selectedTarget?.id ?? ""}" ${selectedTarget ? "" : "disabled"}>
         ${selectedTarget ? `攻击 ${selectedTarget.stackName}` : "无可攻击目标"}
       </button>
+      ${skillButtons}
       <button data-testid="battle-wait" data-battle-action="wait" data-unit="${active.id}">等待</button>
       <button data-testid="battle-defend" data-battle-action="defend" data-unit="${active.id}" ${active.defending ? "disabled" : ""}>防御</button>
     </div>
+  `;
+}
+
+function renderBattleIntelPanel(): string {
+  if (!state.battle) {
+    return `
+      <div class="battle-intel info-card" data-testid="battle-intel">
+        <div class="battle-intel-headline">
+          <strong>战术情报</strong>
+          <span>进入战斗后，这里会展开显示技能、状态和冷却说明。</span>
+        </div>
+      </div>
+    `;
+  }
+
+  const playerCamp = controlledBattleCamp(state.battle) ?? "attacker";
+  const enemyCamp = opposingBattleCamp(playerCamp) ?? "defender";
+  const activeUnit = state.battle.activeUnitId ? state.battle.units[state.battle.activeUnitId] ?? null : null;
+  const enemies = Object.values(state.battle.units).filter((unit) => unit.camp === enemyCamp && unit.count > 0);
+  const selectedTarget = enemies.find((unit) => unit.id === state.selectedBattleTargetId) ?? enemies[0] ?? null;
+  const activeBadge =
+    activeUnit?.count && activeUnit.count > 0
+      ? activeUnit.camp === playerCamp
+        ? "我方行动"
+        : "敌方行动"
+      : "等待中";
+
+  return `
+    <section class="battle-intel" data-testid="battle-intel">
+      <div class="battle-intel-headline">
+        <strong>战术情报</strong>
+        <span>把当前行动单位和锁定目标的技能、状态、冷却都摊开来看。</span>
+      </div>
+      <div class="battle-intel-grid">
+        ${renderBattleIntelCard("当前行动单位", "Turn Actor", activeBadge, activeUnit, "当前没有可行动单位。")}
+        ${renderBattleIntelCard("已锁定目标", "Target Focus", selectedTarget ? "已锁定" : "未锁定", selectedTarget, "请选择一个敌方目标后查看详细说明。")}
+      </div>
+    </section>
   `;
 }
 
@@ -791,6 +1451,9 @@ function renderBattlefield(): string {
       markerAsset(unit.camp === "attacker" ? "hero" : "neutral", isFlashing ? "hit" : isSelected ? "selected" : "idle");
     const frameSrc = unitFrameAsset(unit.templateId);
     const badgeSrc = unitBadgeAssets(unit.templateId);
+    const statusLine = (unit.statusEffects ?? [])
+      .map((status) => `${status.name} ${status.durationRemaining}`)
+      .join(" · ");
 
     return `
       <button
@@ -820,6 +1483,7 @@ function renderBattlefield(): string {
             <span class="unit-meta">ATK ${unit.attack}</span>
             <span class="unit-meta">DEF ${unit.defense}${unit.defending ? " · DEFEND" : ""}</span>
           </div>
+          ${statusLine ? `<div class="meta-row"><span class="unit-meta">${statusLine}</span></div>` : ""}
         </div>
         ${isFlashing && state.battleFx.floatingText ? `<span class="floating-text">${state.battleFx.floatingText}</span>` : ""}
       </button>
@@ -891,9 +1555,312 @@ function renderModal(): string {
   `;
 }
 
+function renderLobby(): string {
+  const roomFieldMarkup = `
+    <label class="lobby-field">
+      <span>房间 ID</span>
+      <input
+        class="account-input"
+        data-lobby-room-id="true"
+        maxlength="40"
+        value="${escapeHtml(state.lobby.roomId)}"
+        placeholder="room-alpha"
+        ${state.lobby.entering ? "disabled" : ""}
+      />
+    </label>
+  `;
+  const roomsMarkup =
+    state.lobby.rooms.length === 0
+      ? `
+        <div class="lobby-room-empty info-card">
+          <strong>当前没有活跃房间</strong>
+          <span>输入房间 ID 后点击“进入房间”，即可创建一个新的独立实例。</span>
+        </div>
+      `
+      : state.lobby.rooms
+          .map(
+            (room) => `
+              <button
+                class="lobby-room-card info-card"
+                data-join-room="${escapeHtml(room.roomId)}"
+                ${state.lobby.entering ? "disabled" : ""}
+              >
+                <div class="lobby-room-card-head">
+                  <div>
+                    <div class="info-card-eyebrow">Instance</div>
+                    <strong>${escapeHtml(room.roomId)}</strong>
+                  </div>
+                  <span class="status-pill">Day ${room.day}</span>
+                </div>
+                <div class="meta-row">
+                  <span class="battle-intel-chip">玩家 ${room.connectedPlayers}</span>
+                  <span class="battle-intel-chip">英雄 ${room.heroCount}</span>
+                  <span class="battle-intel-chip">战斗 ${room.activeBattles}</span>
+                  <span class="battle-intel-chip">Seed ${room.seed}</span>
+                </div>
+                <span class="lobby-room-meta">最近刷新：${escapeHtml(formatLobbyRoomUpdatedAt(room.updatedAt))}</span>
+              </button>
+            `
+          )
+          .join("");
+
+  return `
+    <main class="lobby-shell">
+      <section class="lobby-hero-panel">
+        <div class="eyebrow">Project Veil</div>
+        <h1>大厅 / 登录入口</h1>
+        <p class="lead">这里负责进入真实房间，而不是再靠手写 URL。现在除了游客档，也能把当前进度绑定成口令账号并直接登录。</p>
+        <div class="lobby-hero-copy info-card">
+          <div class="info-card-copy">
+            <div class="info-card-head">
+              <div>
+                <div class="info-card-eyebrow">Session Mode</div>
+                <strong>${escapeHtml(formatAuthModeLabel(state.lobby.authSession))}</strong>
+              </div>
+              <span class="status-pill">${state.lobby.authSession?.authMode === "account" ? "Account" : "Guest"}</span>
+            </div>
+            <span>
+              ${
+                state.lobby.authSession?.authMode === "account"
+                  ? "已缓存口令账号会话，可直接刷新房间列表后进房，也可以退出后切回游客入口。"
+                  : "游客身份仍会保留，但现在可以在游戏内把它绑定成登录 ID + 口令，后续直接用账号模式进入。"
+              }
+            </span>
+          </div>
+        </div>
+      </section>
+      <section class="lobby-panel">
+        <div class="panel-head">
+          <h2>进入房间</h2>
+          <div class="hint">可选已有房间，也可手动输入创建新实例</div>
+        </div>
+        <div class="lobby-form info-card">
+          ${roomFieldMarkup}
+          <div class="lobby-auth-grid">
+            <section class="lobby-auth-card">
+              <div class="lobby-auth-head">
+                <strong>游客进入</strong>
+                <span>创建或继续一个游客档</span>
+              </div>
+              <label class="lobby-field">
+                <span>玩家 ID</span>
+                <input
+                  class="account-input"
+                  data-lobby-player-id="true"
+                  maxlength="40"
+                  value="${escapeHtml(state.lobby.playerId)}"
+                  placeholder="guest-000001"
+                  ${state.lobby.entering ? "disabled" : ""}
+                />
+              </label>
+              <label class="lobby-field">
+                <span>昵称</span>
+                <input
+                  class="account-input"
+                  data-lobby-display-name="true"
+                  maxlength="40"
+                  value="${escapeHtml(state.lobby.displayName)}"
+                  placeholder="输入昵称"
+                  ${state.lobby.entering ? "disabled" : ""}
+                />
+              </label>
+              <button class="account-save" data-enter-room="true" ${state.lobby.entering ? "disabled" : ""}>
+                ${state.lobby.entering ? "进入中..." : "游客进入房间"}
+              </button>
+            </section>
+            <section class="lobby-auth-card">
+              <div class="lobby-auth-head">
+                <strong>账号登录</strong>
+                <span>使用已绑定的登录 ID + 口令</span>
+              </div>
+              <label class="lobby-field">
+                <span>登录 ID</span>
+                <input
+                  class="account-input"
+                  data-lobby-login-id="true"
+                  maxlength="40"
+                  value="${escapeHtml(state.lobby.loginId)}"
+                  placeholder="veil-ranger"
+                  ${state.lobby.entering ? "disabled" : ""}
+                />
+              </label>
+              <label class="lobby-field">
+                <span>账号口令</span>
+                <input
+                  class="account-input"
+                  data-lobby-password="true"
+                  type="password"
+                  maxlength="80"
+                  value="${escapeHtml(state.lobby.password)}"
+                  placeholder="至少 6 位"
+                  ${state.lobby.entering ? "disabled" : ""}
+                />
+              </label>
+              <button class="account-save" data-login-account="true" ${state.lobby.entering ? "disabled" : ""}>
+                ${state.lobby.entering ? "登录中..." : "账号登录并进房"}
+              </button>
+            </section>
+          </div>
+          <div class="lobby-actions">
+            <button class="account-save" data-refresh-lobby="true" ${state.lobby.loading || state.lobby.entering ? "disabled" : ""}>
+              ${state.lobby.loading ? "刷新中..." : "刷新房间"}
+            </button>
+            ${
+              state.lobby.authSession
+                ? `<button class="session-link" data-logout-guest="true" ${state.lobby.entering ? "disabled" : ""}>退出当前会话</button>`
+                : ""
+            }
+          </div>
+          ${
+            state.lobby.authSession
+              ? `<p class="account-meta">已缓存${state.lobby.authSession.source === "remote" ? "云端" : "本地"}会话：${escapeHtml(
+                  state.lobby.authSession.playerId
+                )}${state.lobby.authSession.loginId ? ` / ${escapeHtml(state.lobby.authSession.loginId)}` : ""}</p>`
+              : ""
+          }
+          <p class="muted account-status">${escapeHtml(state.lobby.status)}</p>
+        </div>
+        <div class="panel-head">
+          <h2>活跃房间</h2>
+          <div class="hint">${state.lobby.rooms.length} 个实例</div>
+        </div>
+        <div class="lobby-room-list">${roomsMarkup}</div>
+      </section>
+    </main>
+  `;
+}
+
 function render(): void {
   const root = document.querySelector<HTMLDivElement>("#app");
   if (!root) {
+    return;
+  }
+
+  if (!shouldBootGame) {
+    root.innerHTML = renderLobby();
+
+    for (const playerIdInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-lobby-player-id]"))) {
+      playerIdInput.addEventListener("input", () => {
+        const previousSuggestedName = state.lobby.playerId.trim()
+          ? readLocalPreferredDisplayName(state.lobby.playerId)
+          : "";
+        const nextPlayerId = playerIdInput.value;
+        state.lobby.playerId = nextPlayerId;
+
+        if (!state.lobby.displayName.trim() || state.lobby.displayName === previousSuggestedName) {
+          state.lobby.displayName = nextPlayerId.trim() ? readLocalPreferredDisplayName(nextPlayerId) : "";
+          const displayNameField = root.querySelector<HTMLInputElement>("[data-lobby-display-name]");
+          if (displayNameField) {
+            displayNameField.value = state.lobby.displayName;
+          }
+        }
+      });
+      playerIdInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || state.lobby.entering) {
+          return;
+        }
+
+        event.preventDefault();
+        void enterLobbyRoom();
+      });
+    }
+
+    for (const displayNameInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-lobby-display-name]"))) {
+      displayNameInput.addEventListener("input", () => {
+        state.lobby.displayName = displayNameInput.value;
+      });
+      displayNameInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || state.lobby.entering) {
+          return;
+        }
+
+        event.preventDefault();
+        void enterLobbyRoom();
+      });
+    }
+
+    for (const loginIdInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-lobby-login-id]"))) {
+      loginIdInput.addEventListener("input", () => {
+        state.lobby.loginId = loginIdInput.value;
+      });
+      loginIdInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || state.lobby.entering) {
+          return;
+        }
+
+        event.preventDefault();
+        void loginLobbyAccount();
+      });
+    }
+
+    for (const passwordInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-lobby-password]"))) {
+      passwordInput.addEventListener("input", () => {
+        state.lobby.password = passwordInput.value;
+      });
+      passwordInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || state.lobby.entering) {
+          return;
+        }
+
+        event.preventDefault();
+        void loginLobbyAccount();
+      });
+    }
+
+    for (const roomIdInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-lobby-room-id]"))) {
+      roomIdInput.addEventListener("input", () => {
+        state.lobby.roomId = roomIdInput.value;
+      });
+      roomIdInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || state.lobby.entering) {
+          return;
+        }
+
+        event.preventDefault();
+        if (state.lobby.loginId.trim() && state.lobby.password.trim()) {
+          void loginLobbyAccount();
+          return;
+        }
+
+        void enterLobbyRoom();
+      });
+    }
+
+    for (const refreshButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-refresh-lobby]"))) {
+      refreshButton.addEventListener("click", () => {
+        void refreshLobbyRoomList();
+      });
+    }
+
+    for (const enterButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-enter-room]"))) {
+      enterButton.addEventListener("click", () => {
+        void enterLobbyRoom();
+      });
+    }
+
+    for (const loginButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-login-account]"))) {
+      loginButton.addEventListener("click", () => {
+        void loginLobbyAccount();
+      });
+    }
+
+    for (const roomButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-join-room]"))) {
+      roomButton.addEventListener("click", () => {
+        if (state.lobby.loginId.trim() && state.lobby.password.trim()) {
+          void loginLobbyAccount(roomButton.dataset.joinRoom);
+          return;
+        }
+
+        void enterLobbyRoom(roomButton.dataset.joinRoom);
+      });
+    }
+
+    for (const logoutButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-logout-guest]"))) {
+      logoutButton.addEventListener("click", () => {
+        logoutGuestSession();
+      });
+    }
+
     return;
   }
 
@@ -945,8 +1912,70 @@ function render(): void {
       <section class="hero-panel">
         <div class="eyebrow">Project Veil</div>
         <h1>网页版原型</h1>
-        <p class="lead">本地单机房间。悬停看路径，点击地图移动，靠近明雷触发战斗。</p>
-        <p class="muted" data-testid="session-meta">Room: ${roomId} · Player: ${playerId}</p>
+        <p class="lead">当前已进入房间实例。悬停看路径，点击地图移动，靠近明雷或敌方英雄触发遭遇战。</p>
+        <div class="session-meta-row">
+          <p class="muted" data-testid="session-meta">Room: ${roomId} · Player: ${playerId}</p>
+          <button class="session-link" data-return-lobby="true">返回大厅</button>
+          <button class="session-link" data-logout-guest="true">切换游客账号</button>
+        </div>
+        <div class="account-card" data-testid="account-card">
+          <div class="account-card-head">
+            <div>
+              <span class="account-eyebrow">账号资料</span>
+              <strong>${escapeHtml(state.account.displayName)}</strong>
+            </div>
+            <span class="account-badge tone-${state.account.source}">${formatAccountSource(state.account)}</span>
+          </div>
+          <p class="account-meta">ID ${escapeHtml(state.account.playerId)}</p>
+          <p class="account-meta">${escapeHtml(formatCredentialBinding(state.account))}</p>
+          <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
+          <div class="account-editor">
+            <input
+              class="account-input"
+              data-account-name="true"
+              maxlength="40"
+              value="${escapeHtml(state.accountDraftName)}"
+              placeholder="输入昵称"
+              ${state.accountSaving ? "disabled" : ""}
+            />
+            <button
+              class="account-save"
+              data-save-account="true"
+              ${state.accountSaving ? "disabled" : ""}
+            >${state.accountSaving ? "保存中..." : "保存昵称"}</button>
+          </div>
+          <div class="account-binding-card">
+            <div class="account-binding-head">
+              <strong>${state.account.loginId ? "更新账号口令" : "绑定口令账号"}</strong>
+              <span>${state.account.loginId ? "当前档案已可用登录 ID 直接进入" : "把当前游客档升级成可长期登录的账号"}</span>
+            </div>
+            <div class="account-binding-grid">
+              <input
+                class="account-input"
+                data-account-login-id="true"
+                maxlength="40"
+                value="${escapeHtml(state.account.loginId ?? state.accountLoginId)}"
+                placeholder="veil-ranger"
+                ${state.accountSaving || state.accountBinding || state.account.source !== "remote" || Boolean(state.account.loginId) ? "disabled" : ""}
+              />
+              <input
+                class="account-input"
+                data-account-password="true"
+                type="password"
+                maxlength="80"
+                value="${escapeHtml(state.accountPassword)}"
+                placeholder="${state.account.loginId ? "输入新口令" : "至少 6 位"}"
+                ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}
+              />
+            </div>
+            <button
+              class="account-save"
+              data-bind-account="true"
+              ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}
+            >${state.accountBinding ? "提交中..." : state.account.loginId ? "更新口令" : "绑定账号"}</button>
+          </div>
+          <p class="muted account-status">${escapeHtml(state.accountStatus)}</p>
+        </div>
         ${state.predictionStatus ? `<p class="muted" data-testid="prediction-status">${state.predictionStatus}</p>` : ""}
         <div class="stats">
           <div class="card" data-testid="stat-day"><span>Day</span><strong>${state.world.meta.day}</strong></div>
@@ -958,11 +1987,13 @@ function render(): void {
           <h2>${hero?.name ?? "No Hero"}</h2>
           <p data-testid="hero-level">${formatHeroProgression(hero)}</p>
           <p data-testid="hero-xp">${formatHeroExperience(hero)}</p>
+          <p data-testid="hero-stats">${formatHeroCoreStats(hero)}</p>
           <p data-testid="hero-hp">HP ${hero?.stats.hp ?? 0}/${hero?.stats.maxHp ?? 0}</p>
           <p data-testid="hero-move">Move ${hero?.move.remaining ?? 0}/${hero?.move.total ?? 0}</p>
           <p data-testid="hero-wins">Wins ${hero?.progression.battlesWon ?? 0} · Neutral ${hero?.progression.neutralBattlesWon ?? 0} · PvP ${hero?.progression.pvpBattlesWon ?? 0}</p>
           <p data-testid="hero-army">Army ${hero?.armyTemplateId ?? "-"} x ${hero?.armyCount ?? 0}</p>
           <p class="muted" data-testid="hero-preview">${state.previewPlan ? `预览消耗 ${state.previewPlan.moveCost} 步` : state.predictionStatus || "悬停地图格子查看路径"}</p>
+          <button class="modal-button" data-end-day="true" ${state.battle ? "disabled" : ""}>推进到下一天</button>
         </div>
         <div class="log-panel">
           <h3>时间线</h3>
@@ -987,7 +2018,13 @@ function render(): void {
                   ? [
                       `地形 ${hoveredTile.terrain}`,
                       hoveredTile.resource ? `资源 ${hoveredTile.resource.kind}+${hoveredTile.resource.amount}` : "无资源",
-                      hoveredTile.occupant?.kind === "neutral" ? "明雷怪" : hoveredTile.occupant?.kind === "hero" ? "英雄" : "空地"
+                      hoveredTile.building
+                        ? `建筑 ${hoveredTile.building.label}`
+                        : hoveredTile.occupant?.kind === "neutral"
+                          ? "明雷怪"
+                          : hoveredTile.occupant?.kind === "hero"
+                            ? "英雄"
+                            : "空地"
                     ].join(" · ")
                   : "可达格已高亮，预览路径会在地图上实时显示。"
               }
@@ -1002,7 +2039,7 @@ function render(): void {
                     <div class="object-card-copy info-card-copy">
                       <div class="info-card-head">
                         <div>
-                          <div class="info-card-eyebrow">${interactionLabel(hoveredObject.interactionType)}</div>
+                          <div class="info-card-eyebrow">${hoveredTile?.building ? "建筑交互" : interactionLabel(hoveredObject.interactionType)}</div>
                           <strong>${hoveredObject.title}</strong>
                         </div>
                         <span class="status-pill">${hoveredObject.rarity === "elite" ? "Elite" : "Common"}</span>
@@ -1033,6 +2070,7 @@ function render(): void {
           <div class="hint">${state.battle ? "遭遇中" : "空闲"}</div>
         </div>
         ${renderBattlefield()}
+        ${renderBattleIntelPanel()}
         ${renderBattleActions()}
         ${renderBattleLog()}
       </section>
@@ -1083,6 +2121,16 @@ function render(): void {
         return;
       }
 
+      if (kind === "skill") {
+        void onBattleAction({
+          type: "battle.skill",
+          unitId: actionButton.dataset.unit!,
+          skillId: actionButton.dataset.skillId!,
+          ...(actionButton.dataset.target ? { targetId: actionButton.dataset.target } : {})
+        });
+        return;
+      }
+
       void onBattleAction({
         type: "battle.defend",
         unitId: actionButton.dataset.unit!
@@ -1100,15 +2148,107 @@ function render(): void {
   for (const closeButton of Array.from(root.querySelectorAll<HTMLElement>("[data-close-modal]"))) {
     closeButton.addEventListener("click", closeBattleModal);
   }
+
+  for (const endDayButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-end-day]"))) {
+    endDayButton.addEventListener("click", () => {
+      void onEndDay();
+    });
+  }
+
+  for (const accountInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-account-name]"))) {
+    accountInput.addEventListener("input", () => {
+      state.accountDraftName = accountInput.value;
+    });
+    accountInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || state.accountSaving) {
+        return;
+      }
+
+      event.preventDefault();
+      void onSaveAccountProfile();
+    });
+  }
+
+  for (const accountLoginIdInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-account-login-id]"))) {
+    accountLoginIdInput.addEventListener("input", () => {
+      state.accountLoginId = accountLoginIdInput.value;
+    });
+    accountLoginIdInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || state.accountBinding) {
+        return;
+      }
+
+      event.preventDefault();
+      void onBindAccountProfile();
+    });
+  }
+
+  for (const accountPasswordInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-account-password]"))) {
+    accountPasswordInput.addEventListener("input", () => {
+      state.accountPassword = accountPasswordInput.value;
+    });
+    accountPasswordInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || state.accountBinding) {
+        return;
+      }
+
+      event.preventDefault();
+      void onBindAccountProfile();
+    });
+  }
+
+  for (const saveAccountButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-save-account]"))) {
+    saveAccountButton.addEventListener("click", () => {
+      void onSaveAccountProfile();
+    });
+  }
+
+  for (const bindAccountButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-bind-account]"))) {
+    bindAccountButton.addEventListener("click", () => {
+      void onBindAccountProfile();
+    });
+  }
+
+  for (const returnLobbyButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-return-lobby]"))) {
+    returnLobbyButton.addEventListener("click", () => {
+      returnToLobby();
+    });
+  }
+
+  for (const logoutButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-logout-guest]"))) {
+    logoutButton.addEventListener("click", () => {
+      logoutGuestSession();
+    });
+  }
 }
 
 async function bootstrap(): Promise<void> {
   render();
+  const syncedAuthSession = await syncCurrentAuthSession();
+  state.lobby.authSession = syncedAuthSession;
+  if (syncedAuthSession) {
+    state.lobby.playerId = syncedAuthSession.playerId;
+    state.lobby.displayName = syncedAuthSession.displayName;
+    state.lobby.loginId = syncedAuthSession.loginId ?? state.lobby.loginId;
+    state.accountDraftName = syncedAuthSession.displayName;
+    state.accountLoginId = syncedAuthSession.loginId ?? state.accountLoginId;
+  }
+
+  if (!shouldBootGame) {
+    await refreshLobbyRoomList();
+    return;
+  }
+
+  if (!queryPlayerId && !syncedAuthSession?.playerId) {
+    logoutGuestSession();
+    return;
+  }
+
   const replayed = readStoredSessionReplay(roomId, playerId);
   if (replayed) {
     applyReplayedUpdate(replayed);
   }
-  const session = await sessionPromise;
+  const session = await getSession();
   const initial = await session.snapshot();
   state.log = [
     `会话已连接。Room ${roomId} / Player ${playerId}`,
@@ -1117,6 +2257,86 @@ async function bootstrap(): Promise<void> {
     )
   ].slice(0, 12);
   applyUpdate(initial, "system");
+  void syncPlayerAccountProfile();
+}
+
+async function syncPlayerAccountProfile(): Promise<void> {
+  const account = await loadAccountProfile(playerId, roomId);
+  state.account = account;
+  state.accountDraftName = account.displayName;
+  state.accountLoginId = account.loginId ?? state.accountLoginId;
+  state.accountStatus =
+    account.source === "remote"
+      ? account.loginId
+        ? `账号资料已同步，当前已绑定登录 ID ${account.loginId}。`
+        : "账号资料已与服务端同步，可继续绑定口令账号。"
+      : "当前运行在本地游客档，昵称仅保存在浏览器。";
+  render();
+}
+
+async function onSaveAccountProfile(): Promise<void> {
+  const nextDisplayName = state.accountDraftName.trim() || playerId;
+  state.accountSaving = true;
+  state.accountStatus = "正在保存昵称...";
+  render();
+
+  const account = await saveAccountDisplayName(playerId, roomId, nextDisplayName);
+  state.account = account;
+  state.accountDraftName = account.displayName;
+  state.accountSaving = false;
+  state.accountStatus =
+    account.source === "remote"
+      ? account.loginId
+        ? `昵称已同步到服务端账号，绑定登录 ID ${account.loginId} 仍然有效。`
+        : "昵称已同步到服务端账号。"
+      : "服务器不可用，昵称已保存到本地浏览器。";
+  state.log.unshift(`账号昵称已更新为 ${account.displayName}`);
+  state.log = state.log.slice(0, 12);
+  render();
+}
+
+async function onBindAccountProfile(): Promise<void> {
+  const loginId = (state.account.loginId ?? state.accountLoginId).trim().toLowerCase();
+  if (!loginId) {
+    state.accountStatus = "请输入登录 ID 后再绑定账号。";
+    render();
+    return;
+  }
+
+  if (!state.accountPassword.trim()) {
+    state.accountStatus = state.account.loginId ? "请输入新口令后再更新。" : "请输入账号口令后再绑定。";
+    render();
+    return;
+  }
+
+  state.accountBinding = true;
+  state.accountStatus = state.account.loginId ? "正在更新账号口令..." : "正在绑定口令账号...";
+  render();
+
+  try {
+    const account = await bindAccountCredentials(loginId, state.accountPassword, roomId);
+    state.account = account;
+    state.accountLoginId = account.loginId ?? loginId;
+    state.accountPassword = "";
+    state.accountBinding = false;
+    state.lobby.authSession = readStoredAuthSession();
+    state.lobby.loginId = state.accountLoginId;
+    state.accountStatus = account.loginId
+      ? `口令账号已就绪，后续可用 ${account.loginId} 直接登录。`
+      : "账号绑定已完成。";
+    state.log.unshift(`账号已绑定登录 ID ${account.loginId ?? loginId}`);
+    state.log = state.log.slice(0, 12);
+    render();
+  } catch (error) {
+    state.accountBinding = false;
+    state.accountStatus =
+      error instanceof Error && error.message === "player_account_request_failed:401"
+        ? "当前会话已失效，请重新登录后再绑定账号。"
+        : error instanceof Error
+          ? error.message
+          : "account_bind_failed";
+    render();
+  }
 }
 
 void bootstrap();

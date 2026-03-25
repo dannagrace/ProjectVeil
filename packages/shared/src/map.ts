@@ -3,9 +3,15 @@ import type {
   FogState,
   HeroState,
   HeroConfig,
+  HeroStatBonus,
+  MapBuildingState,
+  MapObjectsConfig,
   MovementPlan,
+  NeutralArmyBehaviorState,
+  NeutralMoveReason,
   NeutralArmyState,
   OccupantState,
+  PlayerBuildingView,
   PlayerTileView,
   PlayerWorldPrediction,
   PlayerWorldView,
@@ -17,6 +23,7 @@ import type {
   WorldAction,
   WorldActionOutcome,
   WorldEvent,
+  WorldGenerationConfig,
   WorldMapState,
   WorldResourceLedger,
   WorldState
@@ -26,6 +33,10 @@ import {
   totalExperienceRequiredForLevel
 } from "./models";
 import { getDefaultMapObjectsConfig, getDefaultWorldConfig } from "./world-config";
+import {
+  validateMapObjectsConfig,
+  validateWorldConfig
+} from "./world-config";
 
 function makeRng(seed: number): () => number {
   let value = seed >>> 0;
@@ -66,7 +77,20 @@ function createTerrainTile(position: Vec2, roll: number): TileState {
     terrain,
     walkable: terrain !== "water",
     resource: undefined,
-    occupant: undefined
+    occupant: undefined,
+    building: undefined
+  };
+}
+
+function ensureTileIsWalkable(tile: TileState): TileState {
+  if (tile.walkable) {
+    return tile;
+  }
+
+  return {
+    ...tile,
+    terrain: "grass",
+    walkable: true
   };
 }
 
@@ -105,6 +129,97 @@ function createWorldResourceLedger(heroes: HeroState[]): WorldResourceLedger {
   return Object.fromEntries(
     Array.from(new Set(heroes.map((hero) => hero.playerId))).map((playerId) => [playerId, createEmptyResourceLedger()])
   );
+}
+
+function cloneResourceLedger(ledger: ResourceLedger): ResourceLedger {
+  return {
+    gold: ledger.gold,
+    wood: ledger.wood,
+    ore: ledger.ore
+  };
+}
+
+function cloneHeroStatBonus(bonus: HeroStatBonus): HeroStatBonus {
+  return {
+    attack: bonus.attack,
+    defense: bonus.defense,
+    power: bonus.power,
+    knowledge: bonus.knowledge
+  };
+}
+
+function clonePosition(position: Vec2): Vec2 {
+  return {
+    x: position.x,
+    y: position.y
+  };
+}
+
+function cloneNeutralBehaviorState(behavior: NeutralArmyBehaviorState | undefined): NeutralArmyBehaviorState {
+  const patrolPath = behavior?.patrolPath?.map(clonePosition) ?? [];
+  return {
+    mode: behavior?.mode === "patrol" && patrolPath.length > 0 ? "patrol" : "guard",
+    patrolPath,
+    patrolIndex: patrolPath.length > 0 ? clamp(Math.floor(behavior?.patrolIndex ?? 0), 0, patrolPath.length - 1) : 0,
+    aggroRange: Math.max(0, Math.floor(behavior?.aggroRange ?? 0))
+  };
+}
+
+function normalizeNeutralArmyState(army: NeutralArmyState): NeutralArmyState {
+  return {
+    ...army,
+    position: clonePosition(army.position),
+    reward: army.reward ? { ...army.reward } : undefined,
+    stacks: army.stacks.map((stack) => ({ ...stack })),
+    origin: clonePosition(army.origin ?? army.position),
+    behavior: cloneNeutralBehaviorState(army.behavior)
+  };
+}
+
+function normalizeNeutralArmyCollection(
+  neutralArmies: Record<string, NeutralArmyState>
+): Record<string, NeutralArmyState> {
+  return Object.fromEntries(
+    Object.entries(neutralArmies).map(([neutralArmyId, army]) => [neutralArmyId, normalizeNeutralArmyState(army)])
+  );
+}
+
+function createNeutralArmyState(config: MapObjectsConfig["neutralArmies"][number]): NeutralArmyState {
+  return normalizeNeutralArmyState({
+    ...config,
+    origin: clonePosition(config.position),
+    behavior: {
+      mode: config.behavior?.mode === "patrol" && (config.behavior?.patrolPath?.length ?? 0) > 0 ? "patrol" : "guard",
+      patrolPath: config.behavior?.patrolPath?.map(clonePosition) ?? [],
+      patrolIndex: 0,
+      aggroRange: Math.max(0, Math.floor(config.behavior?.aggroRange ?? 0))
+    }
+  });
+}
+
+function createBuildingState(config: MapObjectsConfig["buildings"][number]): MapBuildingState {
+  if (config.kind === "recruitment_post") {
+    return {
+      ...config,
+      position: { ...config.position },
+      cost: cloneResourceLedger(config.cost),
+      availableCount: config.recruitCount
+    };
+  }
+
+  if (config.kind === "attribute_shrine") {
+    return {
+      ...config,
+      position: { ...config.position },
+      bonus: cloneHeroStatBonus(config.bonus),
+      visitedHeroIds: []
+    };
+  }
+
+  return {
+    ...config,
+    position: { ...config.position }
+  };
 }
 
 function normalizeHeroes<T extends HeroConfig | HeroState>(heroes: T[]): HeroState[] {
@@ -190,6 +305,106 @@ function grantResource(
   };
 }
 
+function hasEnoughResources(resources: ResourceLedger, cost: ResourceLedger): boolean {
+  return (resources.gold ?? 0) >= cost.gold && (resources.wood ?? 0) >= cost.wood && (resources.ore ?? 0) >= cost.ore;
+}
+
+function spendResources(resources: WorldResourceLedger, playerId: string, cost: ResourceLedger): WorldResourceLedger {
+  const next = getPlayerResources(resources, playerId);
+  return {
+    ...resources,
+    [playerId]: {
+      gold: Math.max(0, (next.gold ?? 0) - cost.gold),
+      wood: Math.max(0, (next.wood ?? 0) - cost.wood),
+      ore: Math.max(0, (next.ore ?? 0) - cost.ore)
+    }
+  };
+}
+
+function clonePlayerBuildingView(building: MapBuildingState): PlayerBuildingView {
+  if (building.kind === "recruitment_post") {
+    return {
+      id: building.id,
+      kind: building.kind,
+      label: building.label,
+      unitTemplateId: building.unitTemplateId,
+      recruitCount: building.recruitCount,
+      availableCount: building.availableCount,
+      cost: cloneResourceLedger(building.cost)
+    };
+  }
+
+  if (building.kind === "attribute_shrine") {
+    return {
+      id: building.id,
+      kind: building.kind,
+      label: building.label,
+      bonus: cloneHeroStatBonus(building.bonus),
+      visitedHeroIds: [...building.visitedHeroIds]
+    };
+  }
+
+  return {
+    id: building.id,
+    kind: building.kind,
+    label: building.label,
+    resourceKind: building.resourceKind,
+    income: building.income,
+    ...(building.ownerPlayerId ? { ownerPlayerId: building.ownerPlayerId } : {})
+  };
+}
+
+function cloneBuildingState(building: MapBuildingState): MapBuildingState {
+  if (building.kind === "recruitment_post") {
+    return {
+      ...building,
+      position: { ...building.position },
+      cost: cloneResourceLedger(building.cost)
+    };
+  }
+
+  if (building.kind === "attribute_shrine") {
+    return {
+      ...building,
+      position: { ...building.position },
+      bonus: cloneHeroStatBonus(building.bonus),
+      visitedHeroIds: [...building.visitedHeroIds]
+    };
+  }
+
+  return {
+    ...building,
+    position: { ...building.position },
+    ...(building.ownerPlayerId ? { ownerPlayerId: building.ownerPlayerId } : {})
+  };
+}
+
+function refreshBuildingForNewDay(building: MapBuildingState): MapBuildingState {
+  if (building.kind === "recruitment_post") {
+    return {
+      ...building,
+      position: { ...building.position },
+      cost: cloneResourceLedger(building.cost),
+      availableCount: building.recruitCount
+    };
+  }
+
+  return cloneBuildingState(building);
+}
+
+function applyHeroStatBonus(hero: HeroState, bonus: HeroStatBonus): HeroState {
+  return {
+    ...hero,
+    stats: {
+      ...hero.stats,
+      attack: hero.stats.attack + bonus.attack,
+      defense: hero.stats.defense + bonus.defense,
+      power: hero.stats.power + bonus.power,
+      knowledge: hero.stats.knowledge + bonus.knowledge
+    }
+  };
+}
+
 function findTile(map: WorldMapState, position: Vec2): TileState | undefined {
   if (!inBounds(map, position)) {
     return undefined;
@@ -228,7 +443,7 @@ function isBlockedForPlayerView(view: PlayerWorldView, heroId: string, position:
   }
 
   const occupant = tile.occupant;
-  if ((occupant?.kind === "neutral" || occupant?.kind === "building") && !samePosition(position, destination)) {
+  if (occupant?.kind === "neutral" && !samePosition(position, destination)) {
     return true;
   }
 
@@ -269,12 +484,20 @@ function updateVisibilityByPlayer(map: WorldMapState, heroes: HeroState[], state
   return nextVisibility;
 }
 
-function syncOccupants(map: WorldMapState, heroes: HeroState[], neutralArmies: Record<string, NeutralArmyState>): WorldMapState {
+function syncWorldTiles(
+  map: WorldMapState,
+  heroes: HeroState[],
+  neutralArmies: Record<string, NeutralArmyState>,
+  buildings: Record<string, MapBuildingState>
+): WorldMapState {
   const heroByKey = new Map<string, OccupantState>(
     heroes.map((hero) => [tileKey(hero.position), { kind: "hero", refId: hero.id }])
   );
   const neutralByKey = new Map<string, OccupantState>(
     Object.values(neutralArmies).map((army) => [tileKey(army.position), { kind: "neutral", refId: army.id }])
+  );
+  const buildingByKey = new Map<string, MapBuildingState>(
+    Object.values(buildings).map((building) => [tileKey(building.position), building])
   );
 
   return {
@@ -282,20 +505,27 @@ function syncOccupants(map: WorldMapState, heroes: HeroState[], neutralArmies: R
     tiles: map.tiles.map((tile) => {
       const heroOccupant = heroByKey.get(tileKey(tile.position));
       if (heroOccupant) {
-        return { ...tile, occupant: heroOccupant };
+        return {
+          ...tile,
+          occupant: heroOccupant,
+          building: buildingByKey.get(tileKey(tile.position))
+        };
       }
 
       const neutralOccupant = neutralByKey.get(tileKey(tile.position));
       if (neutralOccupant) {
-        return { ...tile, occupant: neutralOccupant };
+        return {
+          ...tile,
+          occupant: neutralOccupant,
+          building: buildingByKey.get(tileKey(tile.position))
+        };
       }
 
-      return tile.occupant
-        ? {
-            ...tile,
-            occupant: undefined
-          }
-        : tile;
+      return {
+        ...tile,
+        occupant: undefined,
+        building: buildingByKey.get(tileKey(tile.position))
+      };
     })
   };
 }
@@ -333,6 +563,83 @@ function isBlockedForHero(state: WorldState, heroId: string, position: Vec2, des
   }
 
   return state.heroes.some((hero) => hero.id !== heroId && samePosition(hero.position, position) && !samePosition(position, destination));
+}
+
+function isBlockedForNeutral(
+  state: WorldState,
+  neutralArmyId: string,
+  position: Vec2,
+  destination: Vec2,
+  targetHeroId?: string
+): boolean {
+  const tile = findTile(state.map, position);
+  if (!tile || !tile.walkable || tile.building) {
+    return true;
+  }
+
+  const occupant = tile.occupant;
+  if (occupant?.kind === "neutral" && occupant.refId !== neutralArmyId) {
+    return true;
+  }
+
+  if (occupant?.kind === "hero" && (!samePosition(position, destination) || occupant.refId !== targetHeroId)) {
+    return true;
+  }
+
+  return false;
+}
+
+function getNeutralMovementPath(
+  state: WorldState,
+  neutralArmyId: string,
+  destination: Vec2,
+  targetHeroId?: string
+): Vec2[] | undefined {
+  const neutralArmy = state.neutralArmies[neutralArmyId];
+  if (!neutralArmy) {
+    return undefined;
+  }
+
+  if (samePosition(neutralArmy.position, destination)) {
+    return [clonePosition(neutralArmy.position)];
+  }
+
+  const openSet: Vec2[] = [neutralArmy.position];
+  const cameFrom = new Map<string, Vec2>();
+  const gScore = new Map<string, number>([[tileKey(neutralArmy.position), 0]]);
+  const fScore = new Map<string, number>([[tileKey(neutralArmy.position), distance(neutralArmy.position, destination)]]);
+
+  while (openSet.length > 0) {
+    openSet.sort(
+      (a, b) =>
+        (fScore.get(tileKey(a)) ?? Number.POSITIVE_INFINITY) -
+        (fScore.get(tileKey(b)) ?? Number.POSITIVE_INFINITY)
+    );
+    const current = openSet.shift()!;
+    if (samePosition(current, destination)) {
+      return reconstructPath(cameFrom, current);
+    }
+
+    for (const neighbor of getNeighbors(state.map, current)) {
+      if (isBlockedForNeutral(state, neutralArmyId, neighbor, destination, targetHeroId)) {
+        continue;
+      }
+
+      const tentative = (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + 1;
+      if (tentative >= (gScore.get(tileKey(neighbor)) ?? Number.POSITIVE_INFINITY)) {
+        continue;
+      }
+
+      cameFrom.set(tileKey(neighbor), current);
+      gScore.set(tileKey(neighbor), tentative);
+      fScore.set(tileKey(neighbor), tentative + distance(neighbor, destination));
+      if (!openSet.some((item) => samePosition(item, neighbor))) {
+        openSet.push(neighbor);
+      }
+    }
+  }
+
+  return undefined;
 }
 
 function getMovementPlan(state: WorldState, heroId: string, destination: Vec2): MovementPlan | undefined {
@@ -407,14 +714,178 @@ function getMovementPlan(state: WorldState, heroId: string, destination: Vec2): 
   return undefined;
 }
 
-function buildNextWorldState(base: WorldState, heroes: HeroState[], neutralArmies: Record<string, NeutralArmyState>): WorldState {
-  const nextMap = syncOccupants(base.map, heroes, neutralArmies);
+function buildNextWorldState(
+  base: WorldState,
+  heroes: HeroState[],
+  neutralArmies: Record<string, NeutralArmyState>,
+  buildings: Record<string, MapBuildingState>
+): WorldState {
+  const normalizedNeutralArmies = normalizeNeutralArmyCollection(neutralArmies);
+  const nextMap = syncWorldTiles(base.map, heroes, normalizedNeutralArmies, buildings);
   return {
     ...base,
     heroes,
-    neutralArmies,
+    neutralArmies: normalizedNeutralArmies,
+    buildings,
     map: nextMap,
     visibilityByPlayer: updateVisibilityByPlayer(nextMap, heroes, base)
+  };
+}
+
+function findHero(state: WorldState, heroId: string): HeroState | undefined {
+  return state.heroes.find((hero) => hero.id === heroId);
+}
+
+function findNeutralChaseTarget(
+  state: WorldState,
+  neutralArmy: NeutralArmyState,
+  lockedHeroIds: Set<string>
+): { heroId: string; path: Vec2[] } | null {
+  const aggroRange = neutralArmy.behavior?.aggroRange ?? 0;
+  if (aggroRange <= 0) {
+    return null;
+  }
+
+  const candidates = state.heroes
+    .filter((hero) => !lockedHeroIds.has(hero.id))
+    .map((hero) => ({
+      heroId: hero.id,
+      path: getNeutralMovementPath(state, neutralArmy.id, hero.position, hero.id)
+    }))
+    .filter((item): item is { heroId: string; path: Vec2[] } => Boolean(item.path && item.path.length > 0))
+    .filter((item) => item.path.length - 1 <= aggroRange)
+    .sort((left, right) => {
+      const pathDelta = left.path.length - right.path.length;
+      return pathDelta !== 0 ? pathDelta : left.heroId.localeCompare(right.heroId);
+    });
+
+  return candidates[0] ?? null;
+}
+
+function nextPatrolTarget(
+  neutralArmy: NeutralArmyState
+): { target: Vec2; patrolIndex: number } | null {
+  const patrolPath = neutralArmy.behavior?.patrolPath ?? [];
+  if (patrolPath.length === 0) {
+    return null;
+  }
+
+  let patrolIndex = neutralArmy.behavior?.patrolIndex ?? 0;
+  for (let attempts = 0; attempts < patrolPath.length; attempts += 1) {
+    const target = patrolPath[patrolIndex]!;
+    if (!samePosition(neutralArmy.position, target)) {
+      return {
+        target,
+        patrolIndex
+      };
+    }
+    patrolIndex = (patrolIndex + 1) % patrolPath.length;
+  }
+
+  return null;
+}
+
+function moveNeutralArmy(
+  neutralArmy: NeutralArmyState,
+  nextPosition: Vec2,
+  reason: NeutralMoveReason,
+  nextPatrolIndex?: number,
+  targetHeroId?: string
+): { army: NeutralArmyState; event: WorldEvent } {
+  const behavior = cloneNeutralBehaviorState(neutralArmy.behavior);
+  if (typeof nextPatrolIndex === "number" && behavior.patrolPath.length > 0) {
+    behavior.patrolIndex = nextPatrolIndex;
+  }
+
+  return {
+    army: {
+      ...neutralArmy,
+      position: clonePosition(nextPosition),
+      origin: clonePosition(neutralArmy.origin ?? neutralArmy.position),
+      behavior
+    },
+    event: {
+      type: "neutral.moved",
+      neutralArmyId: neutralArmy.id,
+      from: clonePosition(neutralArmy.position),
+      to: clonePosition(nextPosition),
+      reason,
+      ...(targetHeroId ? { targetHeroId } : {})
+    }
+  };
+}
+
+function resolveNeutralArmyTurn(
+  state: WorldState,
+  neutralArmy: NeutralArmyState,
+  lockedHeroIds: Set<string>
+): { army?: NeutralArmyState; events: WorldEvent[]; lockedHeroId?: string } {
+  const behavior = neutralArmy.behavior;
+  const chaseTarget = findNeutralChaseTarget(state, neutralArmy, lockedHeroIds);
+  if (chaseTarget) {
+    if (chaseTarget.path.length <= 2) {
+      const hero = findHero(state, chaseTarget.heroId);
+      return {
+        events: [
+          {
+            type: "battle.started",
+            heroId: chaseTarget.heroId,
+            encounterKind: "neutral",
+            neutralArmyId: neutralArmy.id,
+            initiator: "neutral",
+            battleId: `battle-${neutralArmy.id}`,
+            path: [clonePosition(hero?.position ?? neutralArmy.position)],
+            moveCost: 0
+          }
+        ],
+        lockedHeroId: chaseTarget.heroId
+      };
+    }
+
+    const nextPosition = chaseTarget.path[1];
+    if (nextPosition) {
+      const movement = moveNeutralArmy(neutralArmy, nextPosition, "chase", undefined, chaseTarget.heroId);
+      return {
+        army: movement.army,
+        events: [movement.event]
+      };
+    }
+  }
+
+  if (behavior?.mode === "patrol" && behavior.patrolPath.length > 0) {
+    const patrol = nextPatrolTarget(neutralArmy);
+    if (patrol) {
+      const path = getNeutralMovementPath(state, neutralArmy.id, patrol.target);
+      const nextPosition = path?.[1];
+      if (nextPosition) {
+        const reachedTarget = samePosition(nextPosition, patrol.target);
+        const nextPatrolIndex = reachedTarget
+          ? (patrol.patrolIndex + 1) % behavior.patrolPath.length
+          : patrol.patrolIndex;
+        const movement = moveNeutralArmy(neutralArmy, nextPosition, "patrol", nextPatrolIndex);
+        return {
+          army: movement.army,
+          events: [movement.event]
+        };
+      }
+    }
+  }
+
+  const origin = neutralArmy.origin ?? neutralArmy.position;
+  if (!samePosition(neutralArmy.position, origin)) {
+    const path = getNeutralMovementPath(state, neutralArmy.id, origin);
+    const nextPosition = path?.[1];
+    if (nextPosition) {
+      const movement = moveNeutralArmy(neutralArmy, nextPosition, "return");
+      return {
+        army: movement.army,
+        events: [movement.event]
+      };
+    }
+  }
+
+  return {
+    events: []
   };
 }
 
@@ -506,22 +977,47 @@ export function planPlayerViewMovement(
   return undefined;
 }
 
-export function createInitialWorldState(seed = 1001, roomId = "room-alpha"): WorldState {
+export function createWorldStateFromConfigs(
+  config: WorldGenerationConfig,
+  mapObjects: MapObjectsConfig,
+  seed = 1001,
+  roomId = "room-alpha"
+): WorldState {
+  validateWorldConfig(config);
+  validateMapObjectsConfig(mapObjects, config);
+
   const rng = makeRng(seed);
-  const config = getDefaultWorldConfig();
-  const mapObjects = getDefaultMapObjectsConfig();
   const width = config.width;
   const height = config.height;
   const heroes: HeroState[] = normalizeHeroes(config.heroes);
+  const forcedWalkableKeys = new Set<string>([
+    ...heroes.map((hero) => tileKey(hero.position)),
+    ...mapObjects.guaranteedResources.map((resource) => tileKey(resource.position)),
+    ...mapObjects.neutralArmies.map((army) => tileKey(army.position)),
+    ...mapObjects.neutralArmies.flatMap((army) => (army.behavior?.patrolPath ?? []).map((waypoint) => tileKey(waypoint))),
+    ...mapObjects.buildings.map((building) => tileKey(building.position))
+  ]);
+  const blockedRandomResourceKeys = new Set<string>([
+    ...mapObjects.neutralArmies.map((army) => tileKey(army.position)),
+    ...mapObjects.buildings.map((building) => tileKey(building.position))
+  ]);
 
   const tiles: TileState[] = [];
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const tile = createTerrainTile({ x, y }, rng());
+      const position = { x, y };
+      const key = tileKey(position);
+      const tile = forcedWalkableKeys.has(key)
+        ? ensureTileIsWalkable(createTerrainTile(position, rng()))
+        : createTerrainTile(position, rng());
       const guaranteedResource = mapObjects.guaranteedResources.find((item) => samePosition(item.position, { x, y }));
       if (guaranteedResource) {
         tile.resource = guaranteedResource.resource;
-      } else if (tile.walkable && !heroes.some((hero) => hero.position.x === x && hero.position.y === y)) {
+      } else if (
+        tile.walkable &&
+        !heroes.some((hero) => hero.position.x === x && hero.position.y === y) &&
+        !blockedRandomResourceKeys.has(key)
+      ) {
         tile.resource = createResourceNode(rng(), config.resourceSpawn);
       }
       tiles.push(tile);
@@ -529,10 +1025,13 @@ export function createInitialWorldState(seed = 1001, roomId = "room-alpha"): Wor
   }
 
   const neutralArmies: Record<string, NeutralArmyState> = Object.fromEntries(
-    mapObjects.neutralArmies.map((army) => [army.id, { ...army, stacks: army.stacks.map((stack) => ({ ...stack })) }])
+    mapObjects.neutralArmies.map((army) => [army.id, createNeutralArmyState(army)])
+  );
+  const buildings: Record<string, MapBuildingState> = Object.fromEntries(
+    mapObjects.buildings.map((building) => [building.id, createBuildingState(building)])
   );
 
-  const initialMap = syncOccupants({ width, height, tiles }, heroes, neutralArmies);
+  const initialMap = syncWorldTiles({ width, height, tiles }, heroes, neutralArmies, buildings);
   const initialState: WorldState = {
     meta: {
       roomId,
@@ -542,6 +1041,7 @@ export function createInitialWorldState(seed = 1001, roomId = "room-alpha"): Wor
     map: initialMap,
     heroes,
     neutralArmies,
+    buildings,
     resources: createWorldResourceLedger(heroes),
     visibilityByPlayer: {}
   };
@@ -550,6 +1050,10 @@ export function createInitialWorldState(seed = 1001, roomId = "room-alpha"): Wor
     ...initialState,
     visibilityByPlayer: updateVisibilityByPlayer(initialState.map, initialState.heroes, initialState)
   };
+}
+
+export function createInitialWorldState(seed = 1001, roomId = "room-alpha"): WorldState {
+  return createWorldStateFromConfigs(getDefaultWorldConfig(), getDefaultMapObjectsConfig(), seed, roomId);
 }
 
 export function listReachableTiles(state: WorldState, heroId: string): Vec2[] {
@@ -706,6 +1210,225 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
     };
   }
 
+  if (action.type === "hero.recruit") {
+    const tile = findPlayerTile(view, hero.position);
+    if (!tile?.building) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_found"
+      };
+    }
+
+    if (tile.building.id !== action.buildingId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "hero_not_on_building"
+      };
+    }
+
+    if (tile.building.kind !== "recruitment_post") {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_recruitable"
+      };
+    }
+    const building = tile.building;
+
+    if (building.availableCount <= 0) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_depleted"
+      };
+    }
+
+    if (!hasEnoughResources(view.resources, building.cost)) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "not_enough_resources"
+      };
+    }
+
+    const predictedWorld: PlayerWorldView = {
+      ...view,
+      ownHeroes: view.ownHeroes.map((item) =>
+        item.id === hero.id
+          ? {
+              ...item,
+              armyCount: item.armyCount + building.availableCount
+            }
+          : item
+      ),
+      map: {
+        ...view.map,
+        tiles: view.map.tiles.map((item) =>
+          samePosition(item.position, hero.position) && item.building?.kind === "recruitment_post"
+            ? {
+                ...item,
+                building: {
+                  ...item.building,
+                  cost: cloneResourceLedger(item.building.cost),
+                  availableCount: 0
+                }
+              }
+            : item
+        )
+      },
+      resources: {
+        gold: Math.max(0, view.resources.gold - building.cost.gold),
+        wood: Math.max(0, view.resources.wood - building.cost.wood),
+        ore: Math.max(0, view.resources.ore - building.cost.ore)
+      }
+    };
+
+    return {
+      world: predictedWorld,
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+    };
+  }
+
+  if (action.type === "hero.visit") {
+    const tile = findPlayerTile(view, hero.position);
+    if (!tile?.building) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_found"
+      };
+    }
+
+    if (tile.building.id !== action.buildingId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "hero_not_on_building"
+      };
+    }
+
+    if (tile.building.kind !== "attribute_shrine") {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_visitable"
+      };
+    }
+    const building = tile.building;
+
+    if (building.visitedHeroIds.includes(hero.id)) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_already_visited"
+      };
+    }
+
+    const predictedWorld: PlayerWorldView = {
+      ...view,
+      ownHeroes: view.ownHeroes.map((item) =>
+        item.id === hero.id ? applyHeroStatBonus(item, building.bonus) : item
+      ),
+      map: {
+        ...view.map,
+        tiles: view.map.tiles.map((item) =>
+          samePosition(item.position, hero.position) && item.building?.kind === "attribute_shrine"
+            ? {
+                ...item,
+                building: {
+                  ...item.building,
+                  bonus: cloneHeroStatBonus(item.building.bonus),
+                  visitedHeroIds: [...item.building.visitedHeroIds, hero.id]
+                }
+              }
+            : item
+        )
+      }
+    };
+
+    return {
+      world: predictedWorld,
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+    };
+  }
+
+  if (action.type === "hero.claimMine") {
+    const tile = findPlayerTile(view, hero.position);
+    if (!tile?.building) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_found"
+      };
+    }
+
+    if (tile.building.id !== action.buildingId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "hero_not_on_building"
+      };
+    }
+
+    if (tile.building.kind !== "resource_mine") {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_claimable"
+      };
+    }
+    const building = tile.building;
+
+    if (building.ownerPlayerId === hero.playerId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_already_owned"
+      };
+    }
+
+    const predictedWorld: PlayerWorldView = {
+      ...view,
+      map: {
+        ...view.map,
+        tiles: view.map.tiles.map((item) =>
+          samePosition(item.position, hero.position) && item.building?.kind === "resource_mine"
+            ? {
+                ...item,
+                building: {
+                  ...item.building,
+                  ownerPlayerId: hero.playerId
+                }
+              }
+            : item
+        )
+      }
+    };
+
+    return {
+      world: predictedWorld,
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+    };
+  }
+
   const tile = findPlayerTile(view, action.position);
   if (!tile) {
     return {
@@ -801,6 +1524,74 @@ export function validateWorldAction(state: WorldState, action: WorldAction): Val
     return { valid: true };
   }
 
+  if (action.type === "hero.recruit") {
+    const building = state.buildings[action.buildingId];
+    if (!building) {
+      return { valid: false, reason: "building_not_found" };
+    }
+
+    if (!samePosition(hero.position, building.position)) {
+      return { valid: false, reason: "hero_not_on_building" };
+    }
+
+    if (building.kind !== "recruitment_post") {
+      return { valid: false, reason: "building_not_recruitable" };
+    }
+
+    if (building.availableCount <= 0) {
+      return { valid: false, reason: "building_depleted" };
+    }
+
+    const resources = getPlayerResources(state.resources, hero.playerId);
+    if (!hasEnoughResources(resources, building.cost)) {
+      return { valid: false, reason: "not_enough_resources" };
+    }
+
+    return { valid: true };
+  }
+
+  if (action.type === "hero.visit") {
+    const building = state.buildings[action.buildingId];
+    if (!building) {
+      return { valid: false, reason: "building_not_found" };
+    }
+
+    if (!samePosition(hero.position, building.position)) {
+      return { valid: false, reason: "hero_not_on_building" };
+    }
+
+    if (building.kind !== "attribute_shrine") {
+      return { valid: false, reason: "building_not_visitable" };
+    }
+
+    if (building.visitedHeroIds.includes(hero.id)) {
+      return { valid: false, reason: "building_already_visited" };
+    }
+
+    return { valid: true };
+  }
+
+  if (action.type === "hero.claimMine") {
+    const building = state.buildings[action.buildingId];
+    if (!building) {
+      return { valid: false, reason: "building_not_found" };
+    }
+
+    if (!samePosition(hero.position, building.position)) {
+      return { valid: false, reason: "hero_not_on_building" };
+    }
+
+    if (building.kind !== "resource_mine") {
+      return { valid: false, reason: "building_not_claimable" };
+    }
+
+    if (building.ownerPlayerId === hero.playerId) {
+      return { valid: false, reason: "building_already_owned" };
+    }
+
+    return { valid: true };
+  }
+
   const tile = findTile(state.map, action.position);
   if (!tile) {
     return { valid: false, reason: "resource_tile_not_found" };
@@ -828,7 +1619,8 @@ export function createPlayerWorldView(state: WorldState, playerId: string): Play
         terrain: "unknown",
         walkable: false,
         resource: undefined,
-        occupant: undefined
+        occupant: undefined,
+        building: undefined
       };
     }
 
@@ -839,7 +1631,8 @@ export function createPlayerWorldView(state: WorldState, playerId: string): Play
         terrain: tile.terrain,
         walkable: tile.walkable,
         resource: undefined,
-        occupant: undefined
+        occupant: undefined,
+        building: tile.building ? clonePlayerBuildingView(tile.building) : undefined
       };
     }
 
@@ -849,7 +1642,8 @@ export function createPlayerWorldView(state: WorldState, playerId: string): Play
       terrain: tile.terrain,
       walkable: tile.walkable,
       resource: tile.resource,
-      occupant: tile.occupant
+      occupant: tile.occupant,
+      building: tile.building ? clonePlayerBuildingView(tile.building) : undefined
     };
   });
 
@@ -881,20 +1675,83 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
       ...hero,
       move: { ...hero.move, remaining: hero.move.total }
     }));
+    let nextResources = state.resources;
+    const buildings = Object.fromEntries(
+      Object.entries(state.buildings).map(([buildingId, building]) => [
+        buildingId,
+        refreshBuildingForNewDay(building)
+      ])
+    );
+    const productionEvents: WorldEvent[] = [];
+    for (const building of Object.values(buildings)) {
+      if (building.kind !== "resource_mine" || !building.ownerPlayerId) {
+        continue;
+      }
+
+      const producedResource = {
+        kind: building.resourceKind,
+        amount: building.income
+      } as const;
+      nextResources = grantResource(nextResources, building.ownerPlayerId, producedResource);
+      productionEvents.push({
+        type: "resource.produced",
+        playerId: building.ownerPlayerId,
+        buildingId: building.id,
+        buildingKind: building.kind,
+        resource: producedResource
+      });
+    }
+    let neutralArmies = normalizeNeutralArmyCollection(state.neutralArmies);
+    let workingState = buildNextWorldState(
+      {
+        ...state,
+        meta: {
+          ...state.meta,
+          day: state.meta.day + 1
+        },
+        resources: nextResources
+      },
+      heroes,
+      neutralArmies,
+      buildings
+    );
+    const lockedHeroIds = new Set<string>();
+    const neutralEvents: WorldEvent[] = [];
+    for (const neutralArmyId of Object.keys(neutralArmies).sort()) {
+      const neutralArmy = neutralArmies[neutralArmyId];
+      if (!neutralArmy) {
+        continue;
+      }
+
+      const resolution = resolveNeutralArmyTurn(workingState, neutralArmy, lockedHeroIds);
+      if (resolution.lockedHeroId) {
+        lockedHeroIds.add(resolution.lockedHeroId);
+      }
+      if (resolution.army) {
+        neutralArmies = {
+          ...neutralArmies,
+          [neutralArmyId]: resolution.army
+        };
+        workingState = buildNextWorldState(workingState, heroes, neutralArmies, buildings);
+      }
+      neutralEvents.push(...resolution.events);
+    }
     const nextState = buildNextWorldState(
       {
         ...state,
         meta: {
           ...state.meta,
           day: state.meta.day + 1
-        }
+        },
+        resources: nextResources
       },
       heroes,
-      state.neutralArmies
+      neutralArmies,
+      buildings
     );
     return {
       state: nextState,
-      events: [{ type: "turn.advanced", day: nextState.meta.day }]
+      events: [{ type: "turn.advanced", day: nextState.meta.day }, ...productionEvents, ...neutralEvents]
     };
   }
 
@@ -918,7 +1775,7 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
           }
         : item
     );
-    const nextState = buildNextWorldState(state, heroes, state.neutralArmies);
+    const nextState = buildNextWorldState(state, heroes, state.neutralArmies, state.buildings);
 
     if (plan.endsInEncounter) {
       const encounterRefId = plan.encounterRefId;
@@ -951,6 +1808,127 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
           heroId: action.heroId,
           path: plan.travelPath,
           moveCost: plan.moveCost
+        }
+      ]
+    };
+  }
+
+  if (action.type === "hero.recruit") {
+    const hero = state.heroes.find((item) => item.id === action.heroId);
+    const building = state.buildings[action.buildingId];
+    if (!hero || !building || building.kind !== "recruitment_post") {
+      return { state, events: [] };
+    }
+
+    const recruitedCount = building.availableCount;
+    const heroes = state.heroes.map((item) =>
+      item.id === hero.id
+        ? {
+            ...item,
+            armyCount: item.armyCount + recruitedCount
+          }
+        : item
+    );
+    const buildings = {
+      ...state.buildings,
+      [building.id]: {
+        ...building,
+        position: { ...building.position },
+        cost: cloneResourceLedger(building.cost),
+        availableCount: 0
+      }
+    };
+    const nextState = buildNextWorldState(
+      {
+        ...state,
+        resources: spendResources(state.resources, hero.playerId, building.cost)
+      },
+      heroes,
+      state.neutralArmies,
+      buildings
+    );
+
+    return {
+      state: nextState,
+      events: [
+        {
+          type: "hero.recruited",
+          heroId: hero.id,
+          buildingId: building.id,
+          buildingKind: building.kind,
+          unitTemplateId: building.unitTemplateId,
+          count: recruitedCount,
+          cost: cloneResourceLedger(building.cost)
+        }
+      ]
+    };
+  }
+
+  if (action.type === "hero.visit") {
+    const hero = state.heroes.find((item) => item.id === action.heroId);
+    const building = state.buildings[action.buildingId];
+    if (!hero || !building || building.kind !== "attribute_shrine") {
+      return { state, events: [] };
+    }
+
+    const heroes = state.heroes.map((item) =>
+      item.id === hero.id ? applyHeroStatBonus(item, building.bonus) : item
+    );
+    const buildings = {
+      ...state.buildings,
+      [building.id]: {
+        ...building,
+        position: { ...building.position },
+        bonus: cloneHeroStatBonus(building.bonus),
+        visitedHeroIds: [...building.visitedHeroIds, hero.id]
+      }
+    };
+    const nextState = buildNextWorldState(state, heroes, state.neutralArmies, buildings);
+
+    return {
+      state: nextState,
+      events: [
+        {
+          type: "hero.visited",
+          heroId: hero.id,
+          buildingId: building.id,
+          buildingKind: building.kind,
+          bonus: cloneHeroStatBonus(building.bonus)
+        }
+      ]
+    };
+  }
+
+  if (action.type === "hero.claimMine") {
+    const hero = state.heroes.find((item) => item.id === action.heroId);
+    const building = state.buildings[action.buildingId];
+    if (!hero || !building || building.kind !== "resource_mine") {
+      return { state, events: [] };
+    }
+
+    const buildings = {
+      ...state.buildings,
+      [building.id]: {
+        ...building,
+        position: { ...building.position },
+        resourceKind: building.resourceKind,
+        income: building.income,
+        ownerPlayerId: hero.playerId
+      }
+    };
+    const nextState = buildNextWorldState(state, state.heroes, state.neutralArmies, buildings);
+
+    return {
+      state: nextState,
+      events: [
+        {
+          type: "hero.claimedMine",
+          heroId: hero.id,
+          buildingId: building.id,
+          buildingKind: building.kind,
+          resourceKind: building.resourceKind,
+          income: building.income,
+          ownerPlayerId: hero.playerId
         }
       ]
     };
@@ -1007,8 +1985,27 @@ export function filterWorldEventsForPlayer(
         return true;
       case "hero.moved":
       case "hero.collected":
+      case "hero.recruited":
+      case "hero.visited":
+      case "hero.claimedMine":
       case "hero.progressed":
         return ownsHero(event.heroId);
+      case "neutral.moved": {
+        const visibility = state.visibilityByPlayer[playerId];
+        if (ownsHero(event.targetHeroId)) {
+          return true;
+        }
+        if (!visibility) {
+          return false;
+        }
+
+        return (
+          getFogAt(visibility, tileIndex(state.map, event.from)) === "visible" ||
+          getFogAt(visibility, tileIndex(state.map, event.to)) === "visible"
+        );
+      }
+      case "resource.produced":
+        return event.playerId === playerId;
       case "battle.started":
       case "battle.resolved":
         return ownsHero(event.heroId) || ownsHero(event.defenderHeroId);
@@ -1055,7 +2052,7 @@ export function applyBattleOutcomeToWorld(
           : hero
       );
       return {
-        state: buildNextWorldState(state, heroes, state.neutralArmies),
+        state: buildNextWorldState(state, heroes, state.neutralArmies, state.buildings),
         events: [
           {
             type: "battle.resolved",
@@ -1111,7 +2108,7 @@ export function applyBattleOutcomeToWorld(
     });
 
     return {
-      state: buildNextWorldState(state, heroes, state.neutralArmies),
+      state: buildNextWorldState(state, heroes, state.neutralArmies, state.buildings),
       events: [
           {
             type: "battle.resolved",
@@ -1160,7 +2157,7 @@ export function applyBattleOutcomeToWorld(
         : hero
     );
     return {
-      state: buildNextWorldState(state, heroes, state.neutralArmies),
+      state: buildNextWorldState(state, heroes, state.neutralArmies, state.buildings),
       events: [
         {
           type: "battle.resolved",
@@ -1189,7 +2186,7 @@ export function applyBattleOutcomeToWorld(
       ? grantResource(state.resources, attackerHero.playerId, neutralArmy.reward)
       : state.resources
   };
-  const nextState = buildNextWorldState(nextStateBase, heroes, nextNeutralArmies);
+  const nextState = buildNextWorldState(nextStateBase, heroes, nextNeutralArmies, state.buildings);
 
   return {
     state: nextState,

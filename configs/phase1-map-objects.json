@@ -15,7 +15,21 @@
           "templateId": "wolf_pack",
           "count": 8
         }
-      ]
+      ],
+      "behavior": {
+        "mode": "patrol",
+        "patrolPath": [
+          {
+            "x": 5,
+            "y": 4
+          },
+          {
+            "x": 5,
+            "y": 3
+          }
+        ],
+        "aggroRange": 2
+      }
     }
   ],
   "guaranteedResources": [
@@ -28,6 +42,50 @@
         "kind": "wood",
         "amount": 5
       }
+    }
+  ],
+  "buildings": [
+    {
+      "id": "recruit-post-1",
+      "kind": "recruitment_post",
+      "position": {
+        "x": 1,
+        "y": 3
+      },
+      "label": "前线招募所",
+      "unitTemplateId": "hero_guard_basic",
+      "recruitCount": 4,
+      "cost": {
+        "gold": 240,
+        "wood": 0,
+        "ore": 0
+      }
+    },
+    {
+      "id": "shrine-attack-1",
+      "kind": "attribute_shrine",
+      "position": {
+        "x": 3,
+        "y": 2
+      },
+      "label": "战旗圣坛",
+      "bonus": {
+        "attack": 1,
+        "defense": 0,
+        "power": 0,
+        "knowledge": 0
+      }
+    },
+    {
+      "id": "mine-wood-1",
+      "kind": "resource_mine",
+      "position": {
+        "x": 3,
+        "y": 1
+      },
+      "label": "前线伐木场",
+      "resourceKind": "wood",
+      "income": 2
     }
   ]
 }

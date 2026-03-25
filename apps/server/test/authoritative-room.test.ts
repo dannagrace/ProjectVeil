@@ -24,20 +24,26 @@ test("battle start auto-resolves defender opener before state is returned to the
         { x: 2, y: 1 },
         { x: 3, y: 1 },
         { x: 3, y: 2 },
-        { x: 4, y: 2 },
-        { x: 5, y: 2 },
-        { x: 5, y: 3 }
+        { x: 3, y: 3 },
+        { x: 3, y: 4 },
+        { x: 4, y: 4 }
       ],
       moveCost: 6
     }
   ]);
   assert.ok(result.battle);
   assert.equal(result.battle?.units[result.battle.activeUnitId ?? ""]?.camp, "attacker");
-  assert.deepEqual(result.battle?.log.slice(-2), [
-    "恶狼 对 凯琳卫队 造成 24 伤害",
-    "凯琳卫队 反击 恶狼，造成 30 伤害"
+  assert.deepEqual(result.battle?.log.slice(-4), [
+    "恶狼 施放 裂伤嚎叫，对 凯琳卫队 造成 15 伤害",
+    "恶狼 的裂伤嚎叫让 凯琳卫队 陷入削弱",
+    "恶狼 的毒牙让 凯琳卫队 陷入中毒",
+    "凯琳卫队 受到中毒影响，损失 2 生命"
   ]);
-  assert.deepEqual(result.snapshot.state.ownHeroes[0]?.position, { x: 5, y: 3 });
+  assert.deepEqual(
+    result.battle?.units["hero-1-stack"]?.statusEffects?.map((status) => status.id).sort(),
+    ["poisoned", "weakened"]
+  );
+  assert.deepEqual(result.snapshot.state.ownHeroes[0]?.position, { x: 4, y: 4 });
 });
 
 test("player battle actions are followed by automated defender turns until control returns", () => {
@@ -60,10 +66,12 @@ test("player battle actions are followed by automated defender turns until contr
   assert.ok(battleResult.battle);
   assert.equal(battleResult.battle?.round, 2);
   assert.equal(battleResult.battle?.units[battleResult.battle?.activeUnitId ?? ""]?.camp, "attacker");
-  assert.deepEqual(battleResult.battle?.log.slice(-3), [
+  assert.deepEqual(battleResult.battle?.log.slice(-5), [
     "hero-1-stack 进入防御",
-    "恶狼 对 凯琳卫队 造成 16 伤害",
-    "凯琳卫队 反击 恶狼，造成 27 伤害"
+    "恶狼 对 凯琳卫队 造成 22 伤害",
+    "恶狼 的毒牙让 凯琳卫队 陷入中毒",
+    "凯琳卫队 反击 恶狼，造成 29 伤害",
+    "凯琳卫队 受到中毒影响，损失 2 生命"
   ]);
 });
 
@@ -161,4 +169,213 @@ test("room filters event timelines per player without hiding PvP battle results 
 
   assert.deepEqual(room.filterEventsForPlayer("player-1", events), events);
   assert.deepEqual(room.filterEventsForPlayer("player-2", events), [events[1], events[2], events[3]]);
+});
+
+test("room allows recruiting from a recruitment post when the hero stands on it", () => {
+  const room = createRoom("room-recruit", 1001);
+  const state = room.getInternalState();
+  state.resources["player-1"] = {
+    gold: 300,
+    wood: 0,
+    ore: 0
+  };
+
+  const moveResult = room.dispatch("player-1", {
+    type: "hero.move",
+    heroId: "hero-1",
+    destination: { x: 1, y: 3 }
+  });
+
+  assert.equal(moveResult.ok, true);
+  assert.deepEqual(moveResult.snapshot.state.ownHeroes[0]?.position, { x: 1, y: 3 });
+
+  const recruitResult = room.dispatch("player-1", {
+    type: "hero.recruit",
+    heroId: "hero-1",
+    buildingId: "recruit-post-1"
+  });
+
+  assert.equal(recruitResult.ok, true);
+  assert.deepEqual(recruitResult.events, [
+    {
+      type: "hero.recruited",
+      heroId: "hero-1",
+      buildingId: "recruit-post-1",
+      buildingKind: "recruitment_post",
+      unitTemplateId: "hero_guard_basic",
+      count: 4,
+      cost: {
+        gold: 240,
+        wood: 0,
+        ore: 0
+      }
+    }
+  ]);
+  assert.equal(recruitResult.snapshot.state.ownHeroes[0]?.armyCount, 16);
+  assert.equal(recruitResult.snapshot.state.resources.gold, 60);
+  assert.equal(
+    recruitResult.snapshot.state.map.tiles.find((tile) => tile.position.x === 1 && tile.position.y === 3)?.building?.availableCount,
+    0
+  );
+});
+
+test("room allows visiting an attribute shrine once and persists the stat bonus", () => {
+  const room = createRoom("room-shrine", 1001);
+
+  const moveResult = room.dispatch("player-1", {
+    type: "hero.move",
+    heroId: "hero-1",
+    destination: { x: 3, y: 2 }
+  });
+
+  assert.equal(moveResult.ok, true);
+  assert.deepEqual(moveResult.snapshot.state.ownHeroes[0]?.position, { x: 3, y: 2 });
+
+  const visitResult = room.dispatch("player-1", {
+    type: "hero.visit",
+    heroId: "hero-1",
+    buildingId: "shrine-attack-1"
+  });
+
+  assert.equal(visitResult.ok, true);
+  assert.deepEqual(visitResult.events, [
+    {
+      type: "hero.visited",
+      heroId: "hero-1",
+      buildingId: "shrine-attack-1",
+      buildingKind: "attribute_shrine",
+      bonus: {
+        attack: 1,
+        defense: 0,
+        power: 0,
+        knowledge: 0
+      }
+    }
+  ]);
+  assert.equal(visitResult.snapshot.state.ownHeroes[0]?.stats.attack, 3);
+
+  const revisitResult = room.dispatch("player-1", {
+    type: "hero.visit",
+    heroId: "hero-1",
+    buildingId: "shrine-attack-1"
+  });
+
+  assert.equal(revisitResult.ok, false);
+  assert.equal(revisitResult.reason, "building_already_visited");
+});
+
+test("room allows claiming a resource mine and grants daily income after advancing the day", () => {
+  const room = createRoom("room-mine", 1001);
+
+  const moveResult = room.dispatch("player-1", {
+    type: "hero.move",
+    heroId: "hero-1",
+    destination: { x: 3, y: 1 }
+  });
+
+  assert.equal(moveResult.ok, true);
+  assert.deepEqual(moveResult.snapshot.state.ownHeroes[0]?.position, { x: 3, y: 1 });
+
+  const claimResult = room.dispatch("player-1", {
+    type: "hero.claimMine",
+    heroId: "hero-1",
+    buildingId: "mine-wood-1"
+  });
+
+  assert.equal(claimResult.ok, true);
+  assert.deepEqual(claimResult.events, [
+    {
+      type: "hero.claimedMine",
+      heroId: "hero-1",
+      buildingId: "mine-wood-1",
+      buildingKind: "resource_mine",
+      resourceKind: "wood",
+      income: 2,
+      ownerPlayerId: "player-1"
+    }
+  ]);
+  assert.equal(
+    claimResult.snapshot.state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 1)?.building?.ownerPlayerId,
+    "player-1"
+  );
+
+  const nextDayResult = room.dispatch("player-1", {
+    type: "turn.endDay"
+  });
+
+  assert.equal(nextDayResult.ok, true);
+  assert.deepEqual(nextDayResult.events, [
+    {
+      type: "turn.advanced",
+      day: 2
+    },
+    {
+      type: "resource.produced",
+      playerId: "player-1",
+      buildingId: "mine-wood-1",
+      buildingKind: "resource_mine",
+      resource: {
+        kind: "wood",
+        amount: 2
+      }
+    },
+    {
+      type: "neutral.moved",
+      neutralArmyId: "neutral-1",
+      from: { x: 5, y: 4 },
+      to: { x: 5, y: 3 },
+      reason: "patrol"
+    }
+  ]);
+  assert.equal(nextDayResult.snapshot.state.resources.wood, 2);
+});
+
+test("room can create a neutral-initiated battle when end day triggers an adjacent chase", () => {
+  const room = createRoom("room-neutral-chase", 1001);
+  const state = room.getInternalState();
+  const previousNeutralTile = state.map.tiles.find((tile) => tile.occupant?.kind === "neutral" && tile.occupant.refId === "neutral-1");
+  if (previousNeutralTile) {
+    previousNeutralTile.occupant = undefined;
+  }
+
+  state.neutralArmies["neutral-1"] = {
+    ...state.neutralArmies["neutral-1"],
+    position: { x: 2, y: 1 },
+    origin: { x: 2, y: 1 },
+    behavior: {
+      mode: "guard",
+      patrolPath: [],
+      patrolIndex: 0,
+      aggroRange: 1
+    }
+  };
+  const nextNeutralTile = state.map.tiles.find((tile) => tile.position.x === 2 && tile.position.y === 1);
+  assert.ok(nextNeutralTile);
+  nextNeutralTile.walkable = true;
+  nextNeutralTile.terrain = "grass";
+  nextNeutralTile.occupant = { kind: "neutral", refId: "neutral-1" };
+
+  const result = room.dispatch("player-1", {
+    type: "turn.endDay"
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.events?.slice(0, 2), [
+    {
+      type: "turn.advanced",
+      day: 2
+    },
+    {
+      type: "battle.started",
+      heroId: "hero-1",
+      encounterKind: "neutral",
+      neutralArmyId: "neutral-1",
+      initiator: "neutral",
+      battleId: "battle-neutral-1",
+      path: [{ x: 1, y: 1 }],
+      moveCost: 0
+    }
+  ]);
+  assert.equal(result.battle?.id, "battle-neutral-1");
+  assert.equal(result.battle?.units[result.battle.activeUnitId ?? ""]?.camp, "attacker");
 });

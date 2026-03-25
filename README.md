@@ -69,6 +69,7 @@
   - 玩家视角裁剪快照与 Action 校验。
   - 统一通过共享 reducer 处理客户端 Action，并在接触明雷时生成战斗快照。
   - 战斗结束后回写世界状态，胜利移除明雷并发放奖励，失败施加英雄惩罚。
+  - MySQL 持久化现已包含房间快照、玩家房间档案、`player_accounts` 全局资源仓库初版，以及 `player_hero_archives` 英雄长期档初版。
 - `apps/client`
   - 客户端渲染器骨架。
   - 当前以文本渲染示例验证“客户端只负责展示玩家可见状态”的边界。
@@ -113,9 +114,30 @@
 - 当前已补上配置中心 MVP：
   - 前端入口：`http://127.0.0.1:4173/config-center.html`
   - 后端 API：`/api/config-center/configs`
-  - 当前支持编辑 `phase1-world.json / phase1-map-objects.json / units.json`
+  - 当前支持编辑 `phase1-world.json / phase1-map-objects.json / units.json / battle-skills.json`
   - 未配置 MySQL 时走文件系统存储；配置 `VEIL_MYSQL_*` 后切换到 MySQL 主存储
   - 保存后会同时导出到 `configs/*.json`，并同步刷新服务端运行时配置，新建房间和战斗逻辑会直接读取新值
+  - 当前编辑 `phase1-world.json` 时，右侧会即时生成一份地图样本预览；可切换预览 seed，对照查看地形、随机资源、保底资源、英雄与中立怪分布
+  - 当前编辑 `battle-skills.json` 时，右侧会显示技能编辑器，可直接调整冷却、伤害倍率、目标类型、附加状态和状态持续参数，并同步回写 JSON 草稿
+- H5 战斗面板现已补上“战术情报”区，会并排展示当前行动单位和已锁定目标的技能、状态、冷却与效果说明，便于直接核对配置是否符合预期。
+- Cocos 战斗面板现已补上技能摘要和目标状态提示，概要区、目标卡与动作按钮都会带出当前技能/状态信息，而不再只有基础攻击指令。
+- `phase1-map-objects.json` 现已支持配置 `buildings`，当前已接入 `recruitment_post` 招募所、`attribute_shrine` 属性神殿和 `resource_mine` 资源矿场；英雄停在建筑格上再次点击当前格即可访问或占领建筑。
+- 招募所会按库存和资源消耗补充部队，并在每日推进后自动重置；属性神殿会给当前英雄永久属性加成，并记录已访问英雄避免重复领取；资源矿场则会在占领后于“推进一天”时自动结算金币/木材/矿石产出。H5 / Cocos / 配置中心地图预览都已能显示这些建筑。
+- `neutralArmies` 现已支持可选 `behavior` 字段：可配置 `guard / patrol` 模式、巡逻路线和 `aggroRange`；中立怪会在每日推进时按路线巡逻、失位后回守，并在英雄靠近时主动追击，贴身时直接触发遭遇战。
+- 当前 MySQL 资源持久化已补上 `player_accounts`：房间保存时会同步刷新玩家全局 `gold / wood / ore` 仓库，新建房间会先回灌这份全局资源，因此同一 `playerId` 的基础资源已能跨房间继承。
+- 当前 MySQL 英雄长期档已补上 `player_hero_archives`：房间保存时会同步刷新英雄的长期成长与带兵快照，新建房间会先回灌这些长期数据，因此同一 `playerId` 的英雄属性成长和当前带兵已能跨房间继承；英雄的位置、剩余移动力和当前生命仍会按新局重置。
+- 当前玩家账号骨架也已接到 `player_accounts`：账号记录现已包含 `displayName / lastRoomId / lastSeenAt / globalResources`，并开放 `GET /api/player-accounts`、`GET /api/player-accounts/:playerId`、`PUT /api/player-accounts/:playerId` 供开发态查看与改名；房间 `connect` 时会自动建档或刷新最近活跃房间。
+- H5 左侧面板现已补上账号资料卡：会优先显示服务端账号昵称，也会在浏览器本地记住上次使用的游客昵称；远端房间首次 `connect` 时会把这份 `displayName` 一并带给服务端，用于初始化游客账号资料。
+- H5 现在也有真正的 Lobby / 登录入口：当页面没有携带 `roomId / playerId` 查询参数时，会先进入大厅页，显示游客 `playerId / 昵称 / roomId` 表单和 `/api/lobby/rooms` 活跃房间列表；选房或手动输入房间后即可进入实例，游戏内也能一键返回大厅。
+- Lobby 进入房间前现在会先请求 `POST /api/auth/guest-login`，服务端会签发一个游客登录 token；浏览器会缓存这份游客会话，因此后续页面只带 `?roomId=...` 也能直接进入房间，不再必须把 `playerId` 写进 URL。
+- 服务端还新增了 `GET /api/auth/session` 与 `GET /api/player-accounts/me`、`PUT /api/player-accounts/me`：前者用于校验和刷新当前游客会话，后者用于按当前登录态读取/修改自己的账号资料，不需要前端再手拼 `playerId`。
+- 账号体系现已从“纯游客模式”升级为“双模式骨架”：`player_accounts` 新增 `loginId / passwordHash / credentialBoundAt`，服务端开放 `POST /api/auth/account-bind` 与 `POST /api/auth/account-login`，可把当前游客档绑定成口令账号，并在之后直接用登录 ID + 口令进入房间。
+- H5 Lobby 现已补上“账号口令登录”表单；游戏内账号资料卡也能直接绑定或更新口令账号，绑定成功后会立即把当前会话升级成账号模式，不需要重新手写 `playerId`。
+- H5 Lobby 和游戏内都已补上“退出游客会话 / 切换游客账号”入口；当前 token 无效时会自动清掉本地会话并回到大厅。
+- Cocos Web 启动入口现在也会复用这份游客会话：如果浏览器里已有已签名游客 token，那么直接访问 `?roomId=...` 就能沿用当前身份进房，HUD 会标出当前是云端会话、本地会话还是手动参数启动。
+- Cocos Web 现在也有真正的 Lobby 面板：没有 `roomId` 查询参数时会先进入大厅，可刷新 `/api/lobby/rooms` 活跃实例、点击字段卡片修改 `playerId / 昵称 / roomId`、直接点房卡加入，并支持从游戏内一键返回大厅。
+- 服务端新增 `GET /api/lobby/rooms`，会实时返回当前进程内活跃房间的 `roomId / day / seed / connectedPlayers / heroCount / activeBattles / updatedAt` 摘要，便于大厅入口和后续房间浏览器直接复用。
+- 这套账号目前仍是“轻量正式化”阶段：虽然已经有口令绑定和账号登录，但还没有刷新令牌、多端撤销、正式注册流程或第三方身份接入。
 - H5 会优先连接 `ws://127.0.0.1:2567` 的本地会话服务；若服务未启动，则自动回退到浏览器内嵌房间模式。
 - 本地会话服务已支持房间内 `session.state` 推送同步，后续可在此基础上继续扩展多人联机。
 - 多人原型已支持双英雄同房间联调，以及踩到敌方英雄格时触发玩家对玩家遭遇战。
@@ -123,7 +145,11 @@
 - `assets.json` 已支持多状态资源描述，当前单位和标记可按 `idle / selected / hit` 状态切换占位素材。
 - 地形资源已支持稳定多变体切换，单位资源也已拆成 `portrait + frame` 槽位，后续可直接替换成正式美术素材而不改逻辑层 key。
 - `units.json` 现已补上 `faction / rarity` 元数据，前端会自动挂载阵营与品质 badge，占位资源层已经具备继续细化正式 UI 的结构。
+- `battle-skills.json` 现已承载战斗技能与持续状态目录，shared 战斗结算会在创建战斗和执行技能时直接读取运行时配置，不再依赖硬编码技能表。
+- 当前示例技能已包含 `投矛射击 / 护甲术 / 战意激发 / 破甲投枪 / 毒牙 / 裂伤嚎叫`，并补充了 `守誓姿态` 模板；守军自动回合也会根据技能目标和效果优先选择施法，而不是固定平砍。
 - 地图对象也已拆出独立视觉元数据配置，悬停地图时会通过统一对象卡片展示 `interactionType / faction / rarity` 等信息。
 - 双开联调示例：
+  - 大厅入口：`http://127.0.0.1:4173/`
+  - 使用已缓存游客会话直进房间：`http://127.0.0.1:4173/?roomId=test-room`
   - `http://127.0.0.1:4173/?roomId=test-room&playerId=player-1`
   - `http://127.0.0.1:4173/?roomId=test-room&playerId=player-2`

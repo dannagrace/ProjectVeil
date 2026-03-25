@@ -2,6 +2,7 @@ export type TerrainType = "grass" | "dirt" | "sand" | "water";
 export type FogState = "hidden" | "explored" | "visible";
 export type ResourceKind = "gold" | "wood" | "ore";
 export type OccupantKind = "hero" | "neutral" | "building";
+export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_mine";
 export type ResourceLedger = Record<ResourceKind, number>;
 export type WorldResourceLedger = Record<string, ResourceLedger>;
 
@@ -18,6 +19,8 @@ export interface HeroStats {
   hp: number;
   maxHp: number;
 }
+
+export type HeroStatBonus = Pick<HeroStats, "attack" | "defense" | "power" | "knowledge">;
 
 export interface MovePoints {
   total: number;
@@ -55,12 +58,94 @@ export interface OccupantState {
   refId: string;
 }
 
+export interface RecruitmentBuildingConfig {
+  id: string;
+  kind: "recruitment_post";
+  position: Vec2;
+  label: string;
+  unitTemplateId: string;
+  recruitCount: number;
+  cost: ResourceLedger;
+}
+
+export interface AttributeShrineBuildingConfig {
+  id: string;
+  kind: "attribute_shrine";
+  position: Vec2;
+  label: string;
+  bonus: HeroStatBonus;
+}
+
+export interface ResourceMineBuildingConfig {
+  id: string;
+  kind: "resource_mine";
+  position: Vec2;
+  label: string;
+  resourceKind: ResourceKind;
+  income: number;
+}
+
+export type MapBuildingConfig =
+  | RecruitmentBuildingConfig
+  | AttributeShrineBuildingConfig
+  | ResourceMineBuildingConfig;
+
+export interface RecruitmentBuildingState extends RecruitmentBuildingConfig {
+  availableCount: number;
+}
+
+export interface AttributeShrineBuildingState extends AttributeShrineBuildingConfig {
+  visitedHeroIds: string[];
+}
+
+export interface ResourceMineBuildingState extends ResourceMineBuildingConfig {
+  ownerPlayerId?: string;
+}
+
+export type MapBuildingState =
+  | RecruitmentBuildingState
+  | AttributeShrineBuildingState
+  | ResourceMineBuildingState;
+
+export interface RecruitmentBuildingView {
+  id: string;
+  kind: "recruitment_post";
+  label: string;
+  unitTemplateId: string;
+  recruitCount: number;
+  availableCount: number;
+  cost: ResourceLedger;
+}
+
+export interface AttributeShrineBuildingView {
+  id: string;
+  kind: "attribute_shrine";
+  label: string;
+  bonus: HeroStatBonus;
+  visitedHeroIds: string[];
+}
+
+export interface ResourceMineBuildingView {
+  id: string;
+  kind: "resource_mine";
+  label: string;
+  resourceKind: ResourceKind;
+  income: number;
+  ownerPlayerId?: string;
+}
+
+export type PlayerBuildingView =
+  | RecruitmentBuildingView
+  | AttributeShrineBuildingView
+  | ResourceMineBuildingView;
+
 export interface TileState {
   position: Vec2;
   terrain: TerrainType;
   walkable: boolean;
   resource: ResourceNode | undefined;
   occupant: OccupantState | undefined;
+  building: MapBuildingState | undefined;
 }
 
 export interface WorldMapState {
@@ -80,6 +165,7 @@ export interface WorldState {
   map: WorldMapState;
   heroes: HeroState[];
   neutralArmies: Record<string, NeutralArmyState>;
+  buildings: Record<string, MapBuildingState>;
   resources: WorldResourceLedger;
   visibilityByPlayer: Record<string, FogState[]>;
 }
@@ -89,11 +175,29 @@ export interface NeutralArmyStack {
   count: number;
 }
 
+export type NeutralBehaviorMode = "guard" | "patrol";
+export type NeutralMoveReason = "patrol" | "return" | "chase";
+
+export interface NeutralArmyBehaviorConfig {
+  mode?: NeutralBehaviorMode;
+  patrolPath?: Vec2[];
+  aggroRange?: number;
+}
+
+export interface NeutralArmyBehaviorState {
+  mode: NeutralBehaviorMode;
+  patrolPath: Vec2[];
+  patrolIndex: number;
+  aggroRange: number;
+}
+
 export interface NeutralArmyState {
   id: string;
   position: Vec2;
   reward: ResourceNode | undefined;
   stacks: NeutralArmyStack[];
+  origin?: Vec2;
+  behavior?: NeutralArmyBehaviorState;
 }
 
 export interface PlayerTileView {
@@ -103,6 +207,7 @@ export interface PlayerTileView {
   walkable: boolean;
   resource: ResourceNode | undefined;
   occupant: OccupantState | undefined;
+  building: PlayerBuildingView | undefined;
 }
 
 export interface PlayerWorldView {
@@ -141,6 +246,32 @@ export interface MovementPlan {
   encounterRefId?: string;
 }
 
+export type BattleSkillId = string;
+export type BattleSkillKind = "active" | "passive";
+export type BattleSkillTarget = "enemy" | "self";
+export type BattleStatusEffectId = string;
+
+export interface BattleSkillState {
+  id: BattleSkillId;
+  name: string;
+  description: string;
+  kind: BattleSkillKind;
+  target: BattleSkillTarget;
+  cooldown: number;
+  remainingCooldown: number;
+}
+
+export interface BattleStatusEffectState {
+  id: BattleStatusEffectId;
+  name: string;
+  description: string;
+  durationRemaining: number;
+  attackModifier: number;
+  defenseModifier: number;
+  damagePerTurn: number;
+  sourceUnitId?: string;
+}
+
 export interface UnitStack {
   id: string;
   templateId: string;
@@ -156,6 +287,8 @@ export interface UnitStack {
   maxHp: number;
   hasRetaliated: boolean;
   defending: boolean;
+  skills?: BattleSkillState[];
+  statusEffects?: BattleStatusEffectState[];
 }
 
 export interface DeterministicRngState {
@@ -189,6 +322,21 @@ export type WorldAction =
       position: Vec2;
     }
   | {
+      type: "hero.recruit";
+      heroId: string;
+      buildingId: string;
+    }
+  | {
+      type: "hero.visit";
+      heroId: string;
+      buildingId: string;
+    }
+  | {
+      type: "hero.claimMine";
+      heroId: string;
+      buildingId: string;
+    }
+  | {
       type: "turn.endDay";
     };
 
@@ -205,6 +353,12 @@ export type BattleAction =
   | {
       type: "battle.defend";
       unitId: string;
+    }
+  | {
+      type: "battle.skill";
+      unitId: string;
+      skillId: BattleSkillId;
+      targetId?: string;
     };
 
 export interface ValidationResult {
@@ -225,6 +379,46 @@ export type WorldEvent =
       resource: ResourceNode;
     }
   | {
+      type: "hero.recruited";
+      heroId: string;
+      buildingId: string;
+      buildingKind: BuildingKind;
+      unitTemplateId: string;
+      count: number;
+      cost: ResourceLedger;
+    }
+  | {
+      type: "hero.visited";
+      heroId: string;
+      buildingId: string;
+      buildingKind: "attribute_shrine";
+      bonus: HeroStatBonus;
+    }
+  | {
+      type: "hero.claimedMine";
+      heroId: string;
+      buildingId: string;
+      buildingKind: "resource_mine";
+      resourceKind: ResourceKind;
+      income: number;
+      ownerPlayerId: string;
+    }
+  | {
+      type: "resource.produced";
+      playerId: string;
+      buildingId: string;
+      buildingKind: "resource_mine";
+      resource: ResourceNode;
+    }
+  | {
+      type: "neutral.moved";
+      neutralArmyId: string;
+      from: Vec2;
+      to: Vec2;
+      reason: NeutralMoveReason;
+      targetHeroId?: string;
+    }
+  | {
       type: "hero.progressed";
       heroId: string;
       battleId: string;
@@ -240,6 +434,7 @@ export type WorldEvent =
       encounterKind: "neutral" | "hero";
       neutralArmyId?: string;
       defenderHeroId?: string;
+      initiator?: "hero" | "neutral";
       battleId: string;
       path: Vec2[];
       moveCost: number;
@@ -354,6 +549,7 @@ export interface NeutralArmyConfig {
   position: Vec2;
   reward: ResourceNode | undefined;
   stacks: NeutralArmyStack[];
+  behavior?: NeutralArmyBehaviorConfig;
 }
 
 export interface GuaranteedResourceConfig {
@@ -377,6 +573,7 @@ export interface WorldGenerationConfig {
 export interface MapObjectsConfig {
   neutralArmies: NeutralArmyConfig[];
   guaranteedResources: GuaranteedResourceConfig[];
+  buildings: MapBuildingConfig[];
 }
 
 export interface UnitTemplateConfig {
@@ -390,8 +587,41 @@ export interface UnitTemplateConfig {
   minDamage: number;
   maxDamage: number;
   maxHp: number;
+  battleSkills?: BattleSkillId[];
 }
 
 export interface UnitCatalogConfig {
   templates: UnitTemplateConfig[];
+}
+
+export interface BattleSkillEffectConfig {
+  damageMultiplier?: number;
+  allowRetaliation?: boolean;
+  grantedStatusId?: BattleStatusEffectId;
+  onHitStatusId?: BattleStatusEffectId;
+}
+
+export interface BattleSkillConfig {
+  id: BattleSkillId;
+  name: string;
+  description: string;
+  kind: BattleSkillKind;
+  target: BattleSkillTarget;
+  cooldown: number;
+  effects?: BattleSkillEffectConfig;
+}
+
+export interface BattleStatusEffectConfig {
+  id: BattleStatusEffectId;
+  name: string;
+  description: string;
+  duration: number;
+  attackModifier: number;
+  defenseModifier: number;
+  damagePerTurn: number;
+}
+
+export interface BattleSkillCatalogConfig {
+  skills: BattleSkillConfig[];
+  statuses: BattleStatusEffectConfig[];
 }

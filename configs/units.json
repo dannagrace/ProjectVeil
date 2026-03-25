@@ -10,7 +10,8 @@
       "defense": 4,
       "minDamage": 2,
       "maxDamage": 4,
-      "maxHp": 10
+      "maxHp": 10,
+      "battleSkills": ["power_shot", "armor_spell", "battle_focus", "sundering_spear"]
     },
     {
       "id": "wolf_pack",
@@ -22,7 +23,8 @@
       "defense": 4,
       "minDamage": 2,
       "maxDamage": 4,
-      "maxHp": 8
+      "maxHp": 8,
+      "battleSkills": ["venomous_fangs", "crippling_howl"]
     }
   ]
 }

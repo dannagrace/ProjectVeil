@@ -1,8 +1,11 @@
 import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
+import { registerAuthRoutes } from "./auth";
 import { createConfiguredConfigCenterStore, registerConfigCenterRoutes } from "./config-center";
-import { configureRoomSnapshotStore, VeilColyseusRoom } from "./colyseus-room";
+import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./colyseus-room";
+import { registerLobbyRoutes } from "./lobby";
 import { createConfiguredRoomSnapshotStore, MySqlRoomSnapshotStore } from "./persistence";
+import { registerPlayerAccountRoutes } from "./player-accounts";
 
 loadEnv();
 
@@ -15,7 +18,10 @@ async function startDevServer(
   const configCenterStore = await createConfiguredConfigCenterStore();
   await configCenterStore.initializeRuntimeConfigs();
   const transport = new WebSocketTransport();
+  registerAuthRoutes(transport.getExpressApp() as never, snapshotStore);
   registerConfigCenterRoutes(transport.getExpressApp() as never, configCenterStore);
+  registerPlayerAccountRoutes(transport.getExpressApp() as never, snapshotStore);
+  registerLobbyRoutes(transport.getExpressApp() as never, { listRooms: listLobbyRooms });
 
   const gameServer = new Server({
     transport
@@ -27,6 +33,12 @@ async function startDevServer(
   console.log(`Project Veil Colyseus dev server listening on ws://${host}:${port}`);
   // eslint-disable-next-line no-console
   console.log(`Config center API available at http://${host}:${port}/api/config-center/configs`);
+  // eslint-disable-next-line no-console
+  console.log(`Player account API available at http://${host}:${port}/api/player-accounts`);
+  // eslint-disable-next-line no-console
+  console.log(`Guest auth API available at http://${host}:${port}/api/auth/guest-login`);
+  // eslint-disable-next-line no-console
+  console.log(`Lobby API available at http://${host}:${port}/api/lobby/rooms`);
   // eslint-disable-next-line no-console
   console.log(`Config center storage: ${configCenterStore.mode}`);
   if (snapshotStore) {

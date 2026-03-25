@@ -100,7 +100,28 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
         currentHp: 10,
         maxHp: 10,
         hasRetaliated: false,
-        defending: false
+        defending: false,
+        skills: [
+          {
+            id: "power_shot",
+            name: "投矛射击",
+            description: "远程压制目标，伤害略低，但不会触发反击。",
+            kind: "active",
+            target: "enemy",
+            cooldown: 2,
+            remainingCooldown: 0
+          },
+          {
+            id: "armor_spell",
+            name: "护甲术",
+            description: "为自己附加护甲术，在后续回合提升防御。",
+            kind: "active",
+            target: "self",
+            cooldown: 3,
+            remainingCooldown: 0
+          }
+        ],
+        statusEffects: []
       },
       "neutral-1-stack": {
         id: "neutral-1-stack",
@@ -116,7 +137,9 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
         currentHp: 9,
         maxHp: 9,
         hasRetaliated: true,
-        defending: true
+        defending: true,
+        skills: [],
+        statusEffects: []
       }
     },
     log: [],
@@ -138,6 +161,8 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
 
   assert.equal(view.idle, false);
   assert.equal(view.summaryLines[2], "阶段：轮到我方");
+  assert.equal(view.summaryLines[4], "技能1：投矛射击[敌/就绪] / 护甲术[自/就绪]");
+  assert.equal(view.summaryLines[5], "状态：无异常");
   assert.equal(view.orderLines[0], "行动顺序");
   assert.equal(view.orderLines[1], "> Guard x12");
   assert.equal(view.orderLines[2], "2. Orc x8 (DEF/RET)");
@@ -160,20 +185,30 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
   assert.deepEqual(view.friendlyItems[0], {
     id: "hero-1-stack",
     title: "Guard x12",
-    meta: "生命 10/10",
+    meta: "生命 10/10 · 技能 2",
     badge: "待命"
   });
   assert.match(view.enemyTargets[0]!.label, /^> Orc x8 生命 9\/9/);
   assert.equal(view.enemyTargets[0]!.title, "Orc x8");
-  assert.equal(view.enemyTargets[0]!.meta, "生命 9/9");
+  assert.equal(view.enemyTargets[0]!.meta, "生命 9/9 · 防御中 · 已反击");
   assert.equal(view.enemyTargets[0]!.badge, "已选中");
   assert.equal(view.actions[0]!.enabled, true);
-  assert.equal(view.actions[0]!.subtitle, "目标：Orc");
+  assert.equal(view.actions[0]!.subtitle, "目标：Orc · 生命 9/9 · 防御中 · 已反击");
   assert.deepEqual(view.actions[0]!.action, {
     type: "battle.attack",
     attackerId: "hero-1-stack",
     defenderId: "neutral-1-stack"
   });
+  assert.equal(view.actions[3]!.key, "skill-power_shot");
+  assert.match(view.actions[3]!.subtitle, /^目标：Orc · 远程压制目标/);
+  assert.deepEqual(view.actions[3]!.action, {
+    type: "battle.skill",
+    unitId: "hero-1-stack",
+    skillId: "power_shot",
+    targetId: "neutral-1-stack"
+  });
+  assert.equal(view.actions[4]!.key, "skill-armor_spell");
+  assert.match(view.actions[4]!.subtitle, /^自身增益 · 为自己附加护甲术/);
 });
 
 test("buildBattlePanelViewModel disables commands during enemy turns", () => {
@@ -198,7 +233,9 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
         currentHp: 10,
         maxHp: 10,
         hasRetaliated: false,
-        defending: false
+        defending: false,
+        skills: [],
+        statusEffects: []
       },
       "hero-2-stack": {
         id: "hero-2-stack",
@@ -214,7 +251,9 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
         currentHp: 10,
         maxHp: 10,
         hasRetaliated: false,
-        defending: false
+        defending: false,
+        skills: [],
+        statusEffects: []
       }
     },
     log: [],
@@ -235,6 +274,8 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
   });
 
   assert.equal(view.summaryLines[2], "阶段：轮到对方");
+  assert.equal(view.summaryLines[4], "技能：普通攻击");
+  assert.equal(view.summaryLines[5], "状态：无异常");
   assert.equal(view.orderLines[1], "> Raider x11");
   assert.equal(view.orderItems[0]!.badge, "行动中");
   assert.equal(view.orderItems[1]!.badge, "2");

@@ -4,10 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  getDefaultBattleSkillCatalog,
   getDefaultWorldConfig,
   resetRuntimeConfigs
 } from "../../../packages/shared/src/index";
-import { FileSystemConfigCenterStore } from "../src/config-center";
+import {
+  createWorldConfigPreview,
+  FileSystemConfigCenterStore
+} from "../src/config-center";
+import type { WorldConfigPreview } from "../src/config-center";
 
 const WORLD_CONFIG = {
   width: 8,
@@ -51,14 +56,49 @@ const MAP_OBJECTS_CONFIG = {
     {
       id: "neutral-1",
       position: { x: 5, y: 4 },
-      reward: { kind: "gold", amount: 300 },
+      reward: { kind: "gold" as const, amount: 300 },
       stacks: [{ templateId: "wolf_pack", count: 8 }]
     }
   ],
   guaranteedResources: [
     {
       position: { x: 2, y: 1 },
-      resource: { kind: "wood", amount: 5 }
+      resource: { kind: "wood" as const, amount: 5 }
+    }
+  ],
+  buildings: [
+    {
+      id: "recruit-post-1",
+      kind: "recruitment_post" as const,
+      position: { x: 1, y: 3 },
+      label: "前线招募所",
+      unitTemplateId: "hero_guard_basic",
+      recruitCount: 4,
+      cost: {
+        gold: 240,
+        wood: 0,
+        ore: 0
+      }
+    },
+    {
+      id: "shrine-attack-1",
+      kind: "attribute_shrine" as const,
+      position: { x: 3, y: 2 },
+      label: "战旗圣坛",
+      bonus: {
+        attack: 1,
+        defense: 0,
+        power: 0,
+        knowledge: 0
+      }
+    },
+    {
+      id: "mine-wood-1",
+      kind: "resource_mine" as const,
+      position: { x: 4, y: 1 },
+      label: "前线伐木场",
+      resourceKind: "wood" as const,
+      income: 2
     }
   ]
 };
@@ -92,10 +132,70 @@ const UNIT_CONFIG = {
   ]
 };
 
+const BATTLE_SKILL_CONFIG = {
+  skills: [
+    {
+      id: "power_shot",
+      name: "投矛射击",
+      description: "远程压制目标，伤害略低，但不会触发反击。",
+      kind: "active" as const,
+      target: "enemy" as const,
+      cooldown: 2,
+      effects: {
+        damageMultiplier: 0.85,
+        allowRetaliation: false
+      }
+    },
+    {
+      id: "armor_spell",
+      name: "护甲术",
+      description: "为自己附加护甲术，在后续回合提升防御。",
+      kind: "active" as const,
+      target: "self" as const,
+      cooldown: 3,
+      effects: {
+        grantedStatusId: "arcane_armor"
+      }
+    },
+    {
+      id: "venomous_fangs",
+      name: "毒牙",
+      description: "命中后让目标陷入中毒，回合开始时持续掉血。",
+      kind: "passive" as const,
+      target: "enemy" as const,
+      cooldown: 0,
+      effects: {
+        onHitStatusId: "poisoned"
+      }
+    }
+  ],
+  statuses: [
+    {
+      id: "poisoned",
+      name: "中毒",
+      description: "回合开始时损失生命。",
+      duration: 2,
+      attackModifier: 0,
+      defenseModifier: 0,
+      damagePerTurn: 2
+    },
+    {
+      id: "arcane_armor",
+      name: "护甲术",
+      description: "临时提升防御。",
+      duration: 2,
+      attackModifier: 0,
+      defenseModifier: 3,
+      damagePerTurn: 0
+    }
+  ]
+};
+
 async function seedConfigRoot(rootDir: string): Promise<void> {
   await writeFile(join(rootDir, "phase1-world.json"), `${JSON.stringify(WORLD_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "phase1-map-objects.json"), `${JSON.stringify(MAP_OBJECTS_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "units.json"), `${JSON.stringify(UNIT_CONFIG, null, 2)}\n`, "utf8");
+  await writeFile(join(rootDir, "battle-skills.json"), `${JSON.stringify(BATTLE_SKILL_CONFIG, null, 2)}\n`, "utf8");
 }
 
 test.afterEach(() => {
@@ -111,7 +211,7 @@ test("config center lists seeded config documents", async () => {
 
   assert.deepEqual(
     items.map((item) => item.id),
-    ["world", "mapObjects", "units"]
+    ["world", "mapObjects", "units", "battleSkills"]
   );
   assert.match(items[0]?.summary ?? "", /8x8/);
 });
@@ -142,6 +242,29 @@ test("config center save writes file and refreshes runtime world config", async 
   assert.equal(getDefaultWorldConfig().heroes[0]?.position.x, 2);
 });
 
+test("config center save writes battle skills file and refreshes runtime skill catalog", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  const nextCatalog = {
+    ...BATTLE_SKILL_CONFIG,
+    skills: BATTLE_SKILL_CONFIG.skills.map((skill) =>
+      skill.id === "power_shot" ? { ...skill, name: "重弩射击", cooldown: 1 } : skill
+    )
+  };
+
+  const document = await store.saveDocument("battleSkills", JSON.stringify(nextCatalog));
+  const fileContent = await readFile(join(rootDir, "battle-skills.json"), "utf8");
+  const powerShot = getDefaultBattleSkillCatalog().skills.find((skill) => skill.id === "power_shot");
+
+  assert.equal(document.id, "battleSkills");
+  assert.match(fileContent, /"重弩射击"/);
+  assert.equal(powerShot?.name, "重弩射击");
+  assert.equal(powerShot?.cooldown, 1);
+});
+
 test("config center rejects map objects that exceed current world bounds", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
   await seedConfigRoot(rootDir);
@@ -162,4 +285,33 @@ test("config center rejects map objects that exceed current world bounds", async
     () => store.saveDocument("mapObjects", JSON.stringify(invalidMapObjects)),
     /exceeds map bounds/
   );
+});
+
+test("config center world preview summarizes generated terrain, resources and occupants", () => {
+  const preview = createWorldConfigPreview(WORLD_CONFIG, MAP_OBJECTS_CONFIG, 2026) as WorldConfigPreview;
+  const guaranteedTile = preview.tiles.find((tile) => tile.position.x === 2 && tile.position.y === 1);
+  const neutralTile = preview.tiles.find((tile) => tile.position.x === 5 && tile.position.y === 4);
+  const buildingTile = preview.tiles.find((tile) => tile.position.x === 1 && tile.position.y === 3);
+  const shrineTile = preview.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 2);
+  const mineTile = preview.tiles.find((tile) => tile.position.x === 4 && tile.position.y === 1);
+  const totalTerrain = Object.values(preview.counts.terrain).reduce((sum, count) => sum + count, 0);
+
+  assert.equal(preview.seed, 2026);
+  assert.equal(preview.width, 8);
+  assert.equal(preview.height, 8);
+  assert.equal(totalTerrain, 64);
+  assert.equal(preview.counts.heroes, 1);
+  assert.equal(preview.counts.neutralArmies, 1);
+  assert.equal(preview.counts.buildings, 3);
+  assert.equal(preview.counts.guaranteedResources, 1);
+  assert.deepEqual(guaranteedTile?.resource, {
+    kind: "wood",
+    amount: 5,
+    source: "guaranteed"
+  });
+  assert.equal(neutralTile?.occupant?.kind, "neutral");
+  assert.equal(buildingTile?.building?.kind, "recruitment_post");
+  assert.equal(shrineTile?.building?.kind, "attribute_shrine");
+  assert.equal(mineTile?.building?.kind, "resource_mine");
+  assert.equal(mineTile?.building?.resourceKind, "wood");
 });

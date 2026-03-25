@@ -15,8 +15,8 @@ test("room persistence snapshot restores an active neutral battle", () => {
 
   assert.deepEqual(restored.serializePersistenceSnapshot(), snapshot);
   assert.equal(restored.getBattleForPlayer("player-1")?.id, "battle-neutral-1");
-  assert.equal(restored.getSnapshot("player-1").state.ownHeroes[0]?.position.x, 5);
-  assert.equal(restored.getSnapshot("player-1").state.ownHeroes[0]?.position.y, 3);
+  assert.equal(restored.getSnapshot("player-1").state.ownHeroes[0]?.position.x, 4);
+  assert.equal(restored.getSnapshot("player-1").state.ownHeroes[0]?.position.y, 4);
 });
 
 test("room persistence snapshot restores a resolved PvP world without active battles", () => {

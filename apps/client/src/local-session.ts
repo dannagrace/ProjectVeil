@@ -28,6 +28,10 @@ interface GameSession {
   snapshot(reason?: string): Promise<SessionUpdate>;
   moveHero(heroId: string, destination: Vec2): Promise<SessionUpdate>;
   collect(heroId: string, position: Vec2): Promise<SessionUpdate>;
+  recruit(heroId: string, buildingId: string): Promise<SessionUpdate>;
+  visitBuilding(heroId: string, buildingId: string): Promise<SessionUpdate>;
+  claimMine(heroId: string, buildingId: string): Promise<SessionUpdate>;
+  endDay(): Promise<SessionUpdate>;
   actInBattle(action: BattleAction): Promise<SessionUpdate>;
   previewMovement(heroId: string, destination: Vec2): Promise<MovementPlan | null>;
   listReachable(heroId: string): Promise<Vec2[]>;
@@ -36,6 +40,8 @@ interface GameSession {
 interface GameSessionOptions {
   onPushUpdate?: (update: SessionUpdate) => void;
   onConnectionEvent?: (event: ConnectionEvent) => void;
+  getDisplayName?: () => string | null;
+  getAuthToken?: () => string | null;
 }
 
 const RECONNECTION_TOKEN_PREFIX = "project-veil:reconnection";
@@ -305,6 +311,80 @@ class LocalGameSession implements GameSession {
     };
   }
 
+  async recruit(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    const result = this.room.dispatch(this.playerId, {
+      type: "hero.recruit",
+      heroId,
+      buildingId
+    });
+    const events = this.room.filterEventsForPlayer(this.playerId, result.events ?? []);
+    const nextHeroId = result.snapshot.state.ownHeroes[0]?.id;
+    const battle = result.battle ?? this.room.getBattleForPlayer(this.playerId);
+    return {
+      world: result.snapshot.state,
+      battle,
+      events,
+      movementPlan: result.movementPlan ?? null,
+      reachableTiles: nextHeroId && !battle ? listReachableTiles(this.room.getInternalState(), nextHeroId) : [],
+      ...(result.reason ? { reason: result.reason } : {})
+    };
+  }
+
+  async visitBuilding(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    const result = this.room.dispatch(this.playerId, {
+      type: "hero.visit",
+      heroId,
+      buildingId
+    });
+    const events = this.room.filterEventsForPlayer(this.playerId, result.events ?? []);
+    const nextHeroId = result.snapshot.state.ownHeroes[0]?.id;
+    const battle = result.battle ?? this.room.getBattleForPlayer(this.playerId);
+    return {
+      world: result.snapshot.state,
+      battle,
+      events,
+      movementPlan: result.movementPlan ?? null,
+      reachableTiles: nextHeroId && !battle ? listReachableTiles(this.room.getInternalState(), nextHeroId) : [],
+      ...(result.reason ? { reason: result.reason } : {})
+    };
+  }
+
+  async claimMine(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    const result = this.room.dispatch(this.playerId, {
+      type: "hero.claimMine",
+      heroId,
+      buildingId
+    });
+    const events = this.room.filterEventsForPlayer(this.playerId, result.events ?? []);
+    const nextHeroId = result.snapshot.state.ownHeroes[0]?.id;
+    const battle = result.battle ?? this.room.getBattleForPlayer(this.playerId);
+    return {
+      world: result.snapshot.state,
+      battle,
+      events,
+      movementPlan: result.movementPlan ?? null,
+      reachableTiles: nextHeroId && !battle ? listReachableTiles(this.room.getInternalState(), nextHeroId) : [],
+      ...(result.reason ? { reason: result.reason } : {})
+    };
+  }
+
+  async endDay(): Promise<SessionUpdate> {
+    const result = this.room.dispatch(this.playerId, {
+      type: "turn.endDay"
+    });
+    const events = this.room.filterEventsForPlayer(this.playerId, result.events ?? []);
+    const nextHeroId = result.snapshot.state.ownHeroes[0]?.id;
+    const battle = result.battle ?? this.room.getBattleForPlayer(this.playerId);
+    return {
+      world: result.snapshot.state,
+      battle,
+      events,
+      movementPlan: result.movementPlan ?? null,
+      reachableTiles: nextHeroId && !battle ? listReachableTiles(this.room.getInternalState(), nextHeroId) : [],
+      ...(result.reason ? { reason: result.reason } : {})
+    };
+  }
+
   async actInBattle(action: BattleAction): Promise<SessionUpdate> {
     const result = this.room.dispatchBattle(this.playerId, action);
     const events = this.room.filterEventsForPlayer(this.playerId, result.events ?? []);
@@ -335,6 +415,8 @@ class RemoteGameSession implements GameSession {
   private readonly playerId: string;
   private readonly onPushUpdate: ((update: SessionUpdate) => void) | undefined;
   private readonly onConnectionEvent: ((event: ConnectionEvent) => void) | undefined;
+  private readonly getDisplayName: (() => string | null) | undefined;
+  private readonly getAuthToken: (() => string | null) | undefined;
   private requestCounter = 0;
   private readonly pendingRequests = new Map<
     string,
@@ -351,6 +433,8 @@ class RemoteGameSession implements GameSession {
     this.playerId = playerId;
     this.onPushUpdate = options?.onPushUpdate;
     this.onConnectionEvent = options?.onConnectionEvent;
+    this.getDisplayName = options?.getDisplayName;
+    this.getAuthToken = options?.getAuthToken;
     this.persistReconnectionToken();
     this.room.onMessage("*", (type, payload) => {
       if (typeof type !== "string") {
@@ -462,12 +546,16 @@ class RemoteGameSession implements GameSession {
   }
 
   async snapshot(): Promise<SessionUpdate> {
+    const displayName = this.getDisplayName?.()?.trim();
+    const authToken = this.getAuthToken?.()?.trim();
     const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
       {
         type: "connect",
         requestId: this.nextRequestId(),
         roomId: this.roomId,
-        playerId: this.playerId
+        playerId: this.playerId,
+        ...(displayName ? { displayName } : {}),
+        ...(authToken ? { authToken } : {})
       },
       "session.state"
     );
@@ -503,6 +591,76 @@ class RemoteGameSession implements GameSession {
           type: "hero.collect",
           heroId,
           position
+        }
+      },
+      "session.state"
+    );
+    const update = fromPayload(response.payload);
+    this.persistSessionReplay(update);
+    return update;
+  }
+
+  async recruit(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.recruit",
+          heroId,
+          buildingId
+        }
+      },
+      "session.state"
+    );
+    const update = fromPayload(response.payload);
+    this.persistSessionReplay(update);
+    return update;
+  }
+
+  async visitBuilding(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.visit",
+          heroId,
+          buildingId
+        }
+      },
+      "session.state"
+    );
+    const update = fromPayload(response.payload);
+    this.persistSessionReplay(update);
+    return update;
+  }
+
+  async claimMine(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.claimMine",
+          heroId,
+          buildingId
+        }
+      },
+      "session.state"
+    );
+    const update = fromPayload(response.payload);
+    this.persistSessionReplay(update);
+    return update;
+  }
+
+  async endDay(): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "turn.endDay"
         }
       },
       "session.state"
@@ -640,6 +798,8 @@ class RecoverableRemoteGameSession implements GameSession {
   ): Promise<{ session: RemoteGameSession; recoveredFromStoredToken: boolean }> {
     const sessionOptions: GameSessionOptions = {
       ...(this.options?.onPushUpdate ? { onPushUpdate: this.options.onPushUpdate } : {}),
+      ...(this.options?.getDisplayName ? { getDisplayName: this.options.getDisplayName } : {}),
+      ...(this.options?.getAuthToken ? { getAuthToken: this.options.getAuthToken } : {}),
       onConnectionEvent: (event) => this.handleConnectionEvent(event)
     };
 
@@ -728,6 +888,22 @@ class RecoverableRemoteGameSession implements GameSession {
 
   async collect(heroId: string, position: Vec2): Promise<SessionUpdate> {
     return this.runWithSession((session) => session.collect(heroId, position));
+  }
+
+  async recruit(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.recruit(heroId, buildingId));
+  }
+
+  async visitBuilding(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.visitBuilding(heroId, buildingId));
+  }
+
+  async claimMine(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.claimMine(heroId, buildingId));
+  }
+
+  async endDay(): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.endDay());
   }
 
   async actInBattle(action: BattleAction): Promise<SessionUpdate> {

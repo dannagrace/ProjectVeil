@@ -1,5 +1,6 @@
 import { Room, type Client as ColyseusClient } from "colyseus";
 import {
+  createInitialWorldState,
   filterWorldEventsForPlayer,
   listReachableTiles,
   planHeroMovement,
@@ -10,7 +11,12 @@ import {
   type WorldEvent
 } from "../../../packages/shared/src/index";
 import { createRoom, type AuthoritativeWorldRoom, type RoomPersistenceSnapshot } from "./index";
-import type { RoomSnapshotStore } from "./persistence";
+import {
+  applyPlayerAccountsToWorldState,
+  applyPlayerHeroArchivesToWorldState,
+  type RoomSnapshotStore
+} from "./persistence";
+import { resolveGuestAuthSession } from "./auth";
 
 type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;
 
@@ -30,9 +36,30 @@ interface JoinOptions {
 
 const RECONNECTION_WINDOW_SECONDS = 20;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
+const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
+
+export interface LobbyRoomSummary {
+  roomId: string;
+  seed: number;
+  day: number;
+  connectedPlayers: number;
+  heroCount: number;
+  activeBattles: number;
+  updatedAt: string;
+}
 
 export function configureRoomSnapshotStore(store: RoomSnapshotStore | null): void {
   configuredRoomSnapshotStore = store;
+}
+
+export function listLobbyRooms(): LobbyRoomSummary[] {
+  return Array.from(lobbyRoomSummaries.values()).sort(
+    (left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.roomId.localeCompare(right.roomId)
+  );
+}
+
+export function resetLobbyRoomRegistry(): void {
+  lobbyRoomSummaries.clear();
 }
 
 function sendMessage<T extends ServerMessage["type"]>(
@@ -57,14 +84,60 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     const persistedSnapshot = configuredRoomSnapshotStore
       ? await configuredRoomSnapshotStore.load(logicalRoomId)
       : null;
-    this.worldRoom = createRoom(logicalRoomId, options.seed, persistedSnapshot ?? undefined);
-    await this.persistRoomState();
 
-    this.onMessage("connect", (client, message: Extract<ClientMessage, { type: "connect" }>) => {
-      const playerId = this.getPlayerId(client, message.playerId);
+    if (persistedSnapshot) {
+      this.worldRoom = createRoom(logicalRoomId, options.seed, persistedSnapshot);
+    } else {
+      let initialState = createInitialWorldState(options.seed, logicalRoomId);
+      if (configuredRoomSnapshotStore) {
+        const playerIds = Array.from(
+          new Set([...initialState.heroes.map((hero) => hero.playerId), ...Object.keys(initialState.resources)])
+        );
+        const [accounts, heroArchives] = await Promise.all([
+          configuredRoomSnapshotStore.loadPlayerAccounts(playerIds),
+          configuredRoomSnapshotStore.loadPlayerHeroArchives(playerIds)
+        ]);
+        initialState = applyPlayerAccountsToWorldState(initialState, accounts);
+        initialState = applyPlayerHeroArchivesToWorldState(initialState, heroArchives);
+      }
+
+      this.worldRoom = createRoom(logicalRoomId, options.seed, {
+        state: initialState,
+        battles: []
+      });
+    }
+
+    await this.persistRoomState();
+    this.publishLobbyRoomSummary();
+
+    this.onMessage("connect", async (client, message: Extract<ClientMessage, { type: "connect" }>) => {
+      const authSession = message.authToken ? resolveGuestAuthSession(message.authToken) : null;
+      if (message.authToken && !authSession) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "unauthorized" });
+        return;
+      }
+
+      const playerId = authSession?.playerId ?? this.getPlayerId(client, message.playerId);
       if (!playerId) {
         sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
         return;
+      }
+
+      this.playerIdBySessionId.set(client.sessionId, playerId);
+      this.publishLobbyRoomSummary();
+
+      if (configuredRoomSnapshotStore) {
+        try {
+          await configuredRoomSnapshotStore.ensurePlayerAccount({
+            playerId,
+            ...((authSession?.displayName ?? message.displayName?.trim())
+              ? { displayName: authSession?.displayName ?? message.displayName?.trim() ?? playerId }
+              : {}),
+            lastRoomId: logicalRoomId
+          });
+        } catch {
+          // Keep session bootstrap resilient even if account metadata refresh fails.
+        }
       }
 
       sendMessage(client, "session.state", {
@@ -113,10 +186,12 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         await this.persistRoomState();
       } catch {
         this.restoreWorldRoom(previousSnapshot);
+        this.publishLobbyRoomSummary();
         sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
         return;
       }
 
+      this.publishLobbyRoomSummary();
       sendMessage(client, "session.state", {
         requestId: message.requestId,
         delivery: "reply",
@@ -145,10 +220,12 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         await this.persistRoomState();
       } catch {
         this.restoreWorldRoom(previousSnapshot);
+        this.publishLobbyRoomSummary();
         sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
         return;
       }
 
+      this.publishLobbyRoomSummary();
       sendMessage(client, "session.state", {
         requestId: message.requestId,
         delivery: "reply",
@@ -167,6 +244,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
   onJoin(client: ColyseusClient, options?: JoinOptions): void {
     this.playerIdBySessionId.set(client.sessionId, options?.playerId ?? client.sessionId);
+    this.publishLobbyRoomSummary();
   }
 
   async onDrop(client: ColyseusClient): Promise<void> {
@@ -179,6 +257,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       const reconnectedClient = await this.allowReconnection(client, RECONNECTION_WINDOW_SECONDS);
       this.playerIdBySessionId.delete(client.sessionId);
       this.playerIdBySessionId.set(reconnectedClient.sessionId, playerId);
+      this.publishLobbyRoomSummary();
       sendMessage(reconnectedClient, "session.state", {
         requestId: "push",
         delivery: "push",
@@ -186,11 +265,17 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       });
     } catch {
       this.playerIdBySessionId.delete(client.sessionId);
+      this.publishLobbyRoomSummary();
     }
   }
 
   onLeave(client: ColyseusClient): void {
     this.playerIdBySessionId.delete(client.sessionId);
+    this.publishLobbyRoomSummary();
+  }
+
+  onDispose(): void {
+    lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
   }
 
   private restoreWorldRoom(snapshot: RoomPersistenceSnapshot): void {
@@ -203,6 +288,19 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     await configuredRoomSnapshotStore.save(this.metadata.logicalRoomId, this.worldRoom.serializePersistenceSnapshot());
+  }
+
+  private publishLobbyRoomSummary(): void {
+    const internalState = this.worldRoom.getInternalState();
+    lobbyRoomSummaries.set(this.metadata.logicalRoomId, {
+      roomId: this.metadata.logicalRoomId,
+      seed: internalState.meta.seed,
+      day: internalState.meta.day,
+      connectedPlayers: this.playerIdBySessionId.size,
+      heroCount: internalState.heroes.length,
+      activeBattles: this.worldRoom.getActiveBattles().length,
+      updatedAt: new Date().toISOString()
+    });
   }
 
   private getPlayerId(client: ColyseusClient, fallback?: string): string | undefined {

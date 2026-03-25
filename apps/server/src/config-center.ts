@@ -3,15 +3,21 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { createConnection, createPool, type Pool, type RowDataPacket } from "mysql2/promise";
 import {
+  createWorldStateFromConfigs,
+  getDefaultBattleSkillCatalog,
   getDefaultMapObjectsConfig,
   getDefaultUnitCatalog,
   getDefaultWorldConfig,
   replaceRuntimeConfigs,
+  validateBattleSkillCatalog,
   validateMapObjectsConfig,
   validateUnitCatalog,
   validateWorldConfig,
+  type BattleSkillCatalogConfig,
   type MapObjectsConfig,
+  type ResourceKind,
   type RuntimeConfigBundle,
+  type TerrainType,
   type UnitCatalogConfig,
   type WorldGenerationConfig
 } from "../../../packages/shared/src/index";
@@ -22,7 +28,7 @@ import {
   readMySqlPersistenceConfig
 } from "./persistence";
 
-export type ConfigDocumentId = "world" | "mapObjects" | "units";
+export type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills";
 
 interface ConfigDefinition {
   id: ConfigDocumentId;
@@ -30,6 +36,8 @@ interface ConfigDefinition {
   title: string;
   description: string;
 }
+
+type ParsedConfigDocument = WorldGenerationConfig | MapObjectsConfig | UnitCatalogConfig | BattleSkillCatalogConfig;
 
 interface ErrorPayload {
   code: string;
@@ -61,6 +69,79 @@ export interface ConfigDocument extends ConfigDocumentSummary {
   content: string;
 }
 
+export interface WorldConfigPreviewTile {
+  position: {
+    x: number;
+    y: number;
+  };
+  terrain: TerrainType;
+  walkable: boolean;
+  resource?:
+    | {
+        kind: ResourceKind;
+        amount: number;
+        source: "random" | "guaranteed";
+      }
+    | undefined;
+  occupant?:
+    | {
+        kind: "hero" | "neutral";
+        refId: string;
+        label: string;
+        playerId?: string;
+      }
+    | undefined;
+  building?:
+    | {
+        kind: "recruitment_post";
+        refId: string;
+        label: string;
+        unitTemplateId: string;
+        availableCount: number;
+      }
+    | {
+        kind: "attribute_shrine";
+        refId: string;
+        label: string;
+        bonus: {
+          attack: number;
+          defense: number;
+          power: number;
+          knowledge: number;
+        };
+        visitedCount: number;
+      }
+    | {
+        kind: "resource_mine";
+        refId: string;
+        label: string;
+        resourceKind: ResourceKind;
+        income: number;
+        ownerPlayerId?: string;
+      }
+    | undefined;
+}
+
+export interface WorldConfigPreview {
+  seed: number;
+  roomId: string;
+  width: number;
+  height: number;
+  counts: {
+    walkable: number;
+    blocked: number;
+    terrain: Record<TerrainType, number>;
+    resourceTiles: Record<ResourceKind, number>;
+    resourceAmounts: Record<ResourceKind, number>;
+    guaranteedResources: number;
+    randomResources: number;
+    heroes: number;
+    neutralArmies: number;
+    buildings: number;
+  };
+  tiles: WorldConfigPreviewTile[];
+}
+
 export interface ConfigCenterStore {
   initializeRuntimeConfigs(): Promise<void>;
   listDocuments(): Promise<ConfigDocumentSummary[]>;
@@ -88,6 +169,12 @@ const CONFIG_DEFINITIONS: ConfigDefinition[] = [
     fileName: "units.json",
     title: "兵种配置",
     description: "兵种模板、阵营、品质和战斗数值。"
+  },
+  {
+    id: "battleSkills",
+    fileName: "battle-skills.json",
+    title: "技能配置",
+    description: "战斗技能、持续状态与效果公式。"
   }
 ];
 
@@ -132,21 +219,57 @@ function buildSummary(id: ConfigDocumentId, parsed: unknown): string {
 
   if (id === "mapObjects") {
     const config = parsed as MapObjectsConfig;
-    return `${config.neutralArmies.length} neutral army(ies) · ${config.guaranteedResources.length} guaranteed resource(s)`;
+    return `${config.neutralArmies.length} neutral army(ies) · ${config.guaranteedResources.length} guaranteed resource(s) · ${config.buildings.length} building(s)`;
   }
 
-  const config = parsed as UnitCatalogConfig;
-  return `${config.templates.length} unit template(s)`;
+  if (id === "units") {
+    const config = parsed as UnitCatalogConfig;
+    return `${config.templates.length} unit template(s)`;
+  }
+
+  const config = parsed as BattleSkillCatalogConfig;
+  return `${config.skills.length} skill(s) · ${config.statuses.length} status(es)`;
 }
 
-function normalizeJsonContent(parsed: WorldGenerationConfig | MapObjectsConfig | UnitCatalogConfig): string {
+function normalizeJsonContent(
+  parsed: WorldGenerationConfig | MapObjectsConfig | UnitCatalogConfig | BattleSkillCatalogConfig
+): string {
   return `${JSON.stringify(parsed, null, 2)}\n`;
+}
+
+function positionKey(position: { x: number; y: number }): string {
+  return `${position.x},${position.y}`;
+}
+
+function createTerrainCountRecord(): Record<TerrainType, number> {
+  return {
+    grass: 0,
+    dirt: 0,
+    sand: 0,
+    water: 0
+  };
+}
+
+function createResourceCountRecord(): Record<ResourceKind, number> {
+  return {
+    gold: 0,
+    wood: 0,
+    ore: 0
+  };
+}
+
+function normalizePreviewSeed(seed: unknown, fallback = 1001): number {
+  if (typeof seed !== "number" || !Number.isFinite(seed)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.floor(seed));
 }
 
 function parseConfigDocument(
   id: ConfigDocumentId,
   content: string
-): WorldGenerationConfig | MapObjectsConfig | UnitCatalogConfig {
+): ParsedConfigDocument {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -164,26 +287,177 @@ function parseConfigDocument(
     return parsed as MapObjectsConfig;
   }
 
-  const nextCatalog = parsed as UnitCatalogConfig;
-  validateUnitCatalog(nextCatalog);
-  return nextCatalog;
+  if (id === "units") {
+    const nextCatalog = parsed as UnitCatalogConfig;
+    validateUnitCatalog(nextCatalog);
+    return nextCatalog;
+  }
+
+  const nextSkillCatalog = parsed as BattleSkillCatalogConfig;
+  validateBattleSkillCatalog(nextSkillCatalog);
+  return nextSkillCatalog;
+}
+
+function buildRuntimeBundleWithParsedDocument(id: ConfigDocumentId, parsed: ParsedConfigDocument): RuntimeConfigBundle {
+  switch (id) {
+    case "world":
+      return buildRuntimeConfigBundle({ world: parsed as WorldGenerationConfig });
+    case "mapObjects":
+      return buildRuntimeConfigBundle({ mapObjects: parsed as MapObjectsConfig });
+    case "units":
+      return buildRuntimeConfigBundle({ units: parsed as UnitCatalogConfig });
+    case "battleSkills":
+      return buildRuntimeConfigBundle({ battleSkills: parsed as BattleSkillCatalogConfig });
+  }
+}
+
+export function createWorldConfigPreview(
+  worldConfig: WorldGenerationConfig,
+  mapObjectsConfig: MapObjectsConfig,
+  seed = 1001
+): WorldConfigPreview {
+  const normalizedSeed = normalizePreviewSeed(seed);
+  const previewState = createWorldStateFromConfigs(worldConfig, mapObjectsConfig, normalizedSeed, "config-preview");
+  const heroById = new Map(previewState.heroes.map((hero) => [hero.id, hero]));
+  const guaranteedResourceKeys = new Set(
+    mapObjectsConfig.guaranteedResources.map((resource) => positionKey(resource.position))
+  );
+  const terrainCounts = createTerrainCountRecord();
+  const resourceTileCounts = createResourceCountRecord();
+  const resourceAmountTotals = createResourceCountRecord();
+  let walkableCount = 0;
+  let blockedCount = 0;
+  let guaranteedResourceCount = 0;
+  let randomResourceCount = 0;
+
+  const tiles: WorldConfigPreviewTile[] = previewState.map.tiles.map((tile) => {
+    terrainCounts[tile.terrain] += 1;
+    if (tile.walkable) {
+      walkableCount += 1;
+    } else {
+      blockedCount += 1;
+    }
+
+    const resourceSource = tile.resource
+      ? guaranteedResourceKeys.has(positionKey(tile.position))
+        ? "guaranteed"
+        : "random"
+      : undefined;
+    if (tile.resource) {
+      resourceTileCounts[tile.resource.kind] += 1;
+      resourceAmountTotals[tile.resource.kind] += tile.resource.amount;
+      if (resourceSource === "guaranteed") {
+        guaranteedResourceCount += 1;
+      } else {
+        randomResourceCount += 1;
+      }
+    }
+
+    let occupant: WorldConfigPreviewTile["occupant"];
+    if (tile.occupant?.kind === "hero") {
+      const hero = heroById.get(tile.occupant.refId);
+      occupant = {
+        kind: "hero",
+        refId: tile.occupant.refId,
+        label: hero?.name ?? tile.occupant.refId,
+        ...(hero ? { playerId: hero.playerId } : {})
+      };
+    } else if (tile.occupant?.kind === "neutral") {
+      occupant = {
+        kind: "neutral",
+        refId: tile.occupant.refId,
+        label: `中立 ${tile.occupant.refId}`
+      };
+    }
+
+    const building = !tile.building
+      ? undefined
+      : tile.building.kind === "recruitment_post"
+        ? {
+            kind: tile.building.kind,
+            refId: tile.building.id,
+            label: tile.building.label,
+            unitTemplateId: tile.building.unitTemplateId,
+            availableCount: tile.building.availableCount
+          }
+        : tile.building.kind === "attribute_shrine"
+          ? {
+              kind: tile.building.kind,
+              refId: tile.building.id,
+              label: tile.building.label,
+              bonus: {
+                attack: tile.building.bonus.attack,
+                defense: tile.building.bonus.defense,
+                power: tile.building.bonus.power,
+                knowledge: tile.building.bonus.knowledge
+              },
+              visitedCount: tile.building.visitedHeroIds.length
+            }
+          : {
+              kind: tile.building.kind,
+              refId: tile.building.id,
+              label: tile.building.label,
+              resourceKind: tile.building.resourceKind,
+              income: tile.building.income,
+              ...(tile.building.ownerPlayerId ? { ownerPlayerId: tile.building.ownerPlayerId } : {})
+            };
+
+    return {
+      position: tile.position,
+      terrain: tile.terrain,
+      walkable: tile.walkable,
+      ...(tile.resource
+        ? {
+            resource: {
+              ...tile.resource,
+              source: resourceSource ?? "random"
+            }
+          }
+        : {}),
+      ...(building ? { building } : {}),
+      ...(occupant ? { occupant } : {})
+    };
+  });
+
+  return {
+    seed: normalizedSeed,
+    roomId: previewState.meta.roomId,
+    width: previewState.map.width,
+    height: previewState.map.height,
+    counts: {
+      walkable: walkableCount,
+      blocked: blockedCount,
+      terrain: terrainCounts,
+      resourceTiles: resourceTileCounts,
+      resourceAmounts: resourceAmountTotals,
+      guaranteedResources: guaranteedResourceCount,
+      randomResources: randomResourceCount,
+      heroes: previewState.heroes.length,
+      neutralArmies: Object.keys(previewState.neutralArmies).length,
+      buildings: Object.keys(previewState.buildings).length
+    },
+    tiles
+  };
 }
 
 function buildRuntimeConfigBundle(
-  documents: Partial<Record<ConfigDocumentId, WorldGenerationConfig | MapObjectsConfig | UnitCatalogConfig>>
+  documents: Partial<RuntimeConfigBundle>
 ): RuntimeConfigBundle {
-  const world = (documents.world ?? getDefaultWorldConfig()) as WorldGenerationConfig;
-  const mapObjects = (documents.mapObjects ?? getDefaultMapObjectsConfig()) as MapObjectsConfig;
-  const units = (documents.units ?? getDefaultUnitCatalog()) as UnitCatalogConfig;
+  const world = documents.world ?? getDefaultWorldConfig();
+  const mapObjects = documents.mapObjects ?? getDefaultMapObjectsConfig();
+  const units = documents.units ?? getDefaultUnitCatalog();
+  const battleSkills = documents.battleSkills ?? getDefaultBattleSkillCatalog();
 
   validateWorldConfig(world);
-  validateMapObjectsConfig(mapObjects, world);
-  validateUnitCatalog(units);
+  validateMapObjectsConfig(mapObjects, world, units);
+  validateBattleSkillCatalog(battleSkills);
+  validateUnitCatalog(units, battleSkills);
 
   return {
     world,
     mapObjects,
-    units
+    units,
+    battleSkills
   };
 }
 
@@ -266,14 +540,15 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
     const bundle = buildRuntimeConfigBundle(
       Object.fromEntries(
         documents.map((document) => [document.id, parseConfigDocument(document.id, document.content)])
-      ) as Partial<Record<ConfigDocumentId, WorldGenerationConfig | MapObjectsConfig | UnitCatalogConfig>>
+      ) as Partial<RuntimeConfigBundle>
     );
 
     applyRuntimeBundle(bundle);
     await Promise.all([
       this.exportDocumentToFile("world", normalizeJsonContent(bundle.world)),
       this.exportDocumentToFile("mapObjects", normalizeJsonContent(bundle.mapObjects)),
-      this.exportDocumentToFile("units", normalizeJsonContent(bundle.units))
+      this.exportDocumentToFile("units", normalizeJsonContent(bundle.units)),
+      this.exportDocumentToFile("battleSkills", normalizeJsonContent(bundle.battleSkills))
     ]);
   }
 
@@ -307,11 +582,7 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
 
   async saveDocument(id: ConfigDocumentId, content: string): Promise<ConfigDocument> {
     const parsed = parseConfigDocument(id, content);
-    const bundle = buildRuntimeConfigBundle({
-      world: id === "world" ? parsed : getDefaultWorldConfig(),
-      mapObjects: id === "mapObjects" ? parsed : getDefaultMapObjectsConfig(),
-      units: id === "units" ? parsed : getDefaultUnitCatalog()
-    });
+    const bundle = buildRuntimeBundleWithParsedDocument(id, parsed);
     const serialized = normalizeJsonContent(bundle[id]);
 
     await this.exportDocumentToFile(id, serialized);
@@ -417,11 +688,7 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
 
   async saveDocument(id: ConfigDocumentId, content: string): Promise<ConfigDocument> {
     const parsed = parseConfigDocument(id, content);
-    const bundle = buildRuntimeConfigBundle({
-      world: id === "world" ? parsed : getDefaultWorldConfig(),
-      mapObjects: id === "mapObjects" ? parsed : getDefaultMapObjectsConfig(),
-      units: id === "units" ? parsed : getDefaultUnitCatalog()
-    });
+    const bundle = buildRuntimeBundleWithParsedDocument(id, parsed);
     const serialized = normalizeJsonContent(bundle[id]);
 
     await this.pool.query(
@@ -509,13 +776,14 @@ export function registerConfigCenterRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
     get: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
+    post: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
     put: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
   },
   store: ConfigCenterStore
 ): void {
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
-    response.setHeader("Access-Control-Allow-Methods", "GET,PUT,OPTIONS");
+    response.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
     response.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
     if (request.method === "OPTIONS") {
@@ -558,6 +826,44 @@ export function registerConfigCenterRoutes(
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/config-center/configs/:id/preview", async (request, response) => {
+    const configId = request.params.id;
+    if (configId !== "world") {
+      sendJson(response, 404, {
+        error: {
+          code: "preview_not_supported",
+          message: "Preview is currently available only for world config"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { content?: string; seed?: number };
+      if (typeof body.content !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: content"
+          }
+        });
+        return;
+      }
+
+      const worldConfig = parseConfigDocument("world", body.content) as WorldGenerationConfig;
+      const mapObjectsDocument = await store.loadDocument("mapObjects");
+      const mapObjectsConfig = parseConfigDocument("mapObjects", mapObjectsDocument.content) as MapObjectsConfig;
+      const preview = createWorldConfigPreview(worldConfig, mapObjectsConfig, normalizePreviewSeed(body.seed));
+
+      sendJson(response, 200, {
+        storage: store.mode,
+        preview
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
     }
   });
 

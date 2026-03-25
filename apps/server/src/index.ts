@@ -8,6 +8,7 @@ import {
   createInitialWorldState,
   getBattleOutcome,
   normalizeHeroState,
+  pickAutomatedBattleAction,
   resolveWorldAction,
   validateWorldAction,
   validateBattleAction,
@@ -57,6 +58,14 @@ export class AuthoritativeWorldRoom {
     if (snapshot) {
       this.state = {
         ...snapshot.state,
+        buildings: snapshot.state.buildings ?? {},
+        map: {
+          ...snapshot.state.map,
+          tiles: snapshot.state.map.tiles.map((tile) => ({
+            ...tile,
+            building: tile.building
+          }))
+        },
         heroes: snapshot.state.heroes.map((hero) => normalizeHeroState(hero)),
         meta: {
           ...snapshot.state.meta,
@@ -192,18 +201,12 @@ export class AuthoritativeWorldRoom {
         break;
       }
 
-      const target = Object.values(battle.units).find((unit) => unit.camp === "attacker" && unit.count > 0);
-      if (!target) {
+      const automatedAction = pickAutomatedBattleAction(battle);
+      if (!automatedAction) {
         break;
       }
 
-      this.setBattle(
-        applyBattleAction(battle, {
-        type: "battle.attack",
-        attackerId: activeUnit.id,
-        defenderId: target.id
-        })
-      );
+      this.setBattle(applyBattleAction(battle, automatedAction));
     }
 
     return events;
@@ -242,30 +245,38 @@ export class AuthoritativeWorldRoom {
     const outcome = resolveWorldAction(this.state, action);
     this.state = outcome.state;
 
-    const battleEvent = outcome.events.find((event) => event.type === "battle.started");
-    let startedBattleId: string | null = null;
-    if (battleEvent?.type === "battle.started") {
+    const startedBattleIds: string[] = [];
+    for (const battleEvent of outcome.events.filter((event) => event.type === "battle.started")) {
       const hero = this.state.heroes.find((item) => item.id === battleEvent.heroId);
-      if (hero && battleEvent.encounterKind === "neutral" && battleEvent.neutralArmyId) {
-        const neutralArmy = this.state.neutralArmies[battleEvent.neutralArmyId];
-        if (neutralArmy) {
-          const battle = createNeutralBattleState(hero, neutralArmy, this.state.meta.seed + this.state.meta.day);
-          this.setBattle(battle);
-          startedBattleId = battle.id;
-        }
+      if (!hero) {
+        continue;
       }
 
-      if (hero && battleEvent.encounterKind === "hero" && battleEvent.defenderHeroId) {
-        const defenderHero = this.state.heroes.find((item) => item.id === battleEvent.defenderHeroId);
-        if (defenderHero) {
-          const battle = createHeroBattleState(hero, defenderHero, this.state.meta.seed + this.state.meta.day);
-          this.setBattle(battle);
-          startedBattleId = battle.id;
+      if (battleEvent.encounterKind === "neutral" && battleEvent.neutralArmyId) {
+        const neutralArmy = this.state.neutralArmies[battleEvent.neutralArmyId];
+        if (!neutralArmy) {
+          continue;
         }
+
+        const battle = createNeutralBattleState(hero, neutralArmy, this.state.meta.seed + this.state.meta.day);
+        this.setBattle(battle);
+        startedBattleIds.push(battle.id);
+        continue;
+      }
+
+      if (battleEvent.encounterKind === "hero" && battleEvent.defenderHeroId) {
+        const defenderHero = this.state.heroes.find((item) => item.id === battleEvent.defenderHeroId);
+        if (!defenderHero) {
+          continue;
+        }
+
+        const battle = createHeroBattleState(hero, defenderHero, this.state.meta.seed + this.state.meta.day);
+        this.setBattle(battle);
+        startedBattleIds.push(battle.id);
       }
     }
 
-    const automatedEvents = startedBattleId ? this.resolveAutomatedBattleTurns(startedBattleId) : [];
+    const automatedEvents = startedBattleIds.flatMap((battleId) => this.resolveAutomatedBattleTurns(battleId));
     const events = outcome.events.concat(automatedEvents);
     const playerBattle = this.getBattleForPlayer(playerId);
 

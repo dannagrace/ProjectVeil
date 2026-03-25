@@ -39,10 +39,63 @@ test("buildTimelineEntriesFromUpdate formats world events and system rejection",
         }
       },
       {
+        type: "hero.recruited",
+        heroId: "hero-1",
+        buildingId: "recruit-post-1",
+        buildingKind: "recruitment_post",
+        unitTemplateId: "hero_guard_basic",
+        count: 4,
+        cost: {
+          gold: 240,
+          wood: 0,
+          ore: 0
+        }
+      },
+      {
+        type: "hero.visited",
+        heroId: "hero-1",
+        buildingId: "shrine-1",
+        buildingKind: "attribute_shrine",
+        bonus: {
+          attack: 1,
+          defense: 0,
+          power: 0,
+          knowledge: 0
+        }
+      },
+      {
+        type: "hero.claimedMine",
+        heroId: "hero-1",
+        buildingId: "mine-1",
+        buildingKind: "resource_mine",
+        resourceKind: "wood",
+        income: 2,
+        ownerPlayerId: "player-1"
+      },
+      {
+        type: "resource.produced",
+        playerId: "player-1",
+        buildingId: "mine-1",
+        buildingKind: "resource_mine",
+        resource: {
+          kind: "wood",
+          amount: 2
+        }
+      },
+      {
+        type: "neutral.moved",
+        neutralArmyId: "neutral-1",
+        from: { x: 3, y: 2 },
+        to: { x: 2, y: 2 },
+        reason: "chase",
+        targetHeroId: "hero-1"
+      },
+      {
         type: "battle.started",
         heroId: "hero-1",
         encounterKind: "neutral",
         neutralArmyId: "neutral-1",
+        initiator: "neutral",
         battleId: "battle-1",
         path: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
         moveCost: 1
@@ -65,7 +118,12 @@ test("buildTimelineEntriesFromUpdate formats world events and system rejection",
     "系统：操作被拒绝，原因是 blocked",
     "事件：计划移动 1 格，前往 (1,0)。",
     "事件：采集 金币 +300。",
-    "事件：遭遇中立守军 neutral-1。"
+    "事件：在招募所补充 hero_guard_basic x4。",
+    "事件：访问属性建筑，获得 攻击 +1。",
+    "事件：占领资源矿场，每日产出 木材 +2。",
+    "事件：资源矿场结算 木材 +2。",
+    "事件：中立守军 neutral-1 主动追击，移动到 (2,2)。",
+    "事件：中立守军 neutral-1 主动发起战斗。"
   ]);
 });
 

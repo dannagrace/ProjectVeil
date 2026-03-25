@@ -19,6 +19,29 @@
     "faction": "wild",
     "rarity": "elite"
   },
+  "buildings": {
+    "recruitment_post": {
+      "title": "招募所",
+      "subtitle": "停驻后可消耗资源招募额外部队。",
+      "interactionType": "move",
+      "faction": "crown",
+      "rarity": "common"
+    },
+    "attribute_shrine": {
+      "title": "属性神殿",
+      "subtitle": "访问后可永久提升英雄属性。",
+      "interactionType": "move",
+      "faction": "crown",
+      "rarity": "elite"
+    },
+    "resource_mine": {
+      "title": "资源矿场",
+      "subtitle": "占领后会在每日推进时自动产出资源。",
+      "interactionType": "move",
+      "faction": "crown",
+      "rarity": "elite"
+    }
+  },
   "resources": {
     "gold": {
       "title": "金币堆",

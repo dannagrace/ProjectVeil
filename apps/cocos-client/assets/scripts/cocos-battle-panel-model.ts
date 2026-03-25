@@ -21,7 +21,7 @@ export interface BattlePanelUnitView {
 }
 
 export interface BattlePanelActionView {
-  key: "attack" | "wait" | "defend";
+  key: string;
   label: string;
   subtitle: string;
   enabled: boolean;
@@ -96,12 +96,12 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     selectable: true,
     label: `${unit.id === selectedTargetId ? ">" : " "} ${formatEnemyUnitLine(unit)}`,
     title: `${unit.stackName} x${unit.count}`,
-    meta: `生命 ${unit.currentHp}/${unit.maxHp}`,
+    meta: buildTargetMeta(unit),
     badge: unit.id === selectedTargetId ? "已选中" : "可攻击"
   }));
   const canAct = Boolean(activeUnit && friendlyCamp && activeUnit.camp === friendlyCamp && !state.actionPending);
   const attackTarget = enemyUnits.find((unit) => unit.id === selectedTargetId) ?? enemyUnits[0] ?? null;
-  const actions = buildActions(canAct, activeUnit?.id ?? null, attackTarget);
+  const actions = buildActions(canAct, activeUnit, attackTarget);
   const orderLines = battle.turnOrder.map((unitId, index) => {
     const unit = battle.units[unitId];
     if (!unit || unit.count <= 0) {
@@ -133,10 +133,12 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     ? collectUnitsForCamp(battle, friendlyCamp).map((unit) => ({
         id: unit.id,
         title: `${unit.stackName} x${unit.count}`,
-        meta: `生命 ${unit.currentHp}/${unit.maxHp}`,
+        meta: buildFriendlyMeta(unit),
         badge: unit.defending ? "防御" : unit.hasRetaliated ? "已反击" : "待命"
       }))
     : [];
+  const skillSummaryLines = activeUnit ? buildSkillSummaryLines(activeUnit) : [];
+  const statusSummary = activeUnit ? buildStatusSummary(activeUnit) : "无异常";
 
   return {
     title: "战斗面板",
@@ -144,7 +146,9 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
       `${battle.id} · 第 ${battle.round} 回合`,
       `阵营：${controlLabel}`,
       `阶段：${turnLabel}`,
-      `行动单位：${activeUnit ? formatActiveUnitLine(activeUnit) : "等待中"}`
+      `行动单位：${activeUnit ? formatActiveUnitLine(activeUnit) : "等待中"}`,
+      ...skillSummaryLines,
+      `状态：${statusSummary}`
     ],
     orderLines: ["行动顺序", ...(orderLines.length > 0 ? orderLines : ["等待中"])],
     friendlyLines: ["我方单位", ...friendlyUnits],
@@ -191,6 +195,10 @@ function formatActiveUnitLine(unit: BattleState["units"][string]): string {
 }
 
 function formatUnitMarker(unit: BattleState["units"][string]): string {
+  if ((unit.statusEffects ?? []).some((status) => status.id === "poisoned")) {
+    return "[PSN]";
+  }
+
   if (unit.defending) {
     return "[DEF]";
   }
@@ -204,6 +212,9 @@ function formatUnitMarker(unit: BattleState["units"][string]): string {
 
 function formatInlineTags(unit: BattleState["units"][string]): string {
   const tags: string[] = [];
+  for (const status of unit.statusEffects ?? []) {
+    tags.push(`${status.name}${status.durationRemaining}`);
+  }
   if (unit.defending) {
     tags.push("DEF");
   }
@@ -213,16 +224,78 @@ function formatInlineTags(unit: BattleState["units"][string]): string {
   return tags.length > 0 ? ` (${tags.join("/")})` : "";
 }
 
+function compactBattleText(text: string, maxLength: number): string {
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function formatSkillToken(skill: NonNullable<BattleState["units"][string]["skills"]>[number]): string {
+  const targetToken = skill.target === "enemy" ? "敌" : "自";
+  const cooldownToken = skill.kind === "passive" ? "常驻" : skill.remainingCooldown > 0 ? `CD${skill.remainingCooldown}` : "就绪";
+  return `${skill.name}[${targetToken}/${cooldownToken}]`;
+}
+
+function buildSkillSummaryLines(unit: BattleState["units"][string]): string[] {
+  const skills = unit.skills ?? [];
+  if (skills.length === 0) {
+    return ["技能：普通攻击"];
+  }
+
+  const lines: string[] = [];
+  for (let index = 0; index < skills.length; index += 2) {
+    const chunk = skills.slice(index, index + 2).map(formatSkillToken);
+    lines.push(`技能${Math.floor(index / 2) + 1}：${chunk.join(" / ")}`);
+  }
+  return lines;
+}
+
+function buildStatusSummary(unit: BattleState["units"][string]): string {
+  const parts = (unit.statusEffects ?? []).map((status) => `${status.name}${status.durationRemaining}`);
+  if (unit.defending) {
+    parts.push("防御");
+  }
+  if (unit.hasRetaliated) {
+    parts.push("已反击");
+  }
+  return parts.length > 0 ? parts.join(" / ") : "无异常";
+}
+
+function buildTargetMeta(unit: BattleState["units"][string]): string {
+  const parts = [`生命 ${unit.currentHp}/${unit.maxHp}`];
+  if (unit.defending) {
+    parts.push("防御中");
+  }
+  if (unit.hasRetaliated) {
+    parts.push("已反击");
+  }
+  if ((unit.statusEffects ?? []).length > 0) {
+    parts.push((unit.statusEffects ?? []).map((status) => `${status.name}${status.durationRemaining}`).join("/"));
+  }
+  return parts.join(" · ");
+}
+
+function buildFriendlyMeta(unit: BattleState["units"][string]): string {
+  const parts = [`生命 ${unit.currentHp}/${unit.maxHp}`];
+  if ((unit.skills ?? []).length > 0) {
+    parts.push(`技能 ${(unit.skills ?? []).length}`);
+  }
+  const statusSummary = buildStatusSummary(unit);
+  if (statusSummary !== "无异常") {
+    parts.push(statusSummary);
+  }
+  return parts.join(" · ");
+}
+
 function buildActions(
   canAct: boolean,
-  activeUnitId: string | null,
+  activeUnit: BattleState["units"][string] | null,
   attackTarget: BattleState["units"][string] | null
 ): BattlePanelActionView[] {
-  return [
+  const activeUnitId = activeUnit?.id ?? null;
+  const actions: BattlePanelActionView[] = [
     {
       key: "attack",
       label: attackTarget ? `攻击 ${attackTarget.stackName}` : "攻击 --",
-      subtitle: attackTarget ? `目标：${attackTarget.stackName}` : "请选择一个目标",
+      subtitle: attackTarget ? `目标：${attackTarget.stackName} · ${buildTargetMeta(attackTarget)}` : "请选择一个目标",
       enabled: Boolean(canAct && activeUnitId && attackTarget),
       action:
         canAct && activeUnitId && attackTarget
@@ -260,6 +333,51 @@ function buildActions(
           : null
     }
   ];
+
+  for (const skill of activeUnit?.skills ?? []) {
+    if (skill.kind !== "active") {
+      continue;
+    }
+
+    if (skill.target === "enemy") {
+      actions.push({
+        key: `skill-${skill.id}`,
+        label: skill.remainingCooldown > 0 ? `${skill.name} (${skill.remainingCooldown})` : skill.name,
+        subtitle: attackTarget
+          ? `目标：${attackTarget.stackName} · ${compactBattleText(skill.description, 18)}`
+          : "请选择一个敌方目标",
+        enabled: Boolean(canAct && activeUnitId && attackTarget && skill.remainingCooldown === 0),
+        action:
+          canAct && activeUnitId && attackTarget && skill.remainingCooldown === 0
+            ? {
+                type: "battle.skill",
+                unitId: activeUnitId,
+                skillId: skill.id,
+                targetId: attackTarget.id
+              }
+            : null
+      });
+      continue;
+    }
+
+    actions.push({
+      key: `skill-${skill.id}`,
+      label: skill.remainingCooldown > 0 ? `${skill.name} (${skill.remainingCooldown})` : skill.name,
+      subtitle: `自身增益 · ${compactBattleText(skill.description, 18)}`,
+      enabled: Boolean(canAct && activeUnitId && skill.remainingCooldown === 0),
+      action:
+        canAct && activeUnitId && skill.remainingCooldown === 0
+          ? {
+              type: "battle.skill",
+              unitId: activeUnitId,
+              skillId: skill.id,
+              targetId: activeUnitId
+            }
+          : null
+    });
+  }
+
+  return actions;
 }
 
 function opposingCamp(camp: BattleCamp | null): BattleCamp | null {

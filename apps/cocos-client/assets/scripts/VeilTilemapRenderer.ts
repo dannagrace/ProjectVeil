@@ -297,7 +297,7 @@ export class VeilTilemapRenderer extends Component {
       return this.heroOccupantGid;
     }
 
-    if (tile.occupant?.kind === "building") {
+    if (tile.building) {
       return this.buildingOccupantGid;
     }
 
