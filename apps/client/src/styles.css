@@ -37,9 +37,19 @@ button {
   padding: 20px;
 }
 
+.lobby-shell {
+  display: grid;
+  grid-template-columns: minmax(300px, 420px) minmax(420px, 1fr);
+  gap: 18px;
+  min-height: 100vh;
+  padding: 20px;
+}
+
 .hero-panel,
 .map-panel,
-.battle-panel {
+.battle-panel,
+.lobby-hero-panel,
+.lobby-panel {
   border: 1px solid rgba(78, 58, 42, 0.15);
   border-radius: 20px;
   background: var(--paper);
@@ -79,6 +89,128 @@ h1 {
   line-height: 1.5;
 }
 
+.lobby-hero-copy,
+.lobby-form,
+.lobby-room-empty,
+.lobby-room-card {
+  padding: 14px;
+}
+
+.lobby-hero-copy {
+  margin-top: 18px;
+}
+
+.lobby-panel .panel-head + .lobby-form {
+  margin-bottom: 16px;
+}
+
+.lobby-field {
+  display: grid;
+  gap: 6px;
+}
+
+.lobby-field span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.lobby-form {
+  display: grid;
+  gap: 12px;
+}
+
+.lobby-auth-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.lobby-auth-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(78, 58, 42, 0.1);
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.lobby-auth-head,
+.account-binding-head {
+  display: grid;
+  gap: 4px;
+}
+
+.lobby-auth-head span,
+.account-binding-head span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.lobby-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.lobby-room-list {
+  display: grid;
+  gap: 12px;
+}
+
+.lobby-room-card,
+.lobby-room-empty {
+  display: grid;
+  gap: 10px;
+}
+
+.lobby-room-card {
+  width: 100%;
+  border: 1px solid rgba(78, 58, 42, 0.1);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(247, 239, 228, 0.84));
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.lobby-room-card:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 24px rgba(84, 57, 35, 0.12);
+  border-color: rgba(164, 77, 44, 0.2);
+}
+
+.lobby-room-card:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.lobby-room-card-head,
+.session-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lobby-room-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.session-meta-row {
+  margin-top: 10px;
+}
+
+.session-link {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(78, 58, 42, 0.08);
+  color: var(--ink);
+  cursor: pointer;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -116,6 +248,100 @@ h1 {
 .log-panel {
   margin-top: 16px;
   padding: 14px;
+}
+
+.account-card {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(78, 58, 42, 0.1);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.account-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-eyebrow {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.account-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: rgba(78, 58, 42, 0.08);
+  color: var(--muted);
+}
+
+.account-badge.tone-remote {
+  background: rgba(47, 110, 91, 0.12);
+  color: #24584b;
+}
+
+.account-badge.tone-local {
+  background: rgba(164, 77, 44, 0.12);
+  color: #8a4429;
+}
+
+.account-meta,
+.account-status {
+  margin-top: 8px;
+}
+
+.account-editor {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.account-binding-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(78, 58, 42, 0.08);
+}
+
+.account-binding-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.account-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(78, 58, 42, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+}
+
+.account-save {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent), #c36d45);
+  color: #fff7f0;
+  cursor: pointer;
+}
+
+.account-save:disabled,
+.account-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .timeline-panel {
@@ -464,6 +690,25 @@ h1 {
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.18));
 }
 
+.tile-building-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 248, 232, 0.88);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(84, 57, 35, 0.16);
+}
+
 .battle-state {
   min-height: 260px;
   padding: 14px;
@@ -622,6 +867,99 @@ h1 {
   padding: 14px;
 }
 
+.battle-intel {
+  margin-top: 14px;
+  padding: 14px;
+}
+
+.battle-intel-headline {
+  display: grid;
+  gap: 4px;
+}
+
+.battle-intel-headline span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.battle-intel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.battle-intel-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.battle-intel-card-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.battle-intel-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.battle-intel-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(164, 77, 44, 0.08);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.battle-detail-group {
+  display: grid;
+  gap: 8px;
+}
+
+.battle-detail-title {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.battle-detail-list {
+  display: grid;
+  gap: 8px;
+}
+
+.battle-detail-item,
+.battle-detail-empty {
+  border-radius: 14px;
+  border: 1px solid rgba(78, 58, 42, 0.08);
+  background: rgba(255, 255, 255, 0.68);
+  padding: 10px;
+}
+
+.battle-detail-item {
+  display: grid;
+  gap: 4px;
+}
+
+.battle-detail-meta,
+.battle-detail-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.battle-detail-copy {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .battle-log {
   margin-top: 14px;
   display: grid;
@@ -754,5 +1092,25 @@ h1 {
 @media (max-width: 1100px) {
   .shell {
     grid-template-columns: 1fr;
+  }
+
+  .lobby-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .battle-intel-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lobby-auth-grid,
+  .account-binding-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-editor,
+  .lobby-actions,
+  .session-meta-row,
+  .lobby-room-card-head {
+    flex-direction: column;
   }
 }

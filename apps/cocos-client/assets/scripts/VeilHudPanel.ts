@@ -39,6 +39,8 @@ interface HudActionButtonState {
 export interface VeilHudRenderState {
   roomId: string;
   playerId: string;
+  displayName: string;
+  sessionSource: "remote" | "local" | "manual" | "none";
   remoteUrl: string;
   update: SessionUpdate | null;
   moveInFlight: boolean;
@@ -49,6 +51,8 @@ export interface VeilHudRenderState {
 export interface VeilHudPanelOptions {
   onNewRun?: () => void;
   onRefresh?: () => void;
+  onEndDay?: () => void;
+  onReturnLobby?: () => void;
 }
 
 @ccclass("ProjectVeilHudPanel")
@@ -64,10 +68,14 @@ export class VeilHudPanel extends Component {
   private requestedIcons = false;
   private onNewRun: (() => void) | undefined;
   private onRefresh: (() => void) | undefined;
+  private onEndDay: (() => void) | undefined;
+  private onReturnLobby: (() => void) | undefined;
 
   configure(options: VeilHudPanelOptions): void {
     this.onNewRun = options.onNewRun;
     this.onRefresh = options.onRefresh;
+    this.onEndDay = options.onEndDay;
+    this.onReturnLobby = options.onReturnLobby;
     this.ensureActionButtons();
     this.syncActionButtons();
   }
@@ -110,8 +118,11 @@ export class VeilHudPanel extends Component {
       this.titleLabel,
       `${CARD_PREFIX}-title`,
       [
-        world ? `第 ${world.meta.day} 天` : "第 -- 天",
-        world ? `可达 ${reachableAhead}` : "可达 --"
+        state.displayName ? `${state.displayName} · ${state.playerId}` : `玩家 ${state.playerId}`,
+        `房间 ${state.roomId}`,
+        world
+          ? `第 ${world.meta.day} 天 · 可达 ${reachableAhead}${state.sessionSource === "remote" ? " · 云端会话" : state.sessionSource === "local" ? " · 本地会话" : ""}`
+          : `等待房间状态...${state.sessionSource === "remote" ? " · 云端会话" : state.sessionSource === "local" ? " · 本地会话" : ""}`
       ],
       cursorY,
       16,
@@ -119,7 +130,7 @@ export class VeilHudPanel extends Component {
       cardWidth,
       leftX,
       4,
-      54
+      76
     );
 
     cursorY = this.renderCardBlock(
@@ -143,8 +154,8 @@ export class VeilHudPanel extends Component {
             `英雄  ${hero.name}`,
             `坐标 (${hero.position.x},${hero.position.y})`,
             `等级 ${hero.progression.level}  经验 ${hero.progression.experience}`,
-            "",
-            ""
+            `攻 ${hero.stats.attack}  防 ${hero.stats.defense}  力 ${hero.stats.power}  知 ${hero.stats.knowledge}`,
+            `兵种 ${hero.armyTemplateId}`
           ]
         : ["英雄", "等待房间状态...", "", "", ""],
       cursorY,
@@ -698,6 +709,8 @@ export class VeilHudPanel extends Component {
 
     this.ensureActionButton(actionsNode, "HudNewRun", "新开一局");
     this.ensureActionButton(actionsNode, "HudRefresh", "刷新状态");
+    this.ensureActionButton(actionsNode, "HudEndDay", "推进一天");
+    this.ensureActionButton(actionsNode, "HudReturnLobby", "返回大厅");
   }
 
   private syncActionButtons(): void {
@@ -709,12 +722,14 @@ export class VeilHudPanel extends Component {
     }
 
     const actionsTransform = actionsNode.getComponent(UITransform) ?? actionsNode.addComponent(UITransform);
-    actionsTransform.setContentSize(Math.max(164, transform.width - 28), 78);
-    actionsNode.setPosition(0, transform.height / 2 - 100, 1);
+    actionsTransform.setContentSize(Math.max(164, transform.width - 28), 146);
+    actionsNode.setPosition(0, transform.height / 2 - 118, 1);
 
     const buttons: HudActionButtonState[] = [
       { name: "HudNewRun", label: "新开一局", callback: this.onNewRun ?? null },
-      { name: "HudRefresh", label: "刷新状态", callback: this.onRefresh ?? null }
+      { name: "HudRefresh", label: "刷新状态", callback: this.onRefresh ?? null },
+      { name: "HudEndDay", label: "推进一天", callback: this.onEndDay ?? null },
+      { name: "HudReturnLobby", label: "返回大厅", callback: this.onReturnLobby ?? null }
     ];
 
     buttons.forEach((button, index) => {
@@ -727,18 +742,32 @@ export class VeilHudPanel extends Component {
       const buttonWidth = Math.floor(actionsTransform.width - 8);
       const buttonHeight = 28;
       buttonTransform.setContentSize(buttonWidth, buttonHeight);
-      const buttonY = index === 0 ? 18 : -18;
+      const buttonY = index === 0 ? 45 : index === 1 ? 15 : index === 2 ? -15 : -45;
       node.setPosition(0, buttonY, 0);
 
       const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
       graphics.clear();
-      graphics.fillColor = index === 0 ? new Color(78, 102, 140, 236) : new Color(51, 70, 99, 228);
-      graphics.strokeColor = index === 0 ? new Color(245, 248, 252, 158) : new Color(218, 229, 242, 112);
+      graphics.fillColor =
+        index === 0
+          ? new Color(78, 102, 140, 236)
+          : index === 1
+            ? new Color(51, 70, 99, 228)
+            : index === 2
+              ? new Color(92, 86, 54, 232)
+              : new Color(121, 84, 70, 234);
+      graphics.strokeColor =
+        index === 0
+          ? new Color(245, 248, 252, 158)
+          : index === 1
+            ? new Color(218, 229, 242, 112)
+            : index === 2
+              ? new Color(242, 224, 171, 120)
+              : new Color(244, 225, 213, 116);
       graphics.lineWidth = 2;
       graphics.roundRect(-buttonWidth / 2, -buttonHeight / 2, buttonWidth, buttonHeight, 10);
       graphics.fill();
       graphics.stroke();
-      graphics.fillColor = new Color(255, 255, 255, index === 0 ? 22 : 14);
+      graphics.fillColor = new Color(255, 255, 255, index === 0 ? 22 : index === 1 ? 14 : index === 2 ? 18 : 16);
       graphics.roundRect(-buttonWidth / 2 + 12, buttonHeight / 2 - 9, buttonWidth - 24, 3, 2);
       graphics.fill();
 

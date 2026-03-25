@@ -19,7 +19,8 @@ function createTile(position: { x: number; y: number }, fog: PlayerTileView["fog
     terrain: "grass",
     walkable: true,
     resource: undefined,
-    occupant: undefined
+    occupant: undefined,
+    building: undefined
   };
 }
 
@@ -161,6 +162,22 @@ test("buildFogOverlayStyle emits quiet overlay chrome for hidden and explored fo
 
 test("buildMapFeedbackEntriesFromUpdate creates tile callouts for move, collect, xp and battle results", () => {
   const update = createBaseUpdate();
+  update.world.map.tiles = [
+    createTile({ x: 0, y: 0 }, "visible"),
+    createTile({ x: 1, y: 0 }, "visible"),
+    createTile({ x: 0, y: 1 }, "visible"),
+    {
+      ...createTile({ x: 1, y: 1 }, "visible"),
+      building: {
+        id: "mine-1",
+        kind: "resource_mine",
+        label: "前线伐木场",
+        resourceKind: "wood",
+        income: 2,
+        ownerPlayerId: "player-1"
+      }
+    }
+  ];
   update.events = [
     {
       type: "hero.moved",
@@ -174,6 +191,50 @@ test("buildMapFeedbackEntriesFromUpdate creates tile callouts for move, collect,
       resource: {
         kind: "wood",
         amount: 5
+      }
+    },
+    {
+      type: "hero.recruited",
+      heroId: "hero-1",
+      buildingId: "recruit-post-1",
+      buildingKind: "recruitment_post",
+      unitTemplateId: "hero_guard_basic",
+      count: 4,
+      cost: {
+        gold: 240,
+        wood: 0,
+        ore: 0
+      }
+    },
+    {
+      type: "hero.visited",
+      heroId: "hero-1",
+      buildingId: "shrine-1",
+      buildingKind: "attribute_shrine",
+      bonus: {
+        attack: 1,
+        defense: 0,
+        power: 0,
+        knowledge: 0
+      }
+    },
+    {
+      type: "hero.claimedMine",
+      heroId: "hero-1",
+      buildingId: "mine-1",
+      buildingKind: "resource_mine",
+      resourceKind: "wood",
+      income: 2,
+      ownerPlayerId: "player-1"
+    },
+    {
+      type: "resource.produced",
+      playerId: "player-1",
+      buildingId: "mine-1",
+      buildingKind: "resource_mine",
+      resource: {
+        kind: "wood",
+        amount: 2
       }
     },
     {
@@ -216,6 +277,26 @@ test("buildMapFeedbackEntriesFromUpdate creates tile callouts for move, collect,
     },
     {
       position: { x: 1, y: 1 },
+      text: "+4",
+      durationSeconds: 0.9
+    },
+    {
+      position: { x: 1, y: 1 },
+      text: "+ATK",
+      durationSeconds: 0.92
+    },
+    {
+      position: { x: 1, y: 1 },
+      text: "MINE",
+      durationSeconds: 0.94
+    },
+    {
+      position: { x: 1, y: 1 },
+      text: "+WOOD",
+      durationSeconds: 0.9
+    },
+    {
+      position: { x: 1, y: 1 },
       text: "LV 3",
       durationSeconds: 1
     },
@@ -234,6 +315,22 @@ test("buildMapFeedbackEntriesFromUpdate creates tile callouts for move, collect,
 
 test("buildObjectPulseEntriesFromUpdate emits bounce targets for collection and encounters", () => {
   const update = createBaseUpdate();
+  update.world.map.tiles = [
+    createTile({ x: 0, y: 0 }, "visible"),
+    createTile({ x: 1, y: 0 }, "visible"),
+    createTile({ x: 0, y: 1 }, "visible"),
+    {
+      ...createTile({ x: 1, y: 1 }, "visible"),
+      building: {
+        id: "mine-1",
+        kind: "resource_mine",
+        label: "前线伐木场",
+        resourceKind: "wood",
+        income: 2,
+        ownerPlayerId: "player-1"
+      }
+    }
+  ];
   update.events = [
     {
       type: "hero.collected",
@@ -241,6 +338,50 @@ test("buildObjectPulseEntriesFromUpdate emits bounce targets for collection and 
       resource: {
         kind: "wood",
         amount: 5
+      }
+    },
+    {
+      type: "hero.recruited",
+      heroId: "hero-1",
+      buildingId: "recruit-post-1",
+      buildingKind: "recruitment_post",
+      unitTemplateId: "hero_guard_basic",
+      count: 4,
+      cost: {
+        gold: 240,
+        wood: 0,
+        ore: 0
+      }
+    },
+    {
+      type: "hero.visited",
+      heroId: "hero-1",
+      buildingId: "shrine-1",
+      buildingKind: "attribute_shrine",
+      bonus: {
+        attack: 1,
+        defense: 0,
+        power: 0,
+        knowledge: 0
+      }
+    },
+    {
+      type: "hero.claimedMine",
+      heroId: "hero-1",
+      buildingId: "mine-1",
+      buildingKind: "resource_mine",
+      resourceKind: "wood",
+      income: 2,
+      ownerPlayerId: "player-1"
+    },
+    {
+      type: "resource.produced",
+      playerId: "player-1",
+      buildingId: "mine-1",
+      buildingKind: "resource_mine",
+      resource: {
+        kind: "wood",
+        amount: 2
       }
     },
     {
@@ -262,8 +403,57 @@ test("buildObjectPulseEntriesFromUpdate emits bounce targets for collection and 
     },
     {
       position: { x: 1, y: 1 },
+      scale: 1.2,
+      durationSeconds: 0.26
+    },
+    {
+      position: { x: 1, y: 1 },
+      scale: 1.22,
+      durationSeconds: 0.28
+    },
+    {
+      position: { x: 1, y: 1 },
+      scale: 1.2,
+      durationSeconds: 0.27
+    },
+    {
+      position: { x: 1, y: 1 },
+      scale: 1.16,
+      durationSeconds: 0.25
+    },
+    {
+      position: { x: 1, y: 1 },
       scale: 1.14,
       durationSeconds: 0.22
+    }
+  ]);
+});
+
+test("neutral movement feedback uses destination callouts and chase pulses", () => {
+  const update = createBaseUpdate();
+  update.events = [
+    {
+      type: "neutral.moved",
+      neutralArmyId: "neutral-1",
+      from: { x: 2, y: 1 },
+      to: { x: 1, y: 1 },
+      reason: "chase",
+      targetHeroId: "hero-1"
+    }
+  ];
+
+  assert.deepEqual(buildMapFeedbackEntriesFromUpdate(update, "hero-1"), [
+    {
+      position: { x: 1, y: 1 },
+      text: "CHASE",
+      durationSeconds: 0.88
+    }
+  ]);
+  assert.deepEqual(buildObjectPulseEntriesFromUpdate(update, "hero-1"), [
+    {
+      position: { x: 1, y: 1 },
+      scale: 1.18,
+      durationSeconds: 0.24
     }
   ]);
 });

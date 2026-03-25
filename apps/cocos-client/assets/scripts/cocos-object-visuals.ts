@@ -15,9 +15,63 @@ export interface CocosTileVisualDescriptor {
   interactionType: InteractionKey;
 }
 
+function formatHeroStatBonus(bonus: { attack: number; defense: number; power: number; knowledge: number }): string {
+  return [
+    bonus.attack > 0 ? `攻击 +${bonus.attack}` : "",
+    bonus.defense > 0 ? `防御 +${bonus.defense}` : "",
+    bonus.power > 0 ? `力量 +${bonus.power}` : "",
+    bonus.knowledge > 0 ? `知识 +${bonus.knowledge}` : ""
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function formatResourceKindLabel(kind: "gold" | "wood" | "ore"): string {
+  return kind === "gold" ? "金币" : kind === "wood" ? "木材" : "矿石";
+}
+
 export function describeCocosTileObject(tile: PlayerTileView | null): CocosTileVisualDescriptor | null {
   if (!tile || tile.fog === "hidden") {
     return null;
+  }
+
+  if (tile.building?.kind === "recruitment_post") {
+    const config = objectVisuals.buildings.recruitment_post;
+    return {
+      title: tile.building.label || config.title,
+      subtitle: tile.building.availableCount > 0 ? `可招募 ${tile.building.availableCount} 单位。` : "今日库存已售罄。",
+      shortLabel: "招募",
+      tag: "访问",
+      faction: toFactionKey(config.faction),
+      rarity: toRarityKey(config.rarity),
+      interactionType: toInteractionKey(config.interactionType)
+    };
+  }
+
+  if (tile.building?.kind === "attribute_shrine") {
+    const config = objectVisuals.buildings.attribute_shrine;
+    return {
+      title: tile.building.label || config.title,
+      subtitle: `${formatHeroStatBonus(tile.building.bonus) || config.subtitle}${tile.building.visitedHeroIds.length > 0 ? " · 已有英雄到访" : ""}`,
+      shortLabel: "神殿",
+      tag: "访问",
+      faction: toFactionKey(config.faction),
+      rarity: toRarityKey(config.rarity),
+      interactionType: toInteractionKey(config.interactionType)
+    };
+  }
+
+  if (tile.building?.kind === "resource_mine") {
+    const config = objectVisuals.buildings.resource_mine;
+    return {
+      title: tile.building.label || config.title,
+      subtitle: `${formatResourceKindLabel(tile.building.resourceKind)} +${tile.building.income}/天${tile.building.ownerPlayerId ? ` · 归属 ${tile.building.ownerPlayerId}` : " · 当前无人占领"}`,
+      shortLabel: "矿场",
+      tag: "占领",
+      faction: toFactionKey(config.faction),
+      rarity: toRarityKey(config.rarity),
+      interactionType: toInteractionKey(config.interactionType)
+    };
   }
 
   if (tile.occupant?.kind === "hero") {
@@ -86,7 +140,7 @@ export function buildCocosTileMarkerText(tile: PlayerTileView | null): string {
     return "";
   }
 
-  if (descriptor.interactionType === "move" && tile?.occupant?.kind !== "building" && !tile?.resource) {
+  if (descriptor.interactionType === "move" && !tile?.building && tile?.occupant?.kind !== "building" && !tile?.resource) {
     return "";
   }
 
@@ -110,7 +164,7 @@ export function buildCocosTileMarkerText(tile: PlayerTileView | null): string {
     return "!H";
   }
 
-  if (tile?.occupant?.kind === "building") {
+  if (tile?.building) {
     return ">B";
   }
 

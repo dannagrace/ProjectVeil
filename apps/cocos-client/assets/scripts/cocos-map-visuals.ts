@@ -36,6 +36,11 @@ export interface ObjectPulseEntry {
   durationSeconds: number;
 }
 
+function findBuildingPosition(update: SessionUpdate, buildingId: string): Vec2 | null {
+  const tile = update.world.map.tiles.find((item) => item.building?.id === buildingId);
+  return tile?.position ?? null;
+}
+
 export function createTileLookup(tiles: PlayerTileView[]): Map<string, PlayerTileView> {
   const lookup = new Map<string, PlayerTileView>();
   for (const tile of tiles) {
@@ -162,6 +167,67 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
       continue;
     }
 
+    if (event.type === "hero.recruited" && heroPosition) {
+      entries.push({
+        position: heroPosition,
+        text: `+${event.count}`,
+        durationSeconds: 0.9
+      });
+      continue;
+    }
+
+    if (event.type === "hero.visited" && heroPosition) {
+      const firstBonus =
+        event.bonus.attack > 0
+          ? "ATK"
+          : event.bonus.defense > 0
+            ? "DEF"
+            : event.bonus.power > 0
+              ? "POW"
+              : event.bonus.knowledge > 0
+                ? "KNW"
+                : "STAT";
+      entries.push({
+        position: heroPosition,
+        text: `+${firstBonus}`,
+        durationSeconds: 0.92
+      });
+      continue;
+    }
+
+    if (event.type === "hero.claimedMine") {
+      const buildingPosition = findBuildingPosition(update, event.buildingId) ?? heroPosition;
+      if (buildingPosition) {
+        entries.push({
+          position: buildingPosition,
+          text: "MINE",
+          durationSeconds: 0.94
+        });
+      }
+      continue;
+    }
+
+    if (event.type === "resource.produced") {
+      const buildingPosition = findBuildingPosition(update, event.buildingId) ?? heroPosition;
+      if (buildingPosition) {
+        entries.push({
+          position: buildingPosition,
+          text: `+${event.resource.kind.toUpperCase()}`,
+          durationSeconds: 0.9
+        });
+      }
+      continue;
+    }
+
+    if (event.type === "neutral.moved") {
+      entries.push({
+        position: event.to,
+        text: event.reason === "chase" ? "CHASE" : event.reason === "return" ? "GUARD" : "PATROL",
+        durationSeconds: 0.88
+      });
+      continue;
+    }
+
     if (event.type === "hero.progressed" && heroPosition) {
       entries.push({
         position: heroPosition,
@@ -205,6 +271,57 @@ export function buildObjectPulseEntriesFromUpdate(update: SessionUpdate, heroId?
       entries.push({
         position: heroPosition,
         scale: 1.18,
+        durationSeconds: 0.24
+      });
+      continue;
+    }
+
+    if (event.type === "hero.recruited" && heroPosition) {
+      entries.push({
+        position: heroPosition,
+        scale: 1.2,
+        durationSeconds: 0.26
+      });
+      continue;
+    }
+
+    if (event.type === "hero.visited" && heroPosition) {
+      entries.push({
+        position: heroPosition,
+        scale: 1.22,
+        durationSeconds: 0.28
+      });
+      continue;
+    }
+
+    if (event.type === "hero.claimedMine") {
+      const buildingPosition = findBuildingPosition(update, event.buildingId) ?? heroPosition;
+      if (buildingPosition) {
+        entries.push({
+          position: buildingPosition,
+          scale: 1.2,
+          durationSeconds: 0.27
+        });
+      }
+      continue;
+    }
+
+    if (event.type === "resource.produced") {
+      const buildingPosition = findBuildingPosition(update, event.buildingId) ?? heroPosition;
+      if (buildingPosition) {
+        entries.push({
+          position: buildingPosition,
+          scale: 1.16,
+          durationSeconds: 0.25
+        });
+      }
+      continue;
+    }
+
+    if (event.type === "neutral.moved") {
+      entries.push({
+        position: event.to,
+        scale: event.reason === "chase" ? 1.18 : 1.12,
         durationSeconds: 0.24
       });
       continue;

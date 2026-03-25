@@ -1,17 +1,29 @@
 import type {
   BattleAction,
+  BattleSkillCatalogConfig,
+  BattleSkillConfig,
   BattleOutcome,
+  BattleSkillId,
+  BattleSkillState,
   BattleState,
+  BattleStatusEffectConfig,
+  BattleStatusEffectId,
+  BattleStatusEffectState,
   HeroState,
   NeutralArmyState,
   UnitStack,
   ValidationResult
 } from "./models";
-import { getDefaultUnitCatalog } from "./world-config";
+import { getDefaultBattleSkillCatalog, getDefaultUnitCatalog } from "./world-config";
 
 interface RngStep {
   nextSeed: number;
   value: number;
+}
+
+interface BattleCatalogIndex {
+  skillById: Map<BattleSkillId, BattleSkillConfig>;
+  statusById: Map<BattleStatusEffectId, BattleStatusEffectConfig>;
 }
 
 function nextRng(seed: number): RngStep {
@@ -19,6 +31,97 @@ function nextRng(seed: number): RngStep {
   return {
     nextSeed,
     value: nextSeed / 0x100000000
+  };
+}
+
+function cloneSkillState(skill: BattleSkillState): BattleSkillState {
+  return { ...skill };
+}
+
+function cloneStatusEffectState(status: BattleStatusEffectState): BattleStatusEffectState {
+  return { ...status };
+}
+
+function skillsOf(unit: UnitStack): BattleSkillState[] {
+  return unit.skills ?? [];
+}
+
+function statusEffectsOf(unit: UnitStack): BattleStatusEffectState[] {
+  return unit.statusEffects ?? [];
+}
+
+function withNormalizedCollections(unit: UnitStack): UnitStack {
+  return {
+    ...unit,
+    skills: skillsOf(unit).map(cloneSkillState),
+    statusEffects: statusEffectsOf(unit).map(cloneStatusEffectState)
+  };
+}
+
+function battleCatalogIndexFor(catalog: BattleSkillCatalogConfig): BattleCatalogIndex {
+  return {
+    skillById: new Map(catalog.skills.map((skill) => [skill.id, skill])),
+    statusById: new Map(catalog.statuses.map((status) => [status.id, status]))
+  };
+}
+
+function getBattleCatalogIndex(): BattleCatalogIndex {
+  return battleCatalogIndexFor(getDefaultBattleSkillCatalog());
+}
+
+function skillDefinitionFor(
+  skillId: BattleSkillId,
+  catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()
+): BattleSkillConfig {
+  const definition = catalogIndex.skillById.get(skillId);
+  if (!definition) {
+    throw new Error(`Missing battle skill definition: ${skillId}`);
+  }
+  return definition;
+}
+
+function statusDefinitionFor(
+  statusId: BattleStatusEffectId,
+  catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()
+): BattleStatusEffectConfig {
+  const definition = catalogIndex.statusById.get(statusId);
+  if (!definition) {
+    throw new Error(`Missing battle status definition: ${statusId}`);
+  }
+  return definition;
+}
+
+function createSkillState(
+  skillId: BattleSkillId,
+  catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()
+): BattleSkillState {
+  const definition = skillDefinitionFor(skillId, catalogIndex);
+  return {
+    id: definition.id,
+    name: definition.name,
+    description: definition.description,
+    kind: definition.kind,
+    target: definition.target,
+    cooldown: definition.cooldown,
+    remainingCooldown: 0
+  };
+}
+
+function createStatusEffectState(
+  statusId: BattleStatusEffectId,
+  sourceUnitId?: string,
+  catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()
+): BattleStatusEffectState {
+  const definition = statusDefinitionFor(statusId, catalogIndex);
+  return {
+    id: definition.id,
+    name: definition.name,
+    description: definition.description,
+    durationRemaining: definition.duration,
+    attackModifier: definition.attackModifier,
+    defenseModifier: definition.defenseModifier,
+    damagePerTurn: definition.damagePerTurn,
+    ...(sourceUnitId ? { sourceUnitId } : {})
   };
 }
 
@@ -33,11 +136,24 @@ function averageDamage(unit: UnitStack): number {
   return (unit.minDamage + unit.maxDamage) / 2;
 }
 
-function estimateDamage(attacker: UnitStack, defender: UnitStack, randomValue: number): number {
+function totalAttackModifier(unit: UnitStack): number {
+  return statusEffectsOf(unit).reduce((total, status) => total + status.attackModifier, 0);
+}
+
+function totalDefenseModifier(unit: UnitStack): number {
+  return statusEffectsOf(unit).reduce((total, status) => total + status.defenseModifier, 0);
+}
+
+function estimateDamage(attacker: UnitStack, defender: UnitStack, randomValue: number, multiplier = 1): number {
   const defenseBonus = defender.defending ? 5 : 0;
-  const offenseModifier = 1 + (attacker.attack - (defender.defense + defenseBonus)) * 0.05;
+  const effectiveAttack = attacker.attack + totalAttackModifier(attacker);
+  const effectiveDefense = defender.defense + totalDefenseModifier(defender) + defenseBonus;
+  const offenseModifier = 1 + (effectiveAttack - effectiveDefense) * 0.05;
   const variance = 0.9 + randomValue * 0.2;
-  return Math.max(1, Math.floor(attacker.count * averageDamage(attacker) * Math.max(0.3, offenseModifier) * variance));
+  return Math.max(
+    1,
+    Math.floor(attacker.count * averageDamage(attacker) * Math.max(0.3, offenseModifier) * variance * multiplier)
+  );
 }
 
 function applyDamage(target: UnitStack, damage: number): UnitStack {
@@ -60,7 +176,248 @@ function applyDamage(target: UnitStack, damage: number): UnitStack {
   };
 }
 
-function advanceTurn(state: BattleState, actingUnitId: string, waited: boolean): BattleState {
+function buildUnitStack(
+  base: Omit<UnitStack, "skills" | "statusEffects">,
+  battleSkills?: BattleSkillId[],
+  catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()
+): UnitStack {
+  return {
+    ...base,
+    skills: (battleSkills ?? []).map((skillId) => createSkillState(skillId, catalogIndex)),
+    statusEffects: []
+  };
+}
+
+function setSkillCooldown(unit: UnitStack, skillId: BattleSkillId): UnitStack {
+  const skills = skillsOf(unit);
+  const updatedSkills = skills.map((skill) =>
+    skill.id === skillId ? { ...skill, remainingCooldown: skill.cooldown } : skill
+  );
+  return {
+    ...unit,
+    skills: updatedSkills
+  };
+}
+
+function tickUnitSkillCooldowns(unit: UnitStack): UnitStack {
+  const skills = skillsOf(unit);
+  if (skills.length === 0) {
+    return unit;
+  }
+
+  return {
+    ...unit,
+    skills: skills.map((skill) =>
+      skill.remainingCooldown > 0 ? { ...skill, remainingCooldown: skill.remainingCooldown - 1 } : skill
+    )
+  };
+}
+
+function upsertStatusEffect(
+  unit: UnitStack,
+  statusId: BattleStatusEffectId,
+  sourceUnitId?: string,
+  catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()
+): UnitStack {
+  const statuses = statusEffectsOf(unit).filter((status) => status.id !== statusId);
+  return {
+    ...unit,
+    statusEffects: statuses.concat(createStatusEffectState(statusId, sourceUnitId, catalogIndex))
+  };
+}
+
+function findSkill(unit: UnitStack, skillId: BattleSkillId): BattleSkillState | undefined {
+  return skillsOf(unit).find((skill) => skill.id === skillId);
+}
+
+function applyOnHitStatuses(
+  attacker: UnitStack,
+  defender: UnitStack,
+  log: string[],
+  catalogIndex: BattleCatalogIndex,
+  explicitSkillIds: BattleSkillId[] = []
+): UnitStack {
+  if (defender.count <= 0) {
+    return defender;
+  }
+
+  const passiveSkillIds = skillsOf(attacker)
+    .filter((skill) => skill.kind === "passive")
+    .map((skill) => skill.id);
+  const skillIds = Array.from(new Set(explicitSkillIds.concat(passiveSkillIds)));
+
+  let nextDefender = defender;
+  for (const skillId of skillIds) {
+    const skill = findSkill(attacker, skillId);
+    const definition = skillDefinitionFor(skillId, catalogIndex);
+    const statusId = definition.effects?.onHitStatusId;
+    if (!skill || !statusId || nextDefender.count <= 0) {
+      continue;
+    }
+
+    const status = statusDefinitionFor(statusId, catalogIndex);
+    log.push(`${attacker.stackName} 的${skill.name}让 ${nextDefender.stackName} 陷入${status.name}`);
+    nextDefender = upsertStatusEffect(nextDefender, statusId, attacker.id, catalogIndex);
+  }
+
+  return nextDefender;
+}
+
+function processTurnStartForUnit(unit: UnitStack): { unit: UnitStack; log: string[] } {
+  let nextUnit = tickUnitSkillCooldowns(unit);
+  const log: string[] = [];
+  const remainingStatuses: BattleStatusEffectState[] = [];
+
+  for (const status of statusEffectsOf(nextUnit)) {
+    if (status.damagePerTurn > 0 && nextUnit.count > 0) {
+      nextUnit = applyDamage(nextUnit, status.damagePerTurn);
+      log.push(`${nextUnit.stackName} 受到${status.name}影响，损失 ${status.damagePerTurn} 生命`);
+    }
+
+    const nextDuration = status.durationRemaining - 1;
+    if (nextDuration > 0 && nextUnit.count > 0) {
+      remainingStatuses.push({
+        ...status,
+        durationRemaining: nextDuration
+      });
+    }
+  }
+
+  return {
+    unit: {
+      ...nextUnit,
+      statusEffects: remainingStatuses
+    },
+    log
+  };
+}
+
+function describeGrantedStatus(status: BattleStatusEffectConfig): string {
+  const parts: string[] = [];
+  if (status.attackModifier !== 0) {
+    parts.push(`${status.attackModifier > 0 ? "+" : ""}${status.attackModifier} 攻击`);
+  }
+  if (status.defenseModifier !== 0) {
+    parts.push(`${status.defenseModifier > 0 ? "+" : ""}${status.defenseModifier} 防御`);
+  }
+  if (status.damagePerTurn > 0) {
+    parts.push(`每回合 ${status.damagePerTurn} 持续伤害`);
+  }
+  return parts.length > 0 ? `${status.name}（${parts.join("，")}）` : status.name;
+}
+
+function hasStatusEffect(unit: UnitStack, statusId: BattleStatusEffectId): boolean {
+  return statusEffectsOf(unit).some((status) => status.id === statusId);
+}
+
+function isActiveSkillReady(skill: BattleSkillState): boolean {
+  return skill.kind === "active" && skill.remainingCooldown === 0;
+}
+
+function scoreAutomatedEnemySkill(
+  skillDefinition: BattleSkillConfig,
+  target: UnitStack,
+  catalogIndex: BattleCatalogIndex
+): number {
+  let score = (skillDefinition.effects?.damageMultiplier ?? 1) * 10;
+
+  if (skillDefinition.effects?.allowRetaliation === false) {
+    score += 4;
+  }
+
+  if (skillDefinition.effects?.onHitStatusId) {
+    const status = statusDefinitionFor(skillDefinition.effects.onHitStatusId, catalogIndex);
+    score += 4 + status.damagePerTurn + Math.max(0, -status.attackModifier) + Math.max(0, -status.defenseModifier);
+    if (hasStatusEffect(target, status.id)) {
+      score -= 6;
+    }
+  }
+
+  if (target.count <= 3) {
+    score += 1;
+  }
+
+  return score;
+}
+
+export function pickAutomatedBattleAction(state: BattleState): BattleAction | null {
+  if (!state.activeUnitId) {
+    return null;
+  }
+
+  const activeUnit = state.units[state.activeUnitId];
+  if (!activeUnit || activeUnit.count <= 0) {
+    return null;
+  }
+
+  const catalogIndex = getBattleCatalogIndex();
+  const readySkills = skillsOf(activeUnit).filter(isActiveSkillReady);
+
+  for (const skill of readySkills) {
+    if (skill.target !== "self") {
+      continue;
+    }
+
+    const definition = skillDefinitionFor(skill.id, catalogIndex);
+    if (definition.effects?.grantedStatusId && hasStatusEffect(activeUnit, definition.effects.grantedStatusId)) {
+      continue;
+    }
+
+    return {
+      type: "battle.skill",
+      unitId: activeUnit.id,
+      skillId: skill.id,
+      targetId: activeUnit.id
+    };
+  }
+
+  const enemyUnits = Object.values(state.units).filter((unit) => unit.camp !== activeUnit.camp && unit.count > 0);
+  if (enemyUnits.length === 0) {
+    return null;
+  }
+
+  let bestEnemySkillAction: BattleAction | null = null;
+  let bestEnemySkillScore = -Infinity;
+
+  for (const skill of readySkills) {
+    if (skill.target !== "enemy") {
+      continue;
+    }
+
+    const definition = skillDefinitionFor(skill.id, catalogIndex);
+    for (const target of enemyUnits) {
+      const score = scoreAutomatedEnemySkill(definition, target, catalogIndex);
+      if (score <= bestEnemySkillScore) {
+        continue;
+      }
+
+      bestEnemySkillScore = score;
+      bestEnemySkillAction = {
+        type: "battle.skill",
+        unitId: activeUnit.id,
+        skillId: skill.id,
+        targetId: target.id
+      };
+    }
+  }
+
+  if (bestEnemySkillAction) {
+    return bestEnemySkillAction;
+  }
+
+  const fallbackTarget = enemyUnits[0];
+  if (!fallbackTarget) {
+    return null;
+  }
+
+  return {
+    type: "battle.attack",
+    attackerId: activeUnit.id,
+    defenderId: fallbackTarget.id
+  };
+}
+
+function advanceTurnInternal(state: BattleState, actingUnitId: string, waited: boolean): BattleState {
   const aliveIds = new Set(
     Object.values(state.units)
       .filter((unit) => unit.count > 0)
@@ -97,6 +454,110 @@ function advanceTurn(state: BattleState, actingUnitId: string, waited: boolean):
   };
 }
 
+function prepareStateForActiveUnit(state: BattleState): BattleState {
+  let nextState = state;
+  let remainingIterations = Object.keys(state.units).length + 1;
+
+  while (nextState.activeUnitId && remainingIterations > 0) {
+    remainingIterations -= 1;
+    const activeUnit = nextState.units[nextState.activeUnitId];
+    if (!activeUnit || activeUnit.count <= 0) {
+      nextState = advanceTurnInternal(nextState, nextState.activeUnitId, false);
+      continue;
+    }
+
+    const processed = processTurnStartForUnit(activeUnit);
+    nextState = {
+      ...nextState,
+      units: {
+        ...nextState.units,
+        [activeUnit.id]: processed.unit
+      },
+      log: processed.log.length > 0 ? nextState.log.concat(processed.log) : nextState.log
+    };
+
+    if (processed.unit.count > 0) {
+      return nextState;
+    }
+
+    nextState = advanceTurnInternal(nextState, activeUnit.id, false);
+  }
+
+  return nextState;
+}
+
+function advanceTurn(state: BattleState, actingUnitId: string, waited: boolean): BattleState {
+  return prepareStateForActiveUnit(advanceTurnInternal(state, actingUnitId, waited));
+}
+
+function applyAttackSequence(
+  state: BattleState,
+  attackerId: string,
+  defenderId: string,
+  options?: {
+    damageMultiplier?: number;
+    allowRetaliation?: boolean;
+    logPrefix?: string;
+    skillId?: BattleSkillId;
+    catalogIndex?: BattleCatalogIndex;
+  }
+): BattleState {
+  const catalogIndex = options?.catalogIndex ?? getBattleCatalogIndex();
+  const attacker = state.units[attackerId]!;
+  const defender = state.units[defenderId]!;
+  const attackRoll = nextRng(state.rng.seed);
+  const attackDamage = estimateDamage(attacker, defender, attackRoll.value, options?.damageMultiplier ?? 1);
+  const nextUnits: Record<string, UnitStack> = {
+    ...state.units,
+    [defender.id]: applyDamage(defender, attackDamage)
+  };
+  let nextRngState = {
+    seed: attackRoll.nextSeed,
+    cursor: state.rng.cursor + 1
+  };
+  const log = state.log.concat(
+    `${options?.logPrefix ?? `${attacker.stackName} 对 ${defender.stackName}`} 造成 ${attackDamage} 伤害`
+  );
+
+  let damagedDefender = nextUnits[defender.id]!;
+  damagedDefender = applyOnHitStatuses(
+    attacker,
+    damagedDefender,
+    log,
+    catalogIndex,
+    options?.skillId ? [options.skillId] : []
+  );
+  nextUnits[defender.id] = damagedDefender;
+
+  if ((options?.allowRetaliation ?? true) && damagedDefender.count > 0 && !damagedDefender.hasRetaliated) {
+    const retaliationRoll = nextRng(nextRngState.seed);
+    const retaliationDamage = estimateDamage(damagedDefender, attacker, retaliationRoll.value);
+    let damagedAttacker = applyDamage(attacker, retaliationDamage);
+    damagedAttacker = applyOnHitStatuses(damagedDefender, damagedAttacker, log, catalogIndex);
+    nextUnits[attacker.id] = damagedAttacker;
+    nextUnits[defender.id] = {
+      ...damagedDefender,
+      hasRetaliated: true
+    };
+    nextRngState = {
+      seed: retaliationRoll.nextSeed,
+      cursor: nextRngState.cursor + 1
+    };
+    log.push(`${damagedDefender.stackName} 反击 ${attacker.stackName}，造成 ${retaliationDamage} 伤害`);
+  }
+
+  return advanceTurn(
+    {
+      ...state,
+      units: nextUnits,
+      log,
+      rng: nextRngState
+    },
+    attacker.id,
+    false
+  );
+}
+
 export function validateBattleAction(state: BattleState, action: BattleAction): ValidationResult {
   if (action.type === "battle.wait" || action.type === "battle.defend") {
     if (state.activeUnitId !== action.unitId) {
@@ -106,6 +567,48 @@ export function validateBattleAction(state: BattleState, action: BattleAction): 
     const unit = state.units[action.unitId];
     if (!unit || unit.count <= 0) {
       return { valid: false, reason: "unit_not_available" };
+    }
+
+    return { valid: true };
+  }
+
+  if (action.type === "battle.skill") {
+    if (state.activeUnitId !== action.unitId) {
+      return { valid: false, reason: "unit_not_active" };
+    }
+
+    const unit = state.units[action.unitId];
+    if (!unit || unit.count <= 0) {
+      return { valid: false, reason: "unit_not_available" };
+    }
+
+    const skill = findSkill(unit, action.skillId);
+    if (!skill || skill.kind !== "active") {
+      return { valid: false, reason: "skill_not_available" };
+    }
+
+    if (skill.remainingCooldown > 0) {
+      return { valid: false, reason: "skill_on_cooldown" };
+    }
+
+    if (skill.target === "self") {
+      if (action.targetId && action.targetId !== unit.id) {
+        return { valid: false, reason: "invalid_skill_target" };
+      }
+      return { valid: true };
+    }
+
+    if (!action.targetId) {
+      return { valid: false, reason: "skill_target_missing" };
+    }
+
+    const target = state.units[action.targetId];
+    if (!target || target.count <= 0) {
+      return { valid: false, reason: "defender_not_available" };
+    }
+
+    if (target.camp === unit.camp) {
+      return { valid: false, reason: "friendly_fire_blocked" };
     }
 
     return { valid: true };
@@ -148,39 +651,55 @@ export function createEmptyBattleState(): BattleState {
 }
 
 export function createDemoBattleState(): BattleState {
+  const unitCatalog = getDefaultUnitCatalog();
+  const catalogIndex = getBattleCatalogIndex();
+  const templateById = new Map(unitCatalog.templates.map((template) => [template.id, template]));
+  const heroTemplate = templateById.get("hero_guard_basic");
+  const wolfTemplate = templateById.get("wolf_pack");
+  if (!heroTemplate || !wolfTemplate) {
+    throw new Error("Missing demo battle templates");
+  }
   const units: Record<string, UnitStack> = {
-    "pikeman-a": {
-      id: "pikeman-a",
-      templateId: "hero_guard_basic",
-      camp: "attacker",
-      stackName: "枪兵",
-      initiative: 8,
-      attack: 4,
-      defense: 5,
-      minDamage: 1,
-      maxDamage: 3,
-      count: 12,
-      currentHp: 10,
-      maxHp: 10,
-      hasRetaliated: false,
-      defending: false
-    },
-    "wolf-d": {
-      id: "wolf-d",
-      templateId: "wolf_pack",
-      camp: "defender",
-      stackName: "恶狼",
-      initiative: 10,
-      attack: 6,
-      defense: 4,
-      minDamage: 2,
-      maxDamage: 4,
-      count: 8,
-      currentHp: 8,
-      maxHp: 8,
-      hasRetaliated: false,
-      defending: false
-    }
+    "pikeman-a": buildUnitStack(
+      {
+        id: "pikeman-a",
+        templateId: "hero_guard_basic",
+        camp: "attacker",
+        stackName: "枪兵",
+        initiative: 8,
+        attack: 4,
+        defense: 5,
+        minDamage: 1,
+        maxDamage: 3,
+        count: 12,
+        currentHp: 10,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false
+      },
+      heroTemplate.battleSkills,
+      catalogIndex
+    ),
+    "wolf-d": buildUnitStack(
+      {
+        id: "wolf-d",
+        templateId: "wolf_pack",
+        camp: "defender",
+        stackName: "恶狼",
+        initiative: 10,
+        attack: 6,
+        defense: 4,
+        minDamage: 2,
+        maxDamage: 4,
+        count: 8,
+        currentHp: 8,
+        maxHp: 8,
+        hasRetaliated: false,
+        defending: false
+      },
+      wolfTemplate.battleSkills,
+      catalogIndex
+    )
   };
 
   const turnOrder = sortTurnOrder(units);
@@ -201,28 +720,33 @@ export function createDemoBattleState(): BattleState {
 export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralArmyState, seed: number): BattleState {
   const units: Record<string, UnitStack> = {};
   const catalog = getDefaultUnitCatalog();
+  const battleCatalogIndex = getBattleCatalogIndex();
   const templateById = new Map(catalog.templates.map((template) => [template.id, template]));
   const heroTemplate = templateById.get(hero.armyTemplateId);
   if (!heroTemplate) {
     throw new Error(`Missing hero army template: ${hero.armyTemplateId}`);
   }
 
-  units[`${hero.id}-stack`] = {
-    id: `${hero.id}-stack`,
-    templateId: hero.armyTemplateId,
-    camp: "attacker",
-    stackName: heroTemplate.stackName,
-    initiative: heroTemplate.initiative,
-    attack: heroTemplate.attack + hero.stats.attack,
-    defense: heroTemplate.defense + hero.stats.defense,
-    minDamage: heroTemplate.minDamage,
-    maxDamage: heroTemplate.maxDamage,
-    count: hero.armyCount,
-    currentHp: heroTemplate.maxHp,
-    maxHp: heroTemplate.maxHp,
-    hasRetaliated: false,
-    defending: false
-  };
+  units[`${hero.id}-stack`] = buildUnitStack(
+    {
+      id: `${hero.id}-stack`,
+      templateId: hero.armyTemplateId,
+      camp: "attacker",
+      stackName: heroTemplate.stackName,
+      initiative: heroTemplate.initiative,
+      attack: heroTemplate.attack + hero.stats.attack,
+      defense: heroTemplate.defense + hero.stats.defense,
+      minDamage: heroTemplate.minDamage,
+      maxDamage: heroTemplate.maxDamage,
+      count: hero.armyCount,
+      currentHp: heroTemplate.maxHp,
+      maxHp: heroTemplate.maxHp,
+      hasRetaliated: false,
+      defending: false
+    },
+    heroTemplate.battleSkills,
+    battleCatalogIndex
+  );
 
   for (const [index, stack] of neutralArmy.stacks.entries()) {
     const template = templateById.get(stack.templateId);
@@ -230,22 +754,26 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
       throw new Error(`Missing neutral unit template: ${stack.templateId}`);
     }
     const id = `${neutralArmy.id}-stack-${index + 1}`;
-    units[id] = {
-      id,
-      templateId: stack.templateId,
-      camp: "defender",
-      stackName: template.stackName,
-      initiative: template.initiative,
-      attack: template.attack,
-      defense: template.defense,
-      minDamage: template.minDamage,
-      maxDamage: template.maxDamage,
-      count: stack.count,
-      currentHp: template.maxHp,
-      maxHp: template.maxHp,
-      hasRetaliated: false,
-      defending: false
-    };
+    units[id] = buildUnitStack(
+      {
+        id,
+        templateId: stack.templateId,
+        camp: "defender",
+        stackName: template.stackName,
+        initiative: template.initiative,
+        attack: template.attack,
+        defense: template.defense,
+        minDamage: template.minDamage,
+        maxDamage: template.maxDamage,
+        count: stack.count,
+        currentHp: template.maxHp,
+        maxHp: template.maxHp,
+        hasRetaliated: false,
+        defending: false
+      },
+      template.battleSkills,
+      battleCatalogIndex
+    );
   }
 
   const turnOrder = sortTurnOrder(units);
@@ -268,6 +796,7 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
 
 export function createHeroBattleState(attackerHero: HeroState, defenderHero: HeroState, seed: number): BattleState {
   const catalog = getDefaultUnitCatalog();
+  const battleCatalogIndex = getBattleCatalogIndex();
   const templateById = new Map(catalog.templates.map((template) => [template.id, template]));
   const attackerTemplate = templateById.get(attackerHero.armyTemplateId);
   const defenderTemplate = templateById.get(defenderHero.armyTemplateId);
@@ -276,38 +805,46 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
   }
 
   const units: Record<string, UnitStack> = {
-    [`${attackerHero.id}-stack`]: {
-      id: `${attackerHero.id}-stack`,
-      templateId: attackerHero.armyTemplateId,
-      camp: "attacker",
-      stackName: attackerTemplate.stackName,
-      initiative: attackerTemplate.initiative,
-      attack: attackerTemplate.attack + attackerHero.stats.attack,
-      defense: attackerTemplate.defense + attackerHero.stats.defense,
-      minDamage: attackerTemplate.minDamage,
-      maxDamage: attackerTemplate.maxDamage,
-      count: attackerHero.armyCount,
-      currentHp: attackerTemplate.maxHp,
-      maxHp: attackerTemplate.maxHp,
-      hasRetaliated: false,
-      defending: false
-    },
-    [`${defenderHero.id}-stack`]: {
-      id: `${defenderHero.id}-stack`,
-      templateId: defenderHero.armyTemplateId,
-      camp: "defender",
-      stackName: defenderTemplate.stackName,
-      initiative: defenderTemplate.initiative,
-      attack: defenderTemplate.attack + defenderHero.stats.attack,
-      defense: defenderTemplate.defense + defenderHero.stats.defense,
-      minDamage: defenderTemplate.minDamage,
-      maxDamage: defenderTemplate.maxDamage,
-      count: defenderHero.armyCount,
-      currentHp: defenderTemplate.maxHp,
-      maxHp: defenderTemplate.maxHp,
-      hasRetaliated: false,
-      defending: false
-    }
+    [`${attackerHero.id}-stack`]: buildUnitStack(
+      {
+        id: `${attackerHero.id}-stack`,
+        templateId: attackerHero.armyTemplateId,
+        camp: "attacker",
+        stackName: attackerTemplate.stackName,
+        initiative: attackerTemplate.initiative,
+        attack: attackerTemplate.attack + attackerHero.stats.attack,
+        defense: attackerTemplate.defense + attackerHero.stats.defense,
+        minDamage: attackerTemplate.minDamage,
+        maxDamage: attackerTemplate.maxDamage,
+        count: attackerHero.armyCount,
+        currentHp: attackerTemplate.maxHp,
+        maxHp: attackerTemplate.maxHp,
+        hasRetaliated: false,
+        defending: false
+      },
+      attackerTemplate.battleSkills,
+      battleCatalogIndex
+    ),
+    [`${defenderHero.id}-stack`]: buildUnitStack(
+      {
+        id: `${defenderHero.id}-stack`,
+        templateId: defenderHero.armyTemplateId,
+        camp: "defender",
+        stackName: defenderTemplate.stackName,
+        initiative: defenderTemplate.initiative,
+        attack: defenderTemplate.attack + defenderHero.stats.attack,
+        defense: defenderTemplate.defense + defenderHero.stats.defense,
+        minDamage: defenderTemplate.minDamage,
+        maxDamage: defenderTemplate.maxDamage,
+        count: defenderHero.armyCount,
+        currentHp: defenderTemplate.maxHp,
+        maxHp: defenderTemplate.maxHp,
+        hasRetaliated: false,
+        defending: false
+      },
+      defenderTemplate.battleSkills,
+      battleCatalogIndex
+    )
   };
 
   const turnOrder = sortTurnOrder(units);
@@ -352,19 +889,25 @@ export function getBattleOutcome(state: BattleState): BattleOutcome {
 }
 
 export function applyBattleAction(state: BattleState, action: BattleAction): BattleState {
-  const validation = validateBattleAction(state, action);
+  const normalizedState: BattleState = {
+    ...state,
+    units: Object.fromEntries(
+      Object.entries(state.units).map(([unitId, unit]) => [unitId, withNormalizedCollections(unit)])
+    )
+  };
+  const validation = validateBattleAction(normalizedState, action);
   if (!validation.valid) {
     return {
-      ...state,
-      log: state.log.concat(`Action rejected: ${validation.reason}`)
+      ...normalizedState,
+      log: normalizedState.log.concat(`Action rejected: ${validation.reason}`)
     };
   }
 
   if (action.type === "battle.wait") {
     return advanceTurn(
       {
-        ...state,
-        log: state.log.concat(`${action.unitId} 选择等待`)
+        ...normalizedState,
+        log: normalizedState.log.concat(`${action.unitId} 选择等待`)
       },
       action.unitId,
       true
@@ -374,59 +917,89 @@ export function applyBattleAction(state: BattleState, action: BattleAction): Bat
   if (action.type === "battle.defend") {
     return advanceTurn(
       {
-        ...state,
+        ...normalizedState,
         units: {
-          ...state.units,
+          ...normalizedState.units,
           [action.unitId]: {
-            ...state.units[action.unitId]!,
+            ...normalizedState.units[action.unitId]!,
             defending: true
           }
         },
-        log: state.log.concat(`${action.unitId} 进入防御`)
+        log: normalizedState.log.concat(`${action.unitId} 进入防御`)
       },
       action.unitId,
       false
     );
   }
 
-  const attacker = state.units[action.attackerId]!;
-  const defender = state.units[action.defenderId]!;
-  const attackRoll = nextRng(state.rng.seed);
-  const attackDamage = estimateDamage(attacker, defender, attackRoll.value);
-  const nextUnits: Record<string, UnitStack> = {
-    ...state.units,
-    [defender.id]: applyDamage(defender, attackDamage)
-  };
-  let nextRngState = {
-    seed: attackRoll.nextSeed,
-    cursor: state.rng.cursor + 1
-  };
-  const log = state.log.concat(`${attacker.stackName} 对 ${defender.stackName} 造成 ${attackDamage} 伤害`);
+  if (action.type === "battle.skill") {
+    const catalogIndex = getBattleCatalogIndex();
+    const caster = normalizedState.units[action.unitId]!;
+    const skillDefinition = skillDefinitionFor(action.skillId, catalogIndex);
+    const casterWithCooldown = setSkillCooldown(caster, action.skillId);
 
-  const damagedDefender = nextUnits[defender.id]!;
-  if (damagedDefender.count > 0 && !damagedDefender.hasRetaliated) {
-    const retaliationRoll = nextRng(nextRngState.seed);
-    const retaliationDamage = estimateDamage(damagedDefender, attacker, retaliationRoll.value);
-    nextUnits[attacker.id] = applyDamage(attacker, retaliationDamage);
-    nextUnits[defender.id] = {
-      ...damagedDefender,
-      hasRetaliated: true
-    };
-    nextRngState = {
-      seed: retaliationRoll.nextSeed,
-      cursor: nextRngState.cursor + 1
-    };
-    log.push(`${damagedDefender.stackName} 反击 ${attacker.stackName}，造成 ${retaliationDamage} 伤害`);
+    if (skillDefinition.target === "enemy" && action.targetId) {
+      return applyAttackSequence(
+        {
+          ...normalizedState,
+          units: {
+            ...normalizedState.units,
+            [caster.id]: casterWithCooldown
+          }
+        },
+        caster.id,
+        action.targetId!,
+        {
+          damageMultiplier: skillDefinition.effects?.damageMultiplier ?? 1,
+          allowRetaliation: skillDefinition.effects?.allowRetaliation ?? true,
+          logPrefix: `${caster.stackName} 施放 ${skillDefinition.name}，对 ${normalizedState.units[action.targetId!]!.stackName}`,
+          skillId: action.skillId,
+          catalogIndex
+        }
+      );
+    }
+
+    if (skillDefinition.effects?.grantedStatusId) {
+      const grantedStatus = statusDefinitionFor(skillDefinition.effects.grantedStatusId, catalogIndex);
+      const empoweredCaster = upsertStatusEffect(
+        casterWithCooldown,
+        skillDefinition.effects.grantedStatusId,
+        caster.id,
+        catalogIndex
+      );
+      return advanceTurn(
+        {
+          ...normalizedState,
+          units: {
+            ...normalizedState.units,
+            [caster.id]: empoweredCaster
+          },
+          log: normalizedState.log.concat(
+            `${caster.stackName} 施放 ${skillDefinition.name}，获得 ${describeGrantedStatus(grantedStatus)}`
+          )
+        },
+        caster.id,
+        false
+      );
+    }
+
+    return advanceTurn(
+      {
+        ...normalizedState,
+        units: {
+          ...normalizedState.units,
+          [caster.id]: casterWithCooldown
+        },
+        log: normalizedState.log.concat(`${caster.stackName} 施放 ${skillDefinition.name}`)
+      },
+      caster.id,
+      false
+    );
   }
 
-  return advanceTurn(
-    {
-      ...state,
-      units: nextUnits,
-      log,
-      rng: nextRngState
-    },
-    attacker.id,
-    false
-  );
+  if (action.type !== "battle.attack") {
+    return normalizedState;
+  }
+
+  return applyAttackSequence(normalizedState, action.attackerId, action.defenderId);
 }

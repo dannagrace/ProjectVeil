@@ -1,0 +1,141 @@
+{
+  "skills": [
+    {
+      "id": "power_shot",
+      "name": "投矛射击",
+      "description": "远程压制目标，伤害略低，但不会触发反击。",
+      "kind": "active",
+      "target": "enemy",
+      "cooldown": 2,
+      "effects": {
+        "damageMultiplier": 0.85,
+        "allowRetaliation": false
+      }
+    },
+    {
+      "id": "armor_spell",
+      "name": "护甲术",
+      "description": "为自己附加护甲术，在后续回合提升防御。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 3,
+      "effects": {
+        "grantedStatusId": "arcane_armor"
+      }
+    },
+    {
+      "id": "battle_focus",
+      "name": "战意激发",
+      "description": "短暂提升自身攻击，适合在贴身缠斗前蓄势。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 3,
+      "effects": {
+        "grantedStatusId": "battle_frenzy"
+      }
+    },
+    {
+      "id": "sundering_spear",
+      "name": "破甲投枪",
+      "description": "投出破甲短枪，伤害略低，但能在数回合内撕开目标防线。",
+      "kind": "active",
+      "target": "enemy",
+      "cooldown": 2,
+      "effects": {
+        "damageMultiplier": 0.9,
+        "onHitStatusId": "armor_break"
+      }
+    },
+    {
+      "id": "guardian_oath",
+      "name": "守誓姿态",
+      "description": "进入短暂守势，同时小幅提升攻防，适合准备接战前使用。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 4,
+      "effects": {
+        "grantedStatusId": "shield_wall"
+      }
+    },
+    {
+      "id": "venomous_fangs",
+      "name": "毒牙",
+      "description": "命中后让目标陷入中毒，回合开始时持续掉血。",
+      "kind": "passive",
+      "target": "enemy",
+      "cooldown": 0,
+      "effects": {
+        "onHitStatusId": "poisoned"
+      }
+    },
+    {
+      "id": "crippling_howl",
+      "name": "裂伤嚎叫",
+      "description": "发出撕裂嚎叫，压低伤害换取削弱效果，且不触发反击。",
+      "kind": "active",
+      "target": "enemy",
+      "cooldown": 3,
+      "effects": {
+        "damageMultiplier": 0.65,
+        "allowRetaliation": false,
+        "onHitStatusId": "weakened"
+      }
+    }
+  ],
+  "statuses": [
+    {
+      "id": "poisoned",
+      "name": "中毒",
+      "description": "回合开始时损失生命。",
+      "duration": 2,
+      "attackModifier": 0,
+      "defenseModifier": 0,
+      "damagePerTurn": 2
+    },
+    {
+      "id": "arcane_armor",
+      "name": "护甲术",
+      "description": "临时提升防御。",
+      "duration": 2,
+      "attackModifier": 0,
+      "defenseModifier": 3,
+      "damagePerTurn": 0
+    },
+    {
+      "id": "battle_frenzy",
+      "name": "战意激发",
+      "description": "短暂提升攻击。",
+      "duration": 2,
+      "attackModifier": 2,
+      "defenseModifier": 0,
+      "damagePerTurn": 0
+    },
+    {
+      "id": "weakened",
+      "name": "削弱",
+      "description": "暂时降低攻击力。",
+      "duration": 2,
+      "attackModifier": -2,
+      "defenseModifier": 0,
+      "damagePerTurn": 0
+    },
+    {
+      "id": "armor_break",
+      "name": "破甲",
+      "description": "短时间内护甲被撕裂，防御力下降。",
+      "duration": 2,
+      "attackModifier": 0,
+      "defenseModifier": -2,
+      "damagePerTurn": 0
+    },
+    {
+      "id": "shield_wall",
+      "name": "守誓姿态",
+      "description": "短暂进入守势，同时提高攻击与防御。",
+      "duration": 2,
+      "attackModifier": 1,
+      "defenseModifier": 2,
+      "damagePerTurn": 0
+    }
+  ]
+}

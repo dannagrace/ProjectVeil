@@ -1,4 +1,12 @@
-import type { MovementPlan, PlayerTileView, PlayerWorldView, Vec2 } from "./VeilCocosSession.ts";
+import type {
+  AttributeShrineBuildingView,
+  MovementPlan,
+  PlayerTileView,
+  PlayerWorldView,
+  RecruitmentBuildingView,
+  ResourceMineBuildingView,
+  Vec2
+} from "./VeilCocosSession.ts";
 
 export type CocosWorldAction =
   | {
@@ -10,6 +18,21 @@ export type CocosWorldAction =
       type: "hero.collect";
       heroId: string;
       position: Vec2;
+    }
+  | {
+      type: "hero.recruit";
+      heroId: string;
+      buildingId: string;
+    }
+  | {
+      type: "hero.visit";
+      heroId: string;
+      buildingId: string;
+    }
+  | {
+      type: "hero.claimMine";
+      heroId: string;
+      buildingId: string;
     }
   | {
       type: "turn.endDay";
@@ -144,6 +167,249 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
     };
   }
 
+  if (action.type === "hero.recruit") {
+    const tile = findPlayerTile(view, hero.position);
+    const building = tile?.building;
+    if (!building) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_found"
+      };
+    }
+
+    if (building.id !== action.buildingId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "hero_not_on_building"
+      };
+    }
+
+    if (!isRecruitmentBuilding(building)) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_recruitable"
+      };
+    }
+
+    if (building.availableCount <= 0) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_depleted"
+      };
+    }
+
+    if (
+      view.resources.gold < building.cost.gold ||
+      view.resources.wood < building.cost.wood ||
+      view.resources.ore < building.cost.ore
+    ) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "not_enough_resources"
+      };
+    }
+
+    const predictedWorld: PlayerWorldView = {
+      ...view,
+      ownHeroes: view.ownHeroes.map((item) =>
+        item.id === hero.id
+          ? {
+              ...item,
+              armyCount: item.armyCount + building.availableCount
+            }
+          : item
+      ),
+      map: {
+        ...view.map,
+        tiles: view.map.tiles.map((item) => {
+          const currentBuilding = item.building;
+          if (!samePosition(item.position, hero.position) || !isRecruitmentBuilding(currentBuilding)) {
+            return item;
+          }
+
+          return {
+            ...item,
+            building: {
+              ...currentBuilding,
+              cost: { ...currentBuilding.cost },
+              availableCount: 0
+            }
+          };
+        })
+      },
+      resources: {
+        gold: Math.max(0, view.resources.gold - building.cost.gold),
+        wood: Math.max(0, view.resources.wood - building.cost.wood),
+        ore: Math.max(0, view.resources.ore - building.cost.ore)
+      }
+    };
+
+    return {
+      world: predictedWorld,
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+    };
+  }
+
+  if (action.type === "hero.visit") {
+    const tile = findPlayerTile(view, hero.position);
+    const building = tile?.building;
+    if (!building) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_found"
+      };
+    }
+
+    if (building.id !== action.buildingId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "hero_not_on_building"
+      };
+    }
+
+    if (!isAttributeShrineBuilding(building)) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_visitable"
+      };
+    }
+
+    if (building.visitedHeroIds.includes(hero.id)) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_already_visited"
+      };
+    }
+
+    const predictedWorld: PlayerWorldView = {
+      ...view,
+      ownHeroes: view.ownHeroes.map((item) =>
+        item.id === hero.id
+          ? {
+              ...item,
+              stats: {
+                ...item.stats,
+                attack: item.stats.attack + building.bonus.attack,
+                defense: item.stats.defense + building.bonus.defense,
+                power: item.stats.power + building.bonus.power,
+                knowledge: item.stats.knowledge + building.bonus.knowledge
+              }
+            }
+          : item
+      ),
+      map: {
+        ...view.map,
+        tiles: view.map.tiles.map((item) => {
+          const currentBuilding = item.building;
+          if (!samePosition(item.position, hero.position) || !isAttributeShrineBuilding(currentBuilding)) {
+            return item;
+          }
+
+          return {
+            ...item,
+            building: {
+              ...currentBuilding,
+              bonus: { ...currentBuilding.bonus },
+              visitedHeroIds: [...currentBuilding.visitedHeroIds, hero.id]
+            }
+          };
+        })
+      }
+    };
+
+    return {
+      world: predictedWorld,
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+    };
+  }
+
+  if (action.type === "hero.claimMine") {
+    const tile = findPlayerTile(view, hero.position);
+    const building = tile?.building;
+    if (!building) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_found"
+      };
+    }
+
+    if (building.id !== action.buildingId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "hero_not_on_building"
+      };
+    }
+
+    if (!isResourceMineBuilding(building)) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_claimable"
+      };
+    }
+
+    if (building.ownerPlayerId === hero.playerId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_already_owned"
+      };
+    }
+
+    const predictedWorld: PlayerWorldView = {
+      ...view,
+      map: {
+        ...view.map,
+        tiles: view.map.tiles.map((item) => {
+          const currentBuilding = item.building;
+          if (!samePosition(item.position, hero.position) || !isResourceMineBuilding(currentBuilding)) {
+            return item;
+          }
+
+          return {
+            ...item,
+            building: {
+              ...currentBuilding,
+              ownerPlayerId: hero.playerId
+            }
+          };
+        })
+      }
+    };
+
+    return {
+      world: predictedWorld,
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+    };
+  }
+
   const tile = findPlayerTile(view, action.position);
   if (!tile) {
     return {
@@ -163,7 +429,8 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
     };
   }
 
-  if (!tile.resource) {
+  const resource = tile.resource;
+  if (!resource) {
     return {
       world: view,
       movementPlan: null,
@@ -189,7 +456,7 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
     },
     resources: {
       ...view.resources,
-      [tile.resource.kind]: view.resources[tile.resource.kind] + tile.resource.amount
+      [resource.kind]: view.resources[resource.kind] + resource.amount
     }
   };
 
@@ -332,7 +599,7 @@ function isBlockedForPlayerView(view: PlayerWorldView, heroId: string, position:
   }
 
   const occupant = tile.occupant;
-  if ((occupant?.kind === "neutral" || occupant?.kind === "building") && !samePosition(position, destination)) {
+  if (occupant?.kind === "neutral" && !samePosition(position, destination)) {
     return true;
   }
 
@@ -356,4 +623,16 @@ function reconstructPath(cameFrom: Map<string, Vec2>, current: Vec2): Vec2[] {
     path.unshift(cursor);
   }
   return path;
+}
+
+function isRecruitmentBuilding(building: PlayerTileView["building"]): building is RecruitmentBuildingView {
+  return building?.kind === "recruitment_post";
+}
+
+function isAttributeShrineBuilding(building: PlayerTileView["building"]): building is AttributeShrineBuildingView {
+  return building?.kind === "attribute_shrine";
+}
+
+function isResourceMineBuilding(building: PlayerTileView["building"]): building is ResourceMineBuildingView {
+  return building?.kind === "resource_mine";
 }

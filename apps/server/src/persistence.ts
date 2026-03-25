@@ -4,6 +4,18 @@ import type { RoomPersistenceSnapshot } from "./index";
 
 export interface RoomSnapshotStore {
   load(roomId: string): Promise<RoomPersistenceSnapshot | null>;
+  loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
+  loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null>;
+  loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]>;
+  loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null>;
+  loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]>;
+  ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot>;
+  bindPlayerAccountCredentials(
+    playerId: string,
+    input: PlayerAccountCredentialInput
+  ): Promise<PlayerAccountSnapshot>;
+  savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot>;
+  listPlayerAccounts(options?: PlayerAccountListOptions): Promise<PlayerAccountSnapshot[]>;
   save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void>;
   delete(roomId: string): Promise<void>;
   pruneExpired(referenceTime?: Date): Promise<number>;
@@ -57,6 +69,33 @@ interface PlayerRoomProfileSummaryRow extends RowDataPacket {
   updated_at: Date | string;
 }
 
+interface PlayerAccountRow extends RowDataPacket {
+  player_id: string;
+  display_name: string | null;
+  global_resources_json: string | ResourceLedger;
+  last_room_id: string | null;
+  last_seen_at: Date | string | null;
+  login_id: string | null;
+  credential_bound_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface PlayerAccountAuthRow extends RowDataPacket {
+  player_id: string;
+  display_name: string | null;
+  login_id: string | null;
+  password_hash: string | null;
+  credential_bound_at: Date | string | null;
+}
+
+interface PlayerHeroArchiveRow extends RowDataPacket {
+  player_id: string;
+  hero_id: string;
+  hero_json: string | HeroState;
+  updated_at: Date | string;
+}
+
 export interface RoomSnapshotSummary {
   roomId: string;
   version: number;
@@ -71,6 +110,53 @@ export interface PlayerRoomProfileSnapshot {
   playerId: string;
   heroes: HeroState[];
   resources: ResourceLedger;
+}
+
+export interface PlayerAccountSnapshot {
+  playerId: string;
+  displayName: string;
+  globalResources: ResourceLedger;
+  lastRoomId?: string;
+  lastSeenAt?: string;
+  loginId?: string;
+  credentialBoundAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PlayerAccountAuthSnapshot {
+  playerId: string;
+  displayName: string;
+  loginId: string;
+  passwordHash: string;
+  credentialBoundAt?: string;
+}
+
+export interface PlayerHeroArchiveSnapshot {
+  playerId: string;
+  heroId: string;
+  hero: HeroState;
+}
+
+export interface PlayerAccountEnsureInput {
+  playerId: string;
+  displayName?: string;
+  lastRoomId?: string;
+}
+
+export interface PlayerAccountProfilePatch {
+  displayName?: string;
+  lastRoomId?: string | null;
+}
+
+export interface PlayerAccountCredentialInput {
+  loginId: string;
+  passwordHash: string;
+}
+
+export interface PlayerAccountListOptions {
+  limit?: number;
+  playerId?: string;
 }
 
 export interface PlayerRoomProfileSummary {
@@ -96,10 +182,17 @@ export const MYSQL_ROOM_SNAPSHOT_TABLE = "room_snapshots";
 export const MYSQL_ROOM_SNAPSHOT_UPDATED_AT_INDEX = "idx_room_snapshots_updated_at";
 export const MYSQL_PLAYER_ROOM_PROFILE_TABLE = "player_room_profiles";
 export const MYSQL_PLAYER_ROOM_PROFILE_UPDATED_AT_INDEX = "idx_player_room_profiles_updated_at";
+export const MYSQL_PLAYER_ACCOUNT_TABLE = "player_accounts";
+export const MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX = "idx_player_accounts_updated_at";
+export const MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX = "uidx_player_accounts_login_id";
+export const MYSQL_PLAYER_HERO_ARCHIVE_TABLE = "player_hero_archives";
+export const MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX = "idx_player_hero_archives_updated_at";
 export const MYSQL_CONFIG_DOCUMENT_TABLE = "config_documents";
 export const MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX = "idx_config_documents_updated_at";
 export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
 export const DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES = 30;
+export const MAX_PLAYER_DISPLAY_NAME_LENGTH = 40;
+export const MAX_PLAYER_LOGIN_ID_LENGTH = 40;
 
 function readOptionalPositiveNumber(value: string | undefined, fallback: number): number | null {
   if (value == null || value.trim() === "") {
@@ -135,6 +228,79 @@ function normalizeResourceLedger(resources?: Partial<ResourceLedger>): ResourceL
   };
 }
 
+function normalizePlayerId(playerId: string): string {
+  const normalized = playerId.trim();
+  if (normalized.length === 0) {
+    throw new Error("playerId must not be empty");
+  }
+
+  return normalized;
+}
+
+function normalizePlayerDisplayName(playerId: string, displayName?: string | null): string {
+  const fallback = normalizePlayerId(playerId);
+  const normalized = displayName?.trim();
+  if (!normalized) {
+    return fallback;
+  }
+
+  return normalized.slice(0, MAX_PLAYER_DISPLAY_NAME_LENGTH);
+}
+
+export function normalizePlayerLoginId(loginId: string): string {
+  const normalized = loginId.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{2,39}$/.test(normalized)) {
+    throw new Error(
+      "loginId must be 3-40 chars and use only lowercase letters, digits, underscores, or hyphens"
+    );
+  }
+
+  return normalized.slice(0, MAX_PLAYER_LOGIN_ID_LENGTH);
+}
+
+function formatTimestamp(value: Date | string | null | undefined): string | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return date.toISOString();
+}
+
+function normalizePlayerAccountSnapshot(account: {
+  playerId: string;
+  displayName?: string | null | undefined;
+  globalResources?: Partial<ResourceLedger>;
+  lastRoomId?: string | undefined;
+  lastSeenAt?: string | undefined;
+  loginId?: string | null | undefined;
+  credentialBoundAt?: string | undefined;
+  createdAt?: string | undefined;
+  updatedAt?: string | undefined;
+}): PlayerAccountSnapshot {
+  const playerId = normalizePlayerId(account.playerId);
+
+  return {
+    playerId,
+    displayName: normalizePlayerDisplayName(playerId, account.displayName),
+    globalResources: normalizeResourceLedger(account.globalResources),
+    ...(account.lastRoomId ? { lastRoomId: account.lastRoomId } : {}),
+    ...(account.lastSeenAt ? { lastSeenAt: account.lastSeenAt } : {}),
+    ...(account.loginId ? { loginId: normalizePlayerLoginId(account.loginId) } : {}),
+    ...(account.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
+    ...(account.createdAt ? { createdAt: account.createdAt } : {}),
+    ...(account.updatedAt ? { updatedAt: account.updatedAt } : {})
+  };
+}
+
+function collectPlayerIds(state: WorldState): string[] {
+  return Array.from(new Set([...state.heroes.map((hero) => hero.playerId), ...Object.keys(state.resources)]));
+}
+
 export function snapshotHasExpired(
   updatedAt: Date | string,
   ttlHours: number | null,
@@ -148,7 +314,7 @@ export function snapshotHasExpired(
 }
 
 export function createPlayerRoomProfiles(state: WorldState): PlayerRoomProfileSnapshot[] {
-  const playerIds = Array.from(new Set([...state.heroes.map((hero) => hero.playerId), ...Object.keys(state.resources)]));
+  const playerIds = collectPlayerIds(state);
 
   return playerIds.map((playerId) => ({
     roomId: state.meta.roomId,
@@ -157,6 +323,22 @@ export function createPlayerRoomProfiles(state: WorldState): PlayerRoomProfileSn
       .filter((hero) => hero.playerId === playerId)
       .map((hero) => normalizeHeroState(hero)),
     resources: normalizeResourceLedger(state.resources[playerId])
+  }));
+}
+
+export function createPlayerAccountsFromWorldState(state: WorldState): PlayerAccountSnapshot[] {
+  return collectPlayerIds(state).map((playerId) => ({
+    playerId,
+    displayName: normalizePlayerDisplayName(playerId),
+    globalResources: normalizeResourceLedger(state.resources[playerId])
+  }));
+}
+
+export function createPlayerHeroArchivesFromWorldState(state: WorldState): PlayerHeroArchiveSnapshot[] {
+  return state.heroes.map((hero) => ({
+    playerId: hero.playerId,
+    heroId: hero.id,
+    hero: normalizeHeroState(hero)
   }));
 }
 
@@ -194,6 +376,70 @@ export function applyPlayerProfilesToWorldState(
     ...state,
     heroes: nextHeroes,
     resources: nextResources
+  };
+}
+
+function mergeHeroArchiveIntoFreshHero(baseHero: HeroState, archive: PlayerHeroArchiveSnapshot): HeroState {
+  const archivedHero = normalizeHeroState(archive.hero);
+
+  return normalizeHeroState({
+    ...baseHero,
+    stats: {
+      ...archivedHero.stats,
+      hp: archivedHero.stats.maxHp
+    },
+    progression: archivedHero.progression,
+    armyTemplateId: archivedHero.armyTemplateId,
+    armyCount: archivedHero.armyCount,
+    move: {
+      total: archivedHero.move.total,
+      remaining: archivedHero.move.total
+    }
+  });
+}
+
+export function applyPlayerAccountsToWorldState(
+  state: WorldState,
+  accounts: PlayerAccountSnapshot[]
+): WorldState {
+  if (accounts.length === 0) {
+    return state;
+  }
+
+  const accountByPlayerId = new Map(accounts.map((account) => [account.playerId, account] as const));
+  const nextResources = { ...state.resources };
+  const orderedPlayerIds = Array.from(new Set([...collectPlayerIds(state), ...accounts.map((account) => account.playerId)]));
+
+  for (const playerId of orderedPlayerIds) {
+    nextResources[playerId] = normalizeResourceLedger(
+      accountByPlayerId.get(playerId)?.globalResources ?? state.resources[playerId]
+    );
+  }
+
+  return {
+    ...state,
+    resources: nextResources
+  };
+}
+
+export function applyPlayerHeroArchivesToWorldState(
+  state: WorldState,
+  archives: PlayerHeroArchiveSnapshot[]
+): WorldState {
+  if (archives.length === 0) {
+    return state;
+  }
+
+  const archiveByKey = new Map(
+    archives.map((archive) => [`${archive.playerId}:${archive.heroId}`, archive] as const)
+  );
+
+  return {
+    ...state,
+    heroes: state.heroes.map((hero) => {
+      const archive = archiveByKey.get(`${hero.playerId}:${hero.id}`);
+      return archive ? mergeHeroArchiveIntoFreshHero(hero, archive) : normalizeHeroState(hero);
+    })
   };
 }
 
@@ -286,6 +532,193 @@ PREPARE veil_player_profiles_idx_stmt FROM @veil_player_profiles_idx_sql;
 EXECUTE veil_player_profiles_idx_stmt;
 DEALLOCATE PREPARE veil_player_profiles_idx_stmt;
 
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
+  player_id VARCHAR(191) NOT NULL,
+  display_name VARCHAR(80) NULL,
+  global_resources_json LONGTEXT NOT NULL,
+  last_room_id VARCHAR(191) NULL,
+  last_seen_at DATETIME NULL DEFAULT NULL,
+  login_id VARCHAR(40) NULL,
+  password_hash VARCHAR(255) NULL,
+  credential_bound_at DATETIME NULL DEFAULT NULL,
+  version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (player_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET @veil_player_accounts_display_name_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'display_name'
+);
+
+SET @veil_player_accounts_display_name_sql := IF(
+  @veil_player_accounts_display_name_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`display_name\` VARCHAR(80) NULL AFTER \`player_id\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_display_name_stmt FROM @veil_player_accounts_display_name_sql;
+EXECUTE veil_player_accounts_display_name_stmt;
+DEALLOCATE PREPARE veil_player_accounts_display_name_stmt;
+
+SET @veil_player_accounts_last_room_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'last_room_id'
+);
+
+SET @veil_player_accounts_last_room_sql := IF(
+  @veil_player_accounts_last_room_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`last_room_id\` VARCHAR(191) NULL AFTER \`global_resources_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_last_room_stmt FROM @veil_player_accounts_last_room_sql;
+EXECUTE veil_player_accounts_last_room_stmt;
+DEALLOCATE PREPARE veil_player_accounts_last_room_stmt;
+
+SET @veil_player_accounts_last_seen_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'last_seen_at'
+);
+
+SET @veil_player_accounts_last_seen_sql := IF(
+  @veil_player_accounts_last_seen_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`last_seen_at\` DATETIME NULL DEFAULT NULL AFTER \`last_room_id\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_last_seen_stmt FROM @veil_player_accounts_last_seen_sql;
+EXECUTE veil_player_accounts_last_seen_stmt;
+DEALLOCATE PREPARE veil_player_accounts_last_seen_stmt;
+
+SET @veil_player_accounts_login_id_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'login_id'
+);
+
+SET @veil_player_accounts_login_id_sql := IF(
+  @veil_player_accounts_login_id_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`login_id\` VARCHAR(40) NULL AFTER \`last_seen_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_login_id_stmt FROM @veil_player_accounts_login_id_sql;
+EXECUTE veil_player_accounts_login_id_stmt;
+DEALLOCATE PREPARE veil_player_accounts_login_id_stmt;
+
+SET @veil_player_accounts_password_hash_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'password_hash'
+);
+
+SET @veil_player_accounts_password_hash_sql := IF(
+  @veil_player_accounts_password_hash_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`password_hash\` VARCHAR(255) NULL AFTER \`login_id\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_password_hash_stmt FROM @veil_player_accounts_password_hash_sql;
+EXECUTE veil_player_accounts_password_hash_stmt;
+DEALLOCATE PREPARE veil_player_accounts_password_hash_stmt;
+
+SET @veil_player_accounts_credential_bound_at_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'credential_bound_at'
+);
+
+SET @veil_player_accounts_credential_bound_at_sql := IF(
+  @veil_player_accounts_credential_bound_at_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`credential_bound_at\` DATETIME NULL DEFAULT NULL AFTER \`password_hash\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_credential_bound_at_stmt FROM @veil_player_accounts_credential_bound_at_sql;
+EXECUTE veil_player_accounts_credential_bound_at_stmt;
+DEALLOCATE PREPARE veil_player_accounts_credential_bound_at_stmt;
+
+SET @veil_player_accounts_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX}'
+);
+
+SET @veil_player_accounts_idx_sql := IF(
+  @veil_player_accounts_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX}\` ON \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (updated_at)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_idx_stmt FROM @veil_player_accounts_idx_sql;
+EXECUTE veil_player_accounts_idx_stmt;
+DEALLOCATE PREPARE veil_player_accounts_idx_stmt;
+
+SET @veil_player_accounts_login_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX}'
+);
+
+SET @veil_player_accounts_login_idx_sql := IF(
+  @veil_player_accounts_login_idx_exists = 0,
+  'CREATE UNIQUE INDEX \`${MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX}\` ON \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (login_id)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_login_idx_stmt FROM @veil_player_accounts_login_idx_sql;
+EXECUTE veil_player_accounts_login_idx_stmt;
+DEALLOCATE PREPARE veil_player_accounts_login_idx_stmt;
+
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (
+  player_id VARCHAR(191) NOT NULL,
+  hero_id VARCHAR(191) NOT NULL,
+  hero_json LONGTEXT NOT NULL,
+  version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (player_id, hero_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET @veil_player_hero_archives_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX}'
+);
+
+SET @veil_player_hero_archives_idx_sql := IF(
+  @veil_player_hero_archives_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX}\` ON \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (updated_at)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_hero_archives_idx_stmt FROM @veil_player_hero_archives_idx_sql;
+EXECUTE veil_player_hero_archives_idx_stmt;
+DEALLOCATE PREPARE veil_player_hero_archives_idx_stmt;
+
 CREATE TABLE IF NOT EXISTS \`${MYSQL_CONFIG_DOCUMENT_TABLE}\` (
   document_id VARCHAR(64) NOT NULL,
   content_json LONGTEXT NOT NULL,
@@ -324,6 +757,40 @@ function parseJsonColumn<T>(value: string | T): T {
   return value;
 }
 
+function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
+  const lastSeenAt = formatTimestamp(row.last_seen_at);
+  const credentialBoundAt = formatTimestamp(row.credential_bound_at);
+  const createdAt = formatTimestamp(row.created_at);
+  const updatedAt = formatTimestamp(row.updated_at);
+
+  return normalizePlayerAccountSnapshot({
+    playerId: row.player_id,
+    globalResources: parseJsonColumn<ResourceLedger>(row.global_resources_json),
+    ...(row.display_name ? { displayName: row.display_name } : {}),
+    ...(row.last_room_id ? { lastRoomId: row.last_room_id } : {}),
+    ...(row.login_id ? { loginId: row.login_id } : {}),
+    ...(lastSeenAt ? { lastSeenAt } : {}),
+    ...(credentialBoundAt ? { credentialBoundAt } : {}),
+    ...(createdAt ? { createdAt } : {}),
+    ...(updatedAt ? { updatedAt } : {})
+  });
+}
+
+function toPlayerAccountAuthSnapshot(row: PlayerAccountAuthRow): PlayerAccountAuthSnapshot | null {
+  if (!row.login_id || !row.password_hash) {
+    return null;
+  }
+
+  const credentialBoundAt = formatTimestamp(row.credential_bound_at);
+  return {
+    playerId: normalizePlayerId(row.player_id),
+    displayName: normalizePlayerDisplayName(row.player_id, row.display_name),
+    loginId: normalizePlayerLoginId(row.login_id),
+    passwordHash: row.password_hash,
+    ...(credentialBoundAt ? { credentialBoundAt } : {})
+  };
+}
+
 async function deletePlayerProfilesForRoom(connection: PoolConnection, roomId: string): Promise<void> {
   await connection.query(`DELETE FROM \`${MYSQL_PLAYER_ROOM_PROFILE_TABLE}\` WHERE room_id = ?`, [roomId]);
 }
@@ -357,6 +824,66 @@ async function savePlayerProfiles(
        AND player_id NOT IN (${placeholders})`,
     [roomId, ...profiles.map((profile) => profile.playerId)]
   );
+}
+
+async function savePlayerAccounts(
+  connection: PoolConnection,
+  accounts: PlayerAccountSnapshot[]
+): Promise<void> {
+  for (const account of accounts) {
+    const normalizedAccount = normalizePlayerAccountSnapshot(account);
+    await connection.query(
+      `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (player_id, display_name, global_resources_json)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = COALESCE(display_name, VALUES(display_name)),
+         global_resources_json = VALUES(global_resources_json),
+         version = version + 1`,
+      [
+        normalizedAccount.playerId,
+        normalizedAccount.displayName,
+        JSON.stringify(normalizedAccount.globalResources)
+      ]
+    );
+  }
+}
+
+async function savePlayerHeroArchives(
+  connection: PoolConnection,
+  archives: PlayerHeroArchiveSnapshot[]
+): Promise<void> {
+  for (const archive of archives) {
+    await connection.query(
+      `INSERT INTO \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (player_id, hero_id, hero_json)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         hero_json = VALUES(hero_json),
+         version = version + 1`,
+      [archive.playerId, archive.heroId, JSON.stringify(archive.hero)]
+    );
+  }
+}
+
+async function ensureColumnExists(
+  pool: Pool,
+  database: string,
+  tableName: string,
+  columnName: string,
+  columnSql: string
+): Promise<void> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT 1
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = ?
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME = ?
+     LIMIT 1`,
+    [database, tableName, columnName]
+  );
+
+  if (!rows[0]) {
+    await pool.query(`ALTER TABLE \`${tableName}\` ADD COLUMN ${columnSql}`);
+  }
 }
 
 export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
@@ -417,6 +944,33 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
     );
     await pool.query(
+      `CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
+        player_id VARCHAR(191) NOT NULL,
+        display_name VARCHAR(80) NULL,
+        global_resources_json LONGTEXT NOT NULL,
+        last_room_id VARCHAR(191) NULL,
+        last_seen_at DATETIME NULL DEFAULT NULL,
+        login_id VARCHAR(40) NULL,
+        password_hash VARCHAR(255) NULL,
+        credential_bound_at DATETIME NULL DEFAULT NULL,
+        version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (player_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    );
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (
+        player_id VARCHAR(191) NOT NULL,
+        hero_id VARCHAR(191) NOT NULL,
+        hero_json LONGTEXT NOT NULL,
+        version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (player_id, hero_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    );
+    await pool.query(
       `CREATE TABLE IF NOT EXISTS \`${MYSQL_CONFIG_DOCUMENT_TABLE}\` (
         document_id VARCHAR(64) NOT NULL,
         content_json LONGTEXT NOT NULL,
@@ -426,6 +980,48 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (document_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    );
+    await ensureColumnExists(
+      pool,
+      config.database,
+      MYSQL_PLAYER_ACCOUNT_TABLE,
+      "display_name",
+      "`display_name` VARCHAR(80) NULL AFTER `player_id`"
+    );
+    await ensureColumnExists(
+      pool,
+      config.database,
+      MYSQL_PLAYER_ACCOUNT_TABLE,
+      "last_room_id",
+      "`last_room_id` VARCHAR(191) NULL AFTER `global_resources_json`"
+    );
+    await ensureColumnExists(
+      pool,
+      config.database,
+      MYSQL_PLAYER_ACCOUNT_TABLE,
+      "last_seen_at",
+      "`last_seen_at` DATETIME NULL DEFAULT NULL AFTER `last_room_id`"
+    );
+    await ensureColumnExists(
+      pool,
+      config.database,
+      MYSQL_PLAYER_ACCOUNT_TABLE,
+      "login_id",
+      "`login_id` VARCHAR(40) NULL AFTER `last_seen_at`"
+    );
+    await ensureColumnExists(
+      pool,
+      config.database,
+      MYSQL_PLAYER_ACCOUNT_TABLE,
+      "password_hash",
+      "`password_hash` VARCHAR(255) NULL AFTER `login_id`"
+    );
+    await ensureColumnExists(
+      pool,
+      config.database,
+      MYSQL_PLAYER_ACCOUNT_TABLE,
+      "credential_bound_at",
+      "`credential_bound_at` DATETIME NULL DEFAULT NULL AFTER `password_hash`"
     );
 
     const [indexRows] = await pool.query<RowDataPacket[]>(
@@ -459,6 +1055,57 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       await pool.query(
         `CREATE INDEX \`${MYSQL_PLAYER_ROOM_PROFILE_UPDATED_AT_INDEX}\`
          ON \`${MYSQL_PLAYER_ROOM_PROFILE_TABLE}\` (updated_at)`
+      );
+    }
+
+    const [playerAccountIndexRows] = await pool.query<RowDataPacket[]>(
+      `SELECT 1
+       FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA = ?
+         AND TABLE_NAME = ?
+         AND INDEX_NAME = ?
+       LIMIT 1`,
+      [config.database, MYSQL_PLAYER_ACCOUNT_TABLE, MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX]
+    );
+
+    if (!playerAccountIndexRows[0]) {
+      await pool.query(
+        `CREATE INDEX \`${MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX}\`
+         ON \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (updated_at)`
+      );
+    }
+
+    const [playerAccountLoginIndexRows] = await pool.query<RowDataPacket[]>(
+      `SELECT 1
+       FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA = ?
+         AND TABLE_NAME = ?
+         AND INDEX_NAME = ?
+       LIMIT 1`,
+      [config.database, MYSQL_PLAYER_ACCOUNT_TABLE, MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX]
+    );
+
+    if (!playerAccountLoginIndexRows[0]) {
+      await pool.query(
+        `CREATE UNIQUE INDEX \`${MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX}\`
+         ON \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (login_id)`
+      );
+    }
+
+    const [playerHeroArchiveIndexRows] = await pool.query<RowDataPacket[]>(
+      `SELECT 1
+       FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA = ?
+         AND TABLE_NAME = ?
+         AND INDEX_NAME = ?
+       LIMIT 1`,
+      [config.database, MYSQL_PLAYER_HERO_ARCHIVE_TABLE, MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX]
+    );
+
+    if (!playerHeroArchiveIndexRows[0]) {
+      await pool.query(
+        `CREATE INDEX \`${MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX}\`
+         ON \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (updated_at)`
       );
     }
 
@@ -516,17 +1163,290 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     }));
 
     const persistedState = parseJsonColumn<WorldState>(row.state_json);
+    const mergedState = applyPlayerProfilesToWorldState(
+      {
+        ...persistedState,
+        heroes: persistedState.heroes.map((hero) => normalizeHeroState(hero))
+      },
+      profiles
+    );
+    const accounts = await this.loadPlayerAccounts(collectPlayerIds(mergedState));
 
     return {
-      state: applyPlayerProfilesToWorldState(
-        {
-          ...persistedState,
-          heroes: persistedState.heroes.map((hero) => normalizeHeroState(hero))
-        },
-        profiles
-      ),
+      state: applyPlayerAccountsToWorldState(mergedState, accounts),
       battles: parseJsonColumn<RoomPersistenceSnapshot["battles"]>(row.battles_json)
     };
+  }
+
+  async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const accounts = await this.loadPlayerAccounts([normalizedPlayerId]);
+    return accounts[0] ?? null;
+  }
+
+  async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
+    const normalizedLoginId = normalizePlayerLoginId(loginId);
+    const [rows] = await this.pool.query<PlayerAccountRow[]>(
+      `SELECT
+         player_id,
+         display_name,
+         global_resources_json,
+         last_room_id,
+         last_seen_at,
+         login_id,
+         credential_bound_at,
+         created_at,
+         updated_at
+       FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       WHERE login_id = ?
+       LIMIT 1`,
+      [normalizedLoginId]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerAccountSnapshot(row) : null;
+  }
+
+  async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {
+    const safePlayerIds = Array.from(new Set(playerIds.map((playerId) => playerId.trim()).filter(Boolean)));
+    if (safePlayerIds.length === 0) {
+      return [];
+    }
+
+    const placeholders = safePlayerIds.map(() => "?").join(", ");
+    const [rows] = await this.pool.query<PlayerAccountRow[]>(
+      `SELECT
+         player_id,
+         display_name,
+         global_resources_json,
+         last_room_id,
+         last_seen_at,
+         login_id,
+         credential_bound_at,
+         created_at,
+         updated_at
+       FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       WHERE player_id IN (${placeholders})`,
+      safePlayerIds
+    );
+
+    return rows.map((row) => toPlayerAccountSnapshot(row));
+  }
+
+  async loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null> {
+    const normalizedLoginId = normalizePlayerLoginId(loginId);
+    const [rows] = await this.pool.query<PlayerAccountAuthRow[]>(
+      `SELECT
+         player_id,
+         display_name,
+         login_id,
+         password_hash,
+         credential_bound_at
+       FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       WHERE login_id = ?
+       LIMIT 1`,
+      [normalizedLoginId]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerAccountAuthSnapshot(row) : null;
+  }
+
+  async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
+    const playerId = normalizePlayerId(input.playerId);
+    const explicitDisplayName = input.displayName?.trim() ? normalizePlayerDisplayName(playerId, input.displayName) : null;
+    const insertDisplayName = normalizePlayerDisplayName(playerId, explicitDisplayName);
+    const lastRoomId = input.lastRoomId?.trim() ? input.lastRoomId.trim() : null;
+    const lastSeenAt = new Date();
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
+         player_id,
+         display_name,
+         global_resources_json,
+         last_room_id,
+         last_seen_at
+       )
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = COALESCE(?, display_name),
+         last_room_id = COALESCE(?, last_room_id),
+         last_seen_at = VALUES(last_seen_at),
+         version = version + 1`,
+      [
+        playerId,
+        insertDisplayName,
+        JSON.stringify(normalizeResourceLedger()),
+        lastRoomId,
+        lastSeenAt,
+        explicitDisplayName,
+        lastRoomId
+      ]
+    );
+
+    return (
+      (await this.loadPlayerAccount(playerId)) ??
+      normalizePlayerAccountSnapshot({
+        playerId,
+        displayName: insertDisplayName,
+        globalResources: normalizeResourceLedger(),
+        ...(lastRoomId ? { lastRoomId } : {}),
+        lastSeenAt: lastSeenAt.toISOString()
+      })
+    );
+  }
+
+  async bindPlayerAccountCredentials(
+    playerId: string,
+    input: PlayerAccountCredentialInput
+  ): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedLoginId = normalizePlayerLoginId(input.loginId);
+    const passwordHash = input.passwordHash.trim();
+    if (!passwordHash) {
+      throw new Error("passwordHash must not be empty");
+    }
+
+    const existingAccount = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    if (existingAccount.loginId && existingAccount.loginId !== normalizedLoginId) {
+      throw new Error("account credentials already bound to another loginId");
+    }
+
+    const loginOwner = await this.loadPlayerAccountByLoginId(normalizedLoginId);
+    if (loginOwner && loginOwner.playerId !== normalizedPlayerId) {
+      throw new Error("loginId is already taken");
+    }
+
+    const credentialBoundAt = existingAccount.credentialBoundAt ?? new Date().toISOString();
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET login_id = ?,
+           password_hash = ?,
+           credential_bound_at = COALESCE(credential_bound_at, ?),
+           version = version + 1
+       WHERE player_id = ?`,
+      [normalizedLoginId, passwordHash, new Date(credentialBoundAt), normalizedPlayerId]
+    );
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        ...existingAccount,
+        loginId: normalizedLoginId,
+        credentialBoundAt
+      })
+    );
+  }
+
+  async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existing =
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        playerId: normalizedPlayerId,
+        displayName: normalizedPlayerId,
+        globalResources: normalizeResourceLedger()
+      });
+
+    const nextAccount = normalizePlayerAccountSnapshot({
+      ...existing,
+      playerId: normalizedPlayerId,
+      ...(patch.displayName !== undefined
+        ? { displayName: normalizePlayerDisplayName(normalizedPlayerId, patch.displayName) }
+        : {}),
+      ...(patch.lastRoomId !== undefined
+        ? patch.lastRoomId
+          ? { lastRoomId: patch.lastRoomId.trim() }
+          : {}
+        : existing.lastRoomId
+          ? { lastRoomId: existing.lastRoomId }
+          : {})
+    });
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
+         player_id,
+         display_name,
+         global_resources_json,
+         last_room_id,
+         last_seen_at
+       )
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = VALUES(display_name),
+         global_resources_json = VALUES(global_resources_json),
+         last_room_id = VALUES(last_room_id),
+         last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
+         version = version + 1`,
+      [
+        nextAccount.playerId,
+        nextAccount.displayName,
+        JSON.stringify(nextAccount.globalResources),
+        nextAccount.lastRoomId ?? null,
+        existing.lastSeenAt ? new Date(existing.lastSeenAt) : null
+      ]
+    );
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        ...nextAccount,
+        ...(existing.lastSeenAt ? { lastSeenAt: existing.lastSeenAt } : {})
+      })
+    );
+  }
+
+  async listPlayerAccounts(options: PlayerAccountListOptions = {}): Promise<PlayerAccountSnapshot[]> {
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (options.playerId?.trim()) {
+      clauses.push("player_id = ?");
+      params.push(options.playerId.trim());
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const [rows] = await this.pool.query<PlayerAccountRow[]>(
+      `SELECT
+         player_id,
+         display_name,
+         global_resources_json,
+         last_room_id,
+         last_seen_at,
+         login_id,
+         credential_bound_at,
+         created_at,
+         updated_at
+       FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       ${whereClause}
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+      [...params, safeLimit]
+    );
+
+    return rows.map((row) => toPlayerAccountSnapshot(row));
+  }
+
+  async loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
+    const safePlayerIds = Array.from(new Set(playerIds.filter((playerId) => playerId.trim().length > 0)));
+    if (safePlayerIds.length === 0) {
+      return [];
+    }
+
+    const placeholders = safePlayerIds.map(() => "?").join(", ");
+    const [rows] = await this.pool.query<PlayerHeroArchiveRow[]>(
+      `SELECT player_id, hero_id, hero_json, updated_at
+       FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+       WHERE player_id IN (${placeholders})`,
+      safePlayerIds
+    );
+
+    return rows.map((row) => ({
+      playerId: row.player_id,
+      heroId: row.hero_id,
+      hero: normalizeHeroState(parseJsonColumn<HeroState>(row.hero_json))
+    }));
   }
 
   async save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void> {
@@ -544,6 +1464,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         [roomId, JSON.stringify(snapshot.state), JSON.stringify(snapshot.battles)]
       );
       await savePlayerProfiles(connection, roomId, createPlayerRoomProfiles(snapshot.state));
+      await savePlayerAccounts(connection, createPlayerAccountsFromWorldState(snapshot.state));
+      await savePlayerHeroArchives(connection, createPlayerHeroArchivesFromWorldState(snapshot.state));
       await connection.commit();
     } catch (error) {
       await connection.rollback();

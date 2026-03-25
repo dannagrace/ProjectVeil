@@ -14,6 +14,7 @@ export interface ResourceLedger {
 export type FogState = "hidden" | "explored" | "visible";
 export type TerrainType = "grass" | "dirt" | "sand" | "water" | "unknown";
 export type OccupantKind = "hero" | "neutral" | "building";
+export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_mine";
 
 export interface HeroProgression {
   level: number;
@@ -31,6 +32,8 @@ export interface HeroStats {
   hp: number;
   maxHp: number;
 }
+
+export type HeroStatBonus = Pick<HeroStats, "attack" | "defense" | "power" | "knowledge">;
 
 export interface HeroView {
   id: string;
@@ -75,6 +78,38 @@ export interface OccupantState {
   refId: string;
 }
 
+export interface RecruitmentBuildingView {
+  id: string;
+  kind: "recruitment_post";
+  label: string;
+  unitTemplateId: string;
+  recruitCount: number;
+  availableCount: number;
+  cost: ResourceLedger;
+}
+
+export interface AttributeShrineBuildingView {
+  id: string;
+  kind: "attribute_shrine";
+  label: string;
+  bonus: HeroStatBonus;
+  visitedHeroIds: string[];
+}
+
+export interface ResourceMineBuildingView {
+  id: string;
+  kind: "resource_mine";
+  label: string;
+  resourceKind: keyof ResourceLedger;
+  income: number;
+  ownerPlayerId?: string;
+}
+
+export type PlayerBuildingView =
+  | RecruitmentBuildingView
+  | AttributeShrineBuildingView
+  | ResourceMineBuildingView;
+
 export interface UnitStack {
   id: string;
   templateId: string;
@@ -90,6 +125,31 @@ export interface UnitStack {
   maxHp: number;
   hasRetaliated: boolean;
   defending: boolean;
+  skills?: BattleSkillState[];
+  statusEffects?: BattleStatusEffectState[];
+}
+
+export type BattleSkillId = string;
+
+export interface BattleSkillState {
+  id: BattleSkillId;
+  name: string;
+  description: string;
+  kind: "active" | "passive";
+  target: "enemy" | "self";
+  cooldown: number;
+  remainingCooldown: number;
+}
+
+export interface BattleStatusEffectState {
+  id: string;
+  name: string;
+  description: string;
+  durationRemaining: number;
+  attackModifier: number;
+  defenseModifier: number;
+  damagePerTurn: number;
+  sourceUnitId?: string;
 }
 
 export interface DeterministicRngState {
@@ -102,6 +162,8 @@ export interface ResourceNode {
   amount: number;
 }
 
+export type NeutralMoveReason = "patrol" | "return" | "chase";
+
 export interface PlayerTileView {
   position: Vec2;
   fog: FogState;
@@ -109,6 +171,7 @@ export interface PlayerTileView {
   walkable: boolean;
   resource: ResourceNode | undefined;
   occupant: OccupantState | undefined;
+  building: PlayerBuildingView | undefined;
 }
 
 export interface BattleState {
@@ -149,6 +212,46 @@ export type WorldEvent =
       resource: ResourceNode;
     }
   | {
+      type: "hero.recruited";
+      heroId: string;
+      buildingId: string;
+      buildingKind: BuildingKind;
+      unitTemplateId: string;
+      count: number;
+      cost: ResourceLedger;
+    }
+  | {
+      type: "hero.visited";
+      heroId: string;
+      buildingId: string;
+      buildingKind: "attribute_shrine";
+      bonus: HeroStatBonus;
+    }
+  | {
+      type: "hero.claimedMine";
+      heroId: string;
+      buildingId: string;
+      buildingKind: "resource_mine";
+      resourceKind: keyof ResourceLedger;
+      income: number;
+      ownerPlayerId: string;
+    }
+  | {
+      type: "resource.produced";
+      playerId: string;
+      buildingId: string;
+      buildingKind: "resource_mine";
+      resource: ResourceNode;
+    }
+  | {
+      type: "neutral.moved";
+      neutralArmyId: string;
+      from: Vec2;
+      to: Vec2;
+      reason: NeutralMoveReason;
+      targetHeroId?: string;
+    }
+  | {
       type: "hero.progressed";
       heroId: string;
       battleId: string;
@@ -164,6 +267,7 @@ export type WorldEvent =
       encounterKind: "neutral" | "hero";
       neutralArmyId?: string;
       defenderHeroId?: string;
+      initiator?: "hero" | "neutral";
       battleId: string;
       path: Vec2[];
       moveCost: number;
@@ -195,6 +299,8 @@ export interface VeilCocosSessionOptions {
   remoteUrl?: string;
   onPushUpdate?: (update: SessionUpdate) => void;
   onConnectionEvent?: (event: ConnectionEvent) => void;
+  getDisplayName?: () => string | null;
+  getAuthToken?: () => string | null;
 }
 
 interface ColyseusCloseCodes {
@@ -237,6 +343,24 @@ type WorldAction =
       type: "hero.collect";
       heroId: string;
       position: Vec2;
+    }
+  | {
+      type: "hero.recruit";
+      heroId: string;
+      buildingId: string;
+    }
+  | {
+      type: "hero.visit";
+      heroId: string;
+      buildingId: string;
+    }
+  | {
+      type: "hero.claimMine";
+      heroId: string;
+      buildingId: string;
+    }
+  | {
+      type: "turn.endDay";
     };
 
 export type BattleAction =
@@ -252,6 +376,12 @@ export type BattleAction =
   | {
       type: "battle.defend";
       unitId: string;
+    }
+  | {
+      type: "battle.skill";
+      unitId: string;
+      skillId: BattleSkillId;
+      targetId?: string;
     };
 
 type ClientMessage =
@@ -260,6 +390,8 @@ type ClientMessage =
       requestId: string;
       roomId: string;
       playerId: string;
+      displayName?: string;
+      authToken?: string;
     }
   | {
       type: "world.action";
@@ -571,12 +703,16 @@ class RemoteGameSession {
   }
 
   async snapshot(): Promise<SessionUpdate> {
+    const displayName = this.options?.getDisplayName?.()?.trim();
+    const authToken = this.options?.getAuthToken?.()?.trim();
     const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
       {
         type: "connect",
         requestId: this.nextRequestId(),
         roomId: this.roomId,
-        playerId: this.playerId
+        playerId: this.playerId,
+        ...(displayName ? { displayName } : {}),
+        ...(authToken ? { authToken } : {})
       },
       "session.state"
     );
@@ -614,6 +750,80 @@ class RemoteGameSession {
           type: "hero.collect",
           heroId,
           position
+        }
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload);
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
+  async recruit(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.recruit",
+          heroId,
+          buildingId
+        }
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload);
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
+  async visitBuilding(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.visit",
+          heroId,
+          buildingId
+        }
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload);
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
+  async claimMine(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.claimMine",
+          heroId,
+          buildingId
+        }
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload);
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
+  async endDay(): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "turn.endDay"
         }
       },
       "session.state"
@@ -788,6 +998,22 @@ class RecoverableRemoteGameSession {
     return this.runWithSession((session) => session.collect(heroId, position));
   }
 
+  async recruit(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.recruit(heroId, buildingId));
+  }
+
+  async visitBuilding(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.visitBuilding(heroId, buildingId));
+  }
+
+  async claimMine(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.claimMine(heroId, buildingId));
+  }
+
+  async endDay(): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.endDay());
+  }
+
   async actInBattle(action: BattleAction): Promise<SessionUpdate> {
     return this.runWithSession((session) => session.actInBattle(action));
   }
@@ -802,6 +1028,8 @@ class RecoverableRemoteGameSession {
     const nestedOptions: VeilCocosSessionOptions = {
       ...(this.options?.remoteUrl ? { remoteUrl: this.options.remoteUrl } : {}),
       ...(this.options?.onPushUpdate ? { onPushUpdate: this.options.onPushUpdate } : {}),
+      ...(this.options?.getDisplayName ? { getDisplayName: this.options.getDisplayName } : {}),
+      ...(this.options?.getAuthToken ? { getAuthToken: this.options.getAuthToken } : {}),
       onConnectionEvent: (event) => this.handleConnectionEvent(event)
     };
 
@@ -898,6 +1126,22 @@ export class VeilCocosSession {
 
   async collect(heroId: string, position: Vec2): Promise<SessionUpdate> {
     return this.remoteSession.collect(heroId, position);
+  }
+
+  async recruit(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    return this.remoteSession.recruit(heroId, buildingId);
+  }
+
+  async visitBuilding(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    return this.remoteSession.visitBuilding(heroId, buildingId);
+  }
+
+  async claimMine(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    return this.remoteSession.claimMine(heroId, buildingId);
+  }
+
+  async endDay(): Promise<SessionUpdate> {
+    return this.remoteSession.endDay();
   }
 
   async actInBattle(action: BattleAction): Promise<SessionUpdate> {

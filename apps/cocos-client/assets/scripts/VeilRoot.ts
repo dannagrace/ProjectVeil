@@ -1,4 +1,4 @@
-import { _decorator, Camera, Canvas, Component, EventMouse, EventTouch, input, Input, Layers, Node, UITransform, view } from "cc";
+import { _decorator, Camera, Canvas, Component, EventMouse, EventTouch, input, Input, Layers, Node, sys, UITransform, view } from "cc";
 import {
   type BattleAction,
   VeilCocosSession,
@@ -9,14 +9,27 @@ import {
   type SessionUpdate,
   type Vec2
 } from "./VeilCocosSession.ts";
-import { predictPlayerWorldAction } from "./cocos-prediction.ts";
+import {
+  clearCurrentCocosAuthSession,
+  createCocosGuestPlayerId,
+  createCocosLobbyPreferences,
+  loadCocosLobbyRooms,
+  loginCocosGuestAuthSession,
+  readPreferredCocosDisplayName,
+  rememberPreferredCocosDisplayName,
+  saveCocosLobbyPreferences,
+  type CocosLobbyRoomSummary
+} from "./cocos-lobby.ts";
+import { type CocosWorldAction, predictPlayerWorldAction } from "./cocos-prediction.ts";
 import { VeilBattleTransition } from "./VeilBattleTransition.ts";
 import { VeilBattlePanel } from "./VeilBattlePanel.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildTimelineEntriesFromUpdate } from "./cocos-ui-formatters.ts";
 import { VeilHudPanel } from "./VeilHudPanel.ts";
+import { VeilLobbyPanel } from "./VeilLobbyPanel.ts";
 import { VeilMapBoard } from "./VeilMapBoard.ts";
 import { buildMapFeedbackEntriesFromUpdate, buildObjectPulseEntriesFromUpdate } from "./cocos-map-visuals.ts";
+import { readStoredCocosAuthSession, resolveCocosLaunchIdentity } from "./cocos-session-launch.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 
 const { ccclass, property } = _decorator;
@@ -25,6 +38,7 @@ const HUD_NODE_NAME = "ProjectVeilHud";
 const MAP_NODE_NAME = "ProjectVeilMap";
 const BATTLE_NODE_NAME = "ProjectVeilBattlePanel";
 const TIMELINE_NODE_NAME = "ProjectVeilTimelinePanel";
+const LOBBY_NODE_NAME = "ProjectVeilLobbyPanel";
 const DEFAULT_MAP_WIDTH_TILES = 8;
 const DEFAULT_MAP_HEIGHT_TILES = 8;
 
@@ -37,6 +51,21 @@ interface BattleResolvedEventLike {
   [key: string]: unknown;
 }
 
+function formatHeroStatBonus(bonus: { attack: number; defense: number; power: number; knowledge: number }): string {
+  return [
+    bonus.attack > 0 ? `攻击 +${bonus.attack}` : "",
+    bonus.defense > 0 ? `防御 +${bonus.defense}` : "",
+    bonus.power > 0 ? `力量 +${bonus.power}` : "",
+    bonus.knowledge > 0 ? `知识 +${bonus.knowledge}` : ""
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function formatResourceKindLabel(kind: "gold" | "wood" | "ore"): string {
+  return kind === "gold" ? "金币" : kind === "wood" ? "木材" : "矿石";
+}
+
 @ccclass("ProjectVeilRoot")
 export class VeilRoot extends Component {
   @property
@@ -44,6 +73,9 @@ export class VeilRoot extends Component {
 
   @property
   playerId = "player-1";
+
+  @property
+  displayName = "";
 
   @property
   seed = 1001;
@@ -67,6 +99,7 @@ export class VeilRoot extends Component {
   private mapBoard: VeilMapBoard | null = null;
   private battlePanel: VeilBattlePanel | null = null;
   private timelinePanel: VeilTimelinePanel | null = null;
+  private lobbyPanel: VeilLobbyPanel | null = null;
   private battleTransition: VeilBattleTransition | null = null;
   private session: VeilCocosSession | null = null;
   private lastUpdate: SessionUpdate | null = null;
@@ -81,8 +114,16 @@ export class VeilRoot extends Component {
   private fogPulsePhase = 0;
   private hudActionBinding = false;
   private sessionEpoch = 0;
+  private authToken: string | null = null;
+  private sessionSource: "remote" | "local" | "manual" | "none" = "none";
+  private showLobby = false;
+  private lobbyRooms: CocosLobbyRoomSummary[] = [];
+  private lobbyStatus = "请选择一个房间，或手动输入新的房间 ID。";
+  private lobbyLoading = false;
+  private lobbyEntering = false;
 
   onLoad(): void {
+    this.hydrateLaunchIdentity();
     this.ensureUiCameraVisibility();
     this.ensureViewNodes();
     this.ensureHudActionBinding();
@@ -92,6 +133,11 @@ export class VeilRoot extends Component {
   start(): void {
     if (this.fogPulseEnabled) {
       this.scheduleFogPulseTick();
+    }
+
+    if (this.showLobby) {
+      void this.refreshLobbyRoomList();
+      return;
     }
 
     if (this.autoConnect) {
@@ -184,6 +230,41 @@ export class VeilRoot extends Component {
     }
   }
 
+  async advanceDay(): Promise<void> {
+    if (this.moveInFlight || this.battleActionInFlight) {
+      return;
+    }
+
+    if (!this.session) {
+      await this.connect();
+      return;
+    }
+
+    if (this.lastUpdate?.battle) {
+      this.pushLog("战斗中无法推进天数。");
+      this.predictionStatus = "战斗中无法推进天数。";
+      this.renderView();
+      return;
+    }
+
+    this.predictionStatus = "正在推进到下一天...";
+    this.moveInFlight = true;
+    this.renderView();
+
+    try {
+      await this.applySessionUpdate(await this.session.endDay());
+      this.pushLog("已推进到下一天。");
+    } catch (error) {
+      const failureMessage = this.describeSessionError(error, "推进天数失败。");
+      this.pushLog(failureMessage);
+      this.predictionStatus = failureMessage;
+    } finally {
+      this.moveInFlight = false;
+    }
+
+    this.renderView();
+  }
+
   private ensureViewNodes(): void {
     assignUiLayer(this.node);
 
@@ -213,6 +294,45 @@ export class VeilRoot extends Component {
       },
       onRefresh: () => {
         void this.refreshSnapshot();
+      },
+      onEndDay: () => {
+        void this.advanceDay();
+      },
+      onReturnLobby: () => {
+        void this.returnToLobby();
+      }
+    });
+
+    let lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
+    if (!lobbyNode) {
+      lobbyNode = new Node(LOBBY_NODE_NAME);
+      lobbyNode.parent = this.node;
+    }
+    assignUiLayer(lobbyNode);
+    const lobbyTransform = lobbyNode.getComponent(UITransform) ?? lobbyNode.addComponent(UITransform);
+    lobbyTransform.setContentSize(Math.max(360, visibleSize.width - 48), Math.max(520, visibleSize.height - 52));
+    this.lobbyPanel = lobbyNode.getComponent(VeilLobbyPanel) ?? lobbyNode.addComponent(VeilLobbyPanel);
+    this.lobbyPanel.configure({
+      onEditPlayerId: () => {
+        this.promptForLobbyField("playerId");
+      },
+      onEditDisplayName: () => {
+        this.promptForLobbyField("displayName");
+      },
+      onEditRoomId: () => {
+        this.promptForLobbyField("roomId");
+      },
+      onRefresh: () => {
+        void this.refreshLobbyRoomList();
+      },
+      onEnterRoom: () => {
+        void this.enterLobbyRoom();
+      },
+      onLogout: () => {
+        this.logoutGuestSession();
+      },
+      onJoinRoom: (roomId) => {
+        void this.enterLobbyRoom(roomId);
       }
     });
 
@@ -307,9 +427,48 @@ export class VeilRoot extends Component {
 
   private renderView(): void {
     this.updateLayout();
+    const lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
+    const hudNode = this.node.getChildByName(HUD_NODE_NAME);
+    const mapNode = this.node.getChildByName(MAP_NODE_NAME);
+    const battleNode = this.node.getChildByName(BATTLE_NODE_NAME);
+    const timelineNode = this.node.getChildByName(TIMELINE_NODE_NAME);
+    const showingGame = !this.showLobby;
+
+    if (lobbyNode) {
+      lobbyNode.active = this.showLobby;
+    }
+    if (hudNode) {
+      hudNode.active = showingGame;
+    }
+    if (mapNode) {
+      mapNode.active = showingGame;
+    }
+    if (battleNode) {
+      battleNode.active = showingGame;
+    }
+    if (timelineNode) {
+      timelineNode.active = showingGame;
+    }
+
+    if (this.showLobby) {
+      this.lobbyPanel?.render({
+        playerId: this.playerId,
+        displayName: this.displayName || this.playerId,
+        roomId: this.roomId,
+        sessionSource: this.sessionSource,
+        loading: this.lobbyLoading,
+        entering: this.lobbyEntering,
+        status: this.lobbyStatus,
+        rooms: this.lobbyRooms
+      });
+      return;
+    }
+
     this.hudPanel?.render({
       roomId: this.roomId,
       playerId: this.playerId,
+      displayName: this.displayName || this.playerId,
+      sessionSource: this.sessionSource,
       remoteUrl: this.remoteUrl,
       update: this.lastUpdate,
       moveInFlight: this.moveInFlight,
@@ -391,6 +550,7 @@ export class VeilRoot extends Component {
     const mapNode = this.node.getChildByName(MAP_NODE_NAME);
     const battleNode = this.node.getChildByName(BATTLE_NODE_NAME);
     const timelineNode = this.node.getChildByName(TIMELINE_NODE_NAME);
+    const lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
 
     this.mapBoard?.configure({
       tileSize: effectiveTileSize,
@@ -413,6 +573,12 @@ export class VeilRoot extends Component {
         },
         onRefresh: () => {
           void this.refreshSnapshot();
+        },
+        onEndDay: () => {
+          void this.advanceDay();
+        },
+        onReturnLobby: () => {
+          void this.returnToLobby();
         }
       });
     }
@@ -443,9 +609,19 @@ export class VeilRoot extends Component {
         0
       );
     }
+
+    if (lobbyNode) {
+      const lobbyTransform = lobbyNode.getComponent(UITransform) ?? lobbyNode.addComponent(UITransform);
+      lobbyTransform.setContentSize(Math.max(360, Math.min(860, visibleSize.width - 40)), Math.max(520, visibleSize.height - 48));
+      lobbyNode.setPosition(0, 0, 0);
+    }
   }
 
   private handleHudActionInput(...args: unknown[]): void {
+    if (this.showLobby) {
+      return;
+    }
+
     const event = args[0] as EventTouch | EventMouse | undefined;
     if (!event) {
       return;
@@ -462,11 +638,23 @@ export class VeilRoot extends Component {
       return;
     }
 
-    this.inputDebug = "button refresh";
-    void this.refreshSnapshot();
+    if (action === "refresh") {
+      this.inputDebug = "button refresh";
+      void this.refreshSnapshot();
+      return;
+    }
+
+    if (action === "return-lobby") {
+      this.inputDebug = "button return-lobby";
+      void this.returnToLobby();
+      return;
+    }
+
+    this.inputDebug = "button end-day";
+    void this.advanceDay();
   }
 
-  private resolveHudActionAt(uiX: number, uiY: number): "new-run" | "refresh" | null {
+  private resolveHudActionAt(uiX: number, uiY: number): "new-run" | "refresh" | "end-day" | "return-lobby" | null {
     const visibleSize = view.getVisibleSize();
     const centeredX = uiX - visibleSize.width / 2;
     const centeredY = uiY - visibleSize.height / 2;
@@ -488,23 +676,27 @@ export class VeilRoot extends Component {
       return null;
     }
 
-    const buttonBandCenterY = hudTransform.height / 2 - 96;
-    const buttonBandHeight = 72;
-    const gutter = 14;
-    const sideWidth = Math.max(88, hudTransform.width / 2 - gutter * 1.5);
-    const leftCenterX = -hudTransform.width / 4;
-    const rightCenterX = hudTransform.width / 4;
+    const actionsCenterY = hudTransform.height / 2 - 118;
+    const buttonWidth = Math.max(156, hudTransform.width - 36);
+    const buttonHeight = 28;
 
-    if (this.pointInRect(hudLocalX, hudLocalY, leftCenterX, buttonBandCenterY, sideWidth, buttonBandHeight)) {
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 45, buttonWidth, buttonHeight)) {
       return "new-run";
     }
 
-    if (this.pointInRect(hudLocalX, hudLocalY, rightCenterX, buttonBandCenterY, sideWidth, buttonBandHeight)) {
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 15, buttonWidth, buttonHeight)) {
       return "refresh";
     }
 
-    return null;
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 15, buttonWidth, buttonHeight)) {
+      return "end-day";
+    }
 
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 45, buttonWidth, buttonHeight)) {
+      return "return-lobby";
+    }
+
+    return null;
   }
 
   private pointInRect(x: number, y: number, centerX: number, centerY: number, width: number, height: number): boolean {
@@ -606,7 +798,7 @@ export class VeilRoot extends Component {
     const reachableTiles = await this.ensureReachableTiles(hero.id);
     const clickedCurrentTile = hero.position.x === tile.position.x && hero.position.y === tile.position.y;
     if (clickedCurrentTile) {
-      if (!tile.resource) {
+      if (!tile.resource && !tile.building) {
         this.pushLog("英雄已经站在这里了。");
         this.mapBoard?.pulseTile(tile.position, 1.04, 0.14);
         this.mapBoard?.showTileFeedback(tile.position, "原地", 0.45);
@@ -614,10 +806,80 @@ export class VeilRoot extends Component {
         return;
       }
 
+      if (tile.building) {
+        this.moveInFlight = true;
+        this.pushLog(`正在访问 ${tile.building.label}...`);
+        this.mapBoard?.pulseTile(tile.position, 1.12, 0.22);
+        this.mapBoard?.pulseObject(tile.position, 1.2, 0.24);
+        this.applyPrediction(
+          tile.building.kind === "recruitment_post"
+            ? {
+                type: "hero.recruit",
+                heroId: hero.id,
+                buildingId: tile.building.id
+              }
+            : tile.building.kind === "attribute_shrine"
+              ? {
+                  type: "hero.visit",
+                  heroId: hero.id,
+                  buildingId: tile.building.id
+                }
+              : {
+                  type: "hero.claimMine",
+                  heroId: hero.id,
+                  buildingId: tile.building.id
+                },
+          tile.building.kind === "recruitment_post"
+            ? `预演招募 ${tile.building.availableCount} 单位`
+            : tile.building.kind === "attribute_shrine"
+              ? `预演获得 ${formatHeroStatBonus(tile.building.bonus)}`
+              : `预演占领矿场，改为每日产出 ${tile.building.income} ${formatResourceKindLabel(tile.building.resourceKind)}`
+        );
+        this.renderView();
+
+        try {
+          this.mapBoard?.playHeroAnimation("attack");
+          await this.applySessionUpdate(
+            tile.building.kind === "recruitment_post"
+              ? await this.session.recruit(hero.id, tile.building.id)
+              : tile.building.kind === "attribute_shrine"
+                ? await this.session.visitBuilding(hero.id, tile.building.id)
+                : await this.session.claimMine(hero.id, tile.building.id)
+          );
+          this.pushLog(
+            tile.building.kind === "recruitment_post"
+              ? "招募已结算。"
+              : tile.building.kind === "attribute_shrine"
+                ? "神殿访问已结算。"
+                : "矿场占领已结算。"
+          );
+        } catch (error) {
+          this.rollbackPrediction(
+            error instanceof Error
+              ? error.message
+              : tile.building.kind === "recruitment_post"
+                ? "招募失败。"
+                : tile.building.kind === "attribute_shrine"
+                  ? "访问失败。"
+                  : "占领失败。"
+          );
+        } finally {
+          this.moveInFlight = false;
+          this.renderView();
+        }
+        return;
+      }
+
+      const resource = tile.resource;
+      if (!resource) {
+        this.pushLog("当前格子没有可采集资源。");
+        this.renderView();
+        return;
+      }
+
       this.moveInFlight = true;
-      const resourceLabel =
-        tile.resource.kind === "gold" ? "金币" : tile.resource.kind === "wood" ? "木材" : tile.resource.kind === "ore" ? "矿石" : tile.resource.kind;
-      this.pushLog(`正在采集 ${resourceLabel} +${tile.resource.amount}`);
+      const resourceLabel = resource.kind === "gold" ? "金币" : resource.kind === "wood" ? "木材" : resource.kind === "ore" ? "矿石" : resource.kind;
+      this.pushLog(`正在采集 ${resourceLabel} +${resource.amount}`);
       this.mapBoard?.pulseTile(tile.position, 1.12, 0.22);
       this.mapBoard?.pulseObject(tile.position, 1.2, 0.24);
       this.applyPrediction(
@@ -626,7 +888,7 @@ export class VeilRoot extends Component {
           heroId: hero.id,
           position: tile.position
         },
-        `预演采集 ${resourceLabel} +${tile.resource.amount}`
+        `预演采集 ${resourceLabel} +${resource.amount}`
       );
       this.renderView();
 
@@ -751,6 +1013,7 @@ export class VeilRoot extends Component {
       this.session = freshSession;
       this.roomId = nextRoomId;
       this.seed = nextSeed;
+      this.syncBrowserRoomQuery(nextRoomId);
       this.pushLog(`已进入新房间 ${nextRoomId}。`);
       await this.applySessionUpdate(freshUpdate);
 
@@ -771,6 +1034,174 @@ export class VeilRoot extends Component {
       this.predictionStatus = failureMessage;
       this.renderView();
     }
+  }
+
+  private async refreshLobbyRoomList(): Promise<void> {
+    if (this.lobbyLoading || this.lobbyEntering) {
+      return;
+    }
+
+    this.lobbyLoading = true;
+    this.lobbyStatus = "正在刷新可加入房间...";
+    this.renderView();
+
+    try {
+      const rooms = await loadCocosLobbyRooms(this.remoteUrl);
+      this.lobbyRooms = rooms;
+      this.lobbyStatus =
+        rooms.length > 0
+          ? `发现 ${rooms.length} 个活跃房间，可直接加入或继续创建新房间。`
+          : "当前没有活跃房间，输入房间 ID 后点击“进入房间”即可创建新实例。";
+    } catch {
+      this.lobbyRooms = [];
+      this.lobbyStatus = "Lobby 服务暂不可达；仍可直接输入房间 ID，进入时会自动尝试远端房间并在失败后回退本地模式。";
+    } finally {
+      this.lobbyLoading = false;
+      this.renderView();
+    }
+  }
+
+  private async enterLobbyRoom(roomIdOverride?: string): Promise<void> {
+    if (this.lobbyEntering) {
+      return;
+    }
+
+    const storage = this.readWebStorage();
+    const preferences = saveCocosLobbyPreferences(this.playerId, roomIdOverride ?? this.roomId, undefined, storage);
+    const displayName = rememberPreferredCocosDisplayName(preferences.playerId, this.displayName || preferences.playerId, storage);
+    this.playerId = preferences.playerId;
+    this.roomId = preferences.roomId;
+    this.displayName = displayName;
+    this.lobbyEntering = true;
+    this.lobbyStatus = `正在登录游客账号并进入房间 ${preferences.roomId}...`;
+    this.renderView();
+
+    const authSession = await loginCocosGuestAuthSession(this.remoteUrl, preferences.playerId, displayName, {
+      storage
+    });
+    this.authToken = authSession.token ?? null;
+    this.playerId = authSession.playerId;
+    this.displayName = authSession.displayName;
+    this.sessionSource = authSession.source;
+    saveCocosLobbyPreferences(authSession.playerId, preferences.roomId, undefined, storage);
+    this.resetSessionViewport(`正在进入房间 ${preferences.roomId} ...`);
+    this.showLobby = false;
+    this.syncBrowserRoomQuery(preferences.roomId);
+    this.lobbyStatus =
+      authSession.source === "remote"
+        ? `游客登录成功，正在进入房间 ${preferences.roomId}...`
+        : `登录服务暂不可达，正在以本地游客档进入房间 ${preferences.roomId}...`;
+    this.renderView();
+    await this.connect();
+    this.lobbyEntering = false;
+
+    if (!this.session && !this.lastUpdate) {
+      this.showLobby = true;
+      this.lobbyStatus = "进入房间失败，请稍后重试或刷新房间列表。";
+      this.renderView();
+      return;
+    }
+
+    this.renderView();
+  }
+
+  private async returnToLobby(): Promise<void> {
+    if (this.showLobby) {
+      return;
+    }
+
+    const storage = this.readWebStorage();
+    saveCocosLobbyPreferences(this.playerId, this.roomId, undefined, storage);
+    this.displayName = rememberPreferredCocosDisplayName(this.playerId, this.displayName || this.playerId, storage);
+    await this.disposeCurrentSession();
+    this.resetSessionViewport("已返回 Cocos Lobby。");
+    this.showLobby = true;
+    this.lobbyStatus = "已返回大厅，可继续选房或创建新实例。";
+    this.syncBrowserRoomQuery(null);
+    this.renderView();
+    await this.refreshLobbyRoomList();
+  }
+
+  private logoutGuestSession(): void {
+    clearCurrentCocosAuthSession(this.readWebStorage());
+    this.authToken = null;
+    this.sessionSource = "none";
+    this.displayName = readPreferredCocosDisplayName(this.playerId, this.readWebStorage());
+    this.lobbyStatus = "已退出当前游客会话，请重新选择或创建一个账号进入房间。";
+    this.renderView();
+  }
+
+  private promptForLobbyField(field: "playerId" | "displayName" | "roomId"): void {
+    const promptRef = globalThis.prompt;
+    if (typeof promptRef !== "function") {
+      this.lobbyStatus = "当前运行环境不支持弹出式输入，请改用 URL 参数或 H5 Lobby。";
+      this.renderView();
+      return;
+    }
+
+    const storage = this.readWebStorage();
+    if (field === "playerId") {
+      const previousSuggestedName = readPreferredCocosDisplayName(this.playerId, storage);
+      const nextValue = promptRef("输入游客 playerId", this.playerId)?.trim();
+      if (nextValue === undefined) {
+        return;
+      }
+
+      const nextPlayerId = nextValue || createCocosGuestPlayerId();
+      const storedSession = readStoredCocosAuthSession(storage);
+      this.playerId = nextPlayerId;
+      if (!this.displayName.trim() || this.displayName === previousSuggestedName) {
+        this.displayName =
+          storedSession?.playerId === nextPlayerId ? storedSession.displayName : readPreferredCocosDisplayName(nextPlayerId, storage);
+      }
+      this.authToken = storedSession?.playerId === nextPlayerId ? storedSession.token ?? null : null;
+      this.sessionSource = storedSession?.playerId === nextPlayerId ? storedSession.source : "manual";
+      this.lobbyStatus = `已切换游客身份草稿为 ${nextPlayerId}。`;
+      this.renderView();
+      return;
+    }
+
+    if (field === "displayName") {
+      const nextValue = promptRef("输入展示昵称", this.displayName || this.playerId);
+      if (nextValue === null) {
+        return;
+      }
+
+      this.displayName = rememberPreferredCocosDisplayName(this.playerId, nextValue, storage);
+      this.lobbyStatus = "昵称草稿已更新。";
+      this.renderView();
+      return;
+    }
+
+    const nextValue = promptRef("输入房间 ID", this.roomId)?.trim();
+    if (nextValue === undefined || nextValue.length === 0) {
+      return;
+    }
+
+    this.roomId = nextValue;
+    this.lobbyStatus = `已将目标房间切换为 ${nextValue}。`;
+    this.renderView();
+  }
+
+  private async disposeCurrentSession(): Promise<void> {
+    this.bumpSessionEpoch();
+    const currentSession = this.session;
+    this.session = null;
+    if (currentSession) {
+      await currentSession.dispose().catch(() => undefined);
+    }
+  }
+
+  private resetSessionViewport(logLine: string): void {
+    this.lastUpdate = null;
+    this.pendingPrediction = null;
+    this.selectedBattleTargetId = null;
+    this.moveInFlight = false;
+    this.battleActionInFlight = false;
+    this.predictionStatus = "";
+    this.inputDebug = "input waiting";
+    this.timelineEntries = [];
+    this.logLines = [logLine];
   }
 
   private describeSessionError(error: unknown, fallback: string): string {
@@ -805,6 +1236,8 @@ export class VeilRoot extends Component {
   private createSessionOptions(epoch: number): VeilCocosSessionOptions {
     return {
       remoteUrl: this.remoteUrl,
+      getDisplayName: () => this.displayName || this.playerId,
+      getAuthToken: () => this.authToken,
       onPushUpdate: (update) => {
         if (!this.isActiveSessionEpoch(epoch)) {
           return;
@@ -821,6 +1254,88 @@ export class VeilRoot extends Component {
         this.handleConnectionEvent(event);
       }
     };
+  }
+
+  private hydrateLaunchIdentity(): void {
+    const storage = this.readWebStorage();
+    const launchIdentity = resolveCocosLaunchIdentity({
+      defaultRoomId: this.roomId,
+      defaultPlayerId: this.playerId,
+      defaultDisplayName: this.displayName,
+      search: this.readLaunchSearch(),
+      storedSession: readStoredCocosAuthSession(storage)
+    });
+
+    if (launchIdentity.shouldOpenLobby) {
+      const storedSession = readStoredCocosAuthSession(storage);
+      const lobbyPreferences = createCocosLobbyPreferences(
+        {
+          ...(storedSession?.playerId ? { playerId: storedSession.playerId } : {}),
+          ...(this.roomId !== "test-room" ? { roomId: this.roomId } : {})
+        },
+        undefined,
+        storage
+      );
+      this.roomId = lobbyPreferences.roomId;
+      this.playerId = storedSession?.playerId ?? lobbyPreferences.playerId;
+      this.displayName =
+        storedSession?.playerId === this.playerId
+          ? storedSession.displayName
+          : readPreferredCocosDisplayName(this.playerId, storage);
+      this.authToken = storedSession?.playerId === this.playerId ? storedSession.token ?? null : null;
+      this.sessionSource = storedSession?.playerId === this.playerId ? storedSession.source : "none";
+      this.showLobby = true;
+      this.autoConnect = false;
+      this.lobbyStatus = storedSession
+        ? `已恢复${storedSession.source === "remote" ? "云端" : "本地"}游客会话，可直接选房或继续修改房间。`
+        : "请选择一个房间，或输入新的房间 ID 后直接开局。";
+      this.pushLog("Cocos Lobby 已待命。");
+      return;
+    }
+
+    this.roomId = launchIdentity.roomId;
+    this.playerId = launchIdentity.playerId;
+    this.displayName = launchIdentity.displayName;
+    this.authToken = launchIdentity.authToken;
+    this.sessionSource = launchIdentity.sessionSource;
+
+    if (launchIdentity.usedStoredSession) {
+      this.pushLog(`已复用${launchIdentity.sessionSource === "remote" ? "云端" : "本地"}游客会话 ${launchIdentity.playerId}。`);
+      return;
+    }
+
+    if (launchIdentity.roomId !== "test-room") {
+      this.pushLog(`已从启动参数载入房间 ${launchIdentity.roomId}。`);
+    }
+  }
+
+  private readLaunchSearch(): string {
+    const locationRef = globalThis.location;
+    return locationRef && typeof locationRef.search === "string" ? locationRef.search : "";
+  }
+
+  private readWebStorage(): Storage | null {
+    const webStorage = (sys as unknown as { localStorage?: Storage }).localStorage;
+    return webStorage ?? null;
+  }
+
+  private syncBrowserRoomQuery(roomId: string | null): void {
+    const historyRef = globalThis.history;
+    const locationRef = globalThis.location;
+    if (!historyRef?.replaceState || !locationRef?.href) {
+      return;
+    }
+
+    const nextUrl = new URL(locationRef.href);
+    if (roomId?.trim()) {
+      nextUrl.searchParams.set("roomId", roomId.trim());
+      nextUrl.searchParams.delete("playerId");
+      nextUrl.searchParams.delete("displayName");
+    } else {
+      nextUrl.search = "";
+    }
+
+    historyRef.replaceState(null, "", nextUrl.toString());
   }
 
   private isBattleResolvedEvent(event: SessionUpdate["events"][number]): event is BattleResolvedEventLike {
@@ -862,13 +1377,23 @@ export class VeilRoot extends Component {
     }
 
     this.battleActionInFlight = true;
+    const skillName =
+      action.type === "battle.skill"
+        ? this.lastUpdate?.battle?.units[action.unitId]?.skills?.find((skill) => skill.id === action.skillId)?.name ?? action.skillId
+        : null;
     const actionLabel =
-      action.type === "battle.attack" ? "攻击" : action.type === "battle.wait" ? "等待" : "防御";
+      action.type === "battle.attack"
+        ? "攻击"
+        : action.type === "battle.wait"
+          ? "等待"
+          : action.type === "battle.defend"
+            ? "防御"
+            : skillName ?? "技能";
     this.pushLog(`战斗指令：${actionLabel}`);
     this.renderView();
 
     try {
-      if (action.type === "battle.attack") {
+      if (action.type === "battle.attack" || (action.type === "battle.skill" && action.targetId && action.targetId !== action.unitId)) {
         this.mapBoard?.playHeroAnimation("attack");
       }
 
@@ -939,20 +1464,7 @@ export class VeilRoot extends Component {
     this.renderView();
   }
 
-  private applyPrediction(
-    action:
-      | {
-          type: "hero.move";
-          heroId: string;
-          destination: Vec2;
-        }
-      | {
-          type: "hero.collect";
-          heroId: string;
-          position: Vec2;
-        },
-    status: string
-  ): void {
+  private applyPrediction(action: CocosWorldAction, status: string): void {
     if (!this.lastUpdate) {
       return;
     }

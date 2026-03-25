@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createRoom } from "../src/index";
-import { applyPlayerProfilesToWorldState, createPlayerRoomProfiles } from "../src/persistence";
+import {
+  applyPlayerAccountsToWorldState,
+  applyPlayerHeroArchivesToWorldState,
+  applyPlayerProfilesToWorldState,
+  createPlayerAccountsFromWorldState,
+  createPlayerHeroArchivesFromWorldState,
+  createPlayerRoomProfiles
+} from "../src/persistence";
 
 test("createPlayerRoomProfiles extracts one profile per player in the room", () => {
   const room = createRoom("room-player-profiles", 1001);
@@ -81,4 +88,118 @@ test("applyPlayerProfilesToWorldState backfills default progression for legacy h
   assert.equal(playerOneHero?.progression.level, 1);
   assert.equal(playerOneHero?.progression.experience, 0);
   assert.equal(playerOneHero?.progression.battlesWon, 0);
+});
+
+test("createPlayerAccountsFromWorldState extracts one global resource ledger per player", () => {
+  const room = createRoom("room-player-accounts", 1001);
+  const snapshot = room.serializePersistenceSnapshot();
+  snapshot.state.resources["player-1"] = {
+    gold: 320,
+    wood: 4,
+    ore: 1
+  };
+
+  const accounts = createPlayerAccountsFromWorldState(snapshot.state);
+
+  assert.deepEqual(
+    accounts.map((account) => account.playerId).sort(),
+    ["player-1", "player-2"]
+  );
+  assert.equal(accounts.find((account) => account.playerId === "player-1")?.displayName, "player-1");
+  assert.deepEqual(accounts.find((account) => account.playerId === "player-1")?.globalResources, {
+    gold: 320,
+    wood: 4,
+    ore: 1
+  });
+});
+
+test("applyPlayerAccountsToWorldState overlays global resources without replacing room heroes", () => {
+  const room = createRoom("room-player-account-merge", 1001);
+  const snapshot = room.serializePersistenceSnapshot();
+  const merged = applyPlayerAccountsToWorldState(snapshot.state, [
+    {
+      playerId: "player-1",
+      globalResources: {
+        gold: 900,
+        wood: 6,
+        ore: 2
+      }
+    }
+  ]);
+
+  assert.equal(merged.resources["player-1"]?.gold, 900);
+  assert.equal(merged.resources["player-1"]?.wood, 6);
+  assert.equal(merged.resources["player-1"]?.ore, 2);
+  assert.equal(merged.resources["player-2"]?.gold, 0);
+  assert.deepEqual(merged.heroes, snapshot.state.heroes);
+});
+
+test("createPlayerHeroArchivesFromWorldState extracts one persistent hero record per hero", () => {
+  const room = createRoom("room-player-hero-archives", 1001);
+  const snapshot = room.serializePersistenceSnapshot();
+  snapshot.state.heroes[0] = {
+    ...snapshot.state.heroes[0]!,
+    stats: {
+      ...snapshot.state.heroes[0]!.stats,
+      attack: 5
+    },
+    armyCount: 16
+  };
+
+  const archives = createPlayerHeroArchivesFromWorldState(snapshot.state);
+
+  assert.equal(archives.length, snapshot.state.heroes.length);
+  assert.equal(archives.find((archive) => archive.heroId === "hero-1")?.hero.stats.attack, 5);
+  assert.equal(archives.find((archive) => archive.heroId === "hero-1")?.hero.armyCount, 16);
+});
+
+test("applyPlayerHeroArchivesToWorldState restores long-term hero growth but resets room-local position and readiness", () => {
+  const room = createRoom("room-player-hero-archive-merge", 1001);
+  const snapshot = room.serializePersistenceSnapshot();
+  const originalHero = snapshot.state.heroes.find((hero) => hero.id === "hero-1");
+
+  if (!originalHero) {
+    throw new Error("Expected hero-1 in room snapshot");
+  }
+
+  const merged = applyPlayerHeroArchivesToWorldState(snapshot.state, [
+    {
+      playerId: "player-1",
+      heroId: "hero-1",
+      hero: {
+        ...originalHero,
+        position: { x: 4, y: 4 },
+        move: {
+          total: 8,
+          remaining: 1
+        },
+        stats: {
+          ...originalHero.stats,
+          attack: 6,
+          hp: 9,
+          maxHp: 42
+        },
+        progression: {
+          ...originalHero.progression,
+          level: 4,
+          experience: 420,
+          battlesWon: 5,
+          neutralBattlesWon: 4,
+          pvpBattlesWon: 1
+        },
+        armyCount: 18
+      }
+    }
+  ]);
+
+  const hydratedHero = merged.heroes.find((hero) => hero.id === "hero-1");
+
+  assert.deepEqual(hydratedHero?.position, originalHero.position);
+  assert.deepEqual(hydratedHero?.move, { total: 8, remaining: 8 });
+  assert.equal(hydratedHero?.stats.attack, 6);
+  assert.equal(hydratedHero?.stats.hp, 42);
+  assert.equal(hydratedHero?.stats.maxHp, 42);
+  assert.equal(hydratedHero?.progression.level, 4);
+  assert.equal(hydratedHero?.progression.experience, 420);
+  assert.equal(hydratedHero?.armyCount, 18);
 });
