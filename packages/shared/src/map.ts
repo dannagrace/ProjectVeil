@@ -176,7 +176,7 @@ function cloneNeutralBehaviorState(behavior: NeutralArmyBehaviorState | undefine
     chaseDistance,
     speed,
     state: nextState,
-    targetHeroId: behavior?.targetHeroId
+    ...(behavior?.targetHeroId ? { targetHeroId: behavior.targetHeroId } : {})
   };
 }
 
@@ -187,7 +187,7 @@ function resetNeutralBehaviorState(behavior: NeutralArmyBehaviorState | undefine
 
   const clone = cloneNeutralBehaviorState(behavior);
   clone.state = clone.mode === "patrol" && clone.patrolPath.length > 0 ? "patrol" : "return";
-  clone.targetHeroId = undefined;
+  delete clone.targetHeroId;
   return clone;
 }
 
@@ -719,11 +719,25 @@ function fallbackNeutralStep(
   destination: Vec2,
   targetHeroId?: string
 ): Vec2 | undefined {
+  const availableExitCount = (position: Vec2): number =>
+    getNeighbors(state.map, position).filter((neighbor) => {
+      if (samePosition(neighbor, from)) {
+        return true;
+      }
+
+      return !isBlockedForNeutral(state, neutralArmyId, neighbor, destination, targetHeroId);
+    }).length;
+
   const candidates = getNeighbors(state.map, from)
     .filter((neighbor) => !isBlockedForNeutral(state, neutralArmyId, neighbor, destination, targetHeroId))
     .sort((left, right) => {
       const delta = distance(left, destination) - distance(right, destination);
-      return delta !== 0 ? delta : tileKey(left).localeCompare(tileKey(right));
+      if (delta !== 0) {
+        return delta;
+      }
+
+      const exitDelta = availableExitCount(right) - availableExitCount(left);
+      return exitDelta !== 0 ? exitDelta : tileKey(left).localeCompare(tileKey(right));
     });
   return candidates[0];
 }
@@ -976,7 +990,11 @@ function advancePatrol(
     }
 
     const steps = Math.min(stepsRemaining, path.length - 1);
-    currentPosition = path[steps];
+    const nextPosition = path[steps];
+    if (!nextPosition) {
+      break;
+    }
+    currentPosition = nextPosition;
     stepsRemaining -= steps;
     moved = moved || steps > 0;
     if (samePosition(currentPosition, target)) {
@@ -1041,6 +1059,15 @@ function resolveNeutralArmyTurn(
 
     const nextIndex = Math.min(speed, chaseTarget.path.length - 1);
     const nextPosition = chaseTarget.path[nextIndex];
+    if (!nextPosition) {
+      return {
+        army: {
+          ...neutralArmy,
+          behavior: cloneNeutralBehaviorState(behavior)
+        },
+        events: []
+      };
+    }
     const movement = moveNeutralArmy(neutralArmy, nextPosition, "chase", behavior, chaseTarget.heroId);
     return {
       army: movement.army,
@@ -1050,7 +1077,7 @@ function resolveNeutralArmyTurn(
 
   if (behavior.state === "chase") {
     behavior.state = "return";
-    behavior.targetHeroId = undefined;
+    delete behavior.targetHeroId;
     behaviorChanged = true;
   }
 
@@ -1939,13 +1966,16 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
     );
     let neutralArmies = normalizeNeutralArmyCollection(state.neutralArmies);
     neutralArmies = Object.fromEntries(
-      Object.entries(neutralArmies).map(([neutralArmyId, army]) => [
-        neutralArmyId,
-        {
-          ...army,
-          behavior: resetNeutralBehaviorState(army.behavior)
-        }
-      ])
+      Object.entries(neutralArmies).map(([neutralArmyId, army]) => {
+        const nextBehavior = resetNeutralBehaviorState(army.behavior);
+        return [
+          neutralArmyId,
+          {
+            ...army,
+            ...(nextBehavior ? { behavior: nextBehavior } : {})
+          }
+        ];
+      })
     );
     let workingState = buildNextWorldState(
       {

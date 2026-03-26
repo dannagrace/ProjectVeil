@@ -18,9 +18,9 @@
       ],
       "behavior": {
         "mode": "patrol",
-        "patrolRadius": 2,
-        "detectionRadius": 3,
-        "chaseDistance": 6,
+        "patrolRadius": 4,
+        "detectionRadius": 5,
+        "chaseDistance": 10,
         "speed": 2
       }
     }
