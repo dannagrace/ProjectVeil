@@ -7,10 +7,10 @@
     "varianceRange": 0.2
   },
   "environment": {
-    "blockerSpawnThreshold": 0.48,
+    "blockerSpawnThreshold": 0.62,
     "blockerDurability": 1,
-    "trapSpawnThreshold": 0.28,
-    "trapDamage": 2,
+    "trapSpawnThreshold": 0.58,
+    "trapDamage": 1,
     "trapCharges": 1,
     "trapGrantedStatusId": "weakened"
   }

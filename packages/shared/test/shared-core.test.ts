@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   applyBattleAction,
@@ -18,15 +19,19 @@ import {
   createWorldStateFromConfigs,
   filterWorldEventsForPlayer,
   getBattleBalanceConfig,
+  getDefaultMapObjectsConfig,
   getDefaultBattleSkillCatalog,
   getDefaultHeroSkillTreeConfig,
   getDefaultUnitCatalog,
+  getDefaultWorldConfig,
   getBattleOutcome,
   getDefaultEquipmentCatalog,
   pickAutomatedBattleAction,
   planPlayerViewMovement,
   predictPlayerWorldAction,
   resetRuntimeConfigs,
+  simulateAutomatedBattle,
+  simulateAutomatedBattles,
   resolveWorldAction,
   setBattleBalanceConfig,
   setBattleSkillCatalog,
@@ -3030,6 +3035,51 @@ test("createEmptyBattleState returns the minimal neutral battle shell", () => {
       cursor: 0
     }
   });
+});
+
+test("simulateAutomatedBattle resolves a deterministic demo encounter and records skill usage", () => {
+  const result = simulateAutomatedBattle(createDemoBattleState());
+
+  assert.notEqual(result.outcome.status, "in_progress");
+  assert.ok(result.turns > 0);
+  assert.ok(result.rounds >= 1);
+  assert.ok(Object.values(result.skillUsage).reduce((total, value) => total + value, 0) > 0);
+  assert.equal(result.maxActionsReached, false);
+});
+
+test("simulateAutomatedBattles aggregates win rate, rounds, and skill usage across repeated auto battles", () => {
+  const world = createWorldStateFromConfigs(getDefaultWorldConfig(), getDefaultMapObjectsConfig(), 1001, "metrics-room");
+  const attacker = world.heroes[0]!;
+  const neutralArmy = Object.values(world.neutralArmies)[0]!;
+
+  const metrics = simulateAutomatedBattles(
+    (battleIndex) => createNeutralBattleState(attacker, neutralArmy, 5000 + battleIndex),
+    12
+  );
+
+  assert.equal(metrics.battleCount, 12);
+  assert.equal(metrics.attackerWins + metrics.defenderWins + metrics.unresolvedBattles, 12);
+  assert.ok(metrics.averageRounds >= 1);
+  assert.ok(metrics.averageTurns >= 1);
+  assert.ok(metrics.maxRounds >= metrics.minRounds);
+  assert.ok(metrics.totalSkillUses > 0);
+  assert.ok(metrics.skillUsage.length > 0);
+  assert.equal(
+    metrics.skillUsage.every((entry, index, entries) => index === 0 || entries[index - 1]!.uses >= entry.uses),
+    true
+  );
+});
+
+test("battle-skills-v1.1 preset validates against the shared runtime schema", () => {
+  const presetContent = readFileSync(
+    new URL("../../../configs/battle-skills-v1.1.json", import.meta.url),
+    "utf8"
+  );
+  const preset = JSON.parse(presetContent) as ReturnType<typeof getDefaultBattleSkillCatalog>;
+
+  assert.doesNotThrow(() => setBattleSkillCatalog(preset));
+
+  resetRuntimeConfigs();
 });
 
 test("applyBattleAction routes contact attacks through blockers before hitting the target", () => {
