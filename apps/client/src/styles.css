@@ -349,10 +349,26 @@ h1 {
 }
 
 .account-achievement p,
-.account-event-entry {
+.account-event-entry p {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.account-event-entry {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(78, 58, 42, 0.05);
+}
+
+.account-event-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .account-binding-card {

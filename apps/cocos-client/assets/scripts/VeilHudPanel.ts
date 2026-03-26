@@ -2,7 +2,8 @@ import { _decorator, Color, Component, Graphics, Label, Node, Sprite, UIOpacity,
 import {
   createHeroAttributeBreakdown,
   createHeroEquipmentLoadoutView,
-  createHeroProgressMeterView
+  createHeroProgressMeterView,
+  getLatestUnlockedAchievement
 } from "../../../../packages/shared/src/index.ts";
 import { createHeroSkillTreeView } from "../../../../packages/shared/src/hero-skills.ts";
 import type { BattleSkillId, HeroState } from "../../../../packages/shared/src/models.ts";
@@ -168,7 +169,7 @@ export interface VeilHudPanelOptions {
 
 function formatAchievementSummary(account: CocosPlayerAccountProfile): string {
   const unlocked = account.achievements.filter((achievement) => achievement.unlocked).length;
-  const latestUnlocked = account.achievements.find((achievement) => achievement.unlockedAt);
+  const latestUnlocked = getLatestUnlockedAchievement(account.achievements);
   return latestUnlocked
     ? `成就 ${unlocked}/${account.achievements.length} · 最新 ${latestUnlocked.title}`
     : `成就 ${unlocked}/${account.achievements.length} · 尚未解锁`;

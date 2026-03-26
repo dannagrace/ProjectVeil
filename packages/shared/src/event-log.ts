@@ -43,6 +43,22 @@ export interface PlayerAchievementProgress {
   unlockedAt?: string;
 }
 
+export function getLatestUnlockedAchievement(
+  progress?: Partial<PlayerAchievementProgress>[] | null
+): PlayerAchievementProgress | null {
+  const unlocked = normalizeAchievementProgress(progress).filter((entry) => entry.unlocked && entry.unlockedAt);
+  if (unlocked.length === 0) {
+    return null;
+  }
+
+  return (
+    unlocked.sort((left, right) => {
+      const unlockedAtOrder = String(right.unlockedAt).localeCompare(String(left.unlockedAt));
+      return unlockedAtOrder || left.id.localeCompare(right.id);
+    })[0] ?? null
+  );
+}
+
 const ACHIEVEMENT_DEFINITIONS: AchievementDefinition[] = [
   {
     id: "first_battle",
