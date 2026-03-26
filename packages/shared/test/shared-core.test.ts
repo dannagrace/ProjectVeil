@@ -896,6 +896,319 @@ test("resolveWorldAction recruits units from a recruitment post and resets stock
   assert.equal(nextDayOutcome.state.map.tiles[3]?.building?.availableCount, 4);
 });
 
+test("building interactions reject missing resources, exhausted stock, wrong building types, and duplicate claims", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 1, y: 1 },
+    armyCount: 12
+  });
+  const state = createWorldState({
+    width: 3,
+    height: 2,
+    heroes: [hero],
+    buildings: {
+      "recruit-post-1": {
+        id: "recruit-post-1",
+        kind: "recruitment_post",
+        position: { x: 1, y: 1 },
+        label: "前线招募所",
+        unitTemplateId: "hero_guard_basic",
+        recruitCount: 4,
+        availableCount: 4,
+        cost: {
+          gold: 240,
+          wood: 0,
+          ore: 0
+        }
+      },
+      "shrine-1": {
+        id: "shrine-1",
+        kind: "attribute_shrine",
+        position: { x: 2, y: 1 },
+        label: "战旗圣坛",
+        bonus: {
+          attack: 1,
+          defense: 0,
+          power: 0,
+          knowledge: 0
+        },
+        visitedHeroIds: []
+      },
+      "mine-1": {
+        id: "mine-1",
+        kind: "resource_mine",
+        position: { x: 0, y: 1 },
+        label: "前线伐木场",
+        resourceKind: "wood",
+        income: 2
+      }
+    },
+    resources: {
+      "player-1": {
+        gold: 120,
+        wood: 0,
+        ore: 0
+      }
+    },
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(2, 0),
+      createTile(0, 1, {
+        building: {
+          id: "mine-1",
+          kind: "resource_mine",
+          position: { x: 0, y: 1 },
+          label: "前线伐木场",
+          resourceKind: "wood",
+          income: 2
+        }
+      }),
+      createTile(1, 1, {
+        occupant: { kind: "hero", refId: "hero-1" },
+        building: {
+          id: "recruit-post-1",
+          kind: "recruitment_post",
+          position: { x: 1, y: 1 },
+          label: "前线招募所",
+          unitTemplateId: "hero_guard_basic",
+          recruitCount: 4,
+          availableCount: 4,
+          cost: {
+            gold: 240,
+            wood: 0,
+            ore: 0
+          }
+        }
+      }),
+      createTile(2, 1, {
+        building: {
+          id: "shrine-1",
+          kind: "attribute_shrine",
+          position: { x: 2, y: 1 },
+          label: "战旗圣坛",
+          bonus: {
+            attack: 1,
+            defense: 0,
+            power: 0,
+            knowledge: 0
+          },
+          visitedHeroIds: []
+        }
+      })
+    ],
+    visibilityByPlayer: {
+      "player-1": ["visible", "visible", "visible", "visible", "visible", "visible"]
+    }
+  });
+
+  assert.deepEqual(validateWorldAction(state, {
+    type: "hero.recruit",
+    heroId: "hero-1",
+    buildingId: "recruit-post-1"
+  }), {
+    valid: false,
+    reason: "not_enough_resources"
+  });
+  assert.equal(
+    predictPlayerWorldAction(createPlayerWorldView(state, "player-1"), {
+      type: "hero.recruit",
+      heroId: "hero-1",
+      buildingId: "recruit-post-1"
+    }).reason,
+    "not_enough_resources"
+  );
+  assert.deepEqual(validateWorldAction(state, {
+    type: "hero.visit",
+    heroId: "hero-1",
+    buildingId: "recruit-post-1"
+  }), {
+    valid: false,
+    reason: "building_not_visitable"
+  });
+  assert.deepEqual(validateWorldAction(state, {
+    type: "hero.claimMine",
+    heroId: "hero-1",
+    buildingId: "recruit-post-1"
+  }), {
+    valid: false,
+    reason: "building_not_claimable"
+  });
+
+  const stockedState = createWorldState({
+    ...state,
+    resources: {
+      "player-1": {
+        gold: 300,
+        wood: 0,
+        ore: 0
+      }
+    }
+  });
+  const recruitedState = resolveWorldAction(stockedState, {
+    type: "hero.recruit",
+    heroId: "hero-1",
+    buildingId: "recruit-post-1"
+  }).state;
+
+  assert.deepEqual(validateWorldAction(recruitedState, {
+    type: "hero.recruit",
+    heroId: "hero-1",
+    buildingId: "recruit-post-1"
+  }), {
+    valid: false,
+    reason: "building_depleted"
+  });
+
+  const visitedState = resolveWorldAction(
+    createWorldState({
+      ...state,
+      heroes: [
+        {
+          ...hero,
+          position: { x: 2, y: 1 }
+        }
+      ],
+      tiles: [
+        createTile(0, 0),
+        createTile(1, 0),
+        createTile(2, 0),
+        createTile(0, 1, {
+          building: {
+            id: "mine-1",
+            kind: "resource_mine",
+            position: { x: 0, y: 1 },
+            label: "前线伐木场",
+            resourceKind: "wood",
+            income: 2
+          }
+        }),
+        createTile(1, 1, {
+          building: {
+            id: "recruit-post-1",
+            kind: "recruitment_post",
+            position: { x: 1, y: 1 },
+            label: "前线招募所",
+            unitTemplateId: "hero_guard_basic",
+            recruitCount: 4,
+            availableCount: 4,
+            cost: {
+              gold: 240,
+              wood: 0,
+              ore: 0
+            }
+          }
+        }),
+        createTile(2, 1, {
+          occupant: { kind: "hero", refId: "hero-1" },
+          building: {
+            id: "shrine-1",
+            kind: "attribute_shrine",
+            position: { x: 2, y: 1 },
+            label: "战旗圣坛",
+            bonus: {
+              attack: 1,
+              defense: 0,
+              power: 0,
+              knowledge: 0
+            },
+            visitedHeroIds: []
+          }
+        })
+      ]
+    }),
+    {
+      type: "hero.visit",
+      heroId: "hero-1",
+      buildingId: "shrine-1"
+    }
+  ).state;
+
+  assert.deepEqual(validateWorldAction(visitedState, {
+    type: "hero.visit",
+    heroId: "hero-1",
+    buildingId: "shrine-1"
+  }), {
+    valid: false,
+    reason: "building_already_visited"
+  });
+
+  const claimedState = resolveWorldAction(
+    createWorldState({
+      ...state,
+      heroes: [
+        {
+          ...hero,
+          position: { x: 0, y: 1 }
+        }
+      ],
+      tiles: [
+        createTile(0, 0),
+        createTile(1, 0),
+        createTile(2, 0),
+        createTile(0, 1, {
+          occupant: { kind: "hero", refId: "hero-1" },
+          building: {
+            id: "mine-1",
+            kind: "resource_mine",
+            position: { x: 0, y: 1 },
+            label: "前线伐木场",
+            resourceKind: "wood",
+            income: 2
+          }
+        }),
+        createTile(1, 1, {
+          building: {
+            id: "recruit-post-1",
+            kind: "recruitment_post",
+            position: { x: 1, y: 1 },
+            label: "前线招募所",
+            unitTemplateId: "hero_guard_basic",
+            recruitCount: 4,
+            availableCount: 4,
+            cost: {
+              gold: 240,
+              wood: 0,
+              ore: 0
+            }
+          }
+        }),
+        createTile(2, 1, {
+          building: {
+            id: "shrine-1",
+            kind: "attribute_shrine",
+            position: { x: 2, y: 1 },
+            label: "战旗圣坛",
+            bonus: {
+              attack: 1,
+              defense: 0,
+              power: 0,
+              knowledge: 0
+            },
+            visitedHeroIds: []
+          }
+        })
+      ]
+    }),
+    {
+      type: "hero.claimMine",
+      heroId: "hero-1",
+      buildingId: "mine-1"
+    }
+  ).state;
+
+  assert.deepEqual(validateWorldAction(claimedState, {
+    type: "hero.claimMine",
+    heroId: "hero-1",
+    buildingId: "mine-1"
+  }), {
+    valid: false,
+    reason: "building_already_owned"
+  });
+});
+
 test("resolveWorldAction visits an attribute shrine once, grants permanent stats, and does not reset on next day", () => {
   const hero = createHero({
     id: "hero-1",
