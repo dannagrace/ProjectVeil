@@ -26,6 +26,11 @@
     "wood": "/assets/resources/wood-stack.svg",
     "ore": "/assets/resources/ore-crate.svg"
   },
+  "buildings": {
+    "recruitment_post": "/assets/buildings/recruitment-post.svg",
+    "attribute_shrine": "/assets/buildings/attribute-shrine.svg",
+    "resource_mine": "/assets/buildings/resource-mine.svg"
+  },
   "units": {
     "hero_guard_basic": {
       "portrait": {

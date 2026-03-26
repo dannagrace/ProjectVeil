@@ -1,6 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect x="22" y="34" width="84" height="68" rx="14" fill="#8e6f59"/>
-  <path d="M34 80l12-22 18 10 18-20 16 30z" fill="#b8c3d1"/>
-  <circle cx="54" cy="58" r="6" fill="#d8e0eb"/>
-</svg>
-
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" shape-rendering="crispEdges">
+    <rect width="128" height="128" rx="26" fill="#182028"/>
+    <rect x="10" y="10" width="108" height="108" rx="18" fill="#10161d"/>
+    <rect x="14" y="14" width="100" height="100" rx="16" fill="#889eb5"/>
+    <rect x="20" y="20" width="88" height="88" rx="14" fill="#10161d"/>
+    <circle cx="64" cy="64" r="38" fill="#dfeaf8" opacity="0.22"/>
+    <image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABC0lEQVR4nO3SsQ0CMQyF4RuPmgVYjgmoqBEVNWIC9oAKCSm5xLH9/JzTWXJ5uf+Lsiz7bHgOx9Pnt+yW7vzHSpfdrIpOgfEMD4cg46GIiHAYhBHvhmDGmxHscDOCHW0CsINNCHaoGcGONAHYgWaE988er3exUwBq4V6QFPEQRHT8JgBaxA5IBxg94Hp/VjcKUCA84qcAtOI1AMtzHX5GvXgNwi3eEyBFnC+3YtMAWoha+CgCDmid0wNIEDSAJF4N8EQgAavxEoAEYX0+cMAaQvIdHDCC0KwV0I1HAyQI0+2zES7xUYiRHY7fBCALQh2fAWGOZyLc4qMhkPAoBDweBQkN98Kwm7szVSxrvidqh+8Qob1FAAAAAElFTkSuQmCC" x="28" y="28" width="72" height="72" preserveAspectRatio="none" style="image-rendering: pixelated" />
+    <rect x="26" y="88" width="76" height="8" fill="#0a1016" opacity="0.48"/>
+  </svg>

@@ -794,6 +794,12 @@ export class VeilMapBoard extends Component {
         return assets.icons.neutral;
       case "!H":
         return assets.icons.hero;
+      case ">R":
+        return assets.icons.recruitment;
+      case ">S":
+        return assets.icons.shrine;
+      case ">M":
+        return assets.icons.mine;
       default:
         return null;
     }

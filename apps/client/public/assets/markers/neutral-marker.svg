@@ -1,4 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <circle cx="32" cy="32" r="24" fill="#8a3131"/>
-  <path d="M18 42l10-22 12 12 6-8 0 18z" fill="#f7f2e9"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 128" shape-rendering="crispEdges">
+    <path d="M48 120L22 76a38 38 0 1 1 52 0L48 120z" fill="#11161d"/>
+    <path d="M48 112L28 76a30 30 0 1 1 40 0L48 112z" fill="#d48d62"/>
+    <circle cx="48" cy="44" r="26" fill="#ffe7db" opacity="0.18"/>
+    <image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABMklEQVR4nO3UzQ2DMAyGYeZhkg7Qc0ftCD12hK5BxQEJ8RPbnz/bKWokX5P3AcIw/NeF12Mcp2WqW8S1jtVOdTMU3QWGGZ4O+bye0zwR8cveoeHbYYZvJzyegZD2Do9HIZZ94XjkMHa863J7D2XFQwB2AOMBuOPRGOYnSAFYo5j3hxLPhljPpAK8COQ8OoD9p4IBWfFhiMx4L6KbC0y9yFXxCAIGIFERkPD49/22m1BEdHwEQgVADmwBPPuaPyP0EA3Ai2heYu+l0wI8Z50CGK/WAkDfxiGAecEs8QgCBmh+b96BARIiI16DOI1vATLjJYQJUBEuQZqANaI6/Aghxs+rOrY1KkCvCHV8jwhz/CUAvSDg+B4Q7vhKBC0+GxISnoUIj4+CpIazMNXN4vqp2Kr1BcWuv/HNQ83MAAAAAElFTkSuQmCC" x="18" y="14" width="60" height="60" preserveAspectRatio="none" style="image-rendering: pixelated" />
+    
+  </svg>

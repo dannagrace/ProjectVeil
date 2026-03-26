@@ -1,7 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="24" fill="#f3dfdf"/>
-  <path d="M20 86l20-28 18 6 18-16 22 14-10 24z" fill="#6f6a67"/>
-  <path d="M38 58l-10-18 20 8z" fill="#6f6a67"/>
-  <circle cx="82" cy="70" r="4" fill="#f4b35f"/>
-</svg>
-
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" shape-rendering="crispEdges">
+    <rect width="128" height="128" rx="26" fill="#241416"/>
+    <rect x="8" y="8" width="112" height="112" rx="18" fill="#111820"/>
+    <rect x="12" y="12" width="104" height="104" rx="16" fill="#c97867"/>
+    <rect x="16" y="16" width="96" height="96" rx="14" fill="#141c25"/>
+    <circle cx="64" cy="52" r="30" fill="#ffd7cd" opacity="0.18"/>
+    <image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABT0lEQVR4nO3XzQ2CQBCGYUrx4NFYhyV4shLr9GgDFoHxQELWnd35+b5ZIW4yBxOF90EIME3/teN1OR7mZUa3dNc6Vjujm13RP4FBhqdDmPFUREY4DWLd8fN+EycdgYiOYqjxnnAPhAKQgq7nkzheBDTeGm3BQBCs+Pn1yEFYAJYjXgPUECEAMr4MlgBQBPLI1wAIRBjgPWV6gBJhBqDjPYAQgglYPlP/BRSgFjoMgD59UIj9AZinDwPwhRgB0N4T0gCtODoAcQ1IcVJ8BEC5iD0AzQNeyn3Ac/pIgCE3sk0DelE9QPn99Ac6JCDlcXqN0BxRDeAz1PcBCcECtDqaAA8iOrDXSQ8giqhtLwzIQtDiNQgJ0sNIv+ntyxyvAbQQltHsxwXQIrwQ7bbd8VaEBmPdVjjei0AMLD4bQgnPQtDjWZDUcBRmdHN3bSp21HoDwFQ8hqkNhDsAAAAASUVORK5CYII=" x="24" y="24" width="80" height="80" preserveAspectRatio="none" style="image-rendering: pixelated" />
+    
+      <path d="M34 44l10-10 10 16M94 44l-10-10-10 16" fill="none" stroke="#ffd7cd" stroke-width="8" stroke-linecap="square"/>
+      <path d="M44 86l-6 10M64 90l0 10M84 86l6 10" fill="none" stroke="#f0c99f" stroke-width="6" stroke-linecap="square"/>
+    
+    <rect x="24" y="98" width="80" height="10" rx="4" fill="#f0c99f" opacity="0.9"/>
+    
+  </svg>
