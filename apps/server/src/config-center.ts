@@ -159,7 +159,7 @@ export interface WorldConfigPreviewTile {
           power: number;
           knowledge: number;
         };
-        visitedCount: number;
+        lastUsedDay?: number;
       }
     | {
         kind: "resource_mine";
@@ -167,7 +167,7 @@ export interface WorldConfigPreviewTile {
         label: string;
         resourceKind: ResourceKind;
         income: number;
-        ownerPlayerId?: string;
+        lastHarvestDay?: number;
       }
     | undefined;
 }
@@ -1446,7 +1446,7 @@ export function createWorldConfigPreview(
                 power: tile.building.bonus.power,
                 knowledge: tile.building.bonus.knowledge
               },
-              visitedCount: tile.building.visitedHeroIds.length
+              ...(typeof tile.building.lastUsedDay === "number" ? { lastUsedDay: tile.building.lastUsedDay } : {})
             }
           : {
               kind: tile.building.kind,
@@ -1454,7 +1454,9 @@ export function createWorldConfigPreview(
               label: tile.building.label,
               resourceKind: tile.building.resourceKind,
               income: tile.building.income,
-              ...(tile.building.ownerPlayerId ? { ownerPlayerId: tile.building.ownerPlayerId } : {})
+              ...(typeof tile.building.lastHarvestDay === "number"
+                ? { lastHarvestDay: tile.building.lastHarvestDay }
+                : {})
             };
 
     return {

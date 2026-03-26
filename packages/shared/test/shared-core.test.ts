@@ -261,7 +261,7 @@ test("hero progression helpers expose xp meter and attribute sources", () => {
           power: 0,
           knowledge: 0
         },
-        visitedHeroIds: ["hero-1"]
+        lastUsedDay: 1
       }
     },
     tiles: [
@@ -278,7 +278,7 @@ test("hero progression helpers expose xp meter and attribute sources", () => {
             power: 0,
             knowledge: 0
           },
-          visitedHeroIds: ["hero-1"]
+          lastUsedDay: 1
         }
       }),
       createTile(0, 1),
@@ -1260,7 +1260,7 @@ test("building interactions reject missing resources, exhausted stock, wrong bui
               power: 0,
               knowledge: 0
             },
-            visitedHeroIds: []
+            lastUsedDay: undefined
           }
         })
       ]
@@ -1278,7 +1278,7 @@ test("building interactions reject missing resources, exhausted stock, wrong bui
     buildingId: "shrine-1"
   }), {
     valid: false,
-    reason: "building_already_visited"
+    reason: "building_on_cooldown"
   });
 
   const claimedState = resolveWorldAction(
@@ -1333,7 +1333,7 @@ test("building interactions reject missing resources, exhausted stock, wrong bui
               power: 0,
               knowledge: 0
             },
-            visitedHeroIds: []
+            lastUsedDay: undefined
           }
         })
       ]
@@ -1351,7 +1351,7 @@ test("building interactions reject missing resources, exhausted stock, wrong bui
     buildingId: "mine-1"
   }), {
     valid: false,
-    reason: "building_already_owned"
+    reason: "building_on_cooldown"
   });
 });
 
@@ -1378,7 +1378,7 @@ test("resolveWorldAction visits an attribute shrine once, grants permanent stats
           power: 1,
           knowledge: 0
         },
-        visitedHeroIds: []
+        lastUsedDay: undefined
       }
     },
     tiles: [
@@ -1398,7 +1398,7 @@ test("resolveWorldAction visits an attribute shrine once, grants permanent stats
             power: 1,
             knowledge: 0
           },
-          visitedHeroIds: []
+          lastUsedDay: undefined
         }
       })
     ],
@@ -1415,7 +1415,7 @@ test("resolveWorldAction visits an attribute shrine once, grants permanent stats
 
   assert.equal(visitOutcome.state.heroes[0]?.stats.attack, 3);
   assert.equal(visitOutcome.state.heroes[0]?.stats.power, 2);
-  assert.deepEqual(visitOutcome.state.buildings["shrine-1"]?.visitedHeroIds, ["hero-1"]);
+  assert.equal(visitOutcome.state.buildings["shrine-1"]?.lastUsedDay, 1);
   assert.deepEqual(visitOutcome.events, [
     {
       type: "hero.visited",
@@ -1453,19 +1453,19 @@ test("resolveWorldAction visits an attribute shrine once, grants permanent stats
     buildingId: "shrine-1"
   }), {
     valid: false,
-    reason: "building_already_visited"
+    reason: "building_on_cooldown"
   });
 
   const nextDayOutcome = resolveWorldAction(visitOutcome.state, {
     type: "turn.endDay"
   });
 
-  assert.deepEqual(nextDayOutcome.state.buildings["shrine-1"]?.visitedHeroIds, ["hero-1"]);
+  assert.equal(nextDayOutcome.state.buildings["shrine-1"]?.lastUsedDay, 1);
   assert.equal(nextDayOutcome.state.heroes[0]?.stats.attack, 3);
   assert.equal(nextDayOutcome.state.heroes[0]?.stats.power, 2);
 });
 
-test("resolveWorldAction claims a resource mine and grants daily income on end day", () => {
+test("resolveWorldAction harvests a resource mine immediately and unlocks it again on the next day", () => {
   const hero = createHero({
     id: "hero-1",
     playerId: "player-1",
@@ -1522,9 +1522,10 @@ test("resolveWorldAction claims a resource mine and grants daily income on end d
   });
   assert.equal(predictedClaim.reason, undefined);
   assert.equal(
-    predictedClaim.world.map.tiles.find((tile) => tile.position.x === 1 && tile.position.y === 1)?.building?.ownerPlayerId,
-    "player-1"
+    predictedClaim.world.map.tiles.find((tile) => tile.position.x === 1 && tile.position.y === 1)?.building?.lastHarvestDay,
+    1
   );
+  assert.equal(predictedClaim.world.resources.wood, 2);
 
   const claimOutcome = resolveWorldAction(state, {
     type: "hero.claimMine",
@@ -1532,8 +1533,9 @@ test("resolveWorldAction claims a resource mine and grants daily income on end d
     buildingId: "mine-1"
   });
 
-  assert.equal(claimOutcome.state.buildings["mine-1"]?.ownerPlayerId, "player-1");
-  assert.equal(claimOutcome.state.map.tiles[3]?.building?.ownerPlayerId, "player-1");
+  assert.equal(claimOutcome.state.buildings["mine-1"]?.lastHarvestDay, 1);
+  assert.equal(claimOutcome.state.map.tiles[3]?.building?.lastHarvestDay, 1);
+  assert.equal(claimOutcome.state.resources["player-1"]?.wood, 2);
   assert.deepEqual(claimOutcome.events, [
     {
       type: "hero.claimedMine",
@@ -1552,7 +1554,7 @@ test("resolveWorldAction claims a resource mine and grants daily income on end d
     buildingId: "mine-1"
   }), {
     valid: false,
-    reason: "building_already_owned"
+    reason: "building_on_cooldown"
   });
 
   const nextDayOutcome = resolveWorldAction(claimOutcome.state, {
@@ -1565,16 +1567,6 @@ test("resolveWorldAction claims a resource mine and grants daily income on end d
     {
       type: "turn.advanced",
       day: 2
-    },
-    {
-      type: "resource.produced",
-      playerId: "player-1",
-      buildingId: "mine-1",
-      buildingKind: "resource_mine",
-      resource: {
-        kind: "wood",
-        amount: 2
-      }
     }
   ]);
 });

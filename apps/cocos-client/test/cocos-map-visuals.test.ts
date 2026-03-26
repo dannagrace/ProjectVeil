@@ -331,7 +331,7 @@ test("buildMapFeedbackEntriesFromUpdate creates tile callouts for move, collect,
     },
     {
       position: { x: 1, y: 1 },
-      text: "MINE",
+      text: "+WOOD",
       durationSeconds: 0.94
     },
     {
@@ -457,7 +457,7 @@ test("buildObjectPulseEntriesFromUpdate emits bounce targets for collection and 
     },
     {
       position: { x: 1, y: 1 },
-      scale: 1.2,
+      scale: 1.22,
       durationSeconds: 0.27
     },
     {

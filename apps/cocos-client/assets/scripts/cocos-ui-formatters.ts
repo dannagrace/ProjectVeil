@@ -57,7 +57,7 @@ function formatWorldEvent(event: WorldEvent): string | null {
   if (event.type === "hero.claimedMine") {
     const resourceKind = typeof event.resourceKind === "string" ? event.resourceKind : "resource";
     const income = typeof event.income === "number" ? event.income : 0;
-    return `占领资源矿场，每日产出 ${formatResourceKindLabel(resourceKind)} +${income}。`;
+    return `采集矿场，获得 ${formatResourceKindLabel(resourceKind)} +${income}。`;
   }
 
   if (event.type === "hero.skillLearned") {

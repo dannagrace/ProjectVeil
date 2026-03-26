@@ -100,7 +100,7 @@ export interface AttributeShrineBuildingView {
   kind: "attribute_shrine";
   label: string;
   bonus: HeroStatBonus;
-  visitedHeroIds: string[];
+  lastUsedDay?: number;
 }
 
 export interface ResourceMineBuildingView {
@@ -109,7 +109,7 @@ export interface ResourceMineBuildingView {
   label: string;
   resourceKind: keyof ResourceLedger;
   income: number;
-  ownerPlayerId?: string;
+  lastHarvestDay?: number;
 }
 
 export type PlayerBuildingView =

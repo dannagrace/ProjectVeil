@@ -248,14 +248,14 @@ test("room allows visiting an attribute shrine once and persists the stat bonus"
       buildingId: "shrine-attack-1",
       buildingKind: "attribute_shrine",
       bonus: {
-        attack: 1,
+        attack: 2,
         defense: 0,
         power: 0,
         knowledge: 0
       }
     }
   ]);
-  assert.equal(visitResult.snapshot.state.ownHeroes[0]?.stats.attack, 3);
+  assert.equal(visitResult.snapshot.state.ownHeroes[0]?.stats.attack, 4);
 
   const revisitResult = room.dispatch("player-1", {
     type: "hero.visit",
@@ -264,10 +264,10 @@ test("room allows visiting an attribute shrine once and persists the stat bonus"
   });
 
   assert.equal(revisitResult.ok, false);
-  assert.equal(revisitResult.reason, "building_already_visited");
+  assert.equal(revisitResult.reason, "building_on_cooldown");
 });
 
-test("room allows claiming a resource mine and grants daily income after advancing the day", () => {
+test("room allows harvesting a resource mine and restores it on the next day", () => {
   const room = createRoom("room-mine", 1001);
 
   const moveResult = room.dispatch("player-1", {
@@ -293,14 +293,15 @@ test("room allows claiming a resource mine and grants daily income after advanci
       buildingId: "mine-wood-1",
       buildingKind: "resource_mine",
       resourceKind: "wood",
-      income: 2,
+      income: 5,
       ownerPlayerId: "player-1"
     }
   ]);
   assert.equal(
-    claimResult.snapshot.state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 1)?.building?.ownerPlayerId,
-    "player-1"
+    claimResult.snapshot.state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 1)?.building?.lastHarvestDay,
+    1
   );
+  assert.equal(claimResult.snapshot.state.resources.wood, 5);
 
   const nextDayResult = room.dispatch("player-1", {
     type: "turn.endDay"
@@ -313,16 +314,6 @@ test("room allows claiming a resource mine and grants daily income after advanci
       day: 2
     },
     {
-      type: "resource.produced",
-      playerId: "player-1",
-      buildingId: "mine-wood-1",
-      buildingKind: "resource_mine",
-      resource: {
-        kind: "wood",
-        amount: 2
-      }
-    },
-    {
       type: "neutral.moved",
       neutralArmyId: "neutral-1",
       from: { x: 5, y: 4 },
@@ -331,7 +322,7 @@ test("room allows claiming a resource mine and grants daily income after advanci
       targetHeroId: "hero-2"
     }
   ]);
-  assert.equal(nextDayResult.snapshot.state.resources.wood, 2);
+  assert.equal(nextDayResult.snapshot.state.resources.wood, 5);
 });
 
 test("room can create a neutral-initiated battle when end day triggers an adjacent chase", () => {

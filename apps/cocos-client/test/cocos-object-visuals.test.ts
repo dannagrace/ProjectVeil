@@ -93,7 +93,7 @@ test("describeCocosTileObject exposes attribute shrines as permanent stat buildi
       power: 0,
       knowledge: 0
     },
-    visitedHeroIds: []
+    lastUsedDay: undefined
   };
 
   assert.equal(describeCocosTileObject(tile)?.shortLabel, "神殿");
@@ -101,7 +101,7 @@ test("describeCocosTileObject exposes attribute shrines as permanent stat buildi
   assert.equal(buildCocosTileMarkerText(tile), ">S");
 });
 
-test("describeCocosTileObject exposes resource mines as claimable daily income buildings", () => {
+test("describeCocosTileObject exposes resource mines as harvestable daily pickups", () => {
   const tile = createTile();
   tile.building = {
     id: "mine-1",
@@ -109,11 +109,11 @@ test("describeCocosTileObject exposes resource mines as claimable daily income b
     label: "前线伐木场",
     resourceKind: "wood",
     income: 2,
-    ownerPlayerId: "player-1"
+    lastHarvestDay: 1
   };
 
   assert.equal(describeCocosTileObject(tile)?.shortLabel, "矿场");
-  assert.equal(describeCocosTileObject(tile)?.tag, "占领");
-  assert.match(describeCocosTileObject(tile)?.subtitle ?? "", /木材 \+2\/天/);
+  assert.equal(describeCocosTileObject(tile)?.tag, "采集");
+  assert.match(describeCocosTileObject(tile)?.subtitle ?? "", /木材 \+2 · 今日已采集/);
   assert.equal(buildCocosTileMarkerText(tile), ">M");
 });

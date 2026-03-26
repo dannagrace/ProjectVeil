@@ -63,7 +63,7 @@
       },
       "label": "战旗圣坛",
       "bonus": {
-        "attack": 1,
+        "attack": 2,
         "defense": 0,
         "power": 0,
         "knowledge": 0
@@ -78,7 +78,7 @@
       },
       "label": "前线伐木场",
       "resourceKind": "wood",
-      "income": 2
+      "income": 5
     }
   ]
 }

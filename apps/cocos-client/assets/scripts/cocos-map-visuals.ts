@@ -200,7 +200,7 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
       if (buildingPosition) {
         entries.push({
           position: buildingPosition,
-          text: "MINE",
+          text: `+${event.resourceKind.toUpperCase()}`,
           durationSeconds: 0.94
         });
       }
@@ -299,7 +299,7 @@ export function buildObjectPulseEntriesFromUpdate(update: SessionUpdate, heroId?
       if (buildingPosition) {
         entries.push({
           position: buildingPosition,
-          scale: 1.2,
+          scale: 1.22,
           durationSeconds: 0.27
         });
       }
