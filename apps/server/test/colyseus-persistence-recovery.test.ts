@@ -804,3 +804,84 @@ test("colyseus room connect provisions player account metadata without overwriti
   assert.ok(account?.lastSeenAt);
   assert.equal(account?.globalResources.gold, 75);
 });
+
+test("colyseus room persists world event logs and first-battle achievements into player accounts", async (t) => {
+  const roomId = `account-event-log-${Date.now()}`;
+  const port = 39100 + Math.floor(Math.random() * 1000);
+  const store = new MemoryRoomSnapshotStore();
+  const seededState = createWorldStateFromConfigs(getDefaultWorldConfig(), getDefaultMapObjectsConfig(), 1001, roomId);
+  const seededHero = seededState.heroes.find((hero) => hero.id === "hero-1");
+  if (!seededHero) {
+    throw new Error("Expected hero-1 in seeded state");
+  }
+  seededHero.loadout.inventory = ["vanguard_blade"];
+  await store.save(roomId, {
+    state: seededState,
+    battles: []
+  });
+
+  const server = await startServer(port, store);
+  let room: ColyseusRoom | null = null;
+
+  t.after(async () => {
+    configureRoomSnapshotStore(null);
+    if (room) {
+      room.removeAllListeners();
+      room.connection.close();
+    }
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  room = await joinRoomWithRetry(port, roomId, "player-1");
+
+  await sendRequest(
+    room,
+    {
+      type: "connect",
+      requestId: nextRequestId("event-log-connect"),
+      roomId,
+      playerId: "player-1"
+    },
+    "session.state"
+  );
+
+  await sendRequest(
+    room,
+    {
+      type: "world.action",
+      requestId: nextRequestId("event-log-equip"),
+      action: {
+        type: "hero.equip",
+        heroId: "hero-1",
+        slot: "weapon",
+        equipmentId: "vanguard_blade"
+      }
+    },
+    "session.state"
+  );
+
+  await sendRequest(
+    room,
+    {
+      type: "world.action",
+      requestId: nextRequestId("event-log-battle"),
+      action: {
+        type: "hero.move",
+        heroId: "hero-1",
+        destination: { x: 5, y: 4 }
+      }
+    },
+    "session.state"
+  );
+
+  const account = await store.loadPlayerAccount("player-1");
+  assert.equal(account?.lastRoomId, roomId);
+  assert.equal(account?.achievements.find((achievement) => achievement.id === "first_battle")?.unlocked, true);
+  assert.ok(
+    account?.recentEventLog.some(
+      (entry) => entry.worldEventType === "hero.equipmentChanged" && /装备了武器 vanguard_blade/.test(entry.description)
+    )
+  );
+  assert.ok(account?.recentEventLog.some((entry) => entry.category === "achievement" && entry.achievementId === "first_battle"));
+  assert.ok(account?.recentEventLog.some((entry) => entry.worldEventType === "battle.started"));
+});

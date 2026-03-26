@@ -7,6 +7,7 @@ import {
   experienceRequiredForNextLevel,
   formatEquipmentBonusSummary,
   formatEquipmentRarityLabel,
+  getLatestUnlockedAchievement,
   getDefaultBattleSkillCatalog,
   getEquipmentDefinition,
   predictPlayerWorldAction,
@@ -292,7 +293,32 @@ function formatGlobalVault(account: ClientPlayerAccountProfile): string {
 
 function formatAchievementSummary(account: ClientPlayerAccountProfile): string {
   const unlocked = account.achievements.filter((achievement) => achievement.unlocked).length;
-  return `成就 ${unlocked}/${account.achievements.length} 已解锁`;
+  const latestUnlocked = getLatestUnlockedAchievement(account.achievements);
+  return latestUnlocked
+    ? `成就 ${unlocked}/${account.achievements.length} 已解锁 · 最新 ${latestUnlocked.title}`
+    : `成就 ${unlocked}/${account.achievements.length} 已解锁`;
+}
+
+function formatEventLogCategory(category: ClientPlayerAccountProfile["recentEventLog"][number]["category"]): string {
+  switch (category) {
+    case "movement":
+      return "移动";
+    case "combat":
+      return "战斗";
+    case "building":
+      return "建筑";
+    case "skill":
+      return "养成";
+    case "achievement":
+      return "成就";
+    default:
+      return category;
+  }
+}
+
+function formatEventLogTimestamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
 }
 
 function renderAchievementProgress(account: ClientPlayerAccountProfile): string {
@@ -330,7 +356,7 @@ function renderRecentAccountEvents(account: ClientPlayerAccountProfile): string 
     <strong>世界事件日志</strong>
     <div class="account-event-list">
       ${account.recentEventLog
-        .slice(0, 4)
+        .slice(0, 6)
         .map((entry) => {
           const rewards =
             entry.rewards.length > 0
@@ -338,7 +364,13 @@ function renderRecentAccountEvents(account: ClientPlayerAccountProfile): string 
                   .map((reward) => (reward.amount != null ? `${reward.label} +${reward.amount}` : reward.label))
                   .join(" / ")}`
               : "";
-          return `<p class="account-event-entry">${escapeHtml(entry.description)}${escapeHtml(rewards)}</p>`;
+          return `<div class="account-event-entry">
+            <div class="account-event-head">
+              <span class="account-badge">${escapeHtml(formatEventLogCategory(entry.category))}</span>
+              <span>${escapeHtml(formatEventLogTimestamp(entry.timestamp))}</span>
+            </div>
+            <p>${escapeHtml(entry.description)}${escapeHtml(rewards)}</p>
+          </div>`;
         })
         .join("")}
     </div>

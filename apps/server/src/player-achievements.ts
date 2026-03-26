@@ -11,6 +11,12 @@ import {
 import type { PlayerAccountSnapshot } from "./persistence";
 
 const RECENT_EVENT_LOG_LIMIT = 12;
+const EQUIPMENT_SLOT_LABELS: Record<"weapon" | "armor" | "accessory" | "trinket", string> = {
+  weapon: "武器",
+  armor: "护甲",
+  accessory: "饰品",
+  trinket: "宝物"
+};
 
 function findHero(state: WorldState, heroId?: string): WorldState["heroes"][number] | undefined {
   return heroId ? state.heroes.find((hero) => hero.id === heroId) : undefined;
@@ -144,6 +150,26 @@ function createEventLogEntry(
         worldEventType: event.type,
         rewards: []
       };
+    case "hero.equipmentChanged": {
+      const slotLabel = EQUIPMENT_SLOT_LABELS[event.slot] ?? event.slot;
+      const description =
+        event.equippedItemId && event.unequippedItemId
+          ? `${hero?.name ?? event.heroId} 将${slotLabel}从 ${event.unequippedItemId} 更换为 ${event.equippedItemId}。`
+          : event.equippedItemId
+            ? `${hero?.name ?? event.heroId} 装备了${slotLabel} ${event.equippedItemId}。`
+            : `${hero?.name ?? event.heroId} 卸下了${slotLabel} ${event.unequippedItemId ?? "装备"}。`;
+      return {
+        id: createEventId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "skill",
+        description,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: []
+      };
+    }
     case "battle.started":
       return {
         id: createEventId(playerId, timestamp, event.type, sequence),

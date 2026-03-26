@@ -33,6 +33,7 @@ import {
   getDefaultWorldConfig,
   getBattleOutcome,
   getDefaultEquipmentCatalog,
+  getLatestUnlockedAchievement,
   pickAutomatedBattleAction,
   planPlayerViewMovement,
   predictPlayerWorldAction,
@@ -215,6 +216,23 @@ test("achievement helpers unlock milestones and preserve catalog order", () => {
     secondPass.progress.map((achievement) => achievement.id),
     getAchievementDefinitions().map((achievement) => achievement.id)
   );
+});
+
+test("achievement helpers return the most recently unlocked milestone", () => {
+  const progress = [
+    {
+      id: "first_battle" as const,
+      current: 1,
+      unlockedAt: "2026-03-27T10:00:00.000Z"
+    },
+    {
+      id: "skill_scholar" as const,
+      current: 5,
+      unlockedAt: "2026-03-27T10:05:00.000Z"
+    }
+  ];
+
+  assert.equal(getLatestUnlockedAchievement(progress)?.id, "skill_scholar");
 });
 
 test("event log helper keeps newest unique entries first", () => {
