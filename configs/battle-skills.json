@@ -60,6 +60,52 @@
       }
     },
     {
+      "id": "commanding_shout",
+      "name": "号令突进",
+      "description": "英雄亲自发出冲锋号令，让部队在短时间内压上输出。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 3,
+      "effects": {
+        "grantedStatusId": "battle_frenzy"
+      }
+    },
+    {
+      "id": "rending_mark",
+      "name": "裂甲追击",
+      "description": "命中时追加破甲印记，让后续换血更占优势。",
+      "kind": "passive",
+      "target": "enemy",
+      "cooldown": 0,
+      "effects": {
+        "onHitStatusId": "armor_break"
+      }
+    },
+    {
+      "id": "phalanx_command",
+      "name": "持盾列阵",
+      "description": "整理阵线，短时间内进入稳固的护卫姿态。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 4,
+      "effects": {
+        "grantedStatusId": "shield_wall"
+      }
+    },
+    {
+      "id": "pinning_javelin",
+      "name": "钉锁投枪",
+      "description": "以压制为先的投枪技，伤害略低，但能削弱对手且不触发反击。",
+      "kind": "active",
+      "target": "enemy",
+      "cooldown": 3,
+      "effects": {
+        "damageMultiplier": 0.8,
+        "allowRetaliation": false,
+        "onHitStatusId": "weakened"
+      }
+    },
+    {
       "id": "venomous_fangs",
       "name": "毒牙",
       "description": "命中后让目标陷入中毒，回合开始时持续掉血。",

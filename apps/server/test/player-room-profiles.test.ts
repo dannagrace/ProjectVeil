@@ -87,6 +87,7 @@ test("applyPlayerProfilesToWorldState backfills default progression for legacy h
 
   assert.equal(playerOneHero?.progression.level, 1);
   assert.equal(playerOneHero?.progression.experience, 0);
+  assert.equal(playerOneHero?.progression.skillPoints, 0);
   assert.equal(playerOneHero?.progression.battlesWon, 0);
 });
 
@@ -152,6 +153,11 @@ test("createPlayerHeroArchivesFromWorldState extracts one persistent hero record
         trinketIds: ["wind_charm"]
       }
     },
+    progression: {
+      ...snapshot.state.heroes[0]!.progression,
+      skillPoints: 2
+    },
+    learnedSkills: [{ skillId: "war_banner", rank: 1 }],
     armyCount: 16
   };
 
@@ -163,6 +169,8 @@ test("createPlayerHeroArchivesFromWorldState extracts one persistent hero record
     { skillId: "armor_spell", rank: 2 }
   ]);
   assert.equal(archives.find((archive) => archive.heroId === "hero-1")?.hero.loadout.equipment.weaponId, "bronze_halberd");
+  assert.equal(archives.find((archive) => archive.heroId === "hero-1")?.hero.progression.skillPoints, 2);
+  assert.deepEqual(archives.find((archive) => archive.heroId === "hero-1")?.hero.learnedSkills, [{ skillId: "war_banner", rank: 1 }]);
   assert.equal(archives.find((archive) => archive.heroId === "hero-1")?.hero.armyCount, 16);
 });
 
@@ -196,6 +204,7 @@ test("applyPlayerHeroArchivesToWorldState restores long-term hero growth but res
           ...originalHero.progression,
           level: 4,
           experience: 420,
+          skillPoints: 3,
           battlesWon: 5,
           neutralBattlesWon: 4,
           pvpBattlesWon: 1
@@ -212,7 +221,8 @@ test("applyPlayerHeroArchivesToWorldState restores long-term hero growth but res
             trinketIds: ["warding_seal", "iron_branch"]
           }
         },
-        armyCount: 18
+        armyCount: 18,
+        learnedSkills: [{ skillId: "war_banner", rank: 2 }]
       }
     }
   ]);
@@ -236,6 +246,8 @@ test("applyPlayerHeroArchivesToWorldState restores long-term hero growth but res
     accessoryId: "sun_medallion",
     trinketIds: ["warding_seal", "iron_branch"]
   });
+  assert.equal(hydratedHero?.progression.skillPoints, 3);
+  assert.deepEqual(hydratedHero?.learnedSkills, [{ skillId: "war_banner", rank: 2 }]);
   assert.equal(hydratedHero?.armyCount, 18);
 });
 

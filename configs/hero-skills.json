@@ -1,0 +1,56 @@
+{
+  "branches": [
+    {
+      "id": "warpath",
+      "name": "战阵",
+      "description": "偏向主动压制与持续滚雪球。"
+    },
+    {
+      "id": "bulwark",
+      "name": "壁垒",
+      "description": "偏向接战容错与稳定换血。"
+    }
+  ],
+  "skills": [
+    {
+      "id": "war_banner",
+      "branchId": "warpath",
+      "name": "战旗号令",
+      "description": "英雄亲自介入战场节奏，先提振攻势，再把破甲压制纳入长期 build。",
+      "requiredLevel": 2,
+      "maxRank": 2,
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“号令突进”。",
+          "battleSkillIds": ["commanding_shout"]
+        },
+        {
+          "rank": 2,
+          "description": "追加被动技能“裂甲追击”。",
+          "battleSkillIds": ["rending_mark"]
+        }
+      ]
+    },
+    {
+      "id": "shield_discipline",
+      "branchId": "bulwark",
+      "name": "盾墙教范",
+      "description": "把部队阵型和投枪压制编进英雄的长期战斗套路里。",
+      "requiredLevel": 2,
+      "maxRank": 2,
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“持盾列阵”。",
+          "battleSkillIds": ["phalanx_command"]
+        },
+        {
+          "rank": 2,
+          "description": "追加主动技能“钉锁投枪”。",
+          "battleSkillIds": ["pinning_javelin"]
+        }
+      ]
+    }
+  ]
+}

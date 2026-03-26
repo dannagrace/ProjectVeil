@@ -60,6 +60,12 @@ function formatWorldEvent(event: WorldEvent): string | null {
     return `占领资源矿场，每日产出 ${formatResourceKindLabel(resourceKind)} +${income}。`;
   }
 
+  if (event.type === "hero.skillLearned") {
+    return event.newRank > 1
+      ? `${event.branchName} 分支的 ${event.skillName} 强化到 ${event.newRank} 阶。`
+      : `习得 ${event.branchName} 分支技能 ${event.skillName}。`;
+  }
+
   if (event.type === "resource.produced" && isObjectRecord(event.resource)) {
     const kind = typeof event.resource.kind === "string" ? event.resource.kind : "resource";
     const amount = typeof event.resource.amount === "number" ? event.resource.amount : 0;
@@ -75,7 +81,7 @@ function formatWorldEvent(event: WorldEvent): string | null {
     const levelsGained = typeof event.levelsGained === "number" ? event.levelsGained : 0;
     const level = typeof event.level === "number" ? event.level : 0;
     return levelsGained > 0
-      ? `英雄获得 ${experienceGained} 经验并升到 ${level} 级。`
+      ? `英雄获得 ${experienceGained} 经验并升到 ${level} 级，同时得到 ${event.skillPointsAwarded} 点技能点。`
       : `英雄获得 ${experienceGained} 经验。`;
   }
 

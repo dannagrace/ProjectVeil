@@ -530,9 +530,21 @@ test("colyseus room hydrates long-term hero archives into fresh rooms", async (t
 
   assert.equal(visitedShrine.payload.world.ownHeroes[0]?.stats.attack, 3);
   assert.deepEqual(visitedShrine.payload.world.ownHeroes[0]?.position, { x: 3, y: 2 });
+  const archivedHeroWithProgression = {
+    ...visitedShrine.payload.world.ownHeroes[0]!,
+    progression: {
+      ...visitedShrine.payload.world.ownHeroes[0]!.progression,
+      skillPoints: 2
+    },
+    learnedSkills: [{ skillId: "war_banner", rank: 1 }]
+  };
+  store.seedHeroArchive({
+    playerId: "player-1",
+    heroId: "hero-1",
+    hero: archivedHeroWithProgression
+  });
 
-  const archivedHero = visitedShrine.payload.world.ownHeroes[0];
-  if (!archivedHero) {
+  if (!visitedShrine.payload.world.ownHeroes[0]) {
     throw new Error("Expected hydrated hero snapshot after shrine visit");
   }
 
@@ -540,7 +552,7 @@ test("colyseus room hydrates long-term hero archives into fresh rooms", async (t
     playerId: "player-1",
     heroId: "hero-1",
     hero: {
-      ...archivedHero,
+      ...archivedHeroWithProgression,
       position: { x: 4, y: 4 },
       move: { total: 8, remaining: 1 },
       loadout: {
@@ -574,6 +586,8 @@ test("colyseus room hydrates long-term hero archives into fresh rooms", async (t
 
   assert.equal(hydratedState.payload.world.ownHeroes[0]?.stats.attack, 3);
   assert.deepEqual(hydratedState.payload.world.ownHeroes[0]?.position, { x: 1, y: 1 });
+  assert.equal(hydratedState.payload.world.ownHeroes[0]?.progression.skillPoints, 2);
+  assert.deepEqual(hydratedState.payload.world.ownHeroes[0]?.learnedSkills, [{ skillId: "war_banner", rank: 1 }]);
   assert.equal(
     hydratedState.payload.world.ownHeroes[0]?.move.remaining,
     hydratedState.payload.world.ownHeroes[0]?.move.total

@@ -38,12 +38,14 @@ function createBaseUpdate(): SessionUpdate {
           progression: {
             level: 1,
             experience: 0,
+            skillPoints: 0,
             battlesWon: 0,
             neutralBattlesWon: 0,
             pvpBattlesWon: 0
           },
           armyCount: 12,
-          armyTemplateId: "hero_guard_basic"
+          armyTemplateId: "hero_guard_basic",
+          learnedSkills: []
         }
       ],
       visibleHeroes: [],

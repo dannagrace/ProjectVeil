@@ -22,6 +22,42 @@ export interface HeroStats {
 
 export type HeroStatBonus = Pick<HeroStats, "attack" | "defense" | "power" | "knowledge">;
 
+export type HeroSkillId = string;
+export type HeroSkillBranchId = string;
+
+export interface HeroLearnedSkillState {
+  skillId: HeroSkillId;
+  rank: number;
+}
+
+export interface HeroSkillBranchConfig {
+  id: HeroSkillBranchId;
+  name: string;
+  description: string;
+}
+
+export interface HeroSkillRankConfig {
+  rank: number;
+  description: string;
+  battleSkillIds?: BattleSkillId[];
+}
+
+export interface HeroSkillConfig {
+  id: HeroSkillId;
+  branchId: HeroSkillBranchId;
+  name: string;
+  description: string;
+  requiredLevel: number;
+  maxRank: number;
+  prerequisites?: HeroSkillId[];
+  ranks: HeroSkillRankConfig[];
+}
+
+export interface HeroSkillTreeConfig {
+  branches: HeroSkillBranchConfig[];
+  skills: HeroSkillConfig[];
+}
+
 export interface MovePoints {
   total: number;
   remaining: number;
@@ -30,12 +66,13 @@ export interface MovePoints {
 export interface HeroProgression {
   level: number;
   experience: number;
+  skillPoints: number;
   battlesWon: number;
   neutralBattlesWon: number;
   pvpBattlesWon: number;
 }
 
-export interface HeroLearnedSkillState {
+export interface HeroBattleSkillState {
   skillId: BattleSkillId;
   rank: number;
 }
@@ -48,7 +85,7 @@ export interface HeroEquipmentState {
 }
 
 export interface HeroLoadout {
-  learnedSkills: HeroLearnedSkillState[];
+  learnedSkills: HeroBattleSkillState[];
   equipment: HeroEquipmentState;
 }
 
@@ -64,9 +101,10 @@ export interface HeroState {
   loadout: HeroLoadout;
   armyTemplateId: string;
   armyCount: number;
+  learnedSkills: HeroLearnedSkillState[];
 }
 
-export interface HeroLearnedSkillConfig {
+export interface HeroBattleSkillConfig {
   skillId: BattleSkillId;
   rank?: number;
 }
@@ -79,7 +117,7 @@ export interface HeroEquipmentConfig {
 }
 
 export interface HeroLoadoutConfig {
-  learnedSkills?: HeroLearnedSkillConfig[];
+  learnedSkills?: HeroBattleSkillConfig[];
   equipment?: HeroEquipmentConfig | null;
 }
 
@@ -401,6 +439,11 @@ export type WorldAction =
       buildingId: string;
     }
   | {
+      type: "hero.learnSkill";
+      heroId: string;
+      skillId: HeroSkillId;
+    }
+  | {
       type: "turn.endDay";
     };
 
@@ -491,6 +534,20 @@ export type WorldEvent =
       totalExperience: number;
       level: number;
       levelsGained: number;
+      skillPointsAwarded: number;
+      availableSkillPoints: number;
+    }
+  | {
+      type: "hero.skillLearned";
+      heroId: string;
+      skillId: HeroSkillId;
+      branchId: HeroSkillBranchId;
+      skillName: string;
+      branchName: string;
+      newRank: number;
+      spentPoint: number;
+      remainingSkillPoints: number;
+      newlyGrantedBattleSkillIds: BattleSkillId[];
     }
   | {
       type: "battle.started";
@@ -548,12 +605,14 @@ export interface HeroConfig {
   loadout?: HeroLoadoutConfig | null;
   armyTemplateId: string;
   armyCount: number;
+  learnedSkills?: HeroLearnedSkillState[] | null;
 }
 
 export function createDefaultHeroProgression(): HeroProgression {
   return {
     level: 1,
     experience: 0,
+    skillPoints: 0,
     battlesWon: 0,
     neutralBattlesWon: 0,
     pvpBattlesWon: 0
@@ -594,30 +653,60 @@ export function createDefaultHeroLoadout(): HeroLoadout {
   };
 }
 
-export function normalizeHeroLoadout(
-  loadout?: HeroLoadoutConfig | HeroLoadout | null
-): HeroLoadout {
-  const skillById = new Map<BattleSkillId, HeroLearnedSkillState>();
+export function normalizeHeroLearnedSkills(
+  learnedSkills?: HeroLearnedSkillState[] | null
+): HeroLearnedSkillState[] {
+  const byId = new Map<HeroSkillId, HeroLearnedSkillState>();
 
-  for (const entry of loadout?.learnedSkills ?? []) {
-    const skillId = entry?.skillId?.trim();
+  for (const learnedSkill of learnedSkills ?? []) {
+    const skillId = learnedSkill?.skillId?.trim();
     if (!skillId) {
       continue;
     }
 
-    const nextRank = Math.max(1, Math.floor(entry.rank ?? 1));
-    const previous = skillById.get(skillId);
-    if (!previous || nextRank > previous.rank) {
-      skillById.set(skillId, {
+    const rank = Math.max(1, Math.floor(learnedSkill.rank ?? 1));
+    const previous = byId.get(skillId);
+    if (!previous || rank > previous.rank) {
+      byId.set(skillId, {
         skillId,
-        rank: nextRank
+        rank
       });
     }
   }
 
+  return Array.from(byId.values()).sort((left, right) => left.skillId.localeCompare(right.skillId));
+}
+
+export function normalizeHeroBattleSkills(
+  learnedSkills?: HeroBattleSkillState[] | HeroBattleSkillConfig[] | null
+): HeroBattleSkillState[] {
+  const byId = new Map<BattleSkillId, HeroBattleSkillState>();
+
+  for (const learnedSkill of learnedSkills ?? []) {
+    const skillId = learnedSkill?.skillId?.trim();
+    if (!skillId) {
+      continue;
+    }
+
+    const rank = Math.max(1, Math.floor(learnedSkill.rank ?? 1));
+    const previous = byId.get(skillId);
+    if (!previous || rank > previous.rank) {
+      byId.set(skillId, {
+        skillId,
+        rank
+      });
+    }
+  }
+
+  return Array.from(byId.values()).sort((left, right) => left.skillId.localeCompare(right.skillId));
+}
+
+export function normalizeHeroLoadout(
+  loadout?: HeroLoadoutConfig | HeroLoadout | null
+): HeroLoadout {
   return {
     ...createDefaultHeroLoadout(),
-    learnedSkills: Array.from(skillById.values()),
+    learnedSkills: normalizeHeroBattleSkills(loadout?.learnedSkills),
     equipment: normalizeHeroEquipment(loadout?.equipment)
   };
 }
@@ -633,6 +722,7 @@ export function normalizeHeroProgression(
     ...progression,
     level: Math.max(Math.max(1, Math.floor(progression?.level ?? 1)), minimumLevelFromExperience),
     experience,
+    skillPoints: Math.max(0, Math.floor(progression?.skillPoints ?? 0)),
     battlesWon: Math.max(0, Math.floor(progression?.battlesWon ?? 0)),
     neutralBattlesWon: Math.max(0, Math.floor(progression?.neutralBattlesWon ?? 0)),
     pvpBattlesWon: Math.max(0, Math.floor(progression?.pvpBattlesWon ?? 0))
@@ -668,7 +758,8 @@ export function normalizeHeroState<T extends HeroConfig | HeroState>(hero: T): H
     move: { ...hero.move },
     stats: { ...hero.stats },
     progression: normalizeHeroProgression(hero.progression),
-    loadout: normalizeHeroLoadout(hero.loadout)
+    loadout: normalizeHeroLoadout(hero.loadout),
+    learnedSkills: normalizeHeroLearnedSkills(hero.learnedSkills)
   };
 }
 
