@@ -4,6 +4,7 @@ import {
   applyBattleAction,
   applyBattleOutcomeToWorld,
   createHeroAttributeBreakdown,
+  createHeroEquipmentBonusSummary,
   createHeroSkillTreeView,
   createHeroProgressMeterView,
   createDemoBattleState,
@@ -19,6 +20,7 @@ import {
   getDefaultHeroSkillTreeConfig,
   getDefaultUnitCatalog,
   getBattleOutcome,
+  getDefaultEquipmentCatalog,
   pickAutomatedBattleAction,
   planPlayerViewMovement,
   predictPlayerWorldAction,
@@ -224,6 +226,15 @@ test("hero progression helpers expose xp meter and attribute sources", () => {
       battlesWon: 1,
       neutralBattlesWon: 1,
       pvpBattlesWon: 0
+    },
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        weaponId: "sunforged_spear",
+        armorId: "padded_gambeson",
+        accessoryId: "sun_medallion",
+        trinketIds: []
+      }
     }
   });
   const state = createWorldState({
@@ -279,9 +290,55 @@ test("hero progression helpers expose xp meter and attribute sources", () => {
     remainingExperience: 135,
     progressRatio: 40 / 175
   });
-  assert.equal(breakdown.find((row) => row.key === "attack")?.formula, "攻击 4 = 基础 2 成长 +1 建筑 +1");
+  assert.equal(breakdown.find((row) => row.key === "attack")?.formula, "攻击 5 = 基础 2 成长 +1 建筑 +1 装备 +1");
   assert.equal(breakdown.find((row) => row.key === "defense")?.formula, "防御 3 = 基础 2 成长 +1");
-  assert.equal(breakdown.find((row) => row.key === "maxHp")?.formula, "生命上限 32 = 基础 30 成长 +2");
+  assert.equal(breakdown.find((row) => row.key === "maxHp")?.formula, "生命上限 34 = 基础 30 成长 +2 装备 +2");
+});
+
+test("equipment catalog exposes the minimum foundation set and resolves hero bonuses", () => {
+  const catalog = getDefaultEquipmentCatalog();
+  const countsByType = catalog.entries.reduce<Record<string, number>>((counts, entry) => {
+    counts[entry.type] = (counts[entry.type] ?? 0) + 1;
+    return counts;
+  }, {});
+  const hero = createHero({
+    id: "hero-equip",
+    playerId: "player-1",
+    name: "装备凯琳",
+    stats: {
+      attack: 5,
+      defense: 4,
+      power: 1,
+      knowledge: 2,
+      hp: 30,
+      maxHp: 30
+    },
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        weaponId: "sunforged_spear",
+        armorId: "warden_aegis",
+        accessoryId: "oracle_lens",
+        trinketIds: []
+      }
+    }
+  });
+
+  const bonuses = createHeroEquipmentBonusSummary(hero);
+
+  assert.equal(countsByType.weapon, 6);
+  assert.equal(countsByType.armor, 6);
+  assert.equal(countsByType.accessory, 6);
+  assert.equal(bonuses.attack, 1);
+  assert.equal(bonuses.defense, 1);
+  assert.equal(bonuses.power, 2);
+  assert.equal(bonuses.knowledge, 2);
+  assert.equal(bonuses.maxHp, 6);
+  assert.deepEqual(bonuses.resolvedItemIds, ["sunforged_spear", "warden_aegis", "oracle_lens"]);
+  assert.deepEqual(
+    bonuses.specialEffects.map((effect) => effect.id).sort(),
+    ["channeling", "momentum", "ward"]
+  );
 });
 
 test("resolveWorldAction starts a battle when a hero reaches a neutral army tile", () => {
@@ -761,6 +818,85 @@ test("createHeroBattleState carries learned hero skill tree rewards into battle"
   assert.ok(attackerSkills.includes("power_shot"));
   assert.ok(attackerSkills.includes("commanding_shout"));
   assert.ok(attackerSkills.includes("rending_mark"));
+});
+
+test("battle state builders fold equipped item bonuses into hero-led stacks", () => {
+  const attacker = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    stats: {
+      attack: 5,
+      defense: 4,
+      power: 1,
+      knowledge: 1,
+      hp: 30,
+      maxHp: 30
+    },
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        weaponId: "sunforged_spear",
+        armorId: "bastion_plate",
+        accessoryId: "captains_insignia",
+        trinketIds: []
+      }
+    }
+  });
+  const defender = createHero({
+    id: "hero-2",
+    playerId: "player-2",
+    name: "罗安",
+    stats: {
+      attack: 3,
+      defense: 5,
+      power: 1,
+      knowledge: 1,
+      hp: 30,
+      maxHp: 30
+    },
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        weaponId: "militia_pike",
+        armorId: "padded_gambeson",
+        accessoryId: "scribe_charm",
+        trinketIds: []
+      }
+    }
+  });
+
+  const attackerBonuses = createHeroEquipmentBonusSummary(attacker);
+  const defenderBonuses = createHeroEquipmentBonusSummary(defender);
+  const baselineBattle = createHeroBattleState(
+    {
+      ...attacker,
+      loadout: createDefaultHeroLoadout()
+    },
+    {
+      ...defender,
+      loadout: createDefaultHeroLoadout()
+    },
+    1001
+  );
+  const battle = createHeroBattleState(attacker, defender, 1001);
+
+  assert.equal(
+    battle.units["hero-1-stack"]?.attack,
+    (baselineBattle.units["hero-1-stack"]?.attack ?? 0) + attackerBonuses.attack
+  );
+  assert.equal(
+    battle.units["hero-1-stack"]?.defense,
+    (baselineBattle.units["hero-1-stack"]?.defense ?? 0) + attackerBonuses.defense
+  );
+  assert.equal(
+    battle.units["hero-2-stack"]?.attack,
+    (baselineBattle.units["hero-2-stack"]?.attack ?? 0) + defenderBonuses.attack
+  );
+  assert.equal(
+    battle.units["hero-2-stack"]?.defense,
+    (baselineBattle.units["hero-2-stack"]?.defense ?? 0) + defenderBonuses.defense
+  );
 });
 
 test("createPlayerWorldView returns player-scoped resources after collection", () => {

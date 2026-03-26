@@ -15,6 +15,7 @@ import type {
   UnitStack,
   ValidationResult
 } from "./models";
+import { createHeroEquipmentBonusSummary } from "./equipment";
 import { grantedHeroBattleSkillIds } from "./hero-skills";
 import { requireValue, withOptionalProperty } from "./invariant";
 import { getDefaultBattleSkillCatalog, getDefaultUnitCatalog } from "./world-config";
@@ -913,6 +914,7 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
   const battleCatalogIndex = getBattleCatalogIndex();
   const templateById = new Map(catalog.templates.map((template) => [template.id, template]));
   const heroTemplate = templateById.get(hero.armyTemplateId);
+  const heroEquipment = createHeroEquipmentBonusSummary(hero);
   const lanes = Math.max(1, neutralArmy.stacks.length);
   const attackerLanes = buildFormationLanes(1, lanes);
   const defenderLanes = buildFormationLanes(neutralArmy.stacks.length, lanes);
@@ -929,8 +931,8 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
       lane: attackerLanes[0] ?? 0,
       stackName: heroTemplate.stackName,
       initiative: heroTemplate.initiative,
-      attack: heroTemplate.attack + hero.stats.attack,
-      defense: heroTemplate.defense + hero.stats.defense,
+      attack: heroTemplate.attack + hero.stats.attack + heroEquipment.attack,
+      defense: heroTemplate.defense + hero.stats.defense + heroEquipment.defense,
       minDamage: heroTemplate.minDamage,
       maxDamage: heroTemplate.maxDamage,
       count: hero.armyCount,
@@ -999,6 +1001,8 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
   const templateById = new Map(catalog.templates.map((template) => [template.id, template]));
   const attackerTemplate = templateById.get(attackerHero.armyTemplateId);
   const defenderTemplate = templateById.get(defenderHero.armyTemplateId);
+  const attackerEquipment = createHeroEquipmentBonusSummary(attackerHero);
+  const defenderEquipment = createHeroEquipmentBonusSummary(defenderHero);
   const lanes = 1;
   const attackerLanes = buildFormationLanes(1, lanes);
   const defenderLanes = buildFormationLanes(1, lanes);
@@ -1021,8 +1025,8 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
         lane: attackerLanes[0] ?? 0,
         stackName: attackerTemplate.stackName,
         initiative: attackerTemplate.initiative,
-        attack: attackerTemplate.attack + attackerHero.stats.attack,
-        defense: attackerTemplate.defense + attackerHero.stats.defense,
+        attack: attackerTemplate.attack + attackerHero.stats.attack + attackerEquipment.attack,
+        defense: attackerTemplate.defense + attackerHero.stats.defense + attackerEquipment.defense,
         minDamage: attackerTemplate.minDamage,
         maxDamage: attackerTemplate.maxDamage,
         count: attackerHero.armyCount,
@@ -1042,8 +1046,8 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
         lane: defenderLanes[0] ?? 0,
         stackName: defenderTemplate.stackName,
         initiative: defenderTemplate.initiative,
-        attack: defenderTemplate.attack + defenderHero.stats.attack,
-        defense: defenderTemplate.defense + defenderHero.stats.defense,
+        attack: defenderTemplate.attack + defenderHero.stats.attack + defenderEquipment.attack,
+        defense: defenderTemplate.defense + defenderHero.stats.defense + defenderEquipment.defense,
         minDamage: defenderTemplate.minDamage,
         maxDamage: defenderTemplate.maxDamage,
         count: defenderHero.armyCount,

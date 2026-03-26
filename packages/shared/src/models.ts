@@ -24,6 +24,38 @@ export type HeroStatBonus = Pick<HeroStats, "attack" | "defense" | "power" | "kn
 
 export type HeroSkillId = string;
 export type HeroSkillBranchId = string;
+export type EquipmentId = string;
+export type EquipmentType = "weapon" | "armor" | "accessory";
+export type EquipmentRarity = "common" | "rare" | "epic";
+export type EquipmentSpecialEffectId = "initiative_edge" | "brace" | "channeling" | "momentum" | "ward";
+
+export interface EquipmentStatBonuses {
+  attackPercent: number;
+  defensePercent: number;
+  power: number;
+  knowledge: number;
+  maxHp: number;
+}
+
+export interface EquipmentSpecialEffectConfig {
+  id: EquipmentSpecialEffectId;
+  name: string;
+  description: string;
+}
+
+export interface EquipmentDefinition {
+  id: EquipmentId;
+  name: string;
+  type: EquipmentType;
+  rarity: EquipmentRarity;
+  description: string;
+  bonuses: Partial<EquipmentStatBonuses>;
+  specialEffect?: EquipmentSpecialEffectConfig;
+}
+
+export interface EquipmentCatalogConfig {
+  entries: EquipmentDefinition[];
+}
 
 export interface HeroLearnedSkillState {
   skillId: HeroSkillId;
@@ -77,11 +109,17 @@ export interface HeroBattleSkillState {
   rank: number;
 }
 
+export interface HeroEquipmentSlots {
+  weaponId?: EquipmentId;
+  armorId?: EquipmentId;
+  accessoryId?: EquipmentId;
+}
+
 export interface HeroEquipmentState {
-  weaponId?: string;
-  armorId?: string;
-  accessoryId?: string;
-  trinketIds: string[];
+  weaponId?: EquipmentId;
+  armorId?: EquipmentId;
+  accessoryId?: EquipmentId;
+  trinketIds: EquipmentId[];
 }
 
 export interface HeroLoadout {
@@ -110,10 +148,10 @@ export interface HeroBattleSkillConfig {
 }
 
 export interface HeroEquipmentConfig {
-  weaponId?: string;
-  armorId?: string;
-  accessoryId?: string;
-  trinketIds?: string[];
+  weaponId?: EquipmentId;
+  armorId?: EquipmentId;
+  accessoryId?: EquipmentId;
+  trinketIds?: EquipmentId[];
 }
 
 export interface HeroLoadoutConfig {
@@ -626,6 +664,16 @@ export function createDefaultHeroProgression(): HeroProgression {
     battlesWon: 0,
     neutralBattlesWon: 0,
     pvpBattlesWon: 0
+  };
+}
+
+export function createDefaultEquipmentStatBonuses(): EquipmentStatBonuses {
+  return {
+    attackPercent: 0,
+    defensePercent: 0,
+    power: 0,
+    knowledge: 0,
+    maxHp: 0
   };
 }
 

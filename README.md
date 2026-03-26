@@ -135,6 +135,7 @@
 - `neutralArmies` 现已支持可选 `behavior` 字段：可配置 `guard / patrol` 模式、显式巡逻路线或 `patrolRadius` 自动巡逻圈，并可按 `detectionRadius / chaseDistance / speed` 精细调节巡逻、追击与返回节奏；中立怪会在每日推进时按路线巡逻、失位后回守，并在英雄靠近时主动追击，贴身时直接触发遭遇战。
 - 当前 MySQL 资源持久化已补上 `player_accounts`：房间保存时会同步刷新玩家全局 `gold / wood / ore` 仓库，新建房间会先回灌这份全局资源，因此同一 `playerId` 的基础资源已能跨房间继承。
 - 当前 MySQL 英雄长期档已补上 `player_hero_archives`：房间保存时会同步刷新英雄的长期成长、已学技能、装备槽位与带兵快照，新建房间会先回灌这些长期数据，因此同一 `playerId` 的英雄属性成长、build 和当前带兵已能跨房间继承；英雄的位置、剩余移动力和当前生命仍会按新局重置。
+- 装备系统的第一批基础能力现已落到 shared/core：共享层补上了 `weapon / armor / accessory` 三类装备目录、品质与特殊效果元数据，英雄长期档里的装备槽位 ID 会直接映射成可计算的属性加成，并且会在创建战斗栈时折算进攻击/防御，方便后续继续接掉落、锻造与 UI。
 - 当前玩家账号骨架也已接到 `player_accounts`：账号记录现已包含 `displayName / lastRoomId / lastSeenAt / globalResources`，并开放 `GET /api/player-accounts`、`GET /api/player-accounts/:playerId`、`PUT /api/player-accounts/:playerId` 供开发态查看与改名；房间 `connect` 时会自动建档或刷新最近活跃房间。
 - H5 左侧面板现已补上账号资料卡：会优先显示服务端账号昵称，也会在浏览器本地记住上次使用的游客昵称；远端房间首次 `connect` 时会把这份 `displayName` 一并带给服务端，用于初始化游客账号资料。`/api/player-accounts/me` 返回的 `globalResources` 也会直接显示成“全局仓库”摘要，方便确认跨房间继承的金币/木材/矿石。
 - H5 现在也有真正的 Lobby / 登录入口：当页面没有携带 `roomId / playerId` 查询参数时，会先进入大厅页，显示游客 `playerId / 昵称 / roomId` 表单和 `/api/lobby/rooms` 活跃房间列表；选房或手动输入房间后即可进入实例，游戏内也能一键返回大厅。
