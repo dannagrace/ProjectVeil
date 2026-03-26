@@ -5,8 +5,11 @@
   "packageManager": "pnpm@10.8.1",
   "scripts": {
     "dev:server": "node --import tsx ./apps/server/src/dev-server.ts",
-    "dev:client": "vite --config apps/client/vite.config.ts",
-    "build:client": "vite build --config apps/client/vite.config.ts",
+    "client:primary": "node --eval \"console.log('Primary runtime: open apps/cocos-client in Cocos Creator 3.8.x and preview the VeilRoot scene. H5 debug shell: npm run dev:client:h5')\"",
+    "dev:client": "npm run dev:client:h5",
+    "dev:client:h5": "vite --config apps/client/vite.config.ts",
+    "build:client": "npm run build:client:h5",
+    "build:client:h5": "vite build --config apps/client/vite.config.ts",
     "db:init:mysql": "node --import tsx ./scripts/init-mysql.ts",
     "db:snapshots:list": "node --import tsx ./scripts/manage-room-snapshots.ts list",
     "db:snapshots:delete": "node --import tsx ./scripts/manage-room-snapshots.ts delete",
@@ -27,7 +30,8 @@
     "typecheck:cocos": "tsc -p apps/cocos-client/tsconfig.json --noEmit",
     "typecheck:shared": "tsc -p packages/shared/tsconfig.json --noEmit",
     "typecheck:server": "tsc -p apps/server/tsconfig.json --noEmit",
-    "typecheck:client": "tsc -p apps/client/tsconfig.json --noEmit"
+    "typecheck:client": "npm run typecheck:cocos",
+    "typecheck:client:h5": "tsc -p apps/client/tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

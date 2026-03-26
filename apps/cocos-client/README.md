@@ -1,13 +1,15 @@
-# Project Veil Cocos Creator Shell
+# Project Veil Cocos Creator Primary Runtime
 
-这个目录是 Project Veil 的 Cocos Creator 3.x 前端壳子。
+这个目录是 Project Veil 的 Cocos Creator 3.x 主客户端运行时。
 
-当前目标不是一次性把 H5 前端完全迁完，而是先把下面这条链路打通：
+当前目标已经从“先做壳子”切到“承接主体验运行时”，核心链路如下：
 
 1. Cocos Creator 工程可被正常打开
-2. 能连接现有 Colyseus / 权威房间服务
-3. 能显示玩家快照
-4. 能通过简单交互验证移动链路
+2. 通过 Cocos Lobby 进入现有 Colyseus / 权威房间服务
+3. 覆盖地图、战斗、账号会话恢复和返回大厅主流程
+4. 直接从 Cocos 入口跳到共享配置中心完成联调
+
+`apps/client` 现在只保留为 H5 调试 / 回归壳，不再承担主客户端职责。
 
 ## 当前内容
 
@@ -17,11 +19,15 @@
   - 支持把最近一次权威 `session.state` 缓存在本地，刷新或短时断线后先回放本地快照
 - `assets/scripts/VeilRoot.ts`
   - 可直接挂到场景节点上的根组件
-  - 现在主要负责会话连接、预测、重连恢复和战斗转场编排
+  - 现在负责 Lobby、账号会话恢复、房间连接、预测、重连恢复和战斗转场编排
   - HUD 和地图表现已经拆到独立组件，避免根节点继续膨胀
+- `assets/scripts/VeilLobbyPanel.ts`
+  - 负责 Cocos Lobby 主入口
+  - 支持游客进入、账号登录并进入、全局仓库摘要展示，以及跳转共享配置台
 - `assets/scripts/VeilHudPanel.ts`
   - 负责 HUD 文本面板渲染
-  - 只消费当前 `SessionUpdate + predictionStatus`
+  - 负责展示当前 `SessionUpdate + predictionStatus`
+  - 会标出当前是游客还是正式账号身份
 - `assets/scripts/VeilBattlePanel.ts`
   - 负责右侧战斗面板
   - 现已按 `战况摘要 / 待动序列 / 我方单位 / 敌方目标 / 指令操作` 分区渲染
@@ -90,11 +96,12 @@
    - 如已挂正式角色资源，可在 `VeilUnitAnimator` 上配置各状态动画名与回退时长
 6. 启动后端：`npm run dev:server`
 7. 在 Cocos 预览窗口运行场景
-8. 点击地图格子，观察 HUD 中的英雄坐标、移动力和资源变化
+8. 没有 `roomId` 查询参数时，会先进入 Cocos Lobby；可在大厅里刷新房间、游客进入、账号登录并进入，或打开配置台
+9. 进入房间后点击地图格子，观察 HUD 中的英雄坐标、移动力和资源变化
 
 ## 下一步建议
 
-- 把资源、美术占位图和对象卡片映射迁到 Cocos 资源系统
+- 把资源、美术占位图和对象卡片映射继续迁到 Cocos 资源系统
 - 把 `VeilUnitAnimator` 接到正式 Spine skeleton 和序列帧资源
 - 把 `VeilBattleTransition` 替换成正式 tween / 特效 / 音效组合
-- 再逐步替换为正式微信小游戏构建流程
+- 继续压实微信小游戏构建和发布流程

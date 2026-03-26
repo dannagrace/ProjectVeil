@@ -72,34 +72,37 @@
   - 战斗结束后回写世界状态，胜利移除明雷并发放奖励，失败施加英雄惩罚。
   - MySQL 持久化现已包含房间快照、玩家房间档案、`player_accounts` 全局资源仓库初版，以及 `player_hero_archives` 英雄长期档；长期档当前会携带等级成长、已学技能、装备槽位和当前带兵信息。
 - `apps/client`
-  - 客户端渲染器骨架。
-  - 当前以文本渲染示例验证“客户端只负责展示玩家可见状态”的边界。
+  - H5 调试 / 回归壳。
+  - 当前保留给浏览器内快速验证、配置联调和回归测试使用，不再作为主客户端运行时。
 - `apps/cocos-client`
-  - Cocos Creator 3.x 前端壳子。
-  - 当前已能连接现有 Colyseus 房间、显示玩家快照，并用点击屏幕验证英雄移动链路。
+  - Cocos Creator 3.x 主客户端运行时。
+  - 当前已覆盖 Lobby、地图探索、战斗、账号会话恢复和配置中心跳转的主流程。
 - `docs/phase1-design.md`
   - 更细的产品、技术与小程序部署方案。
 
 ## 建议的下一步
 
-1. 将 `apps/client` 替换为 Cocos Creator 小游戏工程外壳。
-2. 在 `apps/server` 接入 Colyseus 房间与消息协议。
-3. 补 `configs/` 目录和 JSON 校验脚本，开始数值与地图配置生产。
-4. 为共享模块添加单元测试，锁住移动和战斗结算行为。
+1. 继续把正式资源、动画和小游戏构建流程压到 `apps/cocos-client`，收口成可持续迭代的主客户端工程。
+2. 在 `apps/server` 继续扩展 Colyseus 房间与消息协议，补多人玩法和更细的同步治理。
+3. 继续完善 `configs/` 目录和 JSON 校验脚本，推进数值与地图配置生产流水线。
+4. 维持 `apps/client` 的最小 H5 调试面，专注回归验证和配置联调，而不是继续承载主体验。
 
 ## 本地运行
 
 - 安装依赖：`npm install`
 - 本地 WebSocket 服务：`npm run dev:server`
 - 终端逻辑演示：`npm run demo:flow`
+- 主客户端入口说明：`npm run client:primary`
+- Cocos 主客户端类型检查：`npm run typecheck:client`
+- H5 调试壳开发服务：`npm run dev:client:h5`
+- H5 调试壳构建验证：`npm run build:client:h5`
+- H5 调试壳类型检查：`npm run typecheck:client:h5`
 - 并发房间压测：`npm run stress:rooms -- --rooms=120 --connect-concurrency=24 --action-concurrency=24`
-- 本地 H5 开发服务：`npm run dev:client`
-- H5 构建验证：`npm run build:client`
-- Cocos 壳子类型检查：`npm run typecheck:cocos`
 - 并发房间压测会按 `world_progression / battle_settlement / reconnect` 三种场景分开跑数，并输出 CPU、内存、房间吞吐、动作吞吐等指标；可通过 `--scenarios=world_progression,reconnect` 等参数缩小范围
-- 当前 H5 原型已支持：地图点击移动、可达格高亮、悬停路径预览、资源/明雷信息提示、轻量路径播放反馈、可视化战斗单位面板、目标选中、伤害飘字与战后结果弹窗。
+- 当前客户端边界：`apps/cocos-client` 负责主玩法运行时；`apps/client` 只保留浏览器调试、配置联调和回归验证。
+- 当前 H5 调试壳仍支持：地图点击移动、可达格高亮、悬停路径预览、资源/明雷信息提示、轻量路径播放反馈、可视化战斗单位面板、目标选中、伤害飘字与战后结果弹窗。
 - 当前 H5 联机体验已支持：客户端预测、断线自动重连、刷新后本地快照首帧回放，再由权威房间状态收敛。
-- 当前已补上 Cocos Creator 工程壳子：
+- 当前 Cocos Creator 主客户端已补齐：
   - 工程目录：`apps/cocos-client`
   - 入口脚本：`apps/cocos-client/assets/scripts/VeilRoot.ts`
   - 组件拆分：`VeilRoot` 负责联机流程编排，`VeilHudPanel` 负责 HUD，`VeilMapBoard` 负责地图与点击交互，`VeilBattlePanel / VeilTimelinePanel` 负责右侧信息与战斗面板
@@ -139,6 +142,7 @@
 - H5 Lobby 和游戏内都已补上“退出游客会话 / 切换游客账号”入口；当前 token 无效时会自动清掉本地会话并回到大厅。
 - Cocos Web 启动入口现在会复用和 H5 共用的 `project-veil:auth-session`：如果浏览器里已有已签名会话，那么直接访问 `?roomId=...` 就能沿用当前游客或正式账号身份进房，HUD 会标出当前是云端游客、正式账号还是本地/手动参数启动。
 - Cocos Web 现在也有真正的 Lobby 面板：没有 `roomId` 查询参数时会先进入大厅，可刷新 `/api/lobby/rooms` 活跃实例、点击字段卡片修改 `playerId / 昵称 / roomId / 登录 ID`、直接游客进入，或走“账号登录并进入”直连正式账号；Lobby 还会通过 `/api/player-accounts/me` / `GET /api/player-accounts/:playerId` 同步当前账号资料与全局仓库摘要。
+- Cocos Lobby 现在也提供“打开配置台”入口，会按当前联机目标自动跳到共享的 `config-center.html`，把配置联调从 H5 侧迁成主客户端可达链路。
 - 服务端新增 `GET /api/lobby/rooms`，会实时返回当前进程内活跃房间的 `roomId / day / seed / connectedPlayers / heroCount / activeBattles / updatedAt` 摘要，便于大厅入口和后续房间浏览器直接复用。
 - 这套账号目前仍是“轻量正式化”阶段：虽然已经有口令绑定和账号登录，但还没有刷新令牌、多端撤销、正式注册流程或第三方身份接入。
 - H5 会优先连接 `ws://127.0.0.1:2567` 的本地会话服务；若服务未启动，则自动回退到浏览器内嵌房间模式。

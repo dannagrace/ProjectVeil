@@ -19,6 +19,7 @@ const MUTED_FILL = new Color(31, 42, 57, 164);
 const ACTION_REFRESH = new Color(64, 92, 128, 234);
 const ACTION_ENTER = new Color(84, 122, 94, 234);
 const ACTION_ACCOUNT = new Color(88, 118, 164, 234);
+const ACTION_CONFIG = new Color(94, 112, 86, 234);
 const ACTION_LOGOUT = new Color(126, 92, 74, 234);
 
 export interface VeilLobbyRenderState {
@@ -43,6 +44,7 @@ export interface VeilLobbyPanelOptions {
   onRefresh?: () => void;
   onEnterRoom?: () => void;
   onLoginAccount?: () => void;
+  onOpenConfigCenter?: () => void;
   onLogout?: () => void;
   onJoinRoom?: (roomId: string) => void;
 }
@@ -62,6 +64,7 @@ export class VeilLobbyPanel extends Component {
   private onRefresh: (() => void) | undefined;
   private onEnterRoom: (() => void) | undefined;
   private onLoginAccount: (() => void) | undefined;
+  private onOpenConfigCenter: (() => void) | undefined;
   private onLogout: (() => void) | undefined;
   private onJoinRoom: ((roomId: string) => void) | undefined;
 
@@ -73,6 +76,7 @@ export class VeilLobbyPanel extends Component {
     this.onRefresh = options.onRefresh;
     this.onEnterRoom = options.onEnterRoom;
     this.onLoginAccount = options.onLoginAccount;
+    this.onOpenConfigCenter = options.onOpenConfigCenter;
     this.onLogout = options.onLogout;
     this.onJoinRoom = options.onJoinRoom;
   }
@@ -252,9 +256,23 @@ export class VeilLobbyPanel extends Component {
       state.entering ? null : this.onLoginAccount ?? null
     );
     this.renderActionButton(
-      "LobbyLogout",
+      "LobbyConfigCenter",
       leftX,
       leftCursorY - 120,
+      leftWidth,
+      28,
+      "打开配置台",
+      {
+        fill: ACTION_CONFIG,
+        stroke: new Color(234, 240, 228, 116),
+        accent: new Color(226, 236, 220, 108)
+      },
+      state.entering ? null : this.onOpenConfigCenter ?? null
+    );
+    this.renderActionButton(
+      "LobbyLogout",
+      leftX,
+      leftCursorY - 154,
       leftWidth,
       28,
       state.authMode === "account" ? "退出账号会话" : "退出游客会话",

@@ -2127,8 +2127,8 @@ function render(): void {
     <main class="shell">
       <section class="hero-panel">
         <div class="eyebrow">Project Veil</div>
-        <h1>网页版原型</h1>
-        <p class="lead">当前已进入房间实例。悬停看路径，点击地图移动，靠近明雷或敌方英雄触发遭遇战。</p>
+        <h1>H5 调试壳</h1>
+        <p class="lead">这里保留给浏览器调试、配置联调和回归验证使用；主客户端运行时已切到 Cocos Creator。</p>
         <div class="session-meta-row">
           <p class="muted" data-testid="session-meta">Room: ${roomId} · Player: ${playerId}</p>
           <button class="session-link" data-return-lobby="true">返回大厅</button>
