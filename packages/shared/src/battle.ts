@@ -16,6 +16,7 @@ import type {
   ValidationResult
 } from "./models";
 import { grantedHeroBattleSkillIds } from "./hero-skills";
+import { requireValue, withOptionalProperty } from "./invariant";
 import { getDefaultBattleSkillCatalog, getDefaultUnitCatalog } from "./world-config";
 
 interface RngStep {
@@ -88,22 +89,14 @@ function skillDefinitionFor(
   skillId: BattleSkillId,
   catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()
 ): BattleSkillConfig {
-  const definition = catalogIndex.skillById.get(skillId);
-  if (!definition) {
-    throw new Error(`Missing battle skill definition: ${skillId}`);
-  }
-  return definition;
+  return requireValue(catalogIndex.skillById.get(skillId), `Missing battle skill definition: ${skillId}`);
 }
 
 function statusDefinitionFor(
   statusId: BattleStatusEffectId,
   catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()
 ): BattleStatusEffectConfig {
-  const definition = catalogIndex.statusById.get(statusId);
-  if (!definition) {
-    throw new Error(`Missing battle status definition: ${statusId}`);
-  }
-  return definition;
+  return requireValue(catalogIndex.statusById.get(statusId), `Missing battle status definition: ${statusId}`);
 }
 
 function createSkillState(
@@ -129,16 +122,15 @@ function createStatusEffectState(
   catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()
 ): BattleStatusEffectState {
   const definition = statusDefinitionFor(statusId, catalogIndex);
-  return {
+  return withOptionalProperty({
     id: definition.id,
     name: definition.name,
     description: definition.description,
     durationRemaining: definition.duration,
     attackModifier: definition.attackModifier,
     defenseModifier: definition.defenseModifier,
-    damagePerTurn: definition.damagePerTurn,
-    ...(sourceUnitId ? { sourceUnitId } : {})
-  };
+    damagePerTurn: definition.damagePerTurn
+  }, "sourceUnitId", sourceUnitId);
 }
 
 function isContactSkillDefinition(skill: BattleSkillConfig): boolean {
@@ -494,10 +486,7 @@ export function pickAutomatedBattleAction(state: BattleState): BattleAction | nu
     return bestEnemySkillAction;
   }
 
-  const fallbackTarget = enemyUnits[0];
-  if (!fallbackTarget) {
-    return null;
-  }
+  const fallbackTarget = enemyUnits[0]!;
 
   return {
     type: "battle.attack",
@@ -518,7 +507,7 @@ function advanceTurnInternal(state: BattleState, actingUnitId: string, waited: b
   if (nextQueue.length > 0) {
     return {
       ...state,
-      activeUnitId: nextQueue[0] ?? null,
+      activeUnitId: nextQueue[0]!,
       turnOrder: nextQueue
     };
   }
@@ -537,7 +526,7 @@ function advanceTurnInternal(state: BattleState, actingUnitId: string, waited: b
   return {
     ...state,
     round: state.round + 1,
-    activeUnitId: refreshedOrder[0] ?? null,
+    activeUnitId: refreshedOrder[0]!,
     turnOrder: refreshedOrder,
     units: refreshedUnits
   };
@@ -549,11 +538,7 @@ function prepareStateForActiveUnit(state: BattleState): BattleState {
 
   while (nextState.activeUnitId && remainingIterations > 0) {
     remainingIterations -= 1;
-    const activeUnit = nextState.units[nextState.activeUnitId];
-    if (!activeUnit || activeUnit.count <= 0) {
-      nextState = advanceTurnInternal(nextState, nextState.activeUnitId, false);
-      continue;
-    }
+    const activeUnit = nextState.units[nextState.activeUnitId]!;
 
     const processed = processTurnStartForUnit(activeUnit);
     nextState = {
@@ -566,7 +551,7 @@ function prepareStateForActiveUnit(state: BattleState): BattleState {
     };
 
     if (processed.unit.count > 0) {
-      return nextState;
+      break;
     }
 
     nextState = advanceTurnInternal(nextState, activeUnit.id, false);

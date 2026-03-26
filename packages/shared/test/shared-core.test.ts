@@ -1438,6 +1438,51 @@ test("applyBattleAction supports armor spell buffs on the acting unit", () => {
   assert.match(next.log.at(-1) ?? "", /护甲术/);
 });
 
+test("applyBattleAction reduces damage against defending targets", () => {
+  const baselineState = createDemoBattleState();
+  baselineState.activeUnitId = "wolf-d";
+  baselineState.turnOrder = ["wolf-d", "pikeman-a"];
+  baselineState.units["wolf-d"] = {
+    ...baselineState.units["wolf-d"]!,
+    attack: 12,
+    minDamage: 6,
+    maxDamage: 6,
+    count: 4
+  };
+  baselineState.units["pikeman-a"] = {
+    ...baselineState.units["pikeman-a"]!,
+    defense: 0,
+    count: 6,
+    currentHp: 10,
+    defending: false
+  };
+
+  const defendingState = cloneBattleState(baselineState);
+  defendingState.units["pikeman-a"] = {
+    ...defendingState.units["pikeman-a"]!,
+    defending: true
+  };
+
+  const baselineNext = applyBattleAction(baselineState, {
+    type: "battle.attack",
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  });
+  const defendingNext = applyBattleAction(defendingState, {
+    type: "battle.attack",
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  });
+
+  const baselineDefender = baselineNext.units["pikeman-a"]!;
+  const defendingDefender = defendingNext.units["pikeman-a"]!;
+
+  assert.ok(
+    defendingDefender.count > baselineDefender.count ||
+      (defendingDefender.count === baselineDefender.count && defendingDefender.currentHp > baselineDefender.currentHp)
+  );
+});
+
 test("pickAutomatedBattleAction prefers ready skills before default attacks", () => {
   const initial = createDemoBattleState();
 
@@ -2161,6 +2206,63 @@ test("applyBattleAction supports self-target skills without granted statuses", (
   }
 });
 
+test("pickAutomatedBattleAction and applyBattleAction default enemy skill effects when omitted", () => {
+  const customCatalog = getDefaultBattleSkillCatalog();
+  customCatalog.skills.push({
+    id: "harrying_strike",
+    name: "袭扰打击",
+    description: "测试未显式声明伤害倍率和反击开关时的默认行为。",
+    kind: "active",
+    target: "enemy",
+    cooldown: 1,
+    effects: {}
+  });
+
+  try {
+    setBattleSkillCatalog(customCatalog);
+
+    const state = createDemoBattleState();
+    state.activeUnitId = "pikeman-a";
+    state.turnOrder = ["pikeman-a", "wolf-d"];
+    state.units["pikeman-a"] = {
+      ...state.units["pikeman-a"]!,
+      skills: [
+        {
+          id: "harrying_strike",
+          name: "袭扰打击",
+          description: "测试未显式声明伤害倍率和反击开关时的默认行为。",
+          kind: "active",
+          target: "enemy",
+          cooldown: 1,
+          remainingCooldown: 0
+        }
+      ],
+      statusEffects: []
+    };
+
+    assert.deepEqual(pickAutomatedBattleAction(state), {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "harrying_strike",
+      targetId: "wolf-d"
+    });
+
+    const next = applyBattleAction(state, {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "harrying_strike",
+      targetId: "wolf-d"
+    });
+
+    assert.equal(next.units["pikeman-a"]?.skills?.[0]?.remainingCooldown, 1);
+    assert.equal(next.units["wolf-d"]?.hasRetaliated, true);
+    assert.match(next.log[1] ?? "", /袭扰打击/);
+    assert.match(next.log.join("\n"), /反击/);
+  } finally {
+    resetRuntimeConfigs();
+  }
+});
+
 test("pickAutomatedBattleAction returns null for an empty or dead active slot", () => {
   const deadActiveState = createDemoBattleState();
   deadActiveState.activeUnitId = "wolf-d";
@@ -2352,6 +2454,64 @@ test("applyBattleAction describes granted statuses with negative attack and dama
   }
 });
 
+test("applyBattleAction describes granted statuses with positive attack and negative defense modifiers", () => {
+  const customCatalog = getDefaultBattleSkillCatalog();
+  customCatalog.statuses.push({
+    id: "glass_offense",
+    name: "破阵战意",
+    description: "强化输出但牺牲防御。",
+    duration: 2,
+    attackModifier: 2,
+    defenseModifier: -3,
+    damagePerTurn: 0
+  });
+  customCatalog.skills.push({
+    id: "glass_offense_pose",
+    name: "破阵姿态",
+    description: "测试 granted status 的正攻击和负防御描述。",
+    kind: "active",
+    target: "self",
+    cooldown: 2,
+    effects: {
+      grantedStatusId: "glass_offense"
+    }
+  });
+
+  try {
+    setBattleSkillCatalog(customCatalog);
+
+    const state = createDemoBattleState();
+    state.activeUnitId = "pikeman-a";
+    state.turnOrder = ["pikeman-a", "wolf-d"];
+    state.units["pikeman-a"] = {
+      ...state.units["pikeman-a"]!,
+      skills: [
+        {
+          id: "glass_offense_pose",
+          name: "破阵姿态",
+          description: "测试 granted status 的正攻击和负防御描述。",
+          kind: "active",
+          target: "self",
+          cooldown: 2,
+          remainingCooldown: 0
+        }
+      ],
+      statusEffects: []
+    };
+
+    const next = applyBattleAction(state, {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "glass_offense_pose"
+    });
+
+    assert.equal(next.units["pikeman-a"]?.statusEffects?.[0]?.id, "glass_offense");
+    assert.equal(next.log.at(-1), "枪兵 施放 破阵姿态，获得 破阵战意（+2 攻击，-3 防御）");
+  } finally {
+    resetRuntimeConfigs();
+  }
+});
+
 test("battle state builders carry stats, metadata, and missing-template guards", () => {
   const attackerHero = createHero({
     id: "hero-a",
@@ -2461,6 +2621,50 @@ test("battle state builders carry stats, metadata, and missing-template guards",
       ),
     /Missing hero army template for PvP battle/
   );
+});
+
+test("battle state builders support empty armies and templates without battle skills", () => {
+  const customCatalog = getDefaultUnitCatalog();
+  customCatalog.templates = customCatalog.templates.map((template) =>
+    template.id === "hero_guard_basic" || template.id === "wolf_pack"
+      ? { ...template, battleSkills: undefined }
+      : template
+  );
+
+  try {
+    setUnitCatalog(customCatalog);
+
+    const emptyHero = createHero({
+      id: "hero-empty-a",
+      playerId: "player-1",
+      name: "空军凯琳",
+      armyCount: 0
+    });
+    const emptyEnemy = createHero({
+      id: "hero-empty-b",
+      playerId: "player-2",
+      name: "空军罗安",
+      armyCount: 0
+    });
+    const emptyNeutral: NeutralArmyState = {
+      id: "neutral-empty",
+      position: { x: 1, y: 1 },
+      reward: { kind: "gold", amount: 0 },
+      stacks: [{ templateId: "wolf_pack", count: 0 }]
+    };
+
+    const neutralBattle = createNeutralBattleState(emptyHero, emptyNeutral, 3030);
+    assert.equal(neutralBattle.activeUnitId, null);
+    assert.deepEqual(neutralBattle.units["hero-empty-a-stack"]?.skills, []);
+    assert.deepEqual(neutralBattle.units["neutral-empty-stack-1"]?.skills, []);
+
+    const heroBattle = createHeroBattleState(emptyHero, emptyEnemy, 3031);
+    assert.equal(heroBattle.activeUnitId, null);
+    assert.deepEqual(heroBattle.units["hero-empty-a-stack"]?.skills, []);
+    assert.deepEqual(heroBattle.units["hero-empty-b-stack"]?.skills, []);
+  } finally {
+    resetRuntimeConfigs();
+  }
 });
 
 test("applyBattleAction throws for stale battle skills that no longer exist in runtime config", () => {
