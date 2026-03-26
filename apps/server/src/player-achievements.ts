@@ -1,6 +1,7 @@
 import {
   appendEventLogEntries,
   applyAchievementMetricDelta,
+  formatEquipmentRarityLabel,
   type AchievementMetric,
   type EventLogEntry,
   type EventLogReward,
@@ -170,6 +171,18 @@ function createEventLogEntry(
         rewards: []
       };
     }
+    case "hero.equipmentFound":
+      return {
+        id: createEventId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "combat",
+        description: `${hero?.name ?? event.heroId} 在战斗后获得了${formatEquipmentRarityLabel(event.rarity)}装备 ${event.equipmentName}。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: []
+      };
     case "battle.started":
       return {
         id: createEventId(playerId, timestamp, event.type, sequence),

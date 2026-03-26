@@ -57,6 +57,8 @@ export interface HeroLoadout {
   inventory: string[];
 }
 
+export type EquipmentRarity = "common" | "rare" | "epic";
+
 export type HeroStatBonus = Pick<HeroStats, "attack" | "defense" | "power" | "knowledge">;
 
 export interface HeroView {
@@ -363,6 +365,15 @@ export type WorldEvent =
       spentPoint: number;
       remainingSkillPoints: number;
       newlyGrantedBattleSkillIds: BattleSkillId[];
+    }
+  | {
+      type: "hero.equipmentFound";
+      heroId: string;
+      battleId: string;
+      battleKind: "neutral" | "hero";
+      equipmentId: string;
+      equipmentName: string;
+      rarity: EquipmentRarity;
     }
   | {
       type: "battle.started";

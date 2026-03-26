@@ -647,6 +647,15 @@ export type WorldEvent =
       unequippedItemId?: EquipmentId;
     }
   | {
+      type: "hero.equipmentFound";
+      heroId: string;
+      battleId: string;
+      battleKind: "neutral" | "hero";
+      equipmentId: EquipmentId;
+      equipmentName: string;
+      rarity: EquipmentRarity;
+    }
+  | {
       type: "battle.started";
       heroId: string;
       encounterKind: "neutral" | "hero";

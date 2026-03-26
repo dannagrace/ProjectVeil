@@ -252,6 +252,12 @@ const DEFAULT_EQUIPMENT_CATALOG: EquipmentCatalogConfig = {
 const DEFAULT_EQUIPMENT_BY_ID = new Map(
   DEFAULT_EQUIPMENT_CATALOG.entries.map((entry) => [entry.id, entry] as const)
 );
+const DEFAULT_EQUIPMENT_BY_RARITY: Record<EquipmentRarity, EquipmentDefinition[]> = {
+  common: DEFAULT_EQUIPMENT_CATALOG.entries.filter((entry) => entry.rarity === "common"),
+  rare: DEFAULT_EQUIPMENT_CATALOG.entries.filter((entry) => entry.rarity === "rare"),
+  epic: DEFAULT_EQUIPMENT_CATALOG.entries.filter((entry) => entry.rarity === "epic")
+};
+const EQUIPMENT_DROP_CHANCE = 0.15;
 
 export interface HeroEquipmentBonusSummary extends EquipmentStatBonuses {
   attack: number;
@@ -275,6 +281,11 @@ export interface HeroEquipmentSlotView {
 export interface HeroEquipmentLoadoutView {
   slots: HeroEquipmentSlotView[];
   summary: HeroEquipmentBonusSummary;
+}
+
+export interface RolledEquipmentDrop {
+  itemId: string;
+  item: EquipmentDefinition;
 }
 
 const EQUIPMENT_SLOT_META: Array<{
@@ -346,6 +357,30 @@ export function getDefaultEquipmentCatalog(): EquipmentCatalogConfig {
 
 export function getEquipmentDefinition(equipmentId: string): EquipmentDefinition | undefined {
   return resolveEquipmentDefinition(equipmentId.trim());
+}
+
+export function rollEquipmentDrop(
+  dropRoll: number,
+  rarityRoll: number,
+  selectionRoll: number
+): RolledEquipmentDrop | null {
+  if (dropRoll >= EQUIPMENT_DROP_CHANCE) {
+    return null;
+  }
+
+  const rarity: EquipmentRarity =
+    rarityRoll < 0.65 ? "common" : rarityRoll < 0.93 ? "rare" : "epic";
+  const pool = DEFAULT_EQUIPMENT_BY_RARITY[rarity];
+  if (pool.length === 0) {
+    return null;
+  }
+
+  const index = Math.min(pool.length - 1, Math.floor(selectionRoll * pool.length));
+  const item = pool[index]!;
+  return {
+    itemId: item.id,
+    item
+  };
 }
 
 export function validateHeroEquipmentChange(

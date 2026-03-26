@@ -41,6 +41,7 @@ import {
   simulateAutomatedBattle,
   simulateAutomatedBattles,
   resolveWorldAction,
+  rollEquipmentDrop,
   setBattleBalanceConfig,
   setBattleSkillCatalog,
   setUnitCatalog,
@@ -698,6 +699,57 @@ test("hero equip and unequip actions rotate items between slots and inventory", 
       heroId: "hero-equip-action",
       slot: "weapon",
       unequippedItemId: "vanguard_blade"
+    }
+  ]);
+});
+
+test("equipment drops respect rarity pools and battle victories add loot to hero inventory", () => {
+  assert.equal(rollEquipmentDrop(0.9, 0.1, 0.1), null);
+  assert.deepEqual(rollEquipmentDrop(0.01, 0.98, 0.9), {
+    itemId: "oracle_lens",
+    item: getDefaultEquipmentCatalog().entries.find((entry) => entry.id === "oracle_lens")
+  });
+
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳"
+  });
+  const neutralArmy: NeutralArmyState = {
+    id: "neutral-1",
+    position: { x: 1, y: 0 },
+    reward: { kind: "gold", amount: 100 },
+    stacks: [{ templateId: "wolf_pack", count: 4 }]
+  };
+  const state = createWorldState({
+    heroes: [hero],
+    neutralArmies: { "neutral-1": neutralArmy },
+    resources: {
+      "player-1": {
+        gold: 0,
+        wood: 0,
+        ore: 0
+      }
+    }
+  });
+  state.meta.seed = 3;
+
+  const outcome = applyBattleOutcomeToWorld(state, "battle-neutral-1", "hero-1", {
+    status: "attacker_victory",
+    survivingAttackers: ["hero-1-stack"],
+    survivingDefenders: []
+  });
+
+  assert.deepEqual(outcome.state.heroes[0]?.loadout.inventory, ["tower_shield_mail"]);
+  assert.deepEqual(outcome.events.slice(-1), [
+    {
+      type: "hero.equipmentFound",
+      heroId: "hero-1",
+      battleId: "battle-neutral-1",
+      battleKind: "neutral",
+      equipmentId: "tower_shield_mail",
+      equipmentName: "塔盾链甲",
+      rarity: "common"
     }
   ]);
 });
