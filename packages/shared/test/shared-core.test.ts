@@ -8,6 +8,7 @@ import {
   createHeroEquipmentBonusSummary,
   createHeroSkillTreeView,
   createHeroProgressMeterView,
+  createBattleEnvironmentState,
   createDemoBattleState,
   createEmptyBattleState,
   executeBattleSkill,
@@ -3891,6 +3892,49 @@ test("battle state builders consume runtime battle balance environment config", 
   }
 });
 
+test("createBattleEnvironmentState deterministically generates blockers plus hidden traps from runtime config", () => {
+  const customBalance = getBattleBalanceConfig();
+  customBalance.environment.blockerSpawnThreshold = 0;
+  customBalance.environment.blockerDurability = 2;
+  customBalance.environment.trapSpawnThreshold = 0;
+  customBalance.environment.trapDamage = 3;
+  customBalance.environment.trapCharges = 2;
+
+  try {
+    setBattleBalanceConfig(customBalance);
+
+    const environment = createBattleEnvironmentState(3, 2027);
+
+    assert.deepEqual(environment, [
+      {
+        id: "hazard-blocker-2",
+        kind: "blocker",
+        lane: 2,
+        name: "碎石路障",
+        description: "近身接战前需要先破开这道障碍。",
+        durability: 2,
+        maxDurability: 2
+      },
+      {
+        id: "hazard-trap-2",
+        kind: "trap",
+        lane: 2,
+        effect: "damage",
+        name: "爆裂地刺",
+        description: "隐藏在地面的尖刺会在近战突进时突然弹出。",
+        damage: 3,
+        charges: 2,
+        revealed: false,
+        triggered: false,
+        grantedStatusId: "weakened",
+        triggeredByCamp: "both"
+      }
+    ]);
+  } finally {
+    resetRuntimeConfigs();
+  }
+});
+
 test("applyBattleAction consumes runtime battle balance damage config", () => {
   const state = createEmptyBattleState();
   state.id = "battle-balance-damage";
@@ -4042,4 +4086,41 @@ test("applyBattleAction returns the normalized state for unknown runtime action 
   assert.deepEqual(next.units["pikeman-a"]?.skills, []);
   assert.deepEqual(next.units["pikeman-a"]?.statusEffects, []);
   assert.deepEqual(next.log, state.log);
+});
+
+test("applyBattleAction only triggers traps for matching camps", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d"];
+  state.units["wolf-d"] = {
+    ...state.units["wolf-d"]!,
+    hasRetaliated: true
+  };
+  state.environment = [
+    {
+      id: "hazard-trap-defender",
+      kind: "trap",
+      lane: 0,
+      effect: "damage",
+      name: "守军地刺",
+      description: "只会对防守方的冲锋路线生效。",
+      damage: 3,
+      charges: 1,
+      revealed: false,
+      triggered: false,
+      triggeredByCamp: "defender"
+    }
+  ];
+
+  const next = applyBattleAction(state, {
+    type: "battle.attack",
+    attackerId: "pikeman-a",
+    defenderId: "wolf-d"
+  });
+
+  assert.equal(next.environment[0]?.charges, 1);
+  assert.equal(next.environment[0]?.revealed, false);
+  assert.equal(next.units["pikeman-a"]?.currentHp, 10);
+  assert.equal(next.log.some((entry) => entry.includes("守军地刺")), false);
+  assert.match(next.log.at(-1) ?? "", /^枪兵 对 恶狼 造成 \d+ 伤害$/);
 });

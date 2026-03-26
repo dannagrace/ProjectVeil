@@ -187,7 +187,7 @@ function describeHazard(hazard: BattleHazardState, catalogIndex: BattleCatalogIn
   return parts.join(" · ");
 }
 
-function createBattleEnvironment(lanes: number, seed: number): BattleHazardState[] {
+export function createBattleEnvironmentState(lanes: number, seed: number): BattleHazardState[] {
   const resolvedLanes = Math.max(1, lanes);
   const balance = getBattleBalanceConfig().environment;
   let environmentSeed = (seed ^ 0x9e3779b9) >>> 0;
@@ -1285,7 +1285,7 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
   }
 
   const turnOrder = sortTurnOrder(units);
-  const environment = createBattleEnvironment(lanes, seed);
+  const environment = createBattleEnvironmentState(lanes, seed);
   return {
     id: `battle-${neutralArmy.id}`,
     round: 1,
@@ -1372,7 +1372,7 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
   };
 
   const turnOrder = sortTurnOrder(units);
-  const environment = createBattleEnvironment(lanes, seed);
+  const environment = createBattleEnvironmentState(lanes, seed);
   return {
     id: `battle-${attackerHero.id}-vs-${defenderHero.id}`,
     round: 1,
