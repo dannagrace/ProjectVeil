@@ -1,5 +1,6 @@
 export * from "./battle";
 export * from "./equipment";
+export * from "./event-log";
 export * from "./hero-skills";
 export * from "./hero-progression";
 export * from "./map";

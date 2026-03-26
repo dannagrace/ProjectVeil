@@ -190,6 +190,8 @@ const state: AppState = {
   predictionStatus: ""
 };
 
+let accountRefreshPromise: Promise<void> | null = null;
+
 interface PendingPrediction {
   world: PlayerWorldView;
   battle: BattleState | null;
@@ -282,6 +284,61 @@ function formatAccountLastSeen(account: ClientPlayerAccountProfile): string {
 
 function formatGlobalVault(account: ClientPlayerAccountProfile): string {
   return `全局仓库 金币 ${account.globalResources.gold} / 木材 ${account.globalResources.wood} / 矿石 ${account.globalResources.ore}`;
+}
+
+function formatAchievementSummary(account: ClientPlayerAccountProfile): string {
+  const unlocked = account.achievements.filter((achievement) => achievement.unlocked).length;
+  return `成就 ${unlocked}/${account.achievements.length} 已解锁`;
+}
+
+function renderAchievementProgress(account: ClientPlayerAccountProfile): string {
+  if (account.achievements.length === 0) {
+    return '<p class="account-meta">暂无成就数据</p>';
+  }
+
+  return `<div class="account-subsection">
+    <strong>成就进度</strong>
+    <div class="account-achievement-list">
+      ${account.achievements
+        .map((achievement) => {
+          const ratio =
+            achievement.target > 0 ? Math.min(100, Math.round((achievement.current / achievement.target) * 100)) : 0;
+          return `<div class="account-achievement ${achievement.unlocked ? "is-unlocked" : ""}">
+            <div class="account-achievement-head">
+              <span>${escapeHtml(achievement.title)}</span>
+              <span>${achievement.current}/${achievement.target}</span>
+            </div>
+            <div class="account-achievement-bar"><span style="width:${ratio}%"></span></div>
+            <p>${escapeHtml(achievement.description)}</p>
+          </div>`;
+        })
+        .join("")}
+    </div>
+  </div>`;
+}
+
+function renderRecentAccountEvents(account: ClientPlayerAccountProfile): string {
+  if (account.recentEventLog.length === 0) {
+    return '<div class="account-subsection"><strong>世界事件日志</strong><p class="account-meta">尚未记录关键事件。</p></div>';
+  }
+
+  return `<div class="account-subsection">
+    <strong>世界事件日志</strong>
+    <div class="account-event-list">
+      ${account.recentEventLog
+        .slice(0, 4)
+        .map((entry) => {
+          const rewards =
+            entry.rewards.length > 0
+              ? ` · ${entry.rewards
+                  .map((reward) => (reward.amount != null ? `${reward.label} +${reward.amount}` : reward.label))
+                  .join(" / ")}`
+              : "";
+          return `<p class="account-event-entry">${escapeHtml(entry.description)}${escapeHtml(rewards)}</p>`;
+        })
+        .join("")}
+    </div>
+  </div>`;
 }
 
 function formatLobbyRoomUpdatedAt(updatedAt: string): string {
@@ -1304,7 +1361,35 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
     openBattleModal("战斗结束", "本场遭遇已结束。");
   }
 
+  if (
+    update.events.some(
+      (event) =>
+        event.type === "battle.started" || event.type === "battle.resolved" || event.type === "hero.skillLearned"
+    )
+  ) {
+    void refreshAccountProfileFromServer();
+  }
+
   render();
+}
+
+async function refreshAccountProfileFromServer(): Promise<void> {
+  if (accountRefreshPromise) {
+    return accountRefreshPromise;
+  }
+
+  accountRefreshPromise = (async () => {
+    const account = await loadAccountProfile(playerId, roomId);
+    state.account = account;
+    if (!state.accountSaving) {
+      state.accountDraftName = account.displayName;
+    }
+    render();
+  })().finally(() => {
+    accountRefreshPromise = null;
+  });
+
+  return accountRefreshPromise;
 }
 
 async function previewTile(x: number, y: number): Promise<void> {
@@ -2259,6 +2344,9 @@ function render(): void {
           <p class="account-meta">${escapeHtml(formatCredentialBinding(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
+          <p class="account-meta">${escapeHtml(formatAchievementSummary(state.account))}</p>
+          ${renderAchievementProgress(state.account)}
+          ${renderRecentAccountEvents(state.account)}
           <div class="account-editor">
             <input
               class="account-input"

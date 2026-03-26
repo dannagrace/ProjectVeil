@@ -15,6 +15,7 @@ import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-ro
 import {
   createPlayerAccountsFromWorldState,
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
+  type PlayerAccountProgressPatch,
   type PlayerAccountAuthSnapshot,
   type PlayerAccountCredentialInput,
   type PlayerAccountSnapshot,
@@ -78,6 +79,8 @@ class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       playerId,
       displayName,
       globalResources: structuredClone(existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 }),
+      achievements: structuredClone(existing?.achievements ?? []),
+      recentEventLog: structuredClone(existing?.recentEventLog ?? []),
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
@@ -164,6 +167,8 @@ class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       this.accounts.set(account.playerId, {
         ...structuredClone(account),
         displayName: previous?.displayName ?? account.displayName,
+        achievements: structuredClone(previous?.achievements ?? account.achievements),
+        recentEventLog: structuredClone(previous?.recentEventLog ?? account.recentEventLog),
         ...(previous?.loginId ? { loginId: previous.loginId } : {}),
         ...(previous?.credentialBoundAt ? { credentialBoundAt: previous.credentialBoundAt } : {}),
         ...(previous?.lastRoomId ? { lastRoomId: previous.lastRoomId } : {}),
@@ -191,11 +196,32 @@ class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
   async close(): Promise<void> {}
 
+  async savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const nextAccount: PlayerAccountSnapshot = {
+      ...existing,
+      achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
+      recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
+      ...(patch.lastRoomId !== undefined
+        ? patch.lastRoomId?.trim()
+          ? { lastRoomId: patch.lastRoomId.trim() }
+          : {}
+        : existing.lastRoomId
+          ? { lastRoomId: existing.lastRoomId }
+          : {}),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(playerId.trim(), structuredClone(nextAccount));
+    return structuredClone(nextAccount);
+  }
+
   seedPlayerAccount(account: PlayerAccountSnapshot): void {
     this.accounts.set(account.playerId, {
       playerId: account.playerId,
       displayName: account.displayName,
       globalResources: structuredClone(account.globalResources),
+      achievements: structuredClone(account.achievements),
+      recentEventLog: structuredClone(account.recentEventLog),
       ...(account.lastRoomId ? { lastRoomId: account.lastRoomId } : {}),
       ...(account.lastSeenAt ? { lastSeenAt: account.lastSeenAt } : {}),
       ...(account.loginId ? { loginId: account.loginId } : {}),
@@ -730,7 +756,9 @@ test("colyseus room connect provisions player account metadata without overwriti
       gold: 75,
       wood: 1,
       ore: 0
-    }
+    },
+    achievements: [],
+    recentEventLog: []
   });
 
   let server = await startServer(port, store);

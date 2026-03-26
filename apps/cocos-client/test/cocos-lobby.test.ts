@@ -231,6 +231,27 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
             displayName: "暮潮守望",
             loginId: "veil-ranger",
             lastRoomId: "room-beta",
+            achievements: [
+              {
+                id: "first_battle",
+                current: 1,
+                target: 1,
+                unlocked: true,
+                unlockedAt: "2026-03-25T13:00:00.000Z"
+              }
+            ],
+            recentEventLog: [
+              {
+                id: "account-player:2026-03-25T13:00:00.000Z:achievement:1:first_battle",
+                timestamp: "2026-03-25T13:00:00.000Z",
+                roomId: "room-beta",
+                playerId: "account-player",
+                category: "achievement",
+                description: "解锁成就：初次交锋",
+                achievementId: "first_battle",
+                rewards: [{ type: "badge", label: "初次交锋" }]
+              }
+            ],
             globalResources: {
               gold: 320,
               wood: 5,
@@ -263,8 +284,50 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
       wood: 5,
       ore: 2
     },
+    achievements: [
+      {
+        id: "first_battle",
+        title: "初次交锋",
+        description: "首次进入战斗。",
+        metric: "battles_started",
+        current: 1,
+        target: 1,
+        unlocked: true,
+        unlockedAt: "2026-03-25T13:00:00.000Z"
+      },
+      {
+        id: "enemy_slayer",
+        title: "猎敌者",
+        description: "击败 3 名敌人或中立守军。",
+        metric: "battles_won",
+        current: 0,
+        target: 3,
+        unlocked: false
+      },
+      {
+        id: "skill_scholar",
+        title: "求知者",
+        description: "学习 5 个长期技能。",
+        metric: "skills_learned",
+        current: 0,
+        target: 5,
+        unlocked: false
+      }
+    ],
     loginId: "veil-ranger",
     lastRoomId: "room-beta",
+    recentEventLog: [
+      {
+        id: "account-player:2026-03-25T13:00:00.000Z:achievement:1:first_battle",
+        timestamp: "2026-03-25T13:00:00.000Z",
+        roomId: "room-beta",
+        playerId: "account-player",
+        category: "achievement",
+        description: "解锁成就：初次交锋",
+        achievementId: "first_battle",
+        rewards: [{ type: "badge", label: "初次交锋" }]
+      }
+    ],
     source: "remote"
   });
   assert.ok(values.get("project-veil:auth-session")?.includes("\"loginId\":\"veil-ranger\""));

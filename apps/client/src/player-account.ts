@@ -5,6 +5,12 @@ import {
   storeAuthSession,
   type StoredAuthSession
 } from "./auth-session";
+import {
+  normalizeAchievementProgress,
+  normalizeEventLogEntries,
+  type EventLogEntry,
+  type PlayerAchievementProgress
+} from "../../../packages/shared/src/index";
 
 const PLAYER_ACCOUNT_PREFIX = "project-veil:player-account";
 const PLAYER_ACCOUNT_REQUEST_TIMEOUT_MS = 1200;
@@ -17,6 +23,8 @@ export interface PlayerAccountProfile {
     wood: number;
     ore: number;
   };
+  achievements: PlayerAchievementProgress[];
+  recentEventLog: EventLogEntry[];
   loginId?: string;
   credentialBoundAt?: string;
   lastRoomId?: string;
@@ -33,6 +41,8 @@ interface PlayerAccountApiPayload {
       wood?: number;
       ore?: number;
     };
+    achievements?: Partial<PlayerAchievementProgress>[];
+    recentEventLog?: Partial<EventLogEntry>[];
     loginId?: string;
     credentialBoundAt?: string;
     lastRoomId?: string;
@@ -129,6 +139,8 @@ function asPlayerAccountProfile(
     playerId,
     displayName: normalizePlayerDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
     globalResources: normalizeGlobalResources(account?.globalResources),
+    achievements: normalizeAchievementProgress(account?.achievements),
+    recentEventLog: normalizeEventLogEntries(account?.recentEventLog),
     ...(loginId ? { loginId } : {}),
     ...(account?.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
     ...(account?.lastRoomId ? { lastRoomId: account.lastRoomId } : roomId ? { lastRoomId: roomId } : {}),
@@ -166,6 +178,8 @@ export function createFallbackPlayerAccountProfile(
     playerId,
     displayName: normalizePlayerDisplayName(playerId, displayName),
     globalResources: normalizeGlobalResources(),
+    achievements: normalizeAchievementProgress(),
+    recentEventLog: normalizeEventLogEntries(),
     ...(roomId ? { lastRoomId: roomId } : {}),
     source: "local"
   };

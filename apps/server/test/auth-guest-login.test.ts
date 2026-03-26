@@ -6,6 +6,7 @@ import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/
 import { registerAuthRoutes, resetGuestAuthSessions, type GuestAuthSession } from "../src/auth";
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
 import type {
+  PlayerAccountProgressPatch,
   PlayerAccountAuthSnapshot,
   PlayerAccountCredentialInput,
   PlayerAccountEnsureInput,
@@ -55,6 +56,8 @@ class MemoryAuthStore implements RoomSnapshotStore {
       playerId,
       displayName: input.displayName?.trim() || existing?.displayName || playerId,
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
+      achievements: structuredClone(existing?.achievements ?? []),
+      recentEventLog: structuredClone(existing?.recentEventLog ?? []),
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
@@ -118,6 +121,25 @@ class MemoryAuthStore implements RoomSnapshotStore {
         });
       }
     }
+    return account;
+  }
+
+  async savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
+      recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
+      ...(patch.lastRoomId !== undefined
+        ? patch.lastRoomId?.trim()
+          ? { lastRoomId: patch.lastRoomId.trim() }
+          : {}
+        : existing.lastRoomId
+          ? { lastRoomId: existing.lastRoomId }
+          : {}),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(account.playerId, account);
     return account;
   }
 

@@ -4,6 +4,12 @@ import {
   type CocosStoredAuthSession,
   writeStoredCocosAuthSession
 } from "./cocos-session-launch.ts";
+import {
+  normalizeAchievementProgress,
+  normalizeEventLogEntries,
+  type EventLogEntry,
+  type PlayerAchievementProgress
+} from "../../../../packages/shared/src/index.ts";
 
 const LOBBY_PREFERENCES_STORAGE_KEY = "project-veil:lobby-preferences";
 const PLAYER_ACCOUNT_PREFIX = "project-veil:player-account";
@@ -33,6 +39,8 @@ export interface CocosPlayerAccountProfile {
     wood: number;
     ore: number;
   };
+  achievements: PlayerAchievementProgress[];
+  recentEventLog: EventLogEntry[];
   loginId?: string;
   credentialBoundAt?: string;
   lastRoomId?: string;
@@ -59,6 +67,8 @@ interface PlayerAccountApiPayload extends AuthSessionApiPayload {
       wood?: number;
       ore?: number;
     };
+    achievements?: Partial<PlayerAchievementProgress>[];
+    recentEventLog?: Partial<EventLogEntry>[];
     loginId?: string;
     credentialBoundAt?: string;
     lastRoomId?: string;
@@ -167,6 +177,8 @@ function asCocosPlayerAccountProfile(
     playerId,
     displayName: normalizeDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
     globalResources: normalizeGlobalResources(account?.globalResources),
+    achievements: normalizeAchievementProgress(account?.achievements),
+    recentEventLog: normalizeEventLogEntries(account?.recentEventLog),
     ...(loginId ? { loginId } : {}),
     ...(account?.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
     ...(account?.lastRoomId ? { lastRoomId: account.lastRoomId } : roomId ? { lastRoomId: roomId } : {}),
@@ -263,6 +275,8 @@ export function createFallbackCocosPlayerAccountProfile(
     playerId,
     displayName: normalizeDisplayName(playerId, displayName),
     globalResources: normalizeGlobalResources(),
+    achievements: normalizeAchievementProgress(),
+    recentEventLog: normalizeEventLogEntries(),
     ...(roomId ? { lastRoomId: roomId } : {}),
     source: "local"
   };
