@@ -158,12 +158,106 @@ function clonePosition(position: Vec2): Vec2 {
 
 function cloneNeutralBehaviorState(behavior: NeutralArmyBehaviorState | undefined): NeutralArmyBehaviorState {
   const patrolPath = behavior?.patrolPath?.map(clonePosition) ?? [];
+  const detectionRadius = Math.max(0, Math.floor(behavior?.detectionRadius ?? behavior?.patrolRadius ?? 0));
+  const chaseDistance = Math.max(
+    detectionRadius + 2,
+    Math.floor(behavior?.chaseDistance ?? detectionRadius + 2)
+  );
+  const patrolRadius = Math.max(0, Math.floor(behavior?.patrolRadius ?? 0));
+  const speed = Math.max(1, Math.floor(behavior?.speed ?? 1));
+  const nextState =
+    behavior?.state ?? (behavior?.mode === "patrol" && patrolPath.length > 0 ? "patrol" : "return");
   return {
     mode: behavior?.mode === "patrol" && patrolPath.length > 0 ? "patrol" : "guard",
     patrolPath,
     patrolIndex: patrolPath.length > 0 ? clamp(Math.floor(behavior?.patrolIndex ?? 0), 0, patrolPath.length - 1) : 0,
-    aggroRange: Math.max(0, Math.floor(behavior?.aggroRange ?? 0))
+    patrolRadius,
+    detectionRadius,
+    chaseDistance,
+    speed,
+    state: nextState,
+    targetHeroId: behavior?.targetHeroId
   };
+}
+
+function resetNeutralBehaviorState(behavior: NeutralArmyBehaviorState | undefined): NeutralArmyBehaviorState | undefined {
+  if (!behavior) {
+    return undefined;
+  }
+
+  const clone = cloneNeutralBehaviorState(behavior);
+  clone.state = clone.mode === "patrol" && clone.patrolPath.length > 0 ? "patrol" : "return";
+  clone.targetHeroId = undefined;
+  return clone;
+}
+
+function buildPatrolLoop(origin: Vec2, radius: number, mapWidth: number, mapHeight: number): Vec2[] {
+  if (radius <= 0) {
+    return [];
+  }
+
+  const minX = clamp(origin.x - radius, 0, mapWidth - 1);
+  const maxX = clamp(origin.x + radius, 0, mapWidth - 1);
+  const minY = clamp(origin.y - radius, 0, mapHeight - 1);
+  const maxY = clamp(origin.y + radius, 0, mapHeight - 1);
+  const seen = new Set<string>();
+  const path: Vec2[] = [];
+  const record = (point: Vec2): void => {
+    if (point.x < 0 || point.y < 0 || point.x >= mapWidth || point.y >= mapHeight) {
+      return;
+    }
+    if (samePosition(point, origin)) {
+      return;
+    }
+    const key = tileKey(point);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    path.push(point);
+  };
+
+  for (let x = minX; x <= maxX; x += 1) {
+    record({ x, y: minY });
+  }
+  for (let y = minY + 1; y <= maxY; y += 1) {
+    record({ x: maxX, y });
+  }
+  if (maxY > minY) {
+    for (let x = maxX - 1; x >= minX; x -= 1) {
+      record({ x, y: maxY });
+    }
+  }
+  if (maxX > minX) {
+    for (let y = maxY - 1; y > minY; y -= 1) {
+      record({ x: minX, y });
+    }
+  }
+
+  return path;
+}
+
+function resolvePatrolPath(
+  mapWidth: number,
+  mapHeight: number,
+  origin: Vec2,
+  behavior: MapObjectsConfig["neutralArmies"][number]["behavior"] | undefined
+): Vec2[] {
+  if (!behavior) {
+    return [];
+  }
+
+  const explicitPath = behavior.patrolPath?.map(clonePosition) ?? [];
+  if (explicitPath.length > 0) {
+    return explicitPath;
+  }
+
+  const radius = Math.max(0, Math.floor(behavior.patrolRadius ?? 0));
+  if (radius <= 0) {
+    return [];
+  }
+
+  return buildPatrolLoop(origin, radius, mapWidth, mapHeight);
 }
 
 function normalizeNeutralArmyState(army: NeutralArmyState): NeutralArmyState {
@@ -185,15 +279,37 @@ function normalizeNeutralArmyCollection(
   );
 }
 
-function createNeutralArmyState(config: MapObjectsConfig["neutralArmies"][number]): NeutralArmyState {
+function createNeutralArmyState(
+  config: MapObjectsConfig["neutralArmies"][number],
+  mapWidth: number,
+  mapHeight: number
+): NeutralArmyState {
+  const behaviorConfig = config.behavior;
+  const patrolPath = resolvePatrolPath(mapWidth, mapHeight, config.position, behaviorConfig);
+  const detectionRadius = Math.max(
+    0,
+    Math.floor(behaviorConfig?.detectionRadius ?? behaviorConfig?.aggroRange ?? behaviorConfig?.patrolRadius ?? 0)
+  );
+  const chaseDistance = Math.max(
+    detectionRadius + 2,
+    Math.floor(behaviorConfig?.chaseDistance ?? detectionRadius + 2)
+  );
+  const patrolRadius = Math.max(0, Math.floor(behaviorConfig?.patrolRadius ?? 0));
+  const speed = Math.max(1, Math.floor(behaviorConfig?.speed ?? 1));
+  const mode = behaviorConfig?.mode === "patrol" && patrolPath.length > 0 ? "patrol" : "guard";
+  const initialState = mode === "patrol" && patrolPath.length > 0 ? "patrol" : "return";
   return normalizeNeutralArmyState({
     ...config,
     origin: clonePosition(config.position),
     behavior: {
-      mode: config.behavior?.mode === "patrol" && (config.behavior?.patrolPath?.length ?? 0) > 0 ? "patrol" : "guard",
-      patrolPath: config.behavior?.patrolPath?.map(clonePosition) ?? [],
+      mode,
+      patrolPath,
       patrolIndex: 0,
-      aggroRange: Math.max(0, Math.floor(config.behavior?.aggroRange ?? 0))
+      patrolRadius,
+      detectionRadius,
+      chaseDistance,
+      speed,
+      state: initialState
     }
   });
 }
@@ -594,25 +710,44 @@ function isBlockedForNeutral(
   return false;
 }
 
+function fallbackNeutralStep(
+  state: WorldState,
+  neutralArmyId: string,
+  from: Vec2,
+  destination: Vec2,
+  targetHeroId?: string
+): Vec2 | undefined {
+  const candidates = getNeighbors(state.map, from)
+    .filter((neighbor) => !isBlockedForNeutral(state, neutralArmyId, neighbor, destination, targetHeroId))
+    .sort((left, right) => {
+      const delta = distance(left, destination) - distance(right, destination);
+      return delta !== 0 ? delta : tileKey(left).localeCompare(tileKey(right));
+    });
+  return candidates[0];
+}
+
 function getNeutralMovementPath(
   state: WorldState,
   neutralArmyId: string,
   destination: Vec2,
-  targetHeroId?: string
+  targetHeroId?: string,
+  startPosition?: Vec2
 ): Vec2[] | undefined {
   const neutralArmy = state.neutralArmies[neutralArmyId];
   if (!neutralArmy) {
     return undefined;
   }
 
-  if (samePosition(neutralArmy.position, destination)) {
-    return [clonePosition(neutralArmy.position)];
+  const start = startPosition ?? neutralArmy.position;
+
+  if (samePosition(start, destination)) {
+    return [clonePosition(start)];
   }
 
-  const openSet: Vec2[] = [neutralArmy.position];
+  const openSet: Vec2[] = [start];
   const cameFrom = new Map<string, Vec2>();
-  const gScore = new Map<string, number>([[tileKey(neutralArmy.position), 0]]);
-  const fScore = new Map<string, number>([[tileKey(neutralArmy.position), distance(neutralArmy.position, destination)]]);
+  const gScore = new Map<string, number>([[tileKey(start), 0]]);
+  const fScore = new Map<string, number>([[tileKey(start), distance(start, destination)]]);
 
   while (openSet.length > 0) {
     openSet.sort(
@@ -744,64 +879,49 @@ function findHero(state: WorldState, heroId: string): HeroState | undefined {
 function findNeutralChaseTarget(
   state: WorldState,
   neutralArmy: NeutralArmyState,
-  lockedHeroIds: Set<string>
+  lockedHeroIds: Set<string>,
+  detectionRadius: number,
+  chaseDistance: number,
+  preferredHeroId?: string
 ): { heroId: string; path: Vec2[] } | null {
-  const aggroRange = neutralArmy.behavior?.aggroRange ?? 0;
-  if (aggroRange <= 0) {
-    return null;
-  }
-
-  const candidates = state.heroes
-    .filter((hero) => !lockedHeroIds.has(hero.id))
+  const heroPaths = state.heroes
     .map((hero) => ({
       heroId: hero.id,
       path: getNeutralMovementPath(state, neutralArmy.id, hero.position, hero.id)
     }))
     .filter((item): item is { heroId: string; path: Vec2[] } => Boolean(item.path && item.path.length > 0))
-    .filter((item) => item.path.length - 1 <= aggroRange)
+    .map((item) => ({
+      ...item,
+      distance: item.path.length - 1
+    }));
+
+  const preferred = heroPaths.find((item) => item.heroId === preferredHeroId);
+  if (preferred && preferred.distance <= chaseDistance) {
+    return { heroId: preferred.heroId, path: preferred.path };
+  }
+
+  if (detectionRadius <= 0) {
+    return null;
+  }
+
+  const candidates = heroPaths
+    .filter((item) => item.distance <= detectionRadius && !lockedHeroIds.has(item.heroId))
     .sort((left, right) => {
-      const pathDelta = left.path.length - right.path.length;
+      const pathDelta = left.distance - right.distance;
       return pathDelta !== 0 ? pathDelta : left.heroId.localeCompare(right.heroId);
     });
 
   return candidates[0] ?? null;
 }
 
-function nextPatrolTarget(
-  neutralArmy: NeutralArmyState
-): { target: Vec2; patrolIndex: number } | null {
-  const patrolPath = neutralArmy.behavior?.patrolPath ?? [];
-  if (patrolPath.length === 0) {
-    return null;
-  }
-
-  let patrolIndex = neutralArmy.behavior?.patrolIndex ?? 0;
-  for (let attempts = 0; attempts < patrolPath.length; attempts += 1) {
-    const target = patrolPath[patrolIndex]!;
-    if (!samePosition(neutralArmy.position, target)) {
-      return {
-        target,
-        patrolIndex
-      };
-    }
-    patrolIndex = (patrolIndex + 1) % patrolPath.length;
-  }
-
-  return null;
-}
-
 function moveNeutralArmy(
   neutralArmy: NeutralArmyState,
   nextPosition: Vec2,
   reason: NeutralMoveReason,
-  nextPatrolIndex?: number,
+  behaviorState: NeutralArmyBehaviorState,
   targetHeroId?: string
 ): { army: NeutralArmyState; event: WorldEvent } {
-  const behavior = cloneNeutralBehaviorState(neutralArmy.behavior);
-  if (typeof nextPatrolIndex === "number" && behavior.patrolPath.length > 0) {
-    behavior.patrolIndex = nextPatrolIndex;
-  }
-
+  const behavior = cloneNeutralBehaviorState(behaviorState);
   return {
     army: {
       ...neutralArmy,
@@ -820,17 +940,87 @@ function moveNeutralArmy(
   };
 }
 
+function advancePatrol(
+  state: WorldState,
+  neutralArmy: NeutralArmyState,
+  behavior: NeutralArmyBehaviorState,
+  speed: number
+): { position: Vec2; moved: boolean } {
+  let stepsRemaining = speed;
+  let currentPosition = neutralArmy.position;
+  let moved = false;
+  let patrolIndex = behavior.patrolIndex;
+
+  while (stepsRemaining > 0 && behavior.patrolPath.length > 0) {
+    const target = behavior.patrolPath[patrolIndex];
+    if (!target) {
+      break;
+    }
+    if (samePosition(currentPosition, target)) {
+      patrolIndex = (patrolIndex + 1) % behavior.patrolPath.length;
+      continue;
+    }
+
+    const path = getNeutralMovementPath(state, neutralArmy.id, target, undefined, currentPosition);
+    if (!path || path.length < 2) {
+      const fallback = fallbackNeutralStep(state, neutralArmy.id, currentPosition, target);
+      if (!fallback) {
+        break;
+      }
+      currentPosition = fallback;
+      stepsRemaining -= 1;
+      moved = true;
+      continue;
+    }
+
+    const steps = Math.min(stepsRemaining, path.length - 1);
+    currentPosition = path[steps];
+    stepsRemaining -= steps;
+    moved = moved || steps > 0;
+    if (samePosition(currentPosition, target)) {
+      patrolIndex = (patrolIndex + 1) % behavior.patrolPath.length;
+    } else {
+      break;
+    }
+  }
+
+  behavior.patrolIndex = behavior.patrolPath.length > 0 ? patrolIndex % behavior.patrolPath.length : 0;
+  return { position: currentPosition, moved };
+}
+
 function resolveNeutralArmyTurn(
   state: WorldState,
   neutralArmy: NeutralArmyState,
   lockedHeroIds: Set<string>
 ): { army?: NeutralArmyState; events: WorldEvent[]; lockedHeroId?: string } {
-  const behavior = neutralArmy.behavior;
-  const chaseTarget = findNeutralChaseTarget(state, neutralArmy, lockedHeroIds);
+  const behavior = cloneNeutralBehaviorState(neutralArmy.behavior);
+  const detectionRadius = behavior.detectionRadius;
+  const chaseDistance = Math.max(behavior.chaseDistance, detectionRadius + 2);
+  const speed = Math.max(1, behavior.speed);
+  const origin = neutralArmy.origin ?? neutralArmy.position;
+  let behaviorChanged = false;
+
+  const chaseTarget = findNeutralChaseTarget(
+    state,
+    neutralArmy,
+    lockedHeroIds,
+    detectionRadius,
+    chaseDistance,
+    behavior.targetHeroId
+  );
+
   if (chaseTarget) {
-    if (chaseTarget.path.length <= 2) {
+    behavior.state = "chase";
+    behavior.targetHeroId = chaseTarget.heroId;
+    behaviorChanged = true;
+    const stepsToHero = chaseTarget.path.length - 1;
+    if (stepsToHero <= speed) {
       const hero = findHero(state, chaseTarget.heroId);
       return {
+        army: {
+          ...neutralArmy,
+          behavior: cloneNeutralBehaviorState(behavior)
+        },
         events: [
           {
             type: "battle.started",
@@ -847,46 +1037,68 @@ function resolveNeutralArmyTurn(
       };
     }
 
-    const nextPosition = chaseTarget.path[1];
-    if (nextPosition) {
-      const movement = moveNeutralArmy(neutralArmy, nextPosition, "chase", undefined, chaseTarget.heroId);
-      return {
-        army: movement.army,
-        events: [movement.event]
-      };
-    }
+    const nextIndex = Math.min(speed, chaseTarget.path.length - 1);
+    const nextPosition = chaseTarget.path[nextIndex];
+    const movement = moveNeutralArmy(neutralArmy, nextPosition, "chase", behavior, chaseTarget.heroId);
+    return {
+      army: movement.army,
+      events: [movement.event]
+    };
   }
 
-  if (behavior?.mode === "patrol" && behavior.patrolPath.length > 0) {
-    const patrol = nextPatrolTarget(neutralArmy);
-    if (patrol) {
-      const path = getNeutralMovementPath(state, neutralArmy.id, patrol.target);
-      const nextPosition = path?.[1];
+  if (behavior.state === "chase") {
+    behavior.state = "return";
+    behavior.targetHeroId = undefined;
+    behaviorChanged = true;
+  }
+
+  if (behavior.state === "return") {
+    if (!samePosition(neutralArmy.position, origin)) {
+      const path = getNeutralMovementPath(state, neutralArmy.id, origin);
+      let nextPosition: Vec2 | undefined;
+      if (path && path.length > 1) {
+        const stepIndex = Math.min(speed, path.length - 1);
+        nextPosition = path[stepIndex];
+      } else {
+        nextPosition = fallbackNeutralStep(state, neutralArmy.id, neutralArmy.position, origin);
+      }
+
       if (nextPosition) {
-        const reachedTarget = samePosition(nextPosition, patrol.target);
-        const nextPatrolIndex = reachedTarget
-          ? (patrol.patrolIndex + 1) % behavior.patrolPath.length
-          : patrol.patrolIndex;
-        const movement = moveNeutralArmy(neutralArmy, nextPosition, "patrol", nextPatrolIndex);
+        if (samePosition(nextPosition, origin)) {
+          behavior.state = behavior.mode === "patrol" && behavior.patrolPath.length > 0 ? "patrol" : "return";
+          behaviorChanged = true;
+        }
+        const movement = moveNeutralArmy(neutralArmy, nextPosition, "return", behavior);
         return {
           army: movement.army,
           events: [movement.event]
         };
       }
+    } else if (behavior.mode === "patrol" && behavior.patrolPath.length > 0) {
+      behavior.state = "patrol";
+      behaviorChanged = true;
     }
   }
 
-  const origin = neutralArmy.origin ?? neutralArmy.position;
-  if (!samePosition(neutralArmy.position, origin)) {
-    const path = getNeutralMovementPath(state, neutralArmy.id, origin);
-    const nextPosition = path?.[1];
-    if (nextPosition) {
-      const movement = moveNeutralArmy(neutralArmy, nextPosition, "return");
+  if (behavior.state === "patrol" && behavior.patrolPath.length > 0) {
+    const patrolResult = advancePatrol(state, neutralArmy, behavior, speed);
+    if (patrolResult.moved && !samePosition(patrolResult.position, neutralArmy.position)) {
+      const movement = moveNeutralArmy(neutralArmy, patrolResult.position, "patrol", behavior);
       return {
         army: movement.army,
         events: [movement.event]
       };
     }
+  }
+
+  if (behaviorChanged) {
+    return {
+      army: {
+        ...neutralArmy,
+        behavior: cloneNeutralBehaviorState(behavior)
+      },
+      events: []
+    };
   }
 
   return {
@@ -995,15 +1207,19 @@ export function createWorldStateFromConfigs(
   const width = config.width;
   const height = config.height;
   const heroes: HeroState[] = normalizeHeroes(config.heroes);
+  const patrolWaypointKeys = mapObjects.neutralArmies.flatMap((army) =>
+    resolvePatrolPath(width, height, army.position, army.behavior).map((waypoint) => tileKey(waypoint))
+  );
   const forcedWalkableKeys = new Set<string>([
     ...heroes.map((hero) => tileKey(hero.position)),
     ...mapObjects.guaranteedResources.map((resource) => tileKey(resource.position)),
     ...mapObjects.neutralArmies.map((army) => tileKey(army.position)),
-    ...mapObjects.neutralArmies.flatMap((army) => (army.behavior?.patrolPath ?? []).map((waypoint) => tileKey(waypoint))),
+    ...patrolWaypointKeys,
     ...mapObjects.buildings.map((building) => tileKey(building.position))
   ]);
   const blockedRandomResourceKeys = new Set<string>([
     ...mapObjects.neutralArmies.map((army) => tileKey(army.position)),
+    ...patrolWaypointKeys,
     ...mapObjects.buildings.map((building) => tileKey(building.position))
   ]);
 
@@ -1030,7 +1246,7 @@ export function createWorldStateFromConfigs(
   }
 
   const neutralArmies: Record<string, NeutralArmyState> = Object.fromEntries(
-    mapObjects.neutralArmies.map((army) => [army.id, createNeutralArmyState(army)])
+    mapObjects.neutralArmies.map((army) => [army.id, createNeutralArmyState(army, width, height)])
   );
   const buildings: Record<string, MapBuildingState> = Object.fromEntries(
     mapObjects.buildings.map((building) => [building.id, createBuildingState(building)])
@@ -1735,6 +1951,15 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
       });
     }
     let neutralArmies = normalizeNeutralArmyCollection(state.neutralArmies);
+    neutralArmies = Object.fromEntries(
+      Object.entries(neutralArmies).map(([neutralArmyId, army]) => [
+        neutralArmyId,
+        {
+          ...army,
+          behavior: resetNeutralBehaviorState(army.behavior)
+        }
+      ])
+    );
     let workingState = buildNextWorldState(
       {
         ...state,

@@ -360,6 +360,44 @@ export function validateMapObjectsConfig(
         throw new Error(`Neutral army ${army.id} aggroRange must be a non-negative integer`);
       }
 
+      if (
+        army.behavior.detectionRadius !== undefined &&
+        (!Number.isInteger(army.behavior.detectionRadius) || army.behavior.detectionRadius < 0)
+      ) {
+        throw new Error(`Neutral army ${army.id} detectionRadius must be a non-negative integer`);
+      }
+
+      if (
+        army.behavior.chaseDistance !== undefined &&
+        (!Number.isInteger(army.behavior.chaseDistance) || army.behavior.chaseDistance < 0)
+      ) {
+        throw new Error(`Neutral army ${army.id} chaseDistance must be a non-negative integer`);
+      }
+
+      const configuredDetection =
+        army.behavior.detectionRadius ?? army.behavior.aggroRange ?? undefined;
+      if (
+        army.behavior.chaseDistance !== undefined &&
+        configuredDetection !== undefined &&
+        army.behavior.chaseDistance < configuredDetection
+      ) {
+        throw new Error(`Neutral army ${army.id} chaseDistance must be >= detectionRadius`);
+      }
+
+      if (
+        army.behavior.patrolRadius !== undefined &&
+        (!Number.isInteger(army.behavior.patrolRadius) || army.behavior.patrolRadius < 0)
+      ) {
+        throw new Error(`Neutral army ${army.id} patrolRadius must be a non-negative integer`);
+      }
+
+      if (
+        army.behavior.speed !== undefined &&
+        (!Number.isInteger(army.behavior.speed) || army.behavior.speed <= 0)
+      ) {
+        throw new Error(`Neutral army ${army.id} speed must be a positive integer`);
+      }
+
       if (army.behavior.patrolPath !== undefined) {
         if (!Array.isArray(army.behavior.patrolPath)) {
           throw new Error(`Neutral army ${army.id} patrolPath must be an array`);
@@ -377,8 +415,14 @@ export function validateMapObjectsConfig(
         }
       }
 
-      if (army.behavior.mode === "patrol" && (army.behavior.patrolPath?.length ?? 0) === 0) {
-        throw new Error(`Neutral army ${army.id} patrol mode requires at least one patrol waypoint`);
+      if (
+        army.behavior.mode === "patrol" &&
+        (army.behavior.patrolPath?.length ?? 0) === 0 &&
+        (army.behavior.patrolRadius ?? 0) <= 0
+      ) {
+        throw new Error(
+          `Neutral army ${army.id} patrol mode requires patrolPath waypoints or a patrolRadius`
+        );
       }
     }
 

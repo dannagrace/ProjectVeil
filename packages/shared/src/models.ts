@@ -250,18 +250,28 @@ export interface NeutralArmyStack {
 
 export type NeutralBehaviorMode = "guard" | "patrol";
 export type NeutralMoveReason = "patrol" | "return" | "chase";
+export type NeutralAIState = "patrol" | "chase" | "return";
 
 export interface NeutralArmyBehaviorConfig {
   mode?: NeutralBehaviorMode;
   patrolPath?: Vec2[];
   aggroRange?: number;
+  patrolRadius?: number;
+  detectionRadius?: number;
+  chaseDistance?: number;
+  speed?: number;
 }
 
 export interface NeutralArmyBehaviorState {
   mode: NeutralBehaviorMode;
   patrolPath: Vec2[];
   patrolIndex: number;
-  aggroRange: number;
+  patrolRadius: number;
+  detectionRadius: number;
+  chaseDistance: number;
+  speed: number;
+  state: NeutralAIState;
+  targetHeroId?: string;
 }
 
 export interface NeutralArmyState {

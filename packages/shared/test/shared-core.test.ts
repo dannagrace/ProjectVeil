@@ -1142,7 +1142,11 @@ test("resolveWorldAction advances patrolling neutral armies by one tile on end d
           mode: "patrol",
           patrolPath: [{ x: 2, y: 1 }, { x: 3, y: 1 }],
           patrolIndex: 0,
-          aggroRange: 0
+          detectionRadius: 0,
+          chaseDistance: 0,
+          patrolRadius: 0,
+          speed: 1,
+          state: "patrol"
         }
       }
     },
@@ -1201,7 +1205,11 @@ test("resolveWorldAction can start a neutral-initiated battle on end day", () =>
           mode: "guard",
           patrolPath: [],
           patrolIndex: 0,
-          aggroRange: 1
+          detectionRadius: 1,
+          chaseDistance: 3,
+          patrolRadius: 0,
+          speed: 1,
+          state: "return"
         }
       }
     },

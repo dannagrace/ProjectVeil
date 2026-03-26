@@ -129,7 +129,7 @@
 - Cocos 战斗面板现已补上技能摘要和目标状态提示，概要区、目标卡与动作按钮都会带出当前技能/状态信息，而不再只有基础攻击指令。
 - `phase1-map-objects.json` 现已支持配置 `buildings`，当前已接入 `recruitment_post` 招募所、`attribute_shrine` 属性神殿和 `resource_mine` 资源矿场；英雄停在建筑格上再次点击当前格即可访问或占领建筑。
 - 招募所会按库存和资源消耗补充部队，并在每日推进后自动重置；属性神殿会给当前英雄永久属性加成，并记录已访问英雄避免重复领取；资源矿场则会在占领后于“推进一天”时自动结算金币/木材/矿石产出。H5 / Cocos / 配置中心地图预览都已能显示这些建筑。
-- `neutralArmies` 现已支持可选 `behavior` 字段：可配置 `guard / patrol` 模式、巡逻路线和 `aggroRange`；中立怪会在每日推进时按路线巡逻、失位后回守，并在英雄靠近时主动追击，贴身时直接触发遭遇战。
+- `neutralArmies` 现已支持可选 `behavior` 字段：可配置 `guard / patrol` 模式、显式巡逻路线或 `patrolRadius` 自动巡逻圈，并可按 `detectionRadius / chaseDistance / speed` 精细调节巡逻、追击与返回节奏；中立怪会在每日推进时按路线巡逻、失位后回守，并在英雄靠近时主动追击，贴身时直接触发遭遇战。
 - 当前 MySQL 资源持久化已补上 `player_accounts`：房间保存时会同步刷新玩家全局 `gold / wood / ore` 仓库，新建房间会先回灌这份全局资源，因此同一 `playerId` 的基础资源已能跨房间继承。
 - 当前 MySQL 英雄长期档已补上 `player_hero_archives`：房间保存时会同步刷新英雄的长期成长、已学技能、装备槽位与带兵快照，新建房间会先回灌这些长期数据，因此同一 `playerId` 的英雄属性成长、build 和当前带兵已能跨房间继承；英雄的位置、剩余移动力和当前生命仍会按新局重置。
 - 当前玩家账号骨架也已接到 `player_accounts`：账号记录现已包含 `displayName / lastRoomId / lastSeenAt / globalResources`，并开放 `GET /api/player-accounts`、`GET /api/player-accounts/:playerId`、`PUT /api/player-accounts/:playerId` 供开发态查看与改名；房间 `connect` 时会自动建档或刷新最近活跃房间。
