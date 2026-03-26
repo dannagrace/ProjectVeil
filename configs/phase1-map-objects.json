@@ -18,17 +18,10 @@
       ],
       "behavior": {
         "mode": "patrol",
-        "patrolPath": [
-          {
-            "x": 5,
-            "y": 4
-          },
-          {
-            "x": 5,
-            "y": 3
-          }
-        ],
-        "aggroRange": 2
+        "patrolRadius": 2,
+        "detectionRadius": 3,
+        "chaseDistance": 6,
+        "speed": 2
       }
     }
   ],

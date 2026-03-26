@@ -23,10 +23,10 @@ test("battle start auto-resolves defender opener before state is returned to the
         { x: 1, y: 1 },
         { x: 2, y: 1 },
         { x: 3, y: 1 },
-        { x: 3, y: 2 },
-        { x: 3, y: 3 },
-        { x: 3, y: 4 },
-        { x: 4, y: 4 }
+        { x: 4, y: 1 },
+        { x: 5, y: 1 },
+        { x: 5, y: 2 },
+        { x: 5, y: 3 }
       ],
       moveCost: 6
     }
@@ -43,7 +43,7 @@ test("battle start auto-resolves defender opener before state is returned to the
     result.battle?.units["hero-1-stack"]?.statusEffects?.map((status) => status.id).sort(),
     ["poisoned", "weakened"]
   );
-  assert.deepEqual(result.snapshot.state.ownHeroes[0]?.position, { x: 4, y: 4 });
+  assert.deepEqual(result.snapshot.state.ownHeroes[0]?.position, { x: 5, y: 3 });
 });
 
 test("player battle actions are followed by automated defender turns until control returns", () => {
@@ -326,8 +326,9 @@ test("room allows claiming a resource mine and grants daily income after advanci
       type: "neutral.moved",
       neutralArmyId: "neutral-1",
       from: { x: 5, y: 4 },
-      to: { x: 5, y: 3 },
-      reason: "patrol"
+      to: { x: 6, y: 5 },
+      reason: "chase",
+      targetHeroId: "hero-2"
     }
   ]);
   assert.equal(nextDayResult.snapshot.state.resources.wood, 2);
@@ -349,7 +350,11 @@ test("room can create a neutral-initiated battle when end day triggers an adjace
       mode: "guard",
       patrolPath: [],
       patrolIndex: 0,
-      aggroRange: 1
+      detectionRadius: 1,
+      chaseDistance: 3,
+      patrolRadius: 0,
+      speed: 1,
+      state: "return"
     }
   };
   const nextNeutralTile = state.map.tiles.find((tile) => tile.position.x === 2 && tile.position.y === 1);
