@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   applyBattleAction,
   applyBattleOutcomeToWorld,
+  createHeroSkillTreeView,
   createDemoBattleState,
   createEmptyBattleState,
   createHeroBattleState,
@@ -13,6 +14,7 @@ import {
   createWorldStateFromConfigs,
   filterWorldEventsForPlayer,
   getDefaultBattleSkillCatalog,
+  getDefaultHeroSkillTreeConfig,
   getDefaultUnitCatalog,
   getBattleOutcome,
   pickAutomatedBattleAction,
@@ -571,6 +573,86 @@ test("resolveWorldAction lets heroes learn and upgrade long-term skills after le
     valid: false,
     reason: "not_enough_skill_points"
   });
+});
+
+test("default hero skill tree loads the full three-branch layout", () => {
+  const config = getDefaultHeroSkillTreeConfig();
+
+  assert.equal(config.branches.length, 3);
+  assert.equal(config.skills.length, 15);
+  assert.equal(config.skills.filter((skill) => skill.branchId === "warpath").length, 5);
+  assert.equal(config.skills.filter((skill) => skill.branchId === "bulwark").length, 5);
+  assert.equal(config.skills.filter((skill) => skill.branchId === "arcanum").length, 5);
+});
+
+test("hero skill tree view and resolveWorldAction advance branch prerequisites in order", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    progression: {
+      ...createDefaultHeroProgression(),
+      level: 3,
+      experience: 240,
+      skillPoints: 2
+    }
+  });
+  const state = createWorldState({
+    width: 2,
+    height: 1,
+    heroes: [hero],
+    tiles: [
+      createTile(0, 0, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(1, 0)
+    ],
+    visibilityByPlayer: {
+      "player-1": ["visible", "visible"]
+    }
+  });
+
+  const initialView = createHeroSkillTreeView(hero);
+  const initialLearnableIds = initialView.branches.flatMap((branch) => branch.skills.filter((skill) => skill.canLearn).map((skill) => skill.id));
+  assert.ok(initialLearnableIds.includes("war_banner"));
+  assert.ok(!initialLearnableIds.includes("spearhead_assault"));
+
+  const firstLearn = resolveWorldAction(state, {
+    type: "hero.learnSkill",
+    heroId: "hero-1",
+    skillId: "war_banner"
+  });
+
+  const progressedHero = firstLearn.state.heroes[0]!;
+  const nextView = createHeroSkillTreeView(progressedHero);
+  const nextLearnableIds = nextView.branches.flatMap((branch) => branch.skills.filter((skill) => skill.canLearn).map((skill) => skill.id));
+  assert.ok(nextLearnableIds.includes("spearhead_assault"));
+
+  const secondLearn = resolveWorldAction(firstLearn.state, {
+    type: "hero.learnSkill",
+    heroId: "hero-1",
+    skillId: "spearhead_assault"
+  });
+
+  assert.deepEqual(
+    secondLearn.state.heroes[0]?.learnedSkills.slice().sort((left, right) => left.skillId.localeCompare(right.skillId)),
+    [
+      { skillId: "spearhead_assault", rank: 1 },
+      { skillId: "war_banner", rank: 1 }
+    ]
+  );
+  assert.deepEqual(secondLearn.events, [
+    {
+      type: "hero.skillLearned",
+      heroId: "hero-1",
+      skillId: "spearhead_assault",
+      branchId: "warpath",
+      skillName: "矛锋突击",
+      branchName: "战阵",
+      newRank: 1,
+      spentPoint: 1,
+      remainingSkillPoints: 0,
+      newlyGrantedBattleSkillIds: ["sundering_spear"]
+    }
+  ]);
 });
 
 test("createHeroBattleState carries learned hero skill tree rewards into battle", () => {

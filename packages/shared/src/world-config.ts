@@ -1,5 +1,5 @@
 import defaultBattleSkillsConfig from "../../../configs/battle-skills.json";
-import defaultHeroSkillsConfig from "../../../configs/hero-skills.json";
+import defaultHeroSkillTreesConfig from "../../../configs/hero-skill-trees-full.json";
 import defaultMapObjectsConfig from "../../../configs/phase1-map-objects.json";
 import defaultUnitsConfig from "../../../configs/units.json";
 import defaultWorldConfig from "../../../configs/phase1-world.json";
@@ -20,7 +20,7 @@ let runtimeWorldConfig: WorldGenerationConfig = structuredClone(defaultWorldConf
 let runtimeMapObjectsConfig: MapObjectsConfig = structuredClone(defaultMapObjectsConfig as MapObjectsConfig);
 let runtimeUnitCatalog: UnitCatalogConfig = structuredClone(defaultUnitsConfig as UnitCatalogConfig);
 let runtimeBattleSkillCatalog: BattleSkillCatalogConfig = structuredClone(defaultBattleSkillsConfig as BattleSkillCatalogConfig);
-let runtimeHeroSkillTree: HeroSkillTreeConfig = structuredClone(defaultHeroSkillsConfig as HeroSkillTreeConfig);
+let runtimeHeroSkillTree: HeroSkillTreeConfig = structuredClone(defaultHeroSkillTreesConfig as HeroSkillTreeConfig);
 
 export interface RuntimeConfigBundle {
   world: WorldGenerationConfig;
@@ -586,5 +586,5 @@ export function resetRuntimeConfigs(): void {
   runtimeMapObjectsConfig = structuredClone(defaultMapObjectsConfig as MapObjectsConfig);
   runtimeUnitCatalog = structuredClone(defaultUnitsConfig as UnitCatalogConfig);
   runtimeBattleSkillCatalog = structuredClone(defaultBattleSkillsConfig as BattleSkillCatalogConfig);
-  runtimeHeroSkillTree = structuredClone(defaultHeroSkillsConfig as HeroSkillTreeConfig);
+  runtimeHeroSkillTree = structuredClone(defaultHeroSkillTreesConfig as HeroSkillTreeConfig);
 }

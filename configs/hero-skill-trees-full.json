@@ -1,0 +1,268 @@
+{
+  "branches": [
+    {
+      "id": "warpath",
+      "name": "战阵",
+      "description": "偏向主动压制、先手滚雪球与爆发换血。"
+    },
+    {
+      "id": "bulwark",
+      "name": "壁垒",
+      "description": "偏向接战容错、稳固阵型与防守反击。"
+    },
+    {
+      "id": "arcanum",
+      "name": "秘仪",
+      "description": "偏向法术支援、减益覆盖与持续控制。"
+    }
+  ],
+  "skills": [
+    {
+      "id": "war_banner",
+      "branchId": "warpath",
+      "name": "战旗号令",
+      "description": "英雄亲自介入战场节奏，先提振攻势，再把破甲压制纳入长期 build。",
+      "requiredLevel": 2,
+      "maxRank": 2,
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“号令突进”。",
+          "battleSkillIds": ["commanding_shout"]
+        },
+        {
+          "rank": 2,
+          "description": "追加被动技能“裂甲追击”。",
+          "battleSkillIds": ["rending_mark"]
+        }
+      ]
+    },
+    {
+      "id": "spearhead_assault",
+      "branchId": "warpath",
+      "name": "矛锋突击",
+      "description": "将前线兵力集中到第一轮接战，优先撕开目标防线。",
+      "requiredLevel": 3,
+      "maxRank": 1,
+      "prerequisites": ["war_banner"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“破甲投枪”。",
+          "battleSkillIds": ["sundering_spear"]
+        }
+      ]
+    },
+    {
+      "id": "battle_drill",
+      "branchId": "warpath",
+      "name": "战前操典",
+      "description": "把冲锋节奏训练进部队肌肉记忆，在贴身前先抬高战意。",
+      "requiredLevel": 4,
+      "maxRank": 1,
+      "prerequisites": ["spearhead_assault"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“战意激发”。",
+          "battleSkillIds": ["battle_focus"]
+        }
+      ]
+    },
+    {
+      "id": "hunter_volley",
+      "branchId": "warpath",
+      "name": "猎袭齐射",
+      "description": "用远程牵制打开击杀窗口，为前排创造更稳的收割节奏。",
+      "requiredLevel": 5,
+      "maxRank": 1,
+      "prerequisites": ["battle_drill"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“投矛射击”。",
+          "battleSkillIds": ["power_shot"]
+        }
+      ]
+    },
+    {
+      "id": "ravager_doctrine",
+      "branchId": "warpath",
+      "name": "掠战条令",
+      "description": "将压制与破甲绑定为终结套路，把爆发节奏推到极致。",
+      "requiredLevel": 6,
+      "maxRank": 1,
+      "prerequisites": ["hunter_volley"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "额外强化爆发套件，补齐“号令突进”和“破甲投枪”。",
+          "battleSkillIds": ["commanding_shout", "sundering_spear"]
+        }
+      ]
+    },
+    {
+      "id": "shield_discipline",
+      "branchId": "bulwark",
+      "name": "盾墙教范",
+      "description": "把部队阵型和投枪压制编进英雄的长期战斗套路里。",
+      "requiredLevel": 2,
+      "maxRank": 2,
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“持盾列阵”。",
+          "battleSkillIds": ["phalanx_command"]
+        },
+        {
+          "rank": 2,
+          "description": "追加主动技能“钉锁投枪”。",
+          "battleSkillIds": ["pinning_javelin"]
+        }
+      ]
+    },
+    {
+      "id": "guardian_oath_training",
+      "branchId": "bulwark",
+      "name": "守誓训练",
+      "description": "强化接战前的稳态姿态，让部队更适合扛住第一轮冲击。",
+      "requiredLevel": 3,
+      "maxRank": 1,
+      "prerequisites": ["shield_discipline"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“守誓姿态”。",
+          "battleSkillIds": ["guardian_oath"]
+        }
+      ]
+    },
+    {
+      "id": "counterweight_tactics",
+      "branchId": "bulwark",
+      "name": "衡压战术",
+      "description": "以防守换取回合优势，用更厚的前排撑出反打窗口。",
+      "requiredLevel": 4,
+      "maxRank": 1,
+      "prerequisites": ["guardian_oath_training"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“护甲术”。",
+          "battleSkillIds": ["armor_spell"]
+        }
+      ]
+    },
+    {
+      "id": "iron_screen",
+      "branchId": "bulwark",
+      "name": "铁幕阵线",
+      "description": "把护卫与守势组合成持续前压的稳态打法。",
+      "requiredLevel": 5,
+      "maxRank": 1,
+      "prerequisites": ["counterweight_tactics"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "补足“持盾列阵”和“守誓姿态”的联动。",
+          "battleSkillIds": ["phalanx_command", "guardian_oath"]
+        }
+      ]
+    },
+    {
+      "id": "fortress_drill",
+      "branchId": "bulwark",
+      "name": "堡垒操练",
+      "description": "通过阵线纪律把远近压制合为一体，形成难以撕开的防线。",
+      "requiredLevel": 6,
+      "maxRank": 1,
+      "prerequisites": ["iron_screen"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "补足“钉锁投枪”和“护甲术”的后续支撑。",
+          "battleSkillIds": ["pinning_javelin", "armor_spell"]
+        }
+      ]
+    },
+    {
+      "id": "field_alchemy",
+      "branchId": "arcanum",
+      "name": "战地炼护",
+      "description": "先学会用简化法式为部队补上最低限度的护持。",
+      "requiredLevel": 2,
+      "maxRank": 1,
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“护甲术”。",
+          "battleSkillIds": ["armor_spell"]
+        }
+      ]
+    },
+    {
+      "id": "crippling_hex",
+      "branchId": "arcanum",
+      "name": "迟滞咒压",
+      "description": "利用低成本咒式压低敌方节奏，为拉扯创造空间。",
+      "requiredLevel": 3,
+      "maxRank": 1,
+      "prerequisites": ["field_alchemy"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“裂伤嚎叫”。",
+          "battleSkillIds": ["crippling_howl"]
+        }
+      ]
+    },
+    {
+      "id": "toxin_studies",
+      "branchId": "arcanum",
+      "name": "毒性研修",
+      "description": "把持续伤害编入常规战斗节奏，让对手难以稳定换血。",
+      "requiredLevel": 4,
+      "maxRank": 1,
+      "prerequisites": ["crippling_hex"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁被动技能“毒牙”。",
+          "battleSkillIds": ["venomous_fangs"]
+        }
+      ]
+    },
+    {
+      "id": "battle_meditation",
+      "branchId": "arcanum",
+      "name": "战冥调律",
+      "description": "在复杂战况中维持施法专注，为关键回合抬高爆发。",
+      "requiredLevel": 5,
+      "maxRank": 1,
+      "prerequisites": ["toxin_studies"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "解锁主动技能“战意激发”。",
+          "battleSkillIds": ["battle_focus"]
+        }
+      ]
+    },
+    {
+      "id": "doomcraft",
+      "branchId": "arcanum",
+      "name": "厄咒编织",
+      "description": "把削弱与持续伤害叠成完整压制循环，适合拖长战线。",
+      "requiredLevel": 6,
+      "maxRank": 1,
+      "prerequisites": ["battle_meditation"],
+      "ranks": [
+        {
+          "rank": 1,
+          "description": "补足“裂伤嚎叫”和“毒牙”的持续压制组合。",
+          "battleSkillIds": ["crippling_howl", "venomous_fangs"]
+        }
+      ]
+    }
+  ]
+}
