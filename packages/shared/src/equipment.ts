@@ -2,7 +2,9 @@ import {
   createDefaultEquipmentStatBonuses,
   type EquipmentCatalogConfig,
   type EquipmentDefinition,
+  type EquipmentRarity,
   type EquipmentStatBonuses,
+  type EquipmentType,
   type HeroState
 } from "./models";
 
@@ -257,6 +259,33 @@ export interface HeroEquipmentBonusSummary extends EquipmentStatBonuses {
   specialEffects: NonNullable<EquipmentDefinition["specialEffect"]>[];
 }
 
+export interface HeroEquipmentSlotView {
+  slot: EquipmentType;
+  label: string;
+  itemId: string | null;
+  item: EquipmentDefinition | null;
+  itemName: string;
+  rarityLabel: string | null;
+  description: string | null;
+  bonusSummary: string;
+  specialEffectSummary: string | null;
+}
+
+export interface HeroEquipmentLoadoutView {
+  slots: HeroEquipmentSlotView[];
+  summary: HeroEquipmentBonusSummary;
+}
+
+const EQUIPMENT_SLOT_META: Array<{
+  slot: EquipmentType;
+  label: string;
+  key: "weaponId" | "armorId" | "accessoryId";
+}> = [
+  { slot: "weapon", label: "武器", key: "weaponId" },
+  { slot: "armor", label: "护甲", key: "armorId" },
+  { slot: "accessory", label: "饰品", key: "accessoryId" }
+];
+
 function numericBonus(value: number | undefined): number {
   return Number.isFinite(value) ? Number(value) : 0;
 }
@@ -271,6 +300,24 @@ function percentageDelta(base: number, percent: number): number {
   }
 
   return Math.round(Math.max(0, base) * (percent / 100));
+}
+
+function equipmentRarityLabel(rarity: EquipmentRarity): string {
+  return rarity === "common" ? "普通" : rarity === "rare" ? "稀有" : "史诗";
+}
+
+export function formatEquipmentBonusSummary(
+  bonuses: Partial<EquipmentStatBonuses>
+): string {
+  const parts = [
+    numericBonus(bonuses.attackPercent) !== 0 ? `攻击 +${numericBonus(bonuses.attackPercent)}%` : "",
+    numericBonus(bonuses.defensePercent) !== 0 ? `防御 +${numericBonus(bonuses.defensePercent)}%` : "",
+    numericBonus(bonuses.power) !== 0 ? `力量 +${numericBonus(bonuses.power)}` : "",
+    numericBonus(bonuses.knowledge) !== 0 ? `知识 +${numericBonus(bonuses.knowledge)}` : "",
+    numericBonus(bonuses.maxHp) !== 0 ? `生命上限 +${numericBonus(bonuses.maxHp)}` : ""
+  ].filter(Boolean);
+
+  return parts.join(" / ") || "无属性加成";
 }
 
 export function getDefaultEquipmentCatalog(): EquipmentCatalogConfig {
@@ -317,5 +364,56 @@ export function createHeroEquipmentBonusSummary(
     specialEffects: resolvedItems
       .flatMap((item) => (item.specialEffect ? [item.specialEffect] : []))
       .filter((effect, index, effects) => effects.findIndex((item) => item.id === effect.id) === index)
+  };
+}
+
+export function createHeroEquipmentLoadoutView(
+  hero: Pick<HeroState, "stats" | "loadout">
+): HeroEquipmentLoadoutView {
+  return {
+    slots: EQUIPMENT_SLOT_META.map(({ slot, label, key }) => {
+      const itemId = hero.loadout.equipment[key];
+      const item = resolveEquipmentDefinition(itemId);
+      if (!itemId) {
+        return {
+          slot,
+          label,
+          itemId: null,
+          item: null,
+          itemName: "未装备",
+          rarityLabel: null,
+          description: null,
+          bonusSummary: "等待拾取或替换",
+          specialEffectSummary: null
+        };
+      }
+
+      if (!item) {
+        return {
+          slot,
+          label,
+          itemId,
+          item: null,
+          itemName: `未知装备 (${itemId})`,
+          rarityLabel: null,
+          description: null,
+          bonusSummary: "装备目录缺失",
+          specialEffectSummary: null
+        };
+      }
+
+      return {
+        slot,
+        label,
+        itemId: item.id,
+        item,
+        itemName: item.name,
+        rarityLabel: equipmentRarityLabel(item.rarity),
+        description: item.description,
+        bonusSummary: formatEquipmentBonusSummary(item.bonuses),
+        specialEffectSummary: item.specialEffect ? `${item.specialEffect.name}: ${item.specialEffect.description}` : null
+      };
+    }),
+    summary: createHeroEquipmentBonusSummary(hero)
   };
 }

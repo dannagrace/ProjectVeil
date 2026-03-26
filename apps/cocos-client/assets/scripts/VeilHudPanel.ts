@@ -1,5 +1,9 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Sprite, UIOpacity, UITransform } from "cc";
-import { createHeroAttributeBreakdown, createHeroProgressMeterView } from "../../../../packages/shared/src/hero-progression.ts";
+import {
+  createHeroAttributeBreakdown,
+  createHeroEquipmentLoadoutView,
+  createHeroProgressMeterView
+} from "../../../../packages/shared/src/index.ts";
 import { createHeroSkillTreeView } from "../../../../packages/shared/src/hero-skills.ts";
 import type { BattleSkillId, HeroState } from "../../../../packages/shared/src/models.ts";
 import { getDefaultBattleSkillCatalog } from "../../../../packages/shared/src/world-config.ts";
@@ -68,9 +72,10 @@ function toHeroSkillState(
     stats: { ...hero.stats },
     progression: { ...hero.progression },
     loadout: {
-      learnedSkills: [],
+      learnedSkills: hero.loadout.learnedSkills.map((skill) => ({ ...skill })),
       equipment: {
-        trinketIds: []
+        ...hero.loadout.equipment,
+        trinketIds: [...hero.loadout.equipment.trinketIds]
       }
     },
     armyTemplateId: hero.armyTemplateId,
@@ -109,6 +114,27 @@ function formatHeroLearnedSkills(hero: NonNullable<VeilHudRenderState["update"]>
   }
 
   return learnedSkills.map((skill) => `${skill.skillId} R${skill.rank}`).join(" / ");
+}
+
+function formatHeroEquipmentLines(
+  hero: NonNullable<VeilHudRenderState["update"]>["world"]["ownHeroes"][number] | null
+): string[] {
+  if (!hero) {
+    return ["装备 等待房间状态...", ""];
+  }
+
+  const loadout = createHeroEquipmentLoadoutView(toHeroSkillState(hero));
+  const equipped = loadout.slots.map((slot) => `${slot.label} ${slot.itemName}`);
+  const detail = loadout.slots
+    .filter((slot) => slot.itemId && slot.item)
+    .map((slot) => `${slot.label} ${slot.bonusSummary}`);
+  const effectLine = loadout.summary.specialEffects.map((effect) => effect.name).join(" / ");
+
+  return [
+    `装备 ${equipped.join("  ·  ")}`,
+    detail.length > 0 ? detail.join("  ·  ") : "装备效果 等待拾取或替换",
+    effectLine ? `特效 ${effectLine}` : ""
+  ];
 }
 
 export interface VeilHudRenderState {
@@ -179,6 +205,7 @@ export class VeilHudPanel extends Component {
     const learnableSkills = listLearnableHeroSkills(hero);
     const progressMeter = hero ? createHeroProgressMeterView(toHeroSkillState(hero)) : null;
     const attributeRows = hero ? createHeroAttributeBreakdown(toHeroSkillState(hero), world ?? undefined) : [];
+    const equipmentLines = formatHeroEquipmentLines(hero);
     const reachableAhead =
       state.update?.reachableTiles.filter((tile) => !hero || tile.x !== hero.position.x || tile.y !== hero.position.y).length ?? 0;
     const statusTitle = state.levelUpNotice?.title ?? "状态";
@@ -245,17 +272,20 @@ export class VeilHudPanel extends Component {
             attributeRows[0] ? `攻防公式 ${attributeRows[0].formula} / ${attributeRows[1]?.formula ?? ""}` : "",
             attributeRows[2] ? `法术公式 ${attributeRows[2].formula} / ${attributeRows[3]?.formula ?? ""}` : "",
             attributeRows[4] ? attributeRows[4].formula : "",
+            equipmentLines[0] ?? "",
+            equipmentLines[1] ?? "",
+            equipmentLines[2] ?? "",
             `兵种 ${hero.armyTemplateId}`,
             `技能 ${formatHeroLearnedSkills(hero)}`
           ]
-        : ["英雄", "等待房间状态...", "", "", "", "", "", ""],
+        : ["英雄", "等待房间状态...", "", "", "", "", "", "", "", "", ""],
       cursorY,
       14,
       18,
       cardWidth,
       leftX,
-      7,
-      182
+      10,
+      232
     );
 
     cursorY = this.renderCardBlock(

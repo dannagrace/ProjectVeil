@@ -2,6 +2,7 @@ import "./styles.css";
 import {
   createHeroSkillTreeView,
   createHeroAttributeBreakdown,
+  createHeroEquipmentLoadoutView,
   createHeroProgressMeterView,
   experienceRequiredForNextLevel,
   getDefaultBattleSkillCatalog,
@@ -422,6 +423,50 @@ function renderHeroAttributePanel(
                 <span>技能 ${row.skills}</span>
                 ${row.other !== 0 ? `<span>其他 ${row.other}</span>` : ""}
               </div>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderHeroEquipmentPanel(hero: PlayerWorldView["ownHeroes"][number] | null): string {
+  if (!hero) {
+    return "";
+  }
+
+  const loadout = createHeroEquipmentLoadoutView(hero);
+  const totalBonuses = [
+    loadout.summary.attack !== 0 ? `攻击 +${loadout.summary.attack}` : "",
+    loadout.summary.defense !== 0 ? `防御 +${loadout.summary.defense}` : "",
+    loadout.summary.power !== 0 ? `力量 +${loadout.summary.power}` : "",
+    loadout.summary.knowledge !== 0 ? `知识 +${loadout.summary.knowledge}` : "",
+    loadout.summary.maxHp !== 0 ? `生命上限 +${loadout.summary.maxHp}` : ""
+  ].filter(Boolean);
+
+  return `
+    <section class="hero-equipment-panel info-card" data-testid="hero-equipment-panel">
+      <div class="hero-progress-head">
+        <strong>装备配置</strong>
+        <span class="muted">${totalBonuses.join(" / ") || "当前未提供额外属性"}</span>
+      </div>
+      <div class="hero-equipment-list">
+        ${loadout.slots
+          .map(
+            (slot) => `
+              <article class="hero-equipment-item">
+                <div class="hero-equipment-meta">
+                  <div>
+                    <span class="hero-equipment-slot">${slot.label}</span>
+                    <strong>${escapeHtml(slot.itemName)}</strong>
+                  </div>
+                  ${slot.rarityLabel ? `<span class="status-pill">${slot.rarityLabel}</span>` : ""}
+                </div>
+                <p>${escapeHtml(slot.bonusSummary)}</p>
+                ${slot.specialEffectSummary ? `<p class="hero-equipment-copy">${escapeHtml(slot.specialEffectSummary)}</p>` : ""}
+                ${slot.description ? `<p class="hero-equipment-copy">${escapeHtml(slot.description)}</p>` : ""}
+              </article>
             `
           )
           .join("")}
@@ -2280,6 +2325,7 @@ function render(): void {
           <p data-testid="hero-army">Army ${hero?.armyTemplateId ?? "-"} x ${hero?.armyCount ?? 0}</p>
           <p data-testid="hero-skill-points">Skill Points ${hero?.progression.skillPoints ?? 0}</p>
           <p class="muted" data-testid="hero-preview">${state.previewPlan ? `预览消耗 ${state.previewPlan.moveCost} 步` : state.predictionStatus || "悬停地图格子查看路径"}</p>
+          ${renderHeroEquipmentPanel(hero)}
           ${renderHeroAttributePanel(hero, state.world)}
           <button class="modal-button" data-end-day="true" ${state.battle ? "disabled" : ""}>推进到下一天</button>
           ${renderHeroSkillTree(hero)}

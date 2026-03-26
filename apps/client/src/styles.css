@@ -387,7 +387,8 @@ h1 {
 }
 
 .hero-progress-panel,
-.hero-attribute-panel {
+.hero-attribute-panel,
+.hero-equipment-panel {
   display: grid;
   gap: 10px;
   margin-top: 12px;
@@ -461,6 +462,43 @@ h1 {
   margin-top: 14px;
   display: grid;
   gap: 12px;
+}
+
+.hero-equipment-list {
+  display: grid;
+  gap: 10px;
+}
+
+.hero-equipment-item {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid rgba(78, 58, 42, 0.08);
+}
+
+.hero-equipment-meta {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hero-equipment-slot,
+.hero-equipment-copy {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.hero-equipment-slot {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.hero-equipment-item p {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .hero-skill-tree-head {
