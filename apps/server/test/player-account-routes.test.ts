@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
 import { issueAccountAuthSession, issueGuestAuthSession } from "../src/auth";
+import { applyPlayerEventLogAndAchievements } from "../src/player-achievements";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import type {
+  PlayerAccountProgressPatch,
   PlayerAccountAuthSnapshot,
   PlayerAccountCredentialInput,
   PlayerAccountEnsureInput,
@@ -14,6 +16,7 @@ import type {
   RoomSnapshotStore
 } from "../src/persistence";
 import type { RoomPersistenceSnapshot } from "../src/index";
+import { createDefaultHeroLoadout, createDefaultHeroProgression, type WorldState } from "../../../packages/shared/src/index";
 
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
@@ -54,6 +57,8 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       playerId: input.playerId,
       displayName: input.displayName?.trim() || existing?.displayName || input.playerId,
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
+      achievements: structuredClone(existing?.achievements ?? []),
+      recentEventLog: structuredClone(existing?.recentEventLog ?? []),
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
@@ -121,6 +126,25 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return account;
   }
 
+  async savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
+      recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
+      ...(patch.lastRoomId !== undefined
+        ? patch.lastRoomId?.trim()
+          ? { lastRoomId: patch.lastRoomId.trim() }
+          : {}
+        : existing.lastRoomId
+          ? { lastRoomId: existing.lastRoomId }
+          : {}),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(playerId, account);
+    return account;
+  }
+
   async listPlayerAccounts(options: PlayerAccountListOptions = {}): Promise<PlayerAccountSnapshot[]> {
     const accounts = Array.from(this.accounts.values()).filter((account) =>
       options.playerId ? account.playerId === options.playerId : true
@@ -151,6 +175,52 @@ async function startAccountRouteServer(port: number, store: RoomSnapshotStore | 
   return server;
 }
 
+function createAccountTrackingWorldState(): WorldState {
+  return {
+    meta: {
+      roomId: "room-achievement",
+      seed: 1001,
+      day: 1
+    },
+    map: {
+      width: 1,
+      height: 1,
+      tiles: [
+        {
+          position: { x: 0, y: 0 },
+          terrain: "grass",
+          walkable: true,
+          resource: undefined,
+          occupant: undefined,
+          building: undefined
+        }
+      ]
+    },
+    heroes: [
+      {
+        id: "hero-1",
+        playerId: "player-1",
+        name: "暮火侦骑",
+        position: { x: 0, y: 0 },
+        vision: 2,
+        move: { total: 6, remaining: 6 },
+        stats: { attack: 2, defense: 2, power: 1, knowledge: 1, hp: 20, maxHp: 20 },
+        progression: createDefaultHeroProgression(),
+        loadout: createDefaultHeroLoadout(),
+        armyTemplateId: "hero_guard_basic",
+        armyCount: 12,
+        learnedSkills: []
+      }
+    ],
+    neutralArmies: {},
+    buildings: {},
+    resources: {
+      "player-1": { gold: 0, wood: 0, ore: 0 }
+    },
+    visibilityByPlayer: {}
+  };
+}
+
 test("player account routes list and fetch stored accounts", async (t) => {
   const port = 40000 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
@@ -158,6 +228,8 @@ test("player account routes list and fetch stored accounts", async (t) => {
     playerId: "player-1",
     displayName: "灰烬领主",
     globalResources: { gold: 320, wood: 5, ore: 1 },
+    achievements: [],
+    recentEventLog: [],
     lastRoomId: "room-alpha",
     lastSeenAt: new Date("2026-03-25T09:00:00.000Z").toISOString()
   });
@@ -177,6 +249,47 @@ test("player account routes list and fetch stored accounts", async (t) => {
   assert.equal(detailResponse.status, 200);
   assert.equal(detailPayload.account.playerId, "player-1");
   assert.equal(detailPayload.account.lastRoomId, "room-alpha");
+});
+
+test("player achievement tracker appends logs and unlocks milestones", () => {
+  const updated = applyPlayerEventLogAndAchievements(
+    {
+      playerId: "player-1",
+      displayName: "暮火侦骑",
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      recentEventLog: []
+    },
+    createAccountTrackingWorldState(),
+    [
+      {
+        type: "battle.started",
+        heroId: "hero-1",
+        encounterKind: "neutral",
+        battleId: "battle-1",
+        neutralArmyId: "neutral-1",
+        path: [{ x: 0, y: 0 }],
+        moveCost: 2
+      },
+      {
+        type: "hero.skillLearned",
+        heroId: "hero-1",
+        skillId: "skill-1",
+        branchId: "branch-1",
+        skillName: "远见",
+        branchName: "战略",
+        newRank: 1,
+        spentPoint: 1,
+        remainingSkillPoints: 0,
+        newlyGrantedBattleSkillIds: []
+      }
+    ],
+    "2026-03-27T12:00:00.000Z"
+  );
+
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "first_battle")?.unlocked, true);
+  assert.equal(updated.recentEventLog[0]?.category, "achievement");
+  assert.match(updated.recentEventLog.map((entry) => entry.description).join(" "), /解锁成就：初次交锋/);
 });
 
 test("player account routes update display names through the account store", async (t) => {
@@ -216,6 +329,8 @@ test("player account me routes resolve and update the current authenticated acco
     playerId: "player-me",
     displayName: "苍穹侦骑",
     globalResources: { gold: 12, wood: 3, ore: 4 },
+    achievements: [],
+    recentEventLog: [],
     lastRoomId: "room-old",
     lastSeenAt: new Date("2026-03-25T11:00:00.000Z").toISOString()
   });
@@ -277,6 +392,8 @@ test("player account me route preserves account-mode sessions and returns the gl
     playerId: "account-player",
     displayName: "暮潮守望",
     globalResources: { gold: 320, wood: 5, ore: 2 },
+    achievements: [],
+    recentEventLog: [],
     loginId: "veil-ranger",
     credentialBoundAt: new Date("2026-03-25T12:00:00.000Z").toISOString(),
     lastRoomId: "room-vault",

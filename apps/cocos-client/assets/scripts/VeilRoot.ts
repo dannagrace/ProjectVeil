@@ -133,6 +133,7 @@ export class VeilRoot extends Component {
   private lobbyEntering = false;
   private lobbyAccountProfile: CocosPlayerAccountProfile = createFallbackCocosPlayerAccountProfile("player-1", "test-room");
   private lobbyAccountEpoch = 0;
+  private gameplayAccountRefreshInFlight = false;
 
   onLoad(): void {
     this.hydrateLaunchIdentity();
@@ -542,6 +543,7 @@ export class VeilRoot extends Component {
       roomId: this.roomId,
       playerId: this.playerId,
       displayName: this.displayName || this.playerId,
+      account: this.lobbyAccountProfile,
       authMode: this.authMode,
       loginId: this.loginId,
       sessionSource: this.sessionSource,
@@ -1703,6 +1705,14 @@ export class VeilRoot extends Component {
     if (eventEntries.length > 0) {
       this.timelineEntries = collapseAdjacentEntries([...eventEntries, ...this.timelineEntries]).slice(0, 12);
     }
+    if (
+      update.events.some(
+        (event) =>
+          event.type === "battle.started" || event.type === "battle.resolved" || event.type === "hero.skillLearned"
+      )
+    ) {
+      void this.refreshGameplayAccountProfile();
+    }
     this.syncSelectedBattleTarget();
     this.playMapFeedbackForUpdate(update);
     this.maybeShowHeroProgressNotice(update);
@@ -1721,6 +1731,32 @@ export class VeilRoot extends Component {
     }
 
     this.renderView();
+  }
+
+  private async refreshGameplayAccountProfile(): Promise<void> {
+    if (this.gameplayAccountRefreshInFlight) {
+      return;
+    }
+
+    this.gameplayAccountRefreshInFlight = true;
+    try {
+      this.lobbyAccountProfile = await loadCocosPlayerAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
+        storage: this.readWebStorage(),
+        authSession: this.authToken
+          ? {
+              token: this.authToken,
+              playerId: this.playerId,
+              displayName: this.displayName || this.playerId,
+              authMode: this.authMode,
+              ...(this.loginId ? { loginId: this.loginId } : {}),
+              source: "remote"
+            }
+          : null
+      });
+      this.renderView();
+    } finally {
+      this.gameplayAccountRefreshInFlight = false;
+    }
   }
 
   private maybeShowHeroProgressNotice(update: SessionUpdate): void {

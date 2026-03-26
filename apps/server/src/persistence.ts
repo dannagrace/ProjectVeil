@@ -1,5 +1,14 @@
 import { createConnection, createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
-import { normalizeHeroState, type HeroState, type ResourceLedger, type WorldState } from "../../../packages/shared/src/index";
+import {
+  normalizeAchievementProgress,
+  normalizeEventLogEntries,
+  normalizeHeroState,
+  type EventLogEntry,
+  type HeroState,
+  type PlayerAchievementProgress,
+  type ResourceLedger,
+  type WorldState
+} from "../../../packages/shared/src/index";
 import type { RoomPersistenceSnapshot } from "./index";
 
 export interface RoomSnapshotStore {
@@ -15,6 +24,7 @@ export interface RoomSnapshotStore {
     input: PlayerAccountCredentialInput
   ): Promise<PlayerAccountSnapshot>;
   savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot>;
+  savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot>;
   listPlayerAccounts(options?: PlayerAccountListOptions): Promise<PlayerAccountSnapshot[]>;
   save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void>;
   delete(roomId: string): Promise<void>;
@@ -73,6 +83,8 @@ interface PlayerAccountRow extends RowDataPacket {
   player_id: string;
   display_name: string | null;
   global_resources_json: string | ResourceLedger;
+  achievements_json: string | PlayerAchievementProgress[] | null;
+  recent_event_log_json: string | EventLogEntry[] | null;
   last_room_id: string | null;
   last_seen_at: Date | string | null;
   login_id: string | null;
@@ -120,6 +132,8 @@ export interface PlayerAccountSnapshot {
   playerId: string;
   displayName: string;
   globalResources: ResourceLedger;
+  achievements: PlayerAchievementProgress[];
+  recentEventLog: EventLogEntry[];
   lastRoomId?: string;
   lastSeenAt?: string;
   loginId?: string;
@@ -150,6 +164,12 @@ export interface PlayerAccountEnsureInput {
 
 export interface PlayerAccountProfilePatch {
   displayName?: string;
+  lastRoomId?: string | null;
+}
+
+export interface PlayerAccountProgressPatch {
+  achievements?: Partial<PlayerAchievementProgress>[] | null;
+  recentEventLog?: Partial<EventLogEntry>[] | null;
   lastRoomId?: string | null;
 }
 
@@ -279,6 +299,8 @@ function normalizePlayerAccountSnapshot(account: {
   playerId: string;
   displayName?: string | null | undefined;
   globalResources?: Partial<ResourceLedger>;
+  achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
+  recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
   loginId?: string | null | undefined;
@@ -292,6 +314,8 @@ function normalizePlayerAccountSnapshot(account: {
     playerId,
     displayName: normalizePlayerDisplayName(playerId, account.displayName),
     globalResources: normalizeResourceLedger(account.globalResources),
+    achievements: normalizeAchievementProgress(account.achievements),
+    recentEventLog: normalizeEventLogEntries(account.recentEventLog),
     ...(account.lastRoomId ? { lastRoomId: account.lastRoomId } : {}),
     ...(account.lastSeenAt ? { lastSeenAt: account.lastSeenAt } : {}),
     ...(account.loginId ? { loginId: normalizePlayerLoginId(account.loginId) } : {}),
@@ -334,7 +358,9 @@ export function createPlayerAccountsFromWorldState(state: WorldState): PlayerAcc
   return collectPlayerIds(state).map((playerId) => ({
     playerId,
     displayName: normalizePlayerDisplayName(playerId),
-    globalResources: normalizeResourceLedger(state.resources[playerId])
+    globalResources: normalizeResourceLedger(state.resources[playerId]),
+    achievements: normalizeAchievementProgress(),
+    recentEventLog: normalizeEventLogEntries()
   }));
 }
 
@@ -542,6 +568,8 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   display_name VARCHAR(80) NULL,
   global_resources_json LONGTEXT NOT NULL,
+  achievements_json LONGTEXT NULL,
+  recent_event_log_json LONGTEXT NULL,
   last_room_id VARCHAR(191) NULL,
   last_seen_at DATETIME NULL DEFAULT NULL,
   login_id VARCHAR(40) NULL,
@@ -571,6 +599,42 @@ PREPARE veil_player_accounts_display_name_stmt FROM @veil_player_accounts_displa
 EXECUTE veil_player_accounts_display_name_stmt;
 DEALLOCATE PREPARE veil_player_accounts_display_name_stmt;
 
+SET @veil_player_accounts_achievements_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'achievements_json'
+);
+
+SET @veil_player_accounts_achievements_sql := IF(
+  @veil_player_accounts_achievements_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`achievements_json\` LONGTEXT NULL AFTER \`global_resources_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_achievements_stmt FROM @veil_player_accounts_achievements_sql;
+EXECUTE veil_player_accounts_achievements_stmt;
+DEALLOCATE PREPARE veil_player_accounts_achievements_stmt;
+
+SET @veil_player_accounts_event_log_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'recent_event_log_json'
+);
+
+SET @veil_player_accounts_event_log_sql := IF(
+  @veil_player_accounts_event_log_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`recent_event_log_json\` LONGTEXT NULL AFTER \`achievements_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_event_log_stmt FROM @veil_player_accounts_event_log_sql;
+EXECUTE veil_player_accounts_event_log_stmt;
+DEALLOCATE PREPARE veil_player_accounts_event_log_stmt;
+
 SET @veil_player_accounts_last_room_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.COLUMNS
@@ -581,7 +645,7 @@ SET @veil_player_accounts_last_room_exists := (
 
 SET @veil_player_accounts_last_room_sql := IF(
   @veil_player_accounts_last_room_exists = 0,
-  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`last_room_id\` VARCHAR(191) NULL AFTER \`global_resources_json\`',
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`last_room_id\` VARCHAR(191) NULL AFTER \`recent_event_log_json\`',
   'SELECT 1'
 );
 
@@ -872,6 +936,14 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
   return normalizePlayerAccountSnapshot({
     playerId: row.player_id,
     globalResources: parseJsonColumn<ResourceLedger>(row.global_resources_json),
+    achievements:
+      row.achievements_json != null
+        ? parseJsonColumn<PlayerAchievementProgress[]>(row.achievements_json)
+        : [],
+    recentEventLog:
+      row.recent_event_log_json != null
+        ? parseJsonColumn<EventLogEntry[]>(row.recent_event_log_json)
+        : [],
     ...(row.display_name ? { displayName: row.display_name } : {}),
     ...(row.last_room_id ? { lastRoomId: row.last_room_id } : {}),
     ...(row.login_id ? { loginId: row.login_id } : {}),
@@ -939,16 +1011,26 @@ async function savePlayerAccounts(
   for (const account of accounts) {
     const normalizedAccount = normalizePlayerAccountSnapshot(account);
     await connection.query(
-      `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (player_id, display_name, global_resources_json)
-       VALUES (?, ?, ?)
+      `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
+         player_id,
+         display_name,
+         global_resources_json,
+         achievements_json,
+         recent_event_log_json
+       )
+       VALUES (?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          global_resources_json = VALUES(global_resources_json),
+         achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
+         recent_event_log_json = COALESCE(recent_event_log_json, VALUES(recent_event_log_json)),
          version = version + 1`,
       [
         normalizedAccount.playerId,
         normalizedAccount.displayName,
-        JSON.stringify(normalizedAccount.globalResources)
+        JSON.stringify(normalizedAccount.globalResources),
+        JSON.stringify(normalizedAccount.achievements),
+        JSON.stringify(normalizedAccount.recentEventLog)
       ]
     );
   }
@@ -1067,6 +1149,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         player_id VARCHAR(191) NOT NULL,
         display_name VARCHAR(80) NULL,
         global_resources_json LONGTEXT NOT NULL,
+        achievements_json LONGTEXT NULL,
+        recent_event_log_json LONGTEXT NULL,
         last_room_id VARCHAR(191) NULL,
         last_seen_at DATETIME NULL DEFAULT NULL,
         login_id VARCHAR(40) NULL,
@@ -1115,8 +1199,22 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       pool,
       config.database,
       MYSQL_PLAYER_ACCOUNT_TABLE,
+      "achievements_json",
+      "`achievements_json` LONGTEXT NULL AFTER `global_resources_json`"
+    );
+    await ensureColumnExists(
+      pool,
+      config.database,
+      MYSQL_PLAYER_ACCOUNT_TABLE,
+      "recent_event_log_json",
+      "`recent_event_log_json` LONGTEXT NULL AFTER `achievements_json`"
+    );
+    await ensureColumnExists(
+      pool,
+      config.database,
+      MYSQL_PLAYER_ACCOUNT_TABLE,
       "last_room_id",
-      "`last_room_id` VARCHAR(191) NULL AFTER `global_resources_json`"
+      "`last_room_id` VARCHAR(191) NULL AFTER `recent_event_log_json`"
     );
     await ensureColumnExists(
       pool,
@@ -1342,6 +1440,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          global_resources_json,
+         achievements_json,
+         recent_event_log_json,
          last_room_id,
          last_seen_at,
          login_id,
@@ -1370,6 +1470,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          global_resources_json,
+         achievements_json,
+         recent_event_log_json,
          last_room_id,
          last_seen_at,
          login_id,
@@ -1415,10 +1517,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          global_resources_json,
+         achievements_json,
+         recent_event_log_json,
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(?, display_name),
          last_room_id = COALESCE(?, last_room_id),
@@ -1428,6 +1532,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         playerId,
         insertDisplayName,
         JSON.stringify(normalizeResourceLedger()),
+        JSON.stringify(normalizeAchievementProgress()),
+        JSON.stringify(normalizeEventLogEntries()),
         lastRoomId,
         lastSeenAt,
         explicitDisplayName,
@@ -1441,6 +1547,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         playerId,
         displayName: insertDisplayName,
         globalResources: normalizeResourceLedger(),
+        achievements: normalizeAchievementProgress(),
+        recentEventLog: normalizeEventLogEntries(),
         ...(lastRoomId ? { lastRoomId } : {}),
         lastSeenAt: lastSeenAt.toISOString()
       })
@@ -1519,13 +1627,17 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          global_resources_json,
+         achievements_json,
+         recent_event_log_json,
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          global_resources_json = VALUES(global_resources_json),
+         achievements_json = VALUES(achievements_json),
+         recent_event_log_json = VALUES(recent_event_log_json),
          last_room_id = VALUES(last_room_id),
          last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
          version = version + 1`,
@@ -1533,6 +1645,71 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.playerId,
         nextAccount.displayName,
         JSON.stringify(nextAccount.globalResources),
+        JSON.stringify(nextAccount.achievements),
+        JSON.stringify(nextAccount.recentEventLog),
+        nextAccount.lastRoomId ?? null,
+        existing.lastSeenAt ? new Date(existing.lastSeenAt) : null
+      ]
+    );
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        ...nextAccount,
+        ...(existing.lastSeenAt ? { lastSeenAt: existing.lastSeenAt } : {})
+      })
+    );
+  }
+
+  async savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existing =
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        playerId: normalizedPlayerId,
+        displayName: normalizedPlayerId,
+        globalResources: normalizeResourceLedger()
+      });
+
+    const nextAccount = normalizePlayerAccountSnapshot({
+      ...existing,
+      playerId: normalizedPlayerId,
+      achievements: patch.achievements ?? existing.achievements,
+      recentEventLog: patch.recentEventLog ?? existing.recentEventLog,
+      ...(patch.lastRoomId !== undefined
+        ? patch.lastRoomId
+          ? { lastRoomId: patch.lastRoomId.trim() }
+          : {}
+        : existing.lastRoomId
+          ? { lastRoomId: existing.lastRoomId }
+          : {})
+    });
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
+         player_id,
+         display_name,
+         global_resources_json,
+         achievements_json,
+         recent_event_log_json,
+         last_room_id,
+         last_seen_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = VALUES(display_name),
+         global_resources_json = VALUES(global_resources_json),
+         achievements_json = VALUES(achievements_json),
+         recent_event_log_json = VALUES(recent_event_log_json),
+         last_room_id = VALUES(last_room_id),
+         last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
+         version = version + 1`,
+      [
+        nextAccount.playerId,
+        nextAccount.displayName,
+        JSON.stringify(nextAccount.globalResources),
+        JSON.stringify(nextAccount.achievements),
+        JSON.stringify(nextAccount.recentEventLog),
         nextAccount.lastRoomId ?? null,
         existing.lastSeenAt ? new Date(existing.lastSeenAt) : null
       ]
@@ -1563,6 +1740,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          global_resources_json,
+         achievements_json,
+         recent_event_log_json,
          last_room_id,
          last_seen_at,
          login_id,

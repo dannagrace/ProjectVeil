@@ -120,11 +120,13 @@ test("applyPlayerAccountsToWorldState overlays global resources without replacin
   const merged = applyPlayerAccountsToWorldState(snapshot.state, [
     {
       playerId: "player-1",
+      achievements: [],
       globalResources: {
         gold: 900,
         wood: 6,
         ore: 2
-      }
+      },
+      recentEventLog: []
     }
   ]);
 

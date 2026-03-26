@@ -17,6 +17,7 @@ import {
   applyPlayerHeroArchivesToWorldState,
   type RoomSnapshotStore
 } from "./persistence";
+import { applyPlayerEventLogAndAchievements } from "./player-achievements";
 import { resolveGuestAuthSession } from "./auth";
 
 type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;
@@ -225,6 +226,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
         return;
       }
+      await this.persistPlayerAccountProgress(result.events ?? []);
 
       this.publishLobbyRoomSummary();
       sendMessage(client, "session.state", {
@@ -259,6 +261,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
         return;
       }
+      await this.persistPlayerAccountProgress(result.events ?? []);
 
       this.publishLobbyRoomSummary();
       sendMessage(client, "session.state", {
@@ -323,6 +326,39 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     await configuredRoomSnapshotStore.save(this.metadata.logicalRoomId, this.worldRoom.serializePersistenceSnapshot());
+  }
+
+  private async persistPlayerAccountProgress(events: WorldEvent[]): Promise<void> {
+    const store = configuredRoomSnapshotStore;
+    if (!store || events.length === 0) {
+      return;
+    }
+
+    const internalState = this.worldRoom.getInternalState();
+    const playerIds = Array.from(new Set(internalState.heroes.map((hero) => hero.playerId)));
+    const accounts = await store.loadPlayerAccounts(playerIds);
+
+    await Promise.all(
+      playerIds.map(async (playerId) => {
+        const playerEvents = filterWorldEventsForPlayer(internalState, playerId, events);
+        if (playerEvents.length === 0) {
+          return;
+        }
+
+        const existingAccount =
+          accounts.find((account) => account.playerId === playerId) ??
+          (await store.ensurePlayerAccount({
+            playerId,
+            lastRoomId: this.metadata.logicalRoomId
+          }));
+        const nextAccount = applyPlayerEventLogAndAchievements(existingAccount, internalState, playerEvents);
+        await store.savePlayerAccountProgress(playerId, {
+          achievements: nextAccount.achievements,
+          recentEventLog: nextAccount.recentEventLog,
+          lastRoomId: this.metadata.logicalRoomId
+        });
+      })
+    ).catch(() => undefined);
   }
 
   private publishLobbyRoomSummary(): void {

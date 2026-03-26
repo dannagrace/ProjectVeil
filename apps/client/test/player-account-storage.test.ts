@@ -40,6 +40,36 @@ test("player account helpers can build a local fallback profile", () => {
       wood: 0,
       ore: 0
     },
+    achievements: [
+      {
+        id: "first_battle",
+        title: "初次交锋",
+        description: "首次进入战斗。",
+        metric: "battles_started",
+        current: 0,
+        target: 1,
+        unlocked: false
+      },
+      {
+        id: "enemy_slayer",
+        title: "猎敌者",
+        description: "击败 3 名敌人或中立守军。",
+        metric: "battles_won",
+        current: 0,
+        target: 3,
+        unlocked: false
+      },
+      {
+        id: "skill_scholar",
+        title: "求知者",
+        description: "学习 5 个长期技能。",
+        metric: "skills_learned",
+        current: 0,
+        target: 5,
+        unlocked: false
+      }
+    ],
+    recentEventLog: [],
     lastRoomId: "room-beta",
     source: "local"
   });

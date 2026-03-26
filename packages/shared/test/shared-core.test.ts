@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   applyBattleAction,
+  appendEventLogEntries,
   applyBattleOutcomeToWorld,
+  applyAchievementMetricDelta,
   createHeroAttributeBreakdown,
   createHeroEquipmentBonusSummary,
   createHeroEquipmentLoadoutView,
@@ -23,6 +25,7 @@ import {
   encodePlayerWorldView,
   filterWorldEventsForPlayer,
   getBattleBalanceConfig,
+  getAchievementDefinitions,
   getDefaultMapObjectsConfig,
   getDefaultBattleSkillCatalog,
   getDefaultHeroSkillTreeConfig,
@@ -199,6 +202,61 @@ test("typed-array world map payload decodes back to the original player world vi
   const view = createLargePlayerWorldView();
 
   assert.deepEqual(decodePlayerWorldView(encodePlayerWorldView(view)), view);
+});
+
+test("achievement helpers unlock milestones and preserve catalog order", () => {
+  const firstPass = applyAchievementMetricDelta([], "battles_started", 1, "2026-03-27T10:00:00.000Z");
+  assert.equal(firstPass.unlocked[0]?.id, "first_battle");
+  assert.equal(firstPass.progress[0]?.unlocked, true);
+
+  const secondPass = applyAchievementMetricDelta(firstPass.progress, "skills_learned", 5, "2026-03-27T10:01:00.000Z");
+  assert.equal(secondPass.unlocked[0]?.id, "skill_scholar");
+  assert.deepEqual(
+    secondPass.progress.map((achievement) => achievement.id),
+    getAchievementDefinitions().map((achievement) => achievement.id)
+  );
+});
+
+test("event log helper keeps newest unique entries first", () => {
+  const merged = appendEventLogEntries(
+    [
+      {
+        id: "older",
+        timestamp: "2026-03-27T09:58:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "movement",
+        description: "older",
+        rewards: []
+      }
+    ],
+    [
+      {
+        id: "newer",
+        timestamp: "2026-03-27T10:00:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "achievement",
+        description: "newer",
+        rewards: []
+      },
+      {
+        id: "older",
+        timestamp: "2026-03-27T09:58:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "movement",
+        description: "older",
+        rewards: []
+      }
+    ],
+    4
+  );
+
+  assert.deepEqual(
+    merged.map((entry) => entry.id),
+    ["newer", "older"]
+  );
 });
 
 test("typed-array world map payload is materially smaller than the raw tile JSON on a 32x32 map", () => {

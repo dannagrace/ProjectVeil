@@ -8,6 +8,7 @@ import { createHeroSkillTreeView } from "../../../../packages/shared/src/hero-sk
 import type { BattleSkillId, HeroState } from "../../../../packages/shared/src/models.ts";
 import { getDefaultBattleSkillCatalog } from "../../../../packages/shared/src/world-config.ts";
 import type { SessionUpdate } from "./VeilCocosSession.ts";
+import type { CocosPlayerAccountProfile } from "./cocos-lobby.ts";
 import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 
@@ -141,6 +142,7 @@ export interface VeilHudRenderState {
   roomId: string;
   playerId: string;
   displayName: string;
+  account: CocosPlayerAccountProfile;
   authMode: "guest" | "account";
   loginId: string;
   sessionSource: "remote" | "local" | "manual" | "none";
@@ -161,6 +163,19 @@ export interface VeilHudPanelOptions {
   onLearnSkill?: (skillId: string) => void;
   onEndDay?: () => void;
   onReturnLobby?: () => void;
+}
+
+function formatAchievementSummary(account: CocosPlayerAccountProfile): string {
+  const unlocked = account.achievements.filter((achievement) => achievement.unlocked).length;
+  const latestUnlocked = account.achievements.find((achievement) => achievement.unlockedAt);
+  return latestUnlocked
+    ? `成就 ${unlocked}/${account.achievements.length} · 最新 ${latestUnlocked.title}`
+    : `成就 ${unlocked}/${account.achievements.length} · 尚未解锁`;
+}
+
+function formatRecentEventLog(account: CocosPlayerAccountProfile): string {
+  const latest = account.recentEventLog[0];
+  return latest ? `日志 ${latest.description}` : "日志 尚未记录关键事件";
 }
 
 @ccclass("ProjectVeilHudPanel")
@@ -315,14 +330,14 @@ export class VeilHudPanel extends Component {
     cursorY = this.renderCardBlock(
       this.statusLabel,
       `${CARD_PREFIX}-status`,
-      [statusTitle, statusDetail],
+      [statusTitle, statusDetail, formatAchievementSummary(state.account), formatRecentEventLog(state.account)],
       cursorY,
       12,
       16,
       cardWidth,
       leftX,
-      2,
-      62
+      4,
+      98
     );
 
     if (resources) {
