@@ -419,6 +419,24 @@ test("config center save creates automatic version snapshots and skips no-op sav
   assert.match(snapshots[0]?.label ?? "", /自动保存/);
 });
 
+test("config center export updates exportedAt metadata without changing version", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const beforeExport = await store.loadDocument("world");
+  assert.equal(beforeExport.exportedAt ?? null, null);
+
+  const exported = await store.exportDocument("world", "jsonc");
+  const afterExport = await store.loadDocument("world");
+
+  assert.match(exported.fileName, /^world-v1\.jsonc$/);
+  assert.equal(typeof exported.exportedAt, "string");
+  assert.equal(afterExport.version, beforeExport.version);
+  assert.equal(afterExport.exportedAt, exported.exportedAt);
+  assert.equal((await store.listDocuments()).find((item) => item.id === "world")?.exportedAt, exported.exportedAt);
+});
+
 test("config center presets and workbook import/export roundtrip", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
   await seedConfigRoot(rootDir);
@@ -438,6 +456,7 @@ test("config center presets and workbook import/export roundtrip", async () => {
   assert.deepEqual(workbook.SheetNames, ["Meta", "Schema", "Fields"]);
   const fieldRows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets.Fields);
   assert.equal(fieldRows.some((row) => row.Path === "skills[0].id" && row.Description?.includes("技能 id")), true);
+  assert.equal((await store.loadDocument("battleSkills")).exportedAt, exported.exportedAt);
 
   const csvExported = await store.exportDocument("battleSkills", "csv");
   assert.match(csvExported.fileName, /\.csv$/);

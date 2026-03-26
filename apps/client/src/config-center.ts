@@ -182,6 +182,12 @@ interface ApiErrorPayload {
   };
 }
 
+interface DownloadPayload {
+  blob: Blob;
+  fileName: string | null;
+  exportedAt: string | null;
+}
+
 interface AppState {
   items: ConfigDocumentSummary[];
   current: ConfigDocument | null;
@@ -401,7 +407,30 @@ async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T
   return data;
 }
 
-async function requestBlob(input: RequestInfo, init?: RequestInit): Promise<Blob> {
+function parseDownloadFileName(headerValue: string | null): string | null {
+  if (!headerValue) {
+    return null;
+  }
+
+  const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const quotedMatch = headerValue.match(/filename="([^"]+)"/i);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1];
+  }
+
+  const plainMatch = headerValue.match(/filename=([^;]+)/i);
+  return plainMatch?.[1]?.trim() ?? null;
+}
+
+async function requestDownload(input: RequestInfo, init?: RequestInit): Promise<DownloadPayload> {
   const response = await fetch(input, init);
   if (!response.ok) {
     let errorMessage = `Request failed: ${response.status}`;
@@ -414,7 +443,11 @@ async function requestBlob(input: RequestInfo, init?: RequestInit): Promise<Blob
     throw new Error(errorMessage);
   }
 
-  return response.blob();
+  return {
+    blob: await response.blob(),
+    fileName: parseDownloadFileName(response.headers.get("Content-Disposition")),
+    exportedAt: response.headers.get("X-Config-Exported-At")
+  };
 }
 
 function serializeDisplayValue(value: string): string {
@@ -928,13 +961,20 @@ async function exportCurrentDocument(format: "xlsx" | "jsonc" | "csv"): Promise<
   }
 
   try {
-    const blob = await requestBlob(`/api/config-center/configs/${state.current.id}/export?format=${format}`);
-    const href = URL.createObjectURL(blob);
+    const download = await requestDownload(`/api/config-center/configs/${state.current.id}/export?format=${format}`);
+    const href = URL.createObjectURL(download.blob);
     const anchor = document.createElement("a");
     anchor.href = href;
-    anchor.download = `${state.current.id}.${format}`;
+    anchor.download = download.fileName ?? `${state.current.id}.${format}`;
     anchor.click();
     URL.revokeObjectURL(href);
+    if (state.current) {
+      state.current.exportedAt = download.exportedAt ?? new Date().toISOString();
+      const item = state.items.find((entry) => entry.id === state.current?.id);
+      if (item) {
+        item.exportedAt = state.current.exportedAt;
+      }
+    }
     state.statusTone = "success";
     state.statusMessage =
       format === "xlsx" ? "已导出 Excel 工作簿" : format === "csv" ? "已导出字段清单 CSV" : "已导出 JSON 注释版";

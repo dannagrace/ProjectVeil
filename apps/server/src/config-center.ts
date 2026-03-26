@@ -209,6 +209,7 @@ export interface ConfigCenterStore {
     fileName: string;
     contentType: string;
     body: Buffer;
+    exportedAt: string;
   }>;
   importDocumentFromWorkbook(id: ConfigDocumentId, workbook: Buffer): Promise<ConfigDocument>;
   close(): Promise<void>;
@@ -260,6 +261,7 @@ interface ConfigPresetRecord {
 
 interface ConfigCenterLibraryState {
   filesystemVersions: Partial<Record<ConfigDocumentId, number>>;
+  filesystemExports: Partial<Record<ConfigDocumentId, string>>;
   snapshots: Partial<Record<ConfigDocumentId, ConfigSnapshotRecord[]>>;
   presets: Partial<Record<ConfigDocumentId, ConfigPresetRecord[]>>;
 }
@@ -542,6 +544,7 @@ const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
 function createEmptyLibraryState(): ConfigCenterLibraryState {
   return {
     filesystemVersions: {},
+    filesystemExports: {},
     snapshots: {},
     presets: {}
   };
@@ -1943,6 +1946,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
       const parsed = JSON.parse(content) as Partial<ConfigCenterLibraryState>;
       return {
         filesystemVersions: parsed.filesystemVersions ?? {},
+        filesystemExports: parsed.filesystemExports ?? {},
         snapshots: parsed.snapshots ?? {},
         presets: parsed.presets ?? {}
       };
@@ -1967,6 +1971,17 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
   protected async setFilesystemVersion(id: ConfigDocumentId, version: number): Promise<void> {
     const state = await this.readLibraryState();
     state.filesystemVersions[id] = version;
+    await this.writeLibraryState(state);
+  }
+
+  protected async getFilesystemExportedAt(id: ConfigDocumentId): Promise<string | null> {
+    const state = await this.readLibraryState();
+    return state.filesystemExports[id] ?? null;
+  }
+
+  protected async setFilesystemExportedAt(id: ConfigDocumentId, exportedAt: string): Promise<void> {
+    const state = await this.readLibraryState();
+    state.filesystemExports[id] = exportedAt;
     await this.writeLibraryState(state);
   }
 
@@ -2142,24 +2157,29 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
     fileName: string;
     contentType: string;
     body: Buffer;
+    exportedAt: string;
   }> {
     const document = await this.loadDocument(id);
+    const exportedAt = await this.markDocumentExported(id);
     return format === "xlsx"
       ? {
           fileName: `${id}-v${document.version ?? 1}.xlsx`,
           contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          body: buildWorkbookForDocument(document)
+          body: buildWorkbookForDocument(document),
+          exportedAt
         }
       : format === "csv"
         ? {
             fileName: `${id}-v${document.version ?? 1}.csv`,
             contentType: "text/csv; charset=utf-8",
-            body: buildCsvForDocument(document)
+            body: buildCsvForDocument(document),
+            exportedAt
           }
         : {
           fileName: `${id}-v${document.version ?? 1}.jsonc`,
           contentType: "application/jsonc; charset=utf-8",
-          body: buildCommentedJson(document)
+          body: buildCommentedJson(document),
+          exportedAt
         };
   }
 
@@ -2170,6 +2190,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
 
   abstract loadDocument(id: ConfigDocumentId): Promise<ConfigDocument>;
   abstract saveDocument(id: ConfigDocumentId, content: string): Promise<ConfigDocument>;
+  protected abstract markDocumentExported(id: ConfigDocumentId): Promise<string>;
   abstract close(): Promise<void>;
 }
 
@@ -2188,7 +2209,8 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
 
     return this.buildDocument(definition, normalizeJsonContent(parsed), {
       updatedAt: fileStats.mtime.toISOString(),
-      version: (await this.getFilesystemVersion(id)) ?? 1
+      version: (await this.getFilesystemVersion(id)) ?? 1,
+      exportedAt: await this.getFilesystemExportedAt(id)
     });
   }
 
@@ -2215,6 +2237,12 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
 
   async close(): Promise<void> {
     return;
+  }
+
+  protected async markDocumentExported(id: ConfigDocumentId): Promise<string> {
+    const exportedAt = new Date().toISOString();
+    await this.setFilesystemExportedAt(id, exportedAt);
+    return exportedAt;
   }
 }
 
@@ -2323,18 +2351,11 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
        VALUES (?, ?, NULL)
        ON DUPLICATE KEY UPDATE
          content_json = VALUES(content_json),
-         exported_at = NULL,
          version = version + 1`,
       [id, serialized]
     );
 
     await this.exportDocumentToFile(id, serialized);
-    await this.pool.query(
-      `UPDATE \`${MYSQL_CONFIG_DOCUMENT_TABLE}\`
-       SET exported_at = CURRENT_TIMESTAMP
-       WHERE document_id = ?`,
-      [id]
-    );
     applyRuntimeBundle(bundle);
 
     const saved = await this.loadDocument(id);
@@ -2344,6 +2365,17 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
 
   async close(): Promise<void> {
     await this.pool.end();
+  }
+
+  protected async markDocumentExported(id: ConfigDocumentId): Promise<string> {
+    await this.pool.query(
+      `UPDATE \`${MYSQL_CONFIG_DOCUMENT_TABLE}\`
+       SET exported_at = CURRENT_TIMESTAMP
+       WHERE document_id = ?`,
+      [id]
+    );
+    const row = await this.loadRow(id);
+    return formatTimestamp(row?.exported_at) ?? new Date().toISOString();
   }
 
   describe(): string {
@@ -2367,12 +2399,6 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
         [definition.id, serialized]
       );
       await this.exportDocumentToFile(definition.id, serialized);
-      await this.pool.query(
-        `UPDATE \`${MYSQL_CONFIG_DOCUMENT_TABLE}\`
-         SET exported_at = CURRENT_TIMESTAMP
-         WHERE document_id = ?`,
-        [definition.id]
-      );
     }
   }
 
@@ -2712,6 +2738,7 @@ export function registerConfigCenterRoutes(
       response.statusCode = 200;
       response.setHeader("Content-Type", exported.contentType);
       response.setHeader("Content-Disposition", `attachment; filename="${exported.fileName}"`);
+      response.setHeader("X-Config-Exported-At", exported.exportedAt);
       response.end(exported.body);
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
