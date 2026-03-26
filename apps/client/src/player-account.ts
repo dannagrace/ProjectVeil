@@ -12,6 +12,11 @@ const PLAYER_ACCOUNT_REQUEST_TIMEOUT_MS = 1200;
 export interface PlayerAccountProfile {
   playerId: string;
   displayName: string;
+  globalResources: {
+    gold: number;
+    wood: number;
+    ore: number;
+  };
   loginId?: string;
   credentialBoundAt?: string;
   lastRoomId?: string;
@@ -23,6 +28,11 @@ interface PlayerAccountApiPayload {
   account?: {
     playerId?: string;
     displayName?: string;
+    globalResources?: {
+      gold?: number;
+      wood?: number;
+      ore?: number;
+    };
     loginId?: string;
     credentialBoundAt?: string;
     lastRoomId?: string;
@@ -46,6 +56,16 @@ function normalizePlayerDisplayName(playerId: string, displayName?: string | nul
 function normalizeLoginId(loginId?: string | null): string | undefined {
   const normalized = loginId?.trim().toLowerCase();
   return normalized ? normalized : undefined;
+}
+
+function normalizeGlobalResources(
+  resources?: NonNullable<PlayerAccountApiPayload["account"]>["globalResources"] | null
+): PlayerAccountProfile["globalResources"] {
+  return {
+    gold: Math.max(0, Math.floor(resources?.gold ?? 0)),
+    wood: Math.max(0, Math.floor(resources?.wood ?? 0)),
+    ore: Math.max(0, Math.floor(resources?.ore ?? 0))
+  };
 }
 
 function getPlayerAccountStorage(): Storage | null {
@@ -108,6 +128,7 @@ function asPlayerAccountProfile(
   return {
     playerId,
     displayName: normalizePlayerDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
+    globalResources: normalizeGlobalResources(account?.globalResources),
     ...(loginId ? { loginId } : {}),
     ...(account?.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
     ...(account?.lastRoomId ? { lastRoomId: account.lastRoomId } : roomId ? { lastRoomId: roomId } : {}),
@@ -144,6 +165,7 @@ export function createFallbackPlayerAccountProfile(
   return {
     playerId,
     displayName: normalizePlayerDisplayName(playerId, displayName),
+    globalResources: normalizeGlobalResources(),
     ...(roomId ? { lastRoomId: roomId } : {}),
     source: "local"
   };

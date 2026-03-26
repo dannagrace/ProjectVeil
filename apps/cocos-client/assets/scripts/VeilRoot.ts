@@ -11,14 +11,19 @@ import {
 } from "./VeilCocosSession.ts";
 import {
   clearCurrentCocosAuthSession,
+  createFallbackCocosPlayerAccountProfile,
   createCocosGuestPlayerId,
   createCocosLobbyPreferences,
   loadCocosLobbyRooms,
+  loadCocosPlayerAccountProfile,
+  loginCocosPasswordAuthSession,
   loginCocosGuestAuthSession,
   readPreferredCocosDisplayName,
   rememberPreferredCocosDisplayName,
   saveCocosLobbyPreferences,
-  type CocosLobbyRoomSummary
+  syncCurrentCocosAuthSession,
+  type CocosLobbyRoomSummary,
+  type CocosPlayerAccountProfile
 } from "./cocos-lobby.ts";
 import { type CocosWorldAction, predictPlayerWorldAction } from "./cocos-prediction.ts";
 import { VeilBattleTransition } from "./VeilBattleTransition.ts";
@@ -115,12 +120,16 @@ export class VeilRoot extends Component {
   private hudActionBinding = false;
   private sessionEpoch = 0;
   private authToken: string | null = null;
+  private authMode: "guest" | "account" = "guest";
+  private loginId = "";
   private sessionSource: "remote" | "local" | "manual" | "none" = "none";
   private showLobby = false;
   private lobbyRooms: CocosLobbyRoomSummary[] = [];
   private lobbyStatus = "请选择一个房间，或手动输入新的房间 ID。";
   private lobbyLoading = false;
   private lobbyEntering = false;
+  private lobbyAccountProfile: CocosPlayerAccountProfile = createFallbackCocosPlayerAccountProfile("player-1", "test-room");
+  private lobbyAccountEpoch = 0;
 
   onLoad(): void {
     this.hydrateLaunchIdentity();
@@ -136,7 +145,7 @@ export class VeilRoot extends Component {
     }
 
     if (this.showLobby) {
-      void this.refreshLobbyRoomList();
+      void this.syncLobbyBootstrap();
       return;
     }
 
@@ -322,14 +331,20 @@ export class VeilRoot extends Component {
       onEditRoomId: () => {
         this.promptForLobbyField("roomId");
       },
+      onEditLoginId: () => {
+        this.promptForLobbyField("loginId");
+      },
       onRefresh: () => {
         void this.refreshLobbyRoomList();
       },
       onEnterRoom: () => {
         void this.enterLobbyRoom();
       },
+      onLoginAccount: () => {
+        void this.loginLobbyAccount();
+      },
       onLogout: () => {
-        this.logoutGuestSession();
+        this.logoutAuthSession();
       },
       onJoinRoom: (roomId) => {
         void this.enterLobbyRoom(roomId);
@@ -455,6 +470,9 @@ export class VeilRoot extends Component {
         playerId: this.playerId,
         displayName: this.displayName || this.playerId,
         roomId: this.roomId,
+        authMode: this.authMode,
+        loginId: this.loginId,
+        vaultSummary: this.formatLobbyVaultSummary(),
         sessionSource: this.sessionSource,
         loading: this.lobbyLoading,
         entering: this.lobbyEntering,
@@ -468,6 +486,8 @@ export class VeilRoot extends Component {
       roomId: this.roomId,
       playerId: this.playerId,
       displayName: this.displayName || this.playerId,
+      authMode: this.authMode,
+      loginId: this.loginId,
       sessionSource: this.sessionSource,
       remoteUrl: this.remoteUrl,
       update: this.lastUpdate,
@@ -486,6 +506,59 @@ export class VeilRoot extends Component {
     this.timelinePanel?.render({
       entries: this.timelineEntries
     });
+  }
+
+  private formatLobbyVaultSummary(): string {
+    const resources = this.lobbyAccountProfile.globalResources;
+    return `全局仓库 金币 ${resources.gold} / 木材 ${resources.wood} / 矿石 ${resources.ore}`;
+  }
+
+  private async syncLobbyBootstrap(): Promise<void> {
+    await this.refreshLobbyRoomList();
+    await this.refreshLobbyAccountProfile();
+  }
+
+  private async refreshLobbyAccountProfile(): Promise<void> {
+    const storage = this.readWebStorage();
+    const requestEpoch = this.bumpLobbyAccountEpoch();
+    const storedSession = readStoredCocosAuthSession(storage);
+    const activeSession = storedSession?.playerId === this.playerId ? storedSession : null;
+    const syncedSession = await syncCurrentCocosAuthSession(this.remoteUrl, {
+      storage,
+      session: activeSession
+    });
+    if (!this.isActiveLobbyAccountEpoch(requestEpoch)) {
+      return;
+    }
+
+    if (syncedSession) {
+      this.authToken = syncedSession.token ?? null;
+      this.authMode = syncedSession.authMode;
+      this.loginId = syncedSession.loginId ?? "";
+      this.sessionSource = syncedSession.source;
+      this.playerId = syncedSession.playerId;
+      this.displayName = syncedSession.displayName;
+    } else if (this.sessionSource !== "manual") {
+      this.authToken = null;
+      this.authMode = "guest";
+      this.loginId = "";
+      this.sessionSource = "none";
+    }
+
+    const profile = await loadCocosPlayerAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
+      storage,
+      authSession: syncedSession
+    });
+    if (!this.isActiveLobbyAccountEpoch(requestEpoch)) {
+      return;
+    }
+
+    this.lobbyAccountProfile = profile;
+    if (profile.source === "remote") {
+      this.displayName = profile.displayName;
+      this.loginId = profile.loginId ?? this.loginId;
+    }
+    this.renderView();
   }
 
   private computeLayoutMetrics(): {
@@ -1073,36 +1146,138 @@ export class VeilRoot extends Component {
     this.roomId = preferences.roomId;
     this.displayName = displayName;
     this.lobbyEntering = true;
-    this.lobbyStatus = `正在登录游客账号并进入房间 ${preferences.roomId}...`;
-    this.renderView();
-
-    const authSession = await loginCocosGuestAuthSession(this.remoteUrl, preferences.playerId, displayName, {
-      storage
-    });
-    this.authToken = authSession.token ?? null;
-    this.playerId = authSession.playerId;
-    this.displayName = authSession.displayName;
-    this.sessionSource = authSession.source;
-    saveCocosLobbyPreferences(authSession.playerId, preferences.roomId, undefined, storage);
-    this.resetSessionViewport(`正在进入房间 ${preferences.roomId} ...`);
-    this.showLobby = false;
-    this.syncBrowserRoomQuery(preferences.roomId);
     this.lobbyStatus =
-      authSession.source === "remote"
-        ? `游客登录成功，正在进入房间 ${preferences.roomId}...`
-        : `登录服务暂不可达，正在以本地游客档进入房间 ${preferences.roomId}...`;
+      this.authMode === "account" && this.authToken
+        ? `正在使用账号 ${this.loginId || this.playerId} 进入房间 ${preferences.roomId}...`
+        : `正在登录游客账号并进入房间 ${preferences.roomId}...`;
     this.renderView();
-    await this.connect();
-    this.lobbyEntering = false;
 
-    if (!this.session && !this.lastUpdate) {
+    try {
+      let authSession: Awaited<ReturnType<typeof loginCocosGuestAuthSession>>;
+      if (this.authMode === "account" && this.authToken) {
+        const syncedSession = await syncCurrentCocosAuthSession(this.remoteUrl, {
+          storage,
+          session: readStoredCocosAuthSession(storage)
+        });
+        if (!syncedSession) {
+          throw new Error("cocos_request_failed:401");
+        }
+        authSession = syncedSession;
+      } else {
+        authSession = await loginCocosGuestAuthSession(this.remoteUrl, preferences.playerId, displayName, {
+          storage
+        });
+      }
+      this.authToken = authSession.token ?? null;
+      this.playerId = authSession.playerId;
+      this.displayName = authSession.displayName;
+      this.authMode = authSession.authMode;
+      this.loginId = authSession.loginId ?? "";
+      this.sessionSource = authSession.source;
+      saveCocosLobbyPreferences(authSession.playerId, preferences.roomId, undefined, storage);
+      this.resetSessionViewport(`正在进入房间 ${preferences.roomId} ...`);
+      this.showLobby = false;
+      this.syncBrowserRoomQuery(preferences.roomId);
+      this.lobbyStatus =
+        authSession.authMode === "account"
+          ? `账号 ${authSession.loginId ?? authSession.playerId} 登录成功，正在进入房间 ${preferences.roomId}...`
+          : authSession.source === "remote"
+            ? `游客登录成功，正在进入房间 ${preferences.roomId}...`
+            : `登录服务暂不可达，正在以本地游客档进入房间 ${preferences.roomId}...`;
+      this.renderView();
+      await this.connect();
+
+      if (!this.session && !this.lastUpdate) {
+        this.showLobby = true;
+        this.lobbyStatus = "进入房间失败，请稍后重试或刷新房间列表。";
+        this.renderView();
+        return;
+      }
+
+      this.lobbyAccountProfile = createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName);
+      this.renderView();
+    } catch (error) {
       this.showLobby = true;
-      this.lobbyStatus = "进入房间失败，请稍后重试或刷新房间列表。";
+      if (error instanceof Error && error.message === "cocos_request_failed:401") {
+        this.authToken = null;
+        this.authMode = "guest";
+        this.sessionSource = "none";
+      }
+      this.lobbyStatus =
+        error instanceof Error && error.message === "cocos_request_failed:401"
+          ? "账号会话已失效，请重新登录后再进入房间。"
+          : error instanceof Error
+            ? error.message
+            : "enter_room_failed";
+      this.renderView();
+    } finally {
+      this.lobbyEntering = false;
+    }
+  }
+
+  private async loginLobbyAccount(): Promise<void> {
+    if (this.lobbyEntering) {
+      return;
+    }
+
+    const promptRef = globalThis.prompt;
+    if (typeof promptRef !== "function") {
+      this.lobbyStatus = "当前运行环境不支持弹出式输入，请改用 H5 Lobby 完成账号登录。";
       this.renderView();
       return;
     }
 
+    const nextLoginId = promptRef("输入登录 ID", this.loginId || "")?.trim();
+    if (nextLoginId === undefined) {
+      return;
+    }
+    if (!nextLoginId) {
+      this.lobbyStatus = "请输入登录 ID 后再使用正式账号进入。";
+      this.renderView();
+      return;
+    }
+
+    const password = promptRef("输入账号口令", "");
+    if (password == null) {
+      return;
+    }
+    if (!password.trim()) {
+      this.lobbyStatus = "请输入账号口令后再登录。";
+      this.renderView();
+      return;
+    }
+
+    const storage = this.readWebStorage();
+    this.lobbyEntering = true;
+    this.lobbyStatus = `正在使用账号 ${nextLoginId.toLowerCase()} 登录并进入房间 ${this.roomId}...`;
     this.renderView();
+
+    try {
+      const authSession = await loginCocosPasswordAuthSession(this.remoteUrl, nextLoginId, password, {
+        storage
+      });
+      this.authToken = authSession.token ?? null;
+      this.playerId = authSession.playerId;
+      this.displayName = authSession.displayName;
+      this.authMode = authSession.authMode;
+      this.loginId = authSession.loginId ?? nextLoginId.toLowerCase();
+      this.sessionSource = authSession.source;
+      this.lobbyStatus = `账号 ${this.loginId} 登录成功，正在同步全局仓库并进入房间 ${this.roomId}...`;
+      saveCocosLobbyPreferences(authSession.playerId, this.roomId, undefined, storage);
+      this.renderView();
+      await this.refreshLobbyAccountProfile();
+      this.lobbyEntering = false;
+      await this.enterLobbyRoom(this.roomId);
+    } catch (error) {
+      this.lobbyEntering = false;
+      this.lobbyStatus =
+        error instanceof Error && error.message === "cocos_request_failed:401"
+          ? "登录 ID 或口令不正确，请检查后重试。"
+          : error instanceof Error
+            ? error.message
+            : "account_login_failed";
+      this.renderView();
+    }
   }
 
   private async returnToLobby(): Promise<void> {
@@ -1119,19 +1294,22 @@ export class VeilRoot extends Component {
     this.lobbyStatus = "已返回大厅，可继续选房或创建新实例。";
     this.syncBrowserRoomQuery(null);
     this.renderView();
-    await this.refreshLobbyRoomList();
+    await this.syncLobbyBootstrap();
   }
 
-  private logoutGuestSession(): void {
+  private logoutAuthSession(): void {
     clearCurrentCocosAuthSession(this.readWebStorage());
     this.authToken = null;
+    this.authMode = "guest";
+    this.loginId = "";
     this.sessionSource = "none";
     this.displayName = readPreferredCocosDisplayName(this.playerId, this.readWebStorage());
-    this.lobbyStatus = "已退出当前游客会话，请重新选择或创建一个账号进入房间。";
+    this.lobbyAccountProfile = createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName);
+    this.lobbyStatus = "已退出当前会话，请重新选择游客身份或使用正式账号进入。";
     this.renderView();
   }
 
-  private promptForLobbyField(field: "playerId" | "displayName" | "roomId"): void {
+  private promptForLobbyField(field: "playerId" | "displayName" | "roomId" | "loginId"): void {
     const promptRef = globalThis.prompt;
     if (typeof promptRef !== "function") {
       this.lobbyStatus = "当前运行环境不支持弹出式输入，请改用 URL 参数或 H5 Lobby。";
@@ -1155,9 +1333,12 @@ export class VeilRoot extends Component {
           storedSession?.playerId === nextPlayerId ? storedSession.displayName : readPreferredCocosDisplayName(nextPlayerId, storage);
       }
       this.authToken = storedSession?.playerId === nextPlayerId ? storedSession.token ?? null : null;
+      this.authMode = storedSession?.playerId === nextPlayerId ? storedSession.authMode : "guest";
+      this.loginId = storedSession?.playerId === nextPlayerId ? storedSession.loginId ?? "" : "";
       this.sessionSource = storedSession?.playerId === nextPlayerId ? storedSession.source : "manual";
       this.lobbyStatus = `已切换游客身份草稿为 ${nextPlayerId}。`;
       this.renderView();
+      void this.refreshLobbyAccountProfile();
       return;
     }
 
@@ -1170,6 +1351,19 @@ export class VeilRoot extends Component {
       this.displayName = rememberPreferredCocosDisplayName(this.playerId, nextValue, storage);
       this.lobbyStatus = "昵称草稿已更新。";
       this.renderView();
+      void this.refreshLobbyAccountProfile();
+      return;
+    }
+
+    if (field === "loginId") {
+      const nextValue = promptRef("输入登录 ID", this.loginId)?.trim();
+      if (nextValue === undefined) {
+        return;
+      }
+
+      this.loginId = nextValue.toLowerCase();
+      this.lobbyStatus = this.loginId ? `已更新登录 ID 草稿为 ${this.loginId}。` : "已清空登录 ID 草稿。";
+      this.renderView();
       return;
     }
 
@@ -1181,6 +1375,7 @@ export class VeilRoot extends Component {
     this.roomId = nextValue;
     this.lobbyStatus = `已将目标房间切换为 ${nextValue}。`;
     this.renderView();
+    void this.refreshLobbyAccountProfile();
   }
 
   private async disposeCurrentSession(): Promise<void> {
@@ -1229,8 +1424,17 @@ export class VeilRoot extends Component {
     return this.sessionEpoch;
   }
 
+  private bumpLobbyAccountEpoch(): number {
+    this.lobbyAccountEpoch += 1;
+    return this.lobbyAccountEpoch;
+  }
+
   private isActiveSessionEpoch(epoch: number): boolean {
     return epoch === this.sessionEpoch;
+  }
+
+  private isActiveLobbyAccountEpoch(epoch: number): boolean {
+    return epoch === this.lobbyAccountEpoch;
   }
 
   private createSessionOptions(epoch: number): VeilCocosSessionOptions {
@@ -1283,11 +1487,14 @@ export class VeilRoot extends Component {
           ? storedSession.displayName
           : readPreferredCocosDisplayName(this.playerId, storage);
       this.authToken = storedSession?.playerId === this.playerId ? storedSession.token ?? null : null;
+      this.authMode = storedSession?.playerId === this.playerId ? storedSession.authMode : "guest";
+      this.loginId = storedSession?.playerId === this.playerId ? storedSession.loginId ?? "" : "";
       this.sessionSource = storedSession?.playerId === this.playerId ? storedSession.source : "none";
+      this.lobbyAccountProfile = createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName);
       this.showLobby = true;
       this.autoConnect = false;
       this.lobbyStatus = storedSession
-        ? `已恢复${storedSession.source === "remote" ? "云端" : "本地"}游客会话，可直接选房或继续修改房间。`
+        ? `已恢复${storedSession.source === "remote" ? "云端" : "本地"}${storedSession.authMode === "account" ? "正式账号" : "游客"}会话，可直接选房或继续修改房间。`
         : "请选择一个房间，或输入新的房间 ID 后直接开局。";
       this.pushLog("Cocos Lobby 已待命。");
       return;
@@ -1296,11 +1503,16 @@ export class VeilRoot extends Component {
     this.roomId = launchIdentity.roomId;
     this.playerId = launchIdentity.playerId;
     this.displayName = launchIdentity.displayName;
+    this.authMode = launchIdentity.authMode;
+    this.loginId = launchIdentity.loginId ?? "";
     this.authToken = launchIdentity.authToken;
     this.sessionSource = launchIdentity.sessionSource;
+    this.lobbyAccountProfile = createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName);
 
     if (launchIdentity.usedStoredSession) {
-      this.pushLog(`已复用${launchIdentity.sessionSource === "remote" ? "云端" : "本地"}游客会话 ${launchIdentity.playerId}。`);
+      this.pushLog(
+        `已复用${launchIdentity.sessionSource === "remote" ? "云端" : "本地"}${launchIdentity.authMode === "account" ? "正式账号" : "游客"}会话 ${launchIdentity.playerId}。`
+      );
       return;
     }
 

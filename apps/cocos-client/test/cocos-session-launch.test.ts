@@ -26,6 +26,7 @@ test("readStoredCocosAuthSession parses a cached guest session", () => {
     token: "signed.token",
     playerId: "player-cocos",
     displayName: "晶塔旅人",
+    authMode: "guest",
     source: "remote"
   });
 });
@@ -40,6 +41,8 @@ test("resolveCocosLaunchIdentity reuses the stored guest session when only roomI
       token: "signed.token",
       playerId: "player-cocos",
       displayName: "晶塔旅人",
+      authMode: "account",
+      loginId: "veil-ranger",
       source: "remote"
     }
   });
@@ -48,6 +51,8 @@ test("resolveCocosLaunchIdentity reuses the stored guest session when only roomI
     roomId: "crystal-hall",
     playerId: "player-cocos",
     displayName: "晶塔旅人",
+    authMode: "account",
+    loginId: "veil-ranger",
     authToken: "signed.token",
     sessionSource: "remote",
     usedStoredSession: true,
@@ -65,6 +70,8 @@ test("resolveCocosLaunchIdentity does not reuse a mismatched stored token when p
       token: "signed.token",
       playerId: "player-cocos",
       displayName: "晶塔旅人",
+      authMode: "account",
+      loginId: "veil-ranger",
       source: "remote"
     }
   });
@@ -73,6 +80,7 @@ test("resolveCocosLaunchIdentity does not reuse a mismatched stored token when p
     roomId: "crystal-hall",
     playerId: "guest-alt",
     displayName: "guest-alt",
+    authMode: "guest",
     authToken: null,
     sessionSource: "manual",
     usedStoredSession: false,
@@ -90,6 +98,8 @@ test("resolveCocosLaunchIdentity opens lobby mode when roomId is omitted", () =>
       token: "signed.token",
       playerId: "player-cocos",
       displayName: "晶塔旅人",
+      authMode: "account",
+      loginId: "veil-ranger",
       source: "remote"
     }
   });
@@ -98,6 +108,8 @@ test("resolveCocosLaunchIdentity opens lobby mode when roomId is omitted", () =>
     roomId: "test-room",
     playerId: "player-cocos",
     displayName: "晶塔旅人",
+    authMode: "account",
+    loginId: "veil-ranger",
     authToken: "signed.token",
     sessionSource: "remote",
     usedStoredSession: true,
