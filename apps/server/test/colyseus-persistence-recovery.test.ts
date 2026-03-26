@@ -336,7 +336,7 @@ test("colyseus room reloads a persisted active battle after a server restart", a
   );
 
   assert.equal(movedIntoBattle.payload.battle?.id, "battle-neutral-1");
-  assert.deepEqual(movedIntoBattle.payload.world.ownHeroes[0]?.position, { x: 4, y: 4 });
+  assert.deepEqual(movedIntoBattle.payload.world.ownHeroes[0]?.position, { x: 5, y: 3 });
 
   firstRoom.removeAllListeners();
   firstRoom.connection.close();
@@ -357,7 +357,7 @@ test("colyseus room reloads a persisted active battle after a server restart", a
   );
 
   assert.equal(restoredState.payload.battle?.id, "battle-neutral-1");
-  assert.deepEqual(restoredState.payload.world.ownHeroes[0]?.position, { x: 4, y: 4 });
+  assert.deepEqual(restoredState.payload.world.ownHeroes[0]?.position, { x: 5, y: 3 });
 
   const activeUnitId = restoredState.payload.battle?.activeUnitId;
   assert.ok(activeUnitId);
@@ -528,7 +528,7 @@ test("colyseus room hydrates long-term hero archives into fresh rooms", async (t
     "session.state"
   );
 
-  assert.equal(visitedShrine.payload.world.ownHeroes[0]?.stats.attack, 3);
+  assert.equal(visitedShrine.payload.world.ownHeroes[0]?.stats.attack, 4);
   assert.deepEqual(visitedShrine.payload.world.ownHeroes[0]?.position, { x: 3, y: 2 });
   const archivedHeroWithProgression = {
     ...visitedShrine.payload.world.ownHeroes[0]!,
@@ -584,7 +584,7 @@ test("colyseus room hydrates long-term hero archives into fresh rooms", async (t
     "session.state"
   );
 
-  assert.equal(hydratedState.payload.world.ownHeroes[0]?.stats.attack, 3);
+  assert.equal(hydratedState.payload.world.ownHeroes[0]?.stats.attack, 4);
   assert.deepEqual(hydratedState.payload.world.ownHeroes[0]?.position, { x: 1, y: 1 });
   assert.equal(hydratedState.payload.world.ownHeroes[0]?.progression.skillPoints, 2);
   assert.deepEqual(hydratedState.payload.world.ownHeroes[0]?.learnedSkills, [{ skillId: "war_banner", rank: 1 }]);

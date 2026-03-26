@@ -139,7 +139,9 @@
       "duration": 2,
       "attackModifier": 0,
       "defenseModifier": 0,
-      "damagePerTurn": 2
+      "damagePerTurn": 2,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
     },
     {
       "id": "arcane_armor",
@@ -148,7 +150,9 @@
       "duration": 2,
       "attackModifier": 0,
       "defenseModifier": 3,
-      "damagePerTurn": 0
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
     },
     {
       "id": "battle_frenzy",
@@ -157,7 +161,9 @@
       "duration": 2,
       "attackModifier": 2,
       "defenseModifier": 0,
-      "damagePerTurn": 0
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
     },
     {
       "id": "weakened",
@@ -166,7 +172,9 @@
       "duration": 2,
       "attackModifier": -2,
       "defenseModifier": 0,
-      "damagePerTurn": 0
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
     },
     {
       "id": "armor_break",
@@ -175,7 +183,9 @@
       "duration": 2,
       "attackModifier": 0,
       "defenseModifier": -2,
-      "damagePerTurn": 0
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
     },
     {
       "id": "shield_wall",
@@ -184,7 +194,31 @@
       "duration": 2,
       "attackModifier": 1,
       "defenseModifier": 2,
-      "damagePerTurn": 0
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "slowed",
+      "name": "减速",
+      "description": "被陷阱拖慢，下轮行动顺序会延后。",
+      "duration": 1,
+      "attackModifier": 0,
+      "defenseModifier": 0,
+      "damagePerTurn": 0,
+      "initiativeModifier": -4,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "silenced",
+      "name": "禁魔",
+      "description": "短时间内无法施放主动技能。",
+      "duration": 1,
+      "attackModifier": 0,
+      "defenseModifier": 0,
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": true
     }
   ]
 }

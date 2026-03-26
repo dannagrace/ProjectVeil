@@ -2417,7 +2417,9 @@ test("applyBattleAction resolves wait plus turn-start poison death and cooldown 
         durationRemaining: 1,
         attackModifier: 0,
         defenseModifier: 0,
-        damagePerTurn: 2
+        damagePerTurn: 2,
+        initiativeModifier: 0,
+        blocksActiveSkills: false
       }
     ]
   };
@@ -2433,7 +2435,7 @@ test("applyBattleAction resolves wait plus turn-start poison death and cooldown 
   assert.equal(next.units["wolf-d"]?.currentHp, 0);
   assert.equal(next.units["wolf-d"]?.skills?.find((skill) => skill.id === "crippling_howl")?.remainingCooldown, 0);
   assert.deepEqual(next.units["wolf-d"]?.statusEffects, []);
-  assert.deepEqual(next.log.slice(-2), ["pikeman-a 选择等待", "恶狼 受到中毒影响，损失 2 生命"]);
+  assert.deepEqual(next.log.slice(-3), ["pikeman-a 选择等待", "恶狼 受到中毒影响，损失 2 生命", "恶狼 的中毒结束"]);
 });
 
 test("applyBattleAction advances into turn-start processing even when the next unit has no skills", () => {
@@ -2500,6 +2502,8 @@ test("applyBattleAction refreshes explicit on-hit statuses instead of stacking t
         attackModifier: 0,
         defenseModifier: -2,
         damagePerTurn: 0,
+        initiativeModifier: 0,
+        blocksActiveSkills: false,
         sourceUnitId: "someone-else"
       }
     ]
@@ -2558,7 +2562,9 @@ test("pickAutomatedBattleAction falls back between buff, enemy skill, attack, an
         durationRemaining: 2,
         attackModifier: 0,
         defenseModifier: 3,
-        damagePerTurn: 0
+        damagePerTurn: 0,
+        initiativeModifier: 0,
+        blocksActiveSkills: false
       },
       {
         id: "battle_frenzy",
@@ -2567,7 +2573,9 @@ test("pickAutomatedBattleAction falls back between buff, enemy skill, attack, an
         durationRemaining: 2,
         attackModifier: 2,
         defenseModifier: 0,
-        damagePerTurn: 0
+        damagePerTurn: 0,
+        initiativeModifier: 0,
+        blocksActiveSkills: false
       }
     ]
   };
@@ -2589,7 +2597,9 @@ test("pickAutomatedBattleAction falls back between buff, enemy skill, attack, an
         durationRemaining: 2,
         attackModifier: 0,
         defenseModifier: -2,
-        damagePerTurn: 0
+        damagePerTurn: 0,
+        initiativeModifier: 0,
+        blocksActiveSkills: false
       }
     ]
   };
@@ -2674,6 +2684,10 @@ test("applyBattleAction routes contact attacks through blockers before hitting t
   const state = createDemoBattleState();
   state.activeUnitId = "pikeman-a";
   state.turnOrder = ["pikeman-a", "wolf-d"];
+  state.units["wolf-d"] = {
+    ...state.units["wolf-d"]!,
+    hasRetaliated: true
+  };
   state.environment = [
     {
       id: "hazard-blocker-0",
@@ -2715,10 +2729,13 @@ test("applyBattleAction triggers contact traps before the strike and logs grante
       id: "hazard-trap-0",
       kind: "trap",
       lane: 0,
+      effect: "damage",
       name: "捕兽夹陷阱",
       description: "近身突进时会先被陷阱割伤并短暂削弱。",
       damage: 2,
       charges: 1,
+      revealed: false,
+      triggered: false,
       grantedStatusId: "weakened",
       triggeredByCamp: "both"
     }
@@ -2730,12 +2747,29 @@ test("applyBattleAction triggers contact traps before the strike and logs grante
     defenderId: "wolf-d"
   });
 
-  assert.deepEqual(next.environment, []);
+  assert.deepEqual(next.environment, [
+    {
+      id: "hazard-trap-0",
+      kind: "trap",
+      lane: 0,
+      effect: "damage",
+      name: "捕兽夹陷阱",
+      description: "近身突进时会先被陷阱割伤并短暂削弱。",
+      damage: 2,
+      charges: 0,
+      revealed: true,
+      triggered: true,
+      grantedStatusId: "weakened",
+      triggeredByCamp: "both"
+    }
+  ]);
   assert.equal(next.units["pikeman-a"]?.currentHp, 8);
   assert.deepEqual(next.units["pikeman-a"]?.statusEffects?.map((status) => status.id), ["weakened"]);
-  assert.deepEqual(next.log.slice(-3, -1), [
+  assert.deepEqual(next.log.slice(-5, -1), [
+    "枪兵 踩中隐藏陷阱 捕兽夹陷阱，陷阱位置暴露",
     "枪兵 触发 捕兽夹陷阱，损失 2 生命",
-    "枪兵 因 捕兽夹陷阱 陷入削弱"
+    "枪兵 因 捕兽夹陷阱 陷入削弱",
+    "捕兽夹陷阱 已失效，但该位置对双方保持可见"
   ]);
   assert.match(next.log.at(-1) ?? "", /^枪兵 对 恶狼 造成 \d+ 伤害$/);
 });
@@ -2758,10 +2792,13 @@ test("applyBattleAction lets ranged skills bypass blockers and traps", () => {
       id: "hazard-trap-0",
       kind: "trap",
       lane: 0,
+      effect: "damage",
       name: "捕兽夹陷阱",
       description: "近身突进时会先被陷阱割伤并短暂削弱。",
       damage: 2,
       charges: 1,
+      revealed: false,
+      triggered: false,
       grantedStatusId: "weakened",
       triggeredByCamp: "both"
     }
@@ -2778,6 +2815,118 @@ test("applyBattleAction lets ranged skills bypass blockers and traps", () => {
   assert.deepEqual(next.units["pikeman-a"]?.statusEffects, []);
   assert.deepEqual(next.environment, state.environment);
   assert.match(next.log.at(-1) ?? "", /^枪兵 施放 投矛射击，对 恶狼 造成 \d+ 伤害$/);
+});
+
+test("applyBattleAction reveals silence traps and blocks active skills on the affected unit", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d"];
+  state.units["wolf-d"] = {
+    ...state.units["wolf-d"]!,
+    hasRetaliated: true
+  };
+  state.environment = [
+    {
+      id: "hazard-trap-0",
+      kind: "trap",
+      lane: 0,
+      effect: "silence",
+      name: "封咒符印",
+      description: "触发后短时间内无法施放主动技能。",
+      damage: 0,
+      charges: 1,
+      revealed: false,
+      triggered: false,
+      grantedStatusId: "silenced",
+      triggeredByCamp: "both"
+    }
+  ];
+
+  const next = applyBattleAction(state, {
+    type: "battle.attack",
+    attackerId: "pikeman-a",
+    defenderId: "wolf-d"
+  });
+  const silencedTurnState = {
+    ...next,
+    activeUnitId: "pikeman-a",
+    turnOrder: ["pikeman-a", "wolf-d"]
+  };
+  const rejected = applyBattleAction(silencedTurnState, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "power_shot",
+    targetId: "wolf-d"
+  });
+
+  assert.equal(next.activeUnitId, "wolf-d");
+  assert.deepEqual(next.environment, [
+    {
+      id: "hazard-trap-0",
+      kind: "trap",
+      lane: 0,
+      effect: "silence",
+      name: "封咒符印",
+      description: "触发后短时间内无法施放主动技能。",
+      damage: 0,
+      charges: 0,
+      revealed: true,
+      triggered: true,
+      grantedStatusId: "silenced",
+      triggeredByCamp: "both"
+    }
+  ]);
+  assert.deepEqual(next.units["pikeman-a"]?.statusEffects?.map((status) => status.id), ["silenced"]);
+  assert.deepEqual(next.log.slice(-4, -1), [
+    "枪兵 踩中隐藏陷阱 封咒符印，陷阱位置暴露",
+    "枪兵 因 封咒符印 陷入禁魔",
+    "封咒符印 已失效，但该位置对双方保持可见"
+  ]);
+  assert.equal(rejected.log.at(-1), "Action rejected: skill_disabled");
+});
+
+test("slow traps change the next round turn order", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d"];
+  state.units["pikeman-a"] = {
+    ...state.units["pikeman-a"]!,
+    initiative: 13
+  };
+  state.units["wolf-d"] = {
+    ...state.units["wolf-d"]!,
+    hasRetaliated: true
+  };
+  state.environment = [
+    {
+      id: "hazard-trap-0",
+      kind: "trap",
+      lane: 0,
+      effect: "slow",
+      name: "缠足泥沼",
+      description: "踩中后会被拖慢，下一轮行动明显延后。",
+      damage: 0,
+      charges: 1,
+      revealed: false,
+      triggered: false,
+      grantedStatusId: "slowed",
+      triggeredByCamp: "both"
+    }
+  ];
+
+  const afterTrap = applyBattleAction(state, {
+    type: "battle.attack",
+    attackerId: "pikeman-a",
+    defenderId: "wolf-d"
+  });
+  const nextRound = applyBattleAction(afterTrap, {
+    type: "battle.defend",
+    unitId: "wolf-d"
+  });
+
+  assert.deepEqual(afterTrap.units["pikeman-a"]?.statusEffects?.map((status) => status.id), ["slowed"]);
+  assert.equal(nextRound.round, 2);
+  assert.deepEqual(nextRound.turnOrder, ["wolf-d", "pikeman-a"]);
 });
 
 test("applyBattleAction supports self-target skills without granted statuses", () => {

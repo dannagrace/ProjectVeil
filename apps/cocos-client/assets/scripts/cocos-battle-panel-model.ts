@@ -260,6 +260,10 @@ function buildStatusSummary(unit: BattleState["units"][string]): string {
   return parts.length > 0 ? parts.join(" / ") : "无异常";
 }
 
+function hasSkillLock(unit: BattleState["units"][string]): boolean {
+  return (unit.statusEffects ?? []).some((status) => status.blocksActiveSkills);
+}
+
 function buildTargetMeta(unit: BattleState["units"][string]): string {
   const parts = [`${unit.lane + 1}线`, `生命 ${unit.currentHp}/${unit.maxHp}`];
   if (unit.defending) {
@@ -288,14 +292,15 @@ function buildFriendlyMeta(unit: BattleState["units"][string]): string {
 
 function buildEnvironmentSummaryLines(battle: BattleState): string[] {
   const hazards = battle.environment ?? [];
-  if (hazards.length === 0) {
+  const visibleHazards = hazards.filter((hazard) => hazard.kind === "blocker" || hazard.revealed);
+  if (visibleHazards.length === 0) {
     return ["环境：当前战场没有额外障碍或陷阱"];
   }
 
-  return hazards.map((hazard, index) =>
+  return visibleHazards.map((hazard, index) =>
     hazard.kind === "blocker"
       ? `环境${index + 1}：${hazard.lane + 1}线 ${hazard.name} ${hazard.durability}/${hazard.maxDurability}`
-      : `环境${index + 1}：${hazard.lane + 1}线 ${hazard.name} · ${hazard.damage}伤 · ${hazard.charges}次`
+      : `环境${index + 1}：${hazard.lane + 1}线 ${hazard.name} · ${hazard.grantedStatusId === "slowed" ? "减速" : hazard.grantedStatusId === "silenced" ? "禁魔" : `${hazard.damage}伤`} · ${hazard.charges > 0 ? `${hazard.charges}次` : "已触发"}`
   );
 }
 
@@ -305,6 +310,7 @@ function buildActions(
   attackTarget: BattleState["units"][string] | null
 ): BattlePanelActionView[] {
   const activeUnitId = activeUnit?.id ?? null;
+  const skillLocked = activeUnit ? hasSkillLock(activeUnit) : false;
   const actions: BattlePanelActionView[] = [
     {
       key: "attack",
@@ -357,12 +363,14 @@ function buildActions(
       actions.push({
         key: `skill-${skill.id}`,
         label: skill.remainingCooldown > 0 ? `${skill.name} (${skill.remainingCooldown})` : skill.name,
-        subtitle: attackTarget
-          ? `目标：${attackTarget.stackName} · ${compactBattleText(skill.description, 18)}`
-          : "请选择一个敌方目标",
-        enabled: Boolean(canAct && activeUnitId && attackTarget && skill.remainingCooldown === 0),
+        subtitle: skillLocked
+          ? "已被禁魔，无法施法"
+          : attackTarget
+            ? `目标：${attackTarget.stackName} · ${compactBattleText(skill.description, 18)}`
+            : "请选择一个敌方目标",
+        enabled: Boolean(canAct && activeUnitId && attackTarget && skill.remainingCooldown === 0 && !skillLocked),
         action:
-          canAct && activeUnitId && attackTarget && skill.remainingCooldown === 0
+          canAct && activeUnitId && attackTarget && skill.remainingCooldown === 0 && !skillLocked
             ? {
                 type: "battle.skill",
                 unitId: activeUnitId,
@@ -377,10 +385,10 @@ function buildActions(
     actions.push({
       key: `skill-${skill.id}`,
       label: skill.remainingCooldown > 0 ? `${skill.name} (${skill.remainingCooldown})` : skill.name,
-      subtitle: `自身增益 · ${compactBattleText(skill.description, 18)}`,
-      enabled: Boolean(canAct && activeUnitId && skill.remainingCooldown === 0),
+      subtitle: skillLocked ? "已被禁魔，无法施法" : `自身增益 · ${compactBattleText(skill.description, 18)}`,
+      enabled: Boolean(canAct && activeUnitId && skill.remainingCooldown === 0 && !skillLocked),
       action:
-        canAct && activeUnitId && skill.remainingCooldown === 0
+        canAct && activeUnitId && skill.remainingCooldown === 0 && !skillLocked
           ? {
               type: "battle.skill",
               unitId: activeUnitId,

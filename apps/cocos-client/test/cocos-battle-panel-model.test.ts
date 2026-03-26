@@ -153,10 +153,13 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
         id: "hazard-trap-0",
         kind: "trap",
         lane: 0,
+        effect: "damage",
         name: "捕兽夹陷阱",
         description: "近身突进时会先被陷阱割伤并短暂削弱。",
         damage: 2,
         charges: 1,
+        revealed: true,
+        triggered: false,
         grantedStatusId: "weakened",
         triggeredByCamp: "both"
       }
@@ -304,4 +307,129 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
   assert.equal(view.orderItems[0]!.badge, "行动中");
   assert.equal(view.orderItems[1]!.badge, "2");
   assert.equal(view.actions.every((action) => action.enabled === false), true);
+});
+
+test("buildBattlePanelViewModel hides unrevealed traps and disables skills while silenced", () => {
+  const update = createBaseUpdate();
+  update.battle = {
+    id: "battle-hero-1-vs-neutral-1",
+    round: 3,
+    lanes: 1,
+    activeUnitId: "hero-1-stack",
+    turnOrder: ["hero-1-stack", "neutral-1-stack"],
+    units: {
+      "hero-1-stack": {
+        id: "hero-1-stack",
+        templateId: "hero_guard_basic",
+        camp: "attacker",
+        lane: 0,
+        stackName: "Guard",
+        initiative: 7,
+        attack: 4,
+        defense: 4,
+        minDamage: 1,
+        maxDamage: 2,
+        count: 9,
+        currentHp: 8,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false,
+        skills: [
+          {
+            id: "power_shot",
+            name: "投矛射击",
+            description: "远程压制目标，伤害略低，但不会触发反击。",
+            kind: "active",
+            target: "enemy",
+            delivery: "ranged",
+            cooldown: 2,
+            remainingCooldown: 0
+          }
+        ],
+        statusEffects: [
+          {
+            id: "silenced",
+            name: "禁魔",
+            description: "短时间内无法施放主动技能。",
+            durationRemaining: 1,
+            attackModifier: 0,
+            defenseModifier: 0,
+            damagePerTurn: 0,
+            initiativeModifier: 0,
+            blocksActiveSkills: true
+          }
+        ]
+      },
+      "neutral-1-stack": {
+        id: "neutral-1-stack",
+        templateId: "orc_warrior",
+        camp: "defender",
+        lane: 0,
+        stackName: "Orc",
+        initiative: 5,
+        attack: 3,
+        defense: 3,
+        minDamage: 1,
+        maxDamage: 3,
+        count: 8,
+        currentHp: 9,
+        maxHp: 9,
+        hasRetaliated: false,
+        defending: false,
+        skills: [],
+        statusEffects: []
+      }
+    },
+    environment: [
+      {
+        id: "hazard-hidden-0",
+        kind: "trap",
+        lane: 0,
+        effect: "slow",
+        name: "缠足泥沼",
+        description: "踩中后会被拖慢，下一轮行动明显延后。",
+        damage: 0,
+        charges: 1,
+        revealed: false,
+        triggered: false,
+        grantedStatusId: "slowed",
+        triggeredByCamp: "both"
+      },
+      {
+        id: "hazard-revealed-0",
+        kind: "trap",
+        lane: 0,
+        effect: "silence",
+        name: "封咒符印",
+        description: "触发后短时间内无法施放主动技能。",
+        damage: 0,
+        charges: 0,
+        revealed: true,
+        triggered: true,
+        grantedStatusId: "silenced",
+        triggeredByCamp: "both"
+      }
+    ],
+    log: [],
+    rng: {
+      seed: 5,
+      cursor: 2
+    },
+    worldHeroId: "hero-1",
+    neutralArmyId: "neutral-1"
+  };
+
+  const view = buildBattlePanelViewModel({
+    update,
+    timelineEntries: [],
+    controlledCamp: "attacker",
+    selectedTargetId: "neutral-1-stack",
+    actionPending: false
+  });
+
+  assert.equal(view.summaryLines.includes("环境：当前战场没有额外障碍或陷阱"), false);
+  assert.equal(view.summaryLines.some((line) => line.includes("缠足泥沼")), false);
+  assert.equal(view.summaryLines.some((line) => line.includes("封咒符印 · 禁魔 · 已触发")), true);
+  assert.equal(view.actions[3]!.enabled, false);
+  assert.equal(view.actions[3]!.subtitle, "已被禁魔，无法施法");
 });
