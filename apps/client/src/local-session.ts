@@ -1,5 +1,6 @@
 import { createRoom, type AuthoritativeWorldRoom } from "../../../apps/server/src/index";
 import { Client as ColyseusClient, CloseCode, type Room as ColyseusRoom } from "@colyseus/sdk";
+import { decodePlayerWorldView, listReachableTiles, planHeroMovement } from "../../../packages/shared/src/index";
 import type {
   BattleAction,
   BattleState,
@@ -11,7 +12,6 @@ import type {
   Vec2,
   WorldEvent
 } from "../../../packages/shared/src/index";
-import { listReachableTiles, planHeroMovement } from "../../../packages/shared/src/index";
 
 export interface SessionUpdate {
   world: PlayerWorldView;
@@ -59,7 +59,7 @@ interface StoredSessionReplayEnvelope {
 
 function fromPayload(payload: SessionStatePayload): SessionUpdate {
   return {
-    world: payload.world,
+    world: decodePlayerWorldView(payload.world),
     battle: payload.battle,
     events: payload.events,
     movementPlan: payload.movementPlan,

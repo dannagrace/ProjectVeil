@@ -1,7 +1,8 @@
-import type { BattleAction, BattleState, MovementPlan, PlayerWorldView, Vec2, WorldAction, WorldEvent } from "./models";
+import type { BattleAction, BattleState, MovementPlan, Vec2, WorldAction, WorldEvent } from "./models";
+import type { PlayerWorldViewPayload } from "./map-sync";
 
 export interface SessionStatePayload {
-  world: PlayerWorldView;
+  world: PlayerWorldViewPayload;
   battle: BattleState | null;
   events: WorldEvent[];
   movementPlan: MovementPlan | null;

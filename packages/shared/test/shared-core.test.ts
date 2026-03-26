@@ -18,6 +18,8 @@ import {
   createDefaultHeroProgression,
   createPlayerWorldView,
   createWorldStateFromConfigs,
+  decodePlayerWorldView,
+  encodePlayerWorldView,
   filterWorldEventsForPlayer,
   getBattleBalanceConfig,
   getDefaultMapObjectsConfig,
@@ -43,6 +45,7 @@ import {
   type BattleState,
   type HeroState,
   type NeutralArmyState,
+  type PlayerWorldView,
   type ResourceNode,
   type TileState,
   type UnitStack,
@@ -140,6 +143,71 @@ function createWorldState(options?: {
     visibilityByPlayer: options?.visibilityByPlayer ?? {}
   };
 }
+
+function createLargePlayerWorldView(): PlayerWorldView {
+  const width = 32;
+  const height = 32;
+  const playerId = "player-1";
+  const tiles = Array.from({ length: width * height }, (_, index) => {
+    const x = index % width;
+    const y = Math.floor(index / width);
+    const terrain = (["grass", "dirt", "sand", "water"] as const)[(x + y) % 4] ?? "grass";
+    const resource = index % 47 === 0 ? { kind: "wood" as const, amount: 5 } : undefined;
+    const occupant = index === width + 1 ? { kind: "hero" as const, refId: "hero-1" } : undefined;
+
+    return createTile(x, y, {
+      terrain,
+      walkable: terrain !== "water",
+      ...(resource ? { resource } : {}),
+      ...(occupant ? { occupant } : {})
+    });
+  });
+
+  const visibilityByPlayer = {
+    [playerId]: tiles.map((tile) => {
+      if (tile.position.x <= 10 && tile.position.y <= 10) {
+        return "visible" as const;
+      }
+      if (tile.position.x <= 18 && tile.position.y <= 18) {
+        return "explored" as const;
+      }
+      return "hidden" as const;
+    })
+  };
+
+  return createPlayerWorldView(
+    createWorldState({
+      width,
+      height,
+      tiles,
+      heroes: [
+        createHero({
+          id: "hero-1",
+          playerId,
+          name: "Scout",
+          position: { x: 1, y: 1 }
+        })
+      ],
+      visibilityByPlayer
+    }),
+    playerId
+  );
+}
+
+test("typed-array world map payload decodes back to the original player world view", () => {
+  const view = createLargePlayerWorldView();
+
+  assert.deepEqual(decodePlayerWorldView(encodePlayerWorldView(view)), view);
+});
+
+test("typed-array world map payload is materially smaller than the raw tile JSON on a 32x32 map", () => {
+  const view = createLargePlayerWorldView();
+  const encoded = encodePlayerWorldView(view);
+  const rawSize = JSON.stringify(view).length;
+  const encodedSize = JSON.stringify(encoded).length;
+
+  assert.ok(encodedSize < rawSize * 0.55, `expected encoded payload < 55% of raw size, got ${encodedSize}/${rawSize}`);
+});
 
 function cloneBattleState(state: BattleState): BattleState {
   return structuredClone(state);
