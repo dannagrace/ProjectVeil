@@ -1,10 +1,12 @@
 import defaultBattleSkillsConfig from "../../../configs/battle-skills.json";
+import defaultBattleBalanceConfig from "../../../configs/battle-balance.json";
 import defaultHeroSkillTreesConfig from "../../../configs/hero-skill-trees-full.json";
 import defaultMapObjectsConfig from "../../../configs/phase1-map-objects.json";
 import defaultUnitsConfig from "../../../configs/units.json";
 import defaultWorldConfig from "../../../configs/phase1-world.json";
 import type {
   BattleSkillCatalogConfig,
+  BattleBalanceConfig,
   BattleSkillKind,
   BattleSkillTarget,
   HeroSkillTreeConfig,
@@ -20,6 +22,7 @@ let runtimeWorldConfig: WorldGenerationConfig = structuredClone(defaultWorldConf
 let runtimeMapObjectsConfig: MapObjectsConfig = structuredClone(defaultMapObjectsConfig as MapObjectsConfig);
 let runtimeUnitCatalog: UnitCatalogConfig = structuredClone(defaultUnitsConfig as UnitCatalogConfig);
 let runtimeBattleSkillCatalog: BattleSkillCatalogConfig = structuredClone(defaultBattleSkillsConfig as BattleSkillCatalogConfig);
+let runtimeBattleBalanceConfig: BattleBalanceConfig = structuredClone(defaultBattleBalanceConfig as BattleBalanceConfig);
 let runtimeHeroSkillTree: HeroSkillTreeConfig = structuredClone(defaultHeroSkillTreesConfig as HeroSkillTreeConfig);
 
 export interface RuntimeConfigBundle {
@@ -27,6 +30,7 @@ export interface RuntimeConfigBundle {
   mapObjects: MapObjectsConfig;
   units: UnitCatalogConfig;
   battleSkills: BattleSkillCatalogConfig;
+  battleBalance?: BattleBalanceConfig;
 }
 
 function cloneWorldConfig(config: WorldGenerationConfig): WorldGenerationConfig {
@@ -42,6 +46,10 @@ function cloneUnitCatalog(config: UnitCatalogConfig): UnitCatalogConfig {
 }
 
 function cloneBattleSkillCatalog(config: BattleSkillCatalogConfig): BattleSkillCatalogConfig {
+  return structuredClone(config);
+}
+
+function cloneBattleBalanceConfig(config: BattleBalanceConfig): BattleBalanceConfig {
   return structuredClone(config);
 }
 
@@ -118,6 +126,72 @@ function isNeutralBehaviorMode(value: unknown): value is NeutralBehaviorMode {
 
 function isBattleSkillDelivery(value: unknown): value is "contact" | "ranged" {
   return value === "contact" || value === "ranged";
+}
+
+function isBattleStatusEffectId(value: unknown): value is string {
+  return isNonEmptyString(value);
+}
+
+export function validateBattleBalanceConfig(
+  config: BattleBalanceConfig,
+  battleSkillCatalog: BattleSkillCatalogConfig = runtimeBattleSkillCatalog
+): void {
+  if (typeof config !== "object" || config === null) {
+    throw new Error("Battle balance config must be an object");
+  }
+
+  if (typeof config.damage !== "object" || config.damage === null) {
+    throw new Error("Battle balance config must define damage");
+  }
+  if (typeof config.environment !== "object" || config.environment === null) {
+    throw new Error("Battle balance config must define environment");
+  }
+
+  if (!isFiniteNumber(config.damage.defendingDefenseBonus)) {
+    throw new Error("Battle balance damage.defendingDefenseBonus must be a finite number");
+  }
+  if (!isFiniteNumber(config.damage.offenseAdvantageStep)) {
+    throw new Error("Battle balance damage.offenseAdvantageStep must be a finite number");
+  }
+  if (!isFiniteNumber(config.damage.minimumOffenseMultiplier) || config.damage.minimumOffenseMultiplier <= 0) {
+    throw new Error("Battle balance damage.minimumOffenseMultiplier must be > 0");
+  }
+  if (!isFiniteNumber(config.damage.varianceBase) || config.damage.varianceBase <= 0) {
+    throw new Error("Battle balance damage.varianceBase must be > 0");
+  }
+  if (!isFiniteNumber(config.damage.varianceRange) || config.damage.varianceRange < 0) {
+    throw new Error("Battle balance damage.varianceRange must be >= 0");
+  }
+
+  if (
+    !isFiniteNumber(config.environment.blockerSpawnThreshold) ||
+    config.environment.blockerSpawnThreshold < 0 ||
+    config.environment.blockerSpawnThreshold > 1
+  ) {
+    throw new Error("Battle balance environment.blockerSpawnThreshold must be within [0, 1]");
+  }
+  if (!Number.isInteger(config.environment.blockerDurability) || config.environment.blockerDurability <= 0) {
+    throw new Error("Battle balance environment.blockerDurability must be a positive integer");
+  }
+  if (
+    !isFiniteNumber(config.environment.trapSpawnThreshold) ||
+    config.environment.trapSpawnThreshold < 0 ||
+    config.environment.trapSpawnThreshold > 1
+  ) {
+    throw new Error("Battle balance environment.trapSpawnThreshold must be within [0, 1]");
+  }
+  if (!Number.isInteger(config.environment.trapDamage) || config.environment.trapDamage < 0) {
+    throw new Error("Battle balance environment.trapDamage must be a non-negative integer");
+  }
+  if (!Number.isInteger(config.environment.trapCharges) || config.environment.trapCharges <= 0) {
+    throw new Error("Battle balance environment.trapCharges must be a positive integer");
+  }
+  if (
+    config.environment.trapGrantedStatusId !== undefined &&
+    !isBattleStatusEffectId(config.environment.trapGrantedStatusId)
+  ) {
+    throw new Error("Battle balance environment.trapGrantedStatusId must be a non-empty string when provided");
+  }
 }
 
 export function validateBattleSkillCatalog(config: BattleSkillCatalogConfig): void {
@@ -568,6 +642,12 @@ export function getDefaultBattleSkillCatalog(): BattleSkillCatalogConfig {
   return config;
 }
 
+export function getBattleBalanceConfig(): BattleBalanceConfig {
+  const config = cloneBattleBalanceConfig(runtimeBattleBalanceConfig);
+  validateBattleBalanceConfig(config, runtimeBattleSkillCatalog);
+  return config;
+}
+
 export function getDefaultHeroSkillTreeConfig(): HeroSkillTreeConfig {
   const config = cloneHeroSkillTreeConfig(runtimeHeroSkillTree);
   validateHeroSkillTreeConfig(config);
@@ -599,7 +679,14 @@ export function setBattleSkillCatalog(config: BattleSkillCatalogConfig): void {
   validateBattleSkillCatalog(nextConfig);
   validateUnitCatalog(runtimeUnitCatalog, nextConfig);
   validateHeroSkillTreeConfig(runtimeHeroSkillTree, nextConfig);
+  validateBattleBalanceConfig(runtimeBattleBalanceConfig, nextConfig);
   runtimeBattleSkillCatalog = nextConfig;
+}
+
+export function setBattleBalanceConfig(config: BattleBalanceConfig): void {
+  const nextConfig = cloneBattleBalanceConfig(config);
+  validateBattleBalanceConfig(nextConfig, runtimeBattleSkillCatalog);
+  runtimeBattleBalanceConfig = nextConfig;
 }
 
 export function setHeroSkillTreeConfig(config: HeroSkillTreeConfig): void {
@@ -613,16 +700,19 @@ export function replaceRuntimeConfigs(configs: RuntimeConfigBundle): void {
   const nextMapObjects = cloneMapObjectsConfig(configs.mapObjects);
   const nextUnits = cloneUnitCatalog(configs.units);
   const nextBattleSkills = cloneBattleSkillCatalog(configs.battleSkills);
+  const nextBattleBalance = cloneBattleBalanceConfig(configs.battleBalance ?? runtimeBattleBalanceConfig);
 
   validateWorldConfig(nextWorld);
   validateBattleSkillCatalog(nextBattleSkills);
   validateUnitCatalog(nextUnits, nextBattleSkills);
   validateMapObjectsConfig(nextMapObjects, nextWorld, nextUnits);
+  validateBattleBalanceConfig(nextBattleBalance, nextBattleSkills);
 
   runtimeWorldConfig = nextWorld;
   runtimeMapObjectsConfig = nextMapObjects;
   runtimeUnitCatalog = nextUnits;
   runtimeBattleSkillCatalog = nextBattleSkills;
+  runtimeBattleBalanceConfig = nextBattleBalance;
 }
 
 export function resetRuntimeConfigs(): void {
@@ -630,5 +720,6 @@ export function resetRuntimeConfigs(): void {
   runtimeMapObjectsConfig = structuredClone(defaultMapObjectsConfig as MapObjectsConfig);
   runtimeUnitCatalog = structuredClone(defaultUnitsConfig as UnitCatalogConfig);
   runtimeBattleSkillCatalog = structuredClone(defaultBattleSkillsConfig as BattleSkillCatalogConfig);
+  runtimeBattleBalanceConfig = structuredClone(defaultBattleBalanceConfig as BattleBalanceConfig);
   runtimeHeroSkillTree = structuredClone(defaultHeroSkillTreesConfig as HeroSkillTreeConfig);
 }

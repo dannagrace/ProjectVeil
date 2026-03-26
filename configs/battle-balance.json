@@ -1,0 +1,17 @@
+{
+  "damage": {
+    "defendingDefenseBonus": 5,
+    "offenseAdvantageStep": 0.05,
+    "minimumOffenseMultiplier": 0.3,
+    "varianceBase": 0.9,
+    "varianceRange": 0.2
+  },
+  "environment": {
+    "blockerSpawnThreshold": 0.48,
+    "blockerDurability": 1,
+    "trapSpawnThreshold": 0.28,
+    "trapDamage": 2,
+    "trapCharges": 1,
+    "trapGrantedStatusId": "weakened"
+  }
+}

@@ -18,7 +18,7 @@ import type {
 import { createHeroEquipmentBonusSummary } from "./equipment";
 import { grantedHeroBattleSkillIds } from "./hero-skills";
 import { requireValue, withOptionalProperty } from "./invariant";
-import { getDefaultBattleSkillCatalog, getDefaultUnitCatalog } from "./world-config";
+import { getBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultUnitCatalog } from "./world-config";
 
 interface RngStep {
   nextSeed: number;
@@ -167,6 +167,7 @@ function describeHazard(hazard: BattleHazardState, catalogIndex: BattleCatalogIn
 
 function createBattleEnvironment(lanes: number, seed: number): BattleHazardState[] {
   const resolvedLanes = Math.max(1, lanes);
+  const balance = getBattleBalanceConfig().environment;
   let environmentSeed = (seed ^ 0x9e3779b9) >>> 0;
   const hazards: BattleHazardState[] = [];
 
@@ -174,34 +175,33 @@ function createBattleEnvironment(lanes: number, seed: number): BattleHazardState
   environmentSeed = blockerRoll.nextSeed;
   const blockerLaneRoll = nextRng(environmentSeed);
   environmentSeed = blockerLaneRoll.nextSeed;
-  if (blockerRoll.value >= 0.48) {
+  if (blockerRoll.value >= balance.blockerSpawnThreshold) {
     hazards.push({
       id: `hazard-blocker-${Math.floor(blockerLaneRoll.value * resolvedLanes)}`,
       kind: "blocker",
       lane: Math.min(resolvedLanes - 1, Math.floor(blockerLaneRoll.value * resolvedLanes)),
       name: "碎石路障",
       description: "近身接战前需要先破开这道障碍。",
-      durability: 1,
-      maxDurability: 1
+      durability: balance.blockerDurability,
+      maxDurability: balance.blockerDurability
     });
   }
 
   const trapRoll = nextRng(environmentSeed);
   environmentSeed = trapRoll.nextSeed;
   const trapLaneRoll = nextRng(environmentSeed);
-  if (trapRoll.value >= 0.28) {
+  if (trapRoll.value >= balance.trapSpawnThreshold) {
     const lane = Math.min(resolvedLanes - 1, Math.floor(trapLaneRoll.value * resolvedLanes));
-    hazards.push({
+    hazards.push(withOptionalProperty({
       id: `hazard-trap-${lane}`,
       kind: "trap",
       lane,
       name: "捕兽夹陷阱",
       description: "近身突进时会先被陷阱割伤并短暂削弱。",
-      damage: 2,
-      charges: 1,
-      grantedStatusId: "weakened",
+      damage: balance.trapDamage,
+      charges: balance.trapCharges,
       triggeredByCamp: "both"
-    });
+    }, "grantedStatusId", balance.trapGrantedStatusId));
   }
 
   return hazards;
@@ -227,14 +227,21 @@ function totalDefenseModifier(unit: UnitStack): number {
 }
 
 function estimateDamage(attacker: UnitStack, defender: UnitStack, randomValue: number, multiplier = 1): number {
-  const defenseBonus = defender.defending ? 5 : 0;
+  const balance = getBattleBalanceConfig().damage;
+  const defenseBonus = defender.defending ? balance.defendingDefenseBonus : 0;
   const effectiveAttack = attacker.attack + totalAttackModifier(attacker);
   const effectiveDefense = defender.defense + totalDefenseModifier(defender) + defenseBonus;
-  const offenseModifier = 1 + (effectiveAttack - effectiveDefense) * 0.05;
-  const variance = 0.9 + randomValue * 0.2;
+  const offenseModifier = 1 + (effectiveAttack - effectiveDefense) * balance.offenseAdvantageStep;
+  const variance = balance.varianceBase + randomValue * balance.varianceRange;
   return Math.max(
     1,
-    Math.floor(attacker.count * averageDamage(attacker) * Math.max(0.3, offenseModifier) * variance * multiplier)
+    Math.floor(
+      attacker.count *
+        averageDamage(attacker) *
+        Math.max(balance.minimumOffenseMultiplier, offenseModifier) *
+        variance *
+        multiplier
+    )
   );
 }
 
@@ -574,7 +581,7 @@ function triggerTrap(
   let nextUnit = applyDamage(unit, trap.damage);
   log.push(`${unit.stackName} 触发 ${trap.name}，损失 ${trap.damage} 生命`);
 
-  if (trap.grantedStatusId && nextUnit.count > 0) {
+  if (trap.grantedStatusId && nextUnit.count > 0 && catalogIndex.statusById.has(trap.grantedStatusId)) {
     const status = statusDefinitionFor(trap.grantedStatusId, catalogIndex);
     nextUnit = upsertStatusEffect(nextUnit, trap.grantedStatusId, trap.id, catalogIndex);
     log.push(`${nextUnit.stackName} 因 ${trap.name} 陷入${status.name}`);

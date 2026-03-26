@@ -16,6 +16,7 @@ import {
   createPlayerWorldView,
   createWorldStateFromConfigs,
   filterWorldEventsForPlayer,
+  getBattleBalanceConfig,
   getDefaultBattleSkillCatalog,
   getDefaultHeroSkillTreeConfig,
   getDefaultUnitCatalog,
@@ -26,6 +27,7 @@ import {
   predictPlayerWorldAction,
   resetRuntimeConfigs,
   resolveWorldAction,
+  setBattleBalanceConfig,
   setBattleSkillCatalog,
   setUnitCatalog,
   validateBattleAction,
@@ -138,6 +140,14 @@ function cloneBattleState(state: BattleState): BattleState {
 
 function cloneBattleUnit(unit: UnitStack): UnitStack {
   return structuredClone(unit);
+}
+
+function getUnitHpPool(unit: UnitStack): number {
+  if (unit.count <= 0) {
+    return 0;
+  }
+
+  return (unit.count - 1) * unit.maxHp + unit.currentHp;
 }
 
 test("createPlayerWorldView respects fog-of-war visibility rules", () => {
@@ -3283,6 +3293,135 @@ test("battle state builders support empty armies and templates without battle sk
     assert.equal(heroBattle.activeUnitId, null);
     assert.deepEqual(heroBattle.units["hero-empty-a-stack"]?.skills, []);
     assert.deepEqual(heroBattle.units["hero-empty-b-stack"]?.skills, []);
+  } finally {
+    resetRuntimeConfigs();
+  }
+});
+
+test("battle state builders consume runtime battle balance environment config", () => {
+  const attackerHero = createHero({
+    id: "hero-balance-a",
+    playerId: "player-1",
+    name: "凯琳",
+    armyCount: 12
+  });
+  const defenderHero = createHero({
+    id: "hero-balance-b",
+    playerId: "player-2",
+    name: "罗安",
+    armyCount: 10
+  });
+  const neutralArmy: NeutralArmyState = {
+    id: "neutral-balance",
+    position: { x: 2, y: 3 },
+    reward: { kind: "gold", amount: 100 },
+    stacks: [{ templateId: "wolf_pack", count: 6 }]
+  };
+  const customBalance = getBattleBalanceConfig();
+  customBalance.environment.blockerSpawnThreshold = 0;
+  customBalance.environment.blockerDurability = 3;
+  customBalance.environment.trapSpawnThreshold = 0;
+  customBalance.environment.trapDamage = 4;
+  customBalance.environment.trapCharges = 2;
+
+  try {
+    setBattleBalanceConfig(customBalance);
+
+    const neutralBattle = createNeutralBattleState(attackerHero, neutralArmy, 2027);
+    assert.equal(neutralBattle.environment.some((hazard) => hazard.kind === "blocker" && hazard.durability === 3), true);
+    assert.equal(
+      neutralBattle.environment.some(
+        (hazard) =>
+          hazard.kind === "trap" &&
+          hazard.damage === 4 &&
+          hazard.charges === 2 &&
+          hazard.grantedStatusId === "weakened"
+      ),
+      true
+    );
+
+    const heroBattle = createHeroBattleState(attackerHero, defenderHero, 2028);
+    assert.equal(heroBattle.environment.some((hazard) => hazard.kind === "blocker" && hazard.maxDurability === 3), true);
+    assert.equal(heroBattle.environment.some((hazard) => hazard.kind === "trap" && hazard.damage === 4), true);
+  } finally {
+    resetRuntimeConfigs();
+  }
+});
+
+test("applyBattleAction consumes runtime battle balance damage config", () => {
+  const state = createEmptyBattleState();
+  state.id = "battle-balance-damage";
+  state.round = 1;
+  state.lanes = 1;
+  state.activeUnitId = "attacker";
+  state.turnOrder = ["attacker", "defender"];
+  state.rng = {
+    seed: 12345,
+    cursor: 0
+  };
+  state.units = {
+    attacker: {
+      id: "attacker",
+      templateId: "hero_guard_basic",
+      camp: "attacker",
+      lane: 0,
+      stackName: "枪兵",
+      initiative: 10,
+      attack: 10,
+      defense: 5,
+      minDamage: 5,
+      maxDamage: 5,
+      count: 3,
+      currentHp: 10,
+      maxHp: 10,
+      hasRetaliated: false,
+      defending: false,
+      skills: [],
+      statusEffects: []
+    },
+    defender: {
+      id: "defender",
+      templateId: "wolf_pack",
+      camp: "defender",
+      lane: 0,
+      stackName: "恶狼",
+      initiative: 5,
+      attack: 5,
+      defense: 10,
+      minDamage: 2,
+      maxDamage: 2,
+      count: 4,
+      currentHp: 10,
+      maxHp: 10,
+      hasRetaliated: false,
+      defending: true,
+      skills: [],
+      statusEffects: []
+    }
+  };
+
+  const baselineBalance = getBattleBalanceConfig();
+  baselineBalance.damage.varianceBase = 1;
+  baselineBalance.damage.varianceRange = 0;
+  const boostedBalance = structuredClone(baselineBalance);
+  boostedBalance.damage.defendingDefenseBonus = 0;
+
+  try {
+    setBattleBalanceConfig(baselineBalance);
+    const defendedResult = applyBattleAction(cloneBattleState(state), {
+      type: "battle.attack",
+      attackerId: "attacker",
+      defenderId: "defender"
+    });
+
+    setBattleBalanceConfig(boostedBalance);
+    const boostedResult = applyBattleAction(cloneBattleState(state), {
+      type: "battle.attack",
+      attackerId: "attacker",
+      defenderId: "defender"
+    });
+
+    assert.ok(getUnitHpPool(boostedResult.units.defender!) < getUnitHpPool(defendedResult.units.defender!));
   } finally {
     resetRuntimeConfigs();
   }

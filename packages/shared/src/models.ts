@@ -90,6 +90,28 @@ export interface HeroSkillTreeConfig {
   skills: HeroSkillConfig[];
 }
 
+export interface BattleDamageBalanceConfig {
+  defendingDefenseBonus: number;
+  offenseAdvantageStep: number;
+  minimumOffenseMultiplier: number;
+  varianceBase: number;
+  varianceRange: number;
+}
+
+export interface BattleEnvironmentBalanceConfig {
+  blockerSpawnThreshold: number;
+  blockerDurability: number;
+  trapSpawnThreshold: number;
+  trapDamage: number;
+  trapCharges: number;
+  trapGrantedStatusId?: BattleStatusEffectId;
+}
+
+export interface BattleBalanceConfig {
+  damage: BattleDamageBalanceConfig;
+  environment: BattleEnvironmentBalanceConfig;
+}
+
 export interface MovePoints {
   total: number;
   remaining: number;
