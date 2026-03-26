@@ -1,3 +1,4 @@
+import { createHeroEquipmentBonusSummary } from "./equipment";
 import type { HeroState, PlayerWorldView } from "./models";
 import { experienceRequiredForNextLevel, totalExperienceRequiredForLevel } from "./models";
 
@@ -111,18 +112,25 @@ export function createHeroProgressMeterView(
 }
 
 export function createHeroAttributeBreakdown(
-  hero: Pick<HeroState, "id" | "stats" | "progression">,
+  hero: Pick<HeroState, "id" | "stats" | "progression" | "loadout">,
   world?: Pick<PlayerWorldView, "map"> | null
 ): HeroAttributeBreakdownRow[] {
+  const equipment = createHeroEquipmentBonusSummary(hero);
   const sources: HeroAttributeSourceSet = {
     progression: buildProgressionContribution(hero),
     buildings: buildBuildingContribution(world, hero.id),
-    equipment: createEmptyAttributeValues(),
+    equipment: {
+      attack: equipment.attack,
+      defense: equipment.defense,
+      power: equipment.power,
+      knowledge: equipment.knowledge,
+      maxHp: equipment.maxHp
+    },
     skills: createEmptyAttributeValues()
   };
 
   return ATTRIBUTE_ROWS.map(({ key, label }) => {
-    const total = heroTotalForKey(hero, key);
+    const total = heroTotalForKey(hero, key) + sources.equipment[key];
     const progression = sources.progression[key];
     const buildings = sources.buildings[key];
     const equipment = sources.equipment[key];
