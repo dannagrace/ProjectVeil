@@ -1428,7 +1428,7 @@ function renderSnapshotSection(): string {
         <h4>版本快照</h4>
         <span class="config-meta">${state.snapshots.length} 个历史版本</span>
       </div>
-      <p class="config-hint">快照会记录版本号和时间戳。选择一个快照后可以查看与当前版本的差异，或一键回滚。</p>
+      <p class="config-hint">快照会记录版本号和时间戳。手动保存快照之外，配置保存、预设应用和 Excel 导入后的有效变更也会自动生成版本节点；选择一个快照后可以查看与当前版本的差异，或一键回滚。</p>
       <div class="history-actions">
         <button class="config-button is-secondary config-button-compact" data-action="create-snapshot">保存快照</button>
       </div>

@@ -393,6 +393,32 @@ test("config center snapshots support diff and rollback", async () => {
   assert.equal(JSON.parse(rolledBack.content).width, WORLD_CONFIG.width);
 });
 
+test("config center save creates automatic version snapshots and skips no-op saves", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  const baseline = await store.loadDocument("world");
+  const unchanged = await store.saveDocument("world", baseline.content);
+  assert.equal(unchanged.version, baseline.version);
+  assert.deepEqual(await store.listSnapshots("world"), []);
+
+  const changed = await store.saveDocument(
+    "world",
+    JSON.stringify({
+      ...WORLD_CONFIG,
+      width: 10
+    })
+  );
+  const snapshots = await store.listSnapshots("world");
+
+  assert.equal(changed.version, (baseline.version ?? 1) + 1);
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.version, changed.version);
+  assert.match(snapshots[0]?.label ?? "", /自动保存/);
+});
+
 test("config center presets and workbook import/export roundtrip", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
   await seedConfigRoot(rootDir);

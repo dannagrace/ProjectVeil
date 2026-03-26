@@ -547,6 +547,10 @@ function createEmptyLibraryState(): ConfigCenterLibraryState {
   };
 }
 
+function buildAutomaticSnapshotLabel(title: string, version: number): string {
+  return `${title} 自动保存 v${version}`;
+}
+
 function createId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -2029,19 +2033,31 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
     const document = await this.loadDocument(id);
     parseConfigDocument(id, content);
 
-    const state = await this.readLibraryState();
-    const nextSnapshot: ConfigSnapshotRecord = {
+    return this.appendSnapshot(id, {
       id: createId("snapshot"),
       label: label?.trim() || `${document.title} v${document.version ?? 1}`,
       createdAt: new Date().toISOString(),
       version: document.version ?? 1,
       content: normalizeJsonContent(parseConfigDocument(id, content))
-    };
+    });
+  }
 
-    state.snapshots[id] = [nextSnapshot, ...(state.snapshots[id] ?? [])].slice(0, 30);
+  protected async appendSnapshot(id: ConfigDocumentId, snapshot: ConfigSnapshotRecord): Promise<ConfigSnapshotSummary> {
+    const state = await this.readLibraryState();
+    state.snapshots[id] = [snapshot, ...(state.snapshots[id] ?? [])].slice(0, 30);
     await this.writeLibraryState(state);
-    const { content: _content, ...summary } = nextSnapshot;
+    const { content: _content, ...summary } = snapshot;
     return summary;
+  }
+
+  protected async createAutomaticSnapshot(document: ConfigDocument): Promise<ConfigSnapshotSummary> {
+    return this.appendSnapshot(document.id, {
+      id: createId("snapshot"),
+      label: buildAutomaticSnapshotLabel(document.title, document.version ?? 1),
+      createdAt: new Date().toISOString(),
+      version: document.version ?? 1,
+      content: document.content
+    });
   }
 
   async rollbackToSnapshot(id: ConfigDocumentId, snapshotId: string): Promise<ConfigDocument> {
@@ -2180,13 +2196,21 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
     const parsed = parseConfigDocument(id, content);
     const bundle = buildRuntimeBundleWithParsedDocument(id, parsed);
     const serialized = normalizeJsonContent(bundle[id]);
-    const nextVersion = ((await this.getFilesystemVersion(id)) ?? 1) + 1;
+    const current = await this.loadDocument(id);
+
+    if (current.content === serialized) {
+      return current;
+    }
+
+    const nextVersion = (current.version ?? 1) + 1;
 
     await this.exportDocumentToFile(id, serialized);
     await this.setFilesystemVersion(id, nextVersion);
     applyRuntimeBundle(bundle);
 
-    return this.loadDocument(id);
+    const saved = await this.loadDocument(id);
+    await this.createAutomaticSnapshot(saved);
+    return saved;
   }
 
   async close(): Promise<void> {
@@ -2288,6 +2312,11 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
     const parsed = parseConfigDocument(id, content);
     const bundle = buildRuntimeBundleWithParsedDocument(id, parsed);
     const serialized = normalizeJsonContent(bundle[id]);
+    const current = await this.loadDocument(id);
+
+    if (current.content === serialized) {
+      return current;
+    }
 
     await this.pool.query(
       `INSERT INTO \`${MYSQL_CONFIG_DOCUMENT_TABLE}\` (document_id, content_json, exported_at)
@@ -2308,7 +2337,9 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
     );
     applyRuntimeBundle(bundle);
 
-    return this.loadDocument(id);
+    const saved = await this.loadDocument(id);
+    await this.createAutomaticSnapshot(saved);
+    return saved;
   }
 
   async close(): Promise<void> {
