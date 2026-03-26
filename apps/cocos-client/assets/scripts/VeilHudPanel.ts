@@ -1,4 +1,5 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Sprite, UIOpacity, UITransform } from "cc";
+import { createHeroAttributeBreakdown, createHeroProgressMeterView } from "../../../../packages/shared/src/hero-progression.ts";
 import { createHeroSkillTreeView } from "../../../../packages/shared/src/hero-skills.ts";
 import type { BattleSkillId, HeroState } from "../../../../packages/shared/src/models.ts";
 import { getDefaultBattleSkillCatalog } from "../../../../packages/shared/src/world-config.ts";
@@ -33,6 +34,7 @@ const CARD_PREFIX = "HudCard";
 const CHIP_PREFIX = "HudChip";
 const BADGE_PREFIX = "HudBadge";
 const HERO_METER_PREFIX = "HudHeroMeter";
+const HERO_PROGRESS_PREFIX = "HudHeroProgress";
 const SKILL_BUTTON_PREFIX = "HudSkillButton";
 
 interface HudLearnableSkillState {
@@ -121,6 +123,10 @@ export interface VeilHudRenderState {
   moveInFlight: boolean;
   predictionStatus: string;
   inputDebug: string;
+  levelUpNotice: {
+    title: string;
+    detail: string;
+  } | null;
 }
 
 export interface VeilHudPanelOptions {
@@ -171,19 +177,20 @@ export class VeilHudPanel extends Component {
     const resources = world?.resources;
     const battle = state.update?.battle;
     const learnableSkills = listLearnableHeroSkills(hero);
+    const progressMeter = hero ? createHeroProgressMeterView(toHeroSkillState(hero)) : null;
+    const attributeRows = hero ? createHeroAttributeBreakdown(toHeroSkillState(hero), world ?? undefined) : [];
     const reachableAhead =
       state.update?.reachableTiles.filter((tile) => !hero || tile.x !== hero.position.x || tile.y !== hero.position.y).length ?? 0;
-    const statusTitle = battle
-      ? "状态"
-      : hero && hero.move.remaining <= 0
-        ? "状态"
-        : "状态";
-    const statusBadge = battle
+    const statusTitle = state.levelUpNotice?.title ?? "状态";
+    const statusBadge = state.levelUpNotice
+      ? "升级!"
+      : battle
       ? "战斗中"
       : hero && hero.move.remaining <= 0
         ? "体力耗尽"
         : "待命";
-    const statusDetail = state.predictionStatus
+    const statusDetail = state.levelUpNotice?.detail
+      || state.predictionStatus
       || (state.moveInFlight
         ? "正在结算移动..."
         : hero && hero.move.remaining <= 0
@@ -233,19 +240,22 @@ export class VeilHudPanel extends Component {
         ? [
             `英雄  ${hero.name}`,
             `坐标 (${hero.position.x},${hero.position.y})`,
-            `等级 ${hero.progression.level}  经验 ${hero.progression.experience}  技能点 ${hero.progression.skillPoints ?? 0}`,
+            `等级 ${hero.progression.level}  经验 ${progressMeter?.currentLevelExperience ?? 0}/${progressMeter?.nextLevelExperience ?? 100}  技能点 ${hero.progression.skillPoints ?? 0}`,
             `攻 ${hero.stats.attack}  防 ${hero.stats.defense}  力 ${hero.stats.power}  知 ${hero.stats.knowledge}`,
+            attributeRows[0] ? `攻防公式 ${attributeRows[0].formula} / ${attributeRows[1]?.formula ?? ""}` : "",
+            attributeRows[2] ? `法术公式 ${attributeRows[2].formula} / ${attributeRows[3]?.formula ?? ""}` : "",
+            attributeRows[4] ? attributeRows[4].formula : "",
             `兵种 ${hero.armyTemplateId}`,
             `技能 ${formatHeroLearnedSkills(hero)}`
           ]
-        : ["英雄", "等待房间状态...", "", "", "", ""],
+        : ["英雄", "等待房间状态...", "", "", "", "", "", ""],
       cursorY,
       14,
       18,
       cardWidth,
       leftX,
       7,
-      132
+      182
     );
 
     cursorY = this.renderCardBlock(
@@ -293,11 +303,20 @@ export class VeilHudPanel extends Component {
 
     if (hero) {
       this.renderHeroBadge(`${CARD_PREFIX}-hero`, `Lv ${hero.progression.level}`);
+      if (progressMeter) {
+        this.renderHeroProgressBar(
+          `${CARD_PREFIX}-hero`,
+          progressMeter.progressRatio,
+          `XP ${progressMeter.currentLevelExperience}/${progressMeter.nextLevelExperience}`,
+          Boolean(state.levelUpNotice)
+        );
+      }
       this.renderHeroMeters(`${CARD_PREFIX}-hero`, hero.move.remaining, hero.move.total, hero.stats.hp, hero.stats.maxHp, hero.armyCount);
       this.tightenHeroLabelLayout(leftX, cardWidth);
       this.renderLearnableSkillButtons(`${CARD_PREFIX}-skills`, learnableSkills);
     } else {
       this.hideCardDecorations(`${CARD_PREFIX}-hero`, BADGE_PREFIX);
+      this.hideCardDecorations(`${CARD_PREFIX}-hero`, HERO_PROGRESS_PREFIX);
       this.hideCardDecorations(`${CARD_PREFIX}-hero`, `${CHIP_PREFIX}-${HERO_METER_PREFIX}`);
       this.hideCardDecorations(`${CARD_PREFIX}-skills`, SKILL_BUTTON_PREFIX);
     }
@@ -707,11 +726,65 @@ export class VeilHudPanel extends Component {
     const chipHeight = 28;
     const totalWidth = chipWidth * 3 + gap * 2;
     const startX = -totalWidth / 2 + chipWidth / 2;
-    const y = -30;
+    const y = -52;
 
     this.renderMetricChip(cardNode, `${HERO_METER_PREFIX}-move`, startX, y, chipWidth, chipHeight, null, "移动", `${moveRemaining}/${moveTotal}`, new Color(112, 152, 220, 224));
     this.renderMetricChip(cardNode, `${HERO_METER_PREFIX}-hp`, startX + chipWidth + gap, y, chipWidth, chipHeight, null, "生命", `${hp}/${maxHp}`, new Color(122, 180, 124, 224));
     this.renderMetricChip(cardNode, `${HERO_METER_PREFIX}-army`, startX + (chipWidth + gap) * 2, y, chipWidth, chipHeight, null, "兵力", `${armyCount}`, new Color(204, 168, 92, 224));
+  }
+
+  private renderHeroProgressBar(cardName: string, ratio: number, labelText: string, highlighted: boolean): void {
+    const cardNode = this.node.getChildByName(cardName);
+    if (!cardNode) {
+      return;
+    }
+
+    let barNode = cardNode.getChildByName(HERO_PROGRESS_PREFIX);
+    if (!barNode) {
+      barNode = new Node(HERO_PROGRESS_PREFIX);
+      barNode.parent = cardNode;
+    }
+    assignUiLayer(barNode);
+    barNode.active = true;
+
+    const cardTransform = cardNode.getComponent(UITransform) ?? cardNode.addComponent(UITransform);
+    const width = Math.max(120, cardTransform.width - 28);
+    const height = 18;
+    const clampedRatio = Math.max(0, Math.min(1, ratio));
+    const barTransform = barNode.getComponent(UITransform) ?? barNode.addComponent(UITransform);
+    barTransform.setContentSize(width, height);
+    barNode.setPosition(0, -22, 1);
+
+    const graphics = barNode.getComponent(Graphics) ?? barNode.addComponent(Graphics);
+    const accent = highlighted ? new Color(233, 201, 118, 236) : new Color(108, 166, 122, 228);
+    graphics.clear();
+    graphics.fillColor = new Color(28, 36, 50, 196);
+    graphics.strokeColor = new Color(accent.r, accent.g, accent.b, highlighted ? 180 : 96);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 8);
+    graphics.fill();
+    graphics.stroke();
+    graphics.fillColor = new Color(accent.r, accent.g, accent.b, highlighted ? 212 : 168);
+    graphics.roundRect(-width / 2 + 2, -height / 2 + 2, Math.max(10, (width - 4) * clampedRatio), height - 4, 6);
+    graphics.fill();
+
+    let labelNode = barNode.getChildByName("Label");
+    if (!labelNode) {
+      labelNode = new Node("Label");
+      labelNode.parent = barNode;
+    }
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(width - 8, height);
+    labelNode.setPosition(0, 0, 1);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
+    label.string = labelText;
+    label.fontSize = 9;
+    label.lineHeight = 11;
+    label.horizontalAlign = H_ALIGN_CENTER;
+    label.verticalAlign = V_ALIGN_MIDDLE;
+    label.enableWrapText = false;
+    label.color = new Color(246, 249, 252, 255);
   }
 
   private renderLearnableSkillButtons(cardName: string, skills: HudLearnableSkillState[]): void {

@@ -1,6 +1,8 @@
 import "./styles.css";
 import {
   createHeroSkillTreeView,
+  createHeroAttributeBreakdown,
+  createHeroProgressMeterView,
   experienceRequiredForNextLevel,
   getDefaultBattleSkillCatalog,
   predictPlayerWorldAction,
@@ -356,10 +358,76 @@ function formatHeroExperience(hero: PlayerWorldView["ownHeroes"][number] | null)
     return "XP 0/100";
   }
 
-  const currentLevelBase = totalExperienceRequiredForLevel(hero.progression.level);
-  const currentLevelXp = Math.max(0, hero.progression.experience - currentLevelBase);
-  const nextLevelXp = experienceRequiredForNextLevel(hero.progression.level);
-  return `XP ${currentLevelXp}/${nextLevelXp}`;
+  const meter = createHeroProgressMeterView(hero);
+  return `XP ${meter.currentLevelExperience}/${meter.nextLevelExperience}`;
+}
+
+function renderHeroProgressPanel(hero: PlayerWorldView["ownHeroes"][number] | null): string {
+  if (!hero) {
+    return `
+      <section class="hero-progress-panel info-card">
+        <div class="hero-progress-head">
+          <strong>升级进度</strong>
+          <span class="muted">等待英雄数据</span>
+        </div>
+      </section>
+    `;
+  }
+
+  const meter = createHeroProgressMeterView(hero);
+  return `
+    <section class="hero-progress-panel info-card" data-testid="hero-progress-panel">
+      <div class="hero-progress-head">
+        <strong>升级进度</strong>
+        <span class="status-pill">Lv ${meter.level}</span>
+      </div>
+      <div class="hero-progress-meta">
+        <span>当前 ${meter.currentLevelExperience}/${meter.nextLevelExperience} XP</span>
+        <span>还需 ${meter.remainingExperience} XP</span>
+      </div>
+      <div class="hero-progress-track" aria-label="hero experience progress">
+        <div class="hero-progress-fill" style="width:${(meter.progressRatio * 100).toFixed(1)}%"></div>
+      </div>
+      <p class="hero-progress-copy muted">总经验 ${meter.totalExperience} · 下一级阈值 ${totalExperienceRequiredForLevel(meter.level + 1)}</p>
+    </section>
+  `;
+}
+
+function renderHeroAttributePanel(
+  hero: PlayerWorldView["ownHeroes"][number] | null,
+  world: PlayerWorldView
+): string {
+  if (!hero) {
+    return "";
+  }
+
+  const rows = createHeroAttributeBreakdown(hero, world);
+  return `
+    <section class="hero-attribute-panel info-card" data-testid="hero-attribute-panel">
+      <div class="hero-progress-head">
+        <strong>属性来源</strong>
+        <span class="muted">悬停查看公式</span>
+      </div>
+      <div class="hero-attribute-list">
+        ${rows
+          .map(
+            (row) => `
+              <div class="hero-attribute-row" title="${escapeHtml(row.formula)}">
+                <strong>${row.label}</strong>
+                <span>${row.total}</span>
+                <span>基础 ${row.base}</span>
+                <span>成长 ${row.progression}</span>
+                <span>建筑 ${row.buildings}</span>
+                <span>装备 ${row.equipment}</span>
+                <span>技能 ${row.skills}</span>
+                ${row.other !== 0 ? `<span>其他 ${row.other}</span>` : ""}
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
 }
 
 function formatHeroSkillReason(reason: string): string {
@@ -2204,6 +2272,7 @@ function render(): void {
           <h2>${hero?.name ?? "No Hero"}</h2>
           <p data-testid="hero-level">${formatHeroProgression(hero)}</p>
           <p data-testid="hero-xp">${formatHeroExperience(hero)}</p>
+          ${renderHeroProgressPanel(hero)}
           <p data-testid="hero-stats">${formatHeroCoreStats(hero)}</p>
           <p data-testid="hero-hp">HP ${hero?.stats.hp ?? 0}/${hero?.stats.maxHp ?? 0}</p>
           <p data-testid="hero-move">Move ${hero?.move.remaining ?? 0}/${hero?.move.total ?? 0}</p>
@@ -2211,6 +2280,7 @@ function render(): void {
           <p data-testid="hero-army">Army ${hero?.armyTemplateId ?? "-"} x ${hero?.armyCount ?? 0}</p>
           <p data-testid="hero-skill-points">Skill Points ${hero?.progression.skillPoints ?? 0}</p>
           <p class="muted" data-testid="hero-preview">${state.previewPlan ? `预览消耗 ${state.previewPlan.moveCost} 步` : state.predictionStatus || "悬停地图格子查看路径"}</p>
+          ${renderHeroAttributePanel(hero, state.world)}
           <button class="modal-button" data-end-day="true" ${state.battle ? "disabled" : ""}>推进到下一天</button>
           ${renderHeroSkillTree(hero)}
         </div>
