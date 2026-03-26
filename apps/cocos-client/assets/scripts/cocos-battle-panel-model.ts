@@ -148,7 +148,8 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
       `阶段：${turnLabel}`,
       `行动单位：${activeUnit ? formatActiveUnitLine(activeUnit) : "等待中"}`,
       ...skillSummaryLines,
-      `状态：${statusSummary}`
+      `状态：${statusSummary}`,
+      ...buildEnvironmentSummaryLines(battle)
     ],
     orderLines: ["行动顺序", ...(orderLines.length > 0 ? orderLines : ["等待中"])],
     friendlyLines: ["我方单位", ...friendlyUnits],
@@ -183,11 +184,11 @@ function collectUnitsForCamp(battle: BattleState, camp: BattleCamp) {
 }
 
 function formatFriendlyUnitLine(unit: BattleState["units"][string]): string {
-  return `${formatUnitMarker(unit)} ${unit.stackName} x${unit.count} 生命 ${unit.currentHp}/${unit.maxHp}`;
+  return `${formatUnitMarker(unit)} ${unit.stackName} x${unit.count} 生命 ${unit.currentHp}/${unit.maxHp} · ${unit.lane + 1}线`;
 }
 
 function formatEnemyUnitLine(unit: BattleState["units"][string]): string {
-  return `${unit.stackName} x${unit.count} 生命 ${unit.currentHp}/${unit.maxHp}`;
+  return `${unit.stackName} x${unit.count} 生命 ${unit.currentHp}/${unit.maxHp} · ${unit.lane + 1}线`;
 }
 
 function formatActiveUnitLine(unit: BattleState["units"][string]): string {
@@ -260,7 +261,7 @@ function buildStatusSummary(unit: BattleState["units"][string]): string {
 }
 
 function buildTargetMeta(unit: BattleState["units"][string]): string {
-  const parts = [`生命 ${unit.currentHp}/${unit.maxHp}`];
+  const parts = [`${unit.lane + 1}线`, `生命 ${unit.currentHp}/${unit.maxHp}`];
   if (unit.defending) {
     parts.push("防御中");
   }
@@ -274,7 +275,7 @@ function buildTargetMeta(unit: BattleState["units"][string]): string {
 }
 
 function buildFriendlyMeta(unit: BattleState["units"][string]): string {
-  const parts = [`生命 ${unit.currentHp}/${unit.maxHp}`];
+  const parts = [`${unit.lane + 1}线`, `生命 ${unit.currentHp}/${unit.maxHp}`];
   if ((unit.skills ?? []).length > 0) {
     parts.push(`技能 ${(unit.skills ?? []).length}`);
   }
@@ -283,6 +284,19 @@ function buildFriendlyMeta(unit: BattleState["units"][string]): string {
     parts.push(statusSummary);
   }
   return parts.join(" · ");
+}
+
+function buildEnvironmentSummaryLines(battle: BattleState): string[] {
+  const hazards = battle.environment ?? [];
+  if (hazards.length === 0) {
+    return ["环境：当前战场没有额外障碍或陷阱"];
+  }
+
+  return hazards.map((hazard, index) =>
+    hazard.kind === "blocker"
+      ? `环境${index + 1}：${hazard.lane + 1}线 ${hazard.name} ${hazard.durability}/${hazard.maxDurability}`
+      : `环境${index + 1}：${hazard.lane + 1}线 ${hazard.name} · ${hazard.damage}伤 · ${hazard.charges}次`
+  );
 }
 
 function buildActions(

@@ -83,6 +83,7 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
   update.battle = {
     id: "battle-hero-1-vs-neutral-1",
     round: 2,
+    lanes: 1,
     activeUnitId: "hero-1-stack",
     turnOrder: ["hero-1-stack", "neutral-1-stack"],
     units: {
@@ -90,6 +91,7 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
         id: "hero-1-stack",
         templateId: "hero_guard_basic",
         camp: "attacker",
+        lane: 0,
         stackName: "Guard",
         initiative: 7,
         attack: 4,
@@ -108,6 +110,7 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
             description: "远程压制目标，伤害略低，但不会触发反击。",
             kind: "active",
             target: "enemy",
+            delivery: "ranged",
             cooldown: 2,
             remainingCooldown: 0
           },
@@ -127,6 +130,7 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
         id: "neutral-1-stack",
         templateId: "orc_warrior",
         camp: "defender",
+        lane: 0,
         stackName: "Orc",
         initiative: 5,
         attack: 3,
@@ -142,6 +146,19 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
         statusEffects: []
       }
     },
+    environment: [
+      {
+        id: "hazard-trap-0",
+        kind: "trap",
+        lane: 0,
+        name: "捕兽夹陷阱",
+        description: "近身突进时会先被陷阱割伤并短暂削弱。",
+        damage: 2,
+        charges: 1,
+        grantedStatusId: "weakened",
+        triggeredByCamp: "both"
+      }
+    ],
     log: [],
     rng: {
       seed: 1,
@@ -163,6 +180,7 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
   assert.equal(view.summaryLines[2], "阶段：轮到我方");
   assert.equal(view.summaryLines[4], "技能1：投矛射击[敌/就绪] / 护甲术[自/就绪]");
   assert.equal(view.summaryLines[5], "状态：无异常");
+  assert.equal(view.summaryLines[6], "环境1：1线 捕兽夹陷阱 · 2伤 · 1次");
   assert.equal(view.orderLines[0], "行动顺序");
   assert.equal(view.orderLines[1], "> Guard x12");
   assert.equal(view.orderLines[2], "2. Orc x8 (DEF/RET)");
@@ -181,19 +199,19 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
     active: false
   });
   assert.equal(view.friendlyLines[0], "我方单位");
-  assert.match(view.friendlyLines[1]!, /\[RDY\] Guard x12 生命 10\/10/);
+  assert.match(view.friendlyLines[1]!, /\[RDY\] Guard x12 生命 10\/10 · 1线/);
   assert.deepEqual(view.friendlyItems[0], {
     id: "hero-1-stack",
     title: "Guard x12",
-    meta: "生命 10/10 · 技能 2",
+    meta: "1线 · 生命 10/10 · 技能 2",
     badge: "待命"
   });
-  assert.match(view.enemyTargets[0]!.label, /^> Orc x8 生命 9\/9/);
+  assert.match(view.enemyTargets[0]!.label, /^> Orc x8 生命 9\/9 · 1线/);
   assert.equal(view.enemyTargets[0]!.title, "Orc x8");
-  assert.equal(view.enemyTargets[0]!.meta, "生命 9/9 · 防御中 · 已反击");
+  assert.equal(view.enemyTargets[0]!.meta, "1线 · 生命 9/9 · 防御中 · 已反击");
   assert.equal(view.enemyTargets[0]!.badge, "已选中");
   assert.equal(view.actions[0]!.enabled, true);
-  assert.equal(view.actions[0]!.subtitle, "目标：Orc · 生命 9/9 · 防御中 · 已反击");
+  assert.equal(view.actions[0]!.subtitle, "目标：Orc · 1线 · 生命 9/9 · 防御中 · 已反击");
   assert.deepEqual(view.actions[0]!.action, {
     type: "battle.attack",
     attackerId: "hero-1-stack",
@@ -216,6 +234,7 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
   update.battle = {
     id: "battle-hero-1-vs-hero-2",
     round: 1,
+    lanes: 1,
     activeUnitId: "hero-2-stack",
     turnOrder: ["hero-2-stack", "hero-1-stack"],
     units: {
@@ -223,6 +242,7 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
         id: "hero-1-stack",
         templateId: "hero_guard_basic",
         camp: "attacker",
+        lane: 0,
         stackName: "Guard",
         initiative: 7,
         attack: 4,
@@ -241,6 +261,7 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
         id: "hero-2-stack",
         templateId: "hero_guard_basic",
         camp: "defender",
+        lane: 0,
         stackName: "Raider",
         initiative: 8,
         attack: 5,
@@ -256,6 +277,7 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
         statusEffects: []
       }
     },
+    environment: [],
     log: [],
     rng: {
       seed: 2,

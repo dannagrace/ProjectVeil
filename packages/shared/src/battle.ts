@@ -1,5 +1,6 @@
 import type {
   BattleAction,
+  BattleHazardState,
   BattleSkillCatalogConfig,
   BattleSkillConfig,
   BattleOutcome,
@@ -19,6 +20,11 @@ import { getDefaultBattleSkillCatalog, getDefaultUnitCatalog } from "./world-con
 interface RngStep {
   nextSeed: number;
   value: number;
+}
+
+interface ContactResolutionResult {
+  state: BattleState;
+  intercepted: boolean;
 }
 
 interface BattleCatalogIndex {
@@ -42,6 +48,10 @@ function cloneStatusEffectState(status: BattleStatusEffectState): BattleStatusEf
   return { ...status };
 }
 
+function cloneHazardState(hazard: BattleHazardState): BattleHazardState {
+  return { ...hazard };
+}
+
 function skillsOf(unit: UnitStack): BattleSkillState[] {
   return unit.skills ?? [];
 }
@@ -56,6 +66,10 @@ function withNormalizedCollections(unit: UnitStack): UnitStack {
     skills: skillsOf(unit).map(cloneSkillState),
     statusEffects: statusEffectsOf(unit).map(cloneStatusEffectState)
   };
+}
+
+function hazardsOf(state: BattleState): BattleHazardState[] {
+  return state.environment ?? [];
 }
 
 function battleCatalogIndexFor(catalog: BattleSkillCatalogConfig): BattleCatalogIndex {
@@ -102,6 +116,7 @@ function createSkillState(
     description: definition.description,
     kind: definition.kind,
     target: definition.target,
+    ...(definition.delivery ? { delivery: definition.delivery } : {}),
     cooldown: definition.cooldown,
     remainingCooldown: 0
   };
@@ -123,6 +138,79 @@ function createStatusEffectState(
     damagePerTurn: definition.damagePerTurn,
     ...(sourceUnitId ? { sourceUnitId } : {})
   };
+}
+
+function isContactSkillDefinition(skill: BattleSkillConfig): boolean {
+  return skill.target === "enemy" && skill.delivery !== "ranged";
+}
+
+function buildFormationLanes(unitCount: number, totalLanes: number): number[] {
+  if (unitCount <= 0) {
+    return [];
+  }
+
+  if (unitCount === 1) {
+    return [Math.floor((Math.max(1, totalLanes) - 1) / 2)];
+  }
+
+  const maxLane = Math.max(0, totalLanes - 1);
+  return Array.from({ length: unitCount }, (_, index) =>
+    Math.round((index * maxLane) / Math.max(1, unitCount - 1))
+  );
+}
+
+function describeHazard(hazard: BattleHazardState, catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()): string {
+  if (hazard.kind === "blocker") {
+    return `${hazard.lane + 1} 线 ${hazard.name} ${hazard.durability}/${hazard.maxDurability}`;
+  }
+
+  const parts = [`${hazard.lane + 1} 线 ${hazard.name}`, `${hazard.damage} 伤害`, `${hazard.charges} 次`];
+  if (hazard.grantedStatusId) {
+    parts.push(statusDefinitionFor(hazard.grantedStatusId, catalogIndex).name);
+  }
+  return parts.join(" · ");
+}
+
+function createBattleEnvironment(lanes: number, seed: number): BattleHazardState[] {
+  const resolvedLanes = Math.max(1, lanes);
+  let environmentSeed = (seed ^ 0x9e3779b9) >>> 0;
+  const hazards: BattleHazardState[] = [];
+
+  const blockerRoll = nextRng(environmentSeed);
+  environmentSeed = blockerRoll.nextSeed;
+  const blockerLaneRoll = nextRng(environmentSeed);
+  environmentSeed = blockerLaneRoll.nextSeed;
+  if (blockerRoll.value >= 0.48) {
+    hazards.push({
+      id: `hazard-blocker-${Math.floor(blockerLaneRoll.value * resolvedLanes)}`,
+      kind: "blocker",
+      lane: Math.min(resolvedLanes - 1, Math.floor(blockerLaneRoll.value * resolvedLanes)),
+      name: "碎石路障",
+      description: "近身接战前需要先破开这道障碍。",
+      durability: 1,
+      maxDurability: 1
+    });
+  }
+
+  const trapRoll = nextRng(environmentSeed);
+  environmentSeed = trapRoll.nextSeed;
+  const trapLaneRoll = nextRng(environmentSeed);
+  if (trapRoll.value >= 0.28) {
+    const lane = Math.min(resolvedLanes - 1, Math.floor(trapLaneRoll.value * resolvedLanes));
+    hazards.push({
+      id: `hazard-trap-${lane}`,
+      kind: "trap",
+      lane,
+      name: "捕兽夹陷阱",
+      description: "近身突进时会先被陷阱割伤并短暂削弱。",
+      damage: 2,
+      charges: 1,
+      grantedStatusId: "weakened",
+      triggeredByCamp: "both"
+    });
+  }
+
+  return hazards;
 }
 
 function sortTurnOrder(units: Record<string, UnitStack>): string[] {
@@ -490,6 +578,104 @@ function advanceTurn(state: BattleState, actingUnitId: string, waited: boolean):
   return prepareStateForActiveUnit(advanceTurnInternal(state, actingUnitId, waited));
 }
 
+function triggerTrap(
+  unit: UnitStack,
+  trap: Extract<BattleHazardState, { kind: "trap" }>,
+  log: string[],
+  catalogIndex: BattleCatalogIndex
+): UnitStack {
+  let nextUnit = applyDamage(unit, trap.damage);
+  log.push(`${unit.stackName} 触发 ${trap.name}，损失 ${trap.damage} 生命`);
+
+  if (trap.grantedStatusId && nextUnit.count > 0) {
+    const status = statusDefinitionFor(trap.grantedStatusId, catalogIndex);
+    nextUnit = upsertStatusEffect(nextUnit, trap.grantedStatusId, trap.id, catalogIndex);
+    log.push(`${nextUnit.stackName} 因 ${trap.name} 陷入${status.name}`);
+  }
+
+  return nextUnit;
+}
+
+function resolveContactHazards(
+  state: BattleState,
+  attackerId: string,
+  defenderId: string,
+  catalogIndex: BattleCatalogIndex
+): ContactResolutionResult {
+  const defender = state.units[defenderId]!;
+  const lane = defender.lane;
+  let nextState = state;
+  let nextUnits = { ...state.units };
+  let nextEnvironment = hazardsOf(state).map(cloneHazardState);
+  let nextLog = [...state.log];
+  let attacker = nextUnits[attackerId]!;
+
+  for (const hazard of nextEnvironment) {
+    if (hazard.kind !== "trap" || hazard.lane !== lane || hazard.charges <= 0) {
+      continue;
+    }
+
+    if (hazard.triggeredByCamp && hazard.triggeredByCamp !== "both" && hazard.triggeredByCamp !== attacker.camp) {
+      continue;
+    }
+
+    attacker = triggerTrap(attacker, hazard, nextLog, catalogIndex);
+    nextUnits[attacker.id] = attacker;
+    hazard.charges -= 1;
+  }
+
+  nextEnvironment = nextEnvironment.filter((hazard) => (hazard.kind === "trap" ? hazard.charges > 0 : hazard.durability > 0));
+  nextState = {
+    ...state,
+    units: nextUnits,
+    environment: nextEnvironment,
+    log: nextLog
+  };
+
+  if (attacker.count <= 0) {
+    return {
+      state: advanceTurn(nextState, attacker.id, false),
+      intercepted: true
+    };
+  }
+
+  const blockerIndex = nextEnvironment.findIndex(
+    (hazard) => hazard.kind === "blocker" && hazard.lane === lane && hazard.durability > 0
+  );
+  if (blockerIndex >= 0) {
+    const blocker = nextEnvironment[blockerIndex] as Extract<BattleHazardState, { kind: "blocker" }>;
+    const updatedDurability = blocker.durability - 1;
+    nextLog = nextState.log.concat(`${attacker.stackName} 被 ${blocker.name} 阻挡，只能先破开障碍`);
+    if (updatedDurability > 0) {
+      nextEnvironment[blockerIndex] = {
+        ...blocker,
+        durability: updatedDurability
+      };
+    } else {
+      nextEnvironment = nextEnvironment.filter((hazard) => hazard.id !== blocker.id);
+      nextLog.push(`${blocker.name} 被击碎，${lane + 1} 线重新打开`);
+    }
+
+    return {
+      state: advanceTurn(
+        {
+          ...nextState,
+          environment: nextEnvironment,
+          log: nextLog
+        },
+        attacker.id,
+        false
+      ),
+      intercepted: true
+    };
+  }
+
+  return {
+    state: nextState,
+    intercepted: false
+  };
+}
+
 function applyAttackSequence(
   state: BattleState,
   attackerId: string,
@@ -497,25 +683,37 @@ function applyAttackSequence(
   options?: {
     damageMultiplier?: number;
     allowRetaliation?: boolean;
+    delivery?: "contact" | "ranged";
     logPrefix?: string;
     skillId?: BattleSkillId;
     catalogIndex?: BattleCatalogIndex;
   }
 ): BattleState {
   const catalogIndex = options?.catalogIndex ?? getBattleCatalogIndex();
-  const attacker = state.units[attackerId]!;
-  const defender = state.units[defenderId]!;
-  const attackRoll = nextRng(state.rng.seed);
+  const preparedState =
+    (options?.delivery ?? "contact") === "contact"
+      ? resolveContactHazards(state, attackerId, defenderId, catalogIndex)
+      : {
+          state,
+          intercepted: false
+        };
+  if (preparedState.intercepted) {
+    return preparedState.state;
+  }
+
+  const attacker = preparedState.state.units[attackerId]!;
+  const defender = preparedState.state.units[defenderId]!;
+  const attackRoll = nextRng(preparedState.state.rng.seed);
   const attackDamage = estimateDamage(attacker, defender, attackRoll.value, options?.damageMultiplier ?? 1);
   const nextUnits: Record<string, UnitStack> = {
-    ...state.units,
+    ...preparedState.state.units,
     [defender.id]: applyDamage(defender, attackDamage)
   };
   let nextRngState = {
     seed: attackRoll.nextSeed,
-    cursor: state.rng.cursor + 1
+    cursor: preparedState.state.rng.cursor + 1
   };
-  const log = state.log.concat(
+  const log = preparedState.state.log.concat(
     `${options?.logPrefix ?? `${attacker.stackName} 对 ${defender.stackName}`} 造成 ${attackDamage} 伤害`
   );
 
@@ -548,7 +746,7 @@ function applyAttackSequence(
 
   return advanceTurn(
     {
-      ...state,
+      ...preparedState.state,
       units: nextUnits,
       log,
       rng: nextRngState
@@ -639,9 +837,11 @@ export function createEmptyBattleState(): BattleState {
   return {
     id: "battle-empty",
     round: 0,
+    lanes: 1,
     activeUnitId: null,
     turnOrder: [],
     units: {},
+    environment: [],
     log: [],
     rng: {
       seed: 1,
@@ -665,6 +865,7 @@ export function createDemoBattleState(): BattleState {
         id: "pikeman-a",
         templateId: "hero_guard_basic",
         camp: "attacker",
+        lane: 0,
         stackName: "枪兵",
         initiative: 8,
         attack: 4,
@@ -685,6 +886,7 @@ export function createDemoBattleState(): BattleState {
         id: "wolf-d",
         templateId: "wolf_pack",
         camp: "defender",
+        lane: 0,
         stackName: "恶狼",
         initiative: 10,
         attack: 6,
@@ -706,9 +908,11 @@ export function createDemoBattleState(): BattleState {
   return {
     id: "battle-demo",
     round: 1,
+    lanes: 1,
     activeUnitId: turnOrder[0] ?? null,
     turnOrder,
     units,
+    environment: [],
     log: ["战斗开始"],
     rng: {
       seed: 4242,
@@ -723,6 +927,9 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
   const battleCatalogIndex = getBattleCatalogIndex();
   const templateById = new Map(catalog.templates.map((template) => [template.id, template]));
   const heroTemplate = templateById.get(hero.armyTemplateId);
+  const lanes = Math.max(1, neutralArmy.stacks.length);
+  const attackerLanes = buildFormationLanes(1, lanes);
+  const defenderLanes = buildFormationLanes(neutralArmy.stacks.length, lanes);
   if (!heroTemplate) {
     throw new Error(`Missing hero army template: ${hero.armyTemplateId}`);
   }
@@ -732,6 +939,7 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
       id: `${hero.id}-stack`,
       templateId: hero.armyTemplateId,
       camp: "attacker",
+      lane: attackerLanes[0] ?? 0,
       stackName: heroTemplate.stackName,
       initiative: heroTemplate.initiative,
       attack: heroTemplate.attack + hero.stats.attack,
@@ -759,6 +967,7 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
         id,
         templateId: stack.templateId,
         camp: "defender",
+        lane: defenderLanes[index] ?? index,
         stackName: template.stackName,
         initiative: template.initiative,
         attack: template.attack,
@@ -777,13 +986,16 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
   }
 
   const turnOrder = sortTurnOrder(units);
+  const environment = createBattleEnvironment(lanes, seed);
   return {
     id: `battle-${neutralArmy.id}`,
     round: 1,
+    lanes,
     activeUnitId: turnOrder[0] ?? null,
     turnOrder,
     units,
-    log: [`${hero.name} 遭遇 ${neutralArmy.id}`],
+    environment,
+    log: [`${hero.name} 遭遇 ${neutralArmy.id}`, ...(environment.length > 0 ? [`战场环境：${environment.map((hazard) => describeHazard(hazard, battleCatalogIndex)).join(" / ")}`] : [])],
     rng: {
       seed,
       cursor: 0
@@ -800,6 +1012,9 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
   const templateById = new Map(catalog.templates.map((template) => [template.id, template]));
   const attackerTemplate = templateById.get(attackerHero.armyTemplateId);
   const defenderTemplate = templateById.get(defenderHero.armyTemplateId);
+  const lanes = 1;
+  const attackerLanes = buildFormationLanes(1, lanes);
+  const defenderLanes = buildFormationLanes(1, lanes);
   if (!attackerTemplate || !defenderTemplate) {
     throw new Error("Missing hero army template for PvP battle");
   }
@@ -810,6 +1025,7 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
         id: `${attackerHero.id}-stack`,
         templateId: attackerHero.armyTemplateId,
         camp: "attacker",
+        lane: attackerLanes[0] ?? 0,
         stackName: attackerTemplate.stackName,
         initiative: attackerTemplate.initiative,
         attack: attackerTemplate.attack + attackerHero.stats.attack,
@@ -830,6 +1046,7 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
         id: `${defenderHero.id}-stack`,
         templateId: defenderHero.armyTemplateId,
         camp: "defender",
+        lane: defenderLanes[0] ?? 0,
         stackName: defenderTemplate.stackName,
         initiative: defenderTemplate.initiative,
         attack: defenderTemplate.attack + defenderHero.stats.attack,
@@ -848,13 +1065,19 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
   };
 
   const turnOrder = sortTurnOrder(units);
+  const environment = createBattleEnvironment(lanes, seed);
   return {
     id: `battle-${attackerHero.id}-vs-${defenderHero.id}`,
     round: 1,
+    lanes,
     activeUnitId: turnOrder[0] ?? null,
     turnOrder,
     units,
-    log: [`${attackerHero.name} 遭遇 ${defenderHero.name}`],
+    environment,
+    log: [
+      `${attackerHero.name} 遭遇 ${defenderHero.name}`,
+      ...(environment.length > 0 ? [`战场环境：${environment.map((hazard) => describeHazard(hazard, battleCatalogIndex)).join(" / ")}`] : [])
+    ],
     rng: {
       seed,
       cursor: 0
@@ -893,7 +1116,8 @@ export function applyBattleAction(state: BattleState, action: BattleAction): Bat
     ...state,
     units: Object.fromEntries(
       Object.entries(state.units).map(([unitId, unit]) => [unitId, withNormalizedCollections(unit)])
-    )
+    ),
+    environment: hazardsOf(state).map(cloneHazardState)
   };
   const validation = validateBattleAction(normalizedState, action);
   if (!validation.valid) {
@@ -952,6 +1176,7 @@ export function applyBattleAction(state: BattleState, action: BattleAction): Bat
         {
           damageMultiplier: skillDefinition.effects?.damageMultiplier ?? 1,
           allowRetaliation: skillDefinition.effects?.allowRetaliation ?? true,
+          delivery: isContactSkillDefinition(skillDefinition) ? "contact" : "ranged",
           logPrefix: `${caster.stackName} 施放 ${skillDefinition.name}，对 ${normalizedState.units[action.targetId!]!.stackName}`,
           skillId: action.skillId,
           catalogIndex

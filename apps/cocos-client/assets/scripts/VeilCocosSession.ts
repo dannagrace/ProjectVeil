@@ -114,6 +114,7 @@ export interface UnitStack {
   id: string;
   templateId: string;
   camp: "attacker" | "defender";
+  lane: number;
   stackName: string;
   initiative: number;
   attack: number;
@@ -137,6 +138,7 @@ export interface BattleSkillState {
   description: string;
   kind: "active" | "passive";
   target: "enemy" | "self";
+  delivery?: "contact" | "ranged";
   cooldown: number;
   remainingCooldown: number;
 }
@@ -156,6 +158,30 @@ export interface DeterministicRngState {
   seed: number;
   cursor: number;
 }
+
+export interface BattleBlockerState {
+  id: string;
+  kind: "blocker";
+  lane: number;
+  name: string;
+  description: string;
+  durability: number;
+  maxDurability: number;
+}
+
+export interface BattleTrapState {
+  id: string;
+  kind: "trap";
+  lane: number;
+  name: string;
+  description: string;
+  damage: number;
+  charges: number;
+  grantedStatusId?: string;
+  triggeredByCamp?: "attacker" | "defender" | "both";
+}
+
+export type BattleHazardState = BattleBlockerState | BattleTrapState;
 
 export interface ResourceNode {
   kind: keyof ResourceLedger;
@@ -177,9 +203,11 @@ export interface PlayerTileView {
 export interface BattleState {
   id: string;
   round: number;
+  lanes: number;
   activeUnitId: string | null;
   turnOrder: string[];
   units: Record<string, UnitStack>;
+  environment: BattleHazardState[];
   log: string[];
   rng: DeterministicRngState;
   worldHeroId?: string;

@@ -6,6 +6,7 @@
       "description": "远程压制目标，伤害略低，但不会触发反击。",
       "kind": "active",
       "target": "enemy",
+      "delivery": "ranged",
       "cooldown": 2,
       "effects": {
         "damageMultiplier": 0.85,
@@ -40,6 +41,7 @@
       "description": "投出破甲短枪，伤害略低，但能在数回合内撕开目标防线。",
       "kind": "active",
       "target": "enemy",
+      "delivery": "ranged",
       "cooldown": 2,
       "effects": {
         "damageMultiplier": 0.9,
@@ -74,6 +76,7 @@
       "description": "发出撕裂嚎叫，压低伤害换取削弱效果，且不触发反击。",
       "kind": "active",
       "target": "enemy",
+      "delivery": "ranged",
       "cooldown": 3,
       "effects": {
         "damageMultiplier": 0.65,
