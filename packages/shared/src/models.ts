@@ -35,6 +35,23 @@ export interface HeroProgression {
   pvpBattlesWon: number;
 }
 
+export interface HeroLearnedSkillState {
+  skillId: BattleSkillId;
+  rank: number;
+}
+
+export interface HeroEquipmentState {
+  weaponId?: string;
+  armorId?: string;
+  accessoryId?: string;
+  trinketIds: string[];
+}
+
+export interface HeroLoadout {
+  learnedSkills: HeroLearnedSkillState[];
+  equipment: HeroEquipmentState;
+}
+
 export interface HeroState {
   id: string;
   playerId: string;
@@ -44,8 +61,26 @@ export interface HeroState {
   move: MovePoints;
   stats: HeroStats;
   progression: HeroProgression;
+  loadout: HeroLoadout;
   armyTemplateId: string;
   armyCount: number;
+}
+
+export interface HeroLearnedSkillConfig {
+  skillId: BattleSkillId;
+  rank?: number;
+}
+
+export interface HeroEquipmentConfig {
+  weaponId?: string;
+  armorId?: string;
+  accessoryId?: string;
+  trinketIds?: string[];
+}
+
+export interface HeroLoadoutConfig {
+  learnedSkills?: HeroLearnedSkillConfig[];
+  equipment?: HeroEquipmentConfig | null;
 }
 
 export interface ResourceNode {
@@ -481,6 +516,7 @@ export interface HeroConfig {
   move: MovePoints;
   stats: HeroStats;
   progression?: Partial<HeroProgression>;
+  loadout?: HeroLoadoutConfig | null;
   armyTemplateId: string;
   armyCount: number;
 }
@@ -492,6 +528,68 @@ export function createDefaultHeroProgression(): HeroProgression {
     battlesWon: 0,
     neutralBattlesWon: 0,
     pvpBattlesWon: 0
+  };
+}
+
+export function createDefaultHeroEquipment(): HeroEquipmentState {
+  return {
+    trinketIds: []
+  };
+}
+
+export function normalizeHeroEquipment(
+  equipment?: HeroEquipmentConfig | HeroEquipmentState | null
+): HeroEquipmentState {
+  const trinketIds = Array.from(
+    new Set(
+      (equipment?.trinketIds ?? [])
+        .filter((itemId): itemId is string => typeof itemId === "string")
+        .map((itemId) => itemId.trim())
+        .filter((itemId) => itemId.length > 0)
+    )
+  );
+
+  return {
+    ...createDefaultHeroEquipment(),
+    ...(equipment?.weaponId?.trim() ? { weaponId: equipment.weaponId.trim() } : {}),
+    ...(equipment?.armorId?.trim() ? { armorId: equipment.armorId.trim() } : {}),
+    ...(equipment?.accessoryId?.trim() ? { accessoryId: equipment.accessoryId.trim() } : {}),
+    trinketIds
+  };
+}
+
+export function createDefaultHeroLoadout(): HeroLoadout {
+  return {
+    learnedSkills: [],
+    equipment: createDefaultHeroEquipment()
+  };
+}
+
+export function normalizeHeroLoadout(
+  loadout?: HeroLoadoutConfig | HeroLoadout | null
+): HeroLoadout {
+  const skillById = new Map<BattleSkillId, HeroLearnedSkillState>();
+
+  for (const entry of loadout?.learnedSkills ?? []) {
+    const skillId = entry?.skillId?.trim();
+    if (!skillId) {
+      continue;
+    }
+
+    const nextRank = Math.max(1, Math.floor(entry.rank ?? 1));
+    const previous = skillById.get(skillId);
+    if (!previous || nextRank > previous.rank) {
+      skillById.set(skillId, {
+        skillId,
+        rank: nextRank
+      });
+    }
+  }
+
+  return {
+    ...createDefaultHeroLoadout(),
+    learnedSkills: Array.from(skillById.values()),
+    equipment: normalizeHeroEquipment(loadout?.equipment)
   };
 }
 
@@ -540,7 +638,8 @@ export function normalizeHeroState<T extends HeroConfig | HeroState>(hero: T): H
     position: { ...hero.position },
     move: { ...hero.move },
     stats: { ...hero.stats },
-    progression: normalizeHeroProgression(hero.progression)
+    progression: normalizeHeroProgression(hero.progression),
+    loadout: normalizeHeroLoadout(hero.loadout)
   };
 }
 

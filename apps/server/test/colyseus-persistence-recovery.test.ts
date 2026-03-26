@@ -197,6 +197,10 @@ class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       updatedAt: account.updatedAt ?? new Date().toISOString()
     });
   }
+
+  seedHeroArchive(archive: PlayerHeroArchiveSnapshot): void {
+    this.heroArchives.set(`${archive.playerId}:${archive.heroId}`, structuredClone(archive));
+  }
 }
 
 let requestCounter = 0;
@@ -527,6 +531,34 @@ test("colyseus room hydrates long-term hero archives into fresh rooms", async (t
   assert.equal(visitedShrine.payload.world.ownHeroes[0]?.stats.attack, 3);
   assert.deepEqual(visitedShrine.payload.world.ownHeroes[0]?.position, { x: 3, y: 2 });
 
+  const archivedHero = visitedShrine.payload.world.ownHeroes[0];
+  if (!archivedHero) {
+    throw new Error("Expected hydrated hero snapshot after shrine visit");
+  }
+
+  store.seedHeroArchive({
+    playerId: "player-1",
+    heroId: "hero-1",
+    hero: {
+      ...archivedHero,
+      position: { x: 4, y: 4 },
+      move: { total: 8, remaining: 1 },
+      loadout: {
+        learnedSkills: [
+          { skillId: "armor_spell", rank: 1 },
+          { skillId: "sundering_spear", rank: 2 }
+        ],
+        equipment: {
+          weaponId: "archive_lance",
+          armorId: "archive_plate",
+          accessoryId: "archive_charm",
+          trinketIds: ["ember_token"]
+        }
+      },
+      armyCount: 19
+    }
+  });
+
   secondRoom = await joinRoomWithRetry(port, secondaryRoomId);
 
   const hydratedState = await sendRequest(
@@ -546,6 +578,17 @@ test("colyseus room hydrates long-term hero archives into fresh rooms", async (t
     hydratedState.payload.world.ownHeroes[0]?.move.remaining,
     hydratedState.payload.world.ownHeroes[0]?.move.total
   );
+  assert.equal(hydratedState.payload.world.ownHeroes[0]?.armyCount, 19);
+  assert.deepEqual(hydratedState.payload.world.ownHeroes[0]?.loadout.learnedSkills, [
+    { skillId: "armor_spell", rank: 1 },
+    { skillId: "sundering_spear", rank: 2 }
+  ]);
+  assert.deepEqual(hydratedState.payload.world.ownHeroes[0]?.loadout.equipment, {
+    weaponId: "archive_lance",
+    armorId: "archive_plate",
+    accessoryId: "archive_charm",
+    trinketIds: ["ember_token"]
+  });
 });
 
 test("colyseus room connect provisions player account metadata without overwriting custom display names", async (t) => {

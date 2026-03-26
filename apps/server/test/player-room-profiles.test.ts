@@ -143,6 +143,15 @@ test("createPlayerHeroArchivesFromWorldState extracts one persistent hero record
       ...snapshot.state.heroes[0]!.stats,
       attack: 5
     },
+    loadout: {
+      learnedSkills: [{ skillId: "armor_spell", rank: 2 }],
+      equipment: {
+        weaponId: "bronze_halberd",
+        armorId: "march_guard",
+        accessoryId: "trail_compass",
+        trinketIds: ["wind_charm"]
+      }
+    },
     armyCount: 16
   };
 
@@ -150,6 +159,10 @@ test("createPlayerHeroArchivesFromWorldState extracts one persistent hero record
 
   assert.equal(archives.length, snapshot.state.heroes.length);
   assert.equal(archives.find((archive) => archive.heroId === "hero-1")?.hero.stats.attack, 5);
+  assert.deepEqual(archives.find((archive) => archive.heroId === "hero-1")?.hero.loadout.learnedSkills, [
+    { skillId: "armor_spell", rank: 2 }
+  ]);
+  assert.equal(archives.find((archive) => archive.heroId === "hero-1")?.hero.loadout.equipment.weaponId, "bronze_halberd");
   assert.equal(archives.find((archive) => archive.heroId === "hero-1")?.hero.armyCount, 16);
 });
 
@@ -187,6 +200,18 @@ test("applyPlayerHeroArchivesToWorldState restores long-term hero growth but res
           neutralBattlesWon: 4,
           pvpBattlesWon: 1
         },
+        loadout: {
+          learnedSkills: [
+            { skillId: "armor_spell", rank: 1 },
+            { skillId: "power_shot", rank: 2 }
+          ],
+          equipment: {
+            weaponId: "griffin_lance",
+            armorId: "warden_plate",
+            accessoryId: "sun_medallion",
+            trinketIds: ["warding_seal", "iron_branch"]
+          }
+        },
         armyCount: 18
       }
     }
@@ -201,5 +226,42 @@ test("applyPlayerHeroArchivesToWorldState restores long-term hero growth but res
   assert.equal(hydratedHero?.stats.maxHp, 42);
   assert.equal(hydratedHero?.progression.level, 4);
   assert.equal(hydratedHero?.progression.experience, 420);
+  assert.deepEqual(hydratedHero?.loadout.learnedSkills, [
+    { skillId: "armor_spell", rank: 1 },
+    { skillId: "power_shot", rank: 2 }
+  ]);
+  assert.deepEqual(hydratedHero?.loadout.equipment, {
+    weaponId: "griffin_lance",
+    armorId: "warden_plate",
+    accessoryId: "sun_medallion",
+    trinketIds: ["warding_seal", "iron_branch"]
+  });
   assert.equal(hydratedHero?.armyCount, 18);
+});
+
+test("applyPlayerHeroArchivesToWorldState backfills default long-term build fields for legacy hero rows", () => {
+  const room = createRoom("room-player-hero-archive-legacy", 1001);
+  const snapshot = room.serializePersistenceSnapshot();
+  const originalHero = snapshot.state.heroes.find((hero) => hero.id === "hero-1");
+
+  if (!originalHero) {
+    throw new Error("Expected hero-1 in room snapshot");
+  }
+
+  const legacyHero = { ...originalHero } as Record<string, unknown>;
+  delete legacyHero.loadout;
+
+  const merged = applyPlayerHeroArchivesToWorldState(snapshot.state, [
+    {
+      playerId: "player-1",
+      heroId: "hero-1",
+      hero: legacyHero as unknown as typeof originalHero
+    }
+  ]);
+
+  const hydratedHero = merged.heroes.find((hero) => hero.id === "hero-1");
+  assert.deepEqual(hydratedHero?.loadout.learnedSkills, []);
+  assert.deepEqual(hydratedHero?.loadout.equipment, {
+    trinketIds: []
+  });
 });
