@@ -6,6 +6,7 @@ import {
   applyBattleOutcomeToWorld,
   createHeroAttributeBreakdown,
   createHeroEquipmentBonusSummary,
+  createHeroEquipmentLoadoutView,
   createHeroSkillTreeView,
   createHeroProgressMeterView,
   createBattleEnvironmentState,
@@ -492,6 +493,67 @@ test("equipment catalog exposes the minimum foundation set and resolves hero bon
     bonuses.specialEffects.map((effect) => effect.id).sort(),
     ["channeling", "momentum", "ward"]
   );
+});
+
+test("hero equipment loadout view resolves slot metadata for equipped and empty slots", () => {
+  const hero = createHero({
+    id: "hero-equip-view",
+    playerId: "player-1",
+    name: "装备视图测试",
+    stats: {
+      attack: 5,
+      defense: 4,
+      power: 1,
+      knowledge: 2,
+      hp: 30,
+      maxHp: 30
+    },
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        weaponId: "sunforged_spear",
+        accessoryId: "oracle_lens",
+        trinketIds: []
+      }
+    }
+  });
+
+  const view = createHeroEquipmentLoadoutView(hero);
+
+  assert.deepEqual(
+    view.slots.map((slot) => [slot.slot, slot.itemId, slot.rarityLabel]),
+    [
+      ["weapon", "sunforged_spear", "史诗"],
+      ["armor", null, null],
+      ["accessory", "oracle_lens", "史诗"]
+    ]
+  );
+  assert.equal(view.slots[0]?.bonusSummary, "攻击 +16% / 力量 +1");
+  assert.equal(view.slots[1]?.itemName, "未装备");
+  assert.equal(view.slots[1]?.bonusSummary, "等待拾取或替换");
+  assert.equal(view.slots[2]?.specialEffectSummary, "引导: 为后续技能结算预留更高的法术上限。");
+  assert.deepEqual(view.summary.resolvedItemIds, ["sunforged_spear", "oracle_lens"]);
+});
+
+test("hero equipment loadout view tolerates archived ids missing from the equipment catalog", () => {
+  const hero = createHero({
+    id: "hero-equip-missing",
+    playerId: "player-1",
+    name: "残缺档案",
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        weaponId: "missing_weapon",
+        trinketIds: []
+      }
+    }
+  });
+
+  const view = createHeroEquipmentLoadoutView(hero);
+
+  assert.equal(view.slots[0]?.itemName, "未知装备 (missing_weapon)");
+  assert.equal(view.slots[0]?.bonusSummary, "装备目录缺失");
+  assert.deepEqual(view.summary.resolvedItemIds, []);
 });
 
 test("resolveWorldAction starts a battle when a hero reaches a neutral army tile", () => {

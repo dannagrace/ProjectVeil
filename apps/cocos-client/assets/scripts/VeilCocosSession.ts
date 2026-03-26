@@ -39,6 +39,23 @@ export interface HeroStats {
   maxHp: number;
 }
 
+export interface HeroBattleSkillState {
+  skillId: string;
+  rank: number;
+}
+
+export interface HeroEquipmentState {
+  weaponId?: string;
+  armorId?: string;
+  accessoryId?: string;
+  trinketIds: string[];
+}
+
+export interface HeroLoadout {
+  learnedSkills: HeroBattleSkillState[];
+  equipment: HeroEquipmentState;
+}
+
 export type HeroStatBonus = Pick<HeroStats, "attack" | "defense" | "power" | "knowledge">;
 
 export interface HeroView {
@@ -53,6 +70,7 @@ export interface HeroView {
   };
   stats: HeroStats;
   progression: HeroProgression;
+  loadout: HeroLoadout;
   armyCount: number;
   armyTemplateId: string;
   learnedSkills: HeroLearnedSkillState[];
