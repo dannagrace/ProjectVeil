@@ -153,7 +153,8 @@ test("createPlayerHeroArchivesFromWorldState extracts one persistent hero record
         armorId: "march_guard",
         accessoryId: "trail_compass",
         trinketIds: ["wind_charm"]
-      }
+      },
+      inventory: ["sunforged_spear", "ranger_scale", "ember_talisman"]
     },
     progression: {
       ...snapshot.state.heroes[0]!.progression,
@@ -171,6 +172,11 @@ test("createPlayerHeroArchivesFromWorldState extracts one persistent hero record
     { skillId: "armor_spell", rank: 2 }
   ]);
   assert.equal(archives.find((archive) => archive.heroId === "hero-1")?.hero.loadout.equipment.weaponId, "bronze_halberd");
+  assert.deepEqual(archives.find((archive) => archive.heroId === "hero-1")?.hero.loadout.inventory, [
+    "sunforged_spear",
+    "ranger_scale",
+    "ember_talisman"
+  ]);
   assert.equal(archives.find((archive) => archive.heroId === "hero-1")?.hero.progression.skillPoints, 2);
   assert.deepEqual(archives.find((archive) => archive.heroId === "hero-1")?.hero.learnedSkills, [{ skillId: "war_banner", rank: 1 }]);
   assert.equal(archives.find((archive) => archive.heroId === "hero-1")?.hero.armyCount, 16);
@@ -221,7 +227,8 @@ test("applyPlayerHeroArchivesToWorldState restores long-term hero growth but res
             armorId: "warden_plate",
             accessoryId: "sun_medallion",
             trinketIds: ["warding_seal", "iron_branch"]
-          }
+          },
+          inventory: ["sunforged_spear", "warden_aegis", "oracle_lens"]
         },
         armyCount: 18,
         learnedSkills: [{ skillId: "war_banner", rank: 2 }]
@@ -248,6 +255,7 @@ test("applyPlayerHeroArchivesToWorldState restores long-term hero growth but res
     accessoryId: "sun_medallion",
     trinketIds: ["warding_seal", "iron_branch"]
   });
+  assert.deepEqual(hydratedHero?.loadout.inventory, ["sunforged_spear", "warden_aegis", "oracle_lens"]);
   assert.equal(hydratedHero?.progression.skillPoints, 3);
   assert.deepEqual(hydratedHero?.learnedSkills, [{ skillId: "war_banner", rank: 2 }]);
   assert.equal(hydratedHero?.armyCount, 18);
@@ -278,4 +286,5 @@ test("applyPlayerHeroArchivesToWorldState backfills default long-term build fiel
   assert.deepEqual(hydratedHero?.loadout.equipment, {
     trinketIds: []
   });
+  assert.deepEqual(hydratedHero?.loadout.inventory, []);
 });

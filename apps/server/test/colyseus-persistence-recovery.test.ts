@@ -705,7 +705,8 @@ test("colyseus room hydrates long-term hero archives into fresh rooms", async (t
           armorId: "archive_plate",
           accessoryId: "archive_charm",
           trinketIds: ["ember_token"]
-        }
+        },
+        inventory: ["sunforged_spear", "bastion_plate", "sun_medallion"]
       },
       armyCount: 19
     }
@@ -743,6 +744,11 @@ test("colyseus room hydrates long-term hero archives into fresh rooms", async (t
     accessoryId: "archive_charm",
     trinketIds: ["ember_token"]
   });
+  assert.deepEqual(hydratedState.payload.world.ownHeroes[0]?.loadout.inventory, [
+    "sunforged_spear",
+    "bastion_plate",
+    "sun_medallion"
+  ]);
 });
 
 test("colyseus room connect provisions player account metadata without overwriting custom display names", async (t) => {

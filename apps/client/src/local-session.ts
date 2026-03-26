@@ -5,6 +5,7 @@ import type {
   BattleAction,
   BattleState,
   ClientMessage,
+  EquipmentType,
   MovementPlan,
   PlayerWorldView,
   ServerMessage,
@@ -29,6 +30,8 @@ interface GameSession {
   moveHero(heroId: string, destination: Vec2): Promise<SessionUpdate>;
   collect(heroId: string, position: Vec2): Promise<SessionUpdate>;
   learnSkill(heroId: string, skillId: string): Promise<SessionUpdate>;
+  equipHeroItem(heroId: string, slot: EquipmentType, equipmentId: string): Promise<SessionUpdate>;
+  unequipHeroItem(heroId: string, slot: EquipmentType): Promise<SessionUpdate>;
   recruit(heroId: string, buildingId: string): Promise<SessionUpdate>;
   visitBuilding(heroId: string, buildingId: string): Promise<SessionUpdate>;
   claimMine(heroId: string, buildingId: string): Promise<SessionUpdate>;
@@ -317,6 +320,45 @@ class LocalGameSession implements GameSession {
       type: "hero.learnSkill",
       heroId,
       skillId
+    });
+    const events = this.room.filterEventsForPlayer(this.playerId, result.events ?? []);
+    const nextHeroId = result.snapshot.state.ownHeroes[0]?.id;
+    const battle = result.battle ?? this.room.getBattleForPlayer(this.playerId);
+    return {
+      world: result.snapshot.state,
+      battle,
+      events,
+      movementPlan: result.movementPlan ?? null,
+      reachableTiles: nextHeroId && !battle ? listReachableTiles(this.room.getInternalState(), nextHeroId) : [],
+      ...(result.reason ? { reason: result.reason } : {})
+    };
+  }
+
+  async equipHeroItem(heroId: string, slot: EquipmentType, equipmentId: string): Promise<SessionUpdate> {
+    const result = this.room.dispatch(this.playerId, {
+      type: "hero.equip",
+      heroId,
+      slot,
+      equipmentId
+    });
+    const events = this.room.filterEventsForPlayer(this.playerId, result.events ?? []);
+    const nextHeroId = result.snapshot.state.ownHeroes[0]?.id;
+    const battle = result.battle ?? this.room.getBattleForPlayer(this.playerId);
+    return {
+      world: result.snapshot.state,
+      battle,
+      events,
+      movementPlan: result.movementPlan ?? null,
+      reachableTiles: nextHeroId && !battle ? listReachableTiles(this.room.getInternalState(), nextHeroId) : [],
+      ...(result.reason ? { reason: result.reason } : {})
+    };
+  }
+
+  async unequipHeroItem(heroId: string, slot: EquipmentType): Promise<SessionUpdate> {
+    const result = this.room.dispatch(this.playerId, {
+      type: "hero.unequip",
+      heroId,
+      slot
     });
     const events = this.room.filterEventsForPlayer(this.playerId, result.events ?? []);
     const nextHeroId = result.snapshot.state.ownHeroes[0]?.id;
@@ -644,6 +686,45 @@ class RemoteGameSession implements GameSession {
     return update;
   }
 
+  async equipHeroItem(heroId: string, slot: EquipmentType, equipmentId: string): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.equip",
+          heroId,
+          slot,
+          equipmentId
+        }
+      },
+      "session.state"
+    );
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
+    this.persistSessionReplay(update);
+    return update;
+  }
+
+  async unequipHeroItem(heroId: string, slot: EquipmentType): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.unequip",
+          heroId,
+          slot
+        }
+      },
+      "session.state"
+    );
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
+    this.persistSessionReplay(update);
+    return update;
+  }
+
   async recruit(heroId: string, buildingId: string): Promise<SessionUpdate> {
     const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
       {
@@ -941,6 +1022,14 @@ class RecoverableRemoteGameSession implements GameSession {
 
   async learnSkill(heroId: string, skillId: string): Promise<SessionUpdate> {
     return this.runWithSession((session) => session.learnSkill(heroId, skillId));
+  }
+
+  async equipHeroItem(heroId: string, slot: EquipmentType, equipmentId: string): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.equipHeroItem(heroId, slot, equipmentId));
+  }
+
+  async unequipHeroItem(heroId: string, slot: EquipmentType): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.unequipHeroItem(heroId, slot));
   }
 
   async recruit(heroId: string, buildingId: string): Promise<SessionUpdate> {

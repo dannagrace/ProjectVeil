@@ -54,6 +54,7 @@ export interface HeroEquipmentState {
 export interface HeroLoadout {
   learnedSkills: HeroBattleSkillState[];
   equipment: HeroEquipmentState;
+  inventory: string[];
 }
 
 export type HeroStatBonus = Pick<HeroStats, "attack" | "defense" | "power" | "knowledge">;

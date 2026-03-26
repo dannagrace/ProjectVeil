@@ -552,6 +552,43 @@ h1 {
   color: var(--muted);
 }
 
+.hero-equipment-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hero-equipment-inventory {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hero-equipment-button {
+  appearance: none;
+  border: 1px solid rgba(121, 86, 52, 0.18);
+  background: rgba(249, 244, 231, 0.9);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.hero-equipment-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(47, 110, 91, 0.32);
+  background: rgba(232, 245, 236, 0.96);
+}
+
+.hero-equipment-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .hero-skill-tree-head {
   display: flex;
   align-items: center;

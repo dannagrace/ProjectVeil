@@ -30,6 +30,14 @@
         "neutralBattlesWon": 0,
         "pvpBattlesWon": 0
       },
+      "loadout": {
+        "inventory": [
+          "militia_pike",
+          "vanguard_blade",
+          "padded_gambeson",
+          "scout_compass"
+        ]
+      },
       "armyTemplateId": "hero_guard_basic",
       "armyCount": 12
     },
@@ -60,6 +68,14 @@
         "battlesWon": 0,
         "neutralBattlesWon": 0,
         "pvpBattlesWon": 0
+      },
+      "loadout": {
+        "inventory": [
+          "oak_longbow",
+          "tower_shield_mail",
+          "scribe_charm",
+          "captains_insignia"
+        ]
       },
       "armyTemplateId": "hero_guard_basic",
       "armyCount": 10

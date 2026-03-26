@@ -614,6 +614,76 @@ test("hero equipment loadout view tolerates archived ids missing from the equipm
   assert.deepEqual(view.summary.resolvedItemIds, []);
 });
 
+test("hero equip and unequip actions rotate items between slots and inventory", () => {
+  const hero = createHero({
+    id: "hero-equip-action",
+    playerId: "player-1",
+    name: "装备流转测试",
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        weaponId: "militia_pike",
+        trinketIds: []
+      },
+      inventory: ["vanguard_blade", "padded_gambeson", "scout_compass"]
+    }
+  });
+  const state = createWorldState({
+    heroes: [hero]
+  });
+
+  assert.deepEqual(validateWorldAction(state, {
+    type: "hero.equip",
+    heroId: "hero-equip-action",
+    slot: "weapon",
+    equipmentId: "padded_gambeson"
+  }), {
+    valid: false,
+    reason: "equipment_slot_mismatch"
+  });
+
+  const equipped = resolveWorldAction(state, {
+    type: "hero.equip",
+    heroId: "hero-equip-action",
+    slot: "weapon",
+    equipmentId: "vanguard_blade"
+  });
+
+  assert.equal(equipped.state.heroes[0]?.loadout.equipment.weaponId, "vanguard_blade");
+  assert.deepEqual(equipped.state.heroes[0]?.loadout.inventory, ["padded_gambeson", "scout_compass", "militia_pike"]);
+  assert.deepEqual(equipped.events, [
+    {
+      type: "hero.equipmentChanged",
+      heroId: "hero-equip-action",
+      slot: "weapon",
+      equippedItemId: "vanguard_blade",
+      unequippedItemId: "militia_pike"
+    }
+  ]);
+
+  const unequipped = resolveWorldAction(equipped.state, {
+    type: "hero.unequip",
+    heroId: "hero-equip-action",
+    slot: "weapon"
+  });
+
+  assert.equal(unequipped.state.heroes[0]?.loadout.equipment.weaponId, undefined);
+  assert.deepEqual(unequipped.state.heroes[0]?.loadout.inventory, [
+    "padded_gambeson",
+    "scout_compass",
+    "militia_pike",
+    "vanguard_blade"
+  ]);
+  assert.deepEqual(unequipped.events, [
+    {
+      type: "hero.equipmentChanged",
+      heroId: "hero-equip-action",
+      slot: "weapon",
+      unequippedItemId: "vanguard_blade"
+    }
+  ]);
+});
+
 test("resolveWorldAction starts a battle when a hero reaches a neutral army tile", () => {
   const hero = createHero({
     id: "hero-1",

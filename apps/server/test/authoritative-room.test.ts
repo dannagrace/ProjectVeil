@@ -190,6 +190,37 @@ test("room filters event timelines per player without hiding PvP battle results 
   assert.deepEqual(room.filterEventsForPlayer("player-2", events), [events[1], events[2], events[3]]);
 });
 
+test("room equips hero items from carried inventory and emits the equipment change event", () => {
+  const room = createRoom("room-equip", 1001);
+  const state = room.getInternalState();
+  const hero = state.heroes.find((entry) => entry.id === "hero-1");
+
+  if (!hero) {
+    throw new Error("Expected hero-1 to exist");
+  }
+
+  hero.loadout.inventory = ["vanguard_blade", "padded_gambeson", "scout_compass"];
+
+  const result = room.dispatch("player-1", {
+    type: "hero.equip",
+    heroId: "hero-1",
+    slot: "weapon",
+    equipmentId: "vanguard_blade"
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.state.ownHeroes[0]?.loadout.equipment.weaponId, "vanguard_blade");
+  assert.deepEqual(result.snapshot.state.ownHeroes[0]?.loadout.inventory, ["padded_gambeson", "scout_compass"]);
+  assert.deepEqual(result.events, [
+    {
+      type: "hero.equipmentChanged",
+      heroId: "hero-1",
+      slot: "weapon",
+      equippedItemId: "vanguard_blade"
+    }
+  ]);
+});
+
 test("room allows recruiting from a recruitment post when the hero stands on it", () => {
   const room = createRoom("room-recruit", 1001);
   const state = room.getInternalState();
