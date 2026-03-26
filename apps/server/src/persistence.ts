@@ -396,6 +396,7 @@ function mergeHeroArchiveIntoFreshHero(baseHero: HeroState, archive: PlayerHeroA
     loadout: archivedHero.loadout,
     armyTemplateId: archivedHero.armyTemplateId,
     armyCount: archivedHero.armyCount,
+    learnedSkills: archivedHero.learnedSkills,
     move: {
       total: archivedHero.move.total,
       remaining: archivedHero.move.total

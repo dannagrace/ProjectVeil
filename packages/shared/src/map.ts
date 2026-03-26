@@ -28,6 +28,7 @@ import type {
   WorldResourceLedger,
   WorldState
 } from "./models";
+import { applyHeroSkillSelection, validateHeroSkillSelection } from "./hero-skills";
 import {
   normalizeHeroState,
   totalExperienceRequiredForLevel
@@ -242,13 +243,15 @@ function applyHeroExperience(
   hero: HeroState;
   experienceGained: number;
   levelsGained: number;
+  skillPointsAwarded: number;
 } {
   const safeExperience = Math.max(0, Math.floor(experienceGained));
   if (safeExperience === 0) {
     return {
       hero,
       experienceGained: 0,
-      levelsGained: 0
+      levelsGained: 0,
+      skillPointsAwarded: 0
     };
   }
 
@@ -273,13 +276,15 @@ function applyHeroExperience(
         ...hero.progression,
         level: nextLevel,
         experience: totalExperience,
+        skillPoints: hero.progression.skillPoints + levelsGained,
         battlesWon: hero.progression.battlesWon + 1,
         neutralBattlesWon: hero.progression.neutralBattlesWon + (battleKind === "neutral" ? 1 : 0),
         pvpBattlesWon: hero.progression.pvpBattlesWon + (battleKind === "hero" ? 1 : 0)
       }
     },
     experienceGained: safeExperience,
-    levelsGained
+    levelsGained,
+    skillPointsAwarded: levelsGained
   };
 }
 
@@ -1104,6 +1109,30 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
     };
   }
 
+  if (action.type === "hero.learnSkill") {
+    const validation = validateHeroSkillSelection(hero, action.skillId);
+    if (!validation.valid) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        ...(validation.reason ? { reason: validation.reason } : {})
+      };
+    }
+
+    const learned = applyHeroSkillSelection(hero, action.skillId);
+    const predictedWorld: PlayerWorldView = {
+      ...view,
+      ownHeroes: view.ownHeroes.map((item) => (item.id === hero.id ? learned.hero : item))
+    };
+
+    return {
+      world: predictedWorld,
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+    };
+  }
+
   if (action.type === "hero.move") {
     const destinationTile = findPlayerTile(view, action.destination);
     if (!destinationTile) {
@@ -1524,6 +1553,10 @@ export function validateWorldAction(state: WorldState, action: WorldAction): Val
     return { valid: true };
   }
 
+  if (action.type === "hero.learnSkill") {
+    return validateHeroSkillSelection(hero, action.skillId);
+  }
+
   if (action.type === "hero.recruit") {
     const building = state.buildings[action.buildingId];
     if (!building) {
@@ -1813,6 +1846,44 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
     };
   }
 
+  if (action.type === "hero.learnSkill") {
+    const hero = state.heroes.find((item) => item.id === action.heroId);
+    if (!hero) {
+      return { state, events: [] };
+    }
+
+    const validation = validateHeroSkillSelection(hero, action.skillId);
+    if (!validation.valid) {
+      return { state, events: [] };
+    }
+
+    const learned = applyHeroSkillSelection(hero, action.skillId);
+    const nextState = buildNextWorldState(
+      state,
+      state.heroes.map((item) => (item.id === hero.id ? learned.hero : item)),
+      state.neutralArmies,
+      state.buildings
+    );
+
+    return {
+      state: nextState,
+      events: [
+        {
+          type: "hero.skillLearned",
+          heroId: hero.id,
+          skillId: learned.skill.id,
+          branchId: learned.branch.id,
+          skillName: learned.skill.name,
+          branchName: learned.branch.name,
+          newRank: learned.newRank,
+          spentPoint: 1,
+          remainingSkillPoints: learned.hero.progression.skillPoints,
+          newlyGrantedBattleSkillIds: learned.newlyGrantedBattleSkillIds
+        }
+      ]
+    };
+  }
+
   if (action.type === "hero.recruit") {
     const hero = state.heroes.find((item) => item.id === action.heroId);
     const building = state.buildings[action.buildingId];
@@ -1989,6 +2060,7 @@ export function filterWorldEventsForPlayer(
       case "hero.visited":
       case "hero.claimedMine":
       case "hero.progressed":
+      case "hero.skillLearned":
         return ownsHero(event.heroId);
       case "neutral.moved": {
         const visibility = state.visibilityByPlayer[playerId];
@@ -2069,7 +2141,9 @@ export function applyBattleOutcomeToWorld(
             experienceGained: awardedDefender.experienceGained,
             totalExperience: awardedDefender.hero.progression.experience,
             level: awardedDefender.hero.progression.level,
-            levelsGained: awardedDefender.levelsGained
+            levelsGained: awardedDefender.levelsGained,
+            skillPointsAwarded: awardedDefender.skillPointsAwarded,
+            availableSkillPoints: awardedDefender.hero.progression.skillPoints
           }
         ]
       };
@@ -2125,7 +2199,9 @@ export function applyBattleOutcomeToWorld(
             experienceGained: awardedAttacker.experienceGained,
             totalExperience: awardedAttacker.hero.progression.experience,
             level: awardedAttacker.hero.progression.level,
-            levelsGained: awardedAttacker.levelsGained
+            levelsGained: awardedAttacker.levelsGained,
+            skillPointsAwarded: awardedAttacker.skillPointsAwarded,
+            availableSkillPoints: awardedAttacker.hero.progression.skillPoints
           }
         ]
       };
@@ -2205,7 +2281,9 @@ export function applyBattleOutcomeToWorld(
         experienceGained: awardedAttacker.experienceGained,
         totalExperience: awardedAttacker.hero.progression.experience,
         level: awardedAttacker.hero.progression.level,
-        levelsGained: awardedAttacker.levelsGained
+        levelsGained: awardedAttacker.levelsGained,
+        skillPointsAwarded: awardedAttacker.skillPointsAwarded,
+        availableSkillPoints: awardedAttacker.hero.progression.skillPoints
       },
       ...(neutralArmy.reward
         ? [

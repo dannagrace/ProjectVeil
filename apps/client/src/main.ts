@@ -1,6 +1,8 @@
 import "./styles.css";
 import {
+  createHeroSkillTreeView,
   experienceRequiredForNextLevel,
+  getDefaultBattleSkillCatalog,
   predictPlayerWorldAction,
   totalExperienceRequiredForLevel,
   type BattleAction,
@@ -64,6 +66,9 @@ const initialLobbyDisplayName =
     ? storedAuthSession.displayName
     : readLocalPreferredDisplayName(initialLobbyPreferences.playerId);
 const initialLobbyLoginId = storedAuthSession?.loginId ?? "";
+const battleSkillNameById = new Map(
+  getDefaultBattleSkillCatalog().skills.map((skill) => [skill.id, skill.name] as const)
+);
 
 interface BattleModalState {
   visible: boolean;
@@ -351,6 +356,103 @@ function formatHeroExperience(hero: PlayerWorldView["ownHeroes"][number] | null)
   const currentLevelXp = Math.max(0, hero.progression.experience - currentLevelBase);
   const nextLevelXp = experienceRequiredForNextLevel(hero.progression.level);
   return `XP ${currentLevelXp}/${nextLevelXp}`;
+}
+
+function formatHeroSkillReason(reason: string): string {
+  if (reason === "not_enough_skill_points") {
+    return "需要可用技能点";
+  }
+
+  if (reason === "hero_level_too_low") {
+    return "等级未达标";
+  }
+
+  if (reason === "skill_max_rank_reached") {
+    return "已满级";
+  }
+
+  if (reason === "skill_prerequisite_missing") {
+    return "前置未满足";
+  }
+
+  return reason;
+}
+
+function formatGrantedBattleSkillNames(skillIds: string[]): string {
+  if (skillIds.length === 0) {
+    return "当前未提供额外战斗技能";
+  }
+
+  return skillIds.map((skillId) => battleSkillNameById.get(skillId) ?? skillId).join(" / ");
+}
+
+function renderHeroSkillTree(hero: PlayerWorldView["ownHeroes"][number] | null): string {
+  if (!hero) {
+    return `<div class="hero-skill-tree muted">当前没有可展示的技能树。</div>`;
+  }
+
+  const tree = createHeroSkillTreeView(hero);
+  return `
+    <section class="hero-skill-tree" data-testid="hero-skill-tree">
+      <div class="hero-skill-tree-head">
+        <strong>技能树</strong>
+        <span>${tree.availableSkillPoints} 点待分配</span>
+      </div>
+      <div class="hero-skill-tree-grid">
+        ${tree.branches
+          .map(
+            (branch) => `
+              <article class="hero-skill-branch info-card">
+                <div class="info-card-head">
+                  <div>
+                    <div class="info-card-eyebrow">Branch</div>
+                    <strong>${escapeHtml(branch.name)}</strong>
+                  </div>
+                  <span class="status-pill">${branch.skills.reduce((total, skill) => total + skill.currentRank, 0)} / ${branch.skills.reduce((total, skill) => total + skill.maxRank, 0)}</span>
+                </div>
+                <p class="hero-skill-branch-copy">${escapeHtml(branch.description)}</p>
+                <div class="hero-skill-list">
+                  ${branch.skills
+                    .map(
+                      (skill) => `
+                        <div class="hero-skill-item">
+                          <div class="hero-skill-meta">
+                            <div>
+                              <strong>${escapeHtml(skill.name)}</strong>
+                              <span>Lv ${skill.requiredLevel}+ · Rank ${skill.currentRank}/${skill.maxRank}</span>
+                            </div>
+                            <button
+                              class="hero-skill-button"
+                              data-hero-skill-id="${skill.id}"
+                              ${skill.canLearn && !state.battle ? "" : "disabled"}
+                              title="${escapeHtml(skill.canLearn ? `学习 / 强化到 Rank ${skill.nextRank}` : formatHeroSkillReason(skill.reason ?? ""))}"
+                            >
+                              ${skill.currentRank > 0 ? "强化" : "学习"}
+                            </button>
+                          </div>
+                          <p>${escapeHtml(skill.description)}</p>
+                          <p class="hero-skill-copy">当前效果：${escapeHtml(formatGrantedBattleSkillNames(skill.grantedBattleSkillIds))}</p>
+                          <p class="hero-skill-copy">
+                            ${
+                              skill.nextRank
+                                ? `下一阶：${escapeHtml(skill.ranks.find((rank) => rank.rank === skill.nextRank)?.description ?? `Rank ${skill.nextRank}`)}${skill.nextGrantedBattleSkillIds.length > 0 ? ` · 解锁 ${escapeHtml(formatGrantedBattleSkillNames(skill.nextGrantedBattleSkillIds))}` : ""}`
+                                : "已经达到当前技能上限"
+                            }
+                          </p>
+                          ${skill.prerequisites.length > 0 ? `<p class="hero-skill-copy">前置：${escapeHtml(skill.prerequisites.join(" / "))}</p>` : ""}
+                          ${!skill.canLearn ? `<p class="hero-skill-copy muted">${escapeHtml(formatHeroSkillReason(skill.reason ?? ""))}</p>` : ""}
+                        </div>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
 }
 
 function formatResourceKindLabel(kind: "gold" | "wood" | "ore"): string {
@@ -736,6 +838,12 @@ function appendLog(update: SessionUpdate): void {
       state.log.unshift(`Claimed mine: ${formatDailyIncome(event.resourceKind, event.income)}`);
     } else if (event.type === "resource.produced") {
       state.log.unshift(`Mine produced ${formatResourceKindLabel(event.resource.kind)} +${event.resource.amount}`);
+    } else if (event.type === "hero.skillLearned") {
+      state.log.unshift(
+        event.newRank > 1
+          ? `Upgraded ${event.skillName} to Rank ${event.newRank}`
+          : `Learned ${event.skillName}`
+      );
     } else if (event.type === "neutral.moved") {
       state.log.unshift(
         event.reason === "chase"
@@ -747,7 +855,7 @@ function appendLog(update: SessionUpdate): void {
     } else if (event.type === "hero.progressed") {
       state.log.unshift(
         event.levelsGained > 0
-          ? `Hero gained ${event.experienceGained} XP and reached Lv ${event.level}`
+          ? `Hero gained ${event.experienceGained} XP, reached Lv ${event.level}, and earned ${event.skillPointsAwarded} skill point${event.skillPointsAwarded === 1 ? "" : "s"}`
           : `Hero gained ${event.experienceGained} XP`
       );
     } else if (event.type === "hero.moved") {
@@ -860,6 +968,19 @@ function buildTimelineEntries(update: SessionUpdate, source: TimelineEntry["sour
       return;
     }
 
+    if (event.type === "hero.skillLearned") {
+      items.push({
+        id: `${stamp}-skill-${index}`,
+        tone: "system",
+        source,
+        text:
+          event.newRank > 1
+            ? `${event.branchName} 分支的 ${event.skillName} 强化到 Rank ${event.newRank}`
+            : `${event.branchName} 分支习得 ${event.skillName}`
+      });
+      return;
+    }
+
     if (event.type === "neutral.moved") {
       items.push({
         id: `${stamp}-neutral-move-${index}`,
@@ -882,7 +1003,7 @@ function buildTimelineEntries(update: SessionUpdate, source: TimelineEntry["sour
         source,
         text:
           event.levelsGained > 0
-            ? `英雄获得 ${event.experienceGained} 经验，升至 Lv ${event.level}`
+            ? `英雄获得 ${event.experienceGained} 经验，升至 Lv ${event.level}，并得到 ${event.skillPointsAwarded} 点技能点`
             : `英雄获得 ${event.experienceGained} 经验`
       });
       return;
@@ -1014,7 +1135,8 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
       event.type === "hero.recruited" ||
       event.type === "hero.visited" ||
       event.type === "hero.claimedMine" ||
-      event.type === "resource.produced"
+      event.type === "resource.produced" ||
+      event.type === "hero.skillLearned"
   )
     ? "loot"
     : update.events.some(
@@ -1055,8 +1177,8 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
     const progressEvent = update.events.find((event) => event.type === "hero.progressed");
     const didWin = didCurrentPlayerWinBattle(resolved, update.world);
     const winBody = resolved.defenderHeroId
-      ? `你已击败敌方英雄。${progressEvent?.type === "hero.progressed" ? `获得 ${progressEvent.experienceGained} 经验${progressEvent.levelsGained > 0 ? `，升至 Lv ${progressEvent.level}` : ""}。` : ""}`
-      : `你已击败守军。${rewardEvent?.type === "hero.collected" ? `获得 ${rewardEvent.resource.kind} +${rewardEvent.resource.amount}。` : ""}${progressEvent?.type === "hero.progressed" ? `获得 ${progressEvent.experienceGained} 经验${progressEvent.levelsGained > 0 ? `，升至 Lv ${progressEvent.level}` : ""}。` : ""}`;
+      ? `你已击败敌方英雄。${progressEvent?.type === "hero.progressed" ? `获得 ${progressEvent.experienceGained} 经验${progressEvent.levelsGained > 0 ? `，升至 Lv ${progressEvent.level}，并得到 ${progressEvent.skillPointsAwarded} 点技能点` : ""}。` : ""}`
+      : `你已击败守军。${rewardEvent?.type === "hero.collected" ? `获得 ${rewardEvent.resource.kind} +${rewardEvent.resource.amount}。` : ""}${progressEvent?.type === "hero.progressed" ? `获得 ${progressEvent.experienceGained} 经验${progressEvent.levelsGained > 0 ? `，升至 Lv ${progressEvent.level}，并得到 ${progressEvent.skillPointsAwarded} 点技能点` : ""}。` : ""}`;
     openBattleModal(
       didWin ? "战斗胜利" : "战斗失败",
       didWin ? winBody : "英雄被击退，生命值下降且本日移动力清零。"
@@ -1229,6 +1351,54 @@ async function onEndDay(): Promise<void> {
   } catch (error) {
     state.predictionStatus = error instanceof Error ? error.message : "end_day_failed";
     render();
+  }
+}
+
+async function onLearnHeroSkill(skillId: string): Promise<void> {
+  const hero = activeHero();
+  if (!hero) {
+    return;
+  }
+
+  if (state.battle) {
+    state.predictionStatus = "战斗中无法调整技能树";
+    render();
+    return;
+  }
+
+  const tree = createHeroSkillTreeView(hero);
+  const selectedSkill = tree.branches.flatMap((branch) => branch.skills).find((skill) => skill.id === skillId) ?? null;
+  if (!selectedSkill) {
+    state.predictionStatus = "未找到对应技能";
+    render();
+    return;
+  }
+
+  const session = await getSession();
+  const prediction = predictPlayerWorldAction(state.world, {
+    type: "hero.learnSkill",
+    heroId: hero.id,
+    skillId
+  });
+
+  if (!prediction.reason) {
+    applyPendingPrediction({
+      world: prediction.world,
+      movementPlan: prediction.movementPlan,
+      reachableTiles: prediction.reachableTiles,
+      status:
+        selectedSkill.currentRank > 0
+          ? `预演中：将 ${selectedSkill.name} 强化到 Rank ${selectedSkill.nextRank}`
+          : `预演中：学习 ${selectedSkill.name}`,
+      tone: "loot"
+    });
+    render();
+  }
+
+  try {
+    applyUpdate(await session.learnSkill(hero.id, skillId));
+  } catch (error) {
+    rollbackPendingPrediction(error instanceof Error ? error.message : "learn_skill_failed");
   }
 }
 
@@ -2034,8 +2204,10 @@ function render(): void {
           <p data-testid="hero-move">Move ${hero?.move.remaining ?? 0}/${hero?.move.total ?? 0}</p>
           <p data-testid="hero-wins">Wins ${hero?.progression.battlesWon ?? 0} · Neutral ${hero?.progression.neutralBattlesWon ?? 0} · PvP ${hero?.progression.pvpBattlesWon ?? 0}</p>
           <p data-testid="hero-army">Army ${hero?.armyTemplateId ?? "-"} x ${hero?.armyCount ?? 0}</p>
+          <p data-testid="hero-skill-points">Skill Points ${hero?.progression.skillPoints ?? 0}</p>
           <p class="muted" data-testid="hero-preview">${state.previewPlan ? `预览消耗 ${state.previewPlan.moveCost} 步` : state.predictionStatus || "悬停地图格子查看路径"}</p>
           <button class="modal-button" data-end-day="true" ${state.battle ? "disabled" : ""}>推进到下一天</button>
+          ${renderHeroSkillTree(hero)}
         </div>
         <div class="log-panel">
           <h3>时间线</h3>
@@ -2194,6 +2366,17 @@ function render(): void {
   for (const endDayButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-end-day]"))) {
     endDayButton.addEventListener("click", () => {
       void onEndDay();
+    });
+  }
+
+  for (const skillButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-hero-skill-id]"))) {
+    skillButton.addEventListener("click", () => {
+      const skillId = skillButton.dataset.heroSkillId;
+      if (!skillId) {
+        return;
+      }
+
+      void onLearnHeroSkill(skillId);
     });
   }
 

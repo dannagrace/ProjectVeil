@@ -36,6 +36,15 @@ interface HudActionButtonState {
   callback: (() => void) | null;
 }
 
+function formatHeroLearnedSkills(hero: NonNullable<VeilHudRenderState["update"]>["world"]["ownHeroes"][number] | null): string {
+  const learnedSkills = hero?.learnedSkills ?? [];
+  if (!hero || learnedSkills.length === 0) {
+    return "未学习长期技能";
+  }
+
+  return learnedSkills.map((skill) => `${skill.skillId} R${skill.rank}`).join(" / ");
+}
+
 export interface VeilHudRenderState {
   roomId: string;
   playerId: string;
@@ -153,18 +162,19 @@ export class VeilHudPanel extends Component {
         ? [
             `英雄  ${hero.name}`,
             `坐标 (${hero.position.x},${hero.position.y})`,
-            `等级 ${hero.progression.level}  经验 ${hero.progression.experience}`,
+            `等级 ${hero.progression.level}  经验 ${hero.progression.experience}  技能点 ${hero.progression.skillPoints ?? 0}`,
             `攻 ${hero.stats.attack}  防 ${hero.stats.defense}  力 ${hero.stats.power}  知 ${hero.stats.knowledge}`,
-            `兵种 ${hero.armyTemplateId}`
+            `兵种 ${hero.armyTemplateId}`,
+            `技能 ${formatHeroLearnedSkills(hero)}`
           ]
-        : ["英雄", "等待房间状态...", "", "", ""],
+        : ["英雄", "等待房间状态...", "", "", "", ""],
       cursorY,
       14,
       18,
       cardWidth,
       leftX,
-      6,
-      116
+      7,
+      132
     );
 
     cursorY = this.renderCardBlock(

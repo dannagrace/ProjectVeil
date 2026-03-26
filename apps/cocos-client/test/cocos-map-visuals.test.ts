@@ -59,12 +59,14 @@ function createBaseUpdate(): SessionUpdate {
           progression: {
             level: 2,
             experience: 40,
+            skillPoints: 1,
             battlesWon: 1,
             neutralBattlesWon: 1,
             pvpBattlesWon: 0
           },
           armyCount: 11,
-          armyTemplateId: "hero_guard_basic"
+          armyTemplateId: "hero_guard_basic",
+          learnedSkills: []
         }
       ],
       visibleHeroes: [],
@@ -285,7 +287,9 @@ test("buildMapFeedbackEntriesFromUpdate creates tile callouts for move, collect,
       experienceGained: 20,
       totalExperience: 60,
       level: 3,
-      levelsGained: 1
+      levelsGained: 1,
+      skillPointsAwarded: 1,
+      availableSkillPoints: 2
     },
     {
       type: "battle.started",

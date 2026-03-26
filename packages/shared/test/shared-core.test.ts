@@ -53,7 +53,8 @@ function createHero(overrides: Partial<HeroState> & Pick<HeroState, "id" | "play
     progression: overrides.progression ?? createDefaultHeroProgression(),
     loadout: overrides.loadout ?? createDefaultHeroLoadout(),
     armyTemplateId: overrides.armyTemplateId ?? "hero_guard_basic",
-    armyCount: overrides.armyCount ?? 12
+    armyCount: overrides.armyCount ?? 12,
+    learnedSkills: overrides.learnedSkills ?? []
   };
 }
 
@@ -400,6 +401,7 @@ test("applyBattleOutcomeToWorld grants neutral rewards and moves the hero onto t
   assert.equal(outcome.state.neutralArmies["neutral-1"], undefined);
   assert.equal(outcome.state.heroes[0]?.progression.level, 2);
   assert.equal(outcome.state.heroes[0]?.progression.experience, 120);
+  assert.equal(outcome.state.heroes[0]?.progression.skillPoints, 1);
   assert.equal(outcome.state.heroes[0]?.progression.neutralBattlesWon, 1);
   assert.deepEqual(outcome.events, [
     {
@@ -416,7 +418,9 @@ test("applyBattleOutcomeToWorld grants neutral rewards and moves the hero onto t
       experienceGained: 120,
       totalExperience: 120,
       level: 2,
-      levelsGained: 1
+      levelsGained: 1,
+      skillPointsAwarded: 1,
+      availableSkillPoints: 1
     },
     {
       type: "hero.collected",
@@ -468,6 +472,7 @@ test("applyBattleOutcomeToWorld grants PvP experience to the winning hero", () =
 
   assert.equal(winningDefender?.progression.level, 2);
   assert.equal(winningDefender?.progression.experience, 164);
+  assert.equal(winningDefender?.progression.skillPoints, 1);
   assert.equal(winningDefender?.progression.pvpBattlesWon, 1);
   assert.deepEqual(outcome.events, [
     {
@@ -485,9 +490,113 @@ test("applyBattleOutcomeToWorld grants PvP experience to the winning hero", () =
       experienceGained: 164,
       totalExperience: 164,
       level: 2,
-      levelsGained: 1
+      levelsGained: 1,
+      skillPointsAwarded: 1,
+      availableSkillPoints: 1
     }
   ]);
+});
+
+test("resolveWorldAction lets heroes learn and upgrade long-term skills after leveling", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    progression: {
+      ...createDefaultHeroProgression(),
+      level: 2,
+      experience: 120,
+      skillPoints: 2
+    }
+  });
+  const state = createWorldState({
+    width: 2,
+    height: 1,
+    heroes: [hero],
+    tiles: [
+      createTile(0, 0, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(1, 0)
+    ],
+    visibilityByPlayer: {
+      "player-1": ["visible", "visible"]
+    }
+  });
+
+  const predicted = predictPlayerWorldAction(createPlayerWorldView(state, "player-1"), {
+    type: "hero.learnSkill",
+    heroId: "hero-1",
+    skillId: "war_banner"
+  });
+
+  assert.equal(predicted.reason, undefined);
+  assert.equal(predicted.world.ownHeroes[0]?.progression.skillPoints, 1);
+  assert.deepEqual(predicted.world.ownHeroes[0]?.learnedSkills, [{ skillId: "war_banner", rank: 1 }]);
+
+  const learned = resolveWorldAction(state, {
+    type: "hero.learnSkill",
+    heroId: "hero-1",
+    skillId: "war_banner"
+  });
+
+  assert.equal(learned.state.heroes[0]?.progression.skillPoints, 1);
+  assert.deepEqual(learned.state.heroes[0]?.learnedSkills, [{ skillId: "war_banner", rank: 1 }]);
+  assert.deepEqual(learned.events, [
+    {
+      type: "hero.skillLearned",
+      heroId: "hero-1",
+      skillId: "war_banner",
+      branchId: "warpath",
+      skillName: "战旗号令",
+      branchName: "战阵",
+      newRank: 1,
+      spentPoint: 1,
+      remainingSkillPoints: 1,
+      newlyGrantedBattleSkillIds: ["commanding_shout"]
+    }
+  ]);
+
+  const upgraded = resolveWorldAction(learned.state, {
+    type: "hero.learnSkill",
+    heroId: "hero-1",
+    skillId: "war_banner"
+  });
+
+  assert.equal(upgraded.state.heroes[0]?.progression.skillPoints, 0);
+  assert.deepEqual(upgraded.state.heroes[0]?.learnedSkills, [{ skillId: "war_banner", rank: 2 }]);
+  assert.deepEqual(validateWorldAction(upgraded.state, {
+    type: "hero.learnSkill",
+    heroId: "hero-1",
+    skillId: "war_banner"
+  }), {
+    valid: false,
+    reason: "not_enough_skill_points"
+  });
+});
+
+test("createHeroBattleState carries learned hero skill tree rewards into battle", () => {
+  const attacker = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    progression: {
+      ...createDefaultHeroProgression(),
+      level: 3,
+      experience: 420
+    },
+    learnedSkills: [{ skillId: "war_banner", rank: 2 }]
+  });
+  const defender = createHero({
+    id: "hero-2",
+    playerId: "player-2",
+    name: "罗安"
+  });
+
+  const battle = createHeroBattleState(attacker, defender, 1001);
+  const attackerSkills = battle.units["hero-1-stack"]?.skills?.map((skill) => skill.id) ?? [];
+
+  assert.ok(attackerSkills.includes("power_shot"));
+  assert.ok(attackerSkills.includes("commanding_shout"));
+  assert.ok(attackerSkills.includes("rending_mark"));
 });
 
 test("createPlayerWorldView returns player-scoped resources after collection", () => {
@@ -1157,7 +1266,9 @@ test("applyBattleOutcomeToWorld keeps defenderHeroId on hero-vs-hero resolution 
       experienceGained: 164,
       totalExperience: 164,
       level: 2,
-      levelsGained: 1
+      levelsGained: 1,
+      skillPointsAwarded: 1,
+      availableSkillPoints: 1
     }
   ]);
 });

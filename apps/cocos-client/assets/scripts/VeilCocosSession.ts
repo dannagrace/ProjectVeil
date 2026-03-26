@@ -19,9 +19,15 @@ export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_m
 export interface HeroProgression {
   level: number;
   experience: number;
+  skillPoints: number;
   battlesWon: number;
   neutralBattlesWon: number;
   pvpBattlesWon: number;
+}
+
+export interface HeroLearnedSkillState {
+  skillId: string;
+  rank: number;
 }
 
 export interface HeroStats {
@@ -49,6 +55,7 @@ export interface HeroView {
   progression: HeroProgression;
   armyCount: number;
   armyTemplateId: string;
+  learnedSkills: HeroLearnedSkillState[];
 }
 
 export interface PlayerWorldView {
@@ -288,6 +295,20 @@ export type WorldEvent =
       totalExperience: number;
       level: number;
       levelsGained: number;
+      skillPointsAwarded: number;
+      availableSkillPoints: number;
+    }
+  | {
+      type: "hero.skillLearned";
+      heroId: string;
+      skillId: string;
+      branchId: string;
+      skillName: string;
+      branchName: string;
+      newRank: number;
+      spentPoint: number;
+      remainingSkillPoints: number;
+      newlyGrantedBattleSkillIds: BattleSkillId[];
     }
   | {
       type: "battle.started";
@@ -386,6 +407,11 @@ type WorldAction =
       type: "hero.claimMine";
       heroId: string;
       buildingId: string;
+    }
+  | {
+      type: "hero.learnSkill";
+      heroId: string;
+      skillId: string;
     }
   | {
       type: "turn.endDay";

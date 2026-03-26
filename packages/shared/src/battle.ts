@@ -15,6 +15,7 @@ import type {
   UnitStack,
   ValidationResult
 } from "./models";
+import { grantedHeroBattleSkillIds } from "./hero-skills";
 import { getDefaultBattleSkillCatalog, getDefaultUnitCatalog } from "./world-config";
 
 interface RngStep {
@@ -271,7 +272,7 @@ function buildUnitStack(
 ): UnitStack {
   return {
     ...base,
-    skills: (battleSkills ?? []).map((skillId) => createSkillState(skillId, catalogIndex)),
+    skills: [...new Set(battleSkills ?? [])].map((skillId) => createSkillState(skillId, catalogIndex)),
     statusEffects: []
   };
 }
@@ -933,6 +934,7 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
   if (!heroTemplate) {
     throw new Error(`Missing hero army template: ${hero.armyTemplateId}`);
   }
+  const heroBattleSkills = [...new Set([...(heroTemplate.battleSkills ?? []), ...grantedHeroBattleSkillIds(hero)])];
 
   units[`${hero.id}-stack`] = buildUnitStack(
     {
@@ -952,7 +954,7 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
       hasRetaliated: false,
       defending: false
     },
-    heroTemplate.battleSkills,
+    heroBattleSkills,
     battleCatalogIndex
   );
 
@@ -1018,6 +1020,12 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
   if (!attackerTemplate || !defenderTemplate) {
     throw new Error("Missing hero army template for PvP battle");
   }
+  const attackerBattleSkills = [
+    ...new Set([...(attackerTemplate.battleSkills ?? []), ...grantedHeroBattleSkillIds(attackerHero)])
+  ];
+  const defenderBattleSkills = [
+    ...new Set([...(defenderTemplate.battleSkills ?? []), ...grantedHeroBattleSkillIds(defenderHero)])
+  ];
 
   const units: Record<string, UnitStack> = {
     [`${attackerHero.id}-stack`]: buildUnitStack(
@@ -1038,7 +1046,7 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
         hasRetaliated: false,
         defending: false
       },
-      attackerTemplate.battleSkills,
+      attackerBattleSkills,
       battleCatalogIndex
     ),
     [`${defenderHero.id}-stack`]: buildUnitStack(
@@ -1059,7 +1067,7 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
         hasRetaliated: false,
         defending: false
       },
-      defenderTemplate.battleSkills,
+      defenderBattleSkills,
       battleCatalogIndex
     )
   };
