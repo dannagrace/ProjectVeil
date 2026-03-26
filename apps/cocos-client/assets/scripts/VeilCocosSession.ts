@@ -80,6 +80,30 @@ export interface PlayerWorldView {
   playerId: string;
 }
 
+interface EncodedPlayerMapOverlay {
+  index: number;
+  resource?: ResourceNode;
+  occupant?: OccupantState;
+  building?: PlayerBuildingView;
+}
+
+interface EncodedPlayerMapTiles {
+  format: "typed-array-v1";
+  terrain: string;
+  fog: string;
+  walkable: string;
+  overlays: EncodedPlayerMapOverlay[];
+}
+
+interface PlayerWorldViewPayload extends Omit<PlayerWorldView, "map"> {
+  map: {
+    width: number;
+    height: number;
+    tiles?: PlayerTileView[];
+    encodedTiles?: EncodedPlayerMapTiles;
+  };
+}
+
 export interface OccupantState {
   kind: OccupantKind;
   refId: string;
@@ -469,7 +493,7 @@ type ClientMessage =
     };
 
 interface SessionStatePayload {
-  world: PlayerWorldView;
+  world: PlayerWorldViewPayload;
   battle: BattleState | null;
   events: WorldEvent[];
   movementPlan: MovementPlan | null;
@@ -509,9 +533,71 @@ interface StoredSessionReplayEnvelope {
   update: SessionUpdate;
 }
 
+const TERRAIN_VALUES: TerrainType[] = ["grass", "dirt", "sand", "water", "unknown"];
+const FOG_VALUES: FogState[] = ["hidden", "explored", "visible"];
+
+function decodeBase64Bytes(encoded: string): Uint8Array {
+  if ("Buffer" in globalThis && typeof globalThis.Buffer !== "undefined") {
+    return new Uint8Array(globalThis.Buffer.from(encoded, "base64"));
+  }
+
+  const binary = globalThis.atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function decodePlayerWorldView(payload: PlayerWorldViewPayload): PlayerWorldView {
+  if (Array.isArray(payload.map.tiles)) {
+    return payload as PlayerWorldView;
+  }
+
+  const encoded = payload.map.encodedTiles;
+  if (!encoded || encoded.format !== "typed-array-v1") {
+    throw new Error("unsupported_player_world_view_encoding");
+  }
+
+  const terrain = decodeBase64Bytes(encoded.terrain);
+  const fog = decodeBase64Bytes(encoded.fog);
+  const walkable = decodeBase64Bytes(encoded.walkable);
+  const tileCount = payload.map.width * payload.map.height;
+
+  if (terrain.length !== tileCount || fog.length !== tileCount || walkable.length !== tileCount) {
+    throw new Error("invalid_player_world_view_encoding_length");
+  }
+
+  const overlaysByIndex = new Map(encoded.overlays.map((overlay) => [overlay.index, overlay] as const));
+  const tiles: PlayerTileView[] = Array.from({ length: tileCount }, (_, index) => {
+    const overlay = overlaysByIndex.get(index);
+    return {
+      position: {
+        x: index % payload.map.width,
+        y: Math.floor(index / payload.map.width)
+      },
+      fog: FOG_VALUES[fog[index]!] ?? "hidden",
+      terrain: TERRAIN_VALUES[terrain[index]!] ?? "unknown",
+      walkable: walkable[index] === 1,
+      resource: overlay?.resource,
+      occupant: overlay?.occupant,
+      building: overlay?.building
+    };
+  });
+
+  return {
+    ...payload,
+    map: {
+      width: payload.map.width,
+      height: payload.map.height,
+      tiles
+    }
+  };
+}
+
 function fromPayload(payload: SessionStatePayload): SessionUpdate {
   return {
-    world: payload.world,
+    world: decodePlayerWorldView(payload.world),
     battle: payload.battle,
     events: payload.events,
     movementPlan: payload.movementPlan,

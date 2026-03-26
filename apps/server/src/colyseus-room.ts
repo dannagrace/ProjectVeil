@@ -1,6 +1,7 @@
 import { Room, type Client as ColyseusClient } from "colyseus";
 import {
   createInitialWorldState,
+  encodePlayerWorldView,
   filterWorldEventsForPlayer,
   listReachableTiles,
   planHeroMovement,
@@ -320,7 +321,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       reason?: string;
     }
   ): SessionStatePayload {
-    const world = this.worldRoom.getSnapshot(playerId).state;
+    const world = encodePlayerWorldView(this.worldRoom.getSnapshot(playerId).state);
     const battle = this.worldRoom.getBattleForPlayer(playerId);
     const heroId = world.ownHeroes[0]?.id;
     const events = extras?.events ? filterWorldEventsForPlayer(this.worldRoom.getInternalState(), playerId, extras.events) : [];
