@@ -66,16 +66,32 @@ test("player battle actions are followed by automated defender turns until contr
   assert.ok(battleResult.battle);
   assert.equal(battleResult.battle?.round, 2);
   assert.equal(battleResult.battle?.units[battleResult.battle?.activeUnitId ?? ""]?.camp, "attacker");
-  assert.deepEqual(battleResult.battle?.log.slice(-7), [
-    "hero-1-stack 进入防御",
-    "恶狼 触发 捕兽夹陷阱，损失 2 生命",
-    "恶狼 因 捕兽夹陷阱 陷入削弱",
-    "恶狼 对 凯琳卫队 造成 20 伤害",
+  assert.deepEqual(battleResult.battle?.log.slice(-8), [
+    "恶狼 踩中隐藏陷阱 缠足泥沼，陷阱位置暴露",
+    "恶狼 因 缠足泥沼 陷入减速",
+    "缠足泥沼 已失效，但该位置对双方保持可见",
+    "恶狼 对 凯琳卫队 造成 22 伤害",
     "恶狼 的毒牙让 凯琳卫队 陷入中毒",
     "凯琳卫队 反击 恶狼，造成 29 伤害",
+    "凯琳卫队 的削弱结束",
     "凯琳卫队 受到中毒影响，损失 2 生命"
   ]);
-  assert.deepEqual(battleResult.battle?.environment, []);
+  assert.deepEqual(battleResult.battle?.environment, [
+    {
+      id: "hazard-trap-0",
+      kind: "trap",
+      lane: 0,
+      effect: "slow",
+      name: "缠足泥沼",
+      description: "踩中后会被拖慢，下一轮行动明显延后。",
+      damage: 0,
+      charges: 0,
+      revealed: true,
+      triggered: true,
+      grantedStatusId: "slowed",
+      triggeredByCamp: "both"
+    }
+  ]);
 });
 
 test("server rejects battle actions sent for non-player-controlled defender units", () => {

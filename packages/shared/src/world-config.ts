@@ -225,6 +225,12 @@ export function validateBattleSkillCatalog(config: BattleSkillCatalogConfig): vo
     if (!Number.isInteger(status.damagePerTurn) || status.damagePerTurn < 0) {
       throw new Error(`Battle status ${status.id} damagePerTurn must be a non-negative integer`);
     }
+    if (status.initiativeModifier !== undefined && !isFiniteNumber(status.initiativeModifier)) {
+      throw new Error(`Battle status ${status.id} initiativeModifier must be a finite number`);
+    }
+    if (status.blocksActiveSkills !== undefined && typeof status.blocksActiveSkills !== "boolean") {
+      throw new Error(`Battle status ${status.id} blocksActiveSkills must be boolean`);
+    }
 
     statusIds.add(status.id);
   }

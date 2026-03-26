@@ -130,7 +130,9 @@ function createStatusEffectState(
     durationRemaining: definition.duration,
     attackModifier: definition.attackModifier,
     defenseModifier: definition.defenseModifier,
-    damagePerTurn: definition.damagePerTurn
+    damagePerTurn: definition.damagePerTurn,
+    initiativeModifier: definition.initiativeModifier ?? 0,
+    blocksActiveSkills: definition.blocksActiveSkills ?? false
   }, "sourceUnitId", sourceUnitId);
 }
 
@@ -153,15 +155,35 @@ function buildFormationLanes(unitCount: number, totalLanes: number): number[] {
   );
 }
 
+function totalInitiativeModifier(unit: UnitStack): number {
+  return statusEffectsOf(unit).reduce((total, status) => total + status.initiativeModifier, 0);
+}
+
+function effectiveInitiative(unit: UnitStack): number {
+  return unit.initiative + totalInitiativeModifier(unit);
+}
+
+function canUseActiveSkills(unit: UnitStack): boolean {
+  return statusEffectsOf(unit).every((status) => !status.blocksActiveSkills);
+}
+
 function describeHazard(hazard: BattleHazardState, catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()): string {
   if (hazard.kind === "blocker") {
     return `${hazard.lane + 1} 线 ${hazard.name} ${hazard.durability}/${hazard.maxDurability}`;
   }
 
-  const parts = [`${hazard.lane + 1} 线 ${hazard.name}`, `${hazard.damage} 伤害`, `${hazard.charges} 次`];
+  if (!hazard.revealed) {
+    return `${hazard.lane + 1} 线 隐藏陷阱`;
+  }
+
+  const parts = [`${hazard.lane + 1} 线 ${hazard.name}`];
+  if (hazard.damage > 0) {
+    parts.push(`${hazard.damage} 伤害`);
+  }
   if (hazard.grantedStatusId) {
     parts.push(statusDefinitionFor(hazard.grantedStatusId, catalogIndex).name);
   }
+  parts.push(hazard.charges > 0 ? `${hazard.charges} 次` : "已触发");
   return parts.join(" · ");
 }
 
@@ -190,18 +212,48 @@ function createBattleEnvironment(lanes: number, seed: number): BattleHazardState
   const trapRoll = nextRng(environmentSeed);
   environmentSeed = trapRoll.nextSeed;
   const trapLaneRoll = nextRng(environmentSeed);
+  environmentSeed = trapLaneRoll.nextSeed;
   if (trapRoll.value >= balance.trapSpawnThreshold) {
     const lane = Math.min(resolvedLanes - 1, Math.floor(trapLaneRoll.value * resolvedLanes));
+    const trapTypeRoll = nextRng(environmentSeed);
+    const trapType = trapTypeRoll.value < 1 / 3 ? "damage" : trapTypeRoll.value < 2 / 3 ? "slow" : "silence";
+    const trapBase =
+      trapType === "damage"
+        ? {
+            effect: "damage" as const,
+            name: "爆裂地刺",
+            description: "隐藏在地面的尖刺会在近战突进时突然弹出。",
+            damage: balance.trapDamage,
+            grantedStatusId: balance.trapGrantedStatusId
+          }
+        : trapType === "slow"
+          ? {
+              effect: "slow" as const,
+              name: "缠足泥沼",
+              description: "踩中后会被拖慢，下一轮行动明显延后。",
+              damage: 0,
+              grantedStatusId: "slowed" as BattleStatusEffectId
+            }
+          : {
+              effect: "silence" as const,
+              name: "封咒符印",
+              description: "触发后短时间内无法施放主动技能。",
+              damage: 0,
+              grantedStatusId: "silenced" as BattleStatusEffectId
+            };
     hazards.push(withOptionalProperty({
       id: `hazard-trap-${lane}`,
       kind: "trap",
       lane,
-      name: "捕兽夹陷阱",
-      description: "近身突进时会先被陷阱割伤并短暂削弱。",
-      damage: balance.trapDamage,
+      effect: trapBase.effect,
+      name: trapBase.name,
+      description: trapBase.description,
+      damage: trapBase.damage,
       charges: balance.trapCharges,
+      revealed: false,
+      triggered: false,
       triggeredByCamp: "both"
-    }, "grantedStatusId", balance.trapGrantedStatusId));
+    }, "grantedStatusId", trapBase.grantedStatusId));
   }
 
   return hazards;
@@ -210,7 +262,7 @@ function createBattleEnvironment(lanes: number, seed: number): BattleHazardState
 function sortTurnOrder(units: Record<string, UnitStack>): string[] {
   return Object.values(units)
     .filter((unit) => unit.count > 0)
-    .sort((a, b) => b.initiative - a.initiative)
+    .sort((a, b) => effectiveInitiative(b) - effectiveInitiative(a))
     .map((unit) => unit.id);
 }
 
@@ -369,6 +421,8 @@ function processTurnStartForUnit(unit: UnitStack): { unit: UnitStack; log: strin
         ...status,
         durationRemaining: nextDuration
       });
+    } else {
+      log.push(`${nextUnit.stackName} 的${status.name}结束`);
     }
   }
 
@@ -383,6 +437,7 @@ function processTurnStartForUnit(unit: UnitStack): { unit: UnitStack; log: strin
 
 function describeGrantedStatus(status: BattleStatusEffectConfig): string {
   const parts: string[] = [];
+  const initiativeModifier = status.initiativeModifier ?? 0;
   if (status.attackModifier !== 0) {
     parts.push(`${status.attackModifier > 0 ? "+" : ""}${status.attackModifier} 攻击`);
   }
@@ -391,6 +446,12 @@ function describeGrantedStatus(status: BattleStatusEffectConfig): string {
   }
   if (status.damagePerTurn > 0) {
     parts.push(`每回合 ${status.damagePerTurn} 持续伤害`);
+  }
+  if (initiativeModifier !== 0) {
+    parts.push(`${initiativeModifier > 0 ? "+" : ""}${initiativeModifier} 先攻`);
+  }
+  if (status.blocksActiveSkills) {
+    parts.push("禁用主动技能");
   }
   return parts.length > 0 ? `${status.name}（${parts.join("，")}）` : status.name;
 }
@@ -440,7 +501,7 @@ export function pickAutomatedBattleAction(state: BattleState): BattleAction | nu
   }
 
   const catalogIndex = getBattleCatalogIndex();
-  const readySkills = skillsOf(activeUnit).filter(isActiveSkillReady);
+  const readySkills = canUseActiveSkills(activeUnit) ? skillsOf(activeUnit).filter(isActiveSkillReady) : [];
 
   for (const skill of readySkills) {
     if (skill.target !== "self") {
@@ -578,8 +639,13 @@ function triggerTrap(
   log: string[],
   catalogIndex: BattleCatalogIndex
 ): UnitStack {
-  let nextUnit = applyDamage(unit, trap.damage);
-  log.push(`${unit.stackName} 触发 ${trap.name}，损失 ${trap.damage} 生命`);
+  let nextUnit = unit;
+  log.push(`${unit.stackName} 踩中隐藏陷阱 ${trap.name}，陷阱位置暴露`);
+
+  if (trap.damage > 0) {
+    nextUnit = applyDamage(nextUnit, trap.damage);
+    log.push(`${unit.stackName} 触发 ${trap.name}，损失 ${trap.damage} 生命`);
+  }
 
   if (trap.grantedStatusId && nextUnit.count > 0 && catalogIndex.statusById.has(trap.grantedStatusId)) {
     const status = statusDefinitionFor(trap.grantedStatusId, catalogIndex);
@@ -615,10 +681,17 @@ function resolveContactHazards(
 
     attacker = triggerTrap(attacker, hazard, nextLog, catalogIndex);
     nextUnits[attacker.id] = attacker;
+    hazard.revealed = true;
+    hazard.triggered = true;
     hazard.charges -= 1;
+    if (hazard.charges <= 0) {
+      nextLog.push(`${hazard.name} 已失效，但该位置对双方保持可见`);
+    }
   }
 
-  nextEnvironment = nextEnvironment.filter((hazard) => (hazard.kind === "trap" ? hazard.charges > 0 : hazard.durability > 0));
+  nextEnvironment = nextEnvironment.filter((hazard) =>
+    hazard.kind === "trap" ? hazard.charges > 0 || hazard.revealed : hazard.durability > 0
+  );
   nextState = {
     ...state,
     units: nextUnits,
@@ -777,6 +850,10 @@ export function validateBattleAction(state: BattleState, action: BattleAction): 
     const skill = findSkill(unit, action.skillId);
     if (!skill || skill.kind !== "active") {
       return { valid: false, reason: "skill_not_available" };
+    }
+
+    if (!canUseActiveSkills(unit)) {
+      return { valid: false, reason: "skill_disabled" };
     }
 
     if (skill.remainingCooldown > 0) {
@@ -991,7 +1068,7 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
     turnOrder,
     units,
     environment,
-    log: [`${hero.name} 遭遇 ${neutralArmy.id}`, ...(environment.length > 0 ? [`战场环境：${environment.map((hazard) => describeHazard(hazard, battleCatalogIndex)).join(" / ")}`] : [])],
+    log: [`${hero.name} 遭遇 ${neutralArmy.id}`, ...visibleEnvironmentLog(environment, battleCatalogIndex)],
     rng: {
       seed,
       cursor: 0
@@ -1080,7 +1157,7 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
     environment,
     log: [
       `${attackerHero.name} 遭遇 ${defenderHero.name}`,
-      ...(environment.length > 0 ? [`战场环境：${environment.map((hazard) => describeHazard(hazard, battleCatalogIndex)).join(" / ")}`] : [])
+      ...visibleEnvironmentLog(environment, battleCatalogIndex)
     ],
     rng: {
       seed,
@@ -1231,4 +1308,11 @@ export function applyBattleAction(state: BattleState, action: BattleAction): Bat
   }
 
   return applyAttackSequence(normalizedState, action.attackerId, action.defenderId);
+}
+
+function visibleEnvironmentLog(environment: BattleHazardState[], catalogIndex: BattleCatalogIndex): string[] {
+  const visibleHazards = environment.filter((hazard) => hazard.kind === "blocker" || hazard.revealed);
+  return visibleHazards.length > 0
+    ? [`战场环境：${visibleHazards.map((hazard) => describeHazard(hazard, catalogIndex)).join(" / ")}`]
+    : [];
 }

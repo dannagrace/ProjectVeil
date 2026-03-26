@@ -158,6 +158,8 @@ export interface BattleStatusEffectState {
   attackModifier: number;
   defenseModifier: number;
   damagePerTurn: number;
+  initiativeModifier: number;
+  blocksActiveSkills: boolean;
   sourceUnitId?: string;
 }
 
@@ -180,10 +182,13 @@ export interface BattleTrapState {
   id: string;
   kind: "trap";
   lane: number;
+  effect: "damage" | "slow" | "silence";
   name: string;
   description: string;
   damage: number;
   charges: number;
+  revealed: boolean;
+  triggered: boolean;
   grantedStatusId?: string;
   triggeredByCamp?: "attacker" | "defender" | "both";
 }
