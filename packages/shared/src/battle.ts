@@ -823,6 +823,98 @@ function applyAttackSequence(
   );
 }
 
+export function executeBattleSkill(
+  state: BattleState,
+  unitId: string,
+  skillId: BattleSkillId,
+  targetId?: string
+): BattleState {
+  const normalizedState: BattleState = {
+    ...state,
+    units: Object.fromEntries(
+      Object.entries(state.units).map(([currentUnitId, unit]) => [currentUnitId, withNormalizedCollections(unit)])
+    ),
+    environment: hazardsOf(state).map(cloneHazardState)
+  };
+  const action: BattleAction = {
+    type: "battle.skill",
+    unitId,
+    skillId,
+    ...(targetId ? { targetId } : {})
+  };
+  const validation = validateBattleAction(normalizedState, action);
+  if (!validation.valid) {
+    return {
+      ...normalizedState,
+      log: normalizedState.log.concat(`Action rejected: ${validation.reason}`)
+    };
+  }
+
+  const catalogIndex = getBattleCatalogIndex();
+  const caster = normalizedState.units[unitId]!;
+  const skillDefinition = skillDefinitionFor(skillId, catalogIndex);
+  const casterWithCooldown = setSkillCooldown(caster, skillId);
+
+  if (skillDefinition.target === "enemy" && targetId) {
+    return applyAttackSequence(
+      {
+        ...normalizedState,
+        units: {
+          ...normalizedState.units,
+          [caster.id]: casterWithCooldown
+        }
+      },
+      caster.id,
+      targetId,
+      {
+        damageMultiplier: skillDefinition.effects?.damageMultiplier ?? 1,
+        allowRetaliation: skillDefinition.effects?.allowRetaliation ?? true,
+        delivery: isContactSkillDefinition(skillDefinition) ? "contact" : "ranged",
+        logPrefix: `${caster.stackName} 施放 ${skillDefinition.name}，对 ${normalizedState.units[targetId]!.stackName}`,
+        skillId,
+        catalogIndex
+      }
+    );
+  }
+
+  if (skillDefinition.effects?.grantedStatusId) {
+    const grantedStatus = statusDefinitionFor(skillDefinition.effects.grantedStatusId, catalogIndex);
+    const empoweredCaster = upsertStatusEffect(
+      casterWithCooldown,
+      skillDefinition.effects.grantedStatusId,
+      caster.id,
+      catalogIndex
+    );
+    return advanceTurn(
+      {
+        ...normalizedState,
+        units: {
+          ...normalizedState.units,
+          [caster.id]: empoweredCaster
+        },
+        log: normalizedState.log.concat(
+          `${caster.stackName} 施放 ${skillDefinition.name}，获得 ${describeGrantedStatus(grantedStatus)}`
+        )
+      },
+      caster.id,
+      false
+    );
+  }
+
+  return advanceTurn(
+    {
+      ...normalizedState,
+      units: {
+        ...normalizedState.units,
+        [caster.id]: casterWithCooldown
+      },
+      log: normalizedState.log.concat(`${caster.stackName} 施放 ${skillDefinition.name}`)
+    },
+    caster.id,
+    false
+  );
+}
+
 export function validateBattleAction(state: BattleState, action: BattleAction): ValidationResult {
   if (action.type === "battle.wait" || action.type === "battle.defend") {
     if (state.activeUnitId !== action.unitId) {
@@ -1238,69 +1330,7 @@ export function applyBattleAction(state: BattleState, action: BattleAction): Bat
   }
 
   if (action.type === "battle.skill") {
-    const catalogIndex = getBattleCatalogIndex();
-    const caster = normalizedState.units[action.unitId]!;
-    const skillDefinition = skillDefinitionFor(action.skillId, catalogIndex);
-    const casterWithCooldown = setSkillCooldown(caster, action.skillId);
-
-    if (skillDefinition.target === "enemy" && action.targetId) {
-      return applyAttackSequence(
-        {
-          ...normalizedState,
-          units: {
-            ...normalizedState.units,
-            [caster.id]: casterWithCooldown
-          }
-        },
-        caster.id,
-        action.targetId!,
-        {
-          damageMultiplier: skillDefinition.effects?.damageMultiplier ?? 1,
-          allowRetaliation: skillDefinition.effects?.allowRetaliation ?? true,
-          delivery: isContactSkillDefinition(skillDefinition) ? "contact" : "ranged",
-          logPrefix: `${caster.stackName} 施放 ${skillDefinition.name}，对 ${normalizedState.units[action.targetId!]!.stackName}`,
-          skillId: action.skillId,
-          catalogIndex
-        }
-      );
-    }
-
-    if (skillDefinition.effects?.grantedStatusId) {
-      const grantedStatus = statusDefinitionFor(skillDefinition.effects.grantedStatusId, catalogIndex);
-      const empoweredCaster = upsertStatusEffect(
-        casterWithCooldown,
-        skillDefinition.effects.grantedStatusId,
-        caster.id,
-        catalogIndex
-      );
-      return advanceTurn(
-        {
-          ...normalizedState,
-          units: {
-            ...normalizedState.units,
-            [caster.id]: empoweredCaster
-          },
-          log: normalizedState.log.concat(
-            `${caster.stackName} 施放 ${skillDefinition.name}，获得 ${describeGrantedStatus(grantedStatus)}`
-          )
-        },
-        caster.id,
-        false
-      );
-    }
-
-    return advanceTurn(
-      {
-        ...normalizedState,
-        units: {
-          ...normalizedState.units,
-          [caster.id]: casterWithCooldown
-        },
-        log: normalizedState.log.concat(`${caster.stackName} 施放 ${skillDefinition.name}`)
-      },
-      caster.id,
-      false
-    );
+    return executeBattleSkill(normalizedState, action.unitId, action.skillId, action.targetId);
   }
 
   if (action.type !== "battle.attack") {
