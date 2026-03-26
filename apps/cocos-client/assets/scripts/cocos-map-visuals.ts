@@ -26,8 +26,10 @@ export interface TileFeedbackEntry {
 export interface FogOverlayStyle {
   text: string;
   opacity: number;
+  edgeOpacity: number;
   labelOpacity: number;
   tone: "hidden" | "explored";
+  featherMask: number;
 }
 
 export interface ObjectPulseEntry {
@@ -112,32 +114,30 @@ export function buildFogOverlayStyle(
   tileLookup: Map<string, PlayerTileView>,
   phase = 0
 ): FogOverlayStyle | null {
-  const frontierMarker = fogEdgeMarkerForTile(tile, tileLookup, phase);
-
   if (tile.fog === "hidden") {
-    if (frontierMarker === "~" || frontierMarker === "^") {
-      return {
-        text: "",
-        opacity: phase % 2 === 1 ? 74 : 92,
-        labelOpacity: 0,
-        tone: "hidden"
-      };
-    }
-
-    return null;
+    const featherMask = fogMaskAgainst(tile.position, tileLookup, ["explored", "visible"]);
+    const frontier = featherMask > 0;
+    return {
+      text: "",
+      opacity: frontier ? (phase % 2 === 1 ? 176 : 192) : phase % 2 === 1 ? 204 : 220,
+      edgeOpacity: frontier ? (phase % 2 === 1 ? 62 : 78) : phase % 2 === 1 ? 184 : 198,
+      labelOpacity: 0,
+      tone: "hidden",
+      featherMask
+    };
   }
 
   if (tile.fog === "explored") {
-    if (frontierMarker === ":" || frontierMarker === ";") {
-      return {
-        text: "",
-        opacity: phase % 2 === 1 ? 28 : 36,
-        labelOpacity: 0,
-        tone: "explored"
-      };
-    }
-
-    return null;
+    const featherMask = fogMaskAgainst(tile.position, tileLookup, ["visible"]);
+    const frontier = featherMask > 0;
+    return {
+      text: "",
+      opacity: frontier ? (phase % 2 === 1 ? 78 : 92) : phase % 2 === 1 ? 92 : 108,
+      edgeOpacity: frontier ? (phase % 2 === 1 ? 24 : 34) : phase % 2 === 1 ? 72 : 82,
+      labelOpacity: 0,
+      tone: "explored",
+      featherMask
+    };
   }
 
   return null;
