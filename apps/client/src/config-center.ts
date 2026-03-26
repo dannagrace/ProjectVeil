@@ -54,6 +54,46 @@ interface ConfigDocument extends ConfigDocumentSummary {
   content: string;
 }
 
+interface ValidationIssue {
+  path: string;
+  severity: "error" | "warning";
+  message: string;
+  suggestion: string;
+  line?: number;
+}
+
+interface ValidationReport {
+  valid: boolean;
+  summary: string;
+  issues: ValidationIssue[];
+}
+
+interface ConfigSnapshotSummary {
+  id: string;
+  label: string;
+  createdAt: string;
+  version: number;
+}
+
+interface ConfigDiffEntry {
+  path: string;
+  change: "added" | "removed" | "updated";
+  previousValue: string;
+  nextValue: string;
+}
+
+interface ConfigDiff {
+  entries: ConfigDiffEntry[];
+}
+
+interface ConfigPresetSummary {
+  id: string;
+  name: string;
+  kind: "builtin" | "custom";
+  updatedAt: string;
+  description: string;
+}
+
 interface WorldConfigPreviewTile {
   position: {
     x: number;
@@ -147,6 +187,14 @@ interface AppState {
   worldPreview: WorldConfigPreview | null;
   previewLoading: boolean;
   previewError: string;
+  validation: ValidationReport | null;
+  validationLoading: boolean;
+  snapshots: ConfigSnapshotSummary[];
+  selectedSnapshotId: string | null;
+  snapshotDiff: ConfigDiff | null;
+  historyLoading: boolean;
+  presets: ConfigPresetSummary[];
+  presetsLoading: boolean;
 }
 
 const WORLD_PREVIEW_DEBOUNCE_MS = 260;
@@ -178,11 +226,21 @@ const state: AppState = {
   previewSeed: 1001,
   worldPreview: null,
   previewLoading: false,
-  previewError: ""
+  previewError: "",
+  validation: null,
+  validationLoading: false,
+  snapshots: [],
+  selectedSnapshotId: null,
+  snapshotDiff: null,
+  historyLoading: false,
+  presets: [],
+  presetsLoading: false
 };
 
 let previewRequestVersion = 0;
 let previewDebounceTimer: number | null = null;
+let validationRequestVersion = 0;
+let validationDebounceTimer: number | null = null;
 
 function formatTime(value: string): string {
   const date = new Date(value);
@@ -279,6 +337,10 @@ function setDraftContent(nextDraft: string): void {
     textarea.value = nextDraft;
   }
   refreshLivePanels();
+  void loadValidation(WORLD_PREVIEW_DEBOUNCE_MS);
+  if (isWorldDocumentSelected()) {
+    scheduleWorldPreview();
+  }
 }
 
 function updateBattleSkillCatalogDraft(
@@ -322,6 +384,26 @@ async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T
   return data;
 }
 
+async function requestBlob(input: RequestInfo, init?: RequestInit): Promise<Blob> {
+  const response = await fetch(input, init);
+  if (!response.ok) {
+    let errorMessage = `Request failed: ${response.status}`;
+    try {
+      const data = (await response.json()) as ApiErrorPayload;
+      errorMessage = data.error?.message ?? errorMessage;
+    } catch {
+      // ignore
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.blob();
+}
+
+function serializeDisplayValue(value: string): string {
+  return value.length > 48 ? `${value.slice(0, 48)}...` : value || "空";
+}
+
 function clearWorldPreview(cancelPending = true): void {
   if (cancelPending && previewDebounceTimer != null) {
     window.clearTimeout(previewDebounceTimer);
@@ -341,6 +423,70 @@ async function loadList(): Promise<void> {
   }>("/api/config-center/configs");
   state.storageMode = response.storage;
   state.items = response.items;
+}
+
+async function loadSnapshots(id: ConfigDocumentId): Promise<void> {
+  state.historyLoading = true;
+  refreshPreviewPane();
+  try {
+    const response = await requestJson<{
+      storage: "filesystem" | "mysql";
+      snapshots: ConfigSnapshotSummary[];
+    }>(`/api/config-center/configs/${id}/snapshots`);
+    state.storageMode = response.storage;
+    state.snapshots = response.snapshots;
+    if (!state.snapshots.some((item) => item.id === state.selectedSnapshotId)) {
+      state.selectedSnapshotId = state.snapshots[0]?.id ?? null;
+      state.snapshotDiff = null;
+    }
+  } finally {
+    state.historyLoading = false;
+    refreshPreviewPane();
+  }
+
+  if (state.selectedSnapshotId) {
+    await loadSnapshotDiff();
+  }
+}
+
+async function loadPresets(id: ConfigDocumentId): Promise<void> {
+  state.presetsLoading = true;
+  refreshPreviewPane();
+  try {
+    const response = await requestJson<{
+      storage: "filesystem" | "mysql";
+      presets: ConfigPresetSummary[];
+    }>(`/api/config-center/configs/${id}/presets`);
+    state.storageMode = response.storage;
+    state.presets = response.presets;
+  } finally {
+    state.presetsLoading = false;
+    refreshPreviewPane();
+  }
+}
+
+async function loadSnapshotDiff(): Promise<void> {
+  if (!state.current || !state.selectedSnapshotId) {
+    state.snapshotDiff = null;
+    refreshPreviewPane();
+    return;
+  }
+
+  const response = await requestJson<{
+    storage: "filesystem" | "mysql";
+    diff: ConfigDiff;
+  }>(`/api/config-center/configs/${state.current.id}/diff`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      snapshotId: state.selectedSnapshotId
+    })
+  });
+  state.storageMode = response.storage;
+  state.snapshotDiff = response.diff;
+  refreshPreviewPane();
 }
 
 async function loadWorldPreview(): Promise<void> {
@@ -398,6 +544,79 @@ async function loadWorldPreview(): Promise<void> {
   }
 }
 
+async function loadValidation(delayMs = 0): Promise<void> {
+  if (!state.current) {
+    state.validation = null;
+    refreshPreviewPane();
+    return;
+  }
+
+  if (validationDebounceTimer != null) {
+    window.clearTimeout(validationDebounceTimer);
+    validationDebounceTimer = null;
+  }
+
+  const run = async () => {
+    const requestVersion = ++validationRequestVersion;
+    state.validationLoading = true;
+    refreshPreviewPane();
+
+    try {
+      const response = await requestJson<{
+        storage: "filesystem" | "mysql";
+        validation: ValidationReport;
+      }>(`/api/config-center/configs/${state.current?.id}/validate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          content: state.draft
+        })
+      });
+
+      if (requestVersion !== validationRequestVersion) {
+        return;
+      }
+
+      state.storageMode = response.storage;
+      state.validation = response.validation;
+    } catch (error) {
+      if (requestVersion !== validationRequestVersion) {
+        return;
+      }
+
+      state.validation = {
+        valid: false,
+        summary: error instanceof Error ? error.message : "校验失败",
+        issues: [
+          {
+            path: "$",
+            severity: "error",
+            message: error instanceof Error ? error.message : "校验失败",
+            suggestion: "检查 JSON 语法和字段格式后重试。"
+          }
+        ]
+      };
+    } finally {
+      if (requestVersion === validationRequestVersion) {
+        state.validationLoading = false;
+        refreshPreviewPane();
+      }
+    }
+  };
+
+  if (delayMs <= 0) {
+    await run();
+    return;
+  }
+
+  validationDebounceTimer = window.setTimeout(() => {
+    validationDebounceTimer = null;
+    void run();
+  }, delayMs);
+}
+
 function scheduleWorldPreview(delayMs = WORLD_PREVIEW_DEBOUNCE_MS): void {
   if (!isWorldDocumentSelected()) {
     clearWorldPreview();
@@ -444,6 +663,11 @@ async function loadDocument(id: ConfigDocumentId): Promise<void> {
     state.current = response.document;
     state.selectedId = response.document.id;
     state.draft = response.document.content;
+    state.validation = null;
+    state.snapshots = [];
+    state.presets = [];
+    state.snapshotDiff = null;
+    state.selectedSnapshotId = null;
     state.statusMessage = `${response.document.title} 已加载`;
 
     if (response.document.id === "world") {
@@ -463,11 +687,21 @@ async function loadDocument(id: ConfigDocumentId): Promise<void> {
     if (isWorldDocumentSelected()) {
       void loadWorldPreview();
     }
+    void loadValidation();
+    void loadSnapshots(id);
+    void loadPresets(id);
   }
 }
 
 async function saveCurrentDocument(): Promise<void> {
   if (!state.current || state.saving) {
+    return;
+  }
+
+  if (state.validation && !state.validation.valid) {
+    state.statusTone = "error";
+    state.statusMessage = "当前配置存在校验问题，已阻止保存";
+    render();
     return;
   }
 
@@ -496,6 +730,7 @@ async function saveCurrentDocument(): Promise<void> {
     state.statusTone = "success";
     state.statusMessage = `${response.document.title} 已保存，并同步刷新服务端运行时配置`;
     await loadList();
+    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
 
     if (response.document.id === "world") {
       state.previewLoading = true;
@@ -533,6 +768,221 @@ function restoreCurrentDocument(): void {
   if (isWorldDocumentSelected()) {
     void loadWorldPreview();
   }
+  void loadValidation();
+}
+
+async function createSnapshot(): Promise<void> {
+  if (!state.current) {
+    return;
+  }
+
+  const label = window.prompt("快照名称（可选）", `${state.current.title} v${state.current.version ?? 1}`) ?? "";
+  try {
+    const response = await requestJson<{
+      storage: "filesystem" | "mysql";
+      snapshot: ConfigSnapshotSummary;
+    }>(`/api/config-center/configs/${state.current.id}/snapshots`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        content: state.draft,
+        label
+      })
+    });
+    state.storageMode = response.storage;
+    state.statusTone = "success";
+    state.statusMessage = `已保存快照 ${response.snapshot.label}`;
+    await loadSnapshots(state.current.id);
+    render();
+  } catch (error) {
+    state.statusTone = "error";
+    state.statusMessage = error instanceof Error ? error.message : "保存快照失败";
+    render();
+  }
+}
+
+async function rollbackSnapshot(snapshotId: string): Promise<void> {
+  if (!state.current) {
+    return;
+  }
+
+  try {
+    const response = await requestJson<{
+      storage: "filesystem" | "mysql";
+      document: ConfigDocument;
+    }>(`/api/config-center/configs/${state.current.id}/rollback`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ snapshotId })
+    });
+    state.storageMode = response.storage;
+    state.current = response.document;
+    state.draft = response.document.content;
+    state.statusTone = "success";
+    state.statusMessage = `已回滚到快照 ${snapshotId}`;
+    await loadList();
+    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
+    render();
+    if (isWorldDocumentSelected()) {
+      void loadWorldPreview();
+    }
+    void loadValidation();
+  } catch (error) {
+    state.statusTone = "error";
+    state.statusMessage = error instanceof Error ? error.message : "回滚快照失败";
+    render();
+  }
+}
+
+async function applyPreset(presetId: string): Promise<void> {
+  if (!state.current) {
+    return;
+  }
+
+  try {
+    const response = await requestJson<{
+      storage: "filesystem" | "mysql";
+      document: ConfigDocument;
+    }>(`/api/config-center/configs/${state.current.id}/presets/${presetId}/apply`, {
+      method: "POST"
+    });
+    state.storageMode = response.storage;
+    state.current = response.document;
+    state.draft = response.document.content;
+    state.statusTone = "success";
+    state.statusMessage = `已应用预设 ${presetId}，运行时配置已刷新`;
+    await loadList();
+    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
+    render();
+    if (isWorldDocumentSelected()) {
+      void loadWorldPreview();
+    }
+    void loadValidation();
+  } catch (error) {
+    state.statusTone = "error";
+    state.statusMessage = error instanceof Error ? error.message : "应用预设失败";
+    render();
+  }
+}
+
+async function saveCurrentAsPreset(): Promise<void> {
+  if (!state.current) {
+    return;
+  }
+
+  const name = window.prompt("自定义预设名称", `${state.current.title} 自定义预设`);
+  if (!name) {
+    return;
+  }
+
+  try {
+    await requestJson<{
+      storage: "filesystem" | "mysql";
+      preset: ConfigPresetSummary;
+    }>(`/api/config-center/configs/${state.current.id}/presets`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        name,
+        content: state.draft
+      })
+    });
+    state.statusTone = "success";
+    state.statusMessage = `已保存自定义预设 ${name}`;
+    await loadPresets(state.current.id);
+    render();
+  } catch (error) {
+    state.statusTone = "error";
+    state.statusMessage = error instanceof Error ? error.message : "保存预设失败";
+    render();
+  }
+}
+
+async function exportCurrentDocument(format: "xlsx" | "jsonc"): Promise<void> {
+  if (!state.current) {
+    return;
+  }
+
+  try {
+    const blob = await requestBlob(`/api/config-center/configs/${state.current.id}/export?format=${format}`);
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = `${state.current.id}.${format}`;
+    anchor.click();
+    URL.revokeObjectURL(href);
+    state.statusTone = "success";
+    state.statusMessage = format === "xlsx" ? "已导出 Excel" : "已导出 JSON 注释版";
+    render();
+  } catch (error) {
+    state.statusTone = "error";
+    state.statusMessage = error instanceof Error ? error.message : "导出失败";
+    render();
+  }
+}
+
+async function importWorkbook(file: File): Promise<void> {
+  if (!state.current) {
+    return;
+  }
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+    const response = await requestJson<{
+      storage: "filesystem" | "mysql";
+      document: ConfigDocument;
+    }>(`/api/config-center/configs/${state.current.id}/import`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        workbookBase64: base64
+      })
+    });
+    state.storageMode = response.storage;
+    state.current = response.document;
+    state.draft = response.document.content;
+    state.statusTone = "success";
+    state.statusMessage = `已从 ${file.name} 导入并覆盖当前配置`;
+    await loadList();
+    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
+    render();
+    if (isWorldDocumentSelected()) {
+      void loadWorldPreview();
+    }
+    void loadValidation();
+  } catch (error) {
+    state.statusTone = "error";
+    state.statusMessage = error instanceof Error ? error.message : "Excel 导入失败";
+    render();
+  }
+}
+
+function jumpToValidationIssue(line?: number): void {
+  const textarea = document.querySelector<HTMLTextAreaElement>("[data-role='editor']");
+  if (!textarea) {
+    return;
+  }
+
+  if (!line || line <= 1) {
+    textarea.focus();
+    textarea.setSelectionRange(0, 0);
+    return;
+  }
+
+  const lines = textarea.value.split("\n");
+  const start = lines.slice(0, line - 1).join("\n").length + (line > 1 ? 1 : 0);
+  const end = start + (lines[line - 1]?.length ?? 0);
+  textarea.focus();
+  textarea.setSelectionRange(start, end);
 }
 
 function buildWorldPreviewTileTitle(tile: WorldConfigPreviewTile): string {
@@ -857,6 +1307,176 @@ function renderBattleSkillEditorSection(): string {
   `;
 }
 
+function renderValidationSection(): string {
+  if (!state.current) {
+    return "";
+  }
+
+  const validation = state.validation;
+  const content =
+    state.validationLoading && !validation
+      ? `<div class="world-preview-empty">正在进行 Schema 校验...</div>`
+      : !validation
+        ? `<div class="world-preview-empty">等待校验结果...</div>`
+        : `
+          <div class="validation-summary ${validation.valid ? "is-valid" : "is-invalid"}">
+            <strong>${validation.valid ? "校验通过" : "发现问题"}</strong>
+            <span>${escapeHtml(validation.summary)}</span>
+          </div>
+          ${
+            validation.issues.length > 0
+              ? `
+                <div class="validation-list">
+                  ${validation.issues
+                    .map(
+                      (issue, index) => `
+                        <button class="validation-item" data-action="validation-jump" data-index="${index}">
+                          <strong>${escapeHtml(issue.path)}</strong>
+                          <span>${escapeHtml(issue.message)}</span>
+                          <small>${escapeHtml(issue.suggestion)}${issue.line ? ` · 第 ${issue.line} 行` : ""}</small>
+                        </button>
+                      `
+                    )
+                    .join("")}
+                </div>
+              `
+              : `<p class="config-hint">当前草稿满足实时校验，保存时会继续经过服务端运行时校验。</p>`
+          }
+        `;
+
+  return `
+    <section class="validation-section">
+      <div class="config-preview-subhead">
+        <h4>Schema 校验</h4>
+        <span class="config-meta">${validation?.valid ? "可提交" : "保存前需修复"}</span>
+      </div>
+      ${content}
+    </section>
+  `;
+}
+
+function renderPresetSection(): string {
+  if (!state.current) {
+    return "";
+  }
+
+  return `
+    <section class="history-section">
+      <div class="config-preview-subhead">
+        <h4>配置预设</h4>
+        <span class="config-meta">${state.presets.length} 个可用预设</span>
+      </div>
+      <p class="config-hint">内置 Easy / Normal / Hard 会直接保存并刷新服务端运行时配置；自定义预设会保存当前草稿。</p>
+      <div class="preset-grid">
+        ${state.presetsLoading
+          ? `<div class="world-preview-empty">正在加载预设...</div>`
+          : state.presets
+              .map(
+                (preset) => `
+                  <article class="preset-card">
+                    <div>
+                      <strong>${escapeHtml(preset.name)}</strong>
+                      <span>${escapeHtml(preset.description)}</span>
+                      <small>${preset.kind === "builtin" ? "内置" : `更新于 ${formatTime(preset.updatedAt)}`}</small>
+                    </div>
+                    <button class="config-button is-secondary config-button-compact" data-action="apply-preset" data-preset-id="${preset.id}">应用</button>
+                  </article>
+                `
+              )
+              .join("")}
+      </div>
+      <div class="history-actions">
+        <button class="config-button is-secondary config-button-compact" data-action="save-preset">保存当前为预设</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderSnapshotSection(): string {
+  if (!state.current) {
+    return "";
+  }
+
+  return `
+    <section class="history-section">
+      <div class="config-preview-subhead">
+        <h4>版本快照</h4>
+        <span class="config-meta">${state.snapshots.length} 个历史版本</span>
+      </div>
+      <p class="config-hint">快照会记录版本号和时间戳。选择一个快照后可以查看与当前版本的差异，或一键回滚。</p>
+      <div class="history-actions">
+        <button class="config-button is-secondary config-button-compact" data-action="create-snapshot">保存快照</button>
+      </div>
+      <div class="snapshot-list">
+        ${state.historyLoading
+          ? `<div class="world-preview-empty">正在加载快照...</div>`
+          : state.snapshots.length === 0
+            ? `<div class="world-preview-empty">暂无快照，可以先保存一个版本节点。</div>`
+            : state.snapshots
+                .map(
+                  (snapshot) => `
+                    <article class="snapshot-card ${snapshot.id === state.selectedSnapshotId ? "is-active" : ""}">
+                      <button class="snapshot-main" data-action="select-snapshot" data-snapshot-id="${snapshot.id}">
+                        <strong>${escapeHtml(snapshot.label)}</strong>
+                        <span>v${snapshot.version} · ${formatTime(snapshot.createdAt)}</span>
+                      </button>
+                      <button class="config-button is-secondary config-button-compact" data-action="rollback-snapshot" data-snapshot-id="${snapshot.id}">回滚</button>
+                    </article>
+                  `
+                )
+                .join("")}
+      </div>
+      ${
+        state.selectedSnapshotId && state.snapshotDiff
+          ? `
+            <div class="diff-list">
+              ${
+                state.snapshotDiff.entries.length === 0
+                  ? `<div class="world-preview-empty">当前版本与该快照没有差异。</div>`
+                  : state.snapshotDiff.entries
+                      .slice(0, 12)
+                      .map(
+                        (entry) => `
+                          <article class="diff-item">
+                            <strong>${escapeHtml(entry.path)}</strong>
+                            <span>${entry.change}</span>
+                            <small>${escapeHtml(serializeDisplayValue(entry.previousValue))} → ${escapeHtml(serializeDisplayValue(entry.nextValue))}</small>
+                          </article>
+                        `
+                      )
+                      .join("")
+              }
+            </div>
+          `
+          : ""
+      }
+    </section>
+  `;
+}
+
+function renderExportSection(): string {
+  if (!state.current) {
+    return "";
+  }
+
+  return `
+    <section class="history-section">
+      <div class="config-preview-subhead">
+        <h4>导入导出</h4>
+        <span class="config-meta">Excel / JSON 注释版</span>
+      </div>
+      <div class="history-actions">
+        <button class="config-button is-secondary config-button-compact" data-action="export-xlsx">导出 Excel</button>
+        <button class="config-button is-secondary config-button-compact" data-action="export-jsonc">导出 JSON 注释版</button>
+        <label class="import-button">
+          <input type="file" accept=".xlsx" data-role="import-workbook" />
+          <span>导入 Excel 覆盖当前配置</span>
+        </label>
+      </div>
+    </section>
+  `;
+}
+
 function renderPreviewContent(): string {
   if (!state.current) {
     return `
@@ -928,6 +1548,10 @@ function renderPreviewContent(): string {
     </dl>
     <div class="config-badge-row">${badges}</div>
     <p class="config-hint">保存后会先写主存储，再导出到 <code>configs/*.json</code>，并同步刷新服务端运行时配置。新建房间、战斗公式和世界生成会直接读取最新版本。</p>
+    ${renderValidationSection()}
+    ${renderPresetSection()}
+    ${renderSnapshotSection()}
+    ${renderExportSection()}
     ${renderWorldPreviewSection()}
     ${renderBattleSkillEditorSection()}
   `;
@@ -955,6 +1579,15 @@ function refreshDirtyIndicator(): void {
   }
 
   dirtyIndicator.textContent = isDirty() ? "未保存修改" : "内容已同步";
+}
+
+function refreshEditorValidationState(): void {
+  const textarea = document.querySelector<HTMLTextAreaElement>("[data-role='editor']");
+  if (!textarea) {
+    return;
+  }
+
+  textarea.classList.toggle("is-invalid", Boolean(state.validation && !state.validation.valid));
 }
 
 function bindPreviewControls(): void {
@@ -1127,6 +1760,7 @@ function refreshPreviewPane(): void {
 function refreshLivePanels(): void {
   refreshStatusBanner();
   refreshDirtyIndicator();
+  refreshEditorValidationState();
   refreshPreviewPane();
 }
 
@@ -1157,6 +1791,68 @@ function bindEvents(): void {
     restoreCurrentDocument();
   });
 
+  document.querySelector<HTMLButtonElement>("[data-action='create-snapshot']")?.addEventListener("click", () => {
+    void createSnapshot();
+  });
+
+  document.querySelector<HTMLButtonElement>("[data-action='save-preset']")?.addEventListener("click", () => {
+    void saveCurrentAsPreset();
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-action='apply-preset']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const presetId = button.dataset.presetId;
+      if (presetId) {
+        void applyPreset(presetId);
+      }
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-action='select-snapshot']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const snapshotId = button.dataset.snapshotId;
+      if (!snapshotId) {
+        return;
+      }
+      state.selectedSnapshotId = snapshotId;
+      void loadSnapshotDiff();
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-action='rollback-snapshot']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const snapshotId = button.dataset.snapshotId;
+      if (snapshotId) {
+        void rollbackSnapshot(snapshotId);
+      }
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-action='validation-jump']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.index);
+      const issue = state.validation?.issues[index];
+      jumpToValidationIssue(issue?.line);
+    });
+  });
+
+  document.querySelector<HTMLButtonElement>("[data-action='export-xlsx']")?.addEventListener("click", () => {
+    void exportCurrentDocument("xlsx");
+  });
+
+  document.querySelector<HTMLButtonElement>("[data-action='export-jsonc']")?.addEventListener("click", () => {
+    void exportCurrentDocument("jsonc");
+  });
+
+  const importInput = document.querySelector<HTMLInputElement>("[data-role='import-workbook']");
+  importInput?.addEventListener("change", () => {
+    const file = importInput.files?.[0];
+    if (file) {
+      void importWorkbook(file);
+      importInput.value = "";
+    }
+  });
+
   const textarea = document.querySelector<HTMLTextAreaElement>("[data-role='editor']");
   textarea?.addEventListener("input", () => {
     state.draft = textarea.value;
@@ -1165,6 +1861,7 @@ function bindEvents(): void {
     if (isWorldDocumentSelected()) {
       scheduleWorldPreview();
     }
+    void loadValidation(WORLD_PREVIEW_DEBOUNCE_MS);
   });
 
   bindPreviewControls();
@@ -1210,7 +1907,7 @@ function render(): void {
             <div class="config-actions">
               <button class="config-button is-secondary" data-action="reload" ${state.current ? "" : "disabled"}>重新加载</button>
               <button class="config-button is-secondary" data-action="restore" ${state.current ? "" : "disabled"}>放弃修改</button>
-              <button class="config-button" data-action="save" ${state.current && !state.loading && !state.saving ? "" : "disabled"}>${state.saving ? "保存中..." : "保存配置"}</button>
+              <button class="config-button" data-action="save" ${state.current && !state.loading && !state.saving && !state.validationLoading && (state.validation?.valid ?? true) ? "" : "disabled"}>${state.saving ? "保存中..." : "保存配置"}</button>
             </div>
           </div>
           <div class="${statusClass}" data-role="status">${state.loading ? "正在加载..." : state.statusMessage}</div>
@@ -1220,7 +1917,7 @@ function render(): void {
                 <h3>JSON 编辑器</h3>
                 <span class="config-meta" data-role="dirty-indicator">${isDirty() ? "未保存修改" : "内容已同步"}</span>
               </div>
-              <textarea class="config-textarea" data-role="editor" spellcheck="false" ${state.current ? "" : "disabled"}>${state.draft}</textarea>
+              <textarea class="config-textarea${state.validation && !state.validation.valid ? " is-invalid" : ""}" data-role="editor" spellcheck="false" ${state.current ? "" : "disabled"}>${state.draft}</textarea>
             </section>
             <aside class="config-preview">
               <div class="config-preview-head">
