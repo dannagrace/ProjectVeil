@@ -328,8 +328,7 @@ function createBuildingState(config: MapObjectsConfig["buildings"][number]): Map
     return {
       ...config,
       position: { ...config.position },
-      bonus: cloneHeroStatBonus(config.bonus),
-      visitedHeroIds: []
+      bonus: cloneHeroStatBonus(config.bonus)
     };
   }
 
@@ -451,7 +450,8 @@ function clonePlayerBuildingView(building: MapBuildingState): PlayerBuildingView
       unitTemplateId: building.unitTemplateId,
       recruitCount: building.recruitCount,
       availableCount: building.availableCount,
-      cost: cloneResourceLedger(building.cost)
+      cost: cloneResourceLedger(building.cost),
+      ...(typeof building.lastUsedDay === "number" ? { lastUsedDay: building.lastUsedDay } : {})
     };
   }
 
@@ -461,7 +461,7 @@ function clonePlayerBuildingView(building: MapBuildingState): PlayerBuildingView
       kind: building.kind,
       label: building.label,
       bonus: cloneHeroStatBonus(building.bonus),
-      visitedHeroIds: [...building.visitedHeroIds]
+      ...(typeof building.lastUsedDay === "number" ? { lastUsedDay: building.lastUsedDay } : {})
     };
   }
 
@@ -471,7 +471,7 @@ function clonePlayerBuildingView(building: MapBuildingState): PlayerBuildingView
     label: building.label,
     resourceKind: building.resourceKind,
     income: building.income,
-    ...(building.ownerPlayerId ? { ownerPlayerId: building.ownerPlayerId } : {})
+    ...(typeof building.lastHarvestDay === "number" ? { lastHarvestDay: building.lastHarvestDay } : {})
   };
 }
 
@@ -488,15 +488,13 @@ function cloneBuildingState(building: MapBuildingState): MapBuildingState {
     return {
       ...building,
       position: { ...building.position },
-      bonus: cloneHeroStatBonus(building.bonus),
-      visitedHeroIds: [...building.visitedHeroIds]
+      bonus: cloneHeroStatBonus(building.bonus)
     };
   }
 
   return {
     ...building,
-    position: { ...building.position },
-    ...(building.ownerPlayerId ? { ownerPlayerId: building.ownerPlayerId } : {})
+    position: { ...building.position }
   };
 }
 
@@ -511,6 +509,10 @@ function refreshBuildingForNewDay(building: MapBuildingState): MapBuildingState 
   }
 
   return cloneBuildingState(building);
+}
+
+function isBuildingOnCurrentDayCooldown(day: number, lastUsedDay: number | undefined): boolean {
+  return typeof lastUsedDay === "number" && lastUsedDay >= day;
 }
 
 function applyHeroStatBonus(hero: HeroState, bonus: HeroStatBonus): HeroState {
@@ -1522,7 +1524,8 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
                 building: {
                   ...item.building,
                   cost: cloneResourceLedger(item.building.cost),
-                  availableCount: 0
+                  availableCount: 0,
+                  lastUsedDay: view.meta.day
                 }
               }
             : item
@@ -1572,12 +1575,12 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
     }
     const building = tile.building;
 
-    if (building.visitedHeroIds.includes(hero.id)) {
+    if (isBuildingOnCurrentDayCooldown(view.meta.day, building.lastUsedDay)) {
       return {
         world: view,
         movementPlan: null,
         reachableTiles: [],
-        reason: "building_already_visited"
+        reason: "building_on_cooldown"
       };
     }
 
@@ -1595,7 +1598,7 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
                 building: {
                   ...item.building,
                   bonus: cloneHeroStatBonus(item.building.bonus),
-                  visitedHeroIds: [...item.building.visitedHeroIds, hero.id]
+                  lastUsedDay: view.meta.day
                 }
               }
             : item
@@ -1640,17 +1643,21 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
     }
     const building = tile.building;
 
-    if (building.ownerPlayerId === hero.playerId) {
+    if (isBuildingOnCurrentDayCooldown(view.meta.day, building.lastHarvestDay)) {
       return {
         world: view,
         movementPlan: null,
         reachableTiles: [],
-        reason: "building_already_owned"
+        reason: "building_on_cooldown"
       };
     }
 
     const predictedWorld: PlayerWorldView = {
       ...view,
+      resources: {
+        ...view.resources,
+        [building.resourceKind]: view.resources[building.resourceKind] + building.income
+      },
       map: {
         ...view.map,
         tiles: view.map.tiles.map((item) =>
@@ -1659,7 +1666,7 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
                 ...item,
                 building: {
                   ...item.building,
-                  ownerPlayerId: hero.playerId
+                  lastHarvestDay: view.meta.day
                 }
               }
             : item
@@ -1813,8 +1820,8 @@ export function validateWorldAction(state: WorldState, action: WorldAction): Val
       return { valid: false, reason: "building_not_visitable" };
     }
 
-    if (building.visitedHeroIds.includes(hero.id)) {
-      return { valid: false, reason: "building_already_visited" };
+    if (isBuildingOnCurrentDayCooldown(state.meta.day, building.lastUsedDay)) {
+      return { valid: false, reason: "building_on_cooldown" };
     }
 
     return { valid: true };
@@ -1834,8 +1841,8 @@ export function validateWorldAction(state: WorldState, action: WorldAction): Val
       return { valid: false, reason: "building_not_claimable" };
     }
 
-    if (building.ownerPlayerId === hero.playerId) {
-      return { valid: false, reason: "building_already_owned" };
+    if (isBuildingOnCurrentDayCooldown(state.meta.day, building.lastHarvestDay)) {
+      return { valid: false, reason: "building_on_cooldown" };
     }
 
     return { valid: true };
@@ -1924,32 +1931,12 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
       ...hero,
       move: { ...hero.move, remaining: hero.move.total }
     }));
-    let nextResources = state.resources;
     const buildings = Object.fromEntries(
       Object.entries(state.buildings).map(([buildingId, building]) => [
         buildingId,
         refreshBuildingForNewDay(building)
       ])
     );
-    const productionEvents: WorldEvent[] = [];
-    for (const building of Object.values(buildings)) {
-      if (building.kind !== "resource_mine" || !building.ownerPlayerId) {
-        continue;
-      }
-
-      const producedResource = {
-        kind: building.resourceKind,
-        amount: building.income
-      } as const;
-      nextResources = grantResource(nextResources, building.ownerPlayerId, producedResource);
-      productionEvents.push({
-        type: "resource.produced",
-        playerId: building.ownerPlayerId,
-        buildingId: building.id,
-        buildingKind: building.kind,
-        resource: producedResource
-      });
-    }
     let neutralArmies = normalizeNeutralArmyCollection(state.neutralArmies);
     neutralArmies = Object.fromEntries(
       Object.entries(neutralArmies).map(([neutralArmyId, army]) => [
@@ -1967,7 +1954,7 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
           ...state.meta,
           day: state.meta.day + 1
         },
-        resources: nextResources
+        resources: state.resources
       },
       heroes,
       neutralArmies,
@@ -2001,7 +1988,7 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
           ...state.meta,
           day: state.meta.day + 1
         },
-        resources: nextResources
+        resources: state.resources
       },
       heroes,
       neutralArmies,
@@ -2009,7 +1996,7 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
     );
     return {
       state: nextState,
-      events: [{ type: "turn.advanced", day: nextState.meta.day }, ...productionEvents, ...neutralEvents]
+      events: [{ type: "turn.advanced", day: nextState.meta.day }, ...neutralEvents]
     };
   }
 
@@ -2131,7 +2118,8 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
         ...building,
         position: { ...building.position },
         cost: cloneResourceLedger(building.cost),
-        availableCount: 0
+        availableCount: 0,
+        lastUsedDay: state.meta.day
       }
     };
     const nextState = buildNextWorldState(
@@ -2176,7 +2164,7 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
         ...building,
         position: { ...building.position },
         bonus: cloneHeroStatBonus(building.bonus),
-        visitedHeroIds: [...building.visitedHeroIds, hero.id]
+        lastUsedDay: state.meta.day
       }
     };
     const nextState = buildNextWorldState(state, heroes, state.neutralArmies, buildings);
@@ -2209,10 +2197,22 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
         position: { ...building.position },
         resourceKind: building.resourceKind,
         income: building.income,
-        ownerPlayerId: hero.playerId
+        lastHarvestDay: state.meta.day
       }
     };
-    const nextState = buildNextWorldState(state, state.heroes, state.neutralArmies, buildings);
+    const harvestedResource = {
+      kind: building.resourceKind,
+      amount: building.income
+    } as const;
+    const nextState = buildNextWorldState(
+      {
+        ...state,
+        resources: grantResource(state.resources, hero.playerId, harvestedResource)
+      },
+      state.heroes,
+      state.neutralArmies,
+      buildings
+    );
 
     return {
       state: nextState,

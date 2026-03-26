@@ -120,7 +120,7 @@ test("buildTimelineEntriesFromUpdate formats world events and system rejection",
     "事件：采集 金币 +300。",
     "事件：在招募所补充 hero_guard_basic x4。",
     "事件：访问属性建筑，获得 攻击 +1。",
-    "事件：占领资源矿场，每日产出 木材 +2。",
+    "事件：采集矿场，获得 木材 +2。",
     "事件：资源矿场结算 木材 +2。",
     "事件：中立守军 neutral-1 主动追击，移动到 (2,2)。",
     "事件：中立守军 neutral-1 主动发起战斗。"

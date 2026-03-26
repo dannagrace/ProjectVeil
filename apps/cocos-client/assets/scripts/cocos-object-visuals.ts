@@ -52,7 +52,7 @@ export function describeCocosTileObject(tile: PlayerTileView | null): CocosTileV
     const config = objectVisuals.buildings.attribute_shrine;
     return {
       title: tile.building.label || config.title,
-      subtitle: `${formatHeroStatBonus(tile.building.bonus) || config.subtitle}${tile.building.visitedHeroIds.length > 0 ? " · 已有英雄到访" : ""}`,
+      subtitle: `${formatHeroStatBonus(tile.building.bonus) || config.subtitle}${typeof tile.building.lastUsedDay === "number" ? " · 今日冷却中" : ""}`,
       shortLabel: "神殿",
       tag: "访问",
       faction: toFactionKey(config.faction),
@@ -65,9 +65,9 @@ export function describeCocosTileObject(tile: PlayerTileView | null): CocosTileV
     const config = objectVisuals.buildings.resource_mine;
     return {
       title: tile.building.label || config.title,
-      subtitle: `${formatResourceKindLabel(tile.building.resourceKind)} +${tile.building.income}/天${tile.building.ownerPlayerId ? ` · 归属 ${tile.building.ownerPlayerId}` : " · 当前无人占领"}`,
+      subtitle: `${formatResourceKindLabel(tile.building.resourceKind)} +${tile.building.income}${typeof tile.building.lastHarvestDay === "number" ? " · 今日已采集" : " · 可立即采集"}`,
       shortLabel: "矿场",
-      tag: "占领",
+      tag: "采集",
       faction: toFactionKey(config.faction),
       rarity: toRarityKey(config.rarity),
       interactionType: toInteractionKey(config.interactionType)

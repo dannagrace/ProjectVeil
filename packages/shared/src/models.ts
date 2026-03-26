@@ -225,14 +225,15 @@ export type MapBuildingConfig =
 
 export interface RecruitmentBuildingState extends RecruitmentBuildingConfig {
   availableCount: number;
+  lastUsedDay?: number;
 }
 
 export interface AttributeShrineBuildingState extends AttributeShrineBuildingConfig {
-  visitedHeroIds: string[];
+  lastUsedDay?: number;
 }
 
 export interface ResourceMineBuildingState extends ResourceMineBuildingConfig {
-  ownerPlayerId?: string;
+  lastHarvestDay?: number;
 }
 
 export type MapBuildingState =
@@ -248,6 +249,7 @@ export interface RecruitmentBuildingView {
   recruitCount: number;
   availableCount: number;
   cost: ResourceLedger;
+  lastUsedDay?: number;
 }
 
 export interface AttributeShrineBuildingView {
@@ -255,7 +257,7 @@ export interface AttributeShrineBuildingView {
   kind: "attribute_shrine";
   label: string;
   bonus: HeroStatBonus;
-  visitedHeroIds: string[];
+  lastUsedDay?: number;
 }
 
 export interface ResourceMineBuildingView {
@@ -264,7 +266,7 @@ export interface ResourceMineBuildingView {
   label: string;
   resourceKind: ResourceKind;
   income: number;
-  ownerPlayerId?: string;
+  lastHarvestDay?: number;
 }
 
 export type PlayerBuildingView =

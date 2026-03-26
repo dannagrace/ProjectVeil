@@ -68,7 +68,7 @@ function buildProgressionContribution(hero: Pick<HeroState, "progression">): Rec
 
 function buildBuildingContribution(
   world: Pick<PlayerWorldView, "map"> | null | undefined,
-  heroId: string
+  _heroId: string
 ): Record<HeroAttributeKey, number> {
   const totals = createEmptyAttributeValues();
   if (!world) {
@@ -76,7 +76,7 @@ function buildBuildingContribution(
   }
 
   for (const tile of world.map.tiles) {
-    if (tile.building?.kind !== "attribute_shrine" || !tile.building.visitedHeroIds.includes(heroId)) {
+    if (tile.building?.kind !== "attribute_shrine" || typeof tile.building.lastUsedDay !== "number") {
       continue;
     }
 

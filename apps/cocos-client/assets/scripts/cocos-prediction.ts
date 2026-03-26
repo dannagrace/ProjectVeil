@@ -291,12 +291,12 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
       };
     }
 
-    if (building.visitedHeroIds.includes(hero.id)) {
+    if (typeof building.lastUsedDay === "number" && building.lastUsedDay >= view.meta.day) {
       return {
         world: view,
         movementPlan: null,
         reachableTiles: [],
-        reason: "building_already_visited"
+        reason: "building_on_cooldown"
       };
     }
 
@@ -329,7 +329,7 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
             building: {
               ...currentBuilding,
               bonus: { ...currentBuilding.bonus },
-              visitedHeroIds: [...currentBuilding.visitedHeroIds, hero.id]
+              lastUsedDay: view.meta.day
             }
           };
         })
@@ -373,17 +373,21 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
       };
     }
 
-    if (building.ownerPlayerId === hero.playerId) {
+    if (typeof building.lastHarvestDay === "number" && building.lastHarvestDay >= view.meta.day) {
       return {
         world: view,
         movementPlan: null,
         reachableTiles: [],
-        reason: "building_already_owned"
+        reason: "building_on_cooldown"
       };
     }
 
     const predictedWorld: PlayerWorldView = {
       ...view,
+      resources: {
+        ...view.resources,
+        [building.resourceKind]: view.resources[building.resourceKind] + building.income
+      },
       map: {
         ...view.map,
         tiles: view.map.tiles.map((item) => {
@@ -396,7 +400,7 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
             ...item,
             building: {
               ...currentBuilding,
-              ownerPlayerId: hero.playerId
+              lastHarvestDay: view.meta.day
             }
           };
         })
