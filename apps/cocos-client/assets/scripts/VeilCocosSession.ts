@@ -89,6 +89,12 @@ interface EncodedPlayerMapOverlay {
 
 interface EncodedPlayerMapTiles {
   format: "typed-array-v1";
+  bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
   terrain: string;
   fog: string;
   walkable: string;
@@ -549,7 +555,11 @@ function decodeBase64Bytes(encoded: string): Uint8Array {
   return bytes;
 }
 
-function decodePlayerWorldView(payload: PlayerWorldViewPayload): PlayerWorldView {
+function tileIndex(width: number, x: number, y: number): number {
+  return y * width + x;
+}
+
+function decodePlayerWorldView(payload: PlayerWorldViewPayload, baseView?: PlayerWorldView | null): PlayerWorldView {
   if (Array.isArray(payload.map.tiles)) {
     return payload as PlayerWorldView;
   }
@@ -562,28 +572,60 @@ function decodePlayerWorldView(payload: PlayerWorldViewPayload): PlayerWorldView
   const terrain = decodeBase64Bytes(encoded.terrain);
   const fog = decodeBase64Bytes(encoded.fog);
   const walkable = decodeBase64Bytes(encoded.walkable);
-  const tileCount = payload.map.width * payload.map.height;
+  const bounds = encoded.bounds ?? {
+    x: 0,
+    y: 0,
+    width: payload.map.width,
+    height: payload.map.height
+  };
+  const tileCount = bounds.width * bounds.height;
 
   if (terrain.length !== tileCount || fog.length !== tileCount || walkable.length !== tileCount) {
     throw new Error("invalid_player_world_view_encoding_length");
   }
 
   const overlaysByIndex = new Map(encoded.overlays.map((overlay) => [overlay.index, overlay] as const));
-  const tiles: PlayerTileView[] = Array.from({ length: tileCount }, (_, index) => {
-    const overlay = overlaysByIndex.get(index);
-    return {
-      position: {
-        x: index % payload.map.width,
-        y: Math.floor(index / payload.map.width)
-      },
-      fog: FOG_VALUES[fog[index]!] ?? "hidden",
-      terrain: TERRAIN_VALUES[terrain[index]!] ?? "unknown",
-      walkable: walkable[index] === 1,
-      resource: overlay?.resource,
-      occupant: overlay?.occupant,
-      building: overlay?.building
-    };
-  });
+  const isFullMap =
+    bounds.x === 0 && bounds.y === 0 && bounds.width === payload.map.width && bounds.height === payload.map.height;
+  const tiles: PlayerTileView[] = isFullMap
+    ? Array.from({ length: tileCount }, (_, index) => {
+        const overlay = overlaysByIndex.get(index);
+        return {
+          position: {
+            x: bounds.x + (index % bounds.width),
+            y: bounds.y + Math.floor(index / bounds.width)
+          },
+          fog: FOG_VALUES[fog[index]!] ?? "hidden",
+          terrain: TERRAIN_VALUES[terrain[index]!] ?? "unknown",
+          walkable: walkable[index] === 1,
+          resource: overlay?.resource,
+          occupant: overlay?.occupant,
+          building: overlay?.building
+        };
+      })
+    : (() => {
+        if (!baseView || baseView.map.width !== payload.map.width || baseView.map.height !== payload.map.height) {
+          throw new Error("missing_player_world_view_base");
+        }
+
+        const nextTiles = baseView.map.tiles.map((tile) => ({ ...tile, position: { ...tile.position } }));
+        for (let index = 0; index < tileCount; index += 1) {
+          const overlay = overlaysByIndex.get(index);
+          const x = bounds.x + (index % bounds.width);
+          const y = bounds.y + Math.floor(index / bounds.width);
+          nextTiles[tileIndex(payload.map.width, x, y)] = {
+            position: { x, y },
+            fog: FOG_VALUES[fog[index]!] ?? "hidden",
+            terrain: TERRAIN_VALUES[terrain[index]!] ?? "unknown",
+            walkable: walkable[index] === 1,
+            resource: overlay?.resource,
+            occupant: overlay?.occupant,
+            building: overlay?.building
+          };
+        }
+
+        return nextTiles;
+      })();
 
   return {
     ...payload,
@@ -595,9 +637,9 @@ function decodePlayerWorldView(payload: PlayerWorldViewPayload): PlayerWorldView
   };
 }
 
-function fromPayload(payload: SessionStatePayload): SessionUpdate {
+function fromPayload(payload: SessionStatePayload, previousWorld?: PlayerWorldView | null): SessionUpdate {
   return {
-    world: decodePlayerWorldView(payload.world),
+    world: decodePlayerWorldView(payload.world, previousWorld),
     battle: payload.battle,
     events: payload.events,
     movementPlan: payload.movementPlan,
@@ -765,6 +807,7 @@ function clearSessionReplay(roomId: string, playerId: string): void {
 }
 
 class RemoteGameSession {
+  private latestWorld: PlayerWorldView | null = null;
   private readonly pendingRequests = new Map<
     string,
     {
@@ -792,7 +835,8 @@ class RemoteGameSession {
 
       const message = { type, ...(payload as object) } as ServerMessage;
       if (message.type === "session.state" && message.delivery === "push") {
-        const update = fromPayload(message.payload);
+        const update = fromPayload(message.payload, this.latestWorld);
+        this.latestWorld = update.world;
         writeSessionReplay(this.roomId, this.playerId, update);
         this.options?.onPushUpdate?.(update);
         return;
@@ -862,7 +906,8 @@ class RemoteGameSession {
       "session.state"
     );
 
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     writeSessionReplay(this.roomId, this.playerId, update);
     return update;
   }
@@ -881,7 +926,8 @@ class RemoteGameSession {
       "session.state"
     );
 
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     writeSessionReplay(this.roomId, this.playerId, update);
     return update;
   }
@@ -900,7 +946,8 @@ class RemoteGameSession {
       "session.state"
     );
 
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     writeSessionReplay(this.roomId, this.playerId, update);
     return update;
   }
@@ -919,7 +966,8 @@ class RemoteGameSession {
       "session.state"
     );
 
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     writeSessionReplay(this.roomId, this.playerId, update);
     return update;
   }
@@ -938,7 +986,8 @@ class RemoteGameSession {
       "session.state"
     );
 
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     writeSessionReplay(this.roomId, this.playerId, update);
     return update;
   }
@@ -957,7 +1006,8 @@ class RemoteGameSession {
       "session.state"
     );
 
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     writeSessionReplay(this.roomId, this.playerId, update);
     return update;
   }
@@ -976,7 +1026,8 @@ class RemoteGameSession {
       "session.state"
     );
 
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     writeSessionReplay(this.roomId, this.playerId, update);
     return update;
   }
@@ -993,7 +1044,8 @@ class RemoteGameSession {
       "session.state"
     );
 
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     writeSessionReplay(this.roomId, this.playerId, update);
     return update;
   }
@@ -1008,7 +1060,8 @@ class RemoteGameSession {
       "session.state"
     );
 
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     writeSessionReplay(this.roomId, this.playerId, update);
     return update;
   }

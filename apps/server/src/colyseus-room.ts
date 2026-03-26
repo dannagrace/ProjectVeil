@@ -36,6 +36,8 @@ interface JoinOptions {
 }
 
 const RECONNECTION_WINDOW_SECONDS = 20;
+const MAP_SYNC_CHUNK_SIZE = 8;
+const MAP_SYNC_CHUNK_PADDING = 1;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
 
@@ -69,6 +71,38 @@ function sendMessage<T extends ServerMessage["type"]>(
   payload: MessageOfType<T>
 ): void {
   client.send(type, payload);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function resolveFocusedMapBounds(world: SessionStatePayload["world"]): { x: number; y: number; width: number; height: number } | null {
+  if (world.map.width <= MAP_SYNC_CHUNK_SIZE && world.map.height <= MAP_SYNC_CHUNK_SIZE) {
+    return null;
+  }
+
+  if (world.ownHeroes.length === 0) {
+    return null;
+  }
+
+  const chunkXs = world.ownHeroes.map((hero) => Math.floor(hero.position.x / MAP_SYNC_CHUNK_SIZE));
+  const chunkYs = world.ownHeroes.map((hero) => Math.floor(hero.position.y / MAP_SYNC_CHUNK_SIZE));
+  const maxChunkX = Math.max(0, Math.ceil(world.map.width / MAP_SYNC_CHUNK_SIZE) - 1);
+  const maxChunkY = Math.max(0, Math.ceil(world.map.height / MAP_SYNC_CHUNK_SIZE) - 1);
+  const minChunkX = clamp(Math.min(...chunkXs) - MAP_SYNC_CHUNK_PADDING, 0, maxChunkX);
+  const maxFocusedChunkX = clamp(Math.max(...chunkXs) + MAP_SYNC_CHUNK_PADDING, 0, maxChunkX);
+  const minChunkY = clamp(Math.min(...chunkYs) - MAP_SYNC_CHUNK_PADDING, 0, maxChunkY);
+  const maxFocusedChunkY = clamp(Math.max(...chunkYs) + MAP_SYNC_CHUNK_PADDING, 0, maxChunkY);
+  const x = minChunkX * MAP_SYNC_CHUNK_SIZE;
+  const y = minChunkY * MAP_SYNC_CHUNK_SIZE;
+
+  return {
+    x,
+    y,
+    width: Math.min(world.map.width - x, (maxFocusedChunkX - minChunkX + 1) * MAP_SYNC_CHUNK_SIZE),
+    height: Math.min(world.map.height - y, (maxFocusedChunkY - minChunkY + 1) * MAP_SYNC_CHUNK_SIZE)
+  };
 }
 
 export class VeilColyseusRoom extends Room<VeilRoomOptions> {
@@ -319,9 +353,18 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       events?: WorldEvent[];
       movementPlan?: MovementPlan | null;
       reason?: string;
+    },
+    options?: {
+      mapBounds?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      } | null;
     }
   ): SessionStatePayload {
-    const world = encodePlayerWorldView(this.worldRoom.getSnapshot(playerId).state);
+    const snapshot = this.worldRoom.getSnapshot(playerId).state;
+    const world = encodePlayerWorldView(snapshot, options?.mapBounds ? { bounds: options.mapBounds } : undefined);
     const battle = this.worldRoom.getBattleForPlayer(playerId);
     const heroId = world.ownHeroes[0]?.id;
     const events = extras?.events ? filterWorldEventsForPlayer(this.worldRoom.getInternalState(), playerId, extras.events) : [];
@@ -354,6 +397,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         continue;
       }
 
+      const fullState = this.worldRoom.getSnapshot(playerId).state;
+      const mapBounds = resolveFocusedMapBounds(fullState);
       sendMessage(client, "session.state", {
         requestId: "push",
         delivery: "push",
@@ -361,6 +406,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
           movementPlan: null,
           ...(extras?.events ? { events: extras.events } : {}),
           ...(extras?.reason ? { reason: extras.reason } : {})
+        }, {
+          mapBounds
         })
       });
     }
