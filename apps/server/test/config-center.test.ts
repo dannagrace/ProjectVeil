@@ -315,3 +315,74 @@ test("config center world preview summarizes generated terrain, resources and oc
   assert.equal(mineTile?.building?.kind, "resource_mine");
   assert.equal(mineTile?.building?.resourceKind, "wood");
 });
+
+test("config center can validate invalid world config with structured issues", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const report = await store.validateDocument(
+    "world",
+    JSON.stringify({
+      ...WORLD_CONFIG,
+      width: 0,
+      heroes: [
+        {
+          ...WORLD_CONFIG.heroes[0],
+          position: { x: 99, y: 1 }
+        }
+      ]
+    })
+  );
+
+  assert.equal(report.valid, false);
+  assert.match(report.summary, /发现/);
+  assert.match(report.issues.map((issue) => issue.path).join(","), /width|heroes\[0\]\.position\.x/);
+});
+
+test("config center snapshots support diff and rollback", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  const baseline = await store.loadDocument("world");
+  const snapshot = await store.createSnapshot("world", baseline.content, "baseline");
+
+  await store.saveDocument(
+    "world",
+    JSON.stringify({
+      ...WORLD_CONFIG,
+      width: 12
+    })
+  );
+
+  const diff = await store.diffWithSnapshot("world", snapshot.id);
+  assert.equal(diff.entries.some((entry) => entry.path === "width"), true);
+
+  const rolledBack = await store.rollbackToSnapshot("world", snapshot.id);
+  assert.equal(JSON.parse(rolledBack.content).width, WORLD_CONFIG.width);
+});
+
+test("config center presets and workbook import/export roundtrip", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  const original = await store.loadDocument("battleSkills");
+  const preset = await store.savePreset("battleSkills", "自定义技能预设", original.content);
+  assert.equal(preset.kind, "custom");
+
+  const afterBuiltin = await store.applyPreset("battleSkills", "hard");
+  assert.notEqual(afterBuiltin.content, original.content);
+
+  const exported = await store.exportDocument("battleSkills", "xlsx");
+  assert.match(exported.fileName, /\.xlsx$/);
+
+  const imported = await store.importDocumentFromWorkbook("battleSkills", exported.body);
+  assert.equal(imported.id, "battleSkills");
+
+  const restored = await store.applyPreset("battleSkills", preset.id);
+  assert.equal(restored.content, original.content);
+});

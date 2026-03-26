@@ -2,6 +2,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { createConnection, createPool, type Pool, type RowDataPacket } from "mysql2/promise";
+import * as XLSX from "xlsx";
 import {
   createWorldStateFromConfigs,
   getDefaultBattleSkillCatalog,
@@ -67,6 +68,46 @@ export interface ConfigDocumentSummary {
 
 export interface ConfigDocument extends ConfigDocumentSummary {
   content: string;
+}
+
+export interface ValidationIssue {
+  path: string;
+  severity: "error" | "warning";
+  message: string;
+  suggestion: string;
+  line?: number;
+}
+
+export interface ValidationReport {
+  valid: boolean;
+  summary: string;
+  issues: ValidationIssue[];
+}
+
+export interface ConfigSnapshotSummary {
+  id: string;
+  label: string;
+  createdAt: string;
+  version: number;
+}
+
+export interface ConfigDiffEntry {
+  path: string;
+  change: "added" | "removed" | "updated";
+  previousValue: string;
+  nextValue: string;
+}
+
+export interface ConfigDiff {
+  entries: ConfigDiffEntry[];
+}
+
+export interface ConfigPresetSummary {
+  id: string;
+  name: string;
+  kind: "builtin" | "custom";
+  updatedAt: string;
+  description: string;
 }
 
 export interface WorldConfigPreviewTile {
@@ -147,6 +188,20 @@ export interface ConfigCenterStore {
   listDocuments(): Promise<ConfigDocumentSummary[]>;
   loadDocument(id: ConfigDocumentId): Promise<ConfigDocument>;
   saveDocument(id: ConfigDocumentId, content: string): Promise<ConfigDocument>;
+  validateDocument(id: ConfigDocumentId, content: string): Promise<ValidationReport>;
+  listSnapshots(id: ConfigDocumentId): Promise<ConfigSnapshotSummary[]>;
+  createSnapshot(id: ConfigDocumentId, content: string, label?: string): Promise<ConfigSnapshotSummary>;
+  rollbackToSnapshot(id: ConfigDocumentId, snapshotId: string): Promise<ConfigDocument>;
+  diffWithSnapshot(id: ConfigDocumentId, snapshotId: string): Promise<ConfigDiff>;
+  listPresets(id: ConfigDocumentId): Promise<ConfigPresetSummary[]>;
+  savePreset(id: ConfigDocumentId, name: string, content: string): Promise<ConfigPresetSummary>;
+  applyPreset(id: ConfigDocumentId, presetId: string): Promise<ConfigDocument>;
+  exportDocument(id: ConfigDocumentId, format: "xlsx" | "jsonc"): Promise<{
+    fileName: string;
+    contentType: string;
+    body: Buffer;
+  }>;
+  importDocumentFromWorkbook(id: ConfigDocumentId, workbook: Buffer): Promise<ConfigDocument>;
   close(): Promise<void>;
   readonly mode: "filesystem" | "mysql";
 }
@@ -177,6 +232,304 @@ const CONFIG_DEFINITIONS: ConfigDefinition[] = [
     description: "战斗技能、持续状态与效果公式。"
   }
 ];
+
+interface ConfigSnapshotRecord {
+  id: string;
+  label: string;
+  createdAt: string;
+  version: number;
+  content: string;
+}
+
+interface ConfigPresetRecord {
+  id: string;
+  name: string;
+  updatedAt: string;
+  description: string;
+  content: string;
+}
+
+interface ConfigCenterLibraryState {
+  filesystemVersions: Partial<Record<ConfigDocumentId, number>>;
+  snapshots: Partial<Record<ConfigDocumentId, ConfigSnapshotRecord[]>>;
+  presets: Partial<Record<ConfigDocumentId, ConfigPresetRecord[]>>;
+}
+
+interface FlattenedConfigEntry {
+  path: string;
+  type: string;
+  displayValue: string;
+  jsonValue: string;
+}
+
+const CONFIG_CENTER_LIBRARY_FILE = ".config-center-library.json";
+const BUILTIN_PRESET_IDS = ["easy", "normal", "hard"] as const;
+
+function createEmptyLibraryState(): ConfigCenterLibraryState {
+  return {
+    filesystemVersions: {},
+    snapshots: {},
+    presets: {}
+  };
+}
+
+function createId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function detectSyntaxLine(errorMessage: string, content: string): number | undefined {
+  const match = errorMessage.match(/position\s+(\d+)/i);
+  const position = match ? Number(match[1]) : Number.NaN;
+  if (!Number.isFinite(position)) {
+    return undefined;
+  }
+
+  return content.slice(0, position).split("\n").length;
+}
+
+function pushIssue(
+  issues: ValidationIssue[],
+  issue: Omit<ValidationIssue, "severity"> & { severity?: "error" | "warning" }
+): void {
+  issues.push({
+    severity: issue.severity ?? "error",
+    ...issue
+  });
+}
+
+function parseJsonPath(path: string): Array<string | number> {
+  const segments: Array<string | number> = [];
+  const normalized = path.replace(/\[(\d+)\]/g, ".$1");
+  for (const part of normalized.split(".")) {
+    if (!part) {
+      continue;
+    }
+
+    const maybeIndex = Number(part);
+    segments.push(Number.isInteger(maybeIndex) && `${maybeIndex}` === part ? maybeIndex : part);
+  }
+
+  return segments;
+}
+
+function setValueAtPath(target: unknown, path: string, value: unknown): unknown {
+  const segments = parseJsonPath(path);
+  if (segments.length === 0) {
+    return value;
+  }
+
+  let cursor = target as Record<string, unknown> | unknown[];
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (segment == null) {
+      throw new Error(`Invalid import path: ${path}`);
+    }
+    const isLast = index === segments.length - 1;
+    const nextSegment = segments[index + 1];
+
+    if (typeof segment === "number") {
+      if (!Array.isArray(cursor)) {
+        throw new Error(`Expected array while importing path ${path}`);
+      }
+
+      if (isLast) {
+        cursor[segment] = value;
+        continue;
+      }
+
+      if (cursor[segment] == null) {
+        cursor[segment] = typeof nextSegment === "number" ? [] : {};
+      }
+
+      cursor = cursor[segment] as Record<string, unknown> | unknown[];
+      continue;
+    }
+
+    if (Array.isArray(cursor)) {
+      throw new Error(`Unexpected object segment while importing path ${path}`);
+    }
+
+    if (isLast) {
+      cursor[segment] = value;
+      continue;
+    }
+
+    if (cursor[segment] == null) {
+      cursor[segment] = typeof nextSegment === "number" ? [] : {};
+    }
+
+    cursor = cursor[segment] as Record<string, unknown> | unknown[];
+  }
+
+  return target;
+}
+
+function flattenConfigValue(value: unknown, path = ""): FlattenedConfigEntry[] {
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return [
+        {
+          path,
+          type: "array",
+          displayValue: "[]",
+          jsonValue: "[]"
+        }
+      ];
+    }
+
+    return value.flatMap((item, index) => flattenConfigValue(item, `${path}[${index}]`));
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value);
+    if (entries.length === 0) {
+      return [
+        {
+          path,
+          type: "object",
+          displayValue: "{}",
+          jsonValue: "{}"
+        }
+      ];
+    }
+
+    return entries.flatMap(([key, nested]) => flattenConfigValue(nested, path ? `${path}.${key}` : key));
+  }
+
+  return [
+    {
+      path,
+      type: value === null ? "null" : typeof value,
+      displayValue: value == null ? "null" : typeof value === "string" ? value : JSON.stringify(value),
+      jsonValue: JSON.stringify(value)
+    }
+  ];
+}
+
+function buildConfigDiffEntries(previousContent: string, nextContent: string): ConfigDiffEntry[] {
+  const previousMap = new Map(
+    flattenConfigValue(JSON.parse(previousContent))
+      .filter((entry) => entry.path)
+      .map((entry) => [entry.path, entry.jsonValue])
+  );
+  const nextMap = new Map(
+    flattenConfigValue(JSON.parse(nextContent))
+      .filter((entry) => entry.path)
+      .map((entry) => [entry.path, entry.jsonValue])
+  );
+  const allPaths = new Set([...previousMap.keys(), ...nextMap.keys()]);
+
+  return [...allPaths]
+    .sort((left, right) => left.localeCompare(right))
+    .flatMap((path) => {
+      const previousValue = previousMap.get(path);
+      const nextValue = nextMap.get(path);
+
+      if (previousValue === nextValue) {
+        return [];
+      }
+
+      return [
+        {
+          path,
+          change:
+            previousValue == null ? "added" : nextValue == null ? "removed" : "updated",
+          previousValue: previousValue ?? "",
+          nextValue: nextValue ?? ""
+        } satisfies ConfigDiffEntry
+      ];
+    });
+}
+
+function buildWorkbookForDocument(document: ConfigDocument): Buffer {
+  const workbook = XLSX.utils.book_new();
+  const content = JSON.parse(document.content) as unknown;
+  const rows = flattenConfigValue(content).map((entry) => ({
+    Path: entry.path || "$",
+    Type: entry.type,
+    Value: entry.displayValue,
+    JSON: entry.jsonValue
+  }));
+  const metadataRows = [
+    ["Document", document.id],
+    ["Title", document.title],
+    ["Version", String(document.version ?? 1)],
+    ["UpdatedAt", document.updatedAt],
+    ["Summary", document.summary]
+  ];
+
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(metadataRows), "Meta");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), "Config");
+
+  return XLSX.write(workbook, {
+    bookType: "xlsx",
+    type: "buffer"
+  }) as Buffer;
+}
+
+function buildCommentedJson(document: ConfigDocument): Buffer {
+  const header = [
+    `// Project Veil Config Center export`,
+    `// Document: ${document.id} (${document.title})`,
+    `// Version: v${document.version ?? 1}`,
+    `// Updated: ${document.updatedAt}`,
+    `// Summary: ${document.summary}`,
+    ""
+  ].join("\n");
+
+  return Buffer.from(`${header}${document.content}`, "utf8");
+}
+
+function parseWorkbookToContent(workbookBuffer: Buffer): string {
+  const workbook = XLSX.read(workbookBuffer, { type: "buffer" });
+  const sheetName = workbook.SheetNames.find((name) => name === "Config") ?? workbook.SheetNames[0];
+  const sheet = sheetName ? workbook.Sheets[sheetName] : undefined;
+  if (!sheet) {
+    throw new Error("Workbook does not contain a Config sheet");
+  }
+
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+  let root: unknown = {};
+  for (const row of rows) {
+    const path = String(row.Path ?? row.path ?? "").trim();
+    const normalizedPath = path === "$" ? "" : path;
+    const rawJson = String(row.JSON ?? row.json ?? "").trim();
+    if (!normalizedPath && rawJson) {
+      root = JSON.parse(rawJson);
+      continue;
+    }
+
+    if (!normalizedPath) {
+      continue;
+    }
+
+    const parsedValue = rawJson ? JSON.parse(rawJson) : row.Value;
+    if (root == null || typeof root !== "object") {
+      root = {};
+    }
+    setValueAtPath(root, normalizedPath, parsedValue);
+  }
+
+  return `${JSON.stringify(root, null, 2)}\n`;
+}
+
+function buildBuiltinPresetSummary(id: typeof BUILTIN_PRESET_IDS[number]): ConfigPresetSummary {
+  const title = id === "easy" ? "Easy" : id === "normal" ? "Normal" : "Hard";
+  const description =
+    id === "easy"
+      ? "下调敌对压力并提高资源/生存冗余。"
+      : id === "normal"
+        ? "恢复默认强度，用于基线平衡。"
+        : "提高数值压力，便于验证高难玩法。";
+
+  return {
+    id,
+    name: title,
+    kind: "builtin",
+    updatedAt: new Date(0).toISOString(),
+    description
+  };
+}
 
 function toErrorPayload(error: unknown): ErrorPayload {
   if (error instanceof Error) {
@@ -235,6 +588,174 @@ function normalizeJsonContent(
   parsed: WorldGenerationConfig | MapObjectsConfig | UnitCatalogConfig | BattleSkillCatalogConfig
 ): string {
   return `${JSON.stringify(parsed, null, 2)}\n`;
+}
+
+function applyWorldPreset(config: WorldGenerationConfig, presetId: typeof BUILTIN_PRESET_IDS[number]): WorldGenerationConfig {
+  if (presetId === "normal") {
+    return structuredClone(config);
+  }
+
+  const heroStatScale = presetId === "easy" ? 1.15 : 0.9;
+  const armyScale = presetId === "easy" ? 1.25 : 0.85;
+  const resourceScale = presetId === "easy" ? 1.2 : 0.85;
+  const moveDelta = presetId === "easy" ? 1 : -1;
+
+  return {
+    ...structuredClone(config),
+    heroes: config.heroes.map((hero) => ({
+      ...hero,
+      armyCount: Math.max(1, Math.round(hero.armyCount * armyScale)),
+      move: {
+        total: Math.max(1, hero.move.total + moveDelta),
+        remaining: Math.max(0, Math.min(hero.move.total + moveDelta, hero.move.remaining + moveDelta))
+      },
+      stats: {
+        ...hero.stats,
+        attack: Math.max(1, Math.round(hero.stats.attack * heroStatScale)),
+        defense: Math.max(1, Math.round(hero.stats.defense * heroStatScale)),
+        power: Math.max(0, Math.round(hero.stats.power * heroStatScale)),
+        knowledge: Math.max(0, Math.round(hero.stats.knowledge * heroStatScale)),
+        hp: Math.max(1, Math.round(hero.stats.hp * heroStatScale)),
+        maxHp: Math.max(1, Math.round(hero.stats.maxHp * heroStatScale))
+      }
+    })),
+    resourceSpawn: {
+      goldChance: Math.min(1, Math.max(0, config.resourceSpawn.goldChance * resourceScale)),
+      woodChance: Math.min(1, Math.max(0, config.resourceSpawn.woodChance * resourceScale)),
+      oreChance: Math.min(1, Math.max(0, config.resourceSpawn.oreChance * resourceScale))
+    }
+  };
+}
+
+function applyMapObjectsPreset(config: MapObjectsConfig, presetId: typeof BUILTIN_PRESET_IDS[number]): MapObjectsConfig {
+  if (presetId === "normal") {
+    return structuredClone(config);
+  }
+
+  const enemyScale = presetId === "easy" ? 0.8 : 1.2;
+  const rewardScale = presetId === "easy" ? 1.25 : 0.85;
+
+  return {
+    ...structuredClone(config),
+    neutralArmies: config.neutralArmies.map((army) => ({
+      ...army,
+      reward: army.reward ? { ...army.reward, amount: Math.max(1, Math.round(army.reward.amount * rewardScale)) } : army.reward,
+      stacks: army.stacks.map((stack) => ({
+        ...stack,
+        count: Math.max(1, Math.round(stack.count * enemyScale))
+      }))
+    })),
+    guaranteedResources: config.guaranteedResources.map((resource) => ({
+      ...resource,
+      resource: {
+        ...resource.resource,
+        amount: Math.max(1, Math.round(resource.resource.amount * rewardScale))
+      }
+    })),
+    buildings: config.buildings.map((building) => {
+      if (building.kind === "recruitment_post") {
+        return {
+          ...building,
+          recruitCount: Math.max(1, Math.round(building.recruitCount * rewardScale))
+        };
+      }
+
+      if (building.kind === "attribute_shrine") {
+        return {
+          ...building,
+          bonus: {
+            attack: Math.max(0, Math.round(building.bonus.attack * rewardScale)),
+            defense: Math.max(0, Math.round(building.bonus.defense * rewardScale)),
+            power: Math.max(0, Math.round(building.bonus.power * rewardScale)),
+            knowledge: Math.max(0, Math.round(building.bonus.knowledge * rewardScale))
+          }
+        };
+      }
+
+      return {
+        ...building,
+        income: Math.max(1, Math.round(building.income * rewardScale))
+      };
+    })
+  };
+}
+
+function applyUnitPreset(config: UnitCatalogConfig, presetId: typeof BUILTIN_PRESET_IDS[number]): UnitCatalogConfig {
+  if (presetId === "normal") {
+    return structuredClone(config);
+  }
+
+  const scale = presetId === "easy" ? 0.9 : 1.1;
+
+  return {
+    ...structuredClone(config),
+    templates: config.templates.map((template) => ({
+      ...template,
+      initiative: Math.max(1, Math.round(template.initiative * scale)),
+      attack: Math.max(1, Math.round(template.attack * scale)),
+      defense: Math.max(1, Math.round(template.defense * scale)),
+      minDamage: Math.max(1, Math.round(template.minDamage * scale)),
+      maxDamage: Math.max(1, Math.round(template.maxDamage * scale)),
+      maxHp: Math.max(1, Math.round(template.maxHp * scale))
+    }))
+  };
+}
+
+function applyBattleSkillPreset(
+  config: BattleSkillCatalogConfig,
+  presetId: typeof BUILTIN_PRESET_IDS[number]
+): BattleSkillCatalogConfig {
+  if (presetId === "normal") {
+    return structuredClone(config);
+  }
+
+  const cooldownDelta = presetId === "easy" ? -1 : 1;
+  const effectScale = presetId === "easy" ? 0.9 : 1.1;
+
+  return {
+    ...structuredClone(config),
+    skills: config.skills.map((skill) => ({
+      ...skill,
+      cooldown: skill.kind === "passive" ? 0 : Math.max(0, skill.cooldown + cooldownDelta),
+      ...(skill.effects == null
+        ? {}
+        : {
+            effects: {
+              ...skill.effects,
+              ...(skill.effects.damageMultiplier != null
+                ? {
+                    damageMultiplier: Math.max(0.1, Number((skill.effects.damageMultiplier * effectScale).toFixed(2)))
+                  }
+                : {})
+            }
+          })
+    })),
+    statuses: config.statuses.map((status) => ({
+      ...status,
+      duration: Math.max(1, status.duration + cooldownDelta),
+      attackModifier: Math.round(status.attackModifier * effectScale),
+      defenseModifier: Math.round(status.defenseModifier * effectScale),
+      damagePerTurn: Math.max(0, Math.round(status.damagePerTurn * effectScale))
+    }))
+  };
+}
+
+function applyBuiltinPresetToContent(
+  id: ConfigDocumentId,
+  content: string,
+  presetId: typeof BUILTIN_PRESET_IDS[number]
+): string {
+  const parsed = parseConfigDocument(id, content);
+  const next =
+    id === "world"
+      ? applyWorldPreset(parsed as WorldGenerationConfig, presetId)
+      : id === "mapObjects"
+        ? applyMapObjectsPreset(parsed as MapObjectsConfig, presetId)
+        : id === "units"
+          ? applyUnitPreset(parsed as UnitCatalogConfig, presetId)
+          : applyBattleSkillPreset(parsed as BattleSkillCatalogConfig, presetId);
+
+  return normalizeJsonContent(next);
 }
 
 function positionKey(position: { x: number; y: number }): string {
@@ -487,6 +1008,356 @@ function formatTimestamp(value: Date | string | null | undefined): string | null
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
 }
 
+async function loadValidationDependencies(
+  store: Pick<ConfigCenterStore, "loadDocument">,
+  id: ConfigDocumentId
+): Promise<{
+  world: WorldGenerationConfig;
+  mapObjects: MapObjectsConfig;
+  units: UnitCatalogConfig;
+  battleSkills: BattleSkillCatalogConfig;
+}> {
+  const [worldDocument, mapObjectsDocument, unitsDocument, battleSkillsDocument] = await Promise.all([
+    id === "world" ? Promise.resolve(null) : store.loadDocument("world"),
+    id === "mapObjects" ? Promise.resolve(null) : store.loadDocument("mapObjects"),
+    id === "units" ? Promise.resolve(null) : store.loadDocument("units"),
+    id === "battleSkills" ? Promise.resolve(null) : store.loadDocument("battleSkills")
+  ]);
+
+  return {
+    world:
+      id === "world"
+        ? getDefaultWorldConfig()
+        : (parseConfigDocument("world", worldDocument?.content ?? normalizeJsonContent(getDefaultWorldConfig())) as WorldGenerationConfig),
+    mapObjects:
+      id === "mapObjects"
+        ? getDefaultMapObjectsConfig()
+        : (parseConfigDocument(
+            "mapObjects",
+            mapObjectsDocument?.content ?? normalizeJsonContent(getDefaultMapObjectsConfig())
+          ) as MapObjectsConfig),
+    units:
+      id === "units"
+        ? getDefaultUnitCatalog()
+        : (parseConfigDocument("units", unitsDocument?.content ?? normalizeJsonContent(getDefaultUnitCatalog())) as UnitCatalogConfig),
+    battleSkills:
+      id === "battleSkills"
+        ? getDefaultBattleSkillCatalog()
+        : (parseConfigDocument(
+            "battleSkills",
+            battleSkillsDocument?.content ?? normalizeJsonContent(getDefaultBattleSkillCatalog())
+          ) as BattleSkillCatalogConfig)
+  };
+}
+
+function buildValidationReportFromError(error: Error, content: string): ValidationReport {
+  const line = detectSyntaxLine(error.message, content);
+  return {
+    valid: false,
+    summary: "发现 1 个配置问题",
+    issues: [
+      {
+        path: "$",
+        severity: "error",
+        message: error.message,
+        suggestion: "修复后再保存，必要时参考右侧摘要与历史快照。",
+        ...(line != null ? { line } : {})
+      }
+    ]
+  };
+}
+
+function summarizeIssues(issues: ValidationIssue[]): string {
+  if (issues.length === 0) {
+    return "Schema 校验通过，可以保存并立即生效。";
+  }
+
+  return `发现 ${issues.length} 个配置问题，需要先修复再保存。`;
+}
+
+function validateWorldConfigDetailed(config: WorldGenerationConfig): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!Number.isInteger(config.width) || config.width <= 0) {
+    pushIssue(issues, {
+      path: "width",
+      message: "地图宽度必须是正整数。",
+      suggestion: "将 width 调整为大于 0 的整数。"
+    });
+  }
+  if (!Number.isInteger(config.height) || config.height <= 0) {
+    pushIssue(issues, {
+      path: "height",
+      message: "地图高度必须是正整数。",
+      suggestion: "将 height 调整为大于 0 的整数。"
+    });
+  }
+  if (!Array.isArray(config.heroes) || config.heroes.length === 0) {
+    pushIssue(issues, {
+      path: "heroes",
+      message: "至少需要一个英雄出生点。",
+      suggestion: "补充至少一个 hero 配置。"
+    });
+    return issues;
+  }
+
+  config.heroes.forEach((hero, index) => {
+    if (hero.position.x < 0 || hero.position.x >= config.width) {
+      pushIssue(issues, {
+        path: `heroes[${index}].position.x`,
+        message: `英雄 ${hero.id} 的 X 坐标越界。`,
+        suggestion: `将 X 调整到 0-${Math.max(0, config.width - 1)} 之间。`
+      });
+    }
+    if (hero.position.y < 0 || hero.position.y >= config.height) {
+      pushIssue(issues, {
+        path: `heroes[${index}].position.y`,
+        message: `英雄 ${hero.id} 的 Y 坐标越界。`,
+        suggestion: `将 Y 调整到 0-${Math.max(0, config.height - 1)} 之间。`
+      });
+    }
+    if ((hero.progression?.level ?? 1) < 1) {
+      pushIssue(issues, {
+        path: `heroes[${index}].progression.level`,
+        message: `英雄 ${hero.id} 等级不能小于 1。`,
+        suggestion: "将 level 调整为 1 或更高。"
+      });
+    }
+    if ((hero.progression?.experience ?? 0) < 0) {
+      pushIssue(issues, {
+        path: `heroes[${index}].progression.experience`,
+        message: `英雄 ${hero.id} 经验值不能为负数。`,
+        suggestion: "将 experience 调整为 0 或更高。"
+      });
+    }
+  });
+
+  return issues;
+}
+
+function validateMapObjectsDetailed(
+  config: MapObjectsConfig,
+  world: WorldGenerationConfig,
+  units: UnitCatalogConfig
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const unitTemplateIds = new Set(units.templates.map((template) => template.id));
+  const usedPositions = new Set(world.heroes.map((hero) => positionKey(hero.position)));
+
+  config.neutralArmies.forEach((army, index) => {
+    if (army.position.x < 0 || army.position.x >= world.width || army.position.y < 0 || army.position.y >= world.height) {
+      pushIssue(issues, {
+        path: `neutralArmies[${index}].position`,
+        message: `中立部队 ${army.id} 超出地图边界。`,
+        suggestion: `将坐标调整到 0-${Math.max(0, world.width - 1)} / 0-${Math.max(0, world.height - 1)}。`
+      });
+    }
+    usedPositions.add(positionKey(army.position));
+  });
+
+  config.guaranteedResources.forEach((resource, index) => {
+    if (
+      resource.position.x < 0 ||
+      resource.position.x >= world.width ||
+      resource.position.y < 0 ||
+      resource.position.y >= world.height
+    ) {
+      pushIssue(issues, {
+        path: `guaranteedResources[${index}].position`,
+        message: "保底资源点超出地图边界。",
+        suggestion: "将资源点放回地图范围内。"
+      });
+    }
+    usedPositions.add(positionKey(resource.position));
+  });
+
+  config.buildings.forEach((building, index) => {
+    if (!building.id.trim()) {
+      pushIssue(issues, {
+        path: `buildings[${index}].id`,
+        message: "建筑 id 不能为空。",
+        suggestion: "为建筑补充唯一 id。"
+      });
+    }
+    if (
+      building.position.x < 0 ||
+      building.position.x >= world.width ||
+      building.position.y < 0 ||
+      building.position.y >= world.height
+    ) {
+      pushIssue(issues, {
+        path: `buildings[${index}].position`,
+        message: `建筑 ${building.id} 超出地图边界。`,
+        suggestion: "调整建筑坐标到地图范围内。"
+      });
+    }
+    const key = positionKey(building.position);
+    if (usedPositions.has(key)) {
+      pushIssue(issues, {
+        path: `buildings[${index}].position`,
+        message: `建筑 ${building.id} 与现有对象重叠。`,
+        suggestion: "将建筑移动到未被英雄、中立或资源占用的位置。"
+      });
+    }
+    usedPositions.add(key);
+
+    if (building.kind === "recruitment_post" && !unitTemplateIds.has(building.unitTemplateId)) {
+      pushIssue(issues, {
+        path: `buildings[${index}].unitTemplateId`,
+        message: `招募建筑 ${building.id} 引用了不存在的兵种模板。`,
+        suggestion: "改为 units.json 中存在的 unitTemplateId。"
+      });
+    }
+  });
+
+  return issues;
+}
+
+function validateUnitCatalogDetailed(
+  config: UnitCatalogConfig,
+  battleSkills: BattleSkillCatalogConfig
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const availableSkillIds = new Set(battleSkills.skills.map((skill) => skill.id));
+  const seenIds = new Set<string>();
+
+  if (!Array.isArray(config.templates) || config.templates.length === 0) {
+    pushIssue(issues, {
+      path: "templates",
+      message: "兵种配置至少需要一个模板。",
+      suggestion: "补充至少一个 templates 项。"
+    });
+    return issues;
+  }
+
+  config.templates.forEach((template, index) => {
+    if (seenIds.has(template.id)) {
+      pushIssue(issues, {
+        path: `templates[${index}].id`,
+        message: `兵种模板 id 重复: ${template.id}。`,
+        suggestion: "为模板改成唯一 id。"
+      });
+    }
+    seenIds.add(template.id);
+    for (const skillId of template.battleSkills ?? []) {
+      if (!availableSkillIds.has(skillId)) {
+        pushIssue(issues, {
+          path: `templates[${index}].battleSkills`,
+          message: `兵种模板 ${template.id} 引用了不存在的技能 ${skillId}。`,
+          suggestion: "移除无效技能，或先在技能配置中创建该技能。"
+        });
+      }
+    }
+  });
+
+  return issues;
+}
+
+function validateBattleSkillsDetailed(config: BattleSkillCatalogConfig): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const statusIds = new Set<string>();
+  const skillIds = new Set<string>();
+
+  if (!Array.isArray(config.skills) || !Array.isArray(config.statuses)) {
+    pushIssue(issues, {
+      path: "$",
+      message: "技能配置必须同时包含 skills 与 statuses 数组。",
+      suggestion: "补齐这两个顶层数组。"
+    });
+    return issues;
+  }
+
+  config.statuses.forEach((status, index) => {
+    if (statusIds.has(status.id)) {
+      pushIssue(issues, {
+        path: `statuses[${index}].id`,
+        message: `状态 id 重复: ${status.id}。`,
+        suggestion: "为状态改成唯一 id。"
+      });
+    }
+    statusIds.add(status.id);
+  });
+
+  config.skills.forEach((skill, index) => {
+    if (skillIds.has(skill.id)) {
+      pushIssue(issues, {
+        path: `skills[${index}].id`,
+        message: `技能 id 重复: ${skill.id}。`,
+        suggestion: "为技能改成唯一 id。"
+      });
+    }
+    skillIds.add(skill.id);
+    if (skill.kind === "passive" && skill.cooldown !== 0) {
+      pushIssue(issues, {
+        path: `skills[${index}].cooldown`,
+        message: `被动技能 ${skill.id} 的冷却必须为 0。`,
+        suggestion: "将 cooldown 设为 0。"
+      });
+    }
+    if (skill.effects?.grantedStatusId && !statusIds.has(skill.effects.grantedStatusId)) {
+      pushIssue(issues, {
+        path: `skills[${index}].effects.grantedStatusId`,
+        message: `技能 ${skill.id} 引用了不存在的自身状态。`,
+        suggestion: "改为 statuses 中存在的状态 id。"
+      });
+    }
+    if (skill.effects?.onHitStatusId && !statusIds.has(skill.effects.onHitStatusId)) {
+      pushIssue(issues, {
+        path: `skills[${index}].effects.onHitStatusId`,
+        message: `技能 ${skill.id} 引用了不存在的命中状态。`,
+        suggestion: "改为 statuses 中存在的状态 id。"
+      });
+    }
+  });
+
+  return issues;
+}
+
+async function validateDocumentDetailed(
+  store: Pick<ConfigCenterStore, "loadDocument">,
+  id: ConfigDocumentId,
+  content: string
+): Promise<ValidationReport> {
+  try {
+    const parsed = JSON.parse(content) as ParsedConfigDocument;
+    const dependencies = await loadValidationDependencies(store, id);
+    const issues =
+      id === "world"
+        ? validateWorldConfigDetailed(parsed as WorldGenerationConfig)
+        : id === "mapObjects"
+          ? validateMapObjectsDetailed(
+              parsed as MapObjectsConfig,
+              dependencies.world,
+              dependencies.units
+            )
+          : id === "units"
+            ? validateUnitCatalogDetailed(
+                parsed as UnitCatalogConfig,
+                dependencies.battleSkills
+              )
+            : validateBattleSkillsDetailed(parsed as BattleSkillCatalogConfig);
+
+    try {
+      parseConfigDocument(id, content);
+    } catch (error) {
+      if (error instanceof Error && !issues.some((issue) => issue.message === error.message)) {
+        pushIssue(issues, {
+          path: "$",
+          message: error.message,
+          suggestion: "根据提示修正配置后再保存。"
+        });
+      }
+    }
+
+    return {
+      valid: issues.length === 0,
+      summary: summarizeIssues(issues),
+      issues
+    };
+  } catch (error) {
+    return buildValidationReportFromError(error as Error, content);
+  }
+}
+
 abstract class BaseConfigCenterStore implements ConfigCenterStore {
   abstract readonly mode: "filesystem" | "mysql";
 
@@ -508,6 +1379,45 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
   protected async exportDocumentToFile(id: ConfigDocumentId, content: string): Promise<void> {
     await this.ensureRootDir();
     await writeFile(this.filePathFor(id), content, "utf8");
+  }
+
+  protected libraryFilePath(): string {
+    return resolve(this.rootDir, CONFIG_CENTER_LIBRARY_FILE);
+  }
+
+  protected async readLibraryState(): Promise<ConfigCenterLibraryState> {
+    await this.ensureRootDir();
+
+    try {
+      const content = await readFile(this.libraryFilePath(), "utf8");
+      const parsed = JSON.parse(content) as Partial<ConfigCenterLibraryState>;
+      return {
+        filesystemVersions: parsed.filesystemVersions ?? {},
+        snapshots: parsed.snapshots ?? {},
+        presets: parsed.presets ?? {}
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return createEmptyLibraryState();
+      }
+      throw error;
+    }
+  }
+
+  protected async writeLibraryState(state: ConfigCenterLibraryState): Promise<void> {
+    await this.ensureRootDir();
+    await writeFile(this.libraryFilePath(), `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  }
+
+  protected async getFilesystemVersion(id: ConfigDocumentId): Promise<number | undefined> {
+    const state = await this.readLibraryState();
+    return state.filesystemVersions[id];
+  }
+
+  protected async setFilesystemVersion(id: ConfigDocumentId, version: number): Promise<void> {
+    const state = await this.readLibraryState();
+    state.filesystemVersions[id] = version;
+    await this.writeLibraryState(state);
   }
 
   protected buildDocument(
@@ -557,6 +1467,139 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
     return items.map(({ content: _content, ...summary }) => summary);
   }
 
+  async validateDocument(id: ConfigDocumentId, content: string): Promise<ValidationReport> {
+    return validateDocumentDetailed(this, id, content);
+  }
+
+  async listSnapshots(id: ConfigDocumentId): Promise<ConfigSnapshotSummary[]> {
+    const state = await this.readLibraryState();
+    const snapshots = state.snapshots[id] ?? [];
+    return snapshots
+      .map(({ content: _content, ...summary }) => summary)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  async createSnapshot(id: ConfigDocumentId, content: string, label?: string): Promise<ConfigSnapshotSummary> {
+    const document = await this.loadDocument(id);
+    parseConfigDocument(id, content);
+
+    const state = await this.readLibraryState();
+    const nextSnapshot: ConfigSnapshotRecord = {
+      id: createId("snapshot"),
+      label: label?.trim() || `${document.title} v${document.version ?? 1}`,
+      createdAt: new Date().toISOString(),
+      version: document.version ?? 1,
+      content: normalizeJsonContent(parseConfigDocument(id, content))
+    };
+
+    state.snapshots[id] = [nextSnapshot, ...(state.snapshots[id] ?? [])].slice(0, 30);
+    await this.writeLibraryState(state);
+    const { content: _content, ...summary } = nextSnapshot;
+    return summary;
+  }
+
+  async rollbackToSnapshot(id: ConfigDocumentId, snapshotId: string): Promise<ConfigDocument> {
+    const state = await this.readLibraryState();
+    const snapshot = (state.snapshots[id] ?? []).find((item) => item.id === snapshotId);
+    if (!snapshot) {
+      throw new Error(`Snapshot not found: ${snapshotId}`);
+    }
+
+    return this.saveDocument(id, snapshot.content);
+  }
+
+  async diffWithSnapshot(id: ConfigDocumentId, snapshotId: string): Promise<ConfigDiff> {
+    const state = await this.readLibraryState();
+    const snapshot = (state.snapshots[id] ?? []).find((item) => item.id === snapshotId);
+    if (!snapshot) {
+      throw new Error(`Snapshot not found: ${snapshotId}`);
+    }
+
+    const current = await this.loadDocument(id);
+    return {
+      entries: buildConfigDiffEntries(snapshot.content, current.content)
+    };
+  }
+
+  async listPresets(id: ConfigDocumentId): Promise<ConfigPresetSummary[]> {
+    const state = await this.readLibraryState();
+    const customPresets = (state.presets[id] ?? []).map(({ content: _content, ...summary }) => ({
+      ...summary,
+      kind: "custom" as const
+    }));
+
+    return [...BUILTIN_PRESET_IDS.map((presetId) => buildBuiltinPresetSummary(presetId)), ...customPresets].sort((left, right) =>
+      left.kind === right.kind ? right.updatedAt.localeCompare(left.updatedAt) : left.kind === "builtin" ? -1 : 1
+    );
+  }
+
+  async savePreset(id: ConfigDocumentId, name: string, content: string): Promise<ConfigPresetSummary> {
+    if (!name.trim()) {
+      throw new Error("Preset name is required");
+    }
+
+    parseConfigDocument(id, content);
+    const state = await this.readLibraryState();
+    const nextPreset: ConfigPresetRecord = {
+      id: createId("preset"),
+      name: name.trim(),
+      updatedAt: new Date().toISOString(),
+      description: `${configDefinitionFor(id)?.title ?? id} 自定义预设`,
+      content: normalizeJsonContent(parseConfigDocument(id, content))
+    };
+
+    state.presets[id] = [nextPreset, ...(state.presets[id] ?? [])].slice(0, 20);
+    await this.writeLibraryState(state);
+    return {
+      id: nextPreset.id,
+      name: nextPreset.name,
+      kind: "custom",
+      updatedAt: nextPreset.updatedAt,
+      description: nextPreset.description
+    };
+  }
+
+  async applyPreset(id: ConfigDocumentId, presetId: string): Promise<ConfigDocument> {
+    const current = await this.loadDocument(id);
+    const state = await this.readLibraryState();
+    const customPreset = (state.presets[id] ?? []).find((item) => item.id === presetId);
+    const presetContent = customPreset
+      ? customPreset.content
+      : BUILTIN_PRESET_IDS.includes(presetId as typeof BUILTIN_PRESET_IDS[number])
+        ? applyBuiltinPresetToContent(id, current.content, presetId as typeof BUILTIN_PRESET_IDS[number])
+        : null;
+
+    if (!presetContent) {
+      throw new Error(`Preset not found: ${presetId}`);
+    }
+
+    return this.saveDocument(id, presetContent);
+  }
+
+  async exportDocument(id: ConfigDocumentId, format: "xlsx" | "jsonc"): Promise<{
+    fileName: string;
+    contentType: string;
+    body: Buffer;
+  }> {
+    const document = await this.loadDocument(id);
+    return format === "xlsx"
+      ? {
+          fileName: `${id}-v${document.version ?? 1}.xlsx`,
+          contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          body: buildWorkbookForDocument(document)
+        }
+      : {
+          fileName: `${id}-v${document.version ?? 1}.jsonc`,
+          contentType: "application/jsonc; charset=utf-8",
+          body: buildCommentedJson(document)
+        };
+  }
+
+  async importDocumentFromWorkbook(id: ConfigDocumentId, workbook: Buffer): Promise<ConfigDocument> {
+    const content = parseWorkbookToContent(workbook);
+    return this.saveDocument(id, content);
+  }
+
   abstract loadDocument(id: ConfigDocumentId): Promise<ConfigDocument>;
   abstract saveDocument(id: ConfigDocumentId, content: string): Promise<ConfigDocument>;
   abstract close(): Promise<void>;
@@ -576,7 +1619,8 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
     const parsed = parseConfigDocument(id, fileContent);
 
     return this.buildDocument(definition, normalizeJsonContent(parsed), {
-      updatedAt: fileStats.mtime.toISOString()
+      updatedAt: fileStats.mtime.toISOString(),
+      version: (await this.getFilesystemVersion(id)) ?? 1
     });
   }
 
@@ -584,8 +1628,10 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
     const parsed = parseConfigDocument(id, content);
     const bundle = buildRuntimeBundleWithParsedDocument(id, parsed);
     const serialized = normalizeJsonContent(bundle[id]);
+    const nextVersion = ((await this.getFilesystemVersion(id)) ?? 1) + 1;
 
     await this.exportDocumentToFile(id, serialized);
+    await this.setFilesystemVersion(id, nextVersion);
     applyRuntimeBundle(bundle);
 
     return this.loadDocument(id);
@@ -861,6 +1907,256 @@ export function registerConfigCenterRoutes(
       sendJson(response, 200, {
         storage: store.mode,
         preview
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/config-center/configs/:id/validate", async (request, response) => {
+    const configId = request.params.id;
+    const definition = configId ? configDefinitionFor(configId) : undefined;
+    if (!definition) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { content?: string };
+      if (typeof body.content !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: content"
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, {
+        storage: store.mode,
+        validation: await store.validateDocument(definition.id, body.content)
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/config-center/configs/:id/snapshots", async (request, response) => {
+    const configId = request.params.id;
+    const definition = configId ? configDefinitionFor(configId) : undefined;
+    if (!definition) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      sendJson(response, 200, {
+        storage: store.mode,
+        snapshots: await store.listSnapshots(definition.id)
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/config-center/configs/:id/snapshots", async (request, response) => {
+    const configId = request.params.id;
+    const definition = configId ? configDefinitionFor(configId) : undefined;
+    if (!definition) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { content?: string; label?: string };
+      if (typeof body.content !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: content"
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, {
+        storage: store.mode,
+        snapshot: await store.createSnapshot(definition.id, body.content, body.label)
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/config-center/configs/:id/rollback", async (request, response) => {
+    const configId = request.params.id;
+    const definition = configId ? configDefinitionFor(configId) : undefined;
+    if (!definition) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { snapshotId?: string };
+      if (typeof body.snapshotId !== "string" || !body.snapshotId.trim()) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: snapshotId"
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, {
+        storage: store.mode,
+        document: await store.rollbackToSnapshot(definition.id, body.snapshotId)
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/config-center/configs/:id/diff", async (request, response) => {
+    const configId = request.params.id;
+    const definition = configId ? configDefinitionFor(configId) : undefined;
+    if (!definition) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { snapshotId?: string };
+      if (typeof body.snapshotId !== "string" || !body.snapshotId.trim()) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: snapshotId"
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, {
+        storage: store.mode,
+        diff: await store.diffWithSnapshot(definition.id, body.snapshotId)
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/config-center/configs/:id/presets", async (request, response) => {
+    const configId = request.params.id;
+    const definition = configId ? configDefinitionFor(configId) : undefined;
+    if (!definition) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      sendJson(response, 200, {
+        storage: store.mode,
+        presets: await store.listPresets(definition.id)
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/config-center/configs/:id/presets", async (request, response) => {
+    const configId = request.params.id;
+    const definition = configId ? configDefinitionFor(configId) : undefined;
+    if (!definition) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { name?: string; content?: string };
+      if (typeof body.name !== "string" || typeof body.content !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string fields: name, content"
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, {
+        storage: store.mode,
+        preset: await store.savePreset(definition.id, body.name, body.content)
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/config-center/configs/:id/presets/:presetId/apply", async (request, response) => {
+    const configId = request.params.id;
+    const presetId = request.params.presetId;
+    const definition = configId ? configDefinitionFor(configId) : undefined;
+    if (!definition || !presetId) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      sendJson(response, 200, {
+        storage: store.mode,
+        document: await store.applyPreset(definition.id, presetId)
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/config-center/configs/:id/export", async (request, response) => {
+    const configId = request.params.id;
+    const definition = configId ? configDefinitionFor(configId) : undefined;
+    if (!definition) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      const requestUrl = new URL(request.url ?? "", "http://localhost");
+      const format = requestUrl.searchParams.get("format") === "jsonc" ? "jsonc" : "xlsx";
+      const exported = await store.exportDocument(definition.id, format);
+      response.statusCode = 200;
+      response.setHeader("Content-Type", exported.contentType);
+      response.setHeader("Content-Disposition", `attachment; filename="${exported.fileName}"`);
+      response.end(exported.body);
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/config-center/configs/:id/import", async (request, response) => {
+    const configId = request.params.id;
+    const definition = configId ? configDefinitionFor(configId) : undefined;
+    if (!definition) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { workbookBase64?: string };
+      if (typeof body.workbookBase64 !== "string" || !body.workbookBase64.trim()) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: workbookBase64"
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, {
+        storage: store.mode,
+        document: await store.importDocumentFromWorkbook(definition.id, Buffer.from(body.workbookBase64, "base64"))
       });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
