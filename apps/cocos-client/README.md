@@ -46,12 +46,13 @@
   - Cocos Tilemap 渲染适配层
   - 约定读取 `terrain / fog / fogEdge / objects / overlay` 五个图层
   - 会按 tile 签名增量更新 `gid`，避免整图重刷
+  - 默认启用 `alphaFogOverlayEnabled`，会保留 Tilemap 作为主渲染路径，但把正式迷雾羽化交给 Overlay 层处理
   - `fogEdge` 可选；配置 `hiddenFogEdgeBaseGid / exploredFogEdgeBaseGid` 后会按正交邻接关系自动补迷雾边缘过渡
   - 如再配置 `hiddenFogPulseGid / exploredFogPulseGid` 与 `hiddenFogEdgePulseOffset / exploredFogEdgePulseOffset`，可得到低成本的动态迷雾脉冲效果
 - `assets/scripts/VeilFogOverlay.ts`
-  - 非 Tilemap 回退模式下的独立迷雾覆盖层
-  - 会根据 `hidden / explored / visible` 与迷雾相位切换字符遮罩和透明度
-  - 作为后续 shader / Alpha 混合前的过渡实现，避免文字网格模式下完全没有迷雾层次
+  - Tilemap 与非 Tilemap 共用的独立迷雾覆盖层
+  - 会根据 `hidden / explored / visible`、邻接 frontier 方向与迷雾相位，绘制羽化的 Alpha 混合覆盖
+  - 在未挂正式 `TiledMap` 时仍可作为回退迷雾方案，避免文字网格模式下完全没有迷雾层次
 - `assets/scripts/VeilMapBoard.ts`
   - 资源点/守军/敌方英雄的对象标签现已支持轻量回弹反馈
   - 当前会在拾取资源、接触守军或点击带对象的目标格时触发
@@ -78,6 +79,7 @@
    - 至少准备 `terrain / fog / objects / overlay` 四个 layer
    - 如果想启用迷雾边缘过渡，可额外加一个 `fogEdge` layer
    - 在 `VeilTilemapRenderer` Inspector 里把 terrain/fog/资源/高亮的 `gid` 映射到你的 tileset；如配置 `fogEdge`，可再设置 `hiddenFogEdgeBaseGid / exploredFogEdgeBaseGid`
+   - 如需正式羽化迷雾，保持 `alphaFogOverlayEnabled = true`；如果想回退到纯 Tilemap 的硬边 fog/fogEdge layer，可手动关闭它
 5. 在 Inspector 里配置：
    - `roomId`
    - `playerId`

@@ -135,29 +135,69 @@ test("buildFogOverlayStyle emits quiet overlay chrome for hidden and explored fo
 
   assert.deepEqual(buildFogOverlayStyle(tiles[0]!, lookup, 0), {
     text: "",
-    opacity: 92,
+    opacity: 192,
+    edgeOpacity: 78,
     labelOpacity: 0,
-    tone: "hidden"
+    tone: "hidden",
+    featherMask: 3
   });
   assert.deepEqual(buildFogOverlayStyle(tiles[0]!, lookup, 1), {
     text: "",
-    opacity: 74,
+    opacity: 176,
+    edgeOpacity: 62,
     labelOpacity: 0,
-    tone: "hidden"
+    tone: "hidden",
+    featherMask: 3
   });
   assert.deepEqual(buildFogOverlayStyle(tiles[2]!, lookup, 0), {
     text: "",
-    opacity: 36,
+    opacity: 92,
+    edgeOpacity: 34,
     labelOpacity: 0,
-    tone: "explored"
+    tone: "explored",
+    featherMask: 1
   });
   assert.deepEqual(buildFogOverlayStyle(tiles[2]!, lookup, 1), {
     text: "",
-    opacity: 28,
+    opacity: 78,
+    edgeOpacity: 24,
     labelOpacity: 0,
-    tone: "explored"
+    tone: "explored",
+    featherMask: 1
   });
   assert.equal(buildFogOverlayStyle(tiles[4]!, lookup, 0), null);
+});
+
+test("buildFogOverlayStyle keeps interior fog tiles alpha-blended even without a frontier", () => {
+  const hiddenTiles = [
+    createTile({ x: 0, y: 0 }, "hidden"),
+    createTile({ x: 1, y: 0 }, "hidden"),
+    createTile({ x: 0, y: 1 }, "hidden"),
+    createTile({ x: 1, y: 1 }, "hidden")
+  ];
+  const exploredTiles = [
+    createTile({ x: 0, y: 0 }, "explored"),
+    createTile({ x: 1, y: 0 }, "explored"),
+    createTile({ x: 0, y: 1 }, "explored"),
+    createTile({ x: 1, y: 1 }, "explored")
+  ];
+
+  assert.deepEqual(buildFogOverlayStyle(hiddenTiles[0]!, createTileLookup(hiddenTiles), 0), {
+    text: "",
+    opacity: 220,
+    edgeOpacity: 198,
+    labelOpacity: 0,
+    tone: "hidden",
+    featherMask: 0
+  });
+  assert.deepEqual(buildFogOverlayStyle(exploredTiles[2]!, createTileLookup(exploredTiles), 0), {
+    text: "",
+    opacity: 108,
+    edgeOpacity: 82,
+    labelOpacity: 0,
+    tone: "explored",
+    featherMask: 0
+  });
 });
 
 test("buildMapFeedbackEntriesFromUpdate creates tile callouts for move, collect, xp and battle results", () => {

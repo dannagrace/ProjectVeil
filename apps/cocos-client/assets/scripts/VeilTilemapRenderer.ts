@@ -70,6 +70,9 @@ export class VeilTilemapRenderer extends Component {
   exploredFogEdgePulseOffset = 0;
 
   @property
+  alphaFogOverlayEnabled = true;
+
+  @property
   woodResourceGid = 1;
 
   @property
@@ -127,11 +130,13 @@ export class VeilTilemapRenderer extends Component {
     for (const tile of tiles) {
       const key = this.tileKey(tile.position);
       usedKeys.add(key);
-      const baseFogGid = this.fogGidForTile(tile);
-      const baseFogEdgeGid = fogEdgeGidForTile(tile, tileLookup, {
-        hiddenFogEdgeBaseGid: this.hiddenFogEdgeBaseGid,
-        exploredFogEdgeBaseGid: this.exploredFogEdgeBaseGid
-      });
+      const baseFogGid = this.alphaFogOverlayEnabled ? 0 : this.fogGidForTile(tile);
+      const baseFogEdgeGid = this.alphaFogOverlayEnabled
+        ? 0
+        : fogEdgeGidForTile(tile, tileLookup, {
+            hiddenFogEdgeBaseGid: this.hiddenFogEdgeBaseGid,
+            exploredFogEdgeBaseGid: this.exploredFogEdgeBaseGid
+          });
 
       this.applyCachedGid(terrainLayer, this.cachedTerrainGids, tile.position, key, this.terrainGidForTile(tile));
       this.applyCachedGid(

@@ -150,7 +150,7 @@ export class VeilMapBoard extends Component {
       this.syncTileSprite(tileView, tile, usesTilemapRenderer);
       this.paintTileChrome(tileView.graphics, tile, isReachable, isHeroTile);
       tileView.label.string = usesTilemapRenderer ? "" : this.tileText(tile, tileLookup, isReachable, isHeroTile);
-      tileView.fogOverlay.render(buildFogOverlayStyle(tile, tileLookup, this.fogPulsePhase), !usesTilemapRenderer);
+      tileView.fogOverlay.render(buildFogOverlayStyle(tile, tileLookup, this.fogPulsePhase), true);
       this.renderObjectMarker(tile, width, height, usesTilemapRenderer);
     });
 
