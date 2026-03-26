@@ -9,6 +9,7 @@ import {
   createHeroProgressMeterView,
   createDemoBattleState,
   createEmptyBattleState,
+  executeBattleSkill,
   createHeroBattleState,
   createDefaultHeroLoadout,
   createNeutralBattleState,
@@ -2040,6 +2041,30 @@ test("applyBattleAction supports active ranged skills without retaliation", () =
   assert.equal(next.units["wolf-d"]?.hasRetaliated, false);
   assert.equal(next.units["pikeman-a"]?.skills?.find((skill) => skill.id === "power_shot")?.remainingCooldown, 2);
   assert.match(next.log.at(-1) ?? "", /投矛射击/);
+});
+
+test("executeBattleSkill resolves enemy and self-target skills through the shared battle path", () => {
+  const rangedState = createDemoBattleState();
+  rangedState.activeUnitId = "pikeman-a";
+  rangedState.turnOrder = ["pikeman-a", "wolf-d"];
+
+  const rangedNext = executeBattleSkill(rangedState, "pikeman-a", "power_shot", "wolf-d");
+
+  assert.equal(rangedNext.activeUnitId, "wolf-d");
+  assert.equal(rangedNext.units["pikeman-a"]?.skills?.find((skill) => skill.id === "power_shot")?.remainingCooldown, 2);
+  assert.equal(rangedNext.units["wolf-d"]?.hasRetaliated, false);
+  assert.match(rangedNext.log.at(-1) ?? "", /投矛射击/);
+
+  const buffState = createDemoBattleState();
+  buffState.activeUnitId = "pikeman-a";
+  buffState.turnOrder = ["pikeman-a", "wolf-d"];
+
+  const buffNext = executeBattleSkill(buffState, "pikeman-a", "armor_spell", "pikeman-a");
+
+  assert.equal(buffNext.activeUnitId, "wolf-d");
+  assert.equal(buffNext.units["pikeman-a"]?.statusEffects?.[0]?.id, "arcane_armor");
+  assert.equal(buffNext.units["pikeman-a"]?.skills?.find((skill) => skill.id === "armor_spell")?.remainingCooldown, 3);
+  assert.match(buffNext.log.at(-1) ?? "", /护甲术/);
 });
 
 test("applyBattleAction supports armor spell buffs on the acting unit", () => {
