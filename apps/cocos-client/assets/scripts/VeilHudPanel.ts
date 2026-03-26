@@ -77,7 +77,8 @@ function toHeroSkillState(
       equipment: {
         ...hero.loadout.equipment,
         trinketIds: [...hero.loadout.equipment.trinketIds]
-      }
+      },
+      inventory: [...hero.loadout.inventory]
     },
     armyTemplateId: hero.armyTemplateId,
     armyCount: hero.armyCount,

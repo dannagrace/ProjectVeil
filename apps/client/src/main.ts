@@ -5,11 +5,15 @@ import {
   createHeroEquipmentLoadoutView,
   createHeroProgressMeterView,
   experienceRequiredForNextLevel,
+  formatEquipmentBonusSummary,
+  formatEquipmentRarityLabel,
   getDefaultBattleSkillCatalog,
+  getEquipmentDefinition,
   predictPlayerWorldAction,
   totalExperienceRequiredForLevel,
   type BattleAction,
   type BattleState,
+  type EquipmentType,
   type MovementPlan,
   type PlayerTileView,
   type PlayerWorldView
@@ -488,6 +492,72 @@ function renderHeroAttributePanel(
   `;
 }
 
+function formatEquipmentActionReason(reason: string): string {
+  if (reason === "equipment_not_in_inventory") {
+    return "背包里没有这件装备";
+  }
+
+  if (reason === "equipment_slot_mismatch") {
+    return "装备类型和槽位不匹配";
+  }
+
+  if (reason === "equipment_definition_missing") {
+    return "装备目录缺失，无法装备";
+  }
+
+  if (reason === "equipment_slot_empty") {
+    return "当前槽位没有可卸下的装备";
+  }
+
+  if (reason === "equipment_already_equipped") {
+    return "该装备已经穿戴中";
+  }
+
+  return reason;
+}
+
+function inventoryItemsForSlot(
+  hero: PlayerWorldView["ownHeroes"][number],
+  slot: EquipmentType
+): Array<{
+  itemId: string;
+  name: string;
+  rarityLabel: string;
+  bonusSummary: string;
+  description: string;
+  count: number;
+}> {
+  const counts = new Map<string, number>();
+
+  for (const itemId of hero.loadout.inventory) {
+    const definition = getEquipmentDefinition(itemId);
+    if (!definition || definition.type !== slot) {
+      continue;
+    }
+
+    counts.set(itemId, (counts.get(itemId) ?? 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .map(([itemId, count]) => {
+      const definition = getEquipmentDefinition(itemId);
+      if (!definition) {
+        return null;
+      }
+
+      return {
+        itemId,
+        name: definition.name,
+        rarityLabel: formatEquipmentRarityLabel(definition.rarity),
+        bonusSummary: formatEquipmentBonusSummary(definition.bonuses),
+        description: definition.description,
+        count
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+    .sort((left, right) => left.name.localeCompare(right.name, "zh-Hans-CN"));
+}
+
 function renderHeroEquipmentPanel(hero: PlayerWorldView["ownHeroes"][number] | null): string {
   if (!hero) {
     return "";
@@ -511,7 +581,9 @@ function renderHeroEquipmentPanel(hero: PlayerWorldView["ownHeroes"][number] | n
       <div class="hero-equipment-list">
         ${loadout.slots
           .map(
-            (slot) => `
+            (slot) => {
+              const inventory = inventoryItemsForSlot(hero, slot.slot);
+              return `
               <article class="hero-equipment-item">
                 <div class="hero-equipment-meta">
                   <div>
@@ -523,8 +595,36 @@ function renderHeroEquipmentPanel(hero: PlayerWorldView["ownHeroes"][number] | n
                 <p>${escapeHtml(slot.bonusSummary)}</p>
                 ${slot.specialEffectSummary ? `<p class="hero-equipment-copy">${escapeHtml(slot.specialEffectSummary)}</p>` : ""}
                 ${slot.description ? `<p class="hero-equipment-copy">${escapeHtml(slot.description)}</p>` : ""}
+                <div class="hero-equipment-actions">
+                  <button
+                    class="hero-equipment-button secondary-button"
+                    data-hero-unequip-slot="${slot.slot}"
+                    ${slot.itemId && !state.battle ? "" : "disabled"}
+                  >卸下</button>
+                  <span class="hero-equipment-copy">背包 ${inventory.reduce((total, item) => total + item.count, 0)} 件可替换</span>
+                </div>
+                <div class="hero-equipment-inventory">
+                  ${
+                    inventory.length > 0
+                      ? inventory
+                          .map(
+                            (item) => `
+                              <button
+                                class="hero-equipment-button"
+                                data-hero-equip-slot="${slot.slot}"
+                                data-hero-equip-id="${item.itemId}"
+                                ${state.battle ? "disabled" : ""}
+                                title="${escapeHtml(`${item.bonusSummary} · ${item.description}`)}"
+                              >${escapeHtml(`${item.name} x${item.count}`)}</button>
+                            `
+                          )
+                          .join("")
+                      : `<span class="hero-equipment-copy muted">暂无可用替换装备</span>`
+                  }
+                </div>
               </article>
-            `
+            `;
+            }
           )
           .join("")}
       </div>
@@ -1604,6 +1704,86 @@ async function onLearnHeroSkill(skillId: string): Promise<void> {
   }
 }
 
+async function onEquipHeroItem(slot: EquipmentType, equipmentId: string): Promise<void> {
+  const hero = activeHero();
+  if (!hero) {
+    return;
+  }
+
+  if (state.battle) {
+    state.predictionStatus = "战斗中无法调整装备";
+    render();
+    return;
+  }
+
+  const definition = getEquipmentDefinition(equipmentId);
+  const session = await getSession();
+  const prediction = predictPlayerWorldAction(state.world, {
+    type: "hero.equip",
+    heroId: hero.id,
+    slot,
+    equipmentId
+  });
+
+  if (!prediction.reason) {
+    applyPendingPrediction({
+      world: prediction.world,
+      movementPlan: prediction.movementPlan,
+      reachableTiles: prediction.reachableTiles,
+      status: `预演中：装备 ${definition?.name ?? equipmentId}`,
+      tone: "loot"
+    });
+    render();
+  }
+
+  try {
+    applyUpdate(await session.equipHeroItem(hero.id, slot, equipmentId));
+  } catch (error) {
+    rollbackPendingPrediction(
+      error instanceof Error ? formatEquipmentActionReason(error.message) : "equip_item_failed"
+    );
+  }
+}
+
+async function onUnequipHeroItem(slot: EquipmentType): Promise<void> {
+  const hero = activeHero();
+  if (!hero) {
+    return;
+  }
+
+  if (state.battle) {
+    state.predictionStatus = "战斗中无法调整装备";
+    render();
+    return;
+  }
+
+  const session = await getSession();
+  const prediction = predictPlayerWorldAction(state.world, {
+    type: "hero.unequip",
+    heroId: hero.id,
+    slot
+  });
+
+  if (!prediction.reason) {
+    applyPendingPrediction({
+      world: prediction.world,
+      movementPlan: prediction.movementPlan,
+      reachableTiles: prediction.reachableTiles,
+      status: "预演中：卸下装备",
+      tone: "loot"
+    });
+    render();
+  }
+
+  try {
+    applyUpdate(await session.unequipHeroItem(hero.id, slot));
+  } catch (error) {
+    rollbackPendingPrediction(
+      error instanceof Error ? formatEquipmentActionReason(error.message) : "unequip_item_failed"
+    );
+  }
+}
+
 async function onBattleAction(action: BattleAction): Promise<void> {
   state.pendingBattleAction = action;
   const session = await getSession();
@@ -2586,6 +2766,29 @@ function render(): void {
       }
 
       void onLearnHeroSkill(skillId);
+    });
+  }
+
+  for (const equipButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-hero-equip-slot]"))) {
+    equipButton.addEventListener("click", () => {
+      const slot = equipButton.dataset.heroEquipSlot as EquipmentType | undefined;
+      const equipmentId = equipButton.dataset.heroEquipId;
+      if (!slot || !equipmentId) {
+        return;
+      }
+
+      void onEquipHeroItem(slot, equipmentId);
+    });
+  }
+
+  for (const unequipButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-hero-unequip-slot]"))) {
+    unequipButton.addEventListener("click", () => {
+      const slot = unequipButton.dataset.heroUnequipSlot as EquipmentType | undefined;
+      if (!slot) {
+        return;
+      }
+
+      void onUnequipHeroItem(slot);
     });
   }
 

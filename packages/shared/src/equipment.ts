@@ -5,7 +5,8 @@ import {
   type EquipmentRarity,
   type EquipmentStatBonuses,
   type EquipmentType,
-  type HeroState
+  type HeroState,
+  type ValidationResult
 } from "./models";
 
 const DEFAULT_EQUIPMENT_CATALOG: EquipmentCatalogConfig = {
@@ -302,8 +303,21 @@ function percentageDelta(base: number, percent: number): number {
   return Math.round(Math.max(0, base) * (percent / 100));
 }
 
-function equipmentRarityLabel(rarity: EquipmentRarity): string {
+export function formatEquipmentRarityLabel(rarity: EquipmentRarity): string {
   return rarity === "common" ? "普通" : rarity === "rare" ? "稀有" : "史诗";
+}
+
+function slotKeyForEquipmentType(type: EquipmentType): "weaponId" | "armorId" | "accessoryId" {
+  return type === "weapon" ? "weaponId" : type === "armor" ? "armorId" : "accessoryId";
+}
+
+function withoutFirstInventoryMatch(inventory: string[], equipmentId: string): string[] {
+  const index = inventory.indexOf(equipmentId);
+  if (index < 0) {
+    return inventory;
+  }
+
+  return inventory.filter((_, entryIndex) => entryIndex !== index);
 }
 
 export function formatEquipmentBonusSummary(
@@ -332,6 +346,79 @@ export function getDefaultEquipmentCatalog(): EquipmentCatalogConfig {
 
 export function getEquipmentDefinition(equipmentId: string): EquipmentDefinition | undefined {
   return resolveEquipmentDefinition(equipmentId.trim());
+}
+
+export function validateHeroEquipmentChange(
+  hero: Pick<HeroState, "loadout">,
+  slot: EquipmentType,
+  equipmentId?: string
+): ValidationResult {
+  const key = slotKeyForEquipmentType(slot);
+  const currentItemId = hero.loadout.equipment[key];
+  const normalizedEquipmentId = equipmentId?.trim();
+
+  if (!normalizedEquipmentId) {
+    return currentItemId ? { valid: true } : { valid: false, reason: "equipment_slot_empty" };
+  }
+
+  const definition = resolveEquipmentDefinition(normalizedEquipmentId);
+  if (!definition) {
+    return { valid: false, reason: "equipment_definition_missing" };
+  }
+
+  if (definition.type !== slot) {
+    return { valid: false, reason: "equipment_slot_mismatch" };
+  }
+
+  if (currentItemId === normalizedEquipmentId) {
+    return { valid: false, reason: "equipment_already_equipped" };
+  }
+
+  if (!hero.loadout.inventory.includes(normalizedEquipmentId)) {
+    return { valid: false, reason: "equipment_not_in_inventory" };
+  }
+
+  return { valid: true };
+}
+
+export function applyHeroEquipmentChange(
+  hero: HeroState,
+  slot: EquipmentType,
+  equipmentId?: string
+): {
+  hero: HeroState;
+  equippedItemId?: string;
+  unequippedItemId?: string;
+} {
+  const key = slotKeyForEquipmentType(slot);
+  const normalizedEquipmentId = equipmentId?.trim();
+  const currentItemId = hero.loadout.equipment[key];
+  let nextInventory = [...hero.loadout.inventory];
+
+  if (normalizedEquipmentId) {
+    nextInventory = withoutFirstInventoryMatch(nextInventory, normalizedEquipmentId);
+  }
+
+  if (currentItemId) {
+    nextInventory.push(currentItemId);
+  }
+
+  return {
+    hero: {
+      ...hero,
+      loadout: {
+        ...hero.loadout,
+        equipment: {
+          ...hero.loadout.equipment,
+          ...(normalizedEquipmentId ? { [key]: normalizedEquipmentId } : {}),
+          ...(!normalizedEquipmentId ? { [key]: undefined } : {})
+        },
+        inventory: nextInventory
+      }
+    },
+    ...(normalizedEquipmentId ? { equippedItemId: normalizedEquipmentId } : {}),
+    ...(currentItemId ? { unequippedItemId: currentItemId } : {})
+  };
 }
 
 export function createHeroEquipmentBonusSummary(
@@ -408,7 +495,7 @@ export function createHeroEquipmentLoadoutView(
         itemId: item.id,
         item,
         itemName: item.name,
-        rarityLabel: equipmentRarityLabel(item.rarity),
+        rarityLabel: formatEquipmentRarityLabel(item.rarity),
         description: item.description,
         bonusSummary: formatEquipmentBonusSummary(item.bonuses),
         specialEffectSummary: item.specialEffect ? `${item.specialEffect.name}: ${item.specialEffect.description}` : null

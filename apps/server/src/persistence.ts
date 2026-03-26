@@ -109,6 +109,7 @@ interface PlayerHeroArchiveRow extends RowDataPacket {
   army_count: number | null;
   learned_skills_json: string | HeroState["loadout"]["learnedSkills"] | null;
   equipment_json: string | HeroState["loadout"]["equipment"] | null;
+  inventory_json: string | HeroState["loadout"]["inventory"] | null;
   updated_at: Date | string;
 }
 
@@ -769,6 +770,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (
   army_count INT NULL,
   learned_skills_json LONGTEXT NULL,
   equipment_json LONGTEXT NULL,
+  inventory_json LONGTEXT NULL,
   version BIGINT UNSIGNED NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -847,6 +849,24 @@ PREPARE veil_player_hero_archives_equipment_stmt FROM @veil_player_hero_archives
 EXECUTE veil_player_hero_archives_equipment_stmt;
 DEALLOCATE PREPARE veil_player_hero_archives_equipment_stmt;
 
+SET @veil_player_hero_archives_inventory_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}'
+    AND COLUMN_NAME = 'inventory_json'
+);
+
+SET @veil_player_hero_archives_inventory_sql := IF(
+  @veil_player_hero_archives_inventory_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` ADD COLUMN \`inventory_json\` LONGTEXT NULL AFTER \`equipment_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_hero_archives_inventory_stmt FROM @veil_player_hero_archives_inventory_sql;
+EXECUTE veil_player_hero_archives_inventory_stmt;
+DEALLOCATE PREPARE veil_player_hero_archives_inventory_stmt;
+
 SET @veil_player_hero_archives_idx_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.STATISTICS
@@ -921,7 +941,11 @@ function toPlayerHeroArchiveSnapshot(row: PlayerHeroArchiveRow): PlayerHeroArchi
         equipment:
           row.equipment_json != null
             ? parseJsonColumn<HeroState["loadout"]["equipment"]>(row.equipment_json)
-            : archivedHero.loadout.equipment
+            : archivedHero.loadout.equipment,
+        inventory:
+          row.inventory_json != null
+            ? parseJsonColumn<HeroState["loadout"]["inventory"]>(row.inventory_json)
+            : archivedHero.loadout.inventory
       }
     })
   };
@@ -1043,14 +1067,15 @@ async function savePlayerHeroArchives(
   for (const archive of archives) {
     await connection.query(
       `INSERT INTO \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
-         (player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+         (player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          hero_json = VALUES(hero_json),
          army_template_id = VALUES(army_template_id),
          army_count = VALUES(army_count),
          learned_skills_json = VALUES(learned_skills_json),
          equipment_json = VALUES(equipment_json),
+         inventory_json = VALUES(inventory_json),
          version = version + 1`,
       [
         archive.playerId,
@@ -1059,7 +1084,8 @@ async function savePlayerHeroArchives(
         archive.hero.armyTemplateId,
         archive.hero.armyCount,
         JSON.stringify(archive.hero.loadout.learnedSkills),
-        JSON.stringify(archive.hero.loadout.equipment)
+        JSON.stringify(archive.hero.loadout.equipment),
+        JSON.stringify(archive.hero.loadout.inventory)
       ]
     );
   }
@@ -1171,6 +1197,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         army_count INT NULL,
         learned_skills_json LONGTEXT NULL,
         equipment_json LONGTEXT NULL,
+        inventory_json LONGTEXT NULL,
         version BIGINT UNSIGNED NOT NULL DEFAULT 1,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1271,6 +1298,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       MYSQL_PLAYER_HERO_ARCHIVE_TABLE,
       "equipment_json",
       "`equipment_json` LONGTEXT NULL AFTER `learned_skills_json`"
+    );
+    await ensureColumnExists(
+      pool,
+      config.database,
+      MYSQL_PLAYER_HERO_ARCHIVE_TABLE,
+      "inventory_json",
+      "`inventory_json` LONGTEXT NULL AFTER `equipment_json`"
     );
 
     const [indexRows] = await pool.query<RowDataPacket[]>(
@@ -1766,7 +1800,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     const placeholders = safePlayerIds.map(() => "?").join(", ");
     const [rows] = await this.pool.query<PlayerHeroArchiveRow[]>(
-      `SELECT player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, updated_at
+      `SELECT player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json, updated_at
        FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
        WHERE player_id IN (${placeholders})`,
       safePlayerIds

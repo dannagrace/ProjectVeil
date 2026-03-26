@@ -29,6 +29,7 @@ import type {
   WorldState
 } from "./models";
 import { applyHeroSkillSelection, validateHeroSkillSelection } from "./hero-skills";
+import { applyHeroEquipmentChange, validateHeroEquipmentChange } from "./equipment";
 import {
   normalizeHeroState,
   totalExperienceRequiredForLevel
@@ -1378,6 +1379,38 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
     };
   }
 
+  if (action.type === "hero.equip" || action.type === "hero.unequip") {
+    const validation = validateHeroEquipmentChange(
+      hero,
+      action.slot,
+      action.type === "hero.equip" ? action.equipmentId : undefined
+    );
+    if (!validation.valid) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        ...(validation.reason ? { reason: validation.reason } : {})
+      };
+    }
+
+    const changed = applyHeroEquipmentChange(
+      hero,
+      action.slot,
+      action.type === "hero.equip" ? action.equipmentId : undefined
+    );
+    const predictedWorld: PlayerWorldView = {
+      ...view,
+      ownHeroes: view.ownHeroes.map((item) => (item.id === hero.id ? changed.hero : item))
+    };
+
+    return {
+      world: predictedWorld,
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+    };
+  }
+
   if (action.type === "hero.move") {
     const destinationTile = findPlayerTile(view, action.destination);
     if (!destinationTile) {
@@ -1807,6 +1840,14 @@ export function validateWorldAction(state: WorldState, action: WorldAction): Val
     return validateHeroSkillSelection(hero, action.skillId);
   }
 
+  if (action.type === "hero.equip" || action.type === "hero.unequip") {
+    return validateHeroEquipmentChange(
+      hero,
+      action.slot,
+      action.type === "hero.equip" ? action.equipmentId : undefined
+    );
+  }
+
   if (action.type === "hero.recruit") {
     const building = state.buildings[action.buildingId];
     if (!building) {
@@ -2126,6 +2167,47 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
     };
   }
 
+  if (action.type === "hero.equip" || action.type === "hero.unequip") {
+    const hero = state.heroes.find((item) => item.id === action.heroId);
+    if (!hero) {
+      return { state, events: [] };
+    }
+
+    const validation = validateHeroEquipmentChange(
+      hero,
+      action.slot,
+      action.type === "hero.equip" ? action.equipmentId : undefined
+    );
+    if (!validation.valid) {
+      return { state, events: [] };
+    }
+
+    const changed = applyHeroEquipmentChange(
+      hero,
+      action.slot,
+      action.type === "hero.equip" ? action.equipmentId : undefined
+    );
+    const nextState = buildNextWorldState(
+      state,
+      state.heroes.map((item) => (item.id === hero.id ? changed.hero : item)),
+      state.neutralArmies,
+      state.buildings
+    );
+
+    return {
+      state: nextState,
+      events: [
+        {
+          type: "hero.equipmentChanged",
+          heroId: hero.id,
+          slot: action.slot,
+          ...(changed.equippedItemId ? { equippedItemId: changed.equippedItemId } : {}),
+          ...(changed.unequippedItemId ? { unequippedItemId: changed.unequippedItemId } : {})
+        }
+      ]
+    };
+  }
+
   if (action.type === "hero.recruit") {
     const hero = state.heroes.find((item) => item.id === action.heroId);
     const building = state.buildings[action.buildingId];
@@ -2316,6 +2398,7 @@ export function filterWorldEventsForPlayer(
       case "hero.claimedMine":
       case "hero.progressed":
       case "hero.skillLearned":
+      case "hero.equipmentChanged":
         return ownsHero(event.heroId);
       case "neutral.moved": {
         const visibility = state.visibilityByPlayer[playerId];

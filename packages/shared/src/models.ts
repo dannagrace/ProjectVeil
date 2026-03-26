@@ -147,6 +147,7 @@ export interface HeroEquipmentState {
 export interface HeroLoadout {
   learnedSkills: HeroBattleSkillState[];
   equipment: HeroEquipmentState;
+  inventory: EquipmentId[];
 }
 
 export interface HeroState {
@@ -179,6 +180,7 @@ export interface HeroEquipmentConfig {
 export interface HeroLoadoutConfig {
   learnedSkills?: HeroBattleSkillConfig[];
   equipment?: HeroEquipmentConfig | null;
+  inventory?: EquipmentId[] | null;
 }
 
 export interface ResourceNode {
@@ -521,6 +523,17 @@ export type WorldAction =
       skillId: HeroSkillId;
     }
   | {
+      type: "hero.equip";
+      heroId: string;
+      slot: EquipmentType;
+      equipmentId: EquipmentId;
+    }
+  | {
+      type: "hero.unequip";
+      heroId: string;
+      slot: EquipmentType;
+    }
+  | {
       type: "turn.endDay";
     };
 
@@ -625,6 +638,13 @@ export type WorldEvent =
       spentPoint: number;
       remainingSkillPoints: number;
       newlyGrantedBattleSkillIds: BattleSkillId[];
+    }
+  | {
+      type: "hero.equipmentChanged";
+      heroId: string;
+      slot: EquipmentType;
+      equippedItemId?: EquipmentId;
+      unequippedItemId?: EquipmentId;
     }
   | {
       type: "battle.started";
@@ -736,8 +756,18 @@ export function normalizeHeroEquipment(
 export function createDefaultHeroLoadout(): HeroLoadout {
   return {
     learnedSkills: [],
-    equipment: createDefaultHeroEquipment()
+    equipment: createDefaultHeroEquipment(),
+    inventory: []
   };
+}
+
+export function normalizeHeroEquipmentInventory(
+  inventory?: EquipmentId[] | null
+): EquipmentId[] {
+  return (inventory ?? [])
+    .filter((itemId): itemId is string => typeof itemId === "string")
+    .map((itemId) => itemId.trim())
+    .filter((itemId) => itemId.length > 0);
 }
 
 export function normalizeHeroLearnedSkills(
@@ -794,7 +824,8 @@ export function normalizeHeroLoadout(
   return {
     ...createDefaultHeroLoadout(),
     learnedSkills: normalizeHeroBattleSkills(loadout?.learnedSkills),
-    equipment: normalizeHeroEquipment(loadout?.equipment)
+    equipment: normalizeHeroEquipment(loadout?.equipment),
+    inventory: normalizeHeroEquipmentInventory(loadout?.inventory)
   };
 }
 
