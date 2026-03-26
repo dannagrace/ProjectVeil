@@ -66,13 +66,16 @@ test("player battle actions are followed by automated defender turns until contr
   assert.ok(battleResult.battle);
   assert.equal(battleResult.battle?.round, 2);
   assert.equal(battleResult.battle?.units[battleResult.battle?.activeUnitId ?? ""]?.camp, "attacker");
-  assert.deepEqual(battleResult.battle?.log.slice(-5), [
+  assert.deepEqual(battleResult.battle?.log.slice(-7), [
     "hero-1-stack 进入防御",
-    "恶狼 对 凯琳卫队 造成 22 伤害",
+    "恶狼 触发 捕兽夹陷阱，损失 2 生命",
+    "恶狼 因 捕兽夹陷阱 陷入削弱",
+    "恶狼 对 凯琳卫队 造成 20 伤害",
     "恶狼 的毒牙让 凯琳卫队 陷入中毒",
     "凯琳卫队 反击 恶狼，造成 29 伤害",
     "凯琳卫队 受到中毒影响，损失 2 生命"
   ]);
+  assert.deepEqual(battleResult.battle?.environment, []);
 });
 
 test("server rejects battle actions sent for non-player-controlled defender units", () => {

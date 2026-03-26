@@ -1876,15 +1876,127 @@ test("createEmptyBattleState returns the minimal neutral battle shell", () => {
   assert.deepEqual(createEmptyBattleState(), {
     id: "battle-empty",
     round: 0,
+    lanes: 1,
     activeUnitId: null,
     turnOrder: [],
     units: {},
+    environment: [],
     log: [],
     rng: {
       seed: 1,
       cursor: 0
     }
   });
+});
+
+test("applyBattleAction routes contact attacks through blockers before hitting the target", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d"];
+  state.environment = [
+    {
+      id: "hazard-blocker-0",
+      kind: "blocker",
+      lane: 0,
+      name: "碎石路障",
+      description: "近身接战前需要先破开这道障碍。",
+      durability: 1,
+      maxDurability: 1
+    }
+  ];
+
+  const next = applyBattleAction(state, {
+    type: "battle.attack",
+    attackerId: "pikeman-a",
+    defenderId: "wolf-d"
+  });
+
+  assert.equal(next.activeUnitId, "wolf-d");
+  assert.deepEqual(next.environment, []);
+  assert.equal(next.units["wolf-d"]?.count, 8);
+  assert.equal(next.units["wolf-d"]?.currentHp, 8);
+  assert.deepEqual(next.log.slice(-2), [
+    "枪兵 被 碎石路障 阻挡，只能先破开障碍",
+    "碎石路障 被击碎，1 线重新打开"
+  ]);
+});
+
+test("applyBattleAction triggers contact traps before the strike and logs granted statuses", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d"];
+  state.units["wolf-d"] = {
+    ...state.units["wolf-d"]!,
+    hasRetaliated: true
+  };
+  state.environment = [
+    {
+      id: "hazard-trap-0",
+      kind: "trap",
+      lane: 0,
+      name: "捕兽夹陷阱",
+      description: "近身突进时会先被陷阱割伤并短暂削弱。",
+      damage: 2,
+      charges: 1,
+      grantedStatusId: "weakened",
+      triggeredByCamp: "both"
+    }
+  ];
+
+  const next = applyBattleAction(state, {
+    type: "battle.attack",
+    attackerId: "pikeman-a",
+    defenderId: "wolf-d"
+  });
+
+  assert.deepEqual(next.environment, []);
+  assert.equal(next.units["pikeman-a"]?.currentHp, 8);
+  assert.deepEqual(next.units["pikeman-a"]?.statusEffects?.map((status) => status.id), ["weakened"]);
+  assert.deepEqual(next.log.slice(-3, -1), [
+    "枪兵 触发 捕兽夹陷阱，损失 2 生命",
+    "枪兵 因 捕兽夹陷阱 陷入削弱"
+  ]);
+  assert.match(next.log.at(-1) ?? "", /^枪兵 对 恶狼 造成 \d+ 伤害$/);
+});
+
+test("applyBattleAction lets ranged skills bypass blockers and traps", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d"];
+  state.environment = [
+    {
+      id: "hazard-blocker-0",
+      kind: "blocker",
+      lane: 0,
+      name: "碎石路障",
+      description: "近身接战前需要先破开这道障碍。",
+      durability: 1,
+      maxDurability: 1
+    },
+    {
+      id: "hazard-trap-0",
+      kind: "trap",
+      lane: 0,
+      name: "捕兽夹陷阱",
+      description: "近身突进时会先被陷阱割伤并短暂削弱。",
+      damage: 2,
+      charges: 1,
+      grantedStatusId: "weakened",
+      triggeredByCamp: "both"
+    }
+  ];
+
+  const next = applyBattleAction(state, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "power_shot",
+    targetId: "wolf-d"
+  });
+
+  assert.equal(next.units["pikeman-a"]?.currentHp, 10);
+  assert.deepEqual(next.units["pikeman-a"]?.statusEffects, []);
+  assert.deepEqual(next.environment, state.environment);
+  assert.match(next.log.at(-1) ?? "", /^枪兵 施放 投矛射击，对 恶狼 造成 \d+ 伤害$/);
 });
 
 test("applyBattleAction supports self-target skills without granted statuses", () => {
@@ -2168,17 +2280,25 @@ test("battle state builders carry stats, metadata, and missing-template guards",
   assert.equal(neutralBattle.worldHeroId, "hero-a");
   assert.equal(neutralBattle.neutralArmyId, "neutral-2");
   assert.deepEqual(neutralBattle.encounterPosition, { x: 6, y: 3 });
+  assert.equal(neutralBattle.lanes, 1);
   assert.equal(neutralBattle.units["hero-a-stack"]?.attack, 7);
   assert.equal(neutralBattle.units["hero-a-stack"]?.defense, 6);
   assert.equal(neutralBattle.units["hero-a-stack"]?.count, 15);
+  assert.equal(neutralBattle.units["hero-a-stack"]?.lane, 0);
   assert.equal(neutralBattle.units["neutral-2-stack-1"]?.count, 5);
+  assert.equal(neutralBattle.units["neutral-2-stack-1"]?.lane, 0);
+  assert.equal(neutralBattle.environment.every((hazard) => hazard.lane < neutralBattle.lanes), true);
 
   const heroBattle = createHeroBattleState(attackerHero, defenderHero, 2028);
   assert.equal(heroBattle.worldHeroId, "hero-a");
   assert.equal(heroBattle.defenderHeroId, "hero-b");
   assert.deepEqual(heroBattle.encounterPosition, { x: 4, y: 2 });
+  assert.equal(heroBattle.lanes, 1);
   assert.equal(heroBattle.units["hero-a-stack"]?.attack, 7);
+  assert.equal(heroBattle.units["hero-a-stack"]?.lane, 0);
   assert.equal(heroBattle.units["hero-b-stack"]?.defense, 8);
+  assert.equal(heroBattle.units["hero-b-stack"]?.lane, 0);
+  assert.equal(heroBattle.environment.every((hazard) => hazard.lane < heroBattle.lanes), true);
 
   assert.throws(
     () =>

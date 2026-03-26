@@ -109,6 +109,10 @@ function isNeutralBehaviorMode(value: unknown): value is NeutralBehaviorMode {
   return value === "guard" || value === "patrol";
 }
 
+function isBattleSkillDelivery(value: unknown): value is "contact" | "ranged" {
+  return value === "contact" || value === "ranged";
+}
+
 export function validateBattleSkillCatalog(config: BattleSkillCatalogConfig): void {
   if (!Array.isArray(config.skills) || !Array.isArray(config.statuses)) {
     throw new Error("Battle skill catalog must contain skills and statuses arrays");
@@ -167,6 +171,9 @@ export function validateBattleSkillCatalog(config: BattleSkillCatalogConfig): vo
     }
     if (!isBattleSkillTarget(skill.target)) {
       throw new Error(`Battle skill ${skill.id} has invalid target: ${String(skill.target)}`);
+    }
+    if (skill.delivery !== undefined && !isBattleSkillDelivery(skill.delivery)) {
+      throw new Error(`Battle skill ${skill.id} has invalid delivery: ${String(skill.delivery)}`);
     }
     if (!Number.isInteger(skill.cooldown) || skill.cooldown < 0) {
       throw new Error(`Battle skill ${skill.id} cooldown must be a non-negative integer`);

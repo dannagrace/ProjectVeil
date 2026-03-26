@@ -32,17 +32,28 @@ test("room persistence snapshot restores a resolved PvP world without active bat
     destination: { x: 3, y: 4 }
   });
 
-  const sequence = ["player-2", "player-1", "player-2", "player-1", "player-2"] as const;
-  for (const playerId of sequence) {
-    const battle = room.getBattleForPlayer(playerId);
-    const activeUnitId = battle?.activeUnitId;
+  let steps = 0;
+  while (steps < 12) {
+    const battle = room.getBattleForPlayer("player-1") ?? room.getBattleForPlayer("player-2");
+    if (!battle) {
+      break;
+    }
+
+    const activeUnitId = battle.activeUnitId;
     const activeUnit = activeUnitId ? battle.units[activeUnitId] : undefined;
-    const target = battle
-      ? Object.values(battle.units).find((unit) => unit.camp !== activeUnit?.camp && unit.count > 0)
+    const attackerHero = battle.worldHeroId
+      ? room.getInternalState().heroes.find((hero) => hero.id === battle.worldHeroId)
+      : undefined;
+    const defenderHero = battle.defenderHeroId
+      ? room.getInternalState().heroes.find((hero) => hero.id === battle.defenderHeroId)
+      : undefined;
+    const playerId = activeUnit?.camp === "attacker" ? attackerHero?.playerId : defenderHero?.playerId;
+    const target = activeUnit
+      ? Object.values(battle.units).find((unit) => unit.camp !== activeUnit.camp && unit.count > 0)
       : undefined;
 
-    assert.ok(battle);
     assert.ok(activeUnitId);
+    assert.ok(playerId);
     assert.ok(target);
 
     room.dispatchBattle(playerId, {
@@ -50,7 +61,13 @@ test("room persistence snapshot restores a resolved PvP world without active bat
       attackerId: activeUnitId,
       defenderId: target.id
     });
+    steps += 1;
   }
+
+  assert.ok(steps > 0);
+  assert.ok(steps < 12);
+  assert.equal(room.getBattleForPlayer("player-1"), null);
+  assert.equal(room.getBattleForPlayer("player-2"), null);
 
   const snapshot = room.serializePersistenceSnapshot();
   const restored = createRoom("room-persist-pvp", 1001, snapshot);

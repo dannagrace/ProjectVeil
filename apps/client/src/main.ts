@@ -127,6 +127,7 @@ interface AppState {
 type BattleUnitView = BattleState["units"][string];
 type BattleSkillView = NonNullable<BattleUnitView["skills"]>[number];
 type BattleStatusView = NonNullable<BattleUnitView["statusEffects"]>[number];
+type BattleHazardView = BattleState["environment"][number];
 
 const state: AppState = {
   world: {
@@ -488,9 +489,11 @@ function renderBattleDetailItem(title: string, meta: string, copy: string): stri
 }
 
 function renderBattleSkillDetail(skill: BattleSkillView): string {
+  const deliveryLabel =
+    skill.target === "enemy" ? (skill.delivery === "ranged" ? "远程" : "接战") : "自身";
   return renderBattleDetailItem(
     skill.name,
-    `${battleSkillKindLabel(skill.kind)} · ${battleSkillTargetLabel(skill.target)} · ${battleSkillReadyLabel(skill)}`,
+    `${battleSkillKindLabel(skill.kind)} · ${battleSkillTargetLabel(skill.target)} · ${deliveryLabel} · ${battleSkillReadyLabel(skill)}`,
     skill.description
   );
 }
@@ -506,6 +509,22 @@ function renderBattleStatusDetail(status: BattleStatusView): string {
 
 function renderBattleFlagDetail(title: string, copy: string): string {
   return renderBattleDetailItem(title, "战斗姿态", copy);
+}
+
+function renderBattleHazardDetail(hazard: BattleHazardView): string {
+  if (hazard.kind === "blocker") {
+    return renderBattleDetailItem(
+      hazard.name,
+      `${hazard.lane + 1} 线 · 耐久 ${hazard.durability}/${hazard.maxDurability}`,
+      hazard.description
+    );
+  }
+
+  return renderBattleDetailItem(
+    hazard.name,
+    `${hazard.lane + 1} 线 · ${hazard.damage} 伤害 · 剩余 ${hazard.charges} 次`,
+    hazard.description
+  );
 }
 
 function renderBattleDetailGroup(title: string, items: string[], emptyMessage: string): string {
@@ -561,6 +580,7 @@ function renderBattleIntelCard(
       <div class="battle-intel-stats">
         <span class="battle-intel-chip">数量 x${unit.count}</span>
         <span class="battle-intel-chip">HP ${unit.currentHp}/${unit.maxHp}</span>
+        <span class="battle-intel-chip">线位 ${unit.lane + 1}</span>
         <span class="battle-intel-chip">ATK ${unit.attack}</span>
         <span class="battle-intel-chip">DEF ${unit.defense}</span>
         <span class="battle-intel-chip">INIT ${unit.initiative}</span>
@@ -1426,6 +1446,11 @@ function renderBattleIntelPanel(): string {
         ${renderBattleIntelCard("当前行动单位", "Turn Actor", activeBadge, activeUnit, "当前没有可行动单位。")}
         ${renderBattleIntelCard("已锁定目标", "Target Focus", selectedTarget ? "已锁定" : "未锁定", selectedTarget, "请选择一个敌方目标后查看详细说明。")}
       </div>
+      ${renderBattleDetailGroup(
+        "战场环境",
+        (state.battle.environment ?? []).map(renderBattleHazardDetail),
+        "当前战场没有额外障碍或陷阱。"
+      )}
     </section>
   `;
 }
@@ -1492,6 +1517,9 @@ function renderBattlefield(): string {
           <div class="meta-row">
             <span class="unit-meta">x${unit.count}</span>
             <span class="unit-meta">HP ${unit.currentHp}/${unit.maxHp}</span>
+          </div>
+          <div class="meta-row">
+            <span class="unit-meta">线位 ${unit.lane + 1}</span>
           </div>
           <div class="meta-row">
             <span class="unit-meta">ATK ${unit.attack}</span>
