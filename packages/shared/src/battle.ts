@@ -564,6 +564,140 @@ export function pickAutomatedBattleAction(state: BattleState): BattleAction | nu
   };
 }
 
+export interface AutomatedBattleSkillUsageEntry {
+  skillId: BattleSkillId;
+  uses: number;
+  share: number;
+}
+
+export interface AutomatedBattleSimulationResult {
+  outcome: BattleOutcome;
+  finalState: BattleState;
+  rounds: number;
+  turns: number;
+  skillUsage: Record<BattleSkillId, number>;
+  maxActionsReached: boolean;
+}
+
+export interface AutomatedBattleMetrics {
+  battleCount: number;
+  attackerWins: number;
+  defenderWins: number;
+  unresolvedBattles: number;
+  attackerWinRate: number;
+  defenderWinRate: number;
+  unresolvedRate: number;
+  averageRounds: number;
+  averageTurns: number;
+  minRounds: number;
+  maxRounds: number;
+  totalSkillUses: number;
+  skillUsage: AutomatedBattleSkillUsageEntry[];
+}
+
+export interface AutomatedBattleSimulationOptions {
+  maxActions?: number;
+}
+
+function sortSkillUsage(skillUsage: Record<BattleSkillId, number>): AutomatedBattleSkillUsageEntry[] {
+  const totalSkillUses = Object.values(skillUsage).reduce((total, value) => total + value, 0);
+  return Object.entries(skillUsage)
+    .map(([skillId, uses]) => ({
+      skillId,
+      uses,
+      share: totalSkillUses > 0 ? uses / totalSkillUses : 0
+    }))
+    .sort((left, right) => right.uses - left.uses || left.skillId.localeCompare(right.skillId));
+}
+
+export function simulateAutomatedBattle(
+  initialState: BattleState,
+  options: AutomatedBattleSimulationOptions = {}
+): AutomatedBattleSimulationResult {
+  const maxActions = Math.max(1, options.maxActions ?? 200);
+  const skillUsage: Record<BattleSkillId, number> = {};
+  let state = structuredClone(initialState);
+  let turns = 0;
+
+  while (getBattleOutcome(state).status === "in_progress" && turns < maxActions) {
+    const action = pickAutomatedBattleAction(state);
+    if (!action) {
+      break;
+    }
+
+    if (action.type === "battle.skill") {
+      skillUsage[action.skillId] = (skillUsage[action.skillId] ?? 0) + 1;
+    }
+
+    state = applyBattleAction(state, action);
+    turns += 1;
+  }
+
+  return {
+    outcome: getBattleOutcome(state),
+    finalState: state,
+    rounds: state.round,
+    turns,
+    skillUsage,
+    maxActionsReached: turns >= maxActions && getBattleOutcome(state).status === "in_progress"
+  };
+}
+
+export function simulateAutomatedBattles(
+  createInitialState: (battleIndex: number) => BattleState,
+  battleCount: number,
+  options: AutomatedBattleSimulationOptions = {}
+): AutomatedBattleMetrics {
+  const resolvedBattleCount = Math.max(1, Math.floor(battleCount));
+  const aggregateSkillUsage: Record<BattleSkillId, number> = {};
+  let attackerWins = 0;
+  let defenderWins = 0;
+  let unresolvedBattles = 0;
+  let totalRounds = 0;
+  let totalTurns = 0;
+  let minRounds = Number.POSITIVE_INFINITY;
+  let maxRounds = 0;
+
+  for (let battleIndex = 0; battleIndex < resolvedBattleCount; battleIndex += 1) {
+    const result = simulateAutomatedBattle(createInitialState(battleIndex), options);
+
+    if (result.outcome.status === "attacker_victory") {
+      attackerWins += 1;
+    } else if (result.outcome.status === "defender_victory") {
+      defenderWins += 1;
+    } else {
+      unresolvedBattles += 1;
+    }
+
+    totalRounds += result.rounds;
+    totalTurns += result.turns;
+    minRounds = Math.min(minRounds, result.rounds);
+    maxRounds = Math.max(maxRounds, result.rounds);
+
+    for (const [skillId, uses] of Object.entries(result.skillUsage)) {
+      aggregateSkillUsage[skillId] = (aggregateSkillUsage[skillId] ?? 0) + uses;
+    }
+  }
+
+  const totalSkillUses = Object.values(aggregateSkillUsage).reduce((total, value) => total + value, 0);
+
+  return {
+    battleCount: resolvedBattleCount,
+    attackerWins,
+    defenderWins,
+    unresolvedBattles,
+    attackerWinRate: attackerWins / resolvedBattleCount,
+    defenderWinRate: defenderWins / resolvedBattleCount,
+    unresolvedRate: unresolvedBattles / resolvedBattleCount,
+    averageRounds: totalRounds / resolvedBattleCount,
+    averageTurns: totalTurns / resolvedBattleCount,
+    minRounds: Number.isFinite(minRounds) ? minRounds : 0,
+    maxRounds,
+    totalSkillUses,
+    skillUsage: sortSkillUsage(aggregateSkillUsage)
+  };
+}
+
 function advanceTurnInternal(state: BattleState, actingUnitId: string, waited: boolean): BattleState {
   const aliveIds = new Set(
     Object.values(state.units)

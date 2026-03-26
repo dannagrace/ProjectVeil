@@ -1,0 +1,224 @@
+{
+  "skills": [
+    {
+      "id": "power_shot",
+      "name": "投矛射击",
+      "description": "远程压制目标，伤害略低，但不会触发反击。",
+      "kind": "active",
+      "target": "enemy",
+      "delivery": "ranged",
+      "cooldown": 2,
+      "effects": {
+        "damageMultiplier": 0.9,
+        "allowRetaliation": false
+      }
+    },
+    {
+      "id": "armor_spell",
+      "name": "护甲术",
+      "description": "为自己附加护甲术，在后续回合提升防御。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 3,
+      "effects": {
+        "grantedStatusId": "arcane_armor"
+      }
+    },
+    {
+      "id": "battle_focus",
+      "name": "战意激发",
+      "description": "短暂提升自身攻击，适合在贴身缠斗前蓄势。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 3,
+      "effects": {
+        "grantedStatusId": "battle_frenzy"
+      }
+    },
+    {
+      "id": "sundering_spear",
+      "name": "破甲投枪",
+      "description": "投出破甲短枪，伤害略低，但能在数回合内撕开目标防线。",
+      "kind": "active",
+      "target": "enemy",
+      "delivery": "ranged",
+      "cooldown": 2,
+      "effects": {
+        "damageMultiplier": 0.95,
+        "onHitStatusId": "armor_break"
+      }
+    },
+    {
+      "id": "guardian_oath",
+      "name": "守誓姿态",
+      "description": "进入短暂守势，同时小幅提升攻防，适合准备接战前使用。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 4,
+      "effects": {
+        "grantedStatusId": "shield_wall"
+      }
+    },
+    {
+      "id": "commanding_shout",
+      "name": "号令突进",
+      "description": "英雄亲自发出冲锋号令，让部队在短时间内压上输出。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 3,
+      "effects": {
+        "grantedStatusId": "battle_frenzy"
+      }
+    },
+    {
+      "id": "rending_mark",
+      "name": "裂甲追击",
+      "description": "命中时追加破甲印记，让后续换血更占优势。",
+      "kind": "passive",
+      "target": "enemy",
+      "cooldown": 0,
+      "effects": {
+        "onHitStatusId": "armor_break"
+      }
+    },
+    {
+      "id": "phalanx_command",
+      "name": "持盾列阵",
+      "description": "整理阵线，短时间内进入稳固的护卫姿态。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 4,
+      "effects": {
+        "grantedStatusId": "shield_wall"
+      }
+    },
+    {
+      "id": "pinning_javelin",
+      "name": "钉锁投枪",
+      "description": "以压制为先的投枪技，伤害略低，但能削弱对手且不触发反击。",
+      "kind": "active",
+      "target": "enemy",
+      "cooldown": 2,
+      "effects": {
+        "damageMultiplier": 0.85,
+        "allowRetaliation": false,
+        "onHitStatusId": "weakened"
+      }
+    },
+    {
+      "id": "venomous_fangs",
+      "name": "毒牙",
+      "description": "命中后让目标陷入中毒，回合开始时持续掉血。",
+      "kind": "passive",
+      "target": "enemy",
+      "cooldown": 0,
+      "effects": {
+        "onHitStatusId": "poisoned"
+      }
+    },
+    {
+      "id": "crippling_howl",
+      "name": "裂伤嚎叫",
+      "description": "发出撕裂嚎叫，压低伤害换取削弱效果，且不触发反击。",
+      "kind": "active",
+      "target": "enemy",
+      "delivery": "ranged",
+      "cooldown": 3,
+      "effects": {
+        "damageMultiplier": 0.6,
+        "allowRetaliation": false,
+        "onHitStatusId": "weakened"
+      }
+    }
+  ],
+  "statuses": [
+    {
+      "id": "poisoned",
+      "name": "中毒",
+      "description": "回合开始时损失生命。",
+      "duration": 2,
+      "attackModifier": 0,
+      "defenseModifier": 0,
+      "damagePerTurn": 2,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "arcane_armor",
+      "name": "护甲术",
+      "description": "临时提升防御。",
+      "duration": 2,
+      "attackModifier": 0,
+      "defenseModifier": 2,
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "battle_frenzy",
+      "name": "战意激发",
+      "description": "短暂提升攻击。",
+      "duration": 2,
+      "attackModifier": 1,
+      "defenseModifier": 0,
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "weakened",
+      "name": "削弱",
+      "description": "暂时降低攻击力。",
+      "duration": 2,
+      "attackModifier": -2,
+      "defenseModifier": 0,
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "armor_break",
+      "name": "破甲",
+      "description": "短时间内护甲被撕裂，防御力下降。",
+      "duration": 2,
+      "attackModifier": 0,
+      "defenseModifier": -3,
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "shield_wall",
+      "name": "守誓姿态",
+      "description": "短暂进入守势，同时提高攻击与防御。",
+      "duration": 2,
+      "attackModifier": 0,
+      "defenseModifier": 3,
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "slowed",
+      "name": "减速",
+      "description": "被陷阱拖慢，下轮行动顺序会延后。",
+      "duration": 1,
+      "attackModifier": 0,
+      "defenseModifier": 0,
+      "damagePerTurn": 0,
+      "initiativeModifier": -4,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "silenced",
+      "name": "禁魔",
+      "description": "短时间内无法施放主动技能。",
+      "duration": 1,
+      "attackModifier": 0,
+      "defenseModifier": 0,
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": true
+    }
+  ]
+}
