@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" shape-rendering="crispEdges">
+    <rect width="128" height="128" rx="26" fill="#261a2f"/>
+    <rect x="10" y="10" width="108" height="108" rx="18" fill="#0f141c"/>
+    <rect x="14" y="14" width="100" height="100" rx="16" fill="#b188dd"/>
+    <rect x="18" y="18" width="92" height="92" rx="14" fill="#121821"/>
+    <rect x="24" y="24" width="80" height="16" rx="6" fill="#ff9d7d" opacity="0.95"/>
+    <rect x="28" y="28" width="8" height="8" fill="#fff5d9" opacity="0.7"/>
+    <image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABTUlEQVR4nO3Xyw3CMBBF0VRFASkBsWRBEVQUUQZ1sEAUgGgiiEWkCDzxfN4bA4qlWRLfAzGBrlvXH69+sx+nad1SXfNY7bRudkV/BQYZng5hxlMRGeE0iHXj8+khTjoCER3FUOM94R4IBSAF7fqjOF4ENN4abcFAEBnxVIQFEImXECFAdjwcEYkfr0MKIgyQAl6A+UQRZkAkvgTwQtwIC+B22H6MBLBC6IBSvAaghUAB2ndfC0B9CqkAxmGG3/8lAOorVXUbIQGR8KaAaZoALGdgCXG/DNVpfohLowm3QGAADcITv4RIeRKvAAbAi0ACUn5OvyNQAOr/AQbCE18FZCFo8VZA7flgeWDBAFkIWrwGIUFqGOk1tb3M8RrAEsIymn1cAC3CC9Fe2x1vRWgw1muF470IxMDisyGU8CwEPZ4FSQ1HYVo3V9dPxbZaT7IV+4WqcMUrAAAAAElFTkSuQmCC" x="26" y="38" width="76" height="76" preserveAspectRatio="none" style="image-rendering: pixelated" />
+  </svg>

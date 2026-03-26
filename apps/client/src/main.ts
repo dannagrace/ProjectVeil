@@ -10,7 +10,16 @@ import {
   type PlayerWorldView
 } from "../../../packages/shared/src/index";
 import { createGameSession, readStoredSessionReplay, type SessionUpdate } from "./local-session";
-import { markerAsset, objectBadgeAssets, resourceAsset, terrainAsset, unitAsset, unitBadgeAssets, unitFrameAsset } from "./assets";
+import {
+  buildingAsset,
+  markerAsset,
+  objectBadgeAssets,
+  resourceAsset,
+  terrainAsset,
+  unitAsset,
+  unitBadgeAssets,
+  unitFrameAsset
+} from "./assets";
 import { describeTileObject } from "./object-visuals";
 import {
   clearCurrentAuthSession,
@@ -294,6 +303,7 @@ function markerStateForTile(tile: PlayerTileView): "idle" | "selected" | "hit" {
 function renderTileMedia(tile: PlayerTileView): string {
   const terrainSrc = terrainAsset(tile.terrain, tile.position.x, tile.position.y);
   const resourceSrc = tile.resource ? resourceAsset(tile.resource.kind) : null;
+  const buildingSrc = tile.building ? buildingAsset(tile.building.kind) : null;
   const markerState = markerStateForTile(tile);
   const markerSrc =
     tile.occupant?.kind === "hero"
@@ -301,7 +311,11 @@ function renderTileMedia(tile: PlayerTileView): string {
       : tile.occupant?.kind === "neutral"
         ? markerAsset("neutral", markerState)
         : null;
-  const buildingBadge = tile.building ? `<span class="tile-building-badge">B</span>` : "";
+  const buildingBadge = buildingSrc
+    ? `<img class="tile-building-badge" src="${buildingSrc}" alt="${tile.building?.kind ?? "building"}" />`
+    : tile.building
+      ? `<span class="tile-building-badge">B</span>`
+      : "";
 
   return `
     <img class="tile-terrain" src="${terrainSrc}" alt="${tile.terrain}" />

@@ -1,6 +1,6 @@
 import objectVisuals from "../../../configs/object-visuals.json";
 import type { PlayerTileView } from "../../../packages/shared/src/index";
-import { markerAsset, resourceAsset } from "./assets";
+import { buildingAsset, markerAsset, resourceAsset } from "./assets";
 
 type FactionKey = "crown" | "wild";
 type RarityKey = "common" | "elite";
@@ -63,7 +63,7 @@ export function describeTileObject(tile: PlayerTileView | null): TileCardDescrip
       title: tile.building.label || config.title,
       subtitle: `${config.subtitle}${tile.building.availableCount > 0 ? ` 当前可招募 ${tile.building.availableCount}。` : " 今日库存已售罄。"}`,
       value: costParts.length > 0 ? `招募 ${tile.building.availableCount}/${tile.building.recruitCount} · ${costParts.join(" / ")}` : `招募 ${tile.building.availableCount}/${tile.building.recruitCount}`,
-      icon: markerAsset("hero"),
+      icon: buildingAsset(tile.building.kind),
       faction: toFactionKey(config.faction),
       rarity: toRarityKey(config.rarity),
       interactionType: toInteractionKey(config.interactionType)
@@ -77,7 +77,7 @@ export function describeTileObject(tile: PlayerTileView | null): TileCardDescrip
       title: tile.building.label || config.title,
       subtitle: `${config.subtitle}${visited ? ` 已有 ${tile.building.visitedHeroIds.length} 位英雄完成访问。` : " 当前还没有英雄访问。"}`,
       value: `${formatHeroStatBonus(tile.building.bonus) || "永久属性加成"}${visited ? " · 已留下访问记录" : ""}`,
-      icon: markerAsset("hero"),
+      icon: buildingAsset(tile.building.kind),
       faction: toFactionKey(config.faction),
       rarity: toRarityKey(config.rarity),
       interactionType: toInteractionKey(config.interactionType)
@@ -91,7 +91,7 @@ export function describeTileObject(tile: PlayerTileView | null): TileCardDescrip
       title: tile.building.label || config.title,
       subtitle: `${config.subtitle}${ownerLabel}。`,
       value: `${formatResourceKindLabel(tile.building.resourceKind)} +${tile.building.income}/天`,
-      icon: resourceAsset(tile.building.resourceKind),
+      icon: buildingAsset(tile.building.kind) ?? resourceAsset(tile.building.resourceKind),
       faction: toFactionKey(config.faction),
       rarity: toRarityKey(config.rarity),
       interactionType: toInteractionKey(config.interactionType)

@@ -165,6 +165,15 @@ export function buildCocosTileMarkerText(tile: PlayerTileView | null): string {
   }
 
   if (tile?.building) {
+    if (tile.building.kind === "recruitment_post") {
+      return ">R";
+    }
+    if (tile.building.kind === "attribute_shrine") {
+      return ">S";
+    }
+    if (tile.building.kind === "resource_mine") {
+      return ">M";
+    }
     return ">B";
   }
 

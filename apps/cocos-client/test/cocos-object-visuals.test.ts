@@ -78,7 +78,7 @@ test("describeCocosTileObject exposes recruitment posts as visitable buildings",
 
   assert.equal(describeCocosTileObject(tile)?.shortLabel, "招募");
   assert.equal(describeCocosTileObject(tile)?.tag, "访问");
-  assert.equal(buildCocosTileMarkerText(tile), ">B");
+  assert.equal(buildCocosTileMarkerText(tile), ">R");
 });
 
 test("describeCocosTileObject exposes attribute shrines as permanent stat buildings", () => {
@@ -98,7 +98,7 @@ test("describeCocosTileObject exposes attribute shrines as permanent stat buildi
 
   assert.equal(describeCocosTileObject(tile)?.shortLabel, "神殿");
   assert.equal(describeCocosTileObject(tile)?.tag, "访问");
-  assert.equal(buildCocosTileMarkerText(tile), ">B");
+  assert.equal(buildCocosTileMarkerText(tile), ">S");
 });
 
 test("describeCocosTileObject exposes resource mines as claimable daily income buildings", () => {
@@ -115,5 +115,5 @@ test("describeCocosTileObject exposes resource mines as claimable daily income b
   assert.equal(describeCocosTileObject(tile)?.shortLabel, "矿场");
   assert.equal(describeCocosTileObject(tile)?.tag, "占领");
   assert.match(describeCocosTileObject(tile)?.subtitle ?? "", /木材 \+2\/天/);
-  assert.equal(buildCocosTileMarkerText(tile), ">B");
+  assert.equal(buildCocosTileMarkerText(tile), ">M");
 });

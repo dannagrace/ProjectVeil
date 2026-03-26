@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import zlib from "node:zlib";
 
@@ -23,23 +24,78 @@ generateIcon("gold", drawGoldIcon);
 generateIcon("ore", drawOreIcon);
 generateIcon("neutral", drawNeutralIcon);
 generateIcon("hero", drawHeroIcon);
+generateIcon("recruitment", drawRecruitmentIcon);
+generateIcon("shrine", drawShrineIcon);
+generateIcon("mine", drawMineIcon);
 generateIcon("hud", drawHudIcon);
 generateIcon("battle", drawBattleIcon);
 generateIcon("timeline", drawTimelineIcon);
 
 function generateTileSeries(prefix, count, painter) {
   for (let index = 0; index < count; index += 1) {
-    writePng(path.join(tilesDir, `${prefix}-${index + 1}.png`), TILE, TILE, (x, y, width, height) => painter(index, x, y, width, height));
+    const filepath = path.join(tilesDir, `${prefix}-${index + 1}.png`);
+    writePng(filepath, TILE, TILE, (x, y, width, height) => painter(index, x, y, width, height));
+    ensureImageMeta(filepath);
   }
 }
 
 function generateIcon(name, painter) {
-  writePng(path.join(iconsDir, `${name}.png`), ICON, ICON, painter);
+  const filepath = path.join(iconsDir, `${name}.png`);
+  writePng(filepath, ICON, ICON, painter);
+  ensureImageMeta(filepath);
 }
 
 function writePng(filepath, width, height, painter) {
   const png = createPng(width, height, painter);
   fs.writeFileSync(filepath, png);
+}
+
+function ensureImageMeta(filepath) {
+  const metaPath = `${filepath}.meta`;
+  if (fs.existsSync(metaPath)) {
+    return;
+  }
+
+  const stem = path.basename(filepath, path.extname(filepath));
+  const uuid = crypto.randomUUID();
+  const meta = {
+    ver: "1.0.27",
+    importer: "image",
+    imported: true,
+    uuid,
+    files: [".json", ".png"],
+    subMetas: {
+      "6c48a": {
+        importer: "texture",
+        uuid: `${uuid}@6c48a`,
+        displayName: stem,
+        id: "6c48a",
+        name: "texture",
+        userData: {
+          wrapModeS: "repeat",
+          wrapModeT: "repeat",
+          minfilter: "linear",
+          magfilter: "linear",
+          mipfilter: "none",
+          anisotropy: 0,
+          isUuid: true,
+          imageUuidOrDatabaseUri: uuid,
+          visible: false
+        },
+        ver: "1.0.22",
+        imported: true,
+        files: [".json"],
+        subMetas: {}
+      }
+    },
+    userData: {
+      type: "texture",
+      fixAlphaTransparencyArtifacts: false,
+      hasAlpha: true,
+      redirect: `${uuid}@6c48a`
+    }
+  };
+  fs.writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
 }
 
 function createPng(width, height, painter) {
@@ -257,6 +313,39 @@ function drawHudIcon(x, y, width, height) {
   if (isRoundedRect(x, y, width, height, 0.3, 0.32, 0.42, 0.08, 3)) color = rgb(255, 245, 220);
   if (isRoundedRect(x, y, width, height, 0.3, 0.48, 0.34, 0.08, 3)) color = rgb(228, 214, 182);
   if (isRoundedRect(x, y, width, height, 0.3, 0.64, 0.28, 0.08, 3)) color = rgb(196, 208, 222);
+  return color;
+}
+
+function drawRecruitmentIcon(x, y, width, height) {
+  if (outsideCircle(x, y, width, height, 0.46)) return rgb(0, 0, 0, 0);
+  let color = rgb(66, 54, 92);
+  if (isCircle(x, y, width * 0.5, height * 0.5, width * 0.34)) color = rgb(188, 164, 234);
+  if (isCircle(x, y, width * 0.5, height * 0.5, width * 0.28)) color = rgb(84, 66, 116);
+  if (isRoundedRect(x, y, width, height, 0.34, 0.54, 0.32, 0.18, 4)) color = rgb(232, 214, 162);
+  if (isRoundedRect(x, y, width, height, 0.3, 0.38, 0.08, 0.18, 3)) color = rgb(220, 96, 82);
+  if (isTriangle(x, y, [width * 0.38, height * 0.32], [width * 0.6, height * 0.42], [width * 0.38, height * 0.52])) color = rgb(255, 218, 162);
+  return color;
+}
+
+function drawShrineIcon(x, y, width, height) {
+  if (outsideCircle(x, y, width, height, 0.46)) return rgb(0, 0, 0, 0);
+  let color = rgb(54, 76, 104);
+  if (isCircle(x, y, width * 0.5, height * 0.5, width * 0.34)) color = rgb(154, 206, 248);
+  if (isCircle(x, y, width * 0.5, height * 0.5, width * 0.28)) color = rgb(58, 84, 118);
+  if (isTriangle(x, y, [width * 0.5, height * 0.22], [width * 0.34, height * 0.7], [width * 0.66, height * 0.7])) color = rgb(244, 242, 255);
+  if (isCircle(x, y, width * 0.5, height * 0.22, width * 0.08)) color = rgb(255, 246, 178);
+  if (isRoundedRect(x, y, width, height, 0.32, 0.7, 0.36, 0.06, 3)) color = rgb(212, 198, 168);
+  return color;
+}
+
+function drawMineIcon(x, y, width, height) {
+  if (outsideCircle(x, y, width, height, 0.46)) return rgb(0, 0, 0, 0);
+  let color = rgb(76, 64, 54);
+  if (isCircle(x, y, width * 0.5, height * 0.5, width * 0.34)) color = rgb(188, 154, 114);
+  if (isCircle(x, y, width * 0.5, height * 0.5, width * 0.28)) color = rgb(98, 76, 60);
+  if (isTriangle(x, y, [width * 0.26, height * 0.66], [width * 0.5, height * 0.28], [width * 0.74, height * 0.66])) color = rgb(136, 98, 72);
+  if (isTriangle(x, y, [width * 0.36, height * 0.66], [width * 0.5, height * 0.42], [width * 0.64, height * 0.66])) color = rgb(34, 30, 42);
+  if (isCircle(x, y, width * 0.7, height * 0.54, width * 0.06)) color = rgb(132, 212, 228);
   return color;
 }
 

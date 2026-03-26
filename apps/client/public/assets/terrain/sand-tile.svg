@@ -1,6 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="24" fill="#f0d79a"/>
-  <path d="M10 88c18-10 32-10 46 2 18-14 38-16 62-2v30H10z" fill="#d7b96d"/>
-  <path d="M28 52h18M56 44h12M78 54h18" stroke="#d0ae5e" stroke-width="8" stroke-linecap="round"/>
-</svg>
-
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" shape-rendering="crispEdges">
+    <rect width="128" height="128" rx="26" fill="#302516"/>
+    <rect x="8" y="8" width="112" height="112" rx="20" fill="#0c1117"/>
+    <rect x="12" y="12" width="104" height="104" rx="18" fill="#b28d4b"/>
+    <rect x="16" y="16" width="96" height="96" rx="14" fill="#10161d"/>
+    <image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAYAAABV7bNHAAADJklEQVR4nO2Q51IaURiGvbzcQq4gxvSo2HuNMZqY/8b0YkwQpSrYBQURW3rv5SLIhBkZ4N327Z5v2TNzfjwDnH3m7MtTM9F0Iq/Qp6baA7xOMdDfvZumHC0NWfI4XU5Kd0CgP7kJoRwmBqVyK4FAv3dvGHIQHzB17EK52y2XNRBnTLfCQ6Bf2euG7C/2mzrcLieVOyDQz51xYewt9EnlakEK5PRlXg+k5UKgH5kxXXKxXsPndl1OnG7GQOkxXXLRXsPnbricaO2AQN/T14SwG+2RytUDAn3bHtUkG+nWfeYUyt1uuxhoa1STbLhb95kTlxMRmyHQ162rmuyEu3SfueVyorcDAn1JjTgmE+qUyjUCAyVHgEywU/NcBJS7q+FCoM/JK0A62KF57tTlRNRmCPRpcxjYnm/XPHfT5cRoBwbaGHbE9ly7VK4ZEOjj+lAZW4E2OBMF5e5quRDow/pgGalAK5zpQXE5EbkZA60NlpGabYUzPbhcTsx2QKD3qwO2SfpbpHKtAIHerfYX2fQ3l/0WCeXuaroYaKW/yObz5rLfRlBcTkRvhkBvl/uKbDxrKvttBJfLiZUdhoFEv8xLrlUg0Jul3gLrM77id9FQ7q62C4FeJ3oKrD1tLH43g+JywrHZ9UCyxYRAr+LdZFanG6RyKUCgl4td+ZUn9YVPDih3e8F1HIgzphfCQ6AXC5355ceXC59W4HI5oeyAQEexDhJLjy5J5VKBQJwv80Ig6v+DQImHF/OH0XZLUFxOuDb/dyFQ/MGF/EGkzRJcLifUzRCI82XVdu3EhED74VYWFu+fl8o9BgLthVossXDvnGWXE8oOO64rgWSOCYFywWZLxO6elcqlcnw3BNqdbxJO9M4ZqdxSbAWy+zIZw0Og7JzPlMjtOkse1eXE7mYMFPCZEpmqs+R5xaVSejcE2gk0CiU8dVoqtxIIlJltMCR0q9bUcQPKDicuBvI3GBKarDV17LicONkMgdL+ekOCk6dMHS+5VCrvhkDT4ycVJahAKpAKpAKpQB5GBVKBVCAVSAXyMCqQCqQCqUAqkIdRgVQgwYEU2qhAJvwDyu+HS7YbbQgAAAAASUVORK5CYII=" x="16" y="16" width="96" height="96" preserveAspectRatio="none" style="image-rendering: pixelated" />
+    <rect x="16" y="16" width="96" height="10" fill="#f7dfad" opacity="0.22"/>
+    <rect x="20" y="100" width="88" height="6" fill="#0c1117" opacity="0.45"/>
+    <rect x="24" y="24" width="8" height="8" fill="#f7dfad" opacity="0.5"/>
+    <rect x="96" y="24" width="8" height="8" fill="#f7dfad" opacity="0.42"/>
+    <rect x="24" y="96" width="8" height="8" fill="#f7dfad" opacity="0.3"/>
+    <rect x="96" y="96" width="8" height="8" fill="#f7dfad" opacity="0.34"/>
+  </svg>

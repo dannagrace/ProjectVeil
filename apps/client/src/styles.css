@@ -695,18 +695,11 @@ h1 {
   left: 8px;
   bottom: 8px;
   z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 24px;
-  height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: rgba(255, 248, 232, 0.88);
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
-  box-shadow: 0 2px 6px rgba(84, 57, 35, 0.16);
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px rgba(84, 57, 35, 0.22));
 }
 
 .battle-state {

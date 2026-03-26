@@ -3,6 +3,7 @@ import unitCatalog from "../../../configs/units.json";
 
 type TerrainKey = keyof typeof assetConfig.terrain;
 type ResourceKey = keyof typeof assetConfig.resources;
+type BuildingKey = keyof typeof assetConfig.buildings;
 type MarkerKey = keyof typeof assetConfig.markers;
 type UnitKey = keyof typeof assetConfig.units;
 export type AssetState = "idle" | "selected" | "hit";
@@ -28,6 +29,10 @@ export function terrainAsset(key: string, x: number, y: number): string {
 
 export function resourceAsset(key: string): string | null {
   return assetConfig.resources[key as ResourceKey] ?? null;
+}
+
+export function buildingAsset(key: string): string | null {
+  return assetConfig.buildings[key as BuildingKey] ?? null;
 }
 
 export function markerAsset(key: "hero" | "neutral", state: AssetState = "idle"): string {

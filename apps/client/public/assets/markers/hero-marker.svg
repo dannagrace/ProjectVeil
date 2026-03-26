@@ -1,5 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <circle cx="32" cy="32" r="24" fill="#2f6e5b"/>
-  <path d="M32 12l6 12 13 2-9 9 2 13-12-6-12 6 2-13-9-9 13-2z" fill="#f7f2e9"/>
-</svg>
-
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 128" shape-rendering="crispEdges">
+    <path d="M48 120L22 76a38 38 0 1 1 52 0L48 120z" fill="#11161d"/>
+    <path d="M48 112L28 76a30 30 0 1 1 40 0L48 112z" fill="#68b29a"/>
+    <circle cx="48" cy="44" r="26" fill="#d9fff2" opacity="0.18"/>
+    <image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABa0lEQVR4nO3WPQrCQBCGYQ/lAQTvIJaewsLzeAYvYO8FrOytBOtIhEAIOzvzzd8m4sI0YrLvownJavVfP7zWm103TOsWdo1jpdO6WRU9C4xneDokMj4UkREeBkE3ft5O5KQjPKKtmND4Ulj3un6H+wyBhACo8PFs98fi5yjCNb70K1Kh1PTfR/+N0HgNIAyBAIYQLaCEMAG08RaAK0IbbwUgCDOgtLkHYIqAAZZ4CvB+XCCACWEFTBF9/DDS+OaAcTQ1qQAk3gsgQYQBOIT0HDDA4/LhEMjx8GXkBbifD+zMEiAJRyCqG3lJALebePr4l4RLXkvcADVE6VWYQ1DHhD0HKAAVUkNwx8wKoBkzAEFEAUzxUkDWuAKyEbWOKmAOCFO8F0DyzAgDWBHSJ2xYvARRg2gA3F5wvATgdU9I9lEBpAgtRHpudTyKkGDQc5njtQiPcYvPhoSEZyHC46MgqeFemNbN7FpUbKv1AcrSdKJJaITfAAAAAElFTkSuQmCC" x="18" y="14" width="60" height="60" preserveAspectRatio="none" style="image-rendering: pixelated" />
+    
+  </svg>

@@ -15,6 +15,9 @@ export interface PlaceholderIconSprites {
   ore: SpriteFrame | null;
   neutral: SpriteFrame | null;
   hero: SpriteFrame | null;
+  recruitment: SpriteFrame | null;
+  shrine: SpriteFrame | null;
+  mine: SpriteFrame | null;
   hud: SpriteFrame | null;
   battle: SpriteFrame | null;
   timeline: SpriteFrame | null;
@@ -53,10 +56,14 @@ export function loadPlaceholderSpriteAssets(): Promise<PlaceholderSpriteAssets> 
     loadSpriteFrame("placeholder/icons/ore"),
     loadSpriteFrame("placeholder/icons/neutral"),
     loadSpriteFrame("placeholder/icons/hero"),
+    loadSpriteFrame("placeholder/icons/recruitment"),
+    loadSpriteFrame("placeholder/icons/shrine"),
+    loadSpriteFrame("placeholder/icons/mine"),
     loadSpriteFrame("placeholder/icons/hud"),
     loadSpriteFrame("placeholder/icons/battle"),
     loadSpriteFrame("placeholder/icons/timeline")
-  ]).then(([grass, dirt, sand, water, unknown, hidden, wood, gold, ore, neutral, hero, hud, battle, timeline]) => {
+  ]).then(
+    ([grass, dirt, sand, water, unknown, hidden, wood, gold, ore, neutral, hero, recruitment, shrine, mine, hud, battle, timeline]) => {
     const resolved: PlaceholderSpriteAssets = {
       tiles: {
         grass,
@@ -72,6 +79,9 @@ export function loadPlaceholderSpriteAssets(): Promise<PlaceholderSpriteAssets> 
         ore,
         neutral,
         hero,
+        recruitment,
+        shrine,
+        mine,
         hud,
         battle,
         timeline
@@ -80,7 +90,8 @@ export function loadPlaceholderSpriteAssets(): Promise<PlaceholderSpriteAssets> 
     cachedAssets = resolved;
     inflightLoad = null;
     return resolved;
-  });
+    }
+  );
 
   return inflightLoad;
 }
