@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
-import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
+import {
+  createWorldStateFromConfigs,
+  decodePlayerWorldView,
+  getDefaultMapObjectsConfig,
+  getDefaultWorldConfig,
+  type ClientMessage,
+  type ServerMessage
+} from "../../../packages/shared/src/index";
 import type { RoomPersistenceSnapshot } from "../src/index";
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
 import {
@@ -286,6 +293,30 @@ async function sendRequest<T extends ServerMessage["type"]>(
   });
 }
 
+async function waitForPushState(room: ColyseusRoom): Promise<Extract<ServerMessage, { type: "session.state" }>> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      unsubscribe();
+      reject(new Error("Timed out waiting for push session.state"));
+    }, 5_000);
+
+    const unsubscribe = room.onMessage("*", (type, payload) => {
+      if (type !== "session.state") {
+        return;
+      }
+
+      const incoming = { type, ...(payload as object) } as ServerMessage;
+      if (incoming.type !== "session.state" || incoming.delivery !== "push") {
+        return;
+      }
+
+      clearTimeout(timeout);
+      unsubscribe();
+      resolve(incoming);
+    });
+  });
+}
+
 test("colyseus room reloads a persisted active battle after a server restart", async (t) => {
   const roomId = `persist-restart-${Date.now()}`;
   const port = 36000 + Math.floor(Math.random() * 1000);
@@ -463,6 +494,89 @@ test("colyseus room hydrates global player resources into fresh rooms", async (t
     wood: 5,
     ore: 0
   });
+});
+
+test("colyseus room broadcasts bounded typed-array map chunks to non-source clients", async (t) => {
+  const roomId = `chunk-push-${Date.now()}`;
+  const port = 37500 + Math.floor(Math.random() * 1000);
+  const store = new MemoryRoomSnapshotStore();
+  const worldConfig = {
+    ...getDefaultWorldConfig(),
+    width: 24,
+    height: 24
+  };
+  await store.save(roomId, {
+    state: createWorldStateFromConfigs(worldConfig, getDefaultMapObjectsConfig(), 1001, roomId),
+    battles: []
+  });
+  const server = await startServer(port, store);
+  let sourceRoom: ColyseusRoom | null = null;
+  let observerRoom: ColyseusRoom | null = null;
+
+  t.after(async () => {
+    configureRoomSnapshotStore(null);
+    if (observerRoom) {
+      observerRoom.removeAllListeners();
+      observerRoom.connection.close();
+    }
+    if (sourceRoom) {
+      sourceRoom.removeAllListeners();
+      sourceRoom.connection.close();
+    }
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  sourceRoom = await joinRoomWithRetry(port, roomId, "player-1");
+  observerRoom = await joinRoomWithRetry(port, roomId, "player-2");
+
+  await sendRequest(
+    sourceRoom,
+    {
+      type: "connect",
+      requestId: nextRequestId("chunk-source-connect"),
+      roomId,
+      playerId: "player-1"
+    },
+    "session.state"
+  );
+  const observerInitial = await sendRequest(
+    observerRoom,
+    {
+      type: "connect",
+      requestId: nextRequestId("chunk-observer-connect"),
+      roomId,
+      playerId: "player-2"
+    },
+    "session.state"
+  );
+
+  const pushPromise = waitForPushState(observerRoom);
+  await sendRequest(
+    sourceRoom,
+    {
+      type: "world.action",
+      requestId: nextRequestId("chunk-move"),
+      action: {
+        type: "hero.move",
+        heroId: "hero-1",
+        destination: { x: 2, y: 1 }
+      }
+    },
+    "session.state"
+  );
+
+  const pushed = await pushPromise;
+  assert.ok(!("tiles" in pushed.payload.world.map) || !Array.isArray(pushed.payload.world.map.tiles));
+  assert.ok(pushed.payload.world.map.encodedTiles);
+  assert.deepEqual(pushed.payload.world.map.encodedTiles?.bounds, {
+    x: 0,
+    y: 0,
+    width: 16,
+    height: 16
+  });
+  const decoded = decodePlayerWorldView(pushed.payload.world, decodePlayerWorldView(observerInitial.payload.world));
+  assert.equal(decoded.ownHeroes[0]?.id, "hero-2");
+  assert.equal(decoded.map.tiles.length, 24 * 24);
 });
 
 test("colyseus room hydrates long-term hero archives into fresh rooms", async (t) => {

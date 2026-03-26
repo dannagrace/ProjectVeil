@@ -209,6 +209,74 @@ test("typed-array world map payload is materially smaller than the raw tile JSON
   assert.ok(encodedSize < rawSize * 0.55, `expected encoded payload < 55% of raw size, got ${encodedSize}/${rawSize}`);
 });
 
+test("typed-array world map payload can encode a bounded chunk and merge it back into the previous map", () => {
+  const previous = createLargePlayerWorldView();
+  const next: PlayerWorldView = {
+    ...previous,
+    map: {
+      ...previous.map,
+      tiles: previous.map.tiles.map((tile) =>
+        tile.position.x >= 8 && tile.position.x < 16 && tile.position.y >= 8 && tile.position.y < 16
+          ? {
+              ...tile,
+              fog: "visible",
+              terrain: tile.position.x === 10 && tile.position.y === 10 ? "water" : tile.terrain,
+              walkable: tile.position.x === 10 && tile.position.y === 10 ? false : tile.walkable,
+              resource:
+                tile.position.x === 9 && tile.position.y === 9
+                  ? {
+                      kind: "ore",
+                      amount: 7
+                    }
+                  : tile.resource,
+              occupant:
+                tile.position.x === 11 && tile.position.y === 11
+                  ? {
+                      kind: "neutral",
+                      refId: "neutral-patch"
+                    }
+                  : tile.occupant
+            }
+          : tile
+      )
+    },
+    resources: {
+      gold: previous.resources.gold + 50,
+      wood: previous.resources.wood,
+      ore: previous.resources.ore + 7
+    }
+  };
+
+  const partial = encodePlayerWorldView(next, {
+    bounds: {
+      x: 8,
+      y: 8,
+      width: 8,
+      height: 8
+    }
+  });
+
+  assert.deepEqual(decodePlayerWorldView(partial, previous), next);
+});
+
+test("bounded typed-array world map payload is materially smaller than the full encoded payload", () => {
+  const view = createLargePlayerWorldView();
+  const fullEncoded = encodePlayerWorldView(view);
+  const chunkEncoded = encodePlayerWorldView(view, {
+    bounds: {
+      x: 8,
+      y: 8,
+      width: 8,
+      height: 8
+    }
+  });
+
+  assert.ok(
+    JSON.stringify(chunkEncoded).length < JSON.stringify(fullEncoded).length * 0.3,
+    "expected 8x8 encoded chunk to be less than 30% of full encoded payload"
+  );
+});
+
 function cloneBattleState(state: BattleState): BattleState {
   return structuredClone(state);
 }

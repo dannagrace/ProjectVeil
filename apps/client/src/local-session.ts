@@ -57,9 +57,9 @@ interface StoredSessionReplayEnvelope {
   update: SessionUpdate;
 }
 
-function fromPayload(payload: SessionStatePayload): SessionUpdate {
+function fromPayload(payload: SessionStatePayload, previousWorld?: PlayerWorldView | null): SessionUpdate {
   return {
-    world: decodePlayerWorldView(payload.world),
+    world: decodePlayerWorldView(payload.world, previousWorld),
     battle: payload.battle,
     events: payload.events,
     movementPlan: payload.movementPlan,
@@ -437,6 +437,7 @@ class RemoteGameSession implements GameSession {
   private readonly onConnectionEvent: ((event: ConnectionEvent) => void) | undefined;
   private readonly getDisplayName: (() => string | null) | undefined;
   private readonly getAuthToken: (() => string | null) | undefined;
+  private latestWorld: PlayerWorldView | null = null;
   private requestCounter = 0;
   private readonly pendingRequests = new Map<
     string,
@@ -463,7 +464,8 @@ class RemoteGameSession implements GameSession {
 
       const message = { type, ...(payload as object) } as ServerMessage;
       if (message.type === "session.state" && message.delivery === "push") {
-        const update = fromPayload(message.payload);
+        const update = fromPayload(message.payload, this.latestWorld);
+        this.latestWorld = update.world;
         this.persistSessionReplay(update);
         this.onPushUpdate?.(update);
         return;
@@ -579,7 +581,8 @@ class RemoteGameSession implements GameSession {
       },
       "session.state"
     );
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     this.persistSessionReplay(update);
     return update;
   }
@@ -597,7 +600,8 @@ class RemoteGameSession implements GameSession {
       },
       "session.state"
     );
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     this.persistSessionReplay(update);
     return update;
   }
@@ -615,7 +619,8 @@ class RemoteGameSession implements GameSession {
       },
       "session.state"
     );
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     this.persistSessionReplay(update);
     return update;
   }
@@ -633,7 +638,8 @@ class RemoteGameSession implements GameSession {
       },
       "session.state"
     );
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     this.persistSessionReplay(update);
     return update;
   }
@@ -651,7 +657,8 @@ class RemoteGameSession implements GameSession {
       },
       "session.state"
     );
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     this.persistSessionReplay(update);
     return update;
   }
@@ -669,7 +676,8 @@ class RemoteGameSession implements GameSession {
       },
       "session.state"
     );
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     this.persistSessionReplay(update);
     return update;
   }
@@ -687,7 +695,8 @@ class RemoteGameSession implements GameSession {
       },
       "session.state"
     );
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     this.persistSessionReplay(update);
     return update;
   }
@@ -703,7 +712,8 @@ class RemoteGameSession implements GameSession {
       },
       "session.state"
     );
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     this.persistSessionReplay(update);
     return update;
   }
@@ -717,7 +727,8 @@ class RemoteGameSession implements GameSession {
       },
       "session.state"
     );
-    const update = fromPayload(response.payload);
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
     this.persistSessionReplay(update);
     return update;
   }
