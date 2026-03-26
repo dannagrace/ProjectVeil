@@ -519,6 +519,16 @@ body {
   background: rgba(178, 69, 47, 0.12);
 }
 
+.schema-card {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(138, 90, 43, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
 .validation-list,
 .snapshot-list,
 .diff-list,
@@ -551,6 +561,8 @@ body {
 .validation-item span,
 .validation-item small,
 .snapshot-main span,
+.schema-card span,
+.schema-card small,
 .preset-card span,
 .preset-card small,
 .diff-item span,
