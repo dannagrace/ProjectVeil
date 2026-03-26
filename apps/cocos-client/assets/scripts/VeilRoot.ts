@@ -31,6 +31,7 @@ import { VeilBattleTransition } from "./VeilBattleTransition.ts";
 import { VeilBattlePanel } from "./VeilBattlePanel.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildTimelineEntriesFromUpdate } from "./cocos-ui-formatters.ts";
+import { buildHeroProgressNotice, type HeroProgressNotice } from "./cocos-hero-progression.ts";
 import { VeilHudPanel } from "./VeilHudPanel.ts";
 import { VeilLobbyPanel } from "./VeilLobbyPanel.ts";
 import { VeilMapBoard } from "./VeilMapBoard.ts";
@@ -124,6 +125,7 @@ export class VeilRoot extends Component {
   private authMode: "guest" | "account" = "guest";
   private loginId = "";
   private sessionSource: "remote" | "local" | "manual" | "none" = "none";
+  private levelUpNotice: (HeroProgressNotice & { expiresAt: number }) | null = null;
   private showLobby = false;
   private lobbyRooms: CocosLobbyRoomSummary[] = [];
   private lobbyStatus = "请选择一个房间，或手动输入新的房间 ID。";
@@ -491,6 +493,10 @@ export class VeilRoot extends Component {
   }
 
   private renderView(): void {
+    if (this.levelUpNotice && this.levelUpNotice.expiresAt <= Date.now()) {
+      this.levelUpNotice = null;
+    }
+
     this.updateLayout();
     const lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
     const hudNode = this.node.getChildByName(HUD_NODE_NAME);
@@ -543,7 +549,8 @@ export class VeilRoot extends Component {
       update: this.lastUpdate,
       moveInFlight: this.moveInFlight,
       predictionStatus: this.predictionStatus,
-      inputDebug: this.inputDebug
+      inputDebug: this.inputDebug,
+      levelUpNotice: this.levelUpNotice ? { title: this.levelUpNotice.title, detail: this.levelUpNotice.detail } : null
     });
     this.mapBoard?.render(this.lastUpdate);
     this.battlePanel?.render({
@@ -1698,6 +1705,7 @@ export class VeilRoot extends Component {
     }
     this.syncSelectedBattleTarget();
     this.playMapFeedbackForUpdate(update);
+    this.maybeShowHeroProgressNotice(update);
 
     if (!previousBattleId && nextBattleId) {
       this.mapBoard?.playHeroAnimation("attack");
@@ -1713,6 +1721,54 @@ export class VeilRoot extends Component {
     }
 
     this.renderView();
+  }
+
+  private maybeShowHeroProgressNotice(update: SessionUpdate): void {
+    const heroId = update.world.ownHeroes[0]?.id ?? null;
+    const notice = buildHeroProgressNotice(update, heroId);
+    if (!notice) {
+      return;
+    }
+
+    this.levelUpNotice = {
+      ...notice,
+      expiresAt: Date.now() + 5000
+    };
+    this.pushLog(`${notice.title}。${notice.detail}`);
+    this.mapBoard?.playHeroAnimation("victory");
+    this.playLevelUpSound();
+  }
+
+  private playLevelUpSound(): void {
+    const audioContextCtor =
+      (globalThis as { AudioContext?: new () => AudioContext; webkitAudioContext?: new () => AudioContext }).AudioContext
+      ?? (globalThis as { webkitAudioContext?: new () => AudioContext }).webkitAudioContext;
+    if (!audioContextCtor) {
+      return;
+    }
+
+    try {
+      const audioContext = new audioContextCtor();
+      const now = audioContext.currentTime;
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.type = "triangle";
+      oscillator.frequency.setValueAtTime(523.25, now);
+      oscillator.frequency.linearRampToValueAtTime(659.25, now + 0.12);
+      oscillator.frequency.linearRampToValueAtTime(783.99, now + 0.24);
+      gainNode.gain.setValueAtTime(0.0001, now);
+      gainNode.gain.linearRampToValueAtTime(0.08, now + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.34);
+      oscillator.onended = () => {
+        void audioContext.close().catch(() => undefined);
+      };
+    } catch {
+      // Ignore audio failures in runtimes that block autoplay or lack Web Audio.
+    }
   }
 
   private playMapFeedbackForUpdate(update: SessionUpdate): void {

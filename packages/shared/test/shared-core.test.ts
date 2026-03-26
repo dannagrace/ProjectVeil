@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   applyBattleAction,
   applyBattleOutcomeToWorld,
+  createHeroAttributeBreakdown,
   createHeroSkillTreeView,
+  createHeroProgressMeterView,
   createDemoBattleState,
   createEmptyBattleState,
   createHeroBattleState,
@@ -200,6 +202,86 @@ test("createPlayerWorldView respects fog-of-war visibility rules", () => {
     }
   ]);
   assert.deepEqual(view.resources, { gold: 0, wood: 0, ore: 0 });
+});
+
+test("hero progression helpers expose xp meter and attribute sources", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    stats: {
+      attack: 4,
+      defense: 3,
+      power: 1,
+      knowledge: 1,
+      hp: 30,
+      maxHp: 32
+    },
+    progression: {
+      level: 2,
+      experience: 140,
+      skillPoints: 1,
+      battlesWon: 1,
+      neutralBattlesWon: 1,
+      pvpBattlesWon: 0
+    }
+  });
+  const state = createWorldState({
+    heroes: [hero],
+    buildings: {
+      shrine: {
+        id: "shrine",
+        kind: "attribute_shrine",
+        position: { x: 1, y: 0 },
+        label: "荣耀方尖碑",
+        bonus: {
+          attack: 1,
+          defense: 0,
+          power: 0,
+          knowledge: 0
+        },
+        visitedHeroIds: ["hero-1"]
+      }
+    },
+    tiles: [
+      createTile(0, 0, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(1, 0, {
+        building: {
+          id: "shrine",
+          kind: "attribute_shrine",
+          position: { x: 1, y: 0 },
+          label: "荣耀方尖碑",
+          bonus: {
+            attack: 1,
+            defense: 0,
+            power: 0,
+            knowledge: 0
+          },
+          visitedHeroIds: ["hero-1"]
+        }
+      }),
+      createTile(0, 1),
+      createTile(1, 1)
+    ],
+    visibilityByPlayer: {
+      "player-1": ["visible", "visible", "visible", "visible"]
+    }
+  });
+  const view = createPlayerWorldView(state, "player-1");
+  const meter = createHeroProgressMeterView(hero);
+  const breakdown = createHeroAttributeBreakdown(hero, view);
+
+  assert.deepEqual(meter, {
+    level: 2,
+    totalExperience: 140,
+    currentLevelExperience: 40,
+    nextLevelExperience: 175,
+    remainingExperience: 135,
+    progressRatio: 40 / 175
+  });
+  assert.equal(breakdown.find((row) => row.key === "attack")?.formula, "攻击 4 = 基础 2 成长 +1 建筑 +1");
+  assert.equal(breakdown.find((row) => row.key === "defense")?.formula, "防御 3 = 基础 2 成长 +1");
+  assert.equal(breakdown.find((row) => row.key === "maxHp")?.formula, "生命上限 32 = 基础 30 成长 +2");
 });
 
 test("resolveWorldAction starts a battle when a hero reaches a neutral army tile", () => {
