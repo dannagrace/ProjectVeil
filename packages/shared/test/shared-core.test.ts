@@ -1635,6 +1635,66 @@ test("resolveWorldAction advances patrolling neutral armies by one tile on end d
   assert.equal(outcome.state.neutralArmies["neutral-1"]?.behavior?.patrolIndex, 1);
 });
 
+test("resolveWorldAction keeps patrol movement deterministic across days", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 0 }
+  });
+  const initialState = createWorldState({
+    width: 5,
+    height: 3,
+    heroes: [hero],
+    neutralArmies: {
+      "neutral-1": {
+        id: "neutral-1",
+        position: { x: 2, y: 1 },
+        origin: { x: 2, y: 1 },
+        reward: { kind: "gold", amount: 300 },
+        stacks: [{ templateId: "wolf_pack", count: 8 }],
+        behavior: {
+          mode: "patrol",
+          patrolPath: [{ x: 1, y: 1 }, { x: 3, y: 1 }],
+          patrolIndex: 0,
+          detectionRadius: 0,
+          chaseDistance: 2,
+          patrolRadius: 0,
+          speed: 1,
+          state: "patrol"
+        }
+      }
+    },
+    tiles: [
+      createTile(0, 0, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(1, 0),
+      createTile(2, 0),
+      createTile(3, 0),
+      createTile(4, 0),
+      createTile(0, 1),
+      createTile(1, 1),
+      createTile(2, 1, { occupant: { kind: "neutral", refId: "neutral-1" } }),
+      createTile(3, 1),
+      createTile(4, 1),
+      createTile(0, 2),
+      createTile(1, 2),
+      createTile(2, 2),
+      createTile(3, 2),
+      createTile(4, 2)
+    ]
+  });
+
+  const dayTwo = resolveWorldAction(initialState, { type: "turn.endDay" });
+  const dayThree = resolveWorldAction(dayTwo.state, { type: "turn.endDay" });
+  const dayFour = resolveWorldAction(dayThree.state, { type: "turn.endDay" });
+  const dayFive = resolveWorldAction(dayFour.state, { type: "turn.endDay" });
+
+  assert.deepEqual(dayTwo.state.neutralArmies["neutral-1"]?.position, { x: 1, y: 1 });
+  assert.deepEqual(dayThree.state.neutralArmies["neutral-1"]?.position, { x: 2, y: 1 });
+  assert.deepEqual(dayFour.state.neutralArmies["neutral-1"]?.position, { x: 3, y: 1 });
+  assert.deepEqual(dayFive.state.neutralArmies["neutral-1"]?.position, { x: 2, y: 1 });
+});
+
 test("resolveWorldAction can start a neutral-initiated battle on end day", () => {
   const hero = createHero({
     id: "hero-1",
@@ -1693,6 +1753,273 @@ test("resolveWorldAction can start a neutral-initiated battle on end day", () =>
     }
   ]);
   assert.deepEqual(outcome.state.neutralArmies["neutral-1"]?.position, { x: 2, y: 0 });
+});
+
+test("resolveWorldAction switches neutral armies from chase back to return when heroes leave range", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 2, y: 0 }
+  });
+  const state = createWorldState({
+    width: 6,
+    height: 3,
+    heroes: [hero],
+    neutralArmies: {
+      "neutral-1": {
+        id: "neutral-1",
+        position: { x: 5, y: 0 },
+        origin: { x: 5, y: 0 },
+        reward: { kind: "gold", amount: 300 },
+        stacks: [{ templateId: "wolf_pack", count: 8 }],
+        behavior: {
+          mode: "guard",
+          patrolPath: [],
+          patrolIndex: 0,
+          detectionRadius: 3,
+          chaseDistance: 5,
+          patrolRadius: 0,
+          speed: 1,
+          state: "return"
+        }
+      }
+    },
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(2, 0, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(3, 0),
+      createTile(4, 0),
+      createTile(5, 0, { occupant: { kind: "neutral", refId: "neutral-1" } }),
+      createTile(0, 1),
+      createTile(1, 1),
+      createTile(2, 1),
+      createTile(3, 1),
+      createTile(4, 1),
+      createTile(5, 1),
+      createTile(0, 2),
+      createTile(1, 2),
+      createTile(2, 2),
+      createTile(3, 2),
+      createTile(4, 2),
+      createTile(5, 2)
+    ]
+  });
+
+  const chaseOutcome = resolveWorldAction(state, { type: "turn.endDay" });
+  assert.deepEqual(chaseOutcome.events, [
+    {
+      type: "turn.advanced",
+      day: 2
+    },
+    {
+      type: "neutral.moved",
+      neutralArmyId: "neutral-1",
+      from: { x: 5, y: 0 },
+      to: { x: 4, y: 0 },
+      reason: "chase",
+      targetHeroId: "hero-1"
+    }
+  ]);
+  assert.equal(chaseOutcome.state.neutralArmies["neutral-1"]?.behavior?.state, "chase");
+
+  const returnState: WorldState = {
+    ...chaseOutcome.state,
+    heroes: [createHero({ ...hero, position: { x: 0, y: 2 } })],
+    map: {
+      ...chaseOutcome.state.map,
+      tiles: chaseOutcome.state.map.tiles.map((tile) => {
+        if (tile.position.x === 4 && tile.position.y === 0) {
+          return createTile(4, 0, { occupant: { kind: "neutral", refId: "neutral-1" } });
+        }
+        if (tile.position.x === 0 && tile.position.y === 2) {
+          return createTile(0, 2, { occupant: { kind: "hero", refId: "hero-1" } });
+        }
+        return createTile(tile.position.x, tile.position.y, { walkable: tile.walkable });
+      })
+    }
+  };
+  const returnOutcome = resolveWorldAction(returnState, { type: "turn.endDay" });
+
+  assert.deepEqual(returnOutcome.events, [
+    {
+      type: "turn.advanced",
+      day: 3
+    },
+    {
+      type: "neutral.moved",
+      neutralArmyId: "neutral-1",
+      from: { x: 4, y: 0 },
+      to: { x: 5, y: 0 },
+      reason: "return"
+    }
+  ]);
+  assert.deepEqual(returnOutcome.state.neutralArmies["neutral-1"]?.position, { x: 5, y: 0 });
+  assert.equal(returnOutcome.state.neutralArmies["neutral-1"]?.behavior?.targetHeroId, undefined);
+});
+
+test("resolveWorldAction tracks multiple neutral chase targets independently", () => {
+  const heroOne = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 0 }
+  });
+  const heroTwo = createHero({
+    id: "hero-2",
+    playerId: "player-2",
+    name: "罗安",
+    position: { x: 6, y: 2 }
+  });
+  const state = createWorldState({
+    width: 7,
+    height: 3,
+    heroes: [heroOne, heroTwo],
+    neutralArmies: {
+      "neutral-1": {
+        id: "neutral-1",
+        position: { x: 3, y: 0 },
+        origin: { x: 3, y: 0 },
+        reward: { kind: "gold", amount: 300 },
+        stacks: [{ templateId: "wolf_pack", count: 8 }],
+        behavior: {
+          mode: "guard",
+          patrolPath: [],
+          patrolIndex: 0,
+          detectionRadius: 3,
+          chaseDistance: 6,
+          patrolRadius: 0,
+          speed: 1,
+          state: "return"
+        }
+      },
+      "neutral-2": {
+        id: "neutral-2",
+        position: { x: 4, y: 2 },
+        origin: { x: 4, y: 2 },
+        reward: { kind: "gold", amount: 300 },
+        stacks: [{ templateId: "wolf_pack", count: 8 }],
+        behavior: {
+          mode: "guard",
+          patrolPath: [],
+          patrolIndex: 0,
+          detectionRadius: 3,
+          chaseDistance: 6,
+          patrolRadius: 0,
+          speed: 1,
+          state: "return"
+        }
+      }
+    },
+    tiles: Array.from({ length: 21 }, (_, index) => {
+      const x = index % 7;
+      const y = Math.floor(index / 7);
+      if (x === 0 && y === 0) {
+        return createTile(x, y, { occupant: { kind: "hero", refId: "hero-1" } });
+      }
+      if (x === 3 && y === 0) {
+        return createTile(x, y, { occupant: { kind: "neutral", refId: "neutral-1" } });
+      }
+      if (x === 6 && y === 2) {
+        return createTile(x, y, { occupant: { kind: "hero", refId: "hero-2" } });
+      }
+      if (x === 4 && y === 2) {
+        return createTile(x, y, { occupant: { kind: "neutral", refId: "neutral-2" } });
+      }
+      return createTile(x, y);
+    })
+  });
+
+  const outcome = resolveWorldAction(state, { type: "turn.endDay" });
+
+  assert.deepEqual(outcome.events, [
+    {
+      type: "turn.advanced",
+      day: 2
+    },
+    {
+      type: "neutral.moved",
+      neutralArmyId: "neutral-1",
+      from: { x: 3, y: 0 },
+      to: { x: 2, y: 0 },
+      reason: "chase",
+      targetHeroId: "hero-1"
+    },
+    {
+      type: "neutral.moved",
+      neutralArmyId: "neutral-2",
+      from: { x: 4, y: 2 },
+      to: { x: 5, y: 2 },
+      reason: "chase",
+      targetHeroId: "hero-2"
+    }
+  ]);
+});
+
+test("resolveWorldAction routes neutral chase movement around walls instead of through them", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 1 }
+  });
+  const state = createWorldState({
+    width: 5,
+    height: 3,
+    heroes: [hero],
+    neutralArmies: {
+      "neutral-1": {
+        id: "neutral-1",
+        position: { x: 4, y: 1 },
+        origin: { x: 4, y: 1 },
+        reward: { kind: "gold", amount: 300 },
+        stacks: [{ templateId: "wolf_pack", count: 8 }],
+        behavior: {
+          mode: "guard",
+          patrolPath: [],
+          patrolIndex: 0,
+          detectionRadius: 6,
+          chaseDistance: 8,
+          patrolRadius: 0,
+          speed: 2,
+          state: "return"
+        }
+      }
+    },
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(2, 0),
+      createTile(3, 0),
+      createTile(4, 0),
+      createTile(0, 1, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(1, 1, { walkable: false, terrain: "water" }),
+      createTile(2, 1, { walkable: false, terrain: "water" }),
+      createTile(3, 1, { walkable: false, terrain: "water" }),
+      createTile(4, 1, { occupant: { kind: "neutral", refId: "neutral-1" } }),
+      createTile(0, 2),
+      createTile(1, 2),
+      createTile(2, 2),
+      createTile(3, 2),
+      createTile(4, 2)
+    ]
+  });
+
+  const outcome = resolveWorldAction(state, { type: "turn.endDay" });
+
+  assert.deepEqual(outcome.events[0], {
+    type: "turn.advanced",
+    day: 2
+  });
+  assert.deepEqual(outcome.events[1], {
+    type: "neutral.moved",
+    neutralArmyId: "neutral-1",
+    from: { x: 4, y: 1 },
+    to: outcome.events[1]?.type === "neutral.moved" && outcome.events[1].to.y === 0 ? { x: 3, y: 0 } : { x: 3, y: 2 },
+    reason: "chase",
+    targetHeroId: "hero-1"
+  });
 });
 
 test("planPlayerViewMovement stops at the tile before a visible neutral encounter", () => {
