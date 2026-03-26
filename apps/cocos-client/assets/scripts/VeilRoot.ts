@@ -275,6 +275,49 @@ export class VeilRoot extends Component {
     this.renderView();
   }
 
+  async learnHeroSkill(skillId: string): Promise<void> {
+    if (this.moveInFlight || this.battleActionInFlight) {
+      return;
+    }
+
+    if (!this.session) {
+      await this.connect();
+      return;
+    }
+
+    const hero = this.activeHero();
+    if (!hero) {
+      this.pushLog("当前快照里没有可控制的英雄。");
+      this.renderView();
+      return;
+    }
+
+    if (this.lastUpdate?.battle) {
+      this.pushLog("战斗中无法调整技能树。");
+      this.predictionStatus = "战斗中无法调整技能树。";
+      this.renderView();
+      return;
+    }
+
+    this.moveInFlight = true;
+    this.predictionStatus = `正在学习技能 ${skillId}...`;
+    this.pushLog(`正在为 ${hero.name} 学习技能 ${skillId}...`);
+    this.renderView();
+
+    try {
+      await this.applySessionUpdate(await this.session.learnSkill(hero.id, skillId));
+      this.pushLog("技能学习已结算。");
+    } catch (error) {
+      const failureMessage = this.describeSessionError(error, "技能学习失败。");
+      this.pushLog(failureMessage);
+      this.predictionStatus = failureMessage;
+    } finally {
+      this.moveInFlight = false;
+    }
+
+    this.renderView();
+  }
+
   private ensureViewNodes(): void {
     assignUiLayer(this.node);
 
@@ -304,6 +347,9 @@ export class VeilRoot extends Component {
       },
       onRefresh: () => {
         void this.refreshSnapshot();
+      },
+      onLearnSkill: (skillId) => {
+        void this.learnHeroSkill(skillId);
       },
       onEndDay: () => {
         void this.advanceDay();
@@ -662,6 +708,9 @@ export class VeilRoot extends Component {
         },
         onRefresh: () => {
           void this.refreshSnapshot();
+        },
+        onLearnSkill: (skillId) => {
+          void this.learnHeroSkill(skillId);
         },
         onEndDay: () => {
           void this.advanceDay();

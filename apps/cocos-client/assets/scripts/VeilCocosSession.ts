@@ -871,6 +871,25 @@ class RemoteGameSession {
     return update;
   }
 
+  async learnSkill(heroId: string, skillId: string): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.learnSkill",
+          heroId,
+          skillId
+        }
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload);
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
   async endDay(): Promise<SessionUpdate> {
     const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
       {
@@ -1064,6 +1083,10 @@ class RecoverableRemoteGameSession {
     return this.runWithSession((session) => session.claimMine(heroId, buildingId));
   }
 
+  async learnSkill(heroId: string, skillId: string): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.learnSkill(heroId, skillId));
+  }
+
   async endDay(): Promise<SessionUpdate> {
     return this.runWithSession((session) => session.endDay());
   }
@@ -1192,6 +1215,10 @@ export class VeilCocosSession {
 
   async claimMine(heroId: string, buildingId: string): Promise<SessionUpdate> {
     return this.remoteSession.claimMine(heroId, buildingId);
+  }
+
+  async learnSkill(heroId: string, skillId: string): Promise<SessionUpdate> {
+    return this.remoteSession.learnSkill(heroId, skillId);
   }
 
   async endDay(): Promise<SessionUpdate> {
