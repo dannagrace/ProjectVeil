@@ -66,6 +66,15 @@ interface ValidationReport {
   valid: boolean;
   summary: string;
   issues: ValidationIssue[];
+  schema: ConfigSchemaSummary;
+}
+
+interface ConfigSchemaSummary {
+  id: string;
+  title: string;
+  version: string;
+  description: string;
+  required: string[];
 }
 
 interface ConfigSnapshotSummary {
@@ -235,6 +244,14 @@ const state: AppState = {
   historyLoading: false,
   presets: [],
   presetsLoading: false
+};
+
+const EMPTY_SCHEMA_SUMMARY: ConfigSchemaSummary = {
+  id: "project-veil.config-center.unknown",
+  title: "Unknown Schema",
+  version: "0",
+  description: "Schema 信息暂不可用。",
+  required: []
 };
 
 let previewRequestVersion = 0;
@@ -596,7 +613,8 @@ async function loadValidation(delayMs = 0): Promise<void> {
             message: error instanceof Error ? error.message : "校验失败",
             suggestion: "检查 JSON 语法和字段格式后重试。"
           }
-        ]
+        ],
+        schema: state.validation?.schema ?? EMPTY_SCHEMA_SUMMARY
       };
     } finally {
       if (requestVersion === validationRequestVersion) {
@@ -904,7 +922,7 @@ async function saveCurrentAsPreset(): Promise<void> {
   }
 }
 
-async function exportCurrentDocument(format: "xlsx" | "jsonc"): Promise<void> {
+async function exportCurrentDocument(format: "xlsx" | "jsonc" | "csv"): Promise<void> {
   if (!state.current) {
     return;
   }
@@ -918,7 +936,8 @@ async function exportCurrentDocument(format: "xlsx" | "jsonc"): Promise<void> {
     anchor.click();
     URL.revokeObjectURL(href);
     state.statusTone = "success";
-    state.statusMessage = format === "xlsx" ? "已导出 Excel" : "已导出 JSON 注释版";
+    state.statusMessage =
+      format === "xlsx" ? "已导出 Excel 工作簿" : format === "csv" ? "已导出字段清单 CSV" : "已导出 JSON 注释版";
     render();
   } catch (error) {
     state.statusTone = "error";
@@ -1323,6 +1342,12 @@ function renderValidationSection(): string {
             <strong>${validation.valid ? "校验通过" : "发现问题"}</strong>
             <span>${escapeHtml(validation.summary)}</span>
           </div>
+          <div class="schema-card">
+            <strong>${escapeHtml(validation.schema.title)}</strong>
+            <span>${escapeHtml(validation.schema.description)}</span>
+            <small>${escapeHtml(validation.schema.id)} · v${escapeHtml(validation.schema.version)}</small>
+            <small>必填根字段: ${escapeHtml(validation.schema.required.join(", ") || "无")}</small>
+          </div>
           ${
             validation.issues.length > 0
               ? `
@@ -1366,7 +1391,7 @@ function renderPresetSection(): string {
         <h4>配置预设</h4>
         <span class="config-meta">${state.presets.length} 个可用预设</span>
       </div>
-      <p class="config-hint">内置 Easy / Normal / Hard 会直接保存并刷新服务端运行时配置；自定义预设会保存当前草稿。</p>
+      <p class="config-hint">内置 Easy / Normal / Hard 会直接保存并刷新服务端运行时配置；自定义预设会保存当前草稿，方便保留专题调参版本。</p>
       <div class="preset-grid">
         ${state.presetsLoading
           ? `<div class="world-preview-empty">正在加载预设...</div>`
@@ -1429,6 +1454,7 @@ function renderSnapshotSection(): string {
       ${
         state.selectedSnapshotId && state.snapshotDiff
           ? `
+            <div class="config-hint">当前展示 ${Math.min(state.snapshotDiff.entries.length, 12)} / ${state.snapshotDiff.entries.length} 条差异。</div>
             <div class="diff-list">
               ${
                 state.snapshotDiff.entries.length === 0
@@ -1463,10 +1489,12 @@ function renderExportSection(): string {
     <section class="history-section">
       <div class="config-preview-subhead">
         <h4>导入导出</h4>
-        <span class="config-meta">Excel / JSON 注释版</span>
+        <span class="config-meta">Excel / CSV / JSON 注释版</span>
       </div>
+      <p class="config-hint">Excel 会附带 Meta / Schema / Fields 三张工作表；CSV 提供轻量字段清单，适合快速审阅或粘到外部工具。</p>
       <div class="history-actions">
         <button class="config-button is-secondary config-button-compact" data-action="export-xlsx">导出 Excel</button>
+        <button class="config-button is-secondary config-button-compact" data-action="export-csv">导出字段 CSV</button>
         <button class="config-button is-secondary config-button-compact" data-action="export-jsonc">导出 JSON 注释版</button>
         <label class="import-button">
           <input type="file" accept=".xlsx" data-role="import-workbook" />
@@ -1838,6 +1866,10 @@ function bindEvents(): void {
 
   document.querySelector<HTMLButtonElement>("[data-action='export-xlsx']")?.addEventListener("click", () => {
     void exportCurrentDocument("xlsx");
+  });
+
+  document.querySelector<HTMLButtonElement>("[data-action='export-csv']")?.addEventListener("click", () => {
+    void exportCurrentDocument("csv");
   });
 
   document.querySelector<HTMLButtonElement>("[data-action='export-jsonc']")?.addEventListener("click", () => {

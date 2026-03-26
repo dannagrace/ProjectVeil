@@ -3,6 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import * as XLSX from "xlsx";
 import {
   getDefaultBattleSkillCatalog,
   getDefaultWorldConfig,
@@ -338,6 +339,34 @@ test("config center can validate invalid world config with structured issues", a
   assert.equal(report.valid, false);
   assert.match(report.summary, /发现/);
   assert.match(report.issues.map((issue) => issue.path).join(","), /width|heroes\[0\]\.position\.x/);
+  assert.equal(report.schema.id, "project-veil.config-center.world");
+  assert.match(report.schema.version, /\d{4}-\d{2}-\d{2}/);
+});
+
+test("config center schema validation reports missing and mistyped fields", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const report = await store.validateDocument(
+    "battleSkills",
+    JSON.stringify({
+      skills: [
+        {
+          id: "broken-skill",
+          name: "坏技能",
+          description: "故意缺字段",
+          kind: "burst",
+          target: "enemy",
+          cooldown: "soon"
+        }
+      ]
+    })
+  );
+
+  assert.equal(report.valid, false);
+  assert.match(report.issues.map((issue) => issue.path).join(","), /statuses|skills\[0\]\.kind|skills\[0\]\.cooldown/);
+  assert.equal(report.schema.id, "project-veil.config-center.battleSkills");
 });
 
 test("config center snapshots support diff and rollback", async () => {
@@ -379,6 +408,14 @@ test("config center presets and workbook import/export roundtrip", async () => {
 
   const exported = await store.exportDocument("battleSkills", "xlsx");
   assert.match(exported.fileName, /\.xlsx$/);
+  const workbook = XLSX.read(exported.body, { type: "buffer" });
+  assert.deepEqual(workbook.SheetNames, ["Meta", "Schema", "Fields"]);
+  const fieldRows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets.Fields);
+  assert.equal(fieldRows.some((row) => row.Path === "skills[0].id" && row.Description?.includes("技能 id")), true);
+
+  const csvExported = await store.exportDocument("battleSkills", "csv");
+  assert.match(csvExported.fileName, /\.csv$/);
+  assert.match(csvExported.body.toString("utf8"), /Section,Field,Path,Type,Schema,Description,Value,JSON/);
 
   const imported = await store.importDocumentFromWorkbook("battleSkills", exported.body);
   assert.equal(imported.id, "battleSkills");

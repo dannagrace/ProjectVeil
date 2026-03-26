@@ -123,6 +123,9 @@
   - 当前支持编辑 `phase1-world.json / phase1-map-objects.json / units.json / battle-skills.json`
   - 未配置 MySQL 时走文件系统存储；配置 `VEIL_MYSQL_*` 后切换到 MySQL 主存储
   - 保存后会同时导出到 `configs/*.json`，并同步刷新服务端运行时配置，新建房间和战斗逻辑会直接读取新值
+  - 当前已补上版本快照、快照差异对比、历史回滚，以及 Easy / Normal / Hard 三档内置预设和自定义预设保存
+  - 实时校验现已带出对应配置 schema 摘要、必填根字段和逐项修复建议；非法值会阻止保存
+  - 导出除 JSON 注释版外，还支持带 `Meta / Schema / Fields` 工作表的 Excel，以及更轻量的字段清单 CSV
   - 当前编辑 `phase1-world.json` 时，右侧会即时生成一份地图样本预览；可切换预览 seed，对照查看地形、随机资源、保底资源、英雄与中立怪分布
   - 当前编辑 `battle-skills.json` 时，右侧会显示技能编辑器，可直接调整冷却、伤害倍率、目标类型、附加状态和状态持续参数，并同步回写 JSON 草稿
 - H5 战斗面板现已补上“战术情报”区，会并排展示当前行动单位和已锁定目标的技能、状态、冷却与效果说明，便于直接核对配置是否符合预期。
