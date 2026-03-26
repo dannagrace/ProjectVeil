@@ -313,6 +313,35 @@ export function resolveCocosApiBaseUrl(
   return `${protocol}://${hostname}:2567`;
 }
 
+export function resolveCocosConfigCenterUrl(
+  remoteUrl: string,
+  locationLike:
+    | Pick<Location, "protocol" | "hostname" | "port" | "origin" | "pathname">
+    | null
+    | undefined = globalThis.location
+): string {
+  if (locationLike?.pathname?.includes("config-center.html")) {
+    return new URL("/config-center.html", locationLike.origin).toString();
+  }
+
+  if (locationLike?.port === "4173" && locationLike.origin) {
+    return new URL("/config-center.html", locationLike.origin).toString();
+  }
+
+  try {
+    const apiBaseUrl = new URL(resolveCocosApiBaseUrl(remoteUrl, locationLike));
+    apiBaseUrl.port = "4173";
+    apiBaseUrl.pathname = "/config-center.html";
+    apiBaseUrl.search = "";
+    apiBaseUrl.hash = "";
+    return apiBaseUrl.toString();
+  } catch {
+    const protocol = locationLike?.protocol === "https:" ? "https" : "http";
+    const hostname = locationLike?.hostname || "127.0.0.1";
+    return `${protocol}://${hostname}:4173/config-center.html`;
+  }
+}
+
 export async function loadCocosLobbyRooms(
   remoteUrl: string,
   limit = 6,

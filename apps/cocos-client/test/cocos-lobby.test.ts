@@ -10,7 +10,8 @@ import {
   loginCocosPasswordAuthSession,
   loginCocosGuestAuthSession,
   rememberPreferredCocosDisplayName,
-  resolveCocosApiBaseUrl
+  resolveCocosApiBaseUrl,
+  resolveCocosConfigCenterUrl
 } from "../assets/scripts/cocos-lobby.ts";
 
 test("createCocosLobbyPreferences reuses stored values and falls back to room-alpha", () => {
@@ -54,6 +55,29 @@ test("rememberPreferredCocosDisplayName persists normalized names with the share
 test("resolveCocosApiBaseUrl converts websocket endpoints into http api roots", () => {
   assert.equal(resolveCocosApiBaseUrl("ws://127.0.0.1:2567/ws"), "http://127.0.0.1:2567");
   assert.equal(resolveCocosApiBaseUrl("wss://veil.example.com/socket"), "https://veil.example.com");
+});
+
+test("resolveCocosConfigCenterUrl points Cocos web flows at the shared config center", () => {
+  assert.equal(
+    resolveCocosConfigCenterUrl("ws://127.0.0.1:2567/ws", {
+      protocol: "http:",
+      hostname: "127.0.0.1",
+      port: "7456",
+      origin: "http://127.0.0.1:7456",
+      pathname: "/preview/index.html"
+    }),
+    "http://127.0.0.1:4173/config-center.html"
+  );
+  assert.equal(
+    resolveCocosConfigCenterUrl("", {
+      protocol: "https:",
+      hostname: "veil.example.com",
+      port: "4173",
+      origin: "https://veil.example.com:4173",
+      pathname: "/config-center.html"
+    }),
+    "https://veil.example.com:4173/config-center.html"
+  );
 });
 
 test("loadCocosLobbyRooms queries the lobby api from the resolved remote host", async () => {

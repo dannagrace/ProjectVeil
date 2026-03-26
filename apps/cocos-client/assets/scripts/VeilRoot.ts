@@ -20,6 +20,7 @@ import {
   loginCocosGuestAuthSession,
   readPreferredCocosDisplayName,
   rememberPreferredCocosDisplayName,
+  resolveCocosConfigCenterUrl,
   saveCocosLobbyPreferences,
   syncCurrentCocosAuthSession,
   type CocosLobbyRoomSummary,
@@ -108,7 +109,7 @@ export class VeilRoot extends Component {
   private battleTransition: VeilBattleTransition | null = null;
   private session: VeilCocosSession | null = null;
   private lastUpdate: SessionUpdate | null = null;
-  private logLines: string[] = ["Cocos 原型已就绪。"];
+  private logLines: string[] = ["Cocos 主客户端已就绪。"];
   private timelineEntries: string[] = [];
   private moveInFlight = false;
   private battleActionInFlight = false;
@@ -343,6 +344,9 @@ export class VeilRoot extends Component {
       onLoginAccount: () => {
         void this.loginLobbyAccount();
       },
+      onOpenConfigCenter: () => {
+        this.openConfigCenter();
+      },
       onLogout: () => {
         this.logoutAuthSession();
       },
@@ -511,6 +515,18 @@ export class VeilRoot extends Component {
   private formatLobbyVaultSummary(): string {
     const resources = this.lobbyAccountProfile.globalResources;
     return `全局仓库 金币 ${resources.gold} / 木材 ${resources.wood} / 矿石 ${resources.ore}`;
+  }
+
+  private openConfigCenter(): void {
+    const configCenterUrl = resolveCocosConfigCenterUrl(this.remoteUrl);
+    const openRef = globalThis.open;
+    if (typeof openRef === "function") {
+      openRef(configCenterUrl, "_blank", "noopener,noreferrer");
+      this.lobbyStatus = "已在新窗口打开配置台。";
+    } else {
+      this.lobbyStatus = `当前运行环境无法直接打开配置台，请访问 ${configCenterUrl}`;
+    }
+    this.renderView();
   }
 
   private async syncLobbyBootstrap(): Promise<void> {
@@ -1222,7 +1238,7 @@ export class VeilRoot extends Component {
 
     const promptRef = globalThis.prompt;
     if (typeof promptRef !== "function") {
-      this.lobbyStatus = "当前运行环境不支持弹出式输入，请改用 H5 Lobby 完成账号登录。";
+      this.lobbyStatus = "当前运行环境不支持弹出式输入，请先在浏览器调试壳完成账号登录，或复用已缓存会话。";
       this.renderView();
       return;
     }
@@ -1312,7 +1328,7 @@ export class VeilRoot extends Component {
   private promptForLobbyField(field: "playerId" | "displayName" | "roomId" | "loginId"): void {
     const promptRef = globalThis.prompt;
     if (typeof promptRef !== "function") {
-      this.lobbyStatus = "当前运行环境不支持弹出式输入，请改用 URL 参数或 H5 Lobby。";
+      this.lobbyStatus = "当前运行环境不支持弹出式输入，请改用 URL 参数、已缓存会话或浏览器调试壳。";
       this.renderView();
       return;
     }
