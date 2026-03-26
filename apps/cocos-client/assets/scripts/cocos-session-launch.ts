@@ -1,6 +1,8 @@
 export interface CocosStoredAuthSession {
   playerId: string;
   displayName: string;
+  authMode: "guest" | "account";
+  loginId?: string;
   token?: string;
   source: "remote" | "local";
 }
@@ -9,6 +11,8 @@ export interface CocosLaunchIdentity {
   roomId: string;
   playerId: string;
   displayName: string;
+  authMode: "guest" | "account";
+  loginId?: string;
   authToken: string | null;
   sessionSource: "remote" | "local" | "manual" | "none";
   usedStoredSession: boolean;
@@ -19,6 +23,15 @@ const AUTH_SESSION_STORAGE_KEY = "project-veil:auth-session";
 
 export function getCocosAuthSessionStorageKey(): string {
   return AUTH_SESSION_STORAGE_KEY;
+}
+
+function normalizeValue(value?: string | null): string {
+  return value?.trim() ?? "";
+}
+
+function normalizeLoginId(value?: string | null): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? normalized : undefined;
 }
 
 export function readStoredCocosAuthSession(
@@ -37,6 +50,8 @@ export function readStoredCocosAuthSession(
     const parsed = JSON.parse(raw) as {
       playerId?: unknown;
       displayName?: unknown;
+      authMode?: unknown;
+      loginId?: unknown;
       token?: unknown;
       source?: unknown;
     };
@@ -44,9 +59,12 @@ export function readStoredCocosAuthSession(
       return null;
     }
 
+    const loginId = typeof parsed.loginId === "string" ? normalizeLoginId(parsed.loginId) : undefined;
     return {
       playerId: parsed.playerId,
       displayName: parsed.displayName,
+      authMode: parsed.authMode === "account" || loginId ? "account" : "guest",
+      ...(loginId ? { loginId } : {}),
       ...(typeof parsed.token === "string" ? { token: parsed.token } : {}),
       source: parsed.source === "remote" ? "remote" : "local"
     };
@@ -66,10 +84,6 @@ export function clearStoredCocosAuthSession(storage: Pick<Storage, "removeItem">
   storage.removeItem(AUTH_SESSION_STORAGE_KEY);
 }
 
-function normalizeValue(value?: string | null): string {
-  return value?.trim() ?? "";
-}
-
 export function resolveCocosLaunchIdentity(input: {
   defaultRoomId: string;
   defaultPlayerId: string;
@@ -84,7 +98,8 @@ export function resolveCocosLaunchIdentity(input: {
   const queryDisplayName = normalizeValue(params.get("displayName"));
   const storedSession = input.storedSession ?? null;
   const roomId = queryRoomId || normalizeValue(input.defaultRoomId) || "test-room";
-  const playerId = queryPlayerId || normalizeValue(storedSession?.playerId) || normalizeValue(input.defaultPlayerId) || "player-1";
+  const playerId =
+    queryPlayerId || normalizeValue(storedSession?.playerId) || normalizeValue(input.defaultPlayerId) || "player-1";
   const canReuseStoredSession = Boolean(storedSession && storedSession.playerId === playerId && !queryPlayerId);
   const displayName =
     queryDisplayName ||
@@ -96,6 +111,8 @@ export function resolveCocosLaunchIdentity(input: {
     roomId,
     playerId,
     displayName,
+    authMode: canReuseStoredSession ? storedSession?.authMode ?? "guest" : "guest",
+    ...(canReuseStoredSession && storedSession?.loginId ? { loginId: storedSession.loginId } : {}),
     authToken: canReuseStoredSession ? storedSession?.token ?? null : null,
     sessionSource: canReuseStoredSession ? storedSession?.source ?? "none" : queryPlayerId ? "manual" : "none",
     usedStoredSession: canReuseStoredSession,

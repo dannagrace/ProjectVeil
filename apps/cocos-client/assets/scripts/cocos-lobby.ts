@@ -1,5 +1,6 @@
 import {
   clearStoredCocosAuthSession,
+  readStoredCocosAuthSession,
   type CocosStoredAuthSession,
   writeStoredCocosAuthSession
 } from "./cocos-session-launch.ts";
@@ -24,11 +25,44 @@ export interface CocosLobbyRoomSummary {
   updatedAt: string;
 }
 
+export interface CocosPlayerAccountProfile {
+  playerId: string;
+  displayName: string;
+  globalResources: {
+    gold: number;
+    wood: number;
+    ore: number;
+  };
+  loginId?: string;
+  credentialBoundAt?: string;
+  lastRoomId?: string;
+  lastSeenAt?: string;
+  source: "remote" | "local";
+}
+
 interface AuthSessionApiPayload {
   session?: {
     token?: string;
     playerId?: string;
     displayName?: string;
+    authMode?: "guest" | "account";
+    loginId?: string;
+  };
+}
+
+interface PlayerAccountApiPayload extends AuthSessionApiPayload {
+  account?: {
+    playerId?: string;
+    displayName?: string;
+    globalResources?: {
+      gold?: number;
+      wood?: number;
+      ore?: number;
+    };
+    loginId?: string;
+    credentialBoundAt?: string;
+    lastRoomId?: string;
+    lastSeenAt?: string;
   };
 }
 
@@ -70,6 +104,21 @@ function normalizeDisplayName(playerId: string, displayName?: string | null): st
   return normalizedDisplayName && normalizedDisplayName.length > 0 ? normalizedDisplayName : normalizedPlayerId;
 }
 
+function normalizeLoginId(value?: string | null): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? normalized : undefined;
+}
+
+function normalizeGlobalResources(
+  resources?: NonNullable<PlayerAccountApiPayload["account"]>["globalResources"] | null
+): CocosPlayerAccountProfile["globalResources"] {
+  return {
+    gold: Math.max(0, Math.floor(resources?.gold ?? 0)),
+    wood: Math.max(0, Math.floor(resources?.wood ?? 0)),
+    ore: Math.max(0, Math.floor(resources?.ore ?? 0))
+  };
+}
+
 function readStoredLobbyPreferencesUnsafe(storage: Pick<Storage, "getItem">): Partial<CocosLobbyPreferences> | null {
   const raw = storage.getItem(LOBBY_PREFERENCES_STORAGE_KEY);
   if (!raw) {
@@ -89,15 +138,40 @@ function readStoredLobbyPreferencesUnsafe(storage: Pick<Storage, "getItem">): Pa
 
 function asStoredAuthSession(
   payload: AuthSessionApiPayload["session"],
-  fallbackPlayerId: string,
-  fallbackDisplayName: string
+  fallback: Pick<CocosStoredAuthSession, "playerId" | "displayName" | "authMode"> &
+    Partial<Pick<CocosStoredAuthSession, "loginId" | "token">>
 ): CocosStoredAuthSession {
-  const playerId = normalizePlayerId(payload?.playerId) || fallbackPlayerId;
+  const playerId = normalizePlayerId(payload?.playerId) || fallback.playerId;
+  const loginId = normalizeLoginId(payload?.loginId ?? fallback.loginId);
+  const authMode = payload?.authMode === "account" || loginId ? "account" : fallback.authMode;
+
   return {
     playerId,
-    displayName: normalizeDisplayName(playerId, payload?.displayName ?? fallbackDisplayName),
-    ...(payload?.token ? { token: payload.token } : {}),
+    displayName: normalizeDisplayName(playerId, payload?.displayName ?? fallback.displayName),
+    authMode,
+    ...(loginId ? { loginId } : {}),
+    ...(payload?.token ? { token: payload.token } : fallback.token ? { token: fallback.token } : {}),
     source: "remote"
+  };
+}
+
+function asCocosPlayerAccountProfile(
+  playerId: string,
+  roomId: string,
+  source: CocosPlayerAccountProfile["source"],
+  account?: PlayerAccountApiPayload["account"],
+  fallbackDisplayName?: string | null
+): CocosPlayerAccountProfile {
+  const loginId = normalizeLoginId(account?.loginId);
+  return {
+    playerId,
+    displayName: normalizeDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
+    globalResources: normalizeGlobalResources(account?.globalResources),
+    ...(loginId ? { loginId } : {}),
+    ...(account?.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
+    ...(account?.lastRoomId ? { lastRoomId: account.lastRoomId } : roomId ? { lastRoomId: roomId } : {}),
+    ...(account?.lastSeenAt ? { lastSeenAt: account.lastSeenAt } : {}),
+    source
   };
 }
 
@@ -178,6 +252,28 @@ export function rememberPreferredCocosDisplayName(
   const normalizedDisplayName = normalizeDisplayName(playerId, displayName);
   storage?.setItem(getCocosPlayerAccountStorageKey(playerId), normalizedDisplayName);
   return normalizedDisplayName;
+}
+
+export function createFallbackCocosPlayerAccountProfile(
+  playerId: string,
+  roomId: string,
+  displayName?: string | null
+): CocosPlayerAccountProfile {
+  return {
+    playerId,
+    displayName: normalizeDisplayName(playerId, displayName),
+    globalResources: normalizeGlobalResources(),
+    ...(roomId ? { lastRoomId: roomId } : {}),
+    source: "local"
+  };
+}
+
+export function buildCocosAuthHeaders(token?: string | null): HeadersInit {
+  return token?.trim()
+    ? {
+        Authorization: `Bearer ${token.trim()}`
+      }
+    : {};
 }
 
 export function clearCurrentCocosAuthSession(
@@ -261,7 +357,11 @@ export async function loginCocosGuestAuthSession(
       options?.fetchImpl
     )) as AuthSessionApiPayload;
 
-    const session = asStoredAuthSession(payload.session, normalizedPlayerId, normalizedDisplayName);
+    const session = asStoredAuthSession(payload.session, {
+      playerId: normalizedPlayerId,
+      displayName: normalizedDisplayName,
+      authMode: "guest"
+    });
     if (storage) {
       writeStoredCocosAuthSession(storage, session);
     }
@@ -270,11 +370,146 @@ export async function loginCocosGuestAuthSession(
     const session: CocosStoredAuthSession = {
       playerId: normalizedPlayerId,
       displayName: normalizedDisplayName,
+      authMode: "guest",
       source: "local"
     };
     if (storage) {
       writeStoredCocosAuthSession(storage, session);
     }
     return session;
+  }
+}
+
+export async function loginCocosPasswordAuthSession(
+  remoteUrl: string,
+  loginId: string,
+  password: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "setItem"> | null;
+  }
+): Promise<CocosStoredAuthSession> {
+  const normalizedLoginId = normalizeLoginId(loginId);
+  if (!normalizedLoginId) {
+    throw new Error("loginId_required");
+  }
+
+  const payload = (await fetchJson(
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/auth/account-login`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        loginId: normalizedLoginId,
+        password
+      })
+    },
+    options?.fetchImpl
+  )) as AuthSessionApiPayload;
+
+  const session = asStoredAuthSession(payload.session, {
+    playerId: normalizedLoginId,
+    displayName: normalizedLoginId,
+    authMode: "account",
+    loginId: normalizedLoginId
+  });
+  const storage = options?.storage ?? getCocosStorage();
+  if (storage) {
+    writeStoredCocosAuthSession(storage, session);
+  }
+  return session;
+}
+
+export async function syncCurrentCocosAuthSession(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
+    session?: CocosStoredAuthSession | null;
+  }
+): Promise<CocosStoredAuthSession | null> {
+  const storage = options?.storage ?? getCocosStorage();
+  const currentSession =
+    options && "session" in options ? options.session ?? null : readStoredCocosAuthSession(storage);
+  if (!currentSession?.token) {
+    return currentSession;
+  }
+
+  try {
+    const payload = (await fetchJson(
+      `${resolveCocosApiBaseUrl(remoteUrl)}/api/auth/session`,
+      {
+        headers: buildCocosAuthHeaders(currentSession.token)
+      },
+      options?.fetchImpl
+    )) as AuthSessionApiPayload;
+    const nextSession = asStoredAuthSession(payload.session, currentSession);
+    if (storage) {
+      writeStoredCocosAuthSession(storage, nextSession);
+    }
+    return nextSession;
+  } catch (error) {
+    if (error instanceof Error && error.message === "cocos_request_failed:401") {
+      if (storage) {
+        clearStoredCocosAuthSession(storage);
+      }
+      return null;
+    }
+
+    return currentSession;
+  }
+}
+
+export async function loadCocosPlayerAccountProfile(
+  remoteUrl: string,
+  playerId: string,
+  roomId: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+  }
+): Promise<CocosPlayerAccountProfile> {
+  const storage = options?.storage ?? getCocosStorage();
+  const storedDisplayName = readPreferredCocosDisplayName(playerId, storage);
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+  const accountEndpoint = authSession?.token
+    ? `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me`
+    : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}`;
+
+  try {
+    const payload = (await fetchJson(
+      accountEndpoint,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      options?.fetchImpl
+    )) as PlayerAccountApiPayload;
+    const resolvedPlayerId = payload.account?.playerId?.trim() || authSession?.playerId || playerId;
+    const profile = asCocosPlayerAccountProfile(
+      resolvedPlayerId,
+      roomId,
+      "remote",
+      payload.account,
+      storedDisplayName
+    );
+
+    if (storage?.setItem) {
+      storage.setItem(getCocosPlayerAccountStorageKey(profile.playerId), profile.displayName);
+    }
+
+    if (authSession?.token && payload.session && storage) {
+      writeStoredCocosAuthSession(storage, asStoredAuthSession(payload.session, authSession));
+    }
+
+    return profile;
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && storage) {
+      clearStoredCocosAuthSession(storage);
+    }
+    return createFallbackCocosPlayerAccountProfile(playerId, roomId, storedDisplayName);
   }
 }

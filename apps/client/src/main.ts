@@ -262,6 +262,10 @@ function formatAccountLastSeen(account: ClientPlayerAccountProfile): string {
   return account.lastRoomId ? `${label} · ${account.lastRoomId}` : label;
 }
 
+function formatGlobalVault(account: ClientPlayerAccountProfile): string {
+  return `全局仓库 金币 ${account.globalResources.gold} / 木材 ${account.globalResources.wood} / 矿石 ${account.globalResources.ore}`;
+}
+
 function formatLobbyRoomUpdatedAt(updatedAt: string): string {
   const date = new Date(updatedAt);
   return Number.isNaN(date.getTime()) ? updatedAt : date.toLocaleString();
@@ -1929,6 +1933,7 @@ function render(): void {
           <p class="account-meta">ID ${escapeHtml(state.account.playerId)}</p>
           <p class="account-meta">${escapeHtml(formatCredentialBinding(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
+          <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
           <div class="account-editor">
             <input
               class="account-input"
@@ -2268,8 +2273,8 @@ async function syncPlayerAccountProfile(): Promise<void> {
   state.accountStatus =
     account.source === "remote"
       ? account.loginId
-        ? `账号资料已同步，当前已绑定登录 ID ${account.loginId}。`
-        : "账号资料已与服务端同步，可继续绑定口令账号。"
+        ? `账号资料与全局仓库已同步，当前已绑定登录 ID ${account.loginId}。`
+        : "账号资料与全局仓库已同步，可继续把当前游客档升级成口令账号。"
       : "当前运行在本地游客档，昵称仅保存在浏览器。";
   render();
 }
@@ -2287,7 +2292,7 @@ async function onSaveAccountProfile(): Promise<void> {
   state.accountStatus =
     account.source === "remote"
       ? account.loginId
-        ? `昵称已同步到服务端账号，绑定登录 ID ${account.loginId} 仍然有效。`
+        ? `昵称已同步到服务端账号，全局仓库仍归属于 ${account.loginId}。`
         : "昵称已同步到服务端账号。"
       : "服务器不可用，昵称已保存到本地浏览器。";
   state.log.unshift(`账号昵称已更新为 ${account.displayName}`);
@@ -2322,7 +2327,7 @@ async function onBindAccountProfile(): Promise<void> {
     state.lobby.authSession = readStoredAuthSession();
     state.lobby.loginId = state.accountLoginId;
     state.accountStatus = account.loginId
-      ? `口令账号已就绪，后续可用 ${account.loginId} 直接登录。`
+      ? `口令账号已就绪，后续可用 ${account.loginId} 直接登录同一套英雄档与全局仓库。`
       : "账号绑定已完成。";
     state.log.unshift(`账号已绑定登录 ID ${account.loginId ?? loginId}`);
     state.log = state.log.slice(0, 12);

@@ -6,6 +6,8 @@ import {
   getCocosLobbyPreferencesStorageKey,
   getCocosPlayerAccountStorageKey,
   loadCocosLobbyRooms,
+  loadCocosPlayerAccountProfile,
+  loginCocosPasswordAuthSession,
   loginCocosGuestAuthSession,
   rememberPreferredCocosDisplayName,
   resolveCocosApiBaseUrl
@@ -122,9 +124,125 @@ test("loginCocosGuestAuthSession stores remote sessions and clearCurrentCocosAut
     token: "signed.token",
     playerId: "guest-202503",
     displayName: "晶塔旅人",
+    authMode: "guest",
     source: "remote"
   });
 
   clearCurrentCocosAuthSession(storage);
   assert.equal(values.size, 0);
+});
+
+test("loginCocosPasswordAuthSession stores account sessions with loginId", async () => {
+  const values = new Map<string, string>();
+  const storage = {
+    setItem(key: string, value: string): void {
+      values.set(key, value);
+    }
+  };
+
+  const session = await loginCocosPasswordAuthSession("http://127.0.0.1:2567", "Veil-Ranger", "hunter2", {
+    storage,
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          session: {
+            token: "account.token",
+            playerId: "account-player",
+            displayName: "暮潮守望",
+            authMode: "account",
+            loginId: "veil-ranger"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+  });
+
+  assert.deepEqual(session, {
+    token: "account.token",
+    playerId: "account-player",
+    displayName: "暮潮守望",
+    authMode: "account",
+    loginId: "veil-ranger",
+    source: "remote"
+  });
+  assert.ok(values.get("project-veil:auth-session")?.includes("\"authMode\":\"account\""));
+});
+
+test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and preserves the global vault", async () => {
+  const values = new Map<string, string>();
+  values.set(getCocosPlayerAccountStorageKey("account-player"), "旧档案名");
+  const storage = {
+    getItem(key: string): string | null {
+      return values.get(key) ?? null;
+    },
+    setItem(key: string, value: string): void {
+      values.set(key, value);
+    },
+    removeItem(key: string): void {
+      values.delete(key);
+    }
+  };
+
+  const profile = await loadCocosPlayerAccountProfile("http://127.0.0.1:2567", "account-player", "room-beta", {
+    storage,
+    authSession: {
+      token: "account.token",
+      playerId: "account-player",
+      displayName: "暮潮守望",
+      authMode: "account",
+      loginId: "veil-ranger",
+      source: "remote"
+    },
+    fetchImpl: async (input) => {
+      assert.equal(String(input), "http://127.0.0.1:2567/api/player-accounts/me");
+      return new Response(
+        JSON.stringify({
+          account: {
+            playerId: "account-player",
+            displayName: "暮潮守望",
+            loginId: "veil-ranger",
+            lastRoomId: "room-beta",
+            globalResources: {
+              gold: 320,
+              wood: 5,
+              ore: 2
+            }
+          },
+          session: {
+            token: "account.token.next",
+            playerId: "account-player",
+            displayName: "暮潮守望",
+            authMode: "account",
+            loginId: "veil-ranger"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.deepEqual(profile, {
+    playerId: "account-player",
+    displayName: "暮潮守望",
+    globalResources: {
+      gold: 320,
+      wood: 5,
+      ore: 2
+    },
+    loginId: "veil-ranger",
+    lastRoomId: "room-beta",
+    source: "remote"
+  });
+  assert.ok(values.get("project-veil:auth-session")?.includes("\"loginId\":\"veil-ranger\""));
+  assert.equal(values.get(getCocosPlayerAccountStorageKey("account-player")), "暮潮守望");
 });

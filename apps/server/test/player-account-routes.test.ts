@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
-import { issueGuestAuthSession } from "../src/auth";
+import { issueAccountAuthSession, issueGuestAuthSession } from "../src/auth";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import type {
   PlayerAccountAuthSnapshot,
@@ -268,4 +268,53 @@ test("player account me routes resolve and update the current authenticated acco
   const stored = await store.loadPlayerAccount("player-me");
   assert.equal(stored?.displayName, "风暴司灯人");
   assert.equal(stored?.lastRoomId, "room-next");
+});
+
+test("player account me route preserves account-mode sessions and returns the global vault", async (t) => {
+  const port = 42100 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "account-player",
+    displayName: "暮潮守望",
+    globalResources: { gold: 320, wood: 5, ore: 2 },
+    loginId: "veil-ranger",
+    credentialBoundAt: new Date("2026-03-25T12:00:00.000Z").toISOString(),
+    lastRoomId: "room-vault",
+    lastSeenAt: new Date("2026-03-25T12:30:00.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueAccountAuthSession({
+    playerId: "account-player",
+    displayName: "暮潮守望",
+    loginId: "veil-ranger"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const mePayload = (await meResponse.json()) as {
+    account: PlayerAccountSnapshot;
+    session: {
+      token: string;
+      playerId: string;
+      displayName: string;
+      authMode: "guest" | "account";
+      loginId?: string;
+    };
+  };
+
+  assert.equal(meResponse.status, 200);
+  assert.deepEqual(mePayload.account.globalResources, {
+    gold: 320,
+    wood: 5,
+    ore: 2
+  });
+  assert.equal(mePayload.session.authMode, "account");
+  assert.equal(mePayload.session.loginId, "veil-ranger");
 });

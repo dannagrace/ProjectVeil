@@ -40,6 +40,8 @@ export interface VeilHudRenderState {
   roomId: string;
   playerId: string;
   displayName: string;
+  authMode: "guest" | "account";
+  loginId: string;
   sessionSource: "remote" | "local" | "manual" | "none";
   remoteUrl: string;
   update: SessionUpdate | null;
@@ -121,8 +123,8 @@ export class VeilHudPanel extends Component {
         state.displayName ? `${state.displayName} · ${state.playerId}` : `玩家 ${state.playerId}`,
         `房间 ${state.roomId}`,
         world
-          ? `第 ${world.meta.day} 天 · 可达 ${reachableAhead}${state.sessionSource === "remote" ? " · 云端会话" : state.sessionSource === "local" ? " · 本地会话" : ""}`
-          : `等待房间状态...${state.sessionSource === "remote" ? " · 云端会话" : state.sessionSource === "local" ? " · 本地会话" : ""}`
+          ? `第 ${world.meta.day} 天 · 可达 ${reachableAhead}${state.sessionSource === "remote" ? state.authMode === "account" ? ` · 账号 ${state.loginId || state.playerId}` : " · 云端游客" : state.sessionSource === "local" ? " · 本地会话" : ""}`
+          : `等待房间状态...${state.sessionSource === "remote" ? state.authMode === "account" ? ` · 账号 ${state.loginId || state.playerId}` : " · 云端游客" : state.sessionSource === "local" ? " · 本地会话" : ""}`
       ],
       cursorY,
       16,

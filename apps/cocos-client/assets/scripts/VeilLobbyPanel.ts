@@ -18,12 +18,16 @@ const ROOM_FILL = new Color(39, 53, 74, 176);
 const MUTED_FILL = new Color(31, 42, 57, 164);
 const ACTION_REFRESH = new Color(64, 92, 128, 234);
 const ACTION_ENTER = new Color(84, 122, 94, 234);
+const ACTION_ACCOUNT = new Color(88, 118, 164, 234);
 const ACTION_LOGOUT = new Color(126, 92, 74, 234);
 
 export interface VeilLobbyRenderState {
   playerId: string;
   displayName: string;
   roomId: string;
+  authMode: "guest" | "account";
+  loginId: string;
+  vaultSummary: string;
   sessionSource: "remote" | "local" | "manual" | "none";
   loading: boolean;
   entering: boolean;
@@ -35,8 +39,10 @@ export interface VeilLobbyPanelOptions {
   onEditPlayerId?: () => void;
   onEditDisplayName?: () => void;
   onEditRoomId?: () => void;
+  onEditLoginId?: () => void;
   onRefresh?: () => void;
   onEnterRoom?: () => void;
+  onLoginAccount?: () => void;
   onLogout?: () => void;
   onJoinRoom?: (roomId: string) => void;
 }
@@ -52,8 +58,10 @@ export class VeilLobbyPanel extends Component {
   private onEditPlayerId: (() => void) | undefined;
   private onEditDisplayName: (() => void) | undefined;
   private onEditRoomId: (() => void) | undefined;
+  private onEditLoginId: (() => void) | undefined;
   private onRefresh: (() => void) | undefined;
   private onEnterRoom: (() => void) | undefined;
+  private onLoginAccount: (() => void) | undefined;
   private onLogout: (() => void) | undefined;
   private onJoinRoom: ((roomId: string) => void) | undefined;
 
@@ -61,8 +69,10 @@ export class VeilLobbyPanel extends Component {
     this.onEditPlayerId = options.onEditPlayerId;
     this.onEditDisplayName = options.onEditDisplayName;
     this.onEditRoomId = options.onEditRoomId;
+    this.onEditLoginId = options.onEditLoginId;
     this.onRefresh = options.onRefresh;
     this.onEnterRoom = options.onEnterRoom;
+    this.onLoginAccount = options.onLoginAccount;
     this.onLogout = options.onLogout;
     this.onJoinRoom = options.onJoinRoom;
   }
@@ -147,29 +157,56 @@ export class VeilLobbyPanel extends Component {
       state.entering ? null : this.onEditRoomId ?? null
     );
 
+    leftCursorY = this.renderCard(
+      "LobbyLoginField",
+      leftX,
+      leftCursorY,
+      leftWidth,
+      58,
+      [
+        "登录 ID",
+        state.loginId || "点击填写",
+        state.authMode === "account" ? "当前已处于正式账号模式" : "H5 绑定后的登录 ID 可以在这里直接进入"
+      ],
+      {
+        fill: FIELD_FILL,
+        stroke: new Color(224, 235, 246, 52),
+        accent: new Color(216, 182, 118, 196)
+      },
+      state.entering ? null : this.onEditLoginId ?? null
+    );
+
     const sessionLabel =
       state.sessionSource === "remote"
-        ? "已缓存云端游客会话"
+        ? state.authMode === "account"
+          ? `已缓存云端账号会话${state.loginId ? ` · ${state.loginId}` : ""}`
+          : "已缓存云端游客会话"
         : state.sessionSource === "local"
           ? "已缓存本地游客会话"
           : state.sessionSource === "manual"
             ? "当前为手动身份草稿"
-            : "当前尚未缓存游客会话";
+            : "当前尚未缓存会话";
     leftCursorY = this.renderCard(
       "LobbyStatus",
       leftX,
       leftCursorY,
       leftWidth,
-      86,
-      ["当前状态", sessionLabel, state.status || "等待操作..."],
+      110,
+      [
+        "当前状态",
+        state.authMode === "account" ? "正式账号模式" : "游客模式",
+        sessionLabel,
+        state.vaultSummary,
+        state.status || "等待操作..."
+      ],
       {
         fill: STATUS_FILL,
         stroke: new Color(233, 206, 144, 64),
         accent: new Color(222, 189, 119, 198)
       },
       null,
-      14,
-      18
+      13,
+      16
     );
 
     this.renderActionButton(
@@ -192,7 +229,7 @@ export class VeilLobbyPanel extends Component {
       leftCursorY - 52,
       leftWidth,
       28,
-      state.entering ? "进入中..." : "进入房间",
+      state.entering ? "进入中..." : "游客进入",
       {
         fill: ACTION_ENTER,
         stroke: new Color(228, 244, 229, 124),
@@ -201,12 +238,26 @@ export class VeilLobbyPanel extends Component {
       state.entering ? null : this.onEnterRoom ?? null
     );
     this.renderActionButton(
-      "LobbyLogout",
+      "LobbyAccountEnter",
       leftX,
       leftCursorY - 86,
       leftWidth,
       28,
-      "退出游客会话",
+      state.entering ? "登录中..." : state.authMode === "account" ? "账号进入" : "账号登录并进入",
+      {
+        fill: ACTION_ACCOUNT,
+        stroke: new Color(228, 236, 248, 120),
+        accent: new Color(220, 230, 244, 112)
+      },
+      state.entering ? null : this.onLoginAccount ?? null
+    );
+    this.renderActionButton(
+      "LobbyLogout",
+      leftX,
+      leftCursorY - 120,
+      leftWidth,
+      28,
+      state.authMode === "account" ? "退出账号会话" : "退出游客会话",
       {
         fill: ACTION_LOGOUT,
         stroke: new Color(247, 232, 226, 118),

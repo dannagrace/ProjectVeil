@@ -35,6 +35,11 @@ test("player account helpers can build a local fallback profile", () => {
   assert.deepEqual(createFallbackPlayerAccountProfile("player-9", "room-beta", "本地访客"), {
     playerId: "player-9",
     displayName: "本地访客",
+    globalResources: {
+      gold: 0,
+      wood: 0,
+      ore: 0
+    },
     lastRoomId: "room-beta",
     source: "local"
   });
