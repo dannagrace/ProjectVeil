@@ -6,6 +6,7 @@ import {
   createDemoBattleState,
   createEmptyBattleState,
   createHeroBattleState,
+  createDefaultHeroLoadout,
   createNeutralBattleState,
   createDefaultHeroProgression,
   createPlayerWorldView,
@@ -50,6 +51,7 @@ function createHero(overrides: Partial<HeroState> & Pick<HeroState, "id" | "play
       maxHp: 30
     },
     progression: overrides.progression ?? createDefaultHeroProgression(),
+    loadout: overrides.loadout ?? createDefaultHeroLoadout(),
     armyTemplateId: overrides.armyTemplateId ?? "hero_guard_basic",
     armyCount: overrides.armyCount ?? 12
   };

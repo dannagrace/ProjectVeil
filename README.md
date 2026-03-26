@@ -69,7 +69,7 @@
   - 玩家视角裁剪快照与 Action 校验。
   - 统一通过共享 reducer 处理客户端 Action，并在接触明雷时生成战斗快照。
   - 战斗结束后回写世界状态，胜利移除明雷并发放奖励，失败施加英雄惩罚。
-  - MySQL 持久化现已包含房间快照、玩家房间档案、`player_accounts` 全局资源仓库初版，以及 `player_hero_archives` 英雄长期档初版。
+  - MySQL 持久化现已包含房间快照、玩家房间档案、`player_accounts` 全局资源仓库初版，以及 `player_hero_archives` 英雄长期档；长期档当前会携带等级成长、已学技能、装备槽位和当前带兵信息。
 - `apps/client`
   - 客户端渲染器骨架。
   - 当前以文本渲染示例验证“客户端只负责展示玩家可见状态”的边界。
@@ -125,7 +125,7 @@
 - 招募所会按库存和资源消耗补充部队，并在每日推进后自动重置；属性神殿会给当前英雄永久属性加成，并记录已访问英雄避免重复领取；资源矿场则会在占领后于“推进一天”时自动结算金币/木材/矿石产出。H5 / Cocos / 配置中心地图预览都已能显示这些建筑。
 - `neutralArmies` 现已支持可选 `behavior` 字段：可配置 `guard / patrol` 模式、巡逻路线和 `aggroRange`；中立怪会在每日推进时按路线巡逻、失位后回守，并在英雄靠近时主动追击，贴身时直接触发遭遇战。
 - 当前 MySQL 资源持久化已补上 `player_accounts`：房间保存时会同步刷新玩家全局 `gold / wood / ore` 仓库，新建房间会先回灌这份全局资源，因此同一 `playerId` 的基础资源已能跨房间继承。
-- 当前 MySQL 英雄长期档已补上 `player_hero_archives`：房间保存时会同步刷新英雄的长期成长与带兵快照，新建房间会先回灌这些长期数据，因此同一 `playerId` 的英雄属性成长和当前带兵已能跨房间继承；英雄的位置、剩余移动力和当前生命仍会按新局重置。
+- 当前 MySQL 英雄长期档已补上 `player_hero_archives`：房间保存时会同步刷新英雄的长期成长、已学技能、装备槽位与带兵快照，新建房间会先回灌这些长期数据，因此同一 `playerId` 的英雄属性成长、build 和当前带兵已能跨房间继承；英雄的位置、剩余移动力和当前生命仍会按新局重置。
 - 当前玩家账号骨架也已接到 `player_accounts`：账号记录现已包含 `displayName / lastRoomId / lastSeenAt / globalResources`，并开放 `GET /api/player-accounts`、`GET /api/player-accounts/:playerId`、`PUT /api/player-accounts/:playerId` 供开发态查看与改名；房间 `connect` 时会自动建档或刷新最近活跃房间。
 - H5 左侧面板现已补上账号资料卡：会优先显示服务端账号昵称，也会在浏览器本地记住上次使用的游客昵称；远端房间首次 `connect` 时会把这份 `displayName` 一并带给服务端，用于初始化游客账号资料。
 - H5 现在也有真正的 Lobby / 登录入口：当页面没有携带 `roomId / playerId` 查询参数时，会先进入大厅页，显示游客 `playerId / 昵称 / roomId` 表单和 `/api/lobby/rooms` 活跃房间列表；选房或手动输入房间后即可进入实例，游戏内也能一键返回大厅。
