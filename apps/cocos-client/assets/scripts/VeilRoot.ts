@@ -1708,7 +1708,10 @@ export class VeilRoot extends Component {
     if (
       update.events.some(
         (event) =>
-          event.type === "battle.started" || event.type === "battle.resolved" || event.type === "hero.skillLearned"
+          event.type === "battle.started" ||
+          event.type === "battle.resolved" ||
+          event.type === "hero.skillLearned" ||
+          event.type === "hero.equipmentFound"
       )
     ) {
       void this.refreshGameplayAccountProfile();

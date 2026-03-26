@@ -29,7 +29,7 @@ import type {
   WorldState
 } from "./models";
 import { applyHeroSkillSelection, validateHeroSkillSelection } from "./hero-skills";
-import { applyHeroEquipmentChange, validateHeroEquipmentChange } from "./equipment";
+import { applyHeroEquipmentChange, rollEquipmentDrop, validateHeroEquipmentChange } from "./equipment";
 import {
   normalizeHeroState,
   totalExperienceRequiredForLevel
@@ -46,6 +46,14 @@ function makeRng(seed: number): () => number {
     value = (value * 1664525 + 1013904223) >>> 0;
     return value / 0x100000000;
   };
+}
+
+function hashSeed(base: number, value: string): number {
+  let hash = base >>> 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 16777619) >>> 0;
+  }
+  return hash >>> 0;
 }
 
 function samePosition(a: Vec2, b: Vec2): boolean {
@@ -70,6 +78,38 @@ function tileKey(position: Vec2): string {
 
 function tileIndex(map: WorldMapState, position: Vec2): number {
   return position.y * map.width + position.x;
+}
+
+function maybeAwardBattleEquipmentDrop(
+  hero: HeroState,
+  state: WorldState,
+  battleId: string,
+  battleKind: "neutral" | "hero"
+): { hero: HeroState; event: Extract<WorldEvent, { type: "hero.equipmentFound" }> } | null {
+  const rng = makeRng(hashSeed(hashSeed(state.meta.seed, `${battleId}:${hero.id}:${battleKind}`), `${state.meta.day}`));
+  const drop = rollEquipmentDrop(rng(), rng(), rng());
+  if (!drop) {
+    return null;
+  }
+
+  return {
+    hero: {
+      ...hero,
+      loadout: {
+        ...hero.loadout,
+        inventory: [...hero.loadout.inventory, drop.itemId]
+      }
+    },
+    event: {
+      type: "hero.equipmentFound",
+      heroId: hero.id,
+      battleId,
+      battleKind,
+      equipmentId: drop.itemId,
+      equipmentName: drop.item.name,
+      rarity: drop.item.rarity
+    }
+  };
 }
 
 function createTerrainTile(position: Vec2, roll: number): TileState {
@@ -2399,6 +2439,7 @@ export function filterWorldEventsForPlayer(
       case "hero.progressed":
       case "hero.skillLearned":
       case "hero.equipmentChanged":
+      case "hero.equipmentFound":
         return ownsHero(event.heroId);
       case "neutral.moved": {
         const visibility = state.visibilityByPlayer[playerId];
@@ -2450,6 +2491,7 @@ export function applyBattleOutcomeToWorld(
 
     if (outcome.status === "defender_victory") {
       const awardedDefender = applyHeroExperience(defenderHero, heroBattleExperience(attackerHero), "hero");
+      const droppedEquipment = maybeAwardBattleEquipmentDrop(awardedDefender.hero, state, battleId, "hero");
       const heroes = state.heroes.map((hero) =>
         hero.id === attackerId
           ? {
@@ -2458,7 +2500,7 @@ export function applyBattleOutcomeToWorld(
               move: { ...hero.move, remaining: 0 }
             }
           : hero.id === defenderId
-            ? awardedDefender.hero
+            ? droppedEquipment?.hero ?? awardedDefender.hero
           : hero
       );
       return {
@@ -2482,7 +2524,8 @@ export function applyBattleOutcomeToWorld(
             levelsGained: awardedDefender.levelsGained,
             skillPointsAwarded: awardedDefender.skillPointsAwarded,
             availableSkillPoints: awardedDefender.hero.progression.skillPoints
-          }
+          },
+          ...(droppedEquipment ? [droppedEquipment.event] : [])
         ]
       };
     }
@@ -2499,10 +2542,11 @@ export function applyBattleOutcomeToWorld(
     }) ?? defenderHero.position;
 
     const awardedAttacker = applyHeroExperience(attackerHero, heroBattleExperience(defenderHero), "hero");
+    const droppedEquipment = maybeAwardBattleEquipmentDrop(awardedAttacker.hero, state, battleId, "hero");
     const heroes = state.heroes.map((hero) => {
       if (hero.id === attackerId) {
         return {
-          ...awardedAttacker.hero,
+          ...(droppedEquipment?.hero ?? awardedAttacker.hero),
           position: defenderHero.position
         };
       }
@@ -2540,7 +2584,8 @@ export function applyBattleOutcomeToWorld(
             levelsGained: awardedAttacker.levelsGained,
             skillPointsAwarded: awardedAttacker.skillPointsAwarded,
             availableSkillPoints: awardedAttacker.hero.progression.skillPoints
-          }
+          },
+          ...(droppedEquipment ? [droppedEquipment.event] : [])
         ]
       };
   }
@@ -2584,12 +2629,13 @@ export function applyBattleOutcomeToWorld(
   }
 
   const awardedAttacker = applyHeroExperience(attackerHero, neutralBattleExperience(neutralArmy), "neutral");
+  const droppedEquipment = maybeAwardBattleEquipmentDrop(awardedAttacker.hero, state, battleId, "neutral");
   const nextNeutralArmies = { ...state.neutralArmies };
   delete nextNeutralArmies[neutralArmyId];
   const heroes = state.heroes.map((hero) =>
     hero.id === heroId
       ? {
-          ...awardedAttacker.hero,
+          ...(droppedEquipment?.hero ?? awardedAttacker.hero),
           position: neutralArmy.position
         }
       : hero
@@ -2631,7 +2677,8 @@ export function applyBattleOutcomeToWorld(
               resource: neutralArmy.reward
             }
           ]
-        : [])
+        : []),
+      ...(droppedEquipment ? [droppedEquipment.event] : [])
     ]
   };
 }

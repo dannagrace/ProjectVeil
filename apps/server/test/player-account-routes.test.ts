@@ -292,6 +292,34 @@ test("player achievement tracker appends logs and unlocks milestones", () => {
   assert.match(updated.recentEventLog.map((entry) => entry.description).join(" "), /解锁成就：初次交锋/);
 });
 
+test("player achievement tracker records equipment drop entries for hero victories", () => {
+  const updated = applyPlayerEventLogAndAchievements(
+    {
+      playerId: "player-1",
+      displayName: "暮火侦骑",
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      recentEventLog: []
+    },
+    createAccountTrackingWorldState(),
+    [
+      {
+        type: "hero.equipmentFound",
+        heroId: "hero-1",
+        battleId: "battle-neutral-1",
+        battleKind: "neutral",
+        equipmentId: "tower_shield_mail",
+        equipmentName: "塔盾链甲",
+        rarity: "common"
+      }
+    ],
+    "2026-03-27T12:05:00.000Z"
+  );
+
+  assert.equal(updated.recentEventLog[0]?.worldEventType, "hero.equipmentFound");
+  assert.match(updated.recentEventLog[0]?.description ?? "", /塔盾链甲/);
+});
+
 test("player account routes update display names through the account store", async (t) => {
   const port = 41000 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();

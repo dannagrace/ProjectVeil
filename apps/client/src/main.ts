@@ -1150,6 +1150,8 @@ function appendLog(update: SessionUpdate): void {
           ? `Upgraded ${event.skillName} to Rank ${event.newRank}`
           : `Learned ${event.skillName}`
       );
+    } else if (event.type === "hero.equipmentFound") {
+      state.log.unshift(`Found equipment: ${event.equipmentName}`);
     } else if (event.type === "neutral.moved") {
       state.log.unshift(
         event.reason === "chase"
@@ -1260,6 +1262,16 @@ function buildTimelineEntries(update: SessionUpdate, source: TimelineEntry["sour
         tone: "loot",
         source,
         text: `占领资源产出点，改为每日产出 ${formatDailyIncome(event.resourceKind, event.income)}`
+      });
+      return;
+    }
+
+    if (event.type === "hero.equipmentFound") {
+      items.push({
+        id: `${stamp}-equipment-${index}`,
+        tone: "loot",
+        source,
+        text: `战利品：获得 ${event.equipmentName}`
       });
       return;
     }
@@ -1442,7 +1454,8 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
       event.type === "hero.visited" ||
       event.type === "hero.claimedMine" ||
       event.type === "resource.produced" ||
-      event.type === "hero.skillLearned"
+      event.type === "hero.skillLearned" ||
+      event.type === "hero.equipmentFound"
   )
     ? "loot"
     : update.events.some(
@@ -1481,10 +1494,11 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
   if (resolved?.type === "battle.resolved") {
     const rewardEvent = update.events.find((event) => event.type === "hero.collected");
     const progressEvent = update.events.find((event) => event.type === "hero.progressed");
+    const equipmentEvent = update.events.find((event) => event.type === "hero.equipmentFound");
     const didWin = didCurrentPlayerWinBattle(resolved, update.world);
     const winBody = resolved.defenderHeroId
-      ? `你已击败敌方英雄。${progressEvent?.type === "hero.progressed" ? `获得 ${progressEvent.experienceGained} 经验${progressEvent.levelsGained > 0 ? `，升至 Lv ${progressEvent.level}，并得到 ${progressEvent.skillPointsAwarded} 点技能点` : ""}。` : ""}`
-      : `你已击败守军。${rewardEvent?.type === "hero.collected" ? `获得 ${rewardEvent.resource.kind} +${rewardEvent.resource.amount}。` : ""}${progressEvent?.type === "hero.progressed" ? `获得 ${progressEvent.experienceGained} 经验${progressEvent.levelsGained > 0 ? `，升至 Lv ${progressEvent.level}，并得到 ${progressEvent.skillPointsAwarded} 点技能点` : ""}。` : ""}`;
+      ? `你已击败敌方英雄。${equipmentEvent?.type === "hero.equipmentFound" ? `缴获 ${equipmentEvent.equipmentName}。` : ""}${progressEvent?.type === "hero.progressed" ? `获得 ${progressEvent.experienceGained} 经验${progressEvent.levelsGained > 0 ? `，升至 Lv ${progressEvent.level}，并得到 ${progressEvent.skillPointsAwarded} 点技能点` : ""}。` : ""}`
+      : `你已击败守军。${rewardEvent?.type === "hero.collected" ? `获得 ${rewardEvent.resource.kind} +${rewardEvent.resource.amount}。` : ""}${equipmentEvent?.type === "hero.equipmentFound" ? `拾取 ${equipmentEvent.equipmentName}。` : ""}${progressEvent?.type === "hero.progressed" ? `获得 ${progressEvent.experienceGained} 经验${progressEvent.levelsGained > 0 ? `，升至 Lv ${progressEvent.level}，并得到 ${progressEvent.skillPointsAwarded} 点技能点` : ""}。` : ""}`;
     openBattleModal(
       didWin ? "战斗胜利" : "战斗失败",
       didWin ? winBody : "英雄被击退，生命值下降且本日移动力清零。"
@@ -1496,7 +1510,10 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
   if (
     update.events.some(
       (event) =>
-        event.type === "battle.started" || event.type === "battle.resolved" || event.type === "hero.skillLearned"
+        event.type === "battle.started" ||
+        event.type === "battle.resolved" ||
+        event.type === "hero.skillLearned" ||
+        event.type === "hero.equipmentFound"
     )
   ) {
     void refreshAccountProfileFromServer();

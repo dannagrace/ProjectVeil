@@ -66,6 +66,10 @@ function formatWorldEvent(event: WorldEvent): string | null {
       : `习得 ${event.branchName} 分支技能 ${event.skillName}。`;
   }
 
+  if (event.type === "hero.equipmentFound") {
+    return `战斗缴获 ${event.equipmentName}。`;
+  }
+
   if (event.type === "resource.produced" && isObjectRecord(event.resource)) {
     const kind = typeof event.resource.kind === "string" ? event.resource.kind : "resource";
     const amount = typeof event.resource.amount === "number" ? event.resource.amount : 0;

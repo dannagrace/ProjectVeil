@@ -99,6 +99,15 @@ test("buildTimelineEntriesFromUpdate formats world events and system rejection",
         battleId: "battle-1",
         path: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
         moveCost: 1
+      },
+      {
+        type: "hero.equipmentFound",
+        heroId: "hero-1",
+        battleId: "battle-1",
+        battleKind: "neutral",
+        equipmentId: "tower_shield_mail",
+        equipmentName: "塔盾链甲",
+        rarity: "common"
       }
     ],
     movementPlan: {
@@ -123,7 +132,8 @@ test("buildTimelineEntriesFromUpdate formats world events and system rejection",
     "事件：采集矿场，获得 木材 +2。",
     "事件：资源矿场结算 木材 +2。",
     "事件：中立守军 neutral-1 主动追击，移动到 (2,2)。",
-    "事件：中立守军 neutral-1 主动发起战斗。"
+    "事件：中立守军 neutral-1 主动发起战斗。",
+    "事件：战斗缴获 塔盾链甲。"
   ]);
 });
 
