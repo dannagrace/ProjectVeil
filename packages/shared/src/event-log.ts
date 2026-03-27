@@ -1,4 +1,5 @@
-import type { FogState, WorldEvent } from "./models";
+import { formatEquipmentRarityLabel } from "./equipment";
+import type { FogState, ResourceKind, WorldEvent, WorldState } from "./models";
 
 export type EventLogCategory = "movement" | "combat" | "building" | "skill" | "achievement";
 export type EventLogRewardType = "resource" | "experience" | "skill_point" | "badge";
@@ -82,6 +83,11 @@ export interface PlayerProgressionSnapshot {
   summary: PlayerProgressionSummary;
   achievements: PlayerAchievementProgress[];
   recentEventLog: EventLogEntry[];
+}
+
+export interface EventLogContext {
+  roomId: string;
+  playerId: string;
 }
 
 export function getLatestUnlockedAchievement(
@@ -179,6 +185,271 @@ function normalizeTimestamp(value?: string | null): string | undefined {
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
+function findHero(state: WorldState, heroId?: string): WorldState["heroes"][number] | undefined {
+  return heroId ? state.heroes.find((hero) => hero.id === heroId) : undefined;
+}
+
+function createEventLogId(playerId: string, timestamp: string, key: string, sequence: number, suffix?: string): string {
+  return `${playerId}:${timestamp}:${key}:${sequence}${suffix ? `:${suffix}` : ""}`;
+}
+
+function formatResourceReward(label: ResourceKind, amount: number): EventLogReward {
+  return {
+    type: "resource",
+    label,
+    amount: Math.max(0, Math.floor(amount))
+  };
+}
+
+export function createWorldEventLogEntry(
+  state: WorldState,
+  playerId: string,
+  event: WorldEvent,
+  timestamp: string,
+  sequence: number
+): EventLogEntry | null {
+  const hero = "heroId" in event ? findHero(state, event.heroId) : undefined;
+
+  switch (event.type) {
+    case "hero.moved":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "movement",
+        description: `${hero?.name ?? event.heroId} 移动了 ${event.moveCost} 点行动力。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: []
+      };
+    case "hero.collected":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "building",
+        description: `${hero?.name ?? event.heroId} 收集了 ${event.resource.kind} x${event.resource.amount}。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: [formatResourceReward(event.resource.kind, event.resource.amount)]
+      };
+    case "hero.recruited":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "building",
+        description: `${hero?.name ?? event.heroId} 在 ${event.buildingId} 招募了 ${event.unitTemplateId} x${event.count}。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: []
+      };
+    case "hero.visited":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "building",
+        description: `${hero?.name ?? event.heroId} 造访了 ${event.buildingId}。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: []
+      };
+    case "hero.claimedMine":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "building",
+        description: `${hero?.name ?? event.heroId} 占领了 ${event.buildingId}，每日产出 ${event.resourceKind} +${event.income}。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: [formatResourceReward(event.resourceKind, event.income)]
+      };
+    case "resource.produced":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "building",
+        description: `${event.buildingId} 产出 ${event.resource.kind} x${event.resource.amount}。`,
+        worldEventType: event.type,
+        rewards: [formatResourceReward(event.resource.kind, event.resource.amount)]
+      };
+    case "neutral.moved":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "movement",
+        description:
+          event.reason === "chase" && event.targetHeroId
+            ? `${event.neutralArmyId} 追击 ${event.targetHeroId}，从 (${event.from.x},${event.from.y}) 移动到 (${event.to.x},${event.to.y})。`
+            : `${event.neutralArmyId} 因 ${event.reason} 从 (${event.from.x},${event.from.y}) 移动到 (${event.to.x},${event.to.y})。`,
+        ...(event.targetHeroId ? { heroId: event.targetHeroId } : {}),
+        worldEventType: event.type,
+        rewards: []
+      };
+    case "hero.progressed":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "combat",
+        description: `${hero?.name ?? event.heroId} 获得 ${event.experienceGained} 经验，升至 ${event.level} 级。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: [
+          {
+            type: "experience",
+            label: "经验",
+            amount: event.experienceGained
+          },
+          {
+            type: "skill_point",
+            label: "技能点",
+            amount: event.skillPointsAwarded
+          }
+        ]
+      };
+    case "hero.skillLearned":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "skill",
+        description: `${hero?.name ?? event.heroId} 学会了 ${event.skillName}。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: []
+      };
+    case "hero.equipmentChanged": {
+      const slotLabel = event.slot === "weapon" ? "武器" : event.slot === "armor" ? "护甲" : "饰品";
+      const description =
+        event.equippedItemId && event.unequippedItemId
+          ? `${hero?.name ?? event.heroId} 将${slotLabel}从 ${event.unequippedItemId} 更换为 ${event.equippedItemId}。`
+          : event.equippedItemId
+            ? `${hero?.name ?? event.heroId} 装备了${slotLabel} ${event.equippedItemId}。`
+            : `${hero?.name ?? event.heroId} 卸下了${slotLabel} ${event.unequippedItemId ?? "装备"}。`;
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "skill",
+        description,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: []
+      };
+    }
+    case "hero.equipmentFound":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "combat",
+        description: `${hero?.name ?? event.heroId} 在战斗后获得了${formatEquipmentRarityLabel(event.rarity)}装备 ${event.equipmentName}。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: []
+      };
+    case "battle.started":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "combat",
+        description:
+          event.encounterKind === "hero"
+            ? `${hero?.name ?? event.heroId} 与敌方英雄交战。`
+            : `${hero?.name ?? event.heroId} 遭遇中立守军。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: []
+      };
+    case "battle.resolved":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "combat",
+        description: `${hero?.name ?? event.heroId} 的战斗结果为 ${
+          event.result === "attacker_victory" ? "胜利" : "失利"
+        }。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: []
+      };
+    case "turn.advanced":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "movement",
+        description: `世界推进到第 ${event.day} 天。`,
+        worldEventType: event.type,
+        rewards: []
+      };
+    default:
+      return null;
+  }
+}
+
+export function createAchievementUnlockedEventLogEntry(
+  context: EventLogContext,
+  achievement: PlayerAchievementProgress,
+  timestamp: string,
+  sequence: number
+): EventLogEntry {
+  return {
+    id: createEventLogId(context.playerId, timestamp, "achievement", sequence, achievement.id),
+    timestamp,
+    roomId: context.roomId,
+    playerId: context.playerId,
+    category: "achievement",
+    description: `解锁成就：${achievement.title}`,
+    achievementId: achievement.id,
+    rewards: [
+      {
+        type: "badge",
+        label: achievement.title
+      }
+    ]
+  };
+}
+
+export function createAchievementProgressEventLogEntry(
+  context: EventLogContext,
+  achievement: PlayerAchievementProgress,
+  timestamp: string,
+  sequence: number
+): EventLogEntry {
+  return {
+    id: createEventLogId(context.playerId, timestamp, "achievement-progress", sequence, achievement.id),
+    timestamp,
+    roomId: context.roomId,
+    playerId: context.playerId,
+    category: "achievement",
+    description: `成就进度推进：${achievement.title} (${achievement.current}/${achievement.target})`,
+    achievementId: achievement.id,
+    rewards: []
+  };
 }
 
 export function getAchievementDefinitions(): AchievementDefinition[] {
