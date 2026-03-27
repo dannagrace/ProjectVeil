@@ -42,6 +42,7 @@ import {
   getDefaultEquipmentCatalog,
   getLatestProgressedAchievement,
   getLatestUnlockedAchievement,
+  hasFullyExploredMap,
   normalizePlayerBattleReplaySummaries,
   pauseBattleReplayPlayback,
   pickAutomatedBattleAction,
@@ -335,6 +336,12 @@ test("achievement helpers can sync progress from an absolute value", () => {
   );
 });
 
+test("exploration helpers detect when a map has been fully revealed", () => {
+  assert.equal(hasFullyExploredMap(["visible", "explored", "hidden"], 3), false);
+  assert.equal(hasFullyExploredMap(["visible", "explored", "visible"], 3), true);
+  assert.equal(hasFullyExploredMap([], 0), false);
+});
+
 test("achievement helpers return the most recently unlocked milestone", () => {
   const progress = [
     {
@@ -498,7 +505,7 @@ test("player progression snapshot summarizes unlocked achievements and recent ev
   );
 
   assert.deepEqual(snapshot.summary, {
-    totalAchievements: 4,
+    totalAchievements: 5,
     unlockedAchievements: 1,
     inProgressAchievements: 1,
     latestProgressAchievementId: "enemy_slayer",

@@ -71,6 +71,15 @@ test("player account helpers can build a local fallback profile", () => {
         unlocked: false
       },
       {
+        id: "world_explorer",
+        title: "踏勘全境",
+        description: "揭开整张地图的迷雾。",
+        metric: "maps_fully_explored",
+        current: 0,
+        target: 1,
+        unlocked: false
+      },
+      {
         id: "epic_collector",
         title: "史诗武装",
         description: "为同一名英雄装备全套史诗装备。",
@@ -287,7 +296,7 @@ test("player progression loader normalizes summary, achievements, and limited ev
   try {
     const snapshot = await loadPlayerProgressionSnapshot("player-1", 1);
     assert.deepEqual(snapshot.summary, {
-      totalAchievements: 4,
+      totalAchievements: 5,
       unlockedAchievements: 1,
       inProgressAchievements: 0,
       latestProgressAchievementId: "first_battle",
