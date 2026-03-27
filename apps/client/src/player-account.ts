@@ -6,9 +6,11 @@ import {
   type StoredAuthSession
 } from "./auth-session";
 import {
+  type AchievementProgressQuery,
   normalizePlayerProgressionSnapshot,
   normalizePlayerAccountReadModel,
   normalizePlayerBattleReplaySummaries,
+  queryAchievementProgress,
   normalizeEventLogEntries,
   type EventLogQuery,
   type EventLogEntry,
@@ -59,6 +61,10 @@ interface PlayerEventLogListApiPayload {
   items?: Partial<EventLogEntry>[];
 }
 
+interface PlayerAchievementListApiPayload {
+  items?: Partial<PlayerAchievementProgress>[];
+}
+
 interface PlayerProgressionApiPayload extends Partial<PlayerProgressionSnapshot> {}
 
 function normalizePlayerDisplayName(playerId: string, displayName?: string | null): string {
@@ -105,6 +111,29 @@ function toEventLogQueryString(query?: EventLogQuery): string {
   }
   if (query.worldEventType) {
     searchParams.set("worldEventType", query.worldEventType);
+  }
+
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
+}
+
+function toAchievementQueryString(query?: AchievementProgressQuery): string {
+  if (!query) {
+    return "";
+  }
+
+  const searchParams = new URLSearchParams();
+  if (query.limit != null) {
+    searchParams.set("limit", String(query.limit));
+  }
+  if (query.achievementId) {
+    searchParams.set("achievementId", query.achievementId);
+  }
+  if (query.metric) {
+    searchParams.set("metric", query.metric);
+  }
+  if (query.unlocked != null) {
+    searchParams.set("unlocked", String(query.unlocked));
   }
 
   const serialized = searchParams.toString();
@@ -289,6 +318,29 @@ export async function loadPlayerEventLog(playerId: string, query?: EventLogQuery
       clearCurrentAuthSession();
     }
     return normalizeEventLogEntries();
+  }
+}
+
+export async function loadPlayerAchievementProgress(
+  playerId: string,
+  query?: AchievementProgressQuery
+): Promise<PlayerAchievementProgress[]> {
+  const authSession = readStoredAuthSession();
+  const queryString = toAchievementQueryString(query);
+  const endpoint = authSession?.token
+    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/achievements${queryString}`
+    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/achievements${queryString}`;
+
+  try {
+    const payload = (await fetchJson(endpoint, {
+      ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
+    })) as PlayerAchievementListApiPayload;
+    return queryAchievementProgress(payload.items, query);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+      clearCurrentAuthSession();
+    }
+    return queryAchievementProgress(undefined, query);
   }
 }
 

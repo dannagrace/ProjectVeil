@@ -57,6 +57,13 @@ export interface PlayerAchievementProgress {
   unlockedAt?: string;
 }
 
+export interface AchievementProgressQuery {
+  limit?: number | undefined;
+  achievementId?: AchievementId | undefined;
+  metric?: AchievementMetric | undefined;
+  unlocked?: boolean | undefined;
+}
+
 export interface PlayerProgressionSummary {
   totalAchievements: number;
   unlockedAchievements: number;
@@ -323,6 +330,19 @@ export function applyAchievementProgressValue(
     progress: nextProgress,
     unlocked
   };
+}
+
+export function queryAchievementProgress(
+  progress?: Partial<PlayerAchievementProgress>[] | null,
+  query: AchievementProgressQuery = {}
+): PlayerAchievementProgress[] {
+  const safeLimit = query.limit == null ? undefined : Math.max(1, Math.floor(query.limit));
+
+  return normalizeAchievementProgress(progress)
+    .filter((entry) => (query.achievementId ? entry.id === query.achievementId : true))
+    .filter((entry) => (query.metric ? entry.metric === query.metric : true))
+    .filter((entry) => (query.unlocked == null ? true : entry.unlocked === query.unlocked))
+    .slice(0, safeLimit);
 }
 
 export function normalizeEventLogEntries(entries?: Partial<EventLogEntry>[] | null): EventLogEntry[] {

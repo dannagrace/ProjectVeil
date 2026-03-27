@@ -19,6 +19,7 @@ import type { RoomPersistenceSnapshot } from "../src/index";
 import {
   createDefaultHeroLoadout,
   createDefaultHeroProgression,
+  type PlayerAchievementProgress,
   type PlayerProgressionSnapshot,
   type PlayerBattleReplaySummary,
   type WorldState
@@ -423,6 +424,12 @@ test("player account routes degrade to local-mode responses when persistence is 
   assert.equal(publicReplayResponse.status, 200);
   assert.deepEqual(publicReplayPayload.items, []);
 
+  const publicAchievementResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/achievements`);
+  const publicAchievementPayload = (await publicAchievementResponse.json()) as { items: PlayerAchievementProgress[] };
+  assert.equal(publicAchievementResponse.status, 200);
+  assert.equal(publicAchievementPayload.items.length, 5);
+  assert.equal(publicAchievementPayload.items[0]?.id, "first_battle");
+
   const publicProgressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/progression`);
   const publicProgressPayload = (await publicProgressResponse.json()) as PlayerProgressionSnapshot;
   assert.equal(publicProgressResponse.status, 200);
@@ -451,6 +458,15 @@ test("player account routes degrade to local-mode responses when persistence is 
   const meReplayPayload = (await meReplayResponse.json()) as { items: PlayerBattleReplaySummary[] };
   assert.equal(meReplayResponse.status, 200);
   assert.deepEqual(meReplayPayload.items, []);
+
+  const meAchievementResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/achievements?unlocked=false&limit=2`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const meAchievementPayload = (await meAchievementResponse.json()) as { items: PlayerAchievementProgress[] };
+  assert.equal(meAchievementResponse.status, 200);
+  assert.deepEqual(meAchievementPayload.items.map((entry) => entry.id), ["first_battle", "enemy_slayer"]);
 
   const meProgressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/progression`, {
     headers: {
@@ -608,6 +624,76 @@ test("player account event-log routes filter recent entries without loading prog
   const mePayload = (await meResponse.json()) as { items: PlayerAccountSnapshot["recentEventLog"] };
   assert.equal(meResponse.status, 200);
   assert.deepEqual(mePayload.items.map((entry) => entry.id), ["event-achievement"]);
+});
+
+test("player account achievement routes filter normalized progress without loading event history", async (t) => {
+  const port = 42072 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-achievements",
+    displayName: "星冠检阅官",
+    globalResources: { gold: 22, wood: 7, ore: 1 },
+    achievements: [
+      {
+        id: "first_battle",
+        current: 1,
+        unlockedAt: "2026-03-27T12:00:00.000Z"
+      },
+      {
+        id: "enemy_slayer",
+        current: 2,
+        progressUpdatedAt: "2026-03-27T12:02:00.000Z"
+      },
+      {
+        id: "skill_scholar",
+        current: 5,
+        unlockedAt: "2026-03-27T12:03:00.000Z"
+      }
+    ],
+    recentEventLog: [
+      {
+        id: "event-achievement",
+        timestamp: "2026-03-27T12:03:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-achievements",
+        category: "achievement",
+        description: "achievement",
+        rewards: []
+      }
+    ],
+    recentBattleReplays: [],
+    lastRoomId: "room-alpha",
+    lastSeenAt: new Date("2026-03-27T12:04:00.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-achievements",
+    displayName: "星冠检阅官"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const publicResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-achievements/achievements?unlocked=true&metric=skills_learned`
+  );
+  const publicPayload = (await publicResponse.json()) as { items: PlayerAchievementProgress[] };
+  assert.equal(publicResponse.status, 200);
+  assert.deepEqual(publicPayload.items.map((entry) => entry.id), ["skill_scholar"]);
+
+  const meResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/achievements?achievementId=enemy_slayer`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const mePayload = (await meResponse.json()) as { items: PlayerAchievementProgress[] };
+  assert.equal(meResponse.status, 200);
+  assert.deepEqual(mePayload.items.map((entry) => entry.id), ["enemy_slayer"]);
+  assert.equal(mePayload.items[0]?.title, "猎敌者");
 });
 
 test("player account progression routes return a compact achievement and event read model", async (t) => {
