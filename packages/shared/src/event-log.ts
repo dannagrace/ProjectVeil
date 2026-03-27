@@ -30,11 +30,11 @@ export interface EventLogEntry {
 }
 
 export interface EventLogQuery {
-  limit?: number;
-  category?: EventLogCategory;
-  heroId?: string;
-  achievementId?: AchievementId;
-  worldEventType?: WorldEvent["type"];
+  limit?: number | undefined;
+  category?: EventLogCategory | undefined;
+  heroId?: string | undefined;
+  achievementId?: AchievementId | undefined;
+  worldEventType?: WorldEvent["type"] | undefined;
 }
 
 export interface AchievementDefinition {

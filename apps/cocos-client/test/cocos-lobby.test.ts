@@ -315,6 +315,15 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
         unlocked: false
       },
       {
+        id: "world_explorer",
+        title: "踏勘全境",
+        description: "揭开整张地图的迷雾。",
+        metric: "maps_fully_explored",
+        current: 0,
+        target: 1,
+        unlocked: false
+      },
+      {
         id: "epic_collector",
         title: "史诗武装",
         description: "为同一名英雄装备全套史诗装备。",
