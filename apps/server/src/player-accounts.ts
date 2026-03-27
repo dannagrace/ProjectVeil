@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  applyBattleReplayPlaybackCommand,
   buildPlayerProgressionSnapshot,
   findPlayerBattleReplaySummary,
   getAchievementDefinitions,
@@ -95,6 +96,16 @@ function parseBooleanQueryParam(request: IncomingMessage, key: string): boolean 
   return undefined;
 }
 
+function parseNumberQueryParam(request: IncomingMessage, key: string): number | undefined {
+  const value = parseOptionalQueryParam(request, key);
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function toReplayResponseFromRequest(
   account: PlayerAccountSnapshot,
   request: IncomingMessage
@@ -136,6 +147,31 @@ function toReplayDetailResponse(
 ): { replay: NonNullable<PlayerAccountSnapshot["recentBattleReplays"]>[number] } | null {
   const replay = findPlayerBattleReplaySummary(account.recentBattleReplays, replayId);
   return replay ? { replay } : null;
+}
+
+function toReplayPlaybackResponse(
+  account: PlayerAccountSnapshot,
+  request: IncomingMessage,
+  replayId?: string | null
+) {
+  const replay = findPlayerBattleReplaySummary(account.recentBattleReplays, replayId);
+  if (!replay) {
+    return null;
+  }
+
+  const currentStepIndex = parseNumberQueryParam(request, "currentStepIndex");
+  const status = parseOptionalQueryParam(request, "status") as "paused" | "playing" | undefined;
+  const action = parseOptionalQueryParam(request, "action") as "play" | "pause" | "step" | "tick" | "reset" | undefined;
+  const repeat = parseNumberQueryParam(request, "repeat");
+
+  return {
+    playback: applyBattleReplayPlaybackCommand(replay, {
+      ...(currentStepIndex != null ? { currentStepIndex } : {}),
+      ...(status ? { status } : {}),
+      ...(action ? { action } : {}),
+      ...(repeat != null ? { repeat } : {})
+    })
+  };
 }
 
 function toEventLogResponse(
@@ -420,6 +456,53 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.get("/api/player-accounts/me/battle-replays/:replayId/playback", async (request, response) => {
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    const replayId = request.params.replayId?.trim();
+    if (!replayId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 404, {
+        error: {
+          code: "player_battle_replay_not_found",
+          message: `Player battle replay not found: ${replayId}`
+        }
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const playback = toReplayPlaybackResponse(account, request, replayId);
+      if (!playback) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_battle_replay_not_found",
+            message: `Player battle replay not found: ${replayId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, playback);
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
   app.get("/api/player-accounts/me/event-log", async (request, response) => {
     const authSession = resolveAuthSessionFromRequest(request);
     if (!authSession) {
@@ -638,6 +721,53 @@ export function registerPlayerAccountRoutes(
       }
 
       sendJson(response, 200, detail);
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/battle-replays/:replayId/playback", async (request, response) => {
+    const playerId = request.params.playerId?.trim();
+    const replayId = request.params.replayId?.trim();
+    if (!playerId || !replayId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 404, {
+        error: {
+          code: "player_battle_replay_not_found",
+          message: `Player battle replay not found: ${replayId}`
+        }
+      });
+      return;
+    }
+
+    try {
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_account_not_found",
+            message: `Player account not found: ${playerId}`
+          }
+        });
+        return;
+      }
+
+      const playback = toReplayPlaybackResponse(account, request, replayId);
+      if (!playback) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_battle_replay_not_found",
+            message: `Player battle replay not found: ${replayId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, playback);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
