@@ -1,9 +1,14 @@
-import type { WorldEvent } from "./models";
+import type { FogState, WorldEvent } from "./models";
 
 export type EventLogCategory = "movement" | "combat" | "building" | "skill" | "achievement";
 export type EventLogRewardType = "resource" | "experience" | "skill_point" | "badge";
-export type AchievementId = "first_battle" | "enemy_slayer" | "skill_scholar" | "epic_collector";
-export type AchievementMetric = "battles_started" | "battles_won" | "skills_learned" | "epic_equipment_slots";
+export type AchievementId = "first_battle" | "enemy_slayer" | "skill_scholar" | "world_explorer" | "epic_collector";
+export type AchievementMetric =
+  | "battles_started"
+  | "battles_won"
+  | "skills_learned"
+  | "maps_fully_explored"
+  | "epic_equipment_slots";
 
 export interface EventLogReward {
   type: EventLogRewardType;
@@ -127,6 +132,13 @@ const ACHIEVEMENT_DEFINITIONS: AchievementDefinition[] = [
     target: 5
   },
   {
+    id: "world_explorer",
+    metric: "maps_fully_explored",
+    title: "踏勘全境",
+    description: "揭开整张地图的迷雾。",
+    target: 1
+  },
+  {
     id: "epic_collector",
     metric: "epic_equipment_slots",
     title: "史诗武装",
@@ -148,6 +160,19 @@ function normalizeTimestamp(value?: string | null): string | undefined {
 
 export function getAchievementDefinitions(): AchievementDefinition[] {
   return ACHIEVEMENT_DEFINITIONS.map((definition) => ({ ...definition }));
+}
+
+export function countRevealedFogTiles(visibility?: FogState[] | null): number {
+  return (visibility ?? []).filter((fog) => fog === "explored" || fog === "visible").length;
+}
+
+export function hasFullyExploredMap(visibility?: FogState[] | null, tileCount?: number): boolean {
+  const safeTileCount = Math.max(0, Math.floor(tileCount ?? visibility?.length ?? 0));
+  if (safeTileCount <= 0) {
+    return false;
+  }
+
+  return countRevealedFogTiles(visibility) >= safeTileCount;
 }
 
 export function normalizeAchievementProgress(

@@ -2,6 +2,7 @@ import {
   appendEventLogEntries,
   applyAchievementMetricDelta,
   applyAchievementProgressValue,
+  hasFullyExploredMap,
   formatEquipmentRarityLabel,
   getEquipmentDefinition,
   type AchievementMetric,
@@ -279,6 +280,10 @@ function countBestEpicEquipmentLoadout(state: WorldState, playerId: string): num
     }, 0);
 }
 
+function countFullyExploredMaps(state: WorldState, playerId: string): number {
+  return hasFullyExploredMap(state.visibilityByPlayer[playerId], state.map.tiles.length) ? 1 : 0;
+}
+
 function createAchievementUnlockedEntry(
   state: WorldState,
   playerId: string,
@@ -341,6 +346,18 @@ export function applyPlayerEventLogAndAchievements(
   );
   achievements = epicCollectorResult.progress;
   for (const unlocked of epicCollectorResult.unlocked) {
+    sequence += 1;
+    entries.push(createAchievementUnlockedEntry(state, account.playerId, unlocked, timestamp, sequence));
+  }
+
+  const worldExplorerResult = applyAchievementProgressValue(
+    achievements,
+    "world_explorer",
+    countFullyExploredMaps(state, account.playerId),
+    timestamp
+  );
+  achievements = worldExplorerResult.progress;
+  for (const unlocked of worldExplorerResult.unlocked) {
     sequence += 1;
     entries.push(createAchievementUnlockedEntry(state, account.playerId, unlocked, timestamp, sequence));
   }

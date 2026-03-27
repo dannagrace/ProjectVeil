@@ -253,6 +253,54 @@ function createEpicEquipmentTrackingWorldState(): WorldState {
   };
 }
 
+function createFullyExploredTrackingWorldState(): WorldState {
+  const base = createAccountTrackingWorldState();
+  return {
+    ...base,
+    map: {
+      width: 2,
+      height: 2,
+      tiles: [
+        {
+          position: { x: 0, y: 0 },
+          terrain: "grass",
+          walkable: true,
+          resource: undefined,
+          occupant: undefined,
+          building: undefined
+        },
+        {
+          position: { x: 1, y: 0 },
+          terrain: "grass",
+          walkable: true,
+          resource: undefined,
+          occupant: undefined,
+          building: undefined
+        },
+        {
+          position: { x: 0, y: 1 },
+          terrain: "grass",
+          walkable: true,
+          resource: undefined,
+          occupant: undefined,
+          building: undefined
+        },
+        {
+          position: { x: 1, y: 1 },
+          terrain: "grass",
+          walkable: true,
+          resource: undefined,
+          occupant: undefined,
+          building: undefined
+        }
+      ]
+    },
+    visibilityByPlayer: {
+      "player-1": ["visible", "explored", "visible", "explored"]
+    }
+  };
+}
+
 function createReplaySummary(id: string, completedAt: string): PlayerBattleReplaySummary {
   return {
     id,
@@ -378,7 +426,7 @@ test("player account routes degrade to local-mode responses when persistence is 
   const publicProgressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/progression`);
   const publicProgressPayload = (await publicProgressResponse.json()) as PlayerProgressionSnapshot;
   assert.equal(publicProgressResponse.status, 200);
-  assert.equal(publicProgressPayload.summary.totalAchievements, 4);
+  assert.equal(publicProgressPayload.summary.totalAchievements, 5);
   assert.equal(publicProgressPayload.summary.unlockedAchievements, 0);
 
   const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
@@ -411,7 +459,7 @@ test("player account routes degrade to local-mode responses when persistence is 
   });
   const meProgressPayload = (await meProgressResponse.json()) as PlayerProgressionSnapshot;
   assert.equal(meProgressResponse.status, 200);
-  assert.equal(meProgressPayload.summary.totalAchievements, 4);
+  assert.equal(meProgressPayload.summary.totalAchievements, 5);
   assert.equal(meProgressPayload.summary.unlockedAchievements, 0);
 });
 
@@ -629,7 +677,7 @@ test("player account progression routes return a compact achievement and event r
   const publicPayload = (await publicResponse.json()) as PlayerProgressionSnapshot;
   assert.equal(publicResponse.status, 200);
   assert.deepEqual(publicPayload.summary, {
-    totalAchievements: 4,
+    totalAchievements: 5,
     unlockedAchievements: 1,
     inProgressAchievements: 1,
     latestProgressAchievementId: "enemy_slayer",
@@ -750,6 +798,29 @@ test("player achievement tracker syncs epic equipment loadout progress from worl
     "2026-03-27T12:10:00.000Z"
   );
   assert.match(updated.recentEventLog[0]?.description ?? "", /解锁成就：史诗武装/);
+});
+
+test("player achievement tracker syncs full map exploration progress from world visibility", () => {
+  const updated = applyPlayerEventLogAndAchievements(
+    {
+      playerId: "player-1",
+      displayName: "暮火侦骑",
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      recentEventLog: []
+    },
+    createFullyExploredTrackingWorldState(),
+    [],
+    "2026-03-27T12:12:00.000Z"
+  );
+
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "world_explorer")?.current, 1);
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "world_explorer")?.unlocked, true);
+  assert.equal(
+    updated.achievements.find((achievement) => achievement.id === "world_explorer")?.progressUpdatedAt,
+    "2026-03-27T12:12:00.000Z"
+  );
+  assert.match(updated.recentEventLog[0]?.description ?? "", /解锁成就：踏勘全境/);
 });
 
 test("player account profile updates by player id require auth and allow self-service only", async (t) => {
