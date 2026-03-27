@@ -7,7 +7,6 @@ import {
   experienceRequiredForNextLevel,
   formatEquipmentBonusSummary,
   formatEquipmentRarityLabel,
-  getLatestUnlockedAchievement,
   getDefaultBattleSkillCatalog,
   getEquipmentDefinition,
   predictPlayerWorldAction,
@@ -54,6 +53,7 @@ import {
   savePlayerAccountDisplayName as saveAccountDisplayName,
   type PlayerAccountProfile as ClientPlayerAccountProfile
 } from "./player-account";
+import { renderAchievementProgress, renderRecentAccountEvents } from "./account-history";
 
 const params = new URLSearchParams(window.location.search);
 const queryRoomId = params.get("roomId")?.trim() ?? "";
@@ -289,92 +289,6 @@ function formatAccountLastSeen(account: ClientPlayerAccountProfile): string {
 
 function formatGlobalVault(account: ClientPlayerAccountProfile): string {
   return `全局仓库 金币 ${account.globalResources.gold} / 木材 ${account.globalResources.wood} / 矿石 ${account.globalResources.ore}`;
-}
-
-function formatAchievementSummary(account: ClientPlayerAccountProfile): string {
-  const unlocked = account.achievements.filter((achievement) => achievement.unlocked).length;
-  const latestUnlocked = getLatestUnlockedAchievement(account.achievements);
-  return latestUnlocked
-    ? `成就 ${unlocked}/${account.achievements.length} 已解锁 · 最新 ${latestUnlocked.title}`
-    : `成就 ${unlocked}/${account.achievements.length} 已解锁`;
-}
-
-function formatEventLogCategory(category: ClientPlayerAccountProfile["recentEventLog"][number]["category"]): string {
-  switch (category) {
-    case "movement":
-      return "移动";
-    case "combat":
-      return "战斗";
-    case "building":
-      return "建筑";
-    case "skill":
-      return "养成";
-    case "achievement":
-      return "成就";
-    default:
-      return category;
-  }
-}
-
-function formatEventLogTimestamp(timestamp: string): string {
-  const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
-}
-
-function renderAchievementProgress(account: ClientPlayerAccountProfile): string {
-  if (account.achievements.length === 0) {
-    return '<p class="account-meta">暂无成就数据</p>';
-  }
-
-  return `<div class="account-subsection">
-    <strong>成就进度</strong>
-    <div class="account-achievement-list">
-      ${account.achievements
-        .map((achievement) => {
-          const ratio =
-            achievement.target > 0 ? Math.min(100, Math.round((achievement.current / achievement.target) * 100)) : 0;
-          return `<div class="account-achievement ${achievement.unlocked ? "is-unlocked" : ""}">
-            <div class="account-achievement-head">
-              <span>${escapeHtml(achievement.title)}</span>
-              <span>${achievement.current}/${achievement.target}</span>
-            </div>
-            <div class="account-achievement-bar"><span style="width:${ratio}%"></span></div>
-            <p>${escapeHtml(achievement.description)}</p>
-          </div>`;
-        })
-        .join("")}
-    </div>
-  </div>`;
-}
-
-function renderRecentAccountEvents(account: ClientPlayerAccountProfile): string {
-  if (account.recentEventLog.length === 0) {
-    return '<div class="account-subsection"><strong>世界事件日志</strong><p class="account-meta">尚未记录关键事件。</p></div>';
-  }
-
-  return `<div class="account-subsection">
-    <strong>世界事件日志</strong>
-    <div class="account-event-list">
-      ${account.recentEventLog
-        .slice(0, 6)
-        .map((entry) => {
-          const rewards =
-            entry.rewards.length > 0
-              ? ` · ${entry.rewards
-                  .map((reward) => (reward.amount != null ? `${reward.label} +${reward.amount}` : reward.label))
-                  .join(" / ")}`
-              : "";
-          return `<div class="account-event-entry">
-            <div class="account-event-head">
-              <span class="account-badge">${escapeHtml(formatEventLogCategory(entry.category))}</span>
-              <span>${escapeHtml(formatEventLogTimestamp(entry.timestamp))}</span>
-            </div>
-            <p>${escapeHtml(entry.description)}${escapeHtml(rewards)}</p>
-          </div>`;
-        })
-        .join("")}
-    </div>
-  </div>`;
 }
 
 function formatLobbyRoomUpdatedAt(updatedAt: string): string {
@@ -2573,7 +2487,6 @@ function render(): void {
           <p class="account-meta">${escapeHtml(formatCredentialBinding(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
-          <p class="account-meta">${escapeHtml(formatAchievementSummary(state.account))}</p>
           ${renderAchievementProgress(state.account)}
           ${renderRecentAccountEvents(state.account)}
           <div class="account-editor">
