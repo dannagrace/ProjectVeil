@@ -6,6 +6,29 @@ async function pressTile(page: Page, x: number, y: number): Promise<void> {
   });
 }
 
+async function attackUntilResolved(page: Page, maxAttacks = 6): Promise<void> {
+  for (let index = 0; index < maxAttacks; index += 1) {
+    const modalVisible = await page
+      .getByTestId("battle-modal")
+      .isVisible()
+      .catch(() => false);
+    if (modalVisible) {
+      return;
+    }
+
+    await expect(page.getByTestId("battle-attack")).toBeVisible({ timeout: 10_000 });
+    const logBeforeAttack = await page.getByTestId("battle-log").innerText();
+
+    await page.getByTestId("battle-attack").click();
+
+    await expect
+      .poll(async () => page.getByTestId("battle-log").innerText(), {
+        message: `battle log should change after attack ${index + 1}`
+      })
+      .not.toBe(logBeforeAttack);
+  }
+}
+
 test("hero can clear a neutral battle and receive the reward", async ({ page }) => {
   const roomId = `e2e-battle-${Date.now()}`;
   await page.goto(`/?roomId=${roomId}&playerId=player-1`);
@@ -18,15 +41,7 @@ test("hero can clear a neutral battle and receive the reward", async ({ page }) 
   await expect(page.getByTestId("battle-panel")).not.toContainText("No active battle");
   await expect(page.getByTestId("battle-attack")).toBeVisible();
 
-  const logBeforeAttack = await page.getByTestId("battle-log").innerText();
-
-  await page.getByTestId("battle-attack").click();
-
-  await expect
-    .poll(async () => page.getByTestId("battle-log").innerText(), {
-      message: "battle log should change after the player attacks"
-    })
-    .not.toBe(logBeforeAttack);
+  await attackUntilResolved(page);
 
   await expect(page.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
   await expect(page.getByTestId("battle-modal-body")).toContainText("gold +300");

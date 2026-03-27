@@ -758,6 +758,17 @@ h1 {
   box-shadow: 0 0 0 2px rgba(164, 77, 44, 0.18);
 }
 
+.tile.is-keyboard-cursor:not(.is-selected)::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 13px;
+  border: 2px solid rgba(47, 110, 91, 0.72);
+  box-shadow: 0 0 0 1px rgba(255, 247, 240, 0.88) inset;
+  pointer-events: none;
+  z-index: 3;
+}
+
 .tile.is-preview::after,
 .tile.is-travel::after {
   content: "";

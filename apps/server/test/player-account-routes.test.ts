@@ -324,6 +324,75 @@ test("player account routes list and fetch stored accounts", async (t) => {
   assert.equal(detailPayload.account.lastRoomId, "room-alpha");
 });
 
+test("player account routes degrade to local-mode responses when persistence is unavailable", async (t) => {
+  const port = 40025 + Math.floor(Math.random() * 1000);
+  const server = await startAccountRouteServer(port, null);
+  const session = issueGuestAuthSession({
+    playerId: "player-local",
+    displayName: "本地侦骑"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const listResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts`);
+  const listPayload = (await listResponse.json()) as { items: PlayerAccountSnapshot[] };
+  assert.equal(listResponse.status, 200);
+  assert.deepEqual(listPayload.items, []);
+
+  const detailResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local`);
+  const detailPayload = (await detailResponse.json()) as { account: PlayerAccountSnapshot };
+  assert.equal(detailResponse.status, 200);
+  assert.equal(detailPayload.account.playerId, "player-local");
+  assert.equal(detailPayload.account.displayName, "player-local");
+  assert.deepEqual(detailPayload.account.globalResources, { gold: 0, wood: 0, ore: 0 });
+
+  const publicReplayResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/battle-replays`);
+  const publicReplayPayload = (await publicReplayResponse.json()) as { items: PlayerBattleReplaySummary[] };
+  assert.equal(publicReplayResponse.status, 200);
+  assert.deepEqual(publicReplayPayload.items, []);
+
+  const publicProgressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/progression`);
+  const publicProgressPayload = (await publicProgressResponse.json()) as PlayerProgressionSnapshot;
+  assert.equal(publicProgressResponse.status, 200);
+  assert.equal(publicProgressPayload.summary.totalAchievements, 3);
+  assert.equal(publicProgressPayload.summary.unlockedAchievements, 0);
+
+  const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const mePayload = (await meResponse.json()) as {
+    account: PlayerAccountSnapshot;
+    session: { token: string; playerId: string; displayName: string };
+  };
+  assert.equal(meResponse.status, 200);
+  assert.equal(mePayload.account.playerId, "player-local");
+  assert.equal(mePayload.account.displayName, "本地侦骑");
+  assert.equal(mePayload.session.playerId, "player-local");
+
+  const meReplayResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/battle-replays`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const meReplayPayload = (await meReplayResponse.json()) as { items: PlayerBattleReplaySummary[] };
+  assert.equal(meReplayResponse.status, 200);
+  assert.deepEqual(meReplayPayload.items, []);
+
+  const meProgressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/progression`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const meProgressPayload = (await meProgressResponse.json()) as PlayerProgressionSnapshot;
+  assert.equal(meProgressResponse.status, 200);
+  assert.equal(meProgressPayload.summary.totalAchievements, 3);
+  assert.equal(meProgressPayload.summary.unlockedAchievements, 0);
+});
+
 test("player account battle replay routes return normalized replay summaries with optional limit", async (t) => {
   const port = 40050 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
@@ -632,6 +701,80 @@ test("player account profile updates by player id require auth and allow self-se
   const unchanged = await store.loadPlayerAccount("player-2");
   assert.equal(unchanged?.displayName, "北境执旗官");
   assert.equal(unchanged?.lastRoomId, "room-bravo");
+});
+
+test("player account update routes echo local-mode payloads when persistence is unavailable", async (t) => {
+  const port = 41030 + Math.floor(Math.random() * 1000);
+  const server = await startAccountRouteServer(port, null);
+  const session = issueGuestAuthSession({
+    playerId: "player-local",
+    displayName: "本地旅人"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const byIdResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      displayName: "本地改名",
+      lastRoomId: "room-local"
+    })
+  });
+  const byIdPayload = (await byIdResponse.json()) as {
+    account: PlayerAccountSnapshot;
+    session?: { token: string; playerId: string; displayName: string };
+  };
+
+  assert.equal(byIdResponse.status, 200);
+  assert.equal(byIdPayload.account.playerId, "player-local");
+  assert.equal(byIdPayload.account.displayName, "本地改名");
+  assert.equal(byIdPayload.account.lastRoomId, "room-local");
+  assert.equal(byIdPayload.session, undefined);
+
+  const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      displayName: "本地守望",
+      lastRoomId: "room-auth"
+    })
+  });
+  const mePayload = (await meResponse.json()) as {
+    account: PlayerAccountSnapshot;
+    session: { token: string; playerId: string; displayName: string };
+  };
+
+  assert.equal(meResponse.status, 200);
+  assert.equal(mePayload.account.playerId, "player-local");
+  assert.equal(mePayload.account.displayName, "本地守望");
+  assert.equal(mePayload.account.lastRoomId, "room-auth");
+  assert.equal(mePayload.session.playerId, "player-local");
+  assert.equal(mePayload.session.displayName, "本地守望");
+
+  const crossPlayerResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/other-player`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      displayName: "越权篡改"
+    })
+  });
+  const crossPlayerPayload = (await crossPlayerResponse.json()) as {
+    error: { code: string; message: string };
+  };
+
+  assert.equal(crossPlayerResponse.status, 403);
+  assert.equal(crossPlayerPayload.error.code, "forbidden");
 });
 
 test("player account me routes resolve and update the current authenticated account", async (t) => {

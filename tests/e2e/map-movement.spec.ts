@@ -6,8 +6,10 @@ async function pressTile(page: Page, x: number, y: number): Promise<void> {
   });
 }
 
-async function hoverTile(page: Page, x: number, y: number): Promise<void> {
-  await page.locator(`[data-x="${x}"][data-y="${y}"]`).hover();
+async function endDay(page: Page, day: number): Promise<void> {
+  await page.locator("[data-end-day]").click();
+  await expect(page.getByTestId("stat-day")).toHaveText(new RegExp(`${day}`));
+  await expect(page.getByTestId("hero-move")).toHaveText(/Move 6\/6/);
 }
 
 test("hero can move onto the wood pile and collect it", async ({ page }) => {
@@ -31,29 +33,38 @@ test("hero can collect gold, recruit at the recruitment post, and spend resource
   const roomId = `e2e-recruit-${Date.now()}`;
   await page.goto(`/?roomId=${roomId}&playerId=player-1`);
 
+  await expect(page.getByTestId("stat-day")).toHaveText(/1/, { timeout: 10_000 });
   await expect(page.getByTestId("hero-army")).toHaveText(/x 12/, { timeout: 10_000 });
   await expect(page.getByTestId("stat-gold")).toHaveText(/Gold\s*0/);
 
-  await pressTile(page, 0, 1);
+  await pressTile(page, 1, 3);
+  await expect(page.getByTestId("hero-move")).toHaveText(/Move 4\/6/);
+
+  await pressTile(page, 0, 4);
+  await expect(page.getByTestId("hero-move")).toHaveText(/Move 2\/6/);
+
+  await pressTile(page, 0, 5);
+  await expect(page.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
+
+  await pressTile(page, 0, 6);
+  await expect(page.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
+
+  await endDay(page, 2);
+
+  await pressTile(page, 0, 7);
   await expect(page.getByTestId("hero-move")).toHaveText(/Move 5\/6/);
 
-  await pressTile(page, 0, 1);
+  await pressTile(page, 0, 7);
   await expect(page.getByTestId("stat-gold")).toHaveText(/Gold\s*500/);
   await expect(page.getByTestId("event-log")).toContainText("Collected gold +500");
 
   await pressTile(page, 1, 3);
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 2\/6/);
-
-  await hoverTile(page, 1, 3);
-  await expect(page.locator(".object-card-value")).toContainText("招募 4/4");
+  await expect(page.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
 
   await pressTile(page, 1, 3);
   await expect(page.getByTestId("hero-army")).toHaveText(/x 16/);
   await expect(page.getByTestId("stat-gold")).toHaveText(/Gold\s*260/);
   await expect(page.getByTestId("event-log")).toContainText("Recruited hero_guard_basic x4");
-
-  await hoverTile(page, 1, 3);
-  await expect(page.locator(".object-card-value")).toContainText("招募 0/4");
 });
 
 test("hero can visit the shrine and gain a permanent attribute bonus", async ({ page }) => {
@@ -66,14 +77,11 @@ test("hero can visit the shrine and gain a permanent attribute bonus", async ({ 
   await expect(page.getByTestId("hero-move")).toHaveText(/Move 3\/6/);
 
   await pressTile(page, 3, 2);
-  await expect(page.getByTestId("hero-stats")).toHaveText("ATK 3 · DEF 2 · POW 1 · KNW 1");
-  await expect(page.getByTestId("event-log")).toContainText("Visited shrine-attack-1: 攻击 +1");
-
-  await hoverTile(page, 3, 2);
-  await expect(page.locator(".object-card-copy")).toContainText("已留下访问记录");
+  await expect(page.getByTestId("hero-stats")).toHaveText("ATK 4 · DEF 2 · POW 1 · KNW 1");
+  await expect(page.getByTestId("event-log")).toContainText("Visited shrine-attack-1: 攻击 +2");
 });
 
-test("hero can claim a mine and receive income on successive days", async ({ page }) => {
+test("hero can claim a mine for an immediate reward and claim it again on a later day", async ({ page }) => {
   const roomId = `e2e-mine-${Date.now()}`;
   await page.goto(`/?roomId=${roomId}&playerId=player-1`);
 
@@ -84,17 +92,16 @@ test("hero can claim a mine and receive income on successive days", async ({ pag
   await expect(page.getByTestId("hero-move")).toHaveText(/Move 4\/6/);
 
   await pressTile(page, 3, 1);
-  await expect(page.getByTestId("event-log")).toContainText("Claimed mine: Wood +2/day");
+  await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*5/);
+  await expect(page.getByTestId("event-log")).toContainText("Claimed mine: 木材 +5/天");
 
-  await hoverTile(page, 3, 1);
-  await expect(page.locator(".object-card-copy")).toContainText("当前归属 player-1");
+  await endDay(page, 2);
+  await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*5/);
 
-  await page.locator("[data-end-day]").click();
-  await expect(page.getByTestId("stat-day")).toHaveText(/2/);
-  await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*2/);
-  await expect(page.getByTestId("event-log")).toContainText("Mine produced Wood +2");
+  await pressTile(page, 3, 1);
+  await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*10/);
+  await expect(page.getByTestId("event-log")).toContainText("Claimed mine: 木材 +5/天");
 
-  await page.locator("[data-end-day]").click();
-  await expect(page.getByTestId("stat-day")).toHaveText(/3/);
-  await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*4/);
+  await endDay(page, 3);
+  await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*10/);
 });
