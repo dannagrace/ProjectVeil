@@ -57,6 +57,15 @@ export interface RoomPersistenceSnapshot {
   battles: BattleState[];
 }
 
+function hashBattleSeed(value: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
 export class AuthoritativeWorldRoom {
   private state: WorldState;
   private readonly battles = new Map<string, BattleState>();
@@ -215,6 +224,10 @@ export class AuthoritativeWorldRoom {
     };
   }
 
+  private createBattleSeed(battleId: string): number {
+    return hashBattleSeed(`${this.state.meta.seed}:${this.state.meta.day}:${battleId}`);
+  }
+
   private resolveAutomatedBattleTurns(battleId: string): WorldEvent[] {
     const events: WorldEvent[] = [];
 
@@ -305,7 +318,11 @@ export class AuthoritativeWorldRoom {
           continue;
         }
 
-        const battle = createNeutralBattleState(hero, neutralArmy, this.state.meta.seed + this.state.meta.day);
+        const battle = createNeutralBattleState(
+          hero,
+          neutralArmy,
+          this.createBattleSeed(battleEvent.battleId)
+        );
         this.trackStartedBattle(battle);
         startedBattleIds.push(battle.id);
         continue;
@@ -317,7 +334,11 @@ export class AuthoritativeWorldRoom {
           continue;
         }
 
-        const battle = createHeroBattleState(hero, defenderHero, this.state.meta.seed + this.state.meta.day);
+        const battle = createHeroBattleState(
+          hero,
+          defenderHero,
+          this.createBattleSeed(battleEvent.battleId)
+        );
         this.trackStartedBattle(battle);
         startedBattleIds.push(battle.id);
       }
