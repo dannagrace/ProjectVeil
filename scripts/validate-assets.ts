@@ -2,7 +2,12 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import assetConfigJson from "../configs/assets.json";
 import unitCatalog from "../configs/units.json";
-import { getAssetConfigValidationErrors, parseAssetConfig } from "../packages/shared/src/assets-config";
+import {
+  collectAssetPaths,
+  getAssetConfigValidationErrors,
+  parseAssetConfig,
+  summarizeAssetMetadata
+} from "../packages/shared/src/assets-config";
 
 const rootDir = process.cwd();
 const publicDir = path.join(rootDir, "apps/client/public");
@@ -22,8 +27,9 @@ if (errors.length > 0) {
   }
   process.exitCode = 1;
 } else {
+  const metadata = summarizeAssetMetadata(assetConfig);
   console.log(
-    `Asset validation passed: ${Object.keys(assetConfig.units).length} units, ${countAssetPaths(assetConfig)} registered files`
+    `Asset validation passed: ${Object.keys(assetConfig.units).length} units, ${collectAssetPaths(assetConfig).length} registered files, ${metadata.byStage.placeholder} placeholder / ${metadata.byStage.production} production`
   );
 }
 
@@ -75,48 +81,4 @@ function validateAssetFiles(assetConfig: ReturnType<typeof parseAssetConfig>, er
       errors.push(`${assetPath} does not exist at ${path.relative(rootDir, filepath)}`);
     }
   }
-}
-
-function collectAssetPaths(assetConfig: ReturnType<typeof parseAssetConfig>): string[] {
-  const paths = new Set<string>();
-
-  for (const terrain of Object.values(assetConfig.terrain)) {
-    paths.add(terrain.default);
-    for (const variant of terrain.variants) {
-      paths.add(variant);
-    }
-  }
-
-  for (const resource of Object.values(assetConfig.resources)) {
-    paths.add(resource);
-  }
-
-  for (const building of Object.values(assetConfig.buildings)) {
-    paths.add(building);
-  }
-
-  for (const unit of Object.values(assetConfig.units)) {
-    for (const portrait of Object.values(unit.portrait)) {
-      paths.add(portrait);
-    }
-    paths.add(unit.frame);
-  }
-
-  for (const marker of Object.values(assetConfig.markers)) {
-    for (const state of Object.values(marker)) {
-      paths.add(state);
-    }
-  }
-
-  for (const badgeGroup of Object.values(assetConfig.badges)) {
-    for (const badge of Object.values(badgeGroup)) {
-      paths.add(badge);
-    }
-  }
-
-  return [...paths];
-}
-
-function countAssetPaths(assetConfig: ReturnType<typeof parseAssetConfig>): number {
-  return collectAssetPaths(assetConfig).length;
 }
