@@ -337,6 +337,20 @@ test("achievement helpers can sync progress from an absolute value", () => {
     unlockedSync.progress.find((achievement) => achievement.id === "epic_collector")?.progressUpdatedAt,
     "2026-03-27T10:01:00.000Z"
   );
+
+  const regressedSync = applyAchievementProgressValue(
+    unlockedSync.progress,
+    "epic_collector",
+    1,
+    "2026-03-27T10:02:00.000Z"
+  );
+  assert.equal(regressedSync.unlocked.length, 0);
+  assert.equal(regressedSync.progress.find((achievement) => achievement.id === "epic_collector")?.current, 3);
+  assert.equal(regressedSync.progress.find((achievement) => achievement.id === "epic_collector")?.unlocked, true);
+  assert.equal(
+    regressedSync.progress.find((achievement) => achievement.id === "epic_collector")?.progressUpdatedAt,
+    "2026-03-27T10:01:00.000Z"
+  );
 });
 
 test("exploration helpers detect when a map has been fully revealed", () => {
