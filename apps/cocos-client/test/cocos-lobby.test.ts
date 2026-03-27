@@ -293,6 +293,7 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
         current: 1,
         target: 1,
         unlocked: true,
+        progressUpdatedAt: "2026-03-25T13:00:00.000Z",
         unlockedAt: "2026-03-25T13:00:00.000Z"
       },
       {
@@ -311,6 +312,15 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
         metric: "skills_learned",
         current: 0,
         target: 5,
+        unlocked: false
+      },
+      {
+        id: "epic_collector",
+        title: "史诗武装",
+        description: "为同一名英雄装备全套史诗装备。",
+        metric: "epic_equipment_slots",
+        current: 0,
+        target: 3,
         unlocked: false
       }
     ],

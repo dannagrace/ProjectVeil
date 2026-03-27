@@ -48,6 +48,7 @@ export interface PlayerAchievementProgress {
   current: number;
   target: number;
   unlocked: boolean;
+  progressUpdatedAt?: string;
   unlockedAt?: string;
 }
 
@@ -55,6 +56,9 @@ export interface PlayerProgressionSummary {
   totalAchievements: number;
   unlockedAchievements: number;
   inProgressAchievements: number;
+  latestProgressAchievementId?: AchievementId;
+  latestProgressAchievementTitle?: string;
+  latestProgressAt?: string;
   latestUnlockedAchievementId?: AchievementId;
   latestUnlockedAchievementTitle?: string;
   latestUnlockedAt?: string;
@@ -80,6 +84,22 @@ export function getLatestUnlockedAchievement(
     unlocked.sort((left, right) => {
       const unlockedAtOrder = String(right.unlockedAt).localeCompare(String(left.unlockedAt));
       return unlockedAtOrder || left.id.localeCompare(right.id);
+    })[0] ?? null
+  );
+}
+
+export function getLatestProgressedAchievement(
+  progress?: Partial<PlayerAchievementProgress>[] | null
+): PlayerAchievementProgress | null {
+  const progressed = normalizeAchievementProgress(progress).filter((entry) => entry.current > 0 && entry.progressUpdatedAt);
+  if (progressed.length === 0) {
+    return null;
+  }
+
+  return (
+    progressed.sort((left, right) => {
+      const progressOrder = String(right.progressUpdatedAt).localeCompare(String(left.progressUpdatedAt));
+      return progressOrder || left.id.localeCompare(right.id);
     })[0] ?? null
   );
 }
@@ -142,6 +162,8 @@ export function normalizeAchievementProgress(
         }
 
         const current = Math.max(0, Math.floor(entry.current ?? 0));
+        const progressUpdatedAt =
+          normalizeTimestamp(entry.progressUpdatedAt) ?? (current > 0 ? normalizeTimestamp(entry.unlockedAt) : undefined);
         const unlockedAt = normalizeTimestamp(entry.unlockedAt);
         return [
           definition.id,
@@ -153,6 +175,7 @@ export function normalizeAchievementProgress(
             current,
             target: definition.target,
             unlocked: current >= definition.target || Boolean(unlockedAt),
+            ...(progressUpdatedAt ? { progressUpdatedAt } : {}),
             ...(unlockedAt ? { unlockedAt } : {})
           }
         ] as const;
@@ -178,7 +201,7 @@ export function applyAchievementMetricDelta(
   progress: Partial<PlayerAchievementProgress>[] | null | undefined,
   metric: AchievementMetric,
   amount: number,
-  unlockedAt = new Date().toISOString()
+  recordedAt = new Date().toISOString()
 ): {
   progress: PlayerAchievementProgress[];
   unlocked: PlayerAchievementProgress[];
@@ -200,11 +223,20 @@ export function applyAchievementMetricDelta(
 
     const previousUnlocked = entry.unlocked;
     const current = Math.min(entry.target, entry.current + safeAmount);
+    if (current === entry.current) {
+      return entry;
+    }
+
     const nextEntry: PlayerAchievementProgress = {
       ...entry,
       current,
+      ...(current > 0 ? { progressUpdatedAt: recordedAt } : {}),
       unlocked: current >= entry.target,
-      ...(current >= entry.target ? { unlockedAt: entry.unlockedAt ?? unlockedAt } : entry.unlockedAt ? { unlockedAt: entry.unlockedAt } : {})
+      ...(current >= entry.target
+        ? { unlockedAt: entry.unlockedAt ?? recordedAt }
+        : entry.unlockedAt
+          ? { unlockedAt: entry.unlockedAt }
+          : {})
     };
 
     if (!previousUnlocked && nextEntry.unlocked) {
@@ -224,7 +256,7 @@ export function applyAchievementProgressValue(
   progress: Partial<PlayerAchievementProgress>[] | null | undefined,
   achievementId: AchievementId,
   current: number,
-  unlockedAt = new Date().toISOString()
+  recordedAt = new Date().toISOString()
 ): {
   progress: PlayerAchievementProgress[];
   unlocked: PlayerAchievementProgress[];
@@ -239,11 +271,20 @@ export function applyAchievementProgressValue(
 
     const previousUnlocked = entry.unlocked;
     const nextCurrent = Math.min(entry.target, safeCurrent);
+    if (nextCurrent === entry.current) {
+      return entry;
+    }
+
     const nextEntry: PlayerAchievementProgress = {
       ...entry,
       current: nextCurrent,
+      ...(nextCurrent > 0 ? { progressUpdatedAt: recordedAt } : {}),
       unlocked: nextCurrent >= entry.target,
-      ...(nextCurrent >= entry.target ? { unlockedAt: entry.unlockedAt ?? unlockedAt } : entry.unlockedAt ? { unlockedAt: entry.unlockedAt } : {})
+      ...(nextCurrent >= entry.target
+        ? { unlockedAt: entry.unlockedAt ?? recordedAt }
+        : entry.unlockedAt
+          ? { unlockedAt: entry.unlockedAt }
+          : {})
     };
 
     if (!previousUnlocked && nextEntry.unlocked) {
@@ -338,6 +379,7 @@ export function buildPlayerProgressionSnapshot(
 ): PlayerProgressionSnapshot {
   const normalizedAchievements = normalizeAchievementProgress(achievements);
   const normalizedRecentEventLog = normalizeEventLogEntries(recentEventLog).slice(0, Math.max(1, Math.floor(eventLimit)));
+  const latestProgressed = getLatestProgressedAchievement(normalizedAchievements);
   const latestUnlocked = getLatestUnlockedAchievement(normalizedAchievements);
   const unlockedAchievements = normalizedAchievements.filter((entry) => entry.unlocked).length;
 
@@ -346,6 +388,13 @@ export function buildPlayerProgressionSnapshot(
       totalAchievements: normalizedAchievements.length,
       unlockedAchievements,
       inProgressAchievements: normalizedAchievements.filter((entry) => !entry.unlocked && entry.current > 0).length,
+      ...(latestProgressed
+        ? {
+            latestProgressAchievementId: latestProgressed.id,
+            latestProgressAchievementTitle: latestProgressed.title,
+            latestProgressAt: latestProgressed.progressUpdatedAt
+          }
+        : {}),
       ...(latestUnlocked
         ? {
             latestUnlockedAchievementId: latestUnlocked.id,
