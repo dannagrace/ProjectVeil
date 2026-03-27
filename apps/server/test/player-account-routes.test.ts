@@ -825,6 +825,20 @@ test("player account event-history routes page dedicated history entries beyond 
   assert.equal(mePayload.total, 2);
   assert.equal(mePayload.hasMore, false);
   assert.deepEqual(mePayload.items.map((entry) => entry.id), ["event-history-2", "event-history-1"]);
+
+  const rangedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-history/event-history?since=2026-03-27T12:02:00.000Z&until=2026-03-27T12:04:00.000Z`
+  );
+  const rangedPayload = (await rangedResponse.json()) as {
+    items: PlayerAccountSnapshot["recentEventLog"];
+    total: number;
+    offset: number;
+    limit: number;
+    hasMore: boolean;
+  };
+  assert.equal(rangedResponse.status, 200);
+  assert.equal(rangedPayload.total, 1);
+  assert.deepEqual(rangedPayload.items.map((entry) => entry.id), ["event-history-2"]);
 });
 
 test("player account achievement routes filter normalized progress without loading event history", async (t) => {

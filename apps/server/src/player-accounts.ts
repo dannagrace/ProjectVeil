@@ -122,6 +122,16 @@ function parseNumberQueryParam(request: IncomingMessage, key: string): number | 
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function parseTimestampQueryParam(request: IncomingMessage, key: string): string | undefined {
+  const value = parseOptionalQueryParam(request, key);
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+}
+
 function toReplayResponseFromRequest(
   account: PlayerAccountSnapshot,
   request: IncomingMessage
@@ -228,6 +238,8 @@ function toEventHistoryQuery(request: IncomingMessage): PlayerEventHistoryQuery 
   const worldEventType = parseOptionalQueryParam(request, "worldEventType") as
     | PlayerAccountSnapshot["recentEventLog"][number]["worldEventType"]
     | undefined;
+  const since = parseTimestampQueryParam(request, "since");
+  const until = parseTimestampQueryParam(request, "until");
 
   return {
     ...(limit != null ? { limit } : {}),
@@ -235,7 +247,9 @@ function toEventHistoryQuery(request: IncomingMessage): PlayerEventHistoryQuery 
     ...(category ? { category } : {}),
     ...(heroId ? { heroId } : {}),
     ...(achievementId ? { achievementId } : {}),
-    ...(worldEventType ? { worldEventType } : {})
+    ...(worldEventType ? { worldEventType } : {}),
+    ...(since ? { since } : {}),
+    ...(until ? { until } : {})
   };
 }
 
