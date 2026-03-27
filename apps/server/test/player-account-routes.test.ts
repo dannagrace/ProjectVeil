@@ -9,6 +9,8 @@ import type {
   PlayerAccountAuthSnapshot,
   PlayerAccountCredentialInput,
   PlayerAccountEnsureInput,
+  PlayerEventHistoryQuery,
+  PlayerEventHistorySnapshot,
   PlayerAccountListOptions,
   PlayerAccountProfilePatch,
   PlayerAccountSnapshot,
@@ -19,6 +21,7 @@ import type { RoomPersistenceSnapshot } from "../src/index";
 import {
   createDefaultHeroLoadout,
   createDefaultHeroProgression,
+  queryEventLogEntries,
   type PlayerAchievementProgress,
   type PlayerProgressionSnapshot,
   type PlayerBattleReplaySummary,
@@ -28,6 +31,7 @@ import {
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
+  private readonly eventHistoryByPlayerId = new Map<string, PlayerAccountSnapshot["recentEventLog"]>();
 
   async load(_roomId: string): Promise<RoomPersistenceSnapshot | null> {
     return null;
@@ -42,6 +46,23 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return (
       Array.from(this.accounts.values()).find((account) => account.loginId === normalizedLoginId) ?? null
     );
+  }
+
+  async loadPlayerEventHistory(
+    playerId: string,
+    query: PlayerEventHistoryQuery = {}
+  ): Promise<PlayerEventHistorySnapshot> {
+    const items = queryEventLogEntries(this.eventHistoryByPlayerId.get(playerId) ?? [], query);
+    const total = queryEventLogEntries(this.eventHistoryByPlayerId.get(playerId) ?? [], {
+      ...query,
+      limit: undefined,
+      offset: undefined
+    }).length;
+
+    return {
+      items,
+      total
+    };
   }
 
   async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {
@@ -175,6 +196,13 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   seedAccount(account: PlayerAccountSnapshot): void {
     this.accounts.set(account.playerId, account);
+    if (!this.eventHistoryByPlayerId.has(account.playerId)) {
+      this.eventHistoryByPlayerId.set(account.playerId, structuredClone(account.recentEventLog ?? []));
+    }
+  }
+
+  seedEventHistory(playerId: string, entries: PlayerAccountSnapshot["recentEventLog"]): void {
+    this.eventHistoryByPlayerId.set(playerId, structuredClone(entries));
   }
 }
 
@@ -691,6 +719,112 @@ test("player account event-log routes filter recent entries without loading prog
   const mePayload = (await meResponse.json()) as { items: PlayerAccountSnapshot["recentEventLog"] };
   assert.equal(meResponse.status, 200);
   assert.deepEqual(mePayload.items.map((entry) => entry.id), ["event-achievement"]);
+});
+
+test("player account event-history routes page dedicated history entries beyond the recent snapshot", async (t) => {
+  const port = 42069 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-history",
+    displayName: "霜灯抄录员",
+    globalResources: { gold: 22, wood: 7, ore: 1 },
+    achievements: [],
+    recentEventLog: [
+      {
+        id: "event-recent",
+        timestamp: "2026-03-27T12:05:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-history",
+        category: "achievement",
+        description: "recent snapshot entry",
+        heroId: "hero-1",
+        achievementId: "first_battle",
+        rewards: [{ type: "badge", label: "初次交锋" }]
+      }
+    ],
+    recentBattleReplays: [],
+    lastRoomId: "room-alpha",
+    lastSeenAt: new Date("2026-03-27T12:06:00.000Z").toISOString()
+  });
+  store.seedEventHistory("player-history", [
+    {
+      id: "event-history-3",
+      timestamp: "2026-03-27T12:05:00.000Z",
+      roomId: "room-alpha",
+      playerId: "player-history",
+      category: "achievement",
+      description: "history newest",
+      heroId: "hero-1",
+      achievementId: "first_battle",
+      rewards: [{ type: "badge", label: "初次交锋" }]
+    },
+    {
+      id: "event-history-2",
+      timestamp: "2026-03-27T12:03:00.000Z",
+      roomId: "room-alpha",
+      playerId: "player-history",
+      category: "combat",
+      description: "history middle",
+      heroId: "hero-1",
+      worldEventType: "battle.started",
+      rewards: []
+    },
+    {
+      id: "event-history-1",
+      timestamp: "2026-03-27T12:01:00.000Z",
+      roomId: "room-alpha",
+      playerId: "player-history",
+      category: "combat",
+      description: "history oldest",
+      heroId: "hero-1",
+      worldEventType: "battle.resolved",
+      rewards: []
+    }
+  ]);
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-history",
+    displayName: "霜灯抄录员"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const publicResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-history/event-history?heroId=hero-1&offset=1&limit=1`
+  );
+  const publicPayload = (await publicResponse.json()) as {
+    items: PlayerAccountSnapshot["recentEventLog"];
+    total: number;
+    offset: number;
+    limit: number;
+    hasMore: boolean;
+  };
+  assert.equal(publicResponse.status, 200);
+  assert.equal(publicPayload.total, 3);
+  assert.equal(publicPayload.offset, 1);
+  assert.equal(publicPayload.limit, 1);
+  assert.equal(publicPayload.hasMore, true);
+  assert.deepEqual(publicPayload.items.map((entry) => entry.id), ["event-history-2"]);
+
+  const meResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/event-history?category=combat`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const mePayload = (await meResponse.json()) as {
+    items: PlayerAccountSnapshot["recentEventLog"];
+    total: number;
+    hasMore: boolean;
+  };
+  assert.equal(meResponse.status, 200);
+  assert.equal(mePayload.total, 2);
+  assert.equal(mePayload.hasMore, false);
+  assert.deepEqual(mePayload.items.map((entry) => entry.id), ["event-history-2", "event-history-1"]);
 });
 
 test("player account achievement routes filter normalized progress without loading event history", async (t) => {

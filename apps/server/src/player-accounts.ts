@@ -10,7 +10,12 @@ import {
   type PlayerBattleReplaySummary
 } from "../../../packages/shared/src/index";
 import { issueNextAuthSession, resolveAuthSessionFromRequest } from "./auth";
-import type { PlayerAccountProfilePatch, PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
+import type {
+  PlayerAccountProfilePatch,
+  PlayerAccountSnapshot,
+  PlayerEventHistoryQuery,
+  RoomSnapshotStore
+} from "./persistence";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -65,6 +70,17 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
 function parseLimit(request: IncomingMessage): number | undefined {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const value = url.searchParams.get("limit");
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseOffset(request: IncomingMessage): number | undefined {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const value = url.searchParams.get("offset");
   if (!value) {
     return undefined;
   }
@@ -198,6 +214,28 @@ function toEventLogResponse(
       ...(achievementId ? { achievementId } : {}),
       ...(worldEventType ? { worldEventType } : {})
     })
+  };
+}
+
+function toEventHistoryQuery(request: IncomingMessage): PlayerEventHistoryQuery {
+  const offset = parseOffset(request);
+  const limit = parseLimit(request);
+  const category = parseOptionalQueryParam(request, "category") as PlayerAccountSnapshot["recentEventLog"][number]["category"] | undefined;
+  const heroId = parseOptionalQueryParam(request, "heroId");
+  const achievementId = parseOptionalQueryParam(request, "achievementId") as
+    | PlayerAccountSnapshot["recentEventLog"][number]["achievementId"]
+    | undefined;
+  const worldEventType = parseOptionalQueryParam(request, "worldEventType") as
+    | PlayerAccountSnapshot["recentEventLog"][number]["worldEventType"]
+    | undefined;
+
+  return {
+    ...(limit != null ? { limit } : {}),
+    ...(offset != null ? { offset } : {}),
+    ...(category ? { category } : {}),
+    ...(heroId ? { heroId } : {}),
+    ...(achievementId ? { achievementId } : {}),
+    ...(worldEventType ? { worldEventType } : {})
   };
 }
 
@@ -539,6 +577,49 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.get("/api/player-accounts/me/event-history", async (request, response) => {
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    const query = toEventHistoryQuery(request);
+    if (!store) {
+      const account = createLocalModeAccount({
+        playerId: authSession.playerId,
+        displayName: authSession.displayName,
+        loginId: authSession.loginId
+      });
+      const total = queryEventLogEntries(account.recentEventLog, {
+        ...query,
+        limit: undefined,
+        offset: undefined
+      }).length;
+      const items = queryEventLogEntries(account.recentEventLog, query);
+      sendJson(response, 200, {
+        items,
+        total,
+        offset: Math.max(0, Math.floor(query.offset ?? 0)),
+        limit: query.limit ?? items.length,
+        hasMore: (query.offset ?? 0) + items.length < total
+      });
+      return;
+    }
+
+    try {
+      const history = await store.loadPlayerEventHistory(authSession.playerId, query);
+      sendJson(response, 200, {
+        ...history,
+        offset: Math.max(0, Math.floor(query.offset ?? 0)),
+        limit: query.limit ?? history.items.length,
+        hasMore: (query.offset ?? 0) + history.items.length < history.total
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
   app.get("/api/player-accounts/me/achievements", async (request, response) => {
     const authSession = resolveAuthSessionFromRequest(request);
     if (!authSession) {
@@ -807,6 +888,39 @@ export function registerPlayerAccountRoutes(
       }
 
       sendJson(response, 200, toEventLogResponse(account, request));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/event-history", async (request, response) => {
+    const playerId = request.params.playerId?.trim();
+    if (!playerId) {
+      sendNotFound(response);
+      return;
+    }
+
+    const query = toEventHistoryQuery(request);
+    if (!store) {
+      const items = queryEventLogEntries([], query);
+      sendJson(response, 200, {
+        items,
+        total: 0,
+        offset: Math.max(0, Math.floor(query.offset ?? 0)),
+        limit: query.limit ?? items.length,
+        hasMore: false
+      });
+      return;
+    }
+
+    try {
+      const history = await store.loadPlayerEventHistory(playerId, query);
+      sendJson(response, 200, {
+        ...history,
+        offset: Math.max(0, Math.floor(query.offset ?? 0)),
+        limit: query.limit ?? history.items.length,
+        hasMore: (query.offset ?? 0) + history.items.length < history.total
+      });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
