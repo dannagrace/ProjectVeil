@@ -70,6 +70,7 @@ test("player account helpers can build a local fallback profile", () => {
       }
     ],
     recentEventLog: [],
+    recentBattleReplays: [],
     lastRoomId: "room-beta",
     source: "local"
   });

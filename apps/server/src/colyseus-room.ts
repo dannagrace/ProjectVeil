@@ -5,6 +5,7 @@ import {
   filterWorldEventsForPlayer,
   listReachableTiles,
   planHeroMovement,
+  type PlayerBattleReplaySummary,
   type ClientMessage,
   type MovementPlan,
   type ServerMessage,
@@ -12,6 +13,11 @@ import {
   type WorldEvent
 } from "../../../packages/shared/src/index";
 import { createRoom, type AuthoritativeWorldRoom, type RoomPersistenceSnapshot } from "./index";
+import {
+  appendCompletedBattleReplaysToAccount,
+  buildPlayerBattleReplaySummary,
+  type CompletedBattleReplayCapture
+} from "./battle-replays";
 import {
   applyPlayerAccountsToWorldState,
   applyPlayerHeroArchivesToWorldState,
@@ -226,7 +232,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
         return;
       }
-      await this.persistPlayerAccountProgress(result.events ?? []);
+      await this.persistPlayerAccountProgress(result.events ?? [], this.worldRoom.consumeCompletedBattleReplays());
 
       this.publishLobbyRoomSummary();
       sendMessage(client, "session.state", {
@@ -261,7 +267,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
         return;
       }
-      await this.persistPlayerAccountProgress(result.events ?? []);
+      await this.persistPlayerAccountProgress(result.events ?? [], this.worldRoom.consumeCompletedBattleReplays());
 
       this.publishLobbyRoomSummary();
       sendMessage(client, "session.state", {
@@ -328,9 +334,12 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     await configuredRoomSnapshotStore.save(this.metadata.logicalRoomId, this.worldRoom.serializePersistenceSnapshot());
   }
 
-  private async persistPlayerAccountProgress(events: WorldEvent[]): Promise<void> {
+  private async persistPlayerAccountProgress(
+    events: WorldEvent[],
+    completedReplays: CompletedBattleReplayCapture[]
+  ): Promise<void> {
     const store = configuredRoomSnapshotStore;
-    if (!store || events.length === 0) {
+    if (!store || (events.length === 0 && completedReplays.length === 0)) {
       return;
     }
 
@@ -341,7 +350,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     await Promise.all(
       playerIds.map(async (playerId) => {
         const playerEvents = filterWorldEventsForPlayer(internalState, playerId, events);
-        if (playerEvents.length === 0) {
+        const playerReplays = completedReplays.flatMap((replay) => this.buildPlayerBattleReplaysForAccount(replay, playerId));
+        if (playerEvents.length === 0 && playerReplays.length === 0) {
           return;
         }
 
@@ -351,14 +361,43 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             playerId,
             lastRoomId: this.metadata.logicalRoomId
           }));
-        const nextAccount = applyPlayerEventLogAndAchievements(existingAccount, internalState, playerEvents);
+        const nextAccount = appendCompletedBattleReplaysToAccount(
+          applyPlayerEventLogAndAchievements(existingAccount, internalState, playerEvents),
+          playerReplays
+        );
         await store.savePlayerAccountProgress(playerId, {
           achievements: nextAccount.achievements,
           recentEventLog: nextAccount.recentEventLog,
+          ...(nextAccount.recentBattleReplays ? { recentBattleReplays: nextAccount.recentBattleReplays } : {}),
           lastRoomId: this.metadata.logicalRoomId
         });
       })
     ).catch(() => undefined);
+  }
+
+  private buildPlayerBattleReplaysForAccount(
+    replay: CompletedBattleReplayCapture,
+    playerId: string
+  ): PlayerBattleReplaySummary[] {
+    const battle = replay.battleState;
+    const attackerHero =
+      battle.worldHeroId != null
+        ? this.worldRoom.getInternalState().heroes.find((hero) => hero.id === battle.worldHeroId)
+        : undefined;
+    const defenderHero =
+      battle.defenderHeroId != null
+        ? this.worldRoom.getInternalState().heroes.find((hero) => hero.id === battle.defenderHeroId)
+        : undefined;
+
+    if (attackerHero?.playerId === playerId && battle.worldHeroId) {
+      return [buildPlayerBattleReplaySummary(replay, playerId, battle.worldHeroId, "attacker", battle.defenderHeroId)];
+    }
+
+    if (defenderHero?.playerId === playerId && battle.defenderHeroId) {
+      return [buildPlayerBattleReplaySummary(replay, playerId, battle.defenderHeroId, "defender", battle.worldHeroId)];
+    }
+
+    return [];
   }
 
   private publishLobbyRoomSummary(): void {

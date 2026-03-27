@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   applyBattleAction,
   appendEventLogEntries,
+  appendPlayerBattleReplaySummaries,
   applyBattleOutcomeToWorld,
   applyAchievementMetricDelta,
   createHeroAttributeBreakdown,
@@ -34,6 +35,7 @@ import {
   getBattleOutcome,
   getDefaultEquipmentCatalog,
   getLatestUnlockedAchievement,
+  normalizePlayerBattleReplaySummaries,
   pickAutomatedBattleAction,
   planPlayerViewMovement,
   predictPlayerWorldAction,
@@ -276,6 +278,66 @@ test("event log helper keeps newest unique entries first", () => {
     merged.map((entry) => entry.id),
     ["newer", "older"]
   );
+});
+
+test("battle replay helpers normalize steps and keep newest unique replays first", () => {
+  const battle = createEmptyBattleState();
+  const normalized = normalizePlayerBattleReplaySummaries([
+    {
+      id: "replay-older",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      battleId: "battle-1",
+      battleKind: "neutral",
+      playerCamp: "attacker",
+      heroId: "hero-1",
+      neutralArmyId: "neutral-1",
+      startedAt: "2026-03-27T10:00:00.000Z",
+      completedAt: "2026-03-27T10:01:00.000Z",
+      initialState: battle,
+      steps: [{ index: 2, source: "player", action: { type: "battle.wait", unitId: "hero-1-stack" } }],
+      result: "attacker_victory"
+    }
+  ]);
+
+  const merged = appendPlayerBattleReplaySummaries(normalized, [
+    {
+      id: "replay-newer",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      battleId: "battle-2",
+      battleKind: "hero",
+      playerCamp: "defender",
+      heroId: "hero-2",
+      opponentHeroId: "hero-1",
+      startedAt: "2026-03-27T10:02:00.000Z",
+      completedAt: "2026-03-27T10:03:00.000Z",
+      initialState: battle,
+      steps: [
+        { index: 5, source: "automated", action: { type: "battle.defend", unitId: "hero-2-stack" } }
+      ],
+      result: "defender_victory"
+    },
+    {
+      id: "replay-older",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      battleId: "battle-1",
+      battleKind: "neutral",
+      playerCamp: "attacker",
+      heroId: "hero-1",
+      neutralArmyId: "neutral-1",
+      startedAt: "2026-03-27T10:00:00.000Z",
+      completedAt: "2026-03-27T10:01:00.000Z",
+      initialState: battle,
+      steps: [{ index: 9, source: "player", action: { type: "battle.wait", unitId: "hero-1-stack" } }],
+      result: "attacker_victory"
+    }
+  ]);
+
+  assert.deepEqual(merged.map((replay) => replay.id), ["replay-newer", "replay-older"]);
+  assert.equal(merged[0]?.steps[0]?.index, 5);
+  assert.equal(merged[1]?.steps[0]?.index, 9);
 });
 
 test("typed-array world map payload is materially smaller than the raw tile JSON on a 32x32 map", () => {
