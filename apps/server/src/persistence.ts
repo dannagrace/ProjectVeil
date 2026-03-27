@@ -3,9 +3,11 @@ import {
   appendPlayerBattleReplaySummaries,
   normalizeAchievementProgress,
   normalizeEventLogEntries,
+  normalizePlayerAccountReadModel,
   normalizeHeroState,
   type EventLogEntry,
   type HeroState,
+  type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress,
   type ResourceLedger,
@@ -132,17 +134,8 @@ export interface PlayerRoomProfileSnapshot {
   resources: ResourceLedger;
 }
 
-export interface PlayerAccountSnapshot {
-  playerId: string;
-  displayName: string;
-  globalResources: ResourceLedger;
-  achievements: PlayerAchievementProgress[];
-  recentEventLog: EventLogEntry[];
+export interface PlayerAccountSnapshot extends PlayerAccountReadModel {
   recentBattleReplays?: PlayerBattleReplaySummary[];
-  lastRoomId?: string;
-  lastSeenAt?: string;
-  loginId?: string;
-  credentialBoundAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -333,16 +326,18 @@ function normalizePlayerAccountSnapshot(account: {
   const playerId = normalizePlayerId(account.playerId);
 
   return {
-    playerId,
-    displayName: normalizePlayerDisplayName(playerId, account.displayName),
-    globalResources: normalizeResourceLedger(account.globalResources),
-    achievements: normalizeAchievementProgress(account.achievements),
-    recentEventLog: normalizeEventLogEntries(account.recentEventLog),
-    recentBattleReplays: appendPlayerBattleReplaySummaries([], account.recentBattleReplays),
-    ...(account.lastRoomId ? { lastRoomId: account.lastRoomId } : {}),
-    ...(account.lastSeenAt ? { lastSeenAt: account.lastSeenAt } : {}),
-    ...(account.loginId ? { loginId: normalizePlayerLoginId(account.loginId) } : {}),
-    ...(account.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
+    ...normalizePlayerAccountReadModel({
+      playerId,
+      displayName: normalizePlayerDisplayName(playerId, account.displayName),
+      globalResources: normalizeResourceLedger(account.globalResources),
+      achievements: account.achievements,
+      recentEventLog: account.recentEventLog,
+      recentBattleReplays: appendPlayerBattleReplaySummaries([], account.recentBattleReplays),
+      lastRoomId: account.lastRoomId,
+      lastSeenAt: account.lastSeenAt,
+      loginId: account.loginId ? normalizePlayerLoginId(account.loginId) : undefined,
+      credentialBoundAt: account.credentialBoundAt
+    }),
     ...(account.createdAt ? { createdAt: account.createdAt } : {}),
     ...(account.updatedAt ? { updatedAt: account.updatedAt } : {})
   };
@@ -379,12 +374,11 @@ export function createPlayerRoomProfiles(state: WorldState): PlayerRoomProfileSn
 
 export function createPlayerAccountsFromWorldState(state: WorldState): PlayerAccountSnapshot[] {
   return collectPlayerIds(state).map((playerId) => ({
-    playerId,
-    displayName: normalizePlayerDisplayName(playerId),
-    globalResources: normalizeResourceLedger(state.resources[playerId]),
-    achievements: normalizeAchievementProgress(),
-    recentEventLog: normalizeEventLogEntries(),
-    recentBattleReplays: appendPlayerBattleReplaySummaries([], [])
+    ...normalizePlayerAccountReadModel({
+      playerId,
+      displayName: normalizePlayerDisplayName(playerId),
+      globalResources: normalizeResourceLedger(state.resources[playerId])
+    })
   }));
 }
 

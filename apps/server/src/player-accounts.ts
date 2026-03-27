@@ -92,17 +92,25 @@ function toEventLogResponse(
   account: PlayerAccountSnapshot,
   request: IncomingMessage
 ): { items: PlayerAccountSnapshot["recentEventLog"] } {
+  const limit = parseLimit(request);
+  const category = parseOptionalQueryParam(request, "category") as
+    | PlayerAccountSnapshot["recentEventLog"][number]["category"]
+    | undefined;
+  const heroId = parseOptionalQueryParam(request, "heroId");
+  const achievementId = parseOptionalQueryParam(request, "achievementId") as
+    | PlayerAccountSnapshot["recentEventLog"][number]["achievementId"]
+    | undefined;
+  const worldEventType = parseOptionalQueryParam(request, "worldEventType") as
+    | PlayerAccountSnapshot["recentEventLog"][number]["worldEventType"]
+    | undefined;
+
   return {
     items: queryEventLogEntries(account.recentEventLog, {
-      limit: parseLimit(request),
-      category: parseOptionalQueryParam(request, "category") as PlayerAccountSnapshot["recentEventLog"][number]["category"] | undefined,
-      heroId: parseOptionalQueryParam(request, "heroId"),
-      achievementId: parseOptionalQueryParam(request, "achievementId") as
-        | PlayerAccountSnapshot["recentEventLog"][number]["achievementId"]
-        | undefined,
-      worldEventType: parseOptionalQueryParam(request, "worldEventType") as
-        | PlayerAccountSnapshot["recentEventLog"][number]["worldEventType"]
-        | undefined
+      ...(limit != null ? { limit } : {}),
+      ...(category ? { category } : {}),
+      ...(heroId ? { heroId } : {}),
+      ...(achievementId ? { achievementId } : {}),
+      ...(worldEventType ? { worldEventType } : {})
     })
   };
 }
@@ -130,11 +138,11 @@ function normalizeLoginId(loginId?: string | null): string | undefined {
 }
 
 function createLocalModeAccount(input: {
-  playerId?: string | null;
-  displayName?: string | null;
-  lastRoomId?: string | null;
-  loginId?: string | null;
-  credentialBoundAt?: string | null;
+  playerId?: string | null | undefined;
+  displayName?: string | null | undefined;
+  lastRoomId?: string | null | undefined;
+  loginId?: string | null | undefined;
+  credentialBoundAt?: string | null | undefined;
 }): PlayerAccountSnapshot {
   const playerId = normalizePlayerId(input.playerId);
   const displayName = normalizeDisplayName(playerId, input.displayName);

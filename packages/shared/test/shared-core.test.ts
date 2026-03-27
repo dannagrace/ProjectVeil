@@ -43,6 +43,7 @@ import {
   getLatestProgressedAchievement,
   getLatestUnlockedAchievement,
   hasFullyExploredMap,
+  normalizePlayerAccountReadModel,
   normalizePlayerBattleReplaySummaries,
   pauseBattleReplayPlayback,
   pickAutomatedBattleAction,
@@ -520,6 +521,95 @@ test("player progression snapshot summarizes unlocked achievements and recent ev
   assert.deepEqual(snapshot.recentEventLog.map((entry) => entry.id), ["event-newer"]);
   assert.equal(snapshot.achievements[1]?.id, "enemy_slayer");
   assert.equal(snapshot.achievements[1]?.current, 2);
+});
+
+test("player account read model helper normalizes progression, replays, and resource fields together", () => {
+  const account = normalizePlayerAccountReadModel({
+    playerId: " player-1 ",
+    displayName: "  ",
+    globalResources: {
+      gold: 12.9,
+      wood: -3,
+      ore: 4.1
+    },
+    achievements: [
+      {
+        id: "first_battle",
+        current: 1,
+        unlockedAt: "2026-03-27T12:00:00.000Z"
+      }
+    ],
+    recentEventLog: [
+      {
+        id: "event-older",
+        timestamp: "2026-03-27T11:59:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        category: "combat",
+        description: "older",
+        rewards: []
+      },
+      {
+        id: "event-newer",
+        timestamp: "2026-03-27T12:01:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        category: "achievement",
+        description: "newer",
+        achievementId: "first_battle",
+        rewards: []
+      }
+    ],
+    recentBattleReplays: [
+      {
+        id: "replay-1",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        battleId: "battle-1",
+        battleKind: "neutral",
+        playerCamp: "attacker",
+        heroId: "hero-1",
+        startedAt: "2026-03-27T11:58:00.000Z",
+        completedAt: "2026-03-27T12:02:00.000Z",
+        initialState: createEmptyBattleState({
+          id: "battle-1",
+          attackerHeroId: "hero-1",
+          defenderHeroId: "neutral-1"
+        }),
+        steps: [],
+        result: "attacker_victory"
+      }
+    ],
+    loginId: "  CAPTAIN ",
+    lastRoomId: " room-alpha "
+  });
+
+  assert.equal(account.playerId, "player-1");
+  assert.equal(account.displayName, "player-1");
+  assert.deepEqual(account.globalResources, {
+    gold: 12,
+    wood: 0,
+    ore: 4
+  });
+  assert.equal(account.achievements.find((achievement) => achievement.id === "first_battle")?.unlocked, true);
+  assert.deepEqual(account.recentEventLog.map((entry) => entry.id), ["event-newer", "event-older"]);
+  assert.deepEqual(account.recentBattleReplays.map((replay) => replay.id), ["replay-1"]);
+  assert.equal(account.loginId, "captain");
+  assert.equal(account.lastRoomId, "room-alpha");
+});
+
+test("player account read model helper falls back to empty progression collections", () => {
+  const account = normalizePlayerAccountReadModel();
+
+  assert.equal(account.displayName, "player");
+  assert.equal(account.achievements.length, getAchievementDefinitions().length);
+  assert.deepEqual(account.recentEventLog, []);
+  assert.deepEqual(account.recentBattleReplays, []);
+  assert.deepEqual(account.globalResources, {
+    gold: 0,
+    wood: 0,
+    ore: 0
+  });
 });
 
 test("battle replay helpers normalize steps and keep newest unique replays first", () => {

@@ -7,10 +7,10 @@ import {
 } from "./auth-session";
 import {
   normalizePlayerProgressionSnapshot,
-  normalizeAchievementProgress,
+  normalizePlayerAccountReadModel,
   normalizePlayerBattleReplaySummaries,
-  normalizeEventLogEntries,
   type EventLogEntry,
+  type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress,
   type PlayerProgressionSnapshot
@@ -19,21 +19,7 @@ import {
 const PLAYER_ACCOUNT_PREFIX = "project-veil:player-account";
 const PLAYER_ACCOUNT_REQUEST_TIMEOUT_MS = 1200;
 
-export interface PlayerAccountProfile {
-  playerId: string;
-  displayName: string;
-  globalResources: {
-    gold: number;
-    wood: number;
-    ore: number;
-  };
-  achievements: PlayerAchievementProgress[];
-  recentEventLog: EventLogEntry[];
-  recentBattleReplays: PlayerBattleReplaySummary[];
-  loginId?: string;
-  credentialBoundAt?: string;
-  lastRoomId?: string;
-  lastSeenAt?: string;
+export interface PlayerAccountProfile extends PlayerAccountReadModel {
   source: "remote" | "local";
 }
 
@@ -78,16 +64,6 @@ function normalizePlayerDisplayName(playerId: string, displayName?: string | nul
 function normalizeLoginId(loginId?: string | null): string | undefined {
   const normalized = loginId?.trim().toLowerCase();
   return normalized ? normalized : undefined;
-}
-
-function normalizeGlobalResources(
-  resources?: NonNullable<PlayerAccountApiPayload["account"]>["globalResources"] | null
-): PlayerAccountProfile["globalResources"] {
-  return {
-    gold: Math.max(0, Math.floor(resources?.gold ?? 0)),
-    wood: Math.max(0, Math.floor(resources?.wood ?? 0)),
-    ore: Math.max(0, Math.floor(resources?.ore ?? 0))
-  };
 }
 
 function getPlayerAccountStorage(): Storage | null {
@@ -146,18 +122,19 @@ function asPlayerAccountProfile(
   account?: PlayerAccountApiPayload["account"],
   fallbackDisplayName?: string | null
 ): PlayerAccountProfile {
-  const loginId = normalizeLoginId(account?.loginId);
   return {
-    playerId,
-    displayName: normalizePlayerDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
-    globalResources: normalizeGlobalResources(account?.globalResources),
-    achievements: normalizeAchievementProgress(account?.achievements),
-    recentEventLog: normalizeEventLogEntries(account?.recentEventLog),
-    recentBattleReplays: normalizePlayerBattleReplaySummaries(account?.recentBattleReplays),
-    ...(loginId ? { loginId } : {}),
-    ...(account?.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
-    ...(account?.lastRoomId ? { lastRoomId: account.lastRoomId } : roomId ? { lastRoomId: roomId } : {}),
-    ...(account?.lastSeenAt ? { lastSeenAt: account.lastSeenAt } : {}),
+    ...normalizePlayerAccountReadModel({
+      playerId,
+      displayName: normalizePlayerDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
+      globalResources: account?.globalResources,
+      achievements: account?.achievements,
+      recentEventLog: account?.recentEventLog,
+      recentBattleReplays: account?.recentBattleReplays,
+      loginId: normalizeLoginId(account?.loginId),
+      credentialBoundAt: account?.credentialBoundAt,
+      lastRoomId: account?.lastRoomId ?? roomId,
+      lastSeenAt: account?.lastSeenAt
+    }),
     source
   };
 }
@@ -188,13 +165,11 @@ export function createFallbackPlayerAccountProfile(
   displayName?: string | null
 ): PlayerAccountProfile {
   return {
-    playerId,
-    displayName: normalizePlayerDisplayName(playerId, displayName),
-    globalResources: normalizeGlobalResources(),
-    achievements: normalizeAchievementProgress(),
-    recentEventLog: normalizeEventLogEntries(),
-    recentBattleReplays: normalizePlayerBattleReplaySummaries(),
-    ...(roomId ? { lastRoomId: roomId } : {}),
+    ...normalizePlayerAccountReadModel({
+      playerId,
+      displayName: normalizePlayerDisplayName(playerId, displayName),
+      lastRoomId: roomId
+    }),
     source: "local"
   };
 }

@@ -5,10 +5,9 @@ import {
   writeStoredCocosAuthSession
 } from "./cocos-session-launch.ts";
 import {
-  normalizeAchievementProgress,
-  normalizePlayerBattleReplaySummaries,
-  normalizeEventLogEntries,
+  normalizePlayerAccountReadModel,
   type EventLogEntry,
+  type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress
 } from "../../../../packages/shared/src/index.ts";
@@ -33,21 +32,7 @@ export interface CocosLobbyRoomSummary {
   updatedAt: string;
 }
 
-export interface CocosPlayerAccountProfile {
-  playerId: string;
-  displayName: string;
-  globalResources: {
-    gold: number;
-    wood: number;
-    ore: number;
-  };
-  achievements: PlayerAchievementProgress[];
-  recentEventLog: EventLogEntry[];
-  recentBattleReplays: PlayerBattleReplaySummary[];
-  loginId?: string;
-  credentialBoundAt?: string;
-  lastRoomId?: string;
-  lastSeenAt?: string;
+export interface CocosPlayerAccountProfile extends PlayerAccountReadModel {
   source: "remote" | "local";
 }
 
@@ -123,16 +108,6 @@ function normalizeLoginId(value?: string | null): string | undefined {
   return normalized ? normalized : undefined;
 }
 
-function normalizeGlobalResources(
-  resources?: NonNullable<PlayerAccountApiPayload["account"]>["globalResources"] | null
-): CocosPlayerAccountProfile["globalResources"] {
-  return {
-    gold: Math.max(0, Math.floor(resources?.gold ?? 0)),
-    wood: Math.max(0, Math.floor(resources?.wood ?? 0)),
-    ore: Math.max(0, Math.floor(resources?.ore ?? 0))
-  };
-}
-
 function readStoredLobbyPreferencesUnsafe(storage: Pick<Storage, "getItem">): Partial<CocosLobbyPreferences> | null {
   const raw = storage.getItem(LOBBY_PREFERENCES_STORAGE_KEY);
   if (!raw) {
@@ -176,18 +151,19 @@ function asCocosPlayerAccountProfile(
   account?: PlayerAccountApiPayload["account"],
   fallbackDisplayName?: string | null
 ): CocosPlayerAccountProfile {
-  const loginId = normalizeLoginId(account?.loginId);
   return {
-    playerId,
-    displayName: normalizeDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
-    globalResources: normalizeGlobalResources(account?.globalResources),
-    achievements: normalizeAchievementProgress(account?.achievements),
-    recentEventLog: normalizeEventLogEntries(account?.recentEventLog),
-    recentBattleReplays: normalizePlayerBattleReplaySummaries(account?.recentBattleReplays),
-    ...(loginId ? { loginId } : {}),
-    ...(account?.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
-    ...(account?.lastRoomId ? { lastRoomId: account.lastRoomId } : roomId ? { lastRoomId: roomId } : {}),
-    ...(account?.lastSeenAt ? { lastSeenAt: account.lastSeenAt } : {}),
+    ...normalizePlayerAccountReadModel({
+      playerId,
+      displayName: normalizeDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
+      globalResources: account?.globalResources,
+      achievements: account?.achievements,
+      recentEventLog: account?.recentEventLog,
+      recentBattleReplays: account?.recentBattleReplays,
+      loginId: normalizeLoginId(account?.loginId),
+      credentialBoundAt: account?.credentialBoundAt,
+      lastRoomId: account?.lastRoomId ?? roomId,
+      lastSeenAt: account?.lastSeenAt
+    }),
     source
   };
 }
@@ -277,13 +253,11 @@ export function createFallbackCocosPlayerAccountProfile(
   displayName?: string | null
 ): CocosPlayerAccountProfile {
   return {
-    playerId,
-    displayName: normalizeDisplayName(playerId, displayName),
-    globalResources: normalizeGlobalResources(),
-    achievements: normalizeAchievementProgress(),
-    recentEventLog: normalizeEventLogEntries(),
-    recentBattleReplays: normalizePlayerBattleReplaySummaries(),
-    ...(roomId ? { lastRoomId: roomId } : {}),
+    ...normalizePlayerAccountReadModel({
+      playerId,
+      displayName: normalizeDisplayName(playerId, displayName),
+      lastRoomId: roomId
+    }),
     source: "local"
   };
 }
