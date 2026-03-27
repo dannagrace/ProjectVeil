@@ -4,6 +4,8 @@ import {
   createFallbackPlayerAccountProfile,
   getPlayerAccountStorageKey,
   loadPlayerAchievementProgress,
+  loadPlayerBattleReplayDetail,
+  loadPlayerBattleReplayPlayback,
   loadPlayerBattleReplaySummaries,
   loadPlayerEventLog,
   loadPlayerProgressionSnapshot,
@@ -308,6 +310,243 @@ test("player replay loader clears expired auth session and falls back to normali
     });
     assert.deepEqual(replays, []);
     assert.equal(globalThis.window.localStorage.getItem("project-veil:auth-session"), null);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player replay detail loader requests a replay by id and normalizes the payload", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(): string | null {
+          return null;
+        },
+        setItem(): void {}
+      }
+    }
+  });
+
+  globalThis.fetch = (async (input) => {
+    requestedUrl = String(input);
+    return new Response(
+      JSON.stringify({
+        replay: {
+          id: "replay-detail",
+          roomId: "room-alpha",
+          playerId: "player-1",
+          battleId: "battle-1",
+          battleKind: "neutral",
+          playerCamp: "attacker",
+          heroId: "hero-1",
+          neutralArmyId: "neutral-1",
+          startedAt: "2026-03-27T12:00:00.000Z",
+          completedAt: "2026-03-27T12:01:00.000Z",
+          initialState: {
+            id: "battle-1",
+            round: 1,
+            lanes: 1,
+            activeUnitId: "stack-1",
+            turnOrder: ["stack-1"],
+            units: {
+              "stack-1": {
+                id: "stack-1",
+                camp: "attacker",
+                templateId: "hero_guard_basic",
+                lane: 0,
+                stackName: "暮火侦骑",
+                initiative: 3,
+                attack: 2,
+                defense: 1,
+                minDamage: 1,
+                maxDamage: 2,
+                count: 10,
+                currentHp: 10,
+                maxHp: 10,
+                hasRetaliated: false,
+                defending: false
+              }
+            },
+            environment: [],
+            log: [],
+            rng: { seed: 7, cursor: 0 }
+          },
+          steps: [],
+          result: "attacker_victory"
+        }
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }) as typeof fetch;
+
+  try {
+    const replay = await loadPlayerBattleReplayDetail("player-1", "replay-detail");
+    assert.equal(
+      requestedUrl,
+      "http://127.0.0.1:2567/api/player-accounts/player-1/battle-replays/replay-detail"
+    );
+    assert.equal(replay?.id, "replay-detail");
+    assert.equal(replay?.neutralArmyId, "neutral-1");
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player replay playback loader uses stateless command query params and clears expired auth", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const localStorageValues = new Map<string, string>([
+    [
+      "project-veil:auth-session",
+      JSON.stringify({
+        playerId: "player-1",
+        displayName: "雾林司灯",
+        authMode: "guest",
+        token: "session-token",
+        source: "remote"
+      })
+    ]
+  ]);
+  const requestedUrls: string[] = [];
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(key: string): string | null {
+          return localStorageValues.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          localStorageValues.set(key, value);
+        },
+        removeItem(key: string): void {
+          localStorageValues.delete(key);
+        }
+      }
+    }
+  });
+
+  globalThis.fetch = (async (input) => {
+    requestedUrls.push(String(input));
+    if (requestedUrls.length === 1) {
+      return new Response(
+        JSON.stringify({
+          playback: {
+            replay: {
+              id: "replay-playback",
+              roomId: "room-alpha",
+              playerId: "player-1",
+              battleId: "battle-1",
+              battleKind: "neutral",
+              playerCamp: "attacker",
+              heroId: "hero-1",
+              neutralArmyId: "neutral-1",
+              startedAt: "2026-03-27T12:00:00.000Z",
+              completedAt: "2026-03-27T12:01:00.000Z",
+              initialState: {
+                id: "battle-1",
+                round: 1,
+                lanes: 1,
+                activeUnitId: "stack-1",
+                turnOrder: ["stack-1"],
+                units: {
+                  "stack-1": {
+                    id: "stack-1",
+                    camp: "attacker",
+                    templateId: "hero_guard_basic",
+                    lane: 0,
+                    stackName: "暮火侦骑",
+                    initiative: 3,
+                    attack: 2,
+                    defense: 1,
+                    minDamage: 1,
+                    maxDamage: 2,
+                    count: 10,
+                    currentHp: 10,
+                    maxHp: 10,
+                    hasRetaliated: false,
+                    defending: false
+                  }
+                },
+                environment: [],
+                log: [],
+                rng: { seed: 7, cursor: 0 }
+              },
+              steps: [
+                {
+                  index: 1,
+                  source: "player",
+                  action: {
+                    type: "battle.wait",
+                    unitId: "stack-1"
+                  }
+                }
+              ],
+              result: "attacker_victory"
+            },
+            status: "playing",
+            currentStepIndex: 1
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+  }) as typeof fetch;
+
+  try {
+    const playback = await loadPlayerBattleReplayPlayback("player-1", "replay-playback", {
+      currentStepIndex: 0,
+      status: "paused",
+      action: "tick",
+      repeat: 1
+    });
+    assert.equal(
+      requestedUrls[0],
+      "http://127.0.0.1:2567/api/player-accounts/me/battle-replays/replay-playback/playback?currentStepIndex=0&status=paused&action=tick&repeat=1"
+    );
+    assert.equal(playback?.status, "completed");
+    assert.equal(playback?.currentStepIndex, 1);
+
+    const missingPlayback = await loadPlayerBattleReplayPlayback("player-1", "replay-playback");
+    assert.equal(missingPlayback, null);
+    assert.equal(localStorageValues.has("project-veil:auth-session"), false);
   } finally {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
