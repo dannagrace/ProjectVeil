@@ -747,3 +747,68 @@ test("player account me route preserves account-mode sessions and returns the gl
   assert.equal(mePayload.session.authMode, "account");
   assert.equal(mePayload.session.loginId, "veil-ranger");
 });
+
+test("player account update routes reject oversized JSON bodies with 413", async (t) => {
+  const port = 42150 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-oversized",
+    displayName: "起始名册",
+    globalResources: { gold: 0, wood: 0, ore: 0 },
+    achievements: [],
+    recentEventLog: [],
+    recentBattleReplays: [],
+    lastRoomId: "room-start",
+    lastSeenAt: new Date("2026-03-25T12:00:00.000Z").toISOString(),
+    createdAt: new Date("2026-03-25T12:00:00.000Z").toISOString(),
+    updatedAt: new Date("2026-03-25T12:00:00.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-oversized",
+    displayName: "起始名册"
+  });
+  const oversizedBody = JSON.stringify({
+    displayName: "x".repeat(70_000)
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: oversizedBody
+  });
+  const mePayload = (await meResponse.json()) as {
+    error: { code: string; message: string };
+  };
+
+  assert.equal(meResponse.status, 413);
+  assert.equal(mePayload.error.code, "payload_too_large");
+  assert.match(mePayload.error.message, /65536 bytes/);
+
+  const byIdResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-oversized`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: oversizedBody
+  });
+  const byIdPayload = (await byIdResponse.json()) as {
+    error: { code: string; message: string };
+  };
+
+  assert.equal(byIdResponse.status, 413);
+  assert.equal(byIdPayload.error.code, "payload_too_large");
+  assert.match(byIdPayload.error.message, /65536 bytes/);
+
+  const stored = await store.loadPlayerAccount("player-oversized");
+  assert.equal(stored?.displayName, "起始名册");
+  assert.equal(stored?.lastRoomId, "room-start");
+});
