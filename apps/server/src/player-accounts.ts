@@ -1,9 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   buildPlayerProgressionSnapshot,
+  queryPlayerBattleReplaySummaries,
   queryAchievementProgress,
   queryEventLogEntries,
-  normalizePlayerBattleReplaySummaries
+  type PlayerBattleReplaySummary
 } from "../../../packages/shared/src/index";
 import { issueNextAuthSession, resolveAuthSessionFromRequest } from "./auth";
 import type { PlayerAccountProfilePatch, PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
@@ -92,11 +93,38 @@ function parseBooleanQueryParam(request: IncomingMessage, key: string): boolean 
   return undefined;
 }
 
-function toReplayResponse(account: PlayerAccountSnapshot, limit?: number): { items: PlayerAccountSnapshot["recentBattleReplays"] } {
-  const items = normalizePlayerBattleReplaySummaries(account.recentBattleReplays);
-  const safeLimit = limit == null ? undefined : Math.max(1, Math.floor(limit));
+function toReplayResponseFromRequest(
+  account: PlayerAccountSnapshot,
+  request: IncomingMessage
+): { items: PlayerAccountSnapshot["recentBattleReplays"] } {
+  const limit = parseLimit(request);
+  const roomId = parseOptionalQueryParam(request, "roomId");
+  const battleId = parseOptionalQueryParam(request, "battleId");
+  const battleKind = parseOptionalQueryParam(request, "battleKind") as
+    | PlayerBattleReplaySummary["battleKind"]
+    | undefined;
+  const playerCamp = parseOptionalQueryParam(request, "playerCamp") as
+    | PlayerBattleReplaySummary["playerCamp"]
+    | undefined;
+  const heroId = parseOptionalQueryParam(request, "heroId");
+  const opponentHeroId = parseOptionalQueryParam(request, "opponentHeroId");
+  const neutralArmyId = parseOptionalQueryParam(request, "neutralArmyId");
+  const result = parseOptionalQueryParam(request, "result") as
+    | PlayerBattleReplaySummary["result"]
+    | undefined;
+
   return {
-    items: safeLimit == null ? items : items.slice(0, safeLimit)
+    items: queryPlayerBattleReplaySummaries(account.recentBattleReplays, {
+      ...(limit != null ? { limit } : {}),
+      ...(roomId ? { roomId } : {}),
+      ...(battleId ? { battleId } : {}),
+      ...(battleKind ? { battleKind } : {}),
+      ...(playerCamp ? { playerCamp } : {}),
+      ...(heroId ? { heroId } : {}),
+      ...(opponentHeroId ? { opponentHeroId } : {}),
+      ...(neutralArmyId ? { neutralArmyId } : {}),
+      ...(result ? { result } : {})
+    })
   };
 }
 
@@ -323,7 +351,7 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
-      sendJson(response, 200, toReplayResponse(account, parseLimit(request)));
+      sendJson(response, 200, toReplayResponseFromRequest(account, request));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
@@ -499,7 +527,7 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
-      sendJson(response, 200, toReplayResponse(account, parseLimit(request)));
+      sendJson(response, 200, toReplayResponseFromRequest(account, request));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

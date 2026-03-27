@@ -12,6 +12,7 @@ import {
   buildPlayerProgressionSnapshot,
   queryAchievementProgress,
   queryEventLogEntries,
+  queryPlayerBattleReplaySummaries,
   createHeroAttributeBreakdown,
   createHeroEquipmentBonusSummary,
   createHeroEquipmentLoadoutView,
@@ -702,6 +703,61 @@ test("battle replay helpers normalize steps and keep newest unique replays first
   assert.deepEqual(merged.map((replay) => replay.id), ["replay-newer", "replay-older"]);
   assert.equal(merged[0]?.steps[0]?.index, 5);
   assert.equal(merged[1]?.steps[0]?.index, 9);
+});
+
+test("battle replay query helper filters normalized summaries by replay metadata", () => {
+  const battle = createEmptyBattleState();
+  const replays = normalizePlayerBattleReplaySummaries([
+    {
+      id: "replay-neutral",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      battleId: "battle-neutral-1",
+      battleKind: "neutral",
+      playerCamp: "attacker",
+      heroId: "hero-1",
+      neutralArmyId: "neutral-1",
+      startedAt: "2026-03-27T10:00:00.000Z",
+      completedAt: "2026-03-27T10:01:00.000Z",
+      initialState: battle,
+      steps: [],
+      result: "attacker_victory"
+    },
+    {
+      id: "replay-hero",
+      roomId: "room-beta",
+      playerId: "player-1",
+      battleId: "battle-hero-1",
+      battleKind: "hero",
+      playerCamp: "defender",
+      heroId: "hero-2",
+      opponentHeroId: "hero-9",
+      startedAt: "2026-03-27T10:02:00.000Z",
+      completedAt: "2026-03-27T10:03:00.000Z",
+      initialState: battle,
+      steps: [],
+      result: "defender_victory"
+    }
+  ]);
+
+  assert.deepEqual(
+    queryPlayerBattleReplaySummaries(replays, {
+      battleKind: "hero",
+      playerCamp: "defender",
+      opponentHeroId: "hero-9"
+    }).map((replay) => replay.id),
+    ["replay-hero"]
+  );
+
+  assert.deepEqual(
+    queryPlayerBattleReplaySummaries(replays, {
+      roomId: "room-alpha",
+      neutralArmyId: "neutral-1",
+      result: "attacker_victory",
+      limit: 1
+    }).map((replay) => replay.id),
+    ["replay-neutral"]
+  );
 });
 
 test("battle replay playback helpers support play pause tick and reset controls", () => {
