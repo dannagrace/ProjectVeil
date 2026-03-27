@@ -1,3 +1,4 @@
+import { applyBattleAction } from "./battle";
 import type { BattleAction, BattleState } from "./models";
 
 export type BattleReplayResult = "attacker_victory" | "defender_victory";
@@ -27,6 +28,18 @@ export interface PlayerBattleReplaySummary {
   result: BattleReplayResult;
 }
 
+export type BattleReplayPlaybackStatus = "paused" | "playing" | "completed";
+
+export interface BattleReplayPlaybackState {
+  replay: PlayerBattleReplaySummary;
+  status: BattleReplayPlaybackStatus;
+  currentStepIndex: number;
+  totalSteps: number;
+  currentState: BattleState;
+  currentStep: BattleReplayStep | null;
+  nextStep: BattleReplayStep | null;
+}
+
 function normalizeTimestamp(value?: string | null): string | undefined {
   if (!value) {
     return undefined;
@@ -37,14 +50,90 @@ function normalizeTimestamp(value?: string | null): string | undefined {
 }
 
 function cloneBattleState(state: BattleState): BattleState {
+  return structuredClone(state);
+}
+
+function resolvePlaybackStatus(
+  requestedStatus: Exclude<BattleReplayPlaybackStatus, "completed">,
+  currentStepIndex: number,
+  totalSteps: number
+): BattleReplayPlaybackStatus {
+  return currentStepIndex >= totalSteps ? "completed" : requestedStatus;
+}
+
+function buildPlaybackState(
+  replay: PlayerBattleReplaySummary,
+  currentState: BattleState,
+  currentStepIndex: number,
+  status: Exclude<BattleReplayPlaybackStatus, "completed">
+): BattleReplayPlaybackState {
+  const totalSteps = replay.steps.length;
+  const boundedStepIndex = Math.max(0, Math.min(totalSteps, Math.floor(currentStepIndex)));
   return {
-    ...state,
-    units: Object.fromEntries(Object.entries(state.units).map(([unitId, unit]) => [unitId, { ...unit }])),
-    environment: state.environment.map((hazard) => ({ ...hazard })),
-    log: [...state.log],
-    rng: { ...state.rng },
-    ...(state.encounterPosition ? { encounterPosition: { ...state.encounterPosition } } : {})
+    replay,
+    status: resolvePlaybackStatus(status, boundedStepIndex, totalSteps),
+    currentStepIndex: boundedStepIndex,
+    totalSteps,
+    currentState: cloneBattleState(currentState),
+    currentStep: replay.steps[boundedStepIndex - 1] ?? null,
+    nextStep: replay.steps[boundedStepIndex] ?? null
   };
+}
+
+export function createBattleReplayPlaybackState(replay: PlayerBattleReplaySummary): BattleReplayPlaybackState {
+  return buildPlaybackState(replay, replay.initialState, 0, "paused");
+}
+
+export function playBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
+  if (playback.currentStepIndex >= playback.totalSteps) {
+    return {
+      ...playback,
+      status: "completed"
+    };
+  }
+
+  return {
+    ...playback,
+    status: "playing"
+  };
+}
+
+export function pauseBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
+  if (playback.status === "completed") {
+    return playback;
+  }
+
+  return {
+    ...playback,
+    status: "paused"
+  };
+}
+
+export function resetBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
+  return buildPlaybackState(playback.replay, playback.replay.initialState, 0, "paused");
+}
+
+export function stepBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
+  const nextStep = playback.nextStep;
+  if (!nextStep) {
+    return {
+      ...playback,
+      status: "completed"
+    };
+  }
+
+  const nextState = applyBattleAction(playback.currentState, nextStep.action);
+  const nextStepIndex = playback.currentStepIndex + 1;
+  const nextStatus = playback.status === "playing" ? "playing" : "paused";
+  return buildPlaybackState(playback.replay, nextState, nextStepIndex, nextStatus);
+}
+
+export function tickBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
+  if (playback.status !== "playing") {
+    return playback;
+  }
+
+  return stepBattleReplayPlayback(playback);
 }
 
 function normalizeBattleReplayStep(step: Partial<BattleReplayStep> | null | undefined, fallbackIndex: number): BattleReplayStep | null {
