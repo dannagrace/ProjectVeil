@@ -1,4 +1,5 @@
 import { sys } from "cc";
+import type { EquipmentType } from "../../../../packages/shared/src/index.ts";
 
 export interface Vec2 {
   x: number;
@@ -367,6 +368,13 @@ export type WorldEvent =
       newlyGrantedBattleSkillIds: BattleSkillId[];
     }
   | {
+      type: "hero.equipmentChanged";
+      heroId: string;
+      slot: EquipmentType;
+      equippedItemId?: string;
+      unequippedItemId?: string;
+    }
+  | {
       type: "hero.equipmentFound";
       heroId: string;
       battleId: string;
@@ -477,6 +485,17 @@ type WorldAction =
       type: "hero.learnSkill";
       heroId: string;
       skillId: string;
+    }
+  | {
+      type: "hero.equip";
+      heroId: string;
+      slot: EquipmentType;
+      equipmentId: string;
+    }
+  | {
+      type: "hero.unequip";
+      heroId: string;
+      slot: EquipmentType;
     }
   | {
       type: "turn.endDay";
@@ -1062,6 +1081,47 @@ class RemoteGameSession {
     return update;
   }
 
+  async equipHeroItem(heroId: string, slot: EquipmentType, equipmentId: string): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.equip",
+          heroId,
+          slot,
+          equipmentId
+        }
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
+  async unequipHeroItem(heroId: string, slot: EquipmentType): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.unequip",
+          heroId,
+          slot
+        }
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
   async endDay(): Promise<SessionUpdate> {
     const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
       {
@@ -1261,6 +1321,14 @@ class RecoverableRemoteGameSession {
     return this.runWithSession((session) => session.learnSkill(heroId, skillId));
   }
 
+  async equipHeroItem(heroId: string, slot: EquipmentType, equipmentId: string): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.equipHeroItem(heroId, slot, equipmentId));
+  }
+
+  async unequipHeroItem(heroId: string, slot: EquipmentType): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.unequipHeroItem(heroId, slot));
+  }
+
   async endDay(): Promise<SessionUpdate> {
     return this.runWithSession((session) => session.endDay());
   }
@@ -1393,6 +1461,14 @@ export class VeilCocosSession {
 
   async learnSkill(heroId: string, skillId: string): Promise<SessionUpdate> {
     return this.remoteSession.learnSkill(heroId, skillId);
+  }
+
+  async equipHeroItem(heroId: string, slot: EquipmentType, equipmentId: string): Promise<SessionUpdate> {
+    return this.remoteSession.equipHeroItem(heroId, slot, equipmentId);
+  }
+
+  async unequipHeroItem(heroId: string, slot: EquipmentType): Promise<SessionUpdate> {
+    return this.remoteSession.unequipHeroItem(heroId, slot);
   }
 
   async endDay(): Promise<SessionUpdate> {

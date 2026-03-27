@@ -84,6 +84,10 @@ interface LobbyRoomsApiPayload {
   items?: CocosLobbyRoomSummary[];
 }
 
+interface PlayerBattleReplayListApiPayload {
+  items?: Partial<PlayerBattleReplaySummary>[];
+}
+
 type FetchLike = typeof fetch;
 
 function getCocosStorage(): Storage | null {
@@ -190,6 +194,37 @@ function asCocosPlayerAccountProfile(
     ...(account?.lastSeenAt ? { lastSeenAt: account.lastSeenAt } : {}),
     source
   };
+}
+
+async function loadCocosBattleReplaySummaries(
+  remoteUrl: string,
+  playerId: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    authSession?: CocosStoredAuthSession | null;
+    storage?: Pick<Storage, "removeItem"> | null;
+  }
+): Promise<PlayerBattleReplaySummary[]> {
+  const authSession = options?.authSession ?? null;
+  const endpoint = authSession?.token
+    ? `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/battle-replays`
+    : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays`;
+
+  try {
+    const payload = (await fetchJson(
+      endpoint,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      options?.fetchImpl
+    )) as PlayerBattleReplayListApiPayload;
+    return normalizePlayerBattleReplaySummaries(payload.items);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && options?.storage) {
+      clearStoredCocosAuthSession(options.storage);
+    }
+    return normalizePlayerBattleReplaySummaries();
+  }
 }
 
 async function fetchJson(
@@ -545,6 +580,11 @@ export async function loadCocosPlayerAccountProfile(
       payload.account,
       storedDisplayName
     );
+    const recentBattleReplays = await loadCocosBattleReplaySummaries(remoteUrl, resolvedPlayerId, {
+      ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      authSession: authSession ?? null,
+      storage
+    });
 
     if (storage?.setItem) {
       storage.setItem(getCocosPlayerAccountStorageKey(profile.playerId), profile.displayName);
@@ -554,7 +594,10 @@ export async function loadCocosPlayerAccountProfile(
       writeStoredCocosAuthSession(storage, asStoredAuthSession(payload.session, authSession));
     }
 
-    return profile;
+    return {
+      ...profile,
+      recentBattleReplays
+    };
   } catch (error) {
     if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && storage) {
       clearStoredCocosAuthSession(storage);

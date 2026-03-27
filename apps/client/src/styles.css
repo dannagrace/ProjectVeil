@@ -293,6 +293,16 @@ h1 {
   color: #8a4429;
 }
 
+.account-badge.tone-victory {
+  background: rgba(47, 110, 91, 0.14);
+  color: #24584b;
+}
+
+.account-badge.tone-defeat {
+  background: rgba(164, 77, 44, 0.14);
+  color: #8a4429;
+}
+
 .account-meta,
 .account-status {
   margin-top: 8px;
@@ -311,7 +321,8 @@ h1 {
 }
 
 .account-achievement-list,
-.account-event-list {
+.account-event-list,
+.account-replay-list {
   display: grid;
   gap: 8px;
 }
@@ -379,6 +390,25 @@ h1 {
   gap: 6px;
 }
 
+.account-replay-entry {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(78, 58, 42, 0.08);
+  background: rgba(78, 58, 42, 0.04);
+  display: grid;
+  gap: 6px;
+}
+
+.account-replay-entry.is-victory {
+  border-color: rgba(47, 110, 91, 0.14);
+  background: rgba(47, 110, 91, 0.08);
+}
+
+.account-replay-entry.is-defeat {
+  border-color: rgba(164, 77, 44, 0.14);
+  background: rgba(164, 77, 44, 0.08);
+}
+
 .account-event-head {
   display: flex;
   justify-content: space-between;
@@ -387,6 +417,23 @@ h1 {
   margin-bottom: 6px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.account-replay-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.account-replay-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .account-reward-chip {

@@ -195,3 +195,161 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 
 - 如需继续深度使用 `develop-web-game`，可以基于 `output/web-game-hooks/state-0.json` 开始设计更完整的动作脚本，验证拾取、占矿、招募、战斗、结算等多步链路。
 - 如果要减少工作区噪声，注意当前 `configs/units.json` 只有格式化层面的改动，不是本轮玩法逻辑修改。
+
+## Feature roadmap analysis - 2026-03-27
+
+- 已新建分支：`codex/feature-roadmap-analysis`
+- 本轮未改玩法逻辑，主要补了分析文档：`docs/next-feature-plan.md`
+- 用 `develop-web-game` 技能脚本再次验证了 3 条关键链路：
+  - 战斗流：守军战斗胜利后 `gold = 300`，英雄升到 `Lv 2`
+  - 资源流：木材采集 + 占矿 + 推日后 `wood = 15`
+  - 招募流：招募后 `armyCount = 16`，`gold = 260`
+- 已实际检查 3 张截图，当前 H5 调试壳的玩法验证没有明显错位，问题主要集中在“主客户端产品化”和“已有系统前台承接不足”：
+  - Cocos 仍有占位式战斗转场和占位资源表现
+  - 装备 / 战利品 / 战报等数据链路已经存在，但主客户端还没形成完整操作闭环
+  - 当前内容循环可玩，但内容密度还不足以支撑下一阶段长线验证
+- 本轮分析时生成的临时 `output/` 截图产物已清理，避免给工作区增加噪声。
+- 建议下一阶段功能点已整理为 5 项，见 `docs/next-feature-plan.md`
+
+## Cocos equipment loop - 2026-03-27
+
+- 已按 roadmap 第一优先级推进 `Cocos 装备背包与战利品闭环`，本轮主要改动：
+  - `apps/cocos-client/assets/scripts/VeilCocosSession.ts`
+    - 新增 `equipHeroItem / unequipHeroItem`
+    - `WorldAction` / `WorldEvent` 已补 `hero.equip / hero.unequip / hero.equipmentChanged`
+  - `apps/cocos-client/assets/scripts/cocos-prediction.ts`
+    - 本地预测已支持装备穿戴 / 卸下，失败时返回共享层校验原因
+  - `apps/cocos-client/assets/scripts/VeilRoot.ts`
+    - 已接入装备穿戴 / 卸下交互处理、预演状态与失败回滚
+  - `apps/cocos-client/assets/scripts/VeilHudPanel.ts`
+    - HUD 新增装备操作区，支持直接点击穿戴 / 卸下
+  - `apps/cocos-client/assets/scripts/cocos-ui-formatters.ts`
+    - 时间线已补 `hero.equipmentChanged` 文案
+  - `apps/cocos-client/assets/scripts/cocos-hero-equipment.ts`
+    - 新增装备按钮和背包分组的纯逻辑辅助模块
+- 新增 / 更新测试：
+  - `apps/cocos-client/test/cocos-hero-equipment.test.ts`
+  - `apps/cocos-client/test/cocos-ui-formatters.test.ts`
+  - `package.json` 已把新测试接进 `npm test`
+- 当前验证结果：
+  - `npm run typecheck:cocos` 通过
+  - `node --import tsx --test ./apps/cocos-client/test/cocos-ui-formatters.test.ts ./apps/cocos-client/test/cocos-hero-equipment.test.ts` 通过
+  - `npm test` 通过（198/198）
+  - `develop-web-game` H5 回归脚本再次通过：
+    - 战斗流仍能正常结算，最终 `gold = 300`
+    - 已实际检查截图，H5 调试壳没有出现新回归
+- 当前已知限制：
+  - 本轮环境里没有直接打开 Cocos Creator 预览窗口，所以 Cocos 装备区的“代码层 / 类型层 / 测试层”已经闭环，但还需要后续在 Creator 里做一轮肉眼布局验收。
+
+## Cocos battle transition polish - 2026-03-27
+
+- 已继续推进 roadmap 第三项 `Cocos 战斗表现正式化`，先把“战斗转场”从占位状态拉到可用状态：
+  - `apps/cocos-client/assets/scripts/VeilBattleTransition.ts`
+    - 转场层已改为带遮罩、边框、徽标、标题、副标题的正式 UI
+    - 进入 / 退出战斗会根据上下文切换配色与文案，不再只有单行占位提示
+  - `apps/cocos-client/assets/scripts/cocos-battle-transition-copy.ts`
+    - 新增纯逻辑文案构建器
+    - 已根据 `battle.started / hero.collected / hero.equipmentFound / hero.progressed` 生成进入战斗与结算离场文案
+  - `apps/cocos-client/assets/scripts/VeilRoot.ts`
+    - 战斗开始时会把事件上下文传给 `playEnter`
+    - 战斗结束时会根据真实结算结果区分胜利 / 失利，不再把退出转场固定写成胜利
+  - `apps/cocos-client/types/cc.d.ts`
+    - 为本地类型桩补了 `Tween / tween / Graphics.rect`
+    - 让转场动画相关代码能通过 Cocos 客户端的 TS 校验
+- 新增 / 更新测试：
+  - `apps/cocos-client/test/cocos-battle-transition-copy.test.ts`
+  - `package.json` 已把转场文案测试接进 `npm test`
+- 当前验证结果：
+  - `node --import tsx --test ./apps/cocos-client/test/cocos-battle-transition-copy.test.ts ./apps/cocos-client/test/cocos-hero-equipment.test.ts ./apps/cocos-client/test/cocos-ui-formatters.test.ts` 通过（8/8）
+  - `npm run typecheck:cocos` 通过
+  - `npm test` 通过（200/200）
+  - `develop-web-game` H5 回归脚本再次通过：
+    - URL: `http://127.0.0.1:4173/?roomId=transition-regression-20260327&playerId=player-1`
+    - 输出目录：`/tmp/project-veil-transition-regression`
+    - 生成 `shot-0.png` 与 `state-0.json`
+    - 未生成 `errors-0.json`
+    - `state-0.json` 显示：
+      - 最终已回到 `world` 模式
+      - `gold = 300`
+      - 英雄停在 `(5,4)`
+      - `timelineTail` 含“战斗胜利，世界状态已回写”
+  - 已实际检查截图：
+    - H5 调试壳在战斗结束后正常回到地图视图
+    - 右侧战斗面板显示为空闲态，没有出现结算残留或明显 UI 错位
+- 当前已知限制：
+  - 本轮环境里仍然没有直接打开 Cocos Creator 预览窗口，所以转场的“动效节奏 / 实机字号 / 不同分辨率排版”还需要在 Creator 里做一轮肉眼验收。
+
+## Battle report center surface - 2026-03-27
+
+- 已继续推进 roadmap 第三优先级 `战报 / 回放中心`，先把“最近战报摘要”接到当前双端可见入口：
+  - `apps/client/src/account-history.ts`
+    - 新增 `renderRecentBattleReplays`
+    - H5 账号卡现在会渲染最近 3 场战斗的回放摘要、阵营、步数和攻击 / 技能计数
+  - `apps/client/src/main.ts`
+    - H5 账号资料卡已接入“最近战报”区块
+  - `apps/client/src/styles.css`
+    - 已补战报条目、胜利 / 失利徽标和元信息样式
+  - `apps/client/src/player-account.ts`
+    - 加载账号资料时会额外请求 `/battle-replays`
+    - 避免“公开账号资料里没有 recentBattleReplays，导致战报区永远为空”
+  - `apps/cocos-client/assets/scripts/cocos-lobby.ts`
+    - Cocos 账号资料加载同样会额外请求 `/battle-replays`
+  - `apps/cocos-client/assets/scripts/VeilHudPanel.ts`
+    - HUD 状态区已接入最近一场战斗的简要摘要
+  - `apps/cocos-client/assets/scripts/cocos-battle-report.ts`
+    - 新增 Cocos 侧战报摘要构建器，负责压缩最新 replay 为两行稳定文案
+- 新增 / 更新测试：
+  - `apps/client/test/account-history-render.test.ts`
+  - `apps/client/test/player-account-storage.test.ts`
+  - `apps/cocos-client/test/cocos-lobby.test.ts`
+  - `apps/cocos-client/test/cocos-battle-report.test.ts`
+  - `package.json` 已把 Cocos 战报摘要测试接进 `npm test`
+- 当前验证结果：
+  - `npm run typecheck:cocos` 通过
+  - `npm run typecheck:client:h5` 通过
+  - 定向测试通过：
+    - `node --import tsx --test ./apps/client/test/player-account-storage.test.ts ./apps/client/test/account-history-render.test.ts ./apps/cocos-client/test/cocos-lobby.test.ts ./apps/cocos-client/test/cocos-battle-report.test.ts`
+  - `npm test` 通过（204/204）
+  - `develop-web-game` H5 回归脚本再次通过：
+    - URL: `http://127.0.0.1:4173/?roomId=battle-report-regression-final-20260327&playerId=player-1`
+    - 输出目录：`/tmp/project-veil-battle-report-regression-final`
+    - 生成 `shot-0.png` 与 `state-0.json`
+    - 未生成 `errors-0.json`
+    - `state-0.json` 显示：
+      - 最终已回到 `world` 模式
+      - `gold = 300`
+      - `timelineTail` 仍含“战斗胜利，世界状态已回写”
+- 当前已知限制：
+  - 当前本地 dev server 的公开战报接口实测仍返回空列表：
+    - `GET /api/player-accounts/player-1/battle-replays -> {"items":[]}`
+  - 所以 H5 首屏截图里看到的是“最近战报”的正确 empty state，不代表前端没接通；代码层与测试层已经覆盖“接口返回 replay 数据时，双端都能正常渲染”的路径。
+
+## Local replay persistence fallback - 2026-03-27
+
+- 已继续把“本地跑起来能看到真实战报”这条链路补通，问题根因是 dev server 在没有 MySQL 配置时没有持久化账号 / 回放数据：
+  - `apps/server/src/memory-room-snapshot-store.ts`
+    - 新增本地内存版 `RoomSnapshotStore`
+    - 现在会在同一进程里保存房间快照、账号资料、最近战报、英雄归档和登录映射
+  - `apps/server/src/dev-server.ts`
+    - dev server 启动时如果没有外部持久化配置，会自动回退到内存存储
+    - 这样本地打一场后，`/api/player-accounts/:playerId` 与 `/battle-replays` 就会返回真实数据，而不是一直走空数据分支
+  - `apps/server/src/player-accounts.ts`
+    - 顺手收敛了 local mode 账号构造里的可选字段写法
+    - 兼容 `exactOptionalPropertyTypes`，避免新增本地存储后触发 TS 报错
+- 新增 / 更新测试：
+  - `apps/server/test/memory-room-snapshot-store.test.ts`
+  - `apps/server/test/player-account-routes.test.ts`
+  - `package.json` 已把新的 server 侧内存存储测试接进 `npm test`
+- 当前验证结果：
+  - `npm run typecheck:server` 通过
+  - 定向测试通过：
+    - `node --import tsx --test ./apps/server/test/memory-room-snapshot-store.test.ts ./apps/server/test/player-account-routes.test.ts`
+  - `npm test` 通过（206/206）
+  - 本地联调已验证：
+    - `npm run dev:server` 启动后会输出 `Local in-memory room persistence enabled`
+    - 初始 `GET /api/player-accounts/player-1/battle-replays` 为空，是因为账号尚未生成
+    - 通过 `develop-web-game` 跑完一场本地战斗后，再请求同一路径会返回真实 replay 条目
+    - H5 账号卡已能显示非空“最近战报”，包含胜负、对手、回放步数与攻击 / 技能统计
+- 当前结论：
+  - 现在这条本地预览链路已经从“只能看到 empty state”变成“打一场后即可看到真实最近战报”
+  - 下一步再做回放中心详情页时，可以直接复用这条本地数据链路继续迭代，不需要先补环境依赖。

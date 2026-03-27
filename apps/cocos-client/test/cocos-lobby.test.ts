@@ -200,6 +200,7 @@ test("loginCocosPasswordAuthSession stores account sessions with loginId", async
 test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and preserves the global vault", async () => {
   const values = new Map<string, string>();
   values.set(getCocosPlayerAccountStorageKey("account-player"), "旧档案名");
+  const requestedUrls: string[] = [];
   const storage = {
     getItem(key: string): string | null {
       return values.get(key) ?? null;
@@ -223,48 +224,107 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
       source: "remote"
     },
     fetchImpl: async (input) => {
-      assert.equal(String(input), "http://127.0.0.1:2567/api/player-accounts/me");
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url.endsWith("/api/player-accounts/me")) {
+        return new Response(
+          JSON.stringify({
+            account: {
+              playerId: "account-player",
+              displayName: "暮潮守望",
+              loginId: "veil-ranger",
+              lastRoomId: "room-beta",
+              achievements: [
+                {
+                  id: "first_battle",
+                  current: 1,
+                  target: 1,
+                  unlocked: true,
+                  unlockedAt: "2026-03-25T13:00:00.000Z"
+                }
+              ],
+              recentEventLog: [
+                {
+                  id: "account-player:2026-03-25T13:00:00.000Z:achievement:1:first_battle",
+                  timestamp: "2026-03-25T13:00:00.000Z",
+                  roomId: "room-beta",
+                  playerId: "account-player",
+                  category: "achievement",
+                  description: "解锁成就：初次交锋",
+                  achievementId: "first_battle",
+                  rewards: [{ type: "badge", label: "初次交锋" }]
+                }
+              ],
+              globalResources: {
+                gold: 320,
+                wood: 5,
+                ore: 2
+              }
+            },
+            session: {
+              token: "account.token.next",
+              playerId: "account-player",
+              displayName: "暮潮守望",
+              authMode: "account",
+              loginId: "veil-ranger"
+            }
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        );
+      }
+
       return new Response(
         JSON.stringify({
-          account: {
-            playerId: "account-player",
-            displayName: "暮潮守望",
-            loginId: "veil-ranger",
-            lastRoomId: "room-beta",
-            achievements: [
-              {
-                id: "first_battle",
-                current: 1,
-                target: 1,
-                unlocked: true,
-                unlockedAt: "2026-03-25T13:00:00.000Z"
-              }
-            ],
-            recentEventLog: [
-              {
-                id: "account-player:2026-03-25T13:00:00.000Z:achievement:1:first_battle",
-                timestamp: "2026-03-25T13:00:00.000Z",
-                roomId: "room-beta",
-                playerId: "account-player",
-                category: "achievement",
-                description: "解锁成就：初次交锋",
-                achievementId: "first_battle",
-                rewards: [{ type: "badge", label: "初次交锋" }]
-              }
-            ],
-            globalResources: {
-              gold: 320,
-              wood: 5,
-              ore: 2
+          items: [
+            {
+              id: "room-beta:battle-1:account-player",
+              roomId: "room-beta",
+              playerId: "account-player",
+              battleId: "battle-1",
+              battleKind: "neutral",
+              playerCamp: "attacker",
+              heroId: "hero-1",
+              neutralArmyId: "neutral-1",
+              startedAt: "2026-03-25T12:58:00.000Z",
+              completedAt: "2026-03-25T13:00:00.000Z",
+              initialState: {
+                id: "battle-1",
+                round: 1,
+                lanes: 1,
+                activeUnitId: "unit-1",
+                turnOrder: ["unit-1"],
+                units: {
+                  "unit-1": {
+                    id: "unit-1",
+                    camp: "attacker",
+                    templateId: "hero_guard_basic",
+                    lane: 0,
+                    stackName: "暮潮守望",
+                    initiative: 4,
+                    attack: 2,
+                    defense: 2,
+                    minDamage: 1,
+                    maxDamage: 2,
+                    count: 12,
+                    currentHp: 10,
+                    maxHp: 10,
+                    hasRetaliated: false,
+                    defending: false
+                  }
+                },
+                environment: [],
+                log: [],
+                rng: { seed: 7, cursor: 0 }
+              },
+              steps: [],
+              result: "attacker_victory"
             }
-          },
-          session: {
-            token: "account.token.next",
-            playerId: "account-player",
-            displayName: "暮潮守望",
-            authMode: "account",
-            loginId: "veil-ranger"
-          }
+          ]
         }),
         {
           status: 200,
@@ -276,6 +336,10 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
     }
   });
 
+  assert.deepEqual(requestedUrls, [
+    "http://127.0.0.1:2567/api/player-accounts/me",
+    "http://127.0.0.1:2567/api/player-accounts/me/battle-replays"
+  ]);
   assert.deepEqual(profile, {
     playerId: "account-player",
     displayName: "暮潮守望",
@@ -328,7 +392,51 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
         rewards: [{ type: "badge", label: "初次交锋" }]
       }
     ],
-    recentBattleReplays: [],
+    recentBattleReplays: [
+      {
+        id: "room-beta:battle-1:account-player",
+        roomId: "room-beta",
+        playerId: "account-player",
+        battleId: "battle-1",
+        battleKind: "neutral",
+        playerCamp: "attacker",
+        heroId: "hero-1",
+        neutralArmyId: "neutral-1",
+        startedAt: "2026-03-25T12:58:00.000Z",
+        completedAt: "2026-03-25T13:00:00.000Z",
+        initialState: {
+          id: "battle-1",
+          round: 1,
+          lanes: 1,
+          activeUnitId: "unit-1",
+          turnOrder: ["unit-1"],
+          units: {
+            "unit-1": {
+              id: "unit-1",
+              camp: "attacker",
+              templateId: "hero_guard_basic",
+              lane: 0,
+              stackName: "暮潮守望",
+              initiative: 4,
+              attack: 2,
+              defense: 2,
+              minDamage: 1,
+              maxDamage: 2,
+              count: 12,
+              currentHp: 10,
+              maxHp: 10,
+              hasRetaliated: false,
+              defending: false
+            }
+          },
+          environment: [],
+          log: [],
+          rng: { seed: 7, cursor: 0 }
+        },
+        steps: [],
+        result: "attacker_victory"
+      }
+    ],
     source: "remote"
   });
   assert.ok(values.get("project-veil:auth-session")?.includes("\"loginId\":\"veil-ranger\""));

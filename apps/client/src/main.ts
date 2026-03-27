@@ -53,7 +53,7 @@ import {
   savePlayerAccountDisplayName as saveAccountDisplayName,
   type PlayerAccountProfile as ClientPlayerAccountProfile
 } from "./player-account";
-import { renderAchievementProgress, renderRecentAccountEvents } from "./account-history";
+import { renderAchievementProgress, renderRecentAccountEvents, renderRecentBattleReplays } from "./account-history";
 
 const params = new URLSearchParams(window.location.search);
 const queryRoomId = params.get("roomId")?.trim() ?? "";
@@ -3127,6 +3127,7 @@ function render(): void {
           <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
           ${renderAchievementProgress(state.account)}
+          ${renderRecentBattleReplays(state.account)}
           ${renderRecentAccountEvents(state.account)}
           <div class="account-editor">
             <input

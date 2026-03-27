@@ -1,4 +1,5 @@
 import { _decorator, Camera, Canvas, Component, EventMouse, EventTouch, input, Input, Layers, Node, sys, UITransform, view } from "cc";
+import { getEquipmentDefinition, type EquipmentType } from "../../../../packages/shared/src/index.ts";
 import {
   type BattleAction,
   VeilCocosSession,
@@ -38,6 +39,8 @@ import { VeilMapBoard } from "./VeilMapBoard.ts";
 import { buildMapFeedbackEntriesFromUpdate, buildObjectPulseEntriesFromUpdate } from "./cocos-map-visuals.ts";
 import { readStoredCocosAuthSession, resolveCocosLaunchIdentity } from "./cocos-session-launch.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
+import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
+import { buildBattleEnterCopy, buildBattleExitCopy } from "./cocos-battle-transition-copy.ts";
 
 const { ccclass, property } = _decorator;
 
@@ -321,6 +324,113 @@ export class VeilRoot extends Component {
     this.renderView();
   }
 
+  async equipHeroItem(slot: EquipmentType, equipmentId: string): Promise<void> {
+    if (this.moveInFlight || this.battleActionInFlight) {
+      return;
+    }
+
+    if (!this.session) {
+      await this.connect();
+      return;
+    }
+
+    const hero = this.activeHero();
+    if (!hero) {
+      this.pushLog("当前快照里没有可控制的英雄。");
+      this.renderView();
+      return;
+    }
+
+    if (this.lastUpdate?.battle) {
+      this.pushLog("战斗中无法调整装备。");
+      this.predictionStatus = "战斗中无法调整装备。";
+      this.renderView();
+      return;
+    }
+
+    const itemName = getEquipmentDefinition(equipmentId)?.name ?? equipmentId;
+    this.moveInFlight = true;
+    this.predictionStatus = `正在装备 ${itemName}...`;
+    this.pushLog(`正在为 ${hero.name} 装备 ${itemName}...`);
+    this.applyPrediction(
+      {
+        type: "hero.equip",
+        heroId: hero.id,
+        slot,
+        equipmentId
+      },
+      `预演装备 ${itemName}`
+    );
+    this.renderView();
+
+    try {
+      await this.applySessionUpdate(await this.session.equipHeroItem(hero.id, slot, equipmentId));
+      this.pushLog("装备已结算。");
+    } catch (error) {
+      this.rollbackPrediction(error instanceof Error ? formatEquipmentActionReason(error.message) : "装备失败。");
+    } finally {
+      this.moveInFlight = false;
+    }
+
+    this.renderView();
+  }
+
+  async unequipHeroItem(slot: EquipmentType): Promise<void> {
+    if (this.moveInFlight || this.battleActionInFlight) {
+      return;
+    }
+
+    if (!this.session) {
+      await this.connect();
+      return;
+    }
+
+    const hero = this.activeHero();
+    if (!hero) {
+      this.pushLog("当前快照里没有可控制的英雄。");
+      this.renderView();
+      return;
+    }
+
+    if (this.lastUpdate?.battle) {
+      this.pushLog("战斗中无法调整装备。");
+      this.predictionStatus = "战斗中无法调整装备。";
+      this.renderView();
+      return;
+    }
+
+    const currentItemId =
+      slot === "weapon"
+        ? hero.loadout.equipment.weaponId
+        : slot === "armor"
+          ? hero.loadout.equipment.armorId
+          : hero.loadout.equipment.accessoryId;
+    const itemName = currentItemId ? getEquipmentDefinition(currentItemId)?.name ?? currentItemId : formatEquipmentSlotLabel(slot);
+    this.moveInFlight = true;
+    this.predictionStatus = `正在卸下 ${itemName}...`;
+    this.pushLog(`正在为 ${hero.name} 卸下 ${itemName}...`);
+    this.applyPrediction(
+      {
+        type: "hero.unequip",
+        heroId: hero.id,
+        slot
+      },
+      `预演卸下 ${itemName}`
+    );
+    this.renderView();
+
+    try {
+      await this.applySessionUpdate(await this.session.unequipHeroItem(hero.id, slot));
+      this.pushLog("卸装已结算。");
+    } catch (error) {
+      this.rollbackPrediction(error instanceof Error ? formatEquipmentActionReason(error.message) : "卸装失败。");
+    } finally {
+      this.moveInFlight = false;
+    }
+
+    this.renderView();
+  }
+
   private ensureViewNodes(): void {
     assignUiLayer(this.node);
 
@@ -353,6 +463,12 @@ export class VeilRoot extends Component {
       },
       onLearnSkill: (skillId) => {
         void this.learnHeroSkill(skillId);
+      },
+      onEquipItem: (slot, equipmentId) => {
+        void this.equipHeroItem(slot, equipmentId);
+      },
+      onUnequipItem: (slot) => {
+        void this.unequipHeroItem(slot);
       },
       onEndDay: () => {
         void this.advanceDay();
@@ -720,6 +836,12 @@ export class VeilRoot extends Component {
         },
         onLearnSkill: (skillId) => {
           void this.learnHeroSkill(skillId);
+        },
+        onEquipItem: (slot, equipmentId) => {
+          void this.equipHeroItem(slot, equipmentId);
+        },
+        onUnequipItem: (slot) => {
+          void this.unequipHeroItem(slot);
         },
         onEndDay: () => {
           void this.advanceDay();
@@ -1722,13 +1844,14 @@ export class VeilRoot extends Component {
 
     if (!previousBattleId && nextBattleId) {
       this.mapBoard?.playHeroAnimation("attack");
-      await this.battleTransition?.playEnter();
+      await this.battleTransition?.playEnter(buildBattleEnterCopy(update.events));
     } else if (previousBattleId && !nextBattleId) {
       const resolvedEvent = update.events.find((event) => this.isBattleResolvedEvent(event));
+      const didWin = resolvedEvent ? this.didCurrentPlayerWinBattle(resolvedEvent) : false;
       this.mapBoard?.playHeroAnimation(
-        resolvedEvent ? (this.didCurrentPlayerWinBattle(resolvedEvent) ? "victory" : "defeat") : "idle"
+        resolvedEvent ? (didWin ? "victory" : "defeat") : "idle"
       );
-      await this.battleTransition?.playExit(true);
+      await this.battleTransition?.playExit(buildBattleExitCopy(update.events, didWin));
     } else {
       this.mapBoard?.playHeroAnimation("idle");
     }
