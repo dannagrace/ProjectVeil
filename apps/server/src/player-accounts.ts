@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   buildPlayerProgressionSnapshot,
+  getAchievementDefinitions,
   queryPlayerBattleReplaySummaries,
   queryAchievementProgress,
   queryEventLogEntries,
@@ -292,6 +293,12 @@ export function registerPlayerAccountRoutes(
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
+  });
+
+  app.get("/api/player-accounts/achievement-definitions", (_request, response) => {
+    sendJson(response, 200, {
+      items: getAchievementDefinitions()
+    });
   });
 
   app.get("/api/player-accounts/me", async (request, response) => {
