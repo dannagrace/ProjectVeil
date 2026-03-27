@@ -16,7 +16,6 @@ import {
   createCocosLobbyPreferences,
   loadCocosLobbyRooms,
   loadCocosPlayerAccountProfile,
-  loginCocosPasswordAuthSession,
   loginCocosGuestAuthSession,
   readPreferredCocosDisplayName,
   rememberPreferredCocosDisplayName,
@@ -26,6 +25,13 @@ import {
   type CocosLobbyRoomSummary,
   type CocosPlayerAccountProfile
 } from "./cocos-lobby.ts";
+import {
+  loginWithCocosProvider,
+  resolveCocosLoginProviders,
+  resolveCocosLoginRuntimeConfig,
+  type CocosLoginProviderDescriptor,
+  type CocosLoginRuntimeConfig
+} from "./cocos-login-provider.ts";
 import { type CocosWorldAction, predictPlayerWorldAction } from "./cocos-prediction.ts";
 import { VeilBattleTransition } from "./VeilBattleTransition.ts";
 import { VeilBattlePanel } from "./VeilBattlePanel.ts";
@@ -43,7 +49,7 @@ import {
   type CocosRuntimeCapabilities,
   type CocosRuntimePlatform
 } from "./cocos-runtime-platform.ts";
-import { readStoredCocosAuthSession, resolveCocosLaunchIdentity } from "./cocos-session-launch.ts";
+import { readStoredCocosAuthSession, resolveCocosLaunchIdentity, type CocosAuthProvider } from "./cocos-session-launch.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 
 const { ccclass, property } = _decorator;
@@ -130,6 +136,7 @@ export class VeilRoot extends Component {
   private sessionEpoch = 0;
   private authToken: string | null = null;
   private authMode: "guest" | "account" = "guest";
+  private authProvider: CocosAuthProvider = "guest";
   private loginId = "";
   private sessionSource: "remote" | "local" | "manual" | "none" = "none";
   private levelUpNotice: (HeroProgressNotice & { expiresAt: number }) | null = null;
@@ -143,6 +150,8 @@ export class VeilRoot extends Component {
   private gameplayAccountRefreshInFlight = false;
   private runtimePlatform: CocosRuntimePlatform = "unknown";
   private runtimeCapabilities: CocosRuntimeCapabilities = resolveCocosRuntimeCapabilities("unknown");
+  private loginRuntimeConfig: CocosLoginRuntimeConfig = resolveCocosLoginRuntimeConfig();
+  private loginProviders: CocosLoginProviderDescriptor[] = [];
 
   onLoad(): void {
     this.hydrateRuntimePlatform();
@@ -539,6 +548,8 @@ export class VeilRoot extends Component {
         roomId: this.roomId,
         authMode: this.authMode,
         loginId: this.loginId,
+        loginHint: this.describeLobbyLoginHint(),
+        loginActionLabel: this.primaryLoginProvider().label,
         vaultSummary: this.formatLobbyVaultSummary(),
         sessionSource: this.sessionSource,
         loading: this.lobbyLoading,
@@ -621,6 +632,7 @@ export class VeilRoot extends Component {
     if (syncedSession) {
       this.authToken = syncedSession.token ?? null;
       this.authMode = syncedSession.authMode;
+      this.authProvider = syncedSession.provider ?? "guest";
       this.loginId = syncedSession.loginId ?? "";
       this.sessionSource = syncedSession.source;
       this.playerId = syncedSession.playerId;
@@ -628,6 +640,7 @@ export class VeilRoot extends Component {
     } else if (this.sessionSource !== "manual") {
       this.authToken = null;
       this.authMode = "guest";
+      this.authProvider = "guest";
       this.loginId = "";
       this.sessionSource = "none";
     }
@@ -1262,6 +1275,7 @@ export class VeilRoot extends Component {
       this.playerId = authSession.playerId;
       this.displayName = authSession.displayName;
       this.authMode = authSession.authMode;
+      this.authProvider = authSession.provider ?? "guest";
       this.loginId = authSession.loginId ?? "";
       this.sessionSource = authSession.source;
       saveCocosLobbyPreferences(authSession.playerId, preferences.roomId, undefined, storage);
@@ -1291,6 +1305,7 @@ export class VeilRoot extends Component {
       if (error instanceof Error && error.message === "cocos_request_failed:401") {
         this.authToken = null;
         this.authMode = "guest";
+        this.authProvider = "guest";
         this.sessionSource = "none";
       }
       this.lobbyStatus =
@@ -1307,6 +1322,18 @@ export class VeilRoot extends Component {
 
   private async loginLobbyAccount(): Promise<void> {
     if (this.lobbyEntering) {
+      return;
+    }
+
+    const primaryProvider = this.primaryLoginProvider();
+    if (!primaryProvider.available) {
+      this.lobbyStatus = primaryProvider.message;
+      this.renderView();
+      return;
+    }
+
+    if (primaryProvider.id === "wechat-mini-game") {
+      await this.loginLobbyWechatMiniGame();
       return;
     }
 
@@ -1343,13 +1370,20 @@ export class VeilRoot extends Component {
     this.renderView();
 
     try {
-      const authSession = await loginCocosPasswordAuthSession(this.remoteUrl, nextLoginId, password, {
-        storage
-      });
+      const authSession = await loginWithCocosProvider(
+        this.remoteUrl,
+        {
+          provider: "account-password",
+          loginId: nextLoginId,
+          password
+        },
+        { storage }
+      );
       this.authToken = authSession.token ?? null;
       this.playerId = authSession.playerId;
       this.displayName = authSession.displayName;
       this.authMode = authSession.authMode;
+      this.authProvider = authSession.provider ?? "account-password";
       this.loginId = authSession.loginId ?? nextLoginId.toLowerCase();
       this.sessionSource = authSession.source;
       this.lobbyStatus = `账号 ${this.loginId} 登录成功，正在同步全局仓库并进入房间 ${this.roomId}...`;
@@ -1368,6 +1402,76 @@ export class VeilRoot extends Component {
             : "account_login_failed";
       this.renderView();
     }
+  }
+
+  private async loginLobbyWechatMiniGame(): Promise<void> {
+    const storage = this.readWebStorage();
+    this.lobbyEntering = true;
+    this.lobbyStatus = "正在调用 wx.login() 并交换小游戏会话...";
+    this.renderView();
+
+    try {
+      const authSession = await loginWithCocosProvider(
+        this.remoteUrl,
+        {
+          provider: "wechat-mini-game",
+          playerId: this.playerId,
+          displayName: this.displayName || this.playerId
+        },
+        {
+          storage,
+          wx: (globalThis as { wx?: { login?: ((options: unknown) => void) | undefined } }).wx ?? null,
+          config: this.loginRuntimeConfig
+        }
+      );
+      this.authToken = authSession.token ?? null;
+      this.playerId = authSession.playerId;
+      this.displayName = authSession.displayName;
+      this.authMode = authSession.authMode;
+      this.authProvider = authSession.provider ?? "wechat-mini-game";
+      this.loginId = authSession.loginId ?? "";
+      this.sessionSource = authSession.source;
+      this.lobbyStatus = "微信小游戏登录脚手架已连通，正在同步会话并进入房间...";
+      saveCocosLobbyPreferences(authSession.playerId, this.roomId, undefined, storage);
+      this.renderView();
+      await this.refreshLobbyAccountProfile();
+      this.lobbyEntering = false;
+      await this.enterLobbyRoom(this.roomId);
+    } catch (error) {
+      this.lobbyEntering = false;
+      this.lobbyStatus =
+        error instanceof Error && error.message === "wechat_login_unavailable"
+          ? "当前小游戏壳未暴露 wx.login()，且也未配置 mock code。"
+          : error instanceof Error && error.message === "cocos_request_failed:501"
+            ? "服务端已预留小游戏登录交换接口，但当前未启用。"
+            : error instanceof Error && error.message === "cocos_request_failed:401"
+              ? "小游戏登录 code 校验失败，请刷新后重试。"
+              : error instanceof Error
+                ? error.message
+                : "wechat_login_failed";
+      this.renderView();
+    }
+  }
+
+  private primaryLoginProvider(): CocosLoginProviderDescriptor {
+    return (
+      this.loginProviders.find((provider) => provider.id === "wechat-mini-game" && provider.available) ??
+      this.loginProviders.find((provider) => provider.id === "account-password") ?? {
+        id: "account-password",
+        label: this.authMode === "account" ? "账号进入" : "账号登录并进入",
+        available: true,
+        message: ""
+      }
+    );
+  }
+
+  private describeLobbyLoginHint(): string {
+    const primaryProvider = this.primaryLoginProvider();
+    if (primaryProvider.id === "wechat-mini-game") {
+      return this.authProvider === "wechat-mini-game" ? "当前已使用小游戏登录脚手架会话" : primaryProvider.message;
+    }
+
+    return this.authMode === "account" ? "当前已处于正式账号模式" : "H5 绑定后的登录 ID 可以在这里直接进入";
   }
 
   private async returnToLobby(): Promise<void> {
@@ -1391,6 +1495,7 @@ export class VeilRoot extends Component {
     clearCurrentCocosAuthSession(this.readWebStorage());
     this.authToken = null;
     this.authMode = "guest";
+    this.authProvider = "guest";
     this.loginId = "";
     this.sessionSource = "none";
     this.displayName = readPreferredCocosDisplayName(this.playerId, this.readWebStorage());
@@ -1424,6 +1529,7 @@ export class VeilRoot extends Component {
       }
       this.authToken = storedSession?.playerId === nextPlayerId ? storedSession.token ?? null : null;
       this.authMode = storedSession?.playerId === nextPlayerId ? storedSession.authMode : "guest";
+      this.authProvider = storedSession?.playerId === nextPlayerId ? storedSession.provider ?? "guest" : "guest";
       this.loginId = storedSession?.playerId === nextPlayerId ? storedSession.loginId ?? "" : "";
       this.sessionSource = storedSession?.playerId === nextPlayerId ? storedSession.source : "manual";
       this.lobbyStatus = `已切换游客身份草稿为 ${nextPlayerId}。`;
@@ -1554,12 +1660,26 @@ export class VeilRoot extends Component {
     this.runtimePlatform = detectCocosRuntimePlatform(globalThis as {
       location?: Location;
       history?: History;
-      wx?: { getLaunchOptionsSync?: () => { query?: Record<string, unknown> | null } | null | undefined };
+      wx?: {
+        getLaunchOptionsSync?: () => { query?: Record<string, unknown> | null } | null | undefined;
+        login?: ((options: unknown) => void) | undefined;
+      };
     });
     this.runtimeCapabilities = resolveCocosRuntimeCapabilities(this.runtimePlatform);
+    this.loginRuntimeConfig = resolveCocosLoginRuntimeConfig(globalThis as never);
+    this.loginProviders = resolveCocosLoginProviders({
+      platform: this.runtimePlatform,
+      capabilities: this.runtimeCapabilities,
+      config: this.loginRuntimeConfig,
+      wx: (globalThis as { wx?: { login?: ((options: unknown) => void) | undefined } }).wx ?? null
+    });
 
     if (this.runtimePlatform === "wechat-game") {
       this.pushLog("已识别微信小游戏运行时，启动参数将改读 wx.getLaunchOptionsSync().query。");
+      const wechatProvider = this.loginProviders.find((provider) => provider.id === "wechat-mini-game");
+      if (wechatProvider) {
+        this.pushLog(`小游戏登录状态：${wechatProvider.message}`);
+      }
     }
   }
 
@@ -1591,6 +1711,7 @@ export class VeilRoot extends Component {
           : readPreferredCocosDisplayName(this.playerId, storage);
       this.authToken = storedSession?.playerId === this.playerId ? storedSession.token ?? null : null;
       this.authMode = storedSession?.playerId === this.playerId ? storedSession.authMode : "guest";
+      this.authProvider = storedSession?.playerId === this.playerId ? storedSession.provider ?? "guest" : "guest";
       this.loginId = storedSession?.playerId === this.playerId ? storedSession.loginId ?? "" : "";
       this.sessionSource = storedSession?.playerId === this.playerId ? storedSession.source : "none";
       this.lobbyAccountProfile = createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName);
@@ -1609,6 +1730,7 @@ export class VeilRoot extends Component {
     this.playerId = launchIdentity.playerId;
     this.displayName = launchIdentity.displayName;
     this.authMode = launchIdentity.authMode;
+    this.authProvider = launchIdentity.authProvider;
     this.loginId = launchIdentity.loginId ?? "";
     this.authToken = launchIdentity.authToken;
     this.sessionSource = launchIdentity.sessionSource;

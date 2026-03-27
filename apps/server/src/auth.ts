@@ -3,12 +3,14 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoomSnapshotStore } from "./persistence";
 
 export type AuthMode = "guest" | "account";
+export type AuthProvider = "guest" | "account-password" | "wechat-mini-game";
 
 export interface GuestAuthSession {
   token: string;
   playerId: string;
   displayName: string;
   authMode: AuthMode;
+  provider: AuthProvider;
   loginId?: string;
   issuedAt: string;
   lastUsedAt: string;
@@ -18,12 +20,24 @@ interface GuestAuthTokenPayload {
   playerId: string;
   displayName: string;
   authMode?: AuthMode;
+  provider?: AuthProvider;
   loginId?: string;
   issuedAt: string;
 }
 
 const AUTH_SECRET = process.env.VEIL_AUTH_SECRET?.trim() || "project-veil-dev-secret";
 const MIN_ACCOUNT_PASSWORD_LENGTH = 6;
+
+function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): {
+  mode: "disabled" | "mock";
+  mockCode: string;
+} {
+  const mode = env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase() === "mock" ? "mock" : "disabled";
+  return {
+    mode,
+    mockCode: env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE?.trim() || "wechat-dev-code"
+  };
+}
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -73,6 +87,21 @@ function normalizeAuthMode(authMode?: string | null, loginId?: string | null): A
   return authMode === "account" || Boolean(normalizeLoginId(loginId)) ? "account" : "guest";
 }
 
+function normalizeAuthProvider(input?: {
+  provider?: string | null | undefined;
+  authMode?: string | null | undefined;
+  loginId?: string | null | undefined;
+}): AuthProvider {
+  if (
+    input?.provider === "guest" ||
+    input?.provider === "account-password" ||
+    input?.provider === "wechat-mini-game"
+  ) {
+    return input.provider;
+  }
+  return normalizeAuthMode(input?.authMode, input?.loginId) === "account" ? "account-password" : "guest";
+}
+
 function normalizeAccountLoginId(loginId?: string | null): string {
   const normalized = loginId?.trim().toLowerCase();
   if (!normalized) {
@@ -99,19 +128,34 @@ function normalizeAccountPassword(password?: string | null): string {
   return normalized;
 }
 
+function normalizeWechatMiniGameCode(code?: string | null): string {
+  const normalized = code?.trim();
+  if (!normalized) {
+    throw new Error("wechat_code_required");
+  }
+  return normalized;
+}
+
 export function issueAuthSession(input: {
   playerId: string;
   displayName: string;
   authMode?: AuthMode;
+  provider?: AuthProvider;
   loginId?: string | null;
 }): GuestAuthSession {
   const timestamp = new Date().toISOString();
   const loginId = normalizeLoginId(input.loginId);
   const authMode = normalizeAuthMode(input.authMode, loginId);
+  const provider = normalizeAuthProvider({
+    provider: input.provider,
+    authMode,
+    loginId
+  });
   const payload: GuestAuthTokenPayload = {
     playerId: input.playerId,
     displayName: input.displayName,
     authMode,
+    provider,
     ...(loginId ? { loginId } : {}),
     issuedAt: timestamp
   };
@@ -123,6 +167,7 @@ export function issueAuthSession(input: {
     playerId: input.playerId,
     displayName: input.displayName,
     authMode,
+    provider,
     ...(loginId ? { loginId } : {}),
     issuedAt: timestamp,
     lastUsedAt: timestamp
@@ -132,7 +177,8 @@ export function issueAuthSession(input: {
 export function issueGuestAuthSession(input: { playerId: string; displayName: string }): GuestAuthSession {
   return issueAuthSession({
     ...input,
-    authMode: "guest"
+    authMode: "guest",
+    provider: "guest"
   });
 }
 
@@ -143,7 +189,19 @@ export function issueAccountAuthSession(input: {
 }): GuestAuthSession {
   return issueAuthSession({
     ...input,
-    authMode: "account"
+    authMode: "account",
+    provider: "account-password"
+  });
+}
+
+export function issueWechatMiniGameAuthSession(input: {
+  playerId: string;
+  displayName: string;
+}): GuestAuthSession {
+  return issueAuthSession({
+    ...input,
+    authMode: "guest",
+    provider: "wechat-mini-game"
   });
 }
 
@@ -153,7 +211,7 @@ export function issueNextAuthSession(
     displayName: string;
     loginId?: string | null;
   },
-  currentSession?: Pick<GuestAuthSession, "authMode" | "loginId"> | null
+  currentSession?: Pick<GuestAuthSession, "authMode" | "loginId" | "provider"> | null
 ): GuestAuthSession {
   const loginId = normalizeLoginId(input.loginId);
   if (currentSession?.authMode === "account" && loginId) {
@@ -164,9 +222,11 @@ export function issueNextAuthSession(
     });
   }
 
-  return issueGuestAuthSession({
+  return issueAuthSession({
     playerId: input.playerId,
-    displayName: input.displayName
+    displayName: input.displayName,
+    authMode: "guest",
+    provider: currentSession?.provider ?? "guest"
   });
 }
 
@@ -202,6 +262,7 @@ export function resolveAuthSession(token: string): GuestAuthSession | null {
       playerId: payload.playerId,
       displayName: payload.displayName,
       authMode: normalizeAuthMode(payload.authMode, payload.loginId),
+      provider: normalizeAuthProvider(payload),
       ...(loginId ? { loginId } : {}),
       issuedAt: payload.issuedAt,
       lastUsedAt: new Date().toISOString()
@@ -371,6 +432,88 @@ export function registerAuthRoutes(
 
       sendJson(response, 200, {
         session: issueGuestAuthSession({
+          playerId,
+          displayName
+        })
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/auth/wechat-mini-game-login", async (request, response) => {
+    try {
+      const body = (await readJsonBody(request)) as {
+        code?: string | null;
+        playerId?: string | null;
+        displayName?: string | null;
+      };
+
+      if (body.code !== undefined && body.code !== null && typeof body.code !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: code"
+          }
+        });
+        return;
+      }
+
+      if (body.playerId !== undefined && body.playerId !== null && typeof body.playerId !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional string field: playerId"
+          }
+        });
+        return;
+      }
+
+      if (body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional string field: displayName"
+          }
+        });
+        return;
+      }
+
+      const wechatConfig = readWechatMiniGameLoginConfig();
+      if (wechatConfig.mode !== "mock") {
+        sendJson(response, 501, {
+          error: {
+            code: "wechat_login_not_enabled",
+            message: "WeChat mini game login exchange scaffold exists, but production exchange is not configured"
+          }
+        });
+        return;
+      }
+
+      const code = normalizeWechatMiniGameCode(body.code);
+      if (code !== wechatConfig.mockCode) {
+        sendJson(response, 401, {
+          error: {
+            code: "invalid_wechat_code",
+            message: "WeChat mini game mock code is incorrect"
+          }
+        });
+        return;
+      }
+
+      let playerId = normalizePlayerId(body.playerId);
+      let displayName = normalizeDisplayName(playerId, body.displayName);
+      if (store) {
+        const account = await store.ensurePlayerAccount({
+          playerId,
+          displayName
+        });
+        playerId = account.playerId;
+        displayName = account.displayName;
+      }
+
+      sendJson(response, 200, {
+        session: issueWechatMiniGameAuthSession({
           playerId,
           displayName
         })

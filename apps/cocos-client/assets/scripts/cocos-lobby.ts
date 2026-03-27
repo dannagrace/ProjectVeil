@@ -1,6 +1,7 @@
 import {
   clearStoredCocosAuthSession,
   readStoredCocosAuthSession,
+  type CocosAuthProvider,
   type CocosStoredAuthSession,
   writeStoredCocosAuthSession
 } from "./cocos-session-launch.ts";
@@ -48,6 +49,7 @@ interface AuthSessionApiPayload {
     playerId?: string;
     displayName?: string;
     authMode?: "guest" | "account";
+    provider?: CocosAuthProvider;
     loginId?: string;
   };
 }
@@ -86,6 +88,11 @@ interface PlayerAchievementListApiPayload {
 type PlayerProgressionApiPayload = Partial<PlayerProgressionSnapshot>;
 
 type FetchLike = typeof fetch;
+type WechatMiniGameLoginLike = (options: {
+  timeout?: number;
+  success?: (result: { code?: string }) => void;
+  fail?: (error: { errMsg?: string }) => void;
+}) => void;
 
 function getCocosStorage(): Storage | null {
   try {
@@ -122,6 +129,16 @@ function normalizeDisplayName(playerId: string, displayName?: string | null): st
 function normalizeLoginId(value?: string | null): string | undefined {
   const normalized = value?.trim().toLowerCase();
   return normalized ? normalized : undefined;
+}
+
+function normalizeAuthProvider(value: unknown, authMode: "guest" | "account", loginId?: string): CocosAuthProvider {
+  if (value === "guest" || value === "account-password" || value === "wechat-mini-game") {
+    return value;
+  }
+  if (authMode === "account" || loginId) {
+    return "account-password";
+  }
+  return "guest";
 }
 
 function toEventLogQueryString(query?: EventLogQuery): string {
@@ -193,16 +210,18 @@ function readStoredLobbyPreferencesUnsafe(storage: Pick<Storage, "getItem">): Pa
 function asStoredAuthSession(
   payload: AuthSessionApiPayload["session"],
   fallback: Pick<CocosStoredAuthSession, "playerId" | "displayName" | "authMode"> &
-    Partial<Pick<CocosStoredAuthSession, "loginId" | "token">>
+    Partial<Pick<CocosStoredAuthSession, "loginId" | "token" | "provider">>
 ): CocosStoredAuthSession {
   const playerId = normalizePlayerId(payload?.playerId) || fallback.playerId;
   const loginId = normalizeLoginId(payload?.loginId ?? fallback.loginId);
   const authMode = payload?.authMode === "account" || loginId ? "account" : fallback.authMode;
+  const provider = normalizeAuthProvider(payload?.provider ?? fallback.provider, authMode, loginId);
 
   return {
     playerId,
     displayName: normalizeDisplayName(playerId, payload?.displayName ?? fallback.displayName),
     authMode,
+    provider,
     ...(loginId ? { loginId } : {}),
     ...(payload?.token ? { token: payload.token } : fallback.token ? { token: fallback.token } : {}),
     source: "remote"
@@ -255,6 +274,42 @@ async function fetchJson(
   } finally {
     globalThis.clearTimeout(timeout);
   }
+}
+
+async function requestWechatMiniGameCode(input: {
+  wx?: { login?: WechatMiniGameLoginLike | undefined } | null;
+  timeoutMs?: number;
+  mockCode?: string;
+}): Promise<{ code: string; source: "wx.login" | "mock-config" }> {
+  if (typeof input.wx?.login === "function") {
+    const timeoutMs = Math.max(100, input.timeoutMs ?? 4_000);
+    return new Promise((resolve, reject) => {
+      input.wx?.login?.({
+        timeout: timeoutMs,
+        success: (result) => {
+          const code = result.code?.trim();
+          if (!code) {
+            reject(new Error("wechat_login_missing_code"));
+            return;
+          }
+          resolve({ code, source: "wx.login" });
+        },
+        fail: (error) => {
+          reject(new Error(error.errMsg?.trim() || "wechat_login_failed"));
+        }
+      });
+    });
+  }
+
+  const mockCode = input.mockCode?.trim();
+  if (mockCode) {
+    return {
+      code: mockCode,
+      source: "mock-config"
+    };
+  }
+
+  throw new Error("wechat_login_unavailable");
 }
 
 export function getCocosLobbyPreferencesStorageKey(): string {
@@ -448,7 +503,8 @@ export async function loginCocosGuestAuthSession(
     const session = asStoredAuthSession(payload.session, {
       playerId: normalizedPlayerId,
       displayName: normalizedDisplayName,
-      authMode: "guest"
+      authMode: "guest",
+      provider: "guest"
     });
     if (storage) {
       writeStoredCocosAuthSession(storage, session);
@@ -459,6 +515,7 @@ export async function loginCocosGuestAuthSession(
       playerId: normalizedPlayerId,
       displayName: normalizedDisplayName,
       authMode: "guest",
+      provider: "guest",
       source: "local"
     };
     if (storage) {
@@ -501,9 +558,61 @@ export async function loginCocosPasswordAuthSession(
     playerId: normalizedLoginId,
     displayName: normalizedLoginId,
     authMode: "account",
+    provider: "account-password",
     loginId: normalizedLoginId
   });
   const storage = options?.storage ?? getCocosStorage();
+  if (storage) {
+    writeStoredCocosAuthSession(storage, session);
+  }
+  return session;
+}
+
+export async function loginCocosWechatAuthSession(
+  remoteUrl: string,
+  playerId: string,
+  displayName: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "setItem"> | null;
+    wx?: { login?: WechatMiniGameLoginLike | undefined } | null;
+    timeoutMs?: number;
+    exchangePath?: string;
+    mockCode?: string;
+  }
+): Promise<CocosStoredAuthSession> {
+  const normalizedPlayerId = normalizePlayerId(playerId) || createCocosGuestPlayerId();
+  const normalizedDisplayName = normalizeDisplayName(normalizedPlayerId, displayName);
+  const storage = options?.storage ?? getCocosStorage();
+  const { code } = await requestWechatMiniGameCode({
+    wx: options?.wx ?? ((globalThis as { wx?: { login?: WechatMiniGameLoginLike | undefined } }).wx ?? null),
+    ...(options?.timeoutMs != null ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options?.mockCode ? { mockCode: options.mockCode } : {})
+  });
+  const exchangePath = options?.exchangePath?.trim() || "/api/auth/wechat-mini-game-login";
+
+  const payload = (await fetchJson(
+    `${resolveCocosApiBaseUrl(remoteUrl)}${exchangePath.startsWith("/") ? exchangePath : `/${exchangePath}`}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        code,
+        playerId: normalizedPlayerId,
+        displayName: normalizedDisplayName
+      })
+    },
+    options?.fetchImpl
+  )) as AuthSessionApiPayload;
+
+  const session = asStoredAuthSession(payload.session, {
+    playerId: normalizedPlayerId,
+    displayName: normalizedDisplayName,
+    authMode: "guest",
+    provider: "wechat-mini-game"
+  });
   if (storage) {
     writeStoredCocosAuthSession(storage, session);
   }

@@ -243,6 +243,7 @@ test("guest auth route issues a signed session token", async (t) => {
   assert.equal(response.status, 200);
   assert.equal(payload.session.playerId, "player-auth");
   assert.equal(payload.session.displayName, "访客骑士");
+  assert.equal(payload.session.provider, "guest");
   assert.match(payload.session.token, /\./);
 });
 
@@ -276,6 +277,7 @@ test("auth session route resolves a bearer token into the current guest session"
   assert.equal(sessionResponse.status, 200);
   assert.equal(sessionPayload.session.playerId, "player-session");
   assert.equal(sessionPayload.session.displayName, "回声旅人");
+  assert.equal(sessionPayload.session.provider, "guest");
   assert.match(sessionPayload.session.token, /\./);
 });
 
@@ -357,6 +359,7 @@ test("account bind upgrades a guest session into password login and account-logi
   assert.equal(bindResponse.status, 200);
   assert.equal(bindPayload.account.loginId, "veil-ranger");
   assert.equal(bindPayload.session.authMode, "account");
+  assert.equal(bindPayload.session.provider, "account-password");
   assert.equal(bindPayload.session.loginId, "veil-ranger");
 
   const accountLoginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
@@ -377,6 +380,7 @@ test("account bind upgrades a guest session into password login and account-logi
   assert.equal(accountLoginResponse.status, 200);
   assert.equal(accountLoginPayload.account.playerId, "account-player");
   assert.equal(accountLoginPayload.session.authMode, "account");
+  assert.equal(accountLoginPayload.session.provider, "account-password");
   assert.equal(accountLoginPayload.session.loginId, "veil-ranger");
 
   const sessionResponse = await fetch(`http://127.0.0.1:${port}/api/auth/session`, {
@@ -388,5 +392,67 @@ test("account bind upgrades a guest session into password login and account-logi
 
   assert.equal(sessionResponse.status, 200);
   assert.equal(sessionPayload.session.authMode, "account");
+  assert.equal(sessionPayload.session.provider, "account-password");
   assert.equal(sessionPayload.session.loginId, "veil-ranger");
+});
+
+test("wechat mini game scaffold route returns 501 until mock mode is enabled", { concurrency: false }, async (t) => {
+  const port = 44750 + Math.floor(Math.random() * 1000);
+  const server = await startAuthServer(port);
+
+  t.after(async () => {
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-dev-code",
+      playerId: "wechat-player",
+      displayName: "云桥旅人"
+    })
+  });
+  const payload = (await response.json()) as { error: { code: string } };
+
+  assert.equal(response.status, 501);
+  assert.equal(payload.error.code, "wechat_login_not_enabled");
+});
+
+test("wechat mini game scaffold route issues a provider-tagged session in mock mode", { concurrency: false }, async (t) => {
+  const port = 44850 + Math.floor(Math.random() * 1000);
+  const server = await startAuthServer(port, new MemoryAuthStore());
+
+  t.after(async () => {
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "mock";
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE = "wx-dev-code";
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-dev-code",
+      playerId: "wechat-player",
+      displayName: "云桥旅人"
+    })
+  });
+  const payload = (await response.json()) as { session: GuestAuthSession };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.session.playerId, "wechat-player");
+  assert.equal(payload.session.provider, "wechat-mini-game");
+  assert.equal(payload.session.authMode, "guest");
 });
