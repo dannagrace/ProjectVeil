@@ -6,8 +6,14 @@ import {
 } from "./cocos-session-launch.ts";
 import {
   normalizePlayerAccountReadModel,
+  normalizeEventLogEntries,
+  normalizePlayerProgressionSnapshot,
+  queryAchievementProgress,
+  type AchievementProgressQuery,
   type EventLogEntry,
+  type EventLogQuery,
   type PlayerAccountReadModel,
+  type PlayerProgressionSnapshot,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress
 } from "../../../../packages/shared/src/index.ts";
@@ -69,6 +75,16 @@ interface LobbyRoomsApiPayload {
   items?: CocosLobbyRoomSummary[];
 }
 
+interface PlayerEventLogListApiPayload {
+  items?: Partial<EventLogEntry>[];
+}
+
+interface PlayerAchievementListApiPayload {
+  items?: Partial<PlayerAchievementProgress>[];
+}
+
+type PlayerProgressionApiPayload = Partial<PlayerProgressionSnapshot>;
+
 type FetchLike = typeof fetch;
 
 function getCocosStorage(): Storage | null {
@@ -106,6 +122,55 @@ function normalizeDisplayName(playerId: string, displayName?: string | null): st
 function normalizeLoginId(value?: string | null): string | undefined {
   const normalized = value?.trim().toLowerCase();
   return normalized ? normalized : undefined;
+}
+
+function toEventLogQueryString(query?: EventLogQuery): string {
+  if (!query) {
+    return "";
+  }
+
+  const searchParams = new URLSearchParams();
+  if (query.limit != null) {
+    searchParams.set("limit", String(query.limit));
+  }
+  if (query.category) {
+    searchParams.set("category", query.category);
+  }
+  if (query.heroId) {
+    searchParams.set("heroId", query.heroId);
+  }
+  if (query.achievementId) {
+    searchParams.set("achievementId", query.achievementId);
+  }
+  if (query.worldEventType) {
+    searchParams.set("worldEventType", query.worldEventType);
+  }
+
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
+}
+
+function toAchievementQueryString(query?: AchievementProgressQuery): string {
+  if (!query) {
+    return "";
+  }
+
+  const searchParams = new URLSearchParams();
+  if (query.limit != null) {
+    searchParams.set("limit", String(query.limit));
+  }
+  if (query.achievementId) {
+    searchParams.set("achievementId", query.achievementId);
+  }
+  if (query.metric) {
+    searchParams.set("metric", query.metric);
+  }
+  if (query.unlocked != null) {
+    searchParams.set("unlocked", String(query.unlocked));
+  }
+
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
 }
 
 function readStoredLobbyPreferencesUnsafe(storage: Pick<Storage, "getItem">): Partial<CocosLobbyPreferences> | null {
@@ -534,5 +599,110 @@ export async function loadCocosPlayerAccountProfile(
       clearStoredCocosAuthSession(storage);
     }
     return createFallbackCocosPlayerAccountProfile(playerId, roomId, storedDisplayName);
+  }
+}
+
+export async function loadCocosPlayerEventLog(
+  remoteUrl: string,
+  playerId: string,
+  query?: EventLogQuery,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+  }
+): Promise<EventLogEntry[]> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+  const queryString = toEventLogQueryString(query);
+  const endpoint = authSession?.token
+    ? `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/event-log${queryString}`
+    : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/event-log${queryString}`;
+
+  try {
+    const payload = (await fetchJson(
+      endpoint,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      options?.fetchImpl
+    )) as PlayerEventLogListApiPayload;
+    return normalizeEventLogEntries(payload.items);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && storage) {
+      clearStoredCocosAuthSession(storage);
+    }
+    return normalizeEventLogEntries();
+  }
+}
+
+export async function loadCocosPlayerAchievementProgress(
+  remoteUrl: string,
+  playerId: string,
+  query?: AchievementProgressQuery,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+  }
+): Promise<PlayerAchievementProgress[]> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+  const queryString = toAchievementQueryString(query);
+  const endpoint = authSession?.token
+    ? `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/achievements${queryString}`
+    : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/achievements${queryString}`;
+
+  try {
+    const payload = (await fetchJson(
+      endpoint,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      options?.fetchImpl
+    )) as PlayerAchievementListApiPayload;
+    return queryAchievementProgress(payload.items, query);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && storage) {
+      clearStoredCocosAuthSession(storage);
+    }
+    return queryAchievementProgress(undefined, query);
+  }
+}
+
+export async function loadCocosPlayerProgressionSnapshot(
+  remoteUrl: string,
+  playerId: string,
+  eventLimit?: number,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+  }
+): Promise<PlayerProgressionSnapshot> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+  const limitQuery = eventLimit != null ? `?limit=${encodeURIComponent(String(eventLimit))}` : "";
+  const endpoint = authSession?.token
+    ? `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/progression${limitQuery}`
+    : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/progression${limitQuery}`;
+
+  try {
+    const payload = (await fetchJson(
+      endpoint,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      options?.fetchImpl
+    )) as PlayerProgressionApiPayload;
+    return normalizePlayerProgressionSnapshot(payload);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && storage) {
+      clearStoredCocosAuthSession(storage);
+    }
+    return normalizePlayerProgressionSnapshot();
   }
 }
