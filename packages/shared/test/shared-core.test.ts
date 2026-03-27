@@ -10,6 +10,7 @@ import {
   applyAchievementMetricDelta,
   applyAchievementProgressValue,
   buildPlayerProgressionSnapshot,
+  queryAchievementProgress,
   queryEventLogEntries,
   createHeroAttributeBreakdown,
   createHeroEquipmentBonusSummary,
@@ -465,6 +466,37 @@ test("event log query helper filters by category, hero, and achievement metadata
   );
 
   assert.deepEqual(queried.map((entry) => entry.id), ["achievement-entry"]);
+});
+
+test("achievement progress query helper filters by id, metric, unlocked state, and limit", () => {
+  const queried = queryAchievementProgress(
+    [
+      {
+        id: "first_battle",
+        current: 1,
+        unlockedAt: "2026-03-27T10:00:00.000Z"
+      },
+      {
+        id: "enemy_slayer",
+        current: 2,
+        progressUpdatedAt: "2026-03-27T10:04:00.000Z"
+      },
+      {
+        id: "skill_scholar",
+        current: 5,
+        unlockedAt: "2026-03-27T10:06:00.000Z"
+      }
+    ],
+    {
+      metric: "skills_learned",
+      unlocked: true,
+      limit: 1
+    }
+  );
+
+  assert.deepEqual(queried.map((entry) => entry.id), ["skill_scholar"]);
+  assert.equal(queried[0]?.title, "求知者");
+  assert.equal(queried[0]?.target, 5);
 });
 
 test("player progression snapshot summarizes unlocked achievements and recent events", () => {

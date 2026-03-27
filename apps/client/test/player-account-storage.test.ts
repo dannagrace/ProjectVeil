@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createFallbackPlayerAccountProfile,
   getPlayerAccountStorageKey,
+  loadPlayerAchievementProgress,
   loadPlayerBattleReplaySummaries,
   loadPlayerEventLog,
   loadPlayerProgressionSnapshot,
@@ -359,6 +360,131 @@ test("player event-log loader clears expired auth session and falls back to empt
   try {
     const items = await loadPlayerEventLog("player-1", {
       category: "achievement"
+    });
+
+    assert.deepEqual(items, []);
+    assert.equal(localStorageValues.has("project-veil:auth-session"), false);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player achievement loader sends shared filters and normalizes definition-backed progress", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(): string | null {
+          return null;
+        },
+        setItem(): void {}
+      }
+    }
+  });
+
+  globalThis.fetch = (async (input) => {
+    requestedUrl = String(input);
+    return new Response(
+      JSON.stringify({
+        items: [
+          {
+            id: "enemy_slayer",
+            current: 2,
+            progressUpdatedAt: "2026-03-27T12:02:00.000Z"
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }) as typeof fetch;
+
+  try {
+    const items = await loadPlayerAchievementProgress("player-1", {
+      limit: 1,
+      achievementId: "enemy_slayer",
+      metric: "battles_won",
+      unlocked: false
+    });
+
+    assert.equal(
+      requestedUrl,
+      "http://127.0.0.1:2567/api/player-accounts/player-1/achievements?limit=1&achievementId=enemy_slayer&metric=battles_won&unlocked=false"
+    );
+    assert.deepEqual(items.map((entry) => entry.id), ["enemy_slayer"]);
+    assert.equal(items[0]?.title, "猎敌者");
+    assert.equal(items[0]?.current, 2);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player achievement loader clears expired auth session and falls back to normalized filtered defaults", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const localStorageValues = new Map<string, string>([
+    [
+      "project-veil:auth-session",
+      JSON.stringify({
+        playerId: "player-1",
+        displayName: "雾林司灯",
+        authMode: "guest",
+        token: "session-token",
+        source: "remote"
+      })
+    ]
+  ]);
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(key: string): string | null {
+          return localStorageValues.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          localStorageValues.set(key, value);
+        },
+        removeItem(key: string): void {
+          localStorageValues.delete(key);
+        }
+      }
+    }
+  });
+
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })) as typeof fetch;
+
+  try {
+    const items = await loadPlayerAchievementProgress("player-1", {
+      unlocked: true
     });
 
     assert.deepEqual(items, []);

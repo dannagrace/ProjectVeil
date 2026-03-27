@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   buildPlayerProgressionSnapshot,
+  queryAchievementProgress,
   queryEventLogEntries,
   normalizePlayerBattleReplaySummaries
 } from "../../../packages/shared/src/index";
@@ -80,6 +81,17 @@ function parseOptionalQueryParam(request: IncomingMessage, key: string): string 
   return value ? value : undefined;
 }
 
+function parseBooleanQueryParam(request: IncomingMessage, key: string): boolean | undefined {
+  const value = parseOptionalQueryParam(request, key)?.toLowerCase();
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  return undefined;
+}
+
 function toReplayResponse(account: PlayerAccountSnapshot, limit?: number): { items: PlayerAccountSnapshot["recentBattleReplays"] } {
   const items = normalizePlayerBattleReplaySummaries(account.recentBattleReplays);
   const safeLimit = limit == null ? undefined : Math.max(1, Math.floor(limit));
@@ -111,6 +123,26 @@ function toEventLogResponse(
       ...(heroId ? { heroId } : {}),
       ...(achievementId ? { achievementId } : {}),
       ...(worldEventType ? { worldEventType } : {})
+    })
+  };
+}
+
+function toAchievementResponse(account: PlayerAccountSnapshot, request: IncomingMessage): { items: PlayerAccountSnapshot["achievements"] } {
+  const limit = parseLimit(request);
+  const achievementId = parseOptionalQueryParam(request, "achievementId") as
+    | PlayerAccountSnapshot["achievements"][number]["id"]
+    | undefined;
+  const metric = parseOptionalQueryParam(request, "metric") as
+    | PlayerAccountSnapshot["achievements"][number]["metric"]
+    | undefined;
+  const unlocked = parseBooleanQueryParam(request, "unlocked");
+
+  return {
+    items: queryAchievementProgress(account.achievements, {
+      ...(limit != null ? { limit } : {}),
+      ...(achievementId ? { achievementId } : {}),
+      ...(metric ? { metric } : {}),
+      ...(unlocked != null ? { unlocked } : {})
     })
   };
 }
@@ -333,6 +365,42 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.get("/api/player-accounts/me/achievements", async (request, response) => {
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(
+        response,
+        200,
+        toAchievementResponse(
+          createLocalModeAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            loginId: authSession.loginId
+          }),
+          request
+        )
+      );
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      sendJson(response, 200, toAchievementResponse(account, request));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
   app.get("/api/player-accounts/me/progression", async (request, response) => {
     const authSession = resolveAuthSessionFromRequest(request);
     if (!authSession) {
@@ -471,6 +539,45 @@ export function registerPlayerAccountRoutes(
       }
 
       sendJson(response, 200, toEventLogResponse(account, request));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/achievements", async (request, response) => {
+    const playerId = request.params.playerId?.trim();
+    if (!playerId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(
+        response,
+        200,
+        toAchievementResponse(
+          createLocalModeAccount({
+            playerId
+          }),
+          request
+        )
+      );
+      return;
+    }
+
+    try {
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_account_not_found",
+            message: `Player account not found: ${playerId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, toAchievementResponse(account, request));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
