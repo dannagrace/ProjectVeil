@@ -162,6 +162,8 @@
 - 当前美术接入方式为 `configs/assets.json` + `apps/client/public/assets/` 占位素材，逻辑对象已通过稳定资源 key 映射到前端表现层。
 - `assets.json` 已支持多状态资源描述，当前单位和标记可按 `idle / selected / hit` 状态切换占位素材。
 - 地形资源已支持稳定多变体切换，单位资源也已拆成 `portrait + frame` 槽位，后续可直接替换成正式美术素材而不改逻辑层 key。
+- `assets.json` 现已强制声明 `metadata`：每个被引用的资源路径都要带 `slot / stage / source`，用于追踪“当前占位图对应哪个稳定槽位、是否已经转正、来源是什么”。
+- `npm run validate:assets` 现在除了校验 schema 和文件存在性，也会拦截缺失元数据、重复槽位和游离元数据；后续正式美术替换可直接沿用同一套 manifest 规则补齐审计信息。
 - `units.json` 现已补上 `faction / rarity` 元数据，前端会自动挂载阵营与品质 badge，占位资源层已经具备继续细化正式 UI 的结构。
 - `battle-skills.json` 现已承载战斗技能与持续状态目录，shared 战斗结算会在创建战斗和执行技能时直接读取运行时配置，不再依赖硬编码技能表。
 - `battle-balance.json` 现已补上第一批战斗平衡基础配置，当前 shared 战斗运行时已经会直接读取其中的伤害公式参数，以及遭遇战环境里路障/陷阱的生成阈值、耐久、伤害和次数；本批还未把它接进配置中心 UI，只先建立 shared 侧可验证的数据驱动链路。

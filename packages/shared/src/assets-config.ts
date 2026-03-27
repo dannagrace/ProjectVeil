@@ -2,6 +2,8 @@ import type { BuildingKind, ResourceKind, TerrainType } from "./models";
 
 export type AssetState = "idle" | "selected" | "hit";
 export type MarkerKind = "hero" | "neutral";
+export type AssetStage = "placeholder" | "production";
+export type AssetSource = "generated" | "licensed" | "commissioned";
 
 export interface TerrainAssetEntry {
   default: string;
@@ -19,12 +21,20 @@ export interface MarkerAssetEntry {
   hit: string;
 }
 
+export interface AssetMetadataEntry {
+  slot: string;
+  stage: AssetStage;
+  source: AssetSource;
+  notes?: string;
+}
+
 export interface AssetConfig {
   terrain: Record<TerrainType | "unknown", TerrainAssetEntry>;
   resources: Record<ResourceKind, string>;
   buildings: Record<BuildingKind, string>;
   units: Record<string, UnitAssetEntry>;
   markers: Record<MarkerKind, MarkerAssetEntry>;
+  metadata: Record<string, AssetMetadataEntry>;
   badges: {
     factions: Record<string, string>;
     rarities: Record<string, string>;
@@ -50,7 +60,12 @@ export function getAssetConfigValidationErrors(config: unknown): string[] {
   validateStringMapSection(config.buildings, BUILDING_KEYS, "buildings", errors);
   validateUnitsSection(config.units, errors);
   validateMarkersSection(config.markers, errors);
+  validateMetadataSection(config.metadata, errors);
   validateBadgesSection(config.badges, errors);
+
+  if (errors.length === 0) {
+    validateMetadataCoverage(config as unknown as AssetConfig, errors);
+  }
 
   return errors;
 }
@@ -171,6 +186,63 @@ function validateBadgesSection(section: unknown, errors: string[]): void {
   }
 }
 
+function validateMetadataSection(section: unknown, errors: string[]): void {
+  if (!isRecord(section)) {
+    errors.push("metadata must be an object");
+    return;
+  }
+
+  const seenSlots = new Map<string, string>();
+
+  for (const [assetPath, entry] of Object.entries(section)) {
+    validateAssetPath(assetPath, `metadata.${assetPath}`, errors);
+
+    if (!isRecord(entry)) {
+      errors.push(`metadata[${assetPath}] must be an object`);
+      continue;
+    }
+
+    if (typeof entry.slot !== "string" || entry.slot.length === 0) {
+      errors.push(`metadata[${assetPath}].slot must be a non-empty string`);
+    } else {
+      if (!/^[a-z0-9_.-]+$/.test(entry.slot)) {
+        errors.push(`metadata[${assetPath}].slot must use lowercase letters, numbers, dots, dashes or underscores`);
+      }
+
+      const existingPath = seenSlots.get(entry.slot);
+      if (existingPath) {
+        errors.push(`metadata[${assetPath}].slot duplicates metadata[${existingPath}].slot (${entry.slot})`);
+      } else {
+        seenSlots.set(entry.slot, assetPath);
+      }
+    }
+
+    validateEnum(entry.stage, ["placeholder", "production"], `metadata[${assetPath}].stage`, errors);
+    validateEnum(entry.source, ["generated", "licensed", "commissioned"], `metadata[${assetPath}].source`, errors);
+
+    if (entry.notes !== undefined && typeof entry.notes !== "string") {
+      errors.push(`metadata[${assetPath}].notes must be a string when provided`);
+    }
+  }
+}
+
+function validateMetadataCoverage(config: AssetConfig, errors: string[]): void {
+  const referencedPaths = new Set(collectAssetPaths(config));
+  const metadataPaths = new Set(Object.keys(config.metadata));
+
+  for (const assetPath of referencedPaths) {
+    if (!metadataPaths.has(assetPath)) {
+      errors.push(`metadata[${assetPath}] is missing for referenced asset path`);
+    }
+  }
+
+  for (const assetPath of metadataPaths) {
+    if (!referencedPaths.has(assetPath)) {
+      errors.push(`metadata[${assetPath}] does not map to any referenced asset path`);
+    }
+  }
+}
+
 function validateAssetPathArray(value: unknown, path: string, errors: string[]): void {
   if (!Array.isArray(value) || value.length === 0) {
     errors.push(`${path} must be a non-empty array`);
@@ -191,6 +263,83 @@ function validateAssetPath(value: unknown, path: string, errors: string[]): void
   if (!value.startsWith("/assets/")) {
     errors.push(`${path} must start with /assets/`);
   }
+}
+
+function validateEnum(value: unknown, choices: readonly string[], path: string, errors: string[]): void {
+  if (typeof value !== "string" || !choices.includes(value)) {
+    errors.push(`${path} must be one of: ${choices.join(", ")}`);
+  }
+}
+
+export function collectAssetPaths(assetConfig: AssetConfig): string[] {
+  const paths = new Set<string>();
+
+  for (const terrain of Object.values(assetConfig.terrain)) {
+    paths.add(terrain.default);
+    for (const variant of terrain.variants) {
+      paths.add(variant);
+    }
+  }
+
+  for (const resource of Object.values(assetConfig.resources)) {
+    paths.add(resource);
+  }
+
+  for (const building of Object.values(assetConfig.buildings)) {
+    paths.add(building);
+  }
+
+  for (const unit of Object.values(assetConfig.units)) {
+    for (const portrait of Object.values(unit.portrait)) {
+      paths.add(portrait);
+    }
+    paths.add(unit.frame);
+  }
+
+  for (const marker of Object.values(assetConfig.markers)) {
+    for (const state of Object.values(marker)) {
+      paths.add(state);
+    }
+  }
+
+  for (const badgeGroup of Object.values(assetConfig.badges)) {
+    for (const badge of Object.values(badgeGroup)) {
+      paths.add(badge);
+    }
+  }
+
+  return [...paths];
+}
+
+export function getAssetMetadataEntry(assetConfig: AssetConfig, assetPath: string): AssetMetadataEntry | null {
+  return assetConfig.metadata[assetPath] ?? null;
+}
+
+export function summarizeAssetMetadata(assetConfig: AssetConfig): {
+  total: number;
+  byStage: Record<AssetStage, number>;
+  bySource: Record<AssetSource, number>;
+} {
+  const summary = {
+    total: 0,
+    byStage: {
+      placeholder: 0,
+      production: 0
+    },
+    bySource: {
+      generated: 0,
+      licensed: 0,
+      commissioned: 0
+    }
+  };
+
+  for (const entry of Object.values(assetConfig.metadata)) {
+    summary.total += 1;
+    summary.byStage[entry.stage] += 1;
+    summary.bySource[entry.source] += 1;
+  }
+
+  return summary;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

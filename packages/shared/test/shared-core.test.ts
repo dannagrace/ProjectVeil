@@ -35,6 +35,7 @@ import {
   getBattleBalanceConfig,
   getAchievementDefinitions,
   getAssetConfigValidationErrors,
+  getAssetMetadataEntry,
   getDefaultMapObjectsConfig,
   getDefaultBattleSkillCatalog,
   getDefaultHeroSkillTreeConfig,
@@ -56,6 +57,7 @@ import {
   resetRuntimeConfigs,
   simulateAutomatedBattle,
   simulateAutomatedBattles,
+  summarizeAssetMetadata,
   stepBattleReplayPlayback,
   tickBattleReplayPlayback,
   resolveWorldAction,
@@ -228,6 +230,30 @@ test("asset config passes schema validation", () => {
   assert.deepEqual(getAssetConfigValidationErrors(assetConfig), []);
 });
 
+test("asset config exposes metadata for referenced asset paths", () => {
+  const assetPath = assetConfig.units.hero_guard_basic.portrait.idle;
+
+  assert.deepEqual(getAssetMetadataEntry(assetConfig, assetPath), {
+    slot: "unit.hero_guard_basic.idle",
+    stage: "placeholder",
+    source: "generated",
+    notes: "Pixel Fantasy placeholder sprite pending production replacement."
+  });
+
+  assert.deepEqual(summarizeAssetMetadata(assetConfig), {
+    total: 36,
+    byStage: {
+      placeholder: 36,
+      production: 0
+    },
+    bySource: {
+      generated: 36,
+      licensed: 0,
+      commissioned: 0
+    }
+  });
+});
+
 test("asset config validation reports missing terrain variants and bad asset roots", () => {
   const errors = getAssetConfigValidationErrors({
     terrain: {
@@ -284,6 +310,18 @@ test("asset config validation reports missing terrain variants and bad asset roo
         hit: "/assets/markers/neutral-marker-hit.svg"
       }
     },
+    metadata: {
+      "/assets/terrain/grass-tile.svg": {
+        slot: "terrain.grass.default",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/resources/wood-stack.svg": {
+        slot: "resource.wood",
+        stage: "production",
+        source: "outsourced"
+      }
+    },
     badges: {
       factions: {
         crown: "/assets/badges/faction-crown.svg"
@@ -299,6 +337,172 @@ test("asset config validation reports missing terrain variants and bad asset roo
 
   assert.ok(errors.includes("terrain.unknown.variants must be a non-empty array"));
   assert.ok(errors.includes("resources.wood must start with /assets/"));
+  assert.ok(errors.includes("metadata[/assets/resources/wood-stack.svg].source must be one of: generated, licensed, commissioned"));
+});
+
+test("asset config validation reports missing metadata coverage and duplicate slots", () => {
+  const errors = getAssetConfigValidationErrors({
+    terrain: {
+      grass: {
+        default: "/assets/terrain/grass-tile.svg",
+        variants: ["/assets/terrain/grass-tile.svg"]
+      },
+      dirt: {
+        default: "/assets/terrain/dirt-tile.svg",
+        variants: ["/assets/terrain/dirt-tile.svg"]
+      },
+      sand: {
+        default: "/assets/terrain/sand-tile.svg",
+        variants: ["/assets/terrain/sand-tile.svg"]
+      },
+      water: {
+        default: "/assets/terrain/water-tile.svg",
+        variants: ["/assets/terrain/water-tile.svg"]
+      },
+      unknown: {
+        default: "/assets/terrain/fog-tile.svg",
+        variants: ["/assets/terrain/fog-tile.svg"]
+      }
+    },
+    resources: {
+      gold: "/assets/resources/gold-pile.svg",
+      wood: "/assets/resources/wood-stack.svg",
+      ore: "/assets/resources/ore-crate.svg"
+    },
+    buildings: {
+      recruitment_post: "/assets/buildings/recruitment-post.svg",
+      attribute_shrine: "/assets/buildings/attribute-shrine.svg",
+      resource_mine: "/assets/buildings/resource-mine.svg"
+    },
+    units: {
+      hero_guard_basic: {
+        portrait: {
+          idle: "/assets/units/hero-guard-basic.svg",
+          selected: "/assets/units/hero-guard-basic-selected.svg",
+          hit: "/assets/units/hero-guard-basic-hit.svg"
+        },
+        frame: "/assets/frames/unit-frame-ally.svg"
+      }
+    },
+    markers: {
+      hero: {
+        idle: "/assets/markers/hero-marker.svg",
+        selected: "/assets/markers/hero-marker-selected.svg",
+        hit: "/assets/markers/hero-marker-hit.svg"
+      },
+      neutral: {
+        idle: "/assets/markers/neutral-marker.svg",
+        selected: "/assets/markers/neutral-marker-selected.svg",
+        hit: "/assets/markers/neutral-marker-hit.svg"
+      }
+    },
+    metadata: {
+      "/assets/terrain/grass-tile.svg": {
+        slot: "terrain.base",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/terrain/dirt-tile.svg": {
+        slot: "terrain.base",
+        stage: "placeholder",
+        source: "generated"
+      }
+    },
+    badges: {
+      factions: {
+        crown: "/assets/badges/faction-crown.svg"
+      },
+      rarities: {
+        common: "/assets/badges/rarity-common.svg"
+      },
+      interactions: {
+        move: "/assets/badges/interaction-move.svg"
+      }
+    }
+  });
+
+  assert.ok(
+    errors.includes("metadata[/assets/terrain/dirt-tile.svg].slot duplicates metadata[/assets/terrain/grass-tile.svg].slot (terrain.base)")
+  );
+});
+
+test("asset config validation reports missing metadata coverage", () => {
+  const errors = getAssetConfigValidationErrors({
+    terrain: {
+      grass: {
+        default: "/assets/terrain/grass-tile.svg",
+        variants: ["/assets/terrain/grass-tile.svg"]
+      },
+      dirt: {
+        default: "/assets/terrain/dirt-tile.svg",
+        variants: ["/assets/terrain/dirt-tile.svg"]
+      },
+      sand: {
+        default: "/assets/terrain/sand-tile.svg",
+        variants: ["/assets/terrain/sand-tile.svg"]
+      },
+      water: {
+        default: "/assets/terrain/water-tile.svg",
+        variants: ["/assets/terrain/water-tile.svg"]
+      },
+      unknown: {
+        default: "/assets/terrain/fog-tile.svg",
+        variants: ["/assets/terrain/fog-tile.svg"]
+      }
+    },
+    resources: {
+      gold: "/assets/resources/gold-pile.svg",
+      wood: "/assets/resources/wood-stack.svg",
+      ore: "/assets/resources/ore-crate.svg"
+    },
+    buildings: {
+      recruitment_post: "/assets/buildings/recruitment-post.svg",
+      attribute_shrine: "/assets/buildings/attribute-shrine.svg",
+      resource_mine: "/assets/buildings/resource-mine.svg"
+    },
+    units: {
+      hero_guard_basic: {
+        portrait: {
+          idle: "/assets/units/hero-guard-basic.svg",
+          selected: "/assets/units/hero-guard-basic-selected.svg",
+          hit: "/assets/units/hero-guard-basic-hit.svg"
+        },
+        frame: "/assets/frames/unit-frame-ally.svg"
+      }
+    },
+    markers: {
+      hero: {
+        idle: "/assets/markers/hero-marker.svg",
+        selected: "/assets/markers/hero-marker-selected.svg",
+        hit: "/assets/markers/hero-marker-hit.svg"
+      },
+      neutral: {
+        idle: "/assets/markers/neutral-marker.svg",
+        selected: "/assets/markers/neutral-marker-selected.svg",
+        hit: "/assets/markers/neutral-marker-hit.svg"
+      }
+    },
+    metadata: {
+      "/assets/terrain/grass-tile.svg": {
+        slot: "terrain.grass.default",
+        stage: "placeholder",
+        source: "generated"
+      }
+    },
+    badges: {
+      factions: {
+        crown: "/assets/badges/faction-crown.svg"
+      },
+      rarities: {
+        common: "/assets/badges/rarity-common.svg"
+      },
+      interactions: {
+        move: "/assets/badges/interaction-move.svg"
+      }
+    }
+  });
+
+  assert.ok(errors.includes("metadata[/assets/terrain/fog-tile.svg] is missing for referenced asset path"));
 });
 
 test("achievement helpers unlock milestones and preserve catalog order", () => {
