@@ -4,6 +4,7 @@ import {
   createFallbackPlayerAccountProfile,
   getPlayerAccountStorageKey,
   loadPlayerBattleReplaySummaries,
+  loadPlayerProgressionSnapshot,
   readStoredPlayerDisplayName,
   writeStoredPlayerDisplayName
 } from "../src/player-account";
@@ -200,6 +201,94 @@ test("player replay loader normalizes remote replay summaries and keeps newest f
   try {
     const replays = await loadPlayerBattleReplaySummaries("player-1");
     assert.deepEqual(replays.map((replay) => replay.id), ["replay-newer", "replay-older"]);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player progression loader normalizes summary, achievements, and limited event history", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(): string | null {
+          return null;
+        },
+        setItem(): void {}
+      }
+    }
+  });
+
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        summary: {
+          totalAchievements: 1,
+          unlockedAchievements: 1,
+          inProgressAchievements: 0,
+          latestUnlockedAchievementId: "first_battle",
+          latestUnlockedAchievementTitle: "ignored title",
+          latestUnlockedAt: "2026-03-27T12:00:00.000Z",
+          recentEventCount: 1,
+          latestEventAt: "2026-03-27T12:03:00.000Z"
+        },
+        achievements: [
+          {
+            id: "first_battle",
+            current: 1,
+            target: 999,
+            unlocked: false,
+            unlockedAt: "2026-03-27T12:00:00.000Z"
+          }
+        ],
+        recentEventLog: [
+          {
+            id: "event-1",
+            timestamp: "2026-03-27T12:03:00.000Z",
+            roomId: "room-alpha",
+            playerId: "player-1",
+            category: "achievement",
+            description: "解锁成就：初次交锋",
+            achievementId: "first_battle",
+            rewards: [{ type: "badge", label: "初次交锋" }]
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    )) as typeof fetch;
+
+  try {
+    const snapshot = await loadPlayerProgressionSnapshot("player-1", 1);
+    assert.deepEqual(snapshot.summary, {
+      totalAchievements: 3,
+      unlockedAchievements: 1,
+      inProgressAchievements: 0,
+      latestUnlockedAchievementId: "first_battle",
+      latestUnlockedAchievementTitle: "初次交锋",
+      latestUnlockedAt: "2026-03-27T12:00:00.000Z",
+      recentEventCount: 1,
+      latestEventAt: "2026-03-27T12:03:00.000Z"
+    });
+    assert.equal(snapshot.achievements[0]?.title, "初次交锋");
+    assert.deepEqual(snapshot.recentEventLog.map((entry) => entry.id), ["event-1"]);
   } finally {
     Object.defineProperty(globalThis, "window", {
       configurable: true,

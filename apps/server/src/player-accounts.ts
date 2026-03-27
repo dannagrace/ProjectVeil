@@ -1,5 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { normalizePlayerBattleReplaySummaries } from "../../../packages/shared/src/index";
+import {
+  buildPlayerProgressionSnapshot,
+  normalizePlayerBattleReplaySummaries
+} from "../../../packages/shared/src/index";
 import { issueNextAuthSession, resolveAuthSessionFromRequest } from "./auth";
 import type { PlayerAccountProfilePatch, PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
 
@@ -61,6 +64,13 @@ function toReplayResponse(account: PlayerAccountSnapshot, limit?: number): { ite
   return {
     items: safeLimit == null ? items : items.slice(0, safeLimit)
   };
+}
+
+function toProgressionResponse(
+  account: PlayerAccountSnapshot,
+  limit?: number
+): ReturnType<typeof buildPlayerProgressionSnapshot> {
+  return buildPlayerProgressionSnapshot(account.achievements, account.recentEventLog, limit);
 }
 
 function sendStoreUnavailable(response: ServerResponse): void {
@@ -181,6 +191,31 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.get("/api/player-accounts/me/progression", async (request, response) => {
+    if (!store) {
+      sendStoreUnavailable(response);
+      return;
+    }
+
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      sendJson(response, 200, toProgressionResponse(account, parseLimit(request)));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
   app.get("/api/player-accounts/:playerId", async (request, response) => {
     if (!store) {
       sendStoreUnavailable(response);
@@ -236,6 +271,36 @@ export function registerPlayerAccountRoutes(
       }
 
       sendJson(response, 200, toReplayResponse(account, parseLimit(request)));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/progression", async (request, response) => {
+    if (!store) {
+      sendStoreUnavailable(response);
+      return;
+    }
+
+    const playerId = request.params.playerId?.trim();
+    if (!playerId) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_account_not_found",
+            message: `Player account not found: ${playerId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, toProgressionResponse(account, parseLimit(request)));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

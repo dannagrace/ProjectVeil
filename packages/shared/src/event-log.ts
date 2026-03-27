@@ -43,6 +43,23 @@ export interface PlayerAchievementProgress {
   unlockedAt?: string;
 }
 
+export interface PlayerProgressionSummary {
+  totalAchievements: number;
+  unlockedAchievements: number;
+  inProgressAchievements: number;
+  latestUnlockedAchievementId?: AchievementId;
+  latestUnlockedAchievementTitle?: string;
+  latestUnlockedAt?: string;
+  recentEventCount: number;
+  latestEventAt?: string;
+}
+
+export interface PlayerProgressionSnapshot {
+  summary: PlayerProgressionSummary;
+  achievements: PlayerAchievementProgress[];
+  recentEventLog: EventLogEntry[];
+}
+
 export function getLatestUnlockedAchievement(
   progress?: Partial<PlayerAchievementProgress>[] | null
 ): PlayerAchievementProgress | null {
@@ -243,4 +260,40 @@ export function appendEventLogEntries(
   }
 
   return normalizeEventLogEntries([...normalizedIncoming, ...normalizeEventLogEntries(existing)]).slice(0, safeLimit);
+}
+
+export function buildPlayerProgressionSnapshot(
+  achievements?: Partial<PlayerAchievementProgress>[] | null,
+  recentEventLog?: Partial<EventLogEntry>[] | null,
+  eventLimit = 12
+): PlayerProgressionSnapshot {
+  const normalizedAchievements = normalizeAchievementProgress(achievements);
+  const normalizedRecentEventLog = normalizeEventLogEntries(recentEventLog).slice(0, Math.max(1, Math.floor(eventLimit)));
+  const latestUnlocked = getLatestUnlockedAchievement(normalizedAchievements);
+  const unlockedAchievements = normalizedAchievements.filter((entry) => entry.unlocked).length;
+
+  return {
+    summary: {
+      totalAchievements: normalizedAchievements.length,
+      unlockedAchievements,
+      inProgressAchievements: normalizedAchievements.filter((entry) => !entry.unlocked && entry.current > 0).length,
+      ...(latestUnlocked
+        ? {
+            latestUnlockedAchievementId: latestUnlocked.id,
+            latestUnlockedAchievementTitle: latestUnlocked.title,
+            latestUnlockedAt: latestUnlocked.unlockedAt
+          }
+        : {}),
+      recentEventCount: normalizedRecentEventLog.length,
+      ...(normalizedRecentEventLog[0]?.timestamp ? { latestEventAt: normalizedRecentEventLog[0].timestamp } : {})
+    },
+    achievements: normalizedAchievements,
+    recentEventLog: normalizedRecentEventLog
+  };
+}
+
+export function normalizePlayerProgressionSnapshot(
+  snapshot?: Partial<PlayerProgressionSnapshot> | null
+): PlayerProgressionSnapshot {
+  return buildPlayerProgressionSnapshot(snapshot?.achievements, snapshot?.recentEventLog, snapshot?.recentEventLog?.length ?? 12);
 }
