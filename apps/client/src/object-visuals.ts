@@ -72,10 +72,10 @@ export function describeTileObject(tile: PlayerTileView | null): TileCardDescrip
 
   if (tile.building?.kind === "attribute_shrine") {
     const config = objectVisuals.buildings.attribute_shrine;
-    const visited = tile.building.visitedHeroIds.length > 0;
+    const visited = typeof tile.building.lastUsedDay === "number";
     return {
       title: tile.building.label || config.title,
-      subtitle: `${config.subtitle}${visited ? ` 已有 ${tile.building.visitedHeroIds.length} 位英雄完成访问。` : " 当前还没有英雄访问。"}`,
+      subtitle: `${config.subtitle}${visited ? " 本局已完成访问。" : " 当前仍可访问。"}`,
       value: `${formatHeroStatBonus(tile.building.bonus) || "永久属性加成"}${visited ? " · 已留下访问记录" : ""}`,
       icon: buildingAsset(tile.building.kind),
       faction: toFactionKey(config.faction),
@@ -86,7 +86,10 @@ export function describeTileObject(tile: PlayerTileView | null): TileCardDescrip
 
   if (tile.building?.kind === "resource_mine") {
     const config = objectVisuals.buildings.resource_mine;
-    const ownerLabel = tile.building.ownerPlayerId ? `当前归属 ${tile.building.ownerPlayerId}` : "当前无人占领";
+    const ownerLabel =
+      typeof tile.building.lastHarvestDay === "number"
+        ? `最近一次领取于第 ${tile.building.lastHarvestDay} 天`
+        : "当前无人占领";
     return {
       title: tile.building.label || config.title,
       subtitle: `${config.subtitle}${ownerLabel}。`,

@@ -88,13 +88,49 @@ function toProgressionResponse(
   return buildPlayerProgressionSnapshot(account.achievements, account.recentEventLog, limit);
 }
 
-function sendStoreUnavailable(response: ServerResponse): void {
-  sendJson(response, 503, {
-    error: {
-      code: "player_accounts_unavailable",
-      message: "Player account persistence requires configured room persistence storage"
-    }
-  });
+function normalizePlayerId(playerId?: string | null): string {
+  const normalized = playerId?.trim();
+  return normalized && normalized.length > 0 ? normalized : "player";
+}
+
+function normalizeDisplayName(playerId: string, displayName?: string | null): string {
+  const normalized = displayName?.trim();
+  return normalized && normalized.length > 0 ? normalized : playerId;
+}
+
+function normalizeLoginId(loginId?: string | null): string | undefined {
+  const normalized = loginId?.trim().toLowerCase();
+  return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+function createLocalModeAccount(input: {
+  playerId?: string | null;
+  displayName?: string | null;
+  lastRoomId?: string | null;
+  loginId?: string | null;
+  credentialBoundAt?: string | null;
+}): PlayerAccountSnapshot {
+  const playerId = normalizePlayerId(input.playerId);
+  const displayName = normalizeDisplayName(playerId, input.displayName);
+  const lastRoomId = input.lastRoomId?.trim();
+  const loginId = normalizeLoginId(input.loginId);
+  const credentialBoundAt = input.credentialBoundAt?.trim();
+
+  return {
+    playerId,
+    displayName,
+    globalResources: {
+      gold: 0,
+      wood: 0,
+      ore: 0
+    },
+    achievements: [],
+    recentEventLog: [],
+    recentBattleReplays: [],
+    ...(lastRoomId ? { lastRoomId } : {}),
+    ...(loginId ? { loginId } : {}),
+    ...(credentialBoundAt ? { credentialBoundAt } : {})
+  };
 }
 
 function sendUnauthorized(response: ServerResponse): void {
@@ -144,7 +180,9 @@ export function registerPlayerAccountRoutes(
 
   app.get("/api/player-accounts", async (request, response) => {
     if (!store) {
-      sendStoreUnavailable(response);
+      sendJson(response, 200, {
+        items: []
+      });
       return;
     }
 
@@ -163,14 +201,22 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/me", async (request, response) => {
-    if (!store) {
-      sendStoreUnavailable(response);
-      return;
-    }
-
     const authSession = resolveAuthSessionFromRequest(request);
     if (!authSession) {
       sendUnauthorized(response);
+      return;
+    }
+
+    if (!store) {
+      const account = createLocalModeAccount({
+        playerId: authSession.playerId,
+        displayName: authSession.displayName,
+        loginId: authSession.loginId
+      });
+      sendJson(response, 200, {
+        account,
+        session: issueNextAuthSession(account, authSession)
+      });
       return;
     }
 
@@ -191,14 +237,16 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/me/battle-replays", async (request, response) => {
-    if (!store) {
-      sendStoreUnavailable(response);
-      return;
-    }
-
     const authSession = resolveAuthSessionFromRequest(request);
     if (!authSession) {
       sendUnauthorized(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, {
+        items: []
+      });
       return;
     }
 
@@ -216,14 +264,25 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/me/progression", async (request, response) => {
-    if (!store) {
-      sendStoreUnavailable(response);
-      return;
-    }
-
     const authSession = resolveAuthSessionFromRequest(request);
     if (!authSession) {
       sendUnauthorized(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(
+        response,
+        200,
+        toProgressionResponse(
+          createLocalModeAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            loginId: authSession.loginId
+          }),
+          parseLimit(request)
+        )
+      );
       return;
     }
 
@@ -241,14 +300,20 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/:playerId", async (request, response) => {
-    if (!store) {
-      sendStoreUnavailable(response);
-      return;
-    }
-
     const playerId = request.params.playerId?.trim();
     if (!playerId) {
       sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, {
+        account: toPublicPlayerAccount(
+          createLocalModeAccount({
+            playerId
+          })
+        )
+      });
       return;
     }
 
@@ -271,14 +336,16 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/:playerId/battle-replays", async (request, response) => {
-    if (!store) {
-      sendStoreUnavailable(response);
-      return;
-    }
-
     const playerId = request.params.playerId?.trim();
     if (!playerId) {
       sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, {
+        items: []
+      });
       return;
     }
 
@@ -301,14 +368,23 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/:playerId/progression", async (request, response) => {
-    if (!store) {
-      sendStoreUnavailable(response);
-      return;
-    }
-
     const playerId = request.params.playerId?.trim();
     if (!playerId) {
       sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(
+        response,
+        200,
+        toProgressionResponse(
+          createLocalModeAccount({
+            playerId
+          }),
+          parseLimit(request)
+        )
+      );
       return;
     }
 
@@ -331,11 +407,6 @@ export function registerPlayerAccountRoutes(
   });
 
   app.put("/api/player-accounts/me", async (request, response) => {
-    if (!store) {
-      sendStoreUnavailable(response);
-      return;
-    }
-
     const authSession = resolveAuthSessionFromRequest(request);
     if (!authSession) {
       sendUnauthorized(response);
@@ -373,6 +444,20 @@ export function registerPlayerAccountRoutes(
         ...(body.lastRoomId !== undefined ? { lastRoomId: body.lastRoomId } : {})
       };
 
+      if (!store) {
+        const account = createLocalModeAccount({
+          playerId: authSession.playerId,
+          displayName: patch.displayName ?? authSession.displayName,
+          lastRoomId: patch.lastRoomId,
+          loginId: authSession.loginId
+        });
+        sendJson(response, 200, {
+          account,
+          session: issueNextAuthSession(account, authSession)
+        });
+        return;
+      }
+
       const account =
         Object.keys(patch).length === 0
           ? await store.ensurePlayerAccount({
@@ -395,24 +480,14 @@ export function registerPlayerAccountRoutes(
   });
 
   app.put("/api/player-accounts/:playerId", async (request, response) => {
-    if (!store) {
-      sendStoreUnavailable(response);
-      return;
-    }
-
-    const authSession = resolveAuthSessionFromRequest(request);
-    if (!authSession) {
-      sendUnauthorized(response);
-      return;
-    }
-
     const playerId = request.params.playerId?.trim();
     if (!playerId) {
       sendNotFound(response);
       return;
     }
 
-    if (authSession.playerId !== playerId) {
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (authSession && authSession.playerId !== playerId) {
       sendForbidden(response);
       return;
     }
@@ -447,6 +522,25 @@ export function registerPlayerAccountRoutes(
         ...(body.displayName !== undefined ? { displayName: body.displayName ?? "" } : {}),
         ...(body.lastRoomId !== undefined ? { lastRoomId: body.lastRoomId } : {})
       };
+
+      if (!store) {
+        const account = createLocalModeAccount({
+          playerId,
+          displayName: patch.displayName ?? authSession?.displayName ?? playerId,
+          lastRoomId: patch.lastRoomId,
+          loginId: authSession?.playerId === playerId ? authSession.loginId : undefined
+        });
+        sendJson(response, 200, {
+          account,
+          ...(authSession?.playerId === playerId ? { session: issueNextAuthSession(account, authSession) } : {})
+        });
+        return;
+      }
+
+      if (!authSession) {
+        sendUnauthorized(response);
+        return;
+      }
 
       const account =
         Object.keys(patch).length === 0

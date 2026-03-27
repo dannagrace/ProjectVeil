@@ -78,6 +78,13 @@ const battleSkillNameById = new Map(
   getDefaultBattleSkillCatalog().skills.map((skill) => [skill.id, skill.name] as const)
 );
 
+declare global {
+  interface Window {
+    render_game_to_text?: () => string;
+    advanceTime?: (ms: number) => Promise<void>;
+  }
+}
+
 interface BattleModalState {
   visible: boolean;
   title: string;
@@ -123,6 +130,7 @@ interface AppState {
   selectedHeroId: string | null;
   selectedTile: { x: number; y: number } | null;
   hoveredTile: { x: number; y: number } | null;
+  keyboardCursor: { x: number; y: number } | null;
   previewPlan: MovementPlan | null;
   reachableTiles: Array<{ x: number; y: number }>;
   selectedBattleTargetId: string | null;
@@ -141,6 +149,13 @@ type BattleUnitView = BattleState["units"][string];
 type BattleSkillView = NonNullable<BattleUnitView["skills"]>[number];
 type BattleStatusView = NonNullable<BattleUnitView["statusEffects"]>[number];
 type BattleHazardView = BattleState["environment"][number];
+
+interface ScheduledUiTask {
+  id: number;
+  runAt: number;
+  callback: () => void;
+  canceled: boolean;
+}
 
 const state: AppState = {
   world: {
@@ -174,6 +189,7 @@ const state: AppState = {
   selectedHeroId: null,
   selectedTile: null,
   hoveredTile: null,
+  keyboardCursor: null,
   previewPlan: null,
   reachableTiles: [],
   selectedBattleTargetId: null,
@@ -196,6 +212,12 @@ const state: AppState = {
 };
 
 let accountRefreshPromise: Promise<void> | null = null;
+let uiClockMs = 0;
+let nextUiTaskId = 1;
+let scheduledUiTasks: ScheduledUiTask[] = [];
+let pathAnimationTaskIds: number[] = [];
+let battleFxTaskId: number | null = null;
+let keyboardShortcutsBound = false;
 
 interface PendingPrediction {
   world: PlayerWorldView;
@@ -237,6 +259,64 @@ async function getSession() {
   }
 
   return sessionPromise;
+}
+
+function scheduleUiTask(delayMs: number, callback: () => void): number {
+  const safeDelayMs = Number.isFinite(delayMs) ? Math.max(0, delayMs) : 0;
+  const task: ScheduledUiTask = {
+    id: nextUiTaskId++,
+    runAt: uiClockMs + safeDelayMs,
+    callback,
+    canceled: false
+  };
+
+  scheduledUiTasks.push(task);
+  scheduledUiTasks.sort((left, right) => (left.runAt === right.runAt ? left.id - right.id : left.runAt - right.runAt));
+  return task.id;
+}
+
+function cancelUiTask(taskId: number | null): void {
+  if (taskId == null) {
+    return;
+  }
+
+  const task = scheduledUiTasks.find((item) => item.id === taskId);
+  if (task) {
+    task.canceled = true;
+  }
+}
+
+function cancelUiTaskBatch(taskIds: number[]): void {
+  for (const taskId of taskIds) {
+    cancelUiTask(taskId);
+  }
+  taskIds.length = 0;
+}
+
+function flushUiTasksThrough(targetMs: number): void {
+  const safeTargetMs = Math.max(uiClockMs, Number.isFinite(targetMs) ? targetMs : uiClockMs);
+
+  while (scheduledUiTasks.length > 0) {
+    const nextTask = scheduledUiTasks[0];
+    if (!nextTask) {
+      break;
+    }
+
+    if (nextTask.canceled) {
+      scheduledUiTasks.shift();
+      continue;
+    }
+
+    if (nextTask.runAt > safeTargetMs) {
+      break;
+    }
+
+    scheduledUiTasks.shift();
+    uiClockMs = nextTask.runAt;
+    nextTask.callback();
+  }
+
+  uiClockMs = safeTargetMs;
 }
 
 function escapeHtml(value: string): string {
@@ -714,6 +794,95 @@ function hoveredTileData(): PlayerTileView | null {
   );
 }
 
+function clampWorldCoordinate(value: number, limit: number): number {
+  if (limit <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(limit - 1, Math.floor(value)));
+}
+
+function clampWorldPosition(x: number, y: number): { x: number; y: number } {
+  return {
+    x: clampWorldCoordinate(x, state.world.map.width),
+    y: clampWorldCoordinate(y, state.world.map.height)
+  };
+}
+
+function currentKeyboardCursor(): { x: number; y: number } | null {
+  if (state.world.map.width <= 0 || state.world.map.height <= 0) {
+    return null;
+  }
+
+  const hero = activeHero();
+  const fallback =
+    state.keyboardCursor ??
+    state.selectedTile ??
+    (hero
+      ? {
+          x: hero.position.x,
+          y: hero.position.y
+        }
+      : null) ?? { x: 0, y: 0 };
+
+  return clampWorldPosition(fallback.x, fallback.y);
+}
+
+function syncKeyboardCursor(preferred?: { x: number; y: number } | null): void {
+  if (state.world.map.width <= 0 || state.world.map.height <= 0) {
+    state.keyboardCursor = null;
+    return;
+  }
+
+  const hero = activeHero();
+  const nextCursor = preferred ??
+    state.keyboardCursor ??
+    state.selectedTile ??
+    (hero
+      ? {
+          x: hero.position.x,
+          y: hero.position.y
+        }
+      : null) ?? { x: 0, y: 0 };
+
+  state.keyboardCursor = clampWorldPosition(nextCursor.x, nextCursor.y);
+  if (!state.battle) {
+    state.hoveredTile = state.keyboardCursor;
+  }
+}
+
+function setKeyboardCursor(x: number, y: number, options: { preview?: boolean } = {}): void {
+  const nextCursor = currentKeyboardCursor();
+  if (!nextCursor && (state.world.map.width <= 0 || state.world.map.height <= 0)) {
+    return;
+  }
+
+  const clamped = clampWorldPosition(x, y);
+  state.keyboardCursor = clamped;
+
+  if (state.battle) {
+    render();
+    return;
+  }
+
+  state.hoveredTile = clamped;
+  if (options.preview === false || !sessionPromise) {
+    render();
+    return;
+  }
+
+  void previewTile(clamped.x, clamped.y);
+}
+
+function nudgeKeyboardCursor(dx: number, dy: number): void {
+  const cursor = currentKeyboardCursor();
+  if (!cursor) {
+    return;
+  }
+
+  setKeyboardCursor(cursor.x + dx, cursor.y + dy);
+}
+
 function isReachableTile(x: number, y: number): boolean {
   return state.reachableTiles.some((tile) => tile.x === x && tile.y === y);
 }
@@ -756,6 +925,302 @@ function controlledBattleCamp(
   }
 
   return null;
+}
+
+function battleShortcutContext():
+  | {
+      active: BattleUnitView;
+      enemies: BattleUnitView[];
+      selectedTarget: BattleUnitView | null;
+      readySkills: BattleSkillView[];
+    }
+  | null {
+  if (!state.battle?.activeUnitId) {
+    return null;
+  }
+
+  const playerCamp = controlledBattleCamp(state.battle);
+  const active = state.battle.units[state.battle.activeUnitId] ?? null;
+  if (!playerCamp || !active || active.camp !== playerCamp) {
+    return null;
+  }
+
+  const enemyCamp = opposingBattleCamp(playerCamp);
+  const enemies = Object.values(state.battle.units).filter((unit) => unit.camp === enemyCamp && unit.count > 0);
+  const selectedTarget = enemies.find((unit) => unit.id === state.selectedBattleTargetId) ?? enemies[0] ?? null;
+  const readySkills = (active.skills ?? []).filter(
+    (skill) => skill.kind === "active" && skill.remainingCooldown === 0 && (skill.target !== "enemy" || Boolean(selectedTarget))
+  );
+
+  return {
+    active,
+    enemies,
+    selectedTarget,
+    readySkills
+  };
+}
+
+function cycleBattleTarget(offset: number): void {
+  const context = battleShortcutContext();
+  if (!context || context.enemies.length === 0) {
+    return;
+  }
+
+  const currentIndex = context.enemies.findIndex((unit) => unit.id === (context.selectedTarget?.id ?? ""));
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  const nextIndex = (safeIndex + offset + context.enemies.length) % context.enemies.length;
+  state.selectedBattleTargetId = context.enemies[nextIndex]?.id ?? context.selectedTarget?.id ?? null;
+  render();
+}
+
+function buildAutomationTilePayload(tile: PlayerTileView) {
+  return {
+    x: tile.position.x,
+    y: tile.position.y,
+    fog: tile.fog,
+    terrain: tile.terrain,
+    walkable: tile.walkable,
+    ...(tile.resource ? { resource: { ...tile.resource } } : {}),
+    ...(tile.building
+      ? {
+          building:
+            tile.building.kind === "recruitment_post"
+              ? {
+                  id: tile.building.id,
+                  kind: tile.building.kind,
+                  label: tile.building.label,
+                  availableCount: tile.building.availableCount,
+                  recruitCount: tile.building.recruitCount,
+                  cost: { ...tile.building.cost }
+                }
+              : tile.building.kind === "attribute_shrine"
+                ? {
+                    id: tile.building.id,
+                    kind: tile.building.kind,
+                    label: tile.building.label,
+                    bonus: { ...tile.building.bonus },
+                    ...(typeof tile.building.lastUsedDay === "number" ? { lastUsedDay: tile.building.lastUsedDay } : {})
+                  }
+                : {
+                    id: tile.building.id,
+                    kind: tile.building.kind,
+                    label: tile.building.label,
+                    resourceKind: tile.building.resourceKind,
+                    income: tile.building.income,
+                    ...(typeof tile.building.lastHarvestDay === "number"
+                      ? { lastHarvestDay: tile.building.lastHarvestDay }
+                      : {})
+                  }
+        }
+      : {}),
+    ...(tile.occupant ? { occupant: { kind: tile.occupant.kind, refId: tile.occupant.refId } } : {})
+  };
+}
+
+function renderGameToText(): string {
+  const hero = activeHero();
+  const visibleInteractiveTiles = state.world.map.tiles
+    .filter((tile) => tile.fog !== "hidden" && (tile.resource || tile.building || tile.occupant))
+    .map(buildAutomationTilePayload);
+  const visibleHeroes = [...state.world.visibleHeroes]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((item) => ({
+      id: item.id,
+      playerId: item.playerId,
+      name: item.name,
+      x: item.position.x,
+      y: item.position.y
+    }));
+  const ownHeroes = [...state.world.ownHeroes]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((item) => ({
+      id: item.id,
+      playerId: item.playerId,
+      name: item.name,
+      x: item.position.x,
+      y: item.position.y,
+      move: { total: item.move.total, remaining: item.move.remaining },
+      stats: { ...item.stats },
+      progression: {
+        level: item.progression.level,
+        experience: item.progression.experience,
+        skillPoints: item.progression.skillPoints,
+        battlesWon: item.progression.battlesWon,
+        neutralBattlesWon: item.progression.neutralBattlesWon,
+        pvpBattlesWon: item.progression.pvpBattlesWon
+      },
+      armyTemplateId: item.armyTemplateId,
+      armyCount: item.armyCount
+    }));
+  const battle =
+    state.battle == null
+      ? null
+      : {
+          id: state.battle.id,
+          round: state.battle.round,
+          lanes: state.battle.lanes,
+          activeUnitId: state.battle.activeUnitId,
+          turnOrder: [...state.battle.turnOrder],
+          selectedTargetId: state.selectedBattleTargetId,
+          units: Object.values(state.battle.units)
+            .sort((left, right) => left.id.localeCompare(right.id))
+            .map((unit) => ({
+              id: unit.id,
+              camp: unit.camp,
+              lane: unit.lane,
+              stackName: unit.stackName,
+              count: unit.count,
+              currentHp: unit.currentHp,
+              maxHp: unit.maxHp,
+              attack: unit.attack,
+              defense: unit.defense,
+              initiative: unit.initiative,
+              hasRetaliated: unit.hasRetaliated,
+              defending: unit.defending,
+              skills: (unit.skills ?? []).map((skill) => ({
+                id: skill.id,
+                kind: skill.kind,
+                target: skill.target,
+                cooldown: skill.cooldown,
+                remainingCooldown: skill.remainingCooldown
+              })),
+              statusEffects: (unit.statusEffects ?? []).map((status) => ({
+                id: status.id,
+                durationRemaining: status.durationRemaining,
+                attackModifier: status.attackModifier,
+                defenseModifier: status.defenseModifier,
+                damagePerTurn: status.damagePerTurn,
+                initiativeModifier: status.initiativeModifier,
+                blocksActiveSkills: status.blocksActiveSkills
+              }))
+            })),
+          environment: state.battle.environment.map((hazard) =>
+            hazard.kind === "blocker"
+              ? {
+                  id: hazard.id,
+                  kind: hazard.kind,
+                  lane: hazard.lane,
+                  name: hazard.name,
+                  durability: hazard.durability,
+                  maxDurability: hazard.maxDurability
+                }
+              : {
+                  id: hazard.id,
+                  kind: hazard.kind,
+                  lane: hazard.lane,
+                  effect: hazard.effect,
+                  name: hazard.name,
+                  damage: hazard.damage,
+                  charges: hazard.charges,
+                  revealed: hazard.revealed,
+                  triggered: hazard.triggered,
+                  ...(hazard.grantedStatusId ? { grantedStatusId: hazard.grantedStatusId } : {})
+                }
+          ),
+          logTail: state.battle.log.slice(-8)
+        };
+
+  const payload = {
+    mode: shouldBootGame ? (state.battle ? "battle" : "world") : "lobby",
+    coordinateSystem: "origin=(0,0) at top-left; x increases right; y increases down",
+    automationControls: shouldBootGame
+      ? {
+          world: {
+            moveCursor: "Arrow keys",
+            interact: "Enter / Space",
+            endDay: "B"
+          },
+          battle: {
+            cycleTarget: "Arrow keys",
+            attack: "Enter / Space",
+            skill: "A",
+            defendOrWait: "B"
+          },
+          modal: {
+            close: "Enter / Space / Escape"
+          }
+        }
+      : null,
+    room: {
+      roomId: shouldBootGame ? state.world.meta.roomId : state.lobby.roomId,
+      playerId: shouldBootGame ? state.world.playerId : state.lobby.playerId,
+      day: shouldBootGame ? state.world.meta.day : null
+    },
+    resources: shouldBootGame ? { ...state.world.resources } : null,
+    hero:
+      hero == null
+        ? null
+        : {
+            id: hero.id,
+            name: hero.name,
+            x: hero.position.x,
+            y: hero.position.y,
+            move: { total: hero.move.total, remaining: hero.move.remaining },
+            stats: { ...hero.stats },
+            armyTemplateId: hero.armyTemplateId,
+            armyCount: hero.armyCount,
+            skillPoints: hero.progression.skillPoints
+          },
+    ownHeroes,
+    visibleHeroes,
+    visibleInteractiveTiles,
+    reachableTiles: state.reachableTiles.map((tile) => ({ x: tile.x, y: tile.y })),
+    previewPlan: state.previewPlan
+      ? {
+          moveCost: state.previewPlan.moveCost,
+          endsInEncounter: state.previewPlan.endsInEncounter,
+          encounterKind: state.previewPlan.encounterKind,
+          path: state.previewPlan.path.map((node) => ({ x: node.x, y: node.y })),
+          travelPath: state.previewPlan.travelPath.map((node) => ({ x: node.x, y: node.y }))
+        }
+      : null,
+    selectedTile: state.selectedTile ? { ...state.selectedTile } : null,
+    hoveredTile: state.hoveredTile ? { ...state.hoveredTile } : null,
+    keyboardCursor: state.keyboardCursor ? { ...state.keyboardCursor } : null,
+    feedbackTone: state.feedbackTone,
+    predictionStatus: state.predictionStatus,
+    modal: state.modal.visible ? { ...state.modal } : null,
+    animation: {
+      animatedPath: state.animatedPath.map((node) => ({ x: node.x, y: node.y })),
+      animatedPathIndex: state.animatedPathIndex,
+      battleFx: { ...state.battleFx },
+      pendingUiTasks: scheduledUiTasks.filter((task) => !task.canceled).length
+    },
+    battle,
+    timelineTail: state.timeline.slice(0, 6).map((entry) => entry.text),
+    logTail: state.log.slice(0, 8),
+    lobby:
+      shouldBootGame
+        ? null
+        : {
+            roomId: state.lobby.roomId,
+            playerId: state.lobby.playerId,
+            displayName: state.lobby.displayName,
+            loading: state.lobby.loading,
+            entering: state.lobby.entering,
+            status: state.lobby.status,
+            rooms: state.lobby.rooms.map((item) => ({
+              roomId: item.roomId,
+              day: item.day,
+              connectedPlayers: item.connectedPlayers,
+              heroCount: item.heroCount,
+              activeBattles: item.activeBattles
+            }))
+          }
+  };
+
+  return JSON.stringify(payload, null, 2);
+}
+
+async function advanceUiTime(ms: number): Promise<void> {
+  const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+  flushUiTasksThrough(uiClockMs + safeMs);
+  if (safeMs > 0) {
+    await new Promise((resolve) => window.setTimeout(resolve, Math.min(16, safeMs)));
+  } else {
+    await Promise.resolve();
+  }
+  render();
 }
 
 function opposingBattleCamp(camp: "attacker" | "defender" | null): "attacker" | "defender" | null {
@@ -1018,6 +1483,7 @@ function applyReplayedUpdate(update: SessionUpdate): void {
       text: "已回放本地缓存，等待权威状态同步"
     }
   ]);
+  syncKeyboardCursor();
   render();
 }
 
@@ -1291,6 +1757,7 @@ function buildTimelineEntries(update: SessionUpdate, source: TimelineEntry["sour
 }
 
 function startPathAnimation(path: Array<{ x: number; y: number }>): void {
+  cancelUiTaskBatch(pathAnimationTaskIds);
   state.animatedPath = path;
   state.animatedPathIndex = -1;
 
@@ -1300,33 +1767,36 @@ function startPathAnimation(path: Array<{ x: number; y: number }>): void {
   }
 
   path.forEach((_, index) => {
-    window.setTimeout(() => {
+    pathAnimationTaskIds.push(scheduleUiTask(index * 110, () => {
       state.animatedPathIndex = index;
       render();
-    }, index * 110);
+    }));
   });
 
-  window.setTimeout(() => {
+  pathAnimationTaskIds.push(scheduleUiTask(path.length * 110 + 180, () => {
     state.animatedPath = [];
     state.animatedPathIndex = -1;
+    pathAnimationTaskIds = [];
     render();
-  }, path.length * 110 + 180);
+  }));
 }
 
 function triggerBattleFx(unitId: string | null, floatingText: string | null): void {
+  cancelUiTask(battleFxTaskId);
   state.battleFx = {
     flashUnitId: unitId,
     floatingText
   };
   render();
 
-  window.setTimeout(() => {
+  battleFxTaskId = scheduleUiTask(650, () => {
     state.battleFx = {
       flashUnitId: null,
       floatingText: null
     };
+    battleFxTaskId = null;
     render();
-  }, 650);
+  });
 }
 
 function extractDamageText(lines: string[]): string | null {
@@ -1433,6 +1903,7 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
     void refreshAccountProfileFromServer();
   }
 
+  syncKeyboardCursor();
   render();
 }
 
@@ -1465,7 +1936,12 @@ async function previewTile(x: number, y: number): Promise<void> {
   }
 
   const session = await getSession();
-  state.previewPlan = await session.previewMovement(hero.id, { x, y });
+  const previewPlan = await session.previewMovement(hero.id, { x, y });
+  if (!state.hoveredTile || state.hoveredTile.x !== x || state.hoveredTile.y !== y) {
+    return;
+  }
+
+  state.previewPlan = previewPlan;
   render();
 }
 
@@ -1477,6 +1953,7 @@ function clearPreview(): void {
 
 async function onTileClick(x: number, y: number): Promise<void> {
   state.selectedTile = { x, y };
+  state.keyboardCursor = { x, y };
   const hero = activeHero();
   if (!hero || state.battle) {
     render();
@@ -1751,6 +2228,165 @@ async function onBattleAction(action: BattleAction): Promise<void> {
   state.pendingBattleAction = action;
   const session = await getSession();
   applyUpdate(await session.actInBattle(action));
+}
+
+async function triggerBattleAttackShortcut(): Promise<void> {
+  const context = battleShortcutContext();
+  if (!context?.selectedTarget) {
+    return;
+  }
+
+  await onBattleAction({
+    type: "battle.attack",
+    attackerId: context.active.id,
+    defenderId: context.selectedTarget.id
+  });
+}
+
+async function triggerBattleSkillShortcut(): Promise<void> {
+  const context = battleShortcutContext();
+  if (!context) {
+    return;
+  }
+
+  const skill = context.readySkills[0] ?? null;
+  if (!skill) {
+    await triggerBattleAttackShortcut();
+    return;
+  }
+
+  await onBattleAction({
+    type: "battle.skill",
+    unitId: context.active.id,
+    skillId: skill.id,
+    ...(skill.target === "enemy" && context.selectedTarget ? { targetId: context.selectedTarget.id } : {})
+  });
+}
+
+async function triggerBattleDefendShortcut(): Promise<void> {
+  const context = battleShortcutContext();
+  if (!context) {
+    return;
+  }
+
+  await onBattleAction(
+    context.active.defending
+      ? {
+          type: "battle.wait",
+          unitId: context.active.id
+        }
+      : {
+          type: "battle.defend",
+          unitId: context.active.id
+        }
+  );
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
+function bindKeyboardShortcuts(): void {
+  if (keyboardShortcutsBound) {
+    return;
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (!shouldBootGame || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) {
+      return;
+    }
+
+    if (isEditableKeyboardTarget(event.target)) {
+      return;
+    }
+
+    if (state.modal.visible) {
+      if (event.key === "Enter" || event.key === " " || event.key === "Escape") {
+        event.preventDefault();
+        closeBattleModal();
+      }
+      return;
+    }
+
+    if (state.battle) {
+      if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+        event.preventDefault();
+        cycleBattleTarget(-1);
+        return;
+      }
+
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+        event.preventDefault();
+        cycleBattleTarget(1);
+        return;
+      }
+
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        void triggerBattleAttackShortcut();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        void triggerBattleSkillShortcut();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        void triggerBattleDefendShortcut();
+      }
+      return;
+    }
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      nudgeKeyboardCursor(-1, 0);
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      nudgeKeyboardCursor(1, 0);
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      nudgeKeyboardCursor(0, -1);
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      nudgeKeyboardCursor(0, 1);
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      const cursor = currentKeyboardCursor();
+      if (!cursor) {
+        return;
+      }
+
+      event.preventDefault();
+      void onTileClick(cursor.x, cursor.y);
+      return;
+    }
+
+    if (event.key.toLowerCase() === "b") {
+      event.preventDefault();
+      void onEndDay();
+    }
+  });
+
+  keyboardShortcutsBound = true;
 }
 
 async function refreshLobbyRoomList(): Promise<void> {
@@ -2440,12 +3076,15 @@ function render(): void {
     .map((tile, index) => {
       const selected = state.selectedTile?.x === tile.position.x && state.selectedTile?.y === tile.position.y;
       const hovered = state.hoveredTile?.x === tile.position.x && state.hoveredTile?.y === tile.position.y;
+      const keyboardCursor =
+        state.keyboardCursor?.x === tile.position.x && state.keyboardCursor?.y === tile.position.y;
       const isHero = hero && hero.position.x === tile.position.x && hero.position.y === tile.position.y;
         const classes = [
           "tile",
           `fog-${tile.fog}`,
         selected ? "is-selected" : "",
         hovered ? "is-hovered" : "",
+        keyboardCursor ? "is-keyboard-cursor" : "",
         isHero ? "is-hero" : "",
           tile.occupant?.kind === "neutral" ? "is-neutral" : "",
           isReachableTile(tile.position.x, tile.position.y) ? "is-reachable" : "",
@@ -2645,6 +3284,10 @@ function render(): void {
 
   for (const tileButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-x][data-y]"))) {
     tileButton.addEventListener("mouseenter", () => {
+      state.keyboardCursor = {
+        x: Number(tileButton.dataset.x),
+        y: Number(tileButton.dataset.y)
+      };
       void previewTile(Number(tileButton.dataset.x), Number(tileButton.dataset.y));
     });
     tileButton.addEventListener("mouseleave", clearPreview);
@@ -2654,6 +3297,10 @@ function render(): void {
       }
 
       event.preventDefault();
+      state.keyboardCursor = {
+        x: Number(tileButton.dataset.x),
+        y: Number(tileButton.dataset.y)
+      };
       void onTileClick(Number(tileButton.dataset.x), Number(tileButton.dataset.y));
     });
     tileButton.addEventListener("keydown", (event) => {
@@ -2662,6 +3309,10 @@ function render(): void {
       }
 
       event.preventDefault();
+      state.keyboardCursor = {
+        x: Number(tileButton.dataset.x),
+        y: Number(tileButton.dataset.y)
+      };
       void onTileClick(Number(tileButton.dataset.x), Number(tileButton.dataset.y));
     });
   }
@@ -2822,6 +3473,7 @@ function render(): void {
 }
 
 async function bootstrap(): Promise<void> {
+  bindKeyboardShortcuts();
   render();
   const syncedAuthSession = await syncCurrentAuthSession();
   state.lobby.authSession = syncedAuthSession;
@@ -2939,3 +3591,5 @@ async function onBindAccountProfile(): Promise<void> {
 }
 
 void bootstrap();
+window.render_game_to_text = renderGameToText;
+window.advanceTime = advanceUiTime;
