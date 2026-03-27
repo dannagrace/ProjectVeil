@@ -1,3 +1,4 @@
+export * from "./assets-config";
 export * from "./battle";
 export * from "./battle-replay";
 export * from "./equipment";
