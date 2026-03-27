@@ -143,12 +143,52 @@ Original prompt: 你先学习下当前项目并给出开发的计划
     - `keyboardCursor = { x: 5, y: 4 }`
     - 战斗奖励与升级日志都已落入 `timelineTail / logTail`
 
+## Resource / recruit automation scripts - 2026-03-27
+
+- 已新增动作文件：
+  - `tests/automation/keyboard-resource-flow.actions.json`
+  - `tests/automation/keyboard-recruit-flow.actions.json`
+- 资源流脚本覆盖：
+  - 左移到木材
+  - 拾取木材
+  - 移动到伐木场
+  - 占矿
+  - 推进到下一天
+  - 再次领取
+- 资源流技能脚本实测结果：
+  - URL: `http://127.0.0.1:4173/?roomId=resource-flow-check&playerId=player-1`
+  - 输出目录：`output/web-game-resource-flow`
+  - 未生成 `errors-0.json`
+  - `state-0.json` 结果：
+    - `day = 2`
+    - `wood = 15`
+    - 英雄停在 `(3,1)` 伐木场
+    - `lastHarvestDay = 2`
+- 招募流脚本覆盖：
+  - 下移到招募所附近并消耗完第 1 天移动力
+  - 推进到第 2 天
+  - 下移到金币点并拾取 `gold +500`
+  - 回到招募所
+  - 招募 4 个 `hero_guard_basic`
+- 招募流技能脚本实测结果：
+  - URL: `http://127.0.0.1:4173/?roomId=recruit-flow-check&playerId=player-1`
+  - 输出目录：`output/web-game-recruit-flow`
+  - 未生成 `errors-0.json`
+  - `state-0.json` 结果：
+    - `day = 2`
+    - `gold = 260`
+    - `armyCount = 16`
+    - 英雄停在 `(1,3)` 招募所
+    - 招募所 `availableCount = 0`
+- 已实际检查两张截图：
+  - 资源流截图停在伐木场，无战斗面板残留，地图与说明卡一致。
+  - 招募流截图停在招募所，说明卡显示今日库存已售罄，与 `availableCount = 0` 一致。
+
 ## TODOs for next agent
 
 - 如果要继续用技能脚本做更长链路，可以在 `tests/automation/` 下追加：
-  - 资源流脚本（木材 -> 矿场 -> 推日）
-  - 招募脚本（拿金 -> 回招募所）
   - 技能脚本（进入战斗后优先按 `A` 演练主动技能）
+  - 混合脚本（拿木 -> 占矿 -> 推日 -> 拿金 -> 回招募所 -> 招募）
 - 目前 `advanceTime(ms)` 的真实等待是偏稳妥的保守值；如果后续想压缩脚本运行时长，可以在不引入抖动的前提下再微调。
 
 ## TODOs for next agent
