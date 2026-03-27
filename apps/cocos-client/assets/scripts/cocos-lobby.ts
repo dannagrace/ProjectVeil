@@ -6,8 +6,10 @@ import {
 } from "./cocos-session-launch.ts";
 import {
   normalizeAchievementProgress,
+  normalizePlayerBattleReplaySummaries,
   normalizeEventLogEntries,
   type EventLogEntry,
+  type PlayerBattleReplaySummary,
   type PlayerAchievementProgress
 } from "../../../../packages/shared/src/index.ts";
 
@@ -41,6 +43,7 @@ export interface CocosPlayerAccountProfile {
   };
   achievements: PlayerAchievementProgress[];
   recentEventLog: EventLogEntry[];
+  recentBattleReplays: PlayerBattleReplaySummary[];
   loginId?: string;
   credentialBoundAt?: string;
   lastRoomId?: string;
@@ -69,6 +72,7 @@ interface PlayerAccountApiPayload extends AuthSessionApiPayload {
     };
     achievements?: Partial<PlayerAchievementProgress>[];
     recentEventLog?: Partial<EventLogEntry>[];
+    recentBattleReplays?: Partial<PlayerBattleReplaySummary>[];
     loginId?: string;
     credentialBoundAt?: string;
     lastRoomId?: string;
@@ -179,6 +183,7 @@ function asCocosPlayerAccountProfile(
     globalResources: normalizeGlobalResources(account?.globalResources),
     achievements: normalizeAchievementProgress(account?.achievements),
     recentEventLog: normalizeEventLogEntries(account?.recentEventLog),
+    recentBattleReplays: normalizePlayerBattleReplaySummaries(account?.recentBattleReplays),
     ...(loginId ? { loginId } : {}),
     ...(account?.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
     ...(account?.lastRoomId ? { lastRoomId: account.lastRoomId } : roomId ? { lastRoomId: roomId } : {}),
@@ -277,6 +282,7 @@ export function createFallbackCocosPlayerAccountProfile(
     globalResources: normalizeGlobalResources(),
     achievements: normalizeAchievementProgress(),
     recentEventLog: normalizeEventLogEntries(),
+    recentBattleReplays: normalizePlayerBattleReplaySummaries(),
     ...(roomId ? { lastRoomId: roomId } : {}),
     source: "local"
   };

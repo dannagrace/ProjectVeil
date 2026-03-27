@@ -7,8 +7,10 @@ import {
 } from "./auth-session";
 import {
   normalizeAchievementProgress,
+  normalizePlayerBattleReplaySummaries,
   normalizeEventLogEntries,
   type EventLogEntry,
+  type PlayerBattleReplaySummary,
   type PlayerAchievementProgress
 } from "../../../packages/shared/src/index";
 
@@ -25,6 +27,7 @@ export interface PlayerAccountProfile {
   };
   achievements: PlayerAchievementProgress[];
   recentEventLog: EventLogEntry[];
+  recentBattleReplays: PlayerBattleReplaySummary[];
   loginId?: string;
   credentialBoundAt?: string;
   lastRoomId?: string;
@@ -43,6 +46,7 @@ interface PlayerAccountApiPayload {
     };
     achievements?: Partial<PlayerAchievementProgress>[];
     recentEventLog?: Partial<EventLogEntry>[];
+    recentBattleReplays?: Partial<PlayerBattleReplaySummary>[];
     loginId?: string;
     credentialBoundAt?: string;
     lastRoomId?: string;
@@ -141,6 +145,7 @@ function asPlayerAccountProfile(
     globalResources: normalizeGlobalResources(account?.globalResources),
     achievements: normalizeAchievementProgress(account?.achievements),
     recentEventLog: normalizeEventLogEntries(account?.recentEventLog),
+    recentBattleReplays: normalizePlayerBattleReplaySummaries(account?.recentBattleReplays),
     ...(loginId ? { loginId } : {}),
     ...(account?.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
     ...(account?.lastRoomId ? { lastRoomId: account.lastRoomId } : roomId ? { lastRoomId: roomId } : {}),
@@ -180,6 +185,7 @@ export function createFallbackPlayerAccountProfile(
     globalResources: normalizeGlobalResources(),
     achievements: normalizeAchievementProgress(),
     recentEventLog: normalizeEventLogEntries(),
+    recentBattleReplays: normalizePlayerBattleReplaySummaries(),
     ...(roomId ? { lastRoomId: roomId } : {}),
     source: "local"
   };

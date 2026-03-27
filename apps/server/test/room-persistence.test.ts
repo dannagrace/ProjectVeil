@@ -68,6 +68,14 @@ test("room persistence snapshot restores a resolved PvP world without active bat
   assert.ok(steps < 12);
   assert.equal(room.getBattleForPlayer("player-1"), null);
   assert.equal(room.getBattleForPlayer("player-2"), null);
+  const replays = room.consumeCompletedBattleReplays();
+  assert.equal(replays.length, 1);
+  assert.match(replays[0]?.battleId ?? "", /^battle-hero-[12]-vs-hero-[12]$/);
+  assert.equal(replays[0]?.initialState.id, replays[0]?.battleId);
+  assert.equal(replays[0]?.steps.length, steps);
+  assert.ok(
+    replays[0]?.result === "attacker_victory" || replays[0]?.result === "defender_victory"
+  );
 
   const snapshot = room.serializePersistenceSnapshot();
   const restored = createRoom("room-persist-pvp", 1001, snapshot);

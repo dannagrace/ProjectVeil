@@ -328,6 +328,7 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
         rewards: [{ type: "badge", label: "初次交锋" }]
       }
     ],
+    recentBattleReplays: [],
     source: "remote"
   });
   assert.ok(values.get("project-veil:auth-session")?.includes("\"loginId\":\"veil-ranger\""));

@@ -16,10 +16,18 @@ import {
   type MovementPlan,
   type PlayerWorldView,
   type BattleAction,
+  type BattleOutcome,
   type WorldAction,
   type WorldEvent,
   type WorldState
 } from "../../../packages/shared/src/index";
+import {
+  appendBattleReplayStep,
+  createBattleReplayCapture,
+  finalizeBattleReplayCapture,
+  type CompletedBattleReplayCapture,
+  type OngoingBattleReplayCapture
+} from "./battle-replays";
 
 export interface RoomSnapshot {
   roomId: string;
@@ -53,6 +61,8 @@ export class AuthoritativeWorldRoom {
   private state: WorldState;
   private readonly battles = new Map<string, BattleState>();
   private readonly battleIdByHeroId = new Map<string, string>();
+  private readonly battleReplayByBattleId = new Map<string, OngoingBattleReplayCapture>();
+  private readonly completedBattleReplays: CompletedBattleReplayCapture[] = [];
 
   constructor(roomId: string, seed = 1001, snapshot?: RoomPersistenceSnapshot) {
     if (snapshot) {
@@ -88,6 +98,12 @@ export class AuthoritativeWorldRoom {
 
   getActiveBattles(): BattleState[] {
     return Array.from(this.battles.values());
+  }
+
+  consumeCompletedBattleReplays(): CompletedBattleReplayCapture[] {
+    const completed = this.completedBattleReplays.map((replay) => structuredClone(replay));
+    this.completedBattleReplays.length = 0;
+    return completed;
   }
 
   private getBattleById(battleId: string): BattleState | undefined {
@@ -151,6 +167,35 @@ export class AuthoritativeWorldRoom {
     }
   }
 
+  private trackStartedBattle(battle: BattleState): void {
+    this.setBattle(battle);
+    if (!this.battleReplayByBattleId.has(battle.id)) {
+      this.battleReplayByBattleId.set(battle.id, createBattleReplayCapture(this.state.meta.roomId, battle));
+    }
+  }
+
+  private trackBattleAction(battleId: string, action: BattleAction, source: "player" | "automated"): void {
+    const existing = this.battleReplayByBattleId.get(battleId);
+    if (!existing) {
+      return;
+    }
+
+    this.battleReplayByBattleId.set(battleId, appendBattleReplayStep(existing, action, source));
+  }
+
+  private finalizeBattleReplay(battle: BattleState, outcome: BattleOutcome): void {
+    const existing = this.battleReplayByBattleId.get(battle.id);
+    if (!existing) {
+      return;
+    }
+
+    this.battleReplayByBattleId.delete(battle.id);
+    const completed = finalizeBattleReplayCapture(existing, battle, outcome);
+    if (completed) {
+      this.completedBattleReplays.push(completed);
+    }
+  }
+
   getSnapshot(playerId: string): RoomSnapshot {
     return {
       roomId: this.state.meta.roomId,
@@ -181,6 +226,7 @@ export class AuthoritativeWorldRoom {
 
       const outcome = getBattleOutcome(battle);
       if (outcome.status !== "in_progress") {
+        this.finalizeBattleReplay(battle, outcome);
         if (battle.worldHeroId) {
           const worldOutcome = applyBattleOutcomeToWorld(
             this.state,
@@ -206,6 +252,7 @@ export class AuthoritativeWorldRoom {
         break;
       }
 
+      this.trackBattleAction(battle.id, automatedAction, "automated");
       this.setBattle(applyBattleAction(battle, automatedAction));
     }
 
@@ -259,7 +306,7 @@ export class AuthoritativeWorldRoom {
         }
 
         const battle = createNeutralBattleState(hero, neutralArmy, this.state.meta.seed + this.state.meta.day);
-        this.setBattle(battle);
+        this.trackStartedBattle(battle);
         startedBattleIds.push(battle.id);
         continue;
       }
@@ -271,7 +318,7 @@ export class AuthoritativeWorldRoom {
         }
 
         const battle = createHeroBattleState(hero, defenderHero, this.state.meta.seed + this.state.meta.day);
-        this.setBattle(battle);
+        this.trackStartedBattle(battle);
         startedBattleIds.push(battle.id);
       }
     }
@@ -329,6 +376,7 @@ export class AuthoritativeWorldRoom {
       };
     }
 
+    this.trackBattleAction(activeBattle.id, action, "player");
     const nextBattle = applyBattleAction(activeBattle, action);
     this.setBattle(nextBattle);
     const automatedEvents = this.resolveAutomatedBattleTurns(nextBattle.id);

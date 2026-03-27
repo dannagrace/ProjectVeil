@@ -81,6 +81,7 @@ class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       globalResources: structuredClone(existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 }),
       achievements: structuredClone(existing?.achievements ?? []),
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
+      recentBattleReplays: structuredClone(existing?.recentBattleReplays ?? []),
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
@@ -169,6 +170,7 @@ class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         displayName: previous?.displayName ?? account.displayName,
         achievements: structuredClone(previous?.achievements ?? account.achievements),
         recentEventLog: structuredClone(previous?.recentEventLog ?? account.recentEventLog),
+        recentBattleReplays: structuredClone(previous?.recentBattleReplays ?? account.recentBattleReplays ?? []),
         ...(previous?.loginId ? { loginId: previous.loginId } : {}),
         ...(previous?.credentialBoundAt ? { credentialBoundAt: previous.credentialBoundAt } : {}),
         ...(previous?.lastRoomId ? { lastRoomId: previous.lastRoomId } : {}),
@@ -202,6 +204,11 @@ class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...existing,
       achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
       recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
+      recentBattleReplays: structuredClone(
+        (patch.recentBattleReplays as PlayerAccountSnapshot["recentBattleReplays"] | undefined) ??
+          existing.recentBattleReplays ??
+          []
+      ),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -222,6 +229,7 @@ class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       globalResources: structuredClone(account.globalResources),
       achievements: structuredClone(account.achievements),
       recentEventLog: structuredClone(account.recentEventLog),
+      recentBattleReplays: structuredClone(account.recentBattleReplays ?? []),
       ...(account.lastRoomId ? { lastRoomId: account.lastRoomId } : {}),
       ...(account.lastSeenAt ? { lastSeenAt: account.lastSeenAt } : {}),
       ...(account.loginId ? { loginId: account.loginId } : {}),
@@ -874,6 +882,25 @@ test("colyseus room persists world event logs and first-battle achievements into
     "session.state"
   );
 
+  for (let step = 0; step < 12; step += 1) {
+    const snapshot = await sendRequest(
+      room,
+      {
+        type: "battle.action",
+        requestId: nextRequestId(`event-log-replay-${step}`),
+        action: {
+          type: "battle.defend",
+          unitId: "hero-1-stack"
+        }
+      },
+      "session.state"
+    );
+
+    if (!snapshot.payload.battle) {
+      break;
+    }
+  }
+
   const account = await store.loadPlayerAccount("player-1");
   assert.equal(account?.lastRoomId, roomId);
   assert.equal(account?.achievements.find((achievement) => achievement.id === "first_battle")?.unlocked, true);
@@ -884,4 +911,9 @@ test("colyseus room persists world event logs and first-battle achievements into
   );
   assert.ok(account?.recentEventLog.some((entry) => entry.category === "achievement" && entry.achievementId === "first_battle"));
   assert.ok(account?.recentEventLog.some((entry) => entry.worldEventType === "battle.started"));
+  assert.equal(account?.recentBattleReplays?.length, 1);
+  assert.equal(account?.recentBattleReplays?.[0]?.battleId, "battle-neutral-1");
+  assert.equal(account?.recentBattleReplays?.[0]?.heroId, "hero-1");
+  assert.equal(account?.recentBattleReplays?.[0]?.playerCamp, "attacker");
+  assert.ok((account?.recentBattleReplays?.[0]?.steps.length ?? 0) > 0);
 });

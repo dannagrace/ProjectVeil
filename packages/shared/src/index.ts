@@ -1,4 +1,5 @@
 export * from "./battle";
+export * from "./battle-replay";
 export * from "./equipment";
 export * from "./event-log";
 export * from "./hero-skills";
