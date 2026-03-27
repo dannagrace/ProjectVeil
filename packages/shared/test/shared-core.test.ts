@@ -7,6 +7,7 @@ import {
   appendPlayerBattleReplaySummaries,
   applyBattleOutcomeToWorld,
   applyAchievementMetricDelta,
+  applyAchievementProgressValue,
   buildPlayerProgressionSnapshot,
   createHeroAttributeBreakdown,
   createHeroEquipmentBonusSummary,
@@ -222,6 +223,21 @@ test("achievement helpers unlock milestones and preserve catalog order", () => {
   );
 });
 
+test("achievement helpers can sync progress from an absolute value", () => {
+  const progressSync = applyAchievementProgressValue([], "epic_collector", 2, "2026-03-27T10:00:00.000Z");
+  assert.equal(progressSync.progress.find((achievement) => achievement.id === "epic_collector")?.current, 2);
+  assert.equal(progressSync.unlocked.length, 0);
+
+  const unlockedSync = applyAchievementProgressValue(
+    progressSync.progress,
+    "epic_collector",
+    3,
+    "2026-03-27T10:01:00.000Z"
+  );
+  assert.equal(unlockedSync.unlocked[0]?.id, "epic_collector");
+  assert.equal(unlockedSync.progress.find((achievement) => achievement.id === "epic_collector")?.unlocked, true);
+});
+
 test("achievement helpers return the most recently unlocked milestone", () => {
   const progress = [
     {
@@ -318,7 +334,7 @@ test("player progression snapshot summarizes unlocked achievements and recent ev
   );
 
   assert.deepEqual(snapshot.summary, {
-    totalAchievements: 3,
+    totalAchievements: 4,
     unlockedAchievements: 1,
     inProgressAchievements: 1,
     latestUnlockedAchievementId: "first_battle",

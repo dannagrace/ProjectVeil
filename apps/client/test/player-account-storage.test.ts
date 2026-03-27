@@ -69,6 +69,15 @@ test("player account helpers can build a local fallback profile", () => {
         current: 0,
         target: 5,
         unlocked: false
+      },
+      {
+        id: "epic_collector",
+        title: "史诗武装",
+        description: "为同一名英雄装备全套史诗装备。",
+        metric: "epic_equipment_slots",
+        current: 0,
+        target: 3,
+        unlocked: false
       }
     ],
     recentEventLog: [],
@@ -278,7 +287,7 @@ test("player progression loader normalizes summary, achievements, and limited ev
   try {
     const snapshot = await loadPlayerProgressionSnapshot("player-1", 1);
     assert.deepEqual(snapshot.summary, {
-      totalAchievements: 3,
+      totalAchievements: 4,
       unlockedAchievements: 1,
       inProgressAchievements: 0,
       latestUnlockedAchievementId: "first_battle",

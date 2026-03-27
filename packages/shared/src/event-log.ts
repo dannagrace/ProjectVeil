@@ -2,8 +2,8 @@ import type { WorldEvent } from "./models";
 
 export type EventLogCategory = "movement" | "combat" | "building" | "skill" | "achievement";
 export type EventLogRewardType = "resource" | "experience" | "skill_point" | "badge";
-export type AchievementId = "first_battle" | "enemy_slayer" | "skill_scholar";
-export type AchievementMetric = "battles_started" | "battles_won" | "skills_learned";
+export type AchievementId = "first_battle" | "enemy_slayer" | "skill_scholar" | "epic_collector";
+export type AchievementMetric = "battles_started" | "battles_won" | "skills_learned" | "epic_equipment_slots";
 
 export interface EventLogReward {
   type: EventLogRewardType;
@@ -97,6 +97,13 @@ const ACHIEVEMENT_DEFINITIONS: AchievementDefinition[] = [
     title: "求知者",
     description: "学习 5 个长期技能。",
     target: 5
+  },
+  {
+    id: "epic_collector",
+    metric: "epic_equipment_slots",
+    title: "史诗武装",
+    description: "为同一名英雄装备全套史诗装备。",
+    target: 3
   }
 ];
 
@@ -190,6 +197,45 @@ export function applyAchievementMetricDelta(
       current,
       unlocked: current >= entry.target,
       ...(current >= entry.target ? { unlockedAt: entry.unlockedAt ?? unlockedAt } : entry.unlockedAt ? { unlockedAt: entry.unlockedAt } : {})
+    };
+
+    if (!previousUnlocked && nextEntry.unlocked) {
+      unlocked.push(nextEntry);
+    }
+
+    return nextEntry;
+  });
+
+  return {
+    progress: nextProgress,
+    unlocked
+  };
+}
+
+export function applyAchievementProgressValue(
+  progress: Partial<PlayerAchievementProgress>[] | null | undefined,
+  achievementId: AchievementId,
+  current: number,
+  unlockedAt = new Date().toISOString()
+): {
+  progress: PlayerAchievementProgress[];
+  unlocked: PlayerAchievementProgress[];
+} {
+  const normalized = normalizeAchievementProgress(progress);
+  const safeCurrent = Math.max(0, Math.floor(current));
+  const unlocked: PlayerAchievementProgress[] = [];
+  const nextProgress = normalized.map((entry) => {
+    if (entry.id !== achievementId) {
+      return entry;
+    }
+
+    const previousUnlocked = entry.unlocked;
+    const nextCurrent = Math.min(entry.target, safeCurrent);
+    const nextEntry: PlayerAchievementProgress = {
+      ...entry,
+      current: nextCurrent,
+      unlocked: nextCurrent >= entry.target,
+      ...(nextCurrent >= entry.target ? { unlockedAt: entry.unlockedAt ?? unlockedAt } : entry.unlockedAt ? { unlockedAt: entry.unlockedAt } : {})
     };
 
     if (!previousUnlocked && nextEntry.unlocked) {
