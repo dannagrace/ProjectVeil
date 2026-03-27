@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { normalizePlayerBattleReplaySummaries } from "../../../packages/shared/src/index";
 import { issueNextAuthSession, resolveAuthSessionFromRequest } from "./auth";
 import type { PlayerAccountProfilePatch, PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
 
@@ -52,6 +53,14 @@ function parsePlayerIdFilter(request: IncomingMessage): string | undefined {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const value = url.searchParams.get("playerId")?.trim();
   return value ? value : undefined;
+}
+
+function toReplayResponse(account: PlayerAccountSnapshot, limit?: number): { items: PlayerAccountSnapshot["recentBattleReplays"] } {
+  const items = normalizePlayerBattleReplaySummaries(account.recentBattleReplays);
+  const safeLimit = limit == null ? undefined : Math.max(1, Math.floor(limit));
+  return {
+    items: safeLimit == null ? items : items.slice(0, safeLimit)
+  };
 }
 
 function sendStoreUnavailable(response: ServerResponse): void {
@@ -147,6 +156,31 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.get("/api/player-accounts/me/battle-replays", async (request, response) => {
+    if (!store) {
+      sendStoreUnavailable(response);
+      return;
+    }
+
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      sendJson(response, 200, toReplayResponse(account, parseLimit(request)));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
   app.get("/api/player-accounts/:playerId", async (request, response) => {
     if (!store) {
       sendStoreUnavailable(response);
@@ -172,6 +206,36 @@ export function registerPlayerAccountRoutes(
       }
 
       sendJson(response, 200, { account: toPublicPlayerAccount(account) });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/battle-replays", async (request, response) => {
+    if (!store) {
+      sendStoreUnavailable(response);
+      return;
+    }
+
+    const playerId = request.params.playerId?.trim();
+    if (!playerId) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_account_not_found",
+            message: `Player account not found: ${playerId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, toReplayResponse(account, parseLimit(request)));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

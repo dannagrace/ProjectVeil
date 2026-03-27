@@ -16,7 +16,12 @@ import type {
   RoomSnapshotStore
 } from "../src/persistence";
 import type { RoomPersistenceSnapshot } from "../src/index";
-import { createDefaultHeroLoadout, createDefaultHeroProgression, type WorldState } from "../../../packages/shared/src/index";
+import {
+  createDefaultHeroLoadout,
+  createDefaultHeroProgression,
+  type PlayerBattleReplaySummary,
+  type WorldState
+} from "../../../packages/shared/src/index";
 
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
@@ -59,6 +64,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
       achievements: structuredClone(existing?.achievements ?? []),
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
+      recentBattleReplays: structuredClone(existing?.recentBattleReplays ?? []),
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
@@ -132,6 +138,9 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ...existing,
       achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
       recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
+      recentBattleReplays: structuredClone(
+        (patch.recentBattleReplays as PlayerAccountSnapshot["recentBattleReplays"] | undefined) ?? existing.recentBattleReplays
+      ),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -221,6 +230,69 @@ function createAccountTrackingWorldState(): WorldState {
   };
 }
 
+function createReplaySummary(id: string, completedAt: string): PlayerBattleReplaySummary {
+  return {
+    id,
+    roomId: "room-replay",
+    playerId: "player-1",
+    battleId: `${id}-battle`,
+    battleKind: "hero",
+    playerCamp: "attacker",
+    heroId: "hero-1",
+    opponentHeroId: "hero-2",
+    startedAt: "2026-03-27T11:55:00.000Z",
+    completedAt,
+    initialState: {
+      id: `${id}-battle`,
+      round: 1,
+      lanes: 2,
+      activeUnitId: "unit-1",
+      turnOrder: ["unit-1", "unit-2"],
+      units: {
+        "unit-1": {
+          id: "unit-1",
+          camp: "attacker",
+          templateId: "hero_guard_basic",
+          lane: 0,
+          stackName: "暮火侦骑",
+          initiative: 4,
+          attack: 2,
+          defense: 2,
+          minDamage: 1,
+          maxDamage: 2,
+          currentHp: 10,
+          count: 12,
+          maxHp: 10,
+          hasRetaliated: false,
+          defending: false
+        },
+        "unit-2": {
+          id: "unit-2",
+          camp: "defender",
+          templateId: "hero_guard_basic",
+          lane: 1,
+          stackName: "守军",
+          initiative: 4,
+          attack: 2,
+          defense: 2,
+          minDamage: 1,
+          maxDamage: 2,
+          currentHp: 10,
+          count: 12,
+          maxHp: 10,
+          hasRetaliated: false,
+          defending: false
+        }
+      },
+      environment: [],
+      log: [],
+      rng: { seed: 7, cursor: 0 }
+    },
+    steps: [],
+    result: "attacker_victory"
+  };
+}
+
 test("player account routes list and fetch stored accounts", async (t) => {
   const port = 40000 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
@@ -249,6 +321,76 @@ test("player account routes list and fetch stored accounts", async (t) => {
   assert.equal(detailResponse.status, 200);
   assert.equal(detailPayload.account.playerId, "player-1");
   assert.equal(detailPayload.account.lastRoomId, "room-alpha");
+});
+
+test("player account battle replay routes return normalized replay summaries with optional limit", async (t) => {
+  const port = 40050 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-1",
+    displayName: "灰烬领主",
+    globalResources: { gold: 320, wood: 5, ore: 1 },
+    achievements: [],
+    recentEventLog: [],
+    recentBattleReplays: [
+      createReplaySummary("replay-older", "2026-03-27T11:58:00.000Z"),
+      createReplaySummary("replay-newer", "2026-03-27T12:02:00.000Z")
+    ],
+    lastRoomId: "room-alpha",
+    lastSeenAt: new Date("2026-03-25T09:00:00.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const detailResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays?limit=1`
+  );
+  const detailPayload = (await detailResponse.json()) as { items: PlayerBattleReplaySummary[] };
+  assert.equal(detailResponse.status, 200);
+  assert.deepEqual(detailPayload.items.map((replay) => replay.id), ["replay-newer"]);
+
+  const missingResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/missing/battle-replays`);
+  assert.equal(missingResponse.status, 404);
+});
+
+test("player account me battle replay route resolves the current authenticated account", async (t) => {
+  const port = 42050 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-me",
+    displayName: "苍穹侦骑",
+    globalResources: { gold: 12, wood: 3, ore: 4 },
+    achievements: [],
+    recentEventLog: [],
+    recentBattleReplays: [
+      createReplaySummary("replay-me-1", "2026-03-27T12:03:00.000Z"),
+      createReplaySummary("replay-me-2", "2026-03-27T12:04:00.000Z")
+    ],
+    lastRoomId: "room-old",
+    lastSeenAt: new Date("2026-03-25T11:00:00.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-me",
+    displayName: "苍穹侦骑"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/battle-replays`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const mePayload = (await meResponse.json()) as { items: PlayerBattleReplaySummary[] };
+
+  assert.equal(meResponse.status, 200);
+  assert.deepEqual(mePayload.items.map((replay) => replay.id), ["replay-me-2", "replay-me-1"]);
 });
 
 test("player achievement tracker appends logs and unlocks milestones", () => {
