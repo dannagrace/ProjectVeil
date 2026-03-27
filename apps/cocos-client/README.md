@@ -105,3 +105,24 @@
 - 把 `VeilUnitAnimator` 接到正式 Spine skeleton 和序列帧资源
 - 把 `VeilBattleTransition` 替换成正式 tween / 特效 / 音效组合
 - 继续压实微信小游戏构建和发布流程
+
+## 微信小游戏基础适配
+
+当前仓库已经先落下一层可合并的运行时基础，而不是一次把小游戏构建、微信登录和性能优化全部耦在一起：
+
+- 新增 `assets/scripts/cocos-runtime-platform.ts`
+  - 统一识别 `browser / wechat-game / unknown` 三类运行时
+  - Web 继续读取 `location.search`
+  - 微信小游戏改读 `wx.getLaunchOptionsSync().query`，再转换成与现有 `resolveCocosLaunchIdentity` 兼容的查询串
+  - 对外暴露 `authFlow / configCenterAccess / supportsBrowserHistory`，给后续 `wx.login() -> code2Session` 接入留稳定边界
+- `VeilRoot` 已改走运行时适配层
+  - 不再默认假设浏览器 `history/location` 一定存在
+  - 微信小游戏环境下不会尝试改写浏览器地址栏
+  - 打开配置台会退化成手动提示，而不是直接依赖 `window.open`
+
+这只是 issue #30 的基础切片，当前还没有完成：
+
+- Cocos Creator 微信小游戏构建目标配置
+- `wx.login()` 与服务端 `code2Session` 登录链路
+- OpenID 绑定、头像昵称同步
+- 真机性能与内存优化
