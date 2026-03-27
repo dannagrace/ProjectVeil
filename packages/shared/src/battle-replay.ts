@@ -262,3 +262,15 @@ export function queryPlayerBattleReplaySummaries(
     .filter((replay) => (query.result ? replay.result === query.result : true))
     .slice(0, safeLimit);
 }
+
+export function findPlayerBattleReplaySummary(
+  replays?: Partial<PlayerBattleReplaySummary>[] | null,
+  replayId?: string | null
+): PlayerBattleReplaySummary | null {
+  const normalizedReplayId = replayId?.trim();
+  if (!normalizedReplayId) {
+    return null;
+  }
+
+  return normalizePlayerBattleReplaySummaries(replays).find((replay) => replay.id === normalizedReplayId) ?? null;
+}
