@@ -91,6 +91,15 @@ function sendUnauthorized(response: ServerResponse): void {
   });
 }
 
+function sendForbidden(response: ServerResponse): void {
+  sendJson(response, 403, {
+    error: {
+      code: "forbidden",
+      message: "Authenticated players may only modify their own profile"
+    }
+  });
+}
+
 function toPublicPlayerAccount(account: PlayerAccountSnapshot): Omit<PlayerAccountSnapshot, "loginId" | "credentialBoundAt"> {
   const { loginId: _loginId, credentialBoundAt: _credentialBoundAt, ...publicAccount } = account;
   return publicAccount;
@@ -372,9 +381,20 @@ export function registerPlayerAccountRoutes(
       return;
     }
 
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
     const playerId = request.params.playerId?.trim();
     if (!playerId) {
       sendNotFound(response);
+      return;
+    }
+
+    if (authSession.playerId !== playerId) {
+      sendForbidden(response);
       return;
     }
 
@@ -411,10 +431,16 @@ export function registerPlayerAccountRoutes(
 
       const account =
         Object.keys(patch).length === 0
-          ? await store.ensurePlayerAccount({ playerId })
+          ? await store.ensurePlayerAccount({
+              playerId: authSession.playerId,
+              displayName: authSession.displayName
+            })
           : await store.savePlayerAccountProfile(playerId, patch);
 
-      sendJson(response, 200, { account });
+      sendJson(response, 200, {
+        account,
+        session: issueNextAuthSession(account, authSession)
+      });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
