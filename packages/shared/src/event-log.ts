@@ -68,6 +68,24 @@ export interface AchievementProgressQuery {
   unlocked?: boolean | undefined;
 }
 
+export interface NormalizedEventLogQuery {
+  limit?: number;
+  offset: number;
+  category?: EventLogCategory;
+  heroId?: string;
+  achievementId?: AchievementId;
+  worldEventType?: WorldEvent["type"];
+  since?: string;
+  until?: string;
+}
+
+export interface NormalizedAchievementProgressQuery {
+  limit?: number;
+  achievementId?: AchievementId;
+  metric?: AchievementMetric;
+  unlocked?: boolean;
+}
+
 export interface PlayerProgressionSummary {
   totalAchievements: number;
   unlockedAchievements: number;
@@ -653,13 +671,22 @@ export function queryAchievementProgress(
   progress?: Partial<PlayerAchievementProgress>[] | null,
   query: AchievementProgressQuery = {}
 ): PlayerAchievementProgress[] {
-  const safeLimit = query.limit == null ? undefined : Math.max(1, Math.floor(query.limit));
+  const normalizedQuery = normalizeAchievementProgressQuery(query);
 
   return normalizeAchievementProgress(progress)
-    .filter((entry) => (query.achievementId ? entry.id === query.achievementId : true))
-    .filter((entry) => (query.metric ? entry.metric === query.metric : true))
-    .filter((entry) => (query.unlocked == null ? true : entry.unlocked === query.unlocked))
-    .slice(0, safeLimit);
+    .filter((entry) => (normalizedQuery.achievementId ? entry.id === normalizedQuery.achievementId : true))
+    .filter((entry) => (normalizedQuery.metric ? entry.metric === normalizedQuery.metric : true))
+    .filter((entry) => (normalizedQuery.unlocked == null ? true : entry.unlocked === normalizedQuery.unlocked))
+    .slice(0, normalizedQuery.limit);
+}
+
+export function normalizeAchievementProgressQuery(query: AchievementProgressQuery = {}): NormalizedAchievementProgressQuery {
+  return {
+    ...(query.limit == null ? {} : { limit: Math.max(1, Math.floor(query.limit)) }),
+    ...(query.achievementId ? { achievementId: query.achievementId } : {}),
+    ...(query.metric ? { metric: query.metric } : {}),
+    ...(query.unlocked == null ? {} : { unlocked: query.unlocked })
+  };
 }
 
 export function normalizeEventLogEntries(entries?: Partial<EventLogEntry>[] | null): EventLogEntry[] {
@@ -723,20 +750,35 @@ export function queryEventLogEntries(
   entries?: Partial<EventLogEntry>[] | null,
   query: EventLogQuery = {}
 ): EventLogEntry[] {
-  const safeLimit = query.limit == null ? undefined : Math.max(1, Math.floor(query.limit));
-  const safeOffset = Math.max(0, Math.floor(query.offset ?? 0));
-  const heroId = query.heroId?.trim();
+  const normalizedQuery = normalizeEventLogQuery(query);
+
+  return normalizeEventLogEntries(entries)
+    .filter((entry) => (normalizedQuery.category ? entry.category === normalizedQuery.category : true))
+    .filter((entry) => (normalizedQuery.heroId ? entry.heroId === normalizedQuery.heroId : true))
+    .filter((entry) => (normalizedQuery.achievementId ? entry.achievementId === normalizedQuery.achievementId : true))
+    .filter((entry) => (normalizedQuery.worldEventType ? entry.worldEventType === normalizedQuery.worldEventType : true))
+    .filter((entry) => (normalizedQuery.since ? entry.timestamp >= normalizedQuery.since : true))
+    .filter((entry) => (normalizedQuery.until ? entry.timestamp <= normalizedQuery.until : true))
+    .slice(
+      normalizedQuery.offset,
+      normalizedQuery.limit == null ? undefined : normalizedQuery.offset + normalizedQuery.limit
+    );
+}
+
+export function normalizeEventLogQuery(query: EventLogQuery = {}): NormalizedEventLogQuery {
   const since = normalizeTimestampFilter(query.since);
   const until = normalizeTimestampFilter(query.until);
 
-  return normalizeEventLogEntries(entries)
-    .filter((entry) => (query.category ? entry.category === query.category : true))
-    .filter((entry) => (heroId ? entry.heroId === heroId : true))
-    .filter((entry) => (query.achievementId ? entry.achievementId === query.achievementId : true))
-    .filter((entry) => (query.worldEventType ? entry.worldEventType === query.worldEventType : true))
-    .filter((entry) => (since ? entry.timestamp >= since : true))
-    .filter((entry) => (until ? entry.timestamp <= until : true))
-    .slice(safeOffset, safeLimit == null ? undefined : safeOffset + safeLimit);
+  return {
+    ...(query.limit == null ? {} : { limit: Math.max(1, Math.floor(query.limit)) }),
+    offset: Math.max(0, Math.floor(query.offset ?? 0)),
+    ...(query.category ? { category: query.category } : {}),
+    ...(query.heroId?.trim() ? { heroId: query.heroId.trim() } : {}),
+    ...(query.achievementId ? { achievementId: query.achievementId } : {}),
+    ...(query.worldEventType ? { worldEventType: query.worldEventType } : {}),
+    ...(since ? { since } : {}),
+    ...(until ? { until } : {})
+  };
 }
 
 export function buildPlayerProgressionSnapshot(

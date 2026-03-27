@@ -1,6 +1,7 @@
 import { createConnection, createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import {
   appendPlayerBattleReplaySummaries,
+  normalizeEventLogQuery,
   normalizeAchievementProgress,
   normalizeEventLogEntries,
   normalizePlayerAccountReadModel,
@@ -374,29 +375,7 @@ function normalizePlayerAccountSnapshot(account: {
 function normalizePlayerEventHistoryQuery(query: PlayerEventHistoryQuery = {}): Required<Pick<PlayerEventHistoryQuery, "offset">> &
   Pick<PlayerEventHistoryQuery, "category" | "heroId" | "achievementId" | "worldEventType" | "since" | "until"> &
   { limit?: number } {
-  const since = normalizeHistoryTimestampFilter(query.since);
-  const until = normalizeHistoryTimestampFilter(query.until);
-
-  return {
-    ...(query.limit == null ? {} : { limit: Math.max(1, Math.floor(query.limit)) }),
-    offset: Math.max(0, Math.floor(query.offset ?? 0)),
-    ...(query.category ? { category: query.category } : {}),
-    ...(query.heroId?.trim() ? { heroId: query.heroId.trim() } : {}),
-    ...(query.achievementId ? { achievementId: query.achievementId } : {}),
-    ...(query.worldEventType ? { worldEventType: query.worldEventType } : {}),
-    ...(since ? { since } : {}),
-    ...(until ? { until } : {})
-  };
-}
-
-function normalizeHistoryTimestampFilter(value?: string | null): string | undefined {
-  const normalized = value?.trim();
-  if (!normalized) {
-    return undefined;
-  }
-
-  const parsed = new Date(normalized);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  return normalizeEventLogQuery(query);
 }
 
 function extractNewPlayerEventHistoryEntries(

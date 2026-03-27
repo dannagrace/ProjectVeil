@@ -46,6 +46,8 @@ import {
   getLatestProgressedAchievement,
   getLatestUnlockedAchievement,
   hasFullyExploredMap,
+  normalizeAchievementProgressQuery,
+  normalizeEventLogQuery,
   normalizePlayerAccountReadModel,
   normalizePlayerBattleReplaySummaries,
   pauseBattleReplayPlayback,
@@ -769,6 +771,30 @@ test("event log query helper filters by inclusive time range when provided", () 
   assert.deepEqual(queried.map((entry) => entry.id), ["middle-entry"]);
 });
 
+test("event log query normalization trims filters and canonicalizes paging and timestamps", () => {
+  assert.deepEqual(
+    normalizeEventLogQuery({
+      limit: 2.9,
+      offset: -3,
+      heroId: " hero-1 ",
+      category: "combat",
+      achievementId: "first_battle",
+      worldEventType: "battle.started",
+      since: " 2026-03-27T10:04:00+08:00 ",
+      until: "invalid"
+    }),
+    {
+      limit: 2,
+      offset: 0,
+      heroId: "hero-1",
+      category: "combat",
+      achievementId: "first_battle",
+      worldEventType: "battle.started",
+      since: "2026-03-27T02:04:00.000Z"
+    }
+  );
+});
+
 test("achievement progress query helper filters by id, metric, unlocked state, and limit", () => {
   const queried = queryAchievementProgress(
     [
@@ -798,6 +824,23 @@ test("achievement progress query helper filters by id, metric, unlocked state, a
   assert.deepEqual(queried.map((entry) => entry.id), ["skill_scholar"]);
   assert.equal(queried[0]?.title, "求知者");
   assert.equal(queried[0]?.target, 5);
+});
+
+test("achievement progress query normalization keeps only supported filters", () => {
+  assert.deepEqual(
+    normalizeAchievementProgressQuery({
+      limit: 1.8,
+      achievementId: "skill_scholar",
+      metric: "skills_learned",
+      unlocked: false
+    }),
+    {
+      limit: 1,
+      achievementId: "skill_scholar",
+      metric: "skills_learned",
+      unlocked: false
+    }
+  );
 });
 
 test("player progression snapshot summarizes unlocked achievements and recent events", () => {
