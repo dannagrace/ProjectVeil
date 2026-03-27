@@ -244,6 +244,18 @@ class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   }
 }
 
+class FailingPlayerProgressStore extends MemoryRoomSnapshotStore {
+  constructor(private readonly failure: Error) {
+    super();
+  }
+
+  override async savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot> {
+    void playerId;
+    void patch;
+    throw this.failure;
+  }
+}
+
 let requestCounter = 0;
 
 function nextRequestId(prefix: string): string {
@@ -916,4 +928,75 @@ test("colyseus room persists world event logs and first-battle achievements into
   assert.equal(account?.recentBattleReplays?.[0]?.heroId, "hero-1");
   assert.equal(account?.recentBattleReplays?.[0]?.playerCamp, "attacker");
   assert.ok((account?.recentBattleReplays?.[0]?.steps.length ?? 0) > 0);
+});
+
+test("colyseus room logs player account progress persistence failures instead of silently swallowing them", async (t) => {
+  const roomId = `account-progress-error-${Date.now()}`;
+  const port = 39200 + Math.floor(Math.random() * 1000);
+  const failure = new Error("persist failed");
+  const store = new FailingPlayerProgressStore(failure);
+  const seededState = createWorldStateFromConfigs(getDefaultWorldConfig(), getDefaultMapObjectsConfig(), 1001, roomId);
+  const seededHero = seededState.heroes.find((hero) => hero.id === "hero-1");
+  if (!seededHero) {
+    throw new Error("Expected hero-1 in seeded state");
+  }
+  seededHero.loadout.inventory = ["vanguard_blade"];
+  await store.save(roomId, {
+    state: seededState,
+    battles: []
+  });
+
+  const errorCalls: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    errorCalls.push(args);
+  };
+
+  const server = await startServer(port, store);
+  let room: ColyseusRoom | null = null;
+
+  t.after(async () => {
+    console.error = originalConsoleError;
+    configureRoomSnapshotStore(null);
+    if (room) {
+      room.removeAllListeners();
+      room.connection.close();
+    }
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  room = await joinRoomWithRetry(port, roomId, "player-1");
+
+  await sendRequest(
+    room,
+    {
+      type: "connect",
+      requestId: nextRequestId("event-log-error-connect"),
+      roomId,
+      playerId: "player-1"
+    },
+    "session.state"
+  );
+
+  await sendRequest(
+    room,
+    {
+      type: "world.action",
+      requestId: nextRequestId("event-log-error-equip"),
+      action: {
+        type: "hero.equip",
+        heroId: "hero-1",
+        slot: "weapon",
+        equipmentId: "vanguard_blade"
+      }
+    },
+    "session.state"
+  );
+
+  assert.equal(errorCalls.length, 1);
+  assert.equal(errorCalls[0]?.[0], "[VeilRoom] Failed to persist player account progress");
+  assert.deepEqual(errorCalls[0]?.[1], {
+    roomId,
+    error: failure
+  });
 });

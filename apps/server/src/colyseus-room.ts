@@ -347,32 +347,39 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     const playerIds = Array.from(new Set(internalState.heroes.map((hero) => hero.playerId)));
     const accounts = await store.loadPlayerAccounts(playerIds);
 
-    await Promise.all(
-      playerIds.map(async (playerId) => {
-        const playerEvents = filterWorldEventsForPlayer(internalState, playerId, events);
-        const playerReplays = completedReplays.flatMap((replay) => this.buildPlayerBattleReplaysForAccount(replay, playerId));
-        if (playerEvents.length === 0 && playerReplays.length === 0) {
-          return;
-        }
+    try {
+      await Promise.all(
+        playerIds.map(async (playerId) => {
+          const playerEvents = filterWorldEventsForPlayer(internalState, playerId, events);
+          const playerReplays = completedReplays.flatMap((replay) => this.buildPlayerBattleReplaysForAccount(replay, playerId));
+          if (playerEvents.length === 0 && playerReplays.length === 0) {
+            return;
+          }
 
-        const existingAccount =
-          accounts.find((account) => account.playerId === playerId) ??
-          (await store.ensurePlayerAccount({
-            playerId,
+          const existingAccount =
+            accounts.find((account) => account.playerId === playerId) ??
+            (await store.ensurePlayerAccount({
+              playerId,
+              lastRoomId: this.metadata.logicalRoomId
+            }));
+          const nextAccount = appendCompletedBattleReplaysToAccount(
+            applyPlayerEventLogAndAchievements(existingAccount, internalState, playerEvents),
+            playerReplays
+          );
+          await store.savePlayerAccountProgress(playerId, {
+            achievements: nextAccount.achievements,
+            recentEventLog: nextAccount.recentEventLog,
+            ...(nextAccount.recentBattleReplays ? { recentBattleReplays: nextAccount.recentBattleReplays } : {}),
             lastRoomId: this.metadata.logicalRoomId
-          }));
-        const nextAccount = appendCompletedBattleReplaysToAccount(
-          applyPlayerEventLogAndAchievements(existingAccount, internalState, playerEvents),
-          playerReplays
-        );
-        await store.savePlayerAccountProgress(playerId, {
-          achievements: nextAccount.achievements,
-          recentEventLog: nextAccount.recentEventLog,
-          ...(nextAccount.recentBattleReplays ? { recentBattleReplays: nextAccount.recentBattleReplays } : {}),
-          lastRoomId: this.metadata.logicalRoomId
-        });
-      })
-    ).catch(() => undefined);
+          });
+        })
+      );
+    } catch (error) {
+      console.error("[VeilRoom] Failed to persist player account progress", {
+        roomId: this.metadata.logicalRoomId,
+        error
+      });
+    }
   }
 
   private buildPlayerBattleReplaysForAccount(
