@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   buildPlayerProgressionSnapshot,
+  queryEventLogEntries,
   normalizePlayerBattleReplaySummaries
 } from "../../../packages/shared/src/index";
 import { issueNextAuthSession, resolveAuthSessionFromRequest } from "./auth";
@@ -73,11 +74,36 @@ function parsePlayerIdFilter(request: IncomingMessage): string | undefined {
   return value ? value : undefined;
 }
 
+function parseOptionalQueryParam(request: IncomingMessage, key: string): string | undefined {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const value = url.searchParams.get(key)?.trim();
+  return value ? value : undefined;
+}
+
 function toReplayResponse(account: PlayerAccountSnapshot, limit?: number): { items: PlayerAccountSnapshot["recentBattleReplays"] } {
   const items = normalizePlayerBattleReplaySummaries(account.recentBattleReplays);
   const safeLimit = limit == null ? undefined : Math.max(1, Math.floor(limit));
   return {
     items: safeLimit == null ? items : items.slice(0, safeLimit)
+  };
+}
+
+function toEventLogResponse(
+  account: PlayerAccountSnapshot,
+  request: IncomingMessage
+): { items: PlayerAccountSnapshot["recentEventLog"] } {
+  return {
+    items: queryEventLogEntries(account.recentEventLog, {
+      limit: parseLimit(request),
+      category: parseOptionalQueryParam(request, "category") as PlayerAccountSnapshot["recentEventLog"][number]["category"] | undefined,
+      heroId: parseOptionalQueryParam(request, "heroId"),
+      achievementId: parseOptionalQueryParam(request, "achievementId") as
+        | PlayerAccountSnapshot["recentEventLog"][number]["achievementId"]
+        | undefined,
+      worldEventType: parseOptionalQueryParam(request, "worldEventType") as
+        | PlayerAccountSnapshot["recentEventLog"][number]["worldEventType"]
+        | undefined
+    })
   };
 }
 
@@ -263,6 +289,42 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.get("/api/player-accounts/me/event-log", async (request, response) => {
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(
+        response,
+        200,
+        toEventLogResponse(
+          createLocalModeAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            loginId: authSession.loginId
+          }),
+          request
+        )
+      );
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      sendJson(response, 200, toEventLogResponse(account, request));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
   app.get("/api/player-accounts/me/progression", async (request, response) => {
     const authSession = resolveAuthSessionFromRequest(request);
     if (!authSession) {
@@ -362,6 +424,45 @@ export function registerPlayerAccountRoutes(
       }
 
       sendJson(response, 200, toReplayResponse(account, parseLimit(request)));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/event-log", async (request, response) => {
+    const playerId = request.params.playerId?.trim();
+    if (!playerId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(
+        response,
+        200,
+        toEventLogResponse(
+          createLocalModeAccount({
+            playerId
+          }),
+          request
+        )
+      );
+      return;
+    }
+
+    try {
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_account_not_found",
+            message: `Player account not found: ${playerId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, toEventLogResponse(account, request));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

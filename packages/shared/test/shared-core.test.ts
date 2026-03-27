@@ -9,6 +9,7 @@ import {
   applyAchievementMetricDelta,
   applyAchievementProgressValue,
   buildPlayerProgressionSnapshot,
+  queryEventLogEntries,
   createHeroAttributeBreakdown,
   createHeroEquipmentBonusSummary,
   createHeroEquipmentLoadoutView,
@@ -295,6 +296,54 @@ test("event log helper keeps newest unique entries first", () => {
     merged.map((entry) => entry.id),
     ["newer", "older"]
   );
+});
+
+test("event log query helper filters by category, hero, and achievement metadata", () => {
+  const queried = queryEventLogEntries(
+    [
+      {
+        id: "combat-entry",
+        timestamp: "2026-03-27T10:00:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "combat",
+        description: "combat",
+        heroId: "hero-1",
+        worldEventType: "battle.started",
+        rewards: []
+      },
+      {
+        id: "achievement-entry",
+        timestamp: "2026-03-27T10:05:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "achievement",
+        description: "achievement",
+        heroId: "hero-1",
+        achievementId: "first_battle",
+        rewards: []
+      },
+      {
+        id: "other-hero-entry",
+        timestamp: "2026-03-27T10:06:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "achievement",
+        description: "other hero",
+        heroId: "hero-2",
+        achievementId: "first_battle",
+        rewards: []
+      }
+    ],
+    {
+      category: "achievement",
+      heroId: "hero-1",
+      achievementId: "first_battle",
+      limit: 3
+    }
+  );
+
+  assert.deepEqual(queried.map((entry) => entry.id), ["achievement-entry"]);
 });
 
 test("player progression snapshot summarizes unlocked achievements and recent events", () => {

@@ -24,6 +24,14 @@ export interface EventLogEntry {
   rewards: EventLogReward[];
 }
 
+export interface EventLogQuery {
+  limit?: number;
+  category?: EventLogCategory;
+  heroId?: string;
+  achievementId?: AchievementId;
+  worldEventType?: WorldEvent["type"];
+}
+
 export interface AchievementDefinition {
   id: AchievementId;
   metric: AchievementMetric;
@@ -306,6 +314,21 @@ export function appendEventLogEntries(
   }
 
   return normalizeEventLogEntries([...normalizedIncoming, ...normalizeEventLogEntries(existing)]).slice(0, safeLimit);
+}
+
+export function queryEventLogEntries(
+  entries?: Partial<EventLogEntry>[] | null,
+  query: EventLogQuery = {}
+): EventLogEntry[] {
+  const safeLimit = query.limit == null ? undefined : Math.max(1, Math.floor(query.limit));
+  const heroId = query.heroId?.trim();
+
+  return normalizeEventLogEntries(entries)
+    .filter((entry) => (query.category ? entry.category === query.category : true))
+    .filter((entry) => (heroId ? entry.heroId === heroId : true))
+    .filter((entry) => (query.achievementId ? entry.achievementId === query.achievementId : true))
+    .filter((entry) => (query.worldEventType ? entry.worldEventType === query.worldEventType : true))
+    .slice(0, safeLimit);
 }
 
 export function buildPlayerProgressionSnapshot(
