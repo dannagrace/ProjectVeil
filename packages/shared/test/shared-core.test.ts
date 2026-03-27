@@ -519,6 +519,52 @@ test("event log query helper filters by category, hero, achievement metadata, an
   assert.deepEqual(paged.map((entry) => entry.id), ["older-entry"]);
 });
 
+test("event log query helper filters by inclusive time range when provided", () => {
+  const queried = queryEventLogEntries(
+    [
+      {
+        id: "newest-entry",
+        timestamp: "2026-03-27T10:07:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "achievement",
+        description: "newest",
+        heroId: "hero-1",
+        achievementId: "first_battle",
+        rewards: []
+      },
+      {
+        id: "middle-entry",
+        timestamp: "2026-03-27T10:05:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "combat",
+        description: "middle",
+        heroId: "hero-1",
+        worldEventType: "battle.started",
+        rewards: []
+      },
+      {
+        id: "older-entry",
+        timestamp: "2026-03-27T10:03:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "combat",
+        description: "older",
+        heroId: "hero-1",
+        worldEventType: "battle.resolved",
+        rewards: []
+      }
+    ],
+    {
+      since: "2026-03-27T10:04:00.000Z",
+      until: "2026-03-27T10:06:00.000Z"
+    }
+  );
+
+  assert.deepEqual(queried.map((entry) => entry.id), ["middle-entry"]);
+});
+
 test("achievement progress query helper filters by id, metric, unlocked state, and limit", () => {
   const queried = queryAchievementProgress(
     [

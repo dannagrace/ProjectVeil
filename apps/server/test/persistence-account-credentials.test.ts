@@ -217,3 +217,54 @@ test("loadPlayerEventHistory returns paged rows and total count", async () => {
   assert.match(queries[1].sql, /ORDER BY timestamp DESC, event_id ASC/);
   assert.deepEqual(queries[1].params, ["player-1", "achievement", "hero-1", 1, 1]);
 });
+
+test("mysql player event history query applies inclusive timestamp filters", async () => {
+  const queries: Array<{ sql: string; params: unknown[] | undefined }> = [];
+  const store = new MySqlRoomSnapshotStore({
+    query: async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      if (queries.length === 1) {
+        return [[{ total: 1 }]];
+      }
+
+      return [[
+        {
+          player_id: "player-1",
+          event_id: "event-2",
+          timestamp: "2026-03-20T00:05:00.000Z",
+          room_id: "room-1",
+          category: "achievement",
+          hero_id: "hero-1",
+          world_event_type: null,
+          achievement_id: "first_battle",
+          entry_json: JSON.stringify({
+            id: "event-2",
+            timestamp: "2026-03-20T00:05:00.000Z",
+            roomId: "room-1",
+            playerId: "player-1",
+            category: "achievement",
+            description: "new",
+            heroId: "hero-1",
+            achievementId: "first_battle",
+            rewards: [{ type: "badge", label: "初次交锋" }]
+          }),
+          created_at: "2026-03-20T00:05:00.000Z"
+        }
+      ]];
+    }
+  } as never);
+
+  const history = (await store.loadPlayerEventHistory("player-1", {
+    since: "2026-03-20T00:00:00.000Z",
+    until: "2026-03-20T00:06:00.000Z"
+  })) as PlayerEventHistorySnapshot;
+
+  assert.equal(history.total, 1);
+  assert.deepEqual(history.items.map((entry) => entry.id), ["event-2"]);
+  assert.equal(queries.length, 2);
+  assert.match(queries[0].sql, /timestamp >= \?/);
+  assert.match(queries[0].sql, /timestamp <= \?/);
+  assert.deepEqual(queries[0].params, ["player-1", "2026-03-20T00:00:00.000Z", "2026-03-20T00:06:00.000Z"]);
+  assert.match(queries[1].sql, /ORDER BY timestamp DESC, event_id ASC/);
+  assert.deepEqual(queries[1].params, ["player-1", "2026-03-20T00:00:00.000Z", "2026-03-20T00:06:00.000Z"]);
+});

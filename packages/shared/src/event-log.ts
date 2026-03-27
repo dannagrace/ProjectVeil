@@ -37,6 +37,8 @@ export interface EventLogQuery {
   heroId?: string | undefined;
   achievementId?: AchievementId | undefined;
   worldEventType?: WorldEvent["type"] | undefined;
+  since?: string | undefined;
+  until?: string | undefined;
 }
 
 export interface AchievementDefinition {
@@ -186,6 +188,16 @@ function normalizeTimestamp(value?: string | null): string | undefined {
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
+function normalizeTimestampFilter(value?: string | null): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 function findHero(state: WorldState, heroId?: string): WorldState["heroes"][number] | undefined {
@@ -714,12 +726,16 @@ export function queryEventLogEntries(
   const safeLimit = query.limit == null ? undefined : Math.max(1, Math.floor(query.limit));
   const safeOffset = Math.max(0, Math.floor(query.offset ?? 0));
   const heroId = query.heroId?.trim();
+  const since = normalizeTimestampFilter(query.since);
+  const until = normalizeTimestampFilter(query.until);
 
   return normalizeEventLogEntries(entries)
     .filter((entry) => (query.category ? entry.category === query.category : true))
     .filter((entry) => (heroId ? entry.heroId === heroId : true))
     .filter((entry) => (query.achievementId ? entry.achievementId === query.achievementId : true))
     .filter((entry) => (query.worldEventType ? entry.worldEventType === query.worldEventType : true))
+    .filter((entry) => (since ? entry.timestamp >= since : true))
+    .filter((entry) => (until ? entry.timestamp <= until : true))
     .slice(safeOffset, safeLimit == null ? undefined : safeOffset + safeLimit);
 }
 
