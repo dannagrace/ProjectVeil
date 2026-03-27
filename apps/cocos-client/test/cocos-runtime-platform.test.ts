@@ -63,6 +63,7 @@ test("resolveCocosRuntimeCapabilities marks 微信小游戏 config center access
     authFlow: "wechat-session-bridge",
     configCenterAccess: "manual-link",
     launchQuerySource: "wechat-launch-options",
-    supportsBrowserHistory: false
+    supportsBrowserHistory: false,
+    supportsWechatLogin: true
   });
 });

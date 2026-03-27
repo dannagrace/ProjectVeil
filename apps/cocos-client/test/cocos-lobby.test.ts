@@ -12,6 +12,7 @@ import {
   loadCocosPlayerProgressionSnapshot,
   loginCocosPasswordAuthSession,
   loginCocosGuestAuthSession,
+  loginCocosWechatAuthSession,
   rememberPreferredCocosDisplayName,
   resolveCocosApiBaseUrl,
   resolveCocosConfigCenterUrl
@@ -152,6 +153,7 @@ test("loginCocosGuestAuthSession stores remote sessions and clearCurrentCocosAut
     playerId: "guest-202503",
     displayName: "晶塔旅人",
     authMode: "guest",
+    provider: "guest",
     source: "remote"
   });
 
@@ -194,10 +196,53 @@ test("loginCocosPasswordAuthSession stores account sessions with loginId", async
     playerId: "account-player",
     displayName: "暮潮守望",
     authMode: "account",
+    provider: "account-password",
     loginId: "veil-ranger",
     source: "remote"
   });
   assert.ok(values.get("project-veil:auth-session")?.includes("\"authMode\":\"account\""));
+});
+
+test("loginCocosWechatAuthSession exchanges wx.login code through the scaffold endpoint", async () => {
+  let requestedBody = "";
+
+  const session = await loginCocosWechatAuthSession("http://127.0.0.1:2567", "guest-wechat", "岚桥旅人", {
+    wx: {
+      login: ({ success }) => {
+        success?.({ code: "wx-dev-code" });
+      }
+    },
+    fetchImpl: async (_input, init) => {
+      requestedBody = String(init?.body ?? "");
+      return new Response(
+        JSON.stringify({
+          session: {
+            token: "wechat.token",
+            playerId: "guest-wechat",
+            displayName: "岚桥旅人",
+            authMode: "guest",
+            provider: "wechat-mini-game"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.match(requestedBody, /"code":"wx-dev-code"/);
+  assert.deepEqual(session, {
+    token: "wechat.token",
+    playerId: "guest-wechat",
+    displayName: "岚桥旅人",
+    authMode: "guest",
+    provider: "wechat-mini-game",
+    source: "remote"
+  });
 });
 
 test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and preserves the global vault", async () => {

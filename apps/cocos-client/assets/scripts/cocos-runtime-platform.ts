@@ -10,6 +10,7 @@ export interface CocosRuntimeCapabilities {
   configCenterAccess: CocosRuntimeConfigCenterAccess;
   launchQuerySource: CocosRuntimeLaunchQuerySource;
   supportsBrowserHistory: boolean;
+  supportsWechatLogin: boolean;
 }
 
 interface WechatLaunchOptionsLike {
@@ -18,6 +19,11 @@ interface WechatLaunchOptionsLike {
 
 interface WechatMiniGameLike {
   getLaunchOptionsSync?: (() => WechatLaunchOptionsLike | null | undefined) | undefined;
+  login?: ((options: {
+    timeout?: number;
+    success?: (result: { code?: string }) => void;
+    fail?: (error: { errMsg?: string }) => void;
+  }) => void) | undefined;
 }
 
 export interface CocosRuntimeEnvironmentLike {
@@ -84,7 +90,8 @@ export function resolveCocosRuntimeCapabilities(platform: CocosRuntimePlatform):
         authFlow: "wechat-session-bridge",
         configCenterAccess: "manual-link",
         launchQuerySource: "wechat-launch-options",
-        supportsBrowserHistory: false
+        supportsBrowserHistory: false,
+        supportsWechatLogin: true
       };
     case "browser":
       return {
@@ -92,7 +99,8 @@ export function resolveCocosRuntimeCapabilities(platform: CocosRuntimePlatform):
         authFlow: "standard",
         configCenterAccess: "external-window",
         launchQuerySource: "location-search",
-        supportsBrowserHistory: true
+        supportsBrowserHistory: true,
+        supportsWechatLogin: false
       };
     default:
       return {
@@ -100,7 +108,8 @@ export function resolveCocosRuntimeCapabilities(platform: CocosRuntimePlatform):
         authFlow: "standard",
         configCenterAccess: "manual-link",
         launchQuerySource: "none",
-        supportsBrowserHistory: false
+        supportsBrowserHistory: false,
+        supportsWechatLogin: false
       };
   }
 }

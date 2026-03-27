@@ -123,6 +123,54 @@
 这只是 issue #30 的基础切片，当前还没有完成：
 
 - Cocos Creator 微信小游戏构建目标配置
-- `wx.login()` 与服务端 `code2Session` 登录链路
+- 真正接微信 `code2Session / openid / unionid` 的生产登录链路
 - OpenID 绑定、头像昵称同步
 - 真机性能与内存优化
+
+## 微信登录脚手架
+
+本轮在运行时基础之上，继续补了一层“可合并但不虚假宣称生产完成”的登录脚手架：
+
+- 新增 `assets/scripts/cocos-login-provider.ts`
+  - 把 `guest / account-password / wechat-mini-game` 三类入口收口成统一 provider 抽象
+  - 会按运行时能力、`wx.login()` 可用性和小游戏配置决定 Lobby 主登录按钮文案
+- 新增 `loginCocosWechatAuthSession()`
+  - 微信小游戏环境优先走 `wx.login()`
+  - 如果当前调试壳没有原生 `wx.login()`，但配置了 mock code，则允许退化到 mock 交换
+  - 交换成功后会把会话以 `provider = "wechat-mini-game"` 写入本地缓存，方便后续 UI / 调试识别
+- 服务端新增 `POST /api/auth/wechat-mini-game-login`
+  - 默认返回 `501`
+  - 仅在 `VEIL_WECHAT_MINIGAME_LOGIN_MODE=mock` 时启用 mock 交换
+  - 当前只是开发脚手架，不会触发真实微信 `code2Session`
+
+当前支持的配置项：
+
+- 客户端运行时覆盖：
+  - `globalThis.__PROJECT_VEIL_RUNTIME_CONFIG__.wechatMiniGame.enabled`
+  - `globalThis.__PROJECT_VEIL_RUNTIME_CONFIG__.wechatMiniGame.exchangePath`
+  - `globalThis.__PROJECT_VEIL_RUNTIME_CONFIG__.wechatMiniGame.mockCode`
+  - `globalThis.__PROJECT_VEIL_RUNTIME_CONFIG__.wechatMiniGame.appId`
+- 服务端环境变量：
+  - `VEIL_WECHAT_MINIGAME_LOGIN_MODE=mock`
+  - `VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE=wechat-dev-code`
+
+一个本地联调用例：
+
+```bash
+VEIL_WECHAT_MINIGAME_LOGIN_MODE=mock \
+VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE=wechat-dev-code \
+npm run dev:server
+```
+
+然后在小游戏预览壳里注入：
+
+```ts
+(globalThis as { __PROJECT_VEIL_RUNTIME_CONFIG__?: unknown }).__PROJECT_VEIL_RUNTIME_CONFIG__ = {
+  wechatMiniGame: {
+    enabled: true,
+    mockCode: "wechat-dev-code"
+  }
+};
+```
+
+这样 Lobby 会优先展示“微信登录并进入”，但它仍然只是 mock / scaffold，不代表已经完成生产发布链路。
