@@ -19,6 +19,7 @@ import type { RoomPersistenceSnapshot } from "../src/index";
 import {
   createDefaultHeroLoadout,
   createDefaultHeroProgression,
+  type PlayerProgressionSnapshot,
   type PlayerBattleReplaySummary,
   type WorldState
 } from "../../../packages/shared/src/index";
@@ -391,6 +392,94 @@ test("player account me battle replay route resolves the current authenticated a
 
   assert.equal(meResponse.status, 200);
   assert.deepEqual(mePayload.items.map((replay) => replay.id), ["replay-me-2", "replay-me-1"]);
+});
+
+test("player account progression routes return a compact achievement and event read model", async (t) => {
+  const port = 42080 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-progress",
+    displayName: "雾林司灯",
+    globalResources: { gold: 120, wood: 6, ore: 2 },
+    achievements: [
+      {
+        id: "first_battle",
+        title: "ignored",
+        description: "ignored",
+        metric: "battles_started",
+        current: 1,
+        target: 99,
+        unlocked: true,
+        unlockedAt: "2026-03-27T12:00:00.000Z"
+      },
+      {
+        id: "enemy_slayer",
+        title: "ignored",
+        description: "ignored",
+        metric: "battles_won",
+        current: 2,
+        target: 99,
+        unlocked: false
+      }
+    ],
+    recentEventLog: [
+      {
+        id: "event-older",
+        timestamp: "2026-03-27T12:01:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-progress",
+        category: "combat",
+        description: "older",
+        rewards: []
+      },
+      {
+        id: "event-newer",
+        timestamp: "2026-03-27T12:03:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-progress",
+        category: "achievement",
+        description: "newer",
+        rewards: [{ type: "badge", label: "初次交锋" }]
+      }
+    ],
+    lastRoomId: "room-alpha",
+    lastSeenAt: new Date("2026-03-27T12:04:00.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-progress",
+    displayName: "雾林司灯"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const publicResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-progress/progression?limit=1`);
+  const publicPayload = (await publicResponse.json()) as PlayerProgressionSnapshot;
+  assert.equal(publicResponse.status, 200);
+  assert.deepEqual(publicPayload.summary, {
+    totalAchievements: 3,
+    unlockedAchievements: 1,
+    inProgressAchievements: 1,
+    latestUnlockedAchievementId: "first_battle",
+    latestUnlockedAchievementTitle: "初次交锋",
+    latestUnlockedAt: "2026-03-27T12:00:00.000Z",
+    recentEventCount: 1,
+    latestEventAt: "2026-03-27T12:03:00.000Z"
+  });
+  assert.deepEqual(publicPayload.recentEventLog.map((entry) => entry.id), ["event-newer"]);
+
+  const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/progression`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const mePayload = (await meResponse.json()) as PlayerProgressionSnapshot;
+  assert.equal(meResponse.status, 200);
+  assert.deepEqual(mePayload.recentEventLog.map((entry) => entry.id), ["event-newer", "event-older"]);
+  assert.equal(mePayload.achievements[1]?.id, "enemy_slayer");
+  assert.equal(mePayload.achievements[1]?.current, 2);
 });
 
 test("player achievement tracker appends logs and unlocks milestones", () => {

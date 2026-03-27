@@ -7,6 +7,7 @@ import {
   appendPlayerBattleReplaySummaries,
   applyBattleOutcomeToWorld,
   applyAchievementMetricDelta,
+  buildPlayerProgressionSnapshot,
   createHeroAttributeBreakdown,
   createHeroEquipmentBonusSummary,
   createHeroEquipmentLoadoutView,
@@ -278,6 +279,57 @@ test("event log helper keeps newest unique entries first", () => {
     merged.map((entry) => entry.id),
     ["newer", "older"]
   );
+});
+
+test("player progression snapshot summarizes unlocked achievements and recent events", () => {
+  const snapshot = buildPlayerProgressionSnapshot(
+    [
+      {
+        id: "first_battle",
+        current: 1,
+        unlockedAt: "2026-03-27T10:00:00.000Z"
+      },
+      {
+        id: "enemy_slayer",
+        current: 2
+      }
+    ],
+    [
+      {
+        id: "event-older",
+        timestamp: "2026-03-27T09:55:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "combat",
+        description: "older",
+        rewards: []
+      },
+      {
+        id: "event-newer",
+        timestamp: "2026-03-27T10:05:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "achievement",
+        description: "newer",
+        rewards: []
+      }
+    ],
+    1
+  );
+
+  assert.deepEqual(snapshot.summary, {
+    totalAchievements: 3,
+    unlockedAchievements: 1,
+    inProgressAchievements: 1,
+    latestUnlockedAchievementId: "first_battle",
+    latestUnlockedAchievementTitle: "初次交锋",
+    latestUnlockedAt: "2026-03-27T10:00:00.000Z",
+    recentEventCount: 1,
+    latestEventAt: "2026-03-27T10:05:00.000Z"
+  });
+  assert.deepEqual(snapshot.recentEventLog.map((entry) => entry.id), ["event-newer"]);
+  assert.equal(snapshot.achievements[1]?.id, "enemy_slayer");
+  assert.equal(snapshot.achievements[1]?.current, 2);
 });
 
 test("battle replay helpers normalize steps and keep newest unique replays first", () => {

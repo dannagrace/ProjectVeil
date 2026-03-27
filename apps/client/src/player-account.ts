@@ -6,12 +6,14 @@ import {
   type StoredAuthSession
 } from "./auth-session";
 import {
+  normalizePlayerProgressionSnapshot,
   normalizeAchievementProgress,
   normalizePlayerBattleReplaySummaries,
   normalizeEventLogEntries,
   type EventLogEntry,
   type PlayerBattleReplaySummary,
-  type PlayerAchievementProgress
+  type PlayerAchievementProgress,
+  type PlayerProgressionSnapshot
 } from "../../../packages/shared/src/index";
 
 const PLAYER_ACCOUNT_PREFIX = "project-veil:player-account";
@@ -64,6 +66,8 @@ interface PlayerAccountApiPayload {
 interface PlayerBattleReplayListApiPayload {
   items?: Partial<PlayerBattleReplaySummary>[];
 }
+
+interface PlayerProgressionApiPayload extends Partial<PlayerProgressionSnapshot> {}
 
 function normalizePlayerDisplayName(playerId: string, displayName?: string | null): string {
   const normalizedPlayerId = playerId.trim() || "player";
@@ -258,6 +262,26 @@ export async function loadPlayerBattleReplaySummaries(playerId: string): Promise
       clearCurrentAuthSession();
     }
     return normalizePlayerBattleReplaySummaries();
+  }
+}
+
+export async function loadPlayerProgressionSnapshot(playerId: string, eventLimit?: number): Promise<PlayerProgressionSnapshot> {
+  const authSession = readStoredAuthSession();
+  const limitQuery = eventLimit != null ? `?limit=${encodeURIComponent(String(eventLimit))}` : "";
+  const endpoint = authSession?.token
+    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/progression${limitQuery}`
+    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/progression${limitQuery}`;
+
+  try {
+    const payload = (await fetchJson(endpoint, {
+      ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
+    })) as PlayerProgressionApiPayload;
+    return normalizePlayerProgressionSnapshot(payload);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+      clearCurrentAuthSession();
+    }
+    return normalizePlayerProgressionSnapshot();
   }
 }
 
