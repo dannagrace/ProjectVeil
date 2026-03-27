@@ -5,8 +5,11 @@ import {
   createCocosLobbyPreferences,
   getCocosLobbyPreferencesStorageKey,
   getCocosPlayerAccountStorageKey,
+  loadCocosPlayerAchievementProgress,
   loadCocosLobbyRooms,
   loadCocosPlayerAccountProfile,
+  loadCocosPlayerEventLog,
+  loadCocosPlayerProgressionSnapshot,
   loginCocosPasswordAuthSession,
   loginCocosGuestAuthSession,
   rememberPreferredCocosDisplayName,
@@ -352,4 +355,143 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
   });
   assert.ok(values.get("project-veil:auth-session")?.includes("\"loginId\":\"veil-ranger\""));
   assert.equal(values.get(getCocosPlayerAccountStorageKey("account-player")), "暮潮守望");
+});
+
+test("loadCocosPlayerEventLog sends shared filters through the public query route", async () => {
+  let requestedUrl = "";
+
+  const items = await loadCocosPlayerEventLog("ws://127.0.0.1:2567/ws", "player-1", {
+    limit: 1,
+    category: "achievement",
+    heroId: "hero-1",
+    achievementId: "first_battle",
+    worldEventType: "battle.started"
+  }, {
+    fetchImpl: async (input) => {
+      requestedUrl = String(input);
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "event-older",
+              timestamp: "2026-03-27T12:01:00.000Z",
+              roomId: "room-alpha",
+              playerId: "player-1",
+              category: "achievement",
+              description: "older",
+              heroId: "hero-1",
+              achievementId: "first_battle",
+              worldEventType: "battle.started",
+              rewards: []
+            },
+            {
+              id: "event-newer",
+              timestamp: "2026-03-27T12:03:00.000Z",
+              roomId: "room-alpha",
+              playerId: "player-1",
+              category: "achievement",
+              description: "newer",
+              heroId: "hero-1",
+              achievementId: "first_battle",
+              worldEventType: "battle.started",
+              rewards: [{ type: "badge", label: "初次交锋" }]
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.equal(
+    requestedUrl,
+    "http://127.0.0.1:2567/api/player-accounts/player-1/event-log?limit=1&category=achievement&heroId=hero-1&achievementId=first_battle&worldEventType=battle.started"
+  );
+  assert.deepEqual(items.map((entry) => entry.id), ["event-newer", "event-older"]);
+});
+
+test("loadCocosPlayerAchievementProgress uses /me for authenticated queries and normalizes progress", async () => {
+  let requestedUrl = "";
+
+  const items = await loadCocosPlayerAchievementProgress("http://127.0.0.1:2567", "player-1", {
+    limit: 1,
+    achievementId: "enemy_slayer",
+    metric: "battles_won",
+    unlocked: false
+  }, {
+    authSession: {
+      token: "session-token",
+      playerId: "player-1",
+      displayName: "雾林司灯",
+      authMode: "guest",
+      source: "remote"
+    },
+    fetchImpl: async (input, init) => {
+      requestedUrl = String(input);
+      assert.equal((init?.headers as Record<string, string> | undefined)?.Authorization, "Bearer session-token");
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "enemy_slayer",
+              current: 2,
+              progressUpdatedAt: "2026-03-27T12:02:00.000Z"
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.equal(
+    requestedUrl,
+    "http://127.0.0.1:2567/api/player-accounts/me/achievements?limit=1&achievementId=enemy_slayer&metric=battles_won&unlocked=false"
+  );
+  assert.deepEqual(items.map((entry) => entry.id), ["enemy_slayer"]);
+  assert.equal(items[0]?.title, "猎敌者");
+  assert.equal(items[0]?.current, 2);
+});
+
+test("loadCocosPlayerProgressionSnapshot clears expired auth sessions and falls back to normalized defaults", async () => {
+  const values = new Map<string, string>([
+    [
+      "project-veil:auth-session",
+      JSON.stringify({
+        playerId: "player-1",
+        displayName: "雾林司灯",
+        authMode: "guest",
+        token: "session-token",
+        source: "remote"
+      })
+    ]
+  ]);
+  const storage = {
+    getItem(key: string): string | null {
+      return values.get(key) ?? null;
+    },
+    removeItem(key: string): void {
+      values.delete(key);
+    }
+  };
+
+  const snapshot = await loadCocosPlayerProgressionSnapshot("http://127.0.0.1:2567", "player-1", 2, {
+    storage,
+    fetchImpl: async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })
+  });
+
+  assert.equal(snapshot.summary.totalAchievements, 5);
+  assert.equal(snapshot.summary.unlockedAchievements, 0);
+  assert.deepEqual(snapshot.recentEventLog, []);
+  assert.equal(values.has("project-veil:auth-session"), false);
 });
