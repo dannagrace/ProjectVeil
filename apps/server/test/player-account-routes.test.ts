@@ -551,7 +551,7 @@ test("player achievement tracker records equipment drop entries for hero victori
   assert.match(updated.recentEventLog[0]?.description ?? "", /塔盾链甲/);
 });
 
-test("player account routes update display names through the account store", async (t) => {
+test("player account profile updates by player id require auth and allow self-service only", async (t) => {
   const port = 41000 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
   const server = await startAccountRouteServer(port, store);
@@ -560,25 +560,78 @@ test("player account routes update display names through the account store", asy
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
-  const updateResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-2`, {
+  const unauthenticatedResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-2`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      displayName: "未授权写入",
+      lastRoomId: "room-unauth"
+    })
+  });
+  const unauthenticatedPayload = (await unauthenticatedResponse.json()) as {
+    error: { code: string; message: string };
+  };
+
+  assert.equal(unauthenticatedResponse.status, 401);
+  assert.equal(unauthenticatedPayload.error.code, "unauthorized");
+
+  const selfSession = issueGuestAuthSession({
+    playerId: "player-2",
+    displayName: "远帆旅人"
+  });
+  const updateResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-2`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${selfSession.token}`
     },
     body: JSON.stringify({
       displayName: "北境执旗官",
       lastRoomId: "room-bravo"
     })
   });
-  const updatePayload = (await updateResponse.json()) as { account: PlayerAccountSnapshot };
+  const updatePayload = (await updateResponse.json()) as {
+    account: PlayerAccountSnapshot;
+    session: { token: string; playerId: string; displayName: string };
+  };
 
   assert.equal(updateResponse.status, 200);
   assert.equal(updatePayload.account.displayName, "北境执旗官");
   assert.equal(updatePayload.account.lastRoomId, "room-bravo");
+  assert.equal(updatePayload.session.playerId, "player-2");
+  assert.equal(updatePayload.session.displayName, "北境执旗官");
 
   const stored = await store.loadPlayerAccount("player-2");
   assert.equal(stored?.displayName, "北境执旗官");
   assert.equal(stored?.lastRoomId, "room-bravo");
+
+  const otherSession = issueGuestAuthSession({
+    playerId: "player-3",
+    displayName: "陌路信使"
+  });
+  const crossPlayerResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-2`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${otherSession.token}`
+    },
+    body: JSON.stringify({
+      displayName: "越权篡改",
+      lastRoomId: "room-gamma"
+    })
+  });
+  const crossPlayerPayload = (await crossPlayerResponse.json()) as {
+    error: { code: string; message: string };
+  };
+
+  assert.equal(crossPlayerResponse.status, 403);
+  assert.equal(crossPlayerPayload.error.code, "forbidden");
+
+  const unchanged = await store.loadPlayerAccount("player-2");
+  assert.equal(unchanged?.displayName, "北境执旗官");
+  assert.equal(unchanged?.lastRoomId, "room-bravo");
 });
 
 test("player account me routes resolve and update the current authenticated account", async (t) => {
