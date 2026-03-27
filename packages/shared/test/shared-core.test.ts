@@ -17,6 +17,7 @@ import {
   createHeroSkillTreeView,
   createHeroProgressMeterView,
   createBattleEnvironmentState,
+  createBattleReplayPlaybackState,
   createDemoBattleState,
   createEmptyBattleState,
   executeBattleSkill,
@@ -42,12 +43,17 @@ import {
   getLatestProgressedAchievement,
   getLatestUnlockedAchievement,
   normalizePlayerBattleReplaySummaries,
+  pauseBattleReplayPlayback,
   pickAutomatedBattleAction,
   planPlayerViewMovement,
+  playBattleReplayPlayback,
   predictPlayerWorldAction,
+  resetBattleReplayPlayback,
   resetRuntimeConfigs,
   simulateAutomatedBattle,
   simulateAutomatedBattles,
+  stepBattleReplayPlayback,
+  tickBattleReplayPlayback,
   resolveWorldAction,
   rollEquipmentDrop,
   setBattleBalanceConfig,
@@ -567,6 +573,82 @@ test("battle replay helpers normalize steps and keep newest unique replays first
   assert.deepEqual(merged.map((replay) => replay.id), ["replay-newer", "replay-older"]);
   assert.equal(merged[0]?.steps[0]?.index, 5);
   assert.equal(merged[1]?.steps[0]?.index, 9);
+});
+
+test("battle replay playback helpers support play pause tick and reset controls", () => {
+  const initial = createDemoBattleState();
+  const replay = normalizePlayerBattleReplaySummaries([
+    {
+      id: "replay-controls",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      battleId: initial.id,
+      battleKind: "hero",
+      playerCamp: "attacker",
+      heroId: "hero-1",
+      opponentHeroId: "hero-2",
+      startedAt: "2026-03-27T10:00:00.000Z",
+      completedAt: "2026-03-27T10:01:00.000Z",
+      initialState: initial,
+      steps: [
+        {
+          index: 1,
+          source: "automated",
+          action: {
+            type: "battle.attack",
+            attackerId: "wolf-d",
+            defenderId: "pikeman-a"
+          }
+        },
+        {
+          index: 2,
+          source: "player",
+          action: {
+            type: "battle.wait",
+            unitId: "pikeman-a"
+          }
+        }
+      ],
+      result: "attacker_victory"
+    }
+  ])[0];
+  assert.ok(replay);
+
+  const playback = createBattleReplayPlaybackState(replay);
+  assert.equal(playback.status, "paused");
+  assert.equal(playback.currentStepIndex, 0);
+  assert.equal(playback.currentStep, null);
+  assert.equal(playback.nextStep?.index, 1);
+  assert.equal(playback.currentState.activeUnitId, initial.activeUnitId);
+
+  const playing = playBattleReplayPlayback(playback);
+  assert.equal(playing.status, "playing");
+
+  const afterTick = tickBattleReplayPlayback(playing);
+  assert.equal(afterTick.status, "playing");
+  assert.equal(afterTick.currentStepIndex, 1);
+  assert.equal(afterTick.currentStep?.index, 1);
+  assert.equal(afterTick.nextStep?.index, 2);
+  assert.equal(afterTick.currentState.activeUnitId, "pikeman-a");
+
+  const paused = pauseBattleReplayPlayback(afterTick);
+  assert.equal(paused.status, "paused");
+
+  const afterManualStep = stepBattleReplayPlayback(paused);
+  assert.equal(afterManualStep.status, "completed");
+  assert.equal(afterManualStep.currentStepIndex, 2);
+  assert.equal(afterManualStep.currentStep?.index, 2);
+  assert.equal(afterManualStep.nextStep, null);
+
+  const replayingCompleted = playBattleReplayPlayback(afterManualStep);
+  assert.equal(replayingCompleted.status, "completed");
+
+  const reset = resetBattleReplayPlayback(afterManualStep);
+  assert.equal(reset.status, "paused");
+  assert.equal(reset.currentStepIndex, 0);
+  assert.equal(reset.currentStep, null);
+  assert.equal(reset.nextStep?.index, 1);
+  assert.equal(reset.currentState.activeUnitId, initial.activeUnitId);
 });
 
 test("typed-array world map payload is materially smaller than the raw tile JSON on a 32x32 map", () => {
