@@ -1086,6 +1086,7 @@ function resolveNeutralArmyTurn(
           {
             type: "battle.started",
             heroId: chaseTarget.heroId,
+            attackerPlayerId: hero?.playerId ?? "",
             encounterKind: "neutral",
             neutralArmyId: neutralArmy.id,
             initiator: "neutral",
@@ -2135,6 +2136,10 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
 
     if (plan.endsInEncounter) {
       const encounterRefId = plan.encounterRefId;
+      const encounterHero =
+        plan.encounterKind === "hero" && encounterRefId
+          ? state.heroes.find((item) => item.id === encounterRefId)
+          : undefined;
       return {
         state: nextState,
         movementPlan: plan,
@@ -2143,9 +2148,14 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
               {
                 type: "battle.started",
                 heroId: action.heroId,
+                attackerPlayerId: hero.playerId,
                 encounterKind: plan.encounterKind === "hero" ? "hero" : "neutral",
                 ...(plan.encounterKind === "hero"
-                  ? { defenderHeroId: encounterRefId, battleId: `battle-${action.heroId}-vs-${encounterRefId}` }
+                  ? {
+                      defenderHeroId: encounterRefId,
+                      ...(encounterHero?.playerId ? { defenderPlayerId: encounterHero.playerId } : {}),
+                      battleId: `battle-${action.heroId}-vs-${encounterRefId}`
+                    }
                   : { neutralArmyId: encounterRefId, battleId: `battle-${encounterRefId}` }),
                 path: plan.travelPath,
                 moveCost: plan.moveCost
@@ -2459,6 +2469,9 @@ export function filterWorldEventsForPlayer(
         return event.playerId === playerId;
       case "battle.started":
       case "battle.resolved":
+        if (event.attackerPlayerId === playerId || event.defenderPlayerId === playerId) {
+          return true;
+        }
         return ownsHero(event.heroId) || ownsHero(event.defenderHeroId);
       default:
         return false;
@@ -2509,8 +2522,9 @@ export function applyBattleOutcomeToWorld(
           {
             type: "battle.resolved",
             heroId,
+            attackerPlayerId: attackerHero.playerId,
             battleId,
-            ...(defenderId ? { defenderHeroId: defenderId } : {}),
+            ...(defenderId ? { defenderHeroId: defenderId, defenderPlayerId: defenderHero.playerId } : {}),
             result: "defender_victory"
           },
           {
@@ -2569,8 +2583,9 @@ export function applyBattleOutcomeToWorld(
           {
             type: "battle.resolved",
             heroId,
+            attackerPlayerId: attackerHero.playerId,
             battleId,
-            ...(defenderId ? { defenderHeroId: defenderId } : {}),
+            ...(defenderId ? { defenderHeroId: defenderId, defenderPlayerId: defenderHero.playerId } : {}),
             result: "attacker_victory"
           },
           {
@@ -2621,6 +2636,7 @@ export function applyBattleOutcomeToWorld(
         {
           type: "battle.resolved",
           heroId,
+          attackerPlayerId: attackerHero.playerId,
           battleId,
           result: "defender_victory"
         }
@@ -2654,6 +2670,7 @@ export function applyBattleOutcomeToWorld(
       {
         type: "battle.resolved",
         heroId,
+        attackerPlayerId: attackerHero.playerId,
         battleId,
         result: "attacker_victory"
       },

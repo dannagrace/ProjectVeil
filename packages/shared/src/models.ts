@@ -658,9 +658,11 @@ export type WorldEvent =
   | {
       type: "battle.started";
       heroId: string;
+      attackerPlayerId: string;
       encounterKind: "neutral" | "hero";
       neutralArmyId?: string;
       defenderHeroId?: string;
+      defenderPlayerId?: string;
       initiator?: "hero" | "neutral";
       battleId: string;
       path: Vec2[];
@@ -673,7 +675,9 @@ export type WorldEvent =
   | {
       type: "battle.resolved";
       heroId: string;
+      attackerPlayerId: string;
       defenderHeroId?: string;
+      defenderPlayerId?: string;
       battleId: string;
       result: "attacker_victory" | "defender_victory";
     };

@@ -1378,6 +1378,7 @@ test("resolveWorldAction starts a battle when a hero reaches a neutral army tile
     {
       type: "battle.started",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       encounterKind: "neutral",
       neutralArmyId: "neutral-1",
       battleId: "battle-neutral-1",
@@ -1533,6 +1534,7 @@ test("applyBattleOutcomeToWorld grants neutral rewards and moves the hero onto t
     {
       type: "battle.resolved",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       battleId: "battle-neutral-1",
       result: "attacker_victory"
     },
@@ -1604,7 +1606,9 @@ test("applyBattleOutcomeToWorld grants PvP experience to the winning hero", () =
     {
       type: "battle.resolved",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
       battleId: "battle-hero-1-vs-hero-2",
       result: "defender_victory"
     },
@@ -2718,6 +2722,7 @@ test("resolveWorldAction can start a neutral-initiated battle on end day", () =>
     {
       type: "battle.started",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       encounterKind: "neutral",
       neutralArmyId: "neutral-1",
       initiator: "neutral",
@@ -3133,6 +3138,7 @@ test("applyBattleOutcomeToWorld penalizes the hero on defeat and keeps the neutr
     {
       type: "battle.resolved",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       battleId: "battle-neutral-1",
       result: "defender_victory"
     }
@@ -3179,7 +3185,9 @@ test("applyBattleOutcomeToWorld keeps defenderHeroId on hero-vs-hero resolution 
     {
       type: "battle.resolved",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
       battleId: "battle-hero-1-vs-hero-2",
       result: "attacker_victory"
     },
@@ -3235,7 +3243,9 @@ test("filterWorldEventsForPlayer hides unrelated hero timelines while keeping mi
     {
       type: "battle.started" as const,
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
       encounterKind: "hero" as const,
       battleId: "battle-hero-1-vs-hero-2",
       path: [{ x: 1, y: 1 }, { x: 2, y: 1 }],
@@ -3244,7 +3254,9 @@ test("filterWorldEventsForPlayer hides unrelated hero timelines while keeping mi
     {
       type: "battle.resolved" as const,
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
       battleId: "battle-hero-1-vs-hero-2",
       result: "attacker_victory" as const
     },
@@ -3293,6 +3305,45 @@ test("filterWorldEventsForPlayer hides unrelated hero timelines while keeping mi
   ]);
   assert.deepEqual(filterWorldEventsForPlayer(state, "player-2", events), [events[2], events[3], events[7]]);
   assert.deepEqual(filterWorldEventsForPlayer(state, "player-3", events), [events[1], events[6], events[7]]);
+});
+
+test("filterWorldEventsForPlayer falls back to participant player ids when battle heroes are no longer present", () => {
+  const state = createWorldState({
+    heroes: [
+      createHero({
+        id: "hero-3",
+        playerId: "player-3",
+        name: "旁观者",
+        position: { x: 0, y: 0 }
+      })
+    ]
+  });
+  const events = [
+    {
+      type: "battle.started" as const,
+      heroId: "hero-1",
+      attackerPlayerId: "player-1",
+      defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
+      encounterKind: "hero" as const,
+      battleId: "battle-hero-1-vs-hero-2",
+      path: [{ x: 1, y: 1 }, { x: 2, y: 1 }],
+      moveCost: 1
+    },
+    {
+      type: "battle.resolved" as const,
+      heroId: "hero-1",
+      attackerPlayerId: "player-1",
+      defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
+      battleId: "battle-hero-1-vs-hero-2",
+      result: "defender_victory" as const
+    }
+  ];
+
+  assert.deepEqual(filterWorldEventsForPlayer(state, "player-1", events), events);
+  assert.deepEqual(filterWorldEventsForPlayer(state, "player-2", events), events);
+  assert.deepEqual(filterWorldEventsForPlayer(state, "player-3", events), []);
 });
 
 test("applyBattleAction uses deterministic damage and retaliation flow", () => {

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildPlayerBattleReplaySummary, type CompletedBattleReplayCapture } from "../src/battle-replays";
+import {
+  buildPlayerBattleReplaySummariesForPlayer,
+  buildPlayerBattleReplaySummary,
+  type CompletedBattleReplayCapture
+} from "../src/battle-replays";
 import { createRoom } from "../src/index";
 
 test("room persistence snapshot restores an active neutral battle", () => {
@@ -91,6 +95,8 @@ test("player battle replay summaries preserve the global battle result for both 
   const replay: CompletedBattleReplayCapture = {
     battleId: "battle-hero-1-vs-hero-2",
     roomId: "room-persist-pvp",
+    attackerPlayerId: "player-1",
+    defenderPlayerId: "player-2",
     startedAt: "2026-03-27T12:00:00.000Z",
     completedAt: "2026-03-27T12:01:00.000Z",
     initialState: {
@@ -264,4 +270,179 @@ test("player battle replay summaries preserve the global battle result for both 
 
   assert.equal(attackerReplay.result, "attacker_victory");
   assert.equal(defenderReplay.result, "attacker_victory");
+});
+
+test("player battle replay summaries can resolve both camps from persisted participant ids", () => {
+  const replay: CompletedBattleReplayCapture = {
+    battleId: "battle-hero-1-vs-hero-2",
+    roomId: "room-persist-pvp",
+    attackerPlayerId: "player-1",
+    defenderPlayerId: "player-2",
+    startedAt: "2026-03-27T12:00:00.000Z",
+    completedAt: "2026-03-27T12:01:00.000Z",
+    initialState: {
+      id: "battle-hero-1-vs-hero-2",
+      heroTemplateId: "hero_knight",
+      attacker: {
+        id: "hero-1-stack",
+        camp: "attacker",
+        templateId: "hero_guard_basic",
+        count: 12,
+        attack: 4,
+        defense: 2,
+        hp: 10,
+        maxHp: 10,
+        morale: 0,
+        luck: 0,
+        speed: 4,
+        retaliationsRemaining: 1,
+        hasWaited: false,
+        position: { x: 0, y: 0 }
+      },
+      defender: {
+        id: "hero-2-stack",
+        camp: "defender",
+        templateId: "hero_guard_basic",
+        count: 8,
+        attack: 3,
+        defense: 2,
+        hp: 10,
+        maxHp: 10,
+        morale: 0,
+        luck: 0,
+        speed: 3,
+        retaliationsRemaining: 1,
+        hasWaited: false,
+        position: { x: 1, y: 0 }
+      },
+      units: {
+        "hero-1-stack": {
+          id: "hero-1-stack",
+          camp: "attacker",
+          templateId: "hero_guard_basic",
+          count: 12,
+          attack: 4,
+          defense: 2,
+          hp: 10,
+          maxHp: 10,
+          morale: 0,
+          luck: 0,
+          speed: 4,
+          retaliationsRemaining: 1,
+          hasWaited: false,
+          position: { x: 0, y: 0 }
+        },
+        "hero-2-stack": {
+          id: "hero-2-stack",
+          camp: "defender",
+          templateId: "hero_guard_basic",
+          count: 8,
+          attack: 3,
+          defense: 2,
+          hp: 10,
+          maxHp: 10,
+          morale: 0,
+          luck: 0,
+          speed: 3,
+          retaliationsRemaining: 1,
+          hasWaited: false,
+          position: { x: 1, y: 0 }
+        }
+      },
+      turnOrder: ["hero-1-stack", "hero-2-stack"],
+      activeUnitId: "hero-2-stack",
+      round: 1,
+      seed: 1001,
+      worldHeroId: "hero-1",
+      defenderHeroId: "hero-2"
+    },
+    battleState: {
+      id: "battle-hero-1-vs-hero-2",
+      heroTemplateId: "hero_knight",
+      attacker: {
+        id: "hero-1-stack",
+        camp: "attacker",
+        templateId: "hero_guard_basic",
+        count: 7,
+        attack: 4,
+        defense: 2,
+        hp: 10,
+        maxHp: 10,
+        morale: 0,
+        luck: 0,
+        speed: 4,
+        retaliationsRemaining: 0,
+        hasWaited: false,
+        position: { x: 0, y: 0 }
+      },
+      defender: {
+        id: "hero-2-stack",
+        camp: "defender",
+        templateId: "hero_guard_basic",
+        count: 0,
+        attack: 3,
+        defense: 2,
+        hp: 0,
+        maxHp: 10,
+        morale: 0,
+        luck: 0,
+        speed: 3,
+        retaliationsRemaining: 0,
+        hasWaited: false,
+        position: { x: 1, y: 0 }
+      },
+      units: {
+        "hero-1-stack": {
+          id: "hero-1-stack",
+          camp: "attacker",
+          templateId: "hero_guard_basic",
+          count: 7,
+          attack: 4,
+          defense: 2,
+          hp: 10,
+          maxHp: 10,
+          morale: 0,
+          luck: 0,
+          speed: 4,
+          retaliationsRemaining: 0,
+          hasWaited: false,
+          position: { x: 0, y: 0 }
+        },
+        "hero-2-stack": {
+          id: "hero-2-stack",
+          camp: "defender",
+          templateId: "hero_guard_basic",
+          count: 0,
+          attack: 3,
+          defense: 2,
+          hp: 0,
+          maxHp: 10,
+          morale: 0,
+          luck: 0,
+          speed: 3,
+          retaliationsRemaining: 0,
+          hasWaited: false,
+          position: { x: 1, y: 0 }
+        }
+      },
+      turnOrder: ["hero-1-stack"],
+      activeUnitId: "hero-1-stack",
+      round: 2,
+      seed: 1001,
+      worldHeroId: "hero-1",
+      defenderHeroId: "hero-2"
+    },
+    steps: [],
+    result: "attacker_victory"
+  };
+
+  assert.deepEqual(
+    buildPlayerBattleReplaySummariesForPlayer(replay, "player-1").map((entry) => entry.playerCamp),
+    ["attacker"]
+  );
+  assert.deepEqual(
+    buildPlayerBattleReplaySummariesForPlayer(replay, "player-2").map((entry) => entry.playerCamp),
+    ["defender"]
+  );
+  assert.deepEqual(buildPlayerBattleReplaySummariesForPlayer(replay, "player-3"), []);
 });

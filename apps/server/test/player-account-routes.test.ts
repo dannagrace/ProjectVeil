@@ -902,6 +902,50 @@ test("player achievement tracker appends logs and unlocks milestones", () => {
   assert.match(updated.recentEventLog.map((entry) => entry.description).join(" "), /解锁成就：初次交锋/);
 });
 
+test("player achievement tracker can award battle wins from explicit participant metadata", () => {
+  const state = {
+    ...createAccountTrackingWorldState(),
+    heroes: []
+  };
+  const updated = applyPlayerEventLogAndAchievements(
+    {
+      playerId: "player-1",
+      displayName: "暮火侦骑",
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [
+        {
+          id: "enemy_slayer",
+          title: "ignored",
+          description: "ignored",
+          metric: "battles_won",
+          current: 2,
+          target: 3,
+          unlocked: false,
+          progressUpdatedAt: "2026-03-27T11:59:00.000Z"
+        }
+      ],
+      recentEventLog: []
+    },
+    state,
+    [
+      {
+        type: "battle.resolved",
+        heroId: "hero-1",
+        attackerPlayerId: "player-1",
+        defenderHeroId: "hero-2",
+        defenderPlayerId: "player-2",
+        battleId: "battle-hero-1-vs-hero-2",
+        result: "attacker_victory"
+      }
+    ],
+    "2026-03-27T12:00:00.000Z"
+  );
+
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "enemy_slayer")?.current, 3);
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "enemy_slayer")?.unlocked, true);
+  assert.match(updated.recentEventLog.map((entry) => entry.description).join(" "), /解锁成就：猎敌者/);
+});
+
 test("player achievement tracker records equipment drop entries for hero victories", () => {
   const updated = applyPlayerEventLogAndAchievements(
     {

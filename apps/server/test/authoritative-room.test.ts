@@ -16,6 +16,7 @@ test("battle start auto-resolves defender opener before state is returned to the
     {
       type: "battle.started",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       encounterKind: "neutral",
       neutralArmyId: "neutral-1",
       battleId: "battle-neutral-1",
@@ -168,7 +169,9 @@ test("room filters event timelines per player without hiding PvP battle results 
     {
       type: "battle.started" as const,
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
       encounterKind: "hero" as const,
       battleId: "battle-hero-1-vs-hero-2",
       path: [{ x: 1, y: 1 }, { x: 2, y: 1 }],
@@ -177,7 +180,9 @@ test("room filters event timelines per player without hiding PvP battle results 
     {
       type: "battle.resolved" as const,
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
       battleId: "battle-hero-1-vs-hero-2",
       result: "attacker_victory" as const
     },
@@ -415,6 +420,7 @@ test("room can create a neutral-initiated battle when end day triggers an adjace
     {
       type: "battle.started",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       encounterKind: "neutral",
       neutralArmyId: "neutral-1",
       initiator: "neutral",
