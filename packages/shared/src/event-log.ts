@@ -32,6 +32,7 @@ export interface EventLogEntry {
 
 export interface EventLogQuery {
   limit?: number | undefined;
+  offset?: number | undefined;
   category?: EventLogCategory | undefined;
   heroId?: string | undefined;
   achievementId?: AchievementId | undefined;
@@ -711,6 +712,7 @@ export function queryEventLogEntries(
   query: EventLogQuery = {}
 ): EventLogEntry[] {
   const safeLimit = query.limit == null ? undefined : Math.max(1, Math.floor(query.limit));
+  const safeOffset = Math.max(0, Math.floor(query.offset ?? 0));
   const heroId = query.heroId?.trim();
 
   return normalizeEventLogEntries(entries)
@@ -718,7 +720,7 @@ export function queryEventLogEntries(
     .filter((entry) => (heroId ? entry.heroId === heroId : true))
     .filter((entry) => (query.achievementId ? entry.achievementId === query.achievementId : true))
     .filter((entry) => (query.worldEventType ? entry.worldEventType === query.worldEventType : true))
-    .slice(0, safeLimit);
+    .slice(safeOffset, safeLimit == null ? undefined : safeOffset + safeLimit);
 }
 
 export function buildPlayerProgressionSnapshot(

@@ -7,6 +7,8 @@ import type {
   PlayerAccountAuthSnapshot,
   PlayerAccountCredentialInput,
   PlayerAccountEnsureInput,
+  PlayerEventHistoryQuery,
+  PlayerEventHistorySnapshot,
   PlayerAccountListOptions,
   PlayerAccountProfilePatch,
   PlayerAccountProgressPatch,
@@ -15,7 +17,7 @@ import type {
   RoomSnapshotStore
 } from "../src/persistence";
 import type { RoomPersistenceSnapshot } from "../src/index";
-import { createEmptyBattleState, type PlayerBattleReplaySummary } from "../../../packages/shared/src/index";
+import { createEmptyBattleState, queryEventLogEntries, type PlayerBattleReplaySummary } from "../../../packages/shared/src/index";
 
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
@@ -36,6 +38,22 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return playerIds
       .map((playerId) => this.accounts.get(playerId))
       .filter((account): account is PlayerAccountSnapshot => Boolean(account));
+  }
+
+  async loadPlayerEventHistory(
+    playerId: string,
+    query: PlayerEventHistoryQuery = {}
+  ): Promise<PlayerEventHistorySnapshot> {
+    const account = this.accounts.get(playerId);
+    const total = queryEventLogEntries(account?.recentEventLog ?? [], {
+      ...query,
+      limit: undefined,
+      offset: undefined
+    }).length;
+    return {
+      items: queryEventLogEntries(account?.recentEventLog ?? [], query),
+      total
+    };
   }
 
   async loadPlayerAccountAuthByLoginId(_loginId: string): Promise<PlayerAccountAuthSnapshot | null> {
