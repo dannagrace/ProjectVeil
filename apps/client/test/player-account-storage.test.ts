@@ -290,6 +290,9 @@ test("player progression loader normalizes summary, achievements, and limited ev
       totalAchievements: 4,
       unlockedAchievements: 1,
       inProgressAchievements: 0,
+      latestProgressAchievementId: "first_battle",
+      latestProgressAchievementTitle: "初次交锋",
+      latestProgressAt: "2026-03-27T12:00:00.000Z",
       latestUnlockedAchievementId: "first_battle",
       latestUnlockedAchievementTitle: "初次交锋",
       latestUnlockedAt: "2026-03-27T12:00:00.000Z",
@@ -297,6 +300,7 @@ test("player progression loader normalizes summary, achievements, and limited ev
       latestEventAt: "2026-03-27T12:03:00.000Z"
     });
     assert.equal(snapshot.achievements[0]?.title, "初次交锋");
+    assert.equal(snapshot.achievements[0]?.progressUpdatedAt, "2026-03-27T12:00:00.000Z");
     assert.deepEqual(snapshot.recentEventLog.map((entry) => entry.id), ["event-1"]);
   } finally {
     Object.defineProperty(globalThis, "window", {

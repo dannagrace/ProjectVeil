@@ -37,6 +37,7 @@ import {
   getDefaultWorldConfig,
   getBattleOutcome,
   getDefaultEquipmentCatalog,
+  getLatestProgressedAchievement,
   getLatestUnlockedAchievement,
   normalizePlayerBattleReplaySummaries,
   pickAutomatedBattleAction,
@@ -215,9 +216,11 @@ test("achievement helpers unlock milestones and preserve catalog order", () => {
   const firstPass = applyAchievementMetricDelta([], "battles_started", 1, "2026-03-27T10:00:00.000Z");
   assert.equal(firstPass.unlocked[0]?.id, "first_battle");
   assert.equal(firstPass.progress[0]?.unlocked, true);
+  assert.equal(firstPass.progress[0]?.progressUpdatedAt, "2026-03-27T10:00:00.000Z");
 
   const secondPass = applyAchievementMetricDelta(firstPass.progress, "skills_learned", 5, "2026-03-27T10:01:00.000Z");
   assert.equal(secondPass.unlocked[0]?.id, "skill_scholar");
+  assert.equal(secondPass.progress[2]?.progressUpdatedAt, "2026-03-27T10:01:00.000Z");
   assert.deepEqual(
     secondPass.progress.map((achievement) => achievement.id),
     getAchievementDefinitions().map((achievement) => achievement.id)
@@ -227,6 +230,10 @@ test("achievement helpers unlock milestones and preserve catalog order", () => {
 test("achievement helpers can sync progress from an absolute value", () => {
   const progressSync = applyAchievementProgressValue([], "epic_collector", 2, "2026-03-27T10:00:00.000Z");
   assert.equal(progressSync.progress.find((achievement) => achievement.id === "epic_collector")?.current, 2);
+  assert.equal(
+    progressSync.progress.find((achievement) => achievement.id === "epic_collector")?.progressUpdatedAt,
+    "2026-03-27T10:00:00.000Z"
+  );
   assert.equal(progressSync.unlocked.length, 0);
 
   const unlockedSync = applyAchievementProgressValue(
@@ -237,6 +244,10 @@ test("achievement helpers can sync progress from an absolute value", () => {
   );
   assert.equal(unlockedSync.unlocked[0]?.id, "epic_collector");
   assert.equal(unlockedSync.progress.find((achievement) => achievement.id === "epic_collector")?.unlocked, true);
+  assert.equal(
+    unlockedSync.progress.find((achievement) => achievement.id === "epic_collector")?.progressUpdatedAt,
+    "2026-03-27T10:01:00.000Z"
+  );
 });
 
 test("achievement helpers return the most recently unlocked milestone", () => {
@@ -254,6 +265,23 @@ test("achievement helpers return the most recently unlocked milestone", () => {
   ];
 
   assert.equal(getLatestUnlockedAchievement(progress)?.id, "skill_scholar");
+});
+
+test("achievement helpers return the most recently progressed milestone", () => {
+  const progress = [
+    {
+      id: "first_battle" as const,
+      current: 1,
+      progressUpdatedAt: "2026-03-27T10:00:00.000Z"
+    },
+    {
+      id: "enemy_slayer" as const,
+      current: 2,
+      progressUpdatedAt: "2026-03-27T10:05:00.000Z"
+    }
+  ];
+
+  assert.equal(getLatestProgressedAchievement(progress)?.id, "enemy_slayer");
 });
 
 test("event log helper keeps newest unique entries first", () => {
@@ -352,11 +380,13 @@ test("player progression snapshot summarizes unlocked achievements and recent ev
       {
         id: "first_battle",
         current: 1,
+        progressUpdatedAt: "2026-03-27T10:00:00.000Z",
         unlockedAt: "2026-03-27T10:00:00.000Z"
       },
       {
         id: "enemy_slayer",
-        current: 2
+        current: 2,
+        progressUpdatedAt: "2026-03-27T10:04:00.000Z"
       }
     ],
     [
@@ -386,6 +416,9 @@ test("player progression snapshot summarizes unlocked achievements and recent ev
     totalAchievements: 4,
     unlockedAchievements: 1,
     inProgressAchievements: 1,
+    latestProgressAchievementId: "enemy_slayer",
+    latestProgressAchievementTitle: "猎敌者",
+    latestProgressAt: "2026-03-27T10:04:00.000Z",
     latestUnlockedAchievementId: "first_battle",
     latestUnlockedAchievementTitle: "初次交锋",
     latestUnlockedAt: "2026-03-27T10:00:00.000Z",

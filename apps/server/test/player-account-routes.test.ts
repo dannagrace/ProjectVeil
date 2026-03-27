@@ -578,6 +578,7 @@ test("player account progression routes return a compact achievement and event r
         current: 1,
         target: 99,
         unlocked: true,
+        progressUpdatedAt: "2026-03-27T12:00:00.000Z",
         unlockedAt: "2026-03-27T12:00:00.000Z"
       },
       {
@@ -587,7 +588,8 @@ test("player account progression routes return a compact achievement and event r
         metric: "battles_won",
         current: 2,
         target: 99,
-        unlocked: false
+        unlocked: false,
+        progressUpdatedAt: "2026-03-27T12:02:00.000Z"
       }
     ],
     recentEventLog: [
@@ -630,6 +632,9 @@ test("player account progression routes return a compact achievement and event r
     totalAchievements: 4,
     unlockedAchievements: 1,
     inProgressAchievements: 1,
+    latestProgressAchievementId: "enemy_slayer",
+    latestProgressAchievementTitle: "猎敌者",
+    latestProgressAt: "2026-03-27T12:02:00.000Z",
     latestUnlockedAchievementId: "first_battle",
     latestUnlockedAchievementTitle: "初次交锋",
     latestUnlockedAt: "2026-03-27T12:00:00.000Z",
@@ -648,6 +653,7 @@ test("player account progression routes return a compact achievement and event r
   assert.deepEqual(mePayload.recentEventLog.map((entry) => entry.id), ["event-newer", "event-older"]);
   assert.equal(mePayload.achievements[1]?.id, "enemy_slayer");
   assert.equal(mePayload.achievements[1]?.current, 2);
+  assert.equal(mePayload.achievements[1]?.progressUpdatedAt, "2026-03-27T12:02:00.000Z");
 });
 
 test("player achievement tracker appends logs and unlocks milestones", () => {
@@ -687,6 +693,10 @@ test("player achievement tracker appends logs and unlocks milestones", () => {
   );
 
   assert.equal(updated.achievements.find((achievement) => achievement.id === "first_battle")?.unlocked, true);
+  assert.equal(
+    updated.achievements.find((achievement) => achievement.id === "first_battle")?.progressUpdatedAt,
+    "2026-03-27T12:00:00.000Z"
+  );
   assert.equal(updated.recentEventLog[0]?.category, "achievement");
   assert.match(updated.recentEventLog.map((entry) => entry.description).join(" "), /解锁成就：初次交锋/);
 });
@@ -735,6 +745,10 @@ test("player achievement tracker syncs epic equipment loadout progress from worl
 
   assert.equal(updated.achievements.find((achievement) => achievement.id === "epic_collector")?.current, 3);
   assert.equal(updated.achievements.find((achievement) => achievement.id === "epic_collector")?.unlocked, true);
+  assert.equal(
+    updated.achievements.find((achievement) => achievement.id === "epic_collector")?.progressUpdatedAt,
+    "2026-03-27T12:10:00.000Z"
+  );
   assert.match(updated.recentEventLog[0]?.description ?? "", /解锁成就：史诗武装/);
 });
 
