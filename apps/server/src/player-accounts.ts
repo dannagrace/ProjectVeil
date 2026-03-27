@@ -4,6 +4,8 @@ import {
   buildPlayerProgressionSnapshot,
   findPlayerBattleReplaySummary,
   getAchievementDefinitions,
+  normalizeAchievementProgressQuery,
+  normalizeEventLogQuery,
   queryPlayerBattleReplaySummaries,
   queryAchievementProgress,
   queryEventLogEntries,
@@ -204,72 +206,56 @@ function toEventLogResponse(
   account: PlayerAccountSnapshot,
   request: IncomingMessage
 ): { items: PlayerAccountSnapshot["recentEventLog"] } {
-  const limit = parseLimit(request);
-  const category = parseOptionalQueryParam(request, "category") as
-    | PlayerAccountSnapshot["recentEventLog"][number]["category"]
-    | undefined;
-  const heroId = parseOptionalQueryParam(request, "heroId");
-  const achievementId = parseOptionalQueryParam(request, "achievementId") as
-    | PlayerAccountSnapshot["recentEventLog"][number]["achievementId"]
-    | undefined;
-  const worldEventType = parseOptionalQueryParam(request, "worldEventType") as
-    | PlayerAccountSnapshot["recentEventLog"][number]["worldEventType"]
-    | undefined;
+  const query = normalizeEventLogQuery({
+    limit: parseLimit(request) ?? undefined,
+    category: parseOptionalQueryParam(request, "category") as
+      | PlayerAccountSnapshot["recentEventLog"][number]["category"]
+      | undefined,
+    heroId: parseOptionalQueryParam(request, "heroId") ?? undefined,
+    achievementId: parseOptionalQueryParam(request, "achievementId") as
+      | PlayerAccountSnapshot["recentEventLog"][number]["achievementId"]
+      | undefined,
+    worldEventType: parseOptionalQueryParam(request, "worldEventType") as
+      | PlayerAccountSnapshot["recentEventLog"][number]["worldEventType"]
+      | undefined
+  });
 
   return {
-    items: queryEventLogEntries(account.recentEventLog, {
-      ...(limit != null ? { limit } : {}),
-      ...(category ? { category } : {}),
-      ...(heroId ? { heroId } : {}),
-      ...(achievementId ? { achievementId } : {}),
-      ...(worldEventType ? { worldEventType } : {})
-    })
+    items: queryEventLogEntries(account.recentEventLog, query)
   };
 }
 
 function toEventHistoryQuery(request: IncomingMessage): PlayerEventHistoryQuery {
-  const offset = parseOffset(request);
-  const limit = parseLimit(request);
-  const category = parseOptionalQueryParam(request, "category") as PlayerAccountSnapshot["recentEventLog"][number]["category"] | undefined;
-  const heroId = parseOptionalQueryParam(request, "heroId");
-  const achievementId = parseOptionalQueryParam(request, "achievementId") as
-    | PlayerAccountSnapshot["recentEventLog"][number]["achievementId"]
-    | undefined;
-  const worldEventType = parseOptionalQueryParam(request, "worldEventType") as
-    | PlayerAccountSnapshot["recentEventLog"][number]["worldEventType"]
-    | undefined;
-  const since = parseTimestampQueryParam(request, "since");
-  const until = parseTimestampQueryParam(request, "until");
-
-  return {
-    ...(limit != null ? { limit } : {}),
-    ...(offset != null ? { offset } : {}),
-    ...(category ? { category } : {}),
-    ...(heroId ? { heroId } : {}),
-    ...(achievementId ? { achievementId } : {}),
-    ...(worldEventType ? { worldEventType } : {}),
-    ...(since ? { since } : {}),
-    ...(until ? { until } : {})
-  };
+  return normalizeEventLogQuery({
+    limit: parseLimit(request) ?? undefined,
+    offset: parseOffset(request) ?? undefined,
+    category: parseOptionalQueryParam(request, "category") as PlayerAccountSnapshot["recentEventLog"][number]["category"] | undefined,
+    heroId: parseOptionalQueryParam(request, "heroId") ?? undefined,
+    achievementId: parseOptionalQueryParam(request, "achievementId") as
+      | PlayerAccountSnapshot["recentEventLog"][number]["achievementId"]
+      | undefined,
+    worldEventType: parseOptionalQueryParam(request, "worldEventType") as
+      | PlayerAccountSnapshot["recentEventLog"][number]["worldEventType"]
+      | undefined,
+    since: parseTimestampQueryParam(request, "since") ?? undefined,
+    until: parseTimestampQueryParam(request, "until") ?? undefined
+  });
 }
 
 function toAchievementResponse(account: PlayerAccountSnapshot, request: IncomingMessage): { items: PlayerAccountSnapshot["achievements"] } {
-  const limit = parseLimit(request);
-  const achievementId = parseOptionalQueryParam(request, "achievementId") as
-    | PlayerAccountSnapshot["achievements"][number]["id"]
-    | undefined;
-  const metric = parseOptionalQueryParam(request, "metric") as
-    | PlayerAccountSnapshot["achievements"][number]["metric"]
-    | undefined;
-  const unlocked = parseBooleanQueryParam(request, "unlocked");
+  const query = normalizeAchievementProgressQuery({
+    limit: parseLimit(request) ?? undefined,
+    achievementId: parseOptionalQueryParam(request, "achievementId") as
+      | PlayerAccountSnapshot["achievements"][number]["id"]
+      | undefined,
+    metric: parseOptionalQueryParam(request, "metric") as
+      | PlayerAccountSnapshot["achievements"][number]["metric"]
+      | undefined,
+    unlocked: parseBooleanQueryParam(request, "unlocked") ?? undefined
+  });
 
   return {
-    items: queryAchievementProgress(account.achievements, {
-      ...(limit != null ? { limit } : {}),
-      ...(achievementId ? { achievementId } : {}),
-      ...(metric ? { metric } : {}),
-      ...(unlocked != null ? { unlocked } : {})
-    })
+    items: queryAchievementProgress(account.achievements, query)
   };
 }
 
