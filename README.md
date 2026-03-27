@@ -139,6 +139,7 @@
 - 装备系统的第一批基础能力现已落到 shared/core：共享层补上了 `weapon / armor / accessory` 三类装备目录、品质与特殊效果元数据，英雄长期档里的装备槽位 ID 会直接映射成可计算的属性加成，并且会在创建战斗栈时折算进攻击/防御，方便后续继续接掉落、锻造与 UI。
 - 当前玩家账号骨架也已接到 `player_accounts`：账号记录现已包含 `displayName / lastRoomId / lastSeenAt / globalResources`，并开放 `GET /api/player-accounts`、`GET /api/player-accounts/:playerId`、`PUT /api/player-accounts/:playerId` 供开发态查看与改名；房间 `connect` 时会自动建档或刷新最近活跃房间。
 - 玩家账号进度读模型现已补上共享世界事件日志与成就摘要接口：服务端会把移动、建筑、战斗、技能、成就解锁，以及玩家可见的 `neutral.moved` 追击/巡逻事件写入 `recentEventLog`，并开放 `GET /api/player-accounts/:playerId/event-log`、`/achievements`、`/progression` 供 H5 / Cocos 直接读取；多阶段成就还会追加“成就进度推进”日志，方便后续做提示或回顾面板。
+- H5 账号资料卡现在会额外拉取 `/api/player-accounts/:playerId/progression` 覆盖成就/事件摘要，因此即使基础账号接口只返回轻量档案，前端也能稳定展示最新的成就推进、最近解锁和世界事件日志，而不会继续依赖旧的内嵌快照。
 - H5 左侧面板现已补上账号资料卡：会优先显示服务端账号昵称，也会在浏览器本地记住上次使用的游客昵称；远端房间首次 `connect` 时会把这份 `displayName` 一并带给服务端，用于初始化游客账号资料。`/api/player-accounts/me` 返回的 `globalResources` 也会直接显示成“全局仓库”摘要，方便确认跨房间继承的金币/木材/矿石。
 - H5 现在也有真正的 Lobby / 登录入口：当页面没有携带 `roomId / playerId` 查询参数时，会先进入大厅页，显示游客 `playerId / 昵称 / roomId` 表单和 `/api/lobby/rooms` 活跃房间列表；选房或手动输入房间后即可进入实例，游戏内也能一键返回大厅。
 - Lobby 进入房间前现在会先请求 `POST /api/auth/guest-login`，服务端会签发一个游客登录 token；浏览器会缓存这份游客会话，因此后续页面只带 `?roomId=...` 也能直接进入房间，不再必须把 `playerId` 写进 URL。

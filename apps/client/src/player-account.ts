@@ -84,6 +84,19 @@ interface PlayerAchievementListApiPayload {
 
 interface PlayerProgressionApiPayload extends Partial<PlayerProgressionSnapshot> {}
 
+function hasMeaningfulProgressionSnapshot(snapshot: PlayerProgressionSnapshot): boolean {
+  return (
+    snapshot.summary.unlockedAchievements > 0 ||
+    snapshot.summary.inProgressAchievements > 0 ||
+    snapshot.summary.recentEventCount > 0 ||
+    snapshot.achievements.some(
+      (achievement) =>
+        achievement.current > 0 || achievement.unlocked || Boolean(achievement.progressUpdatedAt) || Boolean(achievement.unlockedAt)
+    ) ||
+    snapshot.recentEventLog.length > 0
+  );
+}
+
 function normalizePlayerDisplayName(playerId: string, displayName?: string | null): string {
   const normalizedPlayerId = playerId.trim() || "player";
   const normalizedDisplayName = displayName?.trim();
@@ -506,6 +519,31 @@ export async function loadPlayerProgressionSnapshot(playerId: string, eventLimit
     }
     return normalizePlayerProgressionSnapshot();
   }
+}
+
+export function applyPlayerProgressionSnapshot(
+  account: PlayerAccountProfile,
+  snapshot: PlayerProgressionSnapshot
+): PlayerAccountProfile {
+  if (!hasMeaningfulProgressionSnapshot(snapshot)) {
+    return account;
+  }
+
+  return {
+    ...account,
+    achievements: snapshot.achievements,
+    recentEventLog: snapshot.recentEventLog
+  };
+}
+
+export async function loadPlayerAccountProfileWithProgression(
+  playerId: string,
+  roomId: string,
+  eventLimit?: number
+): Promise<PlayerAccountProfile> {
+  const account = await loadPlayerAccountProfile(playerId, roomId);
+  const snapshot = await loadPlayerProgressionSnapshot(playerId, eventLimit);
+  return applyPlayerProgressionSnapshot(account, snapshot);
 }
 
 export async function savePlayerAccountDisplayName(

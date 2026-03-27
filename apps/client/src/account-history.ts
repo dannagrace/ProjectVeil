@@ -1,4 +1,4 @@
-import { getLatestUnlockedAchievement } from "../../../packages/shared/src/index";
+import { getLatestProgressedAchievement, getLatestUnlockedAchievement } from "../../../packages/shared/src/index";
 import type { PlayerAccountProfile } from "./player-account";
 
 function escapeHtml(value: string): string {
@@ -40,8 +40,15 @@ function formatRewardLabel(
 function formatAchievementSummary(account: PlayerAccountProfile): string {
   const unlocked = account.achievements.filter((achievement) => achievement.unlocked).length;
   const latestUnlocked = getLatestUnlockedAchievement(account.achievements);
+  const latestProgressed = getLatestProgressedAchievement(account.achievements);
+  if (latestUnlocked && latestProgressed && latestProgressed.id !== latestUnlocked.id) {
+    return `成就 ${unlocked}/${account.achievements.length} 已解锁 · 最新 ${latestUnlocked.title} · 最近推进 ${latestProgressed.title} ${latestProgressed.current}/${latestProgressed.target}`;
+  }
+
   return latestUnlocked
     ? `成就 ${unlocked}/${account.achievements.length} 已解锁 · 最新 ${latestUnlocked.title}`
+    : latestProgressed
+      ? `成就 ${unlocked}/${account.achievements.length} 已解锁 · 最近推进 ${latestProgressed.title} ${latestProgressed.current}/${latestProgressed.target}`
     : `成就 ${unlocked}/${account.achievements.length} 已解锁`;
 }
 
@@ -85,9 +92,10 @@ export function renderRecentAccountEvents(account: PlayerAccountProfile): string
     return '<div class="account-subsection"><strong>世界事件日志</strong><p class="account-meta">尚未记录关键事件。</p></div>';
   }
 
+  const latestEventLabel = account.recentEventLog[0]?.timestamp ? ` · 最新 ${formatTimestamp(account.recentEventLog[0].timestamp)}` : "";
   return `<div class="account-subsection">
     <strong>世界事件日志</strong>
-    <p class="account-meta">最近 ${account.recentEventLog.length} 条关键事件</p>
+    <p class="account-meta">最近 ${account.recentEventLog.length} 条关键事件${escapeHtml(latestEventLabel)}</p>
     <div class="account-event-list">
       ${account.recentEventLog
         .map((entry) => {

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyPlayerProgressionSnapshot,
   createFallbackPlayerAccountProfile,
   getPlayerAccountStorageKey,
+  loadPlayerAccountProfileWithProgression,
   loadPlayerAchievementProgress,
   loadPlayerBattleReplayDetail,
   loadPlayerBattleReplayPlayback,
@@ -98,6 +100,141 @@ test("player account helpers can build a local fallback profile", () => {
     lastRoomId: "room-beta",
     source: "local"
   });
+});
+
+test("player account progression overlay keeps existing account data when snapshot is empty", () => {
+  const account = createFallbackPlayerAccountProfile("player-9", "room-beta", "本地访客");
+
+  const merged = applyPlayerProgressionSnapshot(account, {
+    summary: {
+      totalAchievements: 5,
+      unlockedAchievements: 0,
+      inProgressAchievements: 0,
+      recentEventCount: 0
+    },
+    achievements: account.achievements,
+    recentEventLog: []
+  });
+
+  assert.deepEqual(merged, account);
+});
+
+test("player account loader can overlay progression snapshot onto base account profile", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(): string | null {
+          return null;
+        },
+        setItem(): void {}
+      }
+    }
+  });
+
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    requestedUrls.push(url);
+    if (url.endsWith("/progression?limit=2")) {
+      return new Response(
+        JSON.stringify({
+          summary: {
+            totalAchievements: 5,
+            unlockedAchievements: 1,
+            inProgressAchievements: 1,
+            latestUnlockedAchievementId: "first_battle",
+            latestUnlockedAt: "2026-03-27T12:00:00.000Z",
+            latestProgressAchievementId: "enemy_slayer",
+            latestProgressAt: "2026-03-27T12:02:00.000Z",
+            recentEventCount: 1,
+            latestEventAt: "2026-03-27T12:03:00.000Z"
+          },
+          achievements: [
+            {
+              id: "first_battle",
+              current: 1,
+              unlockedAt: "2026-03-27T12:00:00.000Z"
+            },
+            {
+              id: "enemy_slayer",
+              current: 2,
+              progressUpdatedAt: "2026-03-27T12:02:00.000Z"
+            }
+          ],
+          recentEventLog: [
+            {
+              id: "event-1",
+              timestamp: "2026-03-27T12:03:00.000Z",
+              roomId: "room-alpha",
+              playerId: "player-1",
+              category: "achievement",
+              description: "解锁成就：初次交锋",
+              achievementId: "first_battle",
+              rewards: [{ type: "badge", label: "初次交锋" }]
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        account: {
+          playerId: "player-1",
+          displayName: "暮火侦骑",
+          globalResources: {
+            gold: 12,
+            wood: 4,
+            ore: 2
+          },
+          achievements: [],
+          recentEventLog: [],
+          lastRoomId: "room-alpha"
+        }
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }) as typeof fetch;
+
+  try {
+    const account = await loadPlayerAccountProfileWithProgression("player-1", "room-alpha", 2);
+
+    assert.deepEqual(requestedUrls, [
+      "http://127.0.0.1:2567/api/player-accounts/player-1",
+      "http://127.0.0.1:2567/api/player-accounts/player-1/progression?limit=2"
+    ]);
+    assert.equal(account.displayName, "暮火侦骑");
+    assert.equal(account.achievements[0]?.id, "first_battle");
+    assert.equal(account.achievements[1]?.current, 2);
+    assert.deepEqual(account.recentEventLog.map((entry) => entry.id), ["event-1"]);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("player replay loader sends shared filters and normalizes newest first", async () => {

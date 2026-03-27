@@ -30,7 +30,8 @@ function createProfile(): PlayerAccountProfile {
         metric: "battles_won",
         current: 2,
         target: 3,
-        unlocked: false
+        unlocked: false,
+        progressUpdatedAt: "2026-03-27T12:02:00.000Z"
       }
     ],
     recentEventLog: [
@@ -65,6 +66,7 @@ test("account history renderer shows unlocked achievement state and footnotes", 
   const html = renderAchievementProgress(createProfile());
 
   assert.match(html, /成就 1\/2 已解锁/);
+  assert.match(html, /最近推进 猎敌者 2\/3/);
   assert.match(html, /已解锁/);
   assert.match(html, /解锁于/);
   assert.match(html, /还差 1 点进度/);
@@ -74,6 +76,7 @@ test("account history renderer shows full event history metadata and reward chip
   const html = renderRecentAccountEvents(createProfile());
 
   assert.match(html, /最近 2 条关键事件/);
+  assert.match(html, /最新/);
   assert.match(html, /英雄 hero-1/);
   assert.match(html, /事件 battle\.started/);
   assert.match(html, /成就 first_battle/);
