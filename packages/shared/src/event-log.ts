@@ -302,7 +302,7 @@ export function applyAchievementProgressValue(
     }
 
     const previousUnlocked = entry.unlocked;
-    const nextCurrent = Math.min(entry.target, safeCurrent);
+    const nextCurrent = previousUnlocked ? entry.current : Math.min(entry.target, safeCurrent);
     if (nextCurrent === entry.current) {
       return entry;
     }

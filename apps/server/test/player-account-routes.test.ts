@@ -951,6 +951,24 @@ test("player achievement tracker syncs epic equipment loadout progress from worl
     "2026-03-27T12:10:00.000Z"
   );
   assert.match(updated.recentEventLog[0]?.description ?? "", /解锁成就：史诗武装/);
+
+  const regressed = applyPlayerEventLogAndAchievements(
+    updated,
+    createAccountTrackingWorldState(),
+    [],
+    "2026-03-27T12:11:00.000Z"
+  );
+
+  assert.equal(regressed.achievements.find((achievement) => achievement.id === "epic_collector")?.current, 3);
+  assert.equal(regressed.achievements.find((achievement) => achievement.id === "epic_collector")?.unlocked, true);
+  assert.equal(
+    regressed.achievements.find((achievement) => achievement.id === "epic_collector")?.progressUpdatedAt,
+    "2026-03-27T12:10:00.000Z"
+  );
+  assert.equal(
+    regressed.recentEventLog.filter((entry) => entry.achievementId === "epic_collector").length,
+    1
+  );
 });
 
 test("player achievement tracker syncs full map exploration progress from world visibility", () => {
