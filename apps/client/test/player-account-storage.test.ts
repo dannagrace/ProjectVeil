@@ -98,9 +98,10 @@ test("player account helpers can build a local fallback profile", () => {
   });
 });
 
-test("player replay loader normalizes remote replay summaries and keeps newest first", async () => {
+test("player replay loader sends shared filters and normalizes newest first", async () => {
   const originalWindow = globalThis.window;
   const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
 
   Object.defineProperty(globalThis, "window", {
     configurable: true,
@@ -120,8 +121,9 @@ test("player replay loader normalizes remote replay summaries and keeps newest f
     }
   });
 
-  globalThis.fetch = (async () =>
-    new Response(
+  globalThis.fetch = (async (input) => {
+    requestedUrl = String(input);
+    return new Response(
       JSON.stringify({
         items: [
           {
@@ -172,8 +174,9 @@ test("player replay loader normalizes remote replay summaries and keeps newest f
             playerId: "player-1",
             battleId: "battle-2",
             battleKind: "hero",
-            playerCamp: "attacker",
+            playerCamp: "defender",
             heroId: "hero-1",
+            opponentHeroId: "hero-9",
             startedAt: "2026-03-27T12:01:00.000Z",
             completedAt: "2026-03-27T12:02:00.000Z",
             initialState: {
@@ -206,7 +209,7 @@ test("player replay loader normalizes remote replay summaries and keeps newest f
               rng: { seed: 8, cursor: 0 }
             },
             steps: [],
-            result: "attacker_victory"
+            result: "defender_victory"
           }
         ]
       }),
@@ -216,11 +219,95 @@ test("player replay loader normalizes remote replay summaries and keeps newest f
           "Content-Type": "application/json"
         }
       }
+    );
+  }) as typeof fetch;
+
+  try {
+    const replays = await loadPlayerBattleReplaySummaries("player-1", {
+      limit: 1,
+      roomId: "room-alpha",
+      battleKind: "hero",
+      playerCamp: "defender",
+      heroId: "hero-1",
+      opponentHeroId: "hero-9",
+      result: "defender_victory"
+    });
+    assert.equal(
+      requestedUrl,
+      "http://127.0.0.1:2567/api/player-accounts/player-1/battle-replays?limit=1&roomId=room-alpha&battleKind=hero&playerCamp=defender&heroId=hero-1&opponentHeroId=hero-9&result=defender_victory"
+    );
+    assert.deepEqual(replays.map((replay) => replay.id), ["replay-newer"]);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player replay loader clears expired auth session and falls back to normalized filtered defaults", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        values: new Map<string, string>([
+          [
+            "project-veil:auth-session",
+            JSON.stringify({
+              playerId: "player-1",
+              displayName: "暮火侦骑",
+              authMode: "guest",
+              token: "expired-token",
+              source: "guest"
+            })
+          ]
+        ]),
+        getItem(key: string): string | null {
+          return this.values.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          this.values.set(key, value);
+        },
+        removeItem(key: string): void {
+          this.values.delete(key);
+        }
+      }
+    }
+  });
+
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          code: "unauthorized",
+          message: "expired"
+        }
+      }),
+      {
+        status: 401,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
     )) as typeof fetch;
 
   try {
-    const replays = await loadPlayerBattleReplaySummaries("player-1");
-    assert.deepEqual(replays.map((replay) => replay.id), ["replay-newer", "replay-older"]);
+    const replays = await loadPlayerBattleReplaySummaries("player-1", {
+      limit: 1,
+      battleKind: "neutral"
+    });
+    assert.deepEqual(replays, []);
+    assert.equal(globalThis.window.localStorage.getItem("project-veil:auth-session"), null);
   } finally {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
