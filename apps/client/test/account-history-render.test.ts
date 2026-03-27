@@ -67,19 +67,22 @@ test("account history renderer shows unlocked achievement state and footnotes", 
 
   assert.match(html, /成就 1\/2 已解锁/);
   assert.match(html, /最近推进 猎敌者 2\/3/);
+  assert.ok(html.indexOf("初次交锋") < html.indexOf("猎敌者"));
   assert.match(html, /已解锁/);
   assert.match(html, /解锁于/);
+  assert.match(html, /最近推进/);
   assert.match(html, /还差 1 点进度/);
 });
 
-test("account history renderer shows full event history metadata and reward chips", () => {
+test("account history renderer shows readable event metadata, category summary, and reward chips", () => {
   const html = renderRecentAccountEvents(createProfile());
 
   assert.match(html, /最近 2 条关键事件/);
   assert.match(html, /最新/);
+  assert.match(html, /成就 1 · 战斗 1/);
   assert.match(html, /英雄 hero-1/);
-  assert.match(html, /事件 battle\.started/);
-  assert.match(html, /成就 first_battle/);
+  assert.match(html, /事件 战斗触发/);
+  assert.match(html, /成就 初次交锋/);
   assert.match(html, /经验 \+40/);
   assert.match(html, /初次交锋/);
 });
