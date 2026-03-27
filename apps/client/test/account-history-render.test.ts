@@ -1,9 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderAchievementProgress, renderRecentAccountEvents } from "../src/account-history";
+import { renderAchievementProgress, renderRecentAccountEvents, renderRecentBattleReplays } from "../src/account-history";
 import type { PlayerAccountProfile } from "../src/player-account";
 
 function createProfile(): PlayerAccountProfile {
+  const battleState = {
+    id: "battle-1",
+    round: 1,
+    lanes: 3,
+    activeUnitId: null,
+    turnOrder: [],
+    units: {},
+    environment: [],
+    log: [],
+    rng: {
+      seed: 1,
+      cursor: 0
+    }
+  };
+
   return {
     playerId: "player-1",
     displayName: "暮火侦骑",
@@ -57,6 +72,66 @@ function createProfile(): PlayerAccountProfile {
         rewards: [{ type: "experience", label: "经验", amount: 40 }]
       }
     ],
+    recentBattleReplays: [
+      {
+        id: "room-alpha:battle-1:player-1",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        battleId: "battle-1",
+        battleKind: "neutral",
+        playerCamp: "attacker",
+        heroId: "hero-1",
+        neutralArmyId: "neutral-1",
+        startedAt: "2026-03-27T12:00:00.000Z",
+        completedAt: "2026-03-27T12:03:00.000Z",
+        initialState: battleState,
+        steps: [
+          {
+            index: 1,
+            source: "player",
+            action: {
+              type: "battle.attack",
+              attackerId: "hero-1-stack",
+              defenderId: "neutral-1-stack"
+            }
+          },
+          {
+            index: 2,
+            source: "automated",
+            action: {
+              type: "battle.defend",
+              unitId: "neutral-1-stack"
+            }
+          }
+        ],
+        result: "attacker_victory"
+      },
+      {
+        id: "room-alpha:battle-2:player-1",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        battleId: "battle-2",
+        battleKind: "hero",
+        playerCamp: "defender",
+        heroId: "hero-1",
+        opponentHeroId: "hero-2",
+        startedAt: "2026-03-27T12:10:00.000Z",
+        completedAt: "2026-03-27T12:13:00.000Z",
+        initialState: battleState,
+        steps: [
+          {
+            index: 1,
+            source: "player",
+            action: {
+              type: "battle.skill",
+              unitId: "hero-1-stack",
+              skillId: "volley"
+            }
+          }
+        ],
+        result: "defender_victory"
+      }
+    ],
     lastRoomId: "room-alpha",
     source: "remote"
   };
@@ -85,4 +160,16 @@ test("account history renderer shows readable event metadata, category summary, 
   assert.match(html, /成就 初次交锋/);
   assert.match(html, /经验 \+40/);
   assert.match(html, /初次交锋/);
+});
+
+test("account history renderer shows recent battle replay summaries with step chips", () => {
+  const html = renderRecentBattleReplays(createProfile());
+
+  assert.match(html, /最近 2 场战斗的回放摘要/);
+  assert.match(html, /PVE · 中立守军 neutral-1/);
+  assert.match(html, /房间 room-alpha/);
+  assert.match(html, /回放 2 步/);
+  assert.match(html, /玩家 1/);
+  assert.match(html, /自动 1/);
+  assert.match(html, /技能 1/);
 });

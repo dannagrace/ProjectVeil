@@ -6,6 +6,7 @@ import {
   writeStoredCocosAuthSession
 } from "./cocos-session-launch.ts";
 import {
+  normalizePlayerBattleReplaySummaries,
   normalizePlayerAccountReadModel,
   normalizeEventLogEntries,
   normalizePlayerProgressionSnapshot,
@@ -40,6 +41,7 @@ export interface CocosLobbyRoomSummary {
 }
 
 export interface CocosPlayerAccountProfile extends PlayerAccountReadModel {
+  recentBattleReplays: PlayerBattleReplaySummary[];
   source: "remote" | "local";
 }
 
@@ -77,6 +79,10 @@ interface LobbyRoomsApiPayload {
   items?: CocosLobbyRoomSummary[];
 }
 
+interface PlayerBattleReplayListApiPayload {
+  items?: Partial<PlayerBattleReplaySummary>[];
+}
+
 interface PlayerEventLogListApiPayload {
   items?: Partial<EventLogEntry>[];
 }
@@ -86,7 +92,6 @@ interface PlayerAchievementListApiPayload {
 }
 
 type PlayerProgressionApiPayload = Partial<PlayerProgressionSnapshot>;
-
 type FetchLike = typeof fetch;
 type WechatMiniGameLoginLike = (options: {
   timeout?: number;
@@ -94,10 +99,20 @@ type WechatMiniGameLoginLike = (options: {
   fail?: (error: { errMsg?: string }) => void;
 }) => void;
 
+function isStorageLike(value: unknown): value is Storage {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Storage).getItem === "function" &&
+    typeof (value as Storage).setItem === "function" &&
+    typeof (value as Storage).removeItem === "function"
+  );
+}
+
 function getCocosStorage(): Storage | null {
   try {
-    const sysStorage = (globalThis as { sys?: { localStorage?: Storage } }).sys?.localStorage;
-    if (sysStorage) {
+    const sysStorage = (globalThis as { sys?: { localStorage?: unknown } }).sys?.localStorage;
+    if (isStorageLike(sysStorage)) {
       return sysStorage;
     }
   } catch {
@@ -106,7 +121,7 @@ function getCocosStorage(): Storage | null {
 
   try {
     const localStorageRef = globalThis.localStorage;
-    return localStorageRef ?? null;
+    return isStorageLike(localStorageRef) ? localStorageRef : null;
   } catch {
     return null;
   }
@@ -235,21 +250,55 @@ function asCocosPlayerAccountProfile(
   account?: PlayerAccountApiPayload["account"],
   fallbackDisplayName?: string | null
 ): CocosPlayerAccountProfile {
+  const accountProfile = normalizePlayerAccountReadModel({
+    playerId,
+    displayName: normalizeDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
+    globalResources: account?.globalResources,
+    achievements: account?.achievements,
+    recentEventLog: account?.recentEventLog,
+    recentBattleReplays: account?.recentBattleReplays,
+    loginId: normalizeLoginId(account?.loginId),
+    credentialBoundAt: account?.credentialBoundAt,
+    lastRoomId: account?.lastRoomId ?? roomId,
+    lastSeenAt: account?.lastSeenAt
+  });
+
   return {
-    ...normalizePlayerAccountReadModel({
-      playerId,
-      displayName: normalizeDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
-      globalResources: account?.globalResources,
-      achievements: account?.achievements,
-      recentEventLog: account?.recentEventLog,
-      recentBattleReplays: account?.recentBattleReplays,
-      loginId: normalizeLoginId(account?.loginId),
-      credentialBoundAt: account?.credentialBoundAt,
-      lastRoomId: account?.lastRoomId ?? roomId,
-      lastSeenAt: account?.lastSeenAt
-    }),
+    ...accountProfile,
+    recentBattleReplays: accountProfile.recentBattleReplays ?? [],
     source
   };
+}
+
+async function loadCocosBattleReplaySummaries(
+  remoteUrl: string,
+  playerId: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    authSession?: CocosStoredAuthSession | null;
+    storage?: Pick<Storage, "removeItem"> | null;
+  }
+): Promise<PlayerBattleReplaySummary[]> {
+  const authSession = options?.authSession ?? null;
+  const endpoint = authSession?.token
+    ? `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/battle-replays`
+    : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays`;
+
+  try {
+    const payload = (await fetchJson(
+      endpoint,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      options?.fetchImpl
+    )) as PlayerBattleReplayListApiPayload;
+    return normalizePlayerBattleReplaySummaries(payload.items);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && options?.storage) {
+      clearStoredCocosAuthSession(options.storage);
+    }
+    return normalizePlayerBattleReplaySummaries();
+  }
 }
 
 async function fetchJson(
@@ -372,12 +421,15 @@ export function createFallbackCocosPlayerAccountProfile(
   roomId: string,
   displayName?: string | null
 ): CocosPlayerAccountProfile {
+  const accountProfile = normalizePlayerAccountReadModel({
+    playerId,
+    displayName: normalizeDisplayName(playerId, displayName),
+    lastRoomId: roomId
+  });
+
   return {
-    ...normalizePlayerAccountReadModel({
-      playerId,
-      displayName: normalizeDisplayName(playerId, displayName),
-      lastRoomId: roomId
-    }),
+    ...accountProfile,
+    recentBattleReplays: accountProfile.recentBattleReplays ?? [],
     source: "local"
   };
 }
@@ -693,6 +745,11 @@ export async function loadCocosPlayerAccountProfile(
       payload.account,
       storedDisplayName
     );
+    const recentBattleReplays = await loadCocosBattleReplaySummaries(remoteUrl, resolvedPlayerId, {
+      ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      authSession: authSession ?? null,
+      storage
+    });
 
     if (storage?.setItem) {
       storage.setItem(getCocosPlayerAccountStorageKey(profile.playerId), profile.displayName);
@@ -702,7 +759,10 @@ export async function loadCocosPlayerAccountProfile(
       writeStoredCocosAuthSession(storage, asStoredAuthSession(payload.session, authSession));
     }
 
-    return profile;
+    return {
+      ...profile,
+      recentBattleReplays
+    };
   } catch (error) {
     if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && storage) {
       clearStoredCocosAuthSession(storage);

@@ -42,6 +42,69 @@ function formatRewardLabel(
   return reward.amount != null ? `${reward.label} +${reward.amount}` : reward.label;
 }
 
+function formatBattleReplayResultLabel(
+  replay: PlayerAccountProfile["recentBattleReplays"][number]
+): string {
+  return replay.result === "attacker_victory" ? "胜利" : "失利";
+}
+
+function formatBattleReplayKind(
+  replay: PlayerAccountProfile["recentBattleReplays"][number]
+): string {
+  return replay.battleKind === "hero" ? "PVP" : "PVE";
+}
+
+function formatBattleReplayEncounter(
+  replay: PlayerAccountProfile["recentBattleReplays"][number]
+): string {
+  if (replay.battleKind === "hero") {
+    return replay.opponentHeroId ? `敌方英雄 ${replay.opponentHeroId}` : "敌方英雄";
+  }
+
+  return replay.neutralArmyId ? `中立守军 ${replay.neutralArmyId}` : "中立守军";
+}
+
+function formatBattleReplayCamp(
+  replay: PlayerAccountProfile["recentBattleReplays"][number]
+): string {
+  return replay.playerCamp === "attacker" ? "攻方" : "守方";
+}
+
+function summarizeBattleReplaySteps(
+  replay: PlayerAccountProfile["recentBattleReplays"][number]
+): {
+  player: number;
+  automated: number;
+  attack: number;
+  skill: number;
+} {
+  let player = 0;
+  let automated = 0;
+  let attack = 0;
+  let skill = 0;
+
+  for (const step of replay.steps) {
+    if (step.source === "automated") {
+      automated += 1;
+    } else {
+      player += 1;
+    }
+
+    if (step.action.type === "battle.attack") {
+      attack += 1;
+    } else if (step.action.type === "battle.skill") {
+      skill += 1;
+    }
+  }
+
+  return {
+    player,
+    automated,
+    attack,
+    skill
+  };
+}
+
 function compareAchievementDisplayOrder(
   left: PlayerAccountProfile["achievements"][number],
   right: PlayerAccountProfile["achievements"][number]
@@ -172,6 +235,47 @@ export function renderRecentAccountEvents(account: PlayerAccountProfile): string
                     .join("")}</div>`
                 : ""
             }
+          </div>`;
+        })
+        .join("")}
+    </div>
+  </div>`;
+}
+
+export function renderRecentBattleReplays(account: PlayerAccountProfile): string {
+  if (account.recentBattleReplays.length === 0) {
+    return '<div class="account-subsection"><strong>最近战报</strong><p class="account-meta">尚未记录可回看的战斗摘要。</p></div>';
+  }
+
+  const visibleReplays = account.recentBattleReplays.slice(0, 3);
+  return `<div class="account-subsection">
+    <strong>最近战报</strong>
+    <p class="account-meta">最近 ${visibleReplays.length} 场战斗的回放摘要</p>
+    <div class="account-replay-list">
+      ${visibleReplays
+        .map((replay) => {
+          const stepSummary = summarizeBattleReplaySteps(replay);
+          const summaryChips = [
+            `回放 ${replay.steps.length} 步`,
+            `玩家 ${stepSummary.player}`,
+            `自动 ${stepSummary.automated}`,
+            stepSummary.attack > 0 ? `攻击 ${stepSummary.attack}` : "",
+            stepSummary.skill > 0 ? `技能 ${stepSummary.skill}` : ""
+          ].filter(Boolean);
+          return `<div class="account-replay-entry ${replay.result === "attacker_victory" ? "is-victory" : "is-defeat"}">
+            <div class="account-replay-head">
+              <span class="account-badge tone-${replay.result === "attacker_victory" ? "victory" : "defeat"}">${escapeHtml(formatBattleReplayResultLabel(replay))}</span>
+              <span>${escapeHtml(formatTimestamp(replay.completedAt))}</span>
+            </div>
+            <p>${escapeHtml(`${formatBattleReplayKind(replay)} · ${formatBattleReplayEncounter(replay)}`)}</p>
+            <div class="account-replay-meta">
+              <span>房间 ${escapeHtml(replay.roomId)}</span>
+              <span>阵营 ${escapeHtml(formatBattleReplayCamp(replay))}</span>
+              <span>英雄 ${escapeHtml(replay.heroId)}</span>
+            </div>
+            <div class="account-event-rewards">${summaryChips
+              .map((chip) => `<span class="account-reward-chip">${escapeHtml(chip)}</span>`)
+              .join("")}</div>
           </div>`;
         })
         .join("")}

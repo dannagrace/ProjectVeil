@@ -1,3 +1,4 @@
+import { getEquipmentDefinition } from "../../../../packages/shared/src/index.ts";
 import type { SessionUpdate, WorldEvent } from "./VeilCocosSession.ts";
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -17,6 +18,10 @@ function formatHeroStatBonus(bonus: { attack: number; defense: number; power: nu
 
 function formatResourceKindLabel(kind: string): string {
   return kind === "gold" ? "金币" : kind === "wood" ? "木材" : kind === "ore" ? "矿石" : kind;
+}
+
+function formatEquipmentSlotLabel(slot: string): string {
+  return slot === "weapon" ? "武器" : slot === "armor" ? "护甲" : slot === "accessory" ? "饰品" : slot;
 }
 
 function formatNeutralMoveReason(reason: string): string {
@@ -64,6 +69,24 @@ function formatWorldEvent(event: WorldEvent): string | null {
     return event.newRank > 1
       ? `${event.branchName} 分支的 ${event.skillName} 强化到 ${event.newRank} 阶。`
       : `习得 ${event.branchName} 分支技能 ${event.skillName}。`;
+  }
+
+  if (event.type === "hero.equipmentChanged") {
+    const equippedName = event.equippedItemId
+      ? getEquipmentDefinition(event.equippedItemId)?.name ?? event.equippedItemId
+      : "";
+    const unequippedName = event.unequippedItemId
+      ? getEquipmentDefinition(event.unequippedItemId)?.name ?? event.unequippedItemId
+      : "";
+    const actionText =
+      equippedName && unequippedName
+        ? `装备 ${equippedName}，卸下 ${unequippedName}`
+        : equippedName
+          ? `装备 ${equippedName}`
+          : unequippedName
+            ? `卸下 ${unequippedName}`
+            : "调整装备";
+    return `${formatEquipmentSlotLabel(event.slot)}槽位已${actionText}。`;
   }
 
   if (event.type === "hero.equipmentFound") {

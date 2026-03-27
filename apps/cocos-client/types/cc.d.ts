@@ -111,6 +111,7 @@ declare module "cc" {
     lineWidth: number;
     clear(): void;
     circle(x: number, y: number, r: number): void;
+    rect(x: number, y: number, w: number, h: number): void;
     roundRect(x: number, y: number, w: number, h: number, r: number): void;
     fill(): void;
     stroke(): void;
@@ -190,4 +191,13 @@ declare module "cc" {
       UI_2D: number;
     };
   };
+
+  export class Tween<T = unknown> {
+    to(duration: number, props: Record<string, unknown>): Tween<T>;
+    delay(duration: number): Tween<T>;
+    start(): Tween<T>;
+    static stopAllByTarget(target: unknown): void;
+  }
+
+  export function tween<T>(target: T): Tween<T>;
 }

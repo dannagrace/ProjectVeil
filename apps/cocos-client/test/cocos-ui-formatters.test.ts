@@ -101,6 +101,13 @@ test("buildTimelineEntriesFromUpdate formats world events and system rejection",
         moveCost: 1
       },
       {
+        type: "hero.equipmentChanged",
+        heroId: "hero-1",
+        slot: "weapon",
+        equippedItemId: "vanguard_blade",
+        unequippedItemId: "militia_pike"
+      },
+      {
         type: "hero.equipmentFound",
         heroId: "hero-1",
         battleId: "battle-1",
@@ -133,6 +140,7 @@ test("buildTimelineEntriesFromUpdate formats world events and system rejection",
     "事件：资源矿场结算 木材 +2。",
     "事件：中立守军 neutral-1 主动追击，移动到 (2,2)。",
     "事件：中立守军 neutral-1 主动发起战斗。",
+    "事件：武器槽位已装备 先锋战刃，卸下 民兵长枪。",
     "事件：战斗缴获 塔盾链甲。"
   ]);
 });

@@ -1,5 +1,7 @@
+import { applyHeroEquipmentChange, type EquipmentType, type HeroState, validateHeroEquipmentChange } from "../../../../packages/shared/src/index.ts";
 import type {
   AttributeShrineBuildingView,
+  HeroView,
   MovementPlan,
   PlayerTileView,
   PlayerWorldView,
@@ -35,6 +37,17 @@ export type CocosWorldAction =
       buildingId: string;
     }
   | {
+      type: "hero.equip";
+      heroId: string;
+      slot: EquipmentType;
+      equipmentId: string;
+    }
+  | {
+      type: "hero.unequip";
+      heroId: string;
+      slot: EquipmentType;
+    }
+  | {
       type: "turn.endDay";
     };
 
@@ -62,6 +75,45 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
       movementPlan: null,
       reachableTiles: [],
       reason: "hero_not_found"
+    };
+  }
+
+  if (action.type === "hero.equip" || action.type === "hero.unequip") {
+    const validation = validateHeroEquipmentChange(
+      { loadout: hero.loadout },
+      action.slot,
+      action.type === "hero.equip" ? action.equipmentId : undefined
+    );
+    if (!validation.valid) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: listReachableTilesInPlayerView(view, hero.id),
+        reason: validation.reason ?? "invalid_equipment_change"
+      };
+    }
+
+    const equipmentChange = applyHeroEquipmentChange(
+      toHeroState(hero),
+      action.slot,
+      action.type === "hero.equip" ? action.equipmentId : undefined
+    );
+    const nextHeroes = view.ownHeroes.map((item) =>
+      item.id === hero.id
+        ? {
+            ...item,
+            loadout: equipmentChange.hero.loadout
+          }
+        : item
+    );
+
+    return {
+      world: {
+        ...view,
+        ownHeroes: nextHeroes
+      },
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(view, hero.id)
     };
   }
 
@@ -468,6 +520,30 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
     world: predictedWorld,
     movementPlan: null,
     reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+  };
+}
+
+function toHeroState(hero: HeroView): HeroState {
+  return {
+    id: hero.id,
+    playerId: hero.playerId,
+    name: hero.name,
+    position: { ...hero.position },
+    vision: hero.vision,
+    move: { ...hero.move },
+    stats: { ...hero.stats },
+    progression: { ...hero.progression },
+    loadout: {
+      learnedSkills: hero.loadout.learnedSkills.map((skill) => ({ ...skill })),
+      equipment: {
+        ...hero.loadout.equipment,
+        trinketIds: [...hero.loadout.equipment.trinketIds]
+      },
+      inventory: [...hero.loadout.inventory]
+    },
+    armyTemplateId: hero.armyTemplateId,
+    armyCount: hero.armyCount,
+    learnedSkills: hero.learnedSkills.map((skill) => ({ ...skill }))
   };
 }
 

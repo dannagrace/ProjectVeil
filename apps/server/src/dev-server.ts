@@ -6,6 +6,7 @@ import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./
 import { registerLobbyRoutes } from "./lobby";
 import { createConfiguredRoomSnapshotStore, MySqlRoomSnapshotStore } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
+import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
 
 loadEnv();
 
@@ -14,13 +15,14 @@ async function startDevServer(
   host = process.env.HOST ?? "127.0.0.1"
 ): Promise<void> {
   const snapshotStore = await createConfiguredRoomSnapshotStore();
-  configureRoomSnapshotStore(snapshotStore);
+  const effectiveSnapshotStore = snapshotStore ?? createMemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(effectiveSnapshotStore);
   const configCenterStore = await createConfiguredConfigCenterStore();
   await configCenterStore.initializeRuntimeConfigs();
   const transport = new WebSocketTransport();
-  registerAuthRoutes(transport.getExpressApp() as never, snapshotStore);
+  registerAuthRoutes(transport.getExpressApp() as never, effectiveSnapshotStore);
   registerConfigCenterRoutes(transport.getExpressApp() as never, configCenterStore);
-  registerPlayerAccountRoutes(transport.getExpressApp() as never, snapshotStore);
+  registerPlayerAccountRoutes(transport.getExpressApp() as never, effectiveSnapshotStore);
   registerLobbyRoutes(transport.getExpressApp() as never, { listRooms: listLobbyRooms });
 
   const gameServer = new Server({
@@ -46,6 +48,9 @@ async function startDevServer(
   if (snapshotStore) {
     // eslint-disable-next-line no-console
     console.log("MySQL room persistence enabled");
+  } else {
+    // eslint-disable-next-line no-console
+    console.log("Local in-memory room persistence enabled");
   }
 
   let cleanupTimer: NodeJS.Timeout | null = null;
@@ -84,11 +89,12 @@ async function startDevServer(
     }
 
     if (!snapshotStore) {
+      await effectiveSnapshotStore.close();
       await configCenterStore.close();
       return;
     }
 
-    await Promise.all([snapshotStore.close(), configCenterStore.close()]);
+    await Promise.all([effectiveSnapshotStore.close(), configCenterStore.close()]);
   };
 
   process.once("SIGINT", () => {

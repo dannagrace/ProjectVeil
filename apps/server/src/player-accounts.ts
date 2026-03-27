@@ -395,7 +395,7 @@ export function registerPlayerAccountRoutes(
       const account = createLocalModeAccount({
         playerId: authSession.playerId,
         displayName: authSession.displayName,
-        loginId: authSession.loginId
+        ...(authSession.loginId ? { loginId: authSession.loginId } : {})
       });
       sendJson(response, 200, {
         account,
@@ -671,7 +671,7 @@ export function registerPlayerAccountRoutes(
           createLocalModeAccount({
             playerId: authSession.playerId,
             displayName: authSession.displayName,
-            loginId: authSession.loginId
+            ...(authSession.loginId ? { loginId: authSession.loginId } : {})
           }),
           parseLimit(request)
         )
@@ -1046,8 +1046,8 @@ export function registerPlayerAccountRoutes(
         const account = createLocalModeAccount({
           playerId: authSession.playerId,
           displayName: patch.displayName ?? authSession.displayName,
-          lastRoomId: patch.lastRoomId,
-          loginId: authSession.loginId
+          ...(patch.lastRoomId !== undefined ? { lastRoomId: patch.lastRoomId } : {}),
+          ...(authSession.loginId ? { loginId: authSession.loginId } : {})
         });
         sendJson(response, 200, {
           account,
@@ -1125,8 +1125,8 @@ export function registerPlayerAccountRoutes(
         const account = createLocalModeAccount({
           playerId,
           displayName: patch.displayName ?? authSession?.displayName ?? playerId,
-          lastRoomId: patch.lastRoomId,
-          loginId: authSession?.playerId === playerId ? authSession.loginId : undefined
+          ...(patch.lastRoomId !== undefined ? { lastRoomId: patch.lastRoomId } : {}),
+          ...(authSession?.playerId === playerId && authSession.loginId ? { loginId: authSession.loginId } : {})
         });
         sendJson(response, 200, {
           account,

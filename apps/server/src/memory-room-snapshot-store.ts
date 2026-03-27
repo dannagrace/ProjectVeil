@@ -1,0 +1,281 @@
+import {
+  normalizeEventLogEntries,
+  normalizeEventLogQuery,
+  type EventLogEntry
+} from "../../../packages/shared/src/index";
+import {
+  createPlayerAccountsFromWorldState,
+  MAX_PLAYER_DISPLAY_NAME_LENGTH,
+  type RoomSnapshotStore,
+  type PlayerAccountAuthSnapshot,
+  type PlayerAccountCredentialInput,
+  type PlayerAccountEnsureInput,
+  type PlayerAccountListOptions,
+  type PlayerAccountProfilePatch,
+  type PlayerAccountProgressPatch,
+  type PlayerAccountSnapshot,
+  type PlayerHeroArchiveSnapshot,
+  type PlayerEventHistoryQuery,
+  type PlayerEventHistorySnapshot
+} from "./persistence";
+import type { RoomPersistenceSnapshot } from "./index";
+
+function cloneAccount(account: PlayerAccountSnapshot): PlayerAccountSnapshot {
+  return structuredClone(account);
+}
+
+function cloneArchive(archive: PlayerHeroArchiveSnapshot): PlayerHeroArchiveSnapshot {
+  return structuredClone(archive);
+}
+
+function normalizePlayerId(playerId: string): string {
+  const normalized = playerId.trim();
+  if (!normalized) {
+    throw new Error("playerId must not be empty");
+  }
+
+  return normalized;
+}
+
+function normalizeDisplayName(playerId: string, displayName?: string | null): string {
+  const normalized = displayName?.trim() || playerId;
+  return normalized.slice(0, MAX_PLAYER_DISPLAY_NAME_LENGTH);
+}
+
+function normalizeLoginId(loginId: string): string {
+  const normalized = loginId.trim().toLowerCase();
+  if (!normalized) {
+    throw new Error("loginId must not be empty");
+  }
+
+  return normalized;
+}
+
+export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
+  private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();
+  private readonly accounts = new Map<string, PlayerAccountSnapshot>();
+  private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
+  private readonly heroArchives = new Map<string, PlayerHeroArchiveSnapshot>();
+
+  async load(roomId: string): Promise<RoomPersistenceSnapshot | null> {
+    const snapshot = this.snapshots.get(roomId);
+    return snapshot ? structuredClone(snapshot) : null;
+  }
+
+  async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
+    const account = this.accounts.get(normalizePlayerId(playerId));
+    return account ? cloneAccount(account) : null;
+  }
+
+  async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
+    const normalizedLoginId = normalizeLoginId(loginId);
+    const account = Array.from(this.accounts.values()).find((item) => item.loginId === normalizedLoginId);
+    return account ? cloneAccount(account) : null;
+  }
+
+  async loadPlayerEventHistory(
+    playerId: string,
+    query: PlayerEventHistoryQuery = {}
+  ): Promise<PlayerEventHistorySnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedQuery = normalizeEventLogQuery(query);
+    const items = normalizeEventLogEntries(this.accounts.get(normalizedPlayerId)?.recentEventLog)
+      .filter((entry) => (normalizedQuery.category ? entry.category === normalizedQuery.category : true))
+      .filter((entry) => (normalizedQuery.heroId ? entry.heroId === normalizedQuery.heroId : true))
+      .filter((entry) => (normalizedQuery.achievementId ? entry.achievementId === normalizedQuery.achievementId : true))
+      .filter((entry) => (normalizedQuery.worldEventType ? entry.worldEventType === normalizedQuery.worldEventType : true))
+      .filter((entry) => (normalizedQuery.since ? entry.timestamp >= normalizedQuery.since : true))
+      .filter((entry) => (normalizedQuery.until ? entry.timestamp <= normalizedQuery.until : true))
+      .sort(
+        (left: EventLogEntry, right: EventLogEntry) =>
+          right.timestamp.localeCompare(left.timestamp) || left.id.localeCompare(right.id)
+      );
+    const total = items.length;
+    const sliced = items.slice(
+      normalizedQuery.offset,
+      normalizedQuery.limit != null ? normalizedQuery.offset + normalizedQuery.limit : undefined
+    );
+
+    return {
+      total,
+      items: structuredClone(sliced)
+    };
+  }
+
+  async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {
+    return playerIds
+      .map((playerId) => this.accounts.get(normalizePlayerId(playerId)))
+      .filter((account): account is PlayerAccountSnapshot => Boolean(account))
+      .map((account) => cloneAccount(account));
+  }
+
+  async loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null> {
+    const auth = this.authByLoginId.get(normalizeLoginId(loginId));
+    return auth ? structuredClone(auth) : null;
+  }
+
+  async loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
+    const playerIdSet = new Set(playerIds.map((playerId) => normalizePlayerId(playerId)));
+    return Array.from(this.heroArchives.values())
+      .filter((archive) => playerIdSet.has(archive.playerId))
+      .map((archive) => cloneArchive(archive));
+  }
+
+  async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
+    const playerId = normalizePlayerId(input.playerId);
+    const existing = this.accounts.get(playerId);
+    const nextAccount: PlayerAccountSnapshot = {
+      playerId,
+      displayName: normalizeDisplayName(playerId, input.displayName ?? existing?.displayName),
+      globalResources: structuredClone(existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 }),
+      achievements: structuredClone(existing?.achievements ?? []),
+      recentEventLog: structuredClone(existing?.recentEventLog ?? []),
+      recentBattleReplays: structuredClone(existing?.recentBattleReplays ?? []),
+      ...(input.lastRoomId?.trim()
+        ? { lastRoomId: input.lastRoomId.trim() }
+        : existing?.lastRoomId
+          ? { lastRoomId: existing.lastRoomId }
+          : {}),
+      lastSeenAt: new Date().toISOString(),
+      ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(playerId, cloneAccount(nextAccount));
+    return cloneAccount(nextAccount);
+  }
+
+  async bindPlayerAccountCredentials(
+    playerId: string,
+    input: PlayerAccountCredentialInput
+  ): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const normalizedLoginId = normalizeLoginId(input.loginId);
+    const owner = await this.loadPlayerAccountByLoginId(normalizedLoginId);
+    if (owner && owner.playerId !== normalizedPlayerId) {
+      throw new Error("loginId is already taken");
+    }
+
+    const nextAccount: PlayerAccountSnapshot = {
+      ...existing,
+      loginId: normalizedLoginId,
+      credentialBoundAt: existing.credentialBoundAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
+    this.authByLoginId.set(normalizedLoginId, {
+      playerId: normalizedPlayerId,
+      displayName: nextAccount.displayName,
+      loginId: normalizedLoginId,
+      passwordHash: input.passwordHash,
+      ...(nextAccount.credentialBoundAt ? { credentialBoundAt: nextAccount.credentialBoundAt } : {})
+    });
+    return cloneAccount(nextAccount);
+  }
+
+  async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const nextAccount: PlayerAccountSnapshot = {
+      ...existing,
+      displayName:
+        patch.displayName !== undefined
+          ? normalizeDisplayName(normalizedPlayerId, patch.displayName)
+          : existing.displayName,
+      ...(patch.lastRoomId !== undefined
+        ? patch.lastRoomId?.trim()
+          ? { lastRoomId: patch.lastRoomId.trim() }
+          : {}
+        : existing.lastRoomId
+          ? { lastRoomId: existing.lastRoomId }
+          : {}),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
+    if (nextAccount.loginId) {
+      const auth = this.authByLoginId.get(nextAccount.loginId);
+      if (auth) {
+        this.authByLoginId.set(nextAccount.loginId, {
+          ...auth,
+          displayName: nextAccount.displayName
+        });
+      }
+    }
+    return cloneAccount(nextAccount);
+  }
+
+  async savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const nextAccount: PlayerAccountSnapshot = {
+      ...existing,
+      achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
+      recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
+      recentBattleReplays: structuredClone(
+        (patch.recentBattleReplays as PlayerAccountSnapshot["recentBattleReplays"] | undefined) ??
+          existing.recentBattleReplays ??
+          []
+      ),
+      ...(patch.lastRoomId !== undefined
+        ? patch.lastRoomId?.trim()
+          ? { lastRoomId: patch.lastRoomId.trim() }
+          : {}
+        : existing.lastRoomId
+          ? { lastRoomId: existing.lastRoomId }
+          : {}),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
+    return cloneAccount(nextAccount);
+  }
+
+  async listPlayerAccounts(options: PlayerAccountListOptions = {}): Promise<PlayerAccountSnapshot[]> {
+    const filtered = Array.from(this.accounts.values())
+      .filter((account) => (options.playerId ? account.playerId === options.playerId : true))
+      .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
+    return filtered.slice(0, Math.max(1, Math.floor(options.limit ?? 20))).map((account) => cloneAccount(account));
+  }
+
+  async save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void> {
+    this.snapshots.set(roomId, structuredClone(snapshot));
+    for (const account of createPlayerAccountsFromWorldState(snapshot.state)) {
+      const previous = this.accounts.get(account.playerId);
+      this.accounts.set(account.playerId, {
+        ...cloneAccount(account),
+        displayName: previous?.displayName ?? account.displayName,
+        achievements: structuredClone(previous?.achievements ?? account.achievements),
+        recentEventLog: structuredClone(previous?.recentEventLog ?? account.recentEventLog),
+        recentBattleReplays: structuredClone(previous?.recentBattleReplays ?? account.recentBattleReplays ?? []),
+        ...(previous?.loginId ? { loginId: previous.loginId } : {}),
+        ...(previous?.credentialBoundAt ? { credentialBoundAt: previous.credentialBoundAt } : {}),
+        ...(previous?.lastRoomId ? { lastRoomId: previous.lastRoomId } : {}),
+        ...(previous?.lastSeenAt ? { lastSeenAt: previous.lastSeenAt } : {}),
+        createdAt: previous?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+    for (const hero of snapshot.state.heroes) {
+      this.heroArchives.set(`${hero.playerId}:${hero.id}`, {
+        playerId: hero.playerId,
+        heroId: hero.id,
+        hero: structuredClone(hero)
+      });
+    }
+  }
+
+  async delete(roomId: string): Promise<void> {
+    this.snapshots.delete(roomId);
+  }
+
+  async pruneExpired(): Promise<number> {
+    return 0;
+  }
+
+  async close(): Promise<void> {}
+}
+
+export function createMemoryRoomSnapshotStore(): RoomSnapshotStore {
+  return new MemoryRoomSnapshotStore();
+}

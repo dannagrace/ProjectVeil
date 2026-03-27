@@ -3,6 +3,7 @@ import {
   createHeroAttributeBreakdown,
   createHeroEquipmentLoadoutView,
   createHeroProgressMeterView,
+  type EquipmentType,
   getLatestUnlockedAchievement
 } from "../../../../packages/shared/src/index.ts";
 import { createHeroSkillTreeView } from "../../../../packages/shared/src/hero-skills.ts";
@@ -12,6 +13,8 @@ import type { SessionUpdate } from "./VeilCocosSession.ts";
 import type { CocosPlayerAccountProfile } from "./cocos-lobby.ts";
 import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
+import { buildHeroEquipmentActionRows } from "./cocos-hero-equipment.ts";
+import { summarizeLatestBattleReplay } from "./cocos-battle-report.ts";
 
 const { ccclass } = _decorator;
 const H_ALIGN_LEFT = 0;
@@ -30,6 +33,7 @@ const HUD_CARD_STATUS = new Color(204, 170, 106, 182);
 const TITLE_NODE_NAME = "HudTitle";
 const RESOURCE_NODE_NAME = "HudResources";
 const HERO_NODE_NAME = "HudHero";
+const EQUIPMENT_NODE_NAME = "HudEquipment";
 const SKILLS_NODE_NAME = "HudSkills";
 const STATUS_NODE_NAME = "HudStatus";
 const DEBUG_NODE_NAME = "HudDebug";
@@ -42,6 +46,7 @@ const BADGE_PREFIX = "HudBadge";
 const HERO_METER_PREFIX = "HudHeroMeter";
 const HERO_PROGRESS_PREFIX = "HudHeroProgress";
 const SKILL_BUTTON_PREFIX = "HudSkillButton";
+const EQUIPMENT_BUTTON_PREFIX = "HudEquipButton";
 
 interface HudLearnableSkillState {
   id: string;
@@ -54,6 +59,13 @@ interface HudLearnableSkillState {
 interface HudActionButtonState {
   name: string;
   label: string;
+  callback: (() => void) | null;
+}
+
+interface HudEquipmentButtonState {
+  name: string;
+  label: string;
+  tone: "equip" | "unequip";
   callback: (() => void) | null;
 }
 
@@ -163,6 +175,8 @@ export interface VeilHudPanelOptions {
   onNewRun?: () => void;
   onRefresh?: () => void;
   onLearnSkill?: (skillId: string) => void;
+  onEquipItem?: (slot: EquipmentType, equipmentId: string) => void;
+  onUnequipItem?: (slot: EquipmentType) => void;
   onEndDay?: () => void;
   onReturnLobby?: () => void;
 }
@@ -185,6 +199,7 @@ export class VeilHudPanel extends Component {
   private titleLabel: Label | null = null;
   private resourceLabel: Label | null = null;
   private heroLabel: Label | null = null;
+  private equipmentLabel: Label | null = null;
   private skillLabel: Label | null = null;
   private statusLabel: Label | null = null;
   private debugLabel: Label | null = null;
@@ -195,6 +210,8 @@ export class VeilHudPanel extends Component {
   private onNewRun: (() => void) | undefined;
   private onRefresh: (() => void) | undefined;
   private onLearnSkill: ((skillId: string) => void) | undefined;
+  private onEquipItem: ((slot: EquipmentType, equipmentId: string) => void) | undefined;
+  private onUnequipItem: ((slot: EquipmentType) => void) | undefined;
   private onEndDay: (() => void) | undefined;
   private onReturnLobby: (() => void) | undefined;
 
@@ -202,6 +219,8 @@ export class VeilHudPanel extends Component {
     this.onNewRun = options.onNewRun;
     this.onRefresh = options.onRefresh;
     this.onLearnSkill = options.onLearnSkill;
+    this.onEquipItem = options.onEquipItem;
+    this.onUnequipItem = options.onUnequipItem;
     this.onEndDay = options.onEndDay;
     this.onReturnLobby = options.onReturnLobby;
     this.ensureActionButtons();
@@ -223,6 +242,9 @@ export class VeilHudPanel extends Component {
     const progressMeter = hero ? createHeroProgressMeterView(toHeroSkillState(hero)) : null;
     const attributeRows = hero ? createHeroAttributeBreakdown(toHeroSkillState(hero), world ?? undefined) : [];
     const equipmentLines = formatHeroEquipmentLines(hero);
+    const equipmentRows = buildHeroEquipmentActionRows(hero);
+    const equipmentButtons = this.buildEquipmentButtonStates(equipmentRows);
+    const latestBattleReport = summarizeLatestBattleReplay(state.account.recentBattleReplays);
     const reachableAhead =
       state.update?.reachableTiles.filter((tile) => !hero || tile.x !== hero.position.x || tile.y !== hero.position.y).length ?? 0;
     const statusTitle = state.levelUpNotice?.title ?? "状态";
@@ -289,20 +311,36 @@ export class VeilHudPanel extends Component {
             attributeRows[0] ? `攻防公式 ${attributeRows[0].formula} / ${attributeRows[1]?.formula ?? ""}` : "",
             attributeRows[2] ? `法术公式 ${attributeRows[2].formula} / ${attributeRows[3]?.formula ?? ""}` : "",
             attributeRows[4] ? attributeRows[4].formula : "",
-            equipmentLines[0] ?? "",
-            equipmentLines[1] ?? "",
-            equipmentLines[2] ?? "",
             `兵种 ${hero.armyTemplateId}`,
             `技能 ${formatHeroLearnedSkills(hero)}`
           ]
-        : ["英雄", "等待房间状态...", "", "", "", "", "", "", "", "", ""],
+        : ["英雄", "等待房间状态...", "", "", "", "", "", ""],
       cursorY,
       14,
       18,
       cardWidth,
       leftX,
       10,
-      232
+      194
+    );
+
+    cursorY = this.renderCardBlock(
+      this.equipmentLabel,
+      `${CARD_PREFIX}-equipment`,
+      hero
+        ? [
+            "装备配置",
+            equipmentLines[0] ?? "当前未装备任何物品",
+            equipmentLines[1] || equipmentLines[2] || "点击下方按钮可直接穿戴或卸下装备"
+          ]
+        : ["装备配置", "等待房间状态...", ""],
+      cursorY,
+      12,
+      16,
+      cardWidth,
+      leftX,
+      6,
+      Math.max(92, 56 + (equipmentButtons.length > 0 ? Math.ceil(equipmentButtons.length / 2) * 24 : 0))
     );
 
     cursorY = this.renderCardBlock(
@@ -332,14 +370,21 @@ export class VeilHudPanel extends Component {
     cursorY = this.renderCardBlock(
       this.statusLabel,
       `${CARD_PREFIX}-status`,
-      [statusTitle, statusDetail, formatAchievementSummary(state.account), formatRecentEventLog(state.account)],
+      [
+        statusTitle,
+        statusDetail,
+        formatAchievementSummary(state.account),
+        formatRecentEventLog(state.account),
+        latestBattleReport.title,
+        latestBattleReport.detail
+      ],
       cursorY,
       12,
       16,
       cardWidth,
       leftX,
       4,
-      98
+      126
     );
 
     if (resources) {
@@ -351,20 +396,22 @@ export class VeilHudPanel extends Component {
     if (hero) {
       this.renderHeroBadge(`${CARD_PREFIX}-hero`, `Lv ${hero.progression.level}`);
       if (progressMeter) {
-        this.renderHeroProgressBar(
-          `${CARD_PREFIX}-hero`,
-          progressMeter.progressRatio,
+      this.renderHeroProgressBar(
+        `${CARD_PREFIX}-hero`,
+        progressMeter.progressRatio,
           `XP ${progressMeter.currentLevelExperience}/${progressMeter.nextLevelExperience}`,
           Boolean(state.levelUpNotice)
         );
       }
       this.renderHeroMeters(`${CARD_PREFIX}-hero`, hero.move.remaining, hero.move.total, hero.stats.hp, hero.stats.maxHp, hero.armyCount);
       this.tightenHeroLabelLayout(leftX, cardWidth);
+      this.renderEquipmentActionButtons(`${CARD_PREFIX}-equipment`, equipmentButtons);
       this.renderLearnableSkillButtons(`${CARD_PREFIX}-skills`, learnableSkills);
     } else {
       this.hideCardDecorations(`${CARD_PREFIX}-hero`, BADGE_PREFIX);
       this.hideCardDecorations(`${CARD_PREFIX}-hero`, HERO_PROGRESS_PREFIX);
       this.hideCardDecorations(`${CARD_PREFIX}-hero`, `${CHIP_PREFIX}-${HERO_METER_PREFIX}`);
+      this.hideCardDecorations(`${CARD_PREFIX}-equipment`, EQUIPMENT_BUTTON_PREFIX);
       this.hideCardDecorations(`${CARD_PREFIX}-skills`, SKILL_BUTTON_PREFIX);
     }
 
@@ -424,6 +471,7 @@ export class VeilHudPanel extends Component {
     this.titleLabel = this.ensureLabelNode(TITLE_NODE_NAME, 22, 28, 64);
     this.resourceLabel = this.ensureLabelNode(RESOURCE_NODE_NAME, 18, 24, 72);
     this.heroLabel = this.ensureLabelNode(HERO_NODE_NAME, 18, 24, 110);
+    this.equipmentLabel = this.ensureLabelNode(EQUIPMENT_NODE_NAME, 14, 18, 84);
     this.skillLabel = this.ensureLabelNode(SKILLS_NODE_NAME, 16, 22, 92);
     this.statusLabel = this.ensureLabelNode(STATUS_NODE_NAME, 17, 22, 70);
     this.debugLabel = this.ensureLabelNode(DEBUG_NODE_NAME, 14, 18, 50);
@@ -907,6 +955,111 @@ export class VeilHudPanel extends Component {
     }
   }
 
+  private buildEquipmentButtonStates(rows: ReturnType<typeof buildHeroEquipmentActionRows>): HudEquipmentButtonState[] {
+    const buttons: HudEquipmentButtonState[] = [];
+
+    for (const row of rows) {
+      for (const item of row.inventory) {
+        buttons.push({
+          name: `${EQUIPMENT_BUTTON_PREFIX}-${row.slot}-${item.itemId}`,
+          label: `${row.label} 装 ${item.name} x${item.count}`,
+          tone: "equip",
+          callback: this.onEquipItem ? () => this.onEquipItem?.(row.slot, item.itemId) : null
+        });
+      }
+
+      if (row.itemId) {
+        buttons.push({
+          name: `${EQUIPMENT_BUTTON_PREFIX}-${row.slot}-unequip`,
+          label: `${row.label} 卸 ${row.itemName}`,
+          tone: "unequip",
+          callback: this.onUnequipItem ? () => this.onUnequipItem?.(row.slot) : null
+        });
+      }
+    }
+
+    return buttons;
+  }
+
+  private renderEquipmentActionButtons(cardName: string, buttons: HudEquipmentButtonState[]): void {
+    const cardNode = this.node.getChildByName(cardName);
+    if (!cardNode) {
+      return;
+    }
+
+    if (buttons.length === 0) {
+      this.hideCardDecorations(cardName, EQUIPMENT_BUTTON_PREFIX);
+      return;
+    }
+
+    const cardTransform = cardNode.getComponent(UITransform) ?? cardNode.addComponent(UITransform);
+    const buttonHeight = 20;
+    const gap = 4;
+    const columns = 2;
+    const buttonWidth = Math.max(90, Math.floor((cardTransform.width - 28 - gap) / columns));
+    const rowCount = Math.ceil(buttons.length / columns);
+    const totalHeight = rowCount * buttonHeight + Math.max(0, rowCount - 1) * gap;
+    const startY = -cardTransform.height / 2 + 16 + totalHeight - buttonHeight / 2;
+    const leftX = -buttonWidth / 2 - gap / 2;
+    const rightX = buttonWidth / 2 + gap / 2;
+
+    buttons.forEach((button, index) => {
+      let buttonNode = cardNode.getChildByName(button.name);
+      if (!buttonNode) {
+        buttonNode = new Node(button.name);
+        buttonNode.parent = cardNode;
+      }
+      assignUiLayer(buttonNode);
+      buttonNode.active = true;
+
+      const rowIndex = Math.floor(index / columns);
+      const columnIndex = index % columns;
+      const buttonTransform = buttonNode.getComponent(UITransform) ?? buttonNode.addComponent(UITransform);
+      buttonTransform.setContentSize(buttonWidth, buttonHeight);
+      buttonNode.setPosition(columnIndex === 0 ? leftX : rightX, startY - rowIndex * (buttonHeight + gap), 1);
+
+      const graphics = buttonNode.getComponent(Graphics) ?? buttonNode.addComponent(Graphics);
+      const accent = button.tone === "equip" ? new Color(92, 120, 84, 232) : new Color(132, 92, 76, 232);
+      graphics.clear();
+      graphics.fillColor = new Color(accent.r, accent.g, accent.b, 88);
+      graphics.strokeColor = new Color(accent.r, accent.g, accent.b, 156);
+      graphics.lineWidth = 2;
+      graphics.roundRect(-buttonWidth / 2, -buttonHeight / 2, buttonWidth, buttonHeight, 8);
+      graphics.fill();
+      graphics.stroke();
+      graphics.fillColor = new Color(255, 255, 255, 16);
+      graphics.roundRect(-buttonWidth / 2 + 8, buttonHeight / 2 - 7, buttonWidth - 16, 3, 2);
+      graphics.fill();
+
+      const label = buttonNode.getComponent(Label) ?? buttonNode.addComponent(Label);
+      label.string = button.label;
+      label.fontSize = 9;
+      label.lineHeight = 10;
+      label.horizontalAlign = H_ALIGN_CENTER;
+      label.verticalAlign = V_ALIGN_MIDDLE;
+      label.enableWrapText = false;
+      label.color = new Color(244, 247, 252, 255);
+
+      buttonNode.off(Node.EventType.TOUCH_END);
+      buttonNode.off(Node.EventType.MOUSE_UP);
+      if (button.callback) {
+        buttonNode.on(Node.EventType.TOUCH_END, () => {
+          button.callback?.();
+        });
+        buttonNode.on(Node.EventType.MOUSE_UP, () => {
+          button.callback?.();
+        });
+      }
+    });
+
+    const childNodes = (cardNode as unknown as { children?: Node[] }).children ?? [];
+    for (const child of childNodes) {
+      if (child.name.startsWith(EQUIPMENT_BUTTON_PREFIX) && !buttons.some((button) => child.name === button.name)) {
+        child.active = false;
+      }
+    }
+  }
+
   private tightenHeroLabelLayout(centerX: number, cardWidth: number): void {
     if (!this.heroLabel) {
       return;
@@ -985,6 +1138,7 @@ export class VeilHudPanel extends Component {
       TITLE_NODE_NAME,
       RESOURCE_NODE_NAME,
       HERO_NODE_NAME,
+      EQUIPMENT_NODE_NAME,
       SKILLS_NODE_NAME,
       STATUS_NODE_NAME,
       DEBUG_NODE_NAME,
@@ -994,6 +1148,7 @@ export class VeilHudPanel extends Component {
       `${CARD_PREFIX}-title`,
       `${CARD_PREFIX}-resources`,
       `${CARD_PREFIX}-hero`,
+      `${CARD_PREFIX}-equipment`,
       `${CARD_PREFIX}-skills`,
       `${CARD_PREFIX}-status`,
       `${CARD_PREFIX}-debug`
