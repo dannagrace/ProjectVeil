@@ -1,5 +1,8 @@
-import assetConfig from "../../../configs/assets.json";
+import assetConfigJson from "../../../configs/assets.json";
 import unitCatalog from "../../../configs/units.json";
+import type { AssetConfig } from "../../../packages/shared/src/assets-config";
+
+const assetConfig: AssetConfig = assetConfigJson;
 
 type TerrainKey = keyof typeof assetConfig.terrain;
 type ResourceKey = keyof typeof assetConfig.resources;

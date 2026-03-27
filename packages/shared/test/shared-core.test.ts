@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import assetConfig from "../../../configs/assets.json";
 import {
   applyBattleAction,
   appendEventLogEntries,
@@ -30,6 +31,7 @@ import {
   filterWorldEventsForPlayer,
   getBattleBalanceConfig,
   getAchievementDefinitions,
+  getAssetConfigValidationErrors,
   getDefaultMapObjectsConfig,
   getDefaultBattleSkillCatalog,
   getDefaultHeroSkillTreeConfig,
@@ -210,6 +212,83 @@ test("typed-array world map payload decodes back to the original player world vi
   const view = createLargePlayerWorldView();
 
   assert.deepEqual(decodePlayerWorldView(encodePlayerWorldView(view)), view);
+});
+
+test("asset config passes schema validation", () => {
+  assert.deepEqual(getAssetConfigValidationErrors(assetConfig), []);
+});
+
+test("asset config validation reports missing terrain variants and bad asset roots", () => {
+  const errors = getAssetConfigValidationErrors({
+    terrain: {
+      grass: {
+        default: "/assets/terrain/grass-tile.svg",
+        variants: ["/assets/terrain/grass-tile.svg"]
+      },
+      dirt: {
+        default: "/assets/terrain/dirt-tile.svg",
+        variants: ["/assets/terrain/dirt-tile.svg"]
+      },
+      sand: {
+        default: "/assets/terrain/sand-tile.svg",
+        variants: ["/assets/terrain/sand-tile.svg"]
+      },
+      water: {
+        default: "/assets/terrain/water-tile.svg",
+        variants: ["/assets/terrain/water-tile.svg"]
+      },
+      unknown: {
+        default: "/assets/terrain/fog-tile.svg",
+        variants: []
+      }
+    },
+    resources: {
+      gold: "/assets/resources/gold-pile.svg",
+      wood: "assets/resources/wood-stack.svg",
+      ore: "/assets/resources/ore-crate.svg"
+    },
+    buildings: {
+      recruitment_post: "/assets/buildings/recruitment-post.svg",
+      attribute_shrine: "/assets/buildings/attribute-shrine.svg",
+      resource_mine: "/assets/buildings/resource-mine.svg"
+    },
+    units: {
+      hero_guard_basic: {
+        portrait: {
+          idle: "/assets/units/hero-guard-basic.svg",
+          selected: "/assets/units/hero-guard-basic-selected.svg",
+          hit: "/assets/units/hero-guard-basic-hit.svg"
+        },
+        frame: "/assets/frames/unit-frame-ally.svg"
+      }
+    },
+    markers: {
+      hero: {
+        idle: "/assets/markers/hero-marker.svg",
+        selected: "/assets/markers/hero-marker-selected.svg",
+        hit: "/assets/markers/hero-marker-hit.svg"
+      },
+      neutral: {
+        idle: "/assets/markers/neutral-marker.svg",
+        selected: "/assets/markers/neutral-marker-selected.svg",
+        hit: "/assets/markers/neutral-marker-hit.svg"
+      }
+    },
+    badges: {
+      factions: {
+        crown: "/assets/badges/faction-crown.svg"
+      },
+      rarities: {
+        common: "/assets/badges/rarity-common.svg"
+      },
+      interactions: {
+        move: "/assets/badges/interaction-move.svg"
+      }
+    }
+  });
+
+  assert.ok(errors.includes("terrain.unknown.variants must be a non-empty array"));
+  assert.ok(errors.includes("resources.wood must start with /assets/"));
 });
 
 test("achievement helpers unlock milestones and preserve catalog order", () => {
