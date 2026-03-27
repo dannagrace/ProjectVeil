@@ -223,6 +223,8 @@ export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
 export const DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES = 30;
 export const MAX_PLAYER_DISPLAY_NAME_LENGTH = 40;
 export const MAX_PLAYER_LOGIN_ID_LENGTH = 40;
+const MYSQL_DUPLICATE_ENTRY_ERROR_CODE = "ER_DUP_ENTRY";
+const MYSQL_DUPLICATE_ENTRY_ERRNO = 1062;
 
 function readOptionalPositiveNumber(value: string | undefined, fallback: number): number | null {
   if (value == null || value.trim() === "") {
@@ -299,6 +301,19 @@ function formatTimestamp(value: Date | string | null | undefined): string | unde
   }
 
   return date.toISOString();
+}
+
+function isMySqlDuplicateEntryError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as {
+    code?: unknown;
+    errno?: unknown;
+  };
+
+  return candidate.code === MYSQL_DUPLICATE_ENTRY_ERROR_CODE || candidate.errno === MYSQL_DUPLICATE_ENTRY_ERRNO;
 }
 
 function normalizePlayerAccountSnapshot(account: {
@@ -1653,21 +1668,24 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       throw new Error("account credentials already bound to another loginId");
     }
 
-    const loginOwner = await this.loadPlayerAccountByLoginId(normalizedLoginId);
-    if (loginOwner && loginOwner.playerId !== normalizedPlayerId) {
-      throw new Error("loginId is already taken");
-    }
-
     const credentialBoundAt = existingAccount.credentialBoundAt ?? new Date().toISOString();
-    await this.pool.query(
-      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
-       SET login_id = ?,
-           password_hash = ?,
-           credential_bound_at = COALESCE(credential_bound_at, ?),
-           version = version + 1
-       WHERE player_id = ?`,
-      [normalizedLoginId, passwordHash, new Date(credentialBoundAt), normalizedPlayerId]
-    );
+    try {
+      await this.pool.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET login_id = ?,
+             password_hash = ?,
+             credential_bound_at = COALESCE(credential_bound_at, ?),
+             version = version + 1
+         WHERE player_id = ?`,
+        [normalizedLoginId, passwordHash, new Date(credentialBoundAt), normalizedPlayerId]
+      );
+    } catch (error) {
+      if (isMySqlDuplicateEntryError(error)) {
+        throw new Error("loginId is already taken");
+      }
+
+      throw error;
+    }
 
     return (
       (await this.loadPlayerAccount(normalizedPlayerId)) ??
