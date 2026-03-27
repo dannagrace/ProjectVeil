@@ -41,6 +41,7 @@ export interface PlayerBattleReplayQuery {
 }
 
 export type BattleReplayPlaybackStatus = "paused" | "playing" | "completed";
+export type BattleReplayPlaybackAction = "play" | "pause" | "step" | "tick" | "reset";
 
 export interface BattleReplayPlaybackState {
   replay: PlayerBattleReplaySummary;
@@ -50,6 +51,13 @@ export interface BattleReplayPlaybackState {
   currentState: BattleState;
   currentStep: BattleReplayStep | null;
   nextStep: BattleReplayStep | null;
+}
+
+export interface BattleReplayPlaybackCommand {
+  currentStepIndex?: number | undefined;
+  status?: Exclude<BattleReplayPlaybackStatus, "completed"> | undefined;
+  action?: BattleReplayPlaybackAction | undefined;
+  repeat?: number | undefined;
 }
 
 function normalizeTimestamp(value?: string | null): string | undefined {
@@ -94,6 +102,26 @@ function buildPlaybackState(
 
 export function createBattleReplayPlaybackState(replay: PlayerBattleReplaySummary): BattleReplayPlaybackState {
   return buildPlaybackState(replay, replay.initialState, 0, "paused");
+}
+
+export function restoreBattleReplayPlaybackState(
+  replay: PlayerBattleReplaySummary,
+  currentStepIndex = 0,
+  status: Exclude<BattleReplayPlaybackStatus, "completed"> = "paused"
+): BattleReplayPlaybackState {
+  const safeStepIndex = Math.max(0, Math.min(replay.steps.length, Math.floor(currentStepIndex)));
+  let currentState = cloneBattleState(replay.initialState);
+
+  for (let index = 0; index < safeStepIndex; index += 1) {
+    const step = replay.steps[index];
+    if (!step) {
+      break;
+    }
+
+    currentState = applyBattleAction(currentState, step.action);
+  }
+
+  return buildPlaybackState(replay, currentState, safeStepIndex, status);
 }
 
 export function playBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
@@ -146,6 +174,36 @@ export function tickBattleReplayPlayback(playback: BattleReplayPlaybackState): B
   }
 
   return stepBattleReplayPlayback(playback);
+}
+
+export function applyBattleReplayPlaybackCommand(
+  replay: PlayerBattleReplaySummary,
+  command: BattleReplayPlaybackCommand = {}
+): BattleReplayPlaybackState {
+  const repeat = Math.max(1, Math.floor(command.repeat ?? 1));
+  let playback = restoreBattleReplayPlaybackState(replay, command.currentStepIndex, command.status ?? "paused");
+
+  switch (command.action) {
+    case "play":
+      return playBattleReplayPlayback(playback);
+    case "pause":
+      return pauseBattleReplayPlayback(playback);
+    case "reset":
+      return resetBattleReplayPlayback(playback);
+    case "step":
+      for (let iteration = 0; iteration < repeat; iteration += 1) {
+        playback = stepBattleReplayPlayback(playback);
+      }
+      return playback;
+    case "tick":
+      playback = playBattleReplayPlayback(playback);
+      for (let iteration = 0; iteration < repeat; iteration += 1) {
+        playback = tickBattleReplayPlayback(playback);
+      }
+      return playback;
+    default:
+      return playback;
+  }
 }
 
 function normalizeBattleReplayStep(step: Partial<BattleReplayStep> | null | undefined, fallbackIndex: number): BattleReplayStep | null {
