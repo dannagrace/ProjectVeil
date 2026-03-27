@@ -28,10 +28,25 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
   };
 }
 
+class PayloadTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Request body exceeds ${maxBytes} bytes`);
+    this.name = "payload_too_large";
+  }
+}
+
+const MAX_JSON_BODY_BYTES = 64 * 1024;
+
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > MAX_JSON_BODY_BYTES) {
+      throw new PayloadTooLargeError(MAX_JSON_BODY_BYTES);
+    }
+    chunks.push(buffer);
   }
 
   if (chunks.length === 0) {
@@ -371,6 +386,10 @@ export function registerPlayerAccountRoutes(
         session: issueNextAuthSession(account, authSession)
       });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
   });
@@ -442,6 +461,10 @@ export function registerPlayerAccountRoutes(
         session: issueNextAuthSession(account, authSession)
       });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
   });
