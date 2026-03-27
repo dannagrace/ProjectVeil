@@ -6,6 +6,7 @@ import {
   formatEquipmentRarityLabel,
   getEquipmentDefinition,
   type AchievementMetric,
+  type AchievementId,
   type EventLogEntry,
   type EventLogReward,
   type PlayerAchievementProgress,
@@ -118,6 +119,21 @@ function createEventLogEntry(
         description: `${event.buildingId} 产出 ${event.resource.kind} x${event.resource.amount}。`,
         worldEventType: event.type,
         rewards: [formatResourceReward(event.resource.kind, event.resource.amount)]
+      };
+    case "neutral.moved":
+      return {
+        id: createEventId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "movement",
+        description:
+          event.reason === "chase" && event.targetHeroId
+            ? `${event.neutralArmyId} 追击 ${event.targetHeroId}，从 (${event.from.x},${event.from.y}) 移动到 (${event.to.x},${event.to.y})。`
+            : `${event.neutralArmyId} 因 ${event.reason} 从 (${event.from.x},${event.from.y}) 移动到 (${event.to.x},${event.to.y})。`,
+        ...(event.targetHeroId ? { heroId: event.targetHeroId } : {}),
+        worldEventType: event.type,
+        rewards: []
       };
     case "hero.progressed":
       return {
@@ -321,6 +337,44 @@ function createAchievementUnlockedEntry(
   };
 }
 
+function createAchievementProgressEntry(
+  state: WorldState,
+  playerId: string,
+  achievement: PlayerAchievementProgress,
+  timestamp: string,
+  sequence: number
+): EventLogEntry {
+  return {
+    id: `${playerId}:${timestamp}:achievement-progress:${sequence}:${achievement.id}`,
+    timestamp,
+    roomId: state.meta.roomId,
+    playerId,
+    category: "achievement",
+    description: `成就进度推进：${achievement.title} (${achievement.current}/${achievement.target})`,
+    achievementId: achievement.id,
+    rewards: []
+  };
+}
+
+function getProgressedAchievements(
+  previous: Partial<PlayerAchievementProgress>[] | null | undefined,
+  next: PlayerAchievementProgress[],
+  unlockedIds: Set<AchievementId>
+): PlayerAchievementProgress[] {
+  const previousById = new Map((previous ?? []).map((entry) => (entry?.id ? [entry.id, entry] : null)).filter(Boolean) as [
+    AchievementId,
+    Partial<PlayerAchievementProgress>
+  ][]);
+
+  return next.filter((entry) => {
+    if (entry.current <= 0 || unlockedIds.has(entry.id)) {
+      return false;
+    }
+
+    return Math.max(0, Math.floor(previousById.get(entry.id)?.current ?? 0)) !== entry.current;
+  });
+}
+
 export function applyPlayerEventLogAndAchievements(
   account: PlayerAccountSnapshot,
   state: WorldState,
@@ -343,14 +397,21 @@ export function applyPlayerEventLogAndAchievements(
       continue;
     }
 
+    const previousAchievements = achievements;
     const result = applyAchievementMetricDelta(achievements, delta.metric, delta.amount, timestamp);
     achievements = result.progress;
+    const unlockedIds = new Set(result.unlocked.map((achievement) => achievement.id));
+    for (const progressed of getProgressedAchievements(previousAchievements, achievements, unlockedIds)) {
+      sequence += 1;
+      entries.push(createAchievementProgressEntry(state, account.playerId, progressed, timestamp, sequence));
+    }
     for (const unlocked of result.unlocked) {
       sequence += 1;
       entries.push(createAchievementUnlockedEntry(state, account.playerId, unlocked, timestamp, sequence));
     }
   }
 
+  const achievementsBeforeEpicCollectorSync = achievements;
   const epicCollectorResult = applyAchievementProgressValue(
     achievements,
     "epic_collector",
@@ -358,11 +419,22 @@ export function applyPlayerEventLogAndAchievements(
     timestamp
   );
   achievements = epicCollectorResult.progress;
+  for (
+    const progressed of getProgressedAchievements(
+      achievementsBeforeEpicCollectorSync,
+      achievements,
+      new Set(epicCollectorResult.unlocked.map((achievement) => achievement.id))
+    )
+  ) {
+    sequence += 1;
+    entries.push(createAchievementProgressEntry(state, account.playerId, progressed, timestamp, sequence));
+  }
   for (const unlocked of epicCollectorResult.unlocked) {
     sequence += 1;
     entries.push(createAchievementUnlockedEntry(state, account.playerId, unlocked, timestamp, sequence));
   }
 
+  const achievementsBeforeWorldExplorerSync = achievements;
   const worldExplorerResult = applyAchievementProgressValue(
     achievements,
     "world_explorer",
@@ -370,6 +442,16 @@ export function applyPlayerEventLogAndAchievements(
     timestamp
   );
   achievements = worldExplorerResult.progress;
+  for (
+    const progressed of getProgressedAchievements(
+      achievementsBeforeWorldExplorerSync,
+      achievements,
+      new Set(worldExplorerResult.unlocked.map((achievement) => achievement.id))
+    )
+  ) {
+    sequence += 1;
+    entries.push(createAchievementProgressEntry(state, account.playerId, progressed, timestamp, sequence));
+  }
   for (const unlocked of worldExplorerResult.unlocked) {
     sequence += 1;
     entries.push(createAchievementUnlockedEntry(state, account.playerId, unlocked, timestamp, sequence));
