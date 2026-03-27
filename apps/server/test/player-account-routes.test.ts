@@ -485,6 +485,83 @@ test("player account me battle replay route resolves the current authenticated a
   assert.deepEqual(mePayload.items.map((replay) => replay.id), ["replay-me-2", "replay-me-1"]);
 });
 
+test("player account event-log routes filter recent entries without loading progression payloads", async (t) => {
+  const port = 42065 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-events",
+    displayName: "星炬记录官",
+    globalResources: { gold: 22, wood: 7, ore: 1 },
+    achievements: [],
+    recentEventLog: [
+      {
+        id: "event-skill",
+        timestamp: "2026-03-27T12:01:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-events",
+        category: "skill",
+        description: "skill",
+        heroId: "hero-2",
+        worldEventType: "hero.skillLearned",
+        rewards: []
+      },
+      {
+        id: "event-achievement",
+        timestamp: "2026-03-27T12:03:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-events",
+        category: "achievement",
+        description: "achievement",
+        heroId: "hero-1",
+        achievementId: "first_battle",
+        rewards: [{ type: "badge", label: "初次交锋" }]
+      },
+      {
+        id: "event-combat",
+        timestamp: "2026-03-27T12:02:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-events",
+        category: "combat",
+        description: "combat",
+        heroId: "hero-1",
+        worldEventType: "battle.started",
+        rewards: []
+      }
+    ],
+    recentBattleReplays: [],
+    lastRoomId: "room-alpha",
+    lastSeenAt: new Date("2026-03-27T12:04:00.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-events",
+    displayName: "星炬记录官"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const publicResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-events/event-log?category=achievement&achievementId=first_battle&heroId=hero-1`
+  );
+  const publicPayload = (await publicResponse.json()) as { items: PlayerAccountSnapshot["recentEventLog"] };
+  assert.equal(publicResponse.status, 200);
+  assert.deepEqual(publicPayload.items.map((entry) => entry.id), ["event-achievement"]);
+
+  const meResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/event-log?heroId=hero-1&limit=1`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const mePayload = (await meResponse.json()) as { items: PlayerAccountSnapshot["recentEventLog"] };
+  assert.equal(meResponse.status, 200);
+  assert.deepEqual(mePayload.items.map((entry) => entry.id), ["event-achievement"]);
+});
+
 test("player account progression routes return a compact achievement and event read model", async (t) => {
   const port = 42080 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
