@@ -231,6 +231,28 @@ function createAccountTrackingWorldState(): WorldState {
   };
 }
 
+function createEpicEquipmentTrackingWorldState(): WorldState {
+  const base = createAccountTrackingWorldState();
+  return {
+    ...base,
+    heroes: [
+      {
+        ...base.heroes[0]!,
+        loadout: {
+          ...createDefaultHeroLoadout(),
+          equipment: {
+            weaponId: "sunforged_spear",
+            armorId: "warden_aegis",
+            accessoryId: "sun_medallion",
+            trinketIds: []
+          },
+          inventory: []
+        }
+      }
+    ]
+  };
+}
+
 function createReplaySummary(id: string, completedAt: string): PlayerBattleReplaySummary {
   return {
     id,
@@ -356,7 +378,7 @@ test("player account routes degrade to local-mode responses when persistence is 
   const publicProgressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/progression`);
   const publicProgressPayload = (await publicProgressResponse.json()) as PlayerProgressionSnapshot;
   assert.equal(publicProgressResponse.status, 200);
-  assert.equal(publicProgressPayload.summary.totalAchievements, 3);
+  assert.equal(publicProgressPayload.summary.totalAchievements, 4);
   assert.equal(publicProgressPayload.summary.unlockedAchievements, 0);
 
   const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
@@ -389,7 +411,7 @@ test("player account routes degrade to local-mode responses when persistence is 
   });
   const meProgressPayload = (await meProgressResponse.json()) as PlayerProgressionSnapshot;
   assert.equal(meProgressResponse.status, 200);
-  assert.equal(meProgressPayload.summary.totalAchievements, 3);
+  assert.equal(meProgressPayload.summary.totalAchievements, 4);
   assert.equal(meProgressPayload.summary.unlockedAchievements, 0);
 });
 
@@ -528,7 +550,7 @@ test("player account progression routes return a compact achievement and event r
   const publicPayload = (await publicResponse.json()) as PlayerProgressionSnapshot;
   assert.equal(publicResponse.status, 200);
   assert.deepEqual(publicPayload.summary, {
-    totalAchievements: 3,
+    totalAchievements: 4,
     unlockedAchievements: 1,
     inProgressAchievements: 1,
     latestUnlockedAchievementId: "first_battle",
@@ -618,6 +640,25 @@ test("player achievement tracker records equipment drop entries for hero victori
 
   assert.equal(updated.recentEventLog[0]?.worldEventType, "hero.equipmentFound");
   assert.match(updated.recentEventLog[0]?.description ?? "", /塔盾链甲/);
+});
+
+test("player achievement tracker syncs epic equipment loadout progress from world state", () => {
+  const updated = applyPlayerEventLogAndAchievements(
+    {
+      playerId: "player-1",
+      displayName: "暮火侦骑",
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      recentEventLog: []
+    },
+    createEpicEquipmentTrackingWorldState(),
+    [],
+    "2026-03-27T12:10:00.000Z"
+  );
+
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "epic_collector")?.current, 3);
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "epic_collector")?.unlocked, true);
+  assert.match(updated.recentEventLog[0]?.description ?? "", /解锁成就：史诗武装/);
 });
 
 test("player account profile updates by player id require auth and allow self-service only", async (t) => {

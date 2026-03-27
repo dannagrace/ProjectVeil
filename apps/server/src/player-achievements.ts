@@ -1,7 +1,9 @@
 import {
   appendEventLogEntries,
   applyAchievementMetricDelta,
+  applyAchievementProgressValue,
   formatEquipmentRarityLabel,
+  getEquipmentDefinition,
   type AchievementMetric,
   type EventLogEntry,
   type EventLogReward,
@@ -260,6 +262,23 @@ function metricDeltaForEvent(state: WorldState, playerId: string, event: WorldEv
   }
 }
 
+function countBestEpicEquipmentLoadout(state: WorldState, playerId: string): number {
+  return state.heroes
+    .filter((hero) => hero.playerId === playerId)
+    .reduce((best, hero) => {
+      const epicSlots = [
+        hero.loadout.equipment.weaponId,
+        hero.loadout.equipment.armorId,
+        hero.loadout.equipment.accessoryId
+      ].filter((equipmentId) => {
+        const definition = equipmentId ? getEquipmentDefinition(equipmentId) : undefined;
+        return definition?.rarity === "epic";
+      }).length;
+
+      return Math.max(best, epicSlots);
+    }, 0);
+}
+
 function createAchievementUnlockedEntry(
   state: WorldState,
   playerId: string,
@@ -312,6 +331,18 @@ export function applyPlayerEventLogAndAchievements(
       sequence += 1;
       entries.push(createAchievementUnlockedEntry(state, account.playerId, unlocked, timestamp, sequence));
     }
+  }
+
+  const epicCollectorResult = applyAchievementProgressValue(
+    achievements,
+    "epic_collector",
+    countBestEpicEquipmentLoadout(state, account.playerId),
+    timestamp
+  );
+  achievements = epicCollectorResult.progress;
+  for (const unlocked of epicCollectorResult.unlocked) {
+    sequence += 1;
+    entries.push(createAchievementUnlockedEntry(state, account.playerId, unlocked, timestamp, sequence));
   }
 
   if (entries.length === 0 && achievements === (account.achievements ?? [])) {
