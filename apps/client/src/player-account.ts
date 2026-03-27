@@ -61,6 +61,10 @@ interface PlayerAccountApiPayload {
   };
 }
 
+interface PlayerBattleReplayListApiPayload {
+  items?: Partial<PlayerBattleReplaySummary>[];
+}
+
 function normalizePlayerDisplayName(playerId: string, displayName?: string | null): string {
   const normalizedPlayerId = playerId.trim() || "player";
   const normalizedDisplayName = displayName?.trim();
@@ -235,6 +239,25 @@ export async function loadPlayerAccountProfile(playerId: string, roomId: string)
       clearCurrentAuthSession();
     }
     return createFallbackPlayerAccountProfile(playerId, roomId, storedDisplayName);
+  }
+}
+
+export async function loadPlayerBattleReplaySummaries(playerId: string): Promise<PlayerBattleReplaySummary[]> {
+  const authSession = readStoredAuthSession();
+  const endpoint = authSession?.token
+    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/battle-replays`
+    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays`;
+
+  try {
+    const payload = (await fetchJson(endpoint, {
+      ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
+    })) as PlayerBattleReplayListApiPayload;
+    return normalizePlayerBattleReplaySummaries(payload.items);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+      clearCurrentAuthSession();
+    }
+    return normalizePlayerBattleReplaySummaries();
   }
 }
 
