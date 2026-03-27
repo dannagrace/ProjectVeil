@@ -70,9 +70,9 @@ test("player battle actions are followed by automated defender turns until contr
     "恶狼 踩中隐藏陷阱 缠足泥沼，陷阱位置暴露",
     "恶狼 因 缠足泥沼 陷入减速",
     "缠足泥沼 已失效，但该位置对双方保持可见",
-    "恶狼 对 凯琳卫队 造成 22 伤害",
+    "恶狼 对 凯琳卫队 造成 25 伤害",
     "恶狼 的毒牙让 凯琳卫队 陷入中毒",
-    "凯琳卫队 反击 恶狼，造成 29 伤害",
+    "凯琳卫队 反击 恶狼，造成 21 伤害",
     "凯琳卫队 的削弱结束",
     "凯琳卫队 受到中毒影响，损失 2 生命"
   ]);
@@ -148,6 +148,7 @@ test("room supports concurrent neutral battles and returns player-specific battl
 
   assert.equal(playerOneResult.battle?.id, "battle-neutral-1");
   assert.equal(playerTwoResult.battle?.id, "battle-neutral-2");
+  assert.notEqual(playerOneResult.battle?.rng.seed, playerTwoResult.battle?.rng.seed);
   assert.equal(room.getActiveBattles().length, 2);
   assert.equal(room.getBattleForPlayer("player-1")?.id, "battle-neutral-1");
   assert.equal(room.getBattleForPlayer("player-2")?.id, "battle-neutral-2");
