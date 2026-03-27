@@ -1,10 +1,23 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  applyBattleReplayPlaybackCommand,
   buildPlayerProgressionSnapshot,
-  normalizePlayerBattleReplaySummaries
+  findPlayerBattleReplaySummary,
+  getAchievementDefinitions,
+  normalizeAchievementProgressQuery,
+  normalizeEventLogQuery,
+  queryPlayerBattleReplaySummaries,
+  queryAchievementProgress,
+  queryEventLogEntries,
+  type PlayerBattleReplaySummary
 } from "../../../packages/shared/src/index";
 import { issueNextAuthSession, resolveAuthSessionFromRequest } from "./auth";
-import type { PlayerAccountProfilePatch, PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
+import type {
+  PlayerAccountProfilePatch,
+  PlayerAccountSnapshot,
+  PlayerEventHistoryQuery,
+  RoomSnapshotStore
+} from "./persistence";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -67,17 +80,182 @@ function parseLimit(request: IncomingMessage): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function parseOffset(request: IncomingMessage): number | undefined {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const value = url.searchParams.get("offset");
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function parsePlayerIdFilter(request: IncomingMessage): string | undefined {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const value = url.searchParams.get("playerId")?.trim();
   return value ? value : undefined;
 }
 
-function toReplayResponse(account: PlayerAccountSnapshot, limit?: number): { items: PlayerAccountSnapshot["recentBattleReplays"] } {
-  const items = normalizePlayerBattleReplaySummaries(account.recentBattleReplays);
-  const safeLimit = limit == null ? undefined : Math.max(1, Math.floor(limit));
+function parseOptionalQueryParam(request: IncomingMessage, key: string): string | undefined {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const value = url.searchParams.get(key)?.trim();
+  return value ? value : undefined;
+}
+
+function parseBooleanQueryParam(request: IncomingMessage, key: string): boolean | undefined {
+  const value = parseOptionalQueryParam(request, key)?.toLowerCase();
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  return undefined;
+}
+
+function parseNumberQueryParam(request: IncomingMessage, key: string): number | undefined {
+  const value = parseOptionalQueryParam(request, key);
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseTimestampQueryParam(request: IncomingMessage, key: string): string | undefined {
+  const value = parseOptionalQueryParam(request, key);
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+}
+
+function toReplayResponseFromRequest(
+  account: PlayerAccountSnapshot,
+  request: IncomingMessage
+): { items: PlayerAccountSnapshot["recentBattleReplays"] } {
+  const limit = parseLimit(request);
+  const roomId = parseOptionalQueryParam(request, "roomId");
+  const battleId = parseOptionalQueryParam(request, "battleId");
+  const battleKind = parseOptionalQueryParam(request, "battleKind") as
+    | PlayerBattleReplaySummary["battleKind"]
+    | undefined;
+  const playerCamp = parseOptionalQueryParam(request, "playerCamp") as
+    | PlayerBattleReplaySummary["playerCamp"]
+    | undefined;
+  const heroId = parseOptionalQueryParam(request, "heroId");
+  const opponentHeroId = parseOptionalQueryParam(request, "opponentHeroId");
+  const neutralArmyId = parseOptionalQueryParam(request, "neutralArmyId");
+  const result = parseOptionalQueryParam(request, "result") as
+    | PlayerBattleReplaySummary["result"]
+    | undefined;
+
   return {
-    items: safeLimit == null ? items : items.slice(0, safeLimit)
+    items: queryPlayerBattleReplaySummaries(account.recentBattleReplays, {
+      ...(limit != null ? { limit } : {}),
+      ...(roomId ? { roomId } : {}),
+      ...(battleId ? { battleId } : {}),
+      ...(battleKind ? { battleKind } : {}),
+      ...(playerCamp ? { playerCamp } : {}),
+      ...(heroId ? { heroId } : {}),
+      ...(opponentHeroId ? { opponentHeroId } : {}),
+      ...(neutralArmyId ? { neutralArmyId } : {}),
+      ...(result ? { result } : {})
+    })
+  };
+}
+
+function toReplayDetailResponse(
+  account: PlayerAccountSnapshot,
+  replayId?: string | null
+): { replay: NonNullable<PlayerAccountSnapshot["recentBattleReplays"]>[number] } | null {
+  const replay = findPlayerBattleReplaySummary(account.recentBattleReplays, replayId);
+  return replay ? { replay } : null;
+}
+
+function toReplayPlaybackResponse(
+  account: PlayerAccountSnapshot,
+  request: IncomingMessage,
+  replayId?: string | null
+) {
+  const replay = findPlayerBattleReplaySummary(account.recentBattleReplays, replayId);
+  if (!replay) {
+    return null;
+  }
+
+  const currentStepIndex = parseNumberQueryParam(request, "currentStepIndex");
+  const status = parseOptionalQueryParam(request, "status") as "paused" | "playing" | undefined;
+  const action = parseOptionalQueryParam(request, "action") as "play" | "pause" | "step" | "tick" | "reset" | undefined;
+  const repeat = parseNumberQueryParam(request, "repeat");
+
+  return {
+    playback: applyBattleReplayPlaybackCommand(replay, {
+      ...(currentStepIndex != null ? { currentStepIndex } : {}),
+      ...(status ? { status } : {}),
+      ...(action ? { action } : {}),
+      ...(repeat != null ? { repeat } : {})
+    })
+  };
+}
+
+function toEventLogResponse(
+  account: PlayerAccountSnapshot,
+  request: IncomingMessage
+): { items: PlayerAccountSnapshot["recentEventLog"] } {
+  const query = normalizeEventLogQuery({
+    limit: parseLimit(request) ?? undefined,
+    category: parseOptionalQueryParam(request, "category") as
+      | PlayerAccountSnapshot["recentEventLog"][number]["category"]
+      | undefined,
+    heroId: parseOptionalQueryParam(request, "heroId") ?? undefined,
+    achievementId: parseOptionalQueryParam(request, "achievementId") as
+      | PlayerAccountSnapshot["recentEventLog"][number]["achievementId"]
+      | undefined,
+    worldEventType: parseOptionalQueryParam(request, "worldEventType") as
+      | PlayerAccountSnapshot["recentEventLog"][number]["worldEventType"]
+      | undefined
+  });
+
+  return {
+    items: queryEventLogEntries(account.recentEventLog, query)
+  };
+}
+
+function toEventHistoryQuery(request: IncomingMessage): PlayerEventHistoryQuery {
+  return normalizeEventLogQuery({
+    limit: parseLimit(request) ?? undefined,
+    offset: parseOffset(request) ?? undefined,
+    category: parseOptionalQueryParam(request, "category") as PlayerAccountSnapshot["recentEventLog"][number]["category"] | undefined,
+    heroId: parseOptionalQueryParam(request, "heroId") ?? undefined,
+    achievementId: parseOptionalQueryParam(request, "achievementId") as
+      | PlayerAccountSnapshot["recentEventLog"][number]["achievementId"]
+      | undefined,
+    worldEventType: parseOptionalQueryParam(request, "worldEventType") as
+      | PlayerAccountSnapshot["recentEventLog"][number]["worldEventType"]
+      | undefined,
+    since: parseTimestampQueryParam(request, "since") ?? undefined,
+    until: parseTimestampQueryParam(request, "until") ?? undefined
+  });
+}
+
+function toAchievementResponse(account: PlayerAccountSnapshot, request: IncomingMessage): { items: PlayerAccountSnapshot["achievements"] } {
+  const query = normalizeAchievementProgressQuery({
+    limit: parseLimit(request) ?? undefined,
+    achievementId: parseOptionalQueryParam(request, "achievementId") as
+      | PlayerAccountSnapshot["achievements"][number]["id"]
+      | undefined,
+    metric: parseOptionalQueryParam(request, "metric") as
+      | PlayerAccountSnapshot["achievements"][number]["metric"]
+      | undefined,
+    unlocked: parseBooleanQueryParam(request, "unlocked") ?? undefined
+  });
+
+  return {
+    items: queryAchievementProgress(account.achievements, query)
   };
 }
 
@@ -104,11 +282,11 @@ function normalizeLoginId(loginId?: string | null): string | undefined {
 }
 
 function createLocalModeAccount(input: {
-  playerId?: string | null;
-  displayName?: string | null;
-  lastRoomId?: string | null;
-  loginId?: string | null;
-  credentialBoundAt?: string | null;
+  playerId?: string | null | undefined;
+  displayName?: string | null | undefined;
+  lastRoomId?: string | null | undefined;
+  loginId?: string | null | undefined;
+  credentialBoundAt?: string | null | undefined;
 }): PlayerAccountSnapshot {
   const playerId = normalizePlayerId(input.playerId);
   const displayName = normalizeDisplayName(playerId, input.displayName);
@@ -200,6 +378,12 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.get("/api/player-accounts/achievement-definitions", (_request, response) => {
+    sendJson(response, 200, {
+      items: getAchievementDefinitions()
+    });
+  });
+
   app.get("/api/player-accounts/me", async (request, response) => {
     const authSession = resolveAuthSessionFromRequest(request);
     if (!authSession) {
@@ -257,7 +441,216 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
-      sendJson(response, 200, toReplayResponse(account, parseLimit(request)));
+      sendJson(response, 200, toReplayResponseFromRequest(account, request));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/me/battle-replays/:replayId", async (request, response) => {
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    const replayId = request.params.replayId?.trim();
+    if (!replayId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 404, {
+        error: {
+          code: "player_battle_replay_not_found",
+          message: `Player battle replay not found: ${replayId}`
+        }
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const detail = toReplayDetailResponse(account, replayId);
+      if (!detail) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_battle_replay_not_found",
+            message: `Player battle replay not found: ${replayId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, detail);
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/me/battle-replays/:replayId/playback", async (request, response) => {
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    const replayId = request.params.replayId?.trim();
+    if (!replayId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 404, {
+        error: {
+          code: "player_battle_replay_not_found",
+          message: `Player battle replay not found: ${replayId}`
+        }
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const playback = toReplayPlaybackResponse(account, request, replayId);
+      if (!playback) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_battle_replay_not_found",
+            message: `Player battle replay not found: ${replayId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, playback);
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/me/event-log", async (request, response) => {
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(
+        response,
+        200,
+        toEventLogResponse(
+          createLocalModeAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            loginId: authSession.loginId
+          }),
+          request
+        )
+      );
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      sendJson(response, 200, toEventLogResponse(account, request));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/me/event-history", async (request, response) => {
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    const query = toEventHistoryQuery(request);
+    if (!store) {
+      const account = createLocalModeAccount({
+        playerId: authSession.playerId,
+        displayName: authSession.displayName,
+        loginId: authSession.loginId
+      });
+      const total = queryEventLogEntries(account.recentEventLog, {
+        ...query,
+        limit: undefined,
+        offset: undefined
+      }).length;
+      const items = queryEventLogEntries(account.recentEventLog, query);
+      sendJson(response, 200, {
+        items,
+        total,
+        offset: Math.max(0, Math.floor(query.offset ?? 0)),
+        limit: query.limit ?? items.length,
+        hasMore: (query.offset ?? 0) + items.length < total
+      });
+      return;
+    }
+
+    try {
+      const history = await store.loadPlayerEventHistory(authSession.playerId, query);
+      sendJson(response, 200, {
+        ...history,
+        offset: Math.max(0, Math.floor(query.offset ?? 0)),
+        limit: query.limit ?? history.items.length,
+        hasMore: (query.offset ?? 0) + history.items.length < history.total
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/me/achievements", async (request, response) => {
+    const authSession = resolveAuthSessionFromRequest(request);
+    if (!authSession) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(
+        response,
+        200,
+        toAchievementResponse(
+          createLocalModeAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            loginId: authSession.loginId
+          }),
+          request
+        )
+      );
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      sendJson(response, 200, toAchievementResponse(account, request));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
@@ -361,7 +754,212 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
-      sendJson(response, 200, toReplayResponse(account, parseLimit(request)));
+      sendJson(response, 200, toReplayResponseFromRequest(account, request));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/battle-replays/:replayId", async (request, response) => {
+    const playerId = request.params.playerId?.trim();
+    const replayId = request.params.replayId?.trim();
+    if (!playerId || !replayId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 404, {
+        error: {
+          code: "player_battle_replay_not_found",
+          message: `Player battle replay not found: ${replayId}`
+        }
+      });
+      return;
+    }
+
+    try {
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_account_not_found",
+            message: `Player account not found: ${playerId}`
+          }
+        });
+        return;
+      }
+
+      const detail = toReplayDetailResponse(account, replayId);
+      if (!detail) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_battle_replay_not_found",
+            message: `Player battle replay not found: ${replayId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, detail);
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/battle-replays/:replayId/playback", async (request, response) => {
+    const playerId = request.params.playerId?.trim();
+    const replayId = request.params.replayId?.trim();
+    if (!playerId || !replayId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 404, {
+        error: {
+          code: "player_battle_replay_not_found",
+          message: `Player battle replay not found: ${replayId}`
+        }
+      });
+      return;
+    }
+
+    try {
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_account_not_found",
+            message: `Player account not found: ${playerId}`
+          }
+        });
+        return;
+      }
+
+      const playback = toReplayPlaybackResponse(account, request, replayId);
+      if (!playback) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_battle_replay_not_found",
+            message: `Player battle replay not found: ${replayId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, playback);
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/event-log", async (request, response) => {
+    const playerId = request.params.playerId?.trim();
+    if (!playerId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(
+        response,
+        200,
+        toEventLogResponse(
+          createLocalModeAccount({
+            playerId
+          }),
+          request
+        )
+      );
+      return;
+    }
+
+    try {
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_account_not_found",
+            message: `Player account not found: ${playerId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, toEventLogResponse(account, request));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/event-history", async (request, response) => {
+    const playerId = request.params.playerId?.trim();
+    if (!playerId) {
+      sendNotFound(response);
+      return;
+    }
+
+    const query = toEventHistoryQuery(request);
+    if (!store) {
+      const items = queryEventLogEntries([], query);
+      sendJson(response, 200, {
+        items,
+        total: 0,
+        offset: Math.max(0, Math.floor(query.offset ?? 0)),
+        limit: query.limit ?? items.length,
+        hasMore: false
+      });
+      return;
+    }
+
+    try {
+      const history = await store.loadPlayerEventHistory(playerId, query);
+      sendJson(response, 200, {
+        ...history,
+        offset: Math.max(0, Math.floor(query.offset ?? 0)),
+        limit: query.limit ?? history.items.length,
+        hasMore: (query.offset ?? 0) + history.items.length < history.total
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/achievements", async (request, response) => {
+    const playerId = request.params.playerId?.trim();
+    if (!playerId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(
+        response,
+        200,
+        toAchievementResponse(
+          createLocalModeAccount({
+            playerId
+          }),
+          request
+        )
+      );
+      return;
+    }
+
+    try {
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_account_not_found",
+            message: `Player account not found: ${playerId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, toAchievementResponse(account, request));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

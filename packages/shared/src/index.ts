@@ -1,3 +1,4 @@
+export * from "./assets-config";
 export * from "./battle";
 export * from "./battle-replay";
 export * from "./equipment";
@@ -8,4 +9,5 @@ export * from "./map";
 export * from "./map-sync";
 export * from "./models";
 export * from "./protocol";
+export * from "./player-account";
 export * from "./world-config";

@@ -179,7 +179,25 @@ export class AuthoritativeWorldRoom {
   private trackStartedBattle(battle: BattleState): void {
     this.setBattle(battle);
     if (!this.battleReplayByBattleId.has(battle.id)) {
-      this.battleReplayByBattleId.set(battle.id, createBattleReplayCapture(this.state.meta.roomId, battle));
+      const attackerHero =
+        battle.worldHeroId ? this.state.heroes.find((hero) => hero.id === battle.worldHeroId) : undefined;
+      if (!attackerHero) {
+        return;
+      }
+
+      const defenderHero =
+        battle.defenderHeroId ? this.state.heroes.find((hero) => hero.id === battle.defenderHeroId) : undefined;
+      this.battleReplayByBattleId.set(
+        battle.id,
+        createBattleReplayCapture(
+          this.state.meta.roomId,
+          battle,
+          {
+            attackerPlayerId: attackerHero.playerId,
+            ...(defenderHero?.playerId ? { defenderPlayerId: defenderHero.playerId } : {})
+          }
+        )
+      );
     }
   }
 

@@ -1,4 +1,23 @@
-import { createPlayerAccountsFromWorldState, MAX_PLAYER_DISPLAY_NAME_LENGTH, type RoomSnapshotStore, type PlayerAccountAuthSnapshot, type PlayerAccountCredentialInput, type PlayerAccountEnsureInput, type PlayerAccountListOptions, type PlayerAccountProfilePatch, type PlayerAccountProgressPatch, type PlayerAccountSnapshot, type PlayerHeroArchiveSnapshot } from "./persistence";
+import {
+  normalizeEventLogEntries,
+  normalizeEventLogQuery,
+  type EventLogEntry
+} from "../../../packages/shared/src/index";
+import {
+  createPlayerAccountsFromWorldState,
+  MAX_PLAYER_DISPLAY_NAME_LENGTH,
+  type RoomSnapshotStore,
+  type PlayerAccountAuthSnapshot,
+  type PlayerAccountCredentialInput,
+  type PlayerAccountEnsureInput,
+  type PlayerAccountListOptions,
+  type PlayerAccountProfilePatch,
+  type PlayerAccountProgressPatch,
+  type PlayerAccountSnapshot,
+  type PlayerHeroArchiveSnapshot,
+  type PlayerEventHistoryQuery,
+  type PlayerEventHistorySnapshot
+} from "./persistence";
 import type { RoomPersistenceSnapshot } from "./index";
 
 function cloneAccount(account: PlayerAccountSnapshot): PlayerAccountSnapshot {
@@ -52,6 +71,35 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const normalizedLoginId = normalizeLoginId(loginId);
     const account = Array.from(this.accounts.values()).find((item) => item.loginId === normalizedLoginId);
     return account ? cloneAccount(account) : null;
+  }
+
+  async loadPlayerEventHistory(
+    playerId: string,
+    query: PlayerEventHistoryQuery = {}
+  ): Promise<PlayerEventHistorySnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedQuery = normalizeEventLogQuery(query);
+    const items = normalizeEventLogEntries(this.accounts.get(normalizedPlayerId)?.recentEventLog)
+      .filter((entry) => (normalizedQuery.category ? entry.category === normalizedQuery.category : true))
+      .filter((entry) => (normalizedQuery.heroId ? entry.heroId === normalizedQuery.heroId : true))
+      .filter((entry) => (normalizedQuery.achievementId ? entry.achievementId === normalizedQuery.achievementId : true))
+      .filter((entry) => (normalizedQuery.worldEventType ? entry.worldEventType === normalizedQuery.worldEventType : true))
+      .filter((entry) => (normalizedQuery.since ? entry.timestamp >= normalizedQuery.since : true))
+      .filter((entry) => (normalizedQuery.until ? entry.timestamp <= normalizedQuery.until : true))
+      .sort(
+        (left: EventLogEntry, right: EventLogEntry) =>
+          right.timestamp.localeCompare(left.timestamp) || left.id.localeCompare(right.id)
+      );
+    const total = items.length;
+    const sliced = items.slice(
+      normalizedQuery.offset,
+      normalizedQuery.limit != null ? normalizedQuery.offset + normalizedQuery.limit : undefined
+    );
+
+    return {
+      total,
+      items: structuredClone(sliced)
+    };
   }
 
   async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {

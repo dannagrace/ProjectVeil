@@ -61,6 +61,189 @@
       "hit": "/assets/markers/neutral-marker-hit.svg"
     }
   },
+  "metadata": {
+    "/assets/terrain/grass-tile.svg": {
+      "slot": "terrain.grass.default",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/terrain/grass-tile-alt.svg": {
+      "slot": "terrain.grass.alt",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/terrain/dirt-tile.svg": {
+      "slot": "terrain.dirt.default",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/terrain/dirt-tile-alt.svg": {
+      "slot": "terrain.dirt.alt",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/terrain/sand-tile.svg": {
+      "slot": "terrain.sand.default",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/terrain/sand-tile-alt.svg": {
+      "slot": "terrain.sand.alt",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/terrain/water-tile.svg": {
+      "slot": "terrain.water.default",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/terrain/water-tile-alt.svg": {
+      "slot": "terrain.water.alt",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/terrain/fog-tile.svg": {
+      "slot": "terrain.unknown.default",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/resources/gold-pile.svg": {
+      "slot": "resource.gold",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/resources/wood-stack.svg": {
+      "slot": "resource.wood",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/resources/ore-crate.svg": {
+      "slot": "resource.ore",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/buildings/recruitment-post.svg": {
+      "slot": "building.recruitment_post",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/buildings/attribute-shrine.svg": {
+      "slot": "building.attribute_shrine",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/buildings/resource-mine.svg": {
+      "slot": "building.resource_mine",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/units/hero-guard-basic.svg": {
+      "slot": "unit.hero_guard_basic.idle",
+      "stage": "placeholder",
+      "source": "generated",
+      "notes": "Pixel Fantasy placeholder sprite pending production replacement."
+    },
+    "/assets/units/hero-guard-basic-selected.svg": {
+      "slot": "unit.hero_guard_basic.selected",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/units/hero-guard-basic-hit.svg": {
+      "slot": "unit.hero_guard_basic.hit",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/frames/unit-frame-ally.svg": {
+      "slot": "unit.hero_guard_basic.frame",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/units/wolf-pack.svg": {
+      "slot": "unit.wolf_pack.idle",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/units/wolf-pack-selected.svg": {
+      "slot": "unit.wolf_pack.selected",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/units/wolf-pack-hit.svg": {
+      "slot": "unit.wolf_pack.hit",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/frames/unit-frame-enemy.svg": {
+      "slot": "unit.wolf_pack.frame",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/markers/hero-marker.svg": {
+      "slot": "marker.hero.idle",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/markers/hero-marker-selected.svg": {
+      "slot": "marker.hero.selected",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/markers/hero-marker-hit.svg": {
+      "slot": "marker.hero.hit",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/markers/neutral-marker.svg": {
+      "slot": "marker.neutral.idle",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/markers/neutral-marker-selected.svg": {
+      "slot": "marker.neutral.selected",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/markers/neutral-marker-hit.svg": {
+      "slot": "marker.neutral.hit",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/badges/faction-crown.svg": {
+      "slot": "badge.factions.crown",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/badges/faction-wild.svg": {
+      "slot": "badge.factions.wild",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/badges/rarity-common.svg": {
+      "slot": "badge.rarities.common",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/badges/rarity-elite.svg": {
+      "slot": "badge.rarities.elite",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/badges/interaction-move.svg": {
+      "slot": "badge.interactions.move",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/badges/interaction-pickup.svg": {
+      "slot": "badge.interactions.pickup",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/badges/interaction-battle.svg": {
+      "slot": "badge.interactions.battle",
+      "stage": "placeholder",
+      "source": "generated"
+    }
+  },
   "badges": {
     "factions": {
       "crown": "/assets/badges/faction-crown.svg",

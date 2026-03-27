@@ -27,6 +27,7 @@ test("readStoredCocosAuthSession parses a cached guest session", () => {
     playerId: "player-cocos",
     displayName: "晶塔旅人",
     authMode: "guest",
+    provider: "guest",
     source: "remote"
   });
 });
@@ -42,6 +43,7 @@ test("resolveCocosLaunchIdentity reuses the stored guest session when only roomI
       playerId: "player-cocos",
       displayName: "晶塔旅人",
       authMode: "account",
+      provider: "account-password",
       loginId: "veil-ranger",
       source: "remote"
     }
@@ -52,6 +54,7 @@ test("resolveCocosLaunchIdentity reuses the stored guest session when only roomI
     playerId: "player-cocos",
     displayName: "晶塔旅人",
     authMode: "account",
+    authProvider: "account-password",
     loginId: "veil-ranger",
     authToken: "signed.token",
     sessionSource: "remote",
@@ -71,6 +74,7 @@ test("resolveCocosLaunchIdentity does not reuse a mismatched stored token when p
       playerId: "player-cocos",
       displayName: "晶塔旅人",
       authMode: "account",
+      provider: "account-password",
       loginId: "veil-ranger",
       source: "remote"
     }
@@ -81,6 +85,7 @@ test("resolveCocosLaunchIdentity does not reuse a mismatched stored token when p
     playerId: "guest-alt",
     displayName: "guest-alt",
     authMode: "guest",
+    authProvider: "guest",
     authToken: null,
     sessionSource: "manual",
     usedStoredSession: false,
@@ -99,6 +104,7 @@ test("resolveCocosLaunchIdentity opens lobby mode when roomId is omitted", () =>
       playerId: "player-cocos",
       displayName: "晶塔旅人",
       authMode: "account",
+      provider: "wechat-mini-game",
       loginId: "veil-ranger",
       source: "remote"
     }
@@ -109,6 +115,7 @@ test("resolveCocosLaunchIdentity opens lobby mode when roomId is omitted", () =>
     playerId: "player-cocos",
     displayName: "晶塔旅人",
     authMode: "account",
+    authProvider: "wechat-mini-game",
     loginId: "veil-ranger",
     authToken: "signed.token",
     sessionSource: "remote",

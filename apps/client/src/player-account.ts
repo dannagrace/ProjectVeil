@@ -6,11 +6,20 @@ import {
   type StoredAuthSession
 } from "./auth-session";
 import {
+  restoreBattleReplayPlaybackState,
+  type BattleReplayPlaybackCommand,
+  type BattleReplayPlaybackState,
+  type AchievementProgressQuery,
+  type PlayerBattleReplayQuery,
+  findPlayerBattleReplaySummary,
   normalizePlayerProgressionSnapshot,
-  normalizeAchievementProgress,
-  normalizePlayerBattleReplaySummaries,
+  normalizePlayerAccountReadModel,
+  queryPlayerBattleReplaySummaries,
+  queryAchievementProgress,
   normalizeEventLogEntries,
+  type EventLogQuery,
   type EventLogEntry,
+  type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress,
   type PlayerProgressionSnapshot
@@ -19,21 +28,8 @@ import {
 const PLAYER_ACCOUNT_PREFIX = "project-veil:player-account";
 const PLAYER_ACCOUNT_REQUEST_TIMEOUT_MS = 1200;
 
-export interface PlayerAccountProfile {
-  playerId: string;
-  displayName: string;
-  globalResources: {
-    gold: number;
-    wood: number;
-    ore: number;
-  };
-  achievements: PlayerAchievementProgress[];
-  recentEventLog: EventLogEntry[];
+export interface PlayerAccountProfile extends PlayerAccountReadModel {
   recentBattleReplays: PlayerBattleReplaySummary[];
-  loginId?: string;
-  credentialBoundAt?: string;
-  lastRoomId?: string;
-  lastSeenAt?: string;
   source: "remote" | "local";
 }
 
@@ -67,7 +63,40 @@ interface PlayerBattleReplayListApiPayload {
   items?: Partial<PlayerBattleReplaySummary>[];
 }
 
+interface PlayerBattleReplayDetailApiPayload {
+  replay?: Partial<PlayerBattleReplaySummary>;
+}
+
+interface PlayerBattleReplayPlaybackApiPayload {
+  playback?: {
+    replay?: Partial<PlayerBattleReplaySummary>;
+    status?: BattleReplayPlaybackState["status"];
+    currentStepIndex?: number;
+  };
+}
+
+interface PlayerEventLogListApiPayload {
+  items?: Partial<EventLogEntry>[];
+}
+
+interface PlayerAchievementListApiPayload {
+  items?: Partial<PlayerAchievementProgress>[];
+}
+
 interface PlayerProgressionApiPayload extends Partial<PlayerProgressionSnapshot> {}
+
+function hasMeaningfulProgressionSnapshot(snapshot: PlayerProgressionSnapshot): boolean {
+  return (
+    snapshot.summary.unlockedAchievements > 0 ||
+    snapshot.summary.inProgressAchievements > 0 ||
+    snapshot.summary.recentEventCount > 0 ||
+    snapshot.achievements.some(
+      (achievement) =>
+        achievement.current > 0 || achievement.unlocked || Boolean(achievement.progressUpdatedAt) || Boolean(achievement.unlockedAt)
+    ) ||
+    snapshot.recentEventLog.length > 0
+  );
+}
 
 function normalizePlayerDisplayName(playerId: string, displayName?: string | null): string {
   const normalizedPlayerId = playerId.trim() || "player";
@@ -78,16 +107,6 @@ function normalizePlayerDisplayName(playerId: string, displayName?: string | nul
 function normalizeLoginId(loginId?: string | null): string | undefined {
   const normalized = loginId?.trim().toLowerCase();
   return normalized ? normalized : undefined;
-}
-
-function normalizeGlobalResources(
-  resources?: NonNullable<PlayerAccountApiPayload["account"]>["globalResources"] | null
-): PlayerAccountProfile["globalResources"] {
-  return {
-    gold: Math.max(0, Math.floor(resources?.gold ?? 0)),
-    wood: Math.max(0, Math.floor(resources?.wood ?? 0)),
-    ore: Math.max(0, Math.floor(resources?.ore ?? 0))
-  };
 }
 
 function getPlayerAccountStorage(): Storage | null {
@@ -101,6 +120,116 @@ function getPlayerAccountStorage(): Storage | null {
 function resolvePlayerAccountApiBaseUrl(): string {
   const httpProtocol = window.location.protocol === "https:" ? "https" : "http";
   return `${httpProtocol}://${window.location.hostname || "127.0.0.1"}:2567`;
+}
+
+function toEventLogQueryString(query?: EventLogQuery): string {
+  if (!query) {
+    return "";
+  }
+
+  const searchParams = new URLSearchParams();
+  if (query.limit != null) {
+    searchParams.set("limit", String(query.limit));
+  }
+  if (query.category) {
+    searchParams.set("category", query.category);
+  }
+  if (query.heroId) {
+    searchParams.set("heroId", query.heroId);
+  }
+  if (query.achievementId) {
+    searchParams.set("achievementId", query.achievementId);
+  }
+  if (query.worldEventType) {
+    searchParams.set("worldEventType", query.worldEventType);
+  }
+
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
+}
+
+function toBattleReplayQueryString(query?: PlayerBattleReplayQuery): string {
+  if (!query) {
+    return "";
+  }
+
+  const searchParams = new URLSearchParams();
+  if (query.limit != null) {
+    searchParams.set("limit", String(query.limit));
+  }
+  if (query.roomId) {
+    searchParams.set("roomId", query.roomId);
+  }
+  if (query.battleId) {
+    searchParams.set("battleId", query.battleId);
+  }
+  if (query.battleKind) {
+    searchParams.set("battleKind", query.battleKind);
+  }
+  if (query.playerCamp) {
+    searchParams.set("playerCamp", query.playerCamp);
+  }
+  if (query.heroId) {
+    searchParams.set("heroId", query.heroId);
+  }
+  if (query.opponentHeroId) {
+    searchParams.set("opponentHeroId", query.opponentHeroId);
+  }
+  if (query.neutralArmyId) {
+    searchParams.set("neutralArmyId", query.neutralArmyId);
+  }
+  if (query.result) {
+    searchParams.set("result", query.result);
+  }
+
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
+}
+
+function toBattleReplayPlaybackQueryString(command?: BattleReplayPlaybackCommand): string {
+  if (!command) {
+    return "";
+  }
+
+  const searchParams = new URLSearchParams();
+  if (command.currentStepIndex != null) {
+    searchParams.set("currentStepIndex", String(command.currentStepIndex));
+  }
+  if (command.status) {
+    searchParams.set("status", command.status);
+  }
+  if (command.action) {
+    searchParams.set("action", command.action);
+  }
+  if (command.repeat != null) {
+    searchParams.set("repeat", String(command.repeat));
+  }
+
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
+}
+
+function toAchievementQueryString(query?: AchievementProgressQuery): string {
+  if (!query) {
+    return "";
+  }
+
+  const searchParams = new URLSearchParams();
+  if (query.limit != null) {
+    searchParams.set("limit", String(query.limit));
+  }
+  if (query.achievementId) {
+    searchParams.set("achievementId", query.achievementId);
+  }
+  if (query.metric) {
+    searchParams.set("metric", query.metric);
+  }
+  if (query.unlocked != null) {
+    searchParams.set("unlocked", String(query.unlocked));
+  }
+
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
 }
 
 async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
@@ -146,41 +275,63 @@ function asPlayerAccountProfile(
   account?: PlayerAccountApiPayload["account"],
   fallbackDisplayName?: string | null
 ): PlayerAccountProfile {
-  const loginId = normalizeLoginId(account?.loginId);
-  return {
+  const accountProfile = normalizePlayerAccountReadModel({
     playerId,
     displayName: normalizePlayerDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
-    globalResources: normalizeGlobalResources(account?.globalResources),
-    achievements: normalizeAchievementProgress(account?.achievements),
-    recentEventLog: normalizeEventLogEntries(account?.recentEventLog),
-    recentBattleReplays: normalizePlayerBattleReplaySummaries(account?.recentBattleReplays),
-    ...(loginId ? { loginId } : {}),
-    ...(account?.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
-    ...(account?.lastRoomId ? { lastRoomId: account.lastRoomId } : roomId ? { lastRoomId: roomId } : {}),
-    ...(account?.lastSeenAt ? { lastSeenAt: account.lastSeenAt } : {}),
+    globalResources: account?.globalResources,
+    achievements: account?.achievements,
+    recentEventLog: account?.recentEventLog,
+    recentBattleReplays: account?.recentBattleReplays,
+    loginId: normalizeLoginId(account?.loginId),
+    credentialBoundAt: account?.credentialBoundAt,
+    lastRoomId: account?.lastRoomId ?? roomId,
+    lastSeenAt: account?.lastSeenAt
+  });
+
+  return {
+    ...accountProfile,
+    recentBattleReplays: accountProfile.recentBattleReplays ?? [],
     source
   };
 }
 
 async function loadPlayerBattleReplaySummariesWithSession(
   playerId: string,
-  authSession: StoredAuthSession | null
+  authSession: StoredAuthSession | null,
+  query?: PlayerBattleReplayQuery
 ): Promise<PlayerBattleReplaySummary[]> {
+  const queryString = toBattleReplayQueryString(query);
   const endpoint = authSession?.token
-    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/battle-replays`
-    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays`;
+    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/battle-replays${queryString}`
+    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays${queryString}`;
 
   try {
     const payload = (await fetchJson(endpoint, {
       ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
     })) as PlayerBattleReplayListApiPayload;
-    return normalizePlayerBattleReplaySummaries(payload.items);
+    return queryPlayerBattleReplaySummaries(payload.items, query);
   } catch (error) {
     if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
       clearCurrentAuthSession();
     }
-    return normalizePlayerBattleReplaySummaries();
+    return queryPlayerBattleReplaySummaries(undefined, query);
   }
+}
+
+function normalizePlayerBattleReplayPlayback(
+  replayId: string,
+  payload?: PlayerBattleReplayPlaybackApiPayload["playback"]
+): BattleReplayPlaybackState | null {
+  const replay = findPlayerBattleReplaySummary(payload?.replay ? [payload.replay] : undefined, replayId);
+  if (!replay) {
+    return null;
+  }
+
+  return restoreBattleReplayPlaybackState(
+    replay,
+    payload?.currentStepIndex,
+    payload?.status === "playing" ? "playing" : "paused"
+  );
 }
 
 export function getPlayerAccountStorageKey(playerId: string): string {
@@ -208,14 +359,15 @@ export function createFallbackPlayerAccountProfile(
   roomId: string,
   displayName?: string | null
 ): PlayerAccountProfile {
-  return {
+  const accountProfile = normalizePlayerAccountReadModel({
     playerId,
     displayName: normalizePlayerDisplayName(playerId, displayName),
-    globalResources: normalizeGlobalResources(),
-    achievements: normalizeAchievementProgress(),
-    recentEventLog: normalizeEventLogEntries(),
-    recentBattleReplays: normalizePlayerBattleReplaySummaries(),
-    ...(roomId ? { lastRoomId: roomId } : {}),
+    lastRoomId: roomId
+  });
+
+  return {
+    ...accountProfile,
+    recentBattleReplays: accountProfile.recentBattleReplays ?? [],
     source: "local"
   };
 }
@@ -271,9 +423,101 @@ export async function loadPlayerAccountProfile(playerId: string, roomId: string)
   }
 }
 
-export async function loadPlayerBattleReplaySummaries(playerId: string): Promise<PlayerBattleReplaySummary[]> {
+export async function loadPlayerBattleReplaySummaries(
+  playerId: string,
+  query?: PlayerBattleReplayQuery
+): Promise<PlayerBattleReplaySummary[]> {
   const authSession = readStoredAuthSession();
-  return loadPlayerBattleReplaySummariesWithSession(playerId, authSession);
+  return loadPlayerBattleReplaySummariesWithSession(playerId, authSession ?? null, query);
+}
+
+export async function loadPlayerBattleReplayDetail(
+  playerId: string,
+  replayId: string
+): Promise<PlayerBattleReplaySummary | null> {
+  const authSession = readStoredAuthSession();
+  const endpoint = authSession?.token
+    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/battle-replays/${encodeURIComponent(replayId)}`
+    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays/${encodeURIComponent(replayId)}`;
+
+  try {
+    const payload = (await fetchJson(endpoint, {
+      ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
+    })) as PlayerBattleReplayDetailApiPayload;
+    return findPlayerBattleReplaySummary(payload.replay ? [payload.replay] : undefined, replayId);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+      clearCurrentAuthSession();
+    }
+    return null;
+  }
+}
+
+export async function loadPlayerBattleReplayPlayback(
+  playerId: string,
+  replayId: string,
+  command?: BattleReplayPlaybackCommand
+): Promise<BattleReplayPlaybackState | null> {
+  const authSession = readStoredAuthSession();
+  const queryString = toBattleReplayPlaybackQueryString(command);
+  const endpoint = authSession?.token
+    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/battle-replays/${encodeURIComponent(replayId)}/playback${queryString}`
+    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays/${encodeURIComponent(replayId)}/playback${queryString}`;
+
+  try {
+    const payload = (await fetchJson(endpoint, {
+      ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
+    })) as PlayerBattleReplayPlaybackApiPayload;
+    return normalizePlayerBattleReplayPlayback(replayId, payload.playback);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+      clearCurrentAuthSession();
+    }
+    return null;
+  }
+}
+
+export async function loadPlayerEventLog(playerId: string, query?: EventLogQuery): Promise<EventLogEntry[]> {
+  const authSession = readStoredAuthSession();
+  const queryString = toEventLogQueryString(query);
+  const endpoint = authSession?.token
+    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/event-log${queryString}`
+    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/event-log${queryString}`;
+
+  try {
+    const payload = (await fetchJson(endpoint, {
+      ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
+    })) as PlayerEventLogListApiPayload;
+    return normalizeEventLogEntries(payload.items);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+      clearCurrentAuthSession();
+    }
+    return normalizeEventLogEntries();
+  }
+}
+
+export async function loadPlayerAchievementProgress(
+  playerId: string,
+  query?: AchievementProgressQuery
+): Promise<PlayerAchievementProgress[]> {
+  const authSession = readStoredAuthSession();
+  const queryString = toAchievementQueryString(query);
+  const endpoint = authSession?.token
+    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/achievements${queryString}`
+    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/achievements${queryString}`;
+
+  try {
+    const payload = (await fetchJson(endpoint, {
+      ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
+    })) as PlayerAchievementListApiPayload;
+    return queryAchievementProgress(payload.items, query);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+      clearCurrentAuthSession();
+    }
+    return queryAchievementProgress(undefined, query);
+  }
 }
 
 export async function loadPlayerProgressionSnapshot(playerId: string, eventLimit?: number): Promise<PlayerProgressionSnapshot> {
@@ -294,6 +538,31 @@ export async function loadPlayerProgressionSnapshot(playerId: string, eventLimit
     }
     return normalizePlayerProgressionSnapshot();
   }
+}
+
+export function applyPlayerProgressionSnapshot(
+  account: PlayerAccountProfile,
+  snapshot: PlayerProgressionSnapshot
+): PlayerAccountProfile {
+  if (!hasMeaningfulProgressionSnapshot(snapshot)) {
+    return account;
+  }
+
+  return {
+    ...account,
+    achievements: snapshot.achievements,
+    recentEventLog: snapshot.recentEventLog
+  };
+}
+
+export async function loadPlayerAccountProfileWithProgression(
+  playerId: string,
+  roomId: string,
+  eventLimit?: number
+): Promise<PlayerAccountProfile> {
+  const account = await loadPlayerAccountProfile(playerId, roomId);
+  const snapshot = await loadPlayerProgressionSnapshot(playerId, eventLimit);
+  return applyPlayerProgressionSnapshot(account, snapshot);
 }
 
 export async function savePlayerAccountDisplayName(

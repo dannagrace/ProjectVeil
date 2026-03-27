@@ -1,7 +1,10 @@
+export type CocosAuthProvider = "guest" | "account-password" | "wechat-mini-game";
+
 export interface CocosStoredAuthSession {
   playerId: string;
   displayName: string;
   authMode: "guest" | "account";
+  provider?: CocosAuthProvider;
   loginId?: string;
   token?: string;
   source: "remote" | "local";
@@ -12,6 +15,7 @@ export interface CocosLaunchIdentity {
   playerId: string;
   displayName: string;
   authMode: "guest" | "account";
+  authProvider: CocosAuthProvider;
   loginId?: string;
   authToken: string | null;
   sessionSource: "remote" | "local" | "manual" | "none";
@@ -34,6 +38,16 @@ function normalizeLoginId(value?: string | null): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function normalizeAuthProvider(value: unknown, authMode: "guest" | "account", loginId?: string): CocosAuthProvider {
+  if (value === "guest" || value === "account-password" || value === "wechat-mini-game") {
+    return value;
+  }
+  if (authMode === "account" || loginId) {
+    return "account-password";
+  }
+  return "guest";
+}
+
 export function readStoredCocosAuthSession(
   storage: Pick<Storage, "getItem"> | null | undefined
 ): CocosStoredAuthSession | null {
@@ -51,6 +65,7 @@ export function readStoredCocosAuthSession(
       playerId?: unknown;
       displayName?: unknown;
       authMode?: unknown;
+      provider?: unknown;
       loginId?: unknown;
       token?: unknown;
       source?: unknown;
@@ -60,10 +75,12 @@ export function readStoredCocosAuthSession(
     }
 
     const loginId = typeof parsed.loginId === "string" ? normalizeLoginId(parsed.loginId) : undefined;
+    const authMode = parsed.authMode === "account" || loginId ? "account" : "guest";
     return {
       playerId: parsed.playerId,
       displayName: parsed.displayName,
-      authMode: parsed.authMode === "account" || loginId ? "account" : "guest",
+      authMode,
+      provider: normalizeAuthProvider(parsed.provider, authMode, loginId),
       ...(loginId ? { loginId } : {}),
       ...(typeof parsed.token === "string" ? { token: parsed.token } : {}),
       source: parsed.source === "remote" ? "remote" : "local"
@@ -112,6 +129,7 @@ export function resolveCocosLaunchIdentity(input: {
     playerId,
     displayName,
     authMode: canReuseStoredSession ? storedSession?.authMode ?? "guest" : "guest",
+    authProvider: canReuseStoredSession ? storedSession?.provider ?? "guest" : "guest",
     ...(canReuseStoredSession && storedSession?.loginId ? { loginId: storedSession.loginId } : {}),
     authToken: canReuseStoredSession ? storedSession?.token ?? null : null,
     sessionSource: canReuseStoredSession ? storedSession?.source ?? "none" : queryPlayerId ? "manual" : "none",

@@ -15,6 +15,8 @@ const RECENT_BATTLE_REPLAY_LIMIT = 5;
 export interface OngoingBattleReplayCapture {
   battleId: string;
   roomId: string;
+  attackerPlayerId: string;
+  defenderPlayerId?: string;
   startedAt: string;
   initialState: BattleState;
   steps: BattleReplayStep[];
@@ -37,11 +39,14 @@ function battleKindOf(battle: BattleState): "neutral" | "hero" {
 export function createBattleReplayCapture(
   roomId: string,
   battle: BattleState,
+  participants: { attackerPlayerId: string; defenderPlayerId?: string },
   startedAt = new Date().toISOString()
 ): OngoingBattleReplayCapture {
   return {
     battleId: battle.id,
     roomId,
+    attackerPlayerId: participants.attackerPlayerId,
+    ...(participants.defenderPlayerId ? { defenderPlayerId: participants.defenderPlayerId } : {}),
     startedAt,
     initialState: cloneBattleState(battle),
     steps: []
@@ -85,16 +90,6 @@ function buildPlayerReplayId(replay: CompletedBattleReplayCapture, playerId: str
   return `${replay.roomId}:${replay.battleId}:${playerId}`;
 }
 
-function playerResultForCamp(result: BattleReplayResult, camp: BattleReplayCamp): BattleReplayResult {
-  return result === "attacker_victory"
-    ? camp === "attacker"
-      ? "attacker_victory"
-      : "defender_victory"
-    : camp === "defender"
-      ? "attacker_victory"
-      : "defender_victory";
-}
-
 export function buildPlayerBattleReplaySummary(
   replay: CompletedBattleReplayCapture,
   playerId: string,
@@ -116,8 +111,39 @@ export function buildPlayerBattleReplaySummary(
     completedAt: replay.completedAt,
     initialState: replay.initialState,
     steps: replay.steps,
-    result: playerResultForCamp(replay.result, playerCamp)
+    result: replay.result
   };
+}
+
+export function buildPlayerBattleReplaySummariesForPlayer(
+  replay: CompletedBattleReplayCapture,
+  playerId: string
+): PlayerBattleReplaySummary[] {
+  if (replay.attackerPlayerId === playerId && replay.battleState.worldHeroId) {
+    return [
+      buildPlayerBattleReplaySummary(
+        replay,
+        playerId,
+        replay.battleState.worldHeroId,
+        "attacker",
+        replay.battleState.defenderHeroId
+      )
+    ];
+  }
+
+  if (replay.defenderPlayerId === playerId && replay.battleState.defenderHeroId) {
+    return [
+      buildPlayerBattleReplaySummary(
+        replay,
+        playerId,
+        replay.battleState.defenderHeroId,
+        "defender",
+        replay.battleState.worldHeroId
+      )
+    ];
+  }
+
+  return [];
 }
 
 export function appendCompletedBattleReplaysToAccount(

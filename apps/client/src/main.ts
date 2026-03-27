@@ -46,8 +46,8 @@ import {
 } from "./lobby-preferences";
 import {
   createFallbackPlayerAccountProfile as createLocalAccountProfile,
+  loadPlayerAccountProfileWithProgression as loadAccountProfileWithProgression,
   bindPlayerAccountCredentials as bindAccountCredentials,
-  loadPlayerAccountProfile as loadAccountProfile,
   rememberPreferredPlayerDisplayName,
   readPreferredPlayerDisplayName as readLocalPreferredDisplayName,
   savePlayerAccountDisplayName as saveAccountDisplayName,
@@ -1913,7 +1913,7 @@ async function refreshAccountProfileFromServer(): Promise<void> {
   }
 
   accountRefreshPromise = (async () => {
-    const account = await loadAccountProfile(playerId, roomId);
+    const account = await loadAccountProfileWithProgression(playerId, roomId);
     state.account = account;
     if (!state.accountSaving) {
       state.accountDraftName = account.displayName;
@@ -3513,7 +3513,7 @@ async function bootstrap(): Promise<void> {
 }
 
 async function syncPlayerAccountProfile(): Promise<void> {
-  const account = await loadAccountProfile(playerId, roomId);
+  const account = await loadAccountProfileWithProgression(playerId, roomId);
   state.account = account;
   state.accountDraftName = account.displayName;
   state.accountLoginId = account.loginId ?? state.accountLoginId;

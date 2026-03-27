@@ -1,19 +1,25 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import assetConfig from "../../../configs/assets.json";
 import {
   applyBattleAction,
   appendEventLogEntries,
   appendPlayerBattleReplaySummaries,
   applyBattleOutcomeToWorld,
   applyAchievementMetricDelta,
+  applyAchievementProgressValue,
   buildPlayerProgressionSnapshot,
+  queryAchievementProgress,
+  queryEventLogEntries,
+  queryPlayerBattleReplaySummaries,
   createHeroAttributeBreakdown,
   createHeroEquipmentBonusSummary,
   createHeroEquipmentLoadoutView,
   createHeroSkillTreeView,
   createHeroProgressMeterView,
   createBattleEnvironmentState,
+  createBattleReplayPlaybackState,
   createDemoBattleState,
   createEmptyBattleState,
   executeBattleSkill,
@@ -28,6 +34,8 @@ import {
   filterWorldEventsForPlayer,
   getBattleBalanceConfig,
   getAchievementDefinitions,
+  getAssetConfigValidationErrors,
+  getAssetMetadataEntry,
   getDefaultMapObjectsConfig,
   getDefaultBattleSkillCatalog,
   getDefaultHeroSkillTreeConfig,
@@ -35,14 +43,25 @@ import {
   getDefaultWorldConfig,
   getBattleOutcome,
   getDefaultEquipmentCatalog,
+  getLatestProgressedAchievement,
   getLatestUnlockedAchievement,
+  hasFullyExploredMap,
+  normalizeAchievementProgressQuery,
+  normalizeEventLogQuery,
+  normalizePlayerAccountReadModel,
   normalizePlayerBattleReplaySummaries,
+  pauseBattleReplayPlayback,
   pickAutomatedBattleAction,
   planPlayerViewMovement,
+  playBattleReplayPlayback,
   predictPlayerWorldAction,
+  resetBattleReplayPlayback,
   resetRuntimeConfigs,
   simulateAutomatedBattle,
   simulateAutomatedBattles,
+  summarizeAssetMetadata,
+  stepBattleReplayPlayback,
+  tickBattleReplayPlayback,
   resolveWorldAction,
   rollEquipmentDrop,
   setBattleBalanceConfig,
@@ -209,17 +228,341 @@ test("typed-array world map payload decodes back to the original player world vi
   assert.deepEqual(decodePlayerWorldView(encodePlayerWorldView(view)), view);
 });
 
+test("asset config passes schema validation", () => {
+  assert.deepEqual(getAssetConfigValidationErrors(assetConfig), []);
+});
+
+test("asset config exposes metadata for referenced asset paths", () => {
+  const assetPath = assetConfig.units.hero_guard_basic.portrait.idle;
+
+  assert.deepEqual(getAssetMetadataEntry(assetConfig, assetPath), {
+    slot: "unit.hero_guard_basic.idle",
+    stage: "placeholder",
+    source: "generated",
+    notes: "Pixel Fantasy placeholder sprite pending production replacement."
+  });
+
+  assert.deepEqual(summarizeAssetMetadata(assetConfig), {
+    total: 36,
+    byStage: {
+      placeholder: 36,
+      production: 0
+    },
+    bySource: {
+      generated: 36,
+      licensed: 0,
+      commissioned: 0
+    }
+  });
+});
+
+test("asset config validation reports missing terrain variants and bad asset roots", () => {
+  const errors = getAssetConfigValidationErrors({
+    terrain: {
+      grass: {
+        default: "/assets/terrain/grass-tile.svg",
+        variants: ["/assets/terrain/grass-tile.svg"]
+      },
+      dirt: {
+        default: "/assets/terrain/dirt-tile.svg",
+        variants: ["/assets/terrain/dirt-tile.svg"]
+      },
+      sand: {
+        default: "/assets/terrain/sand-tile.svg",
+        variants: ["/assets/terrain/sand-tile.svg"]
+      },
+      water: {
+        default: "/assets/terrain/water-tile.svg",
+        variants: ["/assets/terrain/water-tile.svg"]
+      },
+      unknown: {
+        default: "/assets/terrain/fog-tile.svg",
+        variants: []
+      }
+    },
+    resources: {
+      gold: "/assets/resources/gold-pile.svg",
+      wood: "assets/resources/wood-stack.svg",
+      ore: "/assets/resources/ore-crate.svg"
+    },
+    buildings: {
+      recruitment_post: "/assets/buildings/recruitment-post.svg",
+      attribute_shrine: "/assets/buildings/attribute-shrine.svg",
+      resource_mine: "/assets/buildings/resource-mine.svg"
+    },
+    units: {
+      hero_guard_basic: {
+        portrait: {
+          idle: "/assets/units/hero-guard-basic.svg",
+          selected: "/assets/units/hero-guard-basic-selected.svg",
+          hit: "/assets/units/hero-guard-basic-hit.svg"
+        },
+        frame: "/assets/frames/unit-frame-ally.svg"
+      }
+    },
+    markers: {
+      hero: {
+        idle: "/assets/markers/hero-marker.svg",
+        selected: "/assets/markers/hero-marker-selected.svg",
+        hit: "/assets/markers/hero-marker-hit.svg"
+      },
+      neutral: {
+        idle: "/assets/markers/neutral-marker.svg",
+        selected: "/assets/markers/neutral-marker-selected.svg",
+        hit: "/assets/markers/neutral-marker-hit.svg"
+      }
+    },
+    metadata: {
+      "/assets/terrain/grass-tile.svg": {
+        slot: "terrain.grass.default",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/resources/wood-stack.svg": {
+        slot: "resource.wood",
+        stage: "production",
+        source: "outsourced"
+      }
+    },
+    badges: {
+      factions: {
+        crown: "/assets/badges/faction-crown.svg"
+      },
+      rarities: {
+        common: "/assets/badges/rarity-common.svg"
+      },
+      interactions: {
+        move: "/assets/badges/interaction-move.svg"
+      }
+    }
+  });
+
+  assert.ok(errors.includes("terrain.unknown.variants must be a non-empty array"));
+  assert.ok(errors.includes("resources.wood must start with /assets/"));
+  assert.ok(errors.includes("metadata[/assets/resources/wood-stack.svg].source must be one of: generated, licensed, commissioned"));
+});
+
+test("asset config validation reports missing metadata coverage and duplicate slots", () => {
+  const errors = getAssetConfigValidationErrors({
+    terrain: {
+      grass: {
+        default: "/assets/terrain/grass-tile.svg",
+        variants: ["/assets/terrain/grass-tile.svg"]
+      },
+      dirt: {
+        default: "/assets/terrain/dirt-tile.svg",
+        variants: ["/assets/terrain/dirt-tile.svg"]
+      },
+      sand: {
+        default: "/assets/terrain/sand-tile.svg",
+        variants: ["/assets/terrain/sand-tile.svg"]
+      },
+      water: {
+        default: "/assets/terrain/water-tile.svg",
+        variants: ["/assets/terrain/water-tile.svg"]
+      },
+      unknown: {
+        default: "/assets/terrain/fog-tile.svg",
+        variants: ["/assets/terrain/fog-tile.svg"]
+      }
+    },
+    resources: {
+      gold: "/assets/resources/gold-pile.svg",
+      wood: "/assets/resources/wood-stack.svg",
+      ore: "/assets/resources/ore-crate.svg"
+    },
+    buildings: {
+      recruitment_post: "/assets/buildings/recruitment-post.svg",
+      attribute_shrine: "/assets/buildings/attribute-shrine.svg",
+      resource_mine: "/assets/buildings/resource-mine.svg"
+    },
+    units: {
+      hero_guard_basic: {
+        portrait: {
+          idle: "/assets/units/hero-guard-basic.svg",
+          selected: "/assets/units/hero-guard-basic-selected.svg",
+          hit: "/assets/units/hero-guard-basic-hit.svg"
+        },
+        frame: "/assets/frames/unit-frame-ally.svg"
+      }
+    },
+    markers: {
+      hero: {
+        idle: "/assets/markers/hero-marker.svg",
+        selected: "/assets/markers/hero-marker-selected.svg",
+        hit: "/assets/markers/hero-marker-hit.svg"
+      },
+      neutral: {
+        idle: "/assets/markers/neutral-marker.svg",
+        selected: "/assets/markers/neutral-marker-selected.svg",
+        hit: "/assets/markers/neutral-marker-hit.svg"
+      }
+    },
+    metadata: {
+      "/assets/terrain/grass-tile.svg": {
+        slot: "terrain.base",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/terrain/dirt-tile.svg": {
+        slot: "terrain.base",
+        stage: "placeholder",
+        source: "generated"
+      }
+    },
+    badges: {
+      factions: {
+        crown: "/assets/badges/faction-crown.svg"
+      },
+      rarities: {
+        common: "/assets/badges/rarity-common.svg"
+      },
+      interactions: {
+        move: "/assets/badges/interaction-move.svg"
+      }
+    }
+  });
+
+  assert.ok(
+    errors.includes("metadata[/assets/terrain/dirt-tile.svg].slot duplicates metadata[/assets/terrain/grass-tile.svg].slot (terrain.base)")
+  );
+});
+
+test("asset config validation reports missing metadata coverage", () => {
+  const errors = getAssetConfigValidationErrors({
+    terrain: {
+      grass: {
+        default: "/assets/terrain/grass-tile.svg",
+        variants: ["/assets/terrain/grass-tile.svg"]
+      },
+      dirt: {
+        default: "/assets/terrain/dirt-tile.svg",
+        variants: ["/assets/terrain/dirt-tile.svg"]
+      },
+      sand: {
+        default: "/assets/terrain/sand-tile.svg",
+        variants: ["/assets/terrain/sand-tile.svg"]
+      },
+      water: {
+        default: "/assets/terrain/water-tile.svg",
+        variants: ["/assets/terrain/water-tile.svg"]
+      },
+      unknown: {
+        default: "/assets/terrain/fog-tile.svg",
+        variants: ["/assets/terrain/fog-tile.svg"]
+      }
+    },
+    resources: {
+      gold: "/assets/resources/gold-pile.svg",
+      wood: "/assets/resources/wood-stack.svg",
+      ore: "/assets/resources/ore-crate.svg"
+    },
+    buildings: {
+      recruitment_post: "/assets/buildings/recruitment-post.svg",
+      attribute_shrine: "/assets/buildings/attribute-shrine.svg",
+      resource_mine: "/assets/buildings/resource-mine.svg"
+    },
+    units: {
+      hero_guard_basic: {
+        portrait: {
+          idle: "/assets/units/hero-guard-basic.svg",
+          selected: "/assets/units/hero-guard-basic-selected.svg",
+          hit: "/assets/units/hero-guard-basic-hit.svg"
+        },
+        frame: "/assets/frames/unit-frame-ally.svg"
+      }
+    },
+    markers: {
+      hero: {
+        idle: "/assets/markers/hero-marker.svg",
+        selected: "/assets/markers/hero-marker-selected.svg",
+        hit: "/assets/markers/hero-marker-hit.svg"
+      },
+      neutral: {
+        idle: "/assets/markers/neutral-marker.svg",
+        selected: "/assets/markers/neutral-marker-selected.svg",
+        hit: "/assets/markers/neutral-marker-hit.svg"
+      }
+    },
+    metadata: {
+      "/assets/terrain/grass-tile.svg": {
+        slot: "terrain.grass.default",
+        stage: "placeholder",
+        source: "generated"
+      }
+    },
+    badges: {
+      factions: {
+        crown: "/assets/badges/faction-crown.svg"
+      },
+      rarities: {
+        common: "/assets/badges/rarity-common.svg"
+      },
+      interactions: {
+        move: "/assets/badges/interaction-move.svg"
+      }
+    }
+  });
+
+  assert.ok(errors.includes("metadata[/assets/terrain/fog-tile.svg] is missing for referenced asset path"));
+});
+
 test("achievement helpers unlock milestones and preserve catalog order", () => {
   const firstPass = applyAchievementMetricDelta([], "battles_started", 1, "2026-03-27T10:00:00.000Z");
   assert.equal(firstPass.unlocked[0]?.id, "first_battle");
   assert.equal(firstPass.progress[0]?.unlocked, true);
+  assert.equal(firstPass.progress[0]?.progressUpdatedAt, "2026-03-27T10:00:00.000Z");
 
   const secondPass = applyAchievementMetricDelta(firstPass.progress, "skills_learned", 5, "2026-03-27T10:01:00.000Z");
   assert.equal(secondPass.unlocked[0]?.id, "skill_scholar");
+  assert.equal(secondPass.progress[2]?.progressUpdatedAt, "2026-03-27T10:01:00.000Z");
   assert.deepEqual(
     secondPass.progress.map((achievement) => achievement.id),
     getAchievementDefinitions().map((achievement) => achievement.id)
   );
+});
+
+test("achievement helpers can sync progress from an absolute value", () => {
+  const progressSync = applyAchievementProgressValue([], "epic_collector", 2, "2026-03-27T10:00:00.000Z");
+  assert.equal(progressSync.progress.find((achievement) => achievement.id === "epic_collector")?.current, 2);
+  assert.equal(
+    progressSync.progress.find((achievement) => achievement.id === "epic_collector")?.progressUpdatedAt,
+    "2026-03-27T10:00:00.000Z"
+  );
+  assert.equal(progressSync.unlocked.length, 0);
+
+  const unlockedSync = applyAchievementProgressValue(
+    progressSync.progress,
+    "epic_collector",
+    3,
+    "2026-03-27T10:01:00.000Z"
+  );
+  assert.equal(unlockedSync.unlocked[0]?.id, "epic_collector");
+  assert.equal(unlockedSync.progress.find((achievement) => achievement.id === "epic_collector")?.unlocked, true);
+  assert.equal(
+    unlockedSync.progress.find((achievement) => achievement.id === "epic_collector")?.progressUpdatedAt,
+    "2026-03-27T10:01:00.000Z"
+  );
+
+  const regressedSync = applyAchievementProgressValue(
+    unlockedSync.progress,
+    "epic_collector",
+    1,
+    "2026-03-27T10:02:00.000Z"
+  );
+  assert.equal(regressedSync.unlocked.length, 0);
+  assert.equal(regressedSync.progress.find((achievement) => achievement.id === "epic_collector")?.current, 3);
+  assert.equal(regressedSync.progress.find((achievement) => achievement.id === "epic_collector")?.unlocked, true);
+  assert.equal(
+    regressedSync.progress.find((achievement) => achievement.id === "epic_collector")?.progressUpdatedAt,
+    "2026-03-27T10:01:00.000Z"
+  );
+});
+
+test("exploration helpers detect when a map has been fully revealed", () => {
+  assert.equal(hasFullyExploredMap(["visible", "explored", "hidden"], 3), false);
+  assert.equal(hasFullyExploredMap(["visible", "explored", "visible"], 3), true);
+  assert.equal(hasFullyExploredMap([], 0), false);
 });
 
 test("achievement helpers return the most recently unlocked milestone", () => {
@@ -237,6 +580,23 @@ test("achievement helpers return the most recently unlocked milestone", () => {
   ];
 
   assert.equal(getLatestUnlockedAchievement(progress)?.id, "skill_scholar");
+});
+
+test("achievement helpers return the most recently progressed milestone", () => {
+  const progress = [
+    {
+      id: "first_battle" as const,
+      current: 1,
+      progressUpdatedAt: "2026-03-27T10:00:00.000Z"
+    },
+    {
+      id: "enemy_slayer" as const,
+      current: 2,
+      progressUpdatedAt: "2026-03-27T10:05:00.000Z"
+    }
+  ];
+
+  assert.equal(getLatestProgressedAchievement(progress)?.id, "enemy_slayer");
 });
 
 test("event log helper keeps newest unique entries first", () => {
@@ -281,8 +641,162 @@ test("event log helper keeps newest unique entries first", () => {
   );
 });
 
-test("player progression snapshot summarizes unlocked achievements and recent events", () => {
-  const snapshot = buildPlayerProgressionSnapshot(
+test("event log query helper filters by category, hero, achievement metadata, and offset", () => {
+  const queried = queryEventLogEntries(
+    [
+      {
+        id: "combat-entry",
+        timestamp: "2026-03-27T10:00:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "combat",
+        description: "combat",
+        heroId: "hero-1",
+        worldEventType: "battle.started",
+        rewards: []
+      },
+      {
+        id: "achievement-entry",
+        timestamp: "2026-03-27T10:05:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "achievement",
+        description: "achievement",
+        heroId: "hero-1",
+        achievementId: "first_battle",
+        rewards: []
+      },
+      {
+        id: "other-hero-entry",
+        timestamp: "2026-03-27T10:06:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "achievement",
+        description: "other hero",
+        heroId: "hero-2",
+        achievementId: "first_battle",
+        rewards: []
+      }
+    ],
+    {
+      category: "achievement",
+      heroId: "hero-1",
+      achievementId: "first_battle",
+      limit: 3
+    }
+  );
+
+  assert.deepEqual(queried.map((entry) => entry.id), ["achievement-entry"]);
+
+  const paged = queryEventLogEntries(
+    [
+      {
+        id: "newest-entry",
+        timestamp: "2026-03-27T10:07:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "achievement",
+        description: "newest",
+        heroId: "hero-1",
+        achievementId: "first_battle",
+        rewards: []
+      },
+      {
+        id: "older-entry",
+        timestamp: "2026-03-27T10:05:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "achievement",
+        description: "older",
+        heroId: "hero-1",
+        achievementId: "first_battle",
+        rewards: []
+      }
+    ],
+    {
+      category: "achievement",
+      heroId: "hero-1",
+      achievementId: "first_battle",
+      offset: 1,
+      limit: 1
+    }
+  );
+
+  assert.deepEqual(paged.map((entry) => entry.id), ["older-entry"]);
+});
+
+test("event log query helper filters by inclusive time range when provided", () => {
+  const queried = queryEventLogEntries(
+    [
+      {
+        id: "newest-entry",
+        timestamp: "2026-03-27T10:07:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "achievement",
+        description: "newest",
+        heroId: "hero-1",
+        achievementId: "first_battle",
+        rewards: []
+      },
+      {
+        id: "middle-entry",
+        timestamp: "2026-03-27T10:05:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "combat",
+        description: "middle",
+        heroId: "hero-1",
+        worldEventType: "battle.started",
+        rewards: []
+      },
+      {
+        id: "older-entry",
+        timestamp: "2026-03-27T10:03:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "combat",
+        description: "older",
+        heroId: "hero-1",
+        worldEventType: "battle.resolved",
+        rewards: []
+      }
+    ],
+    {
+      since: "2026-03-27T10:04:00.000Z",
+      until: "2026-03-27T10:06:00.000Z"
+    }
+  );
+
+  assert.deepEqual(queried.map((entry) => entry.id), ["middle-entry"]);
+});
+
+test("event log query normalization trims filters and canonicalizes paging and timestamps", () => {
+  assert.deepEqual(
+    normalizeEventLogQuery({
+      limit: 2.9,
+      offset: -3,
+      heroId: " hero-1 ",
+      category: "combat",
+      achievementId: "first_battle",
+      worldEventType: "battle.started",
+      since: " 2026-03-27T10:04:00+08:00 ",
+      until: "invalid"
+    }),
+    {
+      limit: 2,
+      offset: 0,
+      heroId: "hero-1",
+      category: "combat",
+      achievementId: "first_battle",
+      worldEventType: "battle.started",
+      since: "2026-03-27T02:04:00.000Z"
+    }
+  );
+});
+
+test("achievement progress query helper filters by id, metric, unlocked state, and limit", () => {
+  const queried = queryAchievementProgress(
     [
       {
         id: "first_battle",
@@ -291,7 +805,57 @@ test("player progression snapshot summarizes unlocked achievements and recent ev
       },
       {
         id: "enemy_slayer",
-        current: 2
+        current: 2,
+        progressUpdatedAt: "2026-03-27T10:04:00.000Z"
+      },
+      {
+        id: "skill_scholar",
+        current: 5,
+        unlockedAt: "2026-03-27T10:06:00.000Z"
+      }
+    ],
+    {
+      metric: "skills_learned",
+      unlocked: true,
+      limit: 1
+    }
+  );
+
+  assert.deepEqual(queried.map((entry) => entry.id), ["skill_scholar"]);
+  assert.equal(queried[0]?.title, "求知者");
+  assert.equal(queried[0]?.target, 5);
+});
+
+test("achievement progress query normalization keeps only supported filters", () => {
+  assert.deepEqual(
+    normalizeAchievementProgressQuery({
+      limit: 1.8,
+      achievementId: "skill_scholar",
+      metric: "skills_learned",
+      unlocked: false
+    }),
+    {
+      limit: 1,
+      achievementId: "skill_scholar",
+      metric: "skills_learned",
+      unlocked: false
+    }
+  );
+});
+
+test("player progression snapshot summarizes unlocked achievements and recent events", () => {
+  const snapshot = buildPlayerProgressionSnapshot(
+    [
+      {
+        id: "first_battle",
+        current: 1,
+        progressUpdatedAt: "2026-03-27T10:00:00.000Z",
+        unlockedAt: "2026-03-27T10:00:00.000Z"
+      },
+      {
+        id: "enemy_slayer",
+        current: 2,
+        progressUpdatedAt: "2026-03-27T10:04:00.000Z"
       }
     ],
     [
@@ -318,9 +882,12 @@ test("player progression snapshot summarizes unlocked achievements and recent ev
   );
 
   assert.deepEqual(snapshot.summary, {
-    totalAchievements: 3,
+    totalAchievements: 5,
     unlockedAchievements: 1,
     inProgressAchievements: 1,
+    latestProgressAchievementId: "enemy_slayer",
+    latestProgressAchievementTitle: "猎敌者",
+    latestProgressAt: "2026-03-27T10:04:00.000Z",
     latestUnlockedAchievementId: "first_battle",
     latestUnlockedAchievementTitle: "初次交锋",
     latestUnlockedAt: "2026-03-27T10:00:00.000Z",
@@ -330,6 +897,95 @@ test("player progression snapshot summarizes unlocked achievements and recent ev
   assert.deepEqual(snapshot.recentEventLog.map((entry) => entry.id), ["event-newer"]);
   assert.equal(snapshot.achievements[1]?.id, "enemy_slayer");
   assert.equal(snapshot.achievements[1]?.current, 2);
+});
+
+test("player account read model helper normalizes progression, replays, and resource fields together", () => {
+  const account = normalizePlayerAccountReadModel({
+    playerId: " player-1 ",
+    displayName: "  ",
+    globalResources: {
+      gold: 12.9,
+      wood: -3,
+      ore: 4.1
+    },
+    achievements: [
+      {
+        id: "first_battle",
+        current: 1,
+        unlockedAt: "2026-03-27T12:00:00.000Z"
+      }
+    ],
+    recentEventLog: [
+      {
+        id: "event-older",
+        timestamp: "2026-03-27T11:59:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        category: "combat",
+        description: "older",
+        rewards: []
+      },
+      {
+        id: "event-newer",
+        timestamp: "2026-03-27T12:01:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        category: "achievement",
+        description: "newer",
+        achievementId: "first_battle",
+        rewards: []
+      }
+    ],
+    recentBattleReplays: [
+      {
+        id: "replay-1",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        battleId: "battle-1",
+        battleKind: "neutral",
+        playerCamp: "attacker",
+        heroId: "hero-1",
+        startedAt: "2026-03-27T11:58:00.000Z",
+        completedAt: "2026-03-27T12:02:00.000Z",
+        initialState: createEmptyBattleState({
+          id: "battle-1",
+          attackerHeroId: "hero-1",
+          defenderHeroId: "neutral-1"
+        }),
+        steps: [],
+        result: "attacker_victory"
+      }
+    ],
+    loginId: "  CAPTAIN ",
+    lastRoomId: " room-alpha "
+  });
+
+  assert.equal(account.playerId, "player-1");
+  assert.equal(account.displayName, "player-1");
+  assert.deepEqual(account.globalResources, {
+    gold: 12,
+    wood: 0,
+    ore: 4
+  });
+  assert.equal(account.achievements.find((achievement) => achievement.id === "first_battle")?.unlocked, true);
+  assert.deepEqual(account.recentEventLog.map((entry) => entry.id), ["event-newer", "event-older"]);
+  assert.deepEqual(account.recentBattleReplays.map((replay) => replay.id), ["replay-1"]);
+  assert.equal(account.loginId, "captain");
+  assert.equal(account.lastRoomId, "room-alpha");
+});
+
+test("player account read model helper falls back to empty progression collections", () => {
+  const account = normalizePlayerAccountReadModel();
+
+  assert.equal(account.displayName, "player");
+  assert.equal(account.achievements.length, getAchievementDefinitions().length);
+  assert.deepEqual(account.recentEventLog, []);
+  assert.deepEqual(account.recentBattleReplays, []);
+  assert.deepEqual(account.globalResources, {
+    gold: 0,
+    wood: 0,
+    ore: 0
+  });
 });
 
 test("battle replay helpers normalize steps and keep newest unique replays first", () => {
@@ -390,6 +1046,137 @@ test("battle replay helpers normalize steps and keep newest unique replays first
   assert.deepEqual(merged.map((replay) => replay.id), ["replay-newer", "replay-older"]);
   assert.equal(merged[0]?.steps[0]?.index, 5);
   assert.equal(merged[1]?.steps[0]?.index, 9);
+});
+
+test("battle replay query helper filters normalized summaries by replay metadata", () => {
+  const battle = createEmptyBattleState();
+  const replays = normalizePlayerBattleReplaySummaries([
+    {
+      id: "replay-neutral",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      battleId: "battle-neutral-1",
+      battleKind: "neutral",
+      playerCamp: "attacker",
+      heroId: "hero-1",
+      neutralArmyId: "neutral-1",
+      startedAt: "2026-03-27T10:00:00.000Z",
+      completedAt: "2026-03-27T10:01:00.000Z",
+      initialState: battle,
+      steps: [],
+      result: "attacker_victory"
+    },
+    {
+      id: "replay-hero",
+      roomId: "room-beta",
+      playerId: "player-1",
+      battleId: "battle-hero-1",
+      battleKind: "hero",
+      playerCamp: "defender",
+      heroId: "hero-2",
+      opponentHeroId: "hero-9",
+      startedAt: "2026-03-27T10:02:00.000Z",
+      completedAt: "2026-03-27T10:03:00.000Z",
+      initialState: battle,
+      steps: [],
+      result: "defender_victory"
+    }
+  ]);
+
+  assert.deepEqual(
+    queryPlayerBattleReplaySummaries(replays, {
+      battleKind: "hero",
+      playerCamp: "defender",
+      opponentHeroId: "hero-9"
+    }).map((replay) => replay.id),
+    ["replay-hero"]
+  );
+
+  assert.deepEqual(
+    queryPlayerBattleReplaySummaries(replays, {
+      roomId: "room-alpha",
+      neutralArmyId: "neutral-1",
+      result: "attacker_victory",
+      limit: 1
+    }).map((replay) => replay.id),
+    ["replay-neutral"]
+  );
+});
+
+test("battle replay playback helpers support play pause tick and reset controls", () => {
+  const initial = createDemoBattleState();
+  const replay = normalizePlayerBattleReplaySummaries([
+    {
+      id: "replay-controls",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      battleId: initial.id,
+      battleKind: "hero",
+      playerCamp: "attacker",
+      heroId: "hero-1",
+      opponentHeroId: "hero-2",
+      startedAt: "2026-03-27T10:00:00.000Z",
+      completedAt: "2026-03-27T10:01:00.000Z",
+      initialState: initial,
+      steps: [
+        {
+          index: 1,
+          source: "automated",
+          action: {
+            type: "battle.attack",
+            attackerId: "wolf-d",
+            defenderId: "pikeman-a"
+          }
+        },
+        {
+          index: 2,
+          source: "player",
+          action: {
+            type: "battle.wait",
+            unitId: "pikeman-a"
+          }
+        }
+      ],
+      result: "attacker_victory"
+    }
+  ])[0];
+  assert.ok(replay);
+
+  const playback = createBattleReplayPlaybackState(replay);
+  assert.equal(playback.status, "paused");
+  assert.equal(playback.currentStepIndex, 0);
+  assert.equal(playback.currentStep, null);
+  assert.equal(playback.nextStep?.index, 1);
+  assert.equal(playback.currentState.activeUnitId, initial.activeUnitId);
+
+  const playing = playBattleReplayPlayback(playback);
+  assert.equal(playing.status, "playing");
+
+  const afterTick = tickBattleReplayPlayback(playing);
+  assert.equal(afterTick.status, "playing");
+  assert.equal(afterTick.currentStepIndex, 1);
+  assert.equal(afterTick.currentStep?.index, 1);
+  assert.equal(afterTick.nextStep?.index, 2);
+  assert.equal(afterTick.currentState.activeUnitId, "pikeman-a");
+
+  const paused = pauseBattleReplayPlayback(afterTick);
+  assert.equal(paused.status, "paused");
+
+  const afterManualStep = stepBattleReplayPlayback(paused);
+  assert.equal(afterManualStep.status, "completed");
+  assert.equal(afterManualStep.currentStepIndex, 2);
+  assert.equal(afterManualStep.currentStep?.index, 2);
+  assert.equal(afterManualStep.nextStep, null);
+
+  const replayingCompleted = playBattleReplayPlayback(afterManualStep);
+  assert.equal(replayingCompleted.status, "completed");
+
+  const reset = resetBattleReplayPlayback(afterManualStep);
+  assert.equal(reset.status, "paused");
+  assert.equal(reset.currentStepIndex, 0);
+  assert.equal(reset.currentStep, null);
+  assert.equal(reset.nextStep?.index, 1);
+  assert.equal(reset.currentState.activeUnitId, initial.activeUnitId);
 });
 
 test("typed-array world map payload is materially smaller than the raw tile JSON on a 32x32 map", () => {
@@ -920,6 +1707,7 @@ test("resolveWorldAction starts a battle when a hero reaches a neutral army tile
     {
       type: "battle.started",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       encounterKind: "neutral",
       neutralArmyId: "neutral-1",
       battleId: "battle-neutral-1",
@@ -1075,6 +1863,7 @@ test("applyBattleOutcomeToWorld grants neutral rewards and moves the hero onto t
     {
       type: "battle.resolved",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       battleId: "battle-neutral-1",
       result: "attacker_victory"
     },
@@ -1146,7 +1935,9 @@ test("applyBattleOutcomeToWorld grants PvP experience to the winning hero", () =
     {
       type: "battle.resolved",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
       battleId: "battle-hero-1-vs-hero-2",
       result: "defender_victory"
     },
@@ -2260,6 +3051,7 @@ test("resolveWorldAction can start a neutral-initiated battle on end day", () =>
     {
       type: "battle.started",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       encounterKind: "neutral",
       neutralArmyId: "neutral-1",
       initiator: "neutral",
@@ -2675,6 +3467,7 @@ test("applyBattleOutcomeToWorld penalizes the hero on defeat and keeps the neutr
     {
       type: "battle.resolved",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       battleId: "battle-neutral-1",
       result: "defender_victory"
     }
@@ -2721,7 +3514,9 @@ test("applyBattleOutcomeToWorld keeps defenderHeroId on hero-vs-hero resolution 
     {
       type: "battle.resolved",
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
       battleId: "battle-hero-1-vs-hero-2",
       result: "attacker_victory"
     },
@@ -2777,7 +3572,9 @@ test("filterWorldEventsForPlayer hides unrelated hero timelines while keeping mi
     {
       type: "battle.started" as const,
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
       encounterKind: "hero" as const,
       battleId: "battle-hero-1-vs-hero-2",
       path: [{ x: 1, y: 1 }, { x: 2, y: 1 }],
@@ -2786,7 +3583,9 @@ test("filterWorldEventsForPlayer hides unrelated hero timelines while keeping mi
     {
       type: "battle.resolved" as const,
       heroId: "hero-1",
+      attackerPlayerId: "player-1",
       defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
       battleId: "battle-hero-1-vs-hero-2",
       result: "attacker_victory" as const
     },
@@ -2835,6 +3634,45 @@ test("filterWorldEventsForPlayer hides unrelated hero timelines while keeping mi
   ]);
   assert.deepEqual(filterWorldEventsForPlayer(state, "player-2", events), [events[2], events[3], events[7]]);
   assert.deepEqual(filterWorldEventsForPlayer(state, "player-3", events), [events[1], events[6], events[7]]);
+});
+
+test("filterWorldEventsForPlayer falls back to participant player ids when battle heroes are no longer present", () => {
+  const state = createWorldState({
+    heroes: [
+      createHero({
+        id: "hero-3",
+        playerId: "player-3",
+        name: "旁观者",
+        position: { x: 0, y: 0 }
+      })
+    ]
+  });
+  const events = [
+    {
+      type: "battle.started" as const,
+      heroId: "hero-1",
+      attackerPlayerId: "player-1",
+      defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
+      encounterKind: "hero" as const,
+      battleId: "battle-hero-1-vs-hero-2",
+      path: [{ x: 1, y: 1 }, { x: 2, y: 1 }],
+      moveCost: 1
+    },
+    {
+      type: "battle.resolved" as const,
+      heroId: "hero-1",
+      attackerPlayerId: "player-1",
+      defenderHeroId: "hero-2",
+      defenderPlayerId: "player-2",
+      battleId: "battle-hero-1-vs-hero-2",
+      result: "defender_victory" as const
+    }
+  ];
+
+  assert.deepEqual(filterWorldEventsForPlayer(state, "player-1", events), events);
+  assert.deepEqual(filterWorldEventsForPlayer(state, "player-2", events), events);
+  assert.deepEqual(filterWorldEventsForPlayer(state, "player-3", events), []);
 });
 
 test("applyBattleAction uses deterministic damage and retaliation flow", () => {

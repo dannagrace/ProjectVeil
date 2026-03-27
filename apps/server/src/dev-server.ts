@@ -40,6 +40,8 @@ async function startDevServer(
   // eslint-disable-next-line no-console
   console.log(`Guest auth API available at http://${host}:${port}/api/auth/guest-login`);
   // eslint-disable-next-line no-console
+  console.log(`WeChat mini game auth scaffold available at http://${host}:${port}/api/auth/wechat-mini-game-login`);
+  // eslint-disable-next-line no-console
   console.log(`Lobby API available at http://${host}:${port}/api/lobby/rooms`);
   // eslint-disable-next-line no-console
   console.log(`Config center storage: ${configCenterStore.mode}`);

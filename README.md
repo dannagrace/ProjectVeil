@@ -138,6 +138,12 @@
 - 当前 MySQL 英雄长期档已补上 `player_hero_archives`：房间保存时会同步刷新英雄的长期成长、已学技能、装备槽位与带兵快照，新建房间会先回灌这些长期数据，因此同一 `playerId` 的英雄属性成长、build 和当前带兵已能跨房间继承；英雄的位置、剩余移动力和当前生命仍会按新局重置。
 - 装备系统的第一批基础能力现已落到 shared/core：共享层补上了 `weapon / armor / accessory` 三类装备目录、品质与特殊效果元数据，英雄长期档里的装备槽位 ID 会直接映射成可计算的属性加成，并且会在创建战斗栈时折算进攻击/防御，方便后续继续接掉落、锻造与 UI。
 - 当前玩家账号骨架也已接到 `player_accounts`：账号记录现已包含 `displayName / lastRoomId / lastSeenAt / globalResources`，并开放 `GET /api/player-accounts`、`GET /api/player-accounts/:playerId`、`PUT /api/player-accounts/:playerId` 供开发态查看与改名；房间 `connect` 时会自动建档或刷新最近活跃房间。
+- 玩家账号进度读模型现已补上共享世界事件日志与成就摘要接口：服务端会把移动、建筑、战斗、技能、成就解锁，以及玩家可见的 `neutral.moved` 追击/巡逻事件写入 `recentEventLog`，并开放 `GET /api/player-accounts/:playerId/event-log`、`/achievements`、`/progression` 供 H5 / Cocos 直接读取；多阶段成就还会追加“成就进度推进”日志，方便后续做提示或回顾面板。
+- 这轮又补了一层独立的玩家事件历史读模型：`savePlayerAccountProgress()` 会把账号 `recentEventLog` 里新增的结构化事件增量追加到 MySQL `player_event_history`，并开放 `GET /api/player-accounts/:playerId/event-history` / `/me/event-history`（支持 `limit`、`offset` 和现有事件筛选条件），让前端可以先做分页历史回顾而不用等完整战斗回放或完整成就 UI。
+- 玩家事件历史接口现已支持可选 `since` / `until` 时间范围筛选，且本地模式与 MySQL 持久化模式保持一致，方便后续只拉取某个时间窗内的世界事件或成就回顾。
+- 事件日志的共享基础当前收敛在 `packages/shared/src/event-log.ts`：除了事件/成就 schema、归一化和查询助手外，这里也统一提供世界事件日志工厂与成就日志工厂，服务端只负责把共享 `WorldEvent[]` 喂给这些 helper；完整战斗回放、完整成就 UI 和更长历史存储仍留给后续 issue 继续扩展。
+- H5 账号资料卡现在会额外拉取 `/api/player-accounts/:playerId/progression` 覆盖成就/事件摘要，因此即使基础账号接口只返回轻量档案，前端也能稳定展示最新的成就推进、最近解锁和世界事件日志，而不会继续依赖旧的内嵌快照。
+- H5 账号资料卡的成就/事件展示本轮也补了一层可读性整理：成就卡会把“已解锁”和“最近推进”的项目排到前面，并显示最近推进时间；世界事件日志则会把 `battle.started`、`first_battle` 这类内部 ID 转成中文标签，同时在摘要里补充各事件类别计数，方便后续继续接提示面板或筛选器。
 - H5 左侧面板现已补上账号资料卡：会优先显示服务端账号昵称，也会在浏览器本地记住上次使用的游客昵称；远端房间首次 `connect` 时会把这份 `displayName` 一并带给服务端，用于初始化游客账号资料。`/api/player-accounts/me` 返回的 `globalResources` 也会直接显示成“全局仓库”摘要，方便确认跨房间继承的金币/木材/矿石。
 - H5 现在也有真正的 Lobby / 登录入口：当页面没有携带 `roomId / playerId` 查询参数时，会先进入大厅页，显示游客 `playerId / 昵称 / roomId` 表单和 `/api/lobby/rooms` 活跃房间列表；选房或手动输入房间后即可进入实例，游戏内也能一键返回大厅。
 - Lobby 进入房间前现在会先请求 `POST /api/auth/guest-login`，服务端会签发一个游客登录 token；浏览器会缓存这份游客会话，因此后续页面只带 `?roomId=...` 也能直接进入房间，不再必须把 `playerId` 写进 URL。
@@ -156,6 +162,8 @@
 - 当前美术接入方式为 `configs/assets.json` + `apps/client/public/assets/` 占位素材，逻辑对象已通过稳定资源 key 映射到前端表现层。
 - `assets.json` 已支持多状态资源描述，当前单位和标记可按 `idle / selected / hit` 状态切换占位素材。
 - 地形资源已支持稳定多变体切换，单位资源也已拆成 `portrait + frame` 槽位，后续可直接替换成正式美术素材而不改逻辑层 key。
+- `assets.json` 现已强制声明 `metadata`：每个被引用的资源路径都要带 `slot / stage / source`，用于追踪“当前占位图对应哪个稳定槽位、是否已经转正、来源是什么”。
+- `npm run validate:assets` 现在除了校验 schema 和文件存在性，也会拦截缺失元数据、重复槽位和游离元数据；后续正式美术替换可直接沿用同一套 manifest 规则补齐审计信息。
 - `units.json` 现已补上 `faction / rarity` 元数据，前端会自动挂载阵营与品质 badge，占位资源层已经具备继续细化正式 UI 的结构。
 - `battle-skills.json` 现已承载战斗技能与持续状态目录，shared 战斗结算会在创建战斗和执行技能时直接读取运行时配置，不再依赖硬编码技能表。
 - `battle-balance.json` 现已补上第一批战斗平衡基础配置，当前 shared 战斗运行时已经会直接读取其中的伤害公式参数，以及遭遇战环境里路障/陷阱的生成阈值、耐久、伤害和次数；本批还未把它接进配置中心 UI，只先建立 shared 侧可验证的数据驱动链路。

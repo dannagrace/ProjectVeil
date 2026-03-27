@@ -105,3 +105,72 @@
 - 把 `VeilUnitAnimator` 接到正式 Spine skeleton 和序列帧资源
 - 把 `VeilBattleTransition` 替换成正式 tween / 特效 / 音效组合
 - 继续压实微信小游戏构建和发布流程
+
+## 微信小游戏基础适配
+
+当前仓库已经先落下一层可合并的运行时基础，而不是一次把小游戏构建、微信登录和性能优化全部耦在一起：
+
+- 新增 `assets/scripts/cocos-runtime-platform.ts`
+  - 统一识别 `browser / wechat-game / unknown` 三类运行时
+  - Web 继续读取 `location.search`
+  - 微信小游戏改读 `wx.getLaunchOptionsSync().query`，再转换成与现有 `resolveCocosLaunchIdentity` 兼容的查询串
+  - 对外暴露 `authFlow / configCenterAccess / supportsBrowserHistory`，给后续 `wx.login() -> code2Session` 接入留稳定边界
+- `VeilRoot` 已改走运行时适配层
+  - 不再默认假设浏览器 `history/location` 一定存在
+  - 微信小游戏环境下不会尝试改写浏览器地址栏
+  - 打开配置台会退化成手动提示，而不是直接依赖 `window.open`
+
+这只是 issue #30 的基础切片，当前还没有完成：
+
+- Cocos Creator 微信小游戏构建目标配置
+- 真正接微信 `code2Session / openid / unionid` 的生产登录链路
+- OpenID 绑定、头像昵称同步
+- 真机性能与内存优化
+
+## 微信登录脚手架
+
+本轮在运行时基础之上，继续补了一层“可合并但不虚假宣称生产完成”的登录脚手架：
+
+- 新增 `assets/scripts/cocos-login-provider.ts`
+  - 把 `guest / account-password / wechat-mini-game` 三类入口收口成统一 provider 抽象
+  - 会按运行时能力、`wx.login()` 可用性和小游戏配置决定 Lobby 主登录按钮文案
+- 新增 `loginCocosWechatAuthSession()`
+  - 微信小游戏环境优先走 `wx.login()`
+  - 如果当前调试壳没有原生 `wx.login()`，但配置了 mock code，则允许退化到 mock 交换
+  - 交换成功后会把会话以 `provider = "wechat-mini-game"` 写入本地缓存，方便后续 UI / 调试识别
+- 服务端新增 `POST /api/auth/wechat-mini-game-login`
+  - 默认返回 `501`
+  - 仅在 `VEIL_WECHAT_MINIGAME_LOGIN_MODE=mock` 时启用 mock 交换
+  - 当前只是开发脚手架，不会触发真实微信 `code2Session`
+
+当前支持的配置项：
+
+- 客户端运行时覆盖：
+  - `globalThis.__PROJECT_VEIL_RUNTIME_CONFIG__.wechatMiniGame.enabled`
+  - `globalThis.__PROJECT_VEIL_RUNTIME_CONFIG__.wechatMiniGame.exchangePath`
+  - `globalThis.__PROJECT_VEIL_RUNTIME_CONFIG__.wechatMiniGame.mockCode`
+  - `globalThis.__PROJECT_VEIL_RUNTIME_CONFIG__.wechatMiniGame.appId`
+- 服务端环境变量：
+  - `VEIL_WECHAT_MINIGAME_LOGIN_MODE=mock`
+  - `VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE=wechat-dev-code`
+
+一个本地联调用例：
+
+```bash
+VEIL_WECHAT_MINIGAME_LOGIN_MODE=mock \
+VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE=wechat-dev-code \
+npm run dev:server
+```
+
+然后在小游戏预览壳里注入：
+
+```ts
+(globalThis as { __PROJECT_VEIL_RUNTIME_CONFIG__?: unknown }).__PROJECT_VEIL_RUNTIME_CONFIG__ = {
+  wechatMiniGame: {
+    enabled: true,
+    mockCode: "wechat-dev-code"
+  }
+};
+```
+
+这样 Lobby 会优先展示“微信登录并进入”，但它仍然只是 mock / scaffold，不代表已经完成生产发布链路。

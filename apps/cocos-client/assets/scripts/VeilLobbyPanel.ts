@@ -28,6 +28,8 @@ export interface VeilLobbyRenderState {
   roomId: string;
   authMode: "guest" | "account";
   loginId: string;
+  loginHint: string;
+  loginActionLabel: string;
   vaultSummary: string;
   sessionSource: "remote" | "local" | "manual" | "none";
   loading: boolean;
@@ -170,7 +172,7 @@ export class VeilLobbyPanel extends Component {
       [
         "登录 ID",
         state.loginId || "点击填写",
-        state.authMode === "account" ? "当前已处于正式账号模式" : "H5 绑定后的登录 ID 可以在这里直接进入"
+        state.loginHint || (state.authMode === "account" ? "当前已处于正式账号模式" : "H5 绑定后的登录 ID 可以在这里直接进入")
       ],
       {
         fill: FIELD_FILL,
@@ -247,7 +249,7 @@ export class VeilLobbyPanel extends Component {
       leftCursorY - 86,
       leftWidth,
       28,
-      state.entering ? "登录中..." : state.authMode === "account" ? "账号进入" : "账号登录并进入",
+      state.entering ? "登录中..." : state.loginActionLabel || (state.authMode === "account" ? "账号进入" : "账号登录并进入"),
       {
         fill: ACTION_ACCOUNT,
         stroke: new Color(228, 236, 248, 120),

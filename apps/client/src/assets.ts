@@ -1,5 +1,8 @@
-import assetConfig from "../../../configs/assets.json";
+import assetConfigJson from "../../../configs/assets.json";
 import unitCatalog from "../../../configs/units.json";
+import { parseAssetConfig, type AssetConfig, type AssetMetadataEntry } from "../../../packages/shared/src/assets-config";
+
+const assetConfig: AssetConfig = parseAssetConfig(assetConfigJson);
 
 type TerrainKey = keyof typeof assetConfig.terrain;
 type ResourceKey = keyof typeof assetConfig.resources;
@@ -45,6 +48,10 @@ export function unitAsset(key: string, state: AssetState = "idle"): string | nul
 
 export function unitFrameAsset(key: string): string | null {
   return assetConfig.units[key as UnitKey]?.frame ?? null;
+}
+
+export function assetManifestEntry(assetPath: string): AssetMetadataEntry | null {
+  return assetConfig.metadata[assetPath] ?? null;
 }
 
 export function unitBadgeAssets(key: string): { faction: string | null; rarity: string | null } {

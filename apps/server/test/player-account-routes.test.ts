@@ -9,6 +9,8 @@ import type {
   PlayerAccountAuthSnapshot,
   PlayerAccountCredentialInput,
   PlayerAccountEnsureInput,
+  PlayerEventHistoryQuery,
+  PlayerEventHistorySnapshot,
   PlayerAccountListOptions,
   PlayerAccountProfilePatch,
   PlayerAccountSnapshot,
@@ -19,6 +21,8 @@ import type { RoomPersistenceSnapshot } from "../src/index";
 import {
   createDefaultHeroLoadout,
   createDefaultHeroProgression,
+  queryEventLogEntries,
+  type PlayerAchievementProgress,
   type PlayerProgressionSnapshot,
   type PlayerBattleReplaySummary,
   type WorldState
@@ -27,6 +31,7 @@ import {
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
+  private readonly eventHistoryByPlayerId = new Map<string, PlayerAccountSnapshot["recentEventLog"]>();
 
   async load(_roomId: string): Promise<RoomPersistenceSnapshot | null> {
     return null;
@@ -41,6 +46,23 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return (
       Array.from(this.accounts.values()).find((account) => account.loginId === normalizedLoginId) ?? null
     );
+  }
+
+  async loadPlayerEventHistory(
+    playerId: string,
+    query: PlayerEventHistoryQuery = {}
+  ): Promise<PlayerEventHistorySnapshot> {
+    const items = queryEventLogEntries(this.eventHistoryByPlayerId.get(playerId) ?? [], query);
+    const total = queryEventLogEntries(this.eventHistoryByPlayerId.get(playerId) ?? [], {
+      ...query,
+      limit: undefined,
+      offset: undefined
+    }).length;
+
+    return {
+      items,
+      total
+    };
   }
 
   async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {
@@ -174,6 +196,13 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   seedAccount(account: PlayerAccountSnapshot): void {
     this.accounts.set(account.playerId, account);
+    if (!this.eventHistoryByPlayerId.has(account.playerId)) {
+      this.eventHistoryByPlayerId.set(account.playerId, structuredClone(account.recentEventLog ?? []));
+    }
+  }
+
+  seedEventHistory(playerId: string, entries: PlayerAccountSnapshot["recentEventLog"]): void {
+    this.eventHistoryByPlayerId.set(playerId, structuredClone(entries));
   }
 }
 
@@ -231,19 +260,94 @@ function createAccountTrackingWorldState(): WorldState {
   };
 }
 
-function createReplaySummary(id: string, completedAt: string): PlayerBattleReplaySummary {
+function createEpicEquipmentTrackingWorldState(): WorldState {
+  const base = createAccountTrackingWorldState();
+  return {
+    ...base,
+    heroes: [
+      {
+        ...base.heroes[0]!,
+        loadout: {
+          ...createDefaultHeroLoadout(),
+          equipment: {
+            weaponId: "sunforged_spear",
+            armorId: "warden_aegis",
+            accessoryId: "sun_medallion",
+            trinketIds: []
+          },
+          inventory: []
+        }
+      }
+    ]
+  };
+}
+
+function createFullyExploredTrackingWorldState(): WorldState {
+  const base = createAccountTrackingWorldState();
+  return {
+    ...base,
+    map: {
+      width: 2,
+      height: 2,
+      tiles: [
+        {
+          position: { x: 0, y: 0 },
+          terrain: "grass",
+          walkable: true,
+          resource: undefined,
+          occupant: undefined,
+          building: undefined
+        },
+        {
+          position: { x: 1, y: 0 },
+          terrain: "grass",
+          walkable: true,
+          resource: undefined,
+          occupant: undefined,
+          building: undefined
+        },
+        {
+          position: { x: 0, y: 1 },
+          terrain: "grass",
+          walkable: true,
+          resource: undefined,
+          occupant: undefined,
+          building: undefined
+        },
+        {
+          position: { x: 1, y: 1 },
+          terrain: "grass",
+          walkable: true,
+          resource: undefined,
+          occupant: undefined,
+          building: undefined
+        }
+      ]
+    },
+    visibilityByPlayer: {
+      "player-1": ["visible", "explored", "visible", "explored"]
+    }
+  };
+}
+
+function createReplaySummary(
+  id: string,
+  completedAt: string,
+  overrides: Partial<PlayerBattleReplaySummary> = {}
+): PlayerBattleReplaySummary {
   return {
     id,
-    roomId: "room-replay",
-    playerId: "player-1",
-    battleId: `${id}-battle`,
-    battleKind: "hero",
-    playerCamp: "attacker",
-    heroId: "hero-1",
-    opponentHeroId: "hero-2",
-    startedAt: "2026-03-27T11:55:00.000Z",
+    roomId: overrides.roomId ?? "room-replay",
+    playerId: overrides.playerId ?? "player-1",
+    battleId: overrides.battleId ?? `${id}-battle`,
+    battleKind: overrides.battleKind ?? "hero",
+    playerCamp: overrides.playerCamp ?? "attacker",
+    heroId: overrides.heroId ?? "hero-1",
+    ...(overrides.opponentHeroId !== undefined ? { opponentHeroId: overrides.opponentHeroId } : { opponentHeroId: "hero-2" }),
+    ...(overrides.neutralArmyId !== undefined ? { neutralArmyId: overrides.neutralArmyId } : {}),
+    startedAt: overrides.startedAt ?? "2026-03-27T11:55:00.000Z",
     completedAt,
-    initialState: {
+    initialState: overrides.initialState ?? {
       id: `${id}-battle`,
       round: 1,
       lanes: 2,
@@ -289,8 +393,8 @@ function createReplaySummary(id: string, completedAt: string): PlayerBattleRepla
       log: [],
       rng: { seed: 7, cursor: 0 }
     },
-    steps: [],
-    result: "attacker_victory"
+    steps: overrides.steps ?? [],
+    result: overrides.result ?? "attacker_victory"
   };
 }
 
@@ -353,10 +457,16 @@ test("player account routes degrade to local-mode responses when persistence is 
   assert.equal(publicReplayResponse.status, 200);
   assert.deepEqual(publicReplayPayload.items, []);
 
+  const publicAchievementResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/achievements`);
+  const publicAchievementPayload = (await publicAchievementResponse.json()) as { items: PlayerAchievementProgress[] };
+  assert.equal(publicAchievementResponse.status, 200);
+  assert.equal(publicAchievementPayload.items.length, 5);
+  assert.equal(publicAchievementPayload.items[0]?.id, "first_battle");
+
   const publicProgressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/progression`);
   const publicProgressPayload = (await publicProgressResponse.json()) as PlayerProgressionSnapshot;
   assert.equal(publicProgressResponse.status, 200);
-  assert.equal(publicProgressPayload.summary.totalAchievements, 3);
+  assert.equal(publicProgressPayload.summary.totalAchievements, 5);
   assert.equal(publicProgressPayload.summary.unlockedAchievements, 0);
 
   const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
@@ -382,6 +492,15 @@ test("player account routes degrade to local-mode responses when persistence is 
   assert.equal(meReplayResponse.status, 200);
   assert.deepEqual(meReplayPayload.items, []);
 
+  const meAchievementResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/achievements?unlocked=false&limit=2`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const meAchievementPayload = (await meAchievementResponse.json()) as { items: PlayerAchievementProgress[] };
+  assert.equal(meAchievementResponse.status, 200);
+  assert.deepEqual(meAchievementPayload.items.map((entry) => entry.id), ["first_battle", "enemy_slayer"]);
+
   const meProgressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/progression`, {
     headers: {
       Authorization: `Bearer ${session.token}`
@@ -389,7 +508,7 @@ test("player account routes degrade to local-mode responses when persistence is 
   });
   const meProgressPayload = (await meProgressResponse.json()) as PlayerProgressionSnapshot;
   assert.equal(meProgressResponse.status, 200);
-  assert.equal(meProgressPayload.summary.totalAchievements, 3);
+  assert.equal(meProgressPayload.summary.totalAchievements, 5);
   assert.equal(meProgressPayload.summary.unlockedAchievements, 0);
 });
 
@@ -424,6 +543,68 @@ test("player account battle replay routes return normalized replay summaries wit
 
   const missingResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/missing/battle-replays`);
   assert.equal(missingResponse.status, 404);
+});
+
+test("player account battle replay routes filter replay summaries by battle metadata", async (t) => {
+  const port = 42040 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-filtered",
+    displayName: "灰烬书记",
+    globalResources: { gold: 40, wood: 5, ore: 2 },
+    achievements: [],
+    recentEventLog: [],
+    recentBattleReplays: [
+      createReplaySummary("replay-hero-loss", "2026-03-27T12:05:00.000Z", {
+        roomId: "room-hero",
+        battleId: "battle-hero-loss",
+        battleKind: "hero",
+        playerCamp: "defender",
+        heroId: "hero-3",
+        opponentHeroId: "hero-9",
+        result: "defender_victory"
+      }),
+      createReplaySummary("replay-neutral-win", "2026-03-27T12:06:00.000Z", {
+        roomId: "room-neutral",
+        battleId: "battle-neutral-win",
+        battleKind: "neutral",
+        heroId: "hero-1",
+        neutralArmyId: "neutral-1",
+        opponentHeroId: undefined,
+        result: "attacker_victory"
+      })
+    ],
+    lastRoomId: "room-neutral",
+    lastSeenAt: new Date("2026-03-27T12:06:30.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-filtered",
+    displayName: "灰烬书记"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const publicResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-filtered/battle-replays?battleKind=neutral&heroId=hero-1&neutralArmyId=neutral-1`
+  );
+  const publicPayload = (await publicResponse.json()) as { items: PlayerBattleReplaySummary[] };
+  assert.equal(publicResponse.status, 200);
+  assert.deepEqual(publicPayload.items.map((replay) => replay.id), ["replay-neutral-win"]);
+
+  const meResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/battle-replays?roomId=room-hero&battleId=battle-hero-loss&playerCamp=defender&result=defender_victory&opponentHeroId=hero-9`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const mePayload = (await meResponse.json()) as { items: PlayerBattleReplaySummary[] };
+  assert.equal(meResponse.status, 200);
+  assert.deepEqual(mePayload.items.map((replay) => replay.id), ["replay-hero-loss"]);
 });
 
 test("player account me battle replay route resolves the current authenticated account", async (t) => {
@@ -463,6 +644,273 @@ test("player account me battle replay route resolves the current authenticated a
   assert.deepEqual(mePayload.items.map((replay) => replay.id), ["replay-me-2", "replay-me-1"]);
 });
 
+test("player account event-log routes filter recent entries without loading progression payloads", async (t) => {
+  const port = 42065 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-events",
+    displayName: "星炬记录官",
+    globalResources: { gold: 22, wood: 7, ore: 1 },
+    achievements: [],
+    recentEventLog: [
+      {
+        id: "event-skill",
+        timestamp: "2026-03-27T12:01:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-events",
+        category: "skill",
+        description: "skill",
+        heroId: "hero-2",
+        worldEventType: "hero.skillLearned",
+        rewards: []
+      },
+      {
+        id: "event-achievement",
+        timestamp: "2026-03-27T12:03:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-events",
+        category: "achievement",
+        description: "achievement",
+        heroId: "hero-1",
+        achievementId: "first_battle",
+        rewards: [{ type: "badge", label: "初次交锋" }]
+      },
+      {
+        id: "event-combat",
+        timestamp: "2026-03-27T12:02:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-events",
+        category: "combat",
+        description: "combat",
+        heroId: "hero-1",
+        worldEventType: "battle.started",
+        rewards: []
+      }
+    ],
+    recentBattleReplays: [],
+    lastRoomId: "room-alpha",
+    lastSeenAt: new Date("2026-03-27T12:04:00.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-events",
+    displayName: "星炬记录官"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const publicResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-events/event-log?category=achievement&achievementId=first_battle&heroId=hero-1`
+  );
+  const publicPayload = (await publicResponse.json()) as { items: PlayerAccountSnapshot["recentEventLog"] };
+  assert.equal(publicResponse.status, 200);
+  assert.deepEqual(publicPayload.items.map((entry) => entry.id), ["event-achievement"]);
+
+  const meResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/event-log?heroId=hero-1&limit=1`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const mePayload = (await meResponse.json()) as { items: PlayerAccountSnapshot["recentEventLog"] };
+  assert.equal(meResponse.status, 200);
+  assert.deepEqual(mePayload.items.map((entry) => entry.id), ["event-achievement"]);
+});
+
+test("player account event-history routes page dedicated history entries beyond the recent snapshot", async (t) => {
+  const port = 42069 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-history",
+    displayName: "霜灯抄录员",
+    globalResources: { gold: 22, wood: 7, ore: 1 },
+    achievements: [],
+    recentEventLog: [
+      {
+        id: "event-recent",
+        timestamp: "2026-03-27T12:05:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-history",
+        category: "achievement",
+        description: "recent snapshot entry",
+        heroId: "hero-1",
+        achievementId: "first_battle",
+        rewards: [{ type: "badge", label: "初次交锋" }]
+      }
+    ],
+    recentBattleReplays: [],
+    lastRoomId: "room-alpha",
+    lastSeenAt: new Date("2026-03-27T12:06:00.000Z").toISOString()
+  });
+  store.seedEventHistory("player-history", [
+    {
+      id: "event-history-3",
+      timestamp: "2026-03-27T12:05:00.000Z",
+      roomId: "room-alpha",
+      playerId: "player-history",
+      category: "achievement",
+      description: "history newest",
+      heroId: "hero-1",
+      achievementId: "first_battle",
+      rewards: [{ type: "badge", label: "初次交锋" }]
+    },
+    {
+      id: "event-history-2",
+      timestamp: "2026-03-27T12:03:00.000Z",
+      roomId: "room-alpha",
+      playerId: "player-history",
+      category: "combat",
+      description: "history middle",
+      heroId: "hero-1",
+      worldEventType: "battle.started",
+      rewards: []
+    },
+    {
+      id: "event-history-1",
+      timestamp: "2026-03-27T12:01:00.000Z",
+      roomId: "room-alpha",
+      playerId: "player-history",
+      category: "combat",
+      description: "history oldest",
+      heroId: "hero-1",
+      worldEventType: "battle.resolved",
+      rewards: []
+    }
+  ]);
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-history",
+    displayName: "霜灯抄录员"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const publicResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-history/event-history?heroId=hero-1&offset=1&limit=1`
+  );
+  const publicPayload = (await publicResponse.json()) as {
+    items: PlayerAccountSnapshot["recentEventLog"];
+    total: number;
+    offset: number;
+    limit: number;
+    hasMore: boolean;
+  };
+  assert.equal(publicResponse.status, 200);
+  assert.equal(publicPayload.total, 3);
+  assert.equal(publicPayload.offset, 1);
+  assert.equal(publicPayload.limit, 1);
+  assert.equal(publicPayload.hasMore, true);
+  assert.deepEqual(publicPayload.items.map((entry) => entry.id), ["event-history-2"]);
+
+  const meResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/event-history?category=combat`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const mePayload = (await meResponse.json()) as {
+    items: PlayerAccountSnapshot["recentEventLog"];
+    total: number;
+    hasMore: boolean;
+  };
+  assert.equal(meResponse.status, 200);
+  assert.equal(mePayload.total, 2);
+  assert.equal(mePayload.hasMore, false);
+  assert.deepEqual(mePayload.items.map((entry) => entry.id), ["event-history-2", "event-history-1"]);
+
+  const rangedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-history/event-history?since=2026-03-27T12:02:00.000Z&until=2026-03-27T12:04:00.000Z`
+  );
+  const rangedPayload = (await rangedResponse.json()) as {
+    items: PlayerAccountSnapshot["recentEventLog"];
+    total: number;
+    offset: number;
+    limit: number;
+    hasMore: boolean;
+  };
+  assert.equal(rangedResponse.status, 200);
+  assert.equal(rangedPayload.total, 1);
+  assert.deepEqual(rangedPayload.items.map((entry) => entry.id), ["event-history-2"]);
+});
+
+test("player account achievement routes filter normalized progress without loading event history", async (t) => {
+  const port = 42072 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-achievements",
+    displayName: "星冠检阅官",
+    globalResources: { gold: 22, wood: 7, ore: 1 },
+    achievements: [
+      {
+        id: "first_battle",
+        current: 1,
+        unlockedAt: "2026-03-27T12:00:00.000Z"
+      },
+      {
+        id: "enemy_slayer",
+        current: 2,
+        progressUpdatedAt: "2026-03-27T12:02:00.000Z"
+      },
+      {
+        id: "skill_scholar",
+        current: 5,
+        unlockedAt: "2026-03-27T12:03:00.000Z"
+      }
+    ],
+    recentEventLog: [
+      {
+        id: "event-achievement",
+        timestamp: "2026-03-27T12:03:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-achievements",
+        category: "achievement",
+        description: "achievement",
+        rewards: []
+      }
+    ],
+    recentBattleReplays: [],
+    lastRoomId: "room-alpha",
+    lastSeenAt: new Date("2026-03-27T12:04:00.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-achievements",
+    displayName: "星冠检阅官"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const publicResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-achievements/achievements?unlocked=true&metric=skills_learned`
+  );
+  const publicPayload = (await publicResponse.json()) as { items: PlayerAchievementProgress[] };
+  assert.equal(publicResponse.status, 200);
+  assert.deepEqual(publicPayload.items.map((entry) => entry.id), ["skill_scholar"]);
+
+  const meResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/achievements?achievementId=enemy_slayer`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const mePayload = (await meResponse.json()) as { items: PlayerAchievementProgress[] };
+  assert.equal(meResponse.status, 200);
+  assert.deepEqual(mePayload.items.map((entry) => entry.id), ["enemy_slayer"]);
+  assert.equal(mePayload.items[0]?.title, "猎敌者");
+});
+
 test("player account progression routes return a compact achievement and event read model", async (t) => {
   const port = 42080 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
@@ -479,6 +927,7 @@ test("player account progression routes return a compact achievement and event r
         current: 1,
         target: 99,
         unlocked: true,
+        progressUpdatedAt: "2026-03-27T12:00:00.000Z",
         unlockedAt: "2026-03-27T12:00:00.000Z"
       },
       {
@@ -488,7 +937,8 @@ test("player account progression routes return a compact achievement and event r
         metric: "battles_won",
         current: 2,
         target: 99,
-        unlocked: false
+        unlocked: false,
+        progressUpdatedAt: "2026-03-27T12:02:00.000Z"
       }
     ],
     recentEventLog: [
@@ -528,9 +978,12 @@ test("player account progression routes return a compact achievement and event r
   const publicPayload = (await publicResponse.json()) as PlayerProgressionSnapshot;
   assert.equal(publicResponse.status, 200);
   assert.deepEqual(publicPayload.summary, {
-    totalAchievements: 3,
+    totalAchievements: 5,
     unlockedAchievements: 1,
     inProgressAchievements: 1,
+    latestProgressAchievementId: "enemy_slayer",
+    latestProgressAchievementTitle: "猎敌者",
+    latestProgressAt: "2026-03-27T12:02:00.000Z",
     latestUnlockedAchievementId: "first_battle",
     latestUnlockedAchievementTitle: "初次交锋",
     latestUnlockedAt: "2026-03-27T12:00:00.000Z",
@@ -549,6 +1002,7 @@ test("player account progression routes return a compact achievement and event r
   assert.deepEqual(mePayload.recentEventLog.map((entry) => entry.id), ["event-newer", "event-older"]);
   assert.equal(mePayload.achievements[1]?.id, "enemy_slayer");
   assert.equal(mePayload.achievements[1]?.current, 2);
+  assert.equal(mePayload.achievements[1]?.progressUpdatedAt, "2026-03-27T12:02:00.000Z");
 });
 
 test("player achievement tracker appends logs and unlocks milestones", () => {
@@ -588,8 +1042,56 @@ test("player achievement tracker appends logs and unlocks milestones", () => {
   );
 
   assert.equal(updated.achievements.find((achievement) => achievement.id === "first_battle")?.unlocked, true);
+  assert.equal(
+    updated.achievements.find((achievement) => achievement.id === "first_battle")?.progressUpdatedAt,
+    "2026-03-27T12:00:00.000Z"
+  );
   assert.equal(updated.recentEventLog[0]?.category, "achievement");
   assert.match(updated.recentEventLog.map((entry) => entry.description).join(" "), /解锁成就：初次交锋/);
+});
+
+test("player achievement tracker can award battle wins from explicit participant metadata", () => {
+  const state = {
+    ...createAccountTrackingWorldState(),
+    heroes: []
+  };
+  const updated = applyPlayerEventLogAndAchievements(
+    {
+      playerId: "player-1",
+      displayName: "暮火侦骑",
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [
+        {
+          id: "enemy_slayer",
+          title: "ignored",
+          description: "ignored",
+          metric: "battles_won",
+          current: 2,
+          target: 3,
+          unlocked: false,
+          progressUpdatedAt: "2026-03-27T11:59:00.000Z"
+        }
+      ],
+      recentEventLog: []
+    },
+    state,
+    [
+      {
+        type: "battle.resolved",
+        heroId: "hero-1",
+        attackerPlayerId: "player-1",
+        defenderHeroId: "hero-2",
+        defenderPlayerId: "player-2",
+        battleId: "battle-hero-1-vs-hero-2",
+        result: "attacker_victory"
+      }
+    ],
+    "2026-03-27T12:00:00.000Z"
+  );
+
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "enemy_slayer")?.current, 3);
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "enemy_slayer")?.unlocked, true);
+  assert.match(updated.recentEventLog.map((entry) => entry.description).join(" "), /解锁成就：猎敌者/);
 });
 
 test("player achievement tracker records equipment drop entries for hero victories", () => {
@@ -618,6 +1120,70 @@ test("player achievement tracker records equipment drop entries for hero victori
 
   assert.equal(updated.recentEventLog[0]?.worldEventType, "hero.equipmentFound");
   assert.match(updated.recentEventLog[0]?.description ?? "", /塔盾链甲/);
+});
+
+test("player achievement tracker syncs epic equipment loadout progress from world state", () => {
+  const updated = applyPlayerEventLogAndAchievements(
+    {
+      playerId: "player-1",
+      displayName: "暮火侦骑",
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      recentEventLog: []
+    },
+    createEpicEquipmentTrackingWorldState(),
+    [],
+    "2026-03-27T12:10:00.000Z"
+  );
+
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "epic_collector")?.current, 3);
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "epic_collector")?.unlocked, true);
+  assert.equal(
+    updated.achievements.find((achievement) => achievement.id === "epic_collector")?.progressUpdatedAt,
+    "2026-03-27T12:10:00.000Z"
+  );
+  assert.match(updated.recentEventLog[0]?.description ?? "", /解锁成就：史诗武装/);
+
+  const regressed = applyPlayerEventLogAndAchievements(
+    updated,
+    createAccountTrackingWorldState(),
+    [],
+    "2026-03-27T12:11:00.000Z"
+  );
+
+  assert.equal(regressed.achievements.find((achievement) => achievement.id === "epic_collector")?.current, 3);
+  assert.equal(regressed.achievements.find((achievement) => achievement.id === "epic_collector")?.unlocked, true);
+  assert.equal(
+    regressed.achievements.find((achievement) => achievement.id === "epic_collector")?.progressUpdatedAt,
+    "2026-03-27T12:10:00.000Z"
+  );
+  assert.equal(
+    regressed.recentEventLog.filter((entry) => entry.achievementId === "epic_collector").length,
+    1
+  );
+});
+
+test("player achievement tracker syncs full map exploration progress from world visibility", () => {
+  const updated = applyPlayerEventLogAndAchievements(
+    {
+      playerId: "player-1",
+      displayName: "暮火侦骑",
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      recentEventLog: []
+    },
+    createFullyExploredTrackingWorldState(),
+    [],
+    "2026-03-27T12:12:00.000Z"
+  );
+
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "world_explorer")?.current, 1);
+  assert.equal(updated.achievements.find((achievement) => achievement.id === "world_explorer")?.unlocked, true);
+  assert.equal(
+    updated.achievements.find((achievement) => achievement.id === "world_explorer")?.progressUpdatedAt,
+    "2026-03-27T12:12:00.000Z"
+  );
+  assert.match(updated.recentEventLog[0]?.description ?? "", /解锁成就：踏勘全境/);
 });
 
 test("player account profile updates by player id require auth and allow self-service only", async (t) => {

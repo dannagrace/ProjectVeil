@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyPlayerProgressionSnapshot,
   createFallbackPlayerAccountProfile,
   getPlayerAccountStorageKey,
   loadPlayerAccountProfile,
+  loadPlayerAccountProfileWithProgression,
+  loadPlayerAchievementProgress,
+  loadPlayerBattleReplayDetail,
+  loadPlayerBattleReplayPlayback,
   loadPlayerBattleReplaySummaries,
+  loadPlayerEventLog,
   loadPlayerProgressionSnapshot,
   readStoredPlayerDisplayName,
   writeStoredPlayerDisplayName
@@ -70,6 +76,24 @@ test("player account helpers can build a local fallback profile", () => {
         current: 0,
         target: 5,
         unlocked: false
+      },
+      {
+        id: "world_explorer",
+        title: "踏勘全境",
+        description: "揭开整张地图的迷雾。",
+        metric: "maps_fully_explored",
+        current: 0,
+        target: 1,
+        unlocked: false
+      },
+      {
+        id: "epic_collector",
+        title: "史诗武装",
+        description: "为同一名英雄装备全套史诗装备。",
+        metric: "epic_equipment_slots",
+        current: 0,
+        target: 3,
+        unlocked: false
       }
     ],
     recentEventLog: [],
@@ -79,9 +103,27 @@ test("player account helpers can build a local fallback profile", () => {
   });
 });
 
-test("player replay loader normalizes remote replay summaries and keeps newest first", async () => {
+test("player account progression overlay keeps existing account data when snapshot is empty", () => {
+  const account = createFallbackPlayerAccountProfile("player-9", "room-beta", "本地访客");
+
+  const merged = applyPlayerProgressionSnapshot(account, {
+    summary: {
+      totalAchievements: 5,
+      unlockedAchievements: 0,
+      inProgressAchievements: 0,
+      recentEventCount: 0
+    },
+    achievements: account.achievements,
+    recentEventLog: []
+  });
+
+  assert.deepEqual(merged, account);
+});
+
+test("player account loader can overlay progression snapshot onto base account profile", async () => {
   const originalWindow = globalThis.window;
   const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
 
   Object.defineProperty(globalThis, "window", {
     configurable: true,
@@ -101,8 +143,128 @@ test("player replay loader normalizes remote replay summaries and keeps newest f
     }
   });
 
-  globalThis.fetch = (async () =>
-    new Response(
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    requestedUrls.push(url);
+    if (url.endsWith("/progression?limit=2")) {
+      return new Response(
+        JSON.stringify({
+          summary: {
+            totalAchievements: 5,
+            unlockedAchievements: 1,
+            inProgressAchievements: 1,
+            latestUnlockedAchievementId: "first_battle",
+            latestUnlockedAt: "2026-03-27T12:00:00.000Z",
+            latestProgressAchievementId: "enemy_slayer",
+            latestProgressAt: "2026-03-27T12:02:00.000Z",
+            recentEventCount: 1,
+            latestEventAt: "2026-03-27T12:03:00.000Z"
+          },
+          achievements: [
+            {
+              id: "first_battle",
+              current: 1,
+              unlockedAt: "2026-03-27T12:00:00.000Z"
+            },
+            {
+              id: "enemy_slayer",
+              current: 2,
+              progressUpdatedAt: "2026-03-27T12:02:00.000Z"
+            }
+          ],
+          recentEventLog: [
+            {
+              id: "event-1",
+              timestamp: "2026-03-27T12:03:00.000Z",
+              roomId: "room-alpha",
+              playerId: "player-1",
+              category: "achievement",
+              description: "解锁成就：初次交锋",
+              achievementId: "first_battle",
+              rewards: [{ type: "badge", label: "初次交锋" }]
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        account: {
+          playerId: "player-1",
+          displayName: "暮火侦骑",
+          globalResources: {
+            gold: 12,
+            wood: 4,
+            ore: 2
+          },
+          achievements: [],
+          recentEventLog: [],
+          lastRoomId: "room-alpha"
+        }
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }) as typeof fetch;
+
+  try {
+    const account = await loadPlayerAccountProfileWithProgression("player-1", "room-alpha", 2);
+
+    assert.deepEqual(requestedUrls, [
+      "http://127.0.0.1:2567/api/player-accounts/player-1",
+      "http://127.0.0.1:2567/api/player-accounts/player-1/battle-replays",
+      "http://127.0.0.1:2567/api/player-accounts/player-1/progression?limit=2"
+    ]);
+    assert.equal(account.displayName, "暮火侦骑");
+    assert.equal(account.achievements[0]?.id, "first_battle");
+    assert.equal(account.achievements[1]?.current, 2);
+    assert.deepEqual(account.recentEventLog.map((entry) => entry.id), ["event-1"]);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player replay loader sends shared filters and normalizes newest first", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(): string | null {
+          return null;
+        },
+        setItem(): void {}
+      }
+    }
+  });
+
+  globalThis.fetch = (async (input) => {
+    requestedUrl = String(input);
+    return new Response(
       JSON.stringify({
         items: [
           {
@@ -153,8 +315,9 @@ test("player replay loader normalizes remote replay summaries and keeps newest f
             playerId: "player-1",
             battleId: "battle-2",
             battleKind: "hero",
-            playerCamp: "attacker",
+            playerCamp: "defender",
             heroId: "hero-1",
+            opponentHeroId: "hero-9",
             startedAt: "2026-03-27T12:01:00.000Z",
             completedAt: "2026-03-27T12:02:00.000Z",
             initialState: {
@@ -187,7 +350,7 @@ test("player replay loader normalizes remote replay summaries and keeps newest f
               rng: { seed: 8, cursor: 0 }
             },
             steps: [],
-            result: "attacker_victory"
+            result: "defender_victory"
           }
         ]
       }),
@@ -197,11 +360,600 @@ test("player replay loader normalizes remote replay summaries and keeps newest f
           "Content-Type": "application/json"
         }
       }
+    );
+  }) as typeof fetch;
+
+  try {
+    const replays = await loadPlayerBattleReplaySummaries("player-1", {
+      limit: 1,
+      roomId: "room-alpha",
+      battleKind: "hero",
+      playerCamp: "defender",
+      heroId: "hero-1",
+      opponentHeroId: "hero-9",
+      result: "defender_victory"
+    });
+    assert.equal(
+      requestedUrl,
+      "http://127.0.0.1:2567/api/player-accounts/player-1/battle-replays?limit=1&roomId=room-alpha&battleKind=hero&playerCamp=defender&heroId=hero-1&opponentHeroId=hero-9&result=defender_victory"
+    );
+    assert.deepEqual(replays.map((replay) => replay.id), ["replay-newer"]);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player replay loader clears expired auth session and falls back to normalized filtered defaults", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        values: new Map<string, string>([
+          [
+            "project-veil:auth-session",
+            JSON.stringify({
+              playerId: "player-1",
+              displayName: "暮火侦骑",
+              authMode: "guest",
+              token: "expired-token",
+              source: "guest"
+            })
+          ]
+        ]),
+        getItem(key: string): string | null {
+          return this.values.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          this.values.set(key, value);
+        },
+        removeItem(key: string): void {
+          this.values.delete(key);
+        }
+      }
+    }
+  });
+
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          code: "unauthorized",
+          message: "expired"
+        }
+      }),
+      {
+        status: 401,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
     )) as typeof fetch;
 
   try {
-    const replays = await loadPlayerBattleReplaySummaries("player-1");
-    assert.deepEqual(replays.map((replay) => replay.id), ["replay-newer", "replay-older"]);
+    const replays = await loadPlayerBattleReplaySummaries("player-1", {
+      limit: 1,
+      battleKind: "neutral"
+    });
+    assert.deepEqual(replays, []);
+    assert.equal(globalThis.window.localStorage.getItem("project-veil:auth-session"), null);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player replay detail loader requests a replay by id and normalizes the payload", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(): string | null {
+          return null;
+        },
+        setItem(): void {}
+      }
+    }
+  });
+
+  globalThis.fetch = (async (input) => {
+    requestedUrl = String(input);
+    return new Response(
+      JSON.stringify({
+        replay: {
+          id: "replay-detail",
+          roomId: "room-alpha",
+          playerId: "player-1",
+          battleId: "battle-1",
+          battleKind: "neutral",
+          playerCamp: "attacker",
+          heroId: "hero-1",
+          neutralArmyId: "neutral-1",
+          startedAt: "2026-03-27T12:00:00.000Z",
+          completedAt: "2026-03-27T12:01:00.000Z",
+          initialState: {
+            id: "battle-1",
+            round: 1,
+            lanes: 1,
+            activeUnitId: "stack-1",
+            turnOrder: ["stack-1"],
+            units: {
+              "stack-1": {
+                id: "stack-1",
+                camp: "attacker",
+                templateId: "hero_guard_basic",
+                lane: 0,
+                stackName: "暮火侦骑",
+                initiative: 3,
+                attack: 2,
+                defense: 1,
+                minDamage: 1,
+                maxDamage: 2,
+                count: 10,
+                currentHp: 10,
+                maxHp: 10,
+                hasRetaliated: false,
+                defending: false
+              }
+            },
+            environment: [],
+            log: [],
+            rng: { seed: 7, cursor: 0 }
+          },
+          steps: [],
+          result: "attacker_victory"
+        }
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }) as typeof fetch;
+
+  try {
+    const replay = await loadPlayerBattleReplayDetail("player-1", "replay-detail");
+    assert.equal(
+      requestedUrl,
+      "http://127.0.0.1:2567/api/player-accounts/player-1/battle-replays/replay-detail"
+    );
+    assert.equal(replay?.id, "replay-detail");
+    assert.equal(replay?.neutralArmyId, "neutral-1");
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player replay playback loader uses stateless command query params and clears expired auth", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const localStorageValues = new Map<string, string>([
+    [
+      "project-veil:auth-session",
+      JSON.stringify({
+        playerId: "player-1",
+        displayName: "雾林司灯",
+        authMode: "guest",
+        token: "session-token",
+        source: "remote"
+      })
+    ]
+  ]);
+  const requestedUrls: string[] = [];
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(key: string): string | null {
+          return localStorageValues.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          localStorageValues.set(key, value);
+        },
+        removeItem(key: string): void {
+          localStorageValues.delete(key);
+        }
+      }
+    }
+  });
+
+  globalThis.fetch = (async (input) => {
+    requestedUrls.push(String(input));
+    if (requestedUrls.length === 1) {
+      return new Response(
+        JSON.stringify({
+          playback: {
+            replay: {
+              id: "replay-playback",
+              roomId: "room-alpha",
+              playerId: "player-1",
+              battleId: "battle-1",
+              battleKind: "neutral",
+              playerCamp: "attacker",
+              heroId: "hero-1",
+              neutralArmyId: "neutral-1",
+              startedAt: "2026-03-27T12:00:00.000Z",
+              completedAt: "2026-03-27T12:01:00.000Z",
+              initialState: {
+                id: "battle-1",
+                round: 1,
+                lanes: 1,
+                activeUnitId: "stack-1",
+                turnOrder: ["stack-1"],
+                units: {
+                  "stack-1": {
+                    id: "stack-1",
+                    camp: "attacker",
+                    templateId: "hero_guard_basic",
+                    lane: 0,
+                    stackName: "暮火侦骑",
+                    initiative: 3,
+                    attack: 2,
+                    defense: 1,
+                    minDamage: 1,
+                    maxDamage: 2,
+                    count: 10,
+                    currentHp: 10,
+                    maxHp: 10,
+                    hasRetaliated: false,
+                    defending: false
+                  }
+                },
+                environment: [],
+                log: [],
+                rng: { seed: 7, cursor: 0 }
+              },
+              steps: [
+                {
+                  index: 1,
+                  source: "player",
+                  action: {
+                    type: "battle.wait",
+                    unitId: "stack-1"
+                  }
+                }
+              ],
+              result: "attacker_victory"
+            },
+            status: "playing",
+            currentStepIndex: 1
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+  }) as typeof fetch;
+
+  try {
+    const playback = await loadPlayerBattleReplayPlayback("player-1", "replay-playback", {
+      currentStepIndex: 0,
+      status: "paused",
+      action: "tick",
+      repeat: 1
+    });
+    assert.equal(
+      requestedUrls[0],
+      "http://127.0.0.1:2567/api/player-accounts/me/battle-replays/replay-playback/playback?currentStepIndex=0&status=paused&action=tick&repeat=1"
+    );
+    assert.equal(playback?.status, "completed");
+    assert.equal(playback?.currentStepIndex, 1);
+
+    const missingPlayback = await loadPlayerBattleReplayPlayback("player-1", "replay-playback");
+    assert.equal(missingPlayback, null);
+    assert.equal(localStorageValues.has("project-veil:auth-session"), false);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player event-log loader sends shared filters and normalizes newest entries first", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(): string | null {
+          return null;
+        },
+        setItem(): void {}
+      }
+    }
+  });
+
+  globalThis.fetch = (async (input) => {
+    requestedUrl = String(input);
+    return new Response(
+      JSON.stringify({
+        items: [
+          {
+            id: "event-older",
+            timestamp: "2026-03-27T12:01:00.000Z",
+            roomId: "room-alpha",
+            playerId: "player-1",
+            category: "achievement",
+            description: "older",
+            heroId: "hero-1",
+            achievementId: "first_battle",
+            worldEventType: "battle.started",
+            rewards: []
+          },
+          {
+            id: "event-newer",
+            timestamp: "2026-03-27T12:03:00.000Z",
+            roomId: "room-alpha",
+            playerId: "player-1",
+            category: "achievement",
+            description: "newer",
+            heroId: "hero-1",
+            achievementId: "first_battle",
+            worldEventType: "battle.started",
+            rewards: [{ type: "badge", label: "初次交锋" }]
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }) as typeof fetch;
+
+  try {
+    const items = await loadPlayerEventLog("player-1", {
+      limit: 1,
+      category: "achievement",
+      heroId: "hero-1",
+      achievementId: "first_battle",
+      worldEventType: "battle.started"
+    });
+
+    assert.equal(
+      requestedUrl,
+      "http://127.0.0.1:2567/api/player-accounts/player-1/event-log?limit=1&category=achievement&heroId=hero-1&achievementId=first_battle&worldEventType=battle.started"
+    );
+    assert.deepEqual(items.map((entry) => entry.id), ["event-newer", "event-older"]);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player event-log loader clears expired auth session and falls back to empty items", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const localStorageValues = new Map<string, string>([
+    [
+      "project-veil:auth-session",
+      JSON.stringify({
+        playerId: "player-1",
+        displayName: "雾林司灯",
+        authMode: "guest",
+        token: "session-token",
+        source: "remote"
+      })
+    ]
+  ]);
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(key: string): string | null {
+          return localStorageValues.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          localStorageValues.set(key, value);
+        },
+        removeItem(key: string): void {
+          localStorageValues.delete(key);
+        }
+      }
+    }
+  });
+
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })) as typeof fetch;
+
+  try {
+    const items = await loadPlayerEventLog("player-1", {
+      category: "achievement"
+    });
+
+    assert.deepEqual(items, []);
+    assert.equal(localStorageValues.has("project-veil:auth-session"), false);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player achievement loader sends shared filters and normalizes definition-backed progress", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(): string | null {
+          return null;
+        },
+        setItem(): void {}
+      }
+    }
+  });
+
+  globalThis.fetch = (async (input) => {
+    requestedUrl = String(input);
+    return new Response(
+      JSON.stringify({
+        items: [
+          {
+            id: "enemy_slayer",
+            current: 2,
+            progressUpdatedAt: "2026-03-27T12:02:00.000Z"
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }) as typeof fetch;
+
+  try {
+    const items = await loadPlayerAchievementProgress("player-1", {
+      limit: 1,
+      achievementId: "enemy_slayer",
+      metric: "battles_won",
+      unlocked: false
+    });
+
+    assert.equal(
+      requestedUrl,
+      "http://127.0.0.1:2567/api/player-accounts/player-1/achievements?limit=1&achievementId=enemy_slayer&metric=battles_won&unlocked=false"
+    );
+    assert.deepEqual(items.map((entry) => entry.id), ["enemy_slayer"]);
+    assert.equal(items[0]?.title, "猎敌者");
+    assert.equal(items[0]?.current, 2);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player achievement loader clears expired auth session and falls back to normalized filtered defaults", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const localStorageValues = new Map<string, string>([
+    [
+      "project-veil:auth-session",
+      JSON.stringify({
+        playerId: "player-1",
+        displayName: "雾林司灯",
+        authMode: "guest",
+        token: "session-token",
+        source: "remote"
+      })
+    ]
+  ]);
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(key: string): string | null {
+          return localStorageValues.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          localStorageValues.set(key, value);
+        },
+        removeItem(key: string): void {
+          localStorageValues.delete(key);
+        }
+      }
+    }
+  });
+
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })) as typeof fetch;
+
+  try {
+    const items = await loadPlayerAchievementProgress("player-1", {
+      unlocked: true
+    });
+
+    assert.deepEqual(items, []);
+    assert.equal(localStorageValues.has("project-veil:auth-session"), false);
   } finally {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
@@ -401,9 +1153,12 @@ test("player progression loader normalizes summary, achievements, and limited ev
   try {
     const snapshot = await loadPlayerProgressionSnapshot("player-1", 1);
     assert.deepEqual(snapshot.summary, {
-      totalAchievements: 3,
+      totalAchievements: 5,
       unlockedAchievements: 1,
       inProgressAchievements: 0,
+      latestProgressAchievementId: "first_battle",
+      latestProgressAchievementTitle: "初次交锋",
+      latestProgressAt: "2026-03-27T12:00:00.000Z",
       latestUnlockedAchievementId: "first_battle",
       latestUnlockedAchievementTitle: "初次交锋",
       latestUnlockedAt: "2026-03-27T12:00:00.000Z",
@@ -411,6 +1166,7 @@ test("player progression loader normalizes summary, achievements, and limited ev
       latestEventAt: "2026-03-27T12:03:00.000Z"
     });
     assert.equal(snapshot.achievements[0]?.title, "初次交锋");
+    assert.equal(snapshot.achievements[0]?.progressUpdatedAt, "2026-03-27T12:00:00.000Z");
     assert.deepEqual(snapshot.recentEventLog.map((entry) => entry.id), ["event-1"]);
   } finally {
     Object.defineProperty(globalThis, "window", {

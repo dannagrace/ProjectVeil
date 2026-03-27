@@ -9,6 +9,8 @@ The current persistence scope is:
 - World state snapshot
 - All active battle snapshots in the room
 - Per-player room progress snapshot
+- Per-player account progression snapshot
+- Per-player append-only event history read model
 - Config center documents for `world`, `mapObjects`, and `units`
 
 Snapshots are stored as serialized JSON strings for compatibility with older MySQL versions.
@@ -68,6 +70,59 @@ Recommended index:
 
 When loading older snapshots that predate hero progression, the server will backfill default progression values before the room is restored.
 
+### Table: `player_accounts`
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `player_id` | `VARCHAR(191)` | No | - | Player id, primary key |
+| `display_name` | `VARCHAR(80)` | Yes | `NULL` | Public display name |
+| `global_resources_json` | `LONGTEXT` | No | - | Serialized account-wide resource ledger |
+| `achievements_json` | `LONGTEXT` | Yes | `NULL` | Serialized achievement progress snapshot |
+| `recent_event_log_json` | `LONGTEXT` | Yes | `NULL` | Serialized compact recent event snapshot used by `/event-log` and `/progression` |
+| `recent_battle_replays_json` | `LONGTEXT` | Yes | `NULL` | Serialized recent battle replay summaries |
+| `last_room_id` | `VARCHAR(191)` | Yes | `NULL` | Last room seen for this account |
+| `last_seen_at` | `DATETIME` | Yes | `NULL` | Last known activity timestamp |
+| `login_id` | `VARCHAR(40)` | Yes | `NULL` | Bound login id for credential auth |
+| `password_hash` | `VARCHAR(255)` | Yes | `NULL` | Stored password hash |
+| `credential_bound_at` | `DATETIME` | Yes | `NULL` | First credential bind time |
+| `version` | `BIGINT UNSIGNED` | No | `1` | Incremented on every upsert |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | First persistence time |
+| `updated_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Last persistence time |
+
+Recommended indexes:
+
+- `idx_player_accounts_updated_at` on `updated_at`
+- `uidx_player_accounts_login_id` unique on `login_id`
+
+### Table: `player_event_history`
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `player_id` | `VARCHAR(191)` | No | - | Player id |
+| `event_id` | `VARCHAR(191)` | No | - | Stable event log id within the player timeline |
+| `timestamp` | `DATETIME` | No | - | Event time used for history ordering |
+| `room_id` | `VARCHAR(191)` | No | - | Source room id |
+| `category` | `VARCHAR(32)` | No | - | Event category for lightweight filtering |
+| `hero_id` | `VARCHAR(191)` | Yes | `NULL` | Optional hero id filter key |
+| `world_event_type` | `VARCHAR(64)` | Yes | `NULL` | Optional world event type filter key |
+| `achievement_id` | `VARCHAR(64)` | Yes | `NULL` | Optional achievement id filter key |
+| `entry_json` | `LONGTEXT` | No | - | Serialized `EventLogEntry` payload |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | First persistence time |
+
+Primary key:
+
+- `(player_id, event_id)`
+
+Recommended index:
+
+- `idx_player_event_history_player_time` on `(player_id, timestamp)`
+
+The server appends only newly seen `recentEventLog` entries into this table when player account progress is saved. This keeps the existing compact snapshot read model intact while exposing a paged `/api/player-accounts/:playerId/event-history` API for player-facing history views.
+
+The event history routes support the existing `category` / `heroId` / `achievementId` / `worldEventType` filters, plus optional inclusive `since` and `until` ISO-8601 timestamps. MySQL-backed queries push those time-range predicates down into SQL so player history views can page within a bounded time window without scanning unrelated rows.
+
+Issue #27 follow-up note: event-log and achievement history queries now share a single normalization contract in `packages/shared/src/event-log.ts`. Route handlers and MySQL persistence both reuse that helper so trimming, pagination clamping, and ISO timestamp coercion stay consistent before full event-log persistence and richer achievement views land.
+
 ### Table: `config_documents`
 
 | Column | Type | Nullable | Default | Description |
@@ -107,7 +162,7 @@ The repository includes a SQL file and an init script:
 - SQL: `docs/mysql-persistence.sql`
 - Script: `npm run db:init:mysql`
 
-Running the init script creates the database, `room_snapshots`, `player_room_profiles`, and `config_documents` if they do not already exist.
+Running the init script creates the database, `room_snapshots`, `player_room_profiles`, `player_accounts`, `player_event_history`, and `config_documents` if they do not already exist.
 
 ## Manual Operations
 

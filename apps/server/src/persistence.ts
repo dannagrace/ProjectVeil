@@ -1,11 +1,15 @@
 import { createConnection, createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import {
   appendPlayerBattleReplaySummaries,
+  normalizeEventLogQuery,
   normalizeAchievementProgress,
   normalizeEventLogEntries,
+  normalizePlayerAccountReadModel,
+  type EventLogQuery,
   normalizeHeroState,
   type EventLogEntry,
   type HeroState,
+  type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress,
   type ResourceLedger,
@@ -17,6 +21,7 @@ export interface RoomSnapshotStore {
   load(roomId: string): Promise<RoomPersistenceSnapshot | null>;
   loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null>;
+  loadPlayerEventHistory(playerId: string, query?: PlayerEventHistoryQuery): Promise<PlayerEventHistorySnapshot>;
   loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]>;
   loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]>;
@@ -104,6 +109,23 @@ interface PlayerAccountAuthRow extends RowDataPacket {
   credential_bound_at: Date | string | null;
 }
 
+interface PlayerEventHistoryRow extends RowDataPacket {
+  player_id: string;
+  event_id: string;
+  timestamp: Date | string;
+  room_id: string;
+  category: EventLogEntry["category"];
+  hero_id: string | null;
+  world_event_type: EventLogEntry["worldEventType"] | null;
+  achievement_id: EventLogEntry["achievementId"] | null;
+  entry_json: string | EventLogEntry;
+  created_at: Date | string;
+}
+
+interface PlayerEventHistoryCountRow extends RowDataPacket {
+  total: number;
+}
+
 interface PlayerHeroArchiveRow extends RowDataPacket {
   player_id: string;
   hero_id: string;
@@ -132,17 +154,8 @@ export interface PlayerRoomProfileSnapshot {
   resources: ResourceLedger;
 }
 
-export interface PlayerAccountSnapshot {
-  playerId: string;
-  displayName: string;
-  globalResources: ResourceLedger;
-  achievements: PlayerAchievementProgress[];
-  recentEventLog: EventLogEntry[];
+export interface PlayerAccountSnapshot extends PlayerAccountReadModel {
   recentBattleReplays?: PlayerBattleReplaySummary[];
-  lastRoomId?: string;
-  lastSeenAt?: string;
-  loginId?: string;
-  credentialBoundAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -201,6 +214,13 @@ export interface PlayerRoomProfileSummary {
   expired: boolean;
 }
 
+export interface PlayerEventHistoryQuery extends EventLogQuery {}
+
+export interface PlayerEventHistorySnapshot {
+  items: EventLogEntry[];
+  total: number;
+}
+
 export interface PlayerRoomProfileListOptions {
   limit?: number;
   roomId?: string;
@@ -215,6 +235,8 @@ export const MYSQL_PLAYER_ROOM_PROFILE_UPDATED_AT_INDEX = "idx_player_room_profi
 export const MYSQL_PLAYER_ACCOUNT_TABLE = "player_accounts";
 export const MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX = "idx_player_accounts_updated_at";
 export const MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX = "uidx_player_accounts_login_id";
+export const MYSQL_PLAYER_EVENT_HISTORY_TABLE = "player_event_history";
+export const MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX = "idx_player_event_history_player_time";
 export const MYSQL_PLAYER_HERO_ARCHIVE_TABLE = "player_hero_archives";
 export const MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX = "idx_player_hero_archives_updated_at";
 export const MYSQL_CONFIG_DOCUMENT_TABLE = "config_documents";
@@ -223,6 +245,8 @@ export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
 export const DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES = 30;
 export const MAX_PLAYER_DISPLAY_NAME_LENGTH = 40;
 export const MAX_PLAYER_LOGIN_ID_LENGTH = 40;
+const MYSQL_DUPLICATE_ENTRY_ERROR_CODE = "ER_DUP_ENTRY";
+const MYSQL_DUPLICATE_ENTRY_ERRNO = 1062;
 
 function readOptionalPositiveNumber(value: string | undefined, fallback: number): number | null {
   if (value == null || value.trim() === "") {
@@ -301,6 +325,19 @@ function formatTimestamp(value: Date | string | null | undefined): string | unde
   return date.toISOString();
 }
 
+function isMySqlDuplicateEntryError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as {
+    code?: unknown;
+    errno?: unknown;
+  };
+
+  return candidate.code === MYSQL_DUPLICATE_ENTRY_ERROR_CODE || candidate.errno === MYSQL_DUPLICATE_ENTRY_ERRNO;
+}
+
 function normalizePlayerAccountSnapshot(account: {
   playerId: string;
   displayName?: string | null | undefined;
@@ -318,19 +355,38 @@ function normalizePlayerAccountSnapshot(account: {
   const playerId = normalizePlayerId(account.playerId);
 
   return {
-    playerId,
-    displayName: normalizePlayerDisplayName(playerId, account.displayName),
-    globalResources: normalizeResourceLedger(account.globalResources),
-    achievements: normalizeAchievementProgress(account.achievements),
-    recentEventLog: normalizeEventLogEntries(account.recentEventLog),
-    recentBattleReplays: appendPlayerBattleReplaySummaries([], account.recentBattleReplays),
-    ...(account.lastRoomId ? { lastRoomId: account.lastRoomId } : {}),
-    ...(account.lastSeenAt ? { lastSeenAt: account.lastSeenAt } : {}),
-    ...(account.loginId ? { loginId: normalizePlayerLoginId(account.loginId) } : {}),
-    ...(account.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {}),
+    ...normalizePlayerAccountReadModel({
+      playerId,
+      displayName: normalizePlayerDisplayName(playerId, account.displayName),
+      globalResources: normalizeResourceLedger(account.globalResources),
+      achievements: account.achievements,
+      recentEventLog: account.recentEventLog,
+      recentBattleReplays: appendPlayerBattleReplaySummaries([], account.recentBattleReplays),
+      lastRoomId: account.lastRoomId,
+      lastSeenAt: account.lastSeenAt,
+      loginId: account.loginId ? normalizePlayerLoginId(account.loginId) : undefined,
+      credentialBoundAt: account.credentialBoundAt
+    }),
     ...(account.createdAt ? { createdAt: account.createdAt } : {}),
     ...(account.updatedAt ? { updatedAt: account.updatedAt } : {})
   };
+}
+
+function normalizePlayerEventHistoryQuery(query: PlayerEventHistoryQuery = {}): Required<Pick<PlayerEventHistoryQuery, "offset">> &
+  Pick<PlayerEventHistoryQuery, "category" | "heroId" | "achievementId" | "worldEventType" | "since" | "until"> &
+  { limit?: number } {
+  return normalizeEventLogQuery(query);
+}
+
+function extractNewPlayerEventHistoryEntries(
+  existing: Partial<EventLogEntry>[] | null | undefined,
+  next: Partial<EventLogEntry>[] | null | undefined
+): EventLogEntry[] {
+  const existingIds = new Set(normalizeEventLogEntries(existing).map((entry) => entry.id));
+
+  return normalizeEventLogEntries(next)
+    .filter((entry) => !existingIds.has(entry.id))
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp) || left.id.localeCompare(right.id));
 }
 
 function collectPlayerIds(state: WorldState): string[] {
@@ -364,12 +420,11 @@ export function createPlayerRoomProfiles(state: WorldState): PlayerRoomProfileSn
 
 export function createPlayerAccountsFromWorldState(state: WorldState): PlayerAccountSnapshot[] {
   return collectPlayerIds(state).map((playerId) => ({
-    playerId,
-    displayName: normalizePlayerDisplayName(playerId),
-    globalResources: normalizeResourceLedger(state.resources[playerId]),
-    achievements: normalizeAchievementProgress(),
-    recentEventLog: normalizeEventLogEntries(),
-    recentBattleReplays: appendPlayerBattleReplaySummaries([], [])
+    ...normalizePlayerAccountReadModel({
+      playerId,
+      displayName: normalizePlayerDisplayName(playerId),
+      globalResources: normalizeResourceLedger(state.resources[playerId])
+    })
   }));
 }
 
@@ -591,6 +646,20 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   PRIMARY KEY (player_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (
+  player_id VARCHAR(191) NOT NULL,
+  event_id VARCHAR(191) NOT NULL,
+  timestamp DATETIME NOT NULL,
+  room_id VARCHAR(191) NOT NULL,
+  category VARCHAR(32) NOT NULL,
+  hero_id VARCHAR(191) NULL,
+  world_event_type VARCHAR(64) NULL,
+  achievement_id VARCHAR(64) NULL,
+  entry_json LONGTEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (player_id, event_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET @veil_player_accounts_display_name_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.COLUMNS
@@ -608,6 +677,24 @@ SET @veil_player_accounts_display_name_sql := IF(
 PREPARE veil_player_accounts_display_name_stmt FROM @veil_player_accounts_display_name_sql;
 EXECUTE veil_player_accounts_display_name_stmt;
 DEALLOCATE PREPARE veil_player_accounts_display_name_stmt;
+
+SET @veil_player_event_history_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_EVENT_HISTORY_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX}'
+);
+
+SET @veil_player_event_history_idx_sql := IF(
+  @veil_player_event_history_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX}\` ON \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (player_id, timestamp)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_event_history_idx_stmt FROM @veil_player_event_history_idx_sql;
+EXECUTE veil_player_event_history_idx_stmt;
+DEALLOCATE PREPARE veil_player_event_history_idx_stmt;
 
 SET @veil_player_accounts_achievements_exists := (
   SELECT COUNT(*)
@@ -1024,6 +1111,60 @@ function toPlayerAccountAuthSnapshot(row: PlayerAccountAuthRow): PlayerAccountAu
   };
 }
 
+function toPlayerEventHistoryEntry(row: PlayerEventHistoryRow): EventLogEntry {
+  const entry = parseJsonColumn<EventLogEntry>(row.entry_json);
+
+  return normalizeEventLogEntries([
+    {
+      ...entry,
+      id: row.event_id,
+      playerId: row.player_id,
+      roomId: row.room_id,
+      timestamp: formatTimestamp(row.timestamp) ?? entry.timestamp,
+      category: row.category,
+      ...(row.hero_id ? { heroId: row.hero_id } : {}),
+      ...(row.world_event_type ? { worldEventType: row.world_event_type } : {}),
+      ...(row.achievement_id ? { achievementId: row.achievement_id } : {})
+    }
+  ])[0] as EventLogEntry;
+}
+
+async function appendPlayerEventHistoryEntries(
+  queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
+  playerId: string,
+  entries: EventLogEntry[]
+): Promise<void> {
+  for (const entry of entries) {
+    await queryable.query(
+      `INSERT INTO \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (
+         player_id,
+         event_id,
+         timestamp,
+         room_id,
+         category,
+         hero_id,
+         world_event_type,
+         achievement_id,
+         entry_json
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         entry_json = VALUES(entry_json)`,
+      [
+        playerId,
+        entry.id,
+        new Date(entry.timestamp),
+        entry.roomId,
+        entry.category,
+        entry.heroId ?? null,
+        entry.worldEventType ?? null,
+        entry.achievementId ?? null,
+        JSON.stringify(entry)
+      ]
+    );
+  }
+}
+
 async function deletePlayerProfilesForRoom(connection: PoolConnection, roomId: string): Promise<void> {
   await connection.query(`DELETE FROM \`${MYSQL_PLAYER_ROOM_PROFILE_TABLE}\` WHERE room_id = ?`, [roomId]);
 }
@@ -1092,6 +1233,7 @@ async function savePlayerAccounts(
         JSON.stringify(normalizedAccount.recentBattleReplays)
       ]
     );
+    await appendPlayerEventHistoryEntries(connection, normalizedAccount.playerId, normalizedAccount.recentEventLog);
   }
 }
 
@@ -1222,6 +1364,21 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (player_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    );
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (
+        player_id VARCHAR(191) NOT NULL,
+        event_id VARCHAR(191) NOT NULL,
+        timestamp DATETIME NOT NULL,
+        room_id VARCHAR(191) NOT NULL,
+        category VARCHAR(32) NOT NULL,
+        hero_id VARCHAR(191) NULL,
+        world_event_type VARCHAR(64) NULL,
+        achievement_id VARCHAR(64) NULL,
+        entry_json LONGTEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (player_id, event_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
     );
     await pool.query(
@@ -1418,6 +1575,23 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       );
     }
 
+    const [playerEventHistoryIndexRows] = await pool.query<RowDataPacket[]>(
+      `SELECT 1
+       FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA = ?
+         AND TABLE_NAME = ?
+         AND INDEX_NAME = ?
+       LIMIT 1`,
+      [config.database, MYSQL_PLAYER_EVENT_HISTORY_TABLE, MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX]
+    );
+
+    if (!playerEventHistoryIndexRows[0]) {
+      await pool.query(
+        `CREATE INDEX \`${MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX}\`
+         ON \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (player_id, timestamp)`
+      );
+    }
+
     const [playerHeroArchiveIndexRows] = await pool.query<RowDataPacket[]>(
       `SELECT 1
        FROM INFORMATION_SCHEMA.STATISTICS
@@ -1534,6 +1708,84 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     const row = rows[0];
     return row ? toPlayerAccountSnapshot(row) : null;
+  }
+
+  async loadPlayerEventHistory(
+    playerId: string,
+    query: PlayerEventHistoryQuery = {}
+  ): Promise<PlayerEventHistorySnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedQuery = normalizePlayerEventHistoryQuery(query);
+    const clauses = ["player_id = ?"];
+    const params: Array<string | number> = [normalizedPlayerId];
+
+    if (normalizedQuery.category) {
+      clauses.push("category = ?");
+      params.push(normalizedQuery.category);
+    }
+    if (normalizedQuery.heroId) {
+      clauses.push("hero_id = ?");
+      params.push(normalizedQuery.heroId);
+    }
+    if (normalizedQuery.achievementId) {
+      clauses.push("achievement_id = ?");
+      params.push(normalizedQuery.achievementId);
+    }
+    if (normalizedQuery.worldEventType) {
+      clauses.push("world_event_type = ?");
+      params.push(normalizedQuery.worldEventType);
+    }
+    if (normalizedQuery.since) {
+      clauses.push("timestamp >= ?");
+      params.push(normalizedQuery.since);
+    }
+    if (normalizedQuery.until) {
+      clauses.push("timestamp <= ?");
+      params.push(normalizedQuery.until);
+    }
+
+    const whereClause = `WHERE ${clauses.join(" AND ")}`;
+    const [countRows] = await this.pool.query<PlayerEventHistoryCountRow[]>(
+      `SELECT COUNT(*) AS total
+       FROM \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\`
+       ${whereClause}`,
+      params
+    );
+
+    const queryParams = [...params];
+    let limitClause = "";
+    const safeOffset = normalizedQuery.offset ?? 0;
+    if (normalizedQuery.limit != null) {
+      limitClause = "LIMIT ? OFFSET ?";
+      queryParams.push(normalizedQuery.limit, safeOffset);
+    } else if (safeOffset > 0) {
+      limitClause = "LIMIT 18446744073709551615 OFFSET ?";
+      queryParams.push(safeOffset);
+    }
+
+    const [rows] = await this.pool.query<PlayerEventHistoryRow[]>(
+      `SELECT
+         player_id,
+         event_id,
+         timestamp,
+         room_id,
+         category,
+         hero_id,
+         world_event_type,
+         achievement_id,
+         entry_json,
+         created_at
+       FROM \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\`
+       ${whereClause}
+       ORDER BY timestamp DESC, event_id ASC
+       ${limitClause}`,
+      queryParams
+    );
+
+    return {
+      total: Math.max(0, Math.floor(countRows[0]?.total ?? 0)),
+      items: rows.map((row) => toPlayerEventHistoryEntry(row))
+    };
   }
 
   async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {
@@ -1653,21 +1905,24 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       throw new Error("account credentials already bound to another loginId");
     }
 
-    const loginOwner = await this.loadPlayerAccountByLoginId(normalizedLoginId);
-    if (loginOwner && loginOwner.playerId !== normalizedPlayerId) {
-      throw new Error("loginId is already taken");
-    }
-
     const credentialBoundAt = existingAccount.credentialBoundAt ?? new Date().toISOString();
-    await this.pool.query(
-      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
-       SET login_id = ?,
-           password_hash = ?,
-           credential_bound_at = COALESCE(credential_bound_at, ?),
-           version = version + 1
-       WHERE player_id = ?`,
-      [normalizedLoginId, passwordHash, new Date(credentialBoundAt), normalizedPlayerId]
-    );
+    try {
+      await this.pool.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET login_id = ?,
+             password_hash = ?,
+             credential_bound_at = COALESCE(credential_bound_at, ?),
+             version = version + 1
+         WHERE player_id = ?`,
+        [normalizedLoginId, passwordHash, new Date(credentialBoundAt), normalizedPlayerId]
+      );
+    } catch (error) {
+      if (isMySqlDuplicateEntryError(error)) {
+        throw new Error("loginId is already taken");
+      }
+
+      throw error;
+    }
 
     return (
       (await this.loadPlayerAccount(normalizedPlayerId)) ??
@@ -1768,8 +2023,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           : {}
         : existing.lastRoomId
           ? { lastRoomId: existing.lastRoomId }
-          : {})
+        : {})
     });
+    const newHistoryEntries = extractNewPlayerEventHistoryEntries(existing.recentEventLog, nextAccount.recentEventLog);
 
     await this.pool.query(
       `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
@@ -1803,6 +2059,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         existing.lastSeenAt ? new Date(existing.lastSeenAt) : null
       ]
     );
+    await appendPlayerEventHistoryEntries(this.pool, normalizedPlayerId, newHistoryEntries);
 
     return (
       (await this.loadPlayerAccount(normalizedPlayerId)) ??

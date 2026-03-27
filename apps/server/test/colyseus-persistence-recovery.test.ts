@@ -7,6 +7,7 @@ import {
   decodePlayerWorldView,
   getDefaultMapObjectsConfig,
   getDefaultWorldConfig,
+  queryEventLogEntries,
   type ClientMessage,
   type ServerMessage
 } from "../../../packages/shared/src/index";
@@ -18,6 +19,8 @@ import {
   type PlayerAccountProgressPatch,
   type PlayerAccountAuthSnapshot,
   type PlayerAccountCredentialInput,
+  type PlayerEventHistoryQuery,
+  type PlayerEventHistorySnapshot,
   type PlayerAccountSnapshot,
   type PlayerHeroArchiveSnapshot,
   type RoomSnapshotStore
@@ -44,6 +47,22 @@ class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
     const account = this.accounts.get(playerId);
     return account ? structuredClone(account) : null;
+  }
+
+  async loadPlayerEventHistory(
+    playerId: string,
+    query: PlayerEventHistoryQuery = {}
+  ): Promise<PlayerEventHistorySnapshot> {
+    const account = this.accounts.get(playerId);
+    const total = queryEventLogEntries(account?.recentEventLog ?? [], {
+      ...query,
+      limit: undefined,
+      offset: undefined
+    }).length;
+    return {
+      items: queryEventLogEntries(account?.recentEventLog ?? [], query).map((entry) => structuredClone(entry)),
+      total
+    };
   }
 
   async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
