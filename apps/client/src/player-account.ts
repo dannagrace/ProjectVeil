@@ -7,9 +7,10 @@ import {
 } from "./auth-session";
 import {
   type AchievementProgressQuery,
+  type PlayerBattleReplayQuery,
   normalizePlayerProgressionSnapshot,
   normalizePlayerAccountReadModel,
-  normalizePlayerBattleReplaySummaries,
+  queryPlayerBattleReplaySummaries,
   queryAchievementProgress,
   normalizeEventLogEntries,
   type EventLogQuery,
@@ -111,6 +112,44 @@ function toEventLogQueryString(query?: EventLogQuery): string {
   }
   if (query.worldEventType) {
     searchParams.set("worldEventType", query.worldEventType);
+  }
+
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
+}
+
+function toBattleReplayQueryString(query?: PlayerBattleReplayQuery): string {
+  if (!query) {
+    return "";
+  }
+
+  const searchParams = new URLSearchParams();
+  if (query.limit != null) {
+    searchParams.set("limit", String(query.limit));
+  }
+  if (query.roomId) {
+    searchParams.set("roomId", query.roomId);
+  }
+  if (query.battleId) {
+    searchParams.set("battleId", query.battleId);
+  }
+  if (query.battleKind) {
+    searchParams.set("battleKind", query.battleKind);
+  }
+  if (query.playerCamp) {
+    searchParams.set("playerCamp", query.playerCamp);
+  }
+  if (query.heroId) {
+    searchParams.set("heroId", query.heroId);
+  }
+  if (query.opponentHeroId) {
+    searchParams.set("opponentHeroId", query.opponentHeroId);
+  }
+  if (query.neutralArmyId) {
+    searchParams.set("neutralArmyId", query.neutralArmyId);
+  }
+  if (query.result) {
+    searchParams.set("result", query.result);
   }
 
   const serialized = searchParams.toString();
@@ -282,22 +321,26 @@ export async function loadPlayerAccountProfile(playerId: string, roomId: string)
   }
 }
 
-export async function loadPlayerBattleReplaySummaries(playerId: string): Promise<PlayerBattleReplaySummary[]> {
+export async function loadPlayerBattleReplaySummaries(
+  playerId: string,
+  query?: PlayerBattleReplayQuery
+): Promise<PlayerBattleReplaySummary[]> {
   const authSession = readStoredAuthSession();
+  const queryString = toBattleReplayQueryString(query);
   const endpoint = authSession?.token
-    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/battle-replays`
-    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays`;
+    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/battle-replays${queryString}`
+    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays${queryString}`;
 
   try {
     const payload = (await fetchJson(endpoint, {
       ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
     })) as PlayerBattleReplayListApiPayload;
-    return normalizePlayerBattleReplaySummaries(payload.items);
+    return queryPlayerBattleReplaySummaries(payload.items, query);
   } catch (error) {
     if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
       clearCurrentAuthSession();
     }
-    return normalizePlayerBattleReplaySummaries();
+    return queryPlayerBattleReplaySummaries(undefined, query);
   }
 }
 
