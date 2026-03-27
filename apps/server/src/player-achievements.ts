@@ -247,6 +247,19 @@ function metricDeltaForEvent(state: WorldState, playerId: string, event: WorldEv
         amount: 1
       };
     case "battle.resolved": {
+      if (event.result === "attacker_victory" && event.attackerPlayerId === playerId) {
+        return {
+          metric: "battles_won",
+          amount: 1
+        };
+      }
+      if (event.result === "defender_victory" && event.defenderPlayerId === playerId) {
+        return {
+          metric: "battles_won",
+          amount: 1
+        };
+      }
+
       const attacker = findHero(state, event.heroId);
       const defender = findHero(state, event.defenderHeroId);
       const winningPlayerId =

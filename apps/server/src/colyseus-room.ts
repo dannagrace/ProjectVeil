@@ -15,7 +15,7 @@ import {
 import { createRoom, type AuthoritativeWorldRoom, type RoomPersistenceSnapshot } from "./index";
 import {
   appendCompletedBattleReplaysToAccount,
-  buildPlayerBattleReplaySummary,
+  buildPlayerBattleReplaySummariesForPlayer,
   type CompletedBattleReplayCapture
 } from "./battle-replays";
 import {
@@ -386,25 +386,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     replay: CompletedBattleReplayCapture,
     playerId: string
   ): PlayerBattleReplaySummary[] {
-    const battle = replay.battleState;
-    const attackerHero =
-      battle.worldHeroId != null
-        ? this.worldRoom.getInternalState().heroes.find((hero) => hero.id === battle.worldHeroId)
-        : undefined;
-    const defenderHero =
-      battle.defenderHeroId != null
-        ? this.worldRoom.getInternalState().heroes.find((hero) => hero.id === battle.defenderHeroId)
-        : undefined;
-
-    if (attackerHero?.playerId === playerId && battle.worldHeroId) {
-      return [buildPlayerBattleReplaySummary(replay, playerId, battle.worldHeroId, "attacker", battle.defenderHeroId)];
-    }
-
-    if (defenderHero?.playerId === playerId && battle.defenderHeroId) {
-      return [buildPlayerBattleReplaySummary(replay, playerId, battle.defenderHeroId, "defender", battle.worldHeroId)];
-    }
-
-    return [];
+    return buildPlayerBattleReplaySummariesForPlayer(replay, playerId);
   }
 
   private publishLobbyRoomSummary(): void {
