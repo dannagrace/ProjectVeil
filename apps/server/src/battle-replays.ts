@@ -85,16 +85,6 @@ function buildPlayerReplayId(replay: CompletedBattleReplayCapture, playerId: str
   return `${replay.roomId}:${replay.battleId}:${playerId}`;
 }
 
-function playerResultForCamp(result: BattleReplayResult, camp: BattleReplayCamp): BattleReplayResult {
-  return result === "attacker_victory"
-    ? camp === "attacker"
-      ? "attacker_victory"
-      : "defender_victory"
-    : camp === "defender"
-      ? "attacker_victory"
-      : "defender_victory";
-}
-
 export function buildPlayerBattleReplaySummary(
   replay: CompletedBattleReplayCapture,
   playerId: string,
@@ -116,7 +106,7 @@ export function buildPlayerBattleReplaySummary(
     completedAt: replay.completedAt,
     initialState: replay.initialState,
     steps: replay.steps,
-    result: playerResultForCamp(replay.result, playerCamp)
+    result: replay.result
   };
 }
 
