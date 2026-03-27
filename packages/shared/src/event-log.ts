@@ -155,6 +155,22 @@ const ACHIEVEMENT_DEFINITIONS: AchievementDefinition[] = [
 ];
 
 const achievementDefinitionById = new Map(ACHIEVEMENT_DEFINITIONS.map((definition) => [definition.id, definition] as const));
+const worldEventTypeLabels: Partial<Record<WorldEvent["type"], string>> = {
+  "hero.moved": "英雄移动",
+  "hero.collected": "资源收集",
+  "hero.recruited": "部队招募",
+  "hero.visited": "建筑造访",
+  "hero.claimedMine": "矿点占领",
+  "resource.produced": "矿点结算",
+  "neutral.moved": "中立移动",
+  "hero.progressed": "英雄成长",
+  "hero.skillLearned": "技能学习",
+  "hero.equipmentChanged": "装备调整",
+  "hero.equipmentFound": "战利品获得",
+  "battle.started": "战斗触发",
+  "battle.resolved": "战斗结算",
+  "turn.advanced": "世界推进"
+};
 
 function normalizeTimestamp(value?: string | null): string | undefined {
   if (!value) {
@@ -167,6 +183,23 @@ function normalizeTimestamp(value?: string | null): string | undefined {
 
 export function getAchievementDefinitions(): AchievementDefinition[] {
   return ACHIEVEMENT_DEFINITIONS.map((definition) => ({ ...definition }));
+}
+
+export function getAchievementDefinition(achievementId?: AchievementId | null): AchievementDefinition | null {
+  if (!achievementId) {
+    return null;
+  }
+
+  const definition = achievementDefinitionById.get(achievementId);
+  return definition ? { ...definition } : null;
+}
+
+export function formatAchievementLabel(achievementId?: AchievementId | null): string {
+  return getAchievementDefinition(achievementId)?.title ?? achievementId ?? "";
+}
+
+export function formatWorldEventTypeLabel(worldEventType?: WorldEvent["type"] | null): string {
+  return worldEventTypeLabels[worldEventType ?? ""] ?? worldEventType ?? "";
 }
 
 export function countRevealedFogTiles(visibility?: FogState[] | null): number {
