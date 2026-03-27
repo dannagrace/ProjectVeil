@@ -302,19 +302,24 @@ function createFullyExploredTrackingWorldState(): WorldState {
   };
 }
 
-function createReplaySummary(id: string, completedAt: string): PlayerBattleReplaySummary {
+function createReplaySummary(
+  id: string,
+  completedAt: string,
+  overrides: Partial<PlayerBattleReplaySummary> = {}
+): PlayerBattleReplaySummary {
   return {
     id,
-    roomId: "room-replay",
-    playerId: "player-1",
-    battleId: `${id}-battle`,
-    battleKind: "hero",
-    playerCamp: "attacker",
-    heroId: "hero-1",
-    opponentHeroId: "hero-2",
-    startedAt: "2026-03-27T11:55:00.000Z",
+    roomId: overrides.roomId ?? "room-replay",
+    playerId: overrides.playerId ?? "player-1",
+    battleId: overrides.battleId ?? `${id}-battle`,
+    battleKind: overrides.battleKind ?? "hero",
+    playerCamp: overrides.playerCamp ?? "attacker",
+    heroId: overrides.heroId ?? "hero-1",
+    ...(overrides.opponentHeroId !== undefined ? { opponentHeroId: overrides.opponentHeroId } : { opponentHeroId: "hero-2" }),
+    ...(overrides.neutralArmyId !== undefined ? { neutralArmyId: overrides.neutralArmyId } : {}),
+    startedAt: overrides.startedAt ?? "2026-03-27T11:55:00.000Z",
     completedAt,
-    initialState: {
+    initialState: overrides.initialState ?? {
       id: `${id}-battle`,
       round: 1,
       lanes: 2,
@@ -360,8 +365,8 @@ function createReplaySummary(id: string, completedAt: string): PlayerBattleRepla
       log: [],
       rng: { seed: 7, cursor: 0 }
     },
-    steps: [],
-    result: "attacker_victory"
+    steps: overrides.steps ?? [],
+    result: overrides.result ?? "attacker_victory"
   };
 }
 
@@ -510,6 +515,68 @@ test("player account battle replay routes return normalized replay summaries wit
 
   const missingResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/missing/battle-replays`);
   assert.equal(missingResponse.status, 404);
+});
+
+test("player account battle replay routes filter replay summaries by battle metadata", async (t) => {
+  const port = 42040 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-filtered",
+    displayName: "灰烬书记",
+    globalResources: { gold: 40, wood: 5, ore: 2 },
+    achievements: [],
+    recentEventLog: [],
+    recentBattleReplays: [
+      createReplaySummary("replay-hero-loss", "2026-03-27T12:05:00.000Z", {
+        roomId: "room-hero",
+        battleId: "battle-hero-loss",
+        battleKind: "hero",
+        playerCamp: "defender",
+        heroId: "hero-3",
+        opponentHeroId: "hero-9",
+        result: "defender_victory"
+      }),
+      createReplaySummary("replay-neutral-win", "2026-03-27T12:06:00.000Z", {
+        roomId: "room-neutral",
+        battleId: "battle-neutral-win",
+        battleKind: "neutral",
+        heroId: "hero-1",
+        neutralArmyId: "neutral-1",
+        opponentHeroId: undefined,
+        result: "attacker_victory"
+      })
+    ],
+    lastRoomId: "room-neutral",
+    lastSeenAt: new Date("2026-03-27T12:06:30.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-filtered",
+    displayName: "灰烬书记"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const publicResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-filtered/battle-replays?battleKind=neutral&heroId=hero-1&neutralArmyId=neutral-1`
+  );
+  const publicPayload = (await publicResponse.json()) as { items: PlayerBattleReplaySummary[] };
+  assert.equal(publicResponse.status, 200);
+  assert.deepEqual(publicPayload.items.map((replay) => replay.id), ["replay-neutral-win"]);
+
+  const meResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/battle-replays?roomId=room-hero&battleId=battle-hero-loss&playerCamp=defender&result=defender_victory&opponentHeroId=hero-9`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const mePayload = (await meResponse.json()) as { items: PlayerBattleReplaySummary[] };
+  assert.equal(meResponse.status, 200);
+  assert.deepEqual(mePayload.items.map((replay) => replay.id), ["replay-hero-loss"]);
 });
 
 test("player account me battle replay route resolves the current authenticated account", async (t) => {

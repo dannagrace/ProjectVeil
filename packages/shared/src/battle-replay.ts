@@ -28,6 +28,18 @@ export interface PlayerBattleReplaySummary {
   result: BattleReplayResult;
 }
 
+export interface PlayerBattleReplayQuery {
+  limit?: number | undefined;
+  roomId?: string | undefined;
+  battleId?: string | undefined;
+  battleKind?: PlayerBattleReplaySummary["battleKind"] | undefined;
+  playerCamp?: PlayerBattleReplaySummary["playerCamp"] | undefined;
+  heroId?: string | undefined;
+  opponentHeroId?: string | undefined;
+  neutralArmyId?: string | undefined;
+  result?: PlayerBattleReplaySummary["result"] | undefined;
+}
+
 export type BattleReplayPlaybackStatus = "paused" | "playing" | "completed";
 
 export interface BattleReplayPlaybackState {
@@ -226,4 +238,27 @@ export function appendPlayerBattleReplaySummaries(
     ...normalizedIncoming,
     ...normalizePlayerBattleReplaySummaries(existing)
   ]).slice(0, safeLimit);
+}
+
+export function queryPlayerBattleReplaySummaries(
+  replays?: Partial<PlayerBattleReplaySummary>[] | null,
+  query: PlayerBattleReplayQuery = {}
+): PlayerBattleReplaySummary[] {
+  const safeLimit = query.limit == null ? undefined : Math.max(1, Math.floor(query.limit));
+  const roomId = query.roomId?.trim();
+  const battleId = query.battleId?.trim();
+  const heroId = query.heroId?.trim();
+  const opponentHeroId = query.opponentHeroId?.trim();
+  const neutralArmyId = query.neutralArmyId?.trim();
+
+  return normalizePlayerBattleReplaySummaries(replays)
+    .filter((replay) => (roomId ? replay.roomId === roomId : true))
+    .filter((replay) => (battleId ? replay.battleId === battleId : true))
+    .filter((replay) => (query.battleKind ? replay.battleKind === query.battleKind : true))
+    .filter((replay) => (query.playerCamp ? replay.playerCamp === query.playerCamp : true))
+    .filter((replay) => (heroId ? replay.heroId === heroId : true))
+    .filter((replay) => (opponentHeroId ? replay.opponentHeroId === opponentHeroId : true))
+    .filter((replay) => (neutralArmyId ? replay.neutralArmyId === neutralArmyId : true))
+    .filter((replay) => (query.result ? replay.result === query.result : true))
+    .slice(0, safeLimit);
 }
