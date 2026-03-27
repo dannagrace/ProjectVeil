@@ -199,7 +199,7 @@ export function formatAchievementLabel(achievementId?: AchievementId | null): st
 }
 
 export function formatWorldEventTypeLabel(worldEventType?: WorldEvent["type"] | null): string {
-  return worldEventTypeLabels[worldEventType ?? ""] ?? worldEventType ?? "";
+  return worldEventType ? worldEventTypeLabels[worldEventType] ?? worldEventType : "";
 }
 
 export function countRevealedFogTiles(visibility?: FogState[] | null): number {

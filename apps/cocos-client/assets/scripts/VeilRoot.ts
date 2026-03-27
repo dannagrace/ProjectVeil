@@ -36,6 +36,13 @@ import { VeilHudPanel } from "./VeilHudPanel.ts";
 import { VeilLobbyPanel } from "./VeilLobbyPanel.ts";
 import { VeilMapBoard } from "./VeilMapBoard.ts";
 import { buildMapFeedbackEntriesFromUpdate, buildObjectPulseEntriesFromUpdate } from "./cocos-map-visuals.ts";
+import {
+  detectCocosRuntimePlatform,
+  readCocosRuntimeLaunchSearch,
+  resolveCocosRuntimeCapabilities,
+  type CocosRuntimeCapabilities,
+  type CocosRuntimePlatform
+} from "./cocos-runtime-platform.ts";
 import { readStoredCocosAuthSession, resolveCocosLaunchIdentity } from "./cocos-session-launch.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 
@@ -134,8 +141,11 @@ export class VeilRoot extends Component {
   private lobbyAccountProfile: CocosPlayerAccountProfile = createFallbackCocosPlayerAccountProfile("player-1", "test-room");
   private lobbyAccountEpoch = 0;
   private gameplayAccountRefreshInFlight = false;
+  private runtimePlatform: CocosRuntimePlatform = "unknown";
+  private runtimeCapabilities: CocosRuntimeCapabilities = resolveCocosRuntimeCapabilities("unknown");
 
   onLoad(): void {
+    this.hydrateRuntimePlatform();
     this.hydrateLaunchIdentity();
     this.ensureUiCameraVisibility();
     this.ensureViewNodes();
@@ -574,6 +584,12 @@ export class VeilRoot extends Component {
 
   private openConfigCenter(): void {
     const configCenterUrl = resolveCocosConfigCenterUrl(this.remoteUrl);
+    if (this.runtimeCapabilities.configCenterAccess !== "external-window") {
+      this.lobbyStatus = `当前${this.runtimePlatform === "wechat-game" ? "微信小游戏" : "运行"}环境不支持直接打开配置台，请在 H5 调试壳访问 ${configCenterUrl}`;
+      this.renderView();
+      return;
+    }
+
     const openRef = globalThis.open;
     if (typeof openRef === "function") {
       openRef(configCenterUrl, "_blank", "noopener,noreferrer");
@@ -1534,6 +1550,19 @@ export class VeilRoot extends Component {
     };
   }
 
+  private hydrateRuntimePlatform(): void {
+    this.runtimePlatform = detectCocosRuntimePlatform(globalThis as {
+      location?: Location;
+      history?: History;
+      wx?: { getLaunchOptionsSync?: () => { query?: Record<string, unknown> | null } | null | undefined };
+    });
+    this.runtimeCapabilities = resolveCocosRuntimeCapabilities(this.runtimePlatform);
+
+    if (this.runtimePlatform === "wechat-game") {
+      this.pushLog("已识别微信小游戏运行时，启动参数将改读 wx.getLaunchOptionsSync().query。");
+    }
+  }
+
   private hydrateLaunchIdentity(): void {
     const storage = this.readWebStorage();
     const launchIdentity = resolveCocosLaunchIdentity({
@@ -1569,7 +1598,9 @@ export class VeilRoot extends Component {
       this.autoConnect = false;
       this.lobbyStatus = storedSession
         ? `已恢复${storedSession.source === "remote" ? "云端" : "本地"}${storedSession.authMode === "account" ? "正式账号" : "游客"}会话，可直接选房或继续修改房间。`
-        : "请选择一个房间，或输入新的房间 ID 后直接开局。";
+        : this.runtimePlatform === "wechat-game"
+          ? "微信小游戏启动参数适配已就绪；当前仍走游客/账号会话，后续可在此处接入 wx.login()。"
+          : "请选择一个房间，或输入新的房间 ID 后直接开局。";
       this.pushLog("Cocos Lobby 已待命。");
       return;
     }
@@ -1596,8 +1627,10 @@ export class VeilRoot extends Component {
   }
 
   private readLaunchSearch(): string {
-    const locationRef = globalThis.location;
-    return locationRef && typeof locationRef.search === "string" ? locationRef.search : "";
+    return readCocosRuntimeLaunchSearch(globalThis as {
+      location?: Pick<Location, "search"> | null;
+      wx?: { getLaunchOptionsSync?: () => { query?: Record<string, unknown> | null } | null | undefined };
+    });
   }
 
   private readWebStorage(): Storage | null {
@@ -1606,6 +1639,10 @@ export class VeilRoot extends Component {
   }
 
   private syncBrowserRoomQuery(roomId: string | null): void {
+    if (!this.runtimeCapabilities.supportsBrowserHistory) {
+      return;
+    }
+
     const historyRef = globalThis.history;
     const locationRef = globalThis.location;
     if (!historyRef?.replaceState || !locationRef?.href) {
