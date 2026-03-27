@@ -9,6 +9,8 @@ import {
   normalizePlayerProgressionSnapshot,
   normalizePlayerAccountReadModel,
   normalizePlayerBattleReplaySummaries,
+  normalizeEventLogEntries,
+  type EventLogQuery,
   type EventLogEntry,
   type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
@@ -53,6 +55,10 @@ interface PlayerBattleReplayListApiPayload {
   items?: Partial<PlayerBattleReplaySummary>[];
 }
 
+interface PlayerEventLogListApiPayload {
+  items?: Partial<EventLogEntry>[];
+}
+
 interface PlayerProgressionApiPayload extends Partial<PlayerProgressionSnapshot> {}
 
 function normalizePlayerDisplayName(playerId: string, displayName?: string | null): string {
@@ -77,6 +83,32 @@ function getPlayerAccountStorage(): Storage | null {
 function resolvePlayerAccountApiBaseUrl(): string {
   const httpProtocol = window.location.protocol === "https:" ? "https" : "http";
   return `${httpProtocol}://${window.location.hostname || "127.0.0.1"}:2567`;
+}
+
+function toEventLogQueryString(query?: EventLogQuery): string {
+  if (!query) {
+    return "";
+  }
+
+  const searchParams = new URLSearchParams();
+  if (query.limit != null) {
+    searchParams.set("limit", String(query.limit));
+  }
+  if (query.category) {
+    searchParams.set("category", query.category);
+  }
+  if (query.heroId) {
+    searchParams.set("heroId", query.heroId);
+  }
+  if (query.achievementId) {
+    searchParams.set("achievementId", query.achievementId);
+  }
+  if (query.worldEventType) {
+    searchParams.set("worldEventType", query.worldEventType);
+  }
+
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
 }
 
 async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
@@ -237,6 +269,26 @@ export async function loadPlayerBattleReplaySummaries(playerId: string): Promise
       clearCurrentAuthSession();
     }
     return normalizePlayerBattleReplaySummaries();
+  }
+}
+
+export async function loadPlayerEventLog(playerId: string, query?: EventLogQuery): Promise<EventLogEntry[]> {
+  const authSession = readStoredAuthSession();
+  const queryString = toEventLogQueryString(query);
+  const endpoint = authSession?.token
+    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/event-log${queryString}`
+    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/event-log${queryString}`;
+
+  try {
+    const payload = (await fetchJson(endpoint, {
+      ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
+    })) as PlayerEventLogListApiPayload;
+    return normalizeEventLogEntries(payload.items);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+      clearCurrentAuthSession();
+    }
+    return normalizeEventLogEntries();
   }
 }
 
