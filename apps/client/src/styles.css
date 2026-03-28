@@ -320,6 +320,20 @@ h1 {
   gap: 8px;
 }
 
+.account-replay-center {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(78, 58, 42, 0.08);
+  background: rgba(255, 248, 240, 0.72);
+}
+
+.account-replay-center-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
 .account-achievement-list,
 .account-event-list,
 .account-replay-list {
