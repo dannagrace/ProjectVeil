@@ -88,6 +88,10 @@ export interface WechatMinigameBuildAnalysis {
   errors: string[];
 }
 
+export interface WechatMinigameBuildAnalysisOptions {
+  expectExportedRuntime?: boolean;
+}
+
 export interface WechatMinigameDomainCoverage {
   required: WechatMinigameDomainMatrix;
   missing: WechatMinigameDomainMatrix;
@@ -105,6 +109,7 @@ const REQUIRED_BUILD_OUTPUT_FILES = [
   "codex.wechat.build.json",
   "README.codex.md"
 ] as const;
+const REQUIRED_EXPORTED_RUNTIME_FILES = ["game.js", "application.js", "src/settings.json"] as const;
 
 function normalizeString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -348,6 +353,67 @@ function listFilesRecursively(rootDir: string, currentDir = rootDir): Array<{ re
   return files;
 }
 
+function compareExpectedJsonSubset(actual: unknown, expected: unknown, currentPath: string): string[] {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) {
+      return [`${currentPath} should be an array.`];
+    }
+    if (actual.length !== expected.length) {
+      return [`${currentPath} length mismatch: expected ${expected.length}, received ${actual.length}.`];
+    }
+
+    return expected.flatMap((entry, index) => compareExpectedJsonSubset(actual[index], entry, `${currentPath}[${index}]`));
+  }
+
+  if (expected && typeof expected === "object") {
+    if (!actual || typeof actual !== "object" || Array.isArray(actual)) {
+      return [`${currentPath} should be an object.`];
+    }
+
+    return Object.entries(expected).flatMap(([key, value]) =>
+      compareExpectedJsonSubset((actual as Record<string, unknown>)[key], value, `${currentPath}.${key}`)
+    );
+  }
+
+  return Object.is(actual, expected)
+    ? []
+    : [`${currentPath} mismatch: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}.`];
+}
+
+function validateExpectedJsonFile(
+  outputDir: string,
+  relativePath: string,
+  expected: unknown,
+  label: string
+): string[] {
+  const filePath = path.join(outputDir, relativePath);
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+
+  try {
+    const actual = JSON.parse(fs.readFileSync(filePath, "utf8")) as unknown;
+    return compareExpectedJsonSubset(actual, expected, label);
+  } catch {
+    return [`${label} is not valid JSON: ${relativePath}`];
+  }
+}
+
+function validateExpectedTextFile(
+  outputDir: string,
+  relativePath: string,
+  expected: string,
+  label: string
+): string[] {
+  const filePath = path.join(outputDir, relativePath);
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+
+  const actual = fs.readFileSync(filePath, "utf8");
+  return actual === expected ? [] : [`${label} does not match generated template content: ${relativePath}`];
+}
+
 export function normalizeWechatMinigameBuildConfig(input: unknown): WechatMinigameBuildConfig {
   const candidate = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const normalizedRuntimeRemoteUrl = normalizeRuntimeRemoteUrl(candidate.runtimeRemoteUrl);
@@ -470,7 +536,7 @@ export function buildWechatMinigameTemplateArtifacts(
     "## Follow-up",
     "- 在 Cocos Creator 的微信小游戏构建目标中执行正式导出。",
     "- 若资源需要分包，请把对应 Asset Bundle 的 Compression Type 设为 Mini Game Subpackage。",
-    "- 导出后运行 `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir>` 校验 4MB / 30MB 预算。",
+    "- 导出后运行 `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime` 校验注入配置与 4MB / 30MB 预算。",
     "- 把远程资源目录上传到 CDN 后，再在微信开发者工具中补齐域名白名单。"
   ].join("\n");
 
@@ -484,7 +550,8 @@ export function buildWechatMinigameTemplateArtifacts(
 
 export function analyzeWechatMinigameBuildOutput(
   outputDir: string,
-  config: WechatMinigameBuildConfig
+  config: WechatMinigameBuildConfig,
+  options: WechatMinigameBuildAnalysisOptions = {}
 ): WechatMinigameBuildAnalysis {
   const domainCoverage = buildWechatMinigameDomainCoverage(config);
   const resolvedOutputDir = path.resolve(outputDir);
@@ -507,11 +574,42 @@ export function analyzeWechatMinigameBuildOutput(
   const errors: string[] = [];
   const files = listFilesRecursively(resolvedOutputDir);
   const totalBytes = files.reduce((sum, file) => sum + file.bytes, 0);
+  const expectedArtifacts = buildWechatMinigameTemplateArtifacts(config);
   for (const requiredFile of REQUIRED_BUILD_OUTPUT_FILES) {
     if (!files.some((file) => file.relativePath === requiredFile)) {
       errors.push(`Build output is missing required file: ${requiredFile}`);
     }
   }
+  if (options.expectExportedRuntime) {
+    for (const requiredFile of REQUIRED_EXPORTED_RUNTIME_FILES) {
+      if (!files.some((file) => file.relativePath === requiredFile)) {
+        errors.push(`Exported build is missing required runtime bootstrap file: ${requiredFile}`);
+      }
+    }
+  }
+
+  errors.push(
+    ...validateExpectedJsonFile(resolvedOutputDir, "game.json", expectedArtifacts.gameJson, "game.json"),
+    ...validateExpectedJsonFile(
+      resolvedOutputDir,
+      "project.config.json",
+      expectedArtifacts.projectConfigJson,
+      "project.config.json"
+    ),
+    ...validateExpectedJsonFile(
+      resolvedOutputDir,
+      "codex.wechat.build.json",
+      expectedArtifacts.manifestJson,
+      "codex.wechat.build.json"
+    ),
+    ...validateExpectedTextFile(
+      resolvedOutputDir,
+      "README.codex.md",
+      `${expectedArtifacts.releaseChecklistMarkdown}\n`,
+      "README.codex.md"
+    )
+  );
+
   const gameJsonPath = path.join(resolvedOutputDir, "game.json");
   let actualSubpackageRoots: string[] = [];
   if (fs.existsSync(gameJsonPath)) {

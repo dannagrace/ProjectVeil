@@ -23,7 +23,7 @@
     "stress:rooms": "node --import tsx ./scripts/stress-concurrent-rooms.ts",
     "validate:battle": "node --import tsx ./scripts/validate-battle-balance.ts",
     "prepare:wechat-build": "node --import tsx ./scripts/prepare-wechat-minigame-build.ts",
-    "check:wechat-build": "node --import tsx ./scripts/prepare-wechat-minigame-build.ts --check && node --import tsx ./scripts/validate-wechat-minigame-build.ts --output-dir apps/cocos-client/build-templates/wechatgame",
+    "check:wechat-build": "node --import tsx ./scripts/prepare-wechat-minigame-build.ts --check && node --import tsx ./scripts/validate-wechat-minigame-build.ts --output-dir apps/cocos-client/build-templates/wechatgame && node --import tsx ./scripts/validate-wechat-minigame-build.ts --output-dir apps/cocos-client/test/fixtures/wechatgame-export --expect-exported-runtime",
     "validate:wechat-build": "node --import tsx ./scripts/validate-wechat-minigame-build.ts",
     "sync:assets:h5-pixel": "node ./scripts/sync-h5-pixel-assets.mjs",
     "validate:assets": "node --import tsx ./scripts/validate-assets.ts",
