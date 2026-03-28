@@ -62,6 +62,7 @@ const HERO_METER_PREFIX = "HudHeroMeter";
 const HERO_PROGRESS_PREFIX = "HudHeroProgress";
 const SKILL_BUTTON_PREFIX = "HudSkillButton";
 const EQUIPMENT_BUTTON_PREFIX = "HudEquipButton";
+const ACHIEVEMENT_NOTICE_NODE_NAME = "HudAchievementNotice";
 
 interface HudLearnableSkillState {
   id: string;
@@ -187,6 +188,10 @@ export interface VeilHudRenderState {
   inputDebug: string;
   runtimeHealth: string;
   levelUpNotice: {
+    title: string;
+    detail: string;
+  } | null;
+  achievementNotice: {
     title: string;
     detail: string;
   } | null;
@@ -520,6 +525,7 @@ export class VeilHudPanel extends Component {
     }
 
     this.renderStatusBadge(`${CARD_PREFIX}-status`, statusBadge);
+    this.renderAchievementNotice(state.achievementNotice);
 
     const showDebug = false;
     if (showDebug) {
@@ -674,6 +680,61 @@ export class VeilHudPanel extends Component {
     graphics.fillColor = accentColor;
     graphics.roundRect(-width / 2 + 14, height / 2 - 16, Math.min(88, width * 0.34), 4, 3);
     graphics.fill();
+  }
+
+  private renderAchievementNotice(notice: VeilHudRenderState["achievementNotice"]): void {
+    let noticeNode = this.node.getChildByName(ACHIEVEMENT_NOTICE_NODE_NAME);
+    if (!notice) {
+      if (noticeNode) {
+        noticeNode.active = false;
+      }
+      return;
+    }
+
+    if (!noticeNode) {
+      noticeNode = new Node(ACHIEVEMENT_NOTICE_NODE_NAME);
+      noticeNode.parent = this.node;
+    }
+    assignUiLayer(noticeNode);
+    noticeNode.active = true;
+
+    const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
+    const noticeTransform = noticeNode.getComponent(UITransform) ?? noticeNode.addComponent(UITransform);
+    const width = Math.max(144, transform.width - 44);
+    const height = 52;
+    noticeTransform.setContentSize(width, height);
+    noticeNode.setPosition(0, transform.height / 2 - 54, 4);
+
+    const graphics = noticeNode.getComponent(Graphics) ?? noticeNode.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(92, 76, 36, 226);
+    graphics.strokeColor = new Color(247, 226, 174, 136);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 14);
+    graphics.fill();
+    graphics.stroke();
+    graphics.fillColor = new Color(255, 248, 214, 58);
+    graphics.roundRect(-width / 2 + 12, height / 2 - 14, width - 24, 4, 2);
+    graphics.fill();
+
+    let labelNode = noticeNode.getChildByName("Label");
+    if (!labelNode) {
+      labelNode = new Node("Label");
+      labelNode.parent = noticeNode;
+    }
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(width - 24, height - 12);
+    labelNode.setPosition(0, 0, 1);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
+    label.string = `${notice.title}\n${notice.detail}`;
+    label.fontSize = 13;
+    label.lineHeight = 16;
+    label.horizontalAlign = H_ALIGN_CENTER;
+    label.verticalAlign = V_ALIGN_MIDDLE;
+    label.overflow = OVERFLOW_RESIZE_HEIGHT;
+    label.enableWrapText = true;
+    label.color = new Color(255, 247, 228, 255);
   }
 
   private renderResourceChips(cardName: string, gold: number, wood: number, ore: number): void {
