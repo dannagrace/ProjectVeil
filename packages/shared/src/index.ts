@@ -12,4 +12,5 @@ export * from "./matchmaking.ts";
 export * from "./models.ts";
 export * from "./protocol.ts";
 export * from "./player-account.ts";
+export * from "./runtime-diagnostics.ts";
 export * from "./world-config.ts";
