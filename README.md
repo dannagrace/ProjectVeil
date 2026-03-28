@@ -94,13 +94,23 @@
 - 终端逻辑演示：`npm run demo:flow`
 - 主客户端入口说明：`npm run client:primary`
 - Cocos 主客户端类型检查：`npm run typecheck:client`
+- 微信小游戏模板刷新：`npm run prepare:wechat-build`
+- 微信小游戏 CI 同款校验：`npm run check:wechat-build`
+- 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
+- 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
+- Issue #33 开源素材 staging 校验：`npm run check:issue33-assets -- --require-pack`
+- GitHub Actions `wechat-build-validation` 会把发布归档与 sidecar 元数据作为 artifact `wechat-release-<sha>` 上传，便于提审前下载与回溯
 - H5 调试壳开发服务：`npm run dev:client:h5`
 - H5 调试壳构建验证：`npm run build:client:h5`
 - H5 调试壳类型检查：`npm run typecheck:client:h5`
+- MySQL 首次初始化 / 升级：`npm run db:migrate`
+- MySQL 回滚上一版 schema：`npm run db:migrate:rollback`
+- `npm run db:init:mysql` 现已委托给同一条迁移链路，不再走独立一次性建表逻辑
 - 并发房间压测：`npm run stress:rooms -- --rooms=120 --connect-concurrency=24 --action-concurrency=24`
 - 战斗平衡验证：`npm run validate:battle -- --count=1000 --scenario=all --skill-config=configs/battle-skills-v1.1.json`
 - 并发房间压测会按 `world_progression / battle_settlement / reconnect` 三种场景分开跑数，并输出 CPU、内存、房间吞吐、动作吞吐等指标；可通过 `--scenarios=world_progression,reconnect` 等参数缩小范围
 - 当前客户端边界：`apps/cocos-client` 负责主玩法运行时；`apps/client` 只保留浏览器调试、配置联调和回归验证。
+- 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
 - 当前 H5 调试壳仍支持：地图点击移动、可达格高亮、悬停路径预览、资源/明雷信息提示、轻量路径播放反馈、可视化战斗单位面板、目标选中、伤害飘字与战后结果弹窗。
 - 当前 H5 联机体验已支持：客户端预测、断线自动重连、刷新后本地快照首帧回放，再由权威房间状态收敛。
 - 当前 Cocos Creator 主客户端已补齐：
@@ -142,6 +152,7 @@
 - 这轮又补了一层独立的玩家事件历史读模型：`savePlayerAccountProgress()` 会把账号 `recentEventLog` 里新增的结构化事件增量追加到 MySQL `player_event_history`，并开放 `GET /api/player-accounts/:playerId/event-history` / `/me/event-history`（支持 `limit`、`offset` 和现有事件筛选条件），让前端可以先做分页历史回顾而不用等完整战斗回放或完整成就 UI。
 - 玩家事件历史接口现已支持可选 `since` / `until` 时间范围筛选，且本地模式与 MySQL 持久化模式保持一致，方便后续只拉取某个时间窗内的世界事件或成就回顾。
 - 事件日志的共享基础当前收敛在 `packages/shared/src/event-log.ts`：除了事件/成就 schema、归一化和查询助手外，这里也统一提供世界事件日志工厂与成就日志工厂，服务端只负责把共享 `WorldEvent[]` 喂给这些 helper；完整战斗回放、完整成就 UI 和更长历史存储仍留给后续 issue 继续扩展。
+- 战斗回放读模型当前已补上两块更适合前端直接消费的能力：`GET /api/player-accounts/:playerId/battle-replays` 现支持 `limit` + `offset` 分页，shared 侧也新增了可从 `initialState + steps` 推导每步回合与伤害/减员结算的 replay timeline helper，H5 战报面板会直接显示这些逐步结算摘要。
 - H5 账号资料卡现在会额外拉取 `/api/player-accounts/:playerId/progression` 覆盖成就/事件摘要，因此即使基础账号接口只返回轻量档案，前端也能稳定展示最新的成就推进、最近解锁和世界事件日志，而不会继续依赖旧的内嵌快照。
 - H5 账号资料卡的成就/事件展示本轮也补了一层可读性整理：成就卡会把“已解锁”和“最近推进”的项目排到前面，并显示最近推进时间；世界事件日志则会把 `battle.started`、`first_battle` 这类内部 ID 转成中文标签，同时在摘要里补充各事件类别计数，方便后续继续接提示面板或筛选器。
 - H5 左侧面板现已补上账号资料卡：会优先显示服务端账号昵称，也会在浏览器本地记住上次使用的游客昵称；远端房间首次 `connect` 时会把这份 `displayName` 一并带给服务端，用于初始化游客账号资料。`/api/player-accounts/me` 返回的 `globalResources` 也会直接显示成“全局仓库”摘要，方便确认跨房间继承的金币/木材/矿石。
@@ -149,13 +160,17 @@
 - Lobby 进入房间前现在会先请求 `POST /api/auth/guest-login`，服务端会签发一个游客登录 token；浏览器会缓存这份游客会话，因此后续页面只带 `?roomId=...` 也能直接进入房间，不再必须把 `playerId` 写进 URL。
 - 服务端还新增了 `GET /api/auth/session` 与 `GET /api/player-accounts/me`、`PUT /api/player-accounts/me`：前者用于校验和刷新当前游客会话，后者用于按当前登录态读取/修改自己的账号资料，不需要前端再手拼 `playerId`。
 - 账号体系现已从“纯游客模式”升级为“双模式骨架”：`player_accounts` 新增 `loginId / passwordHash / credentialBoundAt`，服务端开放 `POST /api/auth/account-bind` 与 `POST /api/auth/account-login`，可把当前游客档绑定成口令账号，并在之后直接用登录 ID + 口令进入房间。
+- 鉴权入口现已补上进程内安全闸门：`POST /api/auth/guest-login`、`/account-login`、`/account-bind` 都会按来源 IP 走滑动窗口限流，`account-login` 还会在连续失败达到阈值后临时锁定账号；默认值分别来自 `VEIL_RATE_LIMIT_AUTH_WINDOW_MS=60000`、`VEIL_RATE_LIMIT_AUTH_MAX=10`、`VEIL_AUTH_LOCKOUT_THRESHOLD=10`、`VEIL_AUTH_LOCKOUT_DURATION_MINUTES=15`，游客会话缓存还会受 `VEIL_MAX_GUEST_SESSIONS=10000` 的 LRU 上限约束。
+- 正式账号会话现在补上了过期与撤销链路：访问令牌默认 1 小时（`VEIL_AUTH_ACCESS_TTL_SECONDS`），刷新令牌默认 30 天（`VEIL_AUTH_REFRESH_TTL_SECONDS`），游客 token 默认 7 天（`VEIL_AUTH_GUEST_TTL_SECONDS`）；服务端新增 `POST /api/auth/refresh` 与 `POST /api/auth/logout`，并把当前刷新令牌族持久化到 `player_accounts` 上，账号口令修改也会同步撤销现有会话。
+- 服务端现已补上开发态正式注册后端闭环：`POST /api/auth/account-registration/request` 可为全新正式账号预留 `loginId` 并生成短时效注册令牌，`POST /api/auth/account-registration/confirm` 会创建新的 `player_accounts` 档案、绑定口令并立即签发首个账号会话；默认通过 `VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE=dev-token` 直接回传开发态令牌，TTL 由 `VEIL_ACCOUNT_REGISTRATION_TTL_MINUTES` 控制，确认成功后会向账号 `recentEventLog` 追加注册申请/完成两条 `account` 审计事件。
+- 服务端现已补上开发态密码找回闭环：`POST /api/auth/password-recovery/request` 会为已绑定口令账号生成短时效重置令牌，`POST /api/auth/password-recovery/confirm` 可用该令牌重置口令并撤销旧会话；默认通过 `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE=dev-token` 直接回传开发态令牌，TTL 由 `VEIL_PASSWORD_RECOVERY_TTL_MINUTES` 控制，且找回申请/确认都会写入账号 `recentEventLog` 的 `account` 审计事件。详细说明见 `docs/account-auth-lifecycle.md`。
 - H5 Lobby 现已补上“账号口令登录”表单；游戏内账号资料卡也能直接绑定或更新口令账号，绑定成功后会立即把当前会话升级成账号模式，不需要重新手写 `playerId`，并会继续沿用同一份英雄长期档与全局资源仓库。
 - H5 Lobby 和游戏内都已补上“退出游客会话 / 切换游客账号”入口；当前 token 无效时会自动清掉本地会话并回到大厅。
 - Cocos Web 启动入口现在会复用和 H5 共用的 `project-veil:auth-session`：如果浏览器里已有已签名会话，那么直接访问 `?roomId=...` 就能沿用当前游客或正式账号身份进房，HUD 会标出当前是云端游客、正式账号还是本地/手动参数启动。
 - Cocos Web 现在也有真正的 Lobby 面板：没有 `roomId` 查询参数时会先进入大厅，可刷新 `/api/lobby/rooms` 活跃实例、点击字段卡片修改 `playerId / 昵称 / roomId / 登录 ID`、直接游客进入，或走“账号登录并进入”直连正式账号；Lobby 还会通过 `/api/player-accounts/me` / `GET /api/player-accounts/:playerId` 同步当前账号资料与全局仓库摘要。
 - Cocos Lobby 现在也提供“打开配置台”入口，会按当前联机目标自动跳到共享的 `config-center.html`，把配置联调从 H5 侧迁成主客户端可达链路。
 - 服务端新增 `GET /api/lobby/rooms`，会实时返回当前进程内活跃房间的 `roomId / day / seed / connectedPlayers / heroCount / activeBattles / updatedAt` 摘要，便于大厅入口和后续房间浏览器直接复用。
-- 这套账号目前仍是“轻量正式化”阶段：虽然已经有口令绑定和账号登录，但还没有刷新令牌、多端撤销、正式注册流程或第三方身份接入。
+- 这套账号目前仍是“轻量正式化”阶段：虽然已经有独立正式注册、口令绑定、刷新令牌轮换和单账号会话撤销，但还没有注册 / 找回前端入口、真正的多端并行会话管理或更完整的第三方身份接入。
 - H5 会优先连接 `ws://127.0.0.1:2567` 的本地会话服务；若服务未启动，则自动回退到浏览器内嵌房间模式。
 - 本地会话服务已支持房间内 `session.state` 推送同步，后续可在此基础上继续扩展多人联机。
 - 多人原型已支持双英雄同房间联调，以及踩到敌方英雄格时触发玩家对玩家遭遇战。
@@ -163,6 +178,8 @@
 - `assets.json` 已支持多状态资源描述，当前单位和标记可按 `idle / selected / hit` 状态切换占位素材。
 - 地形资源已支持稳定多变体切换，单位资源也已拆成 `portrait + frame` 槽位，后续可直接替换成正式美术素材而不改逻辑层 key。
 - `assets.json` 现已强制声明 `metadata`：每个被引用的资源路径都要带 `slot / stage / source`，用于追踪“当前占位图对应哪个稳定槽位、是否已经转正、来源是什么”。
+- `metadata.stage` 现已区分 `placeholder / prototype / production`，`metadata.source` 现已支持 `open-source`，便于把免费像素包的本地 staging 和仓库内预演资源分开审计。
+- issue #33 的免费素材接入约定见 `docs/issue-33-asset-integration.md`；本地未提交的素材包统一放在 `external-assets/issue-33-open-source`，通过 `npm run check:issue33-assets -- --require-pack` 校验完整性。
 - `npm run validate:assets` 现在除了校验 schema 和文件存在性，也会拦截缺失元数据、重复槽位和游离元数据；后续正式美术替换可直接沿用同一套 manifest 规则补齐审计信息。
 - `units.json` 现已补上 `faction / rarity` 元数据，前端会自动挂载阵营与品质 badge，占位资源层已经具备继续细化正式 UI 的结构。
 - `battle-skills.json` 现已承载战斗技能与持续状态目录，shared 战斗结算会在创建战斗和执行技能时直接读取运行时配置，不再依赖硬编码技能表。

@@ -1,0 +1,37 @@
+{
+  "projectName": "Project Veil",
+  "buildOutputDir": "build/wechatgame",
+  "buildTemplatePlatform": "wechatgame",
+  "runtimeRemoteUrl": "http://127.0.0.1:2567",
+  "budgets": {
+    "mainPackageMb": 4,
+    "totalSubpackageMb": 30
+  },
+  "domains": {
+    "request": [
+      "http://127.0.0.1:2567"
+    ],
+    "socket": [
+      "ws://127.0.0.1:2567"
+    ],
+    "uploadFile": [],
+    "downloadFile": []
+  },
+  "requiredDomains": {
+    "request": [
+      "http://127.0.0.1:2567"
+    ],
+    "socket": [
+      "ws://127.0.0.1:2567"
+    ],
+    "uploadFile": [],
+    "downloadFile": []
+  },
+  "missingConfiguredDomains": {
+    "request": [],
+    "socket": [],
+    "uploadFile": [],
+    "downloadFile": []
+  },
+  "expectedSubpackages": []
+}

@@ -11,7 +11,14 @@ import {
   queryEventLogEntries,
   type PlayerBattleReplaySummary
 } from "../../../packages/shared/src/index";
-import { issueNextAuthSession, resolveAuthSessionFromRequest } from "./auth";
+import {
+  cachePlayerAccountAuthState,
+  hashAccountPassword,
+  issueNextAuthSession,
+  readGuestAuthTokenFromRequest,
+  validateAuthSessionFromRequest,
+  verifyAccountPassword
+} from "./auth";
 import type {
   PlayerAccountProfilePatch,
   PlayerAccountSnapshot,
@@ -139,6 +146,7 @@ function toReplayResponseFromRequest(
   request: IncomingMessage
 ): { items: PlayerAccountSnapshot["recentBattleReplays"] } {
   const limit = parseLimit(request);
+  const offset = parseOffset(request);
   const roomId = parseOptionalQueryParam(request, "roomId");
   const battleId = parseOptionalQueryParam(request, "battleId");
   const battleKind = parseOptionalQueryParam(request, "battleKind") as
@@ -157,6 +165,7 @@ function toReplayResponseFromRequest(
   return {
     items: queryPlayerBattleReplaySummaries(account.recentBattleReplays, {
       ...(limit != null ? { limit } : {}),
+      ...(offset != null ? { offset } : {}),
       ...(roomId ? { roomId } : {}),
       ...(battleId ? { battleId } : {}),
       ...(battleKind ? { battleKind } : {}),
@@ -288,12 +297,14 @@ function isEphemeralGuestPlayerId(playerId: string): boolean {
 function createLocalModeAccount(input: {
   playerId?: string | null | undefined;
   displayName?: string | null | undefined;
+  avatarUrl?: string | null | undefined;
   lastRoomId?: string | null | undefined;
   loginId?: string | null | undefined;
   credentialBoundAt?: string | null | undefined;
 }): PlayerAccountSnapshot {
   const playerId = normalizePlayerId(input.playerId);
   const displayName = normalizeDisplayName(playerId, input.displayName);
+  const avatarUrl = input.avatarUrl?.trim();
   const lastRoomId = input.lastRoomId?.trim();
   const loginId = normalizeLoginId(input.loginId);
   const credentialBoundAt = input.credentialBoundAt?.trim();
@@ -309,17 +320,26 @@ function createLocalModeAccount(input: {
     achievements: [],
     recentEventLog: [],
     recentBattleReplays: [],
+    ...(avatarUrl ? { avatarUrl } : {}),
     ...(lastRoomId ? { lastRoomId } : {}),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {})
   };
 }
 
-function sendUnauthorized(response: ServerResponse): void {
+function sendUnauthorized(
+  response: ServerResponse,
+  errorCode: "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked" = "unauthorized"
+): void {
   sendJson(response, 401, {
     error: {
-      code: "unauthorized",
-      message: "Guest auth session is missing or invalid"
+      code: errorCode,
+      message:
+        errorCode === "token_expired"
+          ? "Auth token has expired"
+          : errorCode === "session_revoked"
+            ? "Auth session has been revoked"
+            : "Guest auth session is missing or invalid"
     }
   });
 }
@@ -333,8 +353,32 @@ function sendForbidden(response: ServerResponse): void {
   });
 }
 
-function toPublicPlayerAccount(account: PlayerAccountSnapshot): Omit<PlayerAccountSnapshot, "loginId" | "credentialBoundAt"> {
-  const { loginId: _loginId, credentialBoundAt: _credentialBoundAt, ...publicAccount } = account;
+async function requireAuthSession(
+  request: IncomingMessage,
+  response: ServerResponse,
+  store: RoomSnapshotStore | null
+) {
+  const result = await validateAuthSessionFromRequest(request, store);
+  if (!result.session) {
+    sendUnauthorized(response, result.errorCode ?? "unauthorized");
+    return null;
+  }
+  return result.session;
+}
+
+function toPublicPlayerAccount(
+  account: PlayerAccountSnapshot
+): Omit<
+  PlayerAccountSnapshot,
+  "loginId" | "credentialBoundAt" | "wechatMiniGameOpenId" | "wechatMiniGameUnionId"
+> {
+  const {
+    loginId: _loginId,
+    credentialBoundAt: _credentialBoundAt,
+    wechatMiniGameOpenId: _wechatMiniGameOpenId,
+    wechatMiniGameUnionId: _wechatMiniGameUnionId,
+    ...publicAccount
+  } = account;
   return publicAccount;
 }
 
@@ -389,9 +433,8 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/me", async (request, response) => {
-    const authSession = resolveAuthSessionFromRequest(request);
+    const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
-      sendUnauthorized(response);
       return;
     }
 
@@ -425,9 +468,8 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/me/battle-replays", async (request, response) => {
-    const authSession = resolveAuthSessionFromRequest(request);
+    const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
-      sendUnauthorized(response);
       return;
     }
 
@@ -452,9 +494,8 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/me/battle-replays/:replayId", async (request, response) => {
-    const authSession = resolveAuthSessionFromRequest(request);
+    const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
-      sendUnauthorized(response);
       return;
     }
 
@@ -499,9 +540,8 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/me/battle-replays/:replayId/playback", async (request, response) => {
-    const authSession = resolveAuthSessionFromRequest(request);
+    const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
-      sendUnauthorized(response);
       return;
     }
 
@@ -546,9 +586,8 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/me/event-log", async (request, response) => {
-    const authSession = resolveAuthSessionFromRequest(request);
+    const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
-      sendUnauthorized(response);
       return;
     }
 
@@ -582,9 +621,8 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/me/event-history", async (request, response) => {
-    const authSession = resolveAuthSessionFromRequest(request);
+    const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
-      sendUnauthorized(response);
       return;
     }
 
@@ -625,9 +663,8 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/me/achievements", async (request, response) => {
-    const authSession = resolveAuthSessionFromRequest(request);
+    const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
-      sendUnauthorized(response);
       return;
     }
 
@@ -661,9 +698,8 @@ export function registerPlayerAccountRoutes(
   });
 
   app.get("/api/player-accounts/me/progression", async (request, response) => {
-    const authSession = resolveAuthSessionFromRequest(request);
+    const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
-      sendUnauthorized(response);
       return;
     }
 
@@ -1090,16 +1126,18 @@ export function registerPlayerAccountRoutes(
   });
 
   app.put("/api/player-accounts/me", async (request, response) => {
-    const authSession = resolveAuthSessionFromRequest(request);
+    const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
-      sendUnauthorized(response);
       return;
     }
 
     try {
       const body = (await readJsonBody(request)) as {
         displayName?: string | null;
+        avatarUrl?: string | null;
         lastRoomId?: string | null;
+        currentPassword?: string | null;
+        newPassword?: string | null;
       };
 
       if (body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== "string") {
@@ -1122,15 +1160,57 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
+      if (body.avatarUrl !== undefined && body.avatarUrl !== null && typeof body.avatarUrl !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional string field: avatarUrl"
+          }
+        });
+        return;
+      }
+
+      if (body.currentPassword !== undefined && body.currentPassword !== null && typeof body.currentPassword !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional string field: currentPassword"
+          }
+        });
+        return;
+      }
+
+      if (body.newPassword !== undefined && body.newPassword !== null && typeof body.newPassword !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional string field: newPassword"
+          }
+        });
+        return;
+      }
+
       const patch: PlayerAccountProfilePatch = {
         ...(body.displayName !== undefined ? { displayName: body.displayName ?? "" } : {}),
+        ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
         ...(body.lastRoomId !== undefined ? { lastRoomId: body.lastRoomId } : {})
       };
+      const wantsPasswordChange = body.currentPassword !== undefined || body.newPassword !== undefined;
 
       if (!store) {
+        if (wantsPasswordChange) {
+          sendJson(response, 501, {
+            error: {
+              code: "password_change_not_supported",
+              message: "Password changes require configured room persistence storage"
+            }
+          });
+          return;
+        }
         const account = createLocalModeAccount({
           playerId: authSession.playerId,
           displayName: patch.displayName ?? authSession.displayName,
+          ...(patch.avatarUrl !== undefined ? { avatarUrl: patch.avatarUrl } : {}),
           ...(patch.lastRoomId !== undefined ? { lastRoomId: patch.lastRoomId } : {}),
           ...(authSession.loginId ? { loginId: authSession.loginId } : {})
         });
@@ -1141,13 +1221,71 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
-      const account =
+      let account =
         Object.keys(patch).length === 0
           ? await store.ensurePlayerAccount({
               playerId: authSession.playerId,
               displayName: authSession.displayName
             })
           : await store.savePlayerAccountProfile(authSession.playerId, patch);
+
+      if (wantsPasswordChange) {
+        if (authSession.authMode !== "account") {
+          sendJson(response, 403, {
+            error: {
+              code: "password_change_requires_account_auth",
+              message: "Password changes require an authenticated account session"
+            }
+          });
+          return;
+        }
+
+        const currentPassword = body.currentPassword?.trim();
+        const newPassword = body.newPassword?.trim();
+        if (!currentPassword || !newPassword) {
+          sendJson(response, 400, {
+            error: {
+              code: "invalid_payload",
+              message: "Password changes require both currentPassword and newPassword"
+            }
+          });
+          return;
+        }
+
+        const authAccount = await store.loadPlayerAccountAuthByPlayerId(authSession.playerId);
+        if (!authAccount || !verifyAccountPassword(currentPassword, authAccount.passwordHash)) {
+          sendJson(response, 401, {
+            error: {
+              code: "invalid_credentials",
+              message: "Current password is incorrect"
+            }
+          });
+          return;
+        }
+
+        const credentialBoundAt = new Date().toISOString();
+        const revokedAuth = await store.revokePlayerAccountAuthSessions(authSession.playerId, {
+          passwordHash: hashAccountPassword(newPassword),
+          credentialBoundAt
+        });
+        if (revokedAuth) {
+          cachePlayerAccountAuthState({
+            playerId: revokedAuth.playerId,
+            accountSessionVersion: revokedAuth.accountSessionVersion
+          });
+        }
+        account =
+          (await store.loadPlayerAccount(authSession.playerId)) ??
+          ({
+            ...account,
+            credentialBoundAt
+          } as typeof account);
+
+        sendJson(response, 200, {
+          account
+        });
+        return;
+      }
 
       sendJson(response, 200, {
         account,
@@ -1169,7 +1307,12 @@ export function registerPlayerAccountRoutes(
       return;
     }
 
-    const authSession = resolveAuthSessionFromRequest(request);
+    const authResult = await validateAuthSessionFromRequest(request, store);
+    const authSession = authResult.session;
+    if (!authSession && readGuestAuthTokenFromRequest(request)) {
+      sendUnauthorized(response, authResult.errorCode ?? "unauthorized");
+      return;
+    }
     if (authSession && authSession.playerId !== playerId) {
       sendForbidden(response);
       return;
@@ -1178,6 +1321,7 @@ export function registerPlayerAccountRoutes(
     try {
       const body = (await readJsonBody(request)) as {
         displayName?: string | null;
+        avatarUrl?: string | null;
         lastRoomId?: string | null;
       };
 
@@ -1201,8 +1345,19 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
+      if (body.avatarUrl !== undefined && body.avatarUrl !== null && typeof body.avatarUrl !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional string field: avatarUrl"
+          }
+        });
+        return;
+      }
+
       const patch: PlayerAccountProfilePatch = {
         ...(body.displayName !== undefined ? { displayName: body.displayName ?? "" } : {}),
+        ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
         ...(body.lastRoomId !== undefined ? { lastRoomId: body.lastRoomId } : {})
       };
 
@@ -1210,6 +1365,7 @@ export function registerPlayerAccountRoutes(
         const account = createLocalModeAccount({
           playerId,
           displayName: patch.displayName ?? authSession?.displayName ?? playerId,
+          ...(patch.avatarUrl !== undefined ? { avatarUrl: patch.avatarUrl } : {}),
           ...(patch.lastRoomId !== undefined ? { lastRoomId: patch.lastRoomId } : {}),
           ...(authSession?.playerId === playerId && authSession.loginId ? { loginId: authSession.loginId } : {})
         });
@@ -1221,7 +1377,7 @@ export function registerPlayerAccountRoutes(
       }
 
       if (!authSession) {
-        sendUnauthorized(response);
+        sendUnauthorized(response, authResult.errorCode ?? "unauthorized");
         return;
       }
 

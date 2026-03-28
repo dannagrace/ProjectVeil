@@ -28,6 +28,7 @@
   - 负责 HUD 文本面板渲染
   - 负责展示当前 `SessionUpdate + predictionStatus`
   - 会标出当前是游客还是正式账号身份
+  - 当前会直接展示英雄装备位、背包分组清单，以及最近装备战利品记录，方便在主客户端内完成查看与验证闭环
 - `assets/scripts/VeilBattlePanel.ts`
   - 负责右侧战斗面板
   - 现已按 `战况摘要 / 待动序列 / 我方单位 / 敌方目标 / 指令操作` 分区渲染
@@ -132,6 +133,10 @@
 8. 没有 `roomId` 查询参数时，会先进入 Cocos Lobby；可在大厅里刷新房间、游客进入、账号登录并进入，或打开配置台
 9. 进入房间后点击地图格子，观察 HUD 中的英雄坐标、移动力和资源变化
 10. 如需刷新当前资源占位音频，可先执行 `npm run sync:assets:audio`
+11. 如需验证装备/背包/战利品闭环：
+   - 先完成一场会掉落装备的战斗，确认 HUD 的“战利品”区块出现最近掉落记录
+   - 查看 HUD “装备配置”卡中的“背包”分组清单，确认新掉落已进入当前英雄背包
+   - 点击同一卡片下方的装备/卸下按钮，确认英雄关键属性、装备摘要与背包内容立即刷新
 
 ## 下一步建议
 
@@ -210,3 +215,39 @@ npm run dev:server
 ```
 
 这样 Lobby 会优先展示“微信登录并进入”，但它仍然只是 mock / scaffold，不代表已经完成生产发布链路。
+
+## 微信小游戏构建脚手架
+
+本仓库现在额外补了一层“可执行的构建准备与验收工具”，用来承接 issue #30 里构建配置、分包预算和域名清单这部分工作：
+
+- 配置文件：`apps/cocos-client/wechat-minigame.build.json`
+  - 统一记录小游戏项目名、`appid`、方向、主包预算、分包预算、运行时 `remoteUrl`、远程资源根路径和域名白名单
+  - `domains.request / socket / downloadFile` 会按 origin 维度归一化，避免把路径误当成微信白名单
+- 构建模板生成：
+  - `npm run prepare:wechat-build`
+  - 会生成 `apps/cocos-client/build-templates/wechatgame/`
+  - 当前落地的模板文件：
+    - `game.json`
+    - `project.config.json`
+    - `codex.wechat.build.json`
+    - `README.codex.md`
+- 导出结果校验：
+  - `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
+  - 会读取导出的 `game.json`
+  - 会校验注入的 `game.json / project.config.json / codex.wechat.build.json / README.codex.md` 是否与仓库配置一致
+  - 会校验导出目录里是否包含 `game.js / application.js / src/settings.json` 这些运行时 bootstrap 文件
+  - 计算主包体积与 `subpackages` 总体积
+  - 对照 `4MB / 30MB` 预算给出通过/失败结果
+  - 会根据 `runtimeRemoteUrl` 自动推导小游戏需要的 `request / socket` 域名
+  - 若远程资源 CDN 域名未出现在 `downloadFile` 白名单中，也会给出告警
+- 运行时内存收口：
+  - `assets/scripts/cocos-placeholder-sprites.ts`
+    - 占位图资源现已按 `map / hud / battle / timeline` 分 scope retain/release
+    - Map/HUD/Battle/Timeline 面板销毁时会显式释放不再使用的占位图资源，避免小游戏内长时间常驻整包贴图
+    - 地图在无世界态时会释放 `map` scope；战斗 / 时间线面板在空闲态也会释放各自的装饰资源
+  - `assets/scripts/cocos-runtime-memory.ts`
+    - 会优先读取小游戏性能接口暴露的堆内存指标
+    - 若运行时提供 `onMemoryWarning` / `triggerGC`，Root 会在收到内存告警后记录日志并请求一次 GC
+    - HUD 状态卡会展示当前运行时内存与占位图 scope 健康摘要，方便在小游戏预览时快速观察压力变化
+
+这层工具不会替代 Cocos Creator 里的正式构建操作，但它把“需要手工记住的微信小游戏发布约束”收口成了仓库里的可执行配置。下一步继续推进时，可以直接在 Creator 里把目标 Asset Bundle 标成 `Mini Game Subpackage`，再用这里的校验脚本收口。

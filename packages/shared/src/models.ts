@@ -110,6 +110,9 @@ export interface BattleEnvironmentBalanceConfig {
 export interface BattleBalanceConfig {
   damage: BattleDamageBalanceConfig;
   environment: BattleEnvironmentBalanceConfig;
+  pvp: {
+    eloK: number;
+  };
 }
 
 export interface MovePoints {

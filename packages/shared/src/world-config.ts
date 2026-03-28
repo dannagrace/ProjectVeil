@@ -146,6 +146,9 @@ export function validateBattleBalanceConfig(
   if (typeof config.environment !== "object" || config.environment === null) {
     throw new Error("Battle balance config must define environment");
   }
+  if (typeof config.pvp !== "object" || config.pvp === null) {
+    throw new Error("Battle balance config must define pvp");
+  }
 
   if (!isFiniteNumber(config.damage.defendingDefenseBonus)) {
     throw new Error("Battle balance damage.defendingDefenseBonus must be a finite number");
@@ -191,6 +194,9 @@ export function validateBattleBalanceConfig(
     !isBattleStatusEffectId(config.environment.trapGrantedStatusId)
   ) {
     throw new Error("Battle balance environment.trapGrantedStatusId must be a non-empty string when provided");
+  }
+  if (!Number.isInteger(config.pvp.eloK) || config.pvp.eloK <= 0) {
+    throw new Error("Battle balance pvp.eloK must be a positive integer");
   }
 }
 

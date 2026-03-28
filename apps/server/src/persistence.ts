@@ -1,6 +1,7 @@
-import { createConnection, createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
+import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import {
   appendPlayerBattleReplaySummaries,
+  normalizeEloRating,
   normalizeEventLogQuery,
   normalizeAchievementProgress,
   normalizeEventLogEntries,
@@ -21,14 +22,28 @@ export interface RoomSnapshotStore {
   load(roomId: string): Promise<RoomPersistenceSnapshot | null>;
   loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null>;
+  loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerEventHistory(playerId: string, query?: PlayerEventHistoryQuery): Promise<PlayerEventHistorySnapshot>;
   loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]>;
   loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null>;
+  loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]>;
   ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot>;
   bindPlayerAccountCredentials(
     playerId: string,
     input: PlayerAccountCredentialInput
+  ): Promise<PlayerAccountSnapshot>;
+  savePlayerAccountAuthSession(
+    playerId: string,
+    input: PlayerAccountAuthSessionInput
+  ): Promise<PlayerAccountAuthSnapshot | null>;
+  revokePlayerAccountAuthSessions(
+    playerId: string,
+    input?: PlayerAccountAuthRevokeInput
+  ): Promise<PlayerAccountAuthSnapshot | null>;
+  bindPlayerAccountWechatMiniGameIdentity(
+    playerId: string,
+    input: PlayerAccountWechatMiniGameIdentityInput
   ): Promise<PlayerAccountSnapshot>;
   savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot>;
   savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot>;
@@ -89,6 +104,8 @@ interface PlayerRoomProfileSummaryRow extends RowDataPacket {
 interface PlayerAccountRow extends RowDataPacket {
   player_id: string;
   display_name: string | null;
+  avatar_url: string | null;
+  elo_rating: number | null;
   global_resources_json: string | ResourceLedger;
   achievements_json: string | PlayerAchievementProgress[] | null;
   recent_event_log_json: string | EventLogEntry[] | null;
@@ -96,6 +113,13 @@ interface PlayerAccountRow extends RowDataPacket {
   last_room_id: string | null;
   last_seen_at: Date | string | null;
   login_id: string | null;
+  account_session_version: number;
+  refresh_session_id: string | null;
+  refresh_token_hash: string | null;
+  refresh_token_expires_at: Date | string | null;
+  wechat_mini_game_open_id: string | null;
+  wechat_mini_game_union_id: string | null;
+  wechat_mini_game_bound_at: Date | string | null;
   credential_bound_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -106,6 +130,10 @@ interface PlayerAccountAuthRow extends RowDataPacket {
   display_name: string | null;
   login_id: string | null;
   password_hash: string | null;
+  account_session_version: number;
+  refresh_session_id: string | null;
+  refresh_token_hash: string | null;
+  refresh_token_expires_at: Date | string | null;
   credential_bound_at: Date | string | null;
 }
 
@@ -156,6 +184,12 @@ export interface PlayerRoomProfileSnapshot {
 
 export interface PlayerAccountSnapshot extends PlayerAccountReadModel {
   recentBattleReplays?: PlayerBattleReplaySummary[];
+  accountSessionVersion?: number;
+  refreshSessionId?: string;
+  refreshTokenExpiresAt?: string;
+  wechatMiniGameOpenId?: string;
+  wechatMiniGameUnionId?: string;
+  wechatMiniGameBoundAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -165,6 +199,10 @@ export interface PlayerAccountAuthSnapshot {
   displayName: string;
   loginId: string;
   passwordHash: string;
+  accountSessionVersion: number;
+  refreshSessionId?: string;
+  refreshTokenHash?: string;
+  refreshTokenExpiresAt?: string;
   credentialBoundAt?: string;
 }
 
@@ -182,6 +220,7 @@ export interface PlayerAccountEnsureInput {
 
 export interface PlayerAccountProfilePatch {
   displayName?: string;
+  avatarUrl?: string | null;
   lastRoomId?: string | null;
 }
 
@@ -195,6 +234,24 @@ export interface PlayerAccountProgressPatch {
 export interface PlayerAccountCredentialInput {
   loginId: string;
   passwordHash: string;
+}
+
+export interface PlayerAccountAuthSessionInput {
+  refreshSessionId: string;
+  refreshTokenHash: string;
+  refreshTokenExpiresAt: string;
+}
+
+export interface PlayerAccountAuthRevokeInput {
+  passwordHash?: string;
+  credentialBoundAt?: string;
+}
+
+export interface PlayerAccountWechatMiniGameIdentityInput {
+  openId: string;
+  unionId?: string;
+  displayName?: string;
+  avatarUrl?: string | null;
 }
 
 export interface PlayerAccountListOptions {
@@ -235,6 +292,7 @@ export const MYSQL_PLAYER_ROOM_PROFILE_UPDATED_AT_INDEX = "idx_player_room_profi
 export const MYSQL_PLAYER_ACCOUNT_TABLE = "player_accounts";
 export const MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX = "idx_player_accounts_updated_at";
 export const MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX = "uidx_player_accounts_login_id";
+export const MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX = "uidx_player_accounts_wechat_open_id";
 export const MYSQL_PLAYER_EVENT_HISTORY_TABLE = "player_event_history";
 export const MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX = "idx_player_event_history_player_time";
 export const MYSQL_PLAYER_HERO_ARCHIVE_TABLE = "player_hero_archives";
@@ -245,6 +303,7 @@ export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
 export const DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES = 30;
 export const MAX_PLAYER_DISPLAY_NAME_LENGTH = 40;
 export const MAX_PLAYER_LOGIN_ID_LENGTH = 40;
+export const MAX_PLAYER_AVATAR_URL_LENGTH = 512;
 const MYSQL_DUPLICATE_ENTRY_ERROR_CODE = "ER_DUP_ENTRY";
 const MYSQL_DUPLICATE_ENTRY_ERRNO = 1062;
 
@@ -301,6 +360,11 @@ function normalizePlayerDisplayName(playerId: string, displayName?: string | nul
   return normalized.slice(0, MAX_PLAYER_DISPLAY_NAME_LENGTH);
 }
 
+function normalizePlayerAvatarUrl(avatarUrl?: string | null): string | undefined {
+  const normalized = avatarUrl?.trim();
+  return normalized ? normalized.slice(0, MAX_PLAYER_AVATAR_URL_LENGTH) : undefined;
+}
+
 export function normalizePlayerLoginId(loginId: string): string {
   const normalized = loginId.trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{2,39}$/.test(normalized)) {
@@ -310,6 +374,20 @@ export function normalizePlayerLoginId(loginId: string): string {
   }
 
   return normalized.slice(0, MAX_PLAYER_LOGIN_ID_LENGTH);
+}
+
+function normalizeWechatMiniGameOpenId(openId: string): string {
+  const normalized = openId.trim();
+  if (!normalized) {
+    throw new Error("wechatMiniGameOpenId must not be empty");
+  }
+
+  return normalized;
+}
+
+function normalizeWechatMiniGameUnionId(unionId?: string | null): string | undefined {
+  const normalized = unionId?.trim();
+  return normalized ? normalized : undefined;
 }
 
 function formatTimestamp(value: Date | string | null | undefined): string | undefined {
@@ -341,6 +419,8 @@ function isMySqlDuplicateEntryError(error: unknown): boolean {
 function normalizePlayerAccountSnapshot(account: {
   playerId: string;
   displayName?: string | null | undefined;
+  avatarUrl?: string | null | undefined;
+  eloRating?: number | null | undefined;
   globalResources?: Partial<ResourceLedger>;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -348,16 +428,27 @@ function normalizePlayerAccountSnapshot(account: {
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
   loginId?: string | null | undefined;
+  wechatMiniGameOpenId?: string | null | undefined;
+  wechatMiniGameUnionId?: string | null | undefined;
+  wechatMiniGameBoundAt?: string | undefined;
   credentialBoundAt?: string | undefined;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 }): PlayerAccountSnapshot {
   const playerId = normalizePlayerId(account.playerId);
+  const normalizedWechatMiniGameOpenId = account.wechatMiniGameOpenId
+    ? normalizeWechatMiniGameOpenId(account.wechatMiniGameOpenId)
+    : undefined;
+  const normalizedWechatMiniGameUnionId = account.wechatMiniGameUnionId
+    ? normalizeWechatMiniGameUnionId(account.wechatMiniGameUnionId)
+    : undefined;
 
   return {
     ...normalizePlayerAccountReadModel({
       playerId,
       displayName: normalizePlayerDisplayName(playerId, account.displayName),
+      avatarUrl: normalizePlayerAvatarUrl(account.avatarUrl),
+      eloRating: normalizeEloRating(account.eloRating),
       globalResources: normalizeResourceLedger(account.globalResources),
       achievements: account.achievements,
       recentEventLog: account.recentEventLog,
@@ -367,6 +458,9 @@ function normalizePlayerAccountSnapshot(account: {
       loginId: account.loginId ? normalizePlayerLoginId(account.loginId) : undefined,
       credentialBoundAt: account.credentialBoundAt
     }),
+    ...(normalizedWechatMiniGameOpenId ? { wechatMiniGameOpenId: normalizedWechatMiniGameOpenId } : {}),
+    ...(normalizedWechatMiniGameUnionId ? { wechatMiniGameUnionId: normalizedWechatMiniGameUnionId } : {}),
+    ...(account.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: account.wechatMiniGameBoundAt } : {}),
     ...(account.createdAt ? { createdAt: account.createdAt } : {}),
     ...(account.updatedAt ? { updatedAt: account.updatedAt } : {})
   };
@@ -631,6 +725,8 @@ DEALLOCATE PREPARE veil_player_profiles_idx_stmt;
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   display_name VARCHAR(80) NULL,
+  avatar_url VARCHAR(512) NULL,
+  elo_rating INT NOT NULL DEFAULT 1000,
   global_resources_json LONGTEXT NOT NULL,
   achievements_json LONGTEXT NULL,
   recent_event_log_json LONGTEXT NULL,
@@ -638,6 +734,9 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   last_room_id VARCHAR(191) NULL,
   last_seen_at DATETIME NULL DEFAULT NULL,
   login_id VARCHAR(40) NULL,
+  wechat_mini_game_open_id VARCHAR(191) NULL,
+  wechat_mini_game_union_id VARCHAR(191) NULL,
+  wechat_mini_game_bound_at DATETIME NULL DEFAULT NULL,
   password_hash VARCHAR(255) NULL,
   credential_bound_at DATETIME NULL DEFAULT NULL,
   version BIGINT UNSIGNED NOT NULL DEFAULT 1,
@@ -713,6 +812,42 @@ SET @veil_player_accounts_achievements_sql := IF(
 PREPARE veil_player_accounts_achievements_stmt FROM @veil_player_accounts_achievements_sql;
 EXECUTE veil_player_accounts_achievements_stmt;
 DEALLOCATE PREPARE veil_player_accounts_achievements_stmt;
+
+SET @veil_player_accounts_avatar_url_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'avatar_url'
+);
+
+SET @veil_player_accounts_avatar_url_sql := IF(
+  @veil_player_accounts_avatar_url_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`avatar_url\` VARCHAR(512) NULL AFTER \`display_name\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_avatar_url_stmt FROM @veil_player_accounts_avatar_url_sql;
+EXECUTE veil_player_accounts_avatar_url_stmt;
+DEALLOCATE PREPARE veil_player_accounts_avatar_url_stmt;
+
+SET @veil_player_accounts_elo_rating_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'elo_rating'
+);
+
+SET @veil_player_accounts_elo_rating_sql := IF(
+  @veil_player_accounts_elo_rating_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`elo_rating\` INT NOT NULL DEFAULT 1000 AFTER \`avatar_url\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_elo_rating_stmt FROM @veil_player_accounts_elo_rating_sql;
+EXECUTE veil_player_accounts_elo_rating_stmt;
+DEALLOCATE PREPARE veil_player_accounts_elo_rating_stmt;
 
 SET @veil_player_accounts_event_log_exists := (
   SELECT COUNT(*)
@@ -822,6 +957,60 @@ PREPARE veil_player_accounts_password_hash_stmt FROM @veil_player_accounts_passw
 EXECUTE veil_player_accounts_password_hash_stmt;
 DEALLOCATE PREPARE veil_player_accounts_password_hash_stmt;
 
+SET @veil_player_accounts_wechat_open_id_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'wechat_mini_game_open_id'
+);
+
+SET @veil_player_accounts_wechat_open_id_sql := IF(
+  @veil_player_accounts_wechat_open_id_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`wechat_mini_game_open_id\` VARCHAR(191) NULL AFTER \`password_hash\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_wechat_open_id_stmt FROM @veil_player_accounts_wechat_open_id_sql;
+EXECUTE veil_player_accounts_wechat_open_id_stmt;
+DEALLOCATE PREPARE veil_player_accounts_wechat_open_id_stmt;
+
+SET @veil_player_accounts_wechat_union_id_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'wechat_mini_game_union_id'
+);
+
+SET @veil_player_accounts_wechat_union_id_sql := IF(
+  @veil_player_accounts_wechat_union_id_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`wechat_mini_game_union_id\` VARCHAR(191) NULL AFTER \`wechat_mini_game_open_id\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_wechat_union_id_stmt FROM @veil_player_accounts_wechat_union_id_sql;
+EXECUTE veil_player_accounts_wechat_union_id_stmt;
+DEALLOCATE PREPARE veil_player_accounts_wechat_union_id_stmt;
+
+SET @veil_player_accounts_wechat_bound_at_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'wechat_mini_game_bound_at'
+);
+
+SET @veil_player_accounts_wechat_bound_at_sql := IF(
+  @veil_player_accounts_wechat_bound_at_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`wechat_mini_game_bound_at\` DATETIME NULL DEFAULT NULL AFTER \`wechat_mini_game_union_id\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_wechat_bound_at_stmt FROM @veil_player_accounts_wechat_bound_at_sql;
+EXECUTE veil_player_accounts_wechat_bound_at_stmt;
+DEALLOCATE PREPARE veil_player_accounts_wechat_bound_at_stmt;
+
 SET @veil_player_accounts_credential_bound_at_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.COLUMNS
@@ -832,7 +1021,7 @@ SET @veil_player_accounts_credential_bound_at_exists := (
 
 SET @veil_player_accounts_credential_bound_at_sql := IF(
   @veil_player_accounts_credential_bound_at_exists = 0,
-  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`credential_bound_at\` DATETIME NULL DEFAULT NULL AFTER \`password_hash\`',
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`credential_bound_at\` DATETIME NULL DEFAULT NULL AFTER \`wechat_mini_game_bound_at\`',
   'SELECT 1'
 );
 
@@ -875,6 +1064,24 @@ SET @veil_player_accounts_login_idx_sql := IF(
 PREPARE veil_player_accounts_login_idx_stmt FROM @veil_player_accounts_login_idx_sql;
 EXECUTE veil_player_accounts_login_idx_stmt;
 DEALLOCATE PREPARE veil_player_accounts_login_idx_stmt;
+
+SET @veil_player_accounts_wechat_open_id_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX}'
+);
+
+SET @veil_player_accounts_wechat_open_id_idx_sql := IF(
+  @veil_player_accounts_wechat_open_id_idx_exists = 0,
+  'CREATE UNIQUE INDEX \`${MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX}\` ON \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (wechat_mini_game_open_id)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_wechat_open_id_idx_stmt FROM @veil_player_accounts_wechat_open_id_idx_sql;
+EXECUTE veil_player_accounts_wechat_open_id_idx_stmt;
+DEALLOCATE PREPARE veil_player_accounts_wechat_open_id_idx_stmt;
 
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
@@ -1067,12 +1274,16 @@ function toPlayerHeroArchiveSnapshot(row: PlayerHeroArchiveRow): PlayerHeroArchi
 
 function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
   const lastSeenAt = formatTimestamp(row.last_seen_at);
+  const refreshTokenExpiresAt = formatTimestamp(row.refresh_token_expires_at);
+  const wechatMiniGameBoundAt = formatTimestamp(row.wechat_mini_game_bound_at);
   const credentialBoundAt = formatTimestamp(row.credential_bound_at);
   const createdAt = formatTimestamp(row.created_at);
   const updatedAt = formatTimestamp(row.updated_at);
 
   return normalizePlayerAccountSnapshot({
     playerId: row.player_id,
+    ...(row.avatar_url ? { avatarUrl: row.avatar_url } : {}),
+    ...(row.elo_rating != null ? { eloRating: row.elo_rating } : {}),
     globalResources: parseJsonColumn<ResourceLedger>(row.global_resources_json),
     achievements:
       row.achievements_json != null
@@ -1089,7 +1300,13 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(row.display_name ? { displayName: row.display_name } : {}),
     ...(row.last_room_id ? { lastRoomId: row.last_room_id } : {}),
     ...(row.login_id ? { loginId: row.login_id } : {}),
+    ...(row.account_session_version > 0 ? { accountSessionVersion: row.account_session_version } : {}),
+    ...(row.refresh_session_id ? { refreshSessionId: row.refresh_session_id } : {}),
+    ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}),
+    ...(row.wechat_mini_game_open_id ? { wechatMiniGameOpenId: row.wechat_mini_game_open_id } : {}),
+    ...(row.wechat_mini_game_union_id ? { wechatMiniGameUnionId: row.wechat_mini_game_union_id } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {}),
+    ...(wechatMiniGameBoundAt ? { wechatMiniGameBoundAt } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {})
@@ -1102,11 +1319,16 @@ function toPlayerAccountAuthSnapshot(row: PlayerAccountAuthRow): PlayerAccountAu
   }
 
   const credentialBoundAt = formatTimestamp(row.credential_bound_at);
+  const refreshTokenExpiresAt = formatTimestamp(row.refresh_token_expires_at);
   return {
     playerId: normalizePlayerId(row.player_id),
     displayName: normalizePlayerDisplayName(row.player_id, row.display_name),
     loginId: normalizePlayerLoginId(row.login_id),
     passwordHash: row.password_hash,
+    accountSessionVersion: Math.max(0, Math.floor(row.account_session_version ?? 0)),
+    ...(row.refresh_session_id ? { refreshSessionId: row.refresh_session_id } : {}),
+    ...(row.refresh_token_hash ? { refreshTokenHash: row.refresh_token_hash } : {}),
+    ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {})
   };
 }
@@ -1210,15 +1432,17 @@ async function savePlayerAccounts(
       `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
          player_id,
          display_name,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json
          ,
          recent_battle_replays_json
        )
-       VALUES (?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
+         elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
          recent_event_log_json = COALESCE(recent_event_log_json, VALUES(recent_event_log_json)),
@@ -1227,6 +1451,7 @@ async function savePlayerAccounts(
       [
         normalizedAccount.playerId,
         normalizedAccount.displayName,
+        normalizedAccount.eloRating,
         JSON.stringify(normalizedAccount.globalResources),
         JSON.stringify(normalizedAccount.achievements),
         JSON.stringify(normalizedAccount.recentEventLog),
@@ -1268,28 +1493,6 @@ async function savePlayerHeroArchives(
   }
 }
 
-async function ensureColumnExists(
-  pool: Pool,
-  database: string,
-  tableName: string,
-  columnName: string,
-  columnSql: string
-): Promise<void> {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT 1
-     FROM INFORMATION_SCHEMA.COLUMNS
-     WHERE TABLE_SCHEMA = ?
-       AND TABLE_NAME = ?
-       AND COLUMN_NAME = ?
-     LIMIT 1`,
-    [database, tableName, columnName]
-  );
-
-  if (!rows[0]) {
-    await pool.query(`ALTER TABLE \`${tableName}\` ADD COLUMN ${columnSql}`);
-  }
-}
-
 export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
   private readonly pool: Pool;
   private readonly database: string;
@@ -1302,18 +1505,6 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
   }
 
   static async create(config: MySqlPersistenceConfig): Promise<MySqlRoomSnapshotStore> {
-    const bootstrap = await createConnection({
-      host: config.host,
-      port: config.port,
-      user: config.user,
-      password: config.password
-    });
-
-    await bootstrap.query(
-      `CREATE DATABASE IF NOT EXISTS \`${config.database}\` DEFAULT CHARACTER SET utf8mb4 DEFAULT COLLATE utf8mb4_unicode_ci`
-    );
-    await bootstrap.end();
-
     const pool = createPool({
       host: config.host,
       port: config.port,
@@ -1323,308 +1514,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       connectionLimit: 4,
       namedPlaceholders: true
     });
-
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS \`${MYSQL_ROOM_SNAPSHOT_TABLE}\` (
-        room_id VARCHAR(191) NOT NULL,
-        state_json LONGTEXT NOT NULL,
-        battles_json LONGTEXT NOT NULL,
-        version BIGINT UNSIGNED NOT NULL DEFAULT 1,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (room_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-    );
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ROOM_PROFILE_TABLE}\` (
-        room_id VARCHAR(191) NOT NULL,
-        player_id VARCHAR(191) NOT NULL,
-        heroes_json LONGTEXT NOT NULL,
-        resources_json LONGTEXT NOT NULL,
-        version BIGINT UNSIGNED NOT NULL DEFAULT 1,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (room_id, player_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-    );
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
-        player_id VARCHAR(191) NOT NULL,
-        display_name VARCHAR(80) NULL,
-        global_resources_json LONGTEXT NOT NULL,
-        achievements_json LONGTEXT NULL,
-        recent_event_log_json LONGTEXT NULL,
-        recent_battle_replays_json LONGTEXT NULL,
-        last_room_id VARCHAR(191) NULL,
-        last_seen_at DATETIME NULL DEFAULT NULL,
-        login_id VARCHAR(40) NULL,
-        password_hash VARCHAR(255) NULL,
-        credential_bound_at DATETIME NULL DEFAULT NULL,
-        version BIGINT UNSIGNED NOT NULL DEFAULT 1,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (player_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-    );
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (
-        player_id VARCHAR(191) NOT NULL,
-        event_id VARCHAR(191) NOT NULL,
-        timestamp DATETIME NOT NULL,
-        room_id VARCHAR(191) NOT NULL,
-        category VARCHAR(32) NOT NULL,
-        hero_id VARCHAR(191) NULL,
-        world_event_type VARCHAR(64) NULL,
-        achievement_id VARCHAR(64) NULL,
-        entry_json LONGTEXT NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (player_id, event_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-    );
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (
-        player_id VARCHAR(191) NOT NULL,
-        hero_id VARCHAR(191) NOT NULL,
-        hero_json LONGTEXT NOT NULL,
-        army_template_id VARCHAR(191) NULL,
-        army_count INT NULL,
-        learned_skills_json LONGTEXT NULL,
-        equipment_json LONGTEXT NULL,
-        inventory_json LONGTEXT NULL,
-        version BIGINT UNSIGNED NOT NULL DEFAULT 1,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (player_id, hero_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-    );
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS \`${MYSQL_CONFIG_DOCUMENT_TABLE}\` (
-        document_id VARCHAR(64) NOT NULL,
-        content_json LONGTEXT NOT NULL,
-        version BIGINT UNSIGNED NOT NULL DEFAULT 1,
-        exported_at DATETIME NULL DEFAULT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (document_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_ACCOUNT_TABLE,
-      "display_name",
-      "`display_name` VARCHAR(80) NULL AFTER `player_id`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_ACCOUNT_TABLE,
-      "achievements_json",
-      "`achievements_json` LONGTEXT NULL AFTER `global_resources_json`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_ACCOUNT_TABLE,
-      "recent_event_log_json",
-      "`recent_event_log_json` LONGTEXT NULL AFTER `achievements_json`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_ACCOUNT_TABLE,
-      "recent_battle_replays_json",
-      "`recent_battle_replays_json` LONGTEXT NULL AFTER `recent_event_log_json`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_ACCOUNT_TABLE,
-      "last_room_id",
-      "`last_room_id` VARCHAR(191) NULL AFTER `recent_battle_replays_json`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_ACCOUNT_TABLE,
-      "last_seen_at",
-      "`last_seen_at` DATETIME NULL DEFAULT NULL AFTER `last_room_id`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_ACCOUNT_TABLE,
-      "login_id",
-      "`login_id` VARCHAR(40) NULL AFTER `last_seen_at`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_ACCOUNT_TABLE,
-      "password_hash",
-      "`password_hash` VARCHAR(255) NULL AFTER `login_id`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_ACCOUNT_TABLE,
-      "credential_bound_at",
-      "`credential_bound_at` DATETIME NULL DEFAULT NULL AFTER `password_hash`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_HERO_ARCHIVE_TABLE,
-      "army_template_id",
-      "`army_template_id` VARCHAR(191) NULL AFTER `hero_json`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_HERO_ARCHIVE_TABLE,
-      "army_count",
-      "`army_count` INT NULL AFTER `army_template_id`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_HERO_ARCHIVE_TABLE,
-      "learned_skills_json",
-      "`learned_skills_json` LONGTEXT NULL AFTER `army_count`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_HERO_ARCHIVE_TABLE,
-      "equipment_json",
-      "`equipment_json` LONGTEXT NULL AFTER `learned_skills_json`"
-    );
-    await ensureColumnExists(
-      pool,
-      config.database,
-      MYSQL_PLAYER_HERO_ARCHIVE_TABLE,
-      "inventory_json",
-      "`inventory_json` LONGTEXT NULL AFTER `equipment_json`"
-    );
-
-    const [indexRows] = await pool.query<RowDataPacket[]>(
-      `SELECT 1
-       FROM INFORMATION_SCHEMA.STATISTICS
-       WHERE TABLE_SCHEMA = ?
-         AND TABLE_NAME = ?
-         AND INDEX_NAME = ?
-       LIMIT 1`,
-      [config.database, MYSQL_ROOM_SNAPSHOT_TABLE, MYSQL_ROOM_SNAPSHOT_UPDATED_AT_INDEX]
-    );
-
-    if (!indexRows[0]) {
-      await pool.query(
-        `CREATE INDEX \`${MYSQL_ROOM_SNAPSHOT_UPDATED_AT_INDEX}\`
-         ON \`${MYSQL_ROOM_SNAPSHOT_TABLE}\` (updated_at)`
-      );
-    }
-
-    const [profileIndexRows] = await pool.query<RowDataPacket[]>(
-      `SELECT 1
-       FROM INFORMATION_SCHEMA.STATISTICS
-       WHERE TABLE_SCHEMA = ?
-         AND TABLE_NAME = ?
-         AND INDEX_NAME = ?
-       LIMIT 1`,
-      [config.database, MYSQL_PLAYER_ROOM_PROFILE_TABLE, MYSQL_PLAYER_ROOM_PROFILE_UPDATED_AT_INDEX]
-    );
-
-    if (!profileIndexRows[0]) {
-      await pool.query(
-        `CREATE INDEX \`${MYSQL_PLAYER_ROOM_PROFILE_UPDATED_AT_INDEX}\`
-         ON \`${MYSQL_PLAYER_ROOM_PROFILE_TABLE}\` (updated_at)`
-      );
-    }
-
-    const [playerAccountIndexRows] = await pool.query<RowDataPacket[]>(
-      `SELECT 1
-       FROM INFORMATION_SCHEMA.STATISTICS
-       WHERE TABLE_SCHEMA = ?
-         AND TABLE_NAME = ?
-         AND INDEX_NAME = ?
-       LIMIT 1`,
-      [config.database, MYSQL_PLAYER_ACCOUNT_TABLE, MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX]
-    );
-
-    if (!playerAccountIndexRows[0]) {
-      await pool.query(
-        `CREATE INDEX \`${MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX}\`
-         ON \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (updated_at)`
-      );
-    }
-
-    const [playerAccountLoginIndexRows] = await pool.query<RowDataPacket[]>(
-      `SELECT 1
-       FROM INFORMATION_SCHEMA.STATISTICS
-       WHERE TABLE_SCHEMA = ?
-         AND TABLE_NAME = ?
-         AND INDEX_NAME = ?
-       LIMIT 1`,
-      [config.database, MYSQL_PLAYER_ACCOUNT_TABLE, MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX]
-    );
-
-    if (!playerAccountLoginIndexRows[0]) {
-      await pool.query(
-        `CREATE UNIQUE INDEX \`${MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX}\`
-         ON \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (login_id)`
-      );
-    }
-
-    const [playerEventHistoryIndexRows] = await pool.query<RowDataPacket[]>(
-      `SELECT 1
-       FROM INFORMATION_SCHEMA.STATISTICS
-       WHERE TABLE_SCHEMA = ?
-         AND TABLE_NAME = ?
-         AND INDEX_NAME = ?
-       LIMIT 1`,
-      [config.database, MYSQL_PLAYER_EVENT_HISTORY_TABLE, MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX]
-    );
-
-    if (!playerEventHistoryIndexRows[0]) {
-      await pool.query(
-        `CREATE INDEX \`${MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX}\`
-         ON \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (player_id, timestamp)`
-      );
-    }
-
-    const [playerHeroArchiveIndexRows] = await pool.query<RowDataPacket[]>(
-      `SELECT 1
-       FROM INFORMATION_SCHEMA.STATISTICS
-       WHERE TABLE_SCHEMA = ?
-         AND TABLE_NAME = ?
-         AND INDEX_NAME = ?
-       LIMIT 1`,
-      [config.database, MYSQL_PLAYER_HERO_ARCHIVE_TABLE, MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX]
-    );
-
-    if (!playerHeroArchiveIndexRows[0]) {
-      await pool.query(
-        `CREATE INDEX \`${MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX}\`
-         ON \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (updated_at)`
-      );
-    }
-
-    const [configIndexRows] = await pool.query<RowDataPacket[]>(
-      `SELECT 1
-       FROM INFORMATION_SCHEMA.STATISTICS
-       WHERE TABLE_SCHEMA = ?
-         AND TABLE_NAME = ?
-         AND INDEX_NAME = ?
-       LIMIT 1`,
-      [config.database, MYSQL_CONFIG_DOCUMENT_TABLE, MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX]
-    );
-
-    if (!configIndexRows[0]) {
-      await pool.query(
-        `CREATE INDEX \`${MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX}\`
-         ON \`${MYSQL_CONFIG_DOCUMENT_TABLE}\` (updated_at)`
-      );
-    }
+    await pool.query("SELECT 1");
 
     return new MySqlRoomSnapshotStore(pool, config.database, config.retention);
   }
@@ -1690,6 +1580,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       `SELECT
          player_id,
          display_name,
+         avatar_url,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1697,6 +1589,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         account_session_version,
+         refresh_session_id,
+         refresh_token_hash,
+         refresh_token_expires_at,
+         wechat_mini_game_open_id,
+         wechat_mini_game_union_id,
+         wechat_mini_game_bound_at,
          credential_bound_at,
          created_at,
          updated_at
@@ -1704,6 +1603,41 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
        WHERE login_id = ?
        LIMIT 1`,
       [normalizedLoginId]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerAccountSnapshot(row) : null;
+  }
+
+  async loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null> {
+    const normalizedOpenId = normalizeWechatMiniGameOpenId(openId);
+    const [rows] = await this.pool.query<PlayerAccountRow[]>(
+      `SELECT
+         player_id,
+         display_name,
+         avatar_url,
+         elo_rating,
+         global_resources_json,
+         achievements_json,
+         recent_event_log_json,
+         recent_battle_replays_json,
+         last_room_id,
+         last_seen_at,
+         login_id,
+         account_session_version,
+         refresh_session_id,
+         refresh_token_hash,
+         refresh_token_expires_at,
+         wechat_mini_game_open_id,
+         wechat_mini_game_union_id,
+         wechat_mini_game_bound_at,
+         credential_bound_at,
+         created_at,
+         updated_at
+       FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       WHERE wechat_mini_game_open_id = ?
+       LIMIT 1`,
+      [normalizedOpenId]
     );
 
     const row = rows[0];
@@ -1799,6 +1733,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       `SELECT
          player_id,
          display_name,
+         avatar_url,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1806,6 +1742,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         account_session_version,
+         refresh_session_id,
+         refresh_token_hash,
+         refresh_token_expires_at,
+         wechat_mini_game_open_id,
+         wechat_mini_game_union_id,
+         wechat_mini_game_bound_at,
          credential_bound_at,
          created_at,
          updated_at
@@ -1825,6 +1768,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          login_id,
          password_hash,
+         account_session_version,
+         refresh_session_id,
+         refresh_token_hash,
+         refresh_token_expires_at,
          credential_bound_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
        WHERE login_id = ?
@@ -1847,6 +1794,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
          player_id,
          display_name,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1854,7 +1802,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(?, display_name),
          last_room_id = COALESCE(?, last_room_id),
@@ -1863,6 +1811,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       [
         playerId,
         insertDisplayName,
+        normalizeEloRating(undefined),
         JSON.stringify(normalizeResourceLedger()),
         JSON.stringify(normalizeAchievementProgress()),
         JSON.stringify(normalizeEventLogEntries()),
@@ -1879,6 +1828,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       normalizePlayerAccountSnapshot({
         playerId,
         displayName: insertDisplayName,
+        eloRating: normalizeEloRating(undefined),
         globalResources: normalizeResourceLedger(),
         achievements: normalizeAchievementProgress(),
         recentEventLog: normalizeEventLogEntries(),
@@ -1887,6 +1837,29 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         lastSeenAt: lastSeenAt.toISOString()
       })
     );
+  }
+
+  async loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const [rows] = await this.pool.query<PlayerAccountAuthRow[]>(
+      `SELECT
+         player_id,
+         display_name,
+         login_id,
+         password_hash,
+         account_session_version,
+         refresh_session_id,
+         refresh_token_hash,
+         refresh_token_expires_at,
+         credential_bound_at
+       FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       WHERE player_id = ?
+       LIMIT 1`,
+      [normalizedPlayerId]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerAccountAuthSnapshot(row) : null;
   }
 
   async bindPlayerAccountCredentials(
@@ -1934,6 +1907,134 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
   }
 
+  async savePlayerAccountAuthSession(
+    playerId: string,
+    input: PlayerAccountAuthSessionInput
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const refreshSessionId = input.refreshSessionId.trim();
+    const refreshTokenHash = input.refreshTokenHash.trim();
+    const refreshTokenExpiresAt = new Date(input.refreshTokenExpiresAt);
+    if (!refreshSessionId) {
+      throw new Error("refreshSessionId must not be empty");
+    }
+    if (!refreshTokenHash) {
+      throw new Error("refreshTokenHash must not be empty");
+    }
+    if (Number.isNaN(refreshTokenExpiresAt.getTime())) {
+      throw new Error("refreshTokenExpiresAt must be a valid ISO timestamp");
+    }
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET account_session_version = account_session_version + 1,
+           refresh_session_id = ?,
+           refresh_token_hash = ?,
+           refresh_token_expires_at = ?,
+           version = version + 1
+       WHERE player_id = ?`,
+      [refreshSessionId, refreshTokenHash, refreshTokenExpiresAt, normalizedPlayerId]
+    );
+
+    return this.loadPlayerAccountAuthByPlayerId(normalizedPlayerId);
+  }
+
+  async revokePlayerAccountAuthSessions(
+    playerId: string,
+    input: PlayerAccountAuthRevokeInput = {}
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const passwordHash = input.passwordHash?.trim() ?? null;
+    const credentialBoundAt = input.credentialBoundAt ? new Date(input.credentialBoundAt) : null;
+    if (input.passwordHash !== undefined && !passwordHash) {
+      throw new Error("passwordHash must not be empty");
+    }
+    if (input.credentialBoundAt !== undefined && (!credentialBoundAt || Number.isNaN(credentialBoundAt.getTime()))) {
+      throw new Error("credentialBoundAt must be a valid ISO timestamp");
+    }
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET account_session_version = account_session_version + 1,
+           refresh_session_id = NULL,
+           refresh_token_hash = NULL,
+           refresh_token_expires_at = NULL,
+           password_hash = COALESCE(?, password_hash),
+           credential_bound_at = COALESCE(?, credential_bound_at),
+           version = version + 1
+       WHERE player_id = ?`,
+      [passwordHash, credentialBoundAt, normalizedPlayerId]
+    );
+
+    return this.loadPlayerAccountAuthByPlayerId(normalizedPlayerId);
+  }
+
+  async bindPlayerAccountWechatMiniGameIdentity(
+    playerId: string,
+    input: PlayerAccountWechatMiniGameIdentityInput
+  ): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedOpenId = normalizeWechatMiniGameOpenId(input.openId);
+    const normalizedUnionId = normalizeWechatMiniGameUnionId(input.unionId);
+    const normalizedAvatarUrl = normalizePlayerAvatarUrl(input.avatarUrl);
+    const existingAccount = await this.ensurePlayerAccount({
+      playerId: normalizedPlayerId,
+      ...(input.displayName?.trim() ? { displayName: input.displayName } : {})
+    });
+    if (existingAccount.wechatMiniGameOpenId && existingAccount.wechatMiniGameOpenId !== normalizedOpenId) {
+      throw new Error("wechatMiniGameOpenId is already bound to another identity");
+    }
+
+    const owner = await this.loadPlayerAccountByWechatMiniGameOpenId(normalizedOpenId);
+    if (owner && owner.playerId !== normalizedPlayerId) {
+      throw new Error("wechatMiniGameOpenId is already taken");
+    }
+
+    const displayName = input.displayName?.trim()
+      ? normalizePlayerDisplayName(normalizedPlayerId, input.displayName)
+      : null;
+    const boundAt = existingAccount.wechatMiniGameBoundAt ?? new Date().toISOString();
+
+    try {
+      await this.pool.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET display_name = COALESCE(?, display_name),
+             avatar_url = COALESCE(?, avatar_url),
+             wechat_mini_game_open_id = ?,
+             wechat_mini_game_union_id = COALESCE(?, wechat_mini_game_union_id),
+             wechat_mini_game_bound_at = COALESCE(wechat_mini_game_bound_at, ?),
+             version = version + 1
+         WHERE player_id = ?`,
+        [
+          displayName,
+          normalizedAvatarUrl ?? null,
+          normalizedOpenId,
+          normalizedUnionId ?? null,
+          new Date(boundAt),
+          normalizedPlayerId
+        ]
+      );
+    } catch (error) {
+      if (isMySqlDuplicateEntryError(error)) {
+        throw new Error("wechatMiniGameOpenId is already taken");
+      }
+
+      throw error;
+    }
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        ...existingAccount,
+        ...(displayName ? { displayName } : {}),
+        ...(normalizedAvatarUrl ? { avatarUrl: normalizedAvatarUrl } : {}),
+        wechatMiniGameOpenId: normalizedOpenId,
+        ...(normalizedUnionId ? { wechatMiniGameUnionId: normalizedUnionId } : {}),
+        wechatMiniGameBoundAt: boundAt
+      })
+    );
+  }
+
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {
     const normalizedPlayerId = normalizePlayerId(playerId);
     const existing =
@@ -1950,6 +2051,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       ...(patch.displayName !== undefined
         ? { displayName: normalizePlayerDisplayName(normalizedPlayerId, patch.displayName) }
         : {}),
+      ...(patch.avatarUrl !== undefined
+        ? patch.avatarUrl
+          ? { avatarUrl: normalizePlayerAvatarUrl(patch.avatarUrl) }
+          : {}
+        : existing.avatarUrl
+          ? { avatarUrl: existing.avatarUrl }
+          : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -1963,6 +2071,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
          player_id,
          display_name,
+         avatar_url,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1970,9 +2080,11 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
+         avatar_url = VALUES(avatar_url),
+         elo_rating = VALUES(elo_rating),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
          recent_event_log_json = VALUES(recent_event_log_json),
@@ -1983,6 +2095,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       [
         nextAccount.playerId,
         nextAccount.displayName,
+        nextAccount.avatarUrl ?? null,
+        nextAccount.eloRating,
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
@@ -2031,6 +2145,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
          player_id,
          display_name,
+         avatar_url,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -2038,9 +2154,11 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
+         avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
+         elo_rating = VALUES(elo_rating),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
          recent_event_log_json = VALUES(recent_event_log_json),
@@ -2051,6 +2169,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       [
         nextAccount.playerId,
         nextAccount.displayName,
+        nextAccount.avatarUrl ?? null,
+        nextAccount.eloRating,
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
@@ -2085,6 +2205,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       `SELECT
          player_id,
          display_name,
+         avatar_url,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -2092,6 +2214,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         wechat_mini_game_open_id,
+         wechat_mini_game_union_id,
+         wechat_mini_game_bound_at,
          credential_bound_at,
          created_at,
          updated_at

@@ -39,9 +39,9 @@ import {
 } from "./assets";
 import { describeTileObject } from "./object-visuals";
 import {
-  clearCurrentAuthSession,
   loginGuestAuthSession,
   loginPasswordAuthSession,
+  logoutCurrentAuthSession,
   readStoredAuthSession,
   syncCurrentAuthSession,
   type StoredAuthSession
@@ -64,9 +64,8 @@ import {
 } from "./player-account";
 import {
   renderAchievementProgress,
-  renderBattleReplayInspector,
-  renderRecentAccountEvents,
-  renderRecentBattleReplays
+  renderBattleReportReplayCenter,
+  renderRecentAccountEvents
 } from "./account-history";
 
 const params = new URLSearchParams(window.location.search);
@@ -108,6 +107,13 @@ interface BattleModalState {
 interface BattleFxState {
   flashUnitId: string | null;
   floatingText: string | null;
+}
+
+interface BattleSettlementSummary {
+  title: string;
+  summary: string;
+  aftermath: string;
+  tone: "victory" | "defeat" | "neutral";
 }
 
 interface TimelineEntry {
@@ -163,6 +169,7 @@ interface AppState {
   timeline: TimelineEntry[];
   log: string[];
   modal: BattleModalState;
+  lastBattleSettlement: BattleSettlementSummary | null;
   predictionStatus: string;
 }
 
@@ -236,6 +243,7 @@ const state: AppState = {
     title: "",
     body: ""
   },
+  lastBattleSettlement: null,
   predictionStatus: ""
 };
 
@@ -1565,6 +1573,122 @@ function didCurrentPlayerWinBattle(
   return Boolean(event.defenderHeroId && ownedIds.has(event.defenderHeroId));
 }
 
+function findHeroSnapshot(
+  heroId: string | null | undefined,
+  world: PlayerWorldView = state.world
+): PlayerWorldView["ownHeroes"][number] | PlayerWorldView["visibleHeroes"][number] | null {
+  if (!heroId) {
+    return null;
+  }
+
+  return world.ownHeroes.find((hero) => hero.id === heroId) ?? world.visibleHeroes.find((hero) => hero.id === heroId) ?? null;
+}
+
+function formatHeroIdentity(
+  hero: PlayerWorldView["ownHeroes"][number] | PlayerWorldView["visibleHeroes"][number] | null,
+  fallbackId: string | null | undefined
+): string {
+  if (!hero) {
+    return fallbackId ?? "未知英雄";
+  }
+
+  return hero.name.trim() ? `${hero.name} (${hero.playerId})` : hero.id;
+}
+
+function opposingHeroId(battle: BattleState, world: PlayerWorldView = state.world): string | null {
+  const playerCamp = controlledBattleCamp(battle, world);
+  if (!playerCamp) {
+    return battle.defenderHeroId ?? battle.worldHeroId ?? null;
+  }
+
+  return playerCamp === "attacker" ? battle.defenderHeroId ?? null : battle.worldHeroId ?? null;
+}
+
+function renderEncounterHeadline(): { phase: string; detail: string } {
+  if (state.battle) {
+    const opponentId = opposingHeroId(state.battle, state.world);
+    const opponent = findHeroSnapshot(opponentId, state.world);
+    return {
+      phase: "战斗中",
+      detail: state.battle.defenderHeroId
+        ? `已进入英雄遭遇战，对手 ${formatHeroIdentity(opponent, opponentId)}。`
+        : `已进入中立遭遇战，目标 ${state.battle.neutralArmyId ?? "neutral"}。`
+    };
+  }
+
+  if (state.previewPlan?.endsInEncounter) {
+    if (state.previewPlan.encounterKind === "hero") {
+      const opponent = findHeroSnapshot(state.previewPlan.encounterRefId, state.world);
+      return {
+        phase: "即将接敌",
+        detail: `移动将触发英雄遭遇战，对手 ${formatHeroIdentity(opponent, state.previewPlan.encounterRefId)}。`
+      };
+    }
+
+    return {
+      phase: "即将接敌",
+      detail: `移动将触发中立遭遇战，目标 ${state.previewPlan.encounterRefId ?? "neutral"}。`
+    };
+  }
+
+  if (state.lastBattleSettlement) {
+    return {
+      phase: "已结算",
+      detail: state.lastBattleSettlement.aftermath
+    };
+  }
+
+  return {
+    phase: "探索中",
+    detail: state.predictionStatus || "房间当前处于地图探索阶段。"
+  };
+}
+
+function buildBattleSettlementSummary(
+  event: Extract<SessionUpdate["events"][number], { type: "battle.resolved" }>,
+  world: PlayerWorldView,
+  events: SessionUpdate["events"]
+): BattleSettlementSummary {
+  const rewardEvent = events.find((item) => item.type === "hero.collected");
+  const progressEvent = events.find((item) => item.type === "hero.progressed");
+  const equipmentEvent = events.find((item) => item.type === "hero.equipmentFound");
+  const didWin = didCurrentPlayerWinBattle(event, world);
+  const opponent = findHeroSnapshot(
+    world.playerId === event.attackerPlayerId ? event.defenderHeroId : event.heroId,
+    world
+  );
+  const rewardText =
+    rewardEvent?.type === "hero.collected" ? `${rewardEvent.resource.kind} +${rewardEvent.resource.amount}` : null;
+  const equipmentText = equipmentEvent?.type === "hero.equipmentFound" ? equipmentEvent.equipmentName : null;
+  const progressText =
+    progressEvent?.type === "hero.progressed"
+      ? progressEvent.levelsGained > 0
+        ? `${progressEvent.experienceGained} 经验，升至 Lv ${progressEvent.level}，技能点 +${progressEvent.skillPointsAwarded}`
+        : `${progressEvent.experienceGained} 经验`
+      : null;
+  const summaryParts = [rewardText, equipmentText ? `装备 ${equipmentText}` : null, progressText].filter(Boolean);
+
+  if (didWin) {
+    return {
+      title: "战斗胜利",
+      summary: event.defenderHeroId
+        ? `已击败 ${formatHeroIdentity(opponent, event.defenderHeroId)}。`
+        : "已击败本次守军。",
+      aftermath: summaryParts.length > 0 ? `结算收益：${summaryParts.join(" · ")}。` : "结算完成，可继续处理房间内后续操作。",
+      tone: "victory"
+    };
+  }
+
+  return {
+    title: "战斗失败",
+    summary: event.defenderHeroId
+      ? `遭遇战失利，对手 ${formatHeroIdentity(opponent, event.defenderHeroId ?? event.heroId)} 仍留在房间内。`
+      : "本次遭遇战失利。",
+    aftermath: "英雄被击退，生命值下降且本日移动力清零。",
+    tone: "defeat"
+  };
+}
+
 function openBattleModal(title: string, body: string): void {
   state.modal = {
     visible: true,
@@ -1647,6 +1771,7 @@ function applyReplayedUpdate(update: SessionUpdate): void {
   state.selectedBattleTargetId = null;
   state.feedbackTone = update.battle ? "battle" : "idle";
   state.pendingBattleAction = null;
+  state.lastBattleSettlement = null;
   state.predictionStatus = "已回放本地缓存状态，正在等待房间同步...";
   state.log.unshift("已从本地缓存回放最近房间状态");
   state.log = state.log.slice(0, 12);
@@ -2051,19 +2176,19 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
 
   const resolved = update.events.find(isBattleEvent);
   if (resolved?.type === "battle.resolved") {
-    const rewardEvent = update.events.find((event) => event.type === "hero.collected");
-    const progressEvent = update.events.find((event) => event.type === "hero.progressed");
-    const equipmentEvent = update.events.find((event) => event.type === "hero.equipmentFound");
-    const didWin = didCurrentPlayerWinBattle(resolved, update.world);
-    const winBody = resolved.defenderHeroId
-      ? `你已击败敌方英雄。${equipmentEvent?.type === "hero.equipmentFound" ? `缴获 ${equipmentEvent.equipmentName}。` : ""}${progressEvent?.type === "hero.progressed" ? `获得 ${progressEvent.experienceGained} 经验${progressEvent.levelsGained > 0 ? `，升至 Lv ${progressEvent.level}，并得到 ${progressEvent.skillPointsAwarded} 点技能点` : ""}。` : ""}`
-      : `你已击败守军。${rewardEvent?.type === "hero.collected" ? `获得 ${rewardEvent.resource.kind} +${rewardEvent.resource.amount}。` : ""}${equipmentEvent?.type === "hero.equipmentFound" ? `拾取 ${equipmentEvent.equipmentName}。` : ""}${progressEvent?.type === "hero.progressed" ? `获得 ${progressEvent.experienceGained} 经验${progressEvent.levelsGained > 0 ? `，升至 Lv ${progressEvent.level}，并得到 ${progressEvent.skillPointsAwarded} 点技能点` : ""}。` : ""}`;
-    openBattleModal(
-      didWin ? "战斗胜利" : "战斗失败",
-      didWin ? winBody : "英雄被击退，生命值下降且本日移动力清零。"
-    );
+    const settlement = buildBattleSettlementSummary(resolved, update.world, update.events);
+    state.lastBattleSettlement = settlement;
+    openBattleModal(settlement.title, `${settlement.summary}${settlement.aftermath}`);
   } else if (hadBattle && !update.battle && update.events.length === 0) {
+    state.lastBattleSettlement = {
+      title: "战斗结束",
+      summary: "本场遭遇已结束。",
+      aftermath: "房间状态已回到地图探索，可继续验证后续流程。",
+      tone: "neutral"
+    };
     openBattleModal("战斗结束", "本场遭遇已结束。");
+  } else if (update.events.some((event) => event.type === "battle.started")) {
+    state.lastBattleSettlement = null;
   }
 
   if (
@@ -2665,8 +2790,8 @@ function returnToLobby(): void {
   window.location.assign(nextUrl.toString());
 }
 
-function logoutGuestSession(): void {
-  clearCurrentAuthSession();
+async function logoutGuestSession(): Promise<void> {
+  await logoutCurrentAuthSession();
   state.lobby.authSession = null;
   state.lobby.loginId = "";
   state.lobby.password = "";
@@ -2777,6 +2902,52 @@ function renderBattleIntelPanel(): string {
         (state.battle.environment ?? []).map(renderBattleHazardDetail),
         "当前战场没有额外障碍或陷阱。"
       )}
+    </section>
+  `;
+}
+
+function renderRoomStatusPanel(): string {
+  const encounter = renderEncounterHeadline();
+  const opponentId = state.battle ? opposingHeroId(state.battle, state.world) : state.previewPlan?.encounterRefId ?? null;
+  const opponent = findHeroSnapshot(opponentId, state.world);
+  const opponentLine =
+    state.battle?.defenderHeroId || state.previewPlan?.encounterKind === "hero"
+      ? `对手信息：${formatHeroIdentity(opponent, opponentId)}`
+      : state.battle?.neutralArmyId || state.previewPlan?.encounterKind === "neutral"
+        ? `遭遇目标：${state.battle?.neutralArmyId ?? state.previewPlan?.encounterRefId ?? "neutral"}`
+        : "对手信息：当前没有遭遇目标";
+
+  return `
+    <section class="room-status-panel info-card" data-testid="room-status-panel">
+      <div class="info-card-head">
+        <div>
+          <div class="info-card-eyebrow">Room Phase</div>
+          <strong data-testid="room-phase">${encounter.phase}</strong>
+        </div>
+        <span class="status-pill">${state.world.meta.roomId}</span>
+      </div>
+      <p data-testid="room-status-detail">${encounter.detail}</p>
+      <p class="muted" data-testid="opponent-summary">${opponentLine}</p>
+    </section>
+  `;
+}
+
+function renderBattleSettlementPanel(): string {
+  if (!state.lastBattleSettlement) {
+    return "";
+  }
+
+  return `
+    <section class="battle-settlement-panel info-card tone-${state.lastBattleSettlement.tone}" data-testid="battle-settlement">
+      <div class="info-card-head">
+        <div>
+          <div class="info-card-eyebrow">Settlement</div>
+          <strong>${state.lastBattleSettlement.title}</strong>
+        </div>
+        <span class="status-pill">${state.lastBattleSettlement.tone === "victory" ? "Victory" : state.lastBattleSettlement.tone === "defeat" ? "Defeat" : "Closed"}</span>
+      </div>
+      <p data-testid="battle-settlement-summary">${state.lastBattleSettlement.summary}</p>
+      <p class="muted" data-testid="battle-settlement-aftermath">${state.lastBattleSettlement.aftermath}</p>
     </section>
   `;
 }
@@ -3302,10 +3473,9 @@ function render(): void {
           <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
           ${renderAchievementProgress(state.account)}
-          ${renderRecentBattleReplays(state.account, {
-            selectedReplayId: state.replayDetail.selectedReplayId
-          })}
-          ${renderBattleReplayInspector({
+          ${renderBattleReportReplayCenter({
+            account: state.account,
+            selectedReplayId: state.replayDetail.selectedReplayId,
             replay: state.replayDetail.replay,
             playback: state.replayDetail.playback,
             loading: state.replayDetail.loading,
@@ -3455,8 +3625,10 @@ function render(): void {
       <section class="battle-panel" data-testid="battle-panel">
         <div class="panel-head">
           <h2>战斗面板</h2>
-          <div class="hint">${state.battle ? "遭遇中" : "空闲"}</div>
+          <div class="hint">${renderEncounterHeadline().phase}</div>
         </div>
+        ${renderRoomStatusPanel()}
+        ${renderBattleSettlementPanel()}
         ${renderBattlefield()}
         ${renderBattleIntelPanel()}
         ${renderBattleActions()}

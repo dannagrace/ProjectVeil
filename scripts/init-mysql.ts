@@ -1,5 +1,6 @@
 import { config as loadEnv } from "dotenv";
-import { buildMySqlSchemaSql, createConfiguredRoomSnapshotStore, readMySqlPersistenceConfig } from "../apps/server/src/persistence";
+import { readMySqlPersistenceConfig } from "../apps/server/src/persistence";
+import { runPendingSchemaMigrations } from "../apps/server/src/schema-migrations";
 
 loadEnv();
 
@@ -11,17 +12,10 @@ async function main(): Promise<void> {
     );
   }
 
-  const store = await createConfiguredRoomSnapshotStore();
-  if (!store) {
-    throw new Error("Failed to initialize MySQL room snapshot store.");
-  }
-
-  await store.close();
-
+  const result = await runPendingSchemaMigrations(config);
   console.log("MySQL persistence schema initialized successfully.");
   console.log(`Database: ${config.database}`);
-  console.log("Schema SQL:");
-  console.log(buildMySqlSchemaSql(config.database));
+  console.log(`Applied migrations: ${result.applied.length === 0 ? "none" : result.applied.join(", ")}`);
 }
 
 void main().catch((error) => {

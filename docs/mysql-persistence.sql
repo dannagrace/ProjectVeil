@@ -64,6 +64,7 @@ DEALLOCATE PREPARE veil_player_profiles_idx_stmt;
 CREATE TABLE IF NOT EXISTS `player_accounts` (
   player_id VARCHAR(191) NOT NULL,
   display_name VARCHAR(80) NULL,
+  elo_rating INT NOT NULL DEFAULT 1000,
   global_resources_json LONGTEXT NOT NULL,
   achievements_json LONGTEXT NULL,
   recent_event_log_json LONGTEXT NULL,
@@ -71,6 +72,10 @@ CREATE TABLE IF NOT EXISTS `player_accounts` (
   last_room_id VARCHAR(191) NULL,
   last_seen_at DATETIME NULL DEFAULT NULL,
   login_id VARCHAR(40) NULL,
+  account_session_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  refresh_session_id VARCHAR(64) NULL,
+  refresh_token_hash VARCHAR(255) NULL,
+  refresh_token_expires_at DATETIME NULL DEFAULT NULL,
   password_hash VARCHAR(255) NULL,
   credential_bound_at DATETIME NULL DEFAULT NULL,
   version BIGINT UNSIGNED NOT NULL DEFAULT 1,

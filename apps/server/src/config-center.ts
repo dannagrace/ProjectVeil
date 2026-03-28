@@ -1,7 +1,7 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
-import { createConnection, createPool, type Pool, type RowDataPacket } from "mysql2/promise";
+import { createPool, type Pool, type RowDataPacket } from "mysql2/promise";
 import * as XLSX from "xlsx";
 import {
   createWorldStateFromConfigs,
@@ -2258,18 +2258,6 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
   }
 
   static async create(config: MySqlPersistenceConfig, rootDir = resolve(process.cwd(), "configs")): Promise<MySqlConfigCenterStore> {
-    const bootstrap = await createConnection({
-      host: config.host,
-      port: config.port,
-      user: config.user,
-      password: config.password
-    });
-
-    await bootstrap.query(
-      `CREATE DATABASE IF NOT EXISTS \`${config.database}\` DEFAULT CHARACTER SET utf8mb4 DEFAULT COLLATE utf8mb4_unicode_ci`
-    );
-    await bootstrap.end();
-
     const pool = createPool({
       host: config.host,
       port: config.port,
@@ -2279,35 +2267,7 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
       connectionLimit: 4,
       namedPlaceholders: true
     });
-
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS \`${MYSQL_CONFIG_DOCUMENT_TABLE}\` (
-        document_id VARCHAR(64) NOT NULL,
-        content_json LONGTEXT NOT NULL,
-        version BIGINT UNSIGNED NOT NULL DEFAULT 1,
-        exported_at DATETIME NULL DEFAULT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (document_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-    );
-
-    const [indexRows] = await pool.query<RowDataPacket[]>(
-      `SELECT 1
-       FROM INFORMATION_SCHEMA.STATISTICS
-       WHERE TABLE_SCHEMA = ?
-         AND TABLE_NAME = ?
-         AND INDEX_NAME = ?
-       LIMIT 1`,
-      [config.database, MYSQL_CONFIG_DOCUMENT_TABLE, MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX]
-    );
-
-    if (!indexRows[0]) {
-      await pool.query(
-        `CREATE INDEX \`${MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX}\`
-         ON \`${MYSQL_CONFIG_DOCUMENT_TABLE}\` (updated_at)`
-      );
-    }
+    await pool.query("SELECT 1");
 
     return new MySqlConfigCenterStore(pool, config.database, rootDir);
   }

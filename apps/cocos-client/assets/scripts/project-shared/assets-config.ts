@@ -2,8 +2,8 @@ import type { BuildingKind, ResourceKind, TerrainType } from "./models.ts";
 
 export type AssetState = "idle" | "selected" | "hit";
 export type MarkerKind = "hero" | "neutral";
-export type AssetStage = "placeholder" | "production";
-export type AssetSource = "generated" | "licensed" | "commissioned";
+export type AssetStage = "placeholder" | "prototype" | "production";
+export type AssetSource = "generated" | "open-source" | "licensed" | "commissioned";
 
 export interface TerrainAssetEntry {
   default: string;
@@ -266,8 +266,13 @@ function validateMetadataSection(section: unknown, errors: string[]): void {
       }
     }
 
-    validateEnum(entry.stage, ["placeholder", "production"], `metadata[${assetPath}].stage`, errors);
-    validateEnum(entry.source, ["generated", "licensed", "commissioned"], `metadata[${assetPath}].source`, errors);
+    validateEnum(entry.stage, ["placeholder", "prototype", "production"], `metadata[${assetPath}].stage`, errors);
+    validateEnum(
+      entry.source,
+      ["generated", "open-source", "licensed", "commissioned"],
+      `metadata[${assetPath}].source`,
+      errors
+    );
 
     if (entry.notes !== undefined && typeof entry.notes !== "string") {
       errors.push(`metadata[${assetPath}].notes must be a string when provided`);
@@ -392,10 +397,12 @@ export function summarizeAssetMetadata(assetConfig: AssetConfig): {
     total: 0,
     byStage: {
       placeholder: 0,
+      prototype: 0,
       production: 0
     },
     bySource: {
       generated: 0,
+      "open-source": 0,
       licensed: 0,
       commissioned: 0
     }

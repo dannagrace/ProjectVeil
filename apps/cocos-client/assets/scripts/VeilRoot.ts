@@ -11,13 +11,13 @@ import {
   type Vec2
 } from "./VeilCocosSession.ts";
 import {
-  clearCurrentCocosAuthSession,
   createFallbackCocosPlayerAccountProfile,
   createCocosGuestPlayerId,
   createCocosLobbyPreferences,
   loadCocosLobbyRooms,
   loadCocosPlayerAccountProfile,
   loginCocosGuestAuthSession,
+  logoutCurrentCocosAuthSession,
   readPreferredCocosDisplayName,
   rememberPreferredCocosDisplayName,
   resolveCocosConfigCenterUrl,
@@ -43,6 +43,7 @@ import { VeilHudPanel, type VeilHudRenderState } from "./VeilHudPanel.ts";
 import { VeilLobbyPanel } from "./VeilLobbyPanel.ts";
 import { VeilMapBoard } from "./VeilMapBoard.ts";
 import { buildMapFeedbackEntriesFromUpdate, buildObjectPulseEntriesFromUpdate } from "./cocos-map-visuals.ts";
+import { getPlaceholderSpriteAssetUsageSummary } from "./cocos-placeholder-sprites.ts";
 import {
   detectCocosRuntimePlatform,
   readCocosRuntimeLaunchSearch,
@@ -50,6 +51,17 @@ import {
   type CocosRuntimeCapabilities,
   type CocosRuntimePlatform
 } from "./cocos-runtime-platform.ts";
+import {
+  bindCocosRuntimeMemoryWarning,
+  formatCocosRuntimeMemoryStatus,
+  readCocosRuntimeMemorySnapshot,
+  triggerCocosRuntimeGc
+} from "./cocos-runtime-memory.ts";
+import {
+  buildCocosWechatSharePayload,
+  syncCocosWechatShareBridge,
+  type CocosWechatShareRuntimeLike
+} from "./cocos-wechat-share.ts";
 import { readStoredCocosAuthSession, resolveCocosLaunchIdentity, type CocosAuthProvider } from "./cocos-session-launch.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
@@ -162,6 +174,10 @@ export class VeilRoot extends Component {
   private loginProviders: CocosLoginProviderDescriptor[] = [];
   private audioRuntime = createCocosAudioRuntime(cocosPresentationConfig.audio);
   private pendingPixelSpriteGroups = new Set<"boot" | "battle">();
+  private wechatShareStatus = "分享功能仅在微信小游戏可用。";
+  private wechatShareAvailable = false;
+  private runtimeMemoryNotice = "";
+  private stopRuntimeMemoryWarnings: (() => void) | null = null;
 
   onLoad(): void {
     this.audioRuntime.dispose();
@@ -172,7 +188,9 @@ export class VeilRoot extends Component {
       }
     });
     this.hydrateRuntimePlatform();
+    this.bindRuntimeMemoryWarnings();
     this.hydrateLaunchIdentity();
+    this.syncWechatShareBridge();
     this.ensureUiCameraVisibility();
     this.ensureViewNodes();
     this.ensureHudActionBinding();
@@ -197,6 +215,8 @@ export class VeilRoot extends Component {
   onDestroy(): void {
     this.unscheduleAllCallbacks();
     this.audioRuntime.dispose();
+    this.stopRuntimeMemoryWarnings?.();
+    this.stopRuntimeMemoryWarnings = null;
     if (this.hudActionBinding) {
       input.off(Input.EventType.TOUCH_END, this.handleHudActionInput, this);
       input.off(Input.EventType.MOUSE_UP, this.handleHudActionInput, this);
@@ -688,6 +708,7 @@ export class VeilRoot extends Component {
         loginId: this.loginId,
         loginHint: this.describeLobbyLoginHint(),
         loginActionLabel: this.primaryLoginProvider().label,
+        shareHint: this.describeLobbyShareHint(),
         vaultSummary: this.formatLobbyVaultSummary(),
         sessionSource: this.sessionSource,
         loading: this.lobbyLoading,
@@ -712,6 +733,7 @@ export class VeilRoot extends Component {
       moveInFlight: this.moveInFlight,
       predictionStatus: this.predictionStatus,
       inputDebug: this.inputDebug,
+      runtimeHealth: this.describeRuntimeMemoryHealth(),
       levelUpNotice: this.levelUpNotice ? { title: this.levelUpNotice.title, detail: this.levelUpNotice.detail } : null,
       presentation: this.buildHudPresentationState()
     });
@@ -815,6 +837,7 @@ export class VeilRoot extends Component {
       this.displayName = profile.displayName;
       this.loginId = profile.loginId ?? this.loginId;
     }
+    this.syncWechatShareBridge();
     this.renderView();
   }
 
@@ -1446,6 +1469,7 @@ export class VeilRoot extends Component {
       this.resetSessionViewport(`正在进入房间 ${preferences.roomId} ...`);
       this.showLobby = false;
       this.syncBrowserRoomQuery(preferences.roomId);
+      this.syncWechatShareBridge();
       this.lobbyStatus =
         authSession.authMode === "account"
           ? `账号 ${authSession.loginId ?? authSession.playerId} 登录成功，正在进入房间 ${preferences.roomId}...`
@@ -1550,6 +1574,7 @@ export class VeilRoot extends Component {
       this.authProvider = authSession.provider ?? "account-password";
       this.loginId = authSession.loginId ?? nextLoginId.toLowerCase();
       this.sessionSource = authSession.source;
+      this.syncWechatShareBridge();
       this.lobbyStatus = `账号 ${this.loginId} 登录成功，正在同步全局仓库并进入房间 ${this.roomId}...`;
       saveCocosLobbyPreferences(authSession.playerId, this.roomId, undefined, storage);
       this.renderView();
@@ -1585,7 +1610,8 @@ export class VeilRoot extends Component {
         {
           storage,
           wx: (globalThis as { wx?: { login?: ((options: unknown) => void) | undefined } }).wx ?? null,
-          config: this.loginRuntimeConfig
+          config: this.loginRuntimeConfig,
+          authToken: this.authToken
         }
       );
       this.authToken = authSession.token ?? null;
@@ -1595,7 +1621,8 @@ export class VeilRoot extends Component {
       this.authProvider = authSession.provider ?? "wechat-mini-game";
       this.loginId = authSession.loginId ?? "";
       this.sessionSource = authSession.source;
-      this.lobbyStatus = "微信小游戏登录脚手架已连通，正在同步会话并进入房间...";
+      this.syncWechatShareBridge();
+      this.lobbyStatus = "微信小游戏登录已连通，正在同步会话并进入房间...";
       saveCocosLobbyPreferences(authSession.playerId, this.roomId, undefined, storage);
       this.renderView();
       await this.refreshLobbyAccountProfile();
@@ -1649,14 +1676,17 @@ export class VeilRoot extends Component {
     await this.disposeCurrentSession();
     this.resetSessionViewport("已返回 Cocos Lobby。");
     this.showLobby = true;
+    this.syncWechatShareBridge();
     this.lobbyStatus = "已返回大厅，可继续选房或创建新实例。";
     this.syncBrowserRoomQuery(null);
     this.renderView();
     await this.syncLobbyBootstrap();
   }
 
-  private logoutAuthSession(): void {
-    clearCurrentCocosAuthSession(this.readWebStorage());
+  private async logoutAuthSession(): Promise<void> {
+    await logoutCurrentCocosAuthSession(this.remoteUrl, {
+      storage: this.readWebStorage()
+    });
     this.authToken = null;
     this.authMode = "guest";
     this.authProvider = "guest";
@@ -1664,6 +1694,7 @@ export class VeilRoot extends Component {
     this.sessionSource = "none";
     this.displayName = readPreferredCocosDisplayName(this.playerId, this.readWebStorage());
     this.lobbyAccountProfile = createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName);
+    this.syncWechatShareBridge();
     this.lobbyStatus = "已退出当前会话，请重新选择游客身份或使用正式账号进入。";
     this.renderView();
   }
@@ -1696,6 +1727,7 @@ export class VeilRoot extends Component {
       this.authProvider = storedSession?.playerId === nextPlayerId ? storedSession.provider ?? "guest" : "guest";
       this.loginId = storedSession?.playerId === nextPlayerId ? storedSession.loginId ?? "" : "";
       this.sessionSource = storedSession?.playerId === nextPlayerId ? storedSession.source : "manual";
+      this.syncWechatShareBridge();
       this.lobbyStatus = `已切换游客身份草稿为 ${nextPlayerId}。`;
       this.renderView();
       void this.refreshLobbyAccountProfile();
@@ -1709,6 +1741,7 @@ export class VeilRoot extends Component {
       }
 
       this.displayName = rememberPreferredCocosDisplayName(this.playerId, nextValue, storage);
+      this.syncWechatShareBridge();
       this.lobbyStatus = "昵称草稿已更新。";
       this.renderView();
       void this.refreshLobbyAccountProfile();
@@ -1733,6 +1766,7 @@ export class VeilRoot extends Component {
     }
 
     this.roomId = nextValue;
+    this.syncWechatShareBridge();
     this.lobbyStatus = `已将目标房间切换为 ${nextValue}。`;
     this.renderView();
     void this.refreshLobbyAccountProfile();
@@ -1847,6 +1881,25 @@ export class VeilRoot extends Component {
     }
   }
 
+  private bindRuntimeMemoryWarnings(): void {
+    this.stopRuntimeMemoryWarnings?.();
+    this.stopRuntimeMemoryWarnings = bindCocosRuntimeMemoryWarning((event) => {
+      const gcTriggered = triggerCocosRuntimeGc();
+      this.runtimeMemoryNotice =
+        event.level != null
+          ? `收到内存告警 L${event.level}${gcTriggered ? "，已请求 GC" : ""}`
+          : `收到内存告警${gcTriggered ? "，已请求 GC" : ""}`;
+      this.pushLog(this.runtimeMemoryNotice);
+      this.renderView();
+    });
+  }
+
+  private describeRuntimeMemoryHealth(): string {
+    const snapshot = readCocosRuntimeMemorySnapshot();
+    const summary = formatCocosRuntimeMemoryStatus(snapshot, getPlaceholderSpriteAssetUsageSummary());
+    return this.runtimeMemoryNotice ? `${summary} · ${this.runtimeMemoryNotice}` : summary;
+  }
+
   private hydrateLaunchIdentity(): void {
     const storage = this.readWebStorage();
     const launchIdentity = resolveCocosLaunchIdentity({
@@ -1917,6 +1970,44 @@ export class VeilRoot extends Component {
       location?: Pick<Location, "search"> | null;
       wx?: { getLaunchOptionsSync?: () => { query?: Record<string, unknown> | null } | null | undefined };
     });
+  }
+
+  private describeLobbyShareHint(): string {
+    return `分享：${this.wechatShareStatus}`;
+  }
+
+  private syncWechatShareBridge(immediate = false) {
+    const payload = buildCocosWechatSharePayload({
+      roomId: this.roomId,
+      inviterPlayerId: this.playerId,
+      displayName: this.displayName || this.playerId,
+      scene: this.showLobby ? "lobby" : this.lastUpdate?.battle ? "battle" : "world",
+      day: this.lastUpdate?.world.meta.day ?? null,
+      battleLabel: this.lastUpdate?.battle ? "当前战斗" : null
+    });
+
+    if (this.runtimePlatform !== "wechat-game") {
+      this.wechatShareAvailable = false;
+      this.wechatShareStatus = "分享功能仅在微信小游戏可用。";
+      return {
+        available: false,
+        menuEnabled: false,
+        handlerRegistered: false,
+        canShareDirectly: false,
+        immediateShared: false,
+        payload,
+        message: this.wechatShareStatus
+      };
+    }
+
+    const result = syncCocosWechatShareBridge(
+      (globalThis as { wx?: CocosWechatShareRuntimeLike | null }).wx ?? null,
+      payload,
+      immediate ? { immediate: true } : undefined
+    );
+    this.wechatShareAvailable = result.available;
+    this.wechatShareStatus = result.message;
+    return result;
   }
 
   private readWebStorage(): Storage | null {
@@ -2063,6 +2154,7 @@ export class VeilRoot extends Component {
       this.mapBoard?.playHeroAnimation("idle");
     }
 
+    this.syncWechatShareBridge();
     this.renderView();
   }
 

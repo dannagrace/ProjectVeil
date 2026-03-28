@@ -48,11 +48,14 @@ export interface CocosPlayerAccountProfile extends PlayerAccountReadModel {
 interface AuthSessionApiPayload {
   session?: {
     token?: string;
+    refreshToken?: string;
     playerId?: string;
     displayName?: string;
     authMode?: "guest" | "account";
     provider?: CocosAuthProvider;
     loginId?: string;
+    expiresAt?: string;
+    refreshExpiresAt?: string;
   };
 }
 
@@ -60,6 +63,8 @@ interface PlayerAccountApiPayload extends AuthSessionApiPayload {
   account?: {
     playerId?: string;
     displayName?: string;
+    avatarUrl?: string;
+    eloRating?: number;
     globalResources?: {
       gold?: number;
       wood?: number;
@@ -93,9 +98,16 @@ interface PlayerAchievementListApiPayload {
 
 type PlayerProgressionApiPayload = Partial<PlayerProgressionSnapshot>;
 type FetchLike = typeof fetch;
+type CocosAuthStorage = Pick<Storage, "removeItem"> | Pick<Storage, "setItem" | "removeItem">;
 type WechatMiniGameLoginLike = (options: {
   timeout?: number;
   success?: (result: { code?: string }) => void;
+  fail?: (error: { errMsg?: string }) => void;
+}) => void;
+type WechatMiniGameUserProfileLike = (options: {
+  desc: string;
+  lang?: string;
+  success?: (result: { userInfo?: { nickName?: string; avatarUrl?: string } }) => void;
   fail?: (error: { errMsg?: string }) => void;
 }) => void;
 
@@ -225,7 +237,7 @@ function readStoredLobbyPreferencesUnsafe(storage: Pick<Storage, "getItem">): Pa
 function asStoredAuthSession(
   payload: AuthSessionApiPayload["session"],
   fallback: Pick<CocosStoredAuthSession, "playerId" | "displayName" | "authMode"> &
-    Partial<Pick<CocosStoredAuthSession, "loginId" | "token" | "provider">>
+    Partial<Pick<CocosStoredAuthSession, "loginId" | "token" | "refreshToken" | "expiresAt" | "refreshExpiresAt" | "provider">>
 ): CocosStoredAuthSession {
   const playerId = normalizePlayerId(payload?.playerId) || fallback.playerId;
   const loginId = normalizeLoginId(payload?.loginId ?? fallback.loginId);
@@ -239,6 +251,13 @@ function asStoredAuthSession(
     provider,
     ...(loginId ? { loginId } : {}),
     ...(payload?.token ? { token: payload.token } : fallback.token ? { token: fallback.token } : {}),
+    ...(payload?.refreshToken ? { refreshToken: payload.refreshToken } : fallback.refreshToken ? { refreshToken: fallback.refreshToken } : {}),
+    ...(payload?.expiresAt ? { expiresAt: payload.expiresAt } : fallback.expiresAt ? { expiresAt: fallback.expiresAt } : {}),
+    ...(payload?.refreshExpiresAt
+      ? { refreshExpiresAt: payload.refreshExpiresAt }
+      : fallback.refreshExpiresAt
+        ? { refreshExpiresAt: fallback.refreshExpiresAt }
+        : {}),
     source: "remote"
   };
 }
@@ -254,6 +273,7 @@ function asCocosPlayerAccountProfile(
     playerId,
     displayName: normalizeDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
     globalResources: account?.globalResources,
+    eloRating: account?.eloRating,
     achievements: account?.achievements,
     recentEventLog: account?.recentEventLog,
     recentBattleReplays: account?.recentBattleReplays,
@@ -285,16 +305,21 @@ async function loadCocosBattleReplaySummaries(
     : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays`;
 
   try {
-    const payload = (await fetchJson(
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
       endpoint,
       {
         ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
       },
-      options?.fetchImpl
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(options ? { storage: options.storage ?? null } : {})
+      }
     )) as PlayerBattleReplayListApiPayload;
     return normalizePlayerBattleReplaySummaries(payload.items);
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && options?.storage) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && options?.storage) {
       clearStoredCocosAuthSession(options.storage);
     }
     return normalizePlayerBattleReplaySummaries();
@@ -316,12 +341,101 @@ async function fetchJson(
     });
 
     if (!response.ok) {
-      throw new Error(`cocos_request_failed:${response.status}`);
+      let errorCode = "unknown";
+      try {
+        const payload = (await response.json()) as { error?: { code?: string } };
+        errorCode = payload.error?.code?.trim() || errorCode;
+      } catch {
+        errorCode = "unknown";
+      }
+      throw new Error(`cocos_request_failed:${response.status}:${errorCode}`);
     }
 
     return (await response.json()) as unknown;
   } finally {
     globalThis.clearTimeout(timeout);
+  }
+}
+
+function isCocosError(error: unknown, status: number, code?: string): boolean {
+  return error instanceof Error && error.message === `cocos_request_failed:${status}:${code ?? "unknown"}`;
+}
+
+async function refreshCocosAuthSession(
+  remoteUrl: string,
+  currentSession: CocosStoredAuthSession,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: CocosAuthStorage | null;
+  }
+): Promise<CocosStoredAuthSession | null> {
+  if (!currentSession.refreshToken) {
+    options?.storage && clearStoredCocosAuthSession(options.storage);
+    return null;
+  }
+
+  try {
+    const payload = (await fetchJson(
+      `${resolveCocosApiBaseUrl(remoteUrl)}/api/auth/refresh`,
+      {
+        method: "POST",
+        headers: buildCocosAuthHeaders(currentSession.refreshToken)
+      },
+      options?.fetchImpl
+    )) as AuthSessionApiPayload;
+    const nextSession = asStoredAuthSession(payload.session, currentSession);
+    if (options?.storage && "setItem" in options.storage) {
+      writeStoredCocosAuthSession(options.storage, nextSession);
+    }
+    return nextSession;
+  } catch {
+    options?.storage && clearStoredCocosAuthSession(options.storage);
+    return null;
+  }
+}
+
+async function fetchCocosAuthJson(
+  remoteUrl: string,
+  url: string,
+  init: RequestInit | undefined,
+  authSession: CocosStoredAuthSession | null,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: CocosAuthStorage | null;
+  }
+): Promise<unknown> {
+  const requestInit = {
+    ...init,
+    headers: {
+      ...(init?.headers ?? {}),
+      ...buildCocosAuthHeaders(authSession?.token)
+    }
+  } satisfies RequestInit;
+
+  try {
+    return await fetchJson(url, requestInit, options?.fetchImpl);
+  } catch (error) {
+    if (isCocosError(error, 401, "token_expired") && authSession?.refreshToken) {
+      const refreshedSession = await refreshCocosAuthSession(remoteUrl, authSession, options);
+      if (refreshedSession?.token) {
+        return fetchJson(
+          url,
+          {
+            ...init,
+            headers: {
+              ...(init?.headers ?? {}),
+              ...buildCocosAuthHeaders(refreshedSession.token)
+            }
+          },
+          options?.fetchImpl
+        );
+      }
+    }
+
+    if (error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && options?.storage) {
+      clearStoredCocosAuthSession(options.storage);
+    }
+    throw error;
   }
 }
 
@@ -359,6 +473,39 @@ async function requestWechatMiniGameCode(input: {
   }
 
   throw new Error("wechat_login_unavailable");
+}
+
+async function requestWechatMiniGameUserProfile(input: {
+  wx?: { getUserProfile?: WechatMiniGameUserProfileLike | undefined } | null;
+  fallbackDisplayName: string;
+}): Promise<{ displayName: string; avatarUrl?: string }> {
+  if (typeof input.wx?.getUserProfile !== "function") {
+    return {
+      displayName: input.fallbackDisplayName
+    };
+  }
+
+  try {
+    return await new Promise((resolve, reject) => {
+      input.wx?.getUserProfile?.({
+        desc: "用于同步 Project Veil 小游戏头像与昵称",
+        lang: "zh_CN",
+        success: (result) => {
+          resolve({
+            displayName: result.userInfo?.nickName?.trim() || input.fallbackDisplayName,
+            ...(result.userInfo?.avatarUrl?.trim() ? { avatarUrl: result.userInfo.avatarUrl.trim() } : {})
+          });
+        },
+        fail: (error) => {
+          reject(new Error(error.errMsg?.trim() || "wechat_profile_failed"));
+        }
+      });
+    });
+  } catch {
+    return {
+      displayName: input.fallbackDisplayName
+    };
+  }
 }
 
 export function getCocosLobbyPreferencesStorageKey(): string {
@@ -450,6 +597,35 @@ export function clearCurrentCocosAuthSession(
   }
 
   clearStoredCocosAuthSession(storage);
+}
+
+export async function logoutCurrentCocosAuthSession(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+  }
+): Promise<void> {
+  const storage = options?.storage ?? getCocosStorage();
+  const currentSession = readStoredCocosAuthSession(storage);
+  if (currentSession?.token) {
+    try {
+      await fetchJson(
+        `${resolveCocosApiBaseUrl(remoteUrl)}/api/auth/logout`,
+        {
+          method: "POST",
+          headers: buildCocosAuthHeaders(currentSession.token)
+        },
+        options?.fetchImpl
+      );
+    } catch {
+      // Local cleanup still proceeds.
+    }
+  }
+
+  if (storage) {
+    clearStoredCocosAuthSession(storage);
+  }
 }
 
 export function resolveCocosApiBaseUrl(
@@ -627,17 +803,30 @@ export async function loginCocosWechatAuthSession(
   options?: {
     fetchImpl?: FetchLike;
     storage?: Pick<Storage, "setItem"> | null;
-    wx?: { login?: WechatMiniGameLoginLike | undefined } | null;
+    wx?: {
+      login?: WechatMiniGameLoginLike | undefined;
+      getUserProfile?: WechatMiniGameUserProfileLike | undefined;
+    } | null;
     timeoutMs?: number;
     exchangePath?: string;
     mockCode?: string;
+    authToken?: string | null;
   }
 ): Promise<CocosStoredAuthSession> {
   const normalizedPlayerId = normalizePlayerId(playerId) || createCocosGuestPlayerId();
   const normalizedDisplayName = normalizeDisplayName(normalizedPlayerId, displayName);
   const storage = options?.storage ?? getCocosStorage();
+  const wxEnvironment =
+    options?.wx ??
+    ((globalThis as {
+      wx?: { login?: WechatMiniGameLoginLike | undefined; getUserProfile?: WechatMiniGameUserProfileLike | undefined };
+    }).wx ?? null);
+  const profile = await requestWechatMiniGameUserProfile({
+    wx: wxEnvironment,
+    fallbackDisplayName: normalizedDisplayName
+  });
   const { code } = await requestWechatMiniGameCode({
-    wx: options?.wx ?? ((globalThis as { wx?: { login?: WechatMiniGameLoginLike | undefined } }).wx ?? null),
+    wx: wxEnvironment,
     ...(options?.timeoutMs != null ? { timeoutMs: options.timeoutMs } : {}),
     ...(options?.mockCode ? { mockCode: options.mockCode } : {})
   });
@@ -648,12 +837,14 @@ export async function loginCocosWechatAuthSession(
     {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...buildCocosAuthHeaders(options?.authToken)
       },
       body: JSON.stringify({
         code,
         playerId: normalizedPlayerId,
-        displayName: normalizedDisplayName
+        displayName: profile.displayName,
+        ...(profile.avatarUrl ? { avatarUrl: profile.avatarUrl } : {})
       })
     },
     options?.fetchImpl
@@ -661,7 +852,7 @@ export async function loginCocosWechatAuthSession(
 
   const session = asStoredAuthSession(payload.session, {
     playerId: normalizedPlayerId,
-    displayName: normalizedDisplayName,
+    displayName: profile.displayName,
     authMode: "guest",
     provider: "wechat-mini-game"
   });
@@ -687,12 +878,17 @@ export async function syncCurrentCocosAuthSession(
   }
 
   try {
-    const payload = (await fetchJson(
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
       `${resolveCocosApiBaseUrl(remoteUrl)}/api/auth/session`,
       {
         headers: buildCocosAuthHeaders(currentSession.token)
       },
-      options?.fetchImpl
+      currentSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
+      }
     )) as AuthSessionApiPayload;
     const nextSession = asStoredAuthSession(payload.session, currentSession);
     if (storage) {
@@ -700,7 +896,7 @@ export async function syncCurrentCocosAuthSession(
     }
     return nextSession;
   } catch (error) {
-    if (error instanceof Error && error.message === "cocos_request_failed:401") {
+    if (error instanceof Error && error.message.startsWith("cocos_request_failed:401:")) {
       if (storage) {
         clearStoredCocosAuthSession(storage);
       }
@@ -730,12 +926,17 @@ export async function loadCocosPlayerAccountProfile(
     : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}`;
 
   try {
-    const payload = (await fetchJson(
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
       accountEndpoint,
       {
         ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
       },
-      options?.fetchImpl
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
+      }
     )) as PlayerAccountApiPayload;
     const resolvedPlayerId = payload.account?.playerId?.trim() || authSession?.playerId || playerId;
     const profile = asCocosPlayerAccountProfile(
@@ -764,7 +965,7 @@ export async function loadCocosPlayerAccountProfile(
       recentBattleReplays
     };
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && storage) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
       clearStoredCocosAuthSession(storage);
     }
     return createFallbackCocosPlayerAccountProfile(playerId, roomId, storedDisplayName);
@@ -790,16 +991,21 @@ export async function loadCocosPlayerEventLog(
     : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/event-log${queryString}`;
 
   try {
-    const payload = (await fetchJson(
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
       endpoint,
       {
         ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
       },
-      options?.fetchImpl
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
+      }
     )) as PlayerEventLogListApiPayload;
     return normalizeEventLogEntries(payload.items);
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && storage) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
       clearStoredCocosAuthSession(storage);
     }
     return normalizeEventLogEntries();
@@ -825,16 +1031,21 @@ export async function loadCocosPlayerAchievementProgress(
     : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/achievements${queryString}`;
 
   try {
-    const payload = (await fetchJson(
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
       endpoint,
       {
         ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
       },
-      options?.fetchImpl
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
+      }
     )) as PlayerAchievementListApiPayload;
     return queryAchievementProgress(payload.items, query);
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && storage) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
       clearStoredCocosAuthSession(storage);
     }
     return queryAchievementProgress(undefined, query);
@@ -860,16 +1071,21 @@ export async function loadCocosPlayerProgressionSnapshot(
     : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/progression${limitQuery}`;
 
   try {
-    const payload = (await fetchJson(
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
       endpoint,
       {
         ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
       },
-      options?.fetchImpl
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
+      }
     )) as PlayerProgressionApiPayload;
     return normalizePlayerProgressionSnapshot(payload);
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "cocos_request_failed:401" && storage) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
       clearStoredCocosAuthSession(storage);
     }
     return normalizePlayerProgressionSnapshot();

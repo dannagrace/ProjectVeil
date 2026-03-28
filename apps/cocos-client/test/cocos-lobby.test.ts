@@ -15,7 +15,8 @@ import {
   loginCocosWechatAuthSession,
   rememberPreferredCocosDisplayName,
   resolveCocosApiBaseUrl,
-  resolveCocosConfigCenterUrl
+  resolveCocosConfigCenterUrl,
+  syncCurrentCocosAuthSession
 } from "../assets/scripts/cocos-lobby.ts";
 
 test("createCocosLobbyPreferences reuses stored values and falls back to room-alpha", () => {
@@ -245,6 +246,64 @@ test("loginCocosWechatAuthSession exchanges wx.login code through the scaffold e
   });
 });
 
+test("loginCocosWechatAuthSession forwards auth token and user profile details when wx.getUserProfile is available", async () => {
+  let requestedBody = "";
+  let requestedAuthorization = "";
+
+  const session = await loginCocosWechatAuthSession("http://127.0.0.1:2567", "account-player", "回声旅人", {
+    authToken: "account.token",
+    wx: {
+      login: ({ success }) => {
+        success?.({ code: "wx-profile-code" });
+      },
+      getUserProfile: ({ success }) => {
+        success?.({
+          userInfo: {
+            nickName: "雾海司灯",
+            avatarUrl: "https://cdn.example/avatar-wechat.png"
+          }
+        });
+      }
+    },
+    fetchImpl: async (_input, init) => {
+      requestedAuthorization = new Headers(init?.headers).get("Authorization") ?? "";
+      requestedBody = String(init?.body ?? "");
+      return new Response(
+        JSON.stringify({
+          session: {
+            token: "wechat.account.token",
+            playerId: "account-player",
+            displayName: "雾海司灯",
+            authMode: "account",
+            provider: "wechat-mini-game",
+            loginId: "veil-ranger"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.equal(requestedAuthorization, "Bearer account.token");
+  assert.match(requestedBody, /"code":"wx-profile-code"/);
+  assert.match(requestedBody, /"displayName":"雾海司灯"/);
+  assert.match(requestedBody, /"avatarUrl":"https:\/\/cdn\.example\/avatar-wechat\.png"/);
+  assert.deepEqual(session, {
+    token: "wechat.account.token",
+    playerId: "account-player",
+    displayName: "雾海司灯",
+    authMode: "account",
+    provider: "wechat-mini-game",
+    loginId: "veil-ranger",
+    source: "remote"
+  });
+});
+
 test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and preserves the global vault", async () => {
   const values = new Map<string, string>();
   values.set(getCocosPlayerAccountStorageKey("account-player"), "旧档案名");
@@ -391,6 +450,7 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
   assert.deepEqual(profile, {
     playerId: "account-player",
     displayName: "暮潮守望",
+    eloRating: 1000,
     globalResources: {
       gold: 320,
       wood: 5,
@@ -647,4 +707,64 @@ test("loadCocosPlayerProgressionSnapshot clears expired auth sessions and falls 
   assert.equal(snapshot.summary.unlockedAchievements, 0);
   assert.deepEqual(snapshot.recentEventLog, []);
   assert.equal(values.has("project-veil:auth-session"), false);
+});
+
+test("syncCurrentCocosAuthSession refreshes an expired access token and persists the rotated session", async () => {
+  const values = new Map<string, string>([
+    [
+      "project-veil:auth-session",
+      JSON.stringify({
+        playerId: "player-1",
+        displayName: "雾林司灯",
+        authMode: "account",
+        loginId: "veil-ranger",
+        provider: "account-password",
+        token: "expired-access",
+        refreshToken: "refresh-token",
+        source: "remote"
+      })
+    ]
+  ]);
+  const storage = {
+    getItem(key: string): string | null {
+      return values.get(key) ?? null;
+    },
+    setItem(key: string, value: string): void {
+      values.set(key, value);
+    },
+    removeItem(key: string): void {
+      values.delete(key);
+    }
+  };
+  const authorizations: string[] = [];
+  let callIndex = 0;
+
+  const session = await syncCurrentCocosAuthSession("http://127.0.0.1:2567", {
+    storage,
+    fetchImpl: async (_input, init) => {
+      authorizations.push((init?.headers as Record<string, string> | undefined)?.Authorization ?? "");
+      callIndex += 1;
+      if (callIndex === 1) {
+        return new Response(JSON.stringify({ error: { code: "token_expired" } }), { status: 401 });
+      }
+      return new Response(
+        JSON.stringify({
+          session: {
+            token: callIndex === 2 ? "fresh-access" : "fresh-access",
+            refreshToken: callIndex === 2 ? "fresh-refresh" : "fresh-refresh",
+            playerId: "player-1",
+            displayName: "雾林司灯",
+            authMode: "account",
+            provider: "account-password",
+            loginId: "veil-ranger"
+          }
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+  });
+
+  assert.equal(session?.token, "fresh-access");
+  assert.equal(session?.refreshToken, "fresh-refresh");
+  assert.deepEqual(authorizations, ["Bearer expired-access", "Bearer refresh-token", "Bearer fresh-access"]);
 });

@@ -1,0 +1,23 @@
+{
+  "projectName": "Project Veil",
+  "appId": "touristappid",
+  "orientation": "portrait",
+  "buildOutputDir": "build/wechatgame",
+  "runtimeRemoteUrl": "http://127.0.0.1:2567",
+  "mainPackageBudgetMb": 4,
+  "totalSubpackageBudgetMb": 30,
+  "networkTimeoutMs": {
+    "request": 10000,
+    "connectSocket": 10000,
+    "uploadFile": 10000,
+    "downloadFile": 10000
+  },
+  "domains": {
+    "request": ["http://127.0.0.1:2567"],
+    "socket": ["ws://127.0.0.1:2567"],
+    "uploadFile": [],
+    "downloadFile": []
+  },
+  "expectedSubpackages": [],
+  "remoteAssetRoot": ""
+}

@@ -39,7 +39,7 @@ if (errors.length > 0) {
   const cocosBytes = summarizeAssetBytes(assetConfig, "cocos");
   const audioBytes = summarizeCocosPresentationAudioBytes();
   console.log(
-    `Asset validation passed: ${Object.keys(assetConfig.heroes).length} heroes, ${Object.keys(assetConfig.units).length + Object.keys(assetConfig.showcaseUnits).length} unit sprite sets, ${collectAssetPaths(assetConfig).length} registered files, ${metadata.byStage.placeholder} placeholder / ${metadata.byStage.production} production, public ${Math.round(publicBytes / 1024)} KiB / cocos ${Math.round(cocosBytes / 1024)} KiB, audio ${Math.round(audioBytes / 1024)} KiB, readiness ${formatPresentationReadinessSummary(cocosPresentationReadiness)}`
+    `Asset validation passed: ${Object.keys(assetConfig.heroes).length} heroes, ${Object.keys(assetConfig.units).length + Object.keys(assetConfig.showcaseUnits).length} unit sprite sets, ${collectAssetPaths(assetConfig).length} registered files, ${metadata.byStage.placeholder} placeholder / ${metadata.byStage.prototype} prototype / ${metadata.byStage.production} production, public ${Math.round(publicBytes / 1024)} KiB / cocos ${Math.round(cocosBytes / 1024)} KiB, audio ${Math.round(audioBytes / 1024)} KiB, readiness ${formatPresentationReadinessSummary(cocosPresentationReadiness)}`
   );
 }
 

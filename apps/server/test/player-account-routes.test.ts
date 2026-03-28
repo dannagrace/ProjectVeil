@@ -31,6 +31,7 @@ import {
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
+  private readonly playerIdByWechatOpenId = new Map<string, string>();
   private readonly eventHistoryByPlayerId = new Map<string, PlayerAccountSnapshot["recentEventLog"]>();
 
   async load(_roomId: string): Promise<RoomPersistenceSnapshot | null> {
@@ -46,6 +47,11 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return (
       Array.from(this.accounts.values()).find((account) => account.loginId === normalizedLoginId) ?? null
     );
+  }
+
+  async loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null> {
+    const playerId = this.playerIdByWechatOpenId.get(openId.trim());
+    return playerId ? this.accounts.get(playerId) ?? null : null;
   }
 
   async loadPlayerEventHistory(
@@ -75,6 +81,10 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return this.authByLoginId.get(loginId.trim().toLowerCase()) ?? null;
   }
 
+  async loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null> {
+    return Array.from(this.authByLoginId.values()).find((auth) => auth.playerId === playerId.trim()) ?? null;
+  }
+
   async loadPlayerHeroArchives(_playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
     return [];
   }
@@ -84,6 +94,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     const account: PlayerAccountSnapshot = {
       playerId: input.playerId,
       displayName: input.displayName?.trim() || existing?.displayName || input.playerId,
+      ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
       achievements: structuredClone(existing?.achievements ?? []),
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
@@ -91,6 +102,9 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: existing.wechatMiniGameOpenId } : {}),
+      ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
+      ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -123,8 +137,83 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       displayName: account.displayName,
       loginId: normalizedLoginId,
       passwordHash: input.passwordHash,
+      accountSessionVersion: existing.accountSessionVersion ?? 0,
       credentialBoundAt
     });
+    return account;
+  }
+
+  async savePlayerAccountAuthSession(
+    playerId: string,
+    input: { refreshSessionId: string; refreshTokenHash: string; refreshTokenExpiresAt: string }
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const auth = await this.loadPlayerAccountAuthByPlayerId(playerId);
+    if (!auth) {
+      return null;
+    }
+    const nextAuth: PlayerAccountAuthSnapshot = {
+      ...auth,
+      accountSessionVersion: auth.accountSessionVersion + 1,
+      refreshSessionId: input.refreshSessionId,
+      refreshTokenHash: input.refreshTokenHash,
+      refreshTokenExpiresAt: input.refreshTokenExpiresAt
+    };
+    this.authByLoginId.set(auth.loginId, nextAuth);
+    return nextAuth;
+  }
+
+  async revokePlayerAccountAuthSessions(
+    playerId: string,
+    input: { passwordHash?: string; credentialBoundAt?: string } = {}
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const auth = await this.loadPlayerAccountAuthByPlayerId(playerId);
+    if (!auth) {
+      return null;
+    }
+    const nextAuth: PlayerAccountAuthSnapshot = {
+      ...auth,
+      ...(input.passwordHash ? { passwordHash: input.passwordHash } : {}),
+      ...(input.credentialBoundAt ? { credentialBoundAt: input.credentialBoundAt } : {}),
+      accountSessionVersion: auth.accountSessionVersion + 1
+    };
+    delete nextAuth.refreshSessionId;
+    delete nextAuth.refreshTokenHash;
+    delete nextAuth.refreshTokenExpiresAt;
+    this.authByLoginId.set(auth.loginId, nextAuth);
+    return nextAuth;
+  }
+
+  async bindPlayerAccountWechatMiniGameIdentity(
+    playerId: string,
+    input: { openId: string; unionId?: string; displayName?: string; avatarUrl?: string | null }
+  ): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({
+      playerId,
+      ...(input.displayName?.trim() ? { displayName: input.displayName } : {})
+    });
+    const normalizedOpenId = input.openId.trim();
+    const owner = await this.loadPlayerAccountByWechatMiniGameOpenId(normalizedOpenId);
+    if (owner && owner.playerId !== playerId) {
+      throw new Error("wechatMiniGameOpenId is already taken");
+    }
+
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      ...(input.displayName?.trim() ? { displayName: input.displayName.trim() } : {}),
+      ...(input.avatarUrl !== undefined
+        ? input.avatarUrl?.trim()
+          ? { avatarUrl: input.avatarUrl.trim() }
+          : {}
+        : existing.avatarUrl
+          ? { avatarUrl: existing.avatarUrl }
+          : {}),
+      wechatMiniGameOpenId: normalizedOpenId,
+      ...(input.unionId?.trim() ? { wechatMiniGameUnionId: input.unionId.trim() } : existing.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
+      wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(playerId, account);
+    this.playerIdByWechatOpenId.set(normalizedOpenId, playerId);
     return account;
   }
 
@@ -133,6 +222,13 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     const account: PlayerAccountSnapshot = {
       ...existing,
       displayName: patch.displayName?.trim() || existing.displayName,
+      ...(patch.avatarUrl !== undefined
+        ? patch.avatarUrl?.trim()
+          ? { avatarUrl: patch.avatarUrl.trim() }
+          : {}
+        : existing.avatarUrl
+          ? { avatarUrl: existing.avatarUrl }
+          : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -550,7 +646,7 @@ test("public guest player routes return empty fallback payloads instead of 404 n
   assert.equal(progressionPayload.summary.unlockedAchievements, 0);
 });
 
-test("player account battle replay routes return normalized replay summaries with optional limit", async (t) => {
+test("player account battle replay routes return normalized replay summaries with optional limit and offset", async (t) => {
   const port = 40050 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
@@ -578,6 +674,13 @@ test("player account battle replay routes return normalized replay summaries wit
   const detailPayload = (await detailResponse.json()) as { items: PlayerBattleReplaySummary[] };
   assert.equal(detailResponse.status, 200);
   assert.deepEqual(detailPayload.items.map((replay) => replay.id), ["replay-newer"]);
+
+  const pagedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays?limit=1&offset=1`
+  );
+  const pagedPayload = (await pagedResponse.json()) as { items: PlayerBattleReplaySummary[] };
+  assert.equal(pagedResponse.status, 200);
+  assert.deepEqual(pagedPayload.items.map((replay) => replay.id), ["replay-older"]);
 
   const missingResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/missing/battle-replays`);
   assert.equal(missingResponse.status, 404);

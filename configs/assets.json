@@ -78,94 +78,94 @@
   "metadata": {
     "/assets/pixel/terrain/grass-tile.png": {
       "slot": "terrain.grass.default",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated",
       "notes": "Synced from Cocos placeholder tile bundle for H5 pixel preview."
     },
     "/assets/pixel/terrain/grass-tile-alt.png": {
       "slot": "terrain.grass.alt",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/terrain/dirt-tile.png": {
       "slot": "terrain.dirt.default",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/terrain/dirt-tile-alt.png": {
       "slot": "terrain.dirt.alt",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/terrain/sand-tile.png": {
       "slot": "terrain.sand.default",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/terrain/sand-tile-alt.png": {
       "slot": "terrain.sand.alt",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/terrain/water-tile.png": {
       "slot": "terrain.water.default",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/terrain/water-tile-alt.png": {
       "slot": "terrain.water.alt",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/terrain/fog-tile.png": {
       "slot": "terrain.unknown.default",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/resources/gold-pile.png": {
       "slot": "resource.gold",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/resources/wood-stack.png": {
       "slot": "resource.wood",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/resources/ore-crate.png": {
       "slot": "resource.ore",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/buildings/recruitment-post.png": {
       "slot": "building.recruitment_post",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/buildings/attribute-shrine.png": {
       "slot": "building.attribute_shrine",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/buildings/resource-mine.png": {
       "slot": "building.resource_mine",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/units/hero-guard-basic.png": {
       "slot": "unit.hero_guard_basic.idle",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated",
       "notes": "Synced from Cocos placeholder icon bundle for H5 pixel preview."
     },
     "/assets/pixel/units/hero-guard-basic-selected.png": {
       "slot": "unit.hero_guard_basic.selected",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/units/hero-guard-basic-hit.png": {
       "slot": "unit.hero_guard_basic.hit",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/frames/unit-frame-ally.png": {
@@ -175,17 +175,17 @@
     },
     "/assets/pixel/units/wolf-pack.png": {
       "slot": "unit.wolf_pack.idle",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/units/wolf-pack-selected.png": {
       "slot": "unit.wolf_pack.selected",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/units/wolf-pack-hit.png": {
       "slot": "unit.wolf_pack.hit",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/frames/unit-frame-enemy.png": {
@@ -195,32 +195,32 @@
     },
     "/assets/pixel/markers/hero-marker.png": {
       "slot": "marker.hero.idle",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/markers/hero-marker-selected.png": {
       "slot": "marker.hero.selected",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/markers/hero-marker-hit.png": {
       "slot": "marker.hero.hit",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/markers/neutral-marker.png": {
       "slot": "marker.neutral.idle",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/markers/neutral-marker-selected.png": {
       "slot": "marker.neutral.selected",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/markers/neutral-marker-hit.png": {
       "slot": "marker.neutral.hit",
-      "stage": "placeholder",
+      "stage": "prototype",
       "source": "generated"
     },
     "/assets/pixel/badges/faction-crown.png": {

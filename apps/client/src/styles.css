@@ -320,6 +320,20 @@ h1 {
   gap: 8px;
 }
 
+.account-replay-center {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(78, 58, 42, 0.08);
+  background: rgba(255, 248, 240, 0.72);
+}
+
+.account-replay-center-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
 .account-achievement-list,
 .account-event-list,
 .account-replay-list {
@@ -476,6 +490,7 @@ h1 {
 
 .account-replay-controls,
 .account-replay-progress,
+.account-replay-impact,
 .account-replay-state,
 .account-replay-step-list {
   display: grid;
@@ -501,6 +516,12 @@ h1 {
 .account-replay-progress div {
   display: grid;
   gap: 4px;
+}
+
+.account-replay-impact {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(74, 120, 178, 0.06);
 }
 
 .account-replay-unit {
@@ -534,6 +555,11 @@ h1 {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
+}
+
+.account-replay-step-copy {
+  display: grid;
+  gap: 4px;
 }
 
 .account-replay-step.is-current {
@@ -1483,6 +1509,32 @@ h1 {
 .battle-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.room-status-panel,
+.battle-settlement-panel {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.room-status-panel p,
+.battle-settlement-panel p {
+  line-height: 1.5;
+}
+
+.battle-settlement-panel.tone-victory {
+  border-color: rgba(47, 110, 91, 0.28);
+  background: linear-gradient(180deg, rgba(236, 247, 242, 0.92), rgba(247, 252, 249, 0.9));
+}
+
+.battle-settlement-panel.tone-defeat {
+  border-color: rgba(138, 49, 49, 0.24);
+  background: linear-gradient(180deg, rgba(252, 240, 236, 0.92), rgba(255, 248, 245, 0.9));
+}
+
+.battle-settlement-panel.tone-neutral {
+  border-color: rgba(78, 58, 42, 0.14);
 }
 
 .modal-backdrop {

@@ -7,6 +7,7 @@ export * from "./hero-skills.ts";
 export * from "./hero-progression.ts";
 export * from "./map.ts";
 export * from "./map-sync.ts";
+export * from "./matchmaking.ts";
 export * from "./models.ts";
 export * from "./protocol.ts";
 export * from "./player-account.ts";

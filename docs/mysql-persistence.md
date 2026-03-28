@@ -83,6 +83,10 @@ When loading older snapshots that predate hero progression, the server will back
 | `last_room_id` | `VARCHAR(191)` | Yes | `NULL` | Last room seen for this account |
 | `last_seen_at` | `DATETIME` | Yes | `NULL` | Last known activity timestamp |
 | `login_id` | `VARCHAR(40)` | Yes | `NULL` | Bound login id for credential auth |
+| `account_session_version` | `BIGINT UNSIGNED` | No | `0` | Monotonic account session family version used to revoke access tokens |
+| `refresh_session_id` | `VARCHAR(64)` | Yes | `NULL` | Current active refresh-token family id |
+| `refresh_token_hash` | `VARCHAR(255)` | Yes | `NULL` | Server-side hash of the currently active refresh token |
+| `refresh_token_expires_at` | `DATETIME` | Yes | `NULL` | Expiry timestamp for the active refresh token |
 | `password_hash` | `VARCHAR(255)` | Yes | `NULL` | Stored password hash |
 | `credential_bound_at` | `DATETIME` | Yes | `NULL` | First credential bind time |
 | `version` | `BIGINT UNSIGNED` | No | `1` | Incremented on every upsert |
@@ -157,12 +161,15 @@ This gives us a safe recovery window after server restarts without letting `room
 
 ## Initialization
 
-The repository includes a SQL file and an init script:
+The repository now uses versioned migrations under `scripts/migrations/`.
 
-- SQL: `docs/mysql-persistence.sql`
-- Script: `npm run db:init:mysql`
+- Apply pending migrations: `npm run db:migrate`
+- Roll back the most recent migration: `npm run db:migrate:rollback`
+- Fresh setup alias: `npm run db:init:mysql`
 
-Running the init script creates the database, `room_snapshots`, `player_room_profiles`, `player_accounts`, `player_event_history`, and `config_documents` if they do not already exist.
+`db:init:mysql` now delegates to the same migration runner used for upgrades, so fresh installs and existing environments follow a single schema path. The runner records applied versions in `schema_migrations` with `id`, `name`, and `applied_at`.
+
+If the dev server starts with `VEIL_MYSQL_*` configured but the schema is behind, it logs a warning and falls back to local in-memory room persistence plus filesystem config storage instead of mutating the database implicitly. Run `npm run db:migrate` first for MySQL-backed startup.
 
 ## Manual Operations
 

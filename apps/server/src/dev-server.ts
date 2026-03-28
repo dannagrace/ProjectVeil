@@ -1,12 +1,14 @@
 import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
-import { createConfiguredConfigCenterStore, registerConfigCenterRoutes } from "./config-center";
+import { FileSystemConfigCenterStore, MySqlConfigCenterStore, registerConfigCenterRoutes } from "./config-center";
 import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./colyseus-room";
 import { registerLobbyRoutes } from "./lobby";
-import { createConfiguredRoomSnapshotStore, MySqlRoomSnapshotStore } from "./persistence";
+import { registerMatchmakingRoutes } from "./matchmaking";
+import { MySqlRoomSnapshotStore, readMySqlPersistenceConfig } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
+import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
 
 loadEnv();
 
@@ -14,16 +16,30 @@ async function startDevServer(
   port = Number(process.env.PORT ?? 2567),
   host = process.env.HOST ?? "127.0.0.1"
 ): Promise<void> {
-  const snapshotStore = await createConfiguredRoomSnapshotStore();
+  const mysqlConfig = readMySqlPersistenceConfig();
+  let snapshotStore: MySqlRoomSnapshotStore | null = null;
+  let configCenterStore: FileSystemConfigCenterStore | MySqlConfigCenterStore = new FileSystemConfigCenterStore();
+
+  if (mysqlConfig) {
+    const migrationStatus = await getSchemaMigrationStatus(mysqlConfig);
+    if (migrationStatus.pending.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(formatSchemaMigrationWarning(migrationStatus));
+    } else {
+      snapshotStore = await MySqlRoomSnapshotStore.create(mysqlConfig);
+      configCenterStore = await MySqlConfigCenterStore.create(mysqlConfig);
+    }
+  }
+
   const effectiveSnapshotStore = snapshotStore ?? createMemoryRoomSnapshotStore();
   configureRoomSnapshotStore(effectiveSnapshotStore);
-  const configCenterStore = await createConfiguredConfigCenterStore();
   await configCenterStore.initializeRuntimeConfigs();
   const transport = new WebSocketTransport();
   registerAuthRoutes(transport.getExpressApp() as never, effectiveSnapshotStore);
   registerConfigCenterRoutes(transport.getExpressApp() as never, configCenterStore);
   registerPlayerAccountRoutes(transport.getExpressApp() as never, effectiveSnapshotStore);
   registerLobbyRoutes(transport.getExpressApp() as never, { listRooms: listLobbyRooms });
+  registerMatchmakingRoutes(transport.getExpressApp() as never, { store: effectiveSnapshotStore });
 
   const gameServer = new Server({
     transport
@@ -43,6 +59,8 @@ async function startDevServer(
   console.log(`WeChat mini game auth scaffold available at http://${host}:${port}/api/auth/wechat-mini-game-login`);
   // eslint-disable-next-line no-console
   console.log(`Lobby API available at http://${host}:${port}/api/lobby/rooms`);
+  // eslint-disable-next-line no-console
+  console.log(`Matchmaking API available at http://${host}:${port}/api/matchmaking/status`);
   // eslint-disable-next-line no-console
   console.log(`Config center storage: ${configCenterStore.mode}`);
   if (snapshotStore) {

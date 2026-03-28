@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyBattleReplayPlaybackCommand,
+  buildBattleReplayTimeline,
   createEmptyBattleState,
+  queryPlayerBattleReplaySummaries,
   restoreBattleReplayPlaybackState,
   type PlayerBattleReplaySummary
 } from "../src/index";
@@ -105,4 +107,81 @@ test("applyBattleReplayPlaybackCommand supports play, pause, and reset from a re
   assert.equal(reset.currentStepIndex, 0);
   assert.equal(reset.currentStep, null);
   assert.equal(reset.nextStep?.index, 1);
+});
+
+test("battle replay timeline derives round-aware state deltas", () => {
+  const replay = createReplay();
+  replay.initialState.units = {
+    "stack-1": {
+      id: "stack-1",
+      templateId: "hero-guard-basic",
+      camp: "attacker",
+      lane: 0,
+      stackName: "前锋卫队",
+      initiative: 12,
+      attack: 5,
+      defense: 4,
+      minDamage: 1,
+      maxDamage: 2,
+      count: 3,
+      currentHp: 10,
+      maxHp: 10,
+      hasRetaliated: false,
+      defending: false
+    },
+    "stack-2": {
+      id: "stack-2",
+      templateId: "wolf-pack",
+      camp: "defender",
+      lane: 1,
+      stackName: "狼群",
+      initiative: 8,
+      attack: 4,
+      defense: 4,
+      minDamage: 1,
+      maxDamage: 2,
+      count: 2,
+      currentHp: 10,
+      maxHp: 10,
+      hasRetaliated: false,
+      defending: false
+    }
+  };
+  replay.initialState.round = 1;
+  replay.initialState.turnOrder = ["stack-1", "stack-2"];
+  replay.initialState.activeUnitId = "stack-1";
+  replay.steps = [
+    {
+      index: 1,
+      source: "player",
+      action: {
+        type: "battle.defend",
+        unitId: "stack-1"
+      }
+    }
+  ];
+
+  const timeline = buildBattleReplayTimeline(replay);
+
+  assert.equal(timeline.length, 1);
+  assert.equal(timeline[0]?.round, 1);
+  assert.match(timeline[0]?.state.log.join(" ") ?? "", /stack-1/);
+  assert.equal(timeline[0]?.outcome, "in_progress");
+});
+
+test("queryPlayerBattleReplaySummaries supports offset pagination", () => {
+  const older = createReplay();
+  older.id = "replay-older";
+  older.completedAt = "2026-03-27T10:00:00.000Z";
+
+  const newer = createReplay();
+  newer.id = "replay-newer";
+  newer.completedAt = "2026-03-27T10:05:00.000Z";
+
+  const paged = queryPlayerBattleReplaySummaries([older, newer], {
+    limit: 1,
+    offset: 1
+  });
+
+  assert.deepEqual(paged.map((replay) => replay.id), ["replay-older"]);
 });
