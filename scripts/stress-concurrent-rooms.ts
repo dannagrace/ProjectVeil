@@ -4,6 +4,7 @@ import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import { pickAutomatedBattleAction, type BattleAction, type ClientMessage, type ServerMessage, type SessionStatePayload, type Vec2 } from "../packages/shared/src/index";
 import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../apps/server/src/colyseus-room";
+import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../apps/server/src/observability";
 
 type ScenarioName = "world_progression" | "battle_settlement" | "reconnect";
 
@@ -236,9 +237,15 @@ class ResourceMonitor {
 async function startStressServer(port: number, host: string): Promise<Server> {
   configureRoomSnapshotStore(null);
   resetLobbyRoomRegistry();
+  resetRuntimeObservability();
+
+  const transport = new WebSocketTransport();
+  registerRuntimeObservabilityRoutes(transport.getExpressApp() as never, {
+    serviceName: "project-veil-stress-server"
+  });
 
   const server = new Server({
-    transport: new WebSocketTransport()
+    transport
   });
 
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
@@ -647,6 +654,8 @@ async function runScenario(scenario: ScenarioName, options: StressOptions): Prom
 
 function printSummary(results: ScenarioResult[], options: StressOptions): void {
   console.log(`Concurrent room stress test on ws://${options.host}:${options.port}`);
+  console.log(`Inspect runtime health at http://${options.host}:${options.port}/api/runtime/health`);
+  console.log(`Inspect runtime metrics at http://${options.host}:${options.port}/api/runtime/metrics`);
   console.log(`Rooms: ${options.rooms} | Scenarios: ${options.scenarios.join(", ")}`);
   console.table(
     results.map((result) => ({
