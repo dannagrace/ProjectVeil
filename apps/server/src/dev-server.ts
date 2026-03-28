@@ -1,12 +1,13 @@
 import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
-import { createConfiguredConfigCenterStore, registerConfigCenterRoutes } from "./config-center";
+import { FileSystemConfigCenterStore, MySqlConfigCenterStore, registerConfigCenterRoutes } from "./config-center";
 import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./colyseus-room";
 import { registerLobbyRoutes } from "./lobby";
-import { createConfiguredRoomSnapshotStore, MySqlRoomSnapshotStore } from "./persistence";
+import { MySqlRoomSnapshotStore, readMySqlPersistenceConfig } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
+import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
 
 loadEnv();
 
@@ -14,10 +15,23 @@ async function startDevServer(
   port = Number(process.env.PORT ?? 2567),
   host = process.env.HOST ?? "127.0.0.1"
 ): Promise<void> {
-  const snapshotStore = await createConfiguredRoomSnapshotStore();
+  const mysqlConfig = readMySqlPersistenceConfig();
+  let snapshotStore: MySqlRoomSnapshotStore | null = null;
+  let configCenterStore: FileSystemConfigCenterStore | MySqlConfigCenterStore = new FileSystemConfigCenterStore();
+
+  if (mysqlConfig) {
+    const migrationStatus = await getSchemaMigrationStatus(mysqlConfig);
+    if (migrationStatus.pending.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(formatSchemaMigrationWarning(migrationStatus));
+    } else {
+      snapshotStore = await MySqlRoomSnapshotStore.create(mysqlConfig);
+      configCenterStore = await MySqlConfigCenterStore.create(mysqlConfig);
+    }
+  }
+
   const effectiveSnapshotStore = snapshotStore ?? createMemoryRoomSnapshotStore();
   configureRoomSnapshotStore(effectiveSnapshotStore);
-  const configCenterStore = await createConfiguredConfigCenterStore();
   await configCenterStore.initializeRuntimeConfigs();
   const transport = new WebSocketTransport();
   registerAuthRoutes(transport.getExpressApp() as never, effectiveSnapshotStore);

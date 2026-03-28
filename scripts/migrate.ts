@@ -13,9 +13,9 @@ async function main(): Promise<void> {
   }
 
   const result = await runPendingSchemaMigrations(config);
-  console.log("MySQL persistence schema initialized successfully.");
-  console.log(`Database: ${config.database}`);
-  console.log(`Applied migrations: ${result.applied.length === 0 ? "none" : result.applied.join(", ")}`);
+  console.log(`MySQL schema migrations complete for ${result.database}.`);
+  console.log(`Applied: ${result.applied.length === 0 ? "none" : result.applied.join(", ")}`);
+  console.log(`Already current: ${result.skipped.length === 0 ? "none" : result.skipped.join(", ")}`);
 }
 
 void main().catch((error) => {

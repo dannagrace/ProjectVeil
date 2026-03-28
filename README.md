@@ -97,6 +97,9 @@
 - H5 调试壳开发服务：`npm run dev:client:h5`
 - H5 调试壳构建验证：`npm run build:client:h5`
 - H5 调试壳类型检查：`npm run typecheck:client:h5`
+- MySQL 首次初始化 / 升级：`npm run db:migrate`
+- MySQL 回滚上一版 schema：`npm run db:migrate:rollback`
+- `npm run db:init:mysql` 现已委托给同一条迁移链路，不再走独立一次性建表逻辑
 - 并发房间压测：`npm run stress:rooms -- --rooms=120 --connect-concurrency=24 --action-concurrency=24`
 - 战斗平衡验证：`npm run validate:battle -- --count=1000 --scenario=all --skill-config=configs/battle-skills-v1.1.json`
 - 并发房间压测会按 `world_progression / battle_settlement / reconnect` 三种场景分开跑数，并输出 CPU、内存、房间吞吐、动作吞吐等指标；可通过 `--scenarios=world_progression,reconnect` 等参数缩小范围
