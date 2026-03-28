@@ -71,7 +71,7 @@ import {
   renderBattleReportReplayCenter,
   renderRecentAccountEvents
 } from "./account-history";
-import { renderEncounterSourceDetail, renderRoomActionHint } from "./room-feedback";
+import { renderEncounterSourceDetail, renderRoomActionHint, resolveRoomFeedbackTone } from "./room-feedback";
 
 const params = new URLSearchParams(window.location.search);
 const queryRoomId = params.get("roomId")?.trim() ?? "";
@@ -3374,6 +3374,7 @@ function renderRoomStatusPanel(): string {
   const playerSummary = hero
     ? `我方状态：${hero.name} · HP ${hero.stats.hp}/${hero.stats.maxHp} · Move ${hero.move.remaining}/${hero.move.total}`
     : "我方状态：等待英雄数据同步";
+  const roomFeedbackTone = resolveRoomFeedbackTone(state);
 
   return `
     <section class="room-status-panel info-card" data-testid="room-status-panel">
@@ -3385,7 +3386,7 @@ function renderRoomStatusPanel(): string {
         <span class="status-pill">${state.world.meta.roomId}</span>
       </div>
       <p data-testid="room-status-detail">${encounter.detail}</p>
-      <p class="muted" data-testid="encounter-source">${renderEncounterSourceDetail({
+      <p class="muted" data-testid="encounter-source" data-tone="${roomFeedbackTone}">${renderEncounterSourceDetail({
         battle: state.battle,
         lastEncounterStarted: state.lastEncounterStarted,
         world: state.world,
@@ -3399,7 +3400,7 @@ function renderRoomStatusPanel(): string {
         <span class="battle-intel-chip" data-testid="room-player-summary">${playerSummary}</span>
         <span class="battle-intel-chip" data-testid="room-connection-summary">连接状态：${diagnosticsConnectionStatusLabel(state.diagnostics.connectionStatus)}</span>
       </div>
-      <p class="muted" data-testid="room-next-action">${renderRoomActionHint({
+      <p class="muted" data-testid="room-next-action" data-tone="${roomFeedbackTone}">${renderRoomActionHint({
         battle: state.battle,
         lastBattleSettlement: state.lastBattleSettlement,
         activeHero: activeHero()

@@ -1,6 +1,5 @@
+import type { CocosBattleFeedbackTone } from "./project-shared/index.ts";
 import type { BattleAction, BattleState, SessionUpdate } from "./VeilCocosSession.ts";
-
-export type CocosBattleFeedbackTone = "neutral" | "action" | "skill" | "hit" | "victory" | "defeat";
 
 export interface CocosBattleFeedbackView {
   title: string;
