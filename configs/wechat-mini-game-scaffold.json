@@ -1,0 +1,14 @@
+{
+  "platform": "wechat-game",
+  "creatorVersion": "3.8.8",
+  "appId": "wx-your-app-id",
+  "envVersion": "develop",
+  "mainPackageBudgetMB": 3.5,
+  "preloadBundles": ["resources", "main"],
+  "remoteBundles": ["world-art", "battle-fx"],
+  "assetCdnBaseUrl": "https://assets.example.com/project-veil/wechat",
+  "loginExchangePath": "/api/auth/wechat-mini-game-login",
+  "socketDomains": ["wss://veil.example.com"],
+  "requestDomains": ["https://veil.example.com", "https://assets.example.com"],
+  "notes": "Scaffold only for issue #30. Replace placeholders before real WeChat submission; code2Session, OpenID binding, and runtime memory work are still pending."
+}

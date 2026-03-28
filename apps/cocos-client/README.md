@@ -174,3 +174,13 @@ npm run dev:server
 ```
 
 这样 Lobby 会优先展示“微信登录并进入”，但它仍然只是 mock / scaffold，不代表已经完成生产发布链路。
+
+## 微信小游戏构建脚手架
+
+Issue #30 当前又补了一层更保守的构建基线：
+
+- 新增仓库内配置样板 `configs/wechat-mini-game-scaffold.json`
+- 新增校验命令 `npm run validate:wechat`
+- 新增说明文档 `docs/wechat-mini-game-scaffold.md`
+
+这层脚手架只解决“先把小游戏主包预算、预加载 bundle、远程 CDN、登录交换路径和安全域名占位收口到仓库里”，不代表已经完成 Cocos Creator 导出、真实 `code2Session`、OpenID 绑定或真机性能优化。
