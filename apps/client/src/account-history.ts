@@ -1,8 +1,11 @@
 import {
+  createBattleReplayPlaybackState,
   formatAchievementLabel,
   formatWorldEventTypeLabel,
   getLatestProgressedAchievement,
-  getLatestUnlockedAchievement
+  getLatestUnlockedAchievement,
+  type BattleReplayPlaybackState,
+  type BattleReplayStep
 } from "../../../packages/shared/src/index";
 import type { PlayerAccountProfile } from "./player-account";
 
@@ -103,6 +106,49 @@ function summarizeBattleReplaySteps(
     attack,
     skill
   };
+}
+
+function formatBattleReplayAction(step: BattleReplayStep | null): string {
+  if (!step) {
+    return "暂无动作";
+  }
+
+  if (step.action.type === "battle.attack") {
+    return `${step.action.attackerId} 攻击 ${step.action.defenderId}`;
+  }
+
+  if (step.action.type === "battle.skill") {
+    return `${step.action.unitId} 施放 ${step.action.skillId}${step.action.targetId ? ` -> ${step.action.targetId}` : ""}`;
+  }
+
+  if (step.action.type === "battle.defend") {
+    return `${step.action.unitId} 防御`;
+  }
+
+  return `${step.action.unitId} 等待`;
+}
+
+function formatBattleReplayPlaybackStatus(status: BattleReplayPlaybackState["status"]): string {
+  if (status === "playing") {
+    return "播放中";
+  }
+
+  if (status === "completed") {
+    return "已播完";
+  }
+
+  return "已暂停";
+}
+
+function formatBattleReplaySourceLabel(source: BattleReplayStep["source"]): string {
+  return source === "automated" ? "自动" : "玩家";
+}
+
+function formatBattleReplayUnitSummary(playback: BattleReplayPlaybackState): string {
+  const aliveUnits = Object.values(playback.currentState.units).filter((unit) => unit.count > 0);
+  const attackerAlive = aliveUnits.filter((unit) => unit.camp === "attacker").length;
+  const defenderAlive = aliveUnits.filter((unit) => unit.camp === "defender").length;
+  return `攻方 ${attackerAlive} 队 · 守方 ${defenderAlive} 队`;
 }
 
 function compareAchievementDisplayOrder(
@@ -242,7 +288,12 @@ export function renderRecentAccountEvents(account: PlayerAccountProfile): string
   </div>`;
 }
 
-export function renderRecentBattleReplays(account: PlayerAccountProfile): string {
+export function renderRecentBattleReplays(
+  account: PlayerAccountProfile,
+  options: {
+    selectedReplayId?: string | null;
+  } = {}
+): string {
   if (account.recentBattleReplays.length === 0) {
     return '<div class="account-subsection"><strong>最近战报</strong><p class="account-meta">尚未记录可回看的战斗摘要。</p></div>';
   }
@@ -255,6 +306,7 @@ export function renderRecentBattleReplays(account: PlayerAccountProfile): string
       ${visibleReplays
         .map((replay) => {
           const stepSummary = summarizeBattleReplaySteps(replay);
+          const isSelected = options.selectedReplayId === replay.id;
           const summaryChips = [
             `回放 ${replay.steps.length} 步`,
             `玩家 ${stepSummary.player}`,
@@ -262,7 +314,7 @@ export function renderRecentBattleReplays(account: PlayerAccountProfile): string
             stepSummary.attack > 0 ? `攻击 ${stepSummary.attack}` : "",
             stepSummary.skill > 0 ? `技能 ${stepSummary.skill}` : ""
           ].filter(Boolean);
-          return `<div class="account-replay-entry ${replay.result === "attacker_victory" ? "is-victory" : "is-defeat"}">
+          return `<button type="button" class="account-replay-entry ${replay.result === "attacker_victory" ? "is-victory" : "is-defeat"} ${isSelected ? "is-selected" : ""}" data-select-replay="${escapeHtml(replay.id)}">
             <div class="account-replay-head">
               <span class="account-badge tone-${replay.result === "attacker_victory" ? "victory" : "defeat"}">${escapeHtml(formatBattleReplayResultLabel(replay))}</span>
               <span>${escapeHtml(formatTimestamp(replay.completedAt))}</span>
@@ -276,6 +328,102 @@ export function renderRecentBattleReplays(account: PlayerAccountProfile): string
             <div class="account-event-rewards">${summaryChips
               .map((chip) => `<span class="account-reward-chip">${escapeHtml(chip)}</span>`)
               .join("")}</div>
+          </button>`;
+        })
+        .join("")}
+    </div>
+  </div>`;
+}
+
+export function renderBattleReplayInspector(input: {
+  replay: PlayerAccountProfile["recentBattleReplays"][number] | null;
+  playback: BattleReplayPlaybackState | null;
+  loading?: boolean;
+  status?: string;
+}): string {
+  if (!input.replay) {
+    return `<div class="account-subsection">
+      <strong>回放详情</strong>
+      <p class="account-meta">${escapeHtml(input.status?.trim() || "选择一场最近战斗，即可查看逐步回放。")}</p>
+    </div>`;
+  }
+
+  const playback = input.playback ?? createBattleReplayPlaybackState(input.replay);
+  const activeUnits = Object.values(playback.currentState.units)
+    .filter((unit) => unit.count > 0)
+    .sort((left, right) => {
+      if (left.camp !== right.camp) {
+        return left.camp.localeCompare(right.camp);
+      }
+      if (left.lane !== right.lane) {
+        return left.lane - right.lane;
+      }
+      return left.id.localeCompare(right.id);
+    });
+
+  return `<div class="account-subsection replay-inspector" data-testid="battle-replay-inspector">
+    <div class="account-replay-inspector-head">
+      <div>
+        <strong>回放详情</strong>
+        <p class="account-meta">${escapeHtml(
+          `${formatBattleReplayResultLabel(input.replay)} · ${formatBattleReplayKind(input.replay)} · ${formatBattleReplayEncounter(input.replay)}`
+        )}</p>
+      </div>
+      <button type="button" class="account-replay-dismiss" data-clear-replay="true">收起</button>
+    </div>
+    <div class="account-replay-meta">
+      <span>状态 ${escapeHtml(formatBattleReplayPlaybackStatus(playback.status))}</span>
+      <span>进度 ${playback.currentStepIndex}/${playback.totalSteps}</span>
+      <span>${escapeHtml(formatBattleReplayUnitSummary(playback))}</span>
+    </div>
+    <div class="account-replay-controls">
+      <button type="button" class="modal-button" data-replay-control="play" ${playback.status === "playing" || playback.status === "completed" ? "disabled" : ""}>播放</button>
+      <button type="button" class="modal-button" data-replay-control="pause" ${playback.status !== "playing" ? "disabled" : ""}>暂停</button>
+      <button type="button" class="modal-button" data-replay-control="step" ${playback.currentStepIndex >= playback.totalSteps ? "disabled" : ""}>步进</button>
+      <button type="button" class="modal-button" data-replay-control="reset" ${playback.currentStepIndex === 0 && playback.status !== "completed" ? "disabled" : ""}>重置</button>
+    </div>
+    <p class="account-meta">${escapeHtml(input.loading ? "正在刷新回放详情..." : input.status?.trim() || "按步骤回放本场战斗。")}</p>
+    <div class="account-replay-progress">
+      <div><strong>当前动作</strong><span>${escapeHtml(formatBattleReplayAction(playback.currentStep))}</span></div>
+      <div><strong>下一动作</strong><span>${escapeHtml(formatBattleReplayAction(playback.nextStep))}</span></div>
+    </div>
+    <div class="account-replay-state">
+      ${
+        activeUnits.length > 0
+          ? activeUnits
+              .map((unit) => {
+                const effects = (unit.statusEffects ?? []).map((effect) => effect.name).filter(Boolean);
+                return `<div class="account-replay-unit ${unit.camp === "attacker" ? "is-attacker" : "is-defender"}">
+                  <div class="account-replay-unit-head">
+                    <strong>${escapeHtml(unit.stackName)}</strong>
+                    <span>${escapeHtml(`${unit.camp === "attacker" ? "攻方" : "守方"} · ${unit.id}`)}</span>
+                  </div>
+                  <div class="account-replay-unit-meta">
+                    <span>数量 ${unit.count}</span>
+                    <span>HP ${unit.currentHp}/${unit.maxHp}</span>
+                    <span>格位 ${unit.lane}</span>
+                    ${unit.defending ? "<span>防御中</span>" : ""}
+                    ${effects.map((effect) => `<span>${escapeHtml(effect)}</span>`).join("")}
+                  </div>
+                </div>`;
+              })
+              .join("")
+          : '<div class="account-replay-unit"><span class="account-meta">当前战场没有可展示的存活单位。</span></div>'
+      }
+    </div>
+    <div class="account-replay-step-list">
+      ${input.replay.steps
+        .map((step) => {
+          const tone =
+            step.index === playback.currentStepIndex
+              ? "is-current"
+              : step.index < playback.currentStepIndex
+                ? "is-complete"
+                : "is-upcoming";
+          return `<div class="account-replay-step ${tone}">
+            <span class="account-badge">${step.index}</span>
+            <strong>${escapeHtml(formatBattleReplayAction(step))}</strong>
+            <span>${escapeHtml(formatBattleReplaySourceLabel(step.source))}</span>
           </div>`;
         })
         .join("")}
