@@ -15,6 +15,7 @@
 - H5 / Lobby 冒烟：`npm run test:e2e:smoke`
 - 多人同步冒烟：`npm run test:e2e:multiplayer:smoke`
 - 微信小游戏构建校验：`npm run check:wechat-build`
+- Cocos 发布证据模板：`docs/cocos-release-evidence-template.md`
 - 微信小游戏提审前冒烟：`docs/wechat-minigame-release.md`
 
 ## 发布判断规则
@@ -145,7 +146,7 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
   - 首场战斗反馈统一到正式动画 / 音频方案
 - `Cocos 主链路发布证据`
   - 固定一条 Lobby -> 进房 -> 战斗 -> 重连 -> 返回世界的验收脚本
-  - 补统一的 release evidence 模板
+  - 使用 `docs/cocos-release-evidence-template.md` 回填统一 evidence
 - `多人放量门禁`
   - 固定压测参数
   - 记录可接受阈值和回退条件
