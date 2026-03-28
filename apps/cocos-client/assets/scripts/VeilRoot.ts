@@ -79,13 +79,8 @@ import {
 import { readStoredCocosAuthSession, resolveCocosLaunchIdentity, type CocosAuthProvider } from "./cocos-session-launch.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
-import { buildBattleEnterCopy, buildBattleExitCopy } from "./cocos-battle-transition-copy.ts";
-import {
-  buildBattleActionFeedback,
-  buildBattleProgressFeedback,
-  buildBattleTransitionFeedback,
-  type CocosBattleFeedbackView
-} from "./cocos-battle-feedback.ts";
+import { type CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
+import { buildBattleActionPresentation, buildBattlePresentationPlan } from "./cocos-battle-presentation.ts";
 import { createCocosAudioRuntime } from "./cocos-audio-runtime.ts";
 import { createCocosAudioAssetBridge } from "./cocos-audio-resources.ts";
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
@@ -102,15 +97,6 @@ const LOBBY_NODE_NAME = "ProjectVeilLobbyPanel";
 const DEFAULT_MAP_WIDTH_TILES = 8;
 const DEFAULT_MAP_HEIGHT_TILES = 8;
 const BATTLE_FEEDBACK_DURATION_MS = 2600;
-
-interface BattleResolvedEventLike {
-  type: "battle.resolved";
-  result: "attacker_victory" | "defender_victory";
-  heroId: string;
-  battleId: string;
-  defenderHeroId?: string;
-  [key: string]: unknown;
-}
 
 function formatHeroStatBonus(bonus: { attack: number; defense: number; power: number; knowledge: number }): string {
   return [
@@ -2453,28 +2439,6 @@ export class VeilRoot extends Component {
     historyRef.replaceState(null, "", nextUrl.toString());
   }
 
-  private isBattleResolvedEvent(event: SessionUpdate["events"][number]): event is BattleResolvedEventLike {
-    return (
-      event.type === "battle.resolved" &&
-      typeof event.heroId === "string" &&
-      (event.result === "attacker_victory" || event.result === "defender_victory") &&
-      (event.defenderHeroId === undefined || typeof event.defenderHeroId === "string")
-    );
-  }
-
-  private didCurrentPlayerWinBattle(event: BattleResolvedEventLike): boolean {
-    const heroId = this.activeHero()?.id;
-    if (!heroId) {
-      return false;
-    }
-
-    if (event.result === "attacker_victory") {
-      return event.heroId === heroId;
-    }
-
-    return event.defenderHeroId === heroId;
-  }
-
   private handleConnectionEvent(event: ConnectionEvent): void {
     const label =
       event === "reconnecting"
@@ -2492,6 +2456,7 @@ export class VeilRoot extends Component {
     }
 
     this.battleActionInFlight = true;
+    const actionPresentation = buildBattleActionPresentation(action, this.lastUpdate?.battle ?? null);
     const skillName =
       action.type === "battle.skill"
         ? this.lastUpdate?.battle?.units[action.unitId]?.skills?.find((skill) => skill.id === action.skillId)?.name ?? action.skillId
@@ -2505,17 +2470,15 @@ export class VeilRoot extends Component {
             ? "防御"
             : skillName ?? "技能";
     this.pushLog(`战斗指令：${actionLabel}`);
-    this.setBattleFeedback(buildBattleActionFeedback(action, this.lastUpdate?.battle ?? null));
-    if (action.type === "battle.attack") {
-      this.audioRuntime.playCue("attack");
-    } else if (action.type === "battle.skill") {
-      this.audioRuntime.playCue("skill");
+    this.setBattleFeedback(actionPresentation.feedback);
+    if (actionPresentation.cue) {
+      this.audioRuntime.playCue(actionPresentation.cue);
     }
     this.renderView();
 
     try {
-      if (action.type === "battle.attack" || (action.type === "battle.skill" && action.targetId && action.targetId !== action.unitId)) {
-        this.mapBoard?.playHeroAnimation("attack");
+      if (actionPresentation.animation !== "idle") {
+        this.mapBoard?.playHeroAnimation(actionPresentation.animation);
       }
 
       await this.applySessionUpdate(await this.session.actInBattle(action));
@@ -2530,9 +2493,8 @@ export class VeilRoot extends Component {
 
   private async applySessionUpdate(update: SessionUpdate): Promise<void> {
     const previousBattle = this.lastUpdate?.battle ?? null;
-    const previousBattleId = previousBattle?.id ?? null;
-    const nextBattleId = update.battle?.id ?? null;
     const heroId = this.activeHero()?.id ?? null;
+    const presentation = buildBattlePresentationPlan(previousBattle, update, heroId);
 
     this.pendingPrediction = null;
     this.predictionStatus = "";
@@ -2546,25 +2508,17 @@ export class VeilRoot extends Component {
     }
     this.syncSelectedBattleTarget();
     this.playMapFeedbackForUpdate(update);
-    this.maybePlayBattleHitCue(previousBattle, update.battle ?? null);
     this.maybeShowHeroProgressNotice(update);
+    this.setBattleFeedback(presentation.feedback, presentation.feedbackDurationMs ?? BATTLE_FEEDBACK_DURATION_MS);
+    if (presentation.cue) {
+      this.audioRuntime.playCue(presentation.cue);
+    }
+    this.mapBoard?.playHeroAnimation(presentation.animation);
 
-    if (!previousBattleId && nextBattleId) {
-      this.setBattleFeedback(buildBattleTransitionFeedback(update, heroId));
-      this.mapBoard?.playHeroAnimation("attack");
-      await this.battleTransition?.playEnter(buildBattleEnterCopy(update));
-    } else if (previousBattleId && !nextBattleId) {
-      const resolvedEvent = update.events.find((event) => this.isBattleResolvedEvent(event));
-      const didWin = resolvedEvent ? this.didCurrentPlayerWinBattle(resolvedEvent) : false;
-      this.setBattleFeedback(buildBattleTransitionFeedback(update, heroId), 4200);
-      this.audioRuntime.playCue(didWin ? "victory" : "defeat");
-      this.mapBoard?.playHeroAnimation(
-        resolvedEvent ? (didWin ? "victory" : "defeat") : "idle"
-      );
-      await this.battleTransition?.playExit(buildBattleExitCopy(previousBattle, update, didWin));
-    } else {
-      this.setBattleFeedback(buildBattleProgressFeedback(previousBattle, update.battle ?? null));
-      this.mapBoard?.playHeroAnimation("idle");
+    if (presentation.transition?.kind === "enter") {
+      await this.battleTransition?.playEnter(presentation.transition.copy);
+    } else if (presentation.transition?.kind === "exit") {
+      await this.battleTransition?.playExit(presentation.transition.copy);
     }
 
     this.syncWechatShareBridge();
@@ -2723,23 +2677,6 @@ export class VeilRoot extends Component {
     };
   }
 
-  private maybePlayBattleHitCue(previousBattle: SessionUpdate["battle"] | null, nextBattle: SessionUpdate["battle"] | null): void {
-    if (!previousBattle || !nextBattle) {
-      return;
-    }
-
-    for (const [unitId, unit] of Object.entries(nextBattle.units)) {
-      const previousUnit = previousBattle.units[unitId];
-      if (!previousUnit) {
-        continue;
-      }
-
-      if (unit.currentHp < previousUnit.currentHp || unit.count < previousUnit.count) {
-        this.audioRuntime.playCue("hit");
-        return;
-      }
-    }
-  }
 }
 
 function cloneSessionUpdate(update: SessionUpdate): SessionUpdate {
