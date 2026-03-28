@@ -47,6 +47,16 @@ test("players can reload after a PvP battle resolves and keep the settled world 
   await expect(playerTwoPage.getByTestId("session-meta")).toContainText(`Room: ${roomId}`);
   await expect(playerOnePage.getByTestId("event-log")).toContainText("连接已恢复", { timeout: 10_000 });
   await expect(playerTwoPage.getByTestId("event-log")).toContainText("连接已恢复", { timeout: 10_000 });
+  await expect(playerOnePage.getByTestId("room-phase")).toHaveText("已结算");
+  await expect(playerTwoPage.getByTestId("room-phase")).toHaveText("已结算");
+  await expect(playerOnePage.getByTestId("battle-settlement-summary")).toContainText("已击败");
+  await expect(playerOnePage.getByTestId("battle-settlement-room-state")).toContainText("房间已回到地图探索阶段");
+  await expect(playerOnePage.getByTestId("battle-settlement-next-action")).toContainText("仍可继续移动");
+  await expect(playerTwoPage.getByTestId("battle-settlement-summary")).toContainText("遭遇战失利");
+  await expect(playerTwoPage.getByTestId("battle-settlement-room-state")).toContainText("对手仍保留在房间地图上");
+  await expect(playerTwoPage.getByTestId("battle-settlement-next-action")).toContainText("已无法继续移动");
+  await expect(playerOnePage.getByTestId("opponent-summary")).toContainText("最近对手");
+  await expect(playerTwoPage.getByTestId("room-result-summary")).toContainText("当前结算已同步回写");
 
   await expect(playerOnePage.getByTestId("battle-empty")).toHaveText(/No active battle/);
   await expect(playerTwoPage.getByTestId("battle-empty")).toHaveText(/No active battle/);

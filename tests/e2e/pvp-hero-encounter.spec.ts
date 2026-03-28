@@ -36,10 +36,11 @@ test("two players can enter a hero-vs-hero battle and resolve it with correct tu
   await expect(playerOnePage.getByTestId("room-phase")).toHaveText("战斗中");
   await expect(playerTwoPage.getByTestId("room-phase")).toHaveText("战斗中");
   await expect(playerOnePage.getByTestId("room-status-detail")).toContainText("英雄遭遇战");
-  await expect(playerOnePage.getByTestId("encounter-source")).toContainText("我方主动接触敌方英雄");
+  await expect(playerOnePage.getByTestId("encounter-source")).toContainText("我方英雄先手接触敌方英雄");
   await expect(playerOnePage.getByTestId("encounter-source")).toHaveAttribute("data-tone", "action");
   await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText("player-1");
   await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText("房间态：战斗中");
+  await expect(playerTwoPage.getByTestId("room-result-summary")).toContainText("多人遭遇战已接管地图行动");
   await expect(playerTwoPage.getByTestId("room-next-action")).toContainText("等待本场对抗结算");
   await expect(playerTwoPage.getByTestId("room-next-action")).toHaveAttribute("data-tone", "action");
   await expect(playerTwoPage.getByTestId("battle-attack")).toBeVisible();
@@ -65,13 +66,18 @@ test("two players can enter a hero-vs-hero battle and resolve it with correct tu
   await expect(playerTwoPage.getByTestId("battle-modal-title")).toHaveText("战斗失败");
   await expect(playerOnePage.getByTestId("battle-settlement")).toContainText("战斗胜利");
   await expect(playerOnePage.getByTestId("battle-settlement-summary")).toContainText("已击败");
+  await expect(playerOnePage.getByTestId("battle-settlement-room-state")).toContainText("房间已回到地图探索阶段");
+  await expect(playerOnePage.getByTestId("battle-settlement-next-action")).toContainText("仍可继续移动");
   await expect(playerOnePage.getByTestId("room-phase")).toHaveText("已结算");
-  await expect(playerOnePage.getByTestId("encounter-source")).toContainText("房间权威状态已回写到地图");
+  await expect(playerOnePage.getByTestId("encounter-source")).toContainText("本场结果已结算并回写到房间地图");
   await expect(playerOnePage.getByTestId("encounter-source")).toHaveAttribute("data-tone", "victory");
+  await expect(playerOnePage.getByTestId("room-result-summary")).toContainText("房间已回到地图探索阶段");
+  await expect(playerOnePage.getByTestId("opponent-summary")).toContainText("最近对手");
   await expect(playerOnePage.getByTestId("room-next-action")).toContainText("仍可继续移动");
   await expect(playerOnePage.getByTestId("room-next-action")).toHaveAttribute("data-tone", "victory");
   await expect(playerTwoPage.getByTestId("room-next-action")).toContainText("移动力已耗尽");
   await expect(playerTwoPage.getByTestId("battle-settlement-aftermath")).toContainText("移动力清零");
+  await expect(playerTwoPage.getByTestId("battle-settlement-room-state")).toContainText("对手仍保留在房间地图上");
   await expect(playerTwoPage.getByTestId("hero-hp")).toHaveText(/HP 15\/30/);
   await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
 
