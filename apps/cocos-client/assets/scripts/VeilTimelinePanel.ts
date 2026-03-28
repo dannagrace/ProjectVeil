@@ -1,5 +1,10 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Sprite, UIOpacity, UITransform } from "cc";
-import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
+import {
+  getPlaceholderSpriteAssets,
+  loadPlaceholderSpriteAssets,
+  releasePlaceholderSpriteAssets,
+  retainPlaceholderSpriteAssets
+} from "./cocos-placeholder-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 
 const { ccclass } = _decorator;
@@ -34,9 +39,11 @@ export class VeilTimelinePanel extends Component {
   private currentState: VeilTimelinePanelState | null = null;
   private requestedIcons = false;
   private readonly entryNodes = new Map<string, { node: Node; label: Label }>();
+  private placeholderAssetsRetained = false;
 
   render(state: VeilTimelinePanelState): void {
     this.currentState = state;
+    this.syncPlaceholderAssets(state.entries.length > 0);
     this.cleanupLegacyNodes();
     this.syncChrome();
     this.syncHeaderIcon();
@@ -53,6 +60,13 @@ export class VeilTimelinePanel extends Component {
 
     label.string = lines.join("\n");
     this.renderEntries(state.entries.slice(0, 3));
+  }
+
+  onDestroy(): void {
+    if (this.placeholderAssetsRetained) {
+      releasePlaceholderSpriteAssets("timeline");
+      this.placeholderAssetsRetained = false;
+    }
   }
 
   private ensureLabel(): Label {
@@ -123,9 +137,9 @@ export class VeilTimelinePanel extends Component {
     const frame = getPlaceholderSpriteAssets()?.icons.timeline ?? null;
     if (!frame) {
       iconNode.active = false;
-      if (!this.requestedIcons) {
+      if (!this.requestedIcons && this.placeholderAssetsRetained) {
         this.requestedIcons = true;
-        void loadPlaceholderSpriteAssets().then(() => {
+        void loadPlaceholderSpriteAssets("timeline").then(() => {
           this.requestedIcons = false;
           if (this.currentState) {
             this.render(this.currentState);
@@ -139,6 +153,31 @@ export class VeilTimelinePanel extends Component {
     this.headerIconSprite.spriteFrame = frame;
     this.headerIconOpacity.opacity = 255;
 
+  }
+
+  private retainPlaceholderAssets(): void {
+    if (this.placeholderAssetsRetained) {
+      return;
+    }
+
+    this.placeholderAssetsRetained = true;
+    void retainPlaceholderSpriteAssets("timeline").catch(() => {
+      this.placeholderAssetsRetained = false;
+    });
+  }
+
+  private syncPlaceholderAssets(enabled: boolean): void {
+    if (enabled) {
+      this.retainPlaceholderAssets();
+      return;
+    }
+
+    if (!this.placeholderAssetsRetained) {
+      return;
+    }
+
+    releasePlaceholderSpriteAssets("timeline");
+    this.placeholderAssetsRetained = false;
   }
 
   private syncWatermark(show: boolean): void {

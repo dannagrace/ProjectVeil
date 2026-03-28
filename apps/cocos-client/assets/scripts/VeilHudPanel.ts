@@ -11,7 +11,12 @@ import type { BattleSkillId, HeroState } from "../../../../packages/shared/src/m
 import { getDefaultBattleSkillCatalog } from "../../../../packages/shared/src/world-config.ts";
 import type { SessionUpdate } from "./VeilCocosSession.ts";
 import type { CocosPlayerAccountProfile } from "./cocos-lobby.ts";
-import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
+import {
+  getPlaceholderSpriteAssets,
+  loadPlaceholderSpriteAssets,
+  releasePlaceholderSpriteAssets,
+  retainPlaceholderSpriteAssets
+} from "./cocos-placeholder-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildHeroEquipmentActionRows } from "./cocos-hero-equipment.ts";
 import { summarizeLatestBattleReplay } from "./cocos-battle-report.ts";
@@ -165,6 +170,7 @@ export interface VeilHudRenderState {
   moveInFlight: boolean;
   predictionStatus: string;
   inputDebug: string;
+  runtimeHealth: string;
   levelUpNotice: {
     title: string;
     detail: string;
@@ -214,6 +220,7 @@ export class VeilHudPanel extends Component {
   private onUnequipItem: ((slot: EquipmentType) => void) | undefined;
   private onEndDay: (() => void) | undefined;
   private onReturnLobby: (() => void) | undefined;
+  private placeholderAssetsRetained = false;
 
   configure(options: VeilHudPanelOptions): void {
     this.onNewRun = options.onNewRun;
@@ -223,8 +230,16 @@ export class VeilHudPanel extends Component {
     this.onUnequipItem = options.onUnequipItem;
     this.onEndDay = options.onEndDay;
     this.onReturnLobby = options.onReturnLobby;
+    this.retainPlaceholderAssets();
     this.ensureActionButtons();
     this.syncActionButtons();
+  }
+
+  onDestroy(): void {
+    if (this.placeholderAssetsRetained) {
+      releasePlaceholderSpriteAssets("hud");
+      this.placeholderAssetsRetained = false;
+    }
   }
 
   render(state: VeilHudRenderState): void {
@@ -373,6 +388,7 @@ export class VeilHudPanel extends Component {
       [
         statusTitle,
         statusDetail,
+        state.runtimeHealth,
         formatAchievementSummary(state.account),
         formatRecentEventLog(state.account),
         latestBattleReport.title,
@@ -384,7 +400,7 @@ export class VeilHudPanel extends Component {
       cardWidth,
       leftX,
       4,
-      126
+      144
     );
 
     if (resources) {
@@ -1103,7 +1119,7 @@ export class VeilHudPanel extends Component {
       iconNode.active = false;
       if (!this.requestedIcons) {
         this.requestedIcons = true;
-        void loadPlaceholderSpriteAssets().then(() => {
+        void loadPlaceholderSpriteAssets("hud").then(() => {
           this.requestedIcons = false;
           if (this.currentState) {
             this.render(this.currentState);
@@ -1131,6 +1147,17 @@ export class VeilHudPanel extends Component {
     watermarkNode.active = true;
     watermarkSprite.spriteFrame = frame;
     watermarkOpacity.opacity = 10;
+  }
+
+  private retainPlaceholderAssets(): void {
+    if (this.placeholderAssetsRetained) {
+      return;
+    }
+
+    this.placeholderAssetsRetained = true;
+    void retainPlaceholderSpriteAssets("hud").catch(() => {
+      this.placeholderAssetsRetained = false;
+    });
   }
 
   private cleanupLegacyNodes(): void {

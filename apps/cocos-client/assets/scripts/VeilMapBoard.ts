@@ -7,7 +7,12 @@ import { VeilTilemapRenderer } from "./VeilTilemapRenderer.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import type { UnitAnimationState } from "./unit-animation-config.ts";
 import { VeilUnitAnimator } from "./VeilUnitAnimator.ts";
-import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
+import {
+  getPlaceholderSpriteAssets,
+  loadPlaceholderSpriteAssets,
+  releasePlaceholderSpriteAssets,
+  retainPlaceholderSpriteAssets
+} from "./cocos-placeholder-sprites.ts";
 
 const { ccclass, property } = _decorator;
 
@@ -75,6 +80,7 @@ export class VeilMapBoard extends Component {
   private onInputDebug: ((message: string) => void) | undefined;
   private lastSelectedKey = "";
   private lastSelectedAt = 0;
+  private placeholderAssetsRetained = false;
 
   configure(options: VeilMapBoardOptions): void {
     assignUiLayer(this.node);
@@ -85,16 +91,12 @@ export class VeilMapBoard extends Component {
     this.ensureGlobalPointerBinding();
     this.ensureHeroNode();
     this.tilemapRenderer = this.node.getComponent(VeilTilemapRenderer) ?? this.node.addComponent(VeilTilemapRenderer);
-    void loadPlaceholderSpriteAssets().then(() => {
-      if (this.currentUpdate) {
-        this.render(this.currentUpdate);
-      }
-    });
   }
 
   render(update: SessionUpdate | null): void {
     this.currentUpdate = update;
     if (!update?.world) {
+      this.releasePlaceholderAssets();
       this.node.active = true;
       this.ensureHeroNode();
       this.tilemapRenderer = this.node.getComponent(VeilTilemapRenderer) ?? this.node.addComponent(VeilTilemapRenderer);
@@ -110,6 +112,7 @@ export class VeilMapBoard extends Component {
     }
 
     this.node.active = true;
+    this.retainPlaceholderAssets();
     this.ensureHeroNode();
     this.tilemapRenderer = this.node.getComponent(VeilTilemapRenderer) ?? this.node.addComponent(VeilTilemapRenderer);
 
@@ -564,6 +567,34 @@ export class VeilMapBoard extends Component {
       input.off(Input.EventType.MOUSE_UP, this.handleGlobalPointerEvent, this);
       this.globalPointerBound = false;
     }
+
+    if (this.placeholderAssetsRetained) {
+      this.releasePlaceholderAssets();
+    }
+  }
+
+  private retainPlaceholderAssets(): void {
+    if (this.placeholderAssetsRetained) {
+      return;
+    }
+
+    this.placeholderAssetsRetained = true;
+    void retainPlaceholderSpriteAssets("map").then(() => {
+      if (this.currentUpdate) {
+        this.render(this.currentUpdate);
+      }
+    }).catch(() => {
+      this.placeholderAssetsRetained = false;
+    });
+  }
+
+  private releasePlaceholderAssets(): void {
+    if (!this.placeholderAssetsRetained) {
+      return;
+    }
+
+    releasePlaceholderSpriteAssets("map");
+    this.placeholderAssetsRetained = false;
   }
 
   private handleBoardTouch(event: EventTouch | EventMouse | undefined): void {

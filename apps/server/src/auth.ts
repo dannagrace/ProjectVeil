@@ -25,17 +25,40 @@ interface GuestAuthTokenPayload {
   issuedAt: string;
 }
 
+interface WechatMiniGameLoginConfig {
+  mode: "disabled" | "mock" | "production";
+  mockCode: string;
+  code2SessionUrl: string;
+  appId?: string;
+  appSecret?: string;
+}
+
+interface WechatMiniGameCode2SessionPayload {
+  openid?: string;
+  session_key?: string;
+  unionid?: string;
+  errcode?: number;
+  errmsg?: string;
+}
+
+interface WechatMiniGameIdentity {
+  openId: string;
+  unionId?: string;
+}
+
 const AUTH_SECRET = process.env.VEIL_AUTH_SECRET?.trim() || "project-veil-dev-secret";
 const MIN_ACCOUNT_PASSWORD_LENGTH = 6;
 
-function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): {
-  mode: "disabled" | "mock";
-  mockCode: string;
-} {
-  const mode = env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase() === "mock" ? "mock" : "disabled";
+function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): WechatMiniGameLoginConfig {
+  const normalizedMode = env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
+  const mode =
+    normalizedMode === "mock" ? "mock" : normalizedMode === "production" || normalizedMode === "code2session" ? "production" : "disabled";
   return {
     mode,
-    mockCode: env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE?.trim() || "wechat-dev-code"
+    mockCode: env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE?.trim() || "wechat-dev-code",
+    code2SessionUrl: env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL?.trim() || "https://api.weixin.qq.com/sns/jscode2session",
+    ...(env.VEIL_WECHAT_MINIGAME_APP_ID?.trim() ? { appId: env.VEIL_WECHAT_MINIGAME_APP_ID.trim() } : {}),
+    ...(env.VEIL_WECHAT_MINIGAME_APP_SECRET?.trim() ? { appSecret: env.VEIL_WECHAT_MINIGAME_APP_SECRET.trim() } : {})
   };
 }
 
@@ -136,6 +159,74 @@ function normalizeWechatMiniGameCode(code?: string | null): string {
   return normalized;
 }
 
+function normalizeAvatarUrl(avatarUrl?: string | null): string | undefined {
+  const normalized = avatarUrl?.trim();
+  return normalized ? normalized : undefined;
+}
+
+export function createWechatMiniGamePlayerId(openId: string): string {
+  const normalizedOpenId = openId.trim();
+  if (!normalizedOpenId) {
+    throw new Error("wechat_openid_required");
+  }
+
+  return `wechat-${createHmac("sha256", AUTH_SECRET).update(`wechat:${normalizedOpenId}`).digest("hex").slice(0, 16)}`;
+}
+
+async function exchangeWechatMiniGameCode(
+  code: string,
+  config: WechatMiniGameLoginConfig,
+  fetchImpl: typeof fetch = fetch
+): Promise<WechatMiniGameIdentity> {
+  if (config.mode === "mock") {
+    if (code !== config.mockCode) {
+      throw new Error("invalid_wechat_code");
+    }
+
+    return {
+      openId: `mock-openid:${code}`
+    };
+  }
+
+  if (config.mode !== "production" || !config.appId || !config.appSecret) {
+    throw new Error("wechat_login_not_enabled");
+  }
+
+  const requestUrl = new URL(config.code2SessionUrl);
+  requestUrl.searchParams.set("appid", config.appId);
+  requestUrl.searchParams.set("secret", config.appSecret);
+  requestUrl.searchParams.set("js_code", code);
+  requestUrl.searchParams.set("grant_type", "authorization_code");
+
+  const response = await fetchImpl(requestUrl, {
+    method: "GET",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+  if (!response.ok) {
+    throw new Error("wechat_code2session_failed");
+  }
+
+  const payload = (await response.json()) as WechatMiniGameCode2SessionPayload;
+  if (payload.errcode) {
+    if (payload.errcode === 40029) {
+      throw new Error("invalid_wechat_code");
+    }
+    throw new Error(`wechat_code2session_failed:${payload.errcode}`);
+  }
+
+  const openId = payload.openid?.trim();
+  if (!openId) {
+    throw new Error("wechat_code2session_failed");
+  }
+
+  return {
+    openId,
+    ...(payload.unionid?.trim() ? { unionId: payload.unionid.trim() } : {})
+  };
+}
+
 export function issueAuthSession(input: {
   playerId: string;
   displayName: string;
@@ -197,10 +288,10 @@ export function issueAccountAuthSession(input: {
 export function issueWechatMiniGameAuthSession(input: {
   playerId: string;
   displayName: string;
+  loginId?: string | null;
 }): GuestAuthSession {
   return issueAuthSession({
     ...input,
-    authMode: "guest",
     provider: "wechat-mini-game"
   });
 }
@@ -443,10 +534,12 @@ export function registerAuthRoutes(
 
   app.post("/api/auth/wechat-mini-game-login", async (request, response) => {
     try {
+      const authSession = resolveAuthSessionFromRequest(request);
       const body = (await readJsonBody(request)) as {
         code?: string | null;
         playerId?: string | null;
         displayName?: string | null;
+        avatarUrl?: string | null;
       };
 
       if (body.code !== undefined && body.code !== null && typeof body.code !== "string") {
@@ -479,43 +572,113 @@ export function registerAuthRoutes(
         return;
       }
 
-      const wechatConfig = readWechatMiniGameLoginConfig();
-      if (wechatConfig.mode !== "mock") {
-        sendJson(response, 501, {
+      if (body.avatarUrl !== undefined && body.avatarUrl !== null && typeof body.avatarUrl !== "string") {
+        sendJson(response, 400, {
           error: {
-            code: "wechat_login_not_enabled",
-            message: "WeChat mini game login exchange scaffold exists, but production exchange is not configured"
+            code: "invalid_payload",
+            message: "Expected optional string field: avatarUrl"
           }
         });
         return;
       }
 
       const code = normalizeWechatMiniGameCode(body.code);
-      if (code !== wechatConfig.mockCode) {
-        sendJson(response, 401, {
+      const avatarUrl = normalizeAvatarUrl(body.avatarUrl);
+      const wechatConfig = readWechatMiniGameLoginConfig();
+
+      let identity: WechatMiniGameIdentity;
+      try {
+        identity = await exchangeWechatMiniGameCode(code, wechatConfig);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "wechat_login_not_enabled";
+        if (message === "wechat_login_not_enabled") {
+          sendJson(response, 501, {
+            error: {
+              code: "wechat_login_not_enabled",
+              message: "WeChat mini game login exchange exists, but code2Session is not configured"
+            }
+          });
+          return;
+        }
+
+        if (message === "invalid_wechat_code") {
+          sendJson(response, 401, {
+            error: {
+              code: "invalid_wechat_code",
+              message:
+                wechatConfig.mode === "mock"
+                  ? "WeChat mini game mock code is incorrect"
+                  : "WeChat mini game code is invalid or expired"
+            }
+          });
+          return;
+        }
+
+        sendJson(response, 502, {
           error: {
-            code: "invalid_wechat_code",
-            message: "WeChat mini game mock code is incorrect"
+            code: "wechat_code2session_failed",
+            message
           }
         });
         return;
       }
 
-      let playerId = normalizePlayerId(body.playerId);
-      let displayName = normalizeDisplayName(playerId, body.displayName);
+      let playerId = authSession?.playerId ?? normalizePlayerId(body.playerId || createWechatMiniGamePlayerId(identity.openId));
+      let displayName = normalizeDisplayName(playerId, body.displayName ?? authSession?.displayName);
+      let loginId = authSession?.loginId;
+
       if (store) {
-        const account = await store.ensurePlayerAccount({
-          playerId,
-          displayName
-        });
-        playerId = account.playerId;
-        displayName = account.displayName;
+        const boundAccount = await store.loadPlayerAccountByWechatMiniGameOpenId(identity.openId);
+        if (boundAccount && authSession && boundAccount.playerId !== authSession.playerId) {
+          sendJson(response, 409, {
+            error: {
+              code: "wechat_identity_already_bound",
+              message: "This WeChat mini game identity is already bound to another account"
+            }
+          });
+          return;
+        }
+
+        const requestedPlayerId = body.playerId?.trim();
+        if (!authSession && requestedPlayerId) {
+          const existingRequestedAccount = await store.loadPlayerAccount(requestedPlayerId);
+          if (!existingRequestedAccount) {
+            playerId = normalizePlayerId(requestedPlayerId);
+          }
+        }
+
+        if (boundAccount) {
+          const syncedAccount = await store.bindPlayerAccountWechatMiniGameIdentity(boundAccount.playerId, {
+            openId: identity.openId,
+            ...(identity.unionId ? { unionId: identity.unionId } : {}),
+            ...(body.displayName?.trim() ? { displayName: body.displayName } : {}),
+            ...(avatarUrl ? { avatarUrl } : {})
+          });
+          playerId = syncedAccount.playerId;
+          displayName = syncedAccount.displayName;
+          loginId = syncedAccount.loginId;
+        } else {
+          const targetPlayerId = authSession?.playerId ?? playerId;
+          const boundAccountResult = await store.bindPlayerAccountWechatMiniGameIdentity(targetPlayerId, {
+            openId: identity.openId,
+            ...(identity.unionId ? { unionId: identity.unionId } : {}),
+            ...(body.displayName?.trim() ? { displayName: body.displayName } : {}),
+            ...(avatarUrl ? { avatarUrl } : {})
+          });
+          playerId = boundAccountResult.playerId;
+          displayName = boundAccountResult.displayName;
+          loginId = boundAccountResult.loginId;
+        }
+      } else if (!authSession && body.playerId?.trim()) {
+        playerId = normalizePlayerId(body.playerId);
+        displayName = normalizeDisplayName(playerId, body.displayName);
       }
 
       sendJson(response, 200, {
         session: issueWechatMiniGameAuthSession({
           playerId,
-          displayName
+          displayName,
+          ...(loginId ? { loginId } : {})
         })
       });
     } catch (error) {

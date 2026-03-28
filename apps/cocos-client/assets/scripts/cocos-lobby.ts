@@ -60,6 +60,7 @@ interface PlayerAccountApiPayload extends AuthSessionApiPayload {
   account?: {
     playerId?: string;
     displayName?: string;
+    avatarUrl?: string;
     globalResources?: {
       gold?: number;
       wood?: number;
@@ -96,6 +97,12 @@ type FetchLike = typeof fetch;
 type WechatMiniGameLoginLike = (options: {
   timeout?: number;
   success?: (result: { code?: string }) => void;
+  fail?: (error: { errMsg?: string }) => void;
+}) => void;
+type WechatMiniGameUserProfileLike = (options: {
+  desc: string;
+  lang?: string;
+  success?: (result: { userInfo?: { nickName?: string; avatarUrl?: string } }) => void;
   fail?: (error: { errMsg?: string }) => void;
 }) => void;
 
@@ -359,6 +366,39 @@ async function requestWechatMiniGameCode(input: {
   }
 
   throw new Error("wechat_login_unavailable");
+}
+
+async function requestWechatMiniGameUserProfile(input: {
+  wx?: { getUserProfile?: WechatMiniGameUserProfileLike | undefined } | null;
+  fallbackDisplayName: string;
+}): Promise<{ displayName: string; avatarUrl?: string }> {
+  if (typeof input.wx?.getUserProfile !== "function") {
+    return {
+      displayName: input.fallbackDisplayName
+    };
+  }
+
+  try {
+    return await new Promise((resolve, reject) => {
+      input.wx?.getUserProfile?.({
+        desc: "用于同步 Project Veil 小游戏头像与昵称",
+        lang: "zh_CN",
+        success: (result) => {
+          resolve({
+            displayName: result.userInfo?.nickName?.trim() || input.fallbackDisplayName,
+            ...(result.userInfo?.avatarUrl?.trim() ? { avatarUrl: result.userInfo.avatarUrl.trim() } : {})
+          });
+        },
+        fail: (error) => {
+          reject(new Error(error.errMsg?.trim() || "wechat_profile_failed"));
+        }
+      });
+    });
+  } catch {
+    return {
+      displayName: input.fallbackDisplayName
+    };
+  }
 }
 
 export function getCocosLobbyPreferencesStorageKey(): string {
@@ -627,17 +667,30 @@ export async function loginCocosWechatAuthSession(
   options?: {
     fetchImpl?: FetchLike;
     storage?: Pick<Storage, "setItem"> | null;
-    wx?: { login?: WechatMiniGameLoginLike | undefined } | null;
+    wx?: {
+      login?: WechatMiniGameLoginLike | undefined;
+      getUserProfile?: WechatMiniGameUserProfileLike | undefined;
+    } | null;
     timeoutMs?: number;
     exchangePath?: string;
     mockCode?: string;
+    authToken?: string | null;
   }
 ): Promise<CocosStoredAuthSession> {
   const normalizedPlayerId = normalizePlayerId(playerId) || createCocosGuestPlayerId();
   const normalizedDisplayName = normalizeDisplayName(normalizedPlayerId, displayName);
   const storage = options?.storage ?? getCocosStorage();
+  const wxEnvironment =
+    options?.wx ??
+    ((globalThis as {
+      wx?: { login?: WechatMiniGameLoginLike | undefined; getUserProfile?: WechatMiniGameUserProfileLike | undefined };
+    }).wx ?? null);
+  const profile = await requestWechatMiniGameUserProfile({
+    wx: wxEnvironment,
+    fallbackDisplayName: normalizedDisplayName
+  });
   const { code } = await requestWechatMiniGameCode({
-    wx: options?.wx ?? ((globalThis as { wx?: { login?: WechatMiniGameLoginLike | undefined } }).wx ?? null),
+    wx: wxEnvironment,
     ...(options?.timeoutMs != null ? { timeoutMs: options.timeoutMs } : {}),
     ...(options?.mockCode ? { mockCode: options.mockCode } : {})
   });
@@ -648,12 +701,14 @@ export async function loginCocosWechatAuthSession(
     {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...buildCocosAuthHeaders(options?.authToken)
       },
       body: JSON.stringify({
         code,
         playerId: normalizedPlayerId,
-        displayName: normalizedDisplayName
+        displayName: profile.displayName,
+        ...(profile.avatarUrl ? { avatarUrl: profile.avatarUrl } : {})
       })
     },
     options?.fetchImpl
@@ -661,7 +716,7 @@ export async function loginCocosWechatAuthSession(
 
   const session = asStoredAuthSession(payload.session, {
     playerId: normalizedPlayerId,
-    displayName: normalizedDisplayName,
+    displayName: profile.displayName,
     authMode: "guest",
     provider: "wechat-mini-game"
   });
