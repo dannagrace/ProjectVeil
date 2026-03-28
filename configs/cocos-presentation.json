@@ -148,6 +148,38 @@
           { "frequency": 170, "durationMs": 120 }
         ]
       },
+      "victory": {
+        "waveform": "triangle",
+        "gain": 0.05,
+        "assetPath": "audio/level-up",
+        "assetStage": "placeholder",
+        "assetVolume": 0.78,
+        "attackMs": 14,
+        "releaseMs": 120,
+        "gapMs": 10,
+        "loopGapMs": 0,
+        "notes": [
+          { "frequency": 523.25, "durationMs": 80 },
+          { "frequency": 659.25, "durationMs": 100 },
+          { "frequency": 783.99, "durationMs": 140 }
+        ]
+      },
+      "defeat": {
+        "waveform": "sawtooth",
+        "gain": 0.04,
+        "assetPath": "audio/hit",
+        "assetStage": "placeholder",
+        "assetVolume": 0.72,
+        "attackMs": 8,
+        "releaseMs": 150,
+        "gapMs": 20,
+        "loopGapMs": 0,
+        "notes": [
+          { "frequency": 220, "durationMs": 90 },
+          { "frequency": 174.61, "durationMs": 110 },
+          { "frequency": 146.83, "durationMs": 180 }
+        ]
+      },
       "level_up": {
         "waveform": "triangle",
         "gain": 0.05,

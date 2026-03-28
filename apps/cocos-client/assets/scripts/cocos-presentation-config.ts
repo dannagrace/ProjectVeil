@@ -7,7 +7,7 @@ import {
 
 export type CocosPresentationWaveform = "sine" | "square" | "sawtooth" | "triangle";
 export type CocosMusicScene = "explore" | "battle";
-export type CocosAudioCue = "attack" | "skill" | "hit" | "level_up";
+export type CocosAudioCue = "attack" | "skill" | "hit" | "victory" | "defeat" | "level_up";
 export type CocosPresentationAssetStage = "placeholder" | "production";
 export type CocosAnimationDeliveryMode = "fallback" | "clip" | "spine";
 
@@ -191,6 +191,20 @@ function normalizeConfig(value: unknown): CocosPresentationConfig {
           assetStage: "placeholder",
           assetVolume: 0.66,
           notes: [{ frequency: 180, durationMs: 120 }]
+        }),
+        victory: normalizeSequence(cues.victory, {
+          waveform: "triangle",
+          assetPath: "audio/level-up",
+          assetStage: "placeholder",
+          assetVolume: 0.78,
+          notes: [{ frequency: 587.33, durationMs: 120 }]
+        }),
+        defeat: normalizeSequence(cues.defeat, {
+          waveform: "sawtooth",
+          assetPath: "audio/hit",
+          assetStage: "placeholder",
+          assetVolume: 0.72,
+          notes: [{ frequency: 146.83, durationMs: 140 }]
         }),
         level_up: normalizeSequence(cues.level_up, {
           waveform: "triangle",

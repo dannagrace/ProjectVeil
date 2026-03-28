@@ -1,0 +1,192 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  buildBattleActionFeedback,
+  buildBattleProgressFeedback,
+  buildBattleTransitionFeedback
+} from "../assets/scripts/cocos-battle-feedback";
+import type { BattleState, SessionUpdate } from "../assets/scripts/VeilCocosSession";
+
+function createBattleState(): BattleState {
+  return {
+    id: "battle-1",
+    round: 1,
+    lanes: 1,
+    activeUnitId: "hero-1-stack",
+    turnOrder: ["hero-1-stack", "neutral-1-stack"],
+    units: {
+      "hero-1-stack": {
+        id: "hero-1-stack",
+        templateId: "hero_guard_basic",
+        camp: "attacker",
+        lane: 0,
+        stackName: "Guard",
+        initiative: 7,
+        attack: 4,
+        defense: 4,
+        minDamage: 1,
+        maxDamage: 2,
+        count: 12,
+        currentHp: 10,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false,
+        skills: [
+          {
+            id: "power_shot",
+            name: "投矛射击",
+            description: "远程压制",
+            kind: "active",
+            target: "enemy",
+            delivery: "ranged",
+            cooldown: 2,
+            remainingCooldown: 0
+          }
+        ],
+        statusEffects: []
+      },
+      "neutral-1-stack": {
+        id: "neutral-1-stack",
+        templateId: "orc_warrior",
+        camp: "defender",
+        lane: 0,
+        stackName: "Orc",
+        initiative: 5,
+        attack: 3,
+        defense: 3,
+        minDamage: 1,
+        maxDamage: 3,
+        count: 8,
+        currentHp: 9,
+        maxHp: 9,
+        hasRetaliated: false,
+        defending: false,
+        skills: [],
+        statusEffects: []
+      }
+    },
+    environment: [],
+    log: ["战斗开始"],
+    rng: {
+      seed: 1,
+      cursor: 0
+    },
+    worldHeroId: "hero-1",
+    neutralArmyId: "neutral-1"
+  };
+}
+
+function createResolvedUpdate(result: "attacker_victory" | "defender_victory"): SessionUpdate {
+  return {
+    world: {
+      meta: {
+        roomId: "room-alpha",
+        seed: 1001,
+        day: 1
+      },
+      map: {
+        width: 1,
+        height: 1,
+        tiles: []
+      },
+      ownHeroes: [
+        {
+          id: "hero-1",
+          playerId: "player-1",
+          name: "Katherine",
+          position: { x: 0, y: 0 },
+          vision: 4,
+          move: {
+            total: 6,
+            remaining: 6
+          },
+          stats: {
+            attack: 2,
+            defense: 2,
+            power: 1,
+            knowledge: 1,
+            hp: 30,
+            maxHp: 30
+          },
+          progression: {
+            level: 1,
+            experience: 0,
+            skillPoints: 0,
+            battlesWon: 0,
+            neutralBattlesWon: 0,
+            pvpBattlesWon: 0
+          },
+          armyCount: 12,
+          armyTemplateId: "hero_guard_basic",
+          learnedSkills: []
+        }
+      ],
+      visibleHeroes: [],
+      resources: {
+        gold: 0,
+        wood: 0,
+        ore: 0
+      },
+      playerId: "player-1"
+    },
+    battle: null,
+    events: [
+      {
+        type: "battle.resolved",
+        battleId: "battle-1",
+        battleKind: "neutral",
+        heroId: "hero-1",
+        result,
+        resourcesGained: {
+          gold: 0,
+          wood: 0,
+          ore: 0
+        },
+        experienceGained: 0,
+        skillPointsAwarded: 0
+      }
+    ],
+    movementPlan: null,
+    reachableTiles: []
+  };
+}
+
+test("battle feedback summarizes action, progress, and outcome", () => {
+  const battle = createBattleState();
+
+  const actionFeedback = buildBattleActionFeedback(
+    {
+      type: "battle.skill",
+      unitId: "hero-1-stack",
+      skillId: "power_shot",
+      targetId: "neutral-1-stack"
+    },
+    battle
+  );
+  assert.equal(actionFeedback?.badge, "SKILL");
+  assert.match(actionFeedback?.title ?? "", /Guard 施放 投矛射击/);
+
+  const nextBattle: BattleState = {
+    ...battle,
+    units: {
+      ...battle.units,
+      "neutral-1-stack": {
+        ...battle.units["neutral-1-stack"]!,
+        count: 0,
+        currentHp: 0
+      }
+    },
+    log: battle.log.concat("投矛射击 造成 12 伤害")
+  };
+  const progressFeedback = buildBattleProgressFeedback(battle, nextBattle);
+  assert.equal(progressFeedback?.badge, "K.O.");
+  assert.equal(progressFeedback?.tone, "hit");
+
+  const victoryFeedback = buildBattleTransitionFeedback(createResolvedUpdate("attacker_victory"), "hero-1");
+  assert.equal(victoryFeedback?.tone, "victory");
+  assert.equal(victoryFeedback?.badge, "WIN");
+
+  const defeatFeedback = buildBattleTransitionFeedback(createResolvedUpdate("defender_victory"), "hero-1");
+  assert.equal(defeatFeedback?.tone, "defeat");
+  assert.equal(defeatFeedback?.badge, "LOSE");
+});

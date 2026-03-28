@@ -75,6 +75,12 @@ import { readStoredCocosAuthSession, resolveCocosLaunchIdentity, type CocosAuthP
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
 import { buildBattleEnterCopy, buildBattleExitCopy } from "./cocos-battle-transition-copy.ts";
+import {
+  buildBattleActionFeedback,
+  buildBattleProgressFeedback,
+  buildBattleTransitionFeedback,
+  type CocosBattleFeedbackView
+} from "./cocos-battle-feedback.ts";
 import { createCocosAudioRuntime } from "./cocos-audio-runtime.ts";
 import { createCocosAudioAssetBridge } from "./cocos-audio-resources.ts";
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
@@ -90,6 +96,7 @@ const TIMELINE_NODE_NAME = "ProjectVeilTimelinePanel";
 const LOBBY_NODE_NAME = "ProjectVeilLobbyPanel";
 const DEFAULT_MAP_WIDTH_TILES = 8;
 const DEFAULT_MAP_HEIGHT_TILES = 8;
+const BATTLE_FEEDBACK_DURATION_MS = 2600;
 
 interface BattleResolvedEventLike {
   type: "battle.resolved";
@@ -160,6 +167,7 @@ export class VeilRoot extends Component {
   private inputDebug = "input waiting";
   private pendingPrediction: SessionUpdate | null = null;
   private selectedBattleTargetId: string | null = null;
+  private battleFeedback: (CocosBattleFeedbackView & { expiresAt: number }) | null = null;
   private fogPulsePhase = 0;
   private hudActionBinding = false;
   private sessionEpoch = 0;
@@ -687,6 +695,9 @@ export class VeilRoot extends Component {
     if (this.achievementNotice && this.achievementNotice.expiresAt <= Date.now()) {
       this.achievementNotice = null;
     }
+    if (this.battleFeedback && this.battleFeedback.expiresAt <= Date.now()) {
+      this.battleFeedback = null;
+    }
 
     this.ensurePixelSpriteGroup("boot");
     if (this.lastUpdate?.battle) {
@@ -767,7 +778,8 @@ export class VeilRoot extends Component {
       timelineEntries: this.timelineEntries,
       controlledCamp: this.controlledBattleCamp(),
       selectedTargetId: this.selectedBattleTargetId,
-      actionPending: this.battleActionInFlight
+      actionPending: this.battleActionInFlight,
+      feedback: this.battleFeedback
     });
     this.timelinePanel?.render({
       entries: this.timelineEntries
@@ -1108,6 +1120,17 @@ export class VeilRoot extends Component {
   private pushLog(line: string): void {
     this.logLines.unshift(line);
     this.logLines = this.logLines.slice(0, 8);
+  }
+
+  private setBattleFeedback(feedback: CocosBattleFeedbackView | null, durationMs = BATTLE_FEEDBACK_DURATION_MS): void {
+    if (!feedback) {
+      return;
+    }
+
+    this.battleFeedback = {
+      ...feedback,
+      expiresAt: Date.now() + durationMs
+    };
   }
 
   private activeHero(): HeroView | null {
@@ -2340,6 +2363,7 @@ export class VeilRoot extends Component {
             ? "防御"
             : skillName ?? "技能";
     this.pushLog(`战斗指令：${actionLabel}`);
+    this.setBattleFeedback(buildBattleActionFeedback(action, this.lastUpdate?.battle ?? null));
     if (action.type === "battle.attack") {
       this.audioRuntime.playCue("attack");
     } else if (action.type === "battle.skill") {
@@ -2366,6 +2390,7 @@ export class VeilRoot extends Component {
     const previousBattle = this.lastUpdate?.battle ?? null;
     const previousBattleId = previousBattle?.id ?? null;
     const nextBattleId = update.battle?.id ?? null;
+    const heroId = this.activeHero()?.id ?? null;
 
     this.pendingPrediction = null;
     this.predictionStatus = "";
@@ -2383,16 +2408,20 @@ export class VeilRoot extends Component {
     this.maybeShowHeroProgressNotice(update);
 
     if (!previousBattleId && nextBattleId) {
+      this.setBattleFeedback(buildBattleTransitionFeedback(update, heroId));
       this.mapBoard?.playHeroAnimation("attack");
       await this.battleTransition?.playEnter(buildBattleEnterCopy(update));
     } else if (previousBattleId && !nextBattleId) {
       const resolvedEvent = update.events.find((event) => this.isBattleResolvedEvent(event));
       const didWin = resolvedEvent ? this.didCurrentPlayerWinBattle(resolvedEvent) : false;
+      this.setBattleFeedback(buildBattleTransitionFeedback(update, heroId), 4200);
+      this.audioRuntime.playCue(didWin ? "victory" : "defeat");
       this.mapBoard?.playHeroAnimation(
         resolvedEvent ? (didWin ? "victory" : "defeat") : "idle"
       );
       await this.battleTransition?.playExit(buildBattleExitCopy(previousBattle, update, didWin));
     } else {
+      this.setBattleFeedback(buildBattleProgressFeedback(previousBattle, update.battle ?? null));
       this.mapBoard?.playHeroAnimation("idle");
     }
 

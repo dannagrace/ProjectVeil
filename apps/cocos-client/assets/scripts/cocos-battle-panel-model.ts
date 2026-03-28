@@ -1,4 +1,5 @@
 import type { BattleAction, BattleState, SessionUpdate, TerrainType, Vec2 } from "./VeilCocosSession.ts";
+import type { CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
 
 export type BattleCamp = "attacker" | "defender";
 
@@ -8,6 +9,7 @@ export interface BattlePanelInput {
   controlledCamp: BattleCamp | null;
   selectedTargetId: string | null;
   actionPending: boolean;
+  feedback: CocosBattleFeedbackView | null;
 }
 
 export interface BattlePanelUnitView {
@@ -53,6 +55,7 @@ export interface BattlePanelStageView {
 export interface BattlePanelViewModel {
   title: string;
   stage: BattlePanelStageView | null;
+  feedback: CocosBattleFeedbackView | null;
   summaryLines: string[];
   orderLines: string[];
   friendlyLines: string[];
@@ -69,6 +72,7 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     return {
       title: "战斗面板",
       stage: null,
+      feedback: state.feedback,
       summaryLines: ["当前没有战斗。"],
       orderLines: [],
       friendlyLines: [],
@@ -152,6 +156,7 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
   return {
     title: "战斗面板",
     stage: buildBattleStageView(state.update, battle),
+    feedback: state.feedback,
     summaryLines: [
       `${battle.id} · 第 ${battle.round} 回合`,
       `阵营：${controlLabel}`,

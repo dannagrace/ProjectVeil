@@ -7,6 +7,7 @@ import {
   type BattleCamp,
   type BattlePanelStageView
 } from "./cocos-battle-panel-model.ts";
+import type { CocosBattleFeedbackTone } from "./cocos-battle-feedback.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import type { BattleAction } from "./VeilCocosSession.ts";
 import { getPixelSpriteAssets, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
@@ -39,6 +40,7 @@ const ACTION_NODE_PREFIX = "BattleAction";
 const ORDER_ITEM_PREFIX = "BattleOrderItem";
 const FRIENDLY_ITEM_PREFIX = "BattleFriendlyItem";
 const TITLE_NODE_NAME = "BattleTitle";
+const FEEDBACK_NODE_NAME = "BattleFeedback";
 const SUMMARY_NODE_NAME = "BattleSummary";
 const ORDER_NODE_NAME = "BattleOrder";
 const FRIENDLY_NODE_NAME = "BattleFriendly";
@@ -95,6 +97,7 @@ export interface VeilBattlePanelOptions {
 @ccclass("ProjectVeilBattlePanel")
 export class VeilBattlePanel extends Component {
   private titleLabel: Label | null = null;
+  private feedbackLabel: Label | null = null;
   private summaryLabel: Label | null = null;
   private orderLabel: Label | null = null;
   private friendlyLabel: Label | null = null;
@@ -150,6 +153,7 @@ export class VeilBattlePanel extends Component {
     if (model.idle) {
       this.hideStageBanner();
       this.syncIdleBadge(false, 0, "");
+      this.hideSection(this.feedbackLabel);
       cursorY = this.renderCardTextBlock(
         this.summaryLabel,
         "IdleSummary",
@@ -173,6 +177,7 @@ export class VeilBattlePanel extends Component {
     }
 
     this.syncIdleBadge(false, 0, "");
+    cursorY = this.renderBattleFeedback(model.feedback, cursorY - 4);
     cursorY = this.renderStageBanner(model.stage, cursorY - 2);
     cursorY = this.renderCardTextBlock(this.summaryLabel, "Summary", model.summaryLines, cursorY, 14, 18, 14);
     cursorY = this.renderTextBlock(this.orderLabel, ["行动顺序"], cursorY, 14, 18, 6);
@@ -189,6 +194,7 @@ export class VeilBattlePanel extends Component {
   private cleanupLegacyNodes(): void {
     const allowedNames = new Set<string>([
       TITLE_NODE_NAME,
+      FEEDBACK_NODE_NAME,
       SUMMARY_NODE_NAME,
       ORDER_NODE_NAME,
       FRIENDLY_NODE_NAME,
@@ -226,6 +232,7 @@ export class VeilBattlePanel extends Component {
 
   private ensureSectionLabels(): void {
     this.titleLabel = this.ensureLabelNode(TITLE_NODE_NAME, 20, 24, 32);
+    this.feedbackLabel = this.ensureLabelNode(FEEDBACK_NODE_NAME, 13, 17, 42);
     this.summaryLabel = this.ensureLabelNode(SUMMARY_NODE_NAME, 15, 19, 72);
     this.orderLabel = this.ensureLabelNode(ORDER_NODE_NAME, 14, 18, 88);
     this.friendlyLabel = this.ensureLabelNode(FRIENDLY_NODE_NAME, 14, 18, 72);
@@ -238,6 +245,7 @@ export class VeilBattlePanel extends Component {
   private sanitizePassiveLabels(): void {
     const passiveLabels = [
       this.titleLabel,
+      this.feedbackLabel,
       this.summaryLabel,
       this.orderLabel,
       this.friendlyLabel,
@@ -297,6 +305,37 @@ export class VeilBattlePanel extends Component {
 
     const transform = label.node.getComponent(UITransform) ?? label.node.addComponent(UITransform);
     this.renderSectionCard(cardName, label.node.position.y, transform.height + 22, fillColor);
+    return nextY;
+  }
+
+  private renderBattleFeedback(
+    feedback: {
+      title: string;
+      detail: string;
+      badge: string;
+      tone: CocosBattleFeedbackTone;
+    } | null,
+    topY: number
+  ): number {
+    if (!feedback) {
+      this.hideSection(this.feedbackLabel);
+      this.syncIdleBadge(false, 0, "");
+      return topY;
+    }
+
+    const nextY = this.renderCardTextBlock(
+      this.feedbackLabel,
+      "Feedback",
+      [feedback.title, feedback.detail],
+      topY,
+      13,
+      17,
+      10,
+      fillColorForFeedbackTone(feedback.tone)
+    );
+    if (this.feedbackLabel) {
+      this.syncIdleBadge(true, this.feedbackLabel.node.position.y + 11, feedback.badge);
+    }
     return nextY;
   }
 
@@ -1413,4 +1452,23 @@ function accentForSection(name: string): Color {
     return new Color(181, 151, 97, 144);
   }
   return new Color(235, 163, 128, 132);
+}
+
+function fillColorForFeedbackTone(tone: CocosBattleFeedbackTone): Color {
+  if (tone === "victory") {
+    return new Color(74, 108, 72, 168);
+  }
+  if (tone === "defeat") {
+    return new Color(112, 58, 58, 170);
+  }
+  if (tone === "skill") {
+    return new Color(66, 76, 120, 168);
+  }
+  if (tone === "hit") {
+    return new Color(111, 76, 62, 170);
+  }
+  if (tone === "action") {
+    return new Color(74, 88, 110, 162);
+  }
+  return new Color(54, 64, 84, 154);
 }
