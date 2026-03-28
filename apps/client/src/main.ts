@@ -98,9 +98,14 @@ const battleSkillNameById = new Map(
 declare global {
   interface Window {
     render_game_to_text?: () => string;
+    export_diagnostic_snapshot?: () => string;
     advanceTime?: (ms: number) => Promise<void>;
   }
 }
+
+const DEV_DIAGNOSTICS_ENABLED = import.meta.env.DEV;
+
+type DiagnosticsConnectionStatus = "connecting" | "connected" | "reconnecting" | "reconnect_failed";
 
 interface BattleModalState {
   visible: boolean;
@@ -125,6 +130,15 @@ interface TimelineEntry {
   tone: "move" | "battle" | "loot" | "sync" | "system";
   source: "local" | "push" | "system";
   text: string;
+}
+
+interface DiagnosticState {
+  connectionStatus: DiagnosticsConnectionStatus;
+  lastUpdateAt: number | null;
+  lastUpdateSource: TimelineEntry["source"] | null;
+  lastUpdateReason: string | null;
+  lastEventTypes: string[];
+  exportStatus: string;
 }
 
 interface LobbyViewState {
@@ -180,6 +194,7 @@ interface AppState {
   modal: BattleModalState;
   lastBattleSettlement: BattleSettlementSummary | null;
   predictionStatus: string;
+  diagnostics: DiagnosticState;
 }
 
 type BattleUnitView = BattleState["units"][string];
@@ -258,7 +273,15 @@ const state: AppState = {
     body: ""
   },
   lastBattleSettlement: null,
-  predictionStatus: ""
+  predictionStatus: "",
+  diagnostics: {
+    connectionStatus: shouldBootGame ? "connecting" : "connected",
+    lastUpdateAt: null,
+    lastUpdateSource: null,
+    lastUpdateReason: null,
+    lastEventTypes: [],
+    exportStatus: "等待导出诊断快照"
+  }
 };
 
 let accountRefreshPromise: Promise<void> | null = null;
@@ -292,6 +315,8 @@ let sessionPromise: ReturnType<typeof createGameSession> | null = shouldBootGame
         applyUpdate(update, "push");
       },
       onConnectionEvent: (event) => {
+        state.diagnostics.connectionStatus =
+          event === "reconnecting" ? "reconnecting" : event === "reconnect_failed" ? "reconnect_failed" : "connected";
         state.log.unshift(
           event === "reconnecting"
             ? "连接中断，正在尝试重连..."
@@ -304,6 +329,199 @@ let sessionPromise: ReturnType<typeof createGameSession> | null = shouldBootGame
       }
     })
   : null;
+
+function diagnosticsConnectionStatusLabel(status: DiagnosticsConnectionStatus): string {
+  if (status === "connected") {
+    return "已连接";
+  }
+
+  if (status === "reconnecting") {
+    return "重连中";
+  }
+
+  if (status === "reconnect_failed") {
+    return "恢复失败";
+  }
+
+  return "连接中";
+}
+
+function buildDiagnosticSnapshot() {
+  const hero = activeHero();
+
+  return {
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    source: {
+      surface: "h5-debug-shell",
+      devOnly: DEV_DIAGNOSTICS_ENABLED,
+      mode: shouldBootGame ? (state.battle ? "battle" : "world") : "lobby"
+    },
+    room: {
+      roomId: shouldBootGame ? state.world.meta.roomId : state.lobby.roomId,
+      playerId: shouldBootGame ? state.world.playerId : state.lobby.playerId,
+      day: shouldBootGame ? state.world.meta.day : null,
+      connectionStatus: state.diagnostics.connectionStatus,
+      lastUpdateSource: state.diagnostics.lastUpdateSource,
+      lastUpdateReason: state.diagnostics.lastUpdateReason,
+      lastUpdateAt: state.diagnostics.lastUpdateAt ? new Date(state.diagnostics.lastUpdateAt).toISOString() : null
+    },
+    world:
+      shouldBootGame
+        ? {
+            map: {
+              width: state.world.map.width,
+              height: state.world.map.height,
+              visibleTileCount: state.world.map.tiles.filter((tile) => tile.fog !== "hidden").length,
+              reachableTileCount: state.reachableTiles.length
+            },
+            resources: { ...state.world.resources },
+            selectedTile: state.selectedTile ? { ...state.selectedTile } : null,
+            hoveredTile: state.hoveredTile ? { ...state.hoveredTile } : null,
+            keyboardCursor: state.keyboardCursor ? { ...state.keyboardCursor } : null,
+            hero:
+              hero == null
+                ? null
+                : {
+                    id: hero.id,
+                    name: hero.name,
+                    position: { x: hero.position.x, y: hero.position.y },
+                    move: { total: hero.move.total, remaining: hero.move.remaining },
+                    stats: { ...hero.stats },
+                    armyTemplateId: hero.armyTemplateId,
+                    armyCount: hero.armyCount,
+                    progression: {
+                      level: hero.progression.level,
+                      experience: hero.progression.experience,
+                      skillPoints: hero.progression.skillPoints,
+                      battlesWon: hero.progression.battlesWon,
+                      neutralBattlesWon: hero.progression.neutralBattlesWon,
+                      pvpBattlesWon: hero.progression.pvpBattlesWon
+                    }
+                  },
+            visibleHeroes: state.world.visibleHeroes.map((item) => ({
+              id: item.id,
+              playerId: item.playerId,
+              position: { x: item.position.x, y: item.position.y }
+            }))
+          }
+        : null,
+    battle:
+      state.battle == null
+        ? null
+        : {
+            id: state.battle.id,
+            round: state.battle.round,
+            activeUnitId: state.battle.activeUnitId,
+            selectedTargetId: state.selectedBattleTargetId,
+            unitCount: Object.keys(state.battle.units).length,
+            environmentCount: state.battle.environment.length,
+            logTail: state.battle.log.slice(-6)
+          },
+    account: {
+      playerId: state.account.playerId,
+      displayName: state.account.displayName,
+      source: state.account.source,
+      loginId: state.account.loginId ?? null,
+      recentEventCount: state.account.recentEventLog.length,
+      recentReplayCount: state.account.recentBattleReplays.length
+    },
+    diagnostics: {
+      eventTypes: state.diagnostics.lastEventTypes,
+      timelineTail: state.timeline.slice(0, 6).map((entry) => ({
+        id: entry.id,
+        tone: entry.tone,
+        source: entry.source,
+        text: entry.text
+      })),
+      logTail: state.log.slice(0, 8),
+      predictionStatus: state.predictionStatus || null,
+      pendingUiTasks: scheduledUiTasks.filter((task) => !task.canceled).length,
+      replay:
+        state.replayDetail.replay == null
+          ? null
+          : {
+              replayId: state.replayDetail.replay.id,
+              loading: state.replayDetail.loading,
+              status: state.replayDetail.playback?.status ?? "paused",
+              currentStepIndex: state.replayDetail.playback?.currentStepIndex ?? 0,
+              totalSteps: state.replayDetail.playback?.totalSteps ?? state.replayDetail.replay.steps.length
+            }
+    }
+  };
+}
+
+function exportDiagnosticSnapshot(): string {
+  return JSON.stringify(buildDiagnosticSnapshot(), null, 2);
+}
+
+function sanitizeSnapshotFileSegment(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+  return normalized || "unknown";
+}
+
+function triggerDiagnosticSnapshotExport(): void {
+  if (!DEV_DIAGNOSTICS_ENABLED) {
+    return;
+  }
+
+  const payload = exportDiagnosticSnapshot();
+  const roomSegment = sanitizeSnapshotFileSegment(shouldBootGame ? state.world.meta.roomId : state.lobby.roomId);
+  const playerSegment = sanitizeSnapshotFileSegment(shouldBootGame ? state.world.playerId : state.lobby.playerId);
+  const fileName = `veil-diagnostic-${roomSegment}-${playerSegment}-${Date.now()}.json`;
+  const blob = new Blob([payload], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  state.diagnostics.exportStatus = `已导出 ${fileName}`;
+  render();
+}
+
+function renderDiagnosticPanel(): string {
+  if (!DEV_DIAGNOSTICS_ENABLED || !shouldBootGame) {
+    return "";
+  }
+
+  const hero = activeHero();
+
+  return `
+    <div class="log-panel diagnostics-panel" data-testid="diagnostic-panel">
+      <div class="diagnostics-head">
+        <div>
+          <h3>开发态诊断</h3>
+          <p class="muted">统一查看房间、英雄、同步与最近链路状态。</p>
+        </div>
+        <button class="session-link" data-export-diagnostic="true" data-testid="diagnostic-export">导出快照</button>
+      </div>
+      <div class="diagnostics-grid">
+        <div class="diagnostics-card">
+          <span>房间同步</span>
+          <strong data-testid="diagnostic-connection-status">${diagnosticsConnectionStatusLabel(state.diagnostics.connectionStatus)}</strong>
+          <p class="muted">${escapeHtml(state.diagnostics.lastUpdateSource ?? "尚未收到更新")} · ${escapeHtml(state.diagnostics.lastUpdateReason ?? "snapshot")}</p>
+        </div>
+        <div class="diagnostics-card">
+          <span>关键玩法</span>
+          <strong>${state.battle ? "战斗链路" : "大地图链路"}</strong>
+          <p class="muted">${escapeHtml(hero ? `${hero.name} @ ${hero.position.x},${hero.position.y}` : "当前没有可控英雄")}</p>
+        </div>
+        <div class="diagnostics-card">
+          <span>最近事件</span>
+          <strong>${state.diagnostics.lastEventTypes.length}</strong>
+          <p class="muted">${escapeHtml(state.diagnostics.lastEventTypes.join(", ") || "无")}</p>
+        </div>
+        <div class="diagnostics-card">
+          <span>账号快照</span>
+          <strong>${escapeHtml(state.account.displayName)}</strong>
+          <p class="muted">${escapeHtml(`${state.account.source} · replays ${state.account.recentBattleReplays.length} · events ${state.account.recentEventLog.length}`)}</p>
+        </div>
+      </div>
+      <p class="muted diagnostics-export-status" data-testid="diagnostic-export-status">${escapeHtml(state.diagnostics.exportStatus)}</p>
+    </div>
+  `;
+}
 
 async function getSession() {
   if (!sessionPromise) {
@@ -2127,6 +2345,11 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
   clearPendingPrediction();
   const hadBattle = Boolean(state.battle);
   const previousBattle = state.battle;
+  state.diagnostics.connectionStatus = "connected";
+  state.diagnostics.lastUpdateAt = Date.now();
+  state.diagnostics.lastUpdateSource = source;
+  state.diagnostics.lastUpdateReason = update.reason ?? "snapshot";
+  state.diagnostics.lastEventTypes = update.events.map((event) => event.type).slice(0, 8);
   state.world = update.world;
   state.battle = update.battle;
   state.previewPlan = null;
@@ -3902,6 +4125,7 @@ function render(): void {
           <h3>事件流</h3>
           <div class="log-list" data-testid="event-log">${state.log.map((line) => `<div class="log-line">${line}</div>`).join("")}</div>
         </div>
+        ${renderDiagnosticPanel()}
       </section>
       <section class="map-panel">
         <div class="panel-head">
@@ -4196,6 +4420,10 @@ function render(): void {
       logoutGuestSession();
     });
   }
+
+  for (const exportButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-export-diagnostic]"))) {
+    exportButton.addEventListener("click", triggerDiagnosticSnapshotExport);
+  }
 }
 
 async function bootstrap(): Promise<void> {
@@ -4227,6 +4455,7 @@ async function bootstrap(): Promise<void> {
   }
   const session = await getSession();
   const initial = await session.snapshot();
+  state.diagnostics.connectionStatus = "connected";
   state.log = [
     `会话已连接。Room ${roomId} / Player ${playerId}`,
     ...state.log.filter(
@@ -4321,4 +4550,7 @@ async function onBindAccountProfile(): Promise<void> {
 
 void bootstrap();
 window.render_game_to_text = renderGameToText;
+if (DEV_DIAGNOSTICS_ENABLED) {
+  window.export_diagnostic_snapshot = exportDiagnosticSnapshot;
+}
 window.advanceTime = advanceUiTime;
