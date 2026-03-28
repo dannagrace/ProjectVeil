@@ -12,6 +12,7 @@ import {
   type PlayerAccountAuthSnapshot,
   type PlayerAccountAuthRevokeInput,
   type PlayerAccountAuthSessionInput,
+  type PlayerAccountDeviceSessionSnapshot,
   type PlayerAccountCredentialInput,
   type PlayerAccountEnsureInput,
   type PlayerAccountListOptions,
@@ -61,10 +62,20 @@ function normalizeLoginId(loginId: string): string {
   return normalized;
 }
 
+function normalizeSessionId(sessionId: string): string {
+  const normalized = sessionId.trim();
+  if (!normalized) {
+    throw new Error("sessionId must not be empty");
+  }
+
+  return normalized;
+}
+
 export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
+  private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
   private readonly heroArchives = new Map<string, PlayerHeroArchiveSnapshot>();
 
@@ -228,12 +239,24 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
     const nextAuth: PlayerAccountAuthSnapshot = {
       ...existing,
-      accountSessionVersion: existing.accountSessionVersion + 1,
-      refreshSessionId: input.refreshSessionId.trim(),
+      refreshSessionId: normalizeSessionId(input.refreshSessionId),
       refreshTokenHash: input.refreshTokenHash.trim(),
       refreshTokenExpiresAt: new Date(input.refreshTokenExpiresAt).toISOString()
     };
     this.authByLoginId.set(existing.loginId, structuredClone(nextAuth));
+
+    const existingSessions = this.authSessionsByPlayerId.get(normalizedPlayerId) ?? new Map<string, PlayerAccountDeviceSessionSnapshot>();
+    existingSessions.set(nextAuth.refreshSessionId!, {
+      playerId: normalizedPlayerId,
+      sessionId: nextAuth.refreshSessionId!,
+      provider: input.provider?.trim() || "account-password",
+      deviceLabel: input.deviceLabel?.trim() || "Unknown device",
+      refreshTokenHash: nextAuth.refreshTokenHash!,
+      refreshTokenExpiresAt: nextAuth.refreshTokenExpiresAt!,
+      createdAt: existingSessions.get(nextAuth.refreshSessionId!)?.createdAt ?? new Date().toISOString(),
+      lastUsedAt: input.lastUsedAt ? new Date(input.lastUsedAt).toISOString() : new Date().toISOString()
+    });
+    this.authSessionsByPlayerId.set(normalizedPlayerId, existingSessions);
 
     const account = this.accounts.get(normalizedPlayerId);
     if (account) {
@@ -247,6 +270,44 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     }
 
     return structuredClone(nextAuth);
+  }
+
+  async loadPlayerAccountAuthSession(
+    playerId: string,
+    sessionId: string
+  ): Promise<PlayerAccountDeviceSessionSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    const session = this.authSessionsByPlayerId.get(normalizedPlayerId)?.get(normalizedSessionId) ?? null;
+    return session ? structuredClone(session) : null;
+  }
+
+  async listPlayerAccountAuthSessions(playerId: string): Promise<PlayerAccountDeviceSessionSnapshot[]> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    return Array.from(this.authSessionsByPlayerId.get(normalizedPlayerId)?.values() ?? [])
+      .sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt) || right.createdAt.localeCompare(left.createdAt))
+      .map((session) => structuredClone(session));
+  }
+
+  async touchPlayerAccountAuthSession(playerId: string, sessionId: string, lastUsedAt?: string): Promise<void> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    const sessions = this.authSessionsByPlayerId.get(normalizedPlayerId);
+    const existing = sessions?.get(normalizedSessionId);
+    if (!existing || !sessions) {
+      return;
+    }
+
+    sessions.set(normalizedSessionId, {
+      ...structuredClone(existing),
+      lastUsedAt: lastUsedAt ? new Date(lastUsedAt).toISOString() : new Date().toISOString()
+    });
+  }
+
+  async revokePlayerAccountAuthSession(playerId: string, sessionId: string): Promise<boolean> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    return this.authSessionsByPlayerId.get(normalizedPlayerId)?.delete(normalizedSessionId) ?? false;
   }
 
   async revokePlayerAccountAuthSessions(
@@ -271,6 +332,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     delete nextAuth.refreshTokenHash;
     delete nextAuth.refreshTokenExpiresAt;
     this.authByLoginId.set(existing.loginId, structuredClone(nextAuth));
+    this.authSessionsByPlayerId.delete(normalizedPlayerId);
 
     const account = this.accounts.get(normalizedPlayerId);
     if (account) {

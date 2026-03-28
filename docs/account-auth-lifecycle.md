@@ -8,6 +8,7 @@
 - 游客档升级成口令账号：`POST /api/auth/account-bind`
 - 口令账号登录：`POST /api/auth/account-login`
 - 会话校验 / 刷新 / 退出：`GET /api/auth/session`、`POST /api/auth/refresh`、`POST /api/auth/logout`
+- 正式账号设备会话列表 / 撤销：`GET /api/player-accounts/me/sessions`、`DELETE /api/player-accounts/me/sessions/:sessionId`
 - 已登录账号修改口令：`PUT /api/player-accounts/me`
 
 当前账号模式仍沿用“先游客、再绑定”的模型：
@@ -15,6 +16,13 @@
 1. 玩家可先以游客身份进入房间并形成 `player_accounts` 档案。
 2. 需要长期登录时，再把当前游客档绑定到 `loginId + password`。
 3. 后续账号登录会继续复用同一份英雄长期档、全局资源仓库和账号事件历史。
+
+## 设备会话管理
+
+- 正式账号登录后，服务端会为每个刷新令牌族持久化一条设备会话记录，包含 `sessionId`、最近活跃时间、刷新令牌到期时间以及一个最小设备标签（当前取自请求 `User-Agent`）。
+- `GET /api/player-accounts/me/sessions` 只返回当前账号仍然活跃的设备会话，并额外标记 `current=true` 的当前设备。
+- `DELETE /api/player-accounts/me/sessions/:sessionId` 仅允许撤销“非当前设备”的会话；被撤销的设备会话会立刻从列表消失，且旧刷新令牌随后会返回 `401 session_revoked`。
+- `POST /api/auth/logout` 与口令修改仍然属于“全量撤销”：会清空当前账号全部设备会话，并通过提升 `accountSessionVersion` 让旧访问令牌也一起失效。
 
 ## 正式注册闭环
 

@@ -38,6 +38,7 @@ test("auth session helpers can persist and clear stored guest sessions", () => {
     displayName: "访客骑士",
     authMode: "account",
     loginId: "veil-ranger",
+    sessionId: "session-current",
     source: "remote"
   });
   assert.deepEqual(readStoredAuthSession(storage), {
@@ -46,6 +47,7 @@ test("auth session helpers can persist and clear stored guest sessions", () => {
     displayName: "访客骑士",
     authMode: "account",
     loginId: "veil-ranger",
+    sessionId: "session-current",
     source: "remote"
   });
 

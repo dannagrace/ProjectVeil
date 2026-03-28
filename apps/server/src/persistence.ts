@@ -37,6 +37,13 @@ export interface RoomSnapshotStore {
     playerId: string,
     input: PlayerAccountAuthSessionInput
   ): Promise<PlayerAccountAuthSnapshot | null>;
+  loadPlayerAccountAuthSession(
+    playerId: string,
+    sessionId: string
+  ): Promise<PlayerAccountDeviceSessionSnapshot | null>;
+  listPlayerAccountAuthSessions(playerId: string): Promise<PlayerAccountDeviceSessionSnapshot[]>;
+  touchPlayerAccountAuthSession(playerId: string, sessionId: string, lastUsedAt?: string): Promise<void>;
+  revokePlayerAccountAuthSession(playerId: string, sessionId: string): Promise<boolean>;
   revokePlayerAccountAuthSessions(
     playerId: string,
     input?: PlayerAccountAuthRevokeInput
@@ -154,6 +161,17 @@ interface PlayerEventHistoryCountRow extends RowDataPacket {
   total: number;
 }
 
+interface PlayerAccountDeviceSessionRow extends RowDataPacket {
+  player_id: string;
+  session_id: string;
+  provider: string | null;
+  device_label: string | null;
+  refresh_token_hash: string;
+  refresh_token_expires_at: Date | string;
+  created_at: Date | string;
+  last_used_at: Date | string;
+}
+
 interface PlayerHeroArchiveRow extends RowDataPacket {
   player_id: string;
   hero_id: string;
@@ -206,6 +224,17 @@ export interface PlayerAccountAuthSnapshot {
   credentialBoundAt?: string;
 }
 
+export interface PlayerAccountDeviceSessionSnapshot {
+  playerId: string;
+  sessionId: string;
+  provider: string;
+  deviceLabel: string;
+  refreshTokenHash: string;
+  refreshTokenExpiresAt: string;
+  createdAt: string;
+  lastUsedAt: string;
+}
+
 export interface PlayerHeroArchiveSnapshot {
   playerId: string;
   heroId: string;
@@ -240,6 +269,9 @@ export interface PlayerAccountAuthSessionInput {
   refreshSessionId: string;
   refreshTokenHash: string;
   refreshTokenExpiresAt: string;
+  provider?: string;
+  deviceLabel?: string;
+  lastUsedAt?: string;
 }
 
 export interface PlayerAccountAuthRevokeInput {
@@ -293,6 +325,8 @@ export const MYSQL_PLAYER_ACCOUNT_TABLE = "player_accounts";
 export const MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX = "idx_player_accounts_updated_at";
 export const MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX = "uidx_player_accounts_login_id";
 export const MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX = "uidx_player_accounts_wechat_open_id";
+export const MYSQL_PLAYER_ACCOUNT_SESSION_TABLE = "player_account_sessions";
+export const MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX = "idx_player_account_sessions_player_last_used";
 export const MYSQL_PLAYER_EVENT_HISTORY_TABLE = "player_event_history";
 export const MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX = "idx_player_event_history_player_time";
 export const MYSQL_PLAYER_HERO_ARCHIVE_TABLE = "player_hero_archives";
@@ -388,6 +422,20 @@ function normalizeWechatMiniGameOpenId(openId: string): string {
 function normalizeWechatMiniGameUnionId(unionId?: string | null): string | undefined {
   const normalized = unionId?.trim();
   return normalized ? normalized : undefined;
+}
+
+function normalizeAuthSessionId(sessionId: string): string {
+  const normalized = sessionId.trim();
+  if (!normalized) {
+    throw new Error("sessionId must not be empty");
+  }
+
+  return normalized;
+}
+
+function normalizeAuthSessionDeviceLabel(deviceLabel?: string | null): string {
+  const normalized = deviceLabel?.trim();
+  return normalized ? normalized.slice(0, 191) : "Unknown device";
 }
 
 function formatTimestamp(value: Date | string | null | undefined): string | undefined {
@@ -743,6 +791,19 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (player_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\` (
+  player_id VARCHAR(191) NOT NULL,
+  session_id VARCHAR(64) NOT NULL,
+  provider VARCHAR(64) NULL,
+  device_label VARCHAR(191) NULL,
+  refresh_token_hash VARCHAR(255) NOT NULL,
+  refresh_token_expires_at DATETIME NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_used_at DATETIME NOT NULL,
+  PRIMARY KEY (session_id),
+  KEY \`${MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX}\` (player_id, last_used_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (
@@ -1351,6 +1412,28 @@ function toPlayerEventHistoryEntry(row: PlayerEventHistoryRow): EventLogEntry {
   ])[0] as EventLogEntry;
 }
 
+function toPlayerAccountDeviceSessionSnapshot(
+  row: PlayerAccountDeviceSessionRow
+): PlayerAccountDeviceSessionSnapshot {
+  const refreshTokenExpiresAt = formatTimestamp(row.refresh_token_expires_at);
+  const createdAt = formatTimestamp(row.created_at);
+  const lastUsedAt = formatTimestamp(row.last_used_at);
+  if (!refreshTokenExpiresAt || !createdAt || !lastUsedAt) {
+    throw new Error("player account device session timestamps must be present");
+  }
+
+  return {
+    playerId: normalizePlayerId(row.player_id),
+    sessionId: normalizeAuthSessionId(row.session_id),
+    provider: row.provider?.trim() || "account-password",
+    deviceLabel: normalizeAuthSessionDeviceLabel(row.device_label),
+    refreshTokenHash: row.refresh_token_hash,
+    refreshTokenExpiresAt,
+    createdAt,
+    lastUsedAt
+  };
+}
+
 async function appendPlayerEventHistoryEntries(
   queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
   playerId: string,
@@ -1862,6 +1945,84 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     return row ? toPlayerAccountAuthSnapshot(row) : null;
   }
 
+  async loadPlayerAccountAuthSession(
+    playerId: string,
+    sessionId: string
+  ): Promise<PlayerAccountDeviceSessionSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedSessionId = normalizeAuthSessionId(sessionId);
+    const [rows] = await this.pool.query<PlayerAccountDeviceSessionRow[]>(
+      `SELECT
+         player_id,
+         session_id,
+         provider,
+         device_label,
+         refresh_token_hash,
+         refresh_token_expires_at,
+         created_at,
+         last_used_at
+       FROM \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\`
+       WHERE player_id = ?
+         AND session_id = ?
+       LIMIT 1`,
+      [normalizedPlayerId, normalizedSessionId]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerAccountDeviceSessionSnapshot(row) : null;
+  }
+
+  async listPlayerAccountAuthSessions(playerId: string): Promise<PlayerAccountDeviceSessionSnapshot[]> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const [rows] = await this.pool.query<PlayerAccountDeviceSessionRow[]>(
+      `SELECT
+         player_id,
+         session_id,
+         provider,
+         device_label,
+         refresh_token_hash,
+         refresh_token_expires_at,
+         created_at,
+         last_used_at
+       FROM \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\`
+       WHERE player_id = ?
+       ORDER BY last_used_at DESC, created_at DESC, session_id ASC`,
+      [normalizedPlayerId]
+    );
+
+    return rows.map((row) => toPlayerAccountDeviceSessionSnapshot(row));
+  }
+
+  async touchPlayerAccountAuthSession(playerId: string, sessionId: string, lastUsedAt?: string): Promise<void> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedSessionId = normalizeAuthSessionId(sessionId);
+    const normalizedLastUsedAt = lastUsedAt ? new Date(lastUsedAt) : new Date();
+    if (Number.isNaN(normalizedLastUsedAt.getTime())) {
+      throw new Error("lastUsedAt must be a valid ISO timestamp");
+    }
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\`
+       SET last_used_at = ?
+       WHERE player_id = ?
+         AND session_id = ?`,
+      [normalizedLastUsedAt, normalizedPlayerId, normalizedSessionId]
+    );
+  }
+
+  async revokePlayerAccountAuthSession(playerId: string, sessionId: string): Promise<boolean> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedSessionId = normalizeAuthSessionId(sessionId);
+    const [result] = await this.pool.query<ResultSetHeader>(
+      `DELETE FROM \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\`
+       WHERE player_id = ?
+         AND session_id = ?`,
+      [normalizedPlayerId, normalizedSessionId]
+    );
+
+    return result.affectedRows > 0;
+  }
+
   async bindPlayerAccountCredentials(
     playerId: string,
     input: PlayerAccountCredentialInput
@@ -1912,9 +2073,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     input: PlayerAccountAuthSessionInput
   ): Promise<PlayerAccountAuthSnapshot | null> {
     const normalizedPlayerId = normalizePlayerId(playerId);
-    const refreshSessionId = input.refreshSessionId.trim();
+    const refreshSessionId = normalizeAuthSessionId(input.refreshSessionId);
     const refreshTokenHash = input.refreshTokenHash.trim();
     const refreshTokenExpiresAt = new Date(input.refreshTokenExpiresAt);
+    const lastUsedAt = input.lastUsedAt ? new Date(input.lastUsedAt) : new Date();
+    const provider = input.provider?.trim() || "account-password";
+    const deviceLabel = normalizeAuthSessionDeviceLabel(input.deviceLabel);
     if (!refreshSessionId) {
       throw new Error("refreshSessionId must not be empty");
     }
@@ -1924,11 +2088,33 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     if (Number.isNaN(refreshTokenExpiresAt.getTime())) {
       throw new Error("refreshTokenExpiresAt must be a valid ISO timestamp");
     }
+    if (Number.isNaN(lastUsedAt.getTime())) {
+      throw new Error("lastUsedAt must be a valid ISO timestamp");
+    }
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\` (
+         player_id,
+         session_id,
+         provider,
+         device_label,
+         refresh_token_hash,
+         refresh_token_expires_at,
+         last_used_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         provider = VALUES(provider),
+         device_label = VALUES(device_label),
+         refresh_token_hash = VALUES(refresh_token_hash),
+         refresh_token_expires_at = VALUES(refresh_token_expires_at),
+         last_used_at = VALUES(last_used_at)`,
+      [normalizedPlayerId, refreshSessionId, provider, deviceLabel, refreshTokenHash, refreshTokenExpiresAt, lastUsedAt]
+    );
 
     await this.pool.query(
       `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
-       SET account_session_version = account_session_version + 1,
-           refresh_session_id = ?,
+       SET refresh_session_id = ?,
            refresh_token_hash = ?,
            refresh_token_expires_at = ?,
            version = version + 1
@@ -1952,6 +2138,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     if (input.credentialBoundAt !== undefined && (!credentialBoundAt || Number.isNaN(credentialBoundAt.getTime()))) {
       throw new Error("credentialBoundAt must be a valid ISO timestamp");
     }
+
+    await this.pool.query(
+      `DELETE FROM \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\`
+       WHERE player_id = ?`,
+      [normalizedPlayerId]
+    );
 
     await this.pool.query(
       `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`

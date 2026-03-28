@@ -11,8 +11,10 @@ import {
   loadPlayerBattleReplayPlayback,
   loadPlayerBattleReplaySummaries,
   loadPlayerEventLog,
+  loadPlayerAccountSessions,
   loadPlayerProgressionSnapshot,
   readStoredPlayerDisplayName,
+  revokePlayerAccountSession,
   writeStoredPlayerDisplayName
 } from "../src/player-account";
 
@@ -231,6 +233,123 @@ test("player account loader can overlay progression snapshot onto base account p
     assert.equal(account.achievements[0]?.id, "first_battle");
     assert.equal(account.achievements[1]?.current, 2);
     assert.deepEqual(account.recentEventLog.map((entry) => entry.id), ["event-1"]);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("player account session helpers list and revoke formal-account device sessions", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const values = new Map<string, string>([
+    [
+      "project-veil:auth-session",
+      JSON.stringify({
+        playerId: "player-1",
+        displayName: "暮火侦骑",
+        authMode: "account",
+        loginId: "veil-ranger",
+        sessionId: "session-current",
+        token: "access-token",
+        refreshToken: "refresh-token",
+        source: "remote"
+      })
+    ]
+  ]);
+  const requests: Array<{ url: string; method: string; authorization?: string }> = [];
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(key: string): string | null {
+          return values.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          values.set(key, value);
+        },
+        removeItem(key: string): void {
+          values.delete(key);
+        }
+      }
+    }
+  });
+
+  globalThis.fetch = (async (input, init) => {
+    requests.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      authorization: (init?.headers as Record<string, string> | undefined)?.Authorization
+    });
+
+    return new Response(
+      JSON.stringify({
+        items:
+          init?.method === "DELETE"
+            ? [
+                {
+                  sessionId: "session-current",
+                  provider: "account-password",
+                  deviceLabel: "Current Browser",
+                  lastUsedAt: "2026-03-29T08:00:00.000Z",
+                  createdAt: "2026-03-28T08:00:00.000Z",
+                  refreshExpiresAt: "2026-04-28T08:00:00.000Z",
+                  current: true
+                }
+              ]
+            : [
+                {
+                  sessionId: "session-current",
+                  provider: "account-password",
+                  deviceLabel: "Current Browser",
+                  lastUsedAt: "2026-03-29T08:00:00.000Z",
+                  createdAt: "2026-03-28T08:00:00.000Z",
+                  refreshExpiresAt: "2026-04-28T08:00:00.000Z",
+                  current: true
+                },
+                {
+                  sessionId: "session-other",
+                  provider: "wechat-mini-game",
+                  deviceLabel: "WeChat DevTools",
+                  lastUsedAt: "2026-03-29T07:00:00.000Z",
+                  createdAt: "2026-03-27T07:00:00.000Z",
+                  refreshExpiresAt: "2026-04-27T07:00:00.000Z",
+                  current: false
+                }
+              ]
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }) as typeof fetch;
+
+  try {
+    const sessions = await loadPlayerAccountSessions();
+    assert.deepEqual(sessions.map((session) => session.sessionId), ["session-current", "session-other"]);
+
+    const remainingSessions = await revokePlayerAccountSession("session-other");
+    assert.deepEqual(remainingSessions.map((session) => session.sessionId), ["session-current"]);
+    assert.deepEqual(
+      requests.map((request) => [request.method, request.url, request.authorization]),
+      [
+        ["GET", "http://127.0.0.1:2567/api/player-accounts/me/sessions", "Bearer access-token"],
+        ["DELETE", "http://127.0.0.1:2567/api/player-accounts/me/sessions/session-other", "Bearer access-token"]
+      ]
+    );
   } finally {
     Object.defineProperty(globalThis, "window", {
       configurable: true,

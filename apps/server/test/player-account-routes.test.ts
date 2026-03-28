@@ -7,6 +7,7 @@ import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import type {
   PlayerAccountProgressPatch,
   PlayerAccountAuthSnapshot,
+  PlayerAccountDeviceSessionSnapshot,
   PlayerAccountCredentialInput,
   PlayerAccountEnsureInput,
   PlayerEventHistoryQuery,
@@ -31,6 +32,7 @@ import {
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
+  private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
   private readonly eventHistoryByPlayerId = new Map<string, PlayerAccountSnapshot["recentEventLog"]>();
 
@@ -83,6 +85,32 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   async loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null> {
     return Array.from(this.authByLoginId.values()).find((auth) => auth.playerId === playerId.trim()) ?? null;
+  }
+
+  async loadPlayerAccountAuthSession(playerId: string, sessionId: string): Promise<PlayerAccountDeviceSessionSnapshot | null> {
+    return this.authSessionsByPlayerId.get(playerId.trim())?.get(sessionId.trim()) ?? null;
+  }
+
+  async listPlayerAccountAuthSessions(playerId: string): Promise<PlayerAccountDeviceSessionSnapshot[]> {
+    return Array.from(this.authSessionsByPlayerId.get(playerId.trim())?.values() ?? []).sort(
+      (left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt) || right.createdAt.localeCompare(left.createdAt)
+    );
+  }
+
+  async touchPlayerAccountAuthSession(playerId: string, sessionId: string, lastUsedAt?: string): Promise<void> {
+    const sessions = this.authSessionsByPlayerId.get(playerId.trim());
+    const existing = sessions?.get(sessionId.trim());
+    if (!sessions || !existing) {
+      return;
+    }
+    sessions.set(sessionId.trim(), {
+      ...existing,
+      lastUsedAt: lastUsedAt ? new Date(lastUsedAt).toISOString() : new Date().toISOString()
+    });
+  }
+
+  async revokePlayerAccountAuthSession(playerId: string, sessionId: string): Promise<boolean> {
+    return this.authSessionsByPlayerId.get(playerId.trim())?.delete(sessionId.trim()) ?? false;
   }
 
   async loadPlayerHeroArchives(_playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
@@ -145,7 +173,14 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   async savePlayerAccountAuthSession(
     playerId: string,
-    input: { refreshSessionId: string; refreshTokenHash: string; refreshTokenExpiresAt: string }
+    input: {
+      refreshSessionId: string;
+      refreshTokenHash: string;
+      refreshTokenExpiresAt: string;
+      provider?: string;
+      deviceLabel?: string;
+      lastUsedAt?: string;
+    }
   ): Promise<PlayerAccountAuthSnapshot | null> {
     const auth = await this.loadPlayerAccountAuthByPlayerId(playerId);
     if (!auth) {
@@ -153,12 +188,23 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     }
     const nextAuth: PlayerAccountAuthSnapshot = {
       ...auth,
-      accountSessionVersion: auth.accountSessionVersion + 1,
       refreshSessionId: input.refreshSessionId,
       refreshTokenHash: input.refreshTokenHash,
       refreshTokenExpiresAt: input.refreshTokenExpiresAt
     };
     this.authByLoginId.set(auth.loginId, nextAuth);
+    const sessions = this.authSessionsByPlayerId.get(playerId) ?? new Map<string, PlayerAccountDeviceSessionSnapshot>();
+    sessions.set(input.refreshSessionId, {
+      playerId,
+      sessionId: input.refreshSessionId,
+      provider: input.provider ?? "account-password",
+      deviceLabel: input.deviceLabel ?? "Unknown device",
+      refreshTokenHash: input.refreshTokenHash,
+      refreshTokenExpiresAt: input.refreshTokenExpiresAt,
+      createdAt: sessions.get(input.refreshSessionId)?.createdAt ?? new Date().toISOString(),
+      lastUsedAt: input.lastUsedAt ?? new Date().toISOString()
+    });
+    this.authSessionsByPlayerId.set(playerId, sessions);
     return nextAuth;
   }
 
@@ -180,6 +226,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     delete nextAuth.refreshTokenHash;
     delete nextAuth.refreshTokenExpiresAt;
     this.authByLoginId.set(auth.loginId, nextAuth);
+    this.authSessionsByPlayerId.delete(playerId);
     return nextAuth;
   }
 
@@ -1596,6 +1643,91 @@ test("player account me route preserves account-mode sessions and returns the gl
   });
   assert.equal(mePayload.session.authMode, "account");
   assert.equal(mePayload.session.loginId, "veil-ranger");
+});
+
+test("player account session routes list active devices and revoke a selected non-current session", async (t) => {
+  const port = 42125 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "account-player",
+    displayName: "暮潮守望"
+  });
+  await store.bindPlayerAccountCredentials("account-player", {
+    loginId: "veil-ranger",
+    passwordHash: "hashed-password"
+  });
+  await store.savePlayerAccountAuthSession("account-player", {
+    refreshSessionId: "session-current",
+    refreshTokenHash: "hash-current",
+    refreshTokenExpiresAt: "2026-04-29T08:00:00.000Z",
+    deviceLabel: "Current Browser",
+    lastUsedAt: "2025-03-29T08:00:00.000Z"
+  });
+  await store.savePlayerAccountAuthSession("account-player", {
+    refreshSessionId: "session-other",
+    refreshTokenHash: "hash-other",
+    refreshTokenExpiresAt: "2026-04-28T08:00:00.000Z",
+    provider: "wechat-mini-game",
+    deviceLabel: "WeChat DevTools",
+    lastUsedAt: "2025-03-29T07:00:00.000Z"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueAccountAuthSession({
+    playerId: "account-player",
+    displayName: "暮潮守望",
+    loginId: "veil-ranger",
+    sessionId: "session-current",
+    sessionVersion: 0
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const listResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/sessions`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const listPayload = (await listResponse.json()) as {
+    items: Array<{ sessionId: string; deviceLabel: string; current: boolean }>;
+  };
+
+  assert.equal(listResponse.status, 200);
+  assert.deepEqual(
+    listPayload.items.map((item) => [item.sessionId, item.current, item.deviceLabel]),
+    [
+      ["session-current", true, "Current Browser"],
+      ["session-other", false, "WeChat DevTools"]
+    ]
+  );
+
+  const revokeResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/sessions/session-other`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const revokePayload = (await revokeResponse.json()) as {
+    items: Array<{ sessionId: string }>;
+  };
+
+  assert.equal(revokeResponse.status, 200);
+  assert.deepEqual(revokePayload.items.map((item) => item.sessionId), ["session-current"]);
+  assert.equal(await store.loadPlayerAccountAuthSession("account-player", "session-other"), null);
+
+  const revokeCurrentResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/sessions/session-current`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const revokeCurrentPayload = (await revokeCurrentResponse.json()) as {
+    error: { code: string };
+  };
+
+  assert.equal(revokeCurrentResponse.status, 400);
+  assert.equal(revokeCurrentPayload.error.code, "current_session_revoke_forbidden");
 });
 
 test("player account update routes reject oversized JSON bodies with 413", async (t) => {

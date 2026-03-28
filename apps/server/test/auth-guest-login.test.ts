@@ -15,6 +15,7 @@ import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import type {
   PlayerAccountProgressPatch,
   PlayerAccountAuthSnapshot,
+  PlayerAccountDeviceSessionSnapshot,
   PlayerAccountCredentialInput,
   PlayerAccountEnsureInput,
   PlayerEventHistoryQuery,
@@ -31,6 +32,7 @@ import { queryEventLogEntries } from "../../../packages/shared/src/index";
 class MemoryAuthStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
+  private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
 
   async load(_roomId: string): Promise<RoomPersistenceSnapshot | null> {
@@ -79,6 +81,32 @@ class MemoryAuthStore implements RoomSnapshotStore {
 
   async loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null> {
     return Array.from(this.authByLoginId.values()).find((auth) => auth.playerId === playerId.trim()) ?? null;
+  }
+
+  async loadPlayerAccountAuthSession(playerId: string, sessionId: string): Promise<PlayerAccountDeviceSessionSnapshot | null> {
+    return this.authSessionsByPlayerId.get(playerId.trim())?.get(sessionId.trim()) ?? null;
+  }
+
+  async listPlayerAccountAuthSessions(playerId: string): Promise<PlayerAccountDeviceSessionSnapshot[]> {
+    return Array.from(this.authSessionsByPlayerId.get(playerId.trim())?.values() ?? []).sort(
+      (left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt) || right.createdAt.localeCompare(left.createdAt)
+    );
+  }
+
+  async touchPlayerAccountAuthSession(playerId: string, sessionId: string, lastUsedAt?: string): Promise<void> {
+    const sessions = this.authSessionsByPlayerId.get(playerId.trim());
+    const existing = sessions?.get(sessionId.trim());
+    if (!sessions || !existing) {
+      return;
+    }
+    sessions.set(sessionId.trim(), {
+      ...existing,
+      lastUsedAt: lastUsedAt ? new Date(lastUsedAt).toISOString() : new Date().toISOString()
+    });
+  }
+
+  async revokePlayerAccountAuthSession(playerId: string, sessionId: string): Promise<boolean> {
+    return this.authSessionsByPlayerId.get(playerId.trim())?.delete(sessionId.trim()) ?? false;
   }
 
   async loadPlayerHeroArchives(_playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
@@ -140,7 +168,14 @@ class MemoryAuthStore implements RoomSnapshotStore {
 
   async savePlayerAccountAuthSession(
     playerId: string,
-    input: { refreshSessionId: string; refreshTokenHash: string; refreshTokenExpiresAt: string }
+    input: {
+      refreshSessionId: string;
+      refreshTokenHash: string;
+      refreshTokenExpiresAt: string;
+      provider?: string;
+      deviceLabel?: string;
+      lastUsedAt?: string;
+    }
   ): Promise<PlayerAccountAuthSnapshot | null> {
     const auth = await this.loadPlayerAccountAuthByPlayerId(playerId);
     if (!auth) {
@@ -149,12 +184,23 @@ class MemoryAuthStore implements RoomSnapshotStore {
 
     const nextAuth: PlayerAccountAuthSnapshot = {
       ...auth,
-      accountSessionVersion: auth.accountSessionVersion + 1,
       refreshSessionId: input.refreshSessionId,
       refreshTokenHash: input.refreshTokenHash,
       refreshTokenExpiresAt: input.refreshTokenExpiresAt
     };
     this.authByLoginId.set(auth.loginId, nextAuth);
+    const sessions = this.authSessionsByPlayerId.get(playerId) ?? new Map<string, PlayerAccountDeviceSessionSnapshot>();
+    sessions.set(input.refreshSessionId, {
+      playerId,
+      sessionId: input.refreshSessionId,
+      provider: input.provider ?? "account-password",
+      deviceLabel: input.deviceLabel ?? "Unknown device",
+      refreshTokenHash: input.refreshTokenHash,
+      refreshTokenExpiresAt: input.refreshTokenExpiresAt,
+      createdAt: sessions.get(input.refreshSessionId)?.createdAt ?? new Date().toISOString(),
+      lastUsedAt: input.lastUsedAt ?? new Date().toISOString()
+    });
+    this.authSessionsByPlayerId.set(playerId, sessions);
     return nextAuth;
   }
 
@@ -177,6 +223,7 @@ class MemoryAuthStore implements RoomSnapshotStore {
     delete nextAuth.refreshTokenHash;
     delete nextAuth.refreshTokenExpiresAt;
     this.authByLoginId.set(auth.loginId, nextAuth);
+    this.authSessionsByPlayerId.delete(playerId);
     return nextAuth;
   }
 
@@ -677,6 +724,82 @@ test("refresh rotation invalidates the previous refresh token and logout revokes
 
   assert.equal(revokedRefreshResponse.status, 401);
   assert.equal(revokedRefreshPayload.error.code, "session_revoked");
+});
+
+test("revoking one device session leaves other account sessions active and blocks further refreshes for the revoked device", async (t) => {
+  const port = 44600 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  await store.bindPlayerAccountCredentials("device-player", {
+    loginId: "device-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const firstLoginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "Current Browser"
+    },
+    body: JSON.stringify({
+      loginId: "device-ranger",
+      password: "hunter2"
+    })
+  });
+  const firstLoginPayload = (await firstLoginResponse.json()) as { session: GuestAuthSession };
+
+  const secondLoginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "WeChat DevTools"
+    },
+    body: JSON.stringify({
+      loginId: "device-ranger",
+      password: "hunter2"
+    })
+  });
+  const secondLoginPayload = (await secondLoginResponse.json()) as { session: GuestAuthSession };
+
+  assert.equal(firstLoginResponse.status, 200);
+  assert.equal(secondLoginResponse.status, 200);
+  assert.notEqual(firstLoginPayload.session.sessionId, secondLoginPayload.session.sessionId);
+
+  const revokeResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/sessions/${encodeURIComponent(secondLoginPayload.session.sessionId ?? "")}`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${firstLoginPayload.session.token}`
+      }
+    }
+  );
+  assert.equal(revokeResponse.status, 200);
+
+  const revokedRefreshResponse = await fetch(`http://127.0.0.1:${port}/api/auth/refresh`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secondLoginPayload.session.refreshToken}`
+    }
+  });
+  const revokedRefreshPayload = (await revokedRefreshResponse.json()) as { error: { code: string } };
+
+  assert.equal(revokedRefreshResponse.status, 401);
+  assert.equal(revokedRefreshPayload.error.code, "session_revoked");
+
+  const survivingRefreshResponse = await fetch(`http://127.0.0.1:${port}/api/auth/refresh`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${firstLoginPayload.session.refreshToken}`
+    }
+  });
+
+  assert.equal(survivingRefreshResponse.status, 200);
 });
 
 test("password changes revoke the current account session family", async (t) => {

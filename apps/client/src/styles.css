@@ -703,6 +703,47 @@ h1 {
   cursor: not-allowed;
 }
 
+.account-session-list {
+  display: grid;
+  gap: 10px;
+}
+
+.account-session-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(78, 58, 42, 0.05);
+}
+
+.account-session-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.account-session-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.account-session-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(78, 58, 42, 0.08);
+}
+
+.account-session-action {
+  min-width: 88px;
+}
+
 .timeline-panel {
   display: grid;
   gap: 8px;

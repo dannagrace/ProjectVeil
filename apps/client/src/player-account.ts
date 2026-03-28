@@ -34,6 +34,16 @@ export interface PlayerAccountProfile extends PlayerAccountReadModel {
   source: "remote" | "local";
 }
 
+export interface PlayerAccountSessionDevice {
+  sessionId: string;
+  provider: string;
+  deviceLabel: string;
+  lastUsedAt: string;
+  createdAt: string;
+  refreshExpiresAt: string;
+  current: boolean;
+}
+
 interface PlayerAccountApiPayload {
   account?: {
     playerId?: string;
@@ -58,6 +68,7 @@ interface PlayerAccountApiPayload {
     displayName?: string;
     authMode?: "guest" | "account";
     loginId?: string;
+    sessionId?: string;
     expiresAt?: string;
     refreshExpiresAt?: string;
   };
@@ -88,6 +99,10 @@ interface PlayerAchievementListApiPayload {
 }
 
 interface PlayerProgressionApiPayload extends Partial<PlayerProgressionSnapshot> {}
+
+interface PlayerAccountSessionListApiPayload {
+  items?: Array<Partial<PlayerAccountSessionDevice>>;
+}
 
 function hasMeaningfulProgressionSnapshot(snapshot: PlayerProgressionSnapshot): boolean {
   return (
@@ -288,6 +303,7 @@ function asStoredAuthSession(
     displayName: payload?.displayName?.trim() || previousSession.displayName,
     authMode: payload?.authMode === "account" || loginId ? "account" : previousSession.authMode,
     ...(loginId ? { loginId } : {}),
+    ...(payload?.sessionId ? { sessionId: payload.sessionId } : previousSession.sessionId ? { sessionId: previousSession.sessionId } : {}),
     ...(payload?.token ? { token: payload.token } : previousSession.token ? { token: previousSession.token } : {}),
     ...(payload?.refreshToken
       ? { refreshToken: payload.refreshToken }
@@ -675,4 +691,68 @@ export async function bindPlayerAccountCredentials(
   );
   rememberPreferredPlayerDisplayName(profile.playerId, profile.displayName);
   return profile;
+}
+
+function normalizePlayerAccountSessionDevices(
+  items?: Array<Partial<PlayerAccountSessionDevice>>
+): PlayerAccountSessionDevice[] {
+  return (items ?? [])
+    .map((item) => {
+      const sessionId = item.sessionId?.trim();
+      const lastUsedAt = item.lastUsedAt?.trim();
+      const createdAt = item.createdAt?.trim();
+      const refreshExpiresAt = item.refreshExpiresAt?.trim();
+      if (!sessionId || !lastUsedAt || !createdAt || !refreshExpiresAt) {
+        return null;
+      }
+
+      return {
+        sessionId,
+        provider: item.provider?.trim() || "account-password",
+        deviceLabel: item.deviceLabel?.trim() || "Unknown device",
+        lastUsedAt,
+        createdAt,
+        refreshExpiresAt,
+        current: item.current === true
+      };
+    })
+    .filter((item): item is PlayerAccountSessionDevice => Boolean(item))
+    .sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt) || right.createdAt.localeCompare(left.createdAt));
+}
+
+export async function loadPlayerAccountSessions(): Promise<PlayerAccountSessionDevice[]> {
+  const authSession = readStoredAuthSession();
+  if (!authSession?.token || authSession.authMode !== "account") {
+    return [];
+  }
+
+  try {
+    const payload = (await fetchPlayerAccountJson(`${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/sessions`, {
+      headers: buildAuthHeaders(authSession.token)
+    }, authSession)) as PlayerAccountSessionListApiPayload;
+    return normalizePlayerAccountSessionDevices(payload.items);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("player_account_request_failed:401:")) {
+      clearCurrentAuthSession();
+    }
+    return [];
+  }
+}
+
+export async function revokePlayerAccountSession(sessionId: string): Promise<PlayerAccountSessionDevice[]> {
+  const authSession = readStoredAuthSession();
+  if (!authSession?.token || authSession.authMode !== "account") {
+    throw new Error("auth_session_required");
+  }
+
+  const payload = (await fetchPlayerAccountJson(
+    `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/sessions/${encodeURIComponent(sessionId)}`,
+    {
+      method: "DELETE",
+      headers: buildAuthHeaders(authSession.token)
+    },
+    authSession
+  )) as PlayerAccountSessionListApiPayload;
+
+  return normalizePlayerAccountSessionDevices(payload.items);
 }

@@ -169,7 +169,7 @@
 - 服务端还新增了 `GET /api/auth/session` 与 `GET /api/player-accounts/me`、`PUT /api/player-accounts/me`：前者用于校验和刷新当前游客会话，后者用于按当前登录态读取/修改自己的账号资料，不需要前端再手拼 `playerId`。
 - 账号体系现已从“纯游客模式”升级为“双模式骨架”：`player_accounts` 新增 `loginId / passwordHash / credentialBoundAt`，服务端开放 `POST /api/auth/account-bind` 与 `POST /api/auth/account-login`，可把当前游客档绑定成口令账号，并在之后直接用登录 ID + 口令进入房间。
 - 鉴权入口现已补上进程内安全闸门：`POST /api/auth/guest-login`、`/account-login`、`/account-bind` 都会按来源 IP 走滑动窗口限流，`account-login` 还会在连续失败达到阈值后临时锁定账号；默认值分别来自 `VEIL_RATE_LIMIT_AUTH_WINDOW_MS=60000`、`VEIL_RATE_LIMIT_AUTH_MAX=10`、`VEIL_AUTH_LOCKOUT_THRESHOLD=10`、`VEIL_AUTH_LOCKOUT_DURATION_MINUTES=15`，游客会话缓存还会受 `VEIL_MAX_GUEST_SESSIONS=10000` 的 LRU 上限约束。
-- 正式账号会话现在补上了过期与撤销链路：访问令牌默认 1 小时（`VEIL_AUTH_ACCESS_TTL_SECONDS`），刷新令牌默认 30 天（`VEIL_AUTH_REFRESH_TTL_SECONDS`），游客 token 默认 7 天（`VEIL_AUTH_GUEST_TTL_SECONDS`）；服务端新增 `POST /api/auth/refresh` 与 `POST /api/auth/logout`，并把当前刷新令牌族持久化到 `player_accounts` 上，账号口令修改也会同步撤销现有会话。
+- 正式账号会话现在补上了过期、设备列表与撤销链路：访问令牌默认 1 小时（`VEIL_AUTH_ACCESS_TTL_SECONDS`），刷新令牌默认 30 天（`VEIL_AUTH_REFRESH_TTL_SECONDS`），游客 token 默认 7 天（`VEIL_AUTH_GUEST_TTL_SECONDS`）；服务端新增 `POST /api/auth/refresh`、`POST /api/auth/logout`、`GET /api/player-accounts/me/sessions` 与 `DELETE /api/player-accounts/me/sessions/:sessionId`，正式账号可在 H5 资料卡查看当前设备列表、标记当前设备并撤销其他设备会话，账号口令修改仍会同步撤销现有会话。
 - 服务端现已补上开发态正式注册后端闭环：`POST /api/auth/account-registration/request` 可为全新正式账号预留 `loginId` 并生成短时效注册令牌，`POST /api/auth/account-registration/confirm` 会创建新的 `player_accounts` 档案、绑定口令并立即签发首个账号会话；默认通过 `VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE=dev-token` 直接回传开发态令牌，TTL 由 `VEIL_ACCOUNT_REGISTRATION_TTL_MINUTES` 控制，确认成功后会向账号 `recentEventLog` 追加注册申请/完成两条 `account` 审计事件。
 - 服务端现已补上开发态密码找回闭环：`POST /api/auth/password-recovery/request` 会为已绑定口令账号生成短时效重置令牌，`POST /api/auth/password-recovery/confirm` 可用该令牌重置口令并撤销旧会话；默认通过 `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE=dev-token` 直接回传开发态令牌，TTL 由 `VEIL_PASSWORD_RECOVERY_TTL_MINUTES` 控制，且找回申请/确认都会写入账号 `recentEventLog` 的 `account` 审计事件。详细说明见 `docs/account-auth-lifecycle.md`。
 - H5 Lobby 现已补上“账号口令登录”表单；游戏内账号资料卡也能直接绑定或更新口令账号，绑定成功后会立即把当前会话升级成账号模式，不需要重新手写 `playerId`，并会继续沿用同一份英雄长期档与全局资源仓库。
@@ -180,7 +180,7 @@
 - Cocos Lobby 现已追加“正式注册 / 密码找回”按钮：沿用当前 prompt 式输入链路完成 request / confirm 联调，开发态可直接复用响应里的 token 完成新账号注册或重置后登录，不再需要手拼 API 请求。
 - Cocos Lobby 现在也提供“打开配置台”入口，会按当前联机目标自动跳到共享的 `config-center.html`，把配置联调从 H5 侧迁成主客户端可达链路。
 - 服务端新增 `GET /api/lobby/rooms`，会实时返回当前进程内活跃房间的 `roomId / day / seed / connectedPlayers / heroCount / activeBattles / updatedAt` 摘要，便于大厅入口和后续房间浏览器直接复用。
-- 这套账号目前仍是“轻量正式化”阶段：虽然已经有独立正式注册、口令绑定、前端注册 / 找回入口、刷新令牌轮换和单账号会话撤销，但仍没有真正的多端并行会话管理或更完整的第三方身份接入。
+- 这套账号目前仍是“轻量正式化”阶段：虽然已经有独立正式注册、口令绑定、前端注册 / 找回入口、设备会话列表 / 定向撤销和刷新令牌轮换，但更完整的第三方身份接入与更细的账号安全策略仍留给后续 issue 继续扩展。
 - H5 会优先连接 `ws://127.0.0.1:2567` 的本地会话服务；若服务未启动，则自动回退到浏览器内嵌房间模式。
 - 本地会话服务已支持房间内 `session.state` 推送同步，后续可在此基础上继续扩展多人联机。
 - 多人原型已支持双英雄同房间联调，以及踩到敌方英雄格时触发玩家对玩家遭遇战。
