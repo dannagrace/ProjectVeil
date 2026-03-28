@@ -39,5 +39,7 @@ test("audio cue sequences are normalized from config", () => {
   assert.equal(cocosPresentationConfig.audio.cues.attack.notes.length, 2);
   assert.equal(cocosPresentationConfig.audio.cues.skill.assetPath, "audio/skill");
   assert.equal(cocosPresentationConfig.audio.cues.skill.assetStage, "placeholder");
+  assert.equal(cocosPresentationConfig.audio.cues.victory.assetPath, "audio/level-up");
+  assert.equal(cocosPresentationConfig.audio.cues.defeat.assetPath, "audio/hit");
   assert.equal(cocosPresentationConfig.audio.cues.level_up.notes.at(-1)?.frequency, 783.99);
 });

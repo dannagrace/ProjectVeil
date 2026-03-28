@@ -81,7 +81,8 @@ test("buildBattlePanelViewModel keeps idle summary focused on battle state", () 
     timelineEntries: ["事件：连接已恢复。", "事件：采集 木材 +5。"],
     controlledCamp: null,
     selectedTargetId: null,
-    actionPending: false
+    actionPending: false,
+    feedback: null
   });
 
   assert.equal(view.idle, true);
@@ -191,7 +192,8 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
     timelineEntries: [],
     controlledCamp: "attacker",
     selectedTargetId: "neutral-1-stack",
-    actionPending: false
+    actionPending: false,
+    feedback: null
   });
 
   assert.equal(view.idle, false);
@@ -316,7 +318,8 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
     timelineEntries: [],
     controlledCamp: "attacker",
     selectedTargetId: "hero-2-stack",
-    actionPending: false
+    actionPending: false,
+    feedback: null
   });
 
   assert.deepEqual(view.stage, {
@@ -449,7 +452,8 @@ test("buildBattlePanelViewModel hides unrevealed traps and disables skills while
     timelineEntries: [],
     controlledCamp: "attacker",
     selectedTargetId: "neutral-1-stack",
-    actionPending: false
+    actionPending: false,
+    feedback: null
   });
 
   assert.equal(view.summaryLines.includes("环境：当前战场没有额外障碍或陷阱"), false);
@@ -564,7 +568,8 @@ test("buildBattlePanelViewModel derives stage terrain from encounter position an
     timelineEntries: [],
     controlledCamp: "attacker",
     selectedTargetId: "neutral-2-stack",
-    actionPending: false
+    actionPending: false,
+    feedback: null
   });
 
   assert.deepEqual(view.stage, {
