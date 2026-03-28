@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import * as XLSX from "xlsx";
 import {
+  getBattleBalanceConfig,
   getDefaultBattleSkillCatalog,
   getDefaultWorldConfig,
   resetRuntimeConfigs
@@ -192,11 +193,33 @@ const BATTLE_SKILL_CONFIG = {
   ]
 };
 
+const BATTLE_BALANCE_CONFIG = {
+  damage: {
+    defendingDefenseBonus: 5,
+    offenseAdvantageStep: 0.05,
+    minimumOffenseMultiplier: 0.3,
+    varianceBase: 0.9,
+    varianceRange: 0.2
+  },
+  environment: {
+    blockerSpawnThreshold: 0.62,
+    blockerDurability: 1,
+    trapSpawnThreshold: 0.58,
+    trapDamage: 1,
+    trapCharges: 1,
+    trapGrantedStatusId: "poisoned"
+  },
+  pvp: {
+    eloK: 32
+  }
+};
+
 async function seedConfigRoot(rootDir: string): Promise<void> {
   await writeFile(join(rootDir, "phase1-world.json"), `${JSON.stringify(WORLD_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "phase1-map-objects.json"), `${JSON.stringify(MAP_OBJECTS_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "units.json"), `${JSON.stringify(UNIT_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "battle-skills.json"), `${JSON.stringify(BATTLE_SKILL_CONFIG, null, 2)}\n`, "utf8");
+  await writeFile(join(rootDir, "battle-balance.json"), `${JSON.stringify(BATTLE_BALANCE_CONFIG, null, 2)}\n`, "utf8");
 }
 
 test.afterEach(() => {
@@ -212,7 +235,7 @@ test("config center lists seeded config documents", async () => {
 
   assert.deepEqual(
     items.map((item) => item.id),
-    ["world", "mapObjects", "units", "battleSkills"]
+    ["world", "mapObjects", "units", "battleSkills", "battleBalance"]
   );
   assert.match(items[0]?.summary ?? "", /8x8/);
 });
@@ -264,6 +287,35 @@ test("config center save writes battle skills file and refreshes runtime skill c
   assert.match(fileContent, /"重弩射击"/);
   assert.equal(powerShot?.name, "重弩射击");
   assert.equal(powerShot?.cooldown, 1);
+});
+
+test("config center save writes battle balance file and refreshes runtime battle balance", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  const nextBalance = {
+    ...BATTLE_BALANCE_CONFIG,
+    environment: {
+      ...BATTLE_BALANCE_CONFIG.environment,
+      trapDamage: 3,
+      trapCharges: 2
+    },
+    pvp: {
+      eloK: 28
+    }
+  };
+
+  const document = await store.saveDocument("battleBalance", JSON.stringify(nextBalance));
+  const fileContent = await readFile(join(rootDir, "battle-balance.json"), "utf8");
+  const runtimeBalance = getBattleBalanceConfig();
+
+  assert.equal(document.id, "battleBalance");
+  assert.match(fileContent, /"trapDamage": 3/);
+  assert.equal(runtimeBalance.environment.trapDamage, 3);
+  assert.equal(runtimeBalance.environment.trapCharges, 2);
+  assert.equal(runtimeBalance.pvp.eloK, 28);
 });
 
 test("config center rejects map objects that exceed current world bounds", async () => {
@@ -367,6 +419,31 @@ test("config center schema validation reports missing and mistyped fields", asyn
   assert.equal(report.valid, false);
   assert.match(report.issues.map((issue) => issue.path).join(","), /statuses|skills\[0\]\.kind|skills\[0\]\.cooldown/);
   assert.equal(report.schema.id, "project-veil.config-center.battleSkills");
+});
+
+test("config center validates battle balance against thresholds and status references", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const report = await store.validateDocument(
+    "battleBalance",
+    JSON.stringify({
+      ...BATTLE_BALANCE_CONFIG,
+      environment: {
+        ...BATTLE_BALANCE_CONFIG.environment,
+        trapSpawnThreshold: 1.2,
+        trapGrantedStatusId: "missing_status"
+      }
+    })
+  );
+
+  assert.equal(report.valid, false);
+  assert.match(
+    report.issues.map((issue) => issue.path).join(","),
+    /environment\.trapSpawnThreshold|environment\.trapGrantedStatusId/
+  );
+  assert.equal(report.schema.id, "project-veil.config-center.battleBalance");
 });
 
 test("config center snapshots support diff and rollback", async () => {
