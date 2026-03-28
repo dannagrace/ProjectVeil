@@ -973,6 +973,221 @@ test("guest auth session LRU eviction invalidates the oldest idle guest token", 
   assert.equal(activePayload.session.playerId, "guest-lru-3");
 });
 
+test("password recovery request and confirm reset the password, revoke old sessions, and append account audit events", {
+  concurrency: false
+}, async (t) => {
+  const port = 44725 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  await store.ensurePlayerAccount({
+    playerId: "recovery-player",
+    displayName: "回响旅人"
+  });
+  await store.bindPlayerAccountCredentials("recovery-player", {
+    loginId: "recovery-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "recovery-ranger",
+      password: "hunter2"
+    })
+  });
+  const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
+  assert.equal(loginResponse.status, 200);
+
+  const requestResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "recovery-ranger"
+    })
+  });
+  const requestPayload = (await requestResponse.json()) as {
+    status: string;
+    expiresAt?: string;
+    recoveryToken?: string;
+  };
+
+  assert.equal(requestResponse.status, 202);
+  assert.equal(requestPayload.status, "recovery_requested");
+  assert.equal(typeof requestPayload.recoveryToken, "string");
+  assert.ok(requestPayload.expiresAt);
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "recovery-ranger",
+      recoveryToken: requestPayload.recoveryToken,
+      newPassword: "hunter3"
+    })
+  });
+  const confirmPayload = (await confirmResponse.json()) as { account: PlayerAccountSnapshot };
+
+  assert.equal(confirmResponse.status, 200);
+  assert.equal(confirmPayload.account.playerId, "recovery-player");
+
+  const revokedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/session`, {
+    headers: {
+      Authorization: `Bearer ${loginPayload.session.token}`
+    }
+  });
+  const revokedPayload = (await revokedResponse.json()) as { error: { code: string } };
+  assert.equal(revokedResponse.status, 401);
+  assert.equal(revokedPayload.error.code, "session_revoked");
+
+  const stalePasswordResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "recovery-ranger",
+      password: "hunter2"
+    })
+  });
+  assert.equal(stalePasswordResponse.status, 401);
+
+  const freshPasswordResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "recovery-ranger",
+      password: "hunter3"
+    })
+  });
+  assert.equal(freshPasswordResponse.status, 200);
+
+  const account = await store.loadPlayerAccount("recovery-player");
+  assert.equal(account?.recentEventLog[0]?.category, "account");
+  assert.match(account?.recentEventLog[0]?.description ?? "", /重置口令/);
+  assert.equal(account?.recentEventLog[1]?.category, "account");
+  assert.match(account?.recentEventLog[1]?.description ?? "", /发起密码找回申请/);
+});
+
+test("password recovery confirm rejects invalid tokens", { concurrency: false }, async (t) => {
+  const port = 44735 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  await store.ensurePlayerAccount({
+    playerId: "recovery-invalid-player",
+    displayName: "失效旅人"
+  });
+  await store.bindPlayerAccountCredentials("recovery-invalid-player", {
+    loginId: "invalid-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const requestResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "invalid-ranger"
+    })
+  });
+  assert.equal(requestResponse.status, 202);
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "invalid-ranger",
+      recoveryToken: "wrong-token",
+      newPassword: "hunter3"
+    })
+  });
+  const confirmPayload = (await confirmResponse.json()) as { error: { code: string } };
+
+  assert.equal(confirmResponse.status, 401);
+  assert.equal(confirmPayload.error.code, "invalid_recovery_token");
+});
+
+test("password recovery request returns 429 after the per-IP rate limit is exceeded", { concurrency: false }, async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_RATE_LIMIT_AUTH_WINDOW_MS: "60000",
+      VEIL_RATE_LIMIT_AUTH_MAX: "2"
+    },
+    cleanup
+  );
+
+  const port = 44745 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  await store.ensurePlayerAccount({
+    playerId: "recovery-rate-limit-player",
+    displayName: "限流旅人"
+  });
+  await store.bindPlayerAccountCredentials("recovery-rate-limit-player", {
+    loginId: "limit-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  for (let index = 0; index < 2; index += 1) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/request`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        loginId: "limit-ranger"
+      })
+    });
+    assert.equal(response.status, 202);
+  }
+
+  const limitedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "limit-ranger"
+    })
+  });
+  const limitedPayload = (await limitedResponse.json()) as { error: { code: string } };
+
+  assert.equal(limitedResponse.status, 429);
+  assert.equal(limitedPayload.error.code, "rate_limited");
+  assert.equal(limitedResponse.headers.get("Retry-After"), "60");
+});
+
 test("wechat mini game scaffold route returns 501 until mock mode is enabled", { concurrency: false }, async (t) => {
   const port = 44750 + Math.floor(Math.random() * 1000);
   const server = await startAuthServer(port);

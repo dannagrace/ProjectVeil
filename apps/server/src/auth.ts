@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { appendEventLogEntries, type EventLogEntry } from "../../../packages/shared/src/index";
 import type { RoomSnapshotStore } from "./persistence";
 
 export type AuthMode = "guest" | "account";
@@ -88,6 +89,16 @@ interface AccountAuthSessionState {
   refreshTokenExpiresAt?: string;
 }
 
+interface PasswordRecoveryState {
+  playerId: string;
+  loginId: string;
+  tokenHash: string;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+type PasswordRecoveryDeliveryMode = "disabled" | "dev-token";
+
 const AUTH_SECRET = process.env.VEIL_AUTH_SECRET?.trim() || "project-veil-dev-secret";
 const MIN_ACCOUNT_PASSWORD_LENGTH = 6;
 const DEFAULT_RATE_LIMIT_AUTH_WINDOW_MS = 60_000;
@@ -98,11 +109,13 @@ const DEFAULT_MAX_GUEST_SESSIONS = 10_000;
 const DEFAULT_AUTH_ACCESS_TTL_SECONDS = 60 * 60;
 const DEFAULT_AUTH_REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
 const DEFAULT_GUEST_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+const DEFAULT_PASSWORD_RECOVERY_TTL_MINUTES = 15;
 
 const authRateLimitCounters = new Map<string, number[]>();
 const accountLockoutStateByLoginId = new Map<string, AccountLockoutState>();
 const guestSessionsById = new Map<string, GuestAuthSession>();
 const accountAuthStateByPlayerId = new Map<string, AccountAuthSessionState>();
+const passwordRecoveryStateByLoginId = new Map<string, PasswordRecoveryState>();
 
 function parseEnvNumber(
   value: string | undefined,
@@ -174,6 +187,10 @@ function isExpiredTimestamp(value: string): boolean {
 
 function hashRefreshToken(token: string): string {
   return createHmac("sha256", AUTH_SECRET).update(`refresh:${token}`).digest("hex");
+}
+
+function hashPasswordRecoveryToken(token: string): string {
+  return createHmac("sha256", AUTH_SECRET).update(`password-recovery:${token}`).digest("hex");
 }
 
 function cacheAccountAuthState(input: {
@@ -313,6 +330,102 @@ function normalizeAccountPassword(password?: string | null): string {
   }
 
   return normalized;
+}
+
+function normalizePasswordRecoveryToken(token?: string | null): string {
+  const normalized = token?.trim();
+  if (!normalized) {
+    throw new Error("recoveryToken must not be empty");
+  }
+
+  return normalized;
+}
+
+function readPasswordRecoveryDeliveryMode(env: NodeJS.ProcessEnv = process.env): PasswordRecoveryDeliveryMode {
+  const normalized = env.VEIL_PASSWORD_RECOVERY_DELIVERY_MODE?.trim().toLowerCase();
+  return normalized === "disabled" ? "disabled" : "dev-token";
+}
+
+function readPasswordRecoveryTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+  return (
+    parseEnvNumber(env.VEIL_PASSWORD_RECOVERY_TTL_MINUTES, DEFAULT_PASSWORD_RECOVERY_TTL_MINUTES, {
+      minimum: 1 / 60_000
+    }) * 60_000
+  );
+}
+
+function createAccountAuditLogEntry(
+  playerId: string,
+  description: string,
+  timestamp = new Date().toISOString()
+): EventLogEntry {
+  return {
+    id: `${playerId}:${timestamp}:account:${randomUUID().slice(0, 8)}`,
+    timestamp,
+    roomId: "auth",
+    playerId,
+    category: "account",
+    description,
+    rewards: []
+  };
+}
+
+async function appendAccountAuditLog(
+  store: RoomSnapshotStore,
+  playerId: string,
+  description: string,
+  timestamp = new Date().toISOString()
+): Promise<void> {
+  const account = await store.ensurePlayerAccount({ playerId });
+  await store.savePlayerAccountProgress(playerId, {
+    recentEventLog: appendEventLogEntries(account.recentEventLog, [createAccountAuditLogEntry(playerId, description, timestamp)])
+  });
+}
+
+function createPasswordRecoveryToken(): string {
+  return randomBytes(24).toString("base64url");
+}
+
+function getPasswordRecoveryState(loginId: string): PasswordRecoveryState | null {
+  const existing = passwordRecoveryStateByLoginId.get(loginId);
+  if (!existing) {
+    return null;
+  }
+
+  if (isExpiredTimestamp(existing.expiresAt)) {
+    passwordRecoveryStateByLoginId.delete(loginId);
+    return null;
+  }
+
+  return existing;
+}
+
+function storePasswordRecoveryState(playerId: string, loginId: string, token: string): PasswordRecoveryState {
+  const issuedAt = new Date().toISOString();
+  const expiresAt = new Date(nowMs() + readPasswordRecoveryTtlMs()).toISOString();
+  const state: PasswordRecoveryState = {
+    playerId,
+    loginId,
+    tokenHash: hashPasswordRecoveryToken(token),
+    issuedAt,
+    expiresAt
+  };
+  passwordRecoveryStateByLoginId.set(loginId, state);
+  return state;
+}
+
+function consumePasswordRecoveryState(loginId: string, token: string): PasswordRecoveryState | null {
+  const state = getPasswordRecoveryState(loginId);
+  if (!state) {
+    return null;
+  }
+
+  if (state.tokenHash !== hashPasswordRecoveryToken(token)) {
+    return null;
+  }
+
+  passwordRecoveryStateByLoginId.delete(loginId);
+  return state;
 }
 
 function normalizeWechatMiniGameCode(code?: string | null): string {
@@ -534,8 +647,8 @@ export function issueWechatMiniGameAuthSession(input: {
       displayName: input.displayName,
       loginId,
       provider: "wechat-mini-game",
-      sessionId: input.sessionId,
-      sessionVersion: input.sessionVersion
+      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+      ...(input.sessionVersion !== undefined ? { sessionVersion: input.sessionVersion } : {})
     });
   }
 
@@ -561,21 +674,24 @@ export function issueNextAuthSession(
 ): GuestAuthSession {
   const loginId = normalizeLoginId(input.loginId);
   if (currentSession?.authMode === "account" && loginId) {
+    const nextSessionId = input.sessionId ?? currentSession.sessionId;
+    const nextSessionVersion = input.sessionVersion ?? currentSession.sessionVersion;
     return issueAccountAccessSession({
       playerId: input.playerId,
       displayName: input.displayName,
       loginId,
-      provider: currentSession.provider,
-      sessionId: input.sessionId ?? currentSession.sessionId,
-      sessionVersion: input.sessionVersion ?? currentSession.sessionVersion
+      ...(currentSession.provider ? { provider: currentSession.provider } : {}),
+      ...(nextSessionId !== undefined ? { sessionId: nextSessionId } : {}),
+      ...(nextSessionVersion !== undefined ? { sessionVersion: nextSessionVersion } : {})
     });
   }
 
+  const nextGuestSessionId = input.sessionId ?? currentSession?.sessionId;
   return issueGuestAccessSession({
     playerId: input.playerId,
     displayName: input.displayName,
     provider: currentSession?.provider ?? "guest",
-    sessionId: input.sessionId ?? currentSession?.sessionId
+    ...(nextGuestSessionId !== undefined ? { sessionId: nextGuestSessionId } : {})
   });
 }
 
@@ -784,7 +900,7 @@ async function validateAuthToken(
       return {
         session: {
           ...session,
-          refreshExpiresAt: authAccount.refreshTokenExpiresAt
+          ...(authAccount.refreshTokenExpiresAt ? { refreshExpiresAt: authAccount.refreshTokenExpiresAt } : {})
         }
       };
     }
@@ -829,7 +945,7 @@ async function createAccountSessionBundle(
     playerId: input.playerId,
     displayName: input.displayName,
     loginId: input.loginId,
-    provider: input.provider,
+    ...(input.provider ? { provider: input.provider } : {}),
     sessionId: refreshSessionId,
     sessionVersion: nextSessionVersion
   });
@@ -854,7 +970,7 @@ async function createAccountSessionBundle(
     playerId: input.playerId,
     displayName: input.displayName,
     loginId: input.loginId,
-    provider: input.provider,
+    ...(input.provider ? { provider: input.provider } : {}),
     sessionId: refreshSessionId,
     sessionVersion: finalizedAuth.accountSessionVersion
   });
@@ -1049,6 +1165,7 @@ export function resetGuestAuthSessions(): void {
   accountLockoutStateByLoginId.clear();
   guestSessionsById.clear();
   accountAuthStateByPlayerId.clear();
+  passwordRecoveryStateByLoginId.clear();
 }
 
 export function registerAuthRoutes(
@@ -1459,6 +1576,170 @@ export function registerAuthRoutes(
           displayName: account.displayName,
           loginId
         })
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/auth/password-recovery/request", async (request, response) => {
+    if (!store) {
+      sendStoreUnavailable(response);
+      return;
+    }
+
+    if (!enforceAuthRateLimit(request, response, "password-recovery-request")) {
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        loginId?: string | null;
+      };
+
+      if (body.loginId !== undefined && body.loginId !== null && typeof body.loginId !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: loginId"
+          }
+        });
+        return;
+      }
+
+      const loginId = normalizeAccountLoginId(body.loginId);
+      const deliveryMode = readPasswordRecoveryDeliveryMode();
+      const authAccount = await store.loadPlayerAccountAuthByLoginId(loginId);
+      if (!authAccount) {
+        sendJson(response, 202, {
+          status: "recovery_requested"
+        });
+        return;
+      }
+
+      const recoveryToken = createPasswordRecoveryToken();
+      const recoveryState = storePasswordRecoveryState(authAccount.playerId, loginId, recoveryToken);
+      await appendAccountAuditLog(
+        store,
+        authAccount.playerId,
+        deliveryMode === "dev-token" ? "发起密码找回申请，已生成开发态重置令牌。" : "发起密码找回申请。"
+      );
+
+      sendJson(response, 202, {
+        status: "recovery_requested",
+        expiresAt: recoveryState.expiresAt,
+        ...(deliveryMode === "dev-token" ? { recoveryToken } : {})
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/auth/password-recovery/confirm", async (request, response) => {
+    if (!store) {
+      sendStoreUnavailable(response);
+      return;
+    }
+
+    if (!enforceAuthRateLimit(request, response, "password-recovery-confirm")) {
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        loginId?: string | null;
+        recoveryToken?: string | null;
+        newPassword?: string | null;
+      };
+
+      if (body.loginId !== undefined && body.loginId !== null && typeof body.loginId !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: loginId"
+          }
+        });
+        return;
+      }
+
+      if (body.recoveryToken !== undefined && body.recoveryToken !== null && typeof body.recoveryToken !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: recoveryToken"
+          }
+        });
+        return;
+      }
+
+      if (body.newPassword !== undefined && body.newPassword !== null && typeof body.newPassword !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: newPassword"
+          }
+        });
+        return;
+      }
+
+      const loginId = normalizeAccountLoginId(body.loginId);
+      const recoveryToken = normalizePasswordRecoveryToken(body.recoveryToken);
+      const newPassword = normalizeAccountPassword(body.newPassword);
+      const pendingRecoveryState = getPasswordRecoveryState(loginId);
+      if (!pendingRecoveryState) {
+        sendJson(response, 401, {
+          error: {
+            code: "invalid_recovery_token",
+            message: "Password recovery token is invalid or expired"
+          }
+        });
+        return;
+      }
+
+      const recoveryState = consumePasswordRecoveryState(loginId, recoveryToken);
+      if (!recoveryState) {
+        sendJson(response, 401, {
+          error: {
+            code: "invalid_recovery_token",
+            message: "Password recovery token is invalid or expired"
+          }
+        });
+        return;
+      }
+
+      const authAccount = await store.loadPlayerAccountAuthByLoginId(loginId);
+      if (!authAccount || authAccount.playerId !== recoveryState.playerId) {
+        sendJson(response, 401, {
+          error: {
+            code: "invalid_recovery_token",
+            message: "Password recovery token is invalid or expired"
+          }
+        });
+        return;
+      }
+
+      const credentialBoundAt = new Date().toISOString();
+      const revokedAuth = await store.revokePlayerAccountAuthSessions(authAccount.playerId, {
+        passwordHash: hashAccountPassword(newPassword),
+        credentialBoundAt
+      });
+      if (revokedAuth) {
+        cacheAccountAuthState({
+          playerId: revokedAuth.playerId,
+          accountSessionVersion: revokedAuth.accountSessionVersion
+        });
+      }
+      clearAccountLoginFailures(loginId);
+      await appendAccountAuditLog(store, authAccount.playerId, "通过密码找回流程重置口令，并撤销旧会话。", credentialBoundAt);
+      const account =
+        (await store.loadPlayerAccount(authAccount.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authAccount.playerId,
+          displayName: authAccount.displayName
+        }));
+
+      sendJson(response, 200, {
+        account
       });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
