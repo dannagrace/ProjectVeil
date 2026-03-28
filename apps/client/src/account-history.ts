@@ -173,6 +173,161 @@ function formatBattleReplayUnitSummary(playback: BattleReplayPlaybackState): str
   return `攻方 ${attackerAlive} 队 · 守方 ${defenderAlive} 队`;
 }
 
+function toTimestampMs(value?: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function formatBattleRewardChip(
+  reward: PlayerAccountProfile["recentEventLog"][number]["rewards"][number]
+): string {
+  if (reward.type === "experience") {
+    return reward.amount != null ? `经验 +${reward.amount}` : "经验";
+  }
+
+  if (reward.type === "skill_point") {
+    return reward.amount != null ? `技能点 +${reward.amount}` : "技能点";
+  }
+
+  if (reward.type === "resource") {
+    return reward.amount != null ? `${reward.label} +${reward.amount}` : reward.label;
+  }
+
+  return reward.amount != null ? `${reward.label} +${reward.amount}` : reward.label;
+}
+
+function collectBattleReportEventLogEntries(
+  account: PlayerAccountProfile,
+  replay: PlayerAccountProfile["recentBattleReplays"][number]
+): PlayerAccountProfile["recentEventLog"] {
+  const startedAtMs = toTimestampMs(replay.startedAt);
+  const completedAtMs = toTimestampMs(replay.completedAt);
+  const fallbackEntries = account.recentEventLog.filter(
+    (entry) => entry.category === "combat" && entry.roomId === replay.roomId && (!entry.heroId || entry.heroId === replay.heroId)
+  );
+  const boundedEntries = fallbackEntries.filter((entry) => {
+    const timestamp = toTimestampMs(entry.timestamp);
+    if (timestamp == null || startedAtMs == null || completedAtMs == null) {
+      return true;
+    }
+
+    return timestamp >= startedAtMs && timestamp <= completedAtMs + 2 * 60 * 1000;
+  });
+
+  const candidates = boundedEntries.length > 0 ? boundedEntries : fallbackEntries;
+  return candidates.sort((left, right) => String(right.timestamp).localeCompare(String(left.timestamp)));
+}
+
+function summarizeBattleReplayCasualties(
+  replay: PlayerAccountProfile["recentBattleReplays"][number]
+): {
+  attackerLosses: number;
+  defenderLosses: number;
+  attackerDefeatedStacks: number;
+  defenderDefeatedStacks: number;
+} {
+  const timeline = buildBattleReplayTimeline(replay);
+  const finalState = timeline.at(-1)?.state ?? replay.initialState;
+  let attackerLosses = 0;
+  let defenderLosses = 0;
+  let attackerDefeatedStacks = 0;
+  let defenderDefeatedStacks = 0;
+
+  for (const initialUnit of Object.values(replay.initialState.units)) {
+    const finalUnit = finalState.units[initialUnit.id];
+    const finalCount = Math.max(0, finalUnit?.count ?? 0);
+    const losses = Math.max(0, initialUnit.count - finalCount);
+    if (initialUnit.camp === "attacker") {
+      attackerLosses += losses;
+      if (initialUnit.count > 0 && finalCount <= 0) {
+        attackerDefeatedStacks += 1;
+      }
+    } else {
+      defenderLosses += losses;
+      if (initialUnit.count > 0 && finalCount <= 0) {
+        defenderDefeatedStacks += 1;
+      }
+    }
+  }
+
+  return {
+    attackerLosses,
+    defenderLosses,
+    attackerDefeatedStacks,
+    defenderDefeatedStacks
+  };
+}
+
+function renderBattleReplayReportSummary(
+  account: PlayerAccountProfile,
+  replay: PlayerAccountProfile["recentBattleReplays"][number]
+): string {
+  const eventEntries = collectBattleReportEventLogEntries(account, replay);
+  const rewards = eventEntries.flatMap((entry) => entry.rewards);
+  const uniqueRewards = rewards.filter(
+    (reward, index, list) =>
+      index ===
+      list.findIndex(
+        (candidate) =>
+          candidate.type === reward.type && candidate.label === reward.label && (candidate.amount ?? null) === (reward.amount ?? null)
+      )
+  );
+  const rewardNotes = eventEntries
+    .filter((entry) => entry.worldEventType === "hero.progressed" || entry.worldEventType === "hero.equipmentFound")
+    .map((entry) => entry.description);
+  const casualties = summarizeBattleReplayCasualties(replay);
+  const didPlayerWin =
+    (replay.playerCamp === "attacker" && replay.result === "attacker_victory") ||
+    (replay.playerCamp === "defender" && replay.result === "defender_victory");
+  const playerLosses = replay.playerCamp === "attacker" ? casualties.attackerLosses : casualties.defenderLosses;
+  const enemyLosses = replay.playerCamp === "attacker" ? casualties.defenderLosses : casualties.attackerLosses;
+  const playerDefeatedStacks =
+    replay.playerCamp === "attacker" ? casualties.attackerDefeatedStacks : casualties.defenderDefeatedStacks;
+  const enemyDefeatedStacks =
+    replay.playerCamp === "attacker" ? casualties.defenderDefeatedStacks : casualties.attackerDefeatedStacks;
+
+  return `<div class="account-replay-report-summary">
+    <div class="account-replay-summary-card">
+      <strong>结果概览</strong>
+      <p>${escapeHtml(`${didPlayerWin ? "本场获胜" : "本场失利"} · ${formatBattleReplayCamp(replay)} · ${formatBattleReplayKind(replay)}`)}</p>
+      <div class="account-replay-meta">
+        <span>对阵 ${escapeHtml(formatBattleReplayEncounter(replay))}</span>
+        <span>步数 ${replay.steps.length}</span>
+      </div>
+    </div>
+    <div class="account-replay-summary-card">
+      <strong>伤亡摘要</strong>
+      <p>${escapeHtml(`我方减员 ${playerLosses} · 敌方减员 ${enemyLosses}`)}</p>
+      <div class="account-replay-meta">
+        <span>我方全灭编队 ${playerDefeatedStacks}</span>
+        <span>敌方全灭编队 ${enemyDefeatedStacks}</span>
+      </div>
+    </div>
+    <div class="account-replay-summary-card">
+      <strong>战后收益</strong>
+      ${
+        uniqueRewards.length > 0
+          ? `<div class="account-event-rewards">${uniqueRewards
+              .map((reward) => `<span class="account-reward-chip">${escapeHtml(formatBattleRewardChip(reward))}</span>`)
+              .join("")}</div>`
+          : '<p class="account-meta">近期事件日志里未记录额外奖励。</p>'
+      }
+      ${
+        rewardNotes.length > 0
+          ? `<div class="account-replay-summary-notes">${rewardNotes
+              .slice(0, 2)
+              .map((note) => `<span class="account-meta">${escapeHtml(note)}</span>`)
+              .join("")}</div>`
+          : ""
+      }
+    </div>
+  </div>`;
+}
+
 function compareAchievementDisplayOrder(
   left: PlayerAccountProfile["achievements"][number],
   right: PlayerAccountProfile["achievements"][number]
@@ -383,6 +538,7 @@ export function renderBattleReportReplayCenter(input: {
       ...(input.selectedReplayId !== undefined ? { selectedReplayId: input.selectedReplayId } : {})
     })}
     ${renderBattleReplayInspector({
+      account: input.account,
       replay: input.replay,
       playback: input.playback,
       ...(input.loading !== undefined ? { loading: input.loading } : {}),
@@ -392,6 +548,7 @@ export function renderBattleReportReplayCenter(input: {
 }
 
 export function renderBattleReplayInspector(input: {
+  account: PlayerAccountProfile;
   replay: PlayerAccountProfile["recentBattleReplays"][number] | null;
   playback: BattleReplayPlaybackState | null;
   loading?: boolean;
@@ -442,6 +599,7 @@ export function renderBattleReplayInspector(input: {
       <button type="button" class="modal-button" data-replay-control="reset" ${playback.currentStepIndex === 0 && playback.status !== "completed" ? "disabled" : ""}>重置</button>
     </div>
     <p class="account-meta">${escapeHtml(input.loading ? "正在刷新回放详情..." : input.status?.trim() || "按步骤回放本场战斗。")}</p>
+    ${renderBattleReplayReportSummary(input.account, input.replay)}
     <div class="account-replay-progress">
       <div><strong>当前动作</strong><span>${escapeHtml(formatBattleReplayAction(playback.currentStep))}</span><span class="account-meta">${escapeHtml(currentTimelineEntry ? formatBattleReplayRound(currentTimelineEntry) : "等待开始")}</span></div>
       <div><strong>下一动作</strong><span>${escapeHtml(formatBattleReplayAction(playback.nextStep))}</span><span class="account-meta">${escapeHtml(nextTimelineEntry ? formatBattleReplayRound(nextTimelineEntry) : playback.status === "completed" ? "胜负已结算" : "无下一步")}</span></div>

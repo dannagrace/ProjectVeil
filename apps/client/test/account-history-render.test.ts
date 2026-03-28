@@ -186,9 +186,10 @@ test("account history renderer shows recent battle replay summaries with step ch
 });
 
 test("account history renderer groups battle list and replay detail into a replay center", () => {
-  const replay = createProfile().recentBattleReplays[0]!;
+  const profile = createProfile();
+  const replay = profile.recentBattleReplays[0]!;
   const html = renderBattleReportReplayCenter({
-    account: createProfile(),
+    account: profile,
     selectedReplayId: replay.id,
     replay,
     playback: createBattleReplayPlaybackState(replay),
@@ -204,9 +205,11 @@ test("account history renderer groups battle list and replay detail into a repla
 });
 
 test("account history renderer shows replay inspector controls and current playback snapshot", () => {
-  const replay = createProfile().recentBattleReplays[0]!;
+  const profile = createProfile();
+  const replay = profile.recentBattleReplays[0]!;
   const playback = stepBattleReplayPlayback(createBattleReplayPlaybackState(replay));
   const html = renderBattleReplayInspector({
+    account: profile,
     replay,
     playback,
     status: "已前进一步。"
@@ -215,6 +218,10 @@ test("account history renderer shows replay inspector controls and current playb
   assert.match(html, /回放详情/);
   assert.match(html, /状态 已暂停/);
   assert.match(html, /进度 1\/2/);
+  assert.match(html, /结果概览/);
+  assert.match(html, /伤亡摘要/);
+  assert.match(html, /战后收益/);
+  assert.match(html, /经验 \+40/);
   assert.match(html, /当前动作/);
   assert.match(html, /hero-1-stack 攻击 neutral-1-stack/);
   assert.match(html, /下一动作/);
@@ -226,7 +233,9 @@ test("account history renderer shows replay inspector controls and current playb
 });
 
 test("account history renderer shows replay inspector placeholder before a replay is selected", () => {
+  const profile = createProfile();
   const html = renderBattleReplayInspector({
+    account: profile,
     replay: null,
     playback: null,
     status: "选择一场最近战斗，即可查看逐步回放。"
