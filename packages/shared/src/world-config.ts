@@ -1,8 +1,10 @@
 import defaultBattleSkillsConfig from "../../../configs/battle-skills.json";
 import defaultBattleBalanceConfig from "../../../configs/battle-balance.json";
 import defaultHeroSkillTreesConfig from "../../../configs/hero-skill-trees-full.json";
+import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
 import defaultMapObjectsConfig from "../../../configs/phase1-map-objects.json";
 import defaultUnitsConfig from "../../../configs/units.json";
+import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
 import defaultWorldConfig from "../../../configs/phase1-world.json";
 import type {
   BattleSkillCatalogConfig,
@@ -14,6 +16,7 @@ import type {
   NeutralBehaviorMode,
   ResourceLedger,
   ResourceNode,
+  TerrainType,
   UnitCatalogConfig,
   WorldGenerationConfig
 } from "./models.ts";
@@ -25,12 +28,19 @@ let runtimeBattleSkillCatalog: BattleSkillCatalogConfig = structuredClone(defaul
 let runtimeBattleBalanceConfig: BattleBalanceConfig = structuredClone(defaultBattleBalanceConfig as BattleBalanceConfig);
 let runtimeHeroSkillTree: HeroSkillTreeConfig = structuredClone(defaultHeroSkillTreesConfig as HeroSkillTreeConfig);
 
+export const DEFAULT_MAP_VARIANT_ID = "phase1";
+export const FRONTIER_BASIN_MAP_VARIANT_ID = "frontier_basin";
+
 export interface RuntimeConfigBundle {
   world: WorldGenerationConfig;
   mapObjects: MapObjectsConfig;
   units: UnitCatalogConfig;
   battleSkills: BattleSkillCatalogConfig;
   battleBalance?: BattleBalanceConfig;
+}
+
+export interface RoomRuntimeConfigBundle extends RuntimeConfigBundle {
+  mapVariantId: string;
 }
 
 function cloneWorldConfig(config: WorldGenerationConfig): WorldGenerationConfig {
@@ -118,6 +128,10 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isResourceKind(value: unknown): value is "gold" | "wood" | "ore" {
   return value === "gold" || value === "wood" || value === "ore";
+}
+
+function isTerrainType(value: unknown): value is TerrainType {
+  return value === "grass" || value === "dirt" || value === "sand" || value === "water";
 }
 
 function isNeutralBehaviorMode(value: unknown): value is NeutralBehaviorMode {
@@ -410,6 +424,27 @@ export function validateWorldConfig(config: WorldGenerationConfig): void {
       }
     }
   }
+
+  const occupiedTerrainOverrides = new Set<string>();
+  for (const override of config.terrainOverrides ?? []) {
+    if (!isTerrainType(override.terrain)) {
+      throw new Error(`World config terrain override has invalid terrain: ${String(override.terrain)}`);
+    }
+    if (
+      override.position.x < 0 ||
+      override.position.y < 0 ||
+      override.position.x >= config.width ||
+      override.position.y >= config.height
+    ) {
+      throw new Error("World config terrain override exceeds map bounds");
+    }
+
+    const key = `${override.position.x},${override.position.y}`;
+    if (occupiedTerrainOverrides.has(key)) {
+      throw new Error(`Duplicate terrain override at ${key}`);
+    }
+    occupiedTerrainOverrides.add(key);
+  }
 }
 
 export function validateMapObjectsConfig(
@@ -668,6 +703,66 @@ export function getDefaultHeroSkillTreeConfig(): HeroSkillTreeConfig {
   const config = cloneHeroSkillTreeConfig(runtimeHeroSkillTree);
   validateHeroSkillTreeConfig(config);
   return config;
+}
+
+function hashVariantSeed(value: string, seed: number): number {
+  let hash = seed >>> 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 16777619) >>> 0;
+  }
+  return hash >>> 0;
+}
+
+function parseRequestedMapVariantId(roomId: string): string | undefined {
+  const match = roomId.match(/\[map:([a-z0-9_-]+)\]/i);
+  return match?.[1]?.toLowerCase();
+}
+
+function getAvailableMapVariantIds(): string[] {
+  return [DEFAULT_MAP_VARIANT_ID, FRONTIER_BASIN_MAP_VARIANT_ID];
+}
+
+export function resolveMapVariantIdForRoom(roomId: string, seed = 1001): string {
+  const requested = parseRequestedMapVariantId(roomId);
+  if (!requested) {
+    return DEFAULT_MAP_VARIANT_ID;
+  }
+  if (requested === "random") {
+    const variants = getAvailableMapVariantIds();
+    return variants[hashVariantSeed(roomId, seed) % variants.length] ?? DEFAULT_MAP_VARIANT_ID;
+  }
+  if (requested === DEFAULT_MAP_VARIANT_ID || requested === FRONTIER_BASIN_MAP_VARIANT_ID) {
+    return requested;
+  }
+  return DEFAULT_MAP_VARIANT_ID;
+}
+
+export function getRuntimeConfigBundleForRoom(roomId: string, seed = 1001): RoomRuntimeConfigBundle {
+  const mapVariantId = resolveMapVariantIdForRoom(roomId, seed);
+  const units = getDefaultUnitCatalog();
+  const battleSkills = getDefaultBattleSkillCatalog();
+  const battleBalance = getBattleBalanceConfig();
+
+  const world =
+    mapVariantId === FRONTIER_BASIN_MAP_VARIANT_ID
+      ? cloneWorldConfig(frontierBasinWorldConfig as WorldGenerationConfig)
+      : getDefaultWorldConfig();
+  const mapObjects =
+    mapVariantId === FRONTIER_BASIN_MAP_VARIANT_ID
+      ? cloneMapObjectsConfig(frontierBasinMapObjectsConfig as MapObjectsConfig)
+      : getDefaultMapObjectsConfig();
+
+  validateWorldConfig(world);
+  validateMapObjectsConfig(mapObjects, world, units);
+
+  return {
+    mapVariantId,
+    world,
+    mapObjects,
+    units,
+    battleSkills,
+    battleBalance
+  };
 }
 
 export function setWorldConfig(config: WorldGenerationConfig): void {

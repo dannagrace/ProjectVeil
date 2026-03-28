@@ -298,6 +298,7 @@ export interface WorldMetaState {
   roomId: string;
   seed: number;
   day: number;
+  mapVariantId?: string;
 }
 
 export interface WorldState {
@@ -916,11 +917,17 @@ export interface ResourceSpawnConfig {
   oreChance: number;
 }
 
+export interface TerrainOverrideConfig {
+  position: Vec2;
+  terrain: TerrainType;
+}
+
 export interface WorldGenerationConfig {
   width: number;
   height: number;
   heroes: HeroConfig[];
   resourceSpawn: ResourceSpawnConfig;
+  terrainOverrides?: TerrainOverrideConfig[];
 }
 
 export interface MapObjectsConfig {

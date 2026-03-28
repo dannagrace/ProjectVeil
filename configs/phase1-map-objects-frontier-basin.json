@@ -1,0 +1,210 @@
+{
+  "neutralArmies": [
+    {
+      "id": "neutral-1",
+      "position": {
+        "x": 5,
+        "y": 4
+      },
+      "reward": {
+        "kind": "gold",
+        "amount": 300
+      },
+      "stacks": [
+        {
+          "templateId": "wolf_pack",
+          "count": 8
+        }
+      ],
+      "behavior": {
+        "mode": "patrol",
+        "patrolRadius": 4,
+        "detectionRadius": 5,
+        "chaseDistance": 10,
+        "speed": 2
+      }
+    },
+    {
+      "id": "neutral-2",
+      "position": {
+        "x": 4,
+        "y": 5
+      },
+      "reward": {
+        "kind": "ore",
+        "amount": 4
+      },
+      "stacks": [
+        {
+          "templateId": "hero_guard_basic",
+          "count": 5
+        },
+        {
+          "templateId": "wolf_pack",
+          "count": 3
+        }
+      ],
+      "behavior": {
+        "mode": "guard",
+        "detectionRadius": 3,
+        "chaseDistance": 6,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-3",
+      "position": {
+        "x": 6,
+        "y": 3
+      },
+      "reward": {
+        "kind": "wood",
+        "amount": 6
+      },
+      "stacks": [
+        {
+          "templateId": "wolf_pack",
+          "count": 6
+        }
+      ],
+      "behavior": {
+        "mode": "patrol",
+        "patrolRadius": 1,
+        "detectionRadius": 3,
+        "chaseDistance": 5,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-4",
+      "position": {
+        "x": 1,
+        "y": 6
+      },
+      "reward": {
+        "kind": "gold",
+        "amount": 220
+      },
+      "stacks": [
+        {
+          "templateId": "hero_guard_basic",
+          "count": 7
+        }
+      ],
+      "behavior": {
+        "mode": "guard",
+        "detectionRadius": 2,
+        "chaseDistance": 4,
+        "speed": 1
+      }
+    }
+  ],
+  "guaranteedResources": [
+    {
+      "position": {
+        "x": 2,
+        "y": 1
+      },
+      "resource": {
+        "kind": "wood",
+        "amount": 5
+      }
+    },
+    {
+      "position": {
+        "x": 6,
+        "y": 5
+      },
+      "resource": {
+        "kind": "ore",
+        "amount": 4
+      }
+    }
+  ],
+  "buildings": [
+    {
+      "id": "recruit-post-1",
+      "kind": "recruitment_post",
+      "position": {
+        "x": 1,
+        "y": 3
+      },
+      "label": "前线招募所",
+      "unitTemplateId": "hero_guard_basic",
+      "recruitCount": 4,
+      "cost": {
+        "gold": 240,
+        "wood": 0,
+        "ore": 0
+      }
+    },
+    {
+      "id": "shrine-attack-1",
+      "kind": "attribute_shrine",
+      "position": {
+        "x": 3,
+        "y": 2
+      },
+      "label": "战旗圣坛",
+      "bonus": {
+        "attack": 2,
+        "defense": 0,
+        "power": 0,
+        "knowledge": 0
+      }
+    },
+    {
+      "id": "mine-wood-1",
+      "kind": "resource_mine",
+      "position": {
+        "x": 3,
+        "y": 1
+      },
+      "label": "前线伐木场",
+      "resourceKind": "wood",
+      "income": 5
+    },
+    {
+      "id": "recruit-post-2",
+      "kind": "recruitment_post",
+      "position": {
+        "x": 6,
+        "y": 1
+      },
+      "label": "峡口哨募站",
+      "unitTemplateId": "hero_guard_basic",
+      "recruitCount": 3,
+      "cost": {
+        "gold": 180,
+        "wood": 1,
+        "ore": 0
+      }
+    },
+    {
+      "id": "shrine-knowledge-1",
+      "kind": "attribute_shrine",
+      "position": {
+        "x": 4,
+        "y": 2
+      },
+      "label": "星纹观测坛",
+      "bonus": {
+        "attack": 0,
+        "defense": 0,
+        "power": 1,
+        "knowledge": 1
+      }
+    },
+    {
+      "id": "mine-ore-1",
+      "kind": "resource_mine",
+      "position": {
+        "x": 1,
+        "y": 5
+      },
+      "label": "裂谷矿井",
+      "resourceKind": "ore",
+      "income": 4
+    }
+  ]
+}

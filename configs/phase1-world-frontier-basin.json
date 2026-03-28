@@ -1,0 +1,171 @@
+{
+  "width": 8,
+  "height": 8,
+  "heroes": [
+    {
+      "id": "hero-1",
+      "playerId": "player-1",
+      "name": "凯琳",
+      "position": {
+        "x": 1,
+        "y": 1
+      },
+      "vision": 2,
+      "move": {
+        "total": 6,
+        "remaining": 6
+      },
+      "stats": {
+        "attack": 2,
+        "defense": 2,
+        "power": 1,
+        "knowledge": 1,
+        "hp": 30,
+        "maxHp": 30
+      },
+      "progression": {
+        "level": 1,
+        "experience": 0,
+        "battlesWon": 0,
+        "neutralBattlesWon": 0,
+        "pvpBattlesWon": 0
+      },
+      "loadout": {
+        "inventory": [
+          "militia_pike",
+          "vanguard_blade",
+          "padded_gambeson",
+          "scout_compass"
+        ]
+      },
+      "armyTemplateId": "hero_guard_basic",
+      "armyCount": 12
+    },
+    {
+      "id": "hero-2",
+      "playerId": "player-2",
+      "name": "罗安",
+      "position": {
+        "x": 6,
+        "y": 6
+      },
+      "vision": 2,
+      "move": {
+        "total": 6,
+        "remaining": 6
+      },
+      "stats": {
+        "attack": 2,
+        "defense": 2,
+        "power": 1,
+        "knowledge": 1,
+        "hp": 30,
+        "maxHp": 30
+      },
+      "progression": {
+        "level": 1,
+        "experience": 0,
+        "battlesWon": 0,
+        "neutralBattlesWon": 0,
+        "pvpBattlesWon": 0
+      },
+      "loadout": {
+        "inventory": [
+          "oak_longbow",
+          "tower_shield_mail",
+          "scribe_charm",
+          "captains_insignia"
+        ]
+      },
+      "armyTemplateId": "hero_guard_basic",
+      "armyCount": 10
+    }
+  ],
+  "resourceSpawn": {
+    "goldChance": 0.06,
+    "woodChance": 0.06,
+    "oreChance": 0.06
+  },
+  "terrainOverrides": [
+    {
+      "position": { "x": 2, "y": 2 },
+      "terrain": "water"
+    },
+    {
+      "position": { "x": 2, "y": 3 },
+      "terrain": "water"
+    },
+    {
+      "position": { "x": 3, "y": 3 },
+      "terrain": "water"
+    },
+    {
+      "position": { "x": 4, "y": 3 },
+      "terrain": "water"
+    },
+    {
+      "position": { "x": 5, "y": 2 },
+      "terrain": "water"
+    },
+    {
+      "position": { "x": 5, "y": 3 },
+      "terrain": "water"
+    },
+    {
+      "position": { "x": 1, "y": 4 },
+      "terrain": "sand"
+    },
+    {
+      "position": { "x": 2, "y": 4 },
+      "terrain": "sand"
+    },
+    {
+      "position": { "x": 3, "y": 4 },
+      "terrain": "sand"
+    },
+    {
+      "position": { "x": 4, "y": 4 },
+      "terrain": "sand"
+    },
+    {
+      "position": { "x": 5, "y": 4 },
+      "terrain": "sand"
+    },
+    {
+      "position": { "x": 6, "y": 4 },
+      "terrain": "sand"
+    },
+    {
+      "position": { "x": 4, "y": 1 },
+      "terrain": "dirt"
+    },
+    {
+      "position": { "x": 5, "y": 1 },
+      "terrain": "dirt"
+    },
+    {
+      "position": { "x": 6, "y": 1 },
+      "terrain": "dirt"
+    },
+    {
+      "position": { "x": 6, "y": 2 },
+      "terrain": "dirt"
+    },
+    {
+      "position": { "x": 6, "y": 3 },
+      "terrain": "dirt"
+    },
+    {
+      "position": { "x": 1, "y": 5 },
+      "terrain": "dirt"
+    },
+    {
+      "position": { "x": 2, "y": 5 },
+      "terrain": "dirt"
+    },
+    {
+      "position": { "x": 3, "y": 5 },
+      "terrain": "dirt"
+    }
+  ]
+}
