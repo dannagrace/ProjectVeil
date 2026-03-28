@@ -34,7 +34,7 @@ import {
   normalizeHeroState,
   totalExperienceRequiredForLevel
 } from "./models.ts";
-import { getDefaultMapObjectsConfig, getDefaultWorldConfig } from "./world-config.ts";
+import { getRuntimeConfigBundleForRoom } from "./world-config.ts";
 import {
   validateMapObjectsConfig,
   validateWorldConfig
@@ -112,8 +112,8 @@ function maybeAwardBattleEquipmentDrop(
   };
 }
 
-function createTerrainTile(position: Vec2, roll: number): TileState {
-  const terrain = roll < 0.55 ? "grass" : roll < 0.75 ? "dirt" : roll < 0.92 ? "sand" : "water";
+function createTerrainTile(position: Vec2, roll: number, forcedTerrain?: TileState["terrain"]): TileState {
+  const terrain = forcedTerrain ?? (roll < 0.55 ? "grass" : roll < 0.75 ? "dirt" : roll < 0.92 ? "sand" : "water");
   return {
     position,
     terrain,
@@ -1293,15 +1293,19 @@ export function createWorldStateFromConfigs(
     ...patrolWaypointKeys,
     ...mapObjects.buildings.map((building) => tileKey(building.position))
   ]);
+  const terrainOverrides = new Map(
+    (config.terrainOverrides ?? []).map((override) => [tileKey(override.position), override.terrain] as const)
+  );
 
   const tiles: TileState[] = [];
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const position = { x, y };
       const key = tileKey(position);
+      const terrain = terrainOverrides.get(key);
       const tile = forcedWalkableKeys.has(key)
-        ? ensureTileIsWalkable(createTerrainTile(position, rng()))
-        : createTerrainTile(position, rng());
+        ? ensureTileIsWalkable(createTerrainTile(position, rng(), terrain))
+        : createTerrainTile(position, rng(), terrain);
       const guaranteedResource = mapObjects.guaranteedResources.find((item) => samePosition(item.position, { x, y }));
       if (guaranteedResource) {
         tile.resource = guaranteedResource.resource;
@@ -1345,7 +1349,15 @@ export function createWorldStateFromConfigs(
 }
 
 export function createInitialWorldState(seed = 1001, roomId = "room-alpha"): WorldState {
-  return createWorldStateFromConfigs(getDefaultWorldConfig(), getDefaultMapObjectsConfig(), seed, roomId);
+  const bundle = getRuntimeConfigBundleForRoom(roomId, seed);
+  const state = createWorldStateFromConfigs(bundle.world, bundle.mapObjects, seed, roomId);
+  return {
+    ...state,
+    meta: {
+      ...state.meta,
+      mapVariantId: bundle.mapVariantId
+    }
+  };
 }
 
 export function listReachableTiles(state: WorldState, heroId: string): Vec2[] {

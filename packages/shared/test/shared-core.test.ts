@@ -27,6 +27,7 @@ import {
   createDefaultHeroLoadout,
   createNeutralBattleState,
   createDefaultHeroProgression,
+  createInitialWorldState,
   createPlayerWorldView,
   createWorldStateFromConfigs,
   decodePlayerWorldView,
@@ -2131,6 +2132,46 @@ test("createWorldStateFromConfigs reuses deterministic generation for preview an
   assert.equal(shrineTile?.building?.kind, "attribute_shrine");
   assert.equal(mineTile?.building?.kind, "resource_mine");
   assert.deepEqual(previewState.map.tiles[0]?.occupant, { kind: "hero", refId: "hero-1" });
+});
+
+test("createInitialWorldState selects the frontier basin variant and supports the new ore mine interaction", () => {
+  const state = createInitialWorldState(1001, "preview-frontier[map:frontier_basin]");
+
+  assert.equal(state.meta.mapVariantId, "frontier_basin");
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 2 && tile.position.y === 2)?.terrain, "water");
+  assert.equal(state.buildings["mine-ore-1"]?.kind, "resource_mine");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.buildings["mine-ore-1"]?.income, 4);
+  assert.equal(state.neutralArmies["neutral-2"]?.reward?.kind, "ore");
+  assert.equal(state.neutralArmies["neutral-3"]?.reward?.kind, "wood");
+  assert.equal(state.neutralArmies["neutral-4"]?.reward?.amount, 220);
+
+  const moved = resolveWorldAction(state, {
+    type: "hero.move",
+    heroId: "hero-1",
+    destination: { x: 1, y: 5 }
+  });
+
+  assert.deepEqual(moved.state.heroes.find((hero) => hero.id === "hero-1")?.position, { x: 1, y: 5 });
+
+  const claimed = resolveWorldAction(moved.state, {
+    type: "hero.claimMine",
+    heroId: "hero-1",
+    buildingId: "mine-ore-1"
+  });
+
+  assert.deepEqual(claimed.events, [
+    {
+      type: "hero.claimedMine",
+      heroId: "hero-1",
+      buildingId: "mine-ore-1",
+      buildingKind: "resource_mine",
+      resourceKind: "ore",
+      income: 4,
+      ownerPlayerId: "player-1"
+    }
+  ]);
+  assert.equal(claimed.state.resources["player-1"]?.ore, 4);
 });
 
 test("applyBattleOutcomeToWorld grants neutral rewards and moves the hero onto the defeated army tile", () => {
