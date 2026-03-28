@@ -4,5 +4,5 @@
     "lib": ["ES2022", "DOM"],
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.d.ts"]
 }
