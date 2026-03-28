@@ -4,9 +4,26 @@ on:
   push:
     branches:
       - main
+    tags:
+      - wechat-release-*
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: Upload the packaged WeChat release artifact via miniprogram-ci
+        required: false
+        default: false
+        type: boolean
+      release_version:
+        description: WeChat upload version, required when upload is enabled
+        required: false
+        type: string
+      upload_desc:
+        description: Optional upload description override
+        required: false
+        type: string
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -95,3 +112,97 @@ jobs:
 
       - name: Verify downloaded WeChat release artifact
         run: npm run verify:wechat-release -- --artifacts-dir "${RUNNER_TEMP}/wechat-release-downloaded" --expected-revision "${GITHUB_SHA}"
+
+  wechat-release-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - wechat-build-validation
+      - wechat-release-artifact-smoke
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.upload == 'true') ||
+      startsWith(github.ref, 'refs/tags/wechat-release-')
+    env:
+      WECHAT_UPLOAD_ARTIFACTS_DIR: ${{ runner.temp }}/wechat-release-upload
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Download packaged WeChat release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wechat-release-${{ github.sha }}
+          path: ${{ env.WECHAT_UPLOAD_ARTIFACTS_DIR }}
+
+      - name: Check WeChat upload secrets
+        id: wechat-secrets
+        env:
+          WECHAT_MINIPROGRAM_APPID: ${{ secrets.WECHAT_MINIPROGRAM_APPID }}
+          WECHAT_MINIPROGRAM_PRIVATE_KEY: ${{ secrets.WECHAT_MINIPROGRAM_PRIVATE_KEY }}
+          WECHAT_MINIPROGRAM_PRIVATE_KEY_BASE64: ${{ secrets.WECHAT_MINIPROGRAM_PRIVATE_KEY_BASE64 }}
+        run: |
+          if [[ -n "${WECHAT_MINIPROGRAM_APPID}" && ( -n "${WECHAT_MINIPROGRAM_PRIVATE_KEY}" || -n "${WECHAT_MINIPROGRAM_PRIVATE_KEY_BASE64}" ) ]]; then
+            echo "ready=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "ready=false" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## WeChat Mini Game Upload"
+            echo
+            echo "- Status: skipped"
+            echo "- Reason: missing \`WECHAT_MINIPROGRAM_APPID\` and/or private key secret"
+            echo "- Expected secrets: \`WECHAT_MINIPROGRAM_APPID\` plus one of \`WECHAT_MINIPROGRAM_PRIVATE_KEY\` or \`WECHAT_MINIPROGRAM_PRIVATE_KEY_BASE64\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Resolve upload inputs
+        id: upload-inputs
+        if: steps.wechat-secrets.outputs.ready == 'true'
+        env:
+          DISPATCH_RELEASE_VERSION: ${{ github.event.inputs.release_version }}
+          DISPATCH_UPLOAD_DESC: ${{ github.event.inputs.upload_desc }}
+        run: |
+          version="${DISPATCH_RELEASE_VERSION}"
+          desc="${DISPATCH_UPLOAD_DESC}"
+          if [[ "${GITHUB_REF}" == refs/tags/wechat-release-* ]]; then
+            version="${GITHUB_REF_NAME#wechat-release-}"
+          fi
+          if [[ -z "${version}" ]]; then
+            echo "WeChat upload version is required for workflow_dispatch uploads or must be encoded in tag refs/tags/wechat-release-<version>." >&2
+            exit 1
+          fi
+          {
+            echo "version=${version}"
+            echo "desc<<EOF"
+            echo "${desc}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Upload packaged WeChat release artifact
+        if: steps.wechat-secrets.outputs.ready == 'true'
+        env:
+          WECHAT_MINIPROGRAM_APPID: ${{ secrets.WECHAT_MINIPROGRAM_APPID }}
+          WECHAT_MINIPROGRAM_PRIVATE_KEY: ${{ secrets.WECHAT_MINIPROGRAM_PRIVATE_KEY }}
+          WECHAT_MINIPROGRAM_PRIVATE_KEY_BASE64: ${{ secrets.WECHAT_MINIPROGRAM_PRIVATE_KEY_BASE64 }}
+          WECHAT_MINIPROGRAM_DESC: ${{ steps.upload-inputs.outputs.desc }}
+        run: |
+          npm run upload:wechat-release -- \
+            --artifacts-dir "${WECHAT_UPLOAD_ARTIFACTS_DIR}" \
+            --version "${{ steps.upload-inputs.outputs.version }}"
+
+      - name: Upload WeChat upload receipt
+        if: steps.wechat-secrets.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wechat-upload-${{ github.sha }}
+          path: ${{ env.WECHAT_UPLOAD_ARTIFACTS_DIR }}/*.upload.json
+          if-no-files-found: error

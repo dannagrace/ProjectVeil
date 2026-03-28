@@ -14,17 +14,38 @@
   - sidecar 会记录归档文件名、SHA-256、字节数、导出目录来源，以及归档内文件清单摘要
 - CI 会把上述归档与 sidecar 元数据作为 GitHub Actions artifact `wechat-release-<sha>` 上传，供提审前下载、留档与回滚追溯
 - CI 额外会把刚上传的 artifact 再下载一次，并运行 `npm run verify:wechat-release` 做 artifact 级 smoke 验收
-  - 当前仍不在 CI 中直连微信上传接口；提审上传继续人工执行
+- GitHub Actions 现支持在 `workflow_dispatch` 时显式开启 `upload`，或推送 `wechat-release-<version>` tag 后自动执行 `miniprogram-ci` 上传
+  - 上传前仍会保留 `verify:wechat-release` smoke 验收
+  - 若仓库未配置微信上传 secret，上传 job 会在 summary 中记录 skipped，而不会让 workflow 失败
+  - 上传成功后会生成额外 sidecar `*.upload.json`，记录版本号、commit、上传时间和微信回执摘要
 
 ## 本地执行
 
 - 刷新模板：`npm run prepare:wechat-build`
 - 生成发布元数据：`npm run prepare:wechat-release -- --output-dir <wechatgame-build-dir> --expect-exported-runtime [--source-revision <git-sha>]`
 - 产出发布归档：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
+- 上传已打包产物：`npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`
 - 按 SHA 下载 CI artifact：`npm run download:wechat-release -- --sha <git-sha> [--output-dir artifacts/downloaded/wechat-release-<git-sha>]`
 - 验收已下载 artifact：`npm run verify:wechat-release -- --artifacts-dir <downloaded-artifact-dir> [--expected-revision <git-sha>]`
 - 只做 CI 同款校验：`npm run check:wechat-build`
 - 校验真实导出目录：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
+
+## 上传凭据
+
+- GitHub Actions secrets：
+  - `WECHAT_MINIPROGRAM_APPID`：目标小游戏 appid
+  - `WECHAT_MINIPROGRAM_PRIVATE_KEY`：微信开放平台下载的 PEM 私钥原文
+  - `WECHAT_MINIPROGRAM_PRIVATE_KEY_BASE64`：若不方便直接存多行 PEM，可改存 base64；与上项二选一
+- 本地环境变量：
+  - `WECHAT_MINIPROGRAM_APPID`
+  - `WECHAT_MINIPROGRAM_PRIVATE_KEY` 或 `WECHAT_MINIPROGRAM_PRIVATE_KEY_BASE64`
+  - 可选：`WECHAT_MINIPROGRAM_VERSION`、`WECHAT_MINIPROGRAM_DESC`、`WECHAT_MINIPROGRAM_ROBOT`
+- 也可通过 CLI 传参覆盖：
+  - `--appid <appid>`
+  - `--private-key-path <pem-path>`
+  - `--version <wechat-version>`
+  - `--desc <upload-desc>`
+  - `--robot <robot-id>`
 
 ## 发布步骤
 
@@ -34,7 +55,8 @@
 4. 对真实导出目录执行 `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`。
 5. 运行 `npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`，生成包含 `codex.wechat.release.json` 的归档包与 sidecar 元数据。
 6. 运行 `npm run verify:wechat-release -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>]`，在上传前先做一次本地 artifact 级冒烟验收。
-7. 将远程资源上传到 CDN，在微信开发者工具中导入归档解压后的构建目录并完成人工 smoke check。
+7. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
+8. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成人工 smoke check 与提审。
 
 ## 下载与验收
 
@@ -42,7 +64,8 @@
 
 1. 下载 artifact：`npm run download:wechat-release -- --sha <git-sha>`
 2. 复核 sidecar、release manifest 与 smoke 清单：`npm run verify:wechat-release -- --artifacts-dir artifacts/downloaded/wechat-release-<git-sha> --expected-revision <git-sha>`
-3. 通过后再解压归档并导入微信开发者工具，执行人工提审前检查
+3. 如需直接提审上传，可执行 `npm run upload:wechat-release -- --artifacts-dir artifacts/downloaded/wechat-release-<git-sha> --version <wechat-version>`
+4. 通过后再解压归档并导入微信开发者工具，执行人工提审前检查
 
 `verify:wechat-release` 默认会完成以下检查：
 
@@ -77,4 +100,4 @@
 - CDN 资源回滚：切回上一个静态资源目录版本
 - 小游戏包回滚：在微信开发者工具 / 平台侧重新上传上一个已验证通过的构建目录
 
-当前仓库未接入微信发布凭据，也不在 CI 中直连微信上传接口；正式提审和回滚发布仍保持人工执行。
+当前仓库默认仍不会在 `main` 分支 push 上自动上传；只有手动 `workflow_dispatch` 显式开启 `upload`，或推送 `wechat-release-<version>` tag 时，才会尝试调用微信上传接口。
