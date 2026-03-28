@@ -53,5 +53,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check WeChat mini game build templates
+      - name: Check WeChat mini game templates and exported fixture
         run: npm run check:wechat-build

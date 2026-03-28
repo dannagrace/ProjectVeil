@@ -196,8 +196,10 @@ npm run dev:server
     - `codex.wechat.build.json`
     - `README.codex.md`
 - 导出结果校验：
-  - `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir>`
+  - `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
   - 会读取导出的 `game.json`
+  - 会校验注入的 `game.json / project.config.json / codex.wechat.build.json / README.codex.md` 是否与仓库配置一致
+  - 会校验导出目录里是否包含 `game.js / application.js / src/settings.json` 这些运行时 bootstrap 文件
   - 计算主包体积与 `subpackages` 总体积
   - 对照 `4MB / 30MB` 预算给出通过/失败结果
   - 会根据 `runtimeRemoteUrl` 自动推导小游戏需要的 `request / socket` 域名

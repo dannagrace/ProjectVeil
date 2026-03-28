@@ -144,32 +144,157 @@ test("buildWechatMinigameDomainCoverage derives runtime request and socket origi
 
 test("analyzeWechatMinigameBuildOutput measures main package and subpackage budgets from build output", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-wechat-build-"));
+  const config = normalizeWechatMinigameBuildConfig({
+    mainPackageBudgetMb: 1,
+    totalSubpackageBudgetMb: 1,
+    expectedSubpackages: [{ root: "subpackages/battle" }]
+  });
+  const artifacts = buildWechatMinigameTemplateArtifacts(config);
   fs.mkdirSync(path.join(tempDir, "subpackages", "battle"), { recursive: true });
   fs.writeFileSync(
     path.join(tempDir, "game.json"),
     JSON.stringify({
+      ...artifacts.gameJson,
       subpackages: [{ root: "subpackages/battle" }]
     })
   );
   fs.writeFileSync(path.join(tempDir, "game.js"), Buffer.alloc(140));
-  fs.writeFileSync(path.join(tempDir, "project.config.json"), JSON.stringify({ compileType: "game" }));
-  fs.writeFileSync(path.join(tempDir, "codex.wechat.build.json"), JSON.stringify({ buildTemplatePlatform: "wechatgame" }));
-  fs.writeFileSync(path.join(tempDir, "README.codex.md"), "# checklist\n");
+  fs.writeFileSync(path.join(tempDir, "project.config.json"), JSON.stringify(artifacts.projectConfigJson));
+  fs.writeFileSync(path.join(tempDir, "codex.wechat.build.json"), JSON.stringify(artifacts.manifestJson));
+  fs.writeFileSync(path.join(tempDir, "README.codex.md"), `${artifacts.releaseChecklistMarkdown}\n`);
   fs.writeFileSync(path.join(tempDir, "subpackages", "battle", "index.js"), Buffer.alloc(60));
 
-  const analysis = analyzeWechatMinigameBuildOutput(
-    tempDir,
-    normalizeWechatMinigameBuildConfig({
-      mainPackageBudgetMb: 1,
-      totalSubpackageBudgetMb: 1,
-      expectedSubpackages: [{ root: "subpackages/battle" }]
-    })
-  );
+  const analysis = analyzeWechatMinigameBuildOutput(tempDir, config);
 
   assert.equal(analysis.errors.length, 0);
   assert.ok(analysis.mainPackageBytes > 140);
   assert.equal(analysis.totalSubpackageBytes, 60);
   assert.deepEqual(analysis.subpackages, [{ root: "subpackages/battle", bytes: 60 }]);
+});
+
+test("analyzeWechatMinigameBuildOutput validates injected config and exported runtime bootstrap files", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-wechat-build-export-"));
+  fs.mkdirSync(path.join(tempDir, "src"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tempDir, "game.json"),
+    JSON.stringify({
+      deviceOrientation: "portrait",
+      networkTimeout: {
+        request: 10000,
+        connectSocket: 10000,
+        uploadFile: 10000,
+        downloadFile: 10000
+      },
+      subpackages: []
+    })
+  );
+  fs.writeFileSync(path.join(tempDir, "game.js"), "\"use strict\";\n");
+  fs.writeFileSync(path.join(tempDir, "application.js"), "\"use strict\";\n");
+  fs.writeFileSync(path.join(tempDir, "src", "settings.json"), JSON.stringify({ subpackages: [] }));
+  fs.writeFileSync(
+    path.join(tempDir, "project.config.json"),
+    JSON.stringify({
+      projectname: "Project Veil",
+      appid: "touristappid",
+      compileType: "game",
+      libVersion: "trial"
+    })
+  );
+  fs.writeFileSync(
+    path.join(tempDir, "codex.wechat.build.json"),
+    JSON.stringify(
+      buildWechatMinigameTemplateArtifacts(
+        normalizeWechatMinigameBuildConfig({
+          runtimeRemoteUrl: "http://127.0.0.1:2567",
+          domains: {
+            request: ["http://127.0.0.1:2567"],
+            socket: ["ws://127.0.0.1:2567"],
+            uploadFile: [],
+            downloadFile: []
+          }
+        })
+      ).manifestJson
+    )
+  );
+  fs.writeFileSync(
+    path.join(tempDir, "README.codex.md"),
+    `${buildWechatMinigameTemplateArtifacts(
+      normalizeWechatMinigameBuildConfig({
+        runtimeRemoteUrl: "http://127.0.0.1:2567",
+        domains: {
+          request: ["http://127.0.0.1:2567"],
+          socket: ["ws://127.0.0.1:2567"],
+          uploadFile: [],
+          downloadFile: []
+        }
+      })
+    ).releaseChecklistMarkdown}\n`
+  );
+
+  const analysis = analyzeWechatMinigameBuildOutput(
+    tempDir,
+    normalizeWechatMinigameBuildConfig({
+      runtimeRemoteUrl: "http://127.0.0.1:2567",
+      domains: {
+        request: ["http://127.0.0.1:2567"],
+        socket: ["ws://127.0.0.1:2567"],
+        uploadFile: [],
+        downloadFile: []
+      }
+    }),
+    { expectExportedRuntime: true }
+  );
+
+  assert.equal(analysis.errors.length, 0);
+});
+
+test("analyzeWechatMinigameBuildOutput reports injected config drift and missing exported bootstrap files", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-wechat-build-drift-"));
+  fs.writeFileSync(
+    path.join(tempDir, "game.json"),
+    JSON.stringify({
+      deviceOrientation: "landscape",
+      networkTimeout: {
+        request: 10000,
+        connectSocket: 10000,
+        uploadFile: 10000,
+        downloadFile: 10000
+      },
+      subpackages: []
+    })
+  );
+  fs.writeFileSync(
+    path.join(tempDir, "project.config.json"),
+    JSON.stringify({
+      projectname: "Wrong Name",
+      appid: "touristappid",
+      compileType: "game"
+    })
+  );
+  fs.writeFileSync(path.join(tempDir, "codex.wechat.build.json"), JSON.stringify({ buildTemplatePlatform: "wechatgame" }));
+  fs.writeFileSync(path.join(tempDir, "README.codex.md"), "# stale\n");
+
+  const analysis = analyzeWechatMinigameBuildOutput(
+    tempDir,
+    normalizeWechatMinigameBuildConfig({
+      runtimeRemoteUrl: "http://127.0.0.1:2567",
+      domains: {
+        request: ["http://127.0.0.1:2567"],
+        socket: ["ws://127.0.0.1:2567"],
+        uploadFile: [],
+        downloadFile: []
+      }
+    }),
+    { expectExportedRuntime: true }
+  );
+
+  assert.match(analysis.errors.join("\n"), /Exported build is missing required runtime bootstrap file: game\.js/);
+  assert.match(analysis.errors.join("\n"), /Exported build is missing required runtime bootstrap file: application\.js/);
+  assert.match(analysis.errors.join("\n"), /Exported build is missing required runtime bootstrap file: src\/settings\.json/);
+  assert.match(analysis.errors.join("\n"), /game\.json\.deviceOrientation mismatch/);
+  assert.match(analysis.errors.join("\n"), /project\.config\.json\.projectname mismatch/);
+  assert.match(analysis.errors.join("\n"), /codex\.wechat\.build\.json\.projectName mismatch/);
+  assert.match(analysis.errors.join("\n"), /README\.codex\.md does not match generated template content/);
 });
 
 test("analyzeWechatMinigameBuildOutput reports budget overruns and missing expected subpackages", () => {

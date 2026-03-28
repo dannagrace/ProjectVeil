@@ -8,11 +8,13 @@ import {
 interface Args {
   configPath: string;
   outputDir?: string;
+  expectExportedRuntime: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
   let configPath = "apps/cocos-client/wechat-minigame.build.json";
   let outputDir: string | undefined;
+  let expectExportedRuntime = false;
 
   for (let index = 2; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -25,11 +27,16 @@ function parseArgs(argv: string[]): Args {
     if (arg === "--output-dir" && next) {
       outputDir = next;
       index += 1;
+      continue;
+    }
+    if (arg === "--expect-exported-runtime") {
+      expectExportedRuntime = true;
     }
   }
 
   return {
     configPath,
+    expectExportedRuntime,
     ...(outputDir ? { outputDir } : {})
   };
 }
@@ -44,7 +51,9 @@ function main(): void {
   const configPath = path.resolve(repoRoot, args.configPath);
   const config = normalizeWechatMinigameBuildConfig(JSON.parse(fs.readFileSync(configPath, "utf8")));
   const outputDir = path.resolve(repoRoot, args.outputDir ?? config.buildOutputDir);
-  const analysis = analyzeWechatMinigameBuildOutput(outputDir, config);
+  const analysis = analyzeWechatMinigameBuildOutput(outputDir, config, {
+    expectExportedRuntime: args.expectExportedRuntime
+  });
 
   console.log(`WeChat mini game build report: ${path.relative(repoRoot, outputDir)}`);
   console.log(

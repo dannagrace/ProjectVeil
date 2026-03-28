@@ -96,6 +96,7 @@
 - Cocos 主客户端类型检查：`npm run typecheck:client`
 - 微信小游戏模板刷新：`npm run prepare:wechat-build`
 - 微信小游戏 CI 同款校验：`npm run check:wechat-build`
+- 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - H5 调试壳开发服务：`npm run dev:client:h5`
 - H5 调试壳构建验证：`npm run build:client:h5`
 - H5 调试壳类型检查：`npm run typecheck:client:h5`
