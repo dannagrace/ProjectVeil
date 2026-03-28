@@ -1,4 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function expectEnteredRoom(page: Page, roomId: string): Promise<void> {
+  await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
+  await expect(page.getByTestId("session-meta")).toContainText(`Room: ${roomId}`);
+  await expect(page.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
+}
 
 test("lobby opens and a guest can enter a room", async ({ page }) => {
   const roomId = `e2e-lobby-${Date.now()}`;
@@ -13,10 +19,8 @@ test("lobby opens and a guest can enter a room", async ({ page }) => {
   await page.locator("[data-lobby-display-name]").fill("Smoke Guest");
   await page.locator("[data-enter-room]").click();
 
-  await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
-  await expect(page.getByTestId("session-meta")).toContainText(`Room: ${roomId}`);
+  await expectEnteredRoom(page, roomId);
   await expect(page.getByTestId("account-card")).toContainText("Smoke Guest");
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
 });
 
 test("lobby reuses a cached guest session when entering a room", async ({ page }) => {
@@ -40,8 +44,109 @@ test("lobby reuses a cached guest session when entering a room", async ({ page }
   await page.locator("[data-lobby-room-id]").fill(roomId);
   await page.locator("[data-enter-room]").click();
 
-  await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
+  await expectEnteredRoom(page, roomId);
   await expect(page.getByTestId("session-meta")).toContainText("Player: cached-guest-1");
   await expect(page.getByTestId("account-card")).toContainText("Cached Guest");
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
+});
+
+test("lobby supports formal registration and enters the room with an account session", async ({ page }) => {
+  const stamp = Date.now();
+  const roomId = `e2e-lobby-register-${stamp}`;
+  const loginId = `formal-ranger-${stamp}`;
+  const displayName = "Formal Ranger";
+  const password = "formal-pass-1";
+
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
+  await page.locator("[data-lobby-room-id]").fill(roomId);
+  await page.locator("[data-lobby-login-id]").fill(loginId);
+  await page.locator("[data-registration-display-name]").fill(displayName);
+  await page.locator("[data-registration-password]").fill(password);
+  await page.locator("[data-request-registration]").click();
+
+  await expect(page.locator("[data-registration-token]")).toHaveValue(/\S+/, { timeout: 10_000 });
+  await expect(page.locator(".account-status")).toContainText("注册令牌已生成");
+
+  await page.locator("[data-confirm-registration]").click();
+
+  await expectEnteredRoom(page, roomId);
+  await expect(page.getByTestId("account-card")).toContainText(displayName);
+  await expect(page.getByTestId("account-card")).toContainText(`已绑定登录 ID：${loginId}`);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const raw = window.localStorage.getItem("project-veil:auth-session");
+        return raw ? (JSON.parse(raw) as { authMode?: string; loginId?: string; playerId?: string }) : null;
+      })
+    )
+    .toMatchObject({
+      authMode: "account",
+      loginId
+    });
+});
+
+test("lobby supports password recovery and rotates the account password before entering the room", async ({
+  page,
+  request
+}) => {
+  const stamp = Date.now();
+  const roomId = `e2e-lobby-recovery-${stamp}`;
+  const loginId = `recovery-ranger-${stamp}`;
+  const displayName = "Recovery Ranger";
+  const originalPassword = "recovery-old-1";
+  const nextPassword = "recovery-new-1";
+
+  const requestRegistrationResponse = await request.post("http://127.0.0.1:2567/api/auth/account-registration/request", {
+    data: {
+      loginId,
+      displayName
+    }
+  });
+  expect(requestRegistrationResponse.ok()).toBeTruthy();
+  const requestRegistrationPayload = (await requestRegistrationResponse.json()) as { registrationToken?: string };
+  expect(requestRegistrationPayload.registrationToken).toBeTruthy();
+
+  const confirmRegistrationResponse = await request.post("http://127.0.0.1:2567/api/auth/account-registration/confirm", {
+    data: {
+      loginId,
+      registrationToken: requestRegistrationPayload.registrationToken,
+      password: originalPassword
+    }
+  });
+  expect(confirmRegistrationResponse.ok()).toBeTruthy();
+
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
+  await page.locator("[data-lobby-room-id]").fill(roomId);
+  await page.locator("[data-lobby-login-id]").fill(loginId);
+  await page.locator("[data-request-recovery]").click();
+
+  await expect(page.locator("[data-recovery-token]")).toHaveValue(/\S+/, { timeout: 10_000 });
+  await expect(page.locator(".account-status")).toContainText("找回令牌已生成");
+
+  await page.locator("[data-recovery-password]").fill(nextPassword);
+  await page.locator("[data-confirm-recovery]").click();
+
+  await expectEnteredRoom(page, roomId);
+  await expect(page.getByTestId("account-card")).toContainText(displayName);
+  await expect(page.getByTestId("account-card")).toContainText(`已绑定登录 ID：${loginId}`);
+
+  const oldPasswordLoginResponse = await request.post("http://127.0.0.1:2567/api/auth/account-login", {
+    data: {
+      loginId,
+      password: originalPassword
+    }
+  });
+  expect(oldPasswordLoginResponse.status()).toBe(401);
+
+  const newPasswordLoginResponse = await request.post("http://127.0.0.1:2567/api/auth/account-login", {
+    data: {
+      loginId,
+      password: nextPassword
+    }
+  });
+  expect(newPasswordLoginResponse.ok()).toBeTruthy();
 });
