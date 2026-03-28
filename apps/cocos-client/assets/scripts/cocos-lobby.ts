@@ -59,6 +59,18 @@ interface AuthSessionApiPayload {
   };
 }
 
+interface AccountAuthApiPayload extends AuthSessionApiPayload {
+  status?: string;
+  expiresAt?: string;
+  registrationToken?: string;
+  recoveryToken?: string;
+  account?: {
+    playerId?: string;
+    displayName?: string;
+    loginId?: string;
+  };
+}
+
 interface PlayerAccountApiPayload extends AuthSessionApiPayload {
   account?: {
     playerId?: string;
@@ -94,6 +106,18 @@ interface PlayerEventLogListApiPayload {
 
 interface PlayerAchievementListApiPayload {
   items?: Partial<PlayerAchievementProgress>[];
+}
+
+export interface CocosAccountRegistrationRequestResult {
+  status: string;
+  expiresAt?: string;
+  registrationToken?: string;
+}
+
+export interface CocosPasswordRecoveryRequestResult {
+  status: string;
+  expiresAt?: string;
+  recoveryToken?: string;
 }
 
 type PlayerProgressionApiPayload = Partial<PlayerProgressionSnapshot>;
@@ -794,6 +818,150 @@ export async function loginCocosPasswordAuthSession(
     writeStoredCocosAuthSession(storage, session);
   }
   return session;
+}
+
+export async function requestCocosAccountRegistration(
+  remoteUrl: string,
+  loginId: string,
+  displayName?: string,
+  options?: {
+    fetchImpl?: FetchLike;
+  }
+): Promise<CocosAccountRegistrationRequestResult> {
+  const normalizedLoginId = normalizeLoginId(loginId);
+  if (!normalizedLoginId) {
+    throw new Error("loginId_required");
+  }
+
+  const payload = (await fetchJson(
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/auth/account-registration/request`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        loginId: normalizedLoginId,
+        ...(displayName?.trim() ? { displayName: displayName.trim() } : {})
+      })
+    },
+    options?.fetchImpl
+  )) as AccountAuthApiPayload;
+
+  return {
+    status: payload.status ?? "registration_requested",
+    ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
+    ...(payload.registrationToken ? { registrationToken: payload.registrationToken } : {})
+  };
+}
+
+export async function confirmCocosAccountRegistration(
+  remoteUrl: string,
+  loginId: string,
+  registrationToken: string,
+  password: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "setItem"> | null;
+  }
+): Promise<CocosStoredAuthSession> {
+  const normalizedLoginId = normalizeLoginId(loginId);
+  if (!normalizedLoginId) {
+    throw new Error("loginId_required");
+  }
+
+  const payload = (await fetchJson(
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/auth/account-registration/confirm`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        loginId: normalizedLoginId,
+        registrationToken,
+        password
+      })
+    },
+    options?.fetchImpl
+  )) as AccountAuthApiPayload;
+
+  const session = asStoredAuthSession(payload.session, {
+    playerId: normalizePlayerId(payload.account?.playerId) || normalizedLoginId,
+    displayName: payload.account?.displayName?.trim() || normalizedLoginId,
+    authMode: "account",
+    provider: "account-password",
+    loginId: normalizeLoginId(payload.account?.loginId) ?? normalizedLoginId
+  });
+  const storage = options?.storage ?? getCocosStorage();
+  if (storage) {
+    writeStoredCocosAuthSession(storage, session);
+  }
+  return session;
+}
+
+export async function requestCocosPasswordRecovery(
+  remoteUrl: string,
+  loginId: string,
+  options?: {
+    fetchImpl?: FetchLike;
+  }
+): Promise<CocosPasswordRecoveryRequestResult> {
+  const normalizedLoginId = normalizeLoginId(loginId);
+  if (!normalizedLoginId) {
+    throw new Error("loginId_required");
+  }
+
+  const payload = (await fetchJson(
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/auth/password-recovery/request`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        loginId: normalizedLoginId
+      })
+    },
+    options?.fetchImpl
+  )) as AccountAuthApiPayload;
+
+  return {
+    status: payload.status ?? "recovery_requested",
+    ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
+    ...(payload.recoveryToken ? { recoveryToken: payload.recoveryToken } : {})
+  };
+}
+
+export async function confirmCocosPasswordRecovery(
+  remoteUrl: string,
+  loginId: string,
+  recoveryToken: string,
+  newPassword: string,
+  options?: {
+    fetchImpl?: FetchLike;
+  }
+): Promise<void> {
+  const normalizedLoginId = normalizeLoginId(loginId);
+  if (!normalizedLoginId) {
+    throw new Error("loginId_required");
+  }
+
+  await fetchJson(
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/auth/password-recovery/confirm`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        loginId: normalizedLoginId,
+        recoveryToken,
+        newPassword
+      })
+    },
+    options?.fetchImpl
+  );
 }
 
 export async function loginCocosWechatAuthSession(

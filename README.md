@@ -166,12 +166,14 @@
 - 服务端现已补上开发态正式注册后端闭环：`POST /api/auth/account-registration/request` 可为全新正式账号预留 `loginId` 并生成短时效注册令牌，`POST /api/auth/account-registration/confirm` 会创建新的 `player_accounts` 档案、绑定口令并立即签发首个账号会话；默认通过 `VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE=dev-token` 直接回传开发态令牌，TTL 由 `VEIL_ACCOUNT_REGISTRATION_TTL_MINUTES` 控制，确认成功后会向账号 `recentEventLog` 追加注册申请/完成两条 `account` 审计事件。
 - 服务端现已补上开发态密码找回闭环：`POST /api/auth/password-recovery/request` 会为已绑定口令账号生成短时效重置令牌，`POST /api/auth/password-recovery/confirm` 可用该令牌重置口令并撤销旧会话；默认通过 `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE=dev-token` 直接回传开发态令牌，TTL 由 `VEIL_PASSWORD_RECOVERY_TTL_MINUTES` 控制，且找回申请/确认都会写入账号 `recentEventLog` 的 `account` 审计事件。详细说明见 `docs/account-auth-lifecycle.md`。
 - H5 Lobby 现已补上“账号口令登录”表单；游戏内账号资料卡也能直接绑定或更新口令账号，绑定成功后会立即把当前会话升级成账号模式，不需要重新手写 `playerId`，并会继续沿用同一份英雄长期档与全局资源仓库。
+- H5 Lobby 现已补上开发态“正式注册 / 密码找回”入口：大厅页会直接展示 request / confirm 表单，可申请 dev token、确认注册或重置口令，并在成功后立即缓存正式账号会话进入目标房间。
 - H5 Lobby 和游戏内都已补上“退出游客会话 / 切换游客账号”入口；当前 token 无效时会自动清掉本地会话并回到大厅。
 - Cocos Web 启动入口现在会复用和 H5 共用的 `project-veil:auth-session`：如果浏览器里已有已签名会话，那么直接访问 `?roomId=...` 就能沿用当前游客或正式账号身份进房，HUD 会标出当前是云端游客、正式账号还是本地/手动参数启动。
 - Cocos Web 现在也有真正的 Lobby 面板：没有 `roomId` 查询参数时会先进入大厅，可刷新 `/api/lobby/rooms` 活跃实例、点击字段卡片修改 `playerId / 昵称 / roomId / 登录 ID`、直接游客进入，或走“账号登录并进入”直连正式账号；Lobby 还会通过 `/api/player-accounts/me` / `GET /api/player-accounts/:playerId` 同步当前账号资料与全局仓库摘要。
+- Cocos Lobby 现已追加“正式注册 / 密码找回”按钮：沿用当前 prompt 式输入链路完成 request / confirm 联调，开发态可直接复用响应里的 token 完成新账号注册或重置后登录，不再需要手拼 API 请求。
 - Cocos Lobby 现在也提供“打开配置台”入口，会按当前联机目标自动跳到共享的 `config-center.html`，把配置联调从 H5 侧迁成主客户端可达链路。
 - 服务端新增 `GET /api/lobby/rooms`，会实时返回当前进程内活跃房间的 `roomId / day / seed / connectedPlayers / heroCount / activeBattles / updatedAt` 摘要，便于大厅入口和后续房间浏览器直接复用。
-- 这套账号目前仍是“轻量正式化”阶段：虽然已经有独立正式注册、口令绑定、刷新令牌轮换和单账号会话撤销，但还没有注册 / 找回前端入口、真正的多端并行会话管理或更完整的第三方身份接入。
+- 这套账号目前仍是“轻量正式化”阶段：虽然已经有独立正式注册、口令绑定、前端注册 / 找回入口、刷新令牌轮换和单账号会话撤销，但仍没有真正的多端并行会话管理或更完整的第三方身份接入。
 - H5 会优先连接 `ws://127.0.0.1:2567` 的本地会话服务；若服务未启动，则自动回退到浏览器内嵌房间模式。
 - 本地会话服务已支持房间内 `session.state` 推送同步，后续可在此基础上继续扩展多人联机。
 - 多人原型已支持双英雄同房间联调，以及踩到敌方英雄格时触发玩家对玩家遭遇战。

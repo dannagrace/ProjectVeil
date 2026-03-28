@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  confirmCocosAccountRegistration,
+  confirmCocosPasswordRecovery,
   clearCurrentCocosAuthSession,
   createCocosLobbyPreferences,
   getCocosLobbyPreferencesStorageKey,
@@ -13,6 +15,8 @@ import {
   loginCocosPasswordAuthSession,
   loginCocosGuestAuthSession,
   loginCocosWechatAuthSession,
+  requestCocosAccountRegistration,
+  requestCocosPasswordRecovery,
   rememberPreferredCocosDisplayName,
   resolveCocosApiBaseUrl,
   resolveCocosConfigCenterUrl,
@@ -202,6 +206,109 @@ test("loginCocosPasswordAuthSession stores account sessions with loginId", async
     source: "remote"
   });
   assert.ok(values.get("project-veil:auth-session")?.includes("\"authMode\":\"account\""));
+});
+
+test("cocos account registration helpers request a dev token and persist the confirmed session", async () => {
+  const values = new Map<string, string>();
+  const storage = {
+    setItem(key: string, value: string): void {
+      values.set(key, value);
+    }
+  };
+  const requests: Array<{ url: string; body: string }> = [];
+  let callIndex = 0;
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      body: String(init?.body ?? "")
+    });
+    callIndex += 1;
+
+    if (callIndex === 1) {
+      return new Response(
+        JSON.stringify({
+          status: "registration_requested",
+          expiresAt: "2026-03-28T12:34:56.000Z",
+          registrationToken: "dev-registration-token"
+        }),
+        { status: 202, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        account: {
+          playerId: "account-player",
+          displayName: "暮潮守望",
+          loginId: "veil-ranger"
+        },
+        session: {
+          token: "account.token",
+          playerId: "account-player",
+          displayName: "暮潮守望",
+          authMode: "account",
+          loginId: "veil-ranger"
+        }
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  const requestResult = await requestCocosAccountRegistration("http://127.0.0.1:2567", "Veil-Ranger", "暮潮守望", {
+    fetchImpl
+  });
+  assert.equal(requestResult.registrationToken, "dev-registration-token");
+
+  const session = await confirmCocosAccountRegistration(
+    "http://127.0.0.1:2567",
+    "Veil-Ranger",
+    "dev-registration-token",
+    "hunter2",
+    { fetchImpl, storage }
+  );
+  assert.equal(session.loginId, "veil-ranger");
+  assert.match(requests[0]?.url ?? "", /\/api\/auth\/account-registration\/request$/);
+  assert.match(requests[1]?.url ?? "", /\/api\/auth\/account-registration\/confirm$/);
+  assert.ok(values.get("project-veil:auth-session")?.includes("\"loginId\":\"veil-ranger\""));
+});
+
+test("cocos password recovery helpers request a dev token and confirm reset", async () => {
+  const requests: Array<{ url: string; body: string }> = [];
+  let callIndex = 0;
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      body: String(init?.body ?? "")
+    });
+    callIndex += 1;
+
+    if (callIndex === 1) {
+      return new Response(
+        JSON.stringify({
+          status: "recovery_requested",
+          expiresAt: "2026-03-28T12:34:56.000Z",
+          recoveryToken: "dev-recovery-token"
+        }),
+        { status: 202, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    return new Response(JSON.stringify({ account: { loginId: "veil-ranger" } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+
+  const requestResult = await requestCocosPasswordRecovery("http://127.0.0.1:2567", "Veil-Ranger", {
+    fetchImpl
+  });
+  assert.equal(requestResult.recoveryToken, "dev-recovery-token");
+
+  await confirmCocosPasswordRecovery("http://127.0.0.1:2567", "Veil-Ranger", "dev-recovery-token", "hunter3", {
+    fetchImpl
+  });
+  assert.match(requests[0]?.url ?? "", /\/api\/auth\/password-recovery\/request$/);
+  assert.match(requests[1]?.url ?? "", /\/api\/auth\/password-recovery\/confirm$/);
 });
 
 test("loginCocosWechatAuthSession exchanges wx.login code through the scaffold endpoint", async () => {

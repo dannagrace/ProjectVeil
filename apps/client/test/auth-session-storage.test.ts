@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  confirmAccountRegistration,
+  confirmPasswordRecovery,
   clearStoredAuthSession,
   getAuthSessionStorageKey,
+  requestAccountRegistration,
+  requestPasswordRecovery,
   readStoredAuthSession,
   syncCurrentAuthSession,
   writeStoredAuthSession
@@ -169,6 +173,165 @@ test("syncCurrentAuthSession refreshes an expired access token and persists the 
       "Bearer refresh-token",
       "Bearer fresh-access"
     ]);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("account registration helpers request a dev token and persist the confirmed session", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const values = new Map<string, string>();
+  const requests: Array<{ url: string; body: string }> = [];
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(key: string): string | null {
+          return values.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          values.set(key, value);
+        },
+        removeItem(key: string): void {
+          values.delete(key);
+        }
+      }
+    }
+  });
+
+  let callIndex = 0;
+  globalThis.fetch = (async (input, init) => {
+    requests.push({
+      url: String(input),
+      body: String(init?.body ?? "")
+    });
+    callIndex += 1;
+
+    if (callIndex === 1) {
+      return new Response(
+        JSON.stringify({
+          status: "registration_requested",
+          expiresAt: "2026-03-28T12:34:56.000Z",
+          registrationToken: "dev-registration-token"
+        }),
+        { status: 202, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        account: {
+          playerId: "account-player",
+          displayName: "暮潮守望",
+          loginId: "veil-ranger"
+        },
+        session: {
+          token: "account.token",
+          refreshToken: "refresh.token",
+          playerId: "account-player",
+          displayName: "暮潮守望",
+          authMode: "account",
+          loginId: "veil-ranger"
+        }
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }) as typeof fetch;
+
+  try {
+    const requestResult = await requestAccountRegistration("Veil-Ranger", "暮潮守望");
+    assert.equal(requestResult.registrationToken, "dev-registration-token");
+
+    const session = await confirmAccountRegistration("Veil-Ranger", "dev-registration-token", "hunter2");
+    assert.equal(session.loginId, "veil-ranger");
+    assert.equal(session.token, "account.token");
+    assert.match(requests[0]?.url ?? "", /\/api\/auth\/account-registration\/request$/);
+    assert.match(requests[0]?.body ?? "", /"loginId":"veil-ranger"/);
+    assert.match(requests[1]?.url ?? "", /\/api\/auth\/account-registration\/confirm$/);
+    assert.ok(values.get(getAuthSessionStorageKey())?.includes("\"loginId\":\"veil-ranger\""));
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("password recovery helpers request a dev token and confirm reset without mutating session storage", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const values = new Map<string, string>();
+  const requests: Array<{ url: string; body: string }> = [];
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(key: string): string | null {
+          return values.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          values.set(key, value);
+        },
+        removeItem(key: string): void {
+          values.delete(key);
+        }
+      }
+    }
+  });
+
+  let callIndex = 0;
+  globalThis.fetch = (async (input, init) => {
+    requests.push({
+      url: String(input),
+      body: String(init?.body ?? "")
+    });
+    callIndex += 1;
+
+    if (callIndex === 1) {
+      return new Response(
+        JSON.stringify({
+          status: "recovery_requested",
+          expiresAt: "2026-03-28T12:34:56.000Z",
+          recoveryToken: "dev-recovery-token"
+        }),
+        { status: 202, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    return new Response(JSON.stringify({ account: { loginId: "veil-ranger" } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  try {
+    const requestResult = await requestPasswordRecovery("Veil-Ranger");
+    assert.equal(requestResult.recoveryToken, "dev-recovery-token");
+
+    await confirmPasswordRecovery("Veil-Ranger", "dev-recovery-token", "hunter3");
+    assert.match(requests[0]?.url ?? "", /\/api\/auth\/password-recovery\/request$/);
+    assert.match(requests[1]?.url ?? "", /\/api\/auth\/password-recovery\/confirm$/);
+    assert.equal(values.size, 0);
   } finally {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
