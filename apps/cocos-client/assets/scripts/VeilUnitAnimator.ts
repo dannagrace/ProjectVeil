@@ -9,6 +9,7 @@ import {
 import type { CocosAnimationProfile } from "./cocos-presentation-config.ts";
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { resolveUnitAnimationFallbackFrame } from "./cocos-unit-animation-fallback.ts";
+import { resolveUnitAnimationFrameSequence } from "./cocos-unit-animation-sequence.ts";
 
 const { ccclass, property } = _decorator;
 
@@ -79,6 +80,7 @@ export class VeilUnitAnimator extends Component {
 
   private currentState: UnitAnimationState = "idle";
   private lastPixelFallbackReady = false;
+  private pixelSequenceToken = 0;
 
   applyProfile(profile: CocosAnimationProfile, templateId = this.templateId): void {
     const templateChanged = this.templateId !== templateId;
@@ -138,7 +140,13 @@ export class VeilUnitAnimator extends Component {
   }
 
   private renderCurrentState(): void {
-    if (!this.playSpine(this.currentState) && !this.playTimeline(this.currentState) && !this.playPixelFallback(this.currentState)) {
+    this.pixelSequenceToken += 1;
+    if (
+      !this.playSpine(this.currentState)
+      && !this.playTimeline(this.currentState)
+      && !this.playPixelSequence(this.currentState)
+      && !this.playPixelFallback(this.currentState)
+    ) {
       const label = this.node.getComponent(Label);
       if (label) {
         label.string = `${this.fallbackPrefix}\n[${this.currentState.toUpperCase()}]`;
@@ -192,6 +200,58 @@ export class VeilUnitAnimator extends Component {
       label.string = "";
     }
 
+    return true;
+  }
+
+  private playPixelSequence(state: UnitAnimationState): boolean {
+    const targetNode = this.node.getChildByName("HeroIcon") ?? this.node;
+    const targetSprite = targetNode.getComponent(Sprite) ?? this.node.getComponent(Sprite);
+    if (!targetSprite || !this.templateId) {
+      return false;
+    }
+
+    const sequence = resolveUnitAnimationFrameSequence(this.templateId, state, getPixelSpriteAssets());
+    if (sequence.frames.length === 0 || (sequence.source !== "unit" && sequence.source !== "showcase")) {
+      return false;
+    }
+
+    targetNode.active = true;
+    targetSprite.spriteFrame = sequence.frames[0] ?? null;
+    targetSprite.color = this.resolvePixelFallbackColor(state);
+    targetNode.setScale(this.resolvePixelFallbackScale(state));
+    const opacity = targetNode.getComponent(UIOpacity);
+    if (opacity) {
+      opacity.opacity = 255;
+    }
+
+    const label = this.node.getComponent(Label);
+    if (label) {
+      label.string = "";
+    }
+
+    if (sequence.frames.length === 1) {
+      return true;
+    }
+
+    const token = this.pixelSequenceToken;
+    let frameIndex = 0;
+    const advanceFrame = (): void => {
+      if (token !== this.pixelSequenceToken) {
+        return;
+      }
+
+      if (!sequence.loop && frameIndex >= sequence.frames.length - 1) {
+        return;
+      }
+
+      frameIndex = sequence.loop ? (frameIndex + 1) % sequence.frames.length : Math.min(frameIndex + 1, sequence.frames.length - 1);
+      targetSprite.spriteFrame = sequence.frames[frameIndex] ?? null;
+      if (sequence.loop || frameIndex < sequence.frames.length - 1) {
+        this.scheduleOnce(advanceFrame, sequence.frameDurationSeconds);
+      }
+    };
+
+    this.scheduleOnce(advanceFrame, sequence.frameDurationSeconds);
     return true;
   }
 
