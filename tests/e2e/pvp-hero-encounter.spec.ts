@@ -33,6 +33,10 @@ test("two players can enter a hero-vs-hero battle and resolve it with correct tu
 
   await expect(playerOnePage.getByTestId("battle-panel")).not.toContainText("No active battle");
   await expect(playerTwoPage.getByTestId("battle-panel")).not.toContainText("No active battle");
+  await expect(playerOnePage.getByTestId("room-phase")).toHaveText("战斗中");
+  await expect(playerTwoPage.getByTestId("room-phase")).toHaveText("战斗中");
+  await expect(playerOnePage.getByTestId("room-status-detail")).toContainText("英雄遭遇战");
+  await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText("player-1");
   await expect(playerTwoPage.getByTestId("battle-attack")).toBeVisible();
   await expect(playerOnePage.getByTestId("battle-actions")).toContainText("等待对手操作");
 
@@ -54,6 +58,10 @@ test("two players can enter a hero-vs-hero battle and resolve it with correct tu
   await expect(playerOnePage.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
   await expect(playerOnePage.getByTestId("battle-modal-body")).toContainText("你已击败敌方英雄");
   await expect(playerTwoPage.getByTestId("battle-modal-title")).toHaveText("战斗失败");
+  await expect(playerOnePage.getByTestId("battle-settlement")).toContainText("战斗胜利");
+  await expect(playerOnePage.getByTestId("battle-settlement-summary")).toContainText("已击败");
+  await expect(playerOnePage.getByTestId("room-phase")).toHaveText("已结算");
+  await expect(playerTwoPage.getByTestId("battle-settlement-aftermath")).toContainText("移动力清零");
   await expect(playerTwoPage.getByTestId("hero-hp")).toHaveText(/HP 15\/30/);
   await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
 
