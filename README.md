@@ -159,6 +159,7 @@
 - 账号体系现已从“纯游客模式”升级为“双模式骨架”：`player_accounts` 新增 `loginId / passwordHash / credentialBoundAt`，服务端开放 `POST /api/auth/account-bind` 与 `POST /api/auth/account-login`，可把当前游客档绑定成口令账号，并在之后直接用登录 ID + 口令进入房间。
 - 鉴权入口现已补上进程内安全闸门：`POST /api/auth/guest-login`、`/account-login`、`/account-bind` 都会按来源 IP 走滑动窗口限流，`account-login` 还会在连续失败达到阈值后临时锁定账号；默认值分别来自 `VEIL_RATE_LIMIT_AUTH_WINDOW_MS=60000`、`VEIL_RATE_LIMIT_AUTH_MAX=10`、`VEIL_AUTH_LOCKOUT_THRESHOLD=10`、`VEIL_AUTH_LOCKOUT_DURATION_MINUTES=15`，游客会话缓存还会受 `VEIL_MAX_GUEST_SESSIONS=10000` 的 LRU 上限约束。
 - 正式账号会话现在补上了过期与撤销链路：访问令牌默认 1 小时（`VEIL_AUTH_ACCESS_TTL_SECONDS`），刷新令牌默认 30 天（`VEIL_AUTH_REFRESH_TTL_SECONDS`），游客 token 默认 7 天（`VEIL_AUTH_GUEST_TTL_SECONDS`）；服务端新增 `POST /api/auth/refresh` 与 `POST /api/auth/logout`，并把当前刷新令牌族持久化到 `player_accounts` 上，账号口令修改也会同步撤销现有会话。
+- 服务端现已补上开发态密码找回闭环：`POST /api/auth/password-recovery/request` 会为已绑定口令账号生成短时效重置令牌，`POST /api/auth/password-recovery/confirm` 可用该令牌重置口令并撤销旧会话；默认通过 `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE=dev-token` 直接回传开发态令牌，TTL 由 `VEIL_PASSWORD_RECOVERY_TTL_MINUTES` 控制，且找回申请/确认都会写入账号 `recentEventLog` 的 `account` 审计事件。详细说明见 `docs/account-auth-lifecycle.md`。
 - H5 Lobby 现已补上“账号口令登录”表单；游戏内账号资料卡也能直接绑定或更新口令账号，绑定成功后会立即把当前会话升级成账号模式，不需要重新手写 `playerId`，并会继续沿用同一份英雄长期档与全局资源仓库。
 - H5 Lobby 和游戏内都已补上“退出游客会话 / 切换游客账号”入口；当前 token 无效时会自动清掉本地会话并回到大厅。
 - Cocos Web 启动入口现在会复用和 H5 共用的 `project-veil:auth-session`：如果浏览器里已有已签名会话，那么直接访问 `?roomId=...` 就能沿用当前游客或正式账号身份进房，HUD 会标出当前是云端游客、正式账号还是本地/手动参数启动。

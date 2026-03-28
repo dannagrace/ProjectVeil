@@ -1,7 +1,7 @@
 import { formatEquipmentRarityLabel } from "./equipment";
 import type { FogState, ResourceKind, WorldEvent, WorldState } from "./models";
 
-export type EventLogCategory = "movement" | "combat" | "building" | "skill" | "achievement";
+export type EventLogCategory = "movement" | "combat" | "building" | "skill" | "achievement" | "account";
 export type EventLogRewardType = "resource" | "experience" | "skill_point" | "badge";
 export type AchievementId = "first_battle" | "enemy_slayer" | "skill_scholar" | "world_explorer" | "epic_collector";
 export type AchievementMetric =
