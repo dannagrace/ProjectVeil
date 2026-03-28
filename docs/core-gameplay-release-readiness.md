@@ -14,6 +14,7 @@
 - 类型检查：`npm run typecheck:ci`
 - H5 / Lobby 冒烟：`npm run test:e2e:smoke`
 - 多人同步冒烟：`npm run test:e2e:multiplayer:smoke`
+- 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 微信小游戏构建校验：`npm run check:wechat-build`
 - Cocos 发布证据模板：`docs/cocos-release-evidence-template.md`
 - 微信小游戏提审前冒烟：`docs/wechat-minigame-release.md`
@@ -49,6 +50,7 @@
 - [ ] 英雄移动、资源拾取、建筑访问、战斗结算都由 shared/server 权威结果驱动，而不是前端本地写死。
 - [ ] 至少覆盖一条“探索 -> 遭遇战 -> 战后回写世界状态”的完整回归链路。
 - [ ] 双客户端或多客户端进入同一房间后，同步不会出现长期分叉；断线重连后能收敛到权威状态。
+- [ ] reconnect 验收必须复用 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 的唯一场景和最小成功信号，而不是只写“重连成功”。
 - [ ] 失败路径可读：非法 action、超时、会话失效时，客户端能收到明确错误而不是静默卡死。
 
 `P1 follow-up`
@@ -68,6 +70,7 @@
 
 - [ ] H5 Lobby 能游客进入房间，且缓存会话 / 账号登录 / 找回链路至少各通过一次。
 - [ ] H5 壳可稳定复现大地图、资源点、建筑、战斗和结果弹窗，作为快速回归基线。
+- [ ] H5 reconnect 冒烟至少保留一次 canonical gate 记录，证据中必须同时能看见原 `roomId`、恢复提示和未回档状态。
 - [ ] 关键 E2E 用例与当前配置一致，没有依赖过期坐标、旧数值或旧文案。
 - [ ] H5 回归壳在失败时能提供足够诊断信息，例如 trace、screenshot、事件文案或运行时摘要。
 
@@ -79,6 +82,7 @@
 建议证据：
 
 - `npm run test:e2e:smoke`
+- [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 中定义的 reconnect 证据
 - 必要时补跑：`npm run test:e2e`
 
 ### 3. Cocos 主客户端体验面
@@ -86,6 +90,7 @@
 `P0 blocker`
 
 - [ ] Lobby、进房、地图探索、遭遇战、战报/结果反馈、账号会话恢复能在 Cocos 主运行时串成完整链路。
+- [ ] Cocos / 微信 release candidate 的断线恢复记录必须复用 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 中同一条场景与同一组成功信号。
 - [ ] 关键 HUD / 面板文案足够可理解，玩家能知道当前房间、玩家身份、资源、移动力和战斗状态。
 - [ ] 首场战斗中的反馈最少完整：选中态、受击 / 伤害反馈、胜败结果、返回世界。
 - [ ] 发布目标若是微信小游戏，必须完成真实导出目录校验、发布包校验和真机 / 准真机 smoke 记录。
@@ -99,6 +104,7 @@
 
 - `npm test`
 - `npm run check:wechat-build`
+- [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 中定义的 reconnect 证据
 - 按 [`docs/wechat-minigame-release.md`](/home/gpt/project/ProjectVeil/docs/wechat-minigame-release.md) 完成 `verify` 与 `smoke`
 
 ### 4. 观测、诊断与运维门禁
