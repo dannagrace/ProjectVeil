@@ -1,5 +1,9 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Sprite, SpriteFrame, UITransform } from "cc";
-import { buildCocosAchievementPanelItems } from "./cocos-achievements.ts";
+import {
+  buildCocosAccountReviewPage,
+  type CocosAccountReviewItem,
+  type CocosAccountReviewSection
+} from "./cocos-account-review.ts";
 import type { CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
@@ -39,7 +43,8 @@ const ACTION_ENTER = new Color(84, 122, 94, 234);
 const ACTION_ACCOUNT = new Color(88, 118, 164, 234);
 const ACTION_CONFIG = new Color(94, 112, 86, 234);
 const ACTION_LOGOUT = new Color(126, 92, 74, 234);
-const ACTION_ACHIEVEMENTS = new Color(154, 122, 68, 234);
+const ACTION_ACCOUNT_REVIEW = new Color(154, 122, 68, 234);
+const ACTION_ACCOUNT_REVIEW_ACTIVE = new Color(104, 132, 84, 234);
 const SHOWCASE_FILL = new Color(46, 56, 76, 182);
 const SHOWCASE_CARD_HEIGHT = 220;
 
@@ -86,7 +91,13 @@ interface PanelCardTone {
 @ccclass("ProjectVeilLobbyPanel")
 export class VeilLobbyPanel extends Component {
   private currentState: VeilLobbyRenderState | null = null;
-  private showAchievements = false;
+  private showAccountReview = false;
+  private activeAccountReviewSection: CocosAccountReviewSection = "battle-replays";
+  private reviewPages: Record<CocosAccountReviewSection, number> = {
+    "battle-replays": 0,
+    "event-history": 0,
+    achievements: 0
+  };
   private showcasePhase: LobbyShowcasePhase = "idle";
   private showcaseUnitPage = 0;
   private showcaseTickerStarted = false;
@@ -355,40 +366,45 @@ export class VeilLobbyPanel extends Component {
       },
       state.entering || state.sessionSource === "none" ? null : this.onLogout ?? null
     );
-    const unlockedCount = state.account.achievements.filter((achievement) => achievement.unlocked).length;
     this.renderActionButton(
-      "LobbyAchievements",
+      "LobbyAccountReview",
       leftX,
       leftCursorY - 256,
       leftWidth,
       28,
-      this.showAchievements
-        ? "收起成就面板"
-        : `成就 ${unlockedCount}/${state.account.achievements.length || 0}`,
+      this.showAccountReview ? "收起资料回顾" : "资料回顾 · 战报 / 事件 / 成就",
       {
-        fill: ACTION_ACHIEVEMENTS,
+        fill: ACTION_ACCOUNT_REVIEW,
         stroke: new Color(247, 236, 214, 118),
         accent: new Color(252, 232, 194, 110)
       },
       () => {
-        this.showAchievements = !this.showAchievements;
+        this.showAccountReview = !this.showAccountReview;
         if (this.currentState) {
           this.render(this.currentState);
         }
       }
     );
 
-    if (this.showAchievements) {
+    if (this.showAccountReview) {
+      const review = buildCocosAccountReviewPage(
+        state.account,
+        this.activeAccountReviewSection,
+        this.reviewPages[this.activeAccountReviewSection] ?? 0,
+        3
+      );
+      const unlockedCount = state.account.achievements.filter((achievement) => achievement.unlocked).length;
       rightCursorY = this.renderCard(
-        "LobbyAchievementsHeader",
+        "LobbyAccountReviewHeader",
         rightX,
         rightCursorY,
         rightWidth,
-        82,
+        96,
         [
-          "账号成就",
-          `${unlockedCount}/${state.account.achievements.length} 已解锁`,
-          "来源于 account.achievements。已解锁条目会显示时间，未解锁条目保留进度与剩余目标。"
+          "账号资料回顾",
+          `战报 ${state.account.recentBattleReplays.length} · 事件 ${state.account.recentEventLog.length} · 成就 ${unlockedCount}/${state.account.achievements.length}`,
+          review.subtitle,
+          `当前页 ${review.page + 1}/${review.totalPages}`
         ],
         {
           fill: TITLE_FILL,
@@ -400,10 +416,83 @@ export class VeilLobbyPanel extends Component {
         18
       );
 
-      this.renderAchievementCards(rightX, rightCursorY, rightWidth, state.account);
+      const tabWidth = Math.floor((rightWidth - 12) / 3);
+      const tabStartX = rightX - rightWidth / 2 + tabWidth / 2;
+      review.tabs.forEach((tab, index) => {
+        const isActive = tab.section === review.section;
+        this.renderActionButton(
+          `LobbyAccountReviewTab-${tab.section}`,
+          tabStartX + index * (tabWidth + 6),
+          rightCursorY - 16,
+          tabWidth,
+          28,
+          `${tab.label} ${tab.count}`,
+          isActive
+            ? {
+                fill: ACTION_ACCOUNT_REVIEW_ACTIVE,
+                stroke: new Color(228, 244, 229, 124),
+                accent: new Color(226, 244, 230, 116)
+              }
+            : {
+                fill: ACTION_ACCOUNT_REVIEW,
+                stroke: new Color(247, 236, 214, 118),
+                accent: new Color(252, 232, 194, 110)
+              },
+          () => {
+            this.activeAccountReviewSection = tab.section;
+            if (this.currentState) {
+              this.render(this.currentState);
+            }
+          }
+        );
+      });
+      this.renderActionButton(
+        "LobbyAccountReviewPrev",
+        rightX - rightWidth / 4 - 3,
+        rightCursorY - 50,
+        Math.floor((rightWidth - 6) / 2),
+        26,
+        "上一页",
+        {
+          fill: ACTION_REFRESH,
+          stroke: new Color(233, 242, 250, 130),
+          accent: new Color(218, 230, 242, 120)
+        },
+        review.hasPreviousPage
+          ? () => {
+              this.reviewPages[review.section] = review.page - 1;
+              if (this.currentState) {
+                this.render(this.currentState);
+              }
+            }
+          : null
+      );
+      this.renderActionButton(
+        "LobbyAccountReviewNext",
+        rightX + rightWidth / 4 + 3,
+        rightCursorY - 50,
+        Math.floor((rightWidth - 6) / 2),
+        26,
+        "下一页",
+        {
+          fill: ACTION_REFRESH,
+          stroke: new Color(233, 242, 250, 130),
+          accent: new Color(218, 230, 242, 120)
+        },
+        review.hasNextPage
+          ? () => {
+              this.reviewPages[review.section] = review.page + 1;
+              if (this.currentState) {
+                this.render(this.currentState);
+              }
+            }
+          : null
+      );
+
+      this.renderAccountReviewCards(rightX, rightCursorY - 74, rightWidth, review.items);
       this.hideLobbyRooms();
     } else {
-      this.hideAchievementCards();
+      this.hideAccountReviewCards();
       rightCursorY = this.renderCard(
         "LobbyRoomsHeader",
         rightX,
@@ -689,21 +778,20 @@ export class VeilLobbyPanel extends Component {
     }
   }
 
-  private renderAchievementCards(
+  private renderAccountReviewCards(
     centerX: number,
     topY: number,
     width: number,
-    account: CocosPlayerAccountProfile
+    items: CocosAccountReviewItem[]
   ): void {
-    const items = buildCocosAchievementPanelItems(account.achievements).slice(0, 5);
     if (items.length === 0) {
       this.renderCard(
-        "LobbyAchievementEmpty",
+        "LobbyAccountReviewEmpty",
         centerX,
         topY,
         width,
         84,
-        ["暂无成就数据", "账号快照尚未返回 achievement 列表。", "刷新 Lobby 后会再次同步。"],
+        ["暂无回顾数据", "当前账号快照还没有战报、事件或成就进度。", "刷新 Lobby 或完成一局流程后会再次同步。"],
         {
           fill: MUTED_FILL,
           stroke: new Color(214, 224, 238, 42),
@@ -713,20 +801,20 @@ export class VeilLobbyPanel extends Component {
         14,
         18
       );
-      this.hideExtraAchievementCards(0);
+      this.hideExtraAccountReviewCards(0);
       return;
     }
 
-    const cardHeight = 74;
+    const cardHeight = 78;
     items.forEach((item, index) => {
       this.renderCard(
-        `LobbyAchievement-${index}`,
+        `LobbyAccountReview-${index}`,
         centerX,
         topY - index * (cardHeight + 10),
         width,
         cardHeight,
-        [item.title, `${item.statusLabel} · ${item.progressLabel}`, item.footnote],
-        item.isUnlocked
+        [item.title, item.detail, item.footnote],
+        item.emphasis === "positive"
           ? {
               fill: new Color(78, 92, 72, 184),
               stroke: new Color(234, 244, 220, 74),
@@ -743,32 +831,46 @@ export class VeilLobbyPanel extends Component {
       );
     });
 
-    const emptyNode = this.node.getChildByName("LobbyAchievementEmpty");
+    const emptyNode = this.node.getChildByName("LobbyAccountReviewEmpty");
     if (emptyNode) {
       emptyNode.active = false;
     }
-    this.hideExtraAchievementCards(items.length);
+    this.hideExtraAccountReviewCards(items.length);
   }
 
-  private hideExtraAchievementCards(visibleCount: number): void {
-    for (let index = visibleCount; index < 5; index += 1) {
-      const node = this.node.getChildByName(`LobbyAchievement-${index}`);
+  private hideExtraAccountReviewCards(visibleCount: number): void {
+    for (let index = visibleCount; index < 3; index += 1) {
+      const node = this.node.getChildByName(`LobbyAccountReview-${index}`);
       if (node) {
         node.active = false;
       }
     }
   }
 
-  private hideAchievementCards(): void {
-    const header = this.node.getChildByName("LobbyAchievementsHeader");
+  private hideAccountReviewCards(): void {
+    const header = this.node.getChildByName("LobbyAccountReviewHeader");
     if (header) {
       header.active = false;
     }
-    const emptyNode = this.node.getChildByName("LobbyAchievementEmpty");
+    (["battle-replays", "event-history", "achievements"] as CocosAccountReviewSection[]).forEach((section) => {
+      const tab = this.node.getChildByName(`LobbyAccountReviewTab-${section}`);
+      if (tab) {
+        tab.active = false;
+      }
+    });
+    const prevButton = this.node.getChildByName("LobbyAccountReviewPrev");
+    if (prevButton) {
+      prevButton.active = false;
+    }
+    const nextButton = this.node.getChildByName("LobbyAccountReviewNext");
+    if (nextButton) {
+      nextButton.active = false;
+    }
+    const emptyNode = this.node.getChildByName("LobbyAccountReviewEmpty");
     if (emptyNode) {
       emptyNode.active = false;
     }
-    this.hideExtraAchievementCards(0);
+    this.hideExtraAccountReviewCards(0);
   }
 
   private renderPixelShowcase(centerX: number, topY: number, width: number): void {
