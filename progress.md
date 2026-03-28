@@ -391,3 +391,34 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 当前下一步：
   - 可以继续把当前 H5 回放详情区往“独立回放中心页面”推进
   - 或者把同一套 replay detail / playback 交互补到 Cocos 端入口上。
+
+## H5 pixel asset bundle - 2026-03-28
+
+- 已切到 `#33 高质量像素美术资源集成` 分支：`codex/issue-33-h5-pixel-assets`
+- 本轮先推进一个可交付的小闭环：把 H5 调试壳里最常见的一批占位 SVG 切到像素风 PNG，并补一条可复用的资源同步脚本
+  - `scripts/sync-h5-pixel-assets.mjs`
+    - 从 `apps/cocos-client/assets/resources/placeholder` 同步地形、资源、建筑、地图标记和战斗头像到 `apps/client/public/assets/pixel`
+    - 当前同步 27 个 PNG 资源，作为 H5 端的像素预览包
+  - `package.json`
+    - 新增 `npm run sync:assets:h5-pixel`
+  - `configs/assets.json`
+    - H5 世界地图 / 资源 / 建筑 / 标记 / 两个现有战斗单位头像已切到 `/assets/pixel/**.png`
+    - `metadata` 已同步更新，仍保持 36 个注册资源且全部通过 schema 校验
+  - `apps/client/src/styles.css`
+    - 地图格、资源点、标记、建筑角标、战斗头像都补上 `image-rendering: pixelated`
+  - `packages/shared/test/shared-core.test.ts`
+    - 新增断言，防止 H5 关键资产回退到旧 SVG 路径
+- 当前验证结果：
+  - `npm run sync:assets:h5-pixel` 通过，生成 27 个 PNG 文件
+  - `npm run validate:assets` 通过
+  - `npm run typecheck:client:h5` 通过
+  - `node --import tsx --test ./packages/shared/test/shared-core.test.ts` 通过（103/103）
+  - `npm test` 通过（270/270）
+  - 已按 `develop-web-game` 技能实际联调并检查截图：
+    - 世界地图截图：`/tmp/project-veil-pixel-world/shot-0.png`
+      - 草地 / 土地 / 水面 / 资源点 / 建筑角标 / 英雄标记都已切成像素风 PNG
+    - 战斗截图：`/tmp/project-veil-pixel-battle/shot-0.png`
+      - 我方与敌方单位头像都已改为新的像素包，战斗卡片仍正常渲染
+- 当前结论：
+  - `#33` 还没有完成正式高质量美术与 Spine / 音效 / 压缩优化，但 H5 已不再完全依赖旧 SVG 占位图
+  - 下一步可以继续把这套像素资源从“调试壳预览包”升级成正式资产流水线，并补到 Cocos 端的更细粒度单位 / 建筑表现上

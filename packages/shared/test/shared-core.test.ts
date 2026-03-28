@@ -239,7 +239,7 @@ test("asset config exposes metadata for referenced asset paths", () => {
     slot: "unit.hero_guard_basic.idle",
     stage: "placeholder",
     source: "generated",
-    notes: "Pixel Fantasy placeholder sprite pending production replacement."
+    notes: "Synced from Cocos placeholder icon bundle for H5 pixel preview."
   });
 
   assert.deepEqual(summarizeAssetMetadata(assetConfig), {
@@ -254,6 +254,14 @@ test("asset config exposes metadata for referenced asset paths", () => {
       commissioned: 0
     }
   });
+});
+
+test("asset config routes H5 world-facing assets through the pixel bundle", () => {
+  assert.match(assetConfig.terrain.grass.default, /^\/assets\/pixel\/terrain\/.+\.png$/);
+  assert.match(assetConfig.resources.gold, /^\/assets\/pixel\/resources\/.+\.png$/);
+  assert.match(assetConfig.buildings.recruitment_post, /^\/assets\/pixel\/buildings\/.+\.png$/);
+  assert.match(assetConfig.markers.hero.idle, /^\/assets\/pixel\/markers\/.+\.png$/);
+  assert.match(assetConfig.units.hero_guard_basic.portrait.idle, /^\/assets\/pixel\/units\/.+\.png$/);
 });
 
 test("asset config validation reports missing terrain variants and bad asset roots", () => {
