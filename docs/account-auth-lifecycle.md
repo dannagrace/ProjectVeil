@@ -36,6 +36,7 @@
 - 为“全新正式账号”预留 `loginId`，不依赖先创建游客档。
 - 校验 `loginId` 格式、口令账号占用情况，并按来源 IP 走现有滑动窗口限流。
 - 当前默认开发态投递模式为 `VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE=dev-token`，会直接在响应体里回传 `registrationToken` 供联调使用。
+- 若同一个 `loginId` 仍有未过期的注册申请，服务端会复用现有令牌与到期时间，而不是生成新令牌，避免联调时旧令牌被静默顶掉。
 - 若 `loginId` 已被绑定，接口返回 `409 login_id_taken`。
 - 注册申请事件会在确认成功后补写入新账号的 `recentEventLog`，便于后续统一审计。
 
@@ -89,6 +90,7 @@
 - 仅对已绑定口令账号生效；不存在的 `loginId` 仍返回 `202`，避免泄漏账号存在性。
 - 服务端生成一次性短时效重置令牌，并按来源 IP 走现有滑动窗口限流。
 - 当前默认开发态投递模式为 `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE=dev-token`，会直接在响应体里回传 `recoveryToken` 供联调使用。
+- 若同一账号已有未过期的找回申请，服务端会复用现有令牌与到期时间，避免重复请求导致先前令牌失效或连续追加重复审计事件。
 - 若后续切到 `disabled`，接口仍保留，但不会直接把令牌回传给客户端。
 - 成功发起时会向该账号的 `recentEventLog` 追加一条 `category=account` 的审计事件。
 

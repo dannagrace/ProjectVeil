@@ -93,6 +93,7 @@ interface PasswordRecoveryState {
   playerId: string;
   loginId: string;
   tokenHash: string;
+  deliveryToken?: string;
   issuedAt: string;
   expiresAt: string;
 }
@@ -101,6 +102,7 @@ interface AccountRegistrationState {
   loginId: string;
   requestedDisplayName: string;
   tokenHash: string;
+  deliveryToken?: string;
   issuedAt: string;
   expiresAt: string;
 }
@@ -452,10 +454,12 @@ function getAccountRegistrationState(loginId: string): AccountRegistrationState 
 function storeAccountRegistrationState(loginId: string, requestedDisplayName: string, token: string): AccountRegistrationState {
   const issuedAt = new Date().toISOString();
   const expiresAt = new Date(nowMs() + readAccountRegistrationTtlMs()).toISOString();
+  const deliveryMode = readAccountRegistrationDeliveryMode();
   const state: AccountRegistrationState = {
     loginId,
     requestedDisplayName,
     tokenHash: hashAccountRegistrationToken(token),
+    ...(deliveryMode === "dev-token" ? { deliveryToken: token } : {}),
     issuedAt,
     expiresAt
   };
@@ -494,10 +498,12 @@ function getPasswordRecoveryState(loginId: string): PasswordRecoveryState | null
 function storePasswordRecoveryState(playerId: string, loginId: string, token: string): PasswordRecoveryState {
   const issuedAt = new Date().toISOString();
   const expiresAt = new Date(nowMs() + readPasswordRecoveryTtlMs()).toISOString();
+  const deliveryMode = readPasswordRecoveryDeliveryMode();
   const state: PasswordRecoveryState = {
     playerId,
     loginId,
     tokenHash: hashPasswordRecoveryToken(token),
+    ...(deliveryMode === "dev-token" ? { deliveryToken: token } : {}),
     issuedAt,
     expiresAt
   };
@@ -1723,14 +1729,17 @@ export function registerAuthRoutes(
       }
 
       const requestedDisplayName = normalizeRequestedRegistrationDisplayName(loginId, body.displayName);
-      const registrationToken = createAccountRegistrationToken();
-      const registrationState = storeAccountRegistrationState(loginId, requestedDisplayName, registrationToken);
       const deliveryMode = readAccountRegistrationDeliveryMode();
+      const existingRegistrationState = getAccountRegistrationState(loginId);
+      const registrationState =
+        existingRegistrationState?.requestedDisplayName === requestedDisplayName
+          ? existingRegistrationState
+          : storeAccountRegistrationState(loginId, requestedDisplayName, createAccountRegistrationToken());
 
       sendJson(response, 202, {
         status: "registration_requested",
         expiresAt: registrationState.expiresAt,
-        ...(deliveryMode === "dev-token" ? { registrationToken } : {})
+        ...(deliveryMode === "dev-token" && registrationState.deliveryToken ? { registrationToken: registrationState.deliveryToken } : {})
       });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
@@ -1880,18 +1889,20 @@ export function registerAuthRoutes(
         return;
       }
 
-      const recoveryToken = createPasswordRecoveryToken();
-      const recoveryState = storePasswordRecoveryState(authAccount.playerId, loginId, recoveryToken);
-      await appendAccountAuditLog(
-        store,
-        authAccount.playerId,
-        deliveryMode === "dev-token" ? "发起密码找回申请，已生成开发态重置令牌。" : "发起密码找回申请。"
-      );
+      let recoveryState = getPasswordRecoveryState(loginId);
+      if (!recoveryState || recoveryState.playerId !== authAccount.playerId) {
+        recoveryState = storePasswordRecoveryState(authAccount.playerId, loginId, createPasswordRecoveryToken());
+        await appendAccountAuditLog(
+          store,
+          authAccount.playerId,
+          deliveryMode === "dev-token" ? "发起密码找回申请，已生成开发态重置令牌。" : "发起密码找回申请。"
+        );
+      }
 
       sendJson(response, 202, {
         status: "recovery_requested",
         expiresAt: recoveryState.expiresAt,
-        ...(deliveryMode === "dev-token" ? { recoveryToken } : {})
+        ...(deliveryMode === "dev-token" && recoveryState.deliveryToken ? { recoveryToken: recoveryState.deliveryToken } : {})
       });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
