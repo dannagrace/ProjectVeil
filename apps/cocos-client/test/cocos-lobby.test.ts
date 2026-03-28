@@ -450,6 +450,7 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
   assert.deepEqual(profile, {
     playerId: "account-player",
     displayName: "暮潮守望",
+    eloRating: 1000,
     globalResources: {
       gold: 320,
       wood: 5,
