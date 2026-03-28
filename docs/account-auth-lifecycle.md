@@ -1,6 +1,6 @@
 # 账号鉴权、正式注册与密码找回
 
-本文档描述当前仓库已经落地的正式账号能力，以及 `#124` 和 `#140` 已接上的正式注册 / 密码找回前后端闭环。
+本文档描述当前仓库已经落地的正式账号能力，以及 `#124` 和 `#140` 已接上的正式注册 / 密码找回前后端闭环。游客升级、全新正式注册、密码找回与会话撤销之间的迁移契约，另见 `docs/account-migration-rules.md`。
 
 ## 当前已落地能力
 
@@ -10,6 +10,7 @@
 - 会话校验 / 刷新 / 退出：`GET /api/auth/session`、`POST /api/auth/refresh`、`POST /api/auth/logout`
 - 正式账号设备会话列表 / 撤销：`GET /api/player-accounts/me/sessions`、`DELETE /api/player-accounts/me/sessions/:sessionId`
 - 已登录账号修改口令：`PUT /api/player-accounts/me`
+- 迁移规则与边界场景说明：`docs/account-migration-rules.md`
 
 当前账号模式仍沿用“先游客、再绑定”的模型：
 
@@ -165,6 +166,5 @@
 
 当前仍未完成：
 
-- 游客绑定账号与“全新正式注册账号”之间更完整的迁移规则文档
 - 真实邮件 / 短信 / 验证码通道
 - 更细的前端自动化回归，例如直接覆盖 Lobby DOM / Cocos 交互入口的端到端脚本
