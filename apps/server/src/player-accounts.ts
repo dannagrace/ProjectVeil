@@ -19,6 +19,7 @@ import {
   validateAuthSessionFromRequest,
   verifyAccountPassword
 } from "./auth";
+import { recordAuthInvalidCredentials, removeAuthAccountSession, removeAuthAccountSessionsForPlayer } from "./observability";
 import type {
   PlayerAccountProfilePatch,
   PlayerAccountSnapshot,
@@ -561,6 +562,7 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
+      removeAuthAccountSession(sessionId);
       const items = await store.listPlayerAccountAuthSessions(authSession.playerId);
       sendJson(response, 200, {
         ok: true,
@@ -1366,6 +1368,7 @@ export function registerPlayerAccountRoutes(
 
         const authAccount = await store.loadPlayerAccountAuthByPlayerId(authSession.playerId);
         if (!authAccount || !verifyAccountPassword(currentPassword, authAccount.passwordHash)) {
+          recordAuthInvalidCredentials();
           sendJson(response, 401, {
             error: {
               code: "invalid_credentials",
@@ -1386,6 +1389,7 @@ export function registerPlayerAccountRoutes(
             accountSessionVersion: revokedAuth.accountSessionVersion
           });
         }
+        removeAuthAccountSessionsForPlayer(authSession.playerId);
         account =
           (await store.loadPlayerAccount(authSession.playerId)) ??
           ({

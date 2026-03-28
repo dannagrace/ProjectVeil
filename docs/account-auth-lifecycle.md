@@ -25,6 +25,18 @@
 - `DELETE /api/player-accounts/me/sessions/:sessionId` 仅允许撤销“非当前设备”的会话；被撤销的设备会话会立刻从列表消失，且旧刷新令牌随后会返回 `401 session_revoked`。
 - `POST /api/auth/logout` 与口令修改仍然属于“全量撤销”：会清空当前账号全部设备会话，并通过提升 `accountSessionVersion` 让旧访问令牌也一起失效。
 
+## 鉴权观测面
+
+- `GET /api/runtime/health` 现已附带 `runtime.auth`，用于和现有运行时健康面一起查看鉴权态势。
+- `GET /api/runtime/auth-readiness` 提供更紧凑的鉴权摘要，适合直接接现有 dashboard / alerting tooling。
+- `GET /api/runtime/metrics` 现已补充以下 Prometheus 指标：
+  - 当前进程内活跃游客会话：`veil_auth_guest_sessions`
+  - 当前进程内活跃正式账号设备会话：`veil_auth_account_sessions`
+  - 当前登录锁定数：`veil_auth_account_locks`
+  - 待确认注册 / 找回令牌：`veil_auth_pending_registrations`、`veil_auth_pending_recoveries`
+  - 会话校验、游客登录、账号登录、绑定、注册确认、刷新、退出、限流、口令错误等累计计数：`veil_auth_*_total`
+- 以上“活跃会话”指标是当前服务进程内的运行时视角，适合做本机 readiness / traffic 观测；若部署多实例，应按实例维度抓取再在监控端汇总。
+
 ## 正式注册闭环
 
 ### 1. 发起注册

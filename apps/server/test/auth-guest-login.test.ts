@@ -12,6 +12,7 @@ import {
   type GuestAuthSession
 } from "../src/auth";
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
+import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import type {
   PlayerAccountProgressPatch,
@@ -327,9 +328,11 @@ class MemoryAuthStore implements RoomSnapshotStore {
 async function startAuthServer(port: number, store: RoomSnapshotStore | null = null): Promise<Server> {
   configureRoomSnapshotStore(store);
   resetGuestAuthSessions();
+  resetRuntimeObservability();
   const transport = new WebSocketTransport();
   registerAuthRoutes(transport.getExpressApp() as never, store);
   registerPlayerAccountRoutes(transport.getExpressApp() as never, store);
+  registerRuntimeObservabilityRoutes(transport.getExpressApp() as never);
   const server = new Server({ transport });
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
@@ -778,6 +781,147 @@ test("refresh rotation invalidates the previous refresh token and logout revokes
 
   assert.equal(revokedRefreshResponse.status, 401);
   assert.equal(revokedRefreshPayload.error.code, "session_revoked");
+});
+
+test("auth readiness and metrics summarize auth posture for dashboards", async (t) => {
+  const port = 44590 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  await store.bindPlayerAccountCredentials("metrics-player", {
+    loginId: "metrics-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    resetRuntimeObservability();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const guestLoginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "metrics-guest",
+      displayName: "指标访客"
+    })
+  });
+  const guestLoginPayload = (await guestLoginResponse.json()) as { session: GuestAuthSession };
+  assert.equal(guestLoginResponse.status, 200);
+
+  const accountLoginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "Metrics Browser"
+    },
+    body: JSON.stringify({
+      loginId: "metrics-ranger",
+      password: "hunter2"
+    })
+  });
+  const accountLoginPayload = (await accountLoginResponse.json()) as { session: GuestAuthSession };
+  assert.equal(accountLoginResponse.status, 200);
+
+  const revokedRefreshResponse = await fetch(`http://127.0.0.1:${port}/api/auth/refresh`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accountLoginPayload.session.refreshToken}`
+    }
+  });
+  const rotatedPayload = (await revokedRefreshResponse.json()) as { session: GuestAuthSession };
+  assert.equal(revokedRefreshResponse.status, 200);
+
+  const staleRefreshResponse = await fetch(`http://127.0.0.1:${port}/api/auth/refresh`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accountLoginPayload.session.refreshToken}`
+    }
+  });
+  assert.equal(staleRefreshResponse.status, 401);
+
+  const invalidLoginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "metrics-ranger",
+      password: "wrong-password"
+    })
+  });
+  assert.equal(invalidLoginResponse.status, 401);
+
+  const healthResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/health`);
+  const healthPayload = (await healthResponse.json()) as {
+    runtime: {
+      auth: {
+        activeGuestSessionCount: number;
+        activeAccountSessionCount: number;
+        counters: {
+          guestLoginsTotal: number;
+          accountLoginsTotal: number;
+          refreshesTotal: number;
+          invalidCredentialsTotal: number;
+          sessionFailuresTotal: number;
+        };
+        sessionFailureReasons: {
+          session_revoked: number;
+        };
+      };
+    };
+  };
+
+  assert.equal(healthResponse.status, 200);
+  assert.equal(healthPayload.runtime.auth.activeGuestSessionCount, 1);
+  assert.equal(healthPayload.runtime.auth.activeAccountSessionCount, 1);
+  assert.equal(healthPayload.runtime.auth.counters.guestLoginsTotal, 1);
+  assert.equal(healthPayload.runtime.auth.counters.accountLoginsTotal, 1);
+  assert.equal(healthPayload.runtime.auth.counters.refreshesTotal, 1);
+  assert.equal(healthPayload.runtime.auth.counters.invalidCredentialsTotal, 1);
+  assert.equal(healthPayload.runtime.auth.counters.sessionFailuresTotal, 1);
+  assert.equal(healthPayload.runtime.auth.sessionFailureReasons.session_revoked, 1);
+
+  const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`);
+  const readinessPayload = (await readinessResponse.json()) as {
+    status: string;
+    headline: string;
+    alerts: string[];
+    auth: {
+      activeGuestSessionCount: number;
+      activeAccountSessionCount: number;
+    };
+  };
+
+  assert.equal(readinessResponse.status, 200);
+  assert.equal(readinessPayload.status, "ok");
+  assert.match(readinessPayload.headline, /guest=1 account=1 lockouts=0/);
+  assert.deepEqual(readinessPayload.alerts, []);
+  assert.equal(readinessPayload.auth.activeGuestSessionCount, 1);
+  assert.equal(readinessPayload.auth.activeAccountSessionCount, 1);
+
+  const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`);
+  const metricsText = await metricsResponse.text();
+
+  assert.equal(metricsResponse.status, 200);
+  assert.match(metricsText, /^veil_auth_guest_sessions 1$/m);
+  assert.match(metricsText, /^veil_auth_account_sessions 1$/m);
+  assert.match(metricsText, /^veil_auth_guest_logins_total 1$/m);
+  assert.match(metricsText, /^veil_auth_account_logins_total 1$/m);
+  assert.match(metricsText, /^veil_auth_refreshes_total 1$/m);
+  assert.match(metricsText, /^veil_auth_invalid_credentials_total 1$/m);
+  assert.match(metricsText, /^veil_auth_session_failures_total 1$/m);
+  assert.match(metricsText, /^veil_auth_session_failures_session_revoked_total 1$/m);
+
+  const logoutResponse = await fetch(`http://127.0.0.1:${port}/api/auth/logout`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${rotatedPayload.session.token}`
+    }
+  });
+  assert.equal(logoutResponse.status, 200);
 });
 
 test("revoking one device session leaves other account sessions active and blocks further refreshes for the revoked device", async (t) => {

@@ -66,6 +66,8 @@ async function startDevServer(
   // eslint-disable-next-line no-console
   console.log(`Runtime health available at http://${host}:${port}/api/runtime/health`);
   // eslint-disable-next-line no-console
+  console.log(`Auth readiness available at http://${host}:${port}/api/runtime/auth-readiness`);
+  // eslint-disable-next-line no-console
   console.log(`Runtime metrics available at http://${host}:${port}/api/runtime/metrics`);
   // eslint-disable-next-line no-console
   console.log(`Config center storage: ${configCenterStore.mode}`);

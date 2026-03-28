@@ -8,6 +8,24 @@ import {
   readAccountRegistrationDeliveryMode,
   readPasswordRecoveryDeliveryMode
 } from "./account-token-delivery";
+import {
+  recordAuthAccountBinding,
+  recordAuthAccountLogin,
+  recordAuthAccountRegistration,
+  recordAuthGuestLogin,
+  recordAuthInvalidCredentials,
+  recordAuthLogout,
+  recordAuthRateLimited,
+  recordAuthRefresh,
+  recordAuthSessionCheck,
+  recordAuthSessionFailure,
+  removeAuthAccountSessionsForPlayer,
+  setAuthAccountLockCount,
+  setAuthGuestSessionCount,
+  setPendingAuthRecoveryCount,
+  setPendingAuthRegistrationCount,
+  upsertAuthAccountSession
+} from "./observability";
 import type { RoomSnapshotStore } from "./persistence";
 
 export type AuthMode = "guest" | "account";
@@ -133,6 +151,31 @@ const guestSessionsById = new Map<string, GuestAuthSession>();
 const accountAuthStateByPlayerId = new Map<string, AccountAuthSessionState>();
 const accountRegistrationStateByLoginId = new Map<string, AccountRegistrationState>();
 const passwordRecoveryStateByLoginId = new Map<string, PasswordRecoveryState>();
+
+function countActiveAccountLockouts(): number {
+  const currentTime = nowMs();
+  let count = 0;
+
+  for (const [loginId, state] of accountLockoutStateByLoginId.entries()) {
+    if (state.lockedUntil && state.lockedUntil > currentTime) {
+      count += 1;
+      continue;
+    }
+
+    if (state.failedAttempts.length === 0) {
+      accountLockoutStateByLoginId.delete(loginId);
+    }
+  }
+
+  return count;
+}
+
+function syncAuthStateTelemetry(): void {
+  setAuthGuestSessionCount(guestSessionsById.size);
+  setAuthAccountLockCount(countActiveAccountLockouts());
+  setPendingAuthRegistrationCount(accountRegistrationStateByLoginId.size);
+  setPendingAuthRecoveryCount(passwordRecoveryStateByLoginId.size);
+}
 
 function parseEnvNumber(
   value: string | undefined,
@@ -446,6 +489,7 @@ function getAccountRegistrationState(loginId: string): AccountRegistrationState 
 
   if (isExpiredTimestamp(existing.expiresAt)) {
     accountRegistrationStateByLoginId.delete(loginId);
+    syncAuthStateTelemetry();
     return null;
   }
 
@@ -464,6 +508,7 @@ function storeAccountRegistrationState(loginId: string, requestedDisplayName: st
     expiresAt
   };
   accountRegistrationStateByLoginId.set(loginId, state);
+  syncAuthStateTelemetry();
   return state;
 }
 
@@ -478,6 +523,7 @@ function consumeAccountRegistrationState(loginId: string, token: string): Accoun
   }
 
   accountRegistrationStateByLoginId.delete(loginId);
+  syncAuthStateTelemetry();
   return state;
 }
 
@@ -489,6 +535,7 @@ function getPasswordRecoveryState(loginId: string): PasswordRecoveryState | null
 
   if (isExpiredTimestamp(existing.expiresAt)) {
     passwordRecoveryStateByLoginId.delete(loginId);
+    syncAuthStateTelemetry();
     return null;
   }
 
@@ -507,6 +554,7 @@ function storePasswordRecoveryState(playerId: string, loginId: string, token: st
     expiresAt
   };
   passwordRecoveryStateByLoginId.set(loginId, state);
+  syncAuthStateTelemetry();
   return state;
 }
 
@@ -521,6 +569,7 @@ function consumePasswordRecoveryState(loginId: string, token: string): PasswordR
   }
 
   passwordRecoveryStateByLoginId.delete(loginId);
+  syncAuthStateTelemetry();
   return state;
 }
 
@@ -887,18 +936,22 @@ async function validateAuthToken(
   store: RoomSnapshotStore | null,
   expectedKind: "access" | "refresh" = "access"
 ): Promise<ValidateAuthSessionResult> {
+  recordAuthSessionCheck();
   const normalizedToken = token.trim();
   if (!normalizedToken) {
+    recordAuthSessionFailure("unauthorized");
     return { session: null, errorCode: "unauthorized" };
   }
 
   const [encodedPayload, signature] = normalizedToken.split(".");
   if (!encodedPayload || !signature) {
+    recordAuthSessionFailure("unauthorized");
     return { session: null, errorCode: "unauthorized" };
   }
 
   const expectedSignature = createHmac("sha256", AUTH_SECRET).update(encodedPayload).digest("base64url");
   if (signature !== expectedSignature) {
+    recordAuthSessionFailure("unauthorized");
     return { session: null, errorCode: "unauthorized" };
   }
 
@@ -910,11 +963,13 @@ async function validateAuthToken(
       typeof payload.issuedAt !== "string" ||
       typeof payload.expiresAt !== "string"
     ) {
+      recordAuthSessionFailure("unauthorized");
       return { session: null, errorCode: "unauthorized" };
     }
 
     const tokenKind = payload.tokenKind ?? "access";
     if (tokenKind !== expectedKind) {
+      recordAuthSessionFailure("token_kind_invalid");
       return { session: null, errorCode: "token_kind_invalid" };
     }
 
@@ -936,6 +991,7 @@ async function validateAuthToken(
     };
 
     if (isExpiredTimestamp(session.expiresAt)) {
+      recordAuthSessionFailure("token_expired");
       return { session: null, errorCode: "token_expired" };
     }
 
@@ -943,6 +999,7 @@ async function validateAuthToken(
       if (session.sessionId) {
         const touchedSession = touchGuestSession(session.sessionId, normalizedToken);
         if (!touchedSession) {
+          recordAuthSessionFailure("session_revoked");
           return { session: null, errorCode: "session_revoked" };
         }
         return { session: touchedSession };
@@ -956,6 +1013,9 @@ async function validateAuthToken(
 
     const authAccount = await store.loadPlayerAccountAuthByPlayerId(session.playerId);
     if (!authAccount) {
+      if (session.sessionVersion != null) {
+        recordAuthSessionFailure("session_revoked");
+      }
       return session.sessionVersion == null ? { session } : { session: null, errorCode: "session_revoked" };
     }
 
@@ -963,23 +1023,28 @@ async function validateAuthToken(
       session.sessionVersion != null &&
       session.sessionVersion !== authAccount.accountSessionVersion
     ) {
+      recordAuthSessionFailure("session_revoked");
       return { session: null, errorCode: "session_revoked" };
     }
 
     if (expectedKind === "refresh") {
       if (!session.sessionId) {
+        recordAuthSessionFailure("session_revoked");
         return { session: null, errorCode: "session_revoked" };
       }
       const authDeviceSession = await store.loadPlayerAccountAuthSession(session.playerId, session.sessionId);
       if (!authDeviceSession) {
+        recordAuthSessionFailure("session_revoked");
         return { session: null, errorCode: "session_revoked" };
       }
       if (isExpiredTimestamp(authDeviceSession.refreshTokenExpiresAt)) {
+        recordAuthSessionFailure("token_expired");
         return { session: null, errorCode: "token_expired" };
       }
       if (
         authDeviceSession.refreshTokenHash !== hashRefreshToken(normalizedToken)
       ) {
+        recordAuthSessionFailure("session_revoked");
         return { session: null, errorCode: "session_revoked" };
       }
       await store.touchPlayerAccountAuthSession(session.playerId, session.sessionId, session.lastUsedAt);
@@ -994,6 +1059,7 @@ async function validateAuthToken(
     if (session.sessionId) {
       const authDeviceSession = await store.loadPlayerAccountAuthSession(session.playerId, session.sessionId);
       if (!authDeviceSession) {
+        recordAuthSessionFailure("session_revoked");
         return { session: null, errorCode: "session_revoked" };
       }
       await store.touchPlayerAccountAuthSession(session.playerId, session.sessionId, session.lastUsedAt);
@@ -1006,6 +1072,7 @@ async function validateAuthToken(
       }
     };
   } catch {
+    recordAuthSessionFailure("unauthorized");
     return { session: null, errorCode: "unauthorized" };
   }
 }
@@ -1016,7 +1083,13 @@ export async function validateAuthSessionFromRequest(
   expectedKind: "access" | "refresh" = "access"
 ): Promise<ValidateAuthSessionResult> {
   const token = readGuestAuthTokenFromRequest(request);
-  return token ? validateAuthToken(token, store, expectedKind) : { session: null, errorCode: "unauthorized" };
+  if (!token) {
+    recordAuthSessionCheck();
+    recordAuthSessionFailure("unauthorized");
+    return { session: null, errorCode: "unauthorized" };
+  }
+
+  return validateAuthToken(token, store, expectedKind);
 }
 
 async function createAccountSessionBundle(
@@ -1051,6 +1124,7 @@ async function createAccountSessionBundle(
     ...(input.deviceLabel ? { deviceLabel: input.deviceLabel } : {}),
     lastUsedAt: refreshSession.issuedAt
   });
+  upsertAuthAccountSession(input.playerId, refreshSessionId, input.provider ?? "account-password");
   const finalizedAuth = await store.loadPlayerAccountAuthByPlayerId(input.playerId);
   if (!finalizedAuth) {
     throw new Error("account_auth_not_found");
@@ -1195,6 +1269,7 @@ function enforceAuthRateLimit(
     return true;
   }
 
+  recordAuthRateLimited();
   response.setHeader("Retry-After", String(rateLimitResult.retryAfterSeconds ?? 1));
   sendJson(response, 429, {
     error: {
@@ -1216,10 +1291,12 @@ function pruneAccountLockoutState(loginId: string, config = readAuthRuntimeConfi
 
   if (nextState.failedAttempts.length === 0 && !nextState.lockedUntil) {
     accountLockoutStateByLoginId.delete(loginId);
+    syncAuthStateTelemetry();
     return nextState;
   }
 
   accountLockoutStateByLoginId.set(loginId, nextState);
+  syncAuthStateTelemetry();
   return nextState;
 }
 
@@ -1235,11 +1312,13 @@ function recordAccountLoginFailure(loginId: string, config = readAuthRuntimeConf
     nextState.lockedUntil = currentTime + config.lockoutDurationMs;
   }
   accountLockoutStateByLoginId.set(loginId, nextState);
+  syncAuthStateTelemetry();
   return nextState.lockedUntil ?? null;
 }
 
 function clearAccountLoginFailures(loginId: string): void {
   accountLockoutStateByLoginId.delete(loginId);
+  syncAuthStateTelemetry();
 }
 
 function sendAccountLocked(response: ServerResponse, lockedUntilMs: number): void {
@@ -1268,6 +1347,7 @@ function registerGuestSession(session: GuestAuthSession, config = readAuthRuntim
   }
 
   guestSessionsById.set(session.sessionId, session);
+  syncAuthStateTelemetry();
 }
 
 function touchGuestSession(sessionId: string, token: string): GuestAuthSession | null {
@@ -1292,6 +1372,7 @@ export function resetGuestAuthSessions(): void {
   accountAuthStateByPlayerId.clear();
   accountRegistrationStateByLoginId.clear();
   passwordRecoveryStateByLoginId.clear();
+  syncAuthStateTelemetry();
 }
 
 export function registerAuthRoutes(
@@ -1375,6 +1456,7 @@ export function registerAuthRoutes(
         ...(refreshSession.sessionId ? { refreshSessionId: refreshSession.sessionId } : {}),
         deviceLabel: resolveDeviceLabel(request)
       });
+      recordAuthRefresh();
       sendJson(response, 200, { session });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
@@ -1397,10 +1479,13 @@ export function registerAuthRoutes(
             accountSessionVersion: revokedAuth.accountSessionVersion
           });
         }
+        removeAuthAccountSessionsForPlayer(authSession.playerId);
       } else if (authSession.authMode === "guest" && authSession.sessionId) {
         guestSessionsById.delete(authSession.sessionId);
+        syncAuthStateTelemetry();
       }
 
+      recordAuthLogout();
       sendJson(response, 200, { ok: true });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
@@ -1456,6 +1541,7 @@ export function registerAuthRoutes(
           displayName
         })
       });
+      recordAuthGuestLogin();
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
@@ -1628,6 +1714,11 @@ export function registerAuthRoutes(
                 ...(loginId ? { loginId } : {})
               })
       });
+      if (store && loginId) {
+        recordAuthAccountLogin();
+      } else {
+        recordAuthGuestLogin();
+      }
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
@@ -1679,6 +1770,7 @@ export function registerAuthRoutes(
 
       const authAccount = await store.loadPlayerAccountAuthByLoginId(loginId);
       if (!authAccount || !verifyAccountPassword(password, authAccount.passwordHash)) {
+        recordAuthInvalidCredentials();
         const nextLockedUntil = recordAccountLoginFailure(loginId);
         if (nextLockedUntil) {
           sendAccountLocked(response, nextLockedUntil);
@@ -1707,6 +1799,7 @@ export function registerAuthRoutes(
           deviceLabel: resolveDeviceLabel(request)
         })
       });
+      recordAuthAccountLogin();
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
@@ -1894,6 +1987,7 @@ export function registerAuthRoutes(
           deviceLabel: resolveDeviceLabel(request)
         })
       });
+      recordAuthAccountRegistration();
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
@@ -2060,6 +2154,7 @@ export function registerAuthRoutes(
           accountSessionVersion: revokedAuth.accountSessionVersion
         });
       }
+      removeAuthAccountSessionsForPlayer(authAccount.playerId);
       clearAccountLoginFailures(loginId);
       await appendAccountAuditLog(store, authAccount.playerId, "通过密码找回流程重置口令，并撤销旧会话。", credentialBoundAt);
       const account =
@@ -2135,6 +2230,7 @@ export function registerAuthRoutes(
           deviceLabel: resolveDeviceLabel(request)
         })
       });
+      recordAuthAccountBinding();
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
