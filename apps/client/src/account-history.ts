@@ -298,7 +298,7 @@ export function renderRecentBattleReplays(
     return '<div class="account-subsection"><strong>最近战报</strong><p class="account-meta">尚未记录可回看的战斗摘要。</p></div>';
   }
 
-  const visibleReplays = account.recentBattleReplays.slice(0, 3);
+  const visibleReplays = account.recentBattleReplays.slice(0, 6);
   return `<div class="account-subsection">
     <strong>最近战报</strong>
     <p class="account-meta">最近 ${visibleReplays.length} 场战斗的回放摘要</p>
@@ -333,6 +333,40 @@ export function renderRecentBattleReplays(
         .join("")}
     </div>
   </div>`;
+}
+
+export function renderBattleReportReplayCenter(input: {
+  account: PlayerAccountProfile;
+  selectedReplayId?: string | null;
+  replay: PlayerAccountProfile["recentBattleReplays"][number] | null;
+  playback: BattleReplayPlaybackState | null;
+  loading?: boolean;
+  status?: string;
+}): string {
+  const replayCount = input.account.recentBattleReplays.length;
+  const headline =
+    replayCount > 0
+      ? `最近累计 ${replayCount} 场战斗，支持从列表进入详情或基础回放。`
+      : "暂无可回看的战斗记录，完成一场战斗后这里会自动出现首批战报。";
+
+  return `<section class="account-subsection account-replay-center" data-testid="battle-report-center">
+    <div class="account-replay-center-head">
+      <div>
+        <strong>战报与回放中心</strong>
+        <p class="account-meta">${escapeHtml(headline)}</p>
+      </div>
+      <span class="account-badge">${replayCount > 0 ? `战报 ${replayCount}` : "暂无战报"}</span>
+    </div>
+    ${renderRecentBattleReplays(input.account, {
+      ...(input.selectedReplayId !== undefined ? { selectedReplayId: input.selectedReplayId } : {})
+    })}
+    ${renderBattleReplayInspector({
+      replay: input.replay,
+      playback: input.playback,
+      ...(input.loading !== undefined ? { loading: input.loading } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {})
+    })}
+  </section>`;
 }
 
 export function renderBattleReplayInspector(input: {

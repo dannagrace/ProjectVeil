@@ -64,9 +64,8 @@ import {
 } from "./player-account";
 import {
   renderAchievementProgress,
-  renderBattleReplayInspector,
-  renderRecentAccountEvents,
-  renderRecentBattleReplays
+  renderBattleReportReplayCenter,
+  renderRecentAccountEvents
 } from "./account-history";
 
 const params = new URLSearchParams(window.location.search);
@@ -3474,10 +3473,9 @@ function render(): void {
           <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
           ${renderAchievementProgress(state.account)}
-          ${renderRecentBattleReplays(state.account, {
-            selectedReplayId: state.replayDetail.selectedReplayId
-          })}
-          ${renderBattleReplayInspector({
+          ${renderBattleReportReplayCenter({
+            account: state.account,
+            selectedReplayId: state.replayDetail.selectedReplayId,
             replay: state.replayDetail.replay,
             playback: state.replayDetail.playback,
             loading: state.replayDetail.loading,
