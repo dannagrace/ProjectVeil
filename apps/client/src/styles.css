@@ -1481,6 +1481,32 @@ h1 {
   opacity: 0.45;
 }
 
+.room-status-panel,
+.battle-settlement-panel {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.room-status-panel p,
+.battle-settlement-panel p {
+  line-height: 1.5;
+}
+
+.battle-settlement-panel.tone-victory {
+  border-color: rgba(47, 110, 91, 0.28);
+  background: linear-gradient(180deg, rgba(236, 247, 242, 0.92), rgba(247, 252, 249, 0.9));
+}
+
+.battle-settlement-panel.tone-defeat {
+  border-color: rgba(138, 49, 49, 0.24);
+  background: linear-gradient(180deg, rgba(252, 240, 236, 0.92), rgba(255, 248, 245, 0.9));
+}
+
+.battle-settlement-panel.tone-neutral {
+  border-color: rgba(78, 58, 42, 0.14);
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
