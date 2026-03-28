@@ -353,3 +353,41 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 当前结论：
   - 现在这条本地预览链路已经从“只能看到 empty state”变成“打一场后即可看到真实最近战报”
   - 下一步再做回放中心详情页时，可以直接复用这条本地数据链路继续迭代，不需要先补环境依赖。
+
+## H5 replay detail controls - 2026-03-28
+
+- 已在 `#27 世界事件日志与成就系统` 下继续推进“战斗回放控制”这一段，当前先把 H5 调试壳补成可用的最近战报详情区：
+  - `apps/client/src/account-history.ts`
+    - 最近战报条目改为可点击入口，支持高亮当前选中的 replay
+    - 新增 `renderBattleReplayInspector`，可渲染回放状态、当前动作、下一动作、存活单位列表与步骤轨迹
+  - `apps/client/src/main.ts`
+    - 新增 H5 侧 replay 详情状态
+    - 点击战报会请求 `/battle-replays/:replayId` 详情，并在本地用 shared playback helper 执行 `play / pause / step / reset`
+    - `render_game_to_text` 现已输出当前 replay 的选中状态与步骤进度，方便自动化回归
+  - `apps/client/src/styles.css`
+    - 补齐 replay 详情区、控制按钮、步骤列表和单位状态卡的样式
+- 新增 / 更新测试：
+  - `apps/client/test/account-history-render.test.ts`
+    - 覆盖回放条目选中态
+    - 覆盖 replay inspector 的控制按钮与步骤文案
+- 当前验证结果：
+  - `npm run typecheck:client:h5` 通过
+  - `node --import tsx --test ./apps/client/test/account-history-render.test.ts ./apps/client/test/player-account-storage.test.ts` 通过（20/20）
+  - `npm test` 通过（269/269）
+  - 本地 H5 联调已验证：
+    - 先用 `develop-web-game` 脚本跑 `tests/automation/keyboard-battle.actions.json` 生成真实 replay
+    - 再次用 `develop-web-game` 打开同一房间并点击最近战报，`state-0.json` 已出现：
+      - `replayDetail.replayId = replay-detail-20260328:battle-neutral-1:player-1`
+      - `currentStepIndex = 0`
+      - `totalSteps = 4`
+      - `nextAction = battle.skill`
+    - 额外用 Playwright 实点 `step -> play -> pause -> reset`，状态流转为：
+      - 初始 `0/4`
+      - `step` 后 `1/4`
+      - `play` 后推进到 `2/4`
+      - `pause` 停在 `2/4`
+      - `reset` 回到 `0/4`
+    - 已实际检查账号卡截图，最近战报详情区和控制按钮在页面中可见
+- 当前下一步：
+  - 可以继续把当前 H5 回放详情区往“独立回放中心页面”推进
+  - 或者把同一套 replay detail / playback 交互补到 Cocos 端入口上。

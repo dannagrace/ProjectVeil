@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderAchievementProgress, renderRecentAccountEvents, renderRecentBattleReplays } from "../src/account-history";
+import {
+  renderAchievementProgress,
+  renderBattleReplayInspector,
+  renderRecentAccountEvents,
+  renderRecentBattleReplays
+} from "../src/account-history";
+import { createBattleReplayPlaybackState, stepBattleReplayPlayback } from "../../../packages/shared/src/index";
 import type { PlayerAccountProfile } from "../src/player-account";
 
 function createProfile(): PlayerAccountProfile {
@@ -163,7 +169,9 @@ test("account history renderer shows readable event metadata, category summary, 
 });
 
 test("account history renderer shows recent battle replay summaries with step chips", () => {
-  const html = renderRecentBattleReplays(createProfile());
+  const html = renderRecentBattleReplays(createProfile(), {
+    selectedReplayId: "room-alpha:battle-1:player-1"
+  });
 
   assert.match(html, /最近 2 场战斗的回放摘要/);
   assert.match(html, /PVE · 中立守军 neutral-1/);
@@ -172,4 +180,38 @@ test("account history renderer shows recent battle replay summaries with step ch
   assert.match(html, /玩家 1/);
   assert.match(html, /自动 1/);
   assert.match(html, /技能 1/);
+  assert.match(html, /data-select-replay="room-alpha:battle-1:player-1"/);
+  assert.match(html, /account-replay-entry is-victory is-selected/);
+});
+
+test("account history renderer shows replay inspector controls and current playback snapshot", () => {
+  const replay = createProfile().recentBattleReplays[0]!;
+  const playback = stepBattleReplayPlayback(createBattleReplayPlaybackState(replay));
+  const html = renderBattleReplayInspector({
+    replay,
+    playback,
+    status: "已前进一步。"
+  });
+
+  assert.match(html, /回放详情/);
+  assert.match(html, /状态 已暂停/);
+  assert.match(html, /进度 1\/2/);
+  assert.match(html, /当前动作/);
+  assert.match(html, /hero-1-stack 攻击 neutral-1-stack/);
+  assert.match(html, /下一动作/);
+  assert.match(html, /neutral-1-stack 防御/);
+  assert.match(html, /data-replay-control="play"/);
+  assert.match(html, /data-replay-control="step"/);
+  assert.match(html, /data-clear-replay="true"/);
+});
+
+test("account history renderer shows replay inspector placeholder before a replay is selected", () => {
+  const html = renderBattleReplayInspector({
+    replay: null,
+    playback: null,
+    status: "选择一场最近战斗，即可查看逐步回放。"
+  });
+
+  assert.match(html, /回放详情/);
+  assert.match(html, /选择一场最近战斗/);
 });

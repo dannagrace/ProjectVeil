@@ -391,12 +391,27 @@ h1 {
 }
 
 .account-replay-entry {
+  width: 100%;
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid rgba(78, 58, 42, 0.08);
   background: rgba(78, 58, 42, 0.04);
   display: grid;
   gap: 6px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.account-replay-entry:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(84, 57, 35, 0.08);
+}
+
+.account-replay-entry.is-selected {
+  border-color: rgba(74, 120, 178, 0.28);
+  box-shadow: 0 0 0 2px rgba(74, 120, 178, 0.12);
 }
 
 .account-replay-entry.is-victory {
@@ -434,6 +449,103 @@ h1 {
   gap: 6px 10px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.replay-inspector {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(78, 58, 42, 0.08);
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.account-replay-inspector-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.account-replay-dismiss {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(78, 58, 42, 0.08);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.account-replay-controls,
+.account-replay-progress,
+.account-replay-state,
+.account-replay-step-list {
+  display: grid;
+  gap: 8px;
+}
+
+.account-replay-controls {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.account-replay-progress {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.account-replay-progress div,
+.account-replay-unit,
+.account-replay-step {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(78, 58, 42, 0.05);
+}
+
+.account-replay-progress div {
+  display: grid;
+  gap: 4px;
+}
+
+.account-replay-unit {
+  display: grid;
+  gap: 6px;
+}
+
+.account-replay-unit.is-attacker {
+  border-left: 3px solid rgba(47, 110, 91, 0.38);
+}
+
+.account-replay-unit.is-defender {
+  border-left: 3px solid rgba(164, 77, 44, 0.38);
+}
+
+.account-replay-unit-head,
+.account-replay-unit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.account-replay-unit-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.account-replay-step {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.account-replay-step.is-current {
+  background: rgba(74, 120, 178, 0.1);
+}
+
+.account-replay-step.is-complete {
+  opacity: 0.8;
+}
+
+.account-replay-step.is-upcoming {
+  opacity: 0.64;
 }
 
 .account-reward-chip {
@@ -1466,6 +1578,11 @@ h1 {
 
   .lobby-auth-grid,
   .account-binding-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-replay-controls,
+  .account-replay-progress {
     grid-template-columns: 1fr;
   }
 

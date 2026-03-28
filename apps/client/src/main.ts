@@ -1,5 +1,6 @@
 import "./styles.css";
 import {
+  createBattleReplayPlaybackState,
   createHeroSkillTreeView,
   createHeroAttributeBreakdown,
   createHeroEquipmentLoadoutView,
@@ -9,8 +10,15 @@ import {
   formatEquipmentRarityLabel,
   getDefaultBattleSkillCatalog,
   getEquipmentDefinition,
+  pauseBattleReplayPlayback,
   predictPlayerWorldAction,
+  playBattleReplayPlayback,
+  resetBattleReplayPlayback,
+  stepBattleReplayPlayback,
+  tickBattleReplayPlayback,
   totalExperienceRequiredForLevel,
+  type BattleReplayPlaybackState,
+  type PlayerBattleReplaySummary,
   type BattleAction,
   type BattleState,
   type EquipmentType,
@@ -48,12 +56,18 @@ import {
   createFallbackPlayerAccountProfile as createLocalAccountProfile,
   loadPlayerAccountProfileWithProgression as loadAccountProfileWithProgression,
   bindPlayerAccountCredentials as bindAccountCredentials,
+  loadPlayerBattleReplayDetail,
   rememberPreferredPlayerDisplayName,
   readPreferredPlayerDisplayName as readLocalPreferredDisplayName,
   savePlayerAccountDisplayName as saveAccountDisplayName,
   type PlayerAccountProfile as ClientPlayerAccountProfile
 } from "./player-account";
-import { renderAchievementProgress, renderRecentAccountEvents, renderRecentBattleReplays } from "./account-history";
+import {
+  renderAchievementProgress,
+  renderBattleReplayInspector,
+  renderRecentAccountEvents,
+  renderRecentBattleReplays
+} from "./account-history";
 
 const params = new URLSearchParams(window.location.search);
 const queryRoomId = params.get("roomId")?.trim() ?? "";
@@ -127,6 +141,13 @@ interface AppState {
   accountSaving: boolean;
   accountBinding: boolean;
   accountStatus: string;
+  replayDetail: {
+    selectedReplayId: string | null;
+    replay: PlayerBattleReplaySummary | null;
+    playback: BattleReplayPlaybackState | null;
+    loading: boolean;
+    status: string;
+  };
   selectedHeroId: string | null;
   selectedTile: { x: number; y: number } | null;
   hoveredTile: { x: number; y: number } | null;
@@ -186,6 +207,13 @@ const state: AppState = {
   accountSaving: false,
   accountBinding: false,
   accountStatus: "游客账号资料将在连接后自动同步。",
+  replayDetail: {
+    selectedReplayId: null,
+    replay: null,
+    playback: null,
+    loading: false,
+    status: "选择一场最近战斗，即可查看逐步回放。"
+  },
   selectedHeroId: null,
   selectedTile: null,
   hoveredTile: null,
@@ -217,7 +245,9 @@ let nextUiTaskId = 1;
 let scheduledUiTasks: ScheduledUiTask[] = [];
 let pathAnimationTaskIds: number[] = [];
 let battleFxTaskId: number | null = null;
+let replayPlaybackTaskId: number | null = null;
 let keyboardShortcutsBound = false;
+let replayLoadToken = 0;
 
 interface PendingPrediction {
   world: PlayerWorldView;
@@ -369,6 +399,140 @@ function formatAccountLastSeen(account: ClientPlayerAccountProfile): string {
 
 function formatGlobalVault(account: ClientPlayerAccountProfile): string {
   return `全局仓库 金币 ${account.globalResources.gold} / 木材 ${account.globalResources.wood} / 矿石 ${account.globalResources.ore}`;
+}
+
+function findReplaySummary(replayId: string | null | undefined): PlayerBattleReplaySummary | null {
+  const normalizedReplayId = replayId?.trim();
+  if (!normalizedReplayId) {
+    return null;
+  }
+
+  return state.account.recentBattleReplays.find((replay) => replay.id === normalizedReplayId) ?? null;
+}
+
+function clearReplayPlaybackLoop(): void {
+  if (replayPlaybackTaskId != null) {
+    window.clearTimeout(replayPlaybackTaskId);
+  }
+  replayPlaybackTaskId = null;
+}
+
+function syncReplayPlaybackLoop(): void {
+  clearReplayPlaybackLoop();
+  if (state.replayDetail.playback?.status !== "playing") {
+    return;
+  }
+
+  replayPlaybackTaskId = window.setTimeout(() => {
+    replayPlaybackTaskId = null;
+    if (!state.replayDetail.playback) {
+      return;
+    }
+
+    state.replayDetail.playback = tickBattleReplayPlayback(state.replayDetail.playback);
+    state.replayDetail.status =
+      state.replayDetail.playback.status === "completed" ? "本场回放已播放完成。" : "正在自动推进回放。";
+    syncReplayPlaybackLoop();
+    render();
+  }, 420);
+}
+
+function clearReplayDetail(status = "选择一场最近战斗，即可查看逐步回放。"): void {
+  replayLoadToken += 1;
+  clearReplayPlaybackLoop();
+  state.replayDetail = {
+    selectedReplayId: null,
+    replay: null,
+    playback: null,
+    loading: false,
+    status
+  };
+}
+
+async function selectReplayDetail(replayId: string): Promise<void> {
+  const summary = findReplaySummary(replayId);
+  if (!summary) {
+    clearReplayDetail("该回放已不在最近战报列表中。");
+    render();
+    return;
+  }
+
+  const requestToken = ++replayLoadToken;
+  clearReplayPlaybackLoop();
+  state.replayDetail = {
+    selectedReplayId: replayId,
+    replay: summary,
+    playback: createBattleReplayPlaybackState(summary),
+    loading: true,
+    status: "正在加载回放详情..."
+  };
+  render();
+
+  let replay = summary;
+  try {
+    const detail = await loadPlayerBattleReplayDetail(state.account.playerId, replayId);
+    if (requestToken !== replayLoadToken) {
+      return;
+    }
+
+    replay = detail ?? summary;
+    state.replayDetail = {
+      selectedReplayId: replayId,
+      replay,
+      playback: createBattleReplayPlaybackState(replay),
+      loading: false,
+      status: detail ? "已加载完整回放，可逐步回看。" : "已从最近战报缓存恢复回放。"
+    };
+    render();
+  } catch {
+    if (requestToken !== replayLoadToken) {
+      return;
+    }
+
+    state.replayDetail = {
+      selectedReplayId: replayId,
+      replay,
+      playback: createBattleReplayPlaybackState(replay),
+      loading: false,
+      status: "回放详情加载失败，已回退到最近战报缓存。"
+    };
+    render();
+  }
+}
+
+function applyReplayPlaybackControl(action: "play" | "pause" | "step" | "reset"): void {
+  const currentPlayback = state.replayDetail.playback;
+  if (!currentPlayback) {
+    return;
+  }
+
+  clearReplayPlaybackLoop();
+  if (action === "play") {
+    state.replayDetail.playback = playBattleReplayPlayback(currentPlayback);
+    state.replayDetail.status = "正在自动推进回放。";
+    syncReplayPlaybackLoop();
+    render();
+    return;
+  }
+
+  if (action === "pause") {
+    state.replayDetail.playback = pauseBattleReplayPlayback(currentPlayback);
+    state.replayDetail.status = "回放已暂停。";
+    render();
+    return;
+  }
+
+  if (action === "step") {
+    state.replayDetail.playback = stepBattleReplayPlayback(currentPlayback);
+    state.replayDetail.status =
+      state.replayDetail.playback.status === "completed" ? "已步进到最后一步。" : "已前进一步。";
+    render();
+    return;
+  }
+
+  state.replayDetail.playback = resetBattleReplayPlayback(currentPlayback);
+  state.replayDetail.status = "回放已重置到初始状态。";
+  render();
 }
 
 function formatLobbyRoomUpdatedAt(updatedAt: string): string {
@@ -1180,6 +1344,17 @@ function renderGameToText(): string {
     feedbackTone: state.feedbackTone,
     predictionStatus: state.predictionStatus,
     modal: state.modal.visible ? { ...state.modal } : null,
+    replayDetail: state.replayDetail.replay
+      ? {
+          replayId: state.replayDetail.replay.id,
+          loading: state.replayDetail.loading,
+          status: state.replayDetail.playback?.status ?? "paused",
+          currentStepIndex: state.replayDetail.playback?.currentStepIndex ?? 0,
+          totalSteps: state.replayDetail.playback?.totalSteps ?? state.replayDetail.replay.steps.length,
+          currentAction: state.replayDetail.playback?.currentStep?.action.type ?? null,
+          nextAction: state.replayDetail.playback?.nextStep?.action.type ?? null
+        }
+      : null,
     animation: {
       animatedPath: state.animatedPath.map((node) => ({ x: node.x, y: node.y })),
       animatedPathIndex: state.animatedPathIndex,
@@ -3127,7 +3302,15 @@ function render(): void {
           <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
           ${renderAchievementProgress(state.account)}
-          ${renderRecentBattleReplays(state.account)}
+          ${renderRecentBattleReplays(state.account, {
+            selectedReplayId: state.replayDetail.selectedReplayId
+          })}
+          ${renderBattleReplayInspector({
+            replay: state.replayDetail.replay,
+            playback: state.replayDetail.playback,
+            loading: state.replayDetail.loading,
+            status: state.replayDetail.status
+          })}
           ${renderRecentAccountEvents(state.account)}
           <div class="account-editor">
             <input
@@ -3406,6 +3589,35 @@ function render(): void {
     });
   }
 
+  for (const replayButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-select-replay]"))) {
+    replayButton.addEventListener("click", () => {
+      const replayId = replayButton.dataset.selectReplay;
+      if (!replayId) {
+        return;
+      }
+
+      void selectReplayDetail(replayId);
+    });
+  }
+
+  for (const replayControlButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-replay-control]"))) {
+    replayControlButton.addEventListener("click", () => {
+      const action = replayControlButton.dataset.replayControl;
+      if (action !== "play" && action !== "pause" && action !== "step" && action !== "reset") {
+        return;
+      }
+
+      applyReplayPlaybackControl(action);
+    });
+  }
+
+  for (const clearReplayButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-clear-replay]"))) {
+    clearReplayButton.addEventListener("click", () => {
+      clearReplayDetail();
+      render();
+    });
+  }
+
   for (const accountInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-account-name]"))) {
     accountInput.addEventListener("input", () => {
       state.accountDraftName = accountInput.value;
@@ -3523,6 +3735,9 @@ async function syncPlayerAccountProfile(): Promise<void> {
         ? `账号资料与全局仓库已同步，当前已绑定登录 ID ${account.loginId}。`
         : "账号资料与全局仓库已同步，可继续把当前游客档升级成口令账号。"
       : "当前运行在本地游客档，昵称仅保存在浏览器。";
+  if (state.replayDetail.selectedReplayId && !account.recentBattleReplays.some((replay) => replay.id === state.replayDetail.selectedReplayId)) {
+    clearReplayDetail("最近战报已刷新，当前选中的回放已不可用。");
+  }
   render();
 }
 
