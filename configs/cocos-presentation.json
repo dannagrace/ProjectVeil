@@ -151,33 +151,33 @@
       "victory": {
         "waveform": "triangle",
         "gain": 0.05,
-        "assetPath": "audio/level-up",
-        "assetStage": "placeholder",
-        "assetVolume": 0.78,
-        "attackMs": 14,
-        "releaseMs": 120,
-        "gapMs": 10,
+        "assetPath": "audio/victory-fanfare",
+        "assetStage": "production",
+        "assetVolume": 0.82,
+        "attackMs": 18,
+        "releaseMs": 140,
+        "gapMs": 12,
         "loopGapMs": 0,
         "notes": [
-          { "frequency": 523.25, "durationMs": 80 },
-          { "frequency": 659.25, "durationMs": 100 },
-          { "frequency": 783.99, "durationMs": 140 }
+          { "frequency": 523.25, "durationMs": 180 },
+          { "frequency": 659.25, "durationMs": 160 },
+          { "frequency": 783.99, "durationMs": 220 }
         ]
       },
       "defeat": {
         "waveform": "sawtooth",
         "gain": 0.04,
-        "assetPath": "audio/hit",
-        "assetStage": "placeholder",
-        "assetVolume": 0.72,
-        "attackMs": 8,
-        "releaseMs": 150,
-        "gapMs": 20,
+        "assetPath": "audio/defeat-sting",
+        "assetStage": "production",
+        "assetVolume": 0.7,
+        "attackMs": 12,
+        "releaseMs": 170,
+        "gapMs": 14,
         "loopGapMs": 0,
         "notes": [
-          { "frequency": 220, "durationMs": 90 },
-          { "frequency": 174.61, "durationMs": 110 },
-          { "frequency": 146.83, "durationMs": 180 }
+          { "frequency": 392, "durationMs": 160 },
+          { "frequency": 349.23, "durationMs": 140 },
+          { "frequency": 261.63, "durationMs": 220 }
         ]
       },
       "level_up": {
