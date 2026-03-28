@@ -29,7 +29,7 @@ if (errors.length > 0) {
 } else {
   const metadata = summarizeAssetMetadata(assetConfig);
   console.log(
-    `Asset validation passed: ${Object.keys(assetConfig.units).length} units, ${collectAssetPaths(assetConfig).length} registered files, ${metadata.byStage.placeholder} placeholder / ${metadata.byStage.production} production`
+    `Asset validation passed: ${Object.keys(assetConfig.units).length} units, ${collectAssetPaths(assetConfig).length} registered files, ${metadata.byStage.placeholder} placeholder / ${metadata.byStage.prototype} prototype / ${metadata.byStage.production} production`
   );
 }
 
