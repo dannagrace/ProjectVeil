@@ -3,9 +3,12 @@ import test from "node:test";
 import {
   buildHeroEquipmentActionRows,
   formatEquipmentActionReason,
+  formatInventorySummaryLines,
+  formatRecentLootLines,
   inventoryItemsForSlot
 } from "../assets/scripts/cocos-hero-equipment";
 import type { HeroView } from "../assets/scripts/VeilCocosSession";
+import type { EventLogEntry } from "../../../packages/shared/src/index";
 
 function createHero(overrides?: Partial<HeroView>): HeroView {
   return {
@@ -119,4 +122,71 @@ test("formatEquipmentActionReason keeps user-facing copy stable", () => {
   assert.equal(formatEquipmentActionReason("equipment_slot_empty"), "当前槽位没有可卸下的装备");
   assert.equal(formatEquipmentActionReason("equipment_not_in_inventory"), "背包里没有这件装备");
   assert.equal(formatEquipmentActionReason("unknown_reason"), "unknown_reason");
+});
+
+test("formatInventorySummaryLines exposes the current backpack as grouped readable lines", () => {
+  assert.deepEqual(
+    formatInventorySummaryLines(
+      createHero({
+        loadout: {
+          learnedSkills: [],
+          equipment: {
+            trinketIds: []
+          },
+          inventory: ["militia_pike", "militia_pike", "padded_gambeson", "scout_compass"]
+        }
+      })
+    ),
+    [
+      "背包 4 件（3 类）",
+      "武器 民兵长枪 x2",
+      "护甲 厚绗布甲",
+      "饰品 斥候罗盘"
+    ]
+  );
+});
+
+test("formatRecentLootLines keeps the latest hero loot entries visible in Cocos HUD", () => {
+  const entries: EventLogEntry[] = [
+    {
+      id: "loot-1",
+      timestamp: "2026-03-28T10:00:00.000Z",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      category: "combat",
+      description: "凯琳在战斗后获得了普通装备 塔盾链甲。",
+      heroId: "hero-1",
+      worldEventType: "hero.equipmentFound",
+      rewards: []
+    },
+    {
+      id: "loot-2",
+      timestamp: "2026-03-28T09:00:00.000Z",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      category: "combat",
+      description: "凯琳在战斗后获得了稀有装备 斥候罗盘。",
+      heroId: "hero-1",
+      worldEventType: "hero.equipmentFound",
+      rewards: []
+    },
+    {
+      id: "other-1",
+      timestamp: "2026-03-28T08:00:00.000Z",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      category: "movement",
+      description: "凯琳采集了木材。",
+      heroId: "hero-1",
+      worldEventType: "hero.collected",
+      rewards: []
+    }
+  ];
+
+  assert.deepEqual(formatRecentLootLines(entries, "hero-1"), [
+    "战利品 最近 2 条",
+    "凯琳在战斗后获得了普通装备 塔盾链甲。",
+    "凯琳在战斗后获得了稀有装备 斥候罗盘。"
+  ]);
+  assert.deepEqual(formatRecentLootLines([], "hero-1"), ["战利品 最近暂无装备掉落"]);
 });

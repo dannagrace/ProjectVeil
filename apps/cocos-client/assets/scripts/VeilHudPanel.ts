@@ -18,7 +18,11 @@ import {
   retainPlaceholderSpriteAssets
 } from "./cocos-placeholder-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
-import { buildHeroEquipmentActionRows } from "./cocos-hero-equipment.ts";
+import {
+  buildHeroEquipmentActionRows,
+  formatInventorySummaryLines,
+  formatRecentLootLines
+} from "./cocos-hero-equipment.ts";
 import { summarizeLatestBattleReplay } from "./cocos-battle-report.ts";
 
 const { ccclass } = _decorator;
@@ -137,7 +141,8 @@ function formatHeroLearnedSkills(hero: NonNullable<VeilHudRenderState["update"]>
 }
 
 function formatHeroEquipmentLines(
-  hero: NonNullable<VeilHudRenderState["update"]>["world"]["ownHeroes"][number] | null
+  hero: NonNullable<VeilHudRenderState["update"]>["world"]["ownHeroes"][number] | null,
+  recentEventLog: VeilHudRenderState["account"]["recentEventLog"]
 ): string[] {
   if (!hero) {
     return ["装备 等待房间状态...", ""];
@@ -149,11 +154,15 @@ function formatHeroEquipmentLines(
     .filter((slot) => slot.itemId && slot.item)
     .map((slot) => `${slot.label} ${slot.bonusSummary}`);
   const effectLine = loadout.summary.specialEffects.map((effect) => effect.name).join(" / ");
+  const inventoryLines = formatInventorySummaryLines(hero);
+  const lootLines = formatRecentLootLines(recentEventLog, hero.id);
 
   return [
     `装备 ${equipped.join("  ·  ")}`,
     detail.length > 0 ? detail.join("  ·  ") : "装备效果 等待拾取或替换",
-    effectLine ? `特效 ${effectLine}` : ""
+    ...(effectLine ? [`特效 ${effectLine}`] : []),
+    ...inventoryLines,
+    ...lootLines
   ];
 }
 
@@ -256,7 +265,7 @@ export class VeilHudPanel extends Component {
     const learnableSkills = listLearnableHeroSkills(hero);
     const progressMeter = hero ? createHeroProgressMeterView(toHeroSkillState(hero)) : null;
     const attributeRows = hero ? createHeroAttributeBreakdown(toHeroSkillState(hero), world ?? undefined) : [];
-    const equipmentLines = formatHeroEquipmentLines(hero);
+    const equipmentLines = formatHeroEquipmentLines(hero, state.account.recentEventLog);
     const equipmentRows = buildHeroEquipmentActionRows(hero);
     const equipmentButtons = this.buildEquipmentButtonStates(equipmentRows);
     const latestBattleReport = summarizeLatestBattleReplay(state.account.recentBattleReplays);
@@ -343,11 +352,7 @@ export class VeilHudPanel extends Component {
       this.equipmentLabel,
       `${CARD_PREFIX}-equipment`,
       hero
-        ? [
-            "装备配置",
-            equipmentLines[0] ?? "当前未装备任何物品",
-            equipmentLines[1] || equipmentLines[2] || "点击下方按钮可直接穿戴或卸下装备"
-          ]
+        ? ["装备配置", ...equipmentLines]
         : ["装备配置", "等待房间状态...", ""],
       cursorY,
       12,
@@ -355,7 +360,7 @@ export class VeilHudPanel extends Component {
       cardWidth,
       leftX,
       6,
-      Math.max(92, 56 + (equipmentButtons.length > 0 ? Math.ceil(equipmentButtons.length / 2) * 24 : 0))
+      Math.max(124, 76 + (equipmentButtons.length > 0 ? Math.ceil(equipmentButtons.length / 2) * 24 : 0))
     );
 
     cursorY = this.renderCardBlock(
