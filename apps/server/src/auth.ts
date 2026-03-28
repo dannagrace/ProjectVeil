@@ -1,6 +1,13 @@
 import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { appendEventLogEntries, type EventLogEntry } from "../../../packages/shared/src/index";
+import {
+  AccountTokenDeliveryConfigurationError,
+  AccountTokenDeliveryError,
+  deliverAccountToken,
+  readAccountRegistrationDeliveryMode,
+  readPasswordRecoveryDeliveryMode
+} from "./account-token-delivery";
 import type { RoomSnapshotStore } from "./persistence";
 
 export type AuthMode = "guest" | "account";
@@ -93,7 +100,7 @@ interface PasswordRecoveryState {
   playerId: string;
   loginId: string;
   tokenHash: string;
-  deliveryToken?: string;
+  deliveryToken: string;
   issuedAt: string;
   expiresAt: string;
 }
@@ -102,13 +109,10 @@ interface AccountRegistrationState {
   loginId: string;
   requestedDisplayName: string;
   tokenHash: string;
-  deliveryToken?: string;
+  deliveryToken: string;
   issuedAt: string;
   expiresAt: string;
 }
-
-type PasswordRecoveryDeliveryMode = "disabled" | "dev-token";
-type AccountRegistrationDeliveryMode = "disabled" | "dev-token";
 
 const AUTH_SECRET = process.env.VEIL_AUTH_SECRET?.trim() || "project-veil-dev-secret";
 const MIN_ACCOUNT_PASSWORD_LENGTH = 6;
@@ -382,22 +386,12 @@ function normalizeRequestedRegistrationDisplayName(loginId: string, displayName?
   return normalizeDisplayName(loginId, displayName);
 }
 
-function readAccountRegistrationDeliveryMode(env: NodeJS.ProcessEnv = process.env): AccountRegistrationDeliveryMode {
-  const normalized = env.VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE?.trim().toLowerCase();
-  return normalized === "disabled" ? "disabled" : "dev-token";
-}
-
 function readAccountRegistrationTtlMs(env: NodeJS.ProcessEnv = process.env): number {
   return (
     parseEnvNumber(env.VEIL_ACCOUNT_REGISTRATION_TTL_MINUTES, DEFAULT_ACCOUNT_REGISTRATION_TTL_MINUTES, {
       minimum: 1 / 60_000
     }) * 60_000
   );
-}
-
-function readPasswordRecoveryDeliveryMode(env: NodeJS.ProcessEnv = process.env): PasswordRecoveryDeliveryMode {
-  const normalized = env.VEIL_PASSWORD_RECOVERY_DELIVERY_MODE?.trim().toLowerCase();
-  return normalized === "disabled" ? "disabled" : "dev-token";
 }
 
 function readPasswordRecoveryTtlMs(env: NodeJS.ProcessEnv = process.env): number {
@@ -461,12 +455,11 @@ function getAccountRegistrationState(loginId: string): AccountRegistrationState 
 function storeAccountRegistrationState(loginId: string, requestedDisplayName: string, token: string): AccountRegistrationState {
   const issuedAt = new Date().toISOString();
   const expiresAt = new Date(nowMs() + readAccountRegistrationTtlMs()).toISOString();
-  const deliveryMode = readAccountRegistrationDeliveryMode();
   const state: AccountRegistrationState = {
     loginId,
     requestedDisplayName,
     tokenHash: hashAccountRegistrationToken(token),
-    ...(deliveryMode === "dev-token" ? { deliveryToken: token } : {}),
+    deliveryToken: token,
     issuedAt,
     expiresAt
   };
@@ -505,12 +498,11 @@ function getPasswordRecoveryState(loginId: string): PasswordRecoveryState | null
 function storePasswordRecoveryState(playerId: string, loginId: string, token: string): PasswordRecoveryState {
   const issuedAt = new Date().toISOString();
   const expiresAt = new Date(nowMs() + readPasswordRecoveryTtlMs()).toISOString();
-  const deliveryMode = readPasswordRecoveryDeliveryMode();
   const state: PasswordRecoveryState = {
     playerId,
     loginId,
     tokenHash: hashPasswordRecoveryToken(token),
-    ...(deliveryMode === "dev-token" ? { deliveryToken: token } : {}),
+    deliveryToken: token,
     issuedAt,
     expiresAt
   };
@@ -1112,6 +1104,34 @@ function sendStoreUnavailable(response: ServerResponse): void {
       message: "Account auth requires configured room persistence storage"
     }
   });
+}
+
+function sendAccountTokenDeliveryFailure(
+  response: ServerResponse,
+  error: unknown,
+  kind: "account-registration" | "password-recovery"
+): void {
+  if (error instanceof AccountTokenDeliveryConfigurationError) {
+    sendJson(response, 503, {
+      error: {
+        code: `${kind.replace(/-/g, "_")}_delivery_misconfigured`,
+        message: error.message
+      }
+    });
+    return;
+  }
+
+  if (error instanceof AccountTokenDeliveryError) {
+    sendJson(response, 502, {
+      error: {
+        code: `${kind.replace(/-/g, "_")}_delivery_failed`,
+        message: error.message
+      }
+    });
+    return;
+  }
+
+  throw error;
 }
 
 function sendAuthFailure(
@@ -1748,11 +1768,23 @@ export function registerAuthRoutes(
           ? existingRegistrationState
           : storeAccountRegistrationState(loginId, requestedDisplayName, createAccountRegistrationToken());
 
-      sendJson(response, 202, {
-        status: "registration_requested",
-        expiresAt: registrationState.expiresAt,
-        ...(deliveryMode === "dev-token" && registrationState.deliveryToken ? { registrationToken: registrationState.deliveryToken } : {})
-      });
+      try {
+        const delivery = await deliverAccountToken(deliveryMode, {
+          kind: "account-registration",
+          loginId,
+          token: registrationState.deliveryToken,
+          expiresAt: registrationState.expiresAt,
+          requestedDisplayName
+        });
+
+        sendJson(response, 202, {
+          status: "registration_requested",
+          expiresAt: registrationState.expiresAt,
+          ...(delivery.responseToken ? { registrationToken: delivery.responseToken } : {})
+        });
+      } catch (error) {
+        sendAccountTokenDeliveryFailure(response, error, "account-registration");
+      }
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
@@ -1912,11 +1944,23 @@ export function registerAuthRoutes(
         );
       }
 
-      sendJson(response, 202, {
-        status: "recovery_requested",
-        expiresAt: recoveryState.expiresAt,
-        ...(deliveryMode === "dev-token" && recoveryState.deliveryToken ? { recoveryToken: recoveryState.deliveryToken } : {})
-      });
+      try {
+        const delivery = await deliverAccountToken(deliveryMode, {
+          kind: "password-recovery",
+          loginId,
+          playerId: authAccount.playerId,
+          token: recoveryState.deliveryToken,
+          expiresAt: recoveryState.expiresAt
+        });
+
+        sendJson(response, 202, {
+          status: "recovery_requested",
+          expiresAt: recoveryState.expiresAt,
+          ...(delivery.responseToken ? { recoveryToken: delivery.responseToken } : {})
+        });
+      } catch (error) {
+        sendAccountTokenDeliveryFailure(response, error, "password-recovery");
+      }
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }

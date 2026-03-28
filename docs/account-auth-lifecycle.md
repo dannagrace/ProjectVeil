@@ -44,8 +44,9 @@
 
 - 为“全新正式账号”预留 `loginId`，不依赖先创建游客档。
 - 校验 `loginId` 格式、口令账号占用情况，并按来源 IP 走现有滑动窗口限流。
-- 当前默认开发态投递模式为 `VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE=dev-token`，会直接在响应体里回传 `registrationToken` 供联调使用。
+- 当前默认投递模式为 `VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE=dev-token`，会直接在响应体里回传 `registrationToken` 供联调使用；若切到 `webhook` 或 `disabled`，响应仍返回 `202`，但不会向客户端泄漏令牌。
 - 若同一个 `loginId` 仍有未过期的注册申请，服务端会复用现有令牌与到期时间，而不是生成新令牌，避免联调时旧令牌被静默顶掉。
+- `webhook` 模式会把令牌投递到配置的后端通道；若同一申请被重复触发，服务端会重新投递同一枚未过期令牌，而不是生成新令牌。
 - 若 `loginId` 已被绑定，接口返回 `409 login_id_taken`。
 - 注册申请事件会在确认成功后补写入新账号的 `recentEventLog`，便于后续统一审计。
 
@@ -98,9 +99,10 @@
 
 - 仅对已绑定口令账号生效；不存在的 `loginId` 仍返回 `202`，避免泄漏账号存在性。
 - 服务端生成一次性短时效重置令牌，并按来源 IP 走现有滑动窗口限流。
-- 当前默认开发态投递模式为 `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE=dev-token`，会直接在响应体里回传 `recoveryToken` 供联调使用。
+- 当前默认投递模式为 `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE=dev-token`，会直接在响应体里回传 `recoveryToken` 供联调使用；若切到 `webhook` 或 `disabled`，响应仍返回 `202`，但不会向客户端泄漏令牌。
 - 若同一账号已有未过期的找回申请，服务端会复用现有令牌与到期时间，避免重复请求导致先前令牌失效或连续追加重复审计事件。
-- 若后续切到 `disabled`，接口仍保留，但不会直接把令牌回传给客户端。
+- `webhook` 模式会把令牌投递到配置的后端通道；若同一申请被重复触发，服务端会重新投递同一枚未过期令牌，而不是生成新令牌。
+- 若后续切到 `disabled`，接口仍保留，但不会直接把令牌回传给客户端，也不会尝试外部投递。
 - 成功发起时会向该账号的 `recentEventLog` 追加一条 `category=account` 的审计事件。
 
 成功响应示例：
@@ -138,18 +140,41 @@
 
 - `VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE`
   - `dev-token`：默认值，直接在响应里返回开发态注册令牌
+  - `webhook`：通过通用 webhook 投递注册令牌，响应不回传 `registrationToken`
   - `disabled`：不向客户端直出令牌，保留接口占位
 - `VEIL_ACCOUNT_REGISTRATION_TTL_MINUTES`
   - 默认 `15`
 - `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE`
   - `dev-token`：默认值，直接在响应里返回开发态重置令牌
+  - `webhook`：通过通用 webhook 投递重置令牌，响应不回传 `recoveryToken`
   - `disabled`：不向客户端直出令牌，保留接口占位
 - `VEIL_PASSWORD_RECOVERY_TTL_MINUTES`
   - 默认 `15`
+- `VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL`
+  - 当任一投递模式为 `webhook` 时必填；服务端会向该地址发送 `POST application/json`
+- `VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_BEARER_TOKEN`
+  - 可选；若提供，服务端会附带 `Authorization: Bearer <token>`
+- `VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_TIMEOUT_MS`
+  - 可选，默认 `10000`
 - `VEIL_RATE_LIMIT_AUTH_WINDOW_MS`
   - 默认 `60000`
 - `VEIL_RATE_LIMIT_AUTH_MAX`
   - 默认 `10`
+
+## Webhook 投递契约与失败处理
+
+- `webhook` 模式会向 `VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL` 发送 JSON：
+  - 注册：`{ "event": "account-registration", "loginId": "...", "token": "...", "expiresAt": "...", "requestedDisplayName": "..." }`
+  - 找回：`{ "event": "password-recovery", "loginId": "...", "playerId": "...", "token": "...", "expiresAt": "..." }`
+- 若 `webhook` 模式缺少 URL，`request` 接口会返回 `503 *_delivery_misconfigured`。
+- 若 webhook 超时、网络失败或返回非 2xx，`request` 接口会返回 `502 *_delivery_failed`，并保留当前未过期令牌，方便修复通道后重试同一请求重新投递。
+- `disabled` 适合作为生产环境的显式兜底占位；`dev-token` 适合作为本地联调回退模式。
+
+## 本地联调建议
+
+- 本地默认继续使用 `dev-token`，H5 / Cocos 现有调试入口可以直接拿响应里的 token 完成注册或找回确认。
+- 若要联调真实投递链路，可把某一个流程切到 `webhook`，并将 URL 指向本地捕获器、邮件桥接器或反向代理入口。
+- 若本地暂时没有外部通道，又不希望客户端看到 token，可以临时改成 `disabled`；接口仍会保留，但确认步骤需要从服务端日志、运维工具或外部投递链路获取令牌。
 
 ## 前端联调入口
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer as createHttpServer } from "node:http";
 import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
@@ -414,6 +415,59 @@ function withEnvOverrides(
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function startTokenDeliveryWebhookServer(options: { statusCode?: number } = {}): Promise<{
+  close: () => Promise<void>;
+  requests: Array<{
+    headers: Record<string, string | string[] | undefined>;
+    body: Record<string, unknown>;
+  }>;
+  setStatusCode: (statusCode: number) => void;
+  url: string;
+}> {
+  const requests: Array<{
+    headers: Record<string, string | string[] | undefined>;
+    body: Record<string, unknown>;
+  }> = [];
+  let statusCode = options.statusCode ?? 204;
+  const server = createHttpServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+
+    requests.push({
+      headers: request.headers,
+      body: JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as Record<string, unknown>
+    });
+
+    response.statusCode = statusCode;
+    response.setHeader("Content-Type", "application/json; charset=utf-8");
+    response.end(JSON.stringify({ ok: statusCode < 400 }));
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("webhook_server_address_unavailable");
+  }
+
+  return {
+    close: () => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+    requests,
+    setStatusCode: (nextStatusCode: number) => {
+      statusCode = nextStatusCode;
+    },
+    url: `http://127.0.0.1:${address.port}/delivery`
+  };
 }
 
 test("guest auth route issues a signed session token", async (t) => {
@@ -1645,6 +1699,275 @@ test("password recovery request returns 429 after the per-IP rate limit is excee
   assert.equal(limitedResponse.status, 429);
   assert.equal(limitedPayload.error.code, "rate_limited");
   assert.equal(limitedResponse.headers.get("Retry-After"), "60");
+});
+
+test("account registration request uses webhook delivery without leaking the token", { concurrency: false }, async (t) => {
+  const cleanup: Array<() => void> = [];
+  const webhook = await startTokenDeliveryWebhookServer();
+  withEnvOverrides(
+    {
+      VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE: "webhook",
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL: webhook.url
+    },
+    cleanup
+  );
+
+  const port = 44746 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    await webhook.close().catch(() => undefined);
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const firstResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "webhook-registration-ranger",
+      displayName: "Webhook Ranger"
+    })
+  });
+  const firstPayload = (await firstResponse.json()) as {
+    status: string;
+    expiresAt?: string;
+    registrationToken?: string;
+  };
+
+  assert.equal(firstResponse.status, 202);
+  assert.equal(firstPayload.status, "registration_requested");
+  assert.ok(firstPayload.expiresAt);
+  assert.equal(firstPayload.registrationToken, undefined);
+  assert.equal(webhook.requests.length, 1);
+  assert.equal(webhook.requests[0]?.body.event, "account-registration");
+  assert.equal(webhook.requests[0]?.body.loginId, "webhook-registration-ranger");
+  assert.equal(webhook.requests[0]?.body.requestedDisplayName, "Webhook Ranger");
+  assert.equal(webhook.requests[0]?.body.expiresAt, firstPayload.expiresAt);
+  assert.equal(typeof webhook.requests[0]?.body.token, "string");
+
+  const secondResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "webhook-registration-ranger",
+      displayName: "Webhook Ranger"
+    })
+  });
+  const secondPayload = (await secondResponse.json()) as {
+    status: string;
+    expiresAt?: string;
+    registrationToken?: string;
+  };
+
+  assert.equal(secondResponse.status, 202);
+  assert.equal(secondPayload.registrationToken, undefined);
+  assert.equal(secondPayload.expiresAt, firstPayload.expiresAt);
+  assert.equal(webhook.requests.length, 2);
+  assert.equal(webhook.requests[1]?.body.token, webhook.requests[0]?.body.token);
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "webhook-registration-ranger",
+      registrationToken: webhook.requests[0]?.body.token,
+      password: "hunter2"
+    })
+  });
+
+  assert.equal(confirmResponse.status, 200);
+});
+
+test("account registration request returns 503 when webhook delivery is misconfigured", { concurrency: false }, async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE: "webhook",
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL: undefined
+    },
+    cleanup
+  );
+
+  const port = 44747 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "misconfigured-registration-ranger"
+    })
+  });
+  const payload = (await response.json()) as { error: { code: string; message: string } };
+
+  assert.equal(response.status, 503);
+  assert.equal(payload.error.code, "account_registration_delivery_misconfigured");
+  assert.match(payload.error.message, /VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL/);
+});
+
+test("password recovery request uses webhook delivery without leaking the token", { concurrency: false }, async (t) => {
+  const cleanup: Array<() => void> = [];
+  const webhook = await startTokenDeliveryWebhookServer();
+  withEnvOverrides(
+    {
+      VEIL_PASSWORD_RECOVERY_DELIVERY_MODE: "webhook",
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL: webhook.url,
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_BEARER_TOKEN: "veil-webhook-secret"
+    },
+    cleanup
+  );
+
+  const port = 44748 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  await store.ensurePlayerAccount({
+    playerId: "webhook-recovery-player",
+    displayName: "Webhook Recovery"
+  });
+  await store.bindPlayerAccountCredentials("webhook-recovery-player", {
+    loginId: "webhook-recovery-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    await webhook.close().catch(() => undefined);
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const firstResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "webhook-recovery-ranger"
+    })
+  });
+  const firstPayload = (await firstResponse.json()) as {
+    status: string;
+    expiresAt?: string;
+    recoveryToken?: string;
+  };
+
+  assert.equal(firstResponse.status, 202);
+  assert.equal(firstPayload.status, "recovery_requested");
+  assert.ok(firstPayload.expiresAt);
+  assert.equal(firstPayload.recoveryToken, undefined);
+  assert.equal(webhook.requests.length, 1);
+  assert.equal(webhook.requests[0]?.headers.authorization, "Bearer veil-webhook-secret");
+  assert.equal(webhook.requests[0]?.body.event, "password-recovery");
+  assert.equal(webhook.requests[0]?.body.loginId, "webhook-recovery-ranger");
+  assert.equal(webhook.requests[0]?.body.playerId, "webhook-recovery-player");
+  assert.equal(webhook.requests[0]?.body.expiresAt, firstPayload.expiresAt);
+  assert.equal(typeof webhook.requests[0]?.body.token, "string");
+
+  const secondResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "webhook-recovery-ranger"
+    })
+  });
+  const secondPayload = (await secondResponse.json()) as {
+    status: string;
+    expiresAt?: string;
+    recoveryToken?: string;
+  };
+
+  assert.equal(secondResponse.status, 202);
+  assert.equal(secondPayload.recoveryToken, undefined);
+  assert.equal(secondPayload.expiresAt, firstPayload.expiresAt);
+  assert.equal(webhook.requests.length, 2);
+  assert.equal(webhook.requests[1]?.body.token, webhook.requests[0]?.body.token);
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "webhook-recovery-ranger",
+      recoveryToken: webhook.requests[0]?.body.token,
+      newPassword: "hunter3"
+    })
+  });
+
+  assert.equal(confirmResponse.status, 200);
+});
+
+test("password recovery request returns 502 when the delivery webhook fails", { concurrency: false }, async (t) => {
+  const cleanup: Array<() => void> = [];
+  const webhook = await startTokenDeliveryWebhookServer({ statusCode: 500 });
+  withEnvOverrides(
+    {
+      VEIL_PASSWORD_RECOVERY_DELIVERY_MODE: "webhook",
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL: webhook.url
+    },
+    cleanup
+  );
+
+  const port = 44749 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  await store.ensurePlayerAccount({
+    playerId: "failed-recovery-player",
+    displayName: "Failed Recovery"
+  });
+  await store.bindPlayerAccountCredentials("failed-recovery-player", {
+    loginId: "failed-recovery-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    await webhook.close().catch(() => undefined);
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "failed-recovery-ranger"
+    })
+  });
+  const payload = (await response.json()) as {
+    error: { code: string; message: string };
+    recoveryToken?: string;
+  };
+
+  assert.equal(response.status, 502);
+  assert.equal(payload.error.code, "password_recovery_delivery_failed");
+  assert.equal(payload.recoveryToken, undefined);
+  assert.match(payload.error.message, /500/);
+  assert.equal(webhook.requests.length, 1);
 });
 
 test("wechat mini game scaffold route returns 501 until mock mode is enabled", { concurrency: false }, async (t) => {
