@@ -304,6 +304,13 @@ function normalizeSessionVersion(sessionVersion?: number | null): number | undef
   return Math.max(0, Math.floor(sessionVersion));
 }
 
+function resolveDeviceLabel(request: Pick<IncomingMessage, "headers">): string {
+  const userAgent = request.headers["user-agent"];
+  const raw = Array.isArray(userAgent) ? userAgent[0] : userAgent;
+  const normalized = raw?.trim();
+  return normalized ? normalized.slice(0, 191) : "Unknown device";
+}
+
 function normalizeAuthMode(authMode?: string | null, loginId?: string | null): AuthMode {
   return authMode === "account" || Boolean(normalizeLoginId(loginId)) ? "account" : "guest";
 }
@@ -847,16 +854,6 @@ function resolveAuthSession(token: string): GuestAuthSession | null {
         if (session.sessionVersion != null && session.sessionVersion !== cachedState.sessionVersion) {
           return null;
         }
-        if (session.sessionId && cachedState.refreshSessionId && session.sessionId !== cachedState.refreshSessionId) {
-          return null;
-        }
-        if (
-          payload.tokenKind === "refresh" &&
-          cachedState.refreshTokenHash &&
-          cachedState.refreshTokenHash !== hashRefreshToken(normalizedToken)
-        ) {
-          return null;
-        }
       }
     }
 
@@ -977,35 +974,42 @@ async function validateAuthToken(
       return { session: null, errorCode: "session_revoked" };
     }
 
-    if (session.sessionId && authAccount.refreshSessionId && session.sessionId !== authAccount.refreshSessionId) {
-      return { session: null, errorCode: "session_revoked" };
-    }
-
     if (expectedKind === "refresh") {
-      if (!session.sessionId || !authAccount.refreshSessionId || !authAccount.refreshTokenHash) {
+      if (!session.sessionId) {
         return { session: null, errorCode: "session_revoked" };
       }
-      if (authAccount.refreshTokenExpiresAt && isExpiredTimestamp(authAccount.refreshTokenExpiresAt)) {
+      const authDeviceSession = await store.loadPlayerAccountAuthSession(session.playerId, session.sessionId);
+      if (!authDeviceSession) {
+        return { session: null, errorCode: "session_revoked" };
+      }
+      if (isExpiredTimestamp(authDeviceSession.refreshTokenExpiresAt)) {
         return { session: null, errorCode: "token_expired" };
       }
       if (
-        authAccount.refreshSessionId !== session.sessionId ||
-        authAccount.refreshTokenHash !== hashRefreshToken(normalizedToken)
+        authDeviceSession.refreshTokenHash !== hashRefreshToken(normalizedToken)
       ) {
         return { session: null, errorCode: "session_revoked" };
       }
+      await store.touchPlayerAccountAuthSession(session.playerId, session.sessionId, session.lastUsedAt);
       return {
         session: {
           ...session,
-          ...(authAccount.refreshTokenExpiresAt ? { refreshExpiresAt: authAccount.refreshTokenExpiresAt } : {})
+          refreshExpiresAt: authDeviceSession.refreshTokenExpiresAt
         }
       };
+    }
+
+    if (session.sessionId) {
+      const authDeviceSession = await store.loadPlayerAccountAuthSession(session.playerId, session.sessionId);
+      if (!authDeviceSession) {
+        return { session: null, errorCode: "session_revoked" };
+      }
+      await store.touchPlayerAccountAuthSession(session.playerId, session.sessionId, session.lastUsedAt);
     }
 
     return {
       session: {
         ...session,
-        ...(authAccount.refreshSessionId ? { sessionId: authAccount.refreshSessionId } : {}),
         sessionVersion: authAccount.accountSessionVersion
       }
     };
@@ -1030,26 +1034,30 @@ async function createAccountSessionBundle(
     displayName: string;
     loginId: string;
     provider?: AuthProvider;
+    refreshSessionId?: string;
+    deviceLabel?: string;
   }
 ): Promise<GuestAuthSession> {
-  const refreshSessionId = randomUUID();
+  const refreshSessionId = input.refreshSessionId ?? randomUUID();
   const existingAuth = await store.loadPlayerAccountAuthByPlayerId(input.playerId);
   if (!existingAuth) {
     throw new Error("account_auth_not_found");
   }
-  const nextSessionVersion = existingAuth.accountSessionVersion + 1;
   const refreshSession = issueAccountRefreshSession({
     playerId: input.playerId,
     displayName: input.displayName,
     loginId: input.loginId,
     ...(input.provider ? { provider: input.provider } : {}),
     sessionId: refreshSessionId,
-    sessionVersion: nextSessionVersion
+    sessionVersion: existingAuth.accountSessionVersion
   });
   await store.savePlayerAccountAuthSession(input.playerId, {
     refreshSessionId,
     refreshTokenHash: hashRefreshToken(refreshSession.token),
-    refreshTokenExpiresAt: refreshSession.expiresAt
+    refreshTokenExpiresAt: refreshSession.expiresAt,
+    ...(input.provider ? { provider: input.provider } : {}),
+    ...(input.deviceLabel ? { deviceLabel: input.deviceLabel } : {}),
+    lastUsedAt: refreshSession.issuedAt
   });
   const finalizedAuth = await store.loadPlayerAccountAuthByPlayerId(input.playerId);
   if (!finalizedAuth) {
@@ -1343,7 +1351,9 @@ export function registerAuthRoutes(
         playerId: account.playerId,
         displayName: account.displayName,
         loginId: refreshSession.loginId,
-        provider: refreshSession.provider
+        provider: refreshSession.provider,
+        ...(refreshSession.sessionId ? { refreshSessionId: refreshSession.sessionId } : {}),
+        deviceLabel: resolveDeviceLabel(request)
       });
       sendJson(response, 200, { session });
     } catch (error) {
@@ -1589,7 +1599,8 @@ export function registerAuthRoutes(
                 playerId,
                 displayName,
                 loginId,
-                provider: "wechat-mini-game"
+                provider: "wechat-mini-game",
+                deviceLabel: resolveDeviceLabel(request)
               })
             : issueWechatMiniGameAuthSession({
                 playerId,
@@ -1672,7 +1683,8 @@ export function registerAuthRoutes(
         session: await createAccountSessionBundle(store, {
           playerId: account.playerId,
           displayName: account.displayName,
-          loginId
+          loginId,
+          deviceLabel: resolveDeviceLabel(request)
         })
       });
     } catch (error) {
@@ -1846,7 +1858,8 @@ export function registerAuthRoutes(
         session: await createAccountSessionBundle(store, {
           playerId: account.playerId,
           displayName: account.displayName,
-          loginId
+          loginId,
+          deviceLabel: resolveDeviceLabel(request)
         })
       });
     } catch (error) {
@@ -2074,7 +2087,8 @@ export function registerAuthRoutes(
         session: await createAccountSessionBundle(store, {
           playerId: account.playerId,
           displayName: account.displayName,
-          loginId
+          loginId,
+          deviceLabel: resolveDeviceLabel(request)
         })
       });
     } catch (error) {

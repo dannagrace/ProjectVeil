@@ -60,6 +60,20 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return null;
   }
 
+  async loadPlayerAccountAuthSession(): Promise<null> {
+    return null;
+  }
+
+  async listPlayerAccountAuthSessions(): Promise<[]> {
+    return [];
+  }
+
+  async touchPlayerAccountAuthSession(): Promise<void> {}
+
+  async revokePlayerAccountAuthSession(): Promise<boolean> {
+    return false;
+  }
+
   async loadPlayerHeroArchives(_playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
     return [];
   }

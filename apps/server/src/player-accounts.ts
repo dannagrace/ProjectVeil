@@ -386,13 +386,14 @@ export function registerPlayerAccountRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
     get: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
+    delete: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
     put: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
   },
   store: RoomSnapshotStore | null
 ): void {
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
-    response.setHeader("Access-Control-Allow-Methods", "GET,PUT,OPTIONS");
+    response.setHeader("Access-Control-Allow-Methods", "GET,PUT,DELETE,OPTIONS");
     response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Veil-Auth");
 
     if (request.method === "OPTIONS") {
@@ -461,6 +462,117 @@ export function registerPlayerAccountRoutes(
       sendJson(response, 200, {
         account,
         session: issueNextAuthSession(account, authSession)
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/me/sessions", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (authSession.authMode !== "account" || !authSession.loginId) {
+      sendJson(response, 403, {
+        error: {
+          code: "account_auth_required",
+          message: "Device sessions are only available for formal account logins"
+        }
+      });
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, { items: [] });
+      return;
+    }
+
+    try {
+      const items = await store.listPlayerAccountAuthSessions(authSession.playerId);
+      sendJson(response, 200, {
+        items: items.map((session) => ({
+          sessionId: session.sessionId,
+          provider: session.provider,
+          deviceLabel: session.deviceLabel,
+          lastUsedAt: session.lastUsedAt,
+          createdAt: session.createdAt,
+          refreshExpiresAt: session.refreshTokenExpiresAt,
+          current: authSession.sessionId === session.sessionId
+        }))
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.delete("/api/player-accounts/me/sessions/:sessionId", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    const sessionId = request.params.sessionId?.trim();
+    if (!sessionId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (authSession.authMode !== "account" || !authSession.loginId) {
+      sendJson(response, 403, {
+        error: {
+          code: "account_auth_required",
+          message: "Device sessions are only available for formal account logins"
+        }
+      });
+      return;
+    }
+
+    if (authSession.sessionId === sessionId) {
+      sendJson(response, 400, {
+        error: {
+          code: "current_session_revoke_forbidden",
+          message: "Use logout to revoke the current device session"
+        }
+      });
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 404, {
+        error: {
+          code: "session_not_found",
+          message: `Auth session not found: ${sessionId}`
+        }
+      });
+      return;
+    }
+
+    try {
+      const revoked = await store.revokePlayerAccountAuthSession(authSession.playerId, sessionId);
+      if (!revoked) {
+        sendJson(response, 404, {
+          error: {
+            code: "session_not_found",
+            message: `Auth session not found: ${sessionId}`
+          }
+        });
+        return;
+      }
+
+      const items = await store.listPlayerAccountAuthSessions(authSession.playerId);
+      sendJson(response, 200, {
+        ok: true,
+        items: items.map((session) => ({
+          sessionId: session.sessionId,
+          provider: session.provider,
+          deviceLabel: session.deviceLabel,
+          lastUsedAt: session.lastUsedAt,
+          createdAt: session.createdAt,
+          refreshExpiresAt: session.refreshTokenExpiresAt,
+          current: authSession.sessionId === session.sessionId
+        }))
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });

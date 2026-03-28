@@ -60,11 +60,14 @@ import {
   createFallbackPlayerAccountProfile as createLocalAccountProfile,
   loadPlayerAccountProfileWithProgression as loadAccountProfileWithProgression,
   bindPlayerAccountCredentials as bindAccountCredentials,
+  loadPlayerAccountSessions,
   loadPlayerBattleReplayDetail,
   rememberPreferredPlayerDisplayName,
   readPreferredPlayerDisplayName as readLocalPreferredDisplayName,
+  revokePlayerAccountSession,
   savePlayerAccountDisplayName as saveAccountDisplayName,
-  type PlayerAccountProfile as ClientPlayerAccountProfile
+  type PlayerAccountProfile as ClientPlayerAccountProfile,
+  type PlayerAccountSessionDevice
 } from "./player-account";
 import {
   renderAchievementProgress,
@@ -171,6 +174,9 @@ interface AppState {
   accountSaving: boolean;
   accountBinding: boolean;
   accountStatus: string;
+  accountSessions: PlayerAccountSessionDevice[];
+  accountSessionsLoading: boolean;
+  accountSessionRevokingId: string | null;
   replayDetail: {
     selectedReplayId: string | null;
     replay: PlayerBattleReplaySummary | null;
@@ -245,6 +251,9 @@ const state: AppState = {
   accountSaving: false,
   accountBinding: false,
   accountStatus: "游客账号资料将在连接后自动同步。",
+  accountSessions: [],
+  accountSessionsLoading: false,
+  accountSessionRevokingId: null,
   replayDetail: {
     selectedReplayId: null,
     replay: null,
@@ -642,6 +651,70 @@ function formatAccountLastSeen(account: ClientPlayerAccountProfile): string {
 
 function formatGlobalVault(account: ClientPlayerAccountProfile): string {
   return `全局仓库 金币 ${account.globalResources.gold} / 木材 ${account.globalResources.wood} / 矿石 ${account.globalResources.ore}`;
+}
+
+function formatRelativeSessionTimestamp(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function formatSessionProviderLabel(provider: string): string {
+  if (provider === "wechat-mini-game") {
+    return "微信小游戏";
+  }
+  if (provider === "account-password") {
+    return "口令登录";
+  }
+  return provider;
+}
+
+function renderAccountSessionPanel(): string {
+  if (state.lobby.authSession?.authMode !== "account") {
+    return "";
+  }
+
+  const items = state.accountSessions.length
+    ? state.accountSessions
+        .map((session) => {
+          const revokeDisabled = session.current || state.accountSessionRevokingId !== null;
+          const revokeLabel =
+            state.accountSessionRevokingId === session.sessionId ? "撤销中..." : session.current ? "当前设备" : "撤销";
+          return `
+            <div class="account-session-item">
+              <div class="account-session-copy">
+                <div class="account-session-head">
+                  <strong>${escapeHtml(session.deviceLabel)}</strong>
+                  <span class="account-session-badge">${escapeHtml(
+                    session.current ? "当前设备" : formatSessionProviderLabel(session.provider)
+                  )}</span>
+                </div>
+                <p class="account-meta">最近活跃 ${escapeHtml(formatRelativeSessionTimestamp(session.lastUsedAt))}</p>
+                <p class="account-meta">刷新令牌到期 ${escapeHtml(formatRelativeSessionTimestamp(session.refreshExpiresAt))}</p>
+              </div>
+              <button
+                class="account-save account-session-action"
+                data-revoke-account-session="${escapeHtml(session.sessionId)}"
+                ${revokeDisabled ? "disabled" : ""}
+              >${escapeHtml(revokeLabel)}</button>
+            </div>
+          `;
+        })
+        .join("")
+    : `<p class="muted account-status">${escapeHtml(
+        state.accountSessionsLoading ? "正在同步设备会话..." : "当前没有可撤销的其他设备会话。"
+      )}</p>`;
+
+  return `
+    <div class="account-binding-card">
+      <div class="account-binding-head">
+        <strong>设备会话</strong>
+        <span>查看当前正式账号在哪些设备保持登录，并撤销其他设备。</span>
+      </div>
+      <div class="account-session-list">
+        ${items}
+      </div>
+    </div>
+  `;
 }
 
 function findReplaySummary(replayId: string | null | undefined): PlayerBattleReplaySummary | null {
@@ -4135,6 +4208,7 @@ function render(): void {
               ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}
             >${state.accountBinding ? "提交中..." : state.account.loginId ? "更新口令" : "绑定账号"}</button>
           </div>
+          ${renderAccountSessionPanel()}
           <p class="muted account-status">${escapeHtml(state.accountStatus)}</p>
         </div>
         ${state.predictionStatus ? `<p class="muted" data-testid="prediction-status">${state.predictionStatus}</p>` : ""}
@@ -4453,6 +4527,15 @@ function render(): void {
     });
   }
 
+  for (const revokeSessionButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-revoke-account-session]"))) {
+    revokeSessionButton.addEventListener("click", () => {
+      const sessionId = revokeSessionButton.dataset.revokeAccountSession?.trim();
+      if (sessionId) {
+        void onRevokeAccountSession(sessionId);
+      }
+    });
+  }
+
   for (const returnLobbyButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-return-lobby]"))) {
     returnLobbyButton.addEventListener("click", () => {
       returnToLobby();
@@ -4511,8 +4594,14 @@ async function bootstrap(): Promise<void> {
 }
 
 async function syncPlayerAccountProfile(): Promise<void> {
+  state.accountSessionsLoading = true;
   const account = await loadAccountProfileWithProgression(playerId, roomId);
+  const accountSessions =
+    state.lobby.authSession?.authMode === "account" || readStoredAuthSession()?.authMode === "account"
+      ? await loadPlayerAccountSessions()
+      : [];
   state.account = account;
+  state.accountSessions = accountSessions;
   state.accountDraftName = account.displayName;
   state.accountLoginId = account.loginId ?? state.accountLoginId;
   state.accountStatus =
@@ -4524,7 +4613,25 @@ async function syncPlayerAccountProfile(): Promise<void> {
   if (state.replayDetail.selectedReplayId && !account.recentBattleReplays.some((replay) => replay.id === state.replayDetail.selectedReplayId)) {
     clearReplayDetail("最近战报已刷新，当前选中的回放已不可用。");
   }
+  state.accountSessionsLoading = false;
   render();
+}
+
+async function onRevokeAccountSession(sessionId: string): Promise<void> {
+  state.accountSessionRevokingId = sessionId;
+  state.accountStatus = "正在撤销所选设备会话...";
+  render();
+
+  try {
+    state.accountSessions = await revokePlayerAccountSession(sessionId);
+    state.accountSessionRevokingId = null;
+    state.accountStatus = "已撤销所选设备会话，旧刷新令牌现已失效。";
+    render();
+  } catch (error) {
+    state.accountSessionRevokingId = null;
+    state.accountStatus = error instanceof Error ? error.message : "account_session_revoke_failed";
+    render();
+  }
 }
 
 async function onSaveAccountProfile(): Promise<void> {
@@ -4569,6 +4676,7 @@ async function onBindAccountProfile(): Promise<void> {
   try {
     const account = await bindAccountCredentials(loginId, state.accountPassword, roomId);
     state.account = account;
+    state.accountSessions = await loadPlayerAccountSessions();
     state.accountLoginId = account.loginId ?? loginId;
     state.accountPassword = "";
     state.accountBinding = false;

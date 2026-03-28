@@ -76,6 +76,20 @@ class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     return auth ? structuredClone(auth) : null;
   }
 
+  async loadPlayerAccountAuthSession(): Promise<null> {
+    return null;
+  }
+
+  async listPlayerAccountAuthSessions(): Promise<[]> {
+    return [];
+  }
+
+  async touchPlayerAccountAuthSession(): Promise<void> {}
+
+  async revokePlayerAccountAuthSession(): Promise<boolean> {
+    return false;
+  }
+
   async loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
     const playerIdSet = new Set(playerIds);
     return Array.from(this.heroArchives.values())

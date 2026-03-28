@@ -6,6 +6,7 @@ export interface StoredAuthSession {
   displayName: string;
   authMode: "guest" | "account";
   loginId?: string;
+  sessionId?: string;
   token?: string;
   refreshToken?: string;
   expiresAt?: string;
@@ -21,6 +22,7 @@ interface AuthSessionApiPayload {
     displayName?: string;
     authMode?: "guest" | "account";
     loginId?: string;
+    sessionId?: string;
     expiresAt?: string;
     refreshExpiresAt?: string;
   };
@@ -87,7 +89,7 @@ function asStoredAuthSession(
   payload: AuthSessionApiPayload["session"],
   source: StoredAuthSession["source"],
   fallback: Pick<StoredAuthSession, "playerId" | "displayName" | "authMode"> &
-    Partial<Pick<StoredAuthSession, "loginId" | "token" | "refreshToken" | "expiresAt" | "refreshExpiresAt">>
+    Partial<Pick<StoredAuthSession, "loginId" | "sessionId" | "token" | "refreshToken" | "expiresAt" | "refreshExpiresAt">>
 ): StoredAuthSession {
   const playerId = normalizePlayerId(payload?.playerId ?? fallback.playerId);
   const loginId = normalizeLoginId(payload?.loginId ?? fallback.loginId);
@@ -98,6 +100,7 @@ function asStoredAuthSession(
     displayName: normalizeDisplayName(playerId, payload?.displayName ?? fallback.displayName),
     authMode,
     ...(loginId ? { loginId } : {}),
+    ...(payload?.sessionId ? { sessionId: payload.sessionId } : fallback.sessionId ? { sessionId: fallback.sessionId } : {}),
     ...(payload?.token ? { token: payload.token } : fallback.token ? { token: fallback.token } : {}),
     ...(payload?.refreshToken ? { refreshToken: payload.refreshToken } : fallback.refreshToken ? { refreshToken: fallback.refreshToken } : {}),
     ...(payload?.expiresAt ? { expiresAt: payload.expiresAt } : fallback.expiresAt ? { expiresAt: fallback.expiresAt } : {}),
@@ -159,6 +162,7 @@ export function readStoredAuthSession(
       displayName?: unknown;
       authMode?: unknown;
       loginId?: unknown;
+      sessionId?: unknown;
       token?: unknown;
       refreshToken?: unknown;
       expiresAt?: unknown;
@@ -175,6 +179,7 @@ export function readStoredAuthSession(
       displayName: parsed.displayName,
       authMode: parsed.authMode === "account" || loginId ? "account" : "guest",
       ...(loginId ? { loginId } : {}),
+      ...(typeof parsed.sessionId === "string" ? { sessionId: parsed.sessionId } : {}),
       ...(typeof parsed.token === "string" ? { token: parsed.token } : {}),
       ...(typeof parsed.refreshToken === "string" ? { refreshToken: parsed.refreshToken } : {}),
       ...(typeof parsed.expiresAt === "string" ? { expiresAt: parsed.expiresAt } : {}),
