@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -303,6 +304,87 @@ test("buildWechatMinigameReleaseManifest emits deterministic file hashes for val
   assert.equal(manifest.files[0]?.sha256.length, 64);
   assert.match(manifest.files[0]?.sha256 ?? "", /^[a-f0-9]{64}$/);
   assert.deepEqual(manifest.warnings, ["No subpackages were detected or configured for this build."]);
+});
+
+test("package-wechat-release creates an archive and sidecar metadata from a validated exported build", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-wechat-build-package-"));
+  const artifactsDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-wechat-build-package-artifacts-"));
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-wechat-build-package-config-"));
+  fs.mkdirSync(path.join(tempDir, "src"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tempDir, "game.json"),
+    JSON.stringify({
+      deviceOrientation: "portrait",
+      networkTimeout: {
+        request: 10000,
+        connectSocket: 10000,
+        uploadFile: 10000,
+        downloadFile: 10000
+      },
+      subpackages: []
+    })
+  );
+  fs.writeFileSync(path.join(tempDir, "game.js"), "\"use strict\";\n");
+  fs.writeFileSync(path.join(tempDir, "application.js"), "\"use strict\";\n");
+  fs.writeFileSync(path.join(tempDir, "src", "settings.json"), JSON.stringify({ subpackages: [] }));
+  const config = normalizeWechatMinigameBuildConfig({
+    runtimeRemoteUrl: "https://veil.example.com/socket",
+    remoteAssetRoot: "https://cdn.example.com/assets",
+    domains: {
+      request: ["https://veil.example.com"],
+      socket: ["wss://veil.example.com"],
+      uploadFile: [],
+      downloadFile: ["https://cdn.example.com"]
+    }
+  });
+  const artifacts = buildWechatMinigameTemplateArtifacts(config);
+  const configPath = path.join(configDir, "wechat-minigame.build.json");
+  fs.writeFileSync(path.join(tempDir, "project.config.json"), JSON.stringify(artifacts.projectConfigJson));
+  fs.writeFileSync(path.join(tempDir, "codex.wechat.build.json"), JSON.stringify(artifacts.manifestJson));
+  fs.writeFileSync(path.join(tempDir, "README.codex.md"), `${artifacts.releaseChecklistMarkdown}\n`);
+  fs.writeFileSync(configPath, JSON.stringify(config));
+
+  execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/package-wechat-minigame-release.ts",
+      "--config",
+      configPath,
+      "--output-dir",
+      tempDir,
+      "--artifacts-dir",
+      artifactsDir,
+      "--expect-exported-runtime",
+      "--source-revision",
+      "abc1234"
+    ],
+    {
+      cwd: path.resolve(__dirname, "../../.."),
+      stdio: "pipe"
+    }
+  );
+
+  const archivePath = path.join(artifactsDir, "project-veil-wechatgame-release.tar.gz");
+  const metadataPath = path.join(artifactsDir, "project-veil-wechatgame-release.package.json");
+  assert.ok(fs.existsSync(archivePath));
+  assert.ok(fs.existsSync(metadataPath));
+
+  const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8")) as {
+    archiveFileName: string;
+    archiveSha256: string;
+    fileCount: number;
+    sourceRevision?: string;
+  };
+  assert.equal(metadata.archiveFileName, "project-veil-wechatgame-release.tar.gz");
+  assert.match(metadata.archiveSha256, /^[a-f0-9]{64}$/);
+  assert.equal(metadata.fileCount, 7);
+  assert.equal(metadata.sourceRevision, "abc1234");
+
+  const archiveListing = execFileSync("tar", ["-tzf", archivePath], { encoding: "utf8" });
+  assert.match(archiveListing, /project-veil-wechatgame-release\/wechatgame\/codex\.wechat\.release\.json/);
+  assert.match(archiveListing, /project-veil-wechatgame-release\/wechatgame\/game\.json/);
 });
 
 test("analyzeWechatMinigameBuildOutput reports injected config drift and missing exported bootstrap files", () => {

@@ -55,3 +55,6 @@ jobs:
 
       - name: Check WeChat mini game templates and exported fixture
         run: npm run check:wechat-build
+
+      - name: Package WeChat exported fixture
+        run: npm run package:wechat-release -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir "${RUNNER_TEMP}/wechat-release" --expect-exported-runtime --source-revision "${GITHUB_SHA}"
