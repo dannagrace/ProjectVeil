@@ -39,9 +39,13 @@ import {
 } from "./assets";
 import { describeTileObject } from "./object-visuals";
 import {
+  confirmAccountRegistration,
+  confirmPasswordRecovery,
   loginGuestAuthSession,
   loginPasswordAuthSession,
   logoutCurrentAuthSession,
+  requestAccountRegistration,
+  requestPasswordRecovery,
   readStoredAuthSession,
   syncCurrentAuthSession,
   type StoredAuthSession
@@ -129,6 +133,11 @@ interface LobbyViewState {
   displayName: string;
   loginId: string;
   password: string;
+  registrationDisplayName: string;
+  registrationToken: string;
+  registrationPassword: string;
+  recoveryToken: string;
+  recoveryPassword: string;
   authSession: StoredAuthSession | null;
   rooms: LobbyRoomSummary[];
   loading: boolean;
@@ -202,6 +211,11 @@ const state: AppState = {
     displayName: initialLobbyDisplayName,
     loginId: initialLobbyLoginId,
     password: "",
+    registrationDisplayName: "",
+    registrationToken: "",
+    registrationPassword: "",
+    recoveryToken: "",
+    recoveryPassword: "",
     authSession: storedAuthSession,
     rooms: [],
     loading: false,
@@ -2709,6 +2723,52 @@ async function refreshLobbyRoomList(): Promise<void> {
   render();
 }
 
+function parseAuthRequestFailure(error: unknown): { status: number; code: string } | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+  const matched = /^auth_request_failed:(\d+):(.+)$/.exec(error.message);
+  if (!matched) {
+    return null;
+  }
+
+  return {
+    status: Number(matched[1]),
+    code: matched[2] ?? "unknown"
+  };
+}
+
+function describeAccountFlowError(
+  error: unknown,
+  fallback: string,
+  options: {
+    invalidTokenCode?: string;
+  } = {}
+): string {
+  const failure = parseAuthRequestFailure(error);
+  if (!failure) {
+    return error instanceof Error ? error.message : fallback;
+  }
+
+  if (failure.status === 409 && failure.code === "login_id_taken") {
+    return "登录 ID 已被占用，请更换后重试。";
+  }
+  if (failure.status === 401 && options.invalidTokenCode && failure.code === options.invalidTokenCode) {
+    return "令牌无效或已过期，请重新申请后再确认。";
+  }
+  if (failure.status === 401) {
+    return "登录 ID 或口令不正确，请检查后重试。";
+  }
+  if (failure.status === 400) {
+    return "输入格式不合法，请检查登录 ID、令牌和口令后重试。";
+  }
+  if (failure.status === 429) {
+    return "请求过于频繁，请稍后再试。";
+  }
+
+  return error instanceof Error ? error.message : fallback;
+}
+
 async function enterLobbyRoom(roomIdOverride?: string): Promise<void> {
   const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
   const displayName = rememberPreferredPlayerDisplayName(preferences.playerId, state.lobby.displayName);
@@ -2772,12 +2832,162 @@ async function loginLobbyAccount(roomIdOverride?: string): Promise<void> {
     window.location.assign(nextUrl.toString());
   } catch (error) {
     state.lobby.entering = false;
-    state.lobby.status =
-      error instanceof Error && error.message === "auth_request_failed:401"
-        ? "登录 ID 或口令不正确，请检查后重试。"
-        : error instanceof Error
-          ? error.message
-          : "account_login_failed";
+    state.lobby.status = describeAccountFlowError(error, "account_login_failed");
+    render();
+  }
+}
+
+async function requestLobbyAccountRegistration(): Promise<void> {
+  const loginId = state.lobby.loginId.trim().toLowerCase();
+  if (!loginId) {
+    state.lobby.status = "请输入登录 ID 后再申请正式注册令牌。";
+    render();
+    return;
+  }
+
+  state.lobby.entering = true;
+  state.lobby.status = `正在为 ${loginId} 申请注册令牌...`;
+  render();
+
+  try {
+    const result = await requestAccountRegistration(loginId, state.lobby.registrationDisplayName);
+    state.lobby.entering = false;
+    state.lobby.registrationToken = result.registrationToken ?? state.lobby.registrationToken;
+    state.lobby.status = result.registrationToken
+      ? `注册令牌已生成，可直接确认注册。令牌：${result.registrationToken}${result.expiresAt ? `；过期时间：${result.expiresAt}` : ""}`
+      : `注册申请已受理${result.expiresAt ? `，过期时间：${result.expiresAt}` : ""}。`;
+    render();
+  } catch (error) {
+    state.lobby.entering = false;
+    state.lobby.status = describeAccountFlowError(error, "account_registration_request_failed");
+    render();
+  }
+}
+
+async function confirmLobbyAccountRegistration(roomIdOverride?: string): Promise<void> {
+  const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
+  const loginId = state.lobby.loginId.trim().toLowerCase();
+  if (!loginId) {
+    state.lobby.status = "请输入登录 ID 后再确认正式注册。";
+    render();
+    return;
+  }
+  if (!state.lobby.registrationToken.trim()) {
+    state.lobby.status = "请先申请并填写注册令牌。";
+    render();
+    return;
+  }
+  if (!state.lobby.registrationPassword.trim()) {
+    state.lobby.status = "请输入注册口令后再确认。";
+    render();
+    return;
+  }
+
+  state.lobby.entering = true;
+  state.lobby.status = `正在确认正式注册 ${loginId} 并进入房间 ${preferences.roomId}...`;
+  render();
+
+  try {
+    const authSession = await confirmAccountRegistration(loginId, state.lobby.registrationToken, state.lobby.registrationPassword);
+    state.lobby.authSession = authSession;
+    state.lobby.playerId = authSession.playerId;
+    state.lobby.displayName = authSession.displayName;
+    state.lobby.loginId = authSession.loginId ?? loginId;
+    state.lobby.password = "";
+    state.lobby.registrationToken = "";
+    state.lobby.registrationPassword = "";
+    state.accountLoginId = authSession.loginId ?? loginId;
+    state.accountPassword = "";
+    state.lobby.status = `正式账号注册成功，正在进入房间 ${preferences.roomId}...`;
+    saveLobbyPreferences(authSession.playerId, preferences.roomId);
+
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set("roomId", preferences.roomId);
+    nextUrl.searchParams.delete("playerId");
+    window.location.assign(nextUrl.toString());
+  } catch (error) {
+    state.lobby.entering = false;
+    state.lobby.status = describeAccountFlowError(error, "account_registration_confirm_failed", {
+      invalidTokenCode: "invalid_registration_token"
+    });
+    render();
+  }
+}
+
+async function requestLobbyPasswordRecovery(): Promise<void> {
+  const loginId = state.lobby.loginId.trim().toLowerCase();
+  if (!loginId) {
+    state.lobby.status = "请输入登录 ID 后再申请密码找回令牌。";
+    render();
+    return;
+  }
+
+  state.lobby.entering = true;
+  state.lobby.status = `正在为 ${loginId} 申请密码找回令牌...`;
+  render();
+
+  try {
+    const result = await requestPasswordRecovery(loginId);
+    state.lobby.entering = false;
+    state.lobby.recoveryToken = result.recoveryToken ?? state.lobby.recoveryToken;
+    state.lobby.status = result.recoveryToken
+      ? `找回令牌已生成，可直接确认重置。令牌：${result.recoveryToken}${result.expiresAt ? `；过期时间：${result.expiresAt}` : ""}`
+      : `密码找回申请已受理${result.expiresAt ? `，过期时间：${result.expiresAt}` : ""}。`;
+    render();
+  } catch (error) {
+    state.lobby.entering = false;
+    state.lobby.status = describeAccountFlowError(error, "password_recovery_request_failed");
+    render();
+  }
+}
+
+async function confirmLobbyPasswordRecovery(roomIdOverride?: string): Promise<void> {
+  const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
+  const loginId = state.lobby.loginId.trim().toLowerCase();
+  if (!loginId) {
+    state.lobby.status = "请输入登录 ID 后再确认密码重置。";
+    render();
+    return;
+  }
+  if (!state.lobby.recoveryToken.trim()) {
+    state.lobby.status = "请先申请并填写找回令牌。";
+    render();
+    return;
+  }
+  if (!state.lobby.recoveryPassword.trim()) {
+    state.lobby.status = "请输入新口令后再确认重置。";
+    render();
+    return;
+  }
+
+  state.lobby.entering = true;
+  state.lobby.status = `正在重置 ${loginId} 的口令并进入房间 ${preferences.roomId}...`;
+  render();
+
+  try {
+    await confirmPasswordRecovery(loginId, state.lobby.recoveryToken, state.lobby.recoveryPassword);
+    const authSession = await loginPasswordAuthSession(loginId, state.lobby.recoveryPassword);
+    state.lobby.authSession = authSession;
+    state.lobby.playerId = authSession.playerId;
+    state.lobby.displayName = authSession.displayName;
+    state.lobby.loginId = authSession.loginId ?? loginId;
+    state.lobby.password = "";
+    state.lobby.recoveryToken = "";
+    state.lobby.recoveryPassword = "";
+    state.accountLoginId = authSession.loginId ?? loginId;
+    state.accountPassword = "";
+    state.lobby.status = `口令重置成功，正在进入房间 ${preferences.roomId}...`;
+    saveLobbyPreferences(authSession.playerId, preferences.roomId);
+
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set("roomId", preferences.roomId);
+    nextUrl.searchParams.delete("playerId");
+    window.location.assign(nextUrl.toString());
+  } catch (error) {
+    state.lobby.entering = false;
+    state.lobby.status = describeAccountFlowError(error, "password_recovery_confirm_failed", {
+      invalidTokenCode: "invalid_recovery_token"
+    });
     render();
   }
 }
@@ -3239,6 +3449,83 @@ function renderLobby(): string {
                 ${state.lobby.entering ? "登录中..." : "账号登录并进房"}
               </button>
             </section>
+            <section class="lobby-auth-card">
+              <div class="lobby-auth-head">
+                <strong>正式注册</strong>
+                <span>开发态 request / confirm 闭环</span>
+              </div>
+              <label class="lobby-field">
+                <span>注册昵称</span>
+                <input
+                  class="account-input"
+                  data-registration-display-name="true"
+                  maxlength="40"
+                  value="${escapeHtml(state.lobby.registrationDisplayName)}"
+                  placeholder="默认沿用登录 ID"
+                  ${state.lobby.entering ? "disabled" : ""}
+                />
+              </label>
+              <label class="lobby-field">
+                <span>注册令牌</span>
+                <input
+                  class="account-input"
+                  data-registration-token="true"
+                  maxlength="120"
+                  value="${escapeHtml(state.lobby.registrationToken)}"
+                  placeholder="先申请，再粘贴 dev token"
+                  ${state.lobby.entering ? "disabled" : ""}
+                />
+              </label>
+              <label class="lobby-field">
+                <span>注册口令</span>
+                <input
+                  class="account-input"
+                  data-registration-password="true"
+                  type="password"
+                  maxlength="80"
+                  value="${escapeHtml(state.lobby.registrationPassword)}"
+                  placeholder="至少 6 位"
+                  ${state.lobby.entering ? "disabled" : ""}
+                />
+              </label>
+              <div class="lobby-actions">
+                <button class="account-save" data-request-registration="true" ${state.lobby.entering ? "disabled" : ""}>申请注册令牌</button>
+                <button class="account-save" data-confirm-registration="true" ${state.lobby.entering ? "disabled" : ""}>确认注册并进房</button>
+              </div>
+            </section>
+            <section class="lobby-auth-card">
+              <div class="lobby-auth-head">
+                <strong>密码找回</strong>
+                <span>开发态 request / confirm 闭环</span>
+              </div>
+              <label class="lobby-field">
+                <span>重置令牌</span>
+                <input
+                  class="account-input"
+                  data-recovery-token="true"
+                  maxlength="120"
+                  value="${escapeHtml(state.lobby.recoveryToken)}"
+                  placeholder="先申请，再粘贴 dev token"
+                  ${state.lobby.entering ? "disabled" : ""}
+                />
+              </label>
+              <label class="lobby-field">
+                <span>新口令</span>
+                <input
+                  class="account-input"
+                  data-recovery-password="true"
+                  type="password"
+                  maxlength="80"
+                  value="${escapeHtml(state.lobby.recoveryPassword)}"
+                  placeholder="至少 6 位"
+                  ${state.lobby.entering ? "disabled" : ""}
+                />
+              </label>
+              <div class="lobby-actions">
+                <button class="account-save" data-request-recovery="true" ${state.lobby.entering ? "disabled" : ""}>申请找回令牌</button>
+                <button class="account-save" data-confirm-recovery="true" ${state.lobby.entering ? "disabled" : ""}>确认重置并进房</button>
+              </div>
+            </section>
           </div>
           <div class="lobby-actions">
             <button class="account-save" data-refresh-lobby="true" ${state.lobby.loading || state.lobby.entering ? "disabled" : ""}>
@@ -3346,6 +3633,36 @@ function render(): void {
       });
     }
 
+    for (const displayNameInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-registration-display-name]"))) {
+      displayNameInput.addEventListener("input", () => {
+        state.lobby.registrationDisplayName = displayNameInput.value;
+      });
+    }
+
+    for (const registrationTokenInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-registration-token]"))) {
+      registrationTokenInput.addEventListener("input", () => {
+        state.lobby.registrationToken = registrationTokenInput.value;
+      });
+    }
+
+    for (const registrationPasswordInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-registration-password]"))) {
+      registrationPasswordInput.addEventListener("input", () => {
+        state.lobby.registrationPassword = registrationPasswordInput.value;
+      });
+    }
+
+    for (const recoveryTokenInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-recovery-token]"))) {
+      recoveryTokenInput.addEventListener("input", () => {
+        state.lobby.recoveryToken = recoveryTokenInput.value;
+      });
+    }
+
+    for (const recoveryPasswordInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-recovery-password]"))) {
+      recoveryPasswordInput.addEventListener("input", () => {
+        state.lobby.recoveryPassword = recoveryPasswordInput.value;
+      });
+    }
+
     for (const roomIdInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-lobby-room-id]"))) {
       roomIdInput.addEventListener("input", () => {
         state.lobby.roomId = roomIdInput.value;
@@ -3380,6 +3697,30 @@ function render(): void {
     for (const loginButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-login-account]"))) {
       loginButton.addEventListener("click", () => {
         void loginLobbyAccount();
+      });
+    }
+
+    for (const registrationRequestButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-request-registration]"))) {
+      registrationRequestButton.addEventListener("click", () => {
+        void requestLobbyAccountRegistration();
+      });
+    }
+
+    for (const registrationConfirmButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-confirm-registration]"))) {
+      registrationConfirmButton.addEventListener("click", () => {
+        void confirmLobbyAccountRegistration();
+      });
+    }
+
+    for (const recoveryRequestButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-request-recovery]"))) {
+      recoveryRequestButton.addEventListener("click", () => {
+        void requestLobbyPasswordRecovery();
+      });
+    }
+
+    for (const recoveryConfirmButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-confirm-recovery]"))) {
+      recoveryConfirmButton.addEventListener("click", () => {
+        void confirmLobbyPasswordRecovery();
       });
     }
 

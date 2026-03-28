@@ -67,6 +67,8 @@ export interface VeilLobbyPanelOptions {
   onRefresh?: () => void;
   onEnterRoom?: () => void;
   onLoginAccount?: () => void;
+  onRegisterAccount?: () => void;
+  onRecoverAccount?: () => void;
   onOpenConfigCenter?: () => void;
   onLogout?: () => void;
   onJoinRoom?: (roomId: string) => void;
@@ -91,6 +93,8 @@ export class VeilLobbyPanel extends Component {
   private onRefresh: (() => void) | undefined;
   private onEnterRoom: (() => void) | undefined;
   private onLoginAccount: (() => void) | undefined;
+  private onRegisterAccount: (() => void) | undefined;
+  private onRecoverAccount: (() => void) | undefined;
   private onOpenConfigCenter: (() => void) | undefined;
   private onLogout: (() => void) | undefined;
   private onJoinRoom: ((roomId: string) => void) | undefined;
@@ -107,6 +111,8 @@ export class VeilLobbyPanel extends Component {
     this.onRefresh = options.onRefresh;
     this.onEnterRoom = options.onEnterRoom;
     this.onLoginAccount = options.onLoginAccount;
+    this.onRegisterAccount = options.onRegisterAccount;
+    this.onRecoverAccount = options.onRecoverAccount;
     this.onOpenConfigCenter = options.onOpenConfigCenter;
     this.onLogout = options.onLogout;
     this.onJoinRoom = options.onJoinRoom;
@@ -290,9 +296,37 @@ export class VeilLobbyPanel extends Component {
       state.entering ? null : this.onLoginAccount ?? null
     );
     this.renderActionButton(
-      "LobbyConfigCenter",
+      "LobbyRegisterAccount",
       leftX,
       leftCursorY - 120,
+      leftWidth,
+      28,
+      "正式注册",
+      {
+        fill: ACTION_ACCOUNT,
+        stroke: new Color(228, 236, 248, 120),
+        accent: new Color(220, 230, 244, 112)
+      },
+      state.entering ? null : this.onRegisterAccount ?? null
+    );
+    this.renderActionButton(
+      "LobbyRecoverAccount",
+      leftX,
+      leftCursorY - 154,
+      leftWidth,
+      28,
+      "密码找回",
+      {
+        fill: ACTION_ACCOUNT,
+        stroke: new Color(228, 236, 248, 120),
+        accent: new Color(220, 230, 244, 112)
+      },
+      state.entering ? null : this.onRecoverAccount ?? null
+    );
+    this.renderActionButton(
+      "LobbyConfigCenter",
+      leftX,
+      leftCursorY - 188,
       leftWidth,
       28,
       "打开配置台",
@@ -306,7 +340,7 @@ export class VeilLobbyPanel extends Component {
     this.renderActionButton(
       "LobbyLogout",
       leftX,
-      leftCursorY - 154,
+      leftCursorY - 222,
       leftWidth,
       28,
       state.authMode === "account" ? "退出账号会话" : "退出游客会话",

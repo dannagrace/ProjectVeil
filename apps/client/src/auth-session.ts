@@ -26,6 +26,30 @@ interface AuthSessionApiPayload {
   };
 }
 
+interface AccountAuthApiPayload extends AuthSessionApiPayload {
+  status?: string;
+  expiresAt?: string;
+  registrationToken?: string;
+  recoveryToken?: string;
+  account?: {
+    playerId?: string;
+    displayName?: string;
+    loginId?: string;
+  };
+}
+
+export interface AccountRegistrationRequestResult {
+  status: string;
+  expiresAt?: string;
+  registrationToken?: string;
+}
+
+export interface PasswordRecoveryRequestResult {
+  status: string;
+  expiresAt?: string;
+  recoveryToken?: string;
+}
+
 function getAuthSessionStorage(): Storage | null {
   try {
     return window.localStorage;
@@ -334,6 +358,110 @@ export async function loginPasswordAuthSession(loginId: string, password: string
     loginId: normalizedLoginId
   });
   return storeAuthSession(session);
+}
+
+export async function requestAccountRegistration(
+  loginId: string,
+  displayName?: string
+): Promise<AccountRegistrationRequestResult> {
+  const normalizedLoginId = normalizeLoginId(loginId);
+  if (!normalizedLoginId) {
+    throw new Error("loginId_required");
+  }
+
+  const payload = (await fetchJson(`${resolveAuthApiBaseUrl()}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: normalizedLoginId,
+      ...(displayName?.trim() ? { displayName: displayName.trim() } : {})
+    })
+  })) as AccountAuthApiPayload;
+
+  return {
+    status: payload.status ?? "registration_requested",
+    ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
+    ...(payload.registrationToken ? { registrationToken: payload.registrationToken } : {})
+  };
+}
+
+export async function confirmAccountRegistration(
+  loginId: string,
+  registrationToken: string,
+  password: string
+): Promise<StoredAuthSession> {
+  const normalizedLoginId = normalizeLoginId(loginId);
+  if (!normalizedLoginId) {
+    throw new Error("loginId_required");
+  }
+
+  const payload = (await fetchJson(`${resolveAuthApiBaseUrl()}/api/auth/account-registration/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: normalizedLoginId,
+      registrationToken,
+      password
+    })
+  })) as AccountAuthApiPayload;
+
+  const session = asStoredAuthSession(payload.session, "remote", {
+    playerId: payload.account?.playerId?.trim() || normalizedLoginId,
+    displayName: payload.account?.displayName?.trim() || normalizedLoginId,
+    authMode: "account",
+    loginId: payload.account?.loginId?.trim() || normalizedLoginId
+  });
+  return storeAuthSession(session);
+}
+
+export async function requestPasswordRecovery(loginId: string): Promise<PasswordRecoveryRequestResult> {
+  const normalizedLoginId = normalizeLoginId(loginId);
+  if (!normalizedLoginId) {
+    throw new Error("loginId_required");
+  }
+
+  const payload = (await fetchJson(`${resolveAuthApiBaseUrl()}/api/auth/password-recovery/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: normalizedLoginId
+    })
+  })) as AccountAuthApiPayload;
+
+  return {
+    status: payload.status ?? "recovery_requested",
+    ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
+    ...(payload.recoveryToken ? { recoveryToken: payload.recoveryToken } : {})
+  };
+}
+
+export async function confirmPasswordRecovery(
+  loginId: string,
+  recoveryToken: string,
+  newPassword: string
+): Promise<void> {
+  const normalizedLoginId = normalizeLoginId(loginId);
+  if (!normalizedLoginId) {
+    throw new Error("loginId_required");
+  }
+
+  await fetchJson(`${resolveAuthApiBaseUrl()}/api/auth/password-recovery/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: normalizedLoginId,
+      recoveryToken,
+      newPassword
+    })
+  });
 }
 
 export async function syncCurrentAuthSession(): Promise<StoredAuthSession | null> {
