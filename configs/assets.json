@@ -1,154 +1,155 @@
 {
   "terrain": {
     "grass": {
-      "default": "/assets/terrain/grass-tile.svg",
-      "variants": ["/assets/terrain/grass-tile.svg", "/assets/terrain/grass-tile-alt.svg"]
+      "default": "/assets/pixel/terrain/grass-tile.png",
+      "variants": ["/assets/pixel/terrain/grass-tile.png", "/assets/pixel/terrain/grass-tile-alt.png"]
     },
     "dirt": {
-      "default": "/assets/terrain/dirt-tile.svg",
-      "variants": ["/assets/terrain/dirt-tile.svg", "/assets/terrain/dirt-tile-alt.svg"]
+      "default": "/assets/pixel/terrain/dirt-tile.png",
+      "variants": ["/assets/pixel/terrain/dirt-tile.png", "/assets/pixel/terrain/dirt-tile-alt.png"]
     },
     "sand": {
-      "default": "/assets/terrain/sand-tile.svg",
-      "variants": ["/assets/terrain/sand-tile.svg", "/assets/terrain/sand-tile-alt.svg"]
+      "default": "/assets/pixel/terrain/sand-tile.png",
+      "variants": ["/assets/pixel/terrain/sand-tile.png", "/assets/pixel/terrain/sand-tile-alt.png"]
     },
     "water": {
-      "default": "/assets/terrain/water-tile.svg",
-      "variants": ["/assets/terrain/water-tile.svg", "/assets/terrain/water-tile-alt.svg"]
+      "default": "/assets/pixel/terrain/water-tile.png",
+      "variants": ["/assets/pixel/terrain/water-tile.png", "/assets/pixel/terrain/water-tile-alt.png"]
     },
     "unknown": {
-      "default": "/assets/terrain/fog-tile.svg",
-      "variants": ["/assets/terrain/fog-tile.svg"]
+      "default": "/assets/pixel/terrain/fog-tile.png",
+      "variants": ["/assets/pixel/terrain/fog-tile.png"]
     }
   },
   "resources": {
-    "gold": "/assets/resources/gold-pile.svg",
-    "wood": "/assets/resources/wood-stack.svg",
-    "ore": "/assets/resources/ore-crate.svg"
+    "gold": "/assets/pixel/resources/gold-pile.png",
+    "wood": "/assets/pixel/resources/wood-stack.png",
+    "ore": "/assets/pixel/resources/ore-crate.png"
   },
   "buildings": {
-    "recruitment_post": "/assets/buildings/recruitment-post.svg",
-    "attribute_shrine": "/assets/buildings/attribute-shrine.svg",
-    "resource_mine": "/assets/buildings/resource-mine.svg"
+    "recruitment_post": "/assets/pixel/buildings/recruitment-post.png",
+    "attribute_shrine": "/assets/pixel/buildings/attribute-shrine.png",
+    "resource_mine": "/assets/pixel/buildings/resource-mine.png"
   },
   "units": {
     "hero_guard_basic": {
       "portrait": {
-        "idle": "/assets/units/hero-guard-basic.svg",
-        "selected": "/assets/units/hero-guard-basic-selected.svg",
-        "hit": "/assets/units/hero-guard-basic-hit.svg"
+        "idle": "/assets/pixel/units/hero-guard-basic.png",
+        "selected": "/assets/pixel/units/hero-guard-basic-selected.png",
+        "hit": "/assets/pixel/units/hero-guard-basic-hit.png"
       },
       "frame": "/assets/frames/unit-frame-ally.svg"
     },
     "wolf_pack": {
       "portrait": {
-        "idle": "/assets/units/wolf-pack.svg",
-        "selected": "/assets/units/wolf-pack-selected.svg",
-        "hit": "/assets/units/wolf-pack-hit.svg"
+        "idle": "/assets/pixel/units/wolf-pack.png",
+        "selected": "/assets/pixel/units/wolf-pack-selected.png",
+        "hit": "/assets/pixel/units/wolf-pack-hit.png"
       },
       "frame": "/assets/frames/unit-frame-enemy.svg"
     }
   },
   "markers": {
     "hero": {
-      "idle": "/assets/markers/hero-marker.svg",
-      "selected": "/assets/markers/hero-marker-selected.svg",
-      "hit": "/assets/markers/hero-marker-hit.svg"
+      "idle": "/assets/pixel/markers/hero-marker.png",
+      "selected": "/assets/pixel/markers/hero-marker-selected.png",
+      "hit": "/assets/pixel/markers/hero-marker-hit.png"
     },
     "neutral": {
-      "idle": "/assets/markers/neutral-marker.svg",
-      "selected": "/assets/markers/neutral-marker-selected.svg",
-      "hit": "/assets/markers/neutral-marker-hit.svg"
+      "idle": "/assets/pixel/markers/neutral-marker.png",
+      "selected": "/assets/pixel/markers/neutral-marker-selected.png",
+      "hit": "/assets/pixel/markers/neutral-marker-hit.png"
     }
   },
   "metadata": {
-    "/assets/terrain/grass-tile.svg": {
+    "/assets/pixel/terrain/grass-tile.png": {
       "slot": "terrain.grass.default",
       "stage": "placeholder",
-      "source": "generated"
+      "source": "generated",
+      "notes": "Synced from Cocos placeholder tile bundle for H5 pixel preview."
     },
-    "/assets/terrain/grass-tile-alt.svg": {
+    "/assets/pixel/terrain/grass-tile-alt.png": {
       "slot": "terrain.grass.alt",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/terrain/dirt-tile.svg": {
+    "/assets/pixel/terrain/dirt-tile.png": {
       "slot": "terrain.dirt.default",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/terrain/dirt-tile-alt.svg": {
+    "/assets/pixel/terrain/dirt-tile-alt.png": {
       "slot": "terrain.dirt.alt",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/terrain/sand-tile.svg": {
+    "/assets/pixel/terrain/sand-tile.png": {
       "slot": "terrain.sand.default",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/terrain/sand-tile-alt.svg": {
+    "/assets/pixel/terrain/sand-tile-alt.png": {
       "slot": "terrain.sand.alt",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/terrain/water-tile.svg": {
+    "/assets/pixel/terrain/water-tile.png": {
       "slot": "terrain.water.default",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/terrain/water-tile-alt.svg": {
+    "/assets/pixel/terrain/water-tile-alt.png": {
       "slot": "terrain.water.alt",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/terrain/fog-tile.svg": {
+    "/assets/pixel/terrain/fog-tile.png": {
       "slot": "terrain.unknown.default",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/resources/gold-pile.svg": {
+    "/assets/pixel/resources/gold-pile.png": {
       "slot": "resource.gold",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/resources/wood-stack.svg": {
+    "/assets/pixel/resources/wood-stack.png": {
       "slot": "resource.wood",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/resources/ore-crate.svg": {
+    "/assets/pixel/resources/ore-crate.png": {
       "slot": "resource.ore",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/buildings/recruitment-post.svg": {
+    "/assets/pixel/buildings/recruitment-post.png": {
       "slot": "building.recruitment_post",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/buildings/attribute-shrine.svg": {
+    "/assets/pixel/buildings/attribute-shrine.png": {
       "slot": "building.attribute_shrine",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/buildings/resource-mine.svg": {
+    "/assets/pixel/buildings/resource-mine.png": {
       "slot": "building.resource_mine",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/units/hero-guard-basic.svg": {
+    "/assets/pixel/units/hero-guard-basic.png": {
       "slot": "unit.hero_guard_basic.idle",
       "stage": "placeholder",
       "source": "generated",
-      "notes": "Pixel Fantasy placeholder sprite pending production replacement."
+      "notes": "Synced from Cocos placeholder icon bundle for H5 pixel preview."
     },
-    "/assets/units/hero-guard-basic-selected.svg": {
+    "/assets/pixel/units/hero-guard-basic-selected.png": {
       "slot": "unit.hero_guard_basic.selected",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/units/hero-guard-basic-hit.svg": {
+    "/assets/pixel/units/hero-guard-basic-hit.png": {
       "slot": "unit.hero_guard_basic.hit",
       "stage": "placeholder",
       "source": "generated"
@@ -158,17 +159,17 @@
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/units/wolf-pack.svg": {
+    "/assets/pixel/units/wolf-pack.png": {
       "slot": "unit.wolf_pack.idle",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/units/wolf-pack-selected.svg": {
+    "/assets/pixel/units/wolf-pack-selected.png": {
       "slot": "unit.wolf_pack.selected",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/units/wolf-pack-hit.svg": {
+    "/assets/pixel/units/wolf-pack-hit.png": {
       "slot": "unit.wolf_pack.hit",
       "stage": "placeholder",
       "source": "generated"
@@ -178,32 +179,32 @@
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/markers/hero-marker.svg": {
+    "/assets/pixel/markers/hero-marker.png": {
       "slot": "marker.hero.idle",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/markers/hero-marker-selected.svg": {
+    "/assets/pixel/markers/hero-marker-selected.png": {
       "slot": "marker.hero.selected",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/markers/hero-marker-hit.svg": {
+    "/assets/pixel/markers/hero-marker-hit.png": {
       "slot": "marker.hero.hit",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/markers/neutral-marker.svg": {
+    "/assets/pixel/markers/neutral-marker.png": {
       "slot": "marker.neutral.idle",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/markers/neutral-marker-selected.svg": {
+    "/assets/pixel/markers/neutral-marker-selected.png": {
       "slot": "marker.neutral.selected",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/markers/neutral-marker-hit.svg": {
+    "/assets/pixel/markers/neutral-marker-hit.png": {
       "slot": "marker.neutral.hit",
       "stage": "placeholder",
       "source": "generated"
