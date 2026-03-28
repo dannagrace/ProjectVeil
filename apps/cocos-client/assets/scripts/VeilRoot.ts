@@ -45,6 +45,11 @@ import { buildTimelineEntriesFromUpdate } from "./cocos-ui-formatters.ts";
 import { buildHeroProgressNotice, type HeroProgressNotice } from "./cocos-hero-progression.ts";
 import { VeilHudPanel, type VeilHudRenderState } from "./VeilHudPanel.ts";
 import { VeilLobbyPanel } from "./VeilLobbyPanel.ts";
+import {
+  buildCocosAccountLifecyclePanelView,
+  type CocosAccountLifecycleDeliveryMode,
+  type CocosAccountLifecycleKind
+} from "./cocos-account-lifecycle.ts";
 import { VeilMapBoard } from "./VeilMapBoard.ts";
 import { buildMapFeedbackEntriesFromUpdate, buildObjectPulseEntriesFromUpdate } from "./cocos-map-visuals.ts";
 import { getPlaceholderSpriteAssetUsageSummary } from "./cocos-placeholder-sprites.ts";
@@ -186,6 +191,16 @@ export class VeilRoot extends Component {
   private lobbyAccountProfile: CocosPlayerAccountProfile = createFallbackCocosPlayerAccountProfile("player-1", "test-room");
   private lobbyAccountEpoch = 0;
   private gameplayAccountRefreshInFlight = false;
+  private activeAccountFlow: CocosAccountLifecycleKind | null = null;
+  private registrationDisplayName = "";
+  private registrationToken = "";
+  private registrationPassword = "";
+  private registrationDeliveryMode: CocosAccountLifecycleDeliveryMode = "idle";
+  private registrationExpiresAt = "";
+  private recoveryToken = "";
+  private recoveryPassword = "";
+  private recoveryDeliveryMode: CocosAccountLifecycleDeliveryMode = "idle";
+  private recoveryExpiresAt = "";
   private runtimePlatform: CocosRuntimePlatform = "unknown";
   private runtimeCapabilities: CocosRuntimeCapabilities = resolveCocosRuntimeCapabilities("unknown");
   private loginRuntimeConfig: CocosLoginRuntimeConfig = resolveCocosLoginRuntimeConfig();
@@ -583,10 +598,22 @@ export class VeilRoot extends Component {
         void this.loginLobbyAccount();
       },
       onRegisterAccount: () => {
-        void this.registerLobbyAccount();
+        this.openLobbyAccountFlow("registration");
       },
       onRecoverAccount: () => {
-        void this.recoverLobbyAccountPassword();
+        this.openLobbyAccountFlow("recovery");
+      },
+      onEditAccountFlowField: (field) => {
+        this.promptForAccountFlowField(field);
+      },
+      onRequestAccountFlow: () => {
+        void this.requestActiveAccountFlow();
+      },
+      onConfirmAccountFlow: () => {
+        void this.confirmActiveAccountFlow();
+      },
+      onCancelAccountFlow: () => {
+        this.closeLobbyAccountFlow();
       },
       onOpenConfigCenter: () => {
         this.openConfigCenter();
@@ -747,6 +774,7 @@ export class VeilRoot extends Component {
         entering: this.lobbyEntering,
         status: this.lobbyStatus,
         rooms: this.lobbyRooms,
+        accountFlow: this.buildActiveAccountFlowPanelView(),
         presentationReadiness: cocosPresentationReadiness
       });
       return;
@@ -1683,187 +1711,11 @@ export class VeilRoot extends Component {
   }
 
   private async registerLobbyAccount(): Promise<void> {
-    if (this.lobbyEntering) {
-      return;
-    }
-
-    const promptRef = globalThis.prompt;
-    if (typeof promptRef !== "function") {
-      this.lobbyStatus = "当前运行环境不支持弹出式输入，请先在浏览器调试壳完成正式注册。";
-      this.renderView();
-      return;
-    }
-
-    const loginId = promptRef("输入新的登录 ID", this.loginId || "")?.trim().toLowerCase();
-    if (loginId === undefined) {
-      return;
-    }
-    if (!loginId) {
-      this.lobbyStatus = "请输入登录 ID 后再发起正式注册。";
-      this.renderView();
-      return;
-    }
-
-    const displayName = promptRef("输入注册昵称（留空则沿用登录 ID）", this.displayName || loginId);
-    if (displayName === null) {
-      return;
-    }
-
-    this.lobbyEntering = true;
-    this.loginId = loginId;
-    this.lobbyStatus = `正在为 ${loginId} 申请注册令牌...`;
-    this.renderView();
-
-    try {
-      const requested = await requestCocosAccountRegistration(this.remoteUrl, loginId, displayName);
-      this.lobbyEntering = false;
-      this.lobbyStatus = requested.registrationToken
-        ? `注册令牌已生成：${requested.registrationToken}${requested.expiresAt ? `；过期时间：${requested.expiresAt}` : ""}`
-        : `注册申请已受理${requested.expiresAt ? `，过期时间：${requested.expiresAt}` : ""}。`;
-      this.renderView();
-
-      const registrationToken = promptRef("输入注册令牌", requested.registrationToken ?? "")?.trim();
-      if (registrationToken === undefined) {
-        return;
-      }
-      if (!registrationToken) {
-        this.lobbyStatus = "未填写注册令牌，已保留当前登录 ID 草稿。";
-        this.renderView();
-        return;
-      }
-
-      const password = promptRef("输入注册口令（至少 6 位）", "");
-      if (password == null) {
-        return;
-      }
-      if (!password.trim()) {
-        this.lobbyStatus = "请输入注册口令后再确认。";
-        this.renderView();
-        return;
-      }
-
-      this.lobbyEntering = true;
-      this.lobbyStatus = `正在确认正式注册 ${loginId} 并进入房间 ${this.roomId}...`;
-      this.renderView();
-
-      const storage = this.readWebStorage();
-      const authSession = await confirmCocosAccountRegistration(this.remoteUrl, loginId, registrationToken, password, {
-        storage
-      });
-      this.authToken = authSession.token ?? null;
-      this.playerId = authSession.playerId;
-      this.displayName = authSession.displayName;
-      this.authMode = authSession.authMode;
-      this.authProvider = authSession.provider ?? "account-password";
-      this.loginId = authSession.loginId ?? loginId;
-      this.sessionSource = authSession.source;
-      this.syncWechatShareBridge();
-      this.lobbyStatus = `正式账号注册成功，正在同步全局仓库并进入房间 ${this.roomId}...`;
-      saveCocosLobbyPreferences(authSession.playerId, this.roomId, undefined, storage);
-      this.renderView();
-      await this.refreshLobbyAccountProfile();
-      this.lobbyEntering = false;
-      await this.enterLobbyRoom(this.roomId);
-    } catch (error) {
-      this.lobbyEntering = false;
-      this.lobbyStatus = this.describeCocosAccountFlowError(error, "account_registration_failed", {
-        invalidTokenCode: "invalid_registration_token"
-      });
-      this.renderView();
-    }
+    this.openLobbyAccountFlow("registration");
   }
 
   private async recoverLobbyAccountPassword(): Promise<void> {
-    if (this.lobbyEntering) {
-      return;
-    }
-
-    const promptRef = globalThis.prompt;
-    if (typeof promptRef !== "function") {
-      this.lobbyStatus = "当前运行环境不支持弹出式输入，请先在浏览器调试壳完成密码找回。";
-      this.renderView();
-      return;
-    }
-
-    const loginId = promptRef("输入要找回的登录 ID", this.loginId || "")?.trim().toLowerCase();
-    if (loginId === undefined) {
-      return;
-    }
-    if (!loginId) {
-      this.lobbyStatus = "请输入登录 ID 后再发起密码找回。";
-      this.renderView();
-      return;
-    }
-
-    this.lobbyEntering = true;
-    this.loginId = loginId;
-    this.lobbyStatus = `正在为 ${loginId} 申请密码找回令牌...`;
-    this.renderView();
-
-    try {
-      const requested = await requestCocosPasswordRecovery(this.remoteUrl, loginId);
-      this.lobbyEntering = false;
-      this.lobbyStatus = requested.recoveryToken
-        ? `找回令牌已生成：${requested.recoveryToken}${requested.expiresAt ? `；过期时间：${requested.expiresAt}` : ""}`
-        : `密码找回申请已受理${requested.expiresAt ? `，过期时间：${requested.expiresAt}` : ""}。`;
-      this.renderView();
-
-      const recoveryToken = promptRef("输入找回令牌", requested.recoveryToken ?? "")?.trim();
-      if (recoveryToken === undefined) {
-        return;
-      }
-      if (!recoveryToken) {
-        this.lobbyStatus = "未填写找回令牌，已保留当前登录 ID 草稿。";
-        this.renderView();
-        return;
-      }
-
-      const newPassword = promptRef("输入新的账号口令（至少 6 位）", "");
-      if (newPassword == null) {
-        return;
-      }
-      if (!newPassword.trim()) {
-        this.lobbyStatus = "请输入新口令后再确认重置。";
-        this.renderView();
-        return;
-      }
-
-      this.lobbyEntering = true;
-      this.lobbyStatus = `正在重置 ${loginId} 的口令并进入房间 ${this.roomId}...`;
-      this.renderView();
-
-      await confirmCocosPasswordRecovery(this.remoteUrl, loginId, recoveryToken, newPassword);
-      const storage = this.readWebStorage();
-      const authSession = await loginWithCocosProvider(
-        this.remoteUrl,
-        {
-          provider: "account-password",
-          loginId,
-          password: newPassword
-        },
-        { storage }
-      );
-      this.authToken = authSession.token ?? null;
-      this.playerId = authSession.playerId;
-      this.displayName = authSession.displayName;
-      this.authMode = authSession.authMode;
-      this.authProvider = authSession.provider ?? "account-password";
-      this.loginId = authSession.loginId ?? loginId;
-      this.sessionSource = authSession.source;
-      this.syncWechatShareBridge();
-      this.lobbyStatus = `口令重置成功，正在同步全局仓库并进入房间 ${this.roomId}...`;
-      saveCocosLobbyPreferences(authSession.playerId, this.roomId, undefined, storage);
-      this.renderView();
-      await this.refreshLobbyAccountProfile();
-      this.lobbyEntering = false;
-      await this.enterLobbyRoom(this.roomId);
-    } catch (error) {
-      this.lobbyEntering = false;
-      this.lobbyStatus = this.describeCocosAccountFlowError(error, "password_recovery_failed", {
-        invalidTokenCode: "invalid_recovery_token"
-      });
-      this.renderView();
-    }
+    this.openLobbyAccountFlow("recovery");
   }
 
   private async loginLobbyWechatMiniGame(): Promise<void> {
@@ -1970,6 +1822,296 @@ export class VeilRoot extends Component {
     this.syncWechatShareBridge();
     this.lobbyStatus = "已退出当前会话，请重新选择游客身份或使用正式账号进入。";
     this.renderView();
+  }
+
+  private buildActiveAccountFlowPanelView() {
+    if (!this.activeAccountFlow) {
+      return null;
+    }
+
+    return buildCocosAccountLifecyclePanelView(
+      this.activeAccountFlow === "registration"
+        ? {
+            kind: "registration",
+            loginId: this.loginId,
+            displayName: this.registrationDisplayName || this.displayName || this.loginId,
+            token: this.registrationToken,
+            password: this.registrationPassword,
+            deliveryMode: this.registrationDeliveryMode,
+            ...(this.registrationExpiresAt ? { expiresAt: this.registrationExpiresAt } : {})
+          }
+        : {
+            kind: "recovery",
+            loginId: this.loginId,
+            displayName: "",
+            token: this.recoveryToken,
+            password: this.recoveryPassword,
+            deliveryMode: this.recoveryDeliveryMode,
+            ...(this.recoveryExpiresAt ? { expiresAt: this.recoveryExpiresAt } : {})
+          }
+    );
+  }
+
+  private openLobbyAccountFlow(kind: CocosAccountLifecycleKind): void {
+    this.activeAccountFlow = kind;
+    this.loginId = this.loginId.trim().toLowerCase();
+    if (kind === "registration" && !this.registrationDisplayName.trim()) {
+      this.registrationDisplayName = this.displayName || this.loginId;
+    }
+    this.lobbyStatus =
+      kind === "registration"
+        ? "已打开正式注册面板。先申请注册令牌，再确认口令并进入房间。"
+        : "已打开密码找回面板。先申请找回令牌，再确认新口令并进入房间。";
+    this.renderView();
+  }
+
+  private closeLobbyAccountFlow(): void {
+    this.activeAccountFlow = null;
+    this.lobbyStatus = "已收起账号生命周期面板。";
+    this.renderView();
+  }
+
+  private promptForAccountFlowField(field: "loginId" | "displayName" | "token" | "password"): void {
+    const promptRef = globalThis.prompt;
+    if (typeof promptRef !== "function" || !this.activeAccountFlow) {
+      this.lobbyStatus = "当前运行环境不支持弹出式输入，请改用浏览器调试壳填写流程字段。";
+      this.renderView();
+      return;
+    }
+
+    if (field === "loginId") {
+      const nextValue = promptRef("输入登录 ID", this.loginId)?.trim();
+      if (nextValue === undefined) {
+        return;
+      }
+      this.loginId = nextValue.toLowerCase();
+      this.lobbyStatus = this.loginId ? `已更新登录 ID 草稿为 ${this.loginId}。` : "已清空登录 ID 草稿。";
+      this.renderView();
+      return;
+    }
+
+    if (field === "displayName") {
+      const nextValue = promptRef("输入注册昵称", this.registrationDisplayName || this.displayName || this.loginId);
+      if (nextValue === null) {
+        return;
+      }
+      this.registrationDisplayName = nextValue.trim();
+      this.lobbyStatus = this.registrationDisplayName ? "已更新注册昵称草稿。" : "已清空注册昵称草稿。";
+      this.renderView();
+      return;
+    }
+
+    if (field === "token") {
+      const nextValue = promptRef(
+        this.activeAccountFlow === "registration" ? "输入注册令牌" : "输入找回令牌",
+        this.activeAccountFlow === "registration" ? this.registrationToken : this.recoveryToken
+      )?.trim();
+      if (nextValue === undefined) {
+        return;
+      }
+      if (this.activeAccountFlow === "registration") {
+        this.registrationToken = nextValue;
+      } else {
+        this.recoveryToken = nextValue;
+      }
+      this.lobbyStatus = nextValue ? "已更新令牌草稿。" : "已清空令牌草稿。";
+      this.renderView();
+      return;
+    }
+
+    const nextValue = promptRef(
+      this.activeAccountFlow === "registration" ? "输入注册口令（至少 6 位）" : "输入新的账号口令（至少 6 位）",
+      ""
+    );
+    if (nextValue === null) {
+      return;
+    }
+    if (this.activeAccountFlow === "registration") {
+      this.registrationPassword = nextValue.trim();
+    } else {
+      this.recoveryPassword = nextValue.trim();
+    }
+    this.lobbyStatus = nextValue.trim() ? "已更新口令草稿。" : "已清空口令草稿。";
+    this.renderView();
+  }
+
+  private async requestActiveAccountFlow(): Promise<void> {
+    if (!this.activeAccountFlow || this.lobbyEntering) {
+      return;
+    }
+    const loginId = this.loginId.trim().toLowerCase();
+    if (!loginId) {
+      this.lobbyStatus = "请输入登录 ID 后再申请令牌。";
+      this.renderView();
+      return;
+    }
+
+    this.loginId = loginId;
+    this.lobbyEntering = true;
+    this.lobbyStatus =
+      this.activeAccountFlow === "registration"
+        ? `正在为 ${loginId} 申请注册令牌...`
+        : `正在为 ${loginId} 申请密码找回令牌...`;
+    this.renderView();
+
+    try {
+      if (this.activeAccountFlow === "registration") {
+        const requested = await requestCocosAccountRegistration(
+          this.remoteUrl,
+          loginId,
+          this.registrationDisplayName || this.displayName || loginId
+        );
+        this.registrationToken = requested.registrationToken ?? this.registrationToken;
+        this.registrationExpiresAt = requested.expiresAt ?? "";
+        this.registrationDeliveryMode = requested.registrationToken ? "dev-token" : "external";
+        this.lobbyStatus = requested.registrationToken
+          ? `注册令牌已生成，可直接确认注册。令牌：${requested.registrationToken}${requested.expiresAt ? `；过期时间：${requested.expiresAt}` : ""}`
+          : `注册申请已受理，请从外部渠道获取令牌${requested.expiresAt ? `；过期时间：${requested.expiresAt}` : ""}。`;
+      } else {
+        const requested = await requestCocosPasswordRecovery(this.remoteUrl, loginId);
+        this.recoveryToken = requested.recoveryToken ?? this.recoveryToken;
+        this.recoveryExpiresAt = requested.expiresAt ?? "";
+        this.recoveryDeliveryMode = requested.recoveryToken ? "dev-token" : "external";
+        this.lobbyStatus = requested.recoveryToken
+          ? `找回令牌已生成，可直接确认重置。令牌：${requested.recoveryToken}${requested.expiresAt ? `；过期时间：${requested.expiresAt}` : ""}`
+          : `找回申请已受理，请从外部渠道获取令牌${requested.expiresAt ? `；过期时间：${requested.expiresAt}` : ""}。`;
+      }
+    } catch (error) {
+      this.lobbyStatus =
+        this.activeAccountFlow === "registration"
+          ? this.describeCocosAccountFlowError(error, "account_registration_request_failed")
+          : this.describeCocosAccountFlowError(error, "password_recovery_request_failed");
+    } finally {
+      this.lobbyEntering = false;
+      this.renderView();
+    }
+  }
+
+  private async confirmActiveAccountFlow(): Promise<void> {
+    if (!this.activeAccountFlow || this.lobbyEntering) {
+      return;
+    }
+    const loginId = this.loginId.trim().toLowerCase();
+    if (!loginId) {
+      this.lobbyStatus = "请输入登录 ID 后再确认。";
+      this.renderView();
+      return;
+    }
+    this.loginId = loginId;
+
+    if (this.activeAccountFlow === "registration") {
+      if (!this.registrationToken.trim()) {
+        this.lobbyStatus = "请先填写注册令牌。";
+        this.renderView();
+        return;
+      }
+      if (!this.registrationPassword.trim()) {
+        this.lobbyStatus = "请输入注册口令后再确认。";
+        this.renderView();
+        return;
+      }
+      await this.confirmLobbyAccountRegistration(loginId);
+      return;
+    }
+
+    if (!this.recoveryToken.trim()) {
+      this.lobbyStatus = "请先填写找回令牌。";
+      this.renderView();
+      return;
+    }
+    if (!this.recoveryPassword.trim()) {
+      this.lobbyStatus = "请输入新口令后再确认重置。";
+      this.renderView();
+      return;
+    }
+    await this.confirmLobbyAccountRecovery(loginId);
+  }
+
+  private async confirmLobbyAccountRegistration(loginId: string): Promise<void> {
+    this.lobbyEntering = true;
+    this.lobbyStatus = `正在确认正式注册 ${loginId} 并进入房间 ${this.roomId}...`;
+    this.renderView();
+
+    try {
+      const storage = this.readWebStorage();
+      const authSession = await confirmCocosAccountRegistration(
+        this.remoteUrl,
+        loginId,
+        this.registrationToken,
+        this.registrationPassword,
+        { storage }
+      );
+      this.authToken = authSession.token ?? null;
+      this.playerId = authSession.playerId;
+      this.displayName = authSession.displayName;
+      this.authMode = authSession.authMode;
+      this.authProvider = authSession.provider ?? "account-password";
+      this.loginId = authSession.loginId ?? loginId;
+      this.sessionSource = authSession.source;
+      this.registrationToken = "";
+      this.registrationPassword = "";
+      this.registrationDeliveryMode = "idle";
+      this.registrationExpiresAt = "";
+      this.activeAccountFlow = null;
+      this.syncWechatShareBridge();
+      this.lobbyStatus = `正式账号注册成功，正在同步全局仓库并进入房间 ${this.roomId}...`;
+      saveCocosLobbyPreferences(authSession.playerId, this.roomId, undefined, storage);
+      this.renderView();
+      await this.refreshLobbyAccountProfile();
+      this.lobbyEntering = false;
+      await this.enterLobbyRoom(this.roomId);
+    } catch (error) {
+      this.lobbyEntering = false;
+      this.lobbyStatus = this.describeCocosAccountFlowError(error, "account_registration_failed", {
+        invalidTokenCode: "invalid_registration_token"
+      });
+      this.renderView();
+    }
+  }
+
+  private async confirmLobbyAccountRecovery(loginId: string): Promise<void> {
+    this.lobbyEntering = true;
+    this.lobbyStatus = `正在重置 ${loginId} 的口令并进入房间 ${this.roomId}...`;
+    this.renderView();
+
+    try {
+      await confirmCocosPasswordRecovery(this.remoteUrl, loginId, this.recoveryToken, this.recoveryPassword);
+      const storage = this.readWebStorage();
+      const authSession = await loginWithCocosProvider(
+        this.remoteUrl,
+        {
+          provider: "account-password",
+          loginId,
+          password: this.recoveryPassword
+        },
+        { storage }
+      );
+      this.authToken = authSession.token ?? null;
+      this.playerId = authSession.playerId;
+      this.displayName = authSession.displayName;
+      this.authMode = authSession.authMode;
+      this.authProvider = authSession.provider ?? "account-password";
+      this.loginId = authSession.loginId ?? loginId;
+      this.sessionSource = authSession.source;
+      this.recoveryToken = "";
+      this.recoveryPassword = "";
+      this.recoveryDeliveryMode = "idle";
+      this.recoveryExpiresAt = "";
+      this.activeAccountFlow = null;
+      this.syncWechatShareBridge();
+      this.lobbyStatus = `口令重置成功，正在同步全局仓库并进入房间 ${this.roomId}...`;
+      saveCocosLobbyPreferences(authSession.playerId, this.roomId, undefined, storage);
+      this.renderView();
+      await this.refreshLobbyAccountProfile();
+      this.lobbyEntering = false;
+      await this.enterLobbyRoom(this.roomId);
+    } catch (error) {
+      this.lobbyEntering = false;
+      this.lobbyStatus = this.describeCocosAccountFlowError(error, "password_recovery_failed", {
+        invalidTokenCode: "invalid_recovery_token"
+      });
+      this.renderView();
+    }
   }
 
   private promptForLobbyField(field: "playerId" | "displayName" | "roomId" | "loginId"): void {
