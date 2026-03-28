@@ -54,6 +54,44 @@
 
 ---
 
+## Contributor Quickstart
+
+最快的本地贡献路径已经按以下流程验证过，不需要 MySQL，也不需要先复制 `.env.example`：
+
+### Prerequisites
+
+- Node.js 22 LTS（CI 同款；仓库提供 `.nvmrc`）
+- npm 10+
+- 可选：MySQL 8+（只有在你要验证持久化时才需要）
+
+### 5-Minute Setup
+
+```bash
+nvm use
+npm ci --no-audit --no-fund
+npm run validate:quickstart
+```
+
+`npm run validate:quickstart` 会做两件事：
+
+- 构建 H5 调试壳
+- 以默认内存存储启动本地服务，并校验 `health` / `auth-readiness` / `lobby` 接口
+
+验证通过后，常用本地运行命令如下：
+
+```bash
+npm run dev:server
+npm run dev:client:h5
+```
+
+默认地址：
+
+- H5 调试壳：`http://127.0.0.1:5173/`
+- 配置台：`http://127.0.0.1:5173/config-center.html`
+- 服务端健康检查：`http://127.0.0.1:2567/api/runtime/health`
+
+如果你要启用 MySQL 持久化，再复制 `.env.example` 到 `.env`，填入 `VEIL_MYSQL_*`，然后执行 `npm run db:migrate`。更多说明见 `docs/mysql-persistence.md`。
+
 ## 当前仓库落地内容
 
 本仓库已经按 Phase 1 要求初始化为一个全栈 TypeScript monorepo：
@@ -89,7 +127,8 @@
 
 ## 本地运行
 
-- 安装依赖：`npm install`
+- 安装依赖：`npm ci --no-audit --no-fund`
+- 快速校验首条贡献路径：`npm run validate:quickstart`
 - 本地 WebSocket 服务：`npm run dev:server`
 - 运行时健康检查：`GET http://127.0.0.1:2567/api/runtime/health`
 - 鉴权就绪摘要：`GET http://127.0.0.1:2567/api/runtime/auth-readiness`
