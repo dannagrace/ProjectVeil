@@ -27,6 +27,7 @@
 - 上传已打包产物：`npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`
 - 按 SHA 下载 CI artifact：`npm run download:wechat-release -- --sha <git-sha> [--output-dir artifacts/downloaded/wechat-release-<git-sha>]`
 - 验收已下载 artifact：`npm run verify:wechat-release -- --artifacts-dir <downloaded-artifact-dir> [--expected-revision <git-sha>]`
+- 生成 / 校验真机冒烟报告：`npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> [--report <report-path>] [--check --expected-revision <git-sha>]`
 - 只做 CI 同款校验：`npm run check:wechat-build`
 - 校验真实导出目录：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 
@@ -55,8 +56,10 @@
 4. 对真实导出目录执行 `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`。
 5. 运行 `npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`，生成包含 `codex.wechat.release.json` 的归档包与 sidecar 元数据。
 6. 运行 `npm run verify:wechat-release -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>]`，在上传前先做一次本地 artifact 级冒烟验收。
-7. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
-8. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成人工 smoke check 与提审。
+7. 运行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成 `codex.wechat.smoke-report.json` 模板，并在真机或准真机上逐项填写结果。
+8. 完成真机 / 准真机冒烟后，执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`，确认登录、进房、重连、分享回流、关键资源加载都已有结果记录。
+9. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
+10. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
 
 ## 下载与验收
 
@@ -64,8 +67,9 @@
 
 1. 下载 artifact：`npm run download:wechat-release -- --sha <git-sha>`
 2. 复核 sidecar、release manifest 与 smoke 清单：`npm run verify:wechat-release -- --artifacts-dir artifacts/downloaded/wechat-release-<git-sha> --expected-revision <git-sha>`
-3. 如需直接提审上传，可执行 `npm run upload:wechat-release -- --artifacts-dir artifacts/downloaded/wechat-release-<git-sha> --version <wechat-version>`
-4. 通过后再解压归档并导入微信开发者工具，执行人工提审前检查
+3. 生成真机冒烟模板：`npm run smoke:wechat-release -- --artifacts-dir artifacts/downloaded/wechat-release-<git-sha>`
+4. 完成真机 / 准真机检查后校验结果：`npm run smoke:wechat-release -- --artifacts-dir artifacts/downloaded/wechat-release-<git-sha> --check --expected-revision <git-sha>`
+5. 如需直接提审上传，可执行 `npm run upload:wechat-release -- --artifacts-dir artifacts/downloaded/wechat-release-<git-sha> --version <wechat-version>`
 
 `verify:wechat-release` 默认会完成以下检查：
 
@@ -77,11 +81,24 @@
 
 ## 提审前 Smoke Check
 
-- artifact 验收脚本通过，无 sidecar / manifest / revision 漂移
-- 能正常启动到 Lobby / 首屏
-- `wx` 登录链路或游客降级链路可用
-- 与 `runtimeRemoteUrl` 对应的请求 / socket 域名无白名单报错
-- 关键远程资源可加载，首轮进入房间或战斗不出现缺图 / 缺配置
+`npm run smoke:wechat-release` 会生成 `codex.wechat.smoke-report.json`，默认与 release artifact 放在同一目录。该文件是提审前必须保留的最小验收记录，建议直接随 artifact 归档保存。
+
+最小必填项如下：
+
+- `login-lobby`：验证微信小游戏登录或游客降级后能进入 Lobby，并记录首屏异常
+- `room-entry`：验证从 Lobby 创建 / 加入房间成功
+- `reconnect-recovery`：验证断网、切后台或网络切换后的自动重连 / 恢复
+- `share-roundtrip`：验证分享链路与回流后房间号 / 邀请参数恢复
+- `key-assets`：验证首屏、Lobby、房间或首场战斗关键资源加载无白名单 / 缺图 / 404
+
+推荐执行方式：
+
+1. 先跑 `npm run verify:wechat-release -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>]`
+2. 再跑 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成模板
+3. 在真机或微信开发者工具真机调试模式中逐项填写 `tester`、`device`、`executedAt`、`summary` 以及每个 case 的 `status` / `notes` / `evidence`
+4. 回填完成后执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`
+
+若某项因当前包能力受限无法完整验证，可把 case 标记为 `not_applicable`，并在 `notes` 中写明原因与替代观察证据；其余必填项不得保留 `pending`。
 
 ## 回滚演练
 
