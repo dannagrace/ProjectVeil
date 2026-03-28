@@ -1,6 +1,6 @@
 import { config as loadEnv } from "dotenv";
 import { readMySqlPersistenceConfig } from "../apps/server/src/persistence";
-import { runPendingSchemaMigrations } from "../apps/server/src/schema-migrations";
+import { rollbackLastSchemaMigration } from "../apps/server/src/schema-migrations";
 
 loadEnv();
 
@@ -12,10 +12,13 @@ async function main(): Promise<void> {
     );
   }
 
-  const result = await runPendingSchemaMigrations(config);
-  console.log("MySQL persistence schema initialized successfully.");
-  console.log(`Database: ${config.database}`);
-  console.log(`Applied migrations: ${result.applied.length === 0 ? "none" : result.applied.join(", ")}`);
+  const result = await rollbackLastSchemaMigration(config);
+  if (!result.rolledBack) {
+    console.log(`No schema migrations to roll back for ${result.database}.`);
+    return;
+  }
+
+  console.log(`Rolled back ${result.rolledBack} from ${result.database}.`);
 }
 
 void main().catch((error) => {

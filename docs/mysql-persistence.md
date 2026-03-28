@@ -157,12 +157,15 @@ This gives us a safe recovery window after server restarts without letting `room
 
 ## Initialization
 
-The repository includes a SQL file and an init script:
+The repository now uses versioned migrations under `scripts/migrations/`.
 
-- SQL: `docs/mysql-persistence.sql`
-- Script: `npm run db:init:mysql`
+- Apply pending migrations: `npm run db:migrate`
+- Roll back the most recent migration: `npm run db:migrate:rollback`
+- Fresh setup alias: `npm run db:init:mysql`
 
-Running the init script creates the database, `room_snapshots`, `player_room_profiles`, `player_accounts`, `player_event_history`, and `config_documents` if they do not already exist.
+`db:init:mysql` now delegates to the same migration runner used for upgrades, so fresh installs and existing environments follow a single schema path. The runner records applied versions in `schema_migrations` with `id`, `name`, and `applied_at`.
+
+If the dev server starts with `VEIL_MYSQL_*` configured but the schema is behind, it logs a warning and falls back to local in-memory room persistence plus filesystem config storage instead of mutating the database implicitly. Run `npm run db:migrate` first for MySQL-backed startup.
 
 ## Manual Operations
 
