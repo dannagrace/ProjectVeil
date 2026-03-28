@@ -25,6 +25,8 @@
     "prepare:wechat-build": "node --import tsx ./scripts/prepare-wechat-minigame-build.ts",
     "prepare:wechat-release": "node --import tsx ./scripts/prepare-wechat-minigame-release.ts",
     "package:wechat-release": "node --import tsx ./scripts/package-wechat-minigame-release.ts",
+    "download:wechat-release": "node --import tsx ./scripts/download-wechat-minigame-artifact.ts",
+    "verify:wechat-release": "node --import tsx ./scripts/verify-wechat-minigame-artifact.ts",
     "check:wechat-build": "node --import tsx ./scripts/prepare-wechat-minigame-build.ts --check && node --import tsx ./scripts/validate-wechat-minigame-build.ts --output-dir apps/cocos-client/build-templates/wechatgame && node --import tsx ./scripts/validate-wechat-minigame-build.ts --output-dir apps/cocos-client/test/fixtures/wechatgame-export --expect-exported-runtime && node --import tsx ./scripts/prepare-wechat-minigame-release.ts --output-dir apps/cocos-client/test/fixtures/wechatgame-export --expect-exported-runtime --check",
     "validate:wechat-build": "node --import tsx ./scripts/validate-wechat-minigame-build.ts",
     "sync:assets:h5-pixel": "node ./scripts/sync-h5-pixel-assets.mjs",

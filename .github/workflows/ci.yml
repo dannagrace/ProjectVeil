@@ -67,3 +67,31 @@ jobs:
           name: wechat-release-${{ github.sha }}
           path: ${{ env.WECHAT_RELEASE_ARTIFACTS_DIR }}
           if-no-files-found: error
+
+  wechat-release-artifact-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - wechat-build-validation
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Download packaged WeChat release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wechat-release-${{ github.sha }}
+          path: ${{ runner.temp }}/wechat-release-downloaded
+
+      - name: Verify downloaded WeChat release artifact
+        run: npm run verify:wechat-release -- --artifacts-dir "${RUNNER_TEMP}/wechat-release-downloaded" --expected-revision "${GITHUB_SHA}"
