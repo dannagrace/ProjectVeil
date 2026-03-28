@@ -151,7 +151,7 @@ test("renderEncounterSourceDetail covers active hero encounter initiative branch
       battle: activeBattle,
       lastEncounterStarted: createEncounterStartedEvent()
     }),
-    "遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到多人遭遇战结算。"
+    "遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到多人遭遇战结算，战斗会话 battle-1 已建立。"
   );
 
   assert.equal(
@@ -163,7 +163,7 @@ test("renderEncounterSourceDetail covers active hero encounter initiative branch
         defenderHeroId: "hero-1"
       })
     }),
-    "遭遇来源：敌方英雄先手接触我方，当前房间已切到多人遭遇战结算。"
+    "遭遇来源：敌方英雄先手接触我方，当前房间已切到多人遭遇战结算，战斗会话 battle-1 已建立。"
   );
 });
 
@@ -181,7 +181,7 @@ test("renderEncounterSourceDetail covers active neutral encounter initiator bran
         initiator: "neutral"
       })
     }),
-    "遭遇来源：中立守军主动拦截，当前房间已切到遭遇战结算链路。"
+    "遭遇来源：中立守军主动拦截，当前房间已切到遭遇战结算链路，战斗会话 battle-1 已建立。"
   );
 
   assert.equal(
@@ -195,7 +195,7 @@ test("renderEncounterSourceDetail covers active neutral encounter initiator bran
         initiator: "hero"
       })
     }),
-    "遭遇来源：我方接触了中立守军，当前房间已切到遭遇战结算链路。"
+    "遭遇来源：我方接触了中立守军，当前房间已切到遭遇战结算链路，战斗会话 battle-1 已建立。"
   );
 });
 
@@ -231,7 +231,7 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
         aftermath: "已结算"
       }
     }),
-    "战后反馈：本场结果已结算并回写到房间地图，可按当前结果继续移动、推进回合或等待对手。"
+    "战后反馈：本场结果已结算并回写到房间地图；可结合最近战斗会话、房间态和对手摘要继续移动、推进回合或等待对手。"
   );
 
   assert.equal(

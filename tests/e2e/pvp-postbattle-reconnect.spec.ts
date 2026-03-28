@@ -56,6 +56,7 @@ test("players can reload after a PvP battle resolves and keep the settled world 
   await expect(playerTwoPage.getByTestId("battle-settlement-room-state")).toContainText("对手仍保留在房间地图上");
   await expect(playerTwoPage.getByTestId("battle-settlement-next-action")).toContainText("已无法继续移动");
   await expect(playerOnePage.getByTestId("opponent-summary")).toContainText("最近对手");
+  await expect(playerOnePage.getByTestId("opponent-summary")).toContainText(`遭遇会话：${roomId}/battle-`);
   await expect(playerTwoPage.getByTestId("room-result-summary")).toContainText("当前结算已同步回写");
 
   await expect(playerOnePage.getByTestId("battle-empty")).toHaveText(/No active battle/);
