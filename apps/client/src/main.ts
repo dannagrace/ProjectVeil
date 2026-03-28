@@ -193,6 +193,7 @@ interface AppState {
   log: string[];
   modal: BattleModalState;
   lastBattleSettlement: BattleSettlementSummary | null;
+  lastEncounterStarted: Extract<SessionUpdate["events"][number], { type: "battle.started" }> | null;
   predictionStatus: string;
   diagnostics: DiagnosticState;
 }
@@ -273,6 +274,7 @@ const state: AppState = {
     body: ""
   },
   lastBattleSettlement: null,
+  lastEncounterStarted: null,
   predictionStatus: "",
   diagnostics: {
     connectionStatus: shouldBootGame ? "connecting" : "connected",
@@ -1827,6 +1829,17 @@ function formatHeroIdentity(
   return hero.name.trim() ? `${hero.name} (${hero.playerId})` : hero.id;
 }
 
+function formatVisibleHeroSummary(
+  hero: PlayerWorldView["ownHeroes"][number] | PlayerWorldView["visibleHeroes"][number] | null,
+  fallbackId: string | null | undefined
+): string {
+  if (!hero) {
+    return `玩家 ${fallbackId ?? "unknown"} · 英雄信息待同步`;
+  }
+
+  return `玩家 ${hero.playerId} · 英雄 ${hero.name || hero.id} · 坐标 (${hero.position.x},${hero.position.y})`;
+}
+
 function opposingHeroId(battle: BattleState, world: PlayerWorldView = state.world): string | null {
   const playerCamp = controlledBattleCamp(battle, world);
   if (!playerCamp) {
@@ -1874,6 +1887,65 @@ function renderEncounterHeadline(): { phase: string; detail: string } {
     phase: "探索中",
     detail: state.predictionStatus || "房间当前处于地图探索阶段。"
   };
+}
+
+function renderEncounterSourceDetail(): string {
+  if (state.battle && state.lastEncounterStarted) {
+    const event = state.lastEncounterStarted;
+    const ownedIds = ownedHeroIds(state.world);
+    if (event.encounterKind === "hero") {
+      return ownedIds.has(event.heroId) ? "遭遇来源：我方主动接触敌方英雄并进入房间内对抗。" : "遭遇来源：敌方英雄先手接触我方并拉入对抗。";
+    }
+
+    return event.initiator === "neutral"
+      ? "遭遇来源：中立守军主动拦截，房间已切换到战斗结算链路。"
+      : "遭遇来源：我方接触了中立守军，房间已切换到战斗结算链路。";
+  }
+
+  if (state.previewPlan?.endsInEncounter) {
+    return state.previewPlan.encounterKind === "hero"
+      ? "遭遇提示：确认移动后会立即切入英雄对抗。"
+      : "遭遇提示：确认移动后会立即切入中立战斗。";
+  }
+
+  if (state.lastBattleSettlement) {
+    return "战后反馈：房间权威状态已回写到地图，可直接继续联调后续房间动作。";
+  }
+
+  if (state.diagnostics.connectionStatus === "reconnecting") {
+    return "连接反馈：房间连接中断，正在尝试恢复当前多人状态。";
+  }
+
+  if (state.diagnostics.connectionStatus === "reconnect_failed") {
+    return "连接反馈：旧连接恢复失败，正在通过最近快照恢复房间。";
+  }
+
+  if (state.predictionStatus.includes("已回放本地缓存状态")) {
+    return `连接反馈：${state.predictionStatus}`;
+  }
+
+  return "遭遇提示：当前房间处于稳定同步状态，可继续探索或等待新的多人交互。";
+}
+
+function renderRoomActionHint(): string {
+  const hero = activeHero();
+  if (state.battle) {
+    return "下一步：继续完成当前回合内操作，等待本场对抗结算。";
+  }
+
+  if (!hero) {
+    return "下一步：等待房间首帧同步完成。";
+  }
+
+  if (state.lastBattleSettlement) {
+    return hero.move.remaining > 0
+      ? "下一步：当前英雄仍可继续移动、交互，或直接推进到下一天。"
+      : "下一步：当前英雄移动力已耗尽，可推进到下一天或等待其他玩家。";
+  }
+
+  return hero.move.remaining > 0
+    ? "下一步：选择地图格继续探索；若接敌，将自动切入对抗。"
+    : "下一步：当前英雄今日已无移动力，可推进到下一天。";
 }
 
 function buildBattleSettlementSummary(
@@ -2345,6 +2417,9 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
   clearPendingPrediction();
   const hadBattle = Boolean(state.battle);
   const previousBattle = state.battle;
+  const startedEncounter = update.events.find(
+    (event): event is Extract<SessionUpdate["events"][number], { type: "battle.started" }> => event.type === "battle.started"
+  );
   state.diagnostics.connectionStatus = "connected";
   state.diagnostics.lastUpdateAt = Date.now();
   state.diagnostics.lastUpdateSource = source;
@@ -2424,8 +2499,12 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
       tone: "neutral"
     };
     openBattleModal("战斗结束", "本场遭遇已结束。");
-  } else if (update.events.some((event) => event.type === "battle.started")) {
+  } else if (startedEncounter) {
     state.lastBattleSettlement = null;
+  }
+
+  if (startedEncounter) {
+    state.lastEncounterStarted = startedEncounter;
   }
 
   if (
@@ -3341,14 +3420,18 @@ function renderBattleIntelPanel(): string {
 
 function renderRoomStatusPanel(): string {
   const encounter = renderEncounterHeadline();
+  const hero = activeHero();
   const opponentId = state.battle ? opposingHeroId(state.battle, state.world) : state.previewPlan?.encounterRefId ?? null;
   const opponent = findHeroSnapshot(opponentId, state.world);
   const opponentLine =
     state.battle?.defenderHeroId || state.previewPlan?.encounterKind === "hero"
-      ? `对手信息：${formatHeroIdentity(opponent, opponentId)}`
+      ? `对手信息：${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：${state.battle ? "战斗中" : "待接敌"}`
       : state.battle?.neutralArmyId || state.previewPlan?.encounterKind === "neutral"
-        ? `遭遇目标：${state.battle?.neutralArmyId ?? state.previewPlan?.encounterRefId ?? "neutral"}`
+        ? `遭遇目标：${state.battle?.neutralArmyId ?? state.previewPlan?.encounterRefId ?? "neutral"} · 房间态：${state.battle ? "战斗中" : "待接敌"}`
         : "对手信息：当前没有遭遇目标";
+  const playerSummary = hero
+    ? `我方状态：${hero.name} · HP ${hero.stats.hp}/${hero.stats.maxHp} · Move ${hero.move.remaining}/${hero.move.total}`
+    : "我方状态：等待英雄数据同步";
 
   return `
     <section class="room-status-panel info-card" data-testid="room-status-panel">
@@ -3360,7 +3443,13 @@ function renderRoomStatusPanel(): string {
         <span class="status-pill">${state.world.meta.roomId}</span>
       </div>
       <p data-testid="room-status-detail">${encounter.detail}</p>
+      <p class="muted" data-testid="encounter-source">${renderEncounterSourceDetail()}</p>
       <p class="muted" data-testid="opponent-summary">${opponentLine}</p>
+      <div class="room-status-chips">
+        <span class="battle-intel-chip" data-testid="room-player-summary">${playerSummary}</span>
+        <span class="battle-intel-chip" data-testid="room-connection-summary">连接状态：${diagnosticsConnectionStatusLabel(state.diagnostics.connectionStatus)}</span>
+      </div>
+      <p class="muted" data-testid="room-next-action">${renderRoomActionHint()}</p>
     </section>
   `;
 }
