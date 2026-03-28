@@ -103,6 +103,9 @@
 - H5 调试壳开发服务：`npm run dev:client:h5`
 - H5 调试壳构建验证：`npm run build:client:h5`
 - H5 调试壳类型检查：`npm run typecheck:client:h5`
+- H5 / Lobby Playwright 冒烟：`npm run test:e2e:smoke`
+- 多人联机 Playwright 冒烟：`npm run test:e2e:multiplayer:smoke`
+- GitHub Actions `playwright-smoke` 会执行上述两条冒烟回归，并在失败时上传 Playwright trace / screenshot / video 诊断材料
 - MySQL 首次初始化 / 升级：`npm run db:migrate`
 - MySQL 回滚上一版 schema：`npm run db:migrate:rollback`
 - `npm run db:init:mysql` 现已委托给同一条迁移链路，不再走独立一次性建表逻辑
