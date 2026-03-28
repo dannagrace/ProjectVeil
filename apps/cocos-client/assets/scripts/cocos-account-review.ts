@@ -14,6 +14,7 @@ export interface CocosAccountReviewItem {
   detail: string;
   footnote: string;
   emphasis: "positive" | "neutral";
+  replayId?: string;
 }
 
 export interface CocosAccountReviewPage {
@@ -66,7 +67,8 @@ function buildBattleReplayItems(account: CocosPlayerAccountProfile): CocosAccoun
     title: formatBattleReplayTitle(replay),
     detail: `英雄 ${replay.heroId} · ${replay.steps.length} 步文本回顾`,
     footnote: formatBattleReplayFootnote(replay),
-    emphasis: replay.result === "attacker_victory" ? "positive" : "neutral"
+    emphasis: replay.result === "attacker_victory" ? "positive" : "neutral",
+    replayId: replay.id
   }));
 }
 
