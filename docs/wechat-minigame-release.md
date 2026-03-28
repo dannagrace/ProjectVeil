@@ -28,6 +28,7 @@
 - 按 SHA 下载 CI artifact：`npm run download:wechat-release -- --sha <git-sha> [--output-dir artifacts/downloaded/wechat-release-<git-sha>]`
 - 验收已下载 artifact：`npm run verify:wechat-release -- --artifacts-dir <downloaded-artifact-dir> [--expected-revision <git-sha>]`
 - 生成 / 校验真机冒烟报告：`npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> [--report <report-path>] [--check --expected-revision <git-sha>]`
+- 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 只做 CI 同款校验：`npm run check:wechat-build`
 - 校验真实导出目录：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 
@@ -58,6 +59,7 @@
 6. 运行 `npm run verify:wechat-release -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>]`，在上传前先做一次本地 artifact 级冒烟验收。
 7. 运行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成 `codex.wechat.smoke-report.json` 模板，并在真机或准真机上逐项填写结果。
 8. 完成真机 / 准真机冒烟后，执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`，确认登录、进房、重连、分享回流、关键资源加载都已有结果记录。
+   - `reconnect-recovery` 必须复用 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 的 canonical scenario、最小成功信号和失败诊断口径。
 9. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
 10. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
 
@@ -96,6 +98,7 @@
 1. 先跑 `npm run verify:wechat-release -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>]`
 2. 再跑 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成模板
 3. 在真机或微信开发者工具真机调试模式中逐项填写 `tester`、`device`、`executedAt`、`summary` 以及每个 case 的 `status` / `notes` / `evidence`
+   - `reconnect-recovery` 至少要记录原 `roomId`、恢复提示、恢复后未回档状态三项证据；细则见 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md)
 4. 回填完成后执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`
 
 若某项因当前包能力受限无法完整验证，可把 case 标记为 `not_applicable`，并在 `notes` 中写明原因与替代观察证据；其余必填项不得保留 `pending`。
