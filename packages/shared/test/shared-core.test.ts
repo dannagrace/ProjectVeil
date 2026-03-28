@@ -237,7 +237,7 @@ test("asset config exposes metadata for referenced asset paths", () => {
 
   assert.deepEqual(getAssetMetadataEntry(assetConfig, assetPath), {
     slot: "unit.hero_guard_basic.idle",
-    stage: "placeholder",
+    stage: "prototype",
     source: "generated",
     notes: "Synced from Cocos placeholder icon bundle for H5 pixel preview."
   });
@@ -245,11 +245,13 @@ test("asset config exposes metadata for referenced asset paths", () => {
   assert.deepEqual(summarizeAssetMetadata(assetConfig), {
     total: 36,
     byStage: {
-      placeholder: 36,
+      placeholder: 9,
+      prototype: 27,
       production: 0
     },
     bySource: {
       generated: 36,
+      "open-source": 0,
       licensed: 0,
       commissioned: 0
     }
@@ -347,7 +349,257 @@ test("asset config validation reports missing terrain variants and bad asset roo
 
   assert.ok(errors.includes("terrain.unknown.variants must be a non-empty array"));
   assert.ok(errors.includes("resources.wood must start with /assets/"));
-  assert.ok(errors.includes("metadata[/assets/resources/wood-stack.svg].source must be one of: generated, licensed, commissioned"));
+  assert.ok(
+    errors.includes(
+      "metadata[/assets/resources/wood-stack.svg].source must be one of: generated, open-source, licensed, commissioned"
+    )
+  );
+});
+
+test("asset config validation accepts prototype stage and open-source provenance", () => {
+  const errors = getAssetConfigValidationErrors({
+    terrain: {
+      grass: {
+        default: "/assets/terrain/grass-tile.png",
+        variants: ["/assets/terrain/grass-tile.png"]
+      },
+      dirt: {
+        default: "/assets/terrain/dirt-tile.png",
+        variants: ["/assets/terrain/dirt-tile.png"]
+      },
+      sand: {
+        default: "/assets/terrain/sand-tile.png",
+        variants: ["/assets/terrain/sand-tile.png"]
+      },
+      water: {
+        default: "/assets/terrain/water-tile.png",
+        variants: ["/assets/terrain/water-tile.png"]
+      },
+      unknown: {
+        default: "/assets/terrain/fog-tile.png",
+        variants: ["/assets/terrain/fog-tile.png"]
+      }
+    },
+    resources: {
+      gold: "/assets/resources/gold-pile.png",
+      wood: "/assets/resources/wood-stack.png",
+      ore: "/assets/resources/ore-crate.png"
+    },
+    buildings: {
+      recruitment_post: "/assets/buildings/recruitment-post.png",
+      attribute_shrine: "/assets/buildings/attribute-shrine.png",
+      resource_mine: "/assets/buildings/resource-mine.png"
+    },
+    units: {
+      hero_guard_basic: {
+        portrait: {
+          idle: "/assets/units/hero-guard-basic.png",
+          selected: "/assets/units/hero-guard-basic-selected.png",
+          hit: "/assets/units/hero-guard-basic-hit.png"
+        },
+        frame: "/assets/frames/unit-frame-ally.svg"
+      },
+      wolf_pack: {
+        portrait: {
+          idle: "/assets/units/wolf-pack.png",
+          selected: "/assets/units/wolf-pack-selected.png",
+          hit: "/assets/units/wolf-pack-hit.png"
+        },
+        frame: "/assets/frames/unit-frame-enemy.svg"
+      }
+    },
+    markers: {
+      hero: {
+        idle: "/assets/markers/hero-marker.png",
+        selected: "/assets/markers/hero-marker-selected.png",
+        hit: "/assets/markers/hero-marker-hit.png"
+      },
+      neutral: {
+        idle: "/assets/markers/neutral-marker.png",
+        selected: "/assets/markers/neutral-marker-selected.png",
+        hit: "/assets/markers/neutral-marker-hit.png"
+      }
+    },
+    metadata: {
+      "/assets/terrain/grass-tile.png": {
+        slot: "terrain.grass.default",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/terrain/dirt-tile.png": {
+        slot: "terrain.dirt.default",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/terrain/sand-tile.png": {
+        slot: "terrain.sand.default",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/terrain/water-tile.png": {
+        slot: "terrain.water.default",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/terrain/fog-tile.png": {
+        slot: "terrain.unknown.default",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/resources/gold-pile.png": {
+        slot: "resource.gold",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/resources/wood-stack.png": {
+        slot: "resource.wood",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/resources/ore-crate.png": {
+        slot: "resource.ore",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/buildings/recruitment-post.png": {
+        slot: "building.recruitment_post",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/buildings/attribute-shrine.png": {
+        slot: "building.attribute_shrine",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/buildings/resource-mine.png": {
+        slot: "building.resource_mine",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/units/hero-guard-basic.png": {
+        slot: "unit.hero_guard_basic.idle",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/units/hero-guard-basic-selected.png": {
+        slot: "unit.hero_guard_basic.selected",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/units/hero-guard-basic-hit.png": {
+        slot: "unit.hero_guard_basic.hit",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/frames/unit-frame-ally.svg": {
+        slot: "unit.hero_guard_basic.frame",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/units/wolf-pack.png": {
+        slot: "unit.wolf_pack.idle",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/units/wolf-pack-selected.png": {
+        slot: "unit.wolf_pack.selected",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/units/wolf-pack-hit.png": {
+        slot: "unit.wolf_pack.hit",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/frames/unit-frame-enemy.svg": {
+        slot: "unit.wolf_pack.frame",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/markers/hero-marker.png": {
+        slot: "marker.hero.idle",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/markers/hero-marker-selected.png": {
+        slot: "marker.hero.selected",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/markers/hero-marker-hit.png": {
+        slot: "marker.hero.hit",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/markers/neutral-marker.png": {
+        slot: "marker.neutral.idle",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/markers/neutral-marker-selected.png": {
+        slot: "marker.neutral.selected",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/markers/neutral-marker-hit.png": {
+        slot: "marker.neutral.hit",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/badges/faction-crown.svg": {
+        slot: "badge.factions.crown",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/badges/faction-wild.svg": {
+        slot: "badge.factions.wild",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/badges/rarity-common.svg": {
+        slot: "badge.rarities.common",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/badges/rarity-elite.svg": {
+        slot: "badge.rarities.elite",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/badges/interaction-move.svg": {
+        slot: "badge.interactions.move",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/badges/interaction-pickup.svg": {
+        slot: "badge.interactions.pickup",
+        stage: "placeholder",
+        source: "generated"
+      },
+      "/assets/badges/interaction-battle.svg": {
+        slot: "badge.interactions.battle",
+        stage: "placeholder",
+        source: "generated"
+      }
+    },
+    badges: {
+      factions: {
+        crown: "/assets/badges/faction-crown.svg",
+        wild: "/assets/badges/faction-wild.svg"
+      },
+      rarities: {
+        common: "/assets/badges/rarity-common.svg",
+        elite: "/assets/badges/rarity-elite.svg"
+      },
+      interactions: {
+        move: "/assets/badges/interaction-move.svg",
+        pickup: "/assets/badges/interaction-pickup.svg",
+        battle: "/assets/badges/interaction-battle.svg"
+      }
+    }
+  });
+
+  assert.deepEqual(errors, []);
 });
 
 test("asset config validation reports missing metadata coverage and duplicate slots", () => {
