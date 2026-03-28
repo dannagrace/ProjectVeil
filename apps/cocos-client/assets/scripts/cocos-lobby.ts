@@ -97,6 +97,7 @@ interface PlayerAchievementListApiPayload {
 
 type PlayerProgressionApiPayload = Partial<PlayerProgressionSnapshot>;
 type FetchLike = typeof fetch;
+type CocosAuthStorage = Pick<Storage, "removeItem"> | Pick<Storage, "setItem" | "removeItem">;
 type WechatMiniGameLoginLike = (options: {
   timeout?: number;
   success?: (result: { code?: string }) => void;
@@ -310,8 +311,8 @@ async function loadCocosBattleReplaySummaries(
       },
       authSession,
       {
-        fetchImpl: options?.fetchImpl,
-        storage: options?.storage ?? null
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(options ? { storage: options.storage ?? null } : {})
       }
     )) as PlayerBattleReplayListApiPayload;
     return normalizePlayerBattleReplaySummaries(payload.items);
@@ -363,7 +364,7 @@ async function refreshCocosAuthSession(
   currentSession: CocosStoredAuthSession,
   options?: {
     fetchImpl?: FetchLike;
-    storage?: Pick<Storage, "setItem" | "removeItem"> | null;
+    storage?: CocosAuthStorage | null;
   }
 ): Promise<CocosStoredAuthSession | null> {
   if (!currentSession.refreshToken) {
@@ -381,7 +382,7 @@ async function refreshCocosAuthSession(
       options?.fetchImpl
     )) as AuthSessionApiPayload;
     const nextSession = asStoredAuthSession(payload.session, currentSession);
-    if (options?.storage) {
+    if (options?.storage && "setItem" in options.storage) {
       writeStoredCocosAuthSession(options.storage, nextSession);
     }
     return nextSession;
@@ -398,7 +399,7 @@ async function fetchCocosAuthJson(
   authSession: CocosStoredAuthSession | null,
   options?: {
     fetchImpl?: FetchLike;
-    storage?: Pick<Storage, "setItem" | "removeItem"> | null;
+    storage?: CocosAuthStorage | null;
   }
 ): Promise<unknown> {
   const requestInit = {
@@ -883,8 +884,8 @@ export async function syncCurrentCocosAuthSession(
       },
       currentSession,
       {
-        fetchImpl: options?.fetchImpl,
-        storage
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
       }
     )) as AuthSessionApiPayload;
     const nextSession = asStoredAuthSession(payload.session, currentSession);
@@ -931,8 +932,8 @@ export async function loadCocosPlayerAccountProfile(
       },
       authSession,
       {
-        fetchImpl: options?.fetchImpl,
-        storage
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
       }
     )) as PlayerAccountApiPayload;
     const resolvedPlayerId = payload.account?.playerId?.trim() || authSession?.playerId || playerId;
@@ -996,8 +997,8 @@ export async function loadCocosPlayerEventLog(
       },
       authSession,
       {
-        fetchImpl: options?.fetchImpl,
-        storage
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
       }
     )) as PlayerEventLogListApiPayload;
     return normalizeEventLogEntries(payload.items);
@@ -1036,8 +1037,8 @@ export async function loadCocosPlayerAchievementProgress(
       },
       authSession,
       {
-        fetchImpl: options?.fetchImpl,
-        storage
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
       }
     )) as PlayerAchievementListApiPayload;
     return queryAchievementProgress(payload.items, query);
@@ -1076,8 +1077,8 @@ export async function loadCocosPlayerProgressionSnapshot(
       },
       authSession,
       {
-        fetchImpl: options?.fetchImpl,
-        storage
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
       }
     )) as PlayerProgressionApiPayload;
     return normalizePlayerProgressionSnapshot(payload);
