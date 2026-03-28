@@ -4,6 +4,7 @@ import { registerAuthRoutes } from "./auth";
 import { FileSystemConfigCenterStore, MySqlConfigCenterStore, registerConfigCenterRoutes } from "./config-center";
 import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./colyseus-room";
 import { registerLobbyRoutes } from "./lobby";
+import { registerMatchmakingRoutes } from "./matchmaking";
 import { MySqlRoomSnapshotStore, readMySqlPersistenceConfig } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
@@ -38,6 +39,7 @@ async function startDevServer(
   registerConfigCenterRoutes(transport.getExpressApp() as never, configCenterStore);
   registerPlayerAccountRoutes(transport.getExpressApp() as never, effectiveSnapshotStore);
   registerLobbyRoutes(transport.getExpressApp() as never, { listRooms: listLobbyRooms });
+  registerMatchmakingRoutes(transport.getExpressApp() as never, { store: effectiveSnapshotStore });
 
   const gameServer = new Server({
     transport
@@ -57,6 +59,8 @@ async function startDevServer(
   console.log(`WeChat mini game auth scaffold available at http://${host}:${port}/api/auth/wechat-mini-game-login`);
   // eslint-disable-next-line no-console
   console.log(`Lobby API available at http://${host}:${port}/api/lobby/rooms`);
+  // eslint-disable-next-line no-console
+  console.log(`Matchmaking API available at http://${host}:${port}/api/matchmaking/status`);
   // eslint-disable-next-line no-console
   console.log(`Config center storage: ${configCenterStore.mode}`);
   if (snapshotStore) {

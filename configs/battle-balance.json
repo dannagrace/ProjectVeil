@@ -13,5 +13,8 @@
     "trapDamage": 1,
     "trapCharges": 1,
     "trapGrantedStatusId": "weakened"
+  },
+  "pvp": {
+    "eloK": 32
   }
 }

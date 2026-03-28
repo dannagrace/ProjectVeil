@@ -5,12 +5,14 @@ import {
   type PlayerAchievementProgress
 } from "./event-log";
 import { normalizePlayerBattleReplaySummaries, type PlayerBattleReplaySummary } from "./battle-replay";
+import { normalizeEloRating } from "./matchmaking";
 import type { ResourceLedger } from "./models";
 
 export interface PlayerAccountReadModel {
   playerId: string;
   displayName: string;
   avatarUrl?: string;
+  eloRating?: number;
   globalResources: ResourceLedger;
   achievements: PlayerAchievementProgress[];
   recentEventLog: EventLogEntry[];
@@ -25,6 +27,7 @@ export interface PlayerAccountReadModelInput {
   playerId?: string | undefined;
   displayName?: string | undefined;
   avatarUrl?: string | undefined;
+  eloRating?: number | undefined;
   globalResources?: Partial<ResourceLedger> | null | undefined;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -50,6 +53,7 @@ export function normalizePlayerAccountReadModel(
     playerId,
     displayName: displayName || playerId || "player",
     ...(avatarUrl ? { avatarUrl } : {}),
+    eloRating: normalizeEloRating(account?.eloRating),
     globalResources: {
       gold: Math.max(0, Math.floor(account?.globalResources?.gold ?? 0)),
       wood: Math.max(0, Math.floor(account?.globalResources?.wood ?? 0)),

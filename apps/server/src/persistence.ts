@@ -1,6 +1,7 @@
 import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import {
   appendPlayerBattleReplaySummaries,
+  normalizeEloRating,
   normalizeEventLogQuery,
   normalizeAchievementProgress,
   normalizeEventLogEntries,
@@ -104,6 +105,7 @@ interface PlayerAccountRow extends RowDataPacket {
   player_id: string;
   display_name: string | null;
   avatar_url: string | null;
+  elo_rating: number | null;
   global_resources_json: string | ResourceLedger;
   achievements_json: string | PlayerAchievementProgress[] | null;
   recent_event_log_json: string | EventLogEntry[] | null;
@@ -418,6 +420,7 @@ function normalizePlayerAccountSnapshot(account: {
   playerId: string;
   displayName?: string | null | undefined;
   avatarUrl?: string | null | undefined;
+  eloRating?: number | null | undefined;
   globalResources?: Partial<ResourceLedger>;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -445,6 +448,7 @@ function normalizePlayerAccountSnapshot(account: {
       playerId,
       displayName: normalizePlayerDisplayName(playerId, account.displayName),
       avatarUrl: normalizePlayerAvatarUrl(account.avatarUrl),
+      eloRating: normalizeEloRating(account.eloRating),
       globalResources: normalizeResourceLedger(account.globalResources),
       achievements: account.achievements,
       recentEventLog: account.recentEventLog,
@@ -722,6 +726,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   display_name VARCHAR(80) NULL,
   avatar_url VARCHAR(512) NULL,
+  elo_rating INT NOT NULL DEFAULT 1000,
   global_resources_json LONGTEXT NOT NULL,
   achievements_json LONGTEXT NULL,
   recent_event_log_json LONGTEXT NULL,
@@ -825,6 +830,24 @@ SET @veil_player_accounts_avatar_url_sql := IF(
 PREPARE veil_player_accounts_avatar_url_stmt FROM @veil_player_accounts_avatar_url_sql;
 EXECUTE veil_player_accounts_avatar_url_stmt;
 DEALLOCATE PREPARE veil_player_accounts_avatar_url_stmt;
+
+SET @veil_player_accounts_elo_rating_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'elo_rating'
+);
+
+SET @veil_player_accounts_elo_rating_sql := IF(
+  @veil_player_accounts_elo_rating_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`elo_rating\` INT NOT NULL DEFAULT 1000 AFTER \`avatar_url\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_elo_rating_stmt FROM @veil_player_accounts_elo_rating_sql;
+EXECUTE veil_player_accounts_elo_rating_stmt;
+DEALLOCATE PREPARE veil_player_accounts_elo_rating_stmt;
 
 SET @veil_player_accounts_event_log_exists := (
   SELECT COUNT(*)
@@ -1260,6 +1283,7 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
   return normalizePlayerAccountSnapshot({
     playerId: row.player_id,
     ...(row.avatar_url ? { avatarUrl: row.avatar_url } : {}),
+    ...(row.elo_rating != null ? { eloRating: row.elo_rating } : {}),
     globalResources: parseJsonColumn<ResourceLedger>(row.global_resources_json),
     achievements:
       row.achievements_json != null
@@ -1408,15 +1432,17 @@ async function savePlayerAccounts(
       `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
          player_id,
          display_name,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json
          ,
          recent_battle_replays_json
        )
-       VALUES (?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
+         elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
          recent_event_log_json = COALESCE(recent_event_log_json, VALUES(recent_event_log_json)),
@@ -1425,6 +1451,7 @@ async function savePlayerAccounts(
       [
         normalizedAccount.playerId,
         normalizedAccount.displayName,
+        normalizedAccount.eloRating,
         JSON.stringify(normalizedAccount.globalResources),
         JSON.stringify(normalizedAccount.achievements),
         JSON.stringify(normalizedAccount.recentEventLog),
@@ -1554,6 +1581,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          avatar_url,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1588,6 +1616,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          avatar_url,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1705,6 +1734,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          avatar_url,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1764,6 +1794,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
          player_id,
          display_name,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1771,7 +1802,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(?, display_name),
          last_room_id = COALESCE(?, last_room_id),
@@ -1780,6 +1811,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       [
         playerId,
         insertDisplayName,
+        normalizeEloRating(undefined),
         JSON.stringify(normalizeResourceLedger()),
         JSON.stringify(normalizeAchievementProgress()),
         JSON.stringify(normalizeEventLogEntries()),
@@ -1796,6 +1828,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       normalizePlayerAccountSnapshot({
         playerId,
         displayName: insertDisplayName,
+        eloRating: normalizeEloRating(undefined),
         globalResources: normalizeResourceLedger(),
         achievements: normalizeAchievementProgress(),
         recentEventLog: normalizeEventLogEntries(),
@@ -2039,6 +2072,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          avatar_url,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -2046,10 +2080,11 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
+         elo_rating = VALUES(elo_rating),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
          recent_event_log_json = VALUES(recent_event_log_json),
@@ -2061,6 +2096,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.playerId,
         nextAccount.displayName,
         nextAccount.avatarUrl ?? null,
+        nextAccount.eloRating,
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
@@ -2110,6 +2146,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          avatar_url,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -2117,10 +2154,11 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
+         elo_rating = VALUES(elo_rating),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
          recent_event_log_json = VALUES(recent_event_log_json),
@@ -2132,6 +2170,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.playerId,
         nextAccount.displayName,
         nextAccount.avatarUrl ?? null,
+        nextAccount.eloRating,
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
@@ -2167,6 +2206,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          avatar_url,
+         elo_rating,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
