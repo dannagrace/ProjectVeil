@@ -1,6 +1,6 @@
 import "./config-center.css";
 
-type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills";
+type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 type TerrainType = "grass" | "dirt" | "sand" | "water";
 type ResourceKind = "gold" | "wood" | "ore";
 type BattleSkillKind = "active" | "passive";
@@ -36,6 +36,27 @@ interface BattleStatusEffectConfig {
 interface BattleSkillCatalogConfig {
   skills: BattleSkillConfig[];
   statuses: BattleStatusEffectConfig[];
+}
+
+interface BattleBalanceConfig {
+  damage: {
+    defendingDefenseBonus: number;
+    offenseAdvantageStep: number;
+    minimumOffenseMultiplier: number;
+    varianceBase: number;
+    varianceRange: number;
+  };
+  environment: {
+    blockerSpawnThreshold: number;
+    blockerDurability: number;
+    trapSpawnThreshold: number;
+    trapDamage: number;
+    trapCharges: number;
+    trapGrantedStatusId?: string;
+  };
+  pvp: {
+    eloK: number;
+  };
 }
 
 interface ConfigDocumentSummary {
@@ -345,6 +366,10 @@ function isBattleSkillsDocumentSelected(): boolean {
   return state.current?.id === "battleSkills";
 }
 
+function isBattleBalanceDocumentSelected(): boolean {
+  return state.current?.id === "battleBalance";
+}
+
 function normalizePreviewSeed(value: number, fallback = state.previewSeed): number {
   if (!Number.isFinite(value)) {
     return fallback;
@@ -376,6 +401,59 @@ function updateBattleSkillCatalogDraft(
 
   const nextCatalog = updater(structuredClone(current.catalog));
   setDraftContent(`${JSON.stringify(nextCatalog, null, 2)}\n`);
+}
+
+function currentBattleBalanceState(): {
+  valid: boolean;
+  detail: string;
+  config: BattleBalanceConfig | null;
+} {
+  if (!isBattleBalanceDocumentSelected()) {
+    return {
+      valid: false,
+      detail: "当前未选择战斗平衡文档",
+      config: null
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(state.draft || "{}") as Partial<BattleBalanceConfig>;
+    if (
+      !parsed.damage ||
+      !parsed.environment ||
+      !parsed.pvp
+    ) {
+      return {
+        valid: false,
+        detail: "战斗平衡配置需要同时包含 damage、environment 和 pvp",
+        config: null
+      };
+    }
+
+    return {
+      valid: true,
+      detail: "战斗平衡结构有效",
+      config: parsed as BattleBalanceConfig
+    };
+  } catch (error) {
+    return {
+      valid: false,
+      detail: error instanceof Error ? error.message : "战斗平衡 JSON 无效",
+      config: null
+    };
+  }
+}
+
+function updateBattleBalanceDraft(
+  updater: (config: BattleBalanceConfig) => BattleBalanceConfig
+): void {
+  const current = currentBattleBalanceState();
+  if (!current.valid || !current.config) {
+    return;
+  }
+
+  const nextConfig = updater(structuredClone(current.config));
+  setDraftContent(`${JSON.stringify(nextConfig, null, 2)}\n`);
 }
 
 function cleanupSkillEffects(effects: BattleSkillEffectConfig): BattleSkillEffectConfig | undefined {
@@ -1366,6 +1444,128 @@ function renderBattleSkillEditorSection(): string {
   `;
 }
 
+function renderBattleBalanceEditorSection(): string {
+  if (!isBattleBalanceDocumentSelected()) {
+    return "";
+  }
+
+  const parseState = currentBattleBalanceState();
+  if (!parseState.valid || !parseState.config) {
+    return `
+      <section class="skill-editor-section">
+        <div class="config-preview-subhead">
+          <h4>战斗平衡编辑器</h4>
+          <span class="config-meta">等待合法 JSON</span>
+        </div>
+        <div class="world-preview-empty is-error">${escapeHtml(parseState.detail)}</div>
+      </section>
+    `;
+  }
+
+  const config = parseState.config;
+  const summaryBadges = [
+    `<span class="config-badge">防守加成 ${config.damage.defendingDefenseBonus}</span>`,
+    `<span class="config-badge">攻防步进 ${config.damage.offenseAdvantageStep}</span>`,
+    `<span class="config-badge">路障阈值 ${config.environment.blockerSpawnThreshold}</span>`,
+    `<span class="config-badge">陷阱阈值 ${config.environment.trapSpawnThreshold}</span>`,
+    `<span class="config-badge">ELO K=${config.pvp.eloK}</span>`
+  ].join("");
+
+  return `
+    <section class="skill-editor-section">
+      <div class="config-preview-subhead">
+        <h4>战斗平衡编辑器</h4>
+        <span class="config-meta">公式 / 环境 / PVP</span>
+      </div>
+      <p class="config-hint">右侧表单会直接改写当前 JSON 草稿，适合快速调伤害公式、路障/陷阱生成参数和 ELO K；底部原始 JSON 仍可手改。</p>
+      <div class="config-badge-row">${summaryBadges}</div>
+      <div class="skill-editor-group">
+        <article class="skill-editor-card">
+          <div class="skill-editor-card-head">
+            <div>
+              <strong>伤害公式</strong>
+              <span>damage</span>
+            </div>
+            <span class="config-badge">实时生效</span>
+          </div>
+          <div class="skill-editor-fields">
+            <label>
+              <span>防守防御加成</span>
+              <input type="number" step="1" value="${config.damage.defendingDefenseBonus}" data-role="battle-balance-field" data-section="damage" data-field="defendingDefenseBonus" />
+            </label>
+            <label>
+              <span>攻防差步进</span>
+              <input type="number" step="0.01" value="${config.damage.offenseAdvantageStep}" data-role="battle-balance-field" data-section="damage" data-field="offenseAdvantageStep" />
+            </label>
+            <label>
+              <span>最低伤害倍率</span>
+              <input type="number" step="0.01" value="${config.damage.minimumOffenseMultiplier}" data-role="battle-balance-field" data-section="damage" data-field="minimumOffenseMultiplier" />
+            </label>
+            <label>
+              <span>伤害波动基线</span>
+              <input type="number" step="0.01" value="${config.damage.varianceBase}" data-role="battle-balance-field" data-section="damage" data-field="varianceBase" />
+            </label>
+            <label>
+              <span>伤害波动范围</span>
+              <input type="number" step="0.01" value="${config.damage.varianceRange}" data-role="battle-balance-field" data-section="damage" data-field="varianceRange" />
+            </label>
+          </div>
+        </article>
+        <article class="skill-editor-card">
+          <div class="skill-editor-card-head">
+            <div>
+              <strong>遭遇战环境</strong>
+              <span>environment</span>
+            </div>
+            <span class="config-badge">路障 / 陷阱</span>
+          </div>
+          <div class="skill-editor-fields">
+            <label>
+              <span>路障生成阈值</span>
+              <input type="number" min="0" max="1" step="0.01" value="${config.environment.blockerSpawnThreshold}" data-role="battle-balance-field" data-section="environment" data-field="blockerSpawnThreshold" />
+            </label>
+            <label>
+              <span>路障耐久</span>
+              <input type="number" min="1" step="1" value="${config.environment.blockerDurability}" data-role="battle-balance-field" data-section="environment" data-field="blockerDurability" />
+            </label>
+            <label>
+              <span>陷阱生成阈值</span>
+              <input type="number" min="0" max="1" step="0.01" value="${config.environment.trapSpawnThreshold}" data-role="battle-balance-field" data-section="environment" data-field="trapSpawnThreshold" />
+            </label>
+            <label>
+              <span>陷阱伤害</span>
+              <input type="number" min="0" step="1" value="${config.environment.trapDamage}" data-role="battle-balance-field" data-section="environment" data-field="trapDamage" />
+            </label>
+            <label>
+              <span>陷阱次数</span>
+              <input type="number" min="1" step="1" value="${config.environment.trapCharges}" data-role="battle-balance-field" data-section="environment" data-field="trapCharges" />
+            </label>
+            <label class="is-wide">
+              <span>伤害型陷阱附加状态</span>
+              <input type="text" value="${escapeHtml(config.environment.trapGrantedStatusId ?? "")}" data-role="battle-balance-status" data-field="trapGrantedStatusId" placeholder="例如 weakened；留空则不附带状态" />
+            </label>
+          </div>
+        </article>
+        <article class="skill-editor-card">
+          <div class="skill-editor-card-head">
+            <div>
+              <strong>PVP 参数</strong>
+              <span>pvp</span>
+            </div>
+            <span class="config-badge">匹配结算</span>
+          </div>
+          <div class="skill-editor-fields">
+            <label>
+              <span>ELO K 因子</span>
+              <input type="number" min="1" step="1" value="${config.pvp.eloK}" data-role="battle-balance-field" data-section="pvp" data-field="eloK" />
+            </label>
+          </div>
+        </article>
+      </div>
+    </section>
+  `;
+}
+
 function renderValidationSection(): string {
   if (!state.current) {
     return "";
@@ -1622,6 +1822,7 @@ function renderPreviewContent(): string {
     ${renderExportSection()}
     ${renderWorldPreviewSection()}
     ${renderBattleSkillEditorSection()}
+    ${renderBattleBalanceEditorSection()}
   `;
 }
 
@@ -1814,6 +2015,52 @@ function bindSkillEditorControls(): void {
   });
 }
 
+function bindBattleBalanceEditorControls(): void {
+  document.querySelectorAll<HTMLInputElement>("[data-role='battle-balance-field']").forEach((field) => {
+    field.onchange = () => {
+      const section = field.dataset.section as "damage" | "environment" | "pvp" | undefined;
+      const key = field.dataset.field;
+      if (!section || !key) {
+        return;
+      }
+
+      updateBattleBalanceDraft((config) => {
+        const numericValue = Number(field.value);
+        const nextValue =
+          key === "blockerDurability" || key === "trapDamage" || key === "trapCharges" || key === "eloK"
+            ? Math.floor(Number.isFinite(numericValue) ? numericValue : 0)
+            : Number.isFinite(numericValue)
+              ? numericValue
+              : 0;
+
+        if (section === "damage") {
+          config.damage[key as keyof BattleBalanceConfig["damage"]] = nextValue;
+        } else if (section === "environment") {
+          config.environment[key as Exclude<keyof BattleBalanceConfig["environment"], "trapGrantedStatusId">] = nextValue;
+        } else {
+          config.pvp[key as keyof BattleBalanceConfig["pvp"]] = nextValue;
+        }
+
+        return config;
+      });
+    };
+  });
+
+  document.querySelectorAll<HTMLInputElement>("[data-role='battle-balance-status']").forEach((field) => {
+    field.onchange = () => {
+      updateBattleBalanceDraft((config) => {
+        const nextValue = field.value.trim();
+        if (nextValue) {
+          config.environment.trapGrantedStatusId = nextValue;
+        } else {
+          delete config.environment.trapGrantedStatusId;
+        }
+        return config;
+      });
+    };
+  });
+}
+
 function refreshPreviewPane(): void {
   const preview = document.querySelector<HTMLDivElement>("[data-role='preview-content']");
   if (!preview) {
@@ -1823,6 +2070,7 @@ function refreshPreviewPane(): void {
   preview.innerHTML = renderPreviewContent();
   bindPreviewControls();
   bindSkillEditorControls();
+  bindBattleBalanceEditorControls();
 }
 
 function refreshLivePanels(): void {

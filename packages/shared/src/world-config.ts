@@ -660,6 +660,10 @@ export function getBattleBalanceConfig(): BattleBalanceConfig {
   return config;
 }
 
+export function getDefaultBattleBalanceConfig(): BattleBalanceConfig {
+  return getBattleBalanceConfig();
+}
+
 export function getDefaultHeroSkillTreeConfig(): HeroSkillTreeConfig {
   const config = cloneHeroSkillTreeConfig(runtimeHeroSkillTree);
   validateHeroSkillTreeConfig(config);
