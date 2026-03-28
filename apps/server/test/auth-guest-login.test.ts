@@ -973,6 +973,204 @@ test("guest auth session LRU eviction invalidates the oldest idle guest token", 
   assert.equal(activePayload.session.playerId, "guest-lru-3");
 });
 
+test("account registration request and confirm create a new formal account, session, and audit trail", {
+  concurrency: false
+}, async (t) => {
+  const port = 44710 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const requestResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "formal-ranger",
+      displayName: "晨星旅团"
+    })
+  });
+  const requestPayload = (await requestResponse.json()) as {
+    status: string;
+    expiresAt?: string;
+    registrationToken?: string;
+  };
+
+  assert.equal(requestResponse.status, 202);
+  assert.equal(requestPayload.status, "registration_requested");
+  assert.ok(requestPayload.expiresAt);
+  assert.equal(typeof requestPayload.registrationToken, "string");
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "formal-ranger",
+      registrationToken: requestPayload.registrationToken,
+      password: "hunter2"
+    })
+  });
+  const confirmPayload = (await confirmResponse.json()) as {
+    account: PlayerAccountSnapshot;
+    session: GuestAuthSession;
+  };
+
+  assert.equal(confirmResponse.status, 200);
+  assert.match(confirmPayload.account.playerId, /^account-/);
+  assert.equal(confirmPayload.account.displayName, "晨星旅团");
+  assert.equal(confirmPayload.account.loginId, "formal-ranger");
+  assert.equal(confirmPayload.session.authMode, "account");
+  assert.equal(confirmPayload.session.loginId, "formal-ranger");
+  assert.equal(typeof confirmPayload.session.refreshToken, "string");
+
+  const storedAccount = await store.loadPlayerAccount(confirmPayload.account.playerId);
+  assert.equal(storedAccount?.recentEventLog[0]?.category, "account");
+  assert.match(storedAccount?.recentEventLog[0]?.description ?? "", /完成正式账号注册/);
+  assert.equal(storedAccount?.recentEventLog[1]?.category, "account");
+  assert.match(storedAccount?.recentEventLog[1]?.description ?? "", /发起正式注册申请/);
+
+  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "formal-ranger",
+      password: "hunter2"
+    })
+  });
+  assert.equal(loginResponse.status, 200);
+});
+
+test("account registration request rejects already-bound login IDs", { concurrency: false }, async (t) => {
+  const port = 44715 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  await store.ensurePlayerAccount({
+    playerId: "registration-conflict-player",
+    displayName: "已占用旅人"
+  });
+  await store.bindPlayerAccountCredentials("registration-conflict-player", {
+    loginId: "taken-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "taken-ranger",
+      displayName: "新旅人"
+    })
+  });
+  const payload = (await response.json()) as { error: { code: string } };
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error.code, "login_id_taken");
+});
+
+test("account registration confirm rejects invalid tokens", { concurrency: false }, async (t) => {
+  const port = 44720 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const requestResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "invalid-registration-ranger"
+    })
+  });
+  assert.equal(requestResponse.status, 202);
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "invalid-registration-ranger",
+      registrationToken: "wrong-token",
+      password: "hunter2"
+    })
+  });
+  const confirmPayload = (await confirmResponse.json()) as { error: { code: string } };
+
+  assert.equal(confirmResponse.status, 401);
+  assert.equal(confirmPayload.error.code, "invalid_registration_token");
+});
+
+test("account registration request returns 429 after the per-IP rate limit is exceeded", { concurrency: false }, async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_RATE_LIMIT_AUTH_WINDOW_MS: "60000",
+      VEIL_RATE_LIMIT_AUTH_MAX: "2"
+    },
+    cleanup
+  );
+
+  const port = 44722 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  for (let index = 0; index < 2; index += 1) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        loginId: `registration-limit-${index}`
+      })
+    });
+    assert.equal(response.status, 202);
+  }
+
+  const limitedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "registration-limit-3"
+    })
+  });
+  const limitedPayload = (await limitedResponse.json()) as { error: { code: string } };
+
+  assert.equal(limitedResponse.status, 429);
+  assert.equal(limitedPayload.error.code, "rate_limited");
+  assert.equal(limitedResponse.headers.get("Retry-After"), "60");
+});
+
 test("password recovery request and confirm reset the password, revoke old sessions, and append account audit events", {
   concurrency: false
 }, async (t) => {
