@@ -92,6 +92,7 @@
 - 安装依赖：`npm install`
 - 本地 WebSocket 服务：`npm run dev:server`
 - 运行时健康检查：`GET http://127.0.0.1:2567/api/runtime/health`
+- 鉴权就绪摘要：`GET http://127.0.0.1:2567/api/runtime/auth-readiness`
 - 运行时指标抓取：`GET http://127.0.0.1:2567/api/runtime/metrics`
 - 终端逻辑演示：`npm run demo:flow`
 - 主客户端入口说明：`npm run client:primary`
@@ -112,7 +113,7 @@
 - MySQL 回滚上一版 schema：`npm run db:migrate:rollback`
 - `npm run db:init:mysql` 现已委托给同一条迁移链路，不再走独立一次性建表逻辑
 - 并发房间压测：`npm run stress:rooms -- --rooms=120 --connect-concurrency=24 --action-concurrency=24`
-- 并发房间压测启动后，也可直接查看同进程观测面：`/api/runtime/health` 与 `/api/runtime/metrics`
+- 并发房间压测启动后，也可直接查看同进程观测面：`/api/runtime/health`、`/api/runtime/auth-readiness` 与 `/api/runtime/metrics`
 - 战斗平衡验证：`npm run validate:battle -- --count=1000 --scenario=all --skill-config=configs/battle-skills-v1.1.json`
 - 并发房间压测会按 `world_progression / battle_settlement / reconnect` 三种场景分开跑数，并输出 CPU、内存、房间吞吐、动作吞吐等指标；可通过 `--scenarios=world_progression,reconnect` 等参数缩小范围
 - 当前客户端边界：`apps/cocos-client` 负责主玩法运行时；`apps/client` 只保留浏览器调试、配置联调和回归验证。

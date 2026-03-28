@@ -124,6 +124,13 @@ test("runtime observability routes expose live room counts and gameplay traffic"
         battleActionsTotal: number;
         actionMessagesTotal: number;
       };
+      auth: {
+        activeGuestSessionCount: number;
+        activeAccountSessionCount: number;
+        counters: {
+          sessionChecksTotal: number;
+        };
+      };
     };
   };
 
@@ -136,6 +143,19 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(healthPayload.runtime.gameplayTraffic.worldActionsTotal, 1);
   assert.equal(healthPayload.runtime.gameplayTraffic.battleActionsTotal, 0);
   assert.equal(healthPayload.runtime.gameplayTraffic.actionMessagesTotal, 1);
+  assert.equal(healthPayload.runtime.auth.activeGuestSessionCount, 0);
+  assert.equal(healthPayload.runtime.auth.activeAccountSessionCount, 0);
+  assert.equal(healthPayload.runtime.auth.counters.sessionChecksTotal, 0);
+
+  const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`);
+  const readinessPayload = (await readinessResponse.json()) as {
+    status: string;
+    headline: string;
+  };
+
+  assert.equal(readinessResponse.status, 200);
+  assert.equal(readinessPayload.status, "ok");
+  assert.match(readinessPayload.headline, /guest=0 account=0 lockouts=0/);
 
   const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`);
   const metricsText = await metricsResponse.text();
@@ -148,4 +168,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(metricsText, /^veil_connect_messages_total 1$/m);
   assert.match(metricsText, /^veil_world_actions_total 1$/m);
   assert.match(metricsText, /^veil_gameplay_action_messages_total 1$/m);
+  assert.match(metricsText, /^veil_auth_guest_sessions 0$/m);
+  assert.match(metricsText, /^veil_auth_account_sessions 0$/m);
+  assert.match(metricsText, /^veil_auth_session_checks_total 0$/m);
 });
