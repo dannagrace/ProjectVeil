@@ -106,7 +106,7 @@ function createEncounterStartedEvent(
     battleKind: "hero",
     encounterKind: "hero",
     heroId: "hero-1",
-    opponentHeroId: "hero-2",
+    defenderHeroId: "hero-2",
     initiator: "hero",
     ...overrides
   };
@@ -151,7 +151,7 @@ test("renderEncounterSourceDetail covers active hero encounter initiative branch
       battle: activeBattle,
       lastEncounterStarted: createEncounterStartedEvent()
     }),
-    "遭遇来源：我方主动接触敌方英雄并进入房间内对抗。"
+    "遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到多人遭遇战结算。"
   );
 
   assert.equal(
@@ -160,10 +160,10 @@ test("renderEncounterSourceDetail covers active hero encounter initiative branch
       battle: activeBattle,
       lastEncounterStarted: createEncounterStartedEvent({
         heroId: "hero-2",
-        opponentHeroId: "hero-1"
+        defenderHeroId: "hero-1"
       })
     }),
-    "遭遇来源：敌方英雄先手接触我方并拉入对抗。"
+    "遭遇来源：敌方英雄先手接触我方，当前房间已切到多人遭遇战结算。"
   );
 });
 
@@ -181,7 +181,7 @@ test("renderEncounterSourceDetail covers active neutral encounter initiator bran
         initiator: "neutral"
       })
     }),
-    "遭遇来源：中立守军主动拦截，房间已切换到战斗结算链路。"
+    "遭遇来源：中立守军主动拦截，当前房间已切到遭遇战结算链路。"
   );
 
   assert.equal(
@@ -195,7 +195,7 @@ test("renderEncounterSourceDetail covers active neutral encounter initiator bran
         initiator: "hero"
       })
     }),
-    "遭遇来源：我方接触了中立守军，房间已切换到战斗结算链路。"
+    "遭遇来源：我方接触了中立守军，当前房间已切到遭遇战结算链路。"
   );
 });
 
@@ -209,7 +209,7 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
         encounterRefId: "hero-2"
       })
     }),
-    "遭遇提示：确认移动后会立即切入英雄对抗。"
+    "遭遇提示：确认移动后会立刻接敌，并锁定到英雄遭遇战。"
   );
 
   assert.equal(
@@ -221,7 +221,7 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
         encounterRefId: "neutral-1"
       })
     }),
-    "遭遇提示：确认移动后会立即切入中立战斗。"
+    "遭遇提示：确认移动后会立刻接敌，并锁定到中立遭遇战。"
   );
 
   assert.equal(
@@ -231,7 +231,7 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
         aftermath: "已结算"
       }
     }),
-    "战后反馈：房间权威状态已回写到地图，可直接继续联调后续房间动作。"
+    "战后反馈：本场结果已结算并回写到房间地图，可按当前结果继续移动、推进回合或等待对手。"
   );
 
   assert.equal(
@@ -241,7 +241,7 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
         connectionStatus: "reconnecting"
       }
     }),
-    "连接反馈：房间连接中断，正在尝试恢复当前多人状态。"
+    "连接反馈：房间连接中断，正在恢复多人房间与战斗归属；恢复前请以权威状态为准。"
   );
 
   assert.equal(
@@ -251,7 +251,7 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
         connectionStatus: "reconnect_failed"
       }
     }),
-    "连接反馈：旧连接恢复失败，正在通过最近快照恢复房间。"
+    "连接反馈：旧连接恢复失败，正在通过最近快照回补房间；短暂期间可能只显示缓存状态。"
   );
 
   assert.equal(
@@ -263,7 +263,43 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
   );
 });
 
-test("renderRoomActionHint covers battle active and missing hero states", () => {
+test("renderRoomActionHint covers recovery, battle active, and missing hero states", () => {
+  assert.equal(
+    renderRoomActionHint({
+      battle: null,
+      lastBattleSettlement: null,
+      activeHero: {
+        move: {
+          total: 6,
+          remaining: 4
+        }
+      },
+      diagnostics: {
+        connectionStatus: "reconnecting"
+      },
+      predictionStatus: ""
+    }),
+    "下一步：等待重连恢复完成；此时先不要依赖本地预览判断最终房间结果。"
+  );
+
+  assert.equal(
+    renderRoomActionHint({
+      battle: null,
+      lastBattleSettlement: null,
+      activeHero: {
+        move: {
+          total: 6,
+          remaining: 4
+        }
+      },
+      diagnostics: {
+        connectionStatus: "reconnect_failed"
+      },
+      predictionStatus: ""
+    }),
+    "下一步：等待权威房间状态回补；恢复完成后再继续地图移动或确认战后结果。"
+  );
+
   assert.equal(
     renderRoomActionHint({
       battle: createBattle(),
@@ -273,7 +309,11 @@ test("renderRoomActionHint covers battle active and missing hero states", () => 
           total: 6,
           remaining: 4
         }
-      }
+      },
+      diagnostics: {
+        connectionStatus: "connected"
+      },
+      predictionStatus: ""
     }),
     "下一步：继续完成当前回合内操作，等待本场对抗结算。"
   );
@@ -282,7 +322,11 @@ test("renderRoomActionHint covers battle active and missing hero states", () => 
     renderRoomActionHint({
       battle: null,
       lastBattleSettlement: null,
-      activeHero: null
+      activeHero: null,
+      diagnostics: {
+        connectionStatus: "connected"
+      },
+      predictionStatus: ""
     }),
     "下一步：等待房间首帧同步完成。"
   );
@@ -300,7 +344,11 @@ test("renderRoomActionHint covers settlement and exploration move branches", () 
           total: 6,
           remaining: 2
         }
-      }
+      },
+      diagnostics: {
+        connectionStatus: "connected"
+      },
+      predictionStatus: ""
     }),
     "下一步：当前英雄仍可继续移动、交互，或直接推进到下一天。"
   );
@@ -316,9 +364,13 @@ test("renderRoomActionHint covers settlement and exploration move branches", () 
           total: 6,
           remaining: 0
         }
-      }
+      },
+      diagnostics: {
+        connectionStatus: "connected"
+      },
+      predictionStatus: ""
     }),
-    "下一步：当前英雄移动力已耗尽，可推进到下一天或等待其他玩家。"
+    "下一步：当前英雄移动力已耗尽，可等待其他玩家推进房间或直接结束当天。"
   );
 
   assert.equal(
@@ -330,7 +382,11 @@ test("renderRoomActionHint covers settlement and exploration move branches", () 
           total: 6,
           remaining: 3
         }
-      }
+      },
+      diagnostics: {
+        connectionStatus: "connected"
+      },
+      predictionStatus: ""
     }),
     "下一步：选择地图格继续探索；若接敌，将自动切入对抗。"
   );
@@ -344,7 +400,11 @@ test("renderRoomActionHint covers settlement and exploration move branches", () 
           total: 6,
           remaining: 0
         }
-      }
+      },
+      diagnostics: {
+        connectionStatus: "connected"
+      },
+      predictionStatus: ""
     }),
     "下一步：当前英雄今日已无移动力，可推进到下一天。"
   );

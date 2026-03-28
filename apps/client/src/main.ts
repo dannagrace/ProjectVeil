@@ -127,6 +127,8 @@ interface BattleSettlementSummary {
   title: string;
   summary: string;
   aftermath: string;
+  roomState: string;
+  nextAction: string;
   tone: "victory" | "defeat" | "neutral";
 }
 
@@ -1867,6 +1869,10 @@ function formatVisibleHeroSummary(
   return `玩家 ${hero.playerId} · 英雄 ${hero.name || hero.id} · 坐标 (${hero.position.x},${hero.position.y})`;
 }
 
+function activeHeroSnapshot(world: PlayerWorldView = state.world): PlayerWorldView["ownHeroes"][number] | null {
+  return world.ownHeroes[0] ?? null;
+}
+
 function opposingHeroId(battle: BattleState, world: PlayerWorldView = state.world): string | null {
   const playerCamp = controlledBattleCamp(battle, world);
   if (!playerCamp) {
@@ -1916,6 +1922,91 @@ function renderEncounterHeadline(): { phase: string; detail: string } {
   };
 }
 
+function resolveEncounterOpponentContext(): {
+  label: string;
+  detail: string;
+} | null {
+  const playerCamp = state.battle ? controlledBattleCamp(state.battle, state.world) : null;
+
+  if (state.battle?.defenderHeroId) {
+    const opponentId = opposingHeroId(state.battle, state.world);
+    const opponent = findHeroSnapshot(opponentId, state.world);
+    return {
+      label: "对手信息",
+      detail: `${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：战斗中 · 我方席位：${
+        playerCamp === "attacker" ? "进攻方" : "防守方"
+      }`
+    };
+  }
+
+  if (state.battle?.neutralArmyId) {
+    return {
+      label: "遭遇目标",
+      detail: `${state.battle.neutralArmyId} · 房间态：战斗中`
+    };
+  }
+
+  if (state.previewPlan?.endsInEncounter && state.previewPlan.encounterKind === "hero") {
+    const opponent = findHeroSnapshot(state.previewPlan.encounterRefId, state.world);
+    return {
+      label: "对手信息",
+      detail: `${formatVisibleHeroSummary(opponent, state.previewPlan.encounterRefId)} · 房间态：待接敌`
+    };
+  }
+
+  if (state.previewPlan?.endsInEncounter && state.previewPlan.encounterKind === "neutral") {
+    return {
+      label: "遭遇目标",
+      detail: `${state.previewPlan.encounterRefId ?? "neutral"} · 房间态：待接敌`
+    };
+  }
+
+  if (state.lastBattleSettlement && state.lastEncounterStarted) {
+    if (state.lastEncounterStarted.encounterKind === "hero") {
+      const ownedIds = ownedHeroIds(state.world);
+      const opponentId = ownedIds.has(state.lastEncounterStarted.heroId)
+        ? state.lastEncounterStarted.defenderHeroId ?? null
+        : state.lastEncounterStarted.heroId;
+      const opponent = findHeroSnapshot(opponentId, state.world);
+      return {
+        label: "最近对手",
+        detail: `${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：已结算`
+      };
+    }
+
+    return {
+      label: "最近遭遇",
+      detail: `${state.lastEncounterStarted.neutralArmyId ?? "neutral"} · 房间态：已结算`
+    };
+  }
+
+  return null;
+}
+
+function renderRoomResultSummary(): string {
+  if (state.lastBattleSettlement) {
+    return `房间结果：${state.lastBattleSettlement.roomState}`;
+  }
+
+  if (state.battle) {
+    return "房间结果：多人遭遇战已接管地图行动，待战斗链路关闭后统一回写房间状态。";
+  }
+
+  if (state.diagnostics.connectionStatus === "reconnecting") {
+    return "恢复状态：正在恢复连接与房间主状态，期间可能短暂保留上一帧视图。";
+  }
+
+  if (state.diagnostics.connectionStatus === "reconnect_failed") {
+    return "恢复状态：正在通过最近快照回补房间，等待权威状态确认当前可行动信息。";
+  }
+
+  if (state.predictionStatus.includes("已回放本地缓存状态")) {
+    return `恢复状态：${state.predictionStatus}`;
+  }
+
+  return "房间结果：当前处于稳定探索态，等待新的移动、交互或多人遭遇。";
+}
+
 function buildBattleSettlementSummary(
   event: Extract<SessionUpdate["events"][number], { type: "battle.resolved" }>,
   world: PlayerWorldView,
@@ -1939,6 +2030,15 @@ function buildBattleSettlementSummary(
         : `${progressEvent.experienceGained} 经验`
       : null;
   const summaryParts = [rewardText, equipmentText ? `装备 ${equipmentText}` : null, progressText].filter(Boolean);
+  const hero = activeHeroSnapshot(world);
+  const winnerNextAction =
+    hero && hero.move.remaining > 0
+      ? "当前英雄仍可继续移动、交互，或直接推进到下一天。"
+      : "当前英雄本日行动已接近结束，可等待其他玩家或直接结束当天。";
+  const loserNextAction =
+    hero && hero.move.remaining > 0
+      ? "可先整理当前房间态，再决定是否继续行动。"
+      : "当前英雄已无法继续移动，建议等待其他玩家推进房间或直接结束当天。";
 
   if (didWin) {
     return {
@@ -1947,6 +2047,10 @@ function buildBattleSettlementSummary(
         ? `已击败 ${formatHeroIdentity(opponent, event.defenderHeroId)}。`
         : "已击败本次守军。",
       aftermath: summaryParts.length > 0 ? `结算收益：${summaryParts.join(" · ")}。` : "结算完成，可继续处理房间内后续操作。",
+      roomState: event.defenderHeroId
+        ? "英雄遭遇已关闭，房间已回到地图探索阶段，本次结果已对双方同步生效。"
+        : "守军已清除，房间已回到地图探索阶段，可继续接管地图交互。",
+      nextAction: winnerNextAction,
       tone: "victory"
     };
   }
@@ -1957,6 +2061,10 @@ function buildBattleSettlementSummary(
       ? `遭遇战失利，对手 ${formatHeroIdentity(opponent, event.defenderHeroId ?? event.heroId)} 仍留在房间内。`
       : "本次遭遇战失利。",
     aftermath: "英雄被击退，生命值下降且本日移动力清零。",
+    roomState: event.defenderHeroId
+      ? "英雄遭遇已关闭，对手仍保留在房间地图上，当前结算已同步回写。"
+      : "守军仍保留在房间地图上，当前结算已同步回写。",
+    nextAction: loserNextAction,
     tone: "defeat"
   };
 }
@@ -2033,6 +2141,10 @@ function rollbackPendingPrediction(reason?: string): void {
 
 function applyReplayedUpdate(update: SessionUpdate): void {
   clearPendingPrediction();
+  const replayResolved = update.events.find(isBattleEvent);
+  const replayStarted = update.events.find(
+    (event): event is Extract<SessionUpdate["events"][number], { type: "battle.started" }> => event.type === "battle.started"
+  );
   state.world = update.world;
   state.battle = update.battle;
   state.previewPlan = null;
@@ -2043,7 +2155,11 @@ function applyReplayedUpdate(update: SessionUpdate): void {
   state.selectedBattleTargetId = null;
   state.feedbackTone = update.battle ? "battle" : "idle";
   state.pendingBattleAction = null;
-  state.lastBattleSettlement = null;
+  state.lastBattleSettlement =
+    replayResolved?.type === "battle.resolved" ? buildBattleSettlementSummary(replayResolved, update.world, update.events) : null;
+  if (replayStarted) {
+    state.lastEncounterStarted = replayStarted;
+  }
   state.predictionStatus = "已回放本地缓存状态，正在等待房间同步...";
   state.log.unshift("已从本地缓存回放最近房间状态");
   state.log = state.log.slice(0, 12);
@@ -2464,6 +2580,8 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
       title: "战斗结束",
       summary: "本场遭遇已结束。",
       aftermath: "房间状态已回到地图探索，可继续验证后续流程。",
+      roomState: "本场遭遇链路已经关闭，房间已回到地图探索阶段。",
+      nextAction: "可继续地图移动、交互，或等待其他玩家完成后续操作。",
       tone: "neutral"
     };
     openBattleModal("战斗结束", "本场遭遇已结束。");
@@ -3389,14 +3507,10 @@ function renderBattleIntelPanel(): string {
 function renderRoomStatusPanel(): string {
   const encounter = renderEncounterHeadline();
   const hero = activeHero();
-  const opponentId = state.battle ? opposingHeroId(state.battle, state.world) : state.previewPlan?.encounterRefId ?? null;
-  const opponent = findHeroSnapshot(opponentId, state.world);
-  const opponentLine =
-    state.battle?.defenderHeroId || state.previewPlan?.encounterKind === "hero"
-      ? `对手信息：${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：${state.battle ? "战斗中" : "待接敌"}`
-      : state.battle?.neutralArmyId || state.previewPlan?.encounterKind === "neutral"
-        ? `遭遇目标：${state.battle?.neutralArmyId ?? state.previewPlan?.encounterRefId ?? "neutral"} · 房间态：${state.battle ? "战斗中" : "待接敌"}`
-        : "对手信息：当前没有遭遇目标";
+  const opponentContext = resolveEncounterOpponentContext();
+  const opponentLine = opponentContext
+    ? `${opponentContext.label}：${opponentContext.detail}`
+    : "对手信息：当前没有遭遇目标";
   const playerSummary = hero
     ? `我方状态：${hero.name} · HP ${hero.stats.hp}/${hero.stats.maxHp} · Move ${hero.move.remaining}/${hero.move.total}`
     : "我方状态：等待英雄数据同步";
@@ -3421,6 +3535,7 @@ function renderRoomStatusPanel(): string {
         diagnostics: state.diagnostics,
         predictionStatus: state.predictionStatus
       })}</p>
+      <p class="muted" data-testid="room-result-summary" data-tone="${roomFeedbackTone}">${renderRoomResultSummary()}</p>
       <p class="muted" data-testid="opponent-summary">${opponentLine}</p>
       <div class="room-status-chips">
         <span class="battle-intel-chip" data-testid="room-player-summary">${playerSummary}</span>
@@ -3429,7 +3544,9 @@ function renderRoomStatusPanel(): string {
       <p class="muted" data-testid="room-next-action" data-tone="${roomFeedbackTone}">${renderRoomActionHint({
         battle: state.battle,
         lastBattleSettlement: state.lastBattleSettlement,
-        activeHero: activeHero()
+        activeHero: activeHero(),
+        diagnostics: state.diagnostics,
+        predictionStatus: state.predictionStatus
       })}</p>
     </section>
   `;
@@ -3451,6 +3568,8 @@ function renderBattleSettlementPanel(): string {
       </div>
       <p data-testid="battle-settlement-summary">${state.lastBattleSettlement.summary}</p>
       <p class="muted" data-testid="battle-settlement-aftermath">${state.lastBattleSettlement.aftermath}</p>
+      <p class="muted" data-testid="battle-settlement-room-state">${state.lastBattleSettlement.roomState}</p>
+      <p class="muted" data-testid="battle-settlement-next-action">${state.lastBattleSettlement.nextAction}</p>
     </section>
   `;
 }
