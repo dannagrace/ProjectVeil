@@ -1,5 +1,5 @@
 import { _decorator, Camera, Canvas, Component, EventMouse, EventTouch, input, Input, Layers, Node, sys, UITransform, view } from "cc";
-import { getEquipmentDefinition, type EquipmentType } from "../../../../packages/shared/src/index.ts";
+import { getEquipmentDefinition, type EquipmentType } from "./project-shared/index.ts";
 import {
   type BattleAction,
   VeilCocosSession,
@@ -39,7 +39,7 @@ import { VeilBattlePanel } from "./VeilBattlePanel.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildTimelineEntriesFromUpdate } from "./cocos-ui-formatters.ts";
 import { buildHeroProgressNotice, type HeroProgressNotice } from "./cocos-hero-progression.ts";
-import { VeilHudPanel } from "./VeilHudPanel.ts";
+import { VeilHudPanel, type VeilHudRenderState } from "./VeilHudPanel.ts";
 import { VeilLobbyPanel } from "./VeilLobbyPanel.ts";
 import { VeilMapBoard } from "./VeilMapBoard.ts";
 import { buildMapFeedbackEntriesFromUpdate, buildObjectPulseEntriesFromUpdate } from "./cocos-map-visuals.ts";
@@ -54,6 +54,11 @@ import { readStoredCocosAuthSession, resolveCocosLaunchIdentity, type CocosAuthP
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
 import { buildBattleEnterCopy, buildBattleExitCopy } from "./cocos-battle-transition-copy.ts";
+import { createCocosAudioRuntime } from "./cocos-audio-runtime.ts";
+import { createCocosAudioAssetBridge } from "./cocos-audio-resources.ts";
+import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
+import { cocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
+import { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 
 const { ccclass, property } = _decorator;
 
@@ -155,8 +160,17 @@ export class VeilRoot extends Component {
   private runtimeCapabilities: CocosRuntimeCapabilities = resolveCocosRuntimeCapabilities("unknown");
   private loginRuntimeConfig: CocosLoginRuntimeConfig = resolveCocosLoginRuntimeConfig();
   private loginProviders: CocosLoginProviderDescriptor[] = [];
+  private audioRuntime = createCocosAudioRuntime(cocosPresentationConfig.audio);
+  private pendingPixelSpriteGroups = new Set<"boot" | "battle">();
 
   onLoad(): void {
+    this.audioRuntime.dispose();
+    this.audioRuntime = createCocosAudioRuntime(cocosPresentationConfig.audio, {
+      assetBridge: createCocosAudioAssetBridge(this.node),
+      onStateChange: () => {
+        this.renderView();
+      }
+    });
     this.hydrateRuntimePlatform();
     this.hydrateLaunchIdentity();
     this.ensureUiCameraVisibility();
@@ -182,6 +196,7 @@ export class VeilRoot extends Component {
 
   onDestroy(): void {
     this.unscheduleAllCallbacks();
+    this.audioRuntime.dispose();
     if (this.hudActionBinding) {
       input.off(Input.EventType.TOUCH_END, this.handleHudActionInput, this);
       input.off(Input.EventType.MOUSE_UP, this.handleHudActionInput, this);
@@ -633,6 +648,13 @@ export class VeilRoot extends Component {
       this.levelUpNotice = null;
     }
 
+    this.ensurePixelSpriteGroup("boot");
+    if (this.lastUpdate?.battle) {
+      this.ensurePixelSpriteGroup("battle");
+    }
+
+    this.syncMusicScene();
+
     this.updateLayout();
     const lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
     const hudNode = this.node.getChildByName(HUD_NODE_NAME);
@@ -671,7 +693,8 @@ export class VeilRoot extends Component {
         loading: this.lobbyLoading,
         entering: this.lobbyEntering,
         status: this.lobbyStatus,
-        rooms: this.lobbyRooms
+        rooms: this.lobbyRooms,
+        presentationReadiness: cocosPresentationReadiness
       });
       return;
     }
@@ -689,7 +712,8 @@ export class VeilRoot extends Component {
       moveInFlight: this.moveInFlight,
       predictionStatus: this.predictionStatus,
       inputDebug: this.inputDebug,
-      levelUpNotice: this.levelUpNotice ? { title: this.levelUpNotice.title, detail: this.levelUpNotice.detail } : null
+      levelUpNotice: this.levelUpNotice ? { title: this.levelUpNotice.title, detail: this.levelUpNotice.detail } : null,
+      presentation: this.buildHudPresentationState()
     });
     this.mapBoard?.render(this.lastUpdate);
     this.battlePanel?.render({
@@ -707,6 +731,23 @@ export class VeilRoot extends Component {
   private formatLobbyVaultSummary(): string {
     const resources = this.lobbyAccountProfile.globalResources;
     return `全局仓库 金币 ${resources.gold} / 木材 ${resources.wood} / 矿石 ${resources.ore}`;
+  }
+
+  private ensurePixelSpriteGroup(group: "boot" | "battle"): void {
+    const loadStatus = getPixelSpriteLoadStatus();
+    if (loadStatus.loadedGroups.includes(group) || this.pendingPixelSpriteGroups.has(group)) {
+      return;
+    }
+
+    this.pendingPixelSpriteGroups.add(group);
+    void loadPixelSpriteAssets(group)
+      .then(() => {
+        this.pendingPixelSpriteGroups.delete(group);
+        this.renderView();
+      })
+      .catch(() => {
+        this.pendingPixelSpriteGroups.delete(group);
+      });
   }
 
   private openConfigCenter(): void {
@@ -916,6 +957,7 @@ export class VeilRoot extends Component {
   }
 
   private handleHudActionInput(...args: unknown[]): void {
+    this.audioRuntime.unlock();
     if (this.showLobby) {
       return;
     }
@@ -1957,6 +1999,11 @@ export class VeilRoot extends Component {
             ? "防御"
             : skillName ?? "技能";
     this.pushLog(`战斗指令：${actionLabel}`);
+    if (action.type === "battle.attack") {
+      this.audioRuntime.playCue("attack");
+    } else if (action.type === "battle.skill") {
+      this.audioRuntime.playCue("skill");
+    }
     this.renderView();
 
     try {
@@ -1999,18 +2046,19 @@ export class VeilRoot extends Component {
     }
     this.syncSelectedBattleTarget();
     this.playMapFeedbackForUpdate(update);
+    this.maybePlayBattleHitCue(previousBattle, update.battle ?? null);
     this.maybeShowHeroProgressNotice(update);
 
     if (!previousBattleId && nextBattleId) {
       this.mapBoard?.playHeroAnimation("attack");
-      await this.battleTransition?.playEnter(buildBattleEnterCopy(update.events));
+      await this.battleTransition?.playEnter(buildBattleEnterCopy(update));
     } else if (previousBattleId && !nextBattleId) {
       const resolvedEvent = update.events.find((event) => this.isBattleResolvedEvent(event));
       const didWin = resolvedEvent ? this.didCurrentPlayerWinBattle(resolvedEvent) : false;
       this.mapBoard?.playHeroAnimation(
         resolvedEvent ? (didWin ? "victory" : "defeat") : "idle"
       );
-      await this.battleTransition?.playExit(buildBattleExitCopy(update.events, didWin));
+      await this.battleTransition?.playExit(buildBattleExitCopy(previousBattle, update, didWin));
     } else {
       this.mapBoard?.playHeroAnimation("idle");
     }
@@ -2057,39 +2105,7 @@ export class VeilRoot extends Component {
     };
     this.pushLog(`${notice.title}。${notice.detail}`);
     this.mapBoard?.playHeroAnimation("victory");
-    this.playLevelUpSound();
-  }
-
-  private playLevelUpSound(): void {
-    const audioContextCtor =
-      (globalThis as { AudioContext?: new () => AudioContext; webkitAudioContext?: new () => AudioContext }).AudioContext
-      ?? (globalThis as { webkitAudioContext?: new () => AudioContext }).webkitAudioContext;
-    if (!audioContextCtor) {
-      return;
-    }
-
-    try {
-      const audioContext = new audioContextCtor();
-      const now = audioContext.currentTime;
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      oscillator.type = "triangle";
-      oscillator.frequency.setValueAtTime(523.25, now);
-      oscillator.frequency.linearRampToValueAtTime(659.25, now + 0.12);
-      oscillator.frequency.linearRampToValueAtTime(783.99, now + 0.24);
-      gainNode.gain.setValueAtTime(0.0001, now);
-      gainNode.gain.linearRampToValueAtTime(0.08, now + 0.02);
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      oscillator.start(now);
-      oscillator.stop(now + 0.34);
-      oscillator.onended = () => {
-        void audioContext.close().catch(() => undefined);
-      };
-    } catch {
-      // Ignore audio failures in runtimes that block autoplay or lack Web Audio.
-    }
+    this.audioRuntime.playCue("level_up");
   }
 
   private playMapFeedbackForUpdate(update: SessionUpdate): void {
@@ -2154,6 +2170,46 @@ export class VeilRoot extends Component {
     }
 
     this.renderView();
+  }
+
+  private syncMusicScene(): void {
+    if (this.showLobby) {
+      this.audioRuntime.setScene(null);
+      return;
+    }
+
+    if (this.lastUpdate?.battle) {
+      this.audioRuntime.setScene("battle");
+      return;
+    }
+
+    this.audioRuntime.setScene(this.lastUpdate?.world ? "explore" : null);
+  }
+
+  private buildHudPresentationState(): VeilHudRenderState["presentation"] {
+    return {
+      audio: this.audioRuntime.getState(),
+      pixelAssets: getPixelSpriteLoadStatus(),
+      readiness: cocosPresentationReadiness
+    };
+  }
+
+  private maybePlayBattleHitCue(previousBattle: SessionUpdate["battle"] | null, nextBattle: SessionUpdate["battle"] | null): void {
+    if (!previousBattle || !nextBattle) {
+      return;
+    }
+
+    for (const [unitId, unit] of Object.entries(nextBattle.units)) {
+      const previousUnit = previousBattle.units[unitId];
+      if (!previousUnit) {
+        continue;
+      }
+
+      if (unit.currentHp < previousUnit.currentHp || unit.count < previousUnit.count) {
+        this.audioRuntime.playCue("hit");
+        return;
+      }
+    }
   }
 }
 

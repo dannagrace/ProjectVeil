@@ -1,4 +1,4 @@
-import type { PlayerBattleReplaySummary } from "../../../../packages/shared/src/index.ts";
+import type { PlayerBattleReplaySummary } from "./project-shared/index.ts";
 
 export interface CocosBattleReportSummary {
   title: string;

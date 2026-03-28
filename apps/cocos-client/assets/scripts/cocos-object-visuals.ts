@@ -4,12 +4,22 @@ import type { PlayerTileView } from "./VeilCocosSession.ts";
 type FactionKey = "crown" | "wild";
 type RarityKey = "common" | "elite";
 type InteractionKey = "move" | "pickup" | "battle";
+export type CocosTileMarkerIconKey = "wood" | "gold" | "ore" | "neutral" | "hero" | "recruitment" | "shrine" | "mine";
 
 export interface CocosTileVisualDescriptor {
   title: string;
   subtitle: string;
   shortLabel: string;
   tag: string;
+  faction: FactionKey | null;
+  rarity: RarityKey;
+  interactionType: InteractionKey;
+}
+
+export interface CocosTileMarkerVisual {
+  descriptor: CocosTileVisualDescriptor;
+  iconKey: CocosTileMarkerIconKey | null;
+  fallbackLabel: string;
   faction: FactionKey | null;
   rarity: RarityKey;
   interactionType: InteractionKey;
@@ -178,6 +188,67 @@ export function buildCocosTileMarkerText(tile: PlayerTileView | null): string {
   }
 
   return "";
+}
+
+export function resolveCocosTileMarkerVisual(tile: PlayerTileView | null): CocosTileMarkerVisual | null {
+  const descriptor = describeCocosTileObject(tile);
+  if (!descriptor) {
+    return null;
+  }
+
+  const hidesMarker =
+    descriptor.interactionType === "move" &&
+    !tile?.resource &&
+    !tile?.building &&
+    tile?.occupant?.kind !== "building";
+  if (hidesMarker) {
+    return null;
+  }
+
+  return {
+    descriptor,
+    iconKey: resolveMarkerIconKey(tile),
+    fallbackLabel: descriptor.shortLabel,
+    faction: descriptor.faction,
+    rarity: descriptor.rarity,
+    interactionType: descriptor.interactionType
+  };
+}
+
+function resolveMarkerIconKey(tile: PlayerTileView | null): CocosTileMarkerIconKey | null {
+  if (tile?.resource?.kind === "wood") {
+    return "wood";
+  }
+
+  if (tile?.resource?.kind === "gold") {
+    return "gold";
+  }
+
+  if (tile?.resource?.kind === "ore") {
+    return "ore";
+  }
+
+  if (tile?.occupant?.kind === "neutral") {
+    return "neutral";
+  }
+
+  if (tile?.occupant?.kind === "hero") {
+    return "hero";
+  }
+
+  if (tile?.building?.kind === "recruitment_post") {
+    return "recruitment";
+  }
+
+  if (tile?.building?.kind === "attribute_shrine") {
+    return "shrine";
+  }
+
+  if (tile?.building?.kind === "resource_mine") {
+    return "mine";
+  }
+
+  return null;
 }
 
 function toFactionKey(value: string | undefined): FactionKey | null {

@@ -1,0 +1,42 @@
+{
+  "ver": "1.0.27",
+  "importer": "image",
+  "imported": true,
+  "uuid": "99b987e3-8c72-4ec2-9e95-1647e4fe422e",
+  "files": [
+    ".json",
+    ".png"
+  ],
+  "subMetas": {
+    "6c48a": {
+      "importer": "texture",
+      "uuid": "99b987e3-8c72-4ec2-9e95-1647e4fe422e@6c48a",
+      "displayName": "timeline-icon",
+      "id": "6c48a",
+      "name": "texture",
+      "userData": {
+        "wrapModeS": "clamp-to-edge",
+        "wrapModeT": "clamp-to-edge",
+        "minfilter": "nearest",
+        "magfilter": "nearest",
+        "mipfilter": "none",
+        "anisotropy": 0,
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "99b987e3-8c72-4ec2-9e95-1647e4fe422e",
+        "visible": false
+      },
+      "ver": "1.0.22",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "type": "texture",
+    "fixAlphaTransparencyArtifacts": false,
+    "hasAlpha": true,
+    "redirect": "99b987e3-8c72-4ec2-9e95-1647e4fe422e@6c48a"
+  }
+}

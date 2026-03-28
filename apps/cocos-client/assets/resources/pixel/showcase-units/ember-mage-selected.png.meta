@@ -1,0 +1,42 @@
+{
+  "ver": "1.0.27",
+  "importer": "image",
+  "imported": true,
+  "uuid": "b841e801-a811-4bfe-a60a-5eca17e38fcf",
+  "files": [
+    ".json",
+    ".png"
+  ],
+  "subMetas": {
+    "6c48a": {
+      "importer": "texture",
+      "uuid": "b841e801-a811-4bfe-a60a-5eca17e38fcf@6c48a",
+      "displayName": "ember-mage-selected",
+      "id": "6c48a",
+      "name": "texture",
+      "userData": {
+        "wrapModeS": "clamp-to-edge",
+        "wrapModeT": "clamp-to-edge",
+        "minfilter": "nearest",
+        "magfilter": "nearest",
+        "mipfilter": "none",
+        "anisotropy": 0,
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "b841e801-a811-4bfe-a60a-5eca17e38fcf",
+        "visible": false
+      },
+      "ver": "1.0.22",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "type": "texture",
+    "fixAlphaTransparencyArtifacts": false,
+    "hasAlpha": true,
+    "redirect": "b841e801-a811-4bfe-a60a-5eca17e38fcf@6c48a"
+  }
+}

@@ -1,4 +1,4 @@
-import { applyHeroEquipmentChange, type EquipmentType, type HeroState, validateHeroEquipmentChange } from "../../../../packages/shared/src/index.ts";
+import { applyHeroEquipmentChange, type EquipmentType, type HeroState, validateHeroEquipmentChange } from "./project-shared/index.ts";
 import type {
   AttributeShrineBuildingView,
   HeroView,

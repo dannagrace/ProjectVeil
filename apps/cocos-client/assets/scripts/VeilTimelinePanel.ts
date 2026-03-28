@@ -1,5 +1,5 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Sprite, UIOpacity, UITransform } from "cc";
-import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
+import { getPixelSpriteAssets, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 
 const { ccclass } = _decorator;
@@ -120,12 +120,12 @@ export class VeilTimelinePanel extends Component {
     this.headerIconSprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite);
     this.headerIconOpacity = iconNode.getComponent(UIOpacity) ?? iconNode.addComponent(UIOpacity);
 
-    const frame = getPlaceholderSpriteAssets()?.icons.timeline ?? null;
+    const frame = getPixelSpriteAssets()?.icons.timeline ?? null;
     if (!frame) {
       iconNode.active = false;
       if (!this.requestedIcons) {
         this.requestedIcons = true;
-        void loadPlaceholderSpriteAssets().then(() => {
+        void loadPixelSpriteAssets("boot").then(() => {
           this.requestedIcons = false;
           if (this.currentState) {
             this.render(this.currentState);
@@ -158,7 +158,7 @@ export class VeilTimelinePanel extends Component {
     if (!show) {
       return;
     }
-    const frame = getPlaceholderSpriteAssets()?.icons.timeline ?? null;
+    const frame = getPixelSpriteAssets()?.icons.timeline ?? null;
     if (!frame) {
       watermarkNode.active = false;
       return;

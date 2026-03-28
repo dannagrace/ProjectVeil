@@ -512,6 +512,44 @@ test("player account routes degrade to local-mode responses when persistence is 
   assert.equal(meProgressPayload.summary.unlockedAchievements, 0);
 });
 
+test("public guest player routes return empty fallback payloads instead of 404 noise", async (t) => {
+  const port = 40045 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  const server = await startAccountRouteServer(port, store);
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const accountResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview`);
+  const accountPayload = (await accountResponse.json()) as { account: PlayerAccountSnapshot };
+  assert.equal(accountResponse.status, 200);
+  assert.equal(accountPayload.account.playerId, "guest-preview");
+  assert.equal(accountPayload.account.displayName, "guest-preview");
+  assert.deepEqual(accountPayload.account.globalResources, { gold: 0, wood: 0, ore: 0 });
+
+  const replayResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview/battle-replays`);
+  const replayPayload = (await replayResponse.json()) as { items: PlayerBattleReplaySummary[] };
+  assert.equal(replayResponse.status, 200);
+  assert.deepEqual(replayPayload.items, []);
+
+  const eventLogResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview/event-log?limit=2`);
+  const eventLogPayload = (await eventLogResponse.json()) as { items: PlayerAccountSnapshot["recentEventLog"] };
+  assert.equal(eventLogResponse.status, 200);
+  assert.deepEqual(eventLogPayload.items ?? [], []);
+
+  const achievementResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview/achievements?limit=2`);
+  const achievementPayload = (await achievementResponse.json()) as { items: PlayerAchievementProgress[] };
+  assert.equal(achievementResponse.status, 200);
+  assert.deepEqual(achievementPayload.items.map((entry) => entry.id), ["first_battle", "enemy_slayer"]);
+
+  const progressionResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview/progression?limit=1`);
+  const progressionPayload = (await progressionResponse.json()) as PlayerProgressionSnapshot;
+  assert.equal(progressionResponse.status, 200);
+  assert.equal(progressionPayload.summary.totalAchievements, 5);
+  assert.equal(progressionPayload.summary.unlockedAchievements, 0);
+});
+
 test("player account battle replay routes return normalized replay summaries with optional limit", async (t) => {
   const port = 40050 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();

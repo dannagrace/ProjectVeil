@@ -1,13 +1,15 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Sprite, UIOpacity, UITransform } from "cc";
+import { resolveBattlePanelUnitVisual } from "./cocos-battle-unit-visuals.ts";
 import {
   buildBattlePanelViewModel,
   type BattlePanelActionView,
   type BattlePanelInput,
-  type BattleCamp
+  type BattleCamp,
+  type BattlePanelStageView
 } from "./cocos-battle-panel-model.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import type { BattleAction } from "./VeilCocosSession.ts";
-import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
+import { getPixelSpriteAssets, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 
 const { ccclass } = _decorator;
 
@@ -41,6 +43,41 @@ const WATERMARK_NODE_NAME = "BattleWatermark";
 const IDLE_HINT_NODE_NAME = "BattleIdleHint";
 const IDLE_BADGE_NODE_NAME = "BattleIdleBadge";
 const SECTION_CARD_PREFIX = "BattleSectionCard";
+const STAGE_BANNER_NODE_NAME = "BattleStageBanner";
+const UNIT_ART_SIZE = 34;
+const UNIT_FRAME_SIZE = 38;
+const UNIT_BADGE_SIZE = 10;
+const UNIT_ART_CENTER_X = -PANEL_CONTENT_WIDTH / 2 + 30;
+const UNIT_TEXT_WIDTH = PANEL_CONTENT_WIDTH - 126;
+const UNIT_TEXT_CENTER_X = -8;
+
+interface BattleUnitVisualNodes {
+  portraitNode: Node;
+  portraitSprite: Sprite;
+  portraitOpacity: UIOpacity;
+  frameNode: Node;
+  frameSprite: Sprite;
+  frameOpacity: UIOpacity;
+  factionNode: Node;
+  factionSprite: Sprite;
+  factionOpacity: UIOpacity;
+  rarityNode: Node;
+  raritySprite: Sprite;
+  rarityOpacity: UIOpacity;
+  interactionNode: Node;
+  interactionSprite: Sprite;
+  interactionOpacity: UIOpacity;
+}
+
+interface BattleStageBannerNodes {
+  node: Node;
+  title: Label;
+  meta: Label;
+  badge: Label;
+  terrainNode: Node;
+  terrainSprite: Sprite;
+  terrainOpacity: UIOpacity;
+}
 
 export interface VeilBattlePanelState extends BattlePanelInput {}
 
@@ -59,14 +96,16 @@ export class VeilBattlePanel extends Component {
   private actionHeaderLabel: Label | null = null;
   private idleHintLabel: Label | null = null;
   private idleBadgeLabel: Label | null = null;
-  private readonly targetNodes = new Map<string, { node: Node; title: Label; meta: Label; badge: Label }>();
+  private readonly targetNodes = new Map<string, { node: Node; title: Label; meta: Label; badge: Label; visuals: BattleUnitVisualNodes }>();
   private readonly actionNodes = new Map<string, { node: Node; title: Label; meta: Label }>();
-  private readonly orderItemNodes = new Map<string, { node: Node; title: Label; meta: Label; badge: Label }>();
-  private readonly friendlyItemNodes = new Map<string, { node: Node; title: Label; meta: Label; badge: Label }>();
+  private readonly orderItemNodes = new Map<string, { node: Node; title: Label; meta: Label; badge: Label; visuals: BattleUnitVisualNodes }>();
+  private readonly friendlyItemNodes = new Map<string, { node: Node; title: Label; meta: Label; badge: Label; visuals: BattleUnitVisualNodes }>();
   private headerIconSprite: Sprite | null = null;
   private headerIconOpacity: UIOpacity | null = null;
+  private stageBanner: BattleStageBannerNodes | null = null;
   private currentState: VeilBattlePanelState | null = null;
   private requestedIcons = false;
+  private requestedStageTerrain = false;
   private onSelectTarget: ((unitId: string) => void) | undefined;
   private onAction: ((action: BattleAction) => void) | undefined;
 
@@ -93,6 +132,7 @@ export class VeilBattlePanel extends Component {
     this.tightenTitleLayout();
 
     if (model.idle) {
+      this.hideStageBanner();
       this.syncIdleBadge(false, 0, "");
       cursorY = this.renderCardTextBlock(
         this.summaryLabel,
@@ -117,6 +157,7 @@ export class VeilBattlePanel extends Component {
     }
 
     this.syncIdleBadge(false, 0, "");
+    cursorY = this.renderStageBanner(model.stage, cursorY - 2);
     cursorY = this.renderCardTextBlock(this.summaryLabel, "Summary", model.summaryLines, cursorY, 14, 18, 14);
     cursorY = this.renderTextBlock(this.orderLabel, ["行动顺序"], cursorY, 14, 18, 6);
     cursorY = this.renderOrderItems(model.orderItems, cursorY);
@@ -137,6 +178,7 @@ export class VeilBattlePanel extends Component {
       FRIENDLY_NODE_NAME,
       ENEMY_HEADER_NODE_NAME,
       ACTION_HEADER_NODE_NAME,
+      STAGE_BANNER_NODE_NAME,
       HEADER_ICON_NODE_NAME,
       WATERMARK_NODE_NAME,
       IDLE_HINT_NODE_NAME,
@@ -296,6 +338,7 @@ export class VeilBattlePanel extends Component {
         transform.setContentSize(PANEL_CONTENT_WIDTH, rowHeight);
         targetNode.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, cursorY - rowHeight / 2, 0);
         this.styleTargetNode(targetNode.node, targetNode.title, targetNode.meta, targetNode.badge, target.selected, target.selectable);
+        this.syncUnitVisualNodes(targetNode.visuals, target.id, { selected: target.selected, active: false });
         used.add(target.id);
         cursorY -= rowHeight + gap;
       });
@@ -397,6 +440,7 @@ export class VeilBattlePanel extends Component {
           item.active,
           item.active ? new Color(234, 183, 124, 220) : new Color(98, 121, 164, 176)
         );
+        this.syncUnitVisualNodes(itemNode.visuals, item.id, { selected: false, active: item.active });
         used.add(item.id);
         cursorY -= rowHeight + gap;
       }
@@ -451,6 +495,7 @@ export class VeilBattlePanel extends Component {
         transform.setContentSize(PANEL_CONTENT_WIDTH, rowHeight);
         itemNode.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, cursorY - rowHeight / 2, 0);
         this.styleRosterNode(itemNode.node, itemNode.title, itemNode.meta, itemNode.badge, false, badgeAccentForFriendly(item.badge));
+        this.syncUnitVisualNodes(itemNode.visuals, item.id, { selected: false, active: false });
         used.add(item.id);
         cursorY -= rowHeight + gap;
       }
@@ -536,12 +581,12 @@ export class VeilBattlePanel extends Component {
     this.headerIconSprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite);
     this.headerIconOpacity = iconNode.getComponent(UIOpacity) ?? iconNode.addComponent(UIOpacity);
 
-    const frame = getPlaceholderSpriteAssets()?.icons.battle ?? null;
+    const frame = getPixelSpriteAssets()?.icons.battle ?? null;
     if (!frame) {
       iconNode.active = false;
       if (!this.requestedIcons) {
         this.requestedIcons = true;
-        void loadPlaceholderSpriteAssets().then(() => {
+        void loadPixelSpriteAssets("battle").then(() => {
           this.requestedIcons = false;
           if (this.currentState) {
             this.render(this.currentState);
@@ -569,7 +614,7 @@ export class VeilBattlePanel extends Component {
     watermarkNode.setPosition(transform.width / 2 - 72, -24, 0.2);
     const watermarkSprite = watermarkNode.getComponent(Sprite) ?? watermarkNode.addComponent(Sprite);
     const watermarkOpacity = watermarkNode.getComponent(UIOpacity) ?? watermarkNode.addComponent(UIOpacity);
-    const frame = getPlaceholderSpriteAssets()?.icons.battle ?? null;
+    const frame = getPixelSpriteAssets()?.icons.battle ?? null;
 
     if (!frame) {
       watermarkNode.active = false;
@@ -579,6 +624,174 @@ export class VeilBattlePanel extends Component {
     watermarkNode.active = idle;
     watermarkSprite.spriteFrame = frame;
     watermarkOpacity.opacity = idle ? 18 : 0;
+  }
+
+  private renderStageBanner(stage: BattlePanelStageView | null, topY: number): number {
+    if (!stage) {
+      this.hideStageBanner();
+      return topY;
+    }
+
+    const banner = this.ensureStageBanner();
+    const height = 56;
+    const gap = 10;
+    const transform = banner.node.getComponent(UITransform) ?? banner.node.addComponent(UITransform);
+    transform.setContentSize(PANEL_CONTENT_WIDTH, height);
+    banner.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, topY - height / 2, 0.35);
+    banner.node.active = true;
+    banner.title.string = stage.title;
+    banner.meta.string = stage.subtitle;
+    banner.badge.string = stage.badge;
+
+    const terrainFrame = this.resolveStageTerrainFrame(stage.terrain);
+    this.setVisualNodeFrame(banner.terrainNode, banner.terrainSprite, banner.terrainOpacity, terrainFrame, 255);
+    this.styleStageBanner(banner.node, banner.title, banner.meta, banner.badge, stage.terrain);
+    return topY - height - gap;
+  }
+
+  private hideStageBanner(): void {
+    if (!this.stageBanner) {
+      return;
+    }
+
+    this.stageBanner.node.active = false;
+    this.stageBanner.title.string = "";
+    this.stageBanner.meta.string = "";
+    this.stageBanner.badge.string = "";
+    this.setVisualNodeFrame(
+      this.stageBanner.terrainNode,
+      this.stageBanner.terrainSprite,
+      this.stageBanner.terrainOpacity,
+      null,
+      0
+    );
+  }
+
+  private ensureStageBanner(): BattleStageBannerNodes {
+    if (this.stageBanner) {
+      return this.stageBanner;
+    }
+
+    const node = new Node(STAGE_BANNER_NODE_NAME);
+    node.parent = this.node;
+    assignUiLayer(node);
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(PANEL_CONTENT_WIDTH, 56);
+
+    const terrainNode = new Node(`${STAGE_BANNER_NODE_NAME}-terrain`);
+    terrainNode.parent = node;
+    assignUiLayer(terrainNode);
+    const terrainTransform = terrainNode.getComponent(UITransform) ?? terrainNode.addComponent(UITransform);
+    terrainTransform.setContentSize(34, 34);
+    terrainNode.setPosition(-PANEL_CONTENT_WIDTH / 2 + 28, 0, 1);
+    const terrainSprite = terrainNode.getComponent(Sprite) ?? terrainNode.addComponent(Sprite);
+    const terrainOpacity = terrainNode.getComponent(UIOpacity) ?? terrainNode.addComponent(UIOpacity);
+
+    const titleNode = new Node(`${STAGE_BANNER_NODE_NAME}-title`);
+    titleNode.parent = node;
+    assignUiLayer(titleNode);
+    const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform);
+    titleTransform.setContentSize(PANEL_CONTENT_WIDTH - 118, 18);
+    titleNode.setPosition(-8, 11, 1);
+    const title = titleNode.getComponent(Label) ?? titleNode.addComponent(Label);
+    title.fontSize = 13;
+    title.lineHeight = 16;
+    title.horizontalAlign = H_ALIGN_LEFT;
+    title.verticalAlign = V_ALIGN_CENTER;
+    title.overflow = OVERFLOW_RESIZE_HEIGHT;
+    title.enableWrapText = false;
+    title.string = "";
+
+    const metaNode = new Node(`${STAGE_BANNER_NODE_NAME}-meta`);
+    metaNode.parent = node;
+    assignUiLayer(metaNode);
+    const metaTransform = metaNode.getComponent(UITransform) ?? metaNode.addComponent(UITransform);
+    metaTransform.setContentSize(PANEL_CONTENT_WIDTH - 118, 16);
+    metaNode.setPosition(-8, -11, 1);
+    const meta = metaNode.getComponent(Label) ?? metaNode.addComponent(Label);
+    meta.fontSize = 10;
+    meta.lineHeight = 12;
+    meta.horizontalAlign = H_ALIGN_LEFT;
+    meta.verticalAlign = V_ALIGN_CENTER;
+    meta.overflow = OVERFLOW_RESIZE_HEIGHT;
+    meta.enableWrapText = false;
+    meta.string = "";
+
+    const badgeNode = new Node(`${STAGE_BANNER_NODE_NAME}-badge`);
+    badgeNode.parent = node;
+    assignUiLayer(badgeNode);
+    const badgeTransform = badgeNode.getComponent(UITransform) ?? badgeNode.addComponent(UITransform);
+    badgeTransform.setContentSize(44, 20);
+    badgeNode.setPosition(PANEL_CONTENT_WIDTH / 2 - 34, 0, 1);
+    const badge = badgeNode.getComponent(Label) ?? badgeNode.addComponent(Label);
+    badge.fontSize = 10;
+    badge.lineHeight = 12;
+    badge.horizontalAlign = H_ALIGN_CENTER;
+    badge.verticalAlign = V_ALIGN_CENTER;
+    badge.overflow = OVERFLOW_RESIZE_HEIGHT;
+    badge.enableWrapText = false;
+    badge.string = "";
+
+    this.stageBanner = {
+      node,
+      title,
+      meta,
+      badge,
+      terrainNode,
+      terrainSprite,
+      terrainOpacity
+    };
+    return this.stageBanner;
+  }
+
+  private resolveStageTerrainFrame(terrain: BattlePanelStageView["terrain"]): Sprite["spriteFrame"] {
+    const terrainFrames = getPixelSpriteAssets()?.tiles[terrain] ?? [];
+    const frame = terrainFrames.find((entry) => Boolean(entry)) ?? null;
+    if (!frame && !this.requestedStageTerrain) {
+      this.requestedStageTerrain = true;
+      void loadPixelSpriteAssets("boot")
+        .then(() => {
+          this.requestedStageTerrain = false;
+          if (this.currentState) {
+            this.render(this.currentState);
+          }
+        })
+        .catch(() => {
+          this.requestedStageTerrain = false;
+        });
+    }
+    return frame;
+  }
+
+  private styleStageBanner(
+    node: Node,
+    title: Label,
+    meta: Label,
+    badge: Label,
+    terrain: BattlePanelStageView["terrain"]
+  ): void {
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    const width = transform.width;
+    const height = transform.height;
+    const accent = accentForTerrain(terrain);
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(34, 47, 68, 154);
+    graphics.strokeColor = new Color(accent.r, accent.g, accent.b, 170);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 14);
+    graphics.fill();
+    graphics.stroke();
+    graphics.fillColor = new Color(accent.r, accent.g, accent.b, 86);
+    graphics.roundRect(-width / 2 + 12, -height / 2 + 10, 6, height - 20, 3);
+    graphics.fill();
+    graphics.fillColor = new Color(255, 255, 255, 14);
+    graphics.roundRect(-width / 2 + 12, height / 2 - 16, width - 24, 5, 3);
+    graphics.fill();
+    title.color = new Color(245, 249, 253, 255);
+    meta.color = new Color(201, 214, 229, 220);
+    badge.color = new Color(36, 28, 14, 255);
+    this.styleBadgeNode(badge.node, new Color(accent.r, accent.g, accent.b, 224));
   }
 
   private ensureLabelNode(name: string, fontSize: number, lineHeight: number, height: number): Label {
@@ -602,7 +815,7 @@ export class VeilBattlePanel extends Component {
     return label;
   }
 
-  private ensureTargetNode(unitId: string): { node: Node; title: Label; meta: Label; badge: Label } {
+  private ensureTargetNode(unitId: string): { node: Node; title: Label; meta: Label; badge: Label; visuals: BattleUnitVisualNodes } {
     const existing = this.targetNodes.get(unitId);
     if (existing) {
       return existing;
@@ -618,8 +831,8 @@ export class VeilBattlePanel extends Component {
     titleNode.parent = node;
     assignUiLayer(titleNode);
     const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform);
-    titleTransform.setContentSize(PANEL_CONTENT_WIDTH - 92, 18);
-    titleNode.setPosition(-28, 10, 1);
+    titleTransform.setContentSize(UNIT_TEXT_WIDTH, 18);
+    titleNode.setPosition(UNIT_TEXT_CENTER_X, 10, 1);
     const title = titleNode.getComponent(Label) ?? titleNode.addComponent(Label);
     title.fontSize = 13;
     title.lineHeight = 16;
@@ -633,8 +846,8 @@ export class VeilBattlePanel extends Component {
     metaNode.parent = node;
     assignUiLayer(metaNode);
     const metaTransform = metaNode.getComponent(UITransform) ?? metaNode.addComponent(UITransform);
-    metaTransform.setContentSize(PANEL_CONTENT_WIDTH - 92, 16);
-    metaNode.setPosition(-28, -12, 1);
+    metaTransform.setContentSize(UNIT_TEXT_WIDTH, 16);
+    metaNode.setPosition(UNIT_TEXT_CENTER_X, -12, 1);
     const meta = metaNode.getComponent(Label) ?? metaNode.addComponent(Label);
     meta.fontSize = 11;
     meta.lineHeight = 14;
@@ -668,7 +881,8 @@ export class VeilBattlePanel extends Component {
       this
     );
 
-    const created = { node, title, meta, badge };
+    const visuals = this.createUnitVisualNodes(node, `${node.name}-visual`);
+    const created = { node, title, meta, badge, visuals };
     this.targetNodes.set(unitId, created);
     return created;
   }
@@ -720,7 +934,7 @@ export class VeilBattlePanel extends Component {
     return created;
   }
 
-  private ensureOrderItemNode(id: string): { node: Node; title: Label; meta: Label; badge: Label } {
+  private ensureOrderItemNode(id: string): { node: Node; title: Label; meta: Label; badge: Label; visuals: BattleUnitVisualNodes } {
     const existing = this.orderItemNodes.get(id);
     if (existing) {
       return existing;
@@ -731,7 +945,7 @@ export class VeilBattlePanel extends Component {
     return created;
   }
 
-  private ensureFriendlyItemNode(id: string): { node: Node; title: Label; meta: Label; badge: Label } {
+  private ensureFriendlyItemNode(id: string): { node: Node; title: Label; meta: Label; badge: Label; visuals: BattleUnitVisualNodes } {
     const existing = this.friendlyItemNodes.get(id);
     if (existing) {
       return existing;
@@ -742,7 +956,7 @@ export class VeilBattlePanel extends Component {
     return created;
   }
 
-  private createRosterNode(name: string): { node: Node; title: Label; meta: Label; badge: Label } {
+  private createRosterNode(name: string): { node: Node; title: Label; meta: Label; badge: Label; visuals: BattleUnitVisualNodes } {
     const node = new Node(name);
     node.parent = this.node;
     assignUiLayer(node);
@@ -753,8 +967,8 @@ export class VeilBattlePanel extends Component {
     titleNode.parent = node;
     assignUiLayer(titleNode);
     const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform);
-    titleTransform.setContentSize(PANEL_CONTENT_WIDTH - 92, 18);
-    titleNode.setPosition(-28, 10, 1);
+    titleTransform.setContentSize(UNIT_TEXT_WIDTH, 18);
+    titleNode.setPosition(UNIT_TEXT_CENTER_X, 10, 1);
     const title = titleNode.getComponent(Label) ?? titleNode.addComponent(Label);
     title.fontSize = 13;
     title.lineHeight = 16;
@@ -768,8 +982,8 @@ export class VeilBattlePanel extends Component {
     metaNode.parent = node;
     assignUiLayer(metaNode);
     const metaTransform = metaNode.getComponent(UITransform) ?? metaNode.addComponent(UITransform);
-    metaTransform.setContentSize(PANEL_CONTENT_WIDTH - 92, 16);
-    metaNode.setPosition(-28, -12, 1);
+    metaTransform.setContentSize(UNIT_TEXT_WIDTH, 16);
+    metaNode.setPosition(UNIT_TEXT_CENTER_X, -12, 1);
     const meta = metaNode.getComponent(Label) ?? metaNode.addComponent(Label);
     meta.fontSize = 11;
     meta.lineHeight = 14;
@@ -794,7 +1008,140 @@ export class VeilBattlePanel extends Component {
     badge.enableWrapText = false;
     badge.string = "";
 
-    return { node, title, meta, badge };
+    const visuals = this.createUnitVisualNodes(node, `${name}-visual`);
+    return { node, title, meta, badge, visuals };
+  }
+
+  private createUnitVisualNodes(parent: Node, prefix: string): BattleUnitVisualNodes {
+    const portraitNode = new Node(`${prefix}-portrait`);
+    portraitNode.parent = parent;
+    assignUiLayer(portraitNode);
+    const portraitTransform = portraitNode.getComponent(UITransform) ?? portraitNode.addComponent(UITransform);
+    portraitTransform.setContentSize(UNIT_ART_SIZE, UNIT_ART_SIZE);
+    portraitNode.setPosition(UNIT_ART_CENTER_X, 0, 1);
+    const portraitSprite = portraitNode.getComponent(Sprite) ?? portraitNode.addComponent(Sprite);
+    const portraitOpacity = portraitNode.getComponent(UIOpacity) ?? portraitNode.addComponent(UIOpacity);
+
+    const frameNode = new Node(`${prefix}-frame`);
+    frameNode.parent = parent;
+    assignUiLayer(frameNode);
+    const frameTransform = frameNode.getComponent(UITransform) ?? frameNode.addComponent(UITransform);
+    frameTransform.setContentSize(UNIT_FRAME_SIZE, UNIT_FRAME_SIZE);
+    frameNode.setPosition(UNIT_ART_CENTER_X, 0, 1.1);
+    const frameSprite = frameNode.getComponent(Sprite) ?? frameNode.addComponent(Sprite);
+    const frameOpacity = frameNode.getComponent(UIOpacity) ?? frameNode.addComponent(UIOpacity);
+
+    const factionNode = this.createUnitBadgeSpriteNode(parent, `${prefix}-faction`, UNIT_ART_CENTER_X - 11, 11);
+    const rarityNode = this.createUnitBadgeSpriteNode(parent, `${prefix}-rarity`, UNIT_ART_CENTER_X + 11, 11);
+    const interactionNode = this.createUnitBadgeSpriteNode(parent, `${prefix}-interaction`, UNIT_ART_CENTER_X + 11, -11);
+
+    return {
+      portraitNode,
+      portraitSprite,
+      portraitOpacity,
+      frameNode,
+      frameSprite,
+      frameOpacity,
+      factionNode: factionNode.node,
+      factionSprite: factionNode.sprite,
+      factionOpacity: factionNode.opacity,
+      rarityNode: rarityNode.node,
+      raritySprite: rarityNode.sprite,
+      rarityOpacity: rarityNode.opacity,
+      interactionNode: interactionNode.node,
+      interactionSprite: interactionNode.sprite,
+      interactionOpacity: interactionNode.opacity
+    };
+  }
+
+  private createUnitBadgeSpriteNode(
+    parent: Node,
+    name: string,
+    x: number,
+    y: number
+  ): { node: Node; sprite: Sprite; opacity: UIOpacity } {
+    const node = new Node(name);
+    node.parent = parent;
+    assignUiLayer(node);
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(UNIT_BADGE_SIZE, UNIT_BADGE_SIZE);
+    node.setPosition(x, y, 1.2);
+    const sprite = node.getComponent(Sprite) ?? node.addComponent(Sprite);
+    const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity);
+    return { node, sprite, opacity };
+  }
+
+  private syncUnitVisualNodes(
+    visuals: BattleUnitVisualNodes,
+    unitId: string,
+    options: {
+      selected: boolean;
+      active: boolean;
+    }
+  ): void {
+    const unit = unitId === "empty" ? null : this.currentState?.update?.battle?.units[unitId] ?? null;
+    const assets = getPixelSpriteAssets();
+    if (!unit || !assets) {
+      this.setVisualNodeFrame(visuals.portraitNode, visuals.portraitSprite, visuals.portraitOpacity, null, 0);
+      this.setVisualNodeFrame(visuals.frameNode, visuals.frameSprite, visuals.frameOpacity, null, 0);
+      this.setVisualNodeFrame(visuals.factionNode, visuals.factionSprite, visuals.factionOpacity, null, 0);
+      this.setVisualNodeFrame(visuals.rarityNode, visuals.raritySprite, visuals.rarityOpacity, null, 0);
+      this.setVisualNodeFrame(visuals.interactionNode, visuals.interactionSprite, visuals.interactionOpacity, null, 0);
+      return;
+    }
+
+    const descriptor = resolveBattlePanelUnitVisual(unit.templateId, {
+      selected: options.selected,
+      active: options.active,
+      damaged: unit.currentHp < unit.maxHp
+    });
+    const unitSprites = assets.units[descriptor.templateId];
+    this.setVisualNodeFrame(
+      visuals.portraitNode,
+      visuals.portraitSprite,
+      visuals.portraitOpacity,
+      unitSprites?.[descriptor.portraitState] ?? null,
+      255
+    );
+    this.setVisualNodeFrame(visuals.frameNode, visuals.frameSprite, visuals.frameOpacity, unitSprites?.frame ?? null, 255);
+    this.setVisualNodeFrame(
+      visuals.factionNode,
+      visuals.factionSprite,
+      visuals.factionOpacity,
+      descriptor.faction ? assets.badges.factions[descriptor.faction] ?? null : null,
+      255
+    );
+    this.setVisualNodeFrame(
+      visuals.rarityNode,
+      visuals.raritySprite,
+      visuals.rarityOpacity,
+      assets.badges.rarities[descriptor.rarity] ?? null,
+      255
+    );
+    this.setVisualNodeFrame(
+      visuals.interactionNode,
+      visuals.interactionSprite,
+      visuals.interactionOpacity,
+      assets.badges.interactions[descriptor.interaction] ?? null,
+      255
+    );
+  }
+
+  private setVisualNodeFrame(
+    node: Node,
+    sprite: Sprite,
+    opacity: UIOpacity,
+    frame: Sprite["spriteFrame"],
+    alpha: number
+  ): void {
+    node.active = Boolean(frame);
+    if (!frame) {
+      sprite.spriteFrame = null;
+      opacity.opacity = 0;
+      return;
+    }
+    sprite.spriteFrame = frame;
+    opacity.opacity = alpha;
   }
 
   private renderSectionCard(name: string, centerY: number, height: number, fillColor: Color = new Color(33, 46, 66, 138)): void {
@@ -990,6 +1337,22 @@ function badgeAccentForFriendly(badge: string): Color {
     return new Color(188, 115, 98, 204);
   }
   return new Color(102, 126, 166, 176);
+}
+
+function accentForTerrain(terrain: BattlePanelStageView["terrain"]): Color {
+  if (terrain === "grass") {
+    return new Color(118, 178, 122, 255);
+  }
+  if (terrain === "dirt") {
+    return new Color(182, 132, 92, 255);
+  }
+  if (terrain === "sand") {
+    return new Color(217, 188, 120, 255);
+  }
+  if (terrain === "water") {
+    return new Color(103, 158, 214, 255);
+  }
+  return new Color(168, 170, 184, 255);
 }
 
 function accentForSection(name: string): Color {

@@ -1,0 +1,42 @@
+{
+  "ver": "1.0.27",
+  "importer": "image",
+  "imported": true,
+  "uuid": "e79ef4c1-d586-4134-b8ec-9e65ded6a4b9",
+  "files": [
+    ".json",
+    ".png"
+  ],
+  "subMetas": {
+    "6c48a": {
+      "importer": "texture",
+      "uuid": "e79ef4c1-d586-4134-b8ec-9e65ded6a4b9@6c48a",
+      "displayName": "desert-tile",
+      "id": "6c48a",
+      "name": "texture",
+      "userData": {
+        "wrapModeS": "clamp-to-edge",
+        "wrapModeT": "clamp-to-edge",
+        "minfilter": "nearest",
+        "magfilter": "nearest",
+        "mipfilter": "none",
+        "anisotropy": 0,
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "e79ef4c1-d586-4134-b8ec-9e65ded6a4b9",
+        "visible": false
+      },
+      "ver": "1.0.22",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "type": "texture",
+    "fixAlphaTransparencyArtifacts": false,
+    "hasAlpha": true,
+    "redirect": "e79ef4c1-d586-4134-b8ec-9e65ded6a4b9@6c48a"
+  }
+}

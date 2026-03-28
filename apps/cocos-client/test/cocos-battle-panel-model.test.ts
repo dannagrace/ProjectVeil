@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildBattlePanelViewModel } from "../assets/scripts/cocos-battle-panel-model";
-import type { SessionUpdate } from "../assets/scripts/VeilCocosSession";
+import type { PlayerTileView, SessionUpdate, TerrainType } from "../assets/scripts/VeilCocosSession";
+
+function createTile(position: { x: number; y: number }, terrain: TerrainType = "grass"): PlayerTileView {
+  return {
+    position,
+    fog: "visible",
+    terrain,
+    walkable: true,
+    resource: undefined,
+    occupant: undefined,
+    building: undefined
+  };
+}
 
 function createBaseUpdate(): SessionUpdate {
   return {
@@ -14,7 +26,7 @@ function createBaseUpdate(): SessionUpdate {
       map: {
         width: 1,
         height: 1,
-        tiles: []
+        tiles: [createTile({ x: 0, y: 0 })]
       },
       ownHeroes: [
         {
@@ -73,6 +85,7 @@ test("buildBattlePanelViewModel keeps idle summary focused on battle state", () 
   });
 
   assert.equal(view.idle, true);
+  assert.equal(view.stage, null);
   assert.equal(view.summaryLines[0], "当前没有战斗。");
   assert.equal(view.summaryLines.length, 1);
   assert.deepEqual(view.orderLines, []);
@@ -182,6 +195,12 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
   });
 
   assert.equal(view.idle, false);
+  assert.deepEqual(view.stage, {
+    terrain: "grass",
+    title: "草野战场 · 中立遭遇",
+    subtitle: "坐标 (0,0) · 1 陷阱",
+    badge: "PVE"
+  });
   assert.equal(view.summaryLines[2], "阶段：轮到我方");
   assert.equal(view.summaryLines[4], "技能1：投矛射击[敌/就绪] / 护甲术[自/就绪]");
   assert.equal(view.summaryLines[5], "状态：无异常");
@@ -300,6 +319,12 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
     actionPending: false
   });
 
+  assert.deepEqual(view.stage, {
+    terrain: "grass",
+    title: "草野战场 · 英雄对决",
+    subtitle: "坐标 (0,0) · 无额外障碍",
+    badge: "PVP"
+  });
   assert.equal(view.summaryLines[2], "阶段：轮到对方");
   assert.equal(view.summaryLines[4], "技能：普通攻击");
   assert.equal(view.summaryLines[5], "状态：无异常");
@@ -432,4 +457,120 @@ test("buildBattlePanelViewModel hides unrevealed traps and disables skills while
   assert.equal(view.summaryLines.some((line) => line.includes("封咒符印 · 禁魔 · 已触发")), true);
   assert.equal(view.actions[3]!.enabled, false);
   assert.equal(view.actions[3]!.subtitle, "已被禁魔，无法施法");
+});
+
+test("buildBattlePanelViewModel derives stage terrain from encounter position and only counts visible hazards", () => {
+  const update = createBaseUpdate();
+  update.world.map = {
+    width: 3,
+    height: 2,
+    tiles: [createTile({ x: 0, y: 0 }), createTile({ x: 2, y: 1 }, "sand")]
+  };
+  update.battle = {
+    id: "battle-hero-1-vs-neutral-2",
+    round: 4,
+    lanes: 2,
+    activeUnitId: "hero-1-stack",
+    turnOrder: ["hero-1-stack", "neutral-2-stack"],
+    units: {
+      "hero-1-stack": {
+        id: "hero-1-stack",
+        templateId: "hero_guard_basic",
+        camp: "attacker",
+        lane: 0,
+        stackName: "Guard",
+        initiative: 7,
+        attack: 4,
+        defense: 4,
+        minDamage: 1,
+        maxDamage: 2,
+        count: 7,
+        currentHp: 9,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false,
+        skills: [],
+        statusEffects: []
+      },
+      "neutral-2-stack": {
+        id: "neutral-2-stack",
+        templateId: "wolf_pack",
+        camp: "defender",
+        lane: 1,
+        stackName: "Wolf",
+        initiative: 6,
+        attack: 3,
+        defense: 2,
+        minDamage: 1,
+        maxDamage: 2,
+        count: 5,
+        currentHp: 6,
+        maxHp: 6,
+        hasRetaliated: false,
+        defending: false,
+        skills: [],
+        statusEffects: []
+      }
+    },
+    environment: [
+      {
+        id: "hazard-blocker-0",
+        kind: "blocker",
+        lane: 0,
+        name: "沙丘裂脊",
+        description: "高耸沙脊阻断冲锋路线。"
+      },
+      {
+        id: "hazard-trap-0",
+        kind: "trap",
+        lane: 1,
+        effect: "damage",
+        name: "流沙陷坑",
+        description: "暴露后的陷坑会吞噬贸然前冲的单位。",
+        damage: 3,
+        charges: 1,
+        revealed: true,
+        triggered: false,
+        grantedStatusId: "slowed",
+        triggeredByCamp: "both"
+      },
+      {
+        id: "hazard-hidden-0",
+        kind: "trap",
+        lane: 1,
+        effect: "slow",
+        name: "埋沙绊索",
+        description: "未暴露前不会出现在战场情报中。",
+        damage: 0,
+        charges: 1,
+        revealed: false,
+        triggered: false,
+        grantedStatusId: "slowed",
+        triggeredByCamp: "both"
+      }
+    ],
+    log: [],
+    rng: {
+      seed: 7,
+      cursor: 0
+    },
+    worldHeroId: "hero-1",
+    neutralArmyId: "neutral-2",
+    encounterPosition: { x: 2, y: 1 }
+  };
+
+  const view = buildBattlePanelViewModel({
+    update,
+    timelineEntries: [],
+    controlledCamp: "attacker",
+    selectedTargetId: "neutral-2-stack",
+    actionPending: false
+  });
+
+  assert.deepEqual(view.stage, {
+    terrain: "sand",
+    title: "沙原战场 · 中立遭遇",
+    subtitle: "坐标 (2,1) · 1 阻挡 / 1 陷阱",
+    badge: "PVE"
+  });
 });

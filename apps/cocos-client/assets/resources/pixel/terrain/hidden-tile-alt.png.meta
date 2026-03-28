@@ -1,0 +1,42 @@
+{
+  "ver": "1.0.27",
+  "importer": "image",
+  "imported": true,
+  "uuid": "c7a68e7f-8895-4d5f-9360-467a5e5de3bb",
+  "files": [
+    ".json",
+    ".png"
+  ],
+  "subMetas": {
+    "6c48a": {
+      "importer": "texture",
+      "uuid": "c7a68e7f-8895-4d5f-9360-467a5e5de3bb@6c48a",
+      "displayName": "hidden-tile-alt",
+      "id": "6c48a",
+      "name": "texture",
+      "userData": {
+        "wrapModeS": "clamp-to-edge",
+        "wrapModeT": "clamp-to-edge",
+        "minfilter": "nearest",
+        "magfilter": "nearest",
+        "mipfilter": "none",
+        "anisotropy": 0,
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "c7a68e7f-8895-4d5f-9360-467a5e5de3bb",
+        "visible": false
+      },
+      "ver": "1.0.22",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "type": "texture",
+    "fixAlphaTransparencyArtifacts": false,
+    "hasAlpha": true,
+    "redirect": "c7a68e7f-8895-4d5f-9360-467a5e5de3bb@6c48a"
+  }
+}

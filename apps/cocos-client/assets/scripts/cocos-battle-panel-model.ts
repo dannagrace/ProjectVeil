@@ -1,4 +1,4 @@
-import type { BattleAction, BattleState, SessionUpdate } from "./VeilCocosSession.ts";
+import type { BattleAction, BattleState, SessionUpdate, TerrainType, Vec2 } from "./VeilCocosSession.ts";
 
 export type BattleCamp = "attacker" | "defender";
 
@@ -43,8 +43,16 @@ export interface BattlePanelFriendlyItem {
   badge: string;
 }
 
+export interface BattlePanelStageView {
+  terrain: TerrainType;
+  title: string;
+  subtitle: string;
+  badge: string;
+}
+
 export interface BattlePanelViewModel {
   title: string;
+  stage: BattlePanelStageView | null;
   summaryLines: string[];
   orderLines: string[];
   friendlyLines: string[];
@@ -60,6 +68,7 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
   if (!battle) {
     return {
       title: "战斗面板",
+      stage: null,
       summaryLines: ["当前没有战斗。"],
       orderLines: [],
       friendlyLines: [],
@@ -142,6 +151,7 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
 
   return {
     title: "战斗面板",
+    stage: buildBattleStageView(state.update, battle),
     summaryLines: [
       `${battle.id} · 第 ${battle.round} 回合`,
       `阵营：${controlLabel}`,
@@ -159,6 +169,86 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     actions,
     idle: false
   };
+}
+
+function buildBattleStageView(update: SessionUpdate | null, battle: BattleState): BattlePanelStageView {
+  const encounterPosition = resolveEncounterPosition(update, battle);
+  const terrain = resolveEncounterTerrain(update, encounterPosition);
+  const title = `${formatBattleTerrainLabel(terrain)} · ${formatEncounterLabel(battle)}`;
+  const subtitleParts = [
+    encounterPosition ? `坐标 (${encounterPosition.x},${encounterPosition.y})` : null,
+    formatHazardSummary(battle)
+  ].filter((part): part is string => Boolean(part));
+
+  return {
+    terrain,
+    title,
+    subtitle: subtitleParts.join(" · "),
+    badge: battle.defenderHeroId ? "PVP" : battle.neutralArmyId ? "PVE" : "BATTLE"
+  };
+}
+
+function resolveEncounterPosition(update: SessionUpdate | null, battle: BattleState): Vec2 | null {
+  if (battle.encounterPosition) {
+    return battle.encounterPosition;
+  }
+
+  const heroPosition = update?.world.ownHeroes.find((hero) => hero.id === battle.worldHeroId)?.position;
+  return heroPosition ?? null;
+}
+
+function resolveEncounterTerrain(update: SessionUpdate | null, position: Vec2 | null): TerrainType {
+  if (!update || !position) {
+    return "unknown";
+  }
+
+  const tile = update.world.map.tiles.find(
+    (entry) => entry.position.x === position.x && entry.position.y === position.y
+  );
+  return tile?.terrain ?? "unknown";
+}
+
+function formatBattleTerrainLabel(terrain: TerrainType): string {
+  switch (terrain) {
+    case "grass":
+      return "草野战场";
+    case "dirt":
+      return "荒地战场";
+    case "sand":
+      return "沙原战场";
+    case "water":
+      return "水域战场";
+    default:
+      return "未知战场";
+  }
+}
+
+function formatEncounterLabel(battle: BattleState): string {
+  if (battle.defenderHeroId) {
+    return "英雄对决";
+  }
+  if (battle.neutralArmyId) {
+    return "中立遭遇";
+  }
+  return "战场交锋";
+}
+
+function formatHazardSummary(battle: BattleState): string {
+  const visibleHazards = (battle.environment ?? []).filter((hazard) => hazard.kind === "blocker" || hazard.revealed);
+  if (visibleHazards.length === 0) {
+    return "无额外障碍";
+  }
+
+  const blockers = visibleHazards.filter((hazard) => hazard.kind === "blocker").length;
+  const traps = visibleHazards.filter((hazard) => hazard.kind === "trap").length;
+  const parts: string[] = [];
+  if (blockers > 0) {
+    parts.push(`${blockers} 阻挡`);
+  }
+  if (traps > 0) {
+    parts.push(`${traps} 陷阱`);
+  }
+  return parts.join(" / ");
 }
 
 function collectUnitsForCamp(battle: BattleState, camp: BattleCamp) {

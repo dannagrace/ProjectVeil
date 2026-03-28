@@ -1,4 +1,4 @@
-import { createHeroProgressMeterView } from "../../../../packages/shared/src/hero-progression.ts";
+import { createHeroProgressMeterView } from "./project-shared/hero-progression.ts";
 import type { SessionUpdate } from "./VeilCocosSession.ts";
 
 export interface HeroProgressNotice {

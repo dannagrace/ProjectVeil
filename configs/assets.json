@@ -2,23 +2,37 @@
   "terrain": {
     "grass": {
       "default": "/assets/pixel/terrain/grass-tile.png",
-      "variants": ["/assets/pixel/terrain/grass-tile.png", "/assets/pixel/terrain/grass-tile-alt.png"]
+      "variants": [
+        "/assets/pixel/terrain/grass-tile.png",
+        "/assets/pixel/terrain/grass-tile-alt.png"
+      ]
     },
     "dirt": {
       "default": "/assets/pixel/terrain/dirt-tile.png",
-      "variants": ["/assets/pixel/terrain/dirt-tile.png", "/assets/pixel/terrain/dirt-tile-alt.png"]
+      "variants": [
+        "/assets/pixel/terrain/dirt-tile.png",
+        "/assets/pixel/terrain/dirt-tile-alt.png"
+      ]
     },
     "sand": {
       "default": "/assets/pixel/terrain/sand-tile.png",
-      "variants": ["/assets/pixel/terrain/sand-tile.png", "/assets/pixel/terrain/sand-tile-alt.png"]
+      "variants": [
+        "/assets/pixel/terrain/sand-tile.png",
+        "/assets/pixel/terrain/sand-tile-alt.png"
+      ]
     },
     "water": {
       "default": "/assets/pixel/terrain/water-tile.png",
-      "variants": ["/assets/pixel/terrain/water-tile.png", "/assets/pixel/terrain/water-tile-alt.png"]
+      "variants": [
+        "/assets/pixel/terrain/water-tile.png",
+        "/assets/pixel/terrain/water-tile-alt.png"
+      ]
     },
     "unknown": {
       "default": "/assets/pixel/terrain/fog-tile.png",
-      "variants": ["/assets/pixel/terrain/fog-tile.png"]
+      "variants": [
+        "/assets/pixel/terrain/fog-tile.png"
+      ]
     }
   },
   "resources": {
@@ -38,7 +52,7 @@
         "selected": "/assets/pixel/units/hero-guard-basic-selected.png",
         "hit": "/assets/pixel/units/hero-guard-basic-hit.png"
       },
-      "frame": "/assets/frames/unit-frame-ally.svg"
+      "frame": "/assets/pixel/frames/unit-frame-ally.png"
     },
     "wolf_pack": {
       "portrait": {
@@ -46,7 +60,7 @@
         "selected": "/assets/pixel/units/wolf-pack-selected.png",
         "hit": "/assets/pixel/units/wolf-pack-hit.png"
       },
-      "frame": "/assets/frames/unit-frame-enemy.svg"
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
     }
   },
   "markers": {
@@ -154,7 +168,7 @@
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/frames/unit-frame-ally.svg": {
+    "/assets/pixel/frames/unit-frame-ally.png": {
       "slot": "unit.hero_guard_basic.frame",
       "stage": "placeholder",
       "source": "generated"
@@ -174,7 +188,7 @@
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/frames/unit-frame-enemy.svg": {
+    "/assets/pixel/frames/unit-frame-enemy.png": {
       "slot": "unit.wolf_pack.frame",
       "stage": "placeholder",
       "source": "generated"
@@ -209,55 +223,270 @@
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/badges/faction-crown.svg": {
+    "/assets/pixel/badges/faction-crown.png": {
       "slot": "badge.factions.crown",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/badges/faction-wild.svg": {
+    "/assets/pixel/badges/faction-wild.png": {
       "slot": "badge.factions.wild",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/badges/rarity-common.svg": {
+    "/assets/pixel/badges/rarity-common.png": {
       "slot": "badge.rarities.common",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/badges/rarity-elite.svg": {
+    "/assets/pixel/badges/rarity-elite.png": {
       "slot": "badge.rarities.elite",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/badges/interaction-move.svg": {
+    "/assets/pixel/badges/interaction-move.png": {
       "slot": "badge.interactions.move",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/badges/interaction-pickup.svg": {
+    "/assets/pixel/badges/interaction-pickup.png": {
       "slot": "badge.interactions.pickup",
       "stage": "placeholder",
       "source": "generated"
     },
-    "/assets/badges/interaction-battle.svg": {
+    "/assets/pixel/badges/interaction-battle.png": {
       "slot": "badge.interactions.battle",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/heroes/hero-guard-basic.png": {
+      "slot": "hero.hero_guard_basic.portrait",
+      "stage": "placeholder",
+      "source": "generated",
+      "notes": "Generated pixel portrait scaffold for the primary crown hero."
+    },
+    "/assets/pixel/heroes/hero-ranger-serin.png": {
+      "slot": "hero.hero_ranger_serin.portrait",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/heroes/hero-oracle-lyra.png": {
+      "slot": "hero.hero_oracle_lyra.portrait",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/heroes/hero-forgeguard-borin.png": {
+      "slot": "hero.hero_forgeguard_borin.portrait",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/buildings/forge-hall.png": {
+      "slot": "showcase_building.forge_hall",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-terrain/grassland-tile.png": {
+      "slot": "showcase_terrain.grassland",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-terrain/mountain-tile.png": {
+      "slot": "showcase_terrain.mountain",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-terrain/water-tile.png": {
+      "slot": "showcase_terrain.water",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-terrain/desert-tile.png": {
+      "slot": "showcase_terrain.desert",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-terrain/snow-tile.png": {
+      "slot": "showcase_terrain.snow",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/sunlance-knight.png": {
+      "slot": "showcase_unit.sunlance_knight.idle",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/sunlance-knight-selected.png": {
+      "slot": "showcase_unit.sunlance_knight.selected",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/sunlance-knight-hit.png": {
+      "slot": "showcase_unit.sunlance_knight.hit",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/moss-stalker.png": {
+      "slot": "showcase_unit.moss_stalker.idle",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/moss-stalker-selected.png": {
+      "slot": "showcase_unit.moss_stalker.selected",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/moss-stalker-hit.png": {
+      "slot": "showcase_unit.moss_stalker.hit",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/ember-mage.png": {
+      "slot": "showcase_unit.ember_mage.idle",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/ember-mage-selected.png": {
+      "slot": "showcase_unit.ember_mage.selected",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/ember-mage-hit.png": {
+      "slot": "showcase_unit.ember_mage.hit",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/iron-walker.png": {
+      "slot": "showcase_unit.iron_walker.idle",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/iron-walker-selected.png": {
+      "slot": "showcase_unit.iron_walker.selected",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/iron-walker-hit.png": {
+      "slot": "showcase_unit.iron_walker.hit",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/dune-raider.png": {
+      "slot": "showcase_unit.dune_raider.idle",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/dune-raider-selected.png": {
+      "slot": "showcase_unit.dune_raider.selected",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/dune-raider-hit.png": {
+      "slot": "showcase_unit.dune_raider.hit",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/glacier-warden.png": {
+      "slot": "showcase_unit.glacier_warden.idle",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/glacier-warden-selected.png": {
+      "slot": "showcase_unit.glacier_warden.selected",
+      "stage": "placeholder",
+      "source": "generated"
+    },
+    "/assets/pixel/showcase-units/glacier-warden-hit.png": {
+      "slot": "showcase_unit.glacier_warden.hit",
       "stage": "placeholder",
       "source": "generated"
     }
   },
   "badges": {
     "factions": {
-      "crown": "/assets/badges/faction-crown.svg",
-      "wild": "/assets/badges/faction-wild.svg"
+      "crown": "/assets/pixel/badges/faction-crown.png",
+      "wild": "/assets/pixel/badges/faction-wild.png"
     },
     "rarities": {
-      "common": "/assets/badges/rarity-common.svg",
-      "elite": "/assets/badges/rarity-elite.svg"
+      "common": "/assets/pixel/badges/rarity-common.png",
+      "elite": "/assets/pixel/badges/rarity-elite.png"
     },
     "interactions": {
-      "move": "/assets/badges/interaction-move.svg",
-      "pickup": "/assets/badges/interaction-pickup.svg",
-      "battle": "/assets/badges/interaction-battle.svg"
+      "move": "/assets/pixel/badges/interaction-move.png",
+      "pickup": "/assets/pixel/badges/interaction-pickup.png",
+      "battle": "/assets/pixel/badges/interaction-battle.png"
     }
+  },
+  "heroes": {
+    "hero_guard_basic": {
+      "portrait": "/assets/pixel/heroes/hero-guard-basic.png"
+    },
+    "hero_ranger_serin": {
+      "portrait": "/assets/pixel/heroes/hero-ranger-serin.png"
+    },
+    "hero_oracle_lyra": {
+      "portrait": "/assets/pixel/heroes/hero-oracle-lyra.png"
+    },
+    "hero_forgeguard_borin": {
+      "portrait": "/assets/pixel/heroes/hero-forgeguard-borin.png"
+    }
+  },
+  "showcaseUnits": {
+    "sunlance_knight": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/sunlance-knight.png",
+        "selected": "/assets/pixel/showcase-units/sunlance-knight-selected.png",
+        "hit": "/assets/pixel/showcase-units/sunlance-knight-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-ally.png"
+    },
+    "moss_stalker": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/moss-stalker.png",
+        "selected": "/assets/pixel/showcase-units/moss-stalker-selected.png",
+        "hit": "/assets/pixel/showcase-units/moss-stalker-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "ember_mage": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/ember-mage.png",
+        "selected": "/assets/pixel/showcase-units/ember-mage-selected.png",
+        "hit": "/assets/pixel/showcase-units/ember-mage-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-ally.png"
+    },
+    "iron_walker": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/iron-walker.png",
+        "selected": "/assets/pixel/showcase-units/iron-walker-selected.png",
+        "hit": "/assets/pixel/showcase-units/iron-walker-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "dune_raider": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/dune-raider.png",
+        "selected": "/assets/pixel/showcase-units/dune-raider-selected.png",
+        "hit": "/assets/pixel/showcase-units/dune-raider-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "glacier_warden": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/glacier-warden.png",
+        "selected": "/assets/pixel/showcase-units/glacier-warden-selected.png",
+        "hit": "/assets/pixel/showcase-units/glacier-warden-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-ally.png"
+    }
+  },
+  "showcaseTerrain": {
+    "grassland": "/assets/pixel/showcase-terrain/grassland-tile.png",
+    "mountain": "/assets/pixel/showcase-terrain/mountain-tile.png",
+    "water": "/assets/pixel/showcase-terrain/water-tile.png",
+    "desert": "/assets/pixel/showcase-terrain/desert-tile.png",
+    "snow": "/assets/pixel/showcase-terrain/snow-tile.png"
+  },
+  "showcaseBuildings": {
+    "forge_hall": "/assets/pixel/buildings/forge-hall.png"
   }
 }

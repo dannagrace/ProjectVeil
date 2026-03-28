@@ -1065,6 +1065,8 @@ h1 {
   width: 44px;
   height: 44px;
   object-fit: contain;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 .object-card-empty {
@@ -1095,6 +1097,8 @@ h1 {
   width: 24px;
   height: 24px;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.16));
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 .object-card-value {

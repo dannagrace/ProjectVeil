@@ -18,7 +18,7 @@ import {
   type PlayerProgressionSnapshot,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress
-} from "../../../../packages/shared/src/index.ts";
+} from "./project-shared/index.ts";
 
 const LOBBY_PREFERENCES_STORAGE_KEY = "project-veil:lobby-preferences";
 const PLAYER_ACCOUNT_PREFIX = "project-veil:player-account";

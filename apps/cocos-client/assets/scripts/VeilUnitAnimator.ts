@@ -1,4 +1,4 @@
-import { _decorator, Animation, Component, Label, sp } from "cc";
+import { _decorator, Animation, Color, Component, Label, Sprite, UIOpacity, sp } from "cc";
 import {
   createUnitAnimationNameMap,
   resolveUnitAnimationName,
@@ -6,11 +6,17 @@ import {
   shouldLoopUnitAnimation,
   type UnitAnimationState
 } from "./unit-animation-config.ts";
+import type { CocosAnimationProfile } from "./cocos-presentation-config.ts";
+import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
+import { resolveUnitAnimationFallbackFrame } from "./cocos-unit-animation-fallback.ts";
 
 const { ccclass, property } = _decorator;
 
 @ccclass("ProjectVeilUnitAnimator")
 export class VeilUnitAnimator extends Component {
+  @property
+  templateId = "";
+
   @property
   spinePrefix = "";
 
@@ -72,17 +78,42 @@ export class VeilUnitAnimator extends Component {
   returnToIdleAfterOneShot = true;
 
   private currentState: UnitAnimationState = "idle";
+  private lastPixelFallbackReady = false;
+
+  applyProfile(profile: CocosAnimationProfile, templateId = this.templateId): void {
+    const templateChanged = this.templateId !== templateId;
+    this.templateId = templateId;
+    const pixelFallbackReady = this.hasPixelFallback(templateId);
+    this.fallbackPrefix = profile.fallbackPrefix;
+    this.spinePrefix = profile.spinePrefix;
+    this.clipPrefix = profile.clipPrefix;
+    this.spineIdleName = profile.spineNames.idle;
+    this.spineMoveName = profile.spineNames.move;
+    this.spineAttackName = profile.spineNames.attack;
+    this.spineHitName = profile.spineNames.hit;
+    this.spineVictoryName = profile.spineNames.victory;
+    this.spineDefeatName = profile.spineNames.defeat;
+    this.clipIdleName = profile.clipNames.idle;
+    this.clipMoveName = profile.clipNames.move;
+    this.clipAttackName = profile.clipNames.attack;
+    this.clipHitName = profile.clipNames.hit;
+    this.clipVictoryName = profile.clipNames.victory;
+    this.clipDefeatName = profile.clipNames.defeat;
+    this.attackReturnDelay = profile.returnTimings.attack;
+    this.hitReturnDelay = profile.returnTimings.hit;
+    this.victoryReturnDelay = profile.returnTimings.victory;
+    this.defeatReturnDelay = profile.returnTimings.defeat;
+    this.returnToIdleAfterOneShot = profile.returnToIdleAfterOneShot;
+    if (templateChanged || pixelFallbackReady !== this.lastPixelFallbackReady) {
+      this.lastPixelFallbackReady = pixelFallbackReady;
+      this.renderCurrentState();
+    }
+  }
 
   play(state: UnitAnimationState): void {
     this.unscheduleAllCallbacks();
     this.currentState = state;
-
-    if (!this.playSpine(state) && !this.playTimeline(state)) {
-      const label = this.node.getComponent(Label);
-      if (label) {
-        label.string = `${this.fallbackPrefix}\n[${state.toUpperCase()}]`;
-      }
-    }
+    this.renderCurrentState();
 
     if (!this.returnToIdleAfterOneShot) {
       return;
@@ -99,6 +130,19 @@ export class VeilUnitAnimator extends Component {
       this.scheduleOnce(() => {
         this.play("idle");
       }, returnDelay);
+    }
+  }
+
+  hasPixelFallback(templateId = this.templateId): boolean {
+    return resolveUnitAnimationFallbackFrame(templateId, this.currentState, getPixelSpriteAssets()).frame !== null;
+  }
+
+  private renderCurrentState(): void {
+    if (!this.playSpine(this.currentState) && !this.playTimeline(this.currentState) && !this.playPixelFallback(this.currentState)) {
+      const label = this.node.getComponent(Label);
+      if (label) {
+        label.string = `${this.fallbackPrefix}\n[${this.currentState.toUpperCase()}]`;
+      }
     }
   }
 
@@ -120,6 +164,55 @@ export class VeilUnitAnimator extends Component {
 
     animation.play(this.resolveClipAnimationName(state));
     return true;
+  }
+
+  private playPixelFallback(state: UnitAnimationState): boolean {
+    const targetNode = this.node.getChildByName("HeroIcon") ?? this.node;
+    const targetSprite = targetNode.getComponent(Sprite) ?? this.node.getComponent(Sprite);
+    if (!targetSprite || !this.templateId) {
+      return false;
+    }
+
+    const selection = resolveUnitAnimationFallbackFrame(this.templateId, state, getPixelSpriteAssets());
+    if (!selection.frame) {
+      return false;
+    }
+
+    targetNode.active = true;
+    targetSprite.spriteFrame = selection.frame;
+    targetSprite.color = this.resolvePixelFallbackColor(state);
+    targetNode.setScale(this.resolvePixelFallbackScale(state));
+    const opacity = targetNode.getComponent(UIOpacity);
+    if (opacity) {
+      opacity.opacity = 255;
+    }
+
+    const label = this.node.getComponent(Label);
+    if (label) {
+      label.string = "";
+    }
+
+    return true;
+  }
+
+  private resolvePixelFallbackScale(state: UnitAnimationState): number {
+    if (state === "attack" || state === "victory" || state === "move") {
+      return 1.06;
+    }
+    if (state === "hit" || state === "defeat") {
+      return 0.94;
+    }
+    return 1;
+  }
+
+  private resolvePixelFallbackColor(state: UnitAnimationState): Color {
+    if (state === "hit" || state === "defeat") {
+      return new Color(242, 188, 188, 255);
+    }
+    if (state === "victory") {
+      return new Color(252, 246, 210, 255);
+    }
+    return new Color(255, 255, 255, 255);
   }
 
   private resolveSpineAnimationName(state: UnitAnimationState): string {

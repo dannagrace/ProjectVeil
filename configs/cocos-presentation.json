@@ -1,0 +1,192 @@
+{
+  "animationProfiles": {
+    "hero_guard_basic": {
+      "fallbackPrefix": "Guard",
+      "spinePrefix": "hero_guard_basic_",
+      "clipPrefix": "hero_guard_basic_",
+      "deliveryMode": "fallback",
+      "assetStage": "placeholder",
+      "spineNames": {
+        "idle": "idle",
+        "move": "move",
+        "attack": "attack",
+        "hit": "hit",
+        "victory": "victory",
+        "defeat": "defeat"
+      },
+      "clipNames": {
+        "idle": "idle",
+        "move": "move",
+        "attack": "attack",
+        "hit": "hit",
+        "victory": "victory",
+        "defeat": "defeat"
+      },
+      "returnTimings": {
+        "attack": 0.42,
+        "hit": 0.24,
+        "victory": 0.82,
+        "defeat": 0.9
+      },
+      "returnToIdleAfterOneShot": true
+    },
+    "wolf_pack": {
+      "fallbackPrefix": "Wolf",
+      "spinePrefix": "wolf_pack_",
+      "clipPrefix": "wolf_pack_",
+      "deliveryMode": "fallback",
+      "assetStage": "placeholder",
+      "spineNames": {
+        "idle": "idle",
+        "move": "move",
+        "attack": "attack",
+        "hit": "hit",
+        "victory": "victory",
+        "defeat": "defeat"
+      },
+      "clipNames": {
+        "idle": "idle",
+        "move": "move",
+        "attack": "attack",
+        "hit": "hit",
+        "victory": "victory",
+        "defeat": "defeat"
+      },
+      "returnTimings": {
+        "attack": 0.34,
+        "hit": 0.2,
+        "victory": 0.7,
+        "defeat": 0.78
+      },
+      "returnToIdleAfterOneShot": true
+    }
+  },
+  "audio": {
+    "music": {
+      "explore": {
+        "waveform": "triangle",
+        "gain": 0.034,
+        "assetPath": "audio/explore-loop",
+        "assetStage": "placeholder",
+        "assetVolume": 0.54,
+        "attackMs": 24,
+        "releaseMs": 120,
+        "gapMs": 42,
+        "loopGapMs": 180,
+        "notes": [
+          { "frequency": 261.63, "durationMs": 220 },
+          { "frequency": 329.63, "durationMs": 220 },
+          { "frequency": 392, "durationMs": 320 },
+          { "frequency": 329.63, "durationMs": 220 },
+          { "frequency": 293.66, "durationMs": 220 },
+          { "frequency": 392, "durationMs": 360 }
+        ]
+      },
+      "battle": {
+        "waveform": "sawtooth",
+        "gain": 0.03,
+        "assetPath": "audio/battle-loop",
+        "assetStage": "placeholder",
+        "assetVolume": 0.58,
+        "attackMs": 18,
+        "releaseMs": 92,
+        "gapMs": 28,
+        "loopGapMs": 120,
+        "notes": [
+          { "frequency": 196, "durationMs": 180 },
+          { "frequency": 220, "durationMs": 180 },
+          { "frequency": 246.94, "durationMs": 180 },
+          { "frequency": 293.66, "durationMs": 280 },
+          { "frequency": 246.94, "durationMs": 180 },
+          { "frequency": 220, "durationMs": 260 }
+        ]
+      }
+    },
+    "cues": {
+      "attack": {
+        "waveform": "square",
+        "gain": 0.046,
+        "assetPath": "audio/attack",
+        "assetStage": "placeholder",
+        "assetVolume": 0.74,
+        "attackMs": 8,
+        "releaseMs": 70,
+        "gapMs": 18,
+        "loopGapMs": 0,
+        "notes": [
+          { "frequency": 310, "durationMs": 72 },
+          { "frequency": 220, "durationMs": 88 }
+        ]
+      },
+      "skill": {
+        "waveform": "triangle",
+        "gain": 0.044,
+        "assetPath": "audio/skill",
+        "assetStage": "placeholder",
+        "assetVolume": 0.76,
+        "attackMs": 10,
+        "releaseMs": 88,
+        "gapMs": 14,
+        "loopGapMs": 0,
+        "notes": [
+          { "frequency": 392, "durationMs": 90 },
+          { "frequency": 523.25, "durationMs": 110 },
+          { "frequency": 659.25, "durationMs": 140 }
+        ]
+      },
+      "hit": {
+        "waveform": "sawtooth",
+        "gain": 0.034,
+        "assetPath": "audio/hit",
+        "assetStage": "placeholder",
+        "assetVolume": 0.66,
+        "attackMs": 4,
+        "releaseMs": 68,
+        "gapMs": 0,
+        "loopGapMs": 0,
+        "notes": [
+          { "frequency": 170, "durationMs": 120 }
+        ]
+      },
+      "level_up": {
+        "waveform": "triangle",
+        "gain": 0.05,
+        "assetPath": "audio/level-up",
+        "assetStage": "placeholder",
+        "assetVolume": 0.82,
+        "attackMs": 16,
+        "releaseMs": 120,
+        "gapMs": 12,
+        "loopGapMs": 0,
+        "notes": [
+          { "frequency": 523.25, "durationMs": 90 },
+          { "frequency": 659.25, "durationMs": 110 },
+          { "frequency": 783.99, "durationMs": 160 }
+        ]
+      }
+    }
+  },
+  "loadingBudget": {
+    "targetMs": 1800,
+    "hardLimitMs": 3000,
+    "preloadGroups": {
+      "boot": [
+        "pixel/terrain/*",
+        "pixel/showcase-terrain/*",
+        "pixel/markers/*",
+        "pixel/heroes/*",
+        "pixel/showcase-units/*",
+        "pixel/resources/*",
+        "pixel/buildings/*",
+        "pixel/badges/*",
+        "pixel/ui/hud-icon",
+        "pixel/ui/timeline-icon"
+      ],
+      "battle": [
+        "pixel/units/*",
+        "pixel/frames/*",
+        "pixel/ui/battle-icon"
+      ]
+    }
+  }
+}

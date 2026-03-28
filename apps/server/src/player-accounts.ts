@@ -281,6 +281,10 @@ function normalizeLoginId(loginId?: string | null): string | undefined {
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
+function isEphemeralGuestPlayerId(playerId: string): boolean {
+  return playerId.startsWith("guest-");
+}
+
 function createLocalModeAccount(input: {
   playerId?: string | null | undefined;
   displayName?: string | null | undefined;
@@ -713,6 +717,16 @@ export function registerPlayerAccountRoutes(
     try {
       const account = await store.loadPlayerAccount(playerId);
       if (!account) {
+        if (isEphemeralGuestPlayerId(playerId)) {
+          sendJson(response, 200, {
+            account: toPublicPlayerAccount(
+              createLocalModeAccount({
+                playerId
+              })
+            )
+          });
+          return;
+        }
         sendJson(response, 404, {
           error: {
             code: "player_account_not_found",
@@ -745,6 +759,12 @@ export function registerPlayerAccountRoutes(
     try {
       const account = await store.loadPlayerAccount(playerId);
       if (!account) {
+        if (isEphemeralGuestPlayerId(playerId)) {
+          sendJson(response, 200, {
+            items: []
+          });
+          return;
+        }
         sendJson(response, 404, {
           error: {
             code: "player_account_not_found",
@@ -781,6 +801,19 @@ export function registerPlayerAccountRoutes(
     try {
       const account = await store.loadPlayerAccount(playerId);
       if (!account) {
+        if (isEphemeralGuestPlayerId(playerId)) {
+          sendJson(
+            response,
+            200,
+            toEventLogResponse(
+              createLocalModeAccount({
+                playerId
+              }),
+              request
+            )
+          );
+          return;
+        }
         sendJson(response, 404, {
           error: {
             code: "player_account_not_found",
@@ -828,6 +861,19 @@ export function registerPlayerAccountRoutes(
     try {
       const account = await store.loadPlayerAccount(playerId);
       if (!account) {
+        if (isEphemeralGuestPlayerId(playerId)) {
+          sendJson(
+            response,
+            200,
+            toAchievementResponse(
+              createLocalModeAccount({
+                playerId
+              }),
+              request
+            )
+          );
+          return;
+        }
         sendJson(response, 404, {
           error: {
             code: "player_account_not_found",
@@ -878,6 +924,19 @@ export function registerPlayerAccountRoutes(
     try {
       const account = await store.loadPlayerAccount(playerId);
       if (!account) {
+        if (isEphemeralGuestPlayerId(playerId)) {
+          sendJson(
+            response,
+            200,
+            toEventLogResponse(
+              createLocalModeAccount({
+                playerId
+              }),
+              request
+            )
+          );
+          return;
+        }
         sendJson(response, 404, {
           error: {
             code: "player_account_not_found",
@@ -950,6 +1009,19 @@ export function registerPlayerAccountRoutes(
     try {
       const account = await store.loadPlayerAccount(playerId);
       if (!account) {
+        if (isEphemeralGuestPlayerId(playerId)) {
+          sendJson(
+            response,
+            200,
+            toAchievementResponse(
+              createLocalModeAccount({
+                playerId
+              }),
+              request
+            )
+          );
+          return;
+        }
         sendJson(response, 404, {
           error: {
             code: "player_account_not_found",
@@ -989,6 +1061,19 @@ export function registerPlayerAccountRoutes(
     try {
       const account = await store.loadPlayerAccount(playerId);
       if (!account) {
+        if (isEphemeralGuestPlayerId(playerId)) {
+          sendJson(
+            response,
+            200,
+            toProgressionResponse(
+              createLocalModeAccount({
+                playerId
+              }),
+              parseLimit(request)
+            )
+          );
+          return;
+        }
         sendJson(response, 404, {
           error: {
             code: "player_account_not_found",

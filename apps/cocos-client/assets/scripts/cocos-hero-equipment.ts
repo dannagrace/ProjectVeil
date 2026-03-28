@@ -5,7 +5,7 @@ import {
   getEquipmentDefinition,
   type EquipmentType,
   type HeroState
-} from "../../../../packages/shared/src/index.ts";
+} from "./project-shared/index.ts";
 import type { HeroView } from "./VeilCocosSession.ts";
 
 export interface CocosEquipmentInventoryItem {

@@ -1,13 +1,14 @@
-import { _decorator, Color, Component, EventMouse, EventTouch, Graphics, input, Input, Label, Node, Sprite, UIOpacity, UITransform, v3, view } from "cc";
+import { _decorator, Color, Component, EventMouse, EventTouch, Graphics, input, Input, Label, Node, Sprite, SpriteFrame, UIOpacity, UITransform, v3, view } from "cc";
 import type { PlayerTileView, SessionUpdate, Vec2 } from "./VeilCocosSession.ts";
 import { buildFogOverlayStyle, createTileLookup, fogEdgeMarkerForTile } from "./cocos-map-visuals.ts";
-import { buildCocosTileMarkerText } from "./cocos-object-visuals.ts";
+import { resolveCocosTileMarkerVisual, type CocosTileMarkerVisual } from "./cocos-object-visuals.ts";
 import { VeilFogOverlay } from "./VeilFogOverlay.ts";
 import { VeilTilemapRenderer } from "./VeilTilemapRenderer.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import type { UnitAnimationState } from "./unit-animation-config.ts";
 import { VeilUnitAnimator } from "./VeilUnitAnimator.ts";
-import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
+import { getPixelSpriteAssets, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
+import { resolveUnitAnimationProfile } from "./cocos-presentation-config.ts";
 
 const { ccclass, property } = _decorator;
 
@@ -40,6 +41,37 @@ interface VeilMapBoardOptions {
   onInputDebug?: (message: string) => void;
 }
 
+interface ObjectSpriteNodeView {
+  node: Node;
+  sprite: Sprite;
+  spriteOpacity: UIOpacity;
+}
+
+interface ObjectMarkerNodeView extends ObjectSpriteNodeView {
+  label: Label;
+  graphics: Graphics;
+  spriteNode: Node;
+  factionBadge: ObjectSpriteNodeView;
+  rarityBadge: ObjectSpriteNodeView;
+  interactionBadge: ObjectSpriteNodeView;
+}
+
+interface TileNodeView {
+  node: Node;
+  label: Label;
+  fogOverlay: VeilFogOverlay;
+  graphics: Graphics;
+  spriteNode: Node;
+  sprite: Sprite;
+  spriteOpacity: UIOpacity;
+}
+
+interface FeedbackNodeView {
+  node: Node;
+  label: Label;
+  graphics: Graphics;
+}
+
 @ccclass("ProjectVeilMapBoard")
 export class VeilMapBoard extends Component {
   @property
@@ -58,15 +90,9 @@ export class VeilMapBoard extends Component {
   private tilemapRenderer: VeilTilemapRenderer | null = null;
   private currentUpdate: SessionUpdate | null = null;
   private onTileSelected: ((tile: PlayerTileView) => void) | undefined;
-  private readonly tileNodes = new Map<
-    string,
-    { node: Node; label: Label; fogOverlay: VeilFogOverlay; graphics: Graphics; spriteNode: Node; sprite: Sprite; spriteOpacity: UIOpacity }
-  >();
-  private readonly objectNodes = new Map<
-    string,
-    { node: Node; label: Label; graphics: Graphics; spriteNode: Node; sprite: Sprite; spriteOpacity: UIOpacity }
-  >();
-  private readonly feedbackNodes = new Map<string, { node: Node; label: Label; graphics: Graphics }>();
+  private readonly tileNodes = new Map<string, TileNodeView>();
+  private readonly objectNodes = new Map<string, ObjectMarkerNodeView>();
+  private readonly feedbackNodes = new Map<string, FeedbackNodeView>();
   private readonly activeFeedback = new Map<string, { text: string; expiresAt: number }>();
   private readonly tilePulseTokens = new Map<string, number>();
   private readonly objectPulseTokens = new Map<string, number>();
@@ -85,7 +111,7 @@ export class VeilMapBoard extends Component {
     this.ensureGlobalPointerBinding();
     this.ensureHeroNode();
     this.tilemapRenderer = this.node.getComponent(VeilTilemapRenderer) ?? this.node.addComponent(VeilTilemapRenderer);
-    void loadPlaceholderSpriteAssets().then(() => {
+    void loadPixelSpriteAssets("boot").then(() => {
       if (this.currentUpdate) {
         this.render(this.currentUpdate);
       }
@@ -287,7 +313,7 @@ export class VeilMapBoard extends Component {
       heroLabel.color = HERO_LABEL;
       heroLabel.string = "LV 1";
       const heroAnimator = heroNode.getComponent(VeilUnitAnimator) ?? heroNode.addComponent(VeilUnitAnimator);
-      heroAnimator.fallbackPrefix = "Hero";
+      heroAnimator.applyProfile(resolveUnitAnimationProfile("hero_guard_basic"), "hero_guard_basic");
 
       this.heroNode = heroNode;
       this.heroIconNode = heroIconNode;
@@ -319,9 +345,7 @@ export class VeilMapBoard extends Component {
     }
   }
 
-  private ensureTileNode(
-    tile: PlayerTileView
-  ): { node: Node; label: Label; fogOverlay: VeilFogOverlay; graphics: Graphics; spriteNode: Node; sprite: Sprite; spriteOpacity: UIOpacity } {
+  private ensureTileNode(tile: PlayerTileView): TileNodeView {
     const key = this.tileKey(tile.position);
     const existing = this.tileNodes.get(key);
     if (existing) {
@@ -346,7 +370,16 @@ export class VeilMapBoard extends Component {
     const sprite = spriteNode.getComponent(Sprite) ?? spriteNode.addComponent(Sprite);
     const spriteOpacity = spriteNode.getComponent(UIOpacity) ?? spriteNode.addComponent(UIOpacity);
 
-    const label = tileNode.getComponent(Label) ?? tileNode.addComponent(Label);
+    let labelNode = tileNode.getChildByName("TileLabel");
+    if (!labelNode) {
+      labelNode = new Node("TileLabel");
+      labelNode.parent = tileNode;
+    }
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(this.tileSize - 16, this.tileSize - 16);
+    labelNode.setPosition(0, 0, 0.2);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
     label.fontSize = 14;
     label.lineHeight = 16;
     label.string = "";
@@ -659,17 +692,21 @@ export class VeilMapBoard extends Component {
     }
 
     this.heroNode.active = true;
+    this.heroAnimator?.applyProfile(resolveUnitAnimationProfile(hero.armyTemplateId), hero.armyTemplateId);
     this.heroNode.setPosition(
       hero.position.x * this.tileSize - width / 2 + this.tileSize / 2,
       height / 2 - hero.position.y * this.tileSize - this.tileSize / 2,
       1
     );
     this.paintHeroBadge();
-    const heroIcon = getPlaceholderSpriteAssets()?.icons.hero ?? null;
+    const usesPixelFallback = this.heroAnimator?.hasPixelFallback(hero.armyTemplateId) ?? false;
+    const heroIcon = usesPixelFallback ? null : getPixelSpriteAssets()?.icons.hero ?? null;
     if (this.heroIconNode && this.heroIconSprite && this.heroIconOpacity) {
-      this.heroIconNode.active = Boolean(heroIcon);
-      this.heroIconSprite.spriteFrame = heroIcon;
-      this.heroIconOpacity.opacity = heroIcon ? 255 : 0;
+      this.heroIconNode.active = usesPixelFallback || Boolean(heroIcon);
+      if (heroIcon) {
+        this.heroIconSprite.spriteFrame = heroIcon;
+      }
+      this.heroIconOpacity.opacity = usesPixelFallback || heroIcon ? 255 : 0;
     }
     this.heroLabel.string = heroIcon ? `Lv ${hero.progression.level}` : `${hero.name}\nLV ${hero.progression.level}`;
   }
@@ -677,10 +714,10 @@ export class VeilMapBoard extends Component {
   private renderObjectMarker(tile: PlayerTileView, width: number, height: number, usesTilemapRenderer: boolean): void {
     const hero = this.activeHero();
     const isOwnHeroTile = Boolean(hero && hero.position.x === tile.position.x && hero.position.y === tile.position.y);
-    const markerText = buildCocosTileMarkerText(tile);
+    const markerVisual = resolveCocosTileMarkerVisual(tile);
     const key = this.tileKey(tile.position);
 
-    if (!markerText || tile.fog === "hidden" || isOwnHeroTile) {
+    if (!markerVisual || tile.fog === "hidden" || isOwnHeroTile) {
       const node = this.objectNodes.get(key);
       if (node) {
         node.node.active = false;
@@ -690,23 +727,31 @@ export class VeilMapBoard extends Component {
 
     const objectNode = this.ensureObjectNode(key);
     objectNode.node.active = true;
-    objectNode.label.fontSize = usesTilemapRenderer ? Math.max(10, Math.floor(this.tileSize * 0.16)) : Math.max(9, Math.floor(this.tileSize * 0.15));
-    objectNode.label.lineHeight = usesTilemapRenderer ? Math.max(12, Math.floor(this.tileSize * 0.18)) : Math.max(10, Math.floor(this.tileSize * 0.16));
-    objectNode.label.string = "";
+    objectNode.label.fontSize = usesTilemapRenderer ? Math.max(8, Math.floor(this.tileSize * 0.12)) : Math.max(8, Math.floor(this.tileSize * 0.11));
+    objectNode.label.lineHeight = usesTilemapRenderer ? Math.max(10, Math.floor(this.tileSize * 0.14)) : Math.max(10, Math.floor(this.tileSize * 0.13));
+    const labelTransform = objectNode.label.node.getComponent(UITransform) ?? objectNode.label.node.addComponent(UITransform);
     const transform = objectNode.node.getComponent(UITransform) ?? objectNode.node.addComponent(UITransform);
-    const chipSize = Math.max(34, Math.floor(this.tileSize * 0.56));
+    const chipSize = Math.max(36, Math.floor(this.tileSize * 0.58));
     transform.setContentSize(chipSize, chipSize);
+    labelTransform.setContentSize(chipSize - 10, Math.max(16, Math.floor(chipSize * 0.34)));
+    objectNode.label.node.setPosition(0, 0, 0.2);
     const spriteTransform = objectNode.spriteNode.getComponent(UITransform) ?? objectNode.spriteNode.addComponent(UITransform);
-    spriteTransform.setContentSize(Math.max(24, Math.floor(chipSize * 0.76)), Math.max(24, Math.floor(chipSize * 0.76)));
-    this.paintObjectChip(objectNode.graphics, markerText);
-    this.syncObjectSprite(objectNode, markerText);
+    spriteTransform.setContentSize(Math.max(20, Math.floor(chipSize * 0.54)), Math.max(20, Math.floor(chipSize * 0.54)));
+    objectNode.spriteNode.setPosition(0, 1, 0.1);
+    this.layoutObjectBadgeNodes(objectNode, chipSize);
+    this.paintObjectChip(objectNode.graphics, markerVisual);
+    const hasPixelAssets = Boolean(getPixelSpriteAssets());
+    const hasSpriteFrame = this.syncObjectSprite(
+      { node: objectNode.spriteNode, sprite: objectNode.sprite, spriteOpacity: objectNode.spriteOpacity },
+      markerVisual
+    );
+    this.syncObjectBadges(objectNode, markerVisual);
+    objectNode.label.string = hasSpriteFrame || (!hasPixelAssets && markerVisual.iconKey !== null) ? "" : markerVisual.fallbackLabel;
     objectNode.node.setPosition(
       tile.position.x * this.tileSize - width / 2 + this.tileSize * 0.28,
       height / 2 - tile.position.y * this.tileSize - this.tileSize * 0.28,
       usesTilemapRenderer ? 1 : 0.5
     );
-    this.bindTileSelection(objectNode.node, tile.position);
-    this.bindTileSelection(objectNode.spriteNode, tile.position);
   }
 
   private syncTileSprite(
@@ -719,7 +764,7 @@ export class VeilMapBoard extends Component {
       return;
     }
 
-    const assets = getPlaceholderSpriteAssets();
+    const assets = getPixelSpriteAssets();
     const frame = this.resolveTileSpriteFrame(tile, assets);
     if (!frame) {
       tileView.spriteNode.active = false;
@@ -733,7 +778,7 @@ export class VeilMapBoard extends Component {
 
   private resolveTileSpriteFrame(
     tile: PlayerTileView,
-    assets: ReturnType<typeof getPlaceholderSpriteAssets>
+    assets: ReturnType<typeof getPixelSpriteAssets>
   ) {
     if (!assets) {
       return null;
@@ -759,50 +804,64 @@ export class VeilMapBoard extends Component {
     }
   }
 
-  private syncObjectSprite(
-    objectNode: { spriteNode: Node; sprite: Sprite; spriteOpacity: UIOpacity },
-    markerText: string
-  ): void {
-    const assets = getPlaceholderSpriteAssets();
-    const frame = this.resolveObjectSpriteFrame(markerText, assets);
+  private syncObjectSprite(objectNode: ObjectSpriteNodeView, markerVisual: CocosTileMarkerVisual): boolean {
+    const assets = getPixelSpriteAssets();
+    const frame = this.resolveObjectSpriteFrame(markerVisual, assets);
     if (!frame) {
-      objectNode.spriteNode.active = false;
-      return;
+      objectNode.node.active = false;
+      return false;
     }
 
-    objectNode.spriteNode.active = true;
+    objectNode.node.active = true;
     objectNode.sprite.spriteFrame = frame;
     objectNode.spriteOpacity.opacity = 255;
+    return true;
   }
 
   private resolveObjectSpriteFrame(
-    markerText: string,
-    assets: ReturnType<typeof getPlaceholderSpriteAssets>
+    markerVisual: CocosTileMarkerVisual,
+    assets: ReturnType<typeof getPixelSpriteAssets>
   ) {
     if (!assets) {
       return null;
     }
 
-    switch (markerText) {
-      case "+W":
+    switch (markerVisual.iconKey) {
+      case "wood":
         return assets.icons.wood;
-      case "+$":
+      case "gold":
         return assets.icons.gold;
-      case "+O":
+      case "ore":
         return assets.icons.ore;
-      case "!M":
+      case "neutral":
         return assets.icons.neutral;
-      case "!H":
+      case "hero":
         return assets.icons.hero;
-      case ">R":
+      case "recruitment":
         return assets.icons.recruitment;
-      case ">S":
+      case "shrine":
         return assets.icons.shrine;
-      case ">M":
+      case "mine":
         return assets.icons.mine;
       default:
         return null;
     }
+  }
+
+  private syncObjectBadges(objectNode: ObjectMarkerNodeView, markerVisual: CocosTileMarkerVisual): void {
+    const assets = getPixelSpriteAssets();
+    this.syncObjectBadge(
+      objectNode.factionBadge,
+      markerVisual.faction ? assets?.badges.factions[markerVisual.faction] ?? null : null
+    );
+    this.syncObjectBadge(objectNode.rarityBadge, assets?.badges.rarities[markerVisual.rarity] ?? null);
+    this.syncObjectBadge(objectNode.interactionBadge, assets?.badges.interactions[markerVisual.interactionType] ?? null);
+  }
+
+  private syncObjectBadge(badgeNode: ObjectSpriteNodeView, frame: SpriteFrame | null): void {
+    badgeNode.node.active = Boolean(frame);
+    badgeNode.sprite.spriteFrame = frame;
+    badgeNode.spriteOpacity.opacity = frame ? 255 : 0;
   }
 
   private pickVariant<T>(variants: Array<T | null>, variant: number): T | null {
@@ -813,7 +872,7 @@ export class VeilMapBoard extends Component {
     return variants[variant % variants.length] ?? variants.find((entry) => entry !== null) ?? null;
   }
 
-  private ensureFeedbackNode(key: string): { node: Node; label: Label; graphics: Graphics } {
+  private ensureFeedbackNode(key: string): FeedbackNodeView {
     const existing = this.feedbackNodes.get(key);
     if (existing) {
       return existing;
@@ -825,7 +884,16 @@ export class VeilMapBoard extends Component {
     const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
     transform.setContentSize(this.tileSize, 20);
 
-    const label = node.getComponent(Label) ?? node.addComponent(Label);
+    let labelNode = node.getChildByName("Label");
+    if (!labelNode) {
+      labelNode = new Node("Label");
+      labelNode.parent = node;
+    }
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(this.tileSize - 8, 18);
+    labelNode.setPosition(0, 0, 0.2);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
     label.fontSize = 14;
     label.lineHeight = 16;
     label.string = "";
@@ -837,9 +905,7 @@ export class VeilMapBoard extends Component {
     return created;
   }
 
-  private ensureObjectNode(
-    key: string
-  ): { node: Node; label: Label; graphics: Graphics; spriteNode: Node; sprite: Sprite; spriteOpacity: UIOpacity } {
+  private ensureObjectNode(key: string): ObjectMarkerNodeView {
     const existing = this.objectNodes.get(key);
     if (existing) {
       return existing;
@@ -851,7 +917,16 @@ export class VeilMapBoard extends Component {
     const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
     transform.setContentSize(this.tileSize - 6, 26);
 
-    const label = node.getComponent(Label) ?? node.addComponent(Label);
+    let labelNode = node.getChildByName("Label");
+    if (!labelNode) {
+      labelNode = new Node("Label");
+      labelNode.parent = node;
+    }
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(this.tileSize - 12, 18);
+    labelNode.setPosition(0, 0, 0.2);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
     label.fontSize = 10;
     label.lineHeight = 12;
     label.string = "";
@@ -867,9 +942,50 @@ export class VeilMapBoard extends Component {
     const sprite = spriteNode.getComponent(Sprite) ?? spriteNode.addComponent(Sprite);
     const spriteOpacity = spriteNode.getComponent(UIOpacity) ?? spriteNode.addComponent(UIOpacity);
 
-    const created = { node, label, graphics, spriteNode, sprite, spriteOpacity };
+    const factionBadge = this.createObjectBadgeNode(node, `FactionBadge-${key}`);
+    const rarityBadge = this.createObjectBadgeNode(node, `RarityBadge-${key}`);
+    const interactionBadge = this.createObjectBadgeNode(node, `InteractionBadge-${key}`);
+
+    const created = {
+      node,
+      label,
+      graphics,
+      spriteNode,
+      sprite,
+      spriteOpacity,
+      factionBadge,
+      rarityBadge,
+      interactionBadge
+    };
     this.objectNodes.set(key, created);
+    this.bindTileSelection(node, this.positionFromKey(key));
+    this.bindTileSelection(spriteNode, this.positionFromKey(key));
     return created;
+  }
+
+  private createObjectBadgeNode(parent: Node, name: string): ObjectSpriteNodeView {
+    const node = new Node(name);
+    node.parent = parent;
+    assignUiLayer(node);
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(12, 12);
+    const sprite = node.getComponent(Sprite) ?? node.addComponent(Sprite);
+    const spriteOpacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity);
+    node.active = false;
+    return { node, sprite, spriteOpacity };
+  }
+
+  private layoutObjectBadgeNodes(objectNode: ObjectMarkerNodeView, chipSize: number): void {
+    const badgeSize = Math.max(10, Math.floor(chipSize * 0.3));
+    this.setObjectBadgeLayout(objectNode.factionBadge, -chipSize * 0.24, chipSize * 0.22, badgeSize);
+    this.setObjectBadgeLayout(objectNode.rarityBadge, chipSize * 0.24, chipSize * 0.22, badgeSize);
+    this.setObjectBadgeLayout(objectNode.interactionBadge, 0, -chipSize * 0.24, badgeSize);
+  }
+
+  private setObjectBadgeLayout(badgeNode: ObjectSpriteNodeView, x: number, y: number, size: number): void {
+    const transform = badgeNode.node.getComponent(UITransform) ?? badgeNode.node.addComponent(UITransform);
+    transform.setContentSize(size, size);
+    badgeNode.node.setPosition(x, y, 0.2);
   }
 
   private renderFeedbackNodes(width: number, height: number): void {
@@ -946,7 +1062,7 @@ export class VeilMapBoard extends Component {
     const height = this.tileSize - 6;
     const radius = Math.max(8, Math.floor(this.tileSize * 0.16));
     const palette = this.resolveTilePalette(tile, isReachable, isHeroTile);
-    const usesPlaceholderSprite = Boolean(getPlaceholderSpriteAssets());
+    const usesPlaceholderSprite = Boolean(getPixelSpriteAssets());
 
     graphics.clear();
 
@@ -1037,8 +1153,8 @@ export class VeilMapBoard extends Component {
     graphics.fill();
   }
 
-  private paintObjectChip(graphics: Graphics, markerText: string): void {
-    const theme = this.resolveMarkerPalette(markerText);
+  private paintObjectChip(graphics: Graphics, markerVisual: CocosTileMarkerVisual): void {
+    const theme = this.resolveMarkerPalette(markerVisual);
     const transform = graphics.node.getComponent(UITransform) ?? graphics.node.addComponent(UITransform);
     const width = transform.width || 30;
     const height = transform.height || 18;
@@ -1057,7 +1173,9 @@ export class VeilMapBoard extends Component {
     graphics.lineWidth = 1.2;
     graphics.roundRect(-width / 2 + 1, -height / 2 + 1, width - 2, height - 2, Math.max(7, Math.floor(height / 2) - 1));
     graphics.stroke();
-    this.paintObjectIcon(graphics, markerText, width, height);
+    if (!getPixelSpriteAssets() && markerVisual.iconKey) {
+      this.paintObjectIcon(graphics, markerVisual.iconKey, width, height);
+    }
   }
 
   private paintFeedbackChip(graphics: Graphics): void {
@@ -1165,8 +1283,8 @@ export class VeilMapBoard extends Component {
     };
   }
 
-  private resolveMarkerPalette(markerText: string): { shadow: Color; base: Color; gloss: Color } {
-    if (markerText === "+W") {
+  private resolveMarkerPalette(markerVisual: CocosTileMarkerVisual): { shadow: Color; base: Color; gloss: Color } {
+    if (markerVisual.iconKey === "wood") {
       return {
         shadow: new Color(38, 26, 17, 140),
         base: new Color(126, 94, 59, 255),
@@ -1174,7 +1292,7 @@ export class VeilMapBoard extends Component {
       };
     }
 
-    if (markerText === "+$") {
+    if (markerVisual.iconKey === "gold") {
       return {
         shadow: new Color(53, 36, 12, 140),
         base: new Color(180, 137, 44, 255),
@@ -1182,7 +1300,7 @@ export class VeilMapBoard extends Component {
       };
     }
 
-    if (markerText === "+O") {
+    if (markerVisual.iconKey === "ore") {
       return {
         shadow: new Color(30, 33, 40, 140),
         base: new Color(108, 119, 137, 255),
@@ -1190,7 +1308,7 @@ export class VeilMapBoard extends Component {
       };
     }
 
-    if (markerText === "!M") {
+    if (markerVisual.iconKey === "neutral") {
       return {
         shadow: new Color(63, 24, 24, 140),
         base: new Color(150, 58, 58, 255),
@@ -1198,11 +1316,27 @@ export class VeilMapBoard extends Component {
       };
     }
 
-    if (markerText === "!H") {
+    if (markerVisual.iconKey === "hero") {
       return {
         shadow: new Color(58, 23, 27, 140),
         base: new Color(165, 74, 70, 255),
         gloss: new Color(222, 118, 97, 255)
+      };
+    }
+
+    if (markerVisual.faction === "crown") {
+      return {
+        shadow: new Color(24, 36, 51, 140),
+        base: new Color(79, 108, 142, 255),
+        gloss: new Color(132, 170, 214, 255)
+      };
+    }
+
+    if (markerVisual.interactionType === "pickup") {
+      return {
+        shadow: new Color(27, 40, 34, 140),
+        base: new Color(78, 129, 96, 255),
+        gloss: new Color(132, 186, 150, 255)
       };
     }
 
@@ -1315,8 +1449,13 @@ export class VeilMapBoard extends Component {
     graphics.fill();
   }
 
-  private paintObjectIcon(graphics: Graphics, markerText: string, width: number, height: number): void {
-    if (markerText === "+W") {
+  private paintObjectIcon(
+    graphics: Graphics,
+    iconKey: CocosTileMarkerVisual["iconKey"],
+    width: number,
+    height: number
+  ): void {
+    if (iconKey === "wood") {
       graphics.fillColor = new Color(245, 229, 202, 255);
       graphics.roundRect(-width * 0.22, -height * 0.05, width * 0.44, height * 0.14, 3);
       graphics.roundRect(-width * 0.24, -height * 0.22, width * 0.48, height * 0.14, 3);
@@ -1324,7 +1463,7 @@ export class VeilMapBoard extends Component {
       return;
     }
 
-    if (markerText === "+$") {
+    if (iconKey === "gold") {
       graphics.fillColor = new Color(252, 232, 137, 255);
       graphics.circle(0, 0, Math.min(width, height) * 0.18);
       graphics.fill();
@@ -1334,7 +1473,7 @@ export class VeilMapBoard extends Component {
       return;
     }
 
-    if (markerText === "+O") {
+    if (iconKey === "ore") {
       graphics.fillColor = new Color(225, 233, 242, 255);
       graphics.circle(-width * 0.1, -height * 0.02, Math.min(width, height) * 0.12);
       graphics.circle(width * 0.08, height * 0.04, Math.min(width, height) * 0.1);
@@ -1343,7 +1482,7 @@ export class VeilMapBoard extends Component {
       return;
     }
 
-    if (markerText === "!M") {
+    if (iconKey === "neutral") {
       graphics.fillColor = new Color(255, 233, 223, 255);
       graphics.roundRect(-width * 0.07, -height * 0.18, width * 0.14, height * 0.38, 3);
       graphics.fill();
@@ -1353,7 +1492,7 @@ export class VeilMapBoard extends Component {
       return;
     }
 
-    if (markerText === "!H") {
+    if (iconKey === "hero") {
       graphics.fillColor = new Color(255, 237, 201, 255);
       graphics.circle(-width * 0.12, height * 0.02, Math.min(width, height) * 0.08);
       graphics.circle(0, height * 0.1, Math.min(width, height) * 0.09);

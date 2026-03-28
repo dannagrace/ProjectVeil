@@ -16,7 +16,7 @@ import type {
   ResourceNode,
   UnitCatalogConfig,
   WorldGenerationConfig
-} from "./models";
+} from "./models.ts";
 
 let runtimeWorldConfig: WorldGenerationConfig = structuredClone(defaultWorldConfig as WorldGenerationConfig);
 let runtimeMapObjectsConfig: MapObjectsConfig = structuredClone(defaultMapObjectsConfig as MapObjectsConfig);

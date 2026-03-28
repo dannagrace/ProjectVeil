@@ -1,6 +1,23 @@
-import { _decorator, Color, Component, Graphics, Label, Node, UITransform } from "cc";
+import { _decorator, Color, Component, Graphics, Label, Node, Sprite, SpriteFrame, UITransform } from "cc";
 import type { CocosLobbyRoomSummary } from "./cocos-lobby.ts";
+import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
+import {
+  lobbyBuildingShowcaseEntries,
+  formatLobbyShowcasePhaseLabel,
+  lobbyTerrainShowcaseEntries,
+  nextLobbyShowcaseUnitPage,
+  resolveLobbyShowcaseEntries,
+  nextLobbyShowcasePhase,
+  resolveLobbyBuildingFrame,
+  resolveLobbyTerrainFrame,
+  resolveLobbyShowcaseFrame,
+  type LobbyBuildingShowcaseEntry,
+  type LobbyShowcaseEntry,
+  type LobbyTerrainShowcaseEntry,
+  type LobbyShowcasePhase
+} from "./cocos-showcase-gallery.ts";
+import type { CocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 
 const { ccclass } = _decorator;
 const H_ALIGN_LEFT = 0;
@@ -21,6 +38,8 @@ const ACTION_ENTER = new Color(84, 122, 94, 234);
 const ACTION_ACCOUNT = new Color(88, 118, 164, 234);
 const ACTION_CONFIG = new Color(94, 112, 86, 234);
 const ACTION_LOGOUT = new Color(126, 92, 74, 234);
+const SHOWCASE_FILL = new Color(46, 56, 76, 182);
+const SHOWCASE_CARD_HEIGHT = 220;
 
 export interface VeilLobbyRenderState {
   playerId: string;
@@ -36,6 +55,7 @@ export interface VeilLobbyRenderState {
   entering: boolean;
   status: string;
   rooms: CocosLobbyRoomSummary[];
+  presentationReadiness: CocosPresentationReadiness;
 }
 
 export interface VeilLobbyPanelOptions {
@@ -59,6 +79,10 @@ interface PanelCardTone {
 
 @ccclass("ProjectVeilLobbyPanel")
 export class VeilLobbyPanel extends Component {
+  private currentState: VeilLobbyRenderState | null = null;
+  private showcasePhase: LobbyShowcasePhase = "idle";
+  private showcaseUnitPage = 0;
+  private showcaseTickerStarted = false;
   private onEditPlayerId: (() => void) | undefined;
   private onEditDisplayName: (() => void) | undefined;
   private onEditRoomId: (() => void) | undefined;
@@ -69,6 +93,10 @@ export class VeilLobbyPanel extends Component {
   private onOpenConfigCenter: (() => void) | undefined;
   private onLogout: (() => void) | undefined;
   private onJoinRoom: ((roomId: string) => void) | undefined;
+
+  onDestroy(): void {
+    this.unscheduleAllCallbacks();
+  }
 
   configure(options: VeilLobbyPanelOptions): void {
     this.onEditPlayerId = options.onEditPlayerId;
@@ -84,6 +112,8 @@ export class VeilLobbyPanel extends Component {
   }
 
   render(state: VeilLobbyRenderState): void {
+    this.currentState = state;
+    this.ensureShowcaseTicker();
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const width = transform.width || 760;
     const height = transform.height || 620;
@@ -308,6 +338,7 @@ export class VeilLobbyPanel extends Component {
     );
 
     const visibleRooms = state.rooms.slice(0, 4);
+    let showcaseTopY = rightCursorY;
     if (visibleRooms.length === 0) {
       this.renderCard(
         "LobbyRoomsEmpty",
@@ -326,36 +357,62 @@ export class VeilLobbyPanel extends Component {
         18
       );
       this.hideExtraRoomCards(0);
+      showcaseTopY = rightCursorY - 96;
+    } else {
+      visibleRooms.forEach((room, index) => {
+        const updatedAt = room.updatedAt.includes("T") ? room.updatedAt.slice(11, 16) : room.updatedAt;
+        this.renderCard(
+          `LobbyRoom-${index}`,
+          rightX,
+          rightCursorY - index * 78,
+          rightWidth,
+          68,
+          [
+            room.roomId,
+            `Day ${room.day} · Seed ${room.seed}`,
+            `玩家 ${room.connectedPlayers} · 英雄 ${room.heroCount} · 战斗 ${room.activeBattles} · ${updatedAt}`
+          ],
+          {
+            fill: ROOM_FILL,
+            stroke: new Color(220, 232, 244, 52),
+            accent: new Color(132, 186, 142, 186)
+          },
+          state.entering ? null : () => {
+            this.onJoinRoom?.(room.roomId);
+          },
+          14,
+          18
+        );
+      });
+
+      this.hideExtraRoomCards(visibleRooms.length);
+      showcaseTopY = rightCursorY - visibleRooms.length * 78;
+    }
+
+    this.renderPixelShowcase(rightX, showcaseTopY, rightWidth);
+  }
+
+  private ensureShowcaseTicker(): void {
+    if (this.showcaseTickerStarted) {
       return;
     }
 
-    visibleRooms.forEach((room, index) => {
-      const updatedAt = room.updatedAt.includes("T") ? room.updatedAt.slice(11, 16) : room.updatedAt;
-      this.renderCard(
-        `LobbyRoom-${index}`,
-        rightX,
-        rightCursorY - index * 78,
-        rightWidth,
-        68,
-        [
-          room.roomId,
-          `Day ${room.day} · Seed ${room.seed}`,
-          `玩家 ${room.connectedPlayers} · 英雄 ${room.heroCount} · 战斗 ${room.activeBattles} · ${updatedAt}`
-        ],
-        {
-          fill: ROOM_FILL,
-          stroke: new Color(220, 232, 244, 52),
-          accent: new Color(132, 186, 142, 186)
-        },
-        state.entering ? null : () => {
-          this.onJoinRoom?.(room.roomId);
-        },
-        14,
-        18
-      );
-    });
+    this.showcaseTickerStarted = true;
+    this.scheduleShowcaseTick();
+  }
 
-    this.hideExtraRoomCards(visibleRooms.length);
+  private scheduleShowcaseTick(): void {
+    this.scheduleOnce(() => {
+      const nextPhase = nextLobbyShowcasePhase(this.showcasePhase);
+      if (nextPhase === "idle") {
+        this.showcaseUnitPage = nextLobbyShowcaseUnitPage(this.showcaseUnitPage);
+      }
+      this.showcasePhase = nextPhase;
+      if (this.currentState) {
+        this.render(this.currentState);
+      }
+      this.scheduleShowcaseTick();
+    }, 1.35);
   }
 
   private syncChrome(width: number, height: number): void {
@@ -468,7 +525,16 @@ export class VeilLobbyPanel extends Component {
     graphics.roundRect(-width / 2 + 12, height / 2 - 9, width - 24, 3, 2);
     graphics.fill();
 
-    const label = buttonNode.getComponent(Label) ?? buttonNode.addComponent(Label);
+    let labelNode = buttonNode.getChildByName("Label");
+    if (!labelNode) {
+      labelNode = new Node("Label");
+      labelNode.parent = buttonNode;
+    }
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(width - 16, height - 8);
+    labelNode.setPosition(0, 0, 0.1);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
     label.string = labelText;
     label.fontSize = 13;
     label.lineHeight = 15;
@@ -507,5 +573,302 @@ export class VeilLobbyPanel extends Component {
     if (emptyNode) {
       emptyNode.active = visibleCount === 0;
     }
+  }
+
+  private renderPixelShowcase(centerX: number, topY: number, width: number): void {
+    const assets = getPixelSpriteAssets();
+    const phaseLabel = formatLobbyShowcasePhaseLabel(this.showcasePhase);
+
+    this.renderCard(
+      "LobbyShowcase",
+      centerX,
+      topY,
+      width,
+      SHOWCASE_CARD_HEIGHT,
+      [
+        "像素画册",
+        `4 英雄 / 6 展示兵种轮播 / 5 地形 / 4 建筑 · ${phaseLabel}`,
+        `表现 ${this.currentState?.presentationReadiness.summary ?? "等待表现资源就绪度..."}`,
+        this.currentState?.presentationReadiness.nextStep ?? (assets ? "Lobby 已直连 #33 像素资源包，可在进入房间前先看主视觉。" : "正在加载 Boot 包里的像素资源...")
+      ],
+      {
+        fill: SHOWCASE_FILL,
+        stroke: new Color(235, 222, 184, 68),
+        accent: new Color(214, 175, 112, 194)
+      },
+      null,
+      11,
+      14
+    );
+
+    const cardNode = this.node.getChildByName("LobbyShowcase");
+    if (!cardNode) {
+      return;
+    }
+
+    const cardTransform = cardNode.getComponent(UITransform) ?? cardNode.addComponent(UITransform);
+    const rowY = [14, -24];
+    const slotWidth = (cardTransform.width - 28) / 4;
+    resolveLobbyShowcaseEntries(this.showcaseUnitPage).forEach((entry, index) => {
+      const col = index % 4;
+      const row = Math.floor(index / 4);
+      const centerX = -cardTransform.width / 2 + 14 + slotWidth * col + slotWidth / 2;
+      this.renderShowcaseTile(
+        cardNode,
+        index,
+        centerX,
+        rowY[row] ?? -42,
+        Math.min(62, slotWidth - 4),
+        entry.label,
+        this.resolveShowcaseFrame(entry),
+        this.showcasePhase
+      );
+    });
+
+    const terrainSlotWidth = (cardTransform.width - 30) / 5;
+    lobbyTerrainShowcaseEntries.forEach((entry, index) => {
+      const centerX = -cardTransform.width / 2 + 15 + terrainSlotWidth * index + terrainSlotWidth / 2;
+      this.renderTerrainTile(
+        cardNode,
+        index,
+        centerX,
+        -58,
+        Math.min(44, terrainSlotWidth - 4),
+        entry.label,
+        this.resolveTerrainFrame(entry)
+      );
+    });
+
+    const buildingSlotWidth = (cardTransform.width - 28) / 4;
+    lobbyBuildingShowcaseEntries.forEach((entry, index) => {
+      const centerX = -cardTransform.width / 2 + 14 + buildingSlotWidth * index + buildingSlotWidth / 2;
+      this.renderBuildingTile(
+        cardNode,
+        index,
+        centerX,
+        -92,
+        Math.min(52, buildingSlotWidth - 4),
+        entry.label,
+        this.resolveBuildingFrame(entry)
+      );
+    });
+  }
+
+  private resolveShowcaseFrame(entry: LobbyShowcaseEntry): SpriteFrame | null {
+    return resolveLobbyShowcaseFrame(entry, getPixelSpriteAssets(), this.showcasePhase);
+  }
+
+  private resolveTerrainFrame(entry: LobbyTerrainShowcaseEntry): SpriteFrame | null {
+    return resolveLobbyTerrainFrame(entry, getPixelSpriteAssets());
+  }
+
+  private resolveBuildingFrame(entry: LobbyBuildingShowcaseEntry): SpriteFrame | null {
+    return resolveLobbyBuildingFrame(entry, getPixelSpriteAssets());
+  }
+
+  private renderShowcaseTile(
+    cardNode: Node,
+    index: number,
+    centerX: number,
+    centerY: number,
+    width: number,
+    labelText: string,
+    frame: SpriteFrame | null,
+    phase: LobbyShowcasePhase
+  ): void {
+    let tileNode = cardNode.getChildByName(`ShowcaseTile-${index}`);
+    if (!tileNode) {
+      tileNode = new Node(`ShowcaseTile-${index}`);
+      tileNode.parent = cardNode;
+    }
+    assignUiLayer(tileNode);
+    tileNode.active = true;
+
+    const transform = tileNode.getComponent(UITransform) ?? tileNode.addComponent(UITransform);
+    transform.setContentSize(width, 34);
+    tileNode.setPosition(centerX, centerY, 1);
+
+    const graphics = tileNode.getComponent(Graphics) ?? tileNode.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = phase === "hit"
+      ? new Color(62, 44, 48, 210)
+      : phase === "selected"
+        ? new Color(38, 48, 64, 214)
+        : new Color(28, 38, 53, 208);
+    graphics.strokeColor = frame
+      ? phase === "hit"
+        ? new Color(244, 186, 186, 112)
+        : phase === "selected"
+          ? new Color(248, 230, 176, 118)
+          : new Color(238, 226, 191, 92)
+      : new Color(184, 196, 214, 46);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -17, width, 34, 10);
+    graphics.fill();
+    graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, 14);
+    graphics.roundRect(-width / 2 + 6, 8, width - 12, 3, 2);
+    graphics.fill();
+
+    let iconNode = tileNode.getChildByName("Icon");
+    if (!iconNode) {
+      iconNode = new Node("Icon");
+      iconNode.parent = tileNode;
+    }
+    assignUiLayer(iconNode);
+    const iconTransform = iconNode.getComponent(UITransform) ?? iconNode.addComponent(UITransform);
+    iconTransform.setContentSize(16, 16);
+    iconNode.setPosition(0, 3, 1);
+    const iconSprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite);
+    iconNode.active = Boolean(frame);
+    if (frame) {
+      iconSprite.spriteFrame = frame;
+    }
+
+    let labelNode = tileNode.getChildByName("Label");
+    if (!labelNode) {
+      labelNode = new Node("Label");
+      labelNode.parent = tileNode;
+    }
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(width - 8, 10);
+    labelNode.setPosition(0, -9, 1);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
+    label.string = labelText;
+    label.fontSize = 8;
+    label.lineHeight = 10;
+    label.horizontalAlign = H_ALIGN_CENTER;
+    label.verticalAlign = V_ALIGN_MIDDLE;
+    label.enableWrapText = false;
+    label.color = new Color(243, 247, 252, 255);
+  }
+
+  private renderTerrainTile(
+    cardNode: Node,
+    index: number,
+    centerX: number,
+    centerY: number,
+    width: number,
+    labelText: string,
+    frame: SpriteFrame | null
+  ): void {
+    let tileNode = cardNode.getChildByName(`ShowcaseTerrain-${index}`);
+    if (!tileNode) {
+      tileNode = new Node(`ShowcaseTerrain-${index}`);
+      tileNode.parent = cardNode;
+    }
+    assignUiLayer(tileNode);
+    tileNode.active = true;
+
+    const transform = tileNode.getComponent(UITransform) ?? tileNode.addComponent(UITransform);
+    transform.setContentSize(width, 32);
+    tileNode.setPosition(centerX, centerY, 1);
+
+    const graphics = tileNode.getComponent(Graphics) ?? tileNode.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(24, 32, 46, 204);
+    graphics.strokeColor = frame ? new Color(212, 220, 232, 86) : new Color(126, 142, 160, 48);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -16, width, 32, 8);
+    graphics.fill();
+    graphics.stroke();
+
+    let iconNode = tileNode.getChildByName("Icon");
+    if (!iconNode) {
+      iconNode = new Node("Icon");
+      iconNode.parent = tileNode;
+    }
+    assignUiLayer(iconNode);
+    const iconTransform = iconNode.getComponent(UITransform) ?? iconNode.addComponent(UITransform);
+    iconTransform.setContentSize(18, 18);
+    iconNode.setPosition(0, 4, 1);
+    const iconSprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite);
+    iconNode.active = Boolean(frame);
+    if (frame) {
+      iconSprite.spriteFrame = frame;
+    }
+
+    let labelNode = tileNode.getChildByName("Label");
+    if (!labelNode) {
+      labelNode = new Node("Label");
+      labelNode.parent = tileNode;
+    }
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(width - 6, 10);
+    labelNode.setPosition(0, -10, 1);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
+    label.string = labelText;
+    label.fontSize = 7;
+    label.lineHeight = 9;
+    label.horizontalAlign = H_ALIGN_CENTER;
+    label.verticalAlign = V_ALIGN_MIDDLE;
+    label.enableWrapText = false;
+    label.color = new Color(236, 242, 248, 255);
+  }
+
+  private renderBuildingTile(
+    cardNode: Node,
+    index: number,
+    centerX: number,
+    centerY: number,
+    width: number,
+    labelText: string,
+    frame: SpriteFrame | null
+  ): void {
+    let tileNode = cardNode.getChildByName(`ShowcaseBuilding-${index}`);
+    if (!tileNode) {
+      tileNode = new Node(`ShowcaseBuilding-${index}`);
+      tileNode.parent = cardNode;
+    }
+    assignUiLayer(tileNode);
+    tileNode.active = true;
+
+    const transform = tileNode.getComponent(UITransform) ?? tileNode.addComponent(UITransform);
+    transform.setContentSize(width, 34);
+    tileNode.setPosition(centerX, centerY, 1);
+
+    const graphics = tileNode.getComponent(Graphics) ?? tileNode.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(30, 38, 54, 208);
+    graphics.strokeColor = frame ? new Color(228, 210, 170, 92) : new Color(126, 142, 160, 48);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -17, width, 34, 9);
+    graphics.fill();
+    graphics.stroke();
+
+    let iconNode = tileNode.getChildByName("Icon");
+    if (!iconNode) {
+      iconNode = new Node("Icon");
+      iconNode.parent = tileNode;
+    }
+    assignUiLayer(iconNode);
+    const iconTransform = iconNode.getComponent(UITransform) ?? iconNode.addComponent(UITransform);
+    iconTransform.setContentSize(18, 18);
+    iconNode.setPosition(0, 4, 1);
+    const iconSprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite);
+    iconNode.active = Boolean(frame);
+    if (frame) {
+      iconSprite.spriteFrame = frame;
+    }
+
+    let labelNode = tileNode.getChildByName("Label");
+    if (!labelNode) {
+      labelNode = new Node("Label");
+      labelNode.parent = tileNode;
+    }
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(width - 6, 10);
+    labelNode.setPosition(0, -10, 1);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
+    label.string = labelText;
+    label.fontSize = 8;
+    label.lineHeight = 10;
+    label.horizontalAlign = H_ALIGN_CENTER;
+    label.verticalAlign = V_ALIGN_MIDDLE;
+    label.enableWrapText = false;
+    label.color = new Color(240, 236, 228, 255);
   }
 }

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCocosTileMarkerText, describeCocosTileObject } from "../assets/scripts/cocos-object-visuals";
+import {
+  buildCocosTileMarkerText,
+  describeCocosTileObject,
+  resolveCocosTileMarkerVisual
+} from "../assets/scripts/cocos-object-visuals";
 import type { PlayerTileView } from "../assets/scripts/VeilCocosSession";
 
 function createTile(): PlayerTileView {
@@ -32,6 +36,8 @@ test("describeCocosTileObject maps pickup resources to config-driven descriptors
     interactionType: "pickup"
   });
   assert.equal(buildCocosTileMarkerText(tile), "+W");
+  assert.equal(resolveCocosTileMarkerVisual(tile)?.iconKey, "wood");
+  assert.equal(resolveCocosTileMarkerVisual(tile)?.fallbackLabel, "木材");
 });
 
 test("describeCocosTileObject maps battle occupants to stable cocos markers", () => {
@@ -50,14 +56,19 @@ test("describeCocosTileObject maps battle occupants to stable cocos markers", ()
   assert.equal(describeCocosTileObject(neutralTile)?.tag, "战斗");
   assert.equal(describeCocosTileObject(neutralTile)?.shortLabel, "守军");
   assert.equal(buildCocosTileMarkerText(neutralTile), "!M");
+  assert.equal(resolveCocosTileMarkerVisual(neutralTile)?.interactionType, "battle");
+  assert.equal(resolveCocosTileMarkerVisual(neutralTile)?.iconKey, "neutral");
 
   assert.equal(describeCocosTileObject(heroTile)?.faction, "crown");
   assert.equal(describeCocosTileObject(heroTile)?.shortLabel, "英雄");
   assert.equal(buildCocosTileMarkerText(heroTile), "!H");
+  assert.equal(resolveCocosTileMarkerVisual(heroTile)?.faction, "crown");
+  assert.equal(resolveCocosTileMarkerVisual(heroTile)?.iconKey, "hero");
 });
 
 test("buildCocosTileMarkerText hides empty walkable tiles", () => {
   assert.equal(buildCocosTileMarkerText(createTile()), "");
+  assert.equal(resolveCocosTileMarkerVisual(createTile()), null);
 });
 
 test("describeCocosTileObject exposes recruitment posts as visitable buildings", () => {
@@ -79,6 +90,8 @@ test("describeCocosTileObject exposes recruitment posts as visitable buildings",
   assert.equal(describeCocosTileObject(tile)?.shortLabel, "招募");
   assert.equal(describeCocosTileObject(tile)?.tag, "访问");
   assert.equal(buildCocosTileMarkerText(tile), ">R");
+  assert.equal(resolveCocosTileMarkerVisual(tile)?.iconKey, "recruitment");
+  assert.equal(resolveCocosTileMarkerVisual(tile)?.rarity, "common");
 });
 
 test("describeCocosTileObject exposes attribute shrines as permanent stat buildings", () => {
@@ -99,6 +112,8 @@ test("describeCocosTileObject exposes attribute shrines as permanent stat buildi
   assert.equal(describeCocosTileObject(tile)?.shortLabel, "神殿");
   assert.equal(describeCocosTileObject(tile)?.tag, "访问");
   assert.equal(buildCocosTileMarkerText(tile), ">S");
+  assert.equal(resolveCocosTileMarkerVisual(tile)?.iconKey, "shrine");
+  assert.equal(resolveCocosTileMarkerVisual(tile)?.rarity, "elite");
 });
 
 test("describeCocosTileObject exposes resource mines as harvestable daily pickups", () => {
@@ -116,4 +131,18 @@ test("describeCocosTileObject exposes resource mines as harvestable daily pickup
   assert.equal(describeCocosTileObject(tile)?.tag, "采集");
   assert.match(describeCocosTileObject(tile)?.subtitle ?? "", /木材 \+2 · 今日已采集/);
   assert.equal(buildCocosTileMarkerText(tile), ">M");
+  assert.equal(resolveCocosTileMarkerVisual(tile)?.iconKey, "mine");
+  assert.equal(resolveCocosTileMarkerVisual(tile)?.interactionType, "move");
+});
+
+test("resolveCocosTileMarkerVisual keeps generic buildings visible via fallback labels", () => {
+  const tile = createTile();
+  tile.occupant = {
+    kind: "building",
+    refId: "building-1"
+  };
+
+  assert.equal(resolveCocosTileMarkerVisual(tile)?.iconKey, null);
+  assert.equal(resolveCocosTileMarkerVisual(tile)?.fallbackLabel, "建筑");
+  assert.equal(resolveCocosTileMarkerVisual(tile)?.interactionType, "move");
 });

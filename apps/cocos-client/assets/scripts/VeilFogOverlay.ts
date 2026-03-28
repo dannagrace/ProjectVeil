@@ -49,7 +49,15 @@ export class VeilFogOverlay extends Component {
 
     const opacity = this.node.getComponent(UIOpacity) ?? this.node.addComponent(UIOpacity);
     const graphics = this.node.getComponent(Graphics) ?? this.node.addComponent(Graphics);
-    const label = this.node.getComponent(Label) ?? this.node.addComponent(Label);
+    let labelNode = this.node.getChildByName("Label");
+    if (!labelNode) {
+      labelNode = new Node("Label");
+      labelNode.parent = this.node;
+    }
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(this.tileSize - 18, this.tileSize - 18);
+    labelNode.setPosition(0, 0, 0.2);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
     const fontSize = Math.max(10, Math.floor(this.tileSize * 0.18));
     label.fontSize = fontSize;
     label.lineHeight = fontSize + 2;

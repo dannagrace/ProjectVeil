@@ -1,5 +1,5 @@
 import { sys } from "cc";
-import type { EquipmentType } from "../../../../packages/shared/src/index.ts";
+import type { EquipmentType } from "./project-shared/index.ts";
 
 export interface Vec2 {
   x: number;

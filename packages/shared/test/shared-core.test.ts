@@ -243,13 +243,13 @@ test("asset config exposes metadata for referenced asset paths", () => {
   });
 
   assert.deepEqual(summarizeAssetMetadata(assetConfig), {
-    total: 36,
+    total: 64,
     byStage: {
-      placeholder: 36,
+      placeholder: 64,
       production: 0
     },
     bySource: {
-      generated: 36,
+      generated: 64,
       licensed: 0,
       commissioned: 0
     }
@@ -262,6 +262,10 @@ test("asset config routes H5 world-facing assets through the pixel bundle", () =
   assert.match(assetConfig.buildings.recruitment_post, /^\/assets\/pixel\/buildings\/.+\.png$/);
   assert.match(assetConfig.markers.hero.idle, /^\/assets\/pixel\/markers\/.+\.png$/);
   assert.match(assetConfig.units.hero_guard_basic.portrait.idle, /^\/assets\/pixel\/units\/.+\.png$/);
+  assert.match(assetConfig.units.hero_guard_basic.frame, /^\/assets\/pixel\/frames\/.+\.png$/);
+  assert.match(assetConfig.showcaseTerrain.mountain, /^\/assets\/pixel\/showcase-terrain\/.+\.png$/);
+  assert.match(assetConfig.badges.factions.crown, /^\/assets\/pixel\/badges\/.+\.png$/);
+  assert.match(assetConfig.badges.interactions.battle, /^\/assets\/pixel\/badges\/.+\.png$/);
 });
 
 test("asset config validation reports missing terrain variants and bad asset roots", () => {
@@ -440,60 +444,81 @@ test("asset config validation reports missing metadata coverage", () => {
   const errors = getAssetConfigValidationErrors({
     terrain: {
       grass: {
-        default: "/assets/terrain/grass-tile.svg",
-        variants: ["/assets/terrain/grass-tile.svg"]
+        default: "/assets/pixel/terrain/grass-tile.png",
+        variants: ["/assets/pixel/terrain/grass-tile.png"]
       },
       dirt: {
-        default: "/assets/terrain/dirt-tile.svg",
-        variants: ["/assets/terrain/dirt-tile.svg"]
+        default: "/assets/pixel/terrain/dirt-tile.png",
+        variants: ["/assets/pixel/terrain/dirt-tile.png"]
       },
       sand: {
-        default: "/assets/terrain/sand-tile.svg",
-        variants: ["/assets/terrain/sand-tile.svg"]
+        default: "/assets/pixel/terrain/sand-tile.png",
+        variants: ["/assets/pixel/terrain/sand-tile.png"]
       },
       water: {
-        default: "/assets/terrain/water-tile.svg",
-        variants: ["/assets/terrain/water-tile.svg"]
+        default: "/assets/pixel/terrain/water-tile.png",
+        variants: ["/assets/pixel/terrain/water-tile.png"]
       },
       unknown: {
-        default: "/assets/terrain/fog-tile.svg",
-        variants: ["/assets/terrain/fog-tile.svg"]
+        default: "/assets/pixel/terrain/fog-tile.png",
+        variants: ["/assets/pixel/terrain/fog-tile.png"]
       }
     },
     resources: {
-      gold: "/assets/resources/gold-pile.svg",
-      wood: "/assets/resources/wood-stack.svg",
-      ore: "/assets/resources/ore-crate.svg"
+      gold: "/assets/pixel/resources/gold-pile.png",
+      wood: "/assets/pixel/resources/wood-stack.png",
+      ore: "/assets/pixel/resources/ore-crate.png"
     },
     buildings: {
-      recruitment_post: "/assets/buildings/recruitment-post.svg",
-      attribute_shrine: "/assets/buildings/attribute-shrine.svg",
-      resource_mine: "/assets/buildings/resource-mine.svg"
+      recruitment_post: "/assets/pixel/buildings/recruitment-post.png",
+      attribute_shrine: "/assets/pixel/buildings/attribute-shrine.png",
+      resource_mine: "/assets/pixel/buildings/resource-mine.png"
+    },
+    heroes: {
+      hero_guard_basic: {
+        portrait: "/assets/pixel/heroes/hero-guard-basic.png"
+      }
     },
     units: {
       hero_guard_basic: {
         portrait: {
-          idle: "/assets/units/hero-guard-basic.svg",
-          selected: "/assets/units/hero-guard-basic-selected.svg",
-          hit: "/assets/units/hero-guard-basic-hit.svg"
+          idle: "/assets/pixel/units/hero-guard-basic.png",
+          selected: "/assets/pixel/units/hero-guard-basic-selected.png",
+          hit: "/assets/pixel/units/hero-guard-basic-hit.png"
         },
-        frame: "/assets/frames/unit-frame-ally.svg"
+        frame: "/assets/pixel/frames/unit-frame-ally.png"
       }
+    },
+    showcaseUnits: {
+      sunlance_knight: {
+        portrait: {
+          idle: "/assets/pixel/showcase-units/sunlance-knight.png",
+          selected: "/assets/pixel/showcase-units/sunlance-knight-selected.png",
+          hit: "/assets/pixel/showcase-units/sunlance-knight-hit.png"
+        },
+        frame: "/assets/pixel/frames/unit-frame-ally.png"
+      }
+    },
+    showcaseTerrain: {
+      grassland: "/assets/pixel/showcase-terrain/grassland-tile.png"
+    },
+    showcaseBuildings: {
+      forge_hall: "/assets/pixel/buildings/forge-hall.png"
     },
     markers: {
       hero: {
-        idle: "/assets/markers/hero-marker.svg",
-        selected: "/assets/markers/hero-marker-selected.svg",
-        hit: "/assets/markers/hero-marker-hit.svg"
+        idle: "/assets/pixel/markers/hero-marker.png",
+        selected: "/assets/pixel/markers/hero-marker-selected.png",
+        hit: "/assets/pixel/markers/hero-marker-hit.png"
       },
       neutral: {
-        idle: "/assets/markers/neutral-marker.svg",
-        selected: "/assets/markers/neutral-marker-selected.svg",
-        hit: "/assets/markers/neutral-marker-hit.svg"
+        idle: "/assets/pixel/markers/neutral-marker.png",
+        selected: "/assets/pixel/markers/neutral-marker-selected.png",
+        hit: "/assets/pixel/markers/neutral-marker-hit.png"
       }
     },
     metadata: {
-      "/assets/terrain/grass-tile.svg": {
+      "/assets/pixel/terrain/grass-tile.png": {
         slot: "terrain.grass.default",
         stage: "placeholder",
         source: "generated"
@@ -501,18 +526,18 @@ test("asset config validation reports missing metadata coverage", () => {
     },
     badges: {
       factions: {
-        crown: "/assets/badges/faction-crown.svg"
+        crown: "/assets/pixel/badges/faction-crown.png"
       },
       rarities: {
-        common: "/assets/badges/rarity-common.svg"
+        common: "/assets/pixel/badges/rarity-common.png"
       },
       interactions: {
-        move: "/assets/badges/interaction-move.svg"
+        move: "/assets/pixel/badges/interaction-move.png"
       }
     }
   });
 
-  assert.ok(errors.includes("metadata[/assets/terrain/fog-tile.svg] is missing for referenced asset path"));
+  assert.ok(errors.includes("metadata[/assets/pixel/terrain/fog-tile.png] is missing for referenced asset path"));
 });
 
 test("achievement helpers unlock milestones and preserve catalog order", () => {

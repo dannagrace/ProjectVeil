@@ -1,4 +1,4 @@
-import { getEquipmentDefinition } from "../../../../packages/shared/src/index.ts";
+import { getEquipmentDefinition } from "./project-shared/index.ts";
 import type { SessionUpdate, WorldEvent } from "./VeilCocosSession.ts";
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {

@@ -5,16 +5,21 @@ import {
   createHeroProgressMeterView,
   type EquipmentType,
   getLatestUnlockedAchievement
-} from "../../../../packages/shared/src/index.ts";
-import { createHeroSkillTreeView } from "../../../../packages/shared/src/hero-skills.ts";
-import type { BattleSkillId, HeroState } from "../../../../packages/shared/src/models.ts";
-import { getDefaultBattleSkillCatalog } from "../../../../packages/shared/src/world-config.ts";
+} from "./project-shared/index.ts";
+import { createHeroSkillTreeView } from "./project-shared/hero-skills.ts";
+import type { BattleSkillId, HeroState } from "./project-shared/models.ts";
+import { getDefaultBattleSkillCatalog } from "./project-shared/world-config.ts";
 import type { SessionUpdate } from "./VeilCocosSession.ts";
 import type { CocosPlayerAccountProfile } from "./cocos-lobby.ts";
-import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
+import { getPixelSpriteAssets, loadPixelSpriteAssets, type PixelSpriteLoadStatus } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildHeroEquipmentActionRows } from "./cocos-hero-equipment.ts";
 import { summarizeLatestBattleReplay } from "./cocos-battle-report.ts";
+import type { CocosAudioRuntimeState } from "./cocos-audio-runtime.ts";
+import {
+  formatPresentationReadinessSummary,
+  type CocosPresentationReadiness
+} from "./cocos-presentation-readiness.ts";
 
 const { ccclass } = _decorator;
 const H_ALIGN_LEFT = 0;
@@ -169,6 +174,11 @@ export interface VeilHudRenderState {
     title: string;
     detail: string;
   } | null;
+  presentation: {
+    audio: CocosAudioRuntimeState;
+    pixelAssets: PixelSpriteLoadStatus;
+    readiness: CocosPresentationReadiness;
+  };
 }
 
 export interface VeilHudPanelOptions {
@@ -192,6 +202,71 @@ function formatAchievementSummary(account: CocosPlayerAccountProfile): string {
 function formatRecentEventLog(account: CocosPlayerAccountProfile): string {
   const latest = account.recentEventLog[0];
   return latest ? `日志 ${latest.description}` : "日志 尚未记录关键事件";
+}
+
+function formatAudioCueLabel(cue: CocosAudioRuntimeState["lastCue"]): string {
+  switch (cue) {
+    case "attack":
+      return "普攻";
+    case "skill":
+      return "技能";
+    case "hit":
+      return "受击";
+    case "level_up":
+      return "升级";
+    default:
+      return "无";
+  }
+}
+
+function formatAudioSceneLabel(scene: CocosAudioRuntimeState["currentScene"]): string {
+  return scene === "battle" ? "战斗" : scene === "explore" ? "探索" : "静音";
+}
+
+function formatAudioPlaybackModeLabel(mode: CocosAudioRuntimeState["musicMode"]): string {
+  switch (mode) {
+    case "asset":
+      return "资源";
+    case "synth":
+      return "合成";
+    case "pending":
+      return "待载";
+    default:
+      return "空闲";
+  }
+}
+
+function formatPresentationAudioSummary(audio: CocosAudioRuntimeState): string {
+  const supportLabel = audio.supported
+    ? audio.unlocked
+      ? audio.assetBacked
+        ? "已解锁资源音频"
+        : "已解锁音频运行时"
+      : "待首次点击启音"
+    : "回退静音/无 AudioContext";
+  const cueSuffix = audio.lastCue ? ` · 最近 ${formatAudioCueLabel(audio.lastCue)} ${audio.cueCount}` : "";
+  return `音频 ${supportLabel} · 场景 ${formatAudioSceneLabel(audio.currentScene)} · BGM ${formatAudioPlaybackModeLabel(audio.musicMode)}${cueSuffix}`;
+}
+
+function formatPresentationLoadSummary(pixelAssets: PixelSpriteLoadStatus): string {
+  const groupLabel = pixelAssets.pendingGroups.length > 0
+    ? `等待 ${pixelAssets.pendingGroups.join("/")}`
+    : pixelAssets.loadedGroups.length > 0
+      ? `已就绪 ${pixelAssets.loadedGroups.join("/")}`
+      : "待触发";
+  const durationLabel = pixelAssets.loadDurationMs !== null
+    ? `${pixelAssets.loadDurationMs}ms`
+    : pixelAssets.phase === "loading"
+      ? "加载中"
+      : "待触发";
+  const budgetLabel = pixelAssets.exceededHardLimit
+    ? "超出硬上限"
+    : pixelAssets.exceededTarget
+      ? "超出目标"
+      : pixelAssets.phase === "ready"
+        ? "命中预算"
+        : "待采样";
+  return `像素资源 ${durationLabel} · ${groupLabel} · ${pixelAssets.loadedResourceCount}/${pixelAssets.totalResourceCount} · 预算 ${pixelAssets.targetMs}/${pixelAssets.hardLimitMs}ms · ${budgetLabel}`;
 }
 
 @ccclass("ProjectVeilHudPanel")
@@ -376,7 +451,10 @@ export class VeilHudPanel extends Component {
         formatAchievementSummary(state.account),
         formatRecentEventLog(state.account),
         latestBattleReport.title,
-        latestBattleReport.detail
+        latestBattleReport.detail,
+        formatPresentationAudioSummary(state.presentation.audio),
+        formatPresentationLoadSummary(state.presentation.pixelAssets),
+        `表现 ${formatPresentationReadinessSummary(state.presentation.readiness)}`
       ],
       cursorY,
       12,
@@ -384,7 +462,7 @@ export class VeilHudPanel extends Component {
       cardWidth,
       leftX,
       4,
-      126
+      174
     );
 
     if (resources) {
@@ -394,7 +472,7 @@ export class VeilHudPanel extends Component {
     }
 
     if (hero) {
-      this.renderHeroBadge(`${CARD_PREFIX}-hero`, `Lv ${hero.progression.level}`);
+      this.renderHeroBadge(`${CARD_PREFIX}-hero`, `Lv ${hero.progression.level}`, hero.armyTemplateId);
       if (progressMeter) {
       this.renderHeroProgressBar(
         `${CARD_PREFIX}-hero`,
@@ -582,7 +660,7 @@ export class VeilHudPanel extends Component {
       return;
     }
 
-    const frameSet = getPlaceholderSpriteAssets()?.icons;
+    const frameSet = getPixelSpriteAssets()?.icons;
     const cardTransform = cardNode.getComponent(UITransform) ?? cardNode.addComponent(UITransform);
     const gap = 6;
     const chipWidth = Math.max(46, Math.floor((cardTransform.width - 22 - gap * 2) / 3));
@@ -687,13 +765,13 @@ export class VeilHudPanel extends Component {
     value.color = new Color(244, 247, 251, 255);
   }
 
-  private renderHeroBadge(cardName: string, badgeText: string): void {
+  private renderHeroBadge(cardName: string, badgeText: string, heroTemplateId: string): void {
     const cardNode = this.node.getChildByName(cardName);
     if (!cardNode) {
       return;
     }
 
-    const frame = getPlaceholderSpriteAssets()?.icons.hero ?? null;
+    const frame = getPixelSpriteAssets()?.heroes[heroTemplateId] ?? getPixelSpriteAssets()?.icons.hero ?? null;
     const cardTransform = cardNode.getComponent(UITransform) ?? cardNode.addComponent(UITransform);
     let badgeNode = cardNode.getChildByName(`${BADGE_PREFIX}-hero`);
     if (!badgeNode) {
@@ -926,7 +1004,16 @@ export class VeilHudPanel extends Component {
       graphics.roundRect(-buttonWidth / 2 + 10, buttonHeight / 2 - 8, buttonWidth - 20, 3, 2);
       graphics.fill();
 
-      const label = buttonNode.getComponent(Label) ?? buttonNode.addComponent(Label);
+      let labelNode = buttonNode.getChildByName("Label");
+      if (!labelNode) {
+        labelNode = new Node("Label");
+        labelNode.parent = buttonNode;
+      }
+      assignUiLayer(labelNode);
+      const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+      labelTransform.setContentSize(buttonWidth - 16, buttonHeight - 8);
+      labelNode.setPosition(0, 0, 0.1);
+      const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
       label.string = `学习 ${skill.name}`;
       label.fontSize = 11;
       label.lineHeight = 13;
@@ -1031,7 +1118,16 @@ export class VeilHudPanel extends Component {
       graphics.roundRect(-buttonWidth / 2 + 8, buttonHeight / 2 - 7, buttonWidth - 16, 3, 2);
       graphics.fill();
 
-      const label = buttonNode.getComponent(Label) ?? buttonNode.addComponent(Label);
+      let labelNode = buttonNode.getChildByName("Label");
+      if (!labelNode) {
+        labelNode = new Node("Label");
+        labelNode.parent = buttonNode;
+      }
+      assignUiLayer(labelNode);
+      const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+      labelTransform.setContentSize(buttonWidth - 12, buttonHeight - 6);
+      labelNode.setPosition(0, 0, 0.1);
+      const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
       label.string = button.label;
       label.fontSize = 9;
       label.lineHeight = 10;
@@ -1098,12 +1194,12 @@ export class VeilHudPanel extends Component {
     this.headerIconSprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite);
     this.headerIconOpacity = iconNode.getComponent(UIOpacity) ?? iconNode.addComponent(UIOpacity);
 
-    const frame = getPlaceholderSpriteAssets()?.icons.hud ?? null;
+    const frame = getPixelSpriteAssets()?.icons.hud ?? null;
     if (!frame) {
       iconNode.active = false;
       if (!this.requestedIcons) {
         this.requestedIcons = true;
-        void loadPlaceholderSpriteAssets().then(() => {
+        void loadPixelSpriteAssets("boot").then(() => {
           this.requestedIcons = false;
           if (this.currentState) {
             this.render(this.currentState);
@@ -1233,7 +1329,16 @@ export class VeilHudPanel extends Component {
       graphics.roundRect(-buttonWidth / 2 + 12, buttonHeight / 2 - 9, buttonWidth - 24, 3, 2);
       graphics.fill();
 
-      const label = node.getComponent(Label) ?? node.addComponent(Label);
+      let labelNode = node.getChildByName("Label");
+      if (!labelNode) {
+        labelNode = new Node("Label");
+        labelNode.parent = node;
+      }
+      assignUiLayer(labelNode);
+      const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+      labelTransform.setContentSize(buttonWidth - 16, buttonHeight - 8);
+      labelNode.setPosition(0, 0, 0.1);
+      const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
       label.string = button.label;
       label.fontSize = 13;
       label.lineHeight = 15;
@@ -1262,7 +1367,13 @@ export class VeilHudPanel extends Component {
       buttonNode.parent = parent;
     }
     assignUiLayer(buttonNode);
-    const label = buttonNode.getComponent(Label) ?? buttonNode.addComponent(Label);
+    let labelNode = buttonNode.getChildByName("Label");
+    if (!labelNode) {
+      labelNode = new Node("Label");
+      labelNode.parent = buttonNode;
+    }
+    assignUiLayer(labelNode);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
     label.string = labelText;
   }
 }

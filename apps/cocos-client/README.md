@@ -31,13 +31,18 @@
 - `assets/scripts/VeilBattlePanel.ts`
   - 负责右侧战斗面板
   - 现已按 `战况摘要 / 待动序列 / 我方单位 / 敌方目标 / 指令操作` 分区渲染
+  - 已开始消费 `pixel/units/*`、`pixel/frames/*`、`pixel/badges/*`，在战斗队列 / 我方单位 / 目标选择里展示像素头像卡
   - 支持点击敌方目标并触发 `attack / wait / defend`
   - 回合归属、目标选择和按钮可用性已抽成纯逻辑模型并加测试锁住
+- `assets/scripts/cocos-battle-unit-visuals.ts`
+  - 战斗面板的单位视觉描述工具
+  - 会把单位模板映射成 portrait state、faction badge、rarity badge 和 battle interaction badge
 - `assets/scripts/VeilMapBoard.ts`
   - 负责地图、英雄标记和 tile 点击交互
   - 会优先驱动同节点上的 `TiledMap` 做瓦片层增量更新；若未绑定 `TiledMap`，则回退到文字版 tile 地图
   - 现已支持地图事件反馈标记，例如 `MOVE / +WOOD / XP / PVE / VICTORY`
   - 现已支持基于配置的对象标签覆盖层，资源点/守军/敌方英雄会显示稳定的 `采集 / 战斗` + 对象名小标签
+  - 地图对象 marker 现已消费 `pixel/resources/*`、`pixel/buildings/*` 和 `pixel/badges/*`，会渲染主图标 + `faction / rarity / interaction` badge；没有专用图标的对象会回退到简短中文标签
   - 点击可达格可移动，点击英雄当前所在且带资源的格子可采集
 - `assets/scripts/cocos-object-visuals.ts`
   - Cocos 侧对象视觉描述工具
@@ -66,9 +71,37 @@
   - 单位动画适配层
   - 有 Spine 资源时可走 `sp.Skeleton`
   - 有时间轴动画时可走 `Animation`
+  - 没有正式动画资源时，现已优先退回到像素 portrait 帧，而不再只是 `[IDLE] / [ATTACK]` 文字
+  - 当前会优先读取 `units/*`，其次 `showcaseUnits/*`，最后才退回到单帧 hero portrait
   - 支持在 Inspector 里分别配置 `idle / move / attack / hit / victory / defeat` 的 Spine 名称或 Clip 名称
   - 支持为 `attack / hit / victory / defeat` 配置单次播放后自动回到 `idle` 的时长
   - 没有资源时自动退化成文字态占位
+- `assets/scripts/cocos-presentation-config.ts`
+  - 从 `configs/cocos-presentation.json` 读取动画 profile、音频资源路径 / 合成音效序列和加载预算
+  - 当前已把 `hero_guard_basic / wolf_pack` 的回退动画前缀、交付模式和 `assetStage` 收口到配置层
+  - 音频序列也会标出当前是 `placeholder` 还是 `production`，方便脚本校验和 Creator HUD 对齐
+- `assets/scripts/cocos-presentation-readiness.ts`
+  - 负责汇总像素图、资源音频和动画交付状态
+  - 当前会统一输出 `表现 像素 ... · 音频 ... · 动画 ...` 这条摘要，供 Lobby 画册和 HUD 状态卡复用
+  - 也会给出 `待替换 正式像素美术 / 真实 BGM-SFX / Spine Skeleton` 这类后续收口提示
+- `assets/scripts/cocos-audio-runtime.ts`
+  - 轻量合成音频运行时
+  - 现在会优先加载 `resources/audio/*` 下的 `AudioClip` 占位资源，再回退到波形合成
+  - Creator / H5 预览环境下可先用资源占位音频验证 `explore / battle` BGM 和 `attack / skill / hit / level_up` cue
+  - 资源缺失或加载失败时会安全回退到合成音频；没有 `AudioContext` 时也会保留状态机与 HUD 验证信息
+- `assets/scripts/cocos-audio-resources.ts`
+  - 把 `configs/cocos-presentation.json` 里声明的 `audio/*` 路径接到 Cocos `resources.load(AudioClip)` 和 `AudioSource`
+  - 当前会分别维护 `ProjectVeilMusicAudio / ProjectVeilCueAudio` 两个音频节点，便于后续替换成正式 BGM / SFX
+- `assets/scripts/cocos-pixel-sprites.ts`
+  - 统一加载 H5 / Cocos 共用的像素资源清单
+  - 现在会按 `boot / battle` 两组做预载与按需补载，而不是一次把所有像素资源整包拉起
+  - `pixel/badges/*` 已提前进 `boot` 组，因为地图对象 marker 和 HUD 空闲态也会消费这些 badge
+  - 会记录最近一次像素资源加载耗时，并按 `configs/cocos-presentation.json` 的预算输出状态，方便后续 Creator / 真机验收对照
+- `assets/scripts/cocos-showcase-gallery.ts`
+  - Lobby 像素画册的轮播辅助层
+  - 现在会按 `待机 -> 预备 -> 受击` 三个阶段切换展示帧，不再只是静态缩略图
+  - 画册卡片现在也会直接显示 #33 的表现 readiness 摘要，而不是只展示缩略图
+  - 现在额外带一条 `5` 格地形主题预览条，直接展示 `草原 / 山脉 / 水域 / 沙漠 / 雪原`
 - `assets/scripts/VeilBattleTransition.ts`
   - 战斗转场控制器
   - 当前先用覆盖层文案占位，已经能挂接进入/退出战斗的切场时机
@@ -98,11 +131,14 @@
 7. 在 Cocos 预览窗口运行场景
 8. 没有 `roomId` 查询参数时，会先进入 Cocos Lobby；可在大厅里刷新房间、游客进入、账号登录并进入，或打开配置台
 9. 进入房间后点击地图格子，观察 HUD 中的英雄坐标、移动力和资源变化
+10. 如需刷新当前资源占位音频，可先执行 `npm run sync:assets:audio`
 
 ## 下一步建议
 
 - 把资源、美术占位图和对象卡片映射继续迁到 Cocos 资源系统
 - 把 `VeilUnitAnimator` 接到正式 Spine skeleton 和序列帧资源
+- 用真实 BGM / SFX 或中间件替换当前 `resources/audio/*` 占位音频与合成回退
+- 在 Creator / 微信开发者工具里跑真实加载耗时，对照 `configs/cocos-presentation.json` 的预算进一步压缩
 - 把 `VeilBattleTransition` 替换成正式 tween / 特效 / 音效组合
 - 继续压实微信小游戏构建和发布流程
 

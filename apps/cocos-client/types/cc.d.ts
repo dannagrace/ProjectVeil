@@ -92,6 +92,19 @@ declare module "cc" {
     name: string;
   }
 
+  export class AudioClip {
+    name: string;
+  }
+
+  export class AudioSource extends Component {
+    clip: AudioClip | null;
+    loop: boolean;
+    volume: number;
+    play(): void;
+    stop(): void;
+    playOneShot(clip: AudioClip, volumeScale?: number): void;
+  }
+
   export class Sprite extends Component {
     spriteFrame: SpriteFrame | null;
     color: Color;
