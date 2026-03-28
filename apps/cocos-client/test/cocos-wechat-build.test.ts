@@ -152,19 +152,22 @@ test("analyzeWechatMinigameBuildOutput measures main package and subpackage budg
     })
   );
   fs.writeFileSync(path.join(tempDir, "game.js"), Buffer.alloc(140));
+  fs.writeFileSync(path.join(tempDir, "project.config.json"), JSON.stringify({ compileType: "game" }));
+  fs.writeFileSync(path.join(tempDir, "codex.wechat.build.json"), JSON.stringify({ buildTemplatePlatform: "wechatgame" }));
+  fs.writeFileSync(path.join(tempDir, "README.codex.md"), "# checklist\n");
   fs.writeFileSync(path.join(tempDir, "subpackages", "battle", "index.js"), Buffer.alloc(60));
 
   const analysis = analyzeWechatMinigameBuildOutput(
     tempDir,
     normalizeWechatMinigameBuildConfig({
-      mainPackageBudgetMb: 0.0002,
-      totalSubpackageBudgetMb: 0.0002,
+      mainPackageBudgetMb: 1,
+      totalSubpackageBudgetMb: 1,
       expectedSubpackages: [{ root: "subpackages/battle" }]
     })
   );
 
   assert.equal(analysis.errors.length, 0);
-  assert.equal(analysis.mainPackageBytes, 187);
+  assert.ok(analysis.mainPackageBytes > 140);
   assert.equal(analysis.totalSubpackageBytes, 60);
   assert.deepEqual(analysis.subpackages, [{ root: "subpackages/battle", bytes: 60 }]);
 });
@@ -193,7 +196,10 @@ test("analyzeWechatMinigameBuildOutput reports budget overruns and missing expec
 
   assert.deepEqual(analysis.subpackages, [{ root: "subpackages/scene", bytes: 0 }]);
   assert.equal(analysis.missingExpectedSubpackages[0], "subpackages/scene");
-  assert.match(analysis.errors[0] ?? "", /Main package exceeded budget/);
+  assert.match(analysis.errors.join("\n"), /Main package exceeded budget/);
+  assert.match(analysis.errors.join("\n"), /Build output is missing required file: project\.config\.json/);
+  assert.match(analysis.errors.join("\n"), /Build output is missing required file: codex\.wechat\.build\.json/);
+  assert.match(analysis.errors.join("\n"), /Build output is missing required file: README\.codex\.md/);
   assert.match(analysis.warnings.join("\n"), /Expected subpackages missing/);
   assert.match(analysis.warnings.join("\n"), /request domain checklist/);
   assert.match(analysis.warnings.join("\n"), /socket domain checklist/);

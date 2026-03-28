@@ -8,12 +8,14 @@ import {
 interface Args {
   configPath: string;
   templateDir: string;
+  check: boolean;
   outputDir?: string;
 }
 
 function parseArgs(argv: string[]): Args {
   let configPath = "apps/cocos-client/wechat-minigame.build.json";
   let templateDir = "apps/cocos-client/build-templates/wechatgame";
+  let check = false;
   let outputDir: string | undefined;
 
   for (let index = 2; index < argv.length; index += 1) {
@@ -32,12 +34,17 @@ function parseArgs(argv: string[]): Args {
     if (arg === "--output-dir" && next) {
       outputDir = next;
       index += 1;
+      continue;
+    }
+    if (arg === "--check") {
+      check = true;
     }
   }
 
   return {
     configPath,
     templateDir,
+    check,
     ...(outputDir ? { outputDir } : {})
   };
 }
@@ -52,6 +59,19 @@ function writeTextFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, `${content}\n`, "utf8");
 }
 
+function compareFileContent(filePath: string, expected: string): string | undefined {
+  if (!fs.existsSync(filePath)) {
+    return `missing: ${filePath}`;
+  }
+
+  const actual = fs.readFileSync(filePath, "utf8");
+  if (actual !== expected) {
+    return `stale: ${filePath}`;
+  }
+
+  return undefined;
+}
+
 function main(): void {
   const args = parseArgs(process.argv);
   const repoRoot = process.cwd();
@@ -59,6 +79,35 @@ function main(): void {
   const templateDir = path.resolve(repoRoot, args.templateDir);
   const config = normalizeWechatMinigameBuildConfig(JSON.parse(fs.readFileSync(configPath, "utf8")));
   const artifacts = buildWechatMinigameTemplateArtifacts(config);
+
+  if (args.check) {
+    const mismatches = [
+      compareFileContent(path.join(templateDir, "game.json"), `${JSON.stringify(artifacts.gameJson, null, 2)}\n`),
+      compareFileContent(
+        path.join(templateDir, "project.config.json"),
+        `${JSON.stringify(artifacts.projectConfigJson, null, 2)}\n`
+      ),
+      compareFileContent(
+        path.join(templateDir, "codex.wechat.build.json"),
+        `${JSON.stringify(artifacts.manifestJson, null, 2)}\n`
+      ),
+      compareFileContent(path.join(templateDir, "README.codex.md"), `${artifacts.releaseChecklistMarkdown}\n`)
+    ].filter((value): value is string => Boolean(value));
+
+    if (mismatches.length > 0) {
+      console.error("WeChat mini game template artifacts are stale:");
+      for (const mismatch of mismatches) {
+        const [status, mismatchPath] = mismatch.split(": ", 2);
+        console.error(`  - ${status} ${path.relative(repoRoot, mismatchPath)}`);
+      }
+      console.error("Run npm run prepare:wechat-build to refresh them.");
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`WeChat mini game templates are up to date: ${path.relative(repoRoot, templateDir)}`);
+    return;
+  }
 
   writeJsonFile(path.join(templateDir, "game.json"), artifacts.gameJson);
   writeJsonFile(path.join(templateDir, "project.config.json"), artifacts.projectConfigJson);
