@@ -25,6 +25,12 @@ export interface CocosWechatMiniGameLike {
     success?: (result: { code?: string }) => void;
     fail?: (error: { errMsg?: string }) => void;
   }) => void) | undefined;
+  getUserProfile?: ((options: {
+    desc: string;
+    lang?: string;
+    success?: (result: { userInfo?: { nickName?: string; avatarUrl?: string } }) => void;
+    fail?: (error: { errMsg?: string }) => void;
+  }) => void) | undefined;
 }
 
 export interface CocosLoginProviderEnvironmentLike {
@@ -72,6 +78,7 @@ export interface CocosLoginOptions {
   storage?: Pick<Storage, "setItem"> | null;
   wx?: CocosWechatMiniGameLike | null;
   config?: CocosLoginRuntimeConfig;
+  authToken?: string | null;
 }
 
 function normalizeBoolean(value: unknown): boolean | null {
@@ -188,7 +195,8 @@ export async function loginWithCocosProvider(
         ...(options?.config?.wechatMiniGame.exchangePath
           ? { exchangePath: options.config.wechatMiniGame.exchangePath }
           : {}),
-        ...(options?.config?.wechatMiniGame.mockCode ? { mockCode: options.config.wechatMiniGame.mockCode } : {})
+        ...(options?.config?.wechatMiniGame.mockCode ? { mockCode: options.config.wechatMiniGame.mockCode } : {}),
+        ...(options?.authToken ? { authToken: options.authToken } : {})
       });
   }
 }

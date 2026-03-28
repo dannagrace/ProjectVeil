@@ -191,6 +191,106 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - 混合脚本（拿木 -> 占矿 -> 推日 -> 拿金 -> 回招募所 -> 招募）
 - 目前 `advanceTime(ms)` 的真实等待是偏稳妥的保守值；如果后续想压缩脚本运行时长，可以在不引入抖动的前提下再微调。
 
+## Issue #30 - WeChat login slice - 2026-03-28
+
+- 当前分支：`codex/issue-30-wechat-code2session`
+- 本轮聚焦 `#30 微信小游戏适配与发布` 里的“微信登录集成”子任务，已补齐：
+  - `wx.login() -> code2Session` 的真实/Mock 双路径
+  - WeChat OpenID 绑定到现有账号系统
+  - 微信昵称 / 头像同步到玩家资料
+- 服务端本轮落点：
+  - `apps/server/src/auth.ts`
+    - 新增 `production/mock/disabled` 三态小游戏登录配置
+    - 生产模式下调用 `code2Session`
+    - 已登录账号携带 Bearer token 时，会把 OpenID 绑定到现有账号，并保留 `loginId` / `account` 会话语义
+    - 同一 OpenID 再次登录时会复用已绑定玩家，而不是接受新的伪造 `playerId`
+  - `apps/server/src/persistence.ts`
+    - 玩家账号持久化新增 `avatar_url`
+    - 玩家账号持久化新增 `wechat_mini_game_open_id / union_id / bound_at`
+    - MySQL schema 和内存仓库都已补齐对应字段与唯一索引/映射
+  - `apps/server/src/player-accounts.ts`
+    - 玩家资料路由现在可读写 `avatarUrl`
+    - 对外返回时不会泄漏 WeChat OpenID / UnionID
+- Cocos 端本轮落点：
+  - `apps/cocos-client/assets/scripts/cocos-lobby.ts`
+    - 小游戏登录时优先尝试 `wx.getUserProfile`
+    - 把昵称、头像和当前 Bearer token 一并发到 `/api/auth/wechat-mini-game-login`
+  - `apps/cocos-client/assets/scripts/cocos-login-provider.ts`
+    - 登录 provider 已支持透传 `authToken`
+  - `apps/cocos-client/assets/scripts/VeilRoot.ts`
+    - 小游戏登录状态文案更新为“登录已连通”
+- 本轮新增/更新测试：
+  - `apps/server/test/auth-guest-login.test.ts`
+    - 覆盖 production `code2Session` 交换
+    - 覆盖已登录账号绑定 OpenID
+    - 覆盖同一 OpenID 再次登录时复用已绑定账号
+  - `apps/cocos-client/test/cocos-lobby.test.ts`
+    - 覆盖 `Authorization` header、昵称和头像同步
+- 本轮验证结果：
+  - `npm run typecheck:server` 通过
+  - `npm run typecheck:cocos` 通过
+  - 定向测试通过（`44/44`）
+  - `npm test` 通过（`273/273`）
+  - 按 `develop-web-game` 技能脚本做了 H5 烟测：
+    - URL: `http://127.0.0.1:4173/?roomId=wechat-issue-30-smoke&playerId=player-1`
+    - 动作文件：`tests/automation/keyboard-battle.actions.json`
+    - 最终 `state-0.json` 仍正常回到 `world`
+    - `gold = 300`
+    - 英雄停在 `(5,4)`
+    - 未生成 `errors-0.json`
+    - 截图已人工检查，无残留战斗 UI；临时 `output/wechat-issue-30-smoke` 产物已清理
+- 还未覆盖的 `#30` 范围：
+  - Cocos Creator 微信小游戏构建目标与分包/CDN 配置
+  - 纹理压缩、按需加载、内存剖析
+  - 触控操作、分享转发、安全域名与开发者工具 / 真机验收
+
+## Issue #30 - WeChat build scaffold - 2026-03-28
+
+- 在上一轮登录集成的基础上，本轮继续推进 `#30` 的“构建配置 / 分包预算 / 域名清单”子项。
+- 新增配置文件：`apps/cocos-client/wechat-minigame.build.json`
+  - 统一记录小游戏项目名、`appid`、构建输出目录、主包预算、总分包预算、网络超时、远程资源根路径与白名单域名
+- 新增纯函数工具：`apps/cocos-client/assets/scripts/cocos-wechat-build.ts`
+  - 负责归一化小游戏构建配置
+  - 生成 `build-templates/wechatgame` 所需模板内容
+  - 分析导出结果里的 `game.json` 与 `subpackages` 体积
+  - 校验主包 `4MB` / 总分包 `30MB` 预算
+- 新增脚本：
+  - `scripts/prepare-wechat-minigame-build.ts`
+    - 命令：`npm run prepare:wechat-build`
+    - 会生成 `apps/cocos-client/build-templates/wechatgame/`
+  - `scripts/validate-wechat-minigame-build.ts`
+    - 命令：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir>`
+    - 会读取导出目录，输出主包、总分包和分包明细
+- 本轮实际生成的模板目录：
+  - `apps/cocos-client/build-templates/wechatgame/game.json`
+  - `apps/cocos-client/build-templates/wechatgame/project.config.json`
+  - `apps/cocos-client/build-templates/wechatgame/codex.wechat.build.json`
+  - `apps/cocos-client/build-templates/wechatgame/README.codex.md`
+- 文档已补充到：`apps/cocos-client/README.md`
+  - 说明如何生成模板
+  - 说明如何对导出结果做预算校验
+  - 说明当前脚手架与 Creator 内正式 Asset Bundle / Mini Game Subpackage 设置的关系
+- 本轮验证结果：
+  - `npm run prepare:wechat-build` 通过
+  - `npm run typecheck:cocos` 通过
+  - 新增测试 `apps/cocos-client/test/cocos-wechat-build.test.ts` 通过（`4/4`）
+  - `npm run validate:wechat-build -- --output-dir apps/cocos-client/build-templates/wechatgame` 通过
+    - 当前模板目录给出告警：`No subpackages were detected or configured for this build`
+    - 这是预期行为，因为还没在 Cocos Creator 中把实际 Asset Bundle 标成 `Mini Game Subpackage`
+  - `npm test` 通过（`277/277`）
+  - 按 `develop-web-game` 技能脚本回归 H5：
+    - URL: `http://127.0.0.1:4173/?roomId=wechat-build-smoke&playerId=player-1`
+    - 动作文件：`tests/automation/keyboard-battle.actions.json`
+    - 最终 `state-0.json` 显示仍回到 `world`
+    - `gold = 300`
+    - 英雄位于 `(5,4)`
+    - 无 `errors-0.json`
+    - 截图已人工检查，无残留战斗 UI；临时产物已清理
+- 下一步建议：
+  - 在 Cocos Creator 里把目标资源目录真正拆成 Asset Bundle，并设置 `Mini Game Subpackage`
+  - 导出一次真实 `wechatgame` 构建目录，再用 `validate:wechat-build` 跑预算校验
+  - 补远程资源 CDN 路径与 `downloadFile` 合法域名
+
 ## TODOs for next agent
 
 - 如需继续深度使用 `develop-web-game`，可以基于 `output/web-game-hooks/state-0.json` 开始设计更完整的动作脚本，验证拾取、占矿、招募、战斗、结算等多步链路。
@@ -422,3 +522,124 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 当前结论：
   - `#33` 还没有完成正式高质量美术与 Spine / 音效 / 压缩优化，但 H5 已不再完全依赖旧 SVG 占位图
   - 下一步可以继续把这套像素资源从“调试壳预览包”升级成正式资产流水线，并补到 Cocos 端的更细粒度单位 / 建筑表现上
+
+## Issue #30 - WeChat share + domain readiness - 2026-03-28
+
+- 当前分支仍是 `codex/issue-30-wechat-code2session`
+- 本轮继续推进 `#30 微信小游戏适配与发布` 的“分享与转发功能 / 安全域名配置”两段基础设施：
+  - `apps/cocos-client/assets/scripts/cocos-wechat-share.ts`
+    - 新增小游戏分享桥接工具
+    - 会按当前 `roomId / inviterId / scene / day` 生成稳定分享 payload
+    - 自动挂接 `showShareMenu / onShareAppMessage / shareAppMessage`
+    - 分享 query 只带 `roomId + inviterId`，不复用分享发起人的 `playerId`，避免好友从分享入口进房时错误继承身份
+  - `apps/cocos-client/assets/scripts/VeilRoot.ts`
+    - 在启动、登录、进入房间、返回大厅、切换草稿身份和收到新快照后，都会重新同步小游戏分享卡片
+    - Lobby 面板会显示当前分享状态提示，但本轮刻意没有新增单独的“分享”按钮
+    - 当前选择是优先复用微信小游戏右上角菜单，避免 Cocos Lobby 左侧按钮区继续膨胀并压缩核心登录入口
+  - `apps/cocos-client/assets/scripts/VeilLobbyPanel.ts`
+    - 当前状态卡新增 `shareHint`
+    - 可直接提示“分享仅小游戏可用 / 已同步转发卡片 / 请使用右上角菜单分享”等状态
+  - `apps/cocos-client/assets/scripts/cocos-wechat-build.ts`
+    - 小游戏构建配置新增 `runtimeRemoteUrl`
+    - `domains.request / socket / uploadFile / downloadFile` 现统一按 origin 归一化，而不是保留路径
+    - 构建模板会自动推导运行时真正需要的 `request / socket / downloadFile` 域名
+    - `README.codex.md` 与 `codex.wechat.build.json` 现会明确列出“已配置域名 / 必需域名 / 缺口域名”
+    - `validate:wechat-build` 现在会对白名单缺口给出显式告警，不再只检查远程资源 CDN
+  - `apps/cocos-client/wechat-minigame.build.json`
+    - 先补上本地调试默认值：`runtimeRemoteUrl = http://127.0.0.1:2567`
+    - 同步记录本地 request/socket 域名，后续切正式环境时再替换成 HTTPS/WSS 域名
+- 本轮新增 / 更新测试：
+  - `apps/cocos-client/test/cocos-wechat-share.test.ts`
+    - 覆盖分享 payload 文案、launch query、菜单挂接和直接转发回执
+  - `apps/cocos-client/test/cocos-wechat-build.test.ts`
+    - 覆盖 origin 归一化
+    - 覆盖 `runtimeRemoteUrl -> request/socket` 推导
+    - 覆盖缺口域名告警
+- 本轮验证结果：
+  - `npm run prepare:wechat-build` 通过
+  - `npm run typecheck:cocos` 通过
+  - 定向测试通过：
+    - `node --import tsx --test ./apps/cocos-client/test/cocos-wechat-share.test.ts ./apps/cocos-client/test/cocos-wechat-build.test.ts ./apps/cocos-client/test/cocos-lobby.test.ts ./apps/cocos-client/test/cocos-login-provider.test.ts`
+    - 结果 `26/26`
+  - `npm run validate:wechat-build -- --output-dir apps/cocos-client/build-templates/wechatgame` 通过
+    - 当前唯一保留告警：`No subpackages were detected or configured for this build`
+    - 这和 Creator 里还没正式配置 `Mini Game Subpackage` 一致，属于预期状态
+  - `npm test` 通过（`282/282`）
+  - 已按 `develop-web-game` 技能再跑一轮 H5 烟测：
+    - URL: `http://127.0.0.1:4173/?roomId=wechat-domain-smoke&playerId=player-1`
+    - 动作文件：`tests/automation/keyboard-battle.actions.json`
+    - `state-0.json` 结果：
+      - 最终回到 `world`
+      - `gold = 300`
+      - 英雄停在 `(5,4)`
+      - `timelineTail` 仍包含战斗胜利和奖励日志
+    - 未生成 `errors-0.json`
+    - 已人工检查截图：地图和右侧战斗面板都回到了空闲态，没有残留战斗 UI
+- 当前对 `#30` 的结论：
+  - 已完成：
+    - 微信小游戏登录链路基础打通
+    - 微信小游戏构建模板与预算校验脚手架
+    - 分享卡片自动挂桥
+    - 基于 `runtimeRemoteUrl` 的域名白名单显式校验
+  - 仍未完成：
+    - Cocos Creator 内真实 Asset Bundle / Mini Game Subpackage 配置
+    - 正式导出 `wechatgame` 构建目录并在微信开发者工具运行
+    - 远程资源 CDN 真部署与正式域名白名单
+    - 纹理压缩、按需加载、内存剖析、真机 FPS / 内存验收
+
+## Issue #30 - Runtime memory readiness - 2026-03-28
+
+- 本轮继续补 `#30` 的“内存优化 / 运行时收口”部分，重点不是虚报 `< 256MB` 已验收，而是先把仓库内能完成的内存管理边界做实。
+- 占位图资源管理已从“首次渲染时全量常驻缓存”改成“按 UI scope retain/release”：
+  - 新增 `apps/cocos-client/assets/scripts/cocos-placeholder-sprite-plan.ts`
+    - 显式定义 `map / hud / battle / timeline` 四类占位图 scope 以及它们各自需要的贴图路径
+  - 重构 `apps/cocos-client/assets/scripts/cocos-placeholder-sprites.ts`
+    - 支持 `load / retain / release`
+    - 支持统计当前 retained scope、已加载路径和引用计数
+    - Map/HUD/Battle/Timeline 组件销毁时会释放不再需要的占位图资源
+  - 已接线文件：
+    - `apps/cocos-client/assets/scripts/VeilMapBoard.ts`
+    - `apps/cocos-client/assets/scripts/VeilHudPanel.ts`
+    - `apps/cocos-client/assets/scripts/VeilBattlePanel.ts`
+    - `apps/cocos-client/assets/scripts/VeilTimelinePanel.ts`
+  - 后续又继续收紧了一层：
+    - `VeilMapBoard` 在没有世界态（例如大厅 / 等待房间）时会释放 `map` scope
+    - `VeilBattlePanel` 在空闲态会释放 `battle` scope
+    - `VeilTimelinePanel` 在没有事件条目时会释放 `timeline` scope
+- 运行时内存监控已补一层小游戏适配：
+  - 新增 `apps/cocos-client/assets/scripts/cocos-runtime-memory.ts`
+    - 优先读取小游戏 performance memory，其次回退浏览器 `performance.memory`
+    - 若小游戏运行时暴露 `onMemoryWarning` / `triggerGC`，则允许注册内存告警并手动请求 GC
+  - `apps/cocos-client/assets/scripts/VeilRoot.ts`
+    - 启动时绑定内存告警监听
+    - 收到告警时会写日志并尝试请求一次 GC
+    - HUD 状态卡现会显示“当前内存 / 资源 scope / 是否支持 GC”的摘要
+  - `apps/cocos-client/assets/scripts/VeilHudPanel.ts`
+    - 状态区现多展示一行 `runtimeHealth`
+- 本轮新增 / 更新测试：
+  - `apps/cocos-client/test/cocos-placeholder-sprites.test.ts`
+    - 锁住占位图 scope 规划与去重规则
+  - `apps/cocos-client/test/cocos-runtime-memory.test.ts`
+    - 锁住小游戏 / 浏览器内存快照优先级、状态文案和 warning/GC 挂接
+- 本轮验证结果：
+  - `npm run typecheck:cocos` 通过
+  - 定向测试通过：
+    - `node --import tsx --test ./apps/cocos-client/test/cocos-runtime-memory.test.ts ./apps/cocos-client/test/cocos-placeholder-sprites.test.ts ./apps/cocos-client/test/cocos-wechat-build.test.ts ./apps/cocos-client/test/cocos-wechat-share.test.ts ./apps/cocos-client/test/cocos-lobby.test.ts ./apps/cocos-client/test/cocos-login-provider.test.ts`
+    - 结果 `33/33`
+  - `npm test` 通过（`289/289`）
+  - 已按 `develop-web-game` 补跑一轮 H5 烟测：
+    - URL: `http://127.0.0.1:4173/?roomId=wechat-issue-30-final&playerId=player-1`
+    - 动作文件：`tests/automation/keyboard-battle.actions.json`
+    - `state-0.json` 结果：
+      - 最终回到 `world`
+      - `gold = 300`
+      - 英雄停在 `(5,4)`
+      - 未生成 `errors-0.json`
+    - 截图已人工检查，地图和右侧战斗面板都正常回到空闲态
+- 到当前为止，`#30` 在仓库内能落地的部分基本都已经收口：
+  - 登录、分享、域名配置、按需加载/释放、运行时内存告警挂桥都已完成
+  - 剩余真正未完成的都是外部环境依赖项：
+    - 在 Cocos Creator 里把真实 Asset Bundle 标成 `Mini Game Subpackage`
+    - 导出 `wechatgame` 构建目录
+    - 在微信开发者工具里验证域名、分包、FPS 与内存
+    - iOS / Android 真机验收

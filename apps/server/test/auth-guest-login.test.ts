@@ -3,7 +3,12 @@ import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
-import { registerAuthRoutes, resetGuestAuthSessions, type GuestAuthSession } from "../src/auth";
+import {
+  issueAccountAuthSession,
+  registerAuthRoutes,
+  resetGuestAuthSessions,
+  type GuestAuthSession
+} from "../src/auth";
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
 import type {
   PlayerAccountProgressPatch,
@@ -24,6 +29,7 @@ import { queryEventLogEntries } from "../../../packages/shared/src/index";
 class MemoryAuthStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
+  private readonly playerIdByWechatOpenId = new Map<string, string>();
 
   async load(_roomId: string): Promise<RoomPersistenceSnapshot | null> {
     return null;
@@ -36,6 +42,11 @@ class MemoryAuthStore implements RoomSnapshotStore {
   async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
     const normalizedLoginId = loginId.trim().toLowerCase();
     return Array.from(this.accounts.values()).find((account) => account.loginId === normalizedLoginId) ?? null;
+  }
+
+  async loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null> {
+    const playerId = this.playerIdByWechatOpenId.get(openId.trim());
+    return playerId ? this.accounts.get(playerId) ?? null : null;
   }
 
   async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {
@@ -74,12 +85,16 @@ class MemoryAuthStore implements RoomSnapshotStore {
     const account: PlayerAccountSnapshot = {
       playerId,
       displayName: input.displayName?.trim() || existing?.displayName || playerId,
+      ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
       achievements: structuredClone(existing?.achievements ?? []),
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: existing.wechatMiniGameOpenId } : {}),
+      ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
+      ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -116,11 +131,46 @@ class MemoryAuthStore implements RoomSnapshotStore {
     return account;
   }
 
+  async bindPlayerAccountWechatMiniGameIdentity(
+    playerId: string,
+    input: { openId: string; unionId?: string; displayName?: string; avatarUrl?: string | null }
+  ): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({
+      playerId,
+      ...(input.displayName?.trim() ? { displayName: input.displayName } : {})
+    });
+    const normalizedOpenId = input.openId.trim();
+    const owner = await this.loadPlayerAccountByWechatMiniGameOpenId(normalizedOpenId);
+    if (owner && owner.playerId !== existing.playerId) {
+      throw new Error("wechatMiniGameOpenId is already taken");
+    }
+
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      ...(input.displayName?.trim() ? { displayName: input.displayName.trim() } : {}),
+      ...(input.avatarUrl?.trim() ? { avatarUrl: input.avatarUrl.trim() } : existing.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
+      wechatMiniGameOpenId: normalizedOpenId,
+      ...(input.unionId?.trim() ? { wechatMiniGameUnionId: input.unionId.trim() } : existing.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
+      wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(existing.playerId, account);
+    this.playerIdByWechatOpenId.set(normalizedOpenId, existing.playerId);
+    return account;
+  }
+
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {
     const existing = await this.ensurePlayerAccount({ playerId });
     const account: PlayerAccountSnapshot = {
       ...existing,
       displayName: patch.displayName?.trim() || existing.displayName,
+      ...(patch.avatarUrl !== undefined
+        ? patch.avatarUrl?.trim()
+          ? { avatarUrl: patch.avatarUrl.trim() }
+          : {}
+        : existing.avatarUrl
+          ? { avatarUrl: existing.avatarUrl }
+          : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -474,4 +524,170 @@ test("wechat mini game scaffold route issues a provider-tagged session in mock m
   assert.equal(payload.session.playerId, "wechat-player");
   assert.equal(payload.session.provider, "wechat-mini-game");
   assert.equal(payload.session.authMode, "guest");
+});
+
+test("wechat mini game production exchange binds code2Session identity onto an authenticated account", { concurrency: false }, async (t) => {
+  const port = 44950 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+  let requestedAccept = "";
+
+  await store.ensurePlayerAccount({
+    playerId: "account-player",
+    displayName: "暮潮守望"
+  });
+  await store.bindPlayerAccountCredentials("account-player", {
+    loginId: "veil-ranger",
+    passwordHash: "hashed-password"
+  });
+
+  const accountSession = issueAccountAuthSession({
+    playerId: "account-player",
+    displayName: "暮潮守望",
+    loginId: "veil-ranger"
+  });
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.VEIL_WECHAT_MINIGAME_APP_ID;
+    delete process.env.VEIL_WECHAT_MINIGAME_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.VEIL_WECHAT_MINIGAME_APP_ID = "wx-prod-app";
+  process.env.VEIL_WECHAT_MINIGAME_APP_SECRET = "wx-prod-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  globalThis.fetch = async (input, init) => {
+    requestedUrl = String(input);
+    requestedAccept = new Headers(init?.headers).get("Accept") ?? "";
+    return new Response(
+      JSON.stringify({
+        openid: "wx-openid-prod",
+        unionid: "wx-union-prod",
+        session_key: "session-key"
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  };
+
+  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accountSession.token}`
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      displayName: "微信暮潮守望",
+      avatarUrl: " https://cdn.example.com/avatar.png "
+    })
+  });
+  const payload = (await response.json()) as { session: GuestAuthSession };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.session.playerId, "account-player");
+  assert.equal(payload.session.displayName, "微信暮潮守望");
+  assert.equal(payload.session.provider, "wechat-mini-game");
+  assert.equal(payload.session.authMode, "account");
+  assert.equal(payload.session.loginId, "veil-ranger");
+
+  const requestUrl = new URL(requestedUrl);
+  assert.equal(requestUrl.origin + requestUrl.pathname, "https://wechat.example.test/code2session");
+  assert.equal(requestUrl.searchParams.get("appid"), "wx-prod-app");
+  assert.equal(requestUrl.searchParams.get("secret"), "wx-prod-secret");
+  assert.equal(requestUrl.searchParams.get("js_code"), "wx-prod-code");
+  assert.equal(requestUrl.searchParams.get("grant_type"), "authorization_code");
+  assert.equal(requestedAccept, "application/json");
+
+  const storedAccount = await store.loadPlayerAccount("account-player");
+  assert.equal(storedAccount?.displayName, "微信暮潮守望");
+  assert.equal(storedAccount?.avatarUrl, "https://cdn.example.com/avatar.png");
+  assert.equal(storedAccount?.wechatMiniGameOpenId, "wx-openid-prod");
+  assert.equal(storedAccount?.wechatMiniGameUnionId, "wx-union-prod");
+  assert.equal(storedAccount?.loginId, "veil-ranger");
+});
+
+test("wechat mini game login reuses the bound player even when later requests spoof another playerId", { concurrency: false }, async (t) => {
+  const port = 45050 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.VEIL_WECHAT_MINIGAME_APP_ID;
+    delete process.env.VEIL_WECHAT_MINIGAME_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.VEIL_WECHAT_MINIGAME_APP_ID = "wx-prod-app";
+  process.env.VEIL_WECHAT_MINIGAME_APP_SECRET = "wx-prod-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        openid: "wx-openid-repeat",
+        session_key: "session-key"
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+  const firstResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      playerId: "wechat-player",
+      displayName: "初次旅人"
+    })
+  });
+  const firstPayload = (await firstResponse.json()) as { session: GuestAuthSession };
+
+  const secondResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      playerId: "spoofed-player",
+      displayName: "回归旅人"
+    })
+  });
+  const secondPayload = (await secondResponse.json()) as { session: GuestAuthSession };
+
+  assert.equal(firstResponse.status, 200);
+  assert.equal(secondResponse.status, 200);
+  assert.equal(firstPayload.session.playerId, "wechat-player");
+  assert.equal(secondPayload.session.playerId, "wechat-player");
+  assert.equal(secondPayload.session.displayName, "回归旅人");
+  assert.equal(secondPayload.session.provider, "wechat-mini-game");
+
+  const boundAccount = await store.loadPlayerAccount("wechat-player");
+  const spoofedAccount = await store.loadPlayerAccount("spoofed-player");
+  assert.equal(boundAccount?.wechatMiniGameOpenId, "wx-openid-repeat");
+  assert.equal(boundAccount?.displayName, "回归旅人");
+  assert.equal(spoofedAccount, null);
 });

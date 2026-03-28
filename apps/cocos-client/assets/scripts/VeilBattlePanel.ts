@@ -7,7 +7,12 @@ import {
 } from "./cocos-battle-panel-model.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import type { BattleAction } from "./VeilCocosSession.ts";
-import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
+import {
+  getPlaceholderSpriteAssets,
+  loadPlaceholderSpriteAssets,
+  releasePlaceholderSpriteAssets,
+  retainPlaceholderSpriteAssets
+} from "./cocos-placeholder-sprites.ts";
 
 const { ccclass } = _decorator;
 
@@ -69,18 +74,28 @@ export class VeilBattlePanel extends Component {
   private requestedIcons = false;
   private onSelectTarget: ((unitId: string) => void) | undefined;
   private onAction: ((action: BattleAction) => void) | undefined;
+  private placeholderAssetsRetained = false;
 
   configure(options: VeilBattlePanelOptions): void {
     assignUiLayer(this.node);
     this.onSelectTarget = options.onSelectTarget;
     this.onAction = options.onAction;
+    this.retainPlaceholderAssets();
+  }
+
+  onDestroy(): void {
+    if (this.placeholderAssetsRetained) {
+      releasePlaceholderSpriteAssets("battle");
+      this.placeholderAssetsRetained = false;
+    }
   }
 
   render(state: VeilBattlePanelState): void {
     this.currentState = state;
     this.cleanupLegacyNodes();
-    this.syncHeaderIcon();
     const model = buildBattlePanelViewModel(state);
+    this.syncPlaceholderAssets(!model.idle);
+    this.syncHeaderIcon();
     this.syncChrome();
     this.ensureSectionLabels();
     this.sanitizePassiveLabels();
@@ -539,9 +554,9 @@ export class VeilBattlePanel extends Component {
     const frame = getPlaceholderSpriteAssets()?.icons.battle ?? null;
     if (!frame) {
       iconNode.active = false;
-      if (!this.requestedIcons) {
+      if (!this.requestedIcons && this.placeholderAssetsRetained) {
         this.requestedIcons = true;
-        void loadPlaceholderSpriteAssets().then(() => {
+        void loadPlaceholderSpriteAssets("battle").then(() => {
           this.requestedIcons = false;
           if (this.currentState) {
             this.render(this.currentState);
@@ -554,6 +569,31 @@ export class VeilBattlePanel extends Component {
     iconNode.active = true;
     this.headerIconSprite.spriteFrame = frame;
     this.headerIconOpacity.opacity = 255;
+  }
+
+  private retainPlaceholderAssets(): void {
+    if (this.placeholderAssetsRetained) {
+      return;
+    }
+
+    this.placeholderAssetsRetained = true;
+    void retainPlaceholderSpriteAssets("battle").catch(() => {
+      this.placeholderAssetsRetained = false;
+    });
+  }
+
+  private syncPlaceholderAssets(enabled: boolean): void {
+    if (enabled) {
+      this.retainPlaceholderAssets();
+      return;
+    }
+
+    if (!this.placeholderAssetsRetained) {
+      return;
+    }
+
+    releasePlaceholderSpriteAssets("battle");
+    this.placeholderAssetsRetained = false;
   }
 
   private syncWatermark(idle: boolean): void {

@@ -30,6 +30,7 @@ export interface VeilLobbyRenderState {
   loginId: string;
   loginHint: string;
   loginActionLabel: string;
+  shareHint: string;
   vaultSummary: string;
   sessionSource: "remote" | "local" | "manual" | "none";
   loading: boolean;
@@ -203,6 +204,7 @@ export class VeilLobbyPanel extends Component {
         state.authMode === "account" ? "正式账号模式" : "游客模式",
         sessionLabel,
         state.vaultSummary,
+        state.shareHint,
         state.status || "等待操作..."
       ],
       {

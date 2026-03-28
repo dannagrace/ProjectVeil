@@ -245,6 +245,64 @@ test("loginCocosWechatAuthSession exchanges wx.login code through the scaffold e
   });
 });
 
+test("loginCocosWechatAuthSession forwards auth token and user profile details when wx.getUserProfile is available", async () => {
+  let requestedBody = "";
+  let requestedAuthorization = "";
+
+  const session = await loginCocosWechatAuthSession("http://127.0.0.1:2567", "account-player", "回声旅人", {
+    authToken: "account.token",
+    wx: {
+      login: ({ success }) => {
+        success?.({ code: "wx-profile-code" });
+      },
+      getUserProfile: ({ success }) => {
+        success?.({
+          userInfo: {
+            nickName: "雾海司灯",
+            avatarUrl: "https://cdn.example/avatar-wechat.png"
+          }
+        });
+      }
+    },
+    fetchImpl: async (_input, init) => {
+      requestedAuthorization = new Headers(init?.headers).get("Authorization") ?? "";
+      requestedBody = String(init?.body ?? "");
+      return new Response(
+        JSON.stringify({
+          session: {
+            token: "wechat.account.token",
+            playerId: "account-player",
+            displayName: "雾海司灯",
+            authMode: "account",
+            provider: "wechat-mini-game",
+            loginId: "veil-ranger"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.equal(requestedAuthorization, "Bearer account.token");
+  assert.match(requestedBody, /"code":"wx-profile-code"/);
+  assert.match(requestedBody, /"displayName":"雾海司灯"/);
+  assert.match(requestedBody, /"avatarUrl":"https:\/\/cdn\.example\/avatar-wechat\.png"/);
+  assert.deepEqual(session, {
+    token: "wechat.account.token",
+    playerId: "account-player",
+    displayName: "雾海司灯",
+    authMode: "account",
+    provider: "wechat-mini-game",
+    loginId: "veil-ranger",
+    source: "remote"
+  });
+});
+
 test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and preserves the global vault", async () => {
   const values = new Map<string, string>();
   values.set(getCocosPlayerAccountStorageKey("account-player"), "旧档案名");

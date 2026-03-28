@@ -31,6 +31,7 @@ import {
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
+  private readonly playerIdByWechatOpenId = new Map<string, string>();
   private readonly eventHistoryByPlayerId = new Map<string, PlayerAccountSnapshot["recentEventLog"]>();
 
   async load(_roomId: string): Promise<RoomPersistenceSnapshot | null> {
@@ -46,6 +47,11 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return (
       Array.from(this.accounts.values()).find((account) => account.loginId === normalizedLoginId) ?? null
     );
+  }
+
+  async loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null> {
+    const playerId = this.playerIdByWechatOpenId.get(openId.trim());
+    return playerId ? this.accounts.get(playerId) ?? null : null;
   }
 
   async loadPlayerEventHistory(
@@ -84,6 +90,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     const account: PlayerAccountSnapshot = {
       playerId: input.playerId,
       displayName: input.displayName?.trim() || existing?.displayName || input.playerId,
+      ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
       achievements: structuredClone(existing?.achievements ?? []),
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
@@ -91,6 +98,9 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: existing.wechatMiniGameOpenId } : {}),
+      ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
+      ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -128,11 +138,52 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return account;
   }
 
+  async bindPlayerAccountWechatMiniGameIdentity(
+    playerId: string,
+    input: { openId: string; unionId?: string; displayName?: string; avatarUrl?: string | null }
+  ): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({
+      playerId,
+      ...(input.displayName?.trim() ? { displayName: input.displayName } : {})
+    });
+    const normalizedOpenId = input.openId.trim();
+    const owner = await this.loadPlayerAccountByWechatMiniGameOpenId(normalizedOpenId);
+    if (owner && owner.playerId !== playerId) {
+      throw new Error("wechatMiniGameOpenId is already taken");
+    }
+
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      ...(input.displayName?.trim() ? { displayName: input.displayName.trim() } : {}),
+      ...(input.avatarUrl !== undefined
+        ? input.avatarUrl?.trim()
+          ? { avatarUrl: input.avatarUrl.trim() }
+          : {}
+        : existing.avatarUrl
+          ? { avatarUrl: existing.avatarUrl }
+          : {}),
+      wechatMiniGameOpenId: normalizedOpenId,
+      ...(input.unionId?.trim() ? { wechatMiniGameUnionId: input.unionId.trim() } : existing.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
+      wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(playerId, account);
+    this.playerIdByWechatOpenId.set(normalizedOpenId, playerId);
+    return account;
+  }
+
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {
     const existing = await this.ensurePlayerAccount({ playerId });
     const account: PlayerAccountSnapshot = {
       ...existing,
       displayName: patch.displayName?.trim() || existing.displayName,
+      ...(patch.avatarUrl !== undefined
+        ? patch.avatarUrl?.trim()
+          ? { avatarUrl: patch.avatarUrl.trim() }
+          : {}
+        : existing.avatarUrl
+          ? { avatarUrl: existing.avatarUrl }
+          : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }

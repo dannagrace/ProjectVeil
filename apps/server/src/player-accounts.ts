@@ -284,12 +284,14 @@ function normalizeLoginId(loginId?: string | null): string | undefined {
 function createLocalModeAccount(input: {
   playerId?: string | null | undefined;
   displayName?: string | null | undefined;
+  avatarUrl?: string | null | undefined;
   lastRoomId?: string | null | undefined;
   loginId?: string | null | undefined;
   credentialBoundAt?: string | null | undefined;
 }): PlayerAccountSnapshot {
   const playerId = normalizePlayerId(input.playerId);
   const displayName = normalizeDisplayName(playerId, input.displayName);
+  const avatarUrl = input.avatarUrl?.trim();
   const lastRoomId = input.lastRoomId?.trim();
   const loginId = normalizeLoginId(input.loginId);
   const credentialBoundAt = input.credentialBoundAt?.trim();
@@ -305,6 +307,7 @@ function createLocalModeAccount(input: {
     achievements: [],
     recentEventLog: [],
     recentBattleReplays: [],
+    ...(avatarUrl ? { avatarUrl } : {}),
     ...(lastRoomId ? { lastRoomId } : {}),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {})
@@ -329,8 +332,19 @@ function sendForbidden(response: ServerResponse): void {
   });
 }
 
-function toPublicPlayerAccount(account: PlayerAccountSnapshot): Omit<PlayerAccountSnapshot, "loginId" | "credentialBoundAt"> {
-  const { loginId: _loginId, credentialBoundAt: _credentialBoundAt, ...publicAccount } = account;
+function toPublicPlayerAccount(
+  account: PlayerAccountSnapshot
+): Omit<
+  PlayerAccountSnapshot,
+  "loginId" | "credentialBoundAt" | "wechatMiniGameOpenId" | "wechatMiniGameUnionId"
+> {
+  const {
+    loginId: _loginId,
+    credentialBoundAt: _credentialBoundAt,
+    wechatMiniGameOpenId: _wechatMiniGameOpenId,
+    wechatMiniGameUnionId: _wechatMiniGameUnionId,
+    ...publicAccount
+  } = account;
   return publicAccount;
 }
 
@@ -1014,6 +1028,7 @@ export function registerPlayerAccountRoutes(
     try {
       const body = (await readJsonBody(request)) as {
         displayName?: string | null;
+        avatarUrl?: string | null;
         lastRoomId?: string | null;
       };
 
@@ -1037,8 +1052,19 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
+      if (body.avatarUrl !== undefined && body.avatarUrl !== null && typeof body.avatarUrl !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional string field: avatarUrl"
+          }
+        });
+        return;
+      }
+
       const patch: PlayerAccountProfilePatch = {
         ...(body.displayName !== undefined ? { displayName: body.displayName ?? "" } : {}),
+        ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
         ...(body.lastRoomId !== undefined ? { lastRoomId: body.lastRoomId } : {})
       };
 
@@ -1046,6 +1072,7 @@ export function registerPlayerAccountRoutes(
         const account = createLocalModeAccount({
           playerId: authSession.playerId,
           displayName: patch.displayName ?? authSession.displayName,
+          ...(patch.avatarUrl !== undefined ? { avatarUrl: patch.avatarUrl } : {}),
           ...(patch.lastRoomId !== undefined ? { lastRoomId: patch.lastRoomId } : {}),
           ...(authSession.loginId ? { loginId: authSession.loginId } : {})
         });
@@ -1093,6 +1120,7 @@ export function registerPlayerAccountRoutes(
     try {
       const body = (await readJsonBody(request)) as {
         displayName?: string | null;
+        avatarUrl?: string | null;
         lastRoomId?: string | null;
       };
 
@@ -1116,8 +1144,19 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
+      if (body.avatarUrl !== undefined && body.avatarUrl !== null && typeof body.avatarUrl !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional string field: avatarUrl"
+          }
+        });
+        return;
+      }
+
       const patch: PlayerAccountProfilePatch = {
         ...(body.displayName !== undefined ? { displayName: body.displayName ?? "" } : {}),
+        ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
         ...(body.lastRoomId !== undefined ? { lastRoomId: body.lastRoomId } : {})
       };
 
@@ -1125,6 +1164,7 @@ export function registerPlayerAccountRoutes(
         const account = createLocalModeAccount({
           playerId,
           displayName: patch.displayName ?? authSession?.displayName ?? playerId,
+          ...(patch.avatarUrl !== undefined ? { avatarUrl: patch.avatarUrl } : {}),
           ...(patch.lastRoomId !== undefined ? { lastRoomId: patch.lastRoomId } : {}),
           ...(authSession?.playerId === playerId && authSession.loginId ? { loginId: authSession.loginId } : {})
         });
