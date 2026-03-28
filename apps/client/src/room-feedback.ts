@@ -68,13 +68,13 @@ export function renderEncounterSourceDetail(input: EncounterSourceDetailInput): 
     const ownedIds = ownedHeroIds(input.world);
     if (event.encounterKind === "hero") {
       return ownedIds.has(event.heroId)
-        ? "遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到多人遭遇战结算。"
-        : "遭遇来源：敌方英雄先手接触我方，当前房间已切到多人遭遇战结算。";
+        ? `遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到多人遭遇战结算，战斗会话 ${event.battleId} 已建立。`
+        : `遭遇来源：敌方英雄先手接触我方，当前房间已切到多人遭遇战结算，战斗会话 ${event.battleId} 已建立。`;
     }
 
     return event.initiator === "neutral"
-      ? "遭遇来源：中立守军主动拦截，当前房间已切到遭遇战结算链路。"
-      : "遭遇来源：我方接触了中立守军，当前房间已切到遭遇战结算链路。";
+      ? `遭遇来源：中立守军主动拦截，当前房间已切到遭遇战结算链路，战斗会话 ${event.battleId} 已建立。`
+      : `遭遇来源：我方接触了中立守军，当前房间已切到遭遇战结算链路，战斗会话 ${event.battleId} 已建立。`;
   }
 
   if (input.previewPlan?.endsInEncounter) {
@@ -84,7 +84,7 @@ export function renderEncounterSourceDetail(input: EncounterSourceDetailInput): 
   }
 
   if (input.lastBattleSettlement) {
-    return "战后反馈：本场结果已结算并回写到房间地图，可按当前结果继续移动、推进回合或等待对手。";
+    return "战后反馈：本场结果已结算并回写到房间地图；可结合最近战斗会话、房间态和对手摘要继续移动、推进回合或等待对手。";
   }
 
   if (input.diagnostics.connectionStatus === "reconnecting") {

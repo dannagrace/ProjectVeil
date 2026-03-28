@@ -36,11 +36,16 @@ test("two players can enter a hero-vs-hero battle and resolve it with correct tu
   await expect(playerOnePage.getByTestId("room-phase")).toHaveText("战斗中");
   await expect(playerTwoPage.getByTestId("room-phase")).toHaveText("战斗中");
   await expect(playerOnePage.getByTestId("room-status-detail")).toContainText("英雄遭遇战");
+  await expect(playerOnePage.getByTestId("room-status-detail")).toContainText(`遭遇会话：${roomId}/battle-`);
   await expect(playerOnePage.getByTestId("encounter-source")).toContainText("我方英雄先手接触敌方英雄");
+  await expect(playerOnePage.getByTestId("encounter-source")).toContainText("战斗会话 battle-");
   await expect(playerOnePage.getByTestId("encounter-source")).toHaveAttribute("data-tone", "action");
   await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText("player-1");
   await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText("房间态：战斗中");
+  await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText(`遭遇会话：${roomId}/battle-`);
+  await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText("当前回合：我方操作");
   await expect(playerTwoPage.getByTestId("room-result-summary")).toContainText("多人遭遇战已接管地图行动");
+  await expect(playerTwoPage.getByTestId("room-result-summary")).toContainText(`遭遇会话：${roomId}/battle-`);
   await expect(playerTwoPage.getByTestId("room-next-action")).toContainText("等待本场对抗结算");
   await expect(playerTwoPage.getByTestId("room-next-action")).toHaveAttribute("data-tone", "action");
   await expect(playerTwoPage.getByTestId("battle-attack")).toBeVisible();
@@ -73,6 +78,7 @@ test("two players can enter a hero-vs-hero battle and resolve it with correct tu
   await expect(playerOnePage.getByTestId("encounter-source")).toHaveAttribute("data-tone", "victory");
   await expect(playerOnePage.getByTestId("room-result-summary")).toContainText("房间已回到地图探索阶段");
   await expect(playerOnePage.getByTestId("opponent-summary")).toContainText("最近对手");
+  await expect(playerOnePage.getByTestId("opponent-summary")).toContainText(`遭遇会话：${roomId}/battle-`);
   await expect(playerOnePage.getByTestId("room-next-action")).toContainText("仍可继续移动");
   await expect(playerOnePage.getByTestId("room-next-action")).toHaveAttribute("data-tone", "victory");
   await expect(playerTwoPage.getByTestId("room-next-action")).toContainText("移动力已耗尽");

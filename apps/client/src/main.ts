@@ -1869,6 +1869,28 @@ function formatVisibleHeroSummary(
   return `玩家 ${hero.playerId} · 英雄 ${hero.name || hero.id} · 坐标 (${hero.position.x},${hero.position.y})`;
 }
 
+function battleTurnContextLabel(battle: BattleState, world: PlayerWorldView = state.world): string {
+  if (!battle.activeUnitId) {
+    return "当前回合：等待下一行动单位";
+  }
+
+  const activeUnit = battle.units[battle.activeUnitId];
+  if (!activeUnit) {
+    return "当前回合：等待权威同步";
+  }
+
+  const playerCamp = controlledBattleCamp(battle, world);
+  if (!playerCamp) {
+    return "当前回合：等待权威同步";
+  }
+
+  return activeUnit.camp === playerCamp ? "当前回合：我方操作" : "当前回合：对手操作";
+}
+
+function battleSessionSummary(battleId: string, roomId: string): string {
+  return `遭遇会话：${roomId}/${battleId}`;
+}
+
 function activeHeroSnapshot(world: PlayerWorldView = state.world): PlayerWorldView["ownHeroes"][number] | null {
   return world.ownHeroes[0] ?? null;
 }
@@ -1889,8 +1911,8 @@ function renderEncounterHeadline(): { phase: string; detail: string } {
     return {
       phase: "战斗中",
       detail: state.battle.defenderHeroId
-        ? `已进入英雄遭遇战，对手 ${formatHeroIdentity(opponent, opponentId)}。`
-        : `已进入中立遭遇战，目标 ${state.battle.neutralArmyId ?? "neutral"}。`
+        ? `已进入英雄遭遇战，对手 ${formatHeroIdentity(opponent, opponentId)}。${battleSessionSummary(state.battle.id, state.world.meta.roomId)}。`
+        : `已进入中立遭遇战，目标 ${state.battle.neutralArmyId ?? "neutral"}。${battleSessionSummary(state.battle.id, state.world.meta.roomId)}。`
     };
   }
 
@@ -1933,16 +1955,20 @@ function resolveEncounterOpponentContext(): {
     const opponent = findHeroSnapshot(opponentId, state.world);
     return {
       label: "对手信息",
-      detail: `${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：战斗中 · 我方席位：${
-        playerCamp === "attacker" ? "进攻方" : "防守方"
-      }`
+      detail: `${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：战斗中 · ${battleSessionSummary(
+        state.battle.id,
+        state.world.meta.roomId
+      )} · ${battleTurnContextLabel(state.battle, state.world)} · 我方席位：${playerCamp === "attacker" ? "进攻方" : "防守方"}`
     };
   }
 
   if (state.battle?.neutralArmyId) {
     return {
       label: "遭遇目标",
-      detail: `${state.battle.neutralArmyId} · 房间态：战斗中`
+      detail: `${state.battle.neutralArmyId} · 房间态：战斗中 · ${battleSessionSummary(
+        state.battle.id,
+        state.world.meta.roomId
+      )} · ${battleTurnContextLabel(state.battle, state.world)}`
     };
   }
 
@@ -1970,13 +1996,19 @@ function resolveEncounterOpponentContext(): {
       const opponent = findHeroSnapshot(opponentId, state.world);
       return {
         label: "最近对手",
-        detail: `${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：已结算`
+        detail: `${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：已结算 · ${battleSessionSummary(
+          state.lastEncounterStarted.battleId,
+          state.world.meta.roomId
+        )}`
       };
     }
 
     return {
       label: "最近遭遇",
-      detail: `${state.lastEncounterStarted.neutralArmyId ?? "neutral"} · 房间态：已结算`
+      detail: `${state.lastEncounterStarted.neutralArmyId ?? "neutral"} · 房间态：已结算 · ${battleSessionSummary(
+        state.lastEncounterStarted.battleId,
+        state.world.meta.roomId
+      )}`
     };
   }
 
@@ -1989,7 +2021,10 @@ function renderRoomResultSummary(): string {
   }
 
   if (state.battle) {
-    return "房间结果：多人遭遇战已接管地图行动，待战斗链路关闭后统一回写房间状态。";
+    return `房间结果：多人遭遇战已接管地图行动，当前由 ${battleSessionSummary(
+      state.battle.id,
+      state.world.meta.roomId
+    )} 驱动；待战斗链路关闭后统一回写房间状态。`;
   }
 
   if (state.diagnostics.connectionStatus === "reconnecting") {

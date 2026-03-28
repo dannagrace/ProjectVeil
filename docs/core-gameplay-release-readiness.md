@@ -70,6 +70,7 @@
 
 - [ ] H5 Lobby 能游客进入房间，且缓存会话 / 账号登录 / 找回链路至少各通过一次。
 - [ ] H5 壳可稳定复现大地图、资源点、建筑、战斗和结果弹窗，作为快速回归基线。
+- [ ] 多人遭遇战反馈链路可读：进入战斗时至少能看到 `room-phase`、`encounter-source`、`opponent-summary` 中的房间态 / 对手摘要 / 遭遇会话；结算回到地图后仍能看到 `battle-settlement-*` 与最近遭遇摘要。
 - [ ] H5 reconnect 冒烟至少保留一次 canonical gate 记录，证据中必须同时能看见原 `roomId`、恢复提示和未回档状态。
 - [ ] 关键 E2E 用例与当前配置一致，没有依赖过期坐标、旧数值或旧文案。
 - [ ] H5 回归壳在失败时能提供足够诊断信息，例如 trace、screenshot、事件文案或运行时摘要。
@@ -166,3 +167,18 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
 2. 再跑 `npm run test:e2e:smoke` 与 `npm run test:e2e:multiplayer:smoke`，确认 H5 回归面和多人主链路。
 3. 若候选包涉及微信小游戏，再跑 `npm run check:wechat-build`，并按微信发布文档回填真实 smoke 报告。
 4. 用本清单逐项标记 `pass / partial / fail`，只要存在 `P0 blocker = fail`，该候选版本就不应进入更广范围测试。
+
+## 多人遭遇反馈本地验收流
+
+用于验证 issue #208 这类“多人遭遇进入 / 结算 / 回到地图”反馈是否仍然完整可读。
+
+1. 启动本地房间与 H5 调试壳：`npm run dev:server`、`npm run dev:client`
+2. 跑最小 PvP 反馈回归：`npx playwright test tests/e2e/pvp-hero-encounter.spec.ts --config=playwright.multiplayer.config.ts`
+3. 跑结算后重载回归：`npx playwright test tests/e2e/pvp-postbattle-reconnect.spec.ts --config=playwright.multiplayer.config.ts`
+4. 若只想快速校验文案分支，补跑单测：`node --import tsx --test ./apps/client/test/room-feedback.test.ts`
+
+成功信号：
+
+- 战斗进入后，`room-phase` 显示 `战斗中`，并且 `encounter-source` / `opponent-summary` 能看到遭遇会话与当前房间态。
+- PvP 轮转期间，`opponent-summary` 能看出当前回合归属和我方席位，避免靠日志猜是谁在操作。
+- 战斗结算后，`battle-settlement-summary`、`battle-settlement-room-state`、`battle-settlement-next-action` 与 `最近对手/最近遭遇` 同时保留，能够说明“这场遭遇是谁、结果是什么、房间现在回到了哪里”。
