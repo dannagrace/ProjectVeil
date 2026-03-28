@@ -12,6 +12,7 @@
   - 清单内包含导出目录文件列表、字节数、SHA-256、主包 / 分包体积汇总，以及可选的源码 revision 标识
 - 当前自动化可把已校验导出目录打成确定性的 `tar.gz` 发布包，并输出 sidecar 元数据 `codex.wechat.package.json`
   - sidecar 会记录归档文件名、SHA-256、字节数、导出目录来源，以及归档内文件清单摘要
+- CI 会把上述归档与 sidecar 元数据作为 GitHub Actions artifact `wechat-release-<sha>` 上传，供提审前下载、留档与回滚追溯
   - 当前仍不在 CI 中直连微信上传接口；提审上传继续人工执行
 
 ## 本地执行

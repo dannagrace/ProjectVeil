@@ -98,6 +98,7 @@
 - 微信小游戏 CI 同款校验：`npm run check:wechat-build`
 - 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
+- GitHub Actions `wechat-build-validation` 会把发布归档与 sidecar 元数据作为 artifact `wechat-release-<sha>` 上传，便于提审前下载与回溯
 - H5 调试壳开发服务：`npm run dev:client:h5`
 - H5 调试壳构建验证：`npm run build:client:h5`
 - H5 调试壳类型检查：`npm run typecheck:client:h5`

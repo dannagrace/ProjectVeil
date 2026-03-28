@@ -39,6 +39,8 @@ jobs:
   wechat-build-validation:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      WECHAT_RELEASE_ARTIFACTS_DIR: ${{ runner.temp }}/wechat-release
 
     steps:
       - name: Checkout
@@ -57,4 +59,11 @@ jobs:
         run: npm run check:wechat-build
 
       - name: Package WeChat exported fixture
-        run: npm run package:wechat-release -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir "${RUNNER_TEMP}/wechat-release" --expect-exported-runtime --source-revision "${GITHUB_SHA}"
+        run: npm run package:wechat-release -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir "${WECHAT_RELEASE_ARTIFACTS_DIR}" --expect-exported-runtime --source-revision "${GITHUB_SHA}"
+
+      - name: Upload WeChat release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wechat-release-${{ github.sha }}
+          path: ${{ env.WECHAT_RELEASE_ARTIFACTS_DIR }}
+          if-no-files-found: error
