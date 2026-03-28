@@ -24,9 +24,31 @@ interface AuthObservabilityCounters {
   logoutsTotal: number;
   rateLimitedTotal: number;
   invalidCredentialsTotal: number;
+  tokenDeliveryRequestsTotal: number;
+  tokenDeliverySuccessesTotal: number;
+  tokenDeliveryFailuresTotal: number;
+  tokenDeliveryRetriesTotal: number;
+  tokenDeliveryDeadLettersTotal: number;
 }
 
 type AuthSessionFailureReason = "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked";
+type AuthTokenDeliveryFailureReason = "misconfigured" | "timeout" | "network" | "webhook_4xx" | "webhook_429" | "webhook_5xx";
+type AuthTokenDeliveryAttemptStatus = "disabled" | "dev-token" | "delivered" | "retry_scheduled" | "dead-lettered";
+
+interface AuthTokenDeliveryAttemptLogEntry {
+  timestamp: string;
+  kind: "account-registration" | "password-recovery";
+  loginId: string;
+  deliveryMode: "disabled" | "dev-token" | "webhook";
+  status: AuthTokenDeliveryAttemptStatus;
+  attemptCount: number;
+  maxAttempts: number;
+  retryable: boolean;
+  message: string;
+  failureReason?: AuthTokenDeliveryFailureReason;
+  statusCode?: number;
+  nextAttemptAt?: string;
+}
 
 interface AuthObservabilityState {
   counters: AuthObservabilityCounters;
@@ -36,6 +58,10 @@ interface AuthObservabilityState {
   pendingRegistrationCount: number;
   pendingRecoveryCount: number;
   sessionFailureReasons: Record<AuthSessionFailureReason, number>;
+  tokenDeliveryQueueCount: number;
+  tokenDeliveryDeadLetterCount: number;
+  tokenDeliveryFailureReasons: Record<AuthTokenDeliveryFailureReason, number>;
+  tokenDeliveryRecentAttempts: AuthTokenDeliveryAttemptLogEntry[];
 }
 
 interface RuntimeObservabilityState {
@@ -71,6 +97,19 @@ interface RuntimeHealthPayload {
       pendingRecoveryCount: number;
       counters: AuthObservabilityCounters;
       sessionFailureReasons: Record<AuthSessionFailureReason, number>;
+      tokenDelivery: {
+        queueCount: number;
+        deadLetterCount: number;
+        counters: Pick<
+          AuthObservabilityCounters,
+          | "tokenDeliveryRequestsTotal"
+          | "tokenDeliverySuccessesTotal"
+          | "tokenDeliveryFailuresTotal"
+          | "tokenDeliveryRetriesTotal"
+          | "tokenDeliveryDeadLettersTotal"
+        >;
+        failureReasons: Record<AuthTokenDeliveryFailureReason, number>;
+      };
     };
   };
 }
@@ -83,6 +122,18 @@ interface AuthReadinessPayload {
   alerts: string[];
   auth: RuntimeHealthPayload["runtime"]["auth"];
 }
+
+interface AuthTokenDeliveryPayload {
+  status: "ok" | "warn";
+  service: string;
+  checkedAt: string;
+  headline: string;
+  delivery: RuntimeHealthPayload["runtime"]["auth"]["tokenDelivery"] & {
+    recentAttempts: AuthTokenDeliveryAttemptLogEntry[];
+  };
+}
+
+const RECENT_TOKEN_DELIVERY_ATTEMPTS_LIMIT = 25;
 
 const runtimeObservability: RuntimeObservabilityState = {
   startedAt: Date.now(),
@@ -103,7 +154,12 @@ const runtimeObservability: RuntimeObservabilityState = {
       refreshesTotal: 0,
       logoutsTotal: 0,
       rateLimitedTotal: 0,
-      invalidCredentialsTotal: 0
+      invalidCredentialsTotal: 0,
+      tokenDeliveryRequestsTotal: 0,
+      tokenDeliverySuccessesTotal: 0,
+      tokenDeliveryFailuresTotal: 0,
+      tokenDeliveryRetriesTotal: 0,
+      tokenDeliveryDeadLettersTotal: 0
     },
     activeGuestSessionCount: 0,
     activeAccountSessions: new Map<string, { playerId: string; provider: string }>(),
@@ -115,7 +171,18 @@ const runtimeObservability: RuntimeObservabilityState = {
       token_expired: 0,
       token_kind_invalid: 0,
       session_revoked: 0
-    }
+    },
+    tokenDeliveryQueueCount: 0,
+    tokenDeliveryDeadLetterCount: 0,
+    tokenDeliveryFailureReasons: {
+      misconfigured: 0,
+      timeout: 0,
+      network: 0,
+      webhook_4xx: 0,
+      webhook_429: 0,
+      webhook_5xx: 0
+    },
+    tokenDeliveryRecentAttempts: []
   }
 };
 
@@ -173,7 +240,19 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
         pendingRegistrationCount: runtimeObservability.auth.pendingRegistrationCount,
         pendingRecoveryCount: runtimeObservability.auth.pendingRecoveryCount,
         counters: { ...runtimeObservability.auth.counters },
-        sessionFailureReasons: { ...runtimeObservability.auth.sessionFailureReasons }
+        sessionFailureReasons: { ...runtimeObservability.auth.sessionFailureReasons },
+        tokenDelivery: {
+          queueCount: runtimeObservability.auth.tokenDeliveryQueueCount,
+          deadLetterCount: runtimeObservability.auth.tokenDeliveryDeadLetterCount,
+          counters: {
+            tokenDeliveryRequestsTotal: runtimeObservability.auth.counters.tokenDeliveryRequestsTotal,
+            tokenDeliverySuccessesTotal: runtimeObservability.auth.counters.tokenDeliverySuccessesTotal,
+            tokenDeliveryFailuresTotal: runtimeObservability.auth.counters.tokenDeliveryFailuresTotal,
+            tokenDeliveryRetriesTotal: runtimeObservability.auth.counters.tokenDeliveryRetriesTotal,
+            tokenDeliveryDeadLettersTotal: runtimeObservability.auth.counters.tokenDeliveryDeadLettersTotal
+          },
+          failureReasons: { ...runtimeObservability.auth.tokenDeliveryFailureReasons }
+        }
       }
     }
   };
@@ -195,6 +274,14 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
     alerts.push(`${health.runtime.auth.pendingRegistrationCount} account registration tokens pending`);
   }
 
+  if (health.runtime.auth.tokenDelivery.deadLetterCount > 0) {
+    alerts.push(`${health.runtime.auth.tokenDelivery.deadLetterCount} token delivery dead-letter(s) need operator attention`);
+  }
+
+  if (health.runtime.auth.tokenDelivery.queueCount > 5) {
+    alerts.push(`${health.runtime.auth.tokenDelivery.queueCount} token deliveries waiting for retry`);
+  }
+
   return {
     status: alerts.length > 0 ? "warn" : "ok",
     service,
@@ -202,6 +289,22 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
     headline: `auth ready; guest=${health.runtime.auth.activeGuestSessionCount} account=${health.runtime.auth.activeAccountSessionCount} lockouts=${health.runtime.auth.activeAccountLockCount}`,
     alerts,
     auth: health.runtime.auth
+  };
+}
+
+function buildAuthTokenDeliveryPayload(service = "project-veil-server"): AuthTokenDeliveryPayload {
+  const health = buildHealthPayload(service);
+  const recentAttempts = runtimeObservability.auth.tokenDeliveryRecentAttempts.map((entry) => ({ ...entry }));
+  const warn = health.runtime.auth.tokenDelivery.deadLetterCount > 0 || health.runtime.auth.tokenDelivery.queueCount > 0;
+  return {
+    status: warn ? "warn" : "ok",
+    service,
+    checkedAt: health.checkedAt,
+    headline: `token delivery queue=${health.runtime.auth.tokenDelivery.queueCount} deadLetters=${health.runtime.auth.tokenDelivery.deadLetterCount}`,
+    delivery: {
+      ...health.runtime.auth.tokenDelivery,
+      recentAttempts
+    }
   };
 }
 
@@ -281,6 +384,42 @@ function buildMetricsDocument(): string {
     "# HELP veil_auth_invalid_credentials_total Total auth requests rejected for invalid credentials.",
     "# TYPE veil_auth_invalid_credentials_total counter",
     `veil_auth_invalid_credentials_total ${health.runtime.auth.counters.invalidCredentialsTotal}`,
+    "# HELP veil_auth_token_delivery_queue_count Account token deliveries currently queued for retry.",
+    "# TYPE veil_auth_token_delivery_queue_count gauge",
+    `veil_auth_token_delivery_queue_count ${health.runtime.auth.tokenDelivery.queueCount}`,
+    "# HELP veil_auth_token_delivery_dead_letter_count Account token deliveries currently held in the dead-letter set.",
+    "# TYPE veil_auth_token_delivery_dead_letter_count gauge",
+    `veil_auth_token_delivery_dead_letter_count ${health.runtime.auth.tokenDelivery.deadLetterCount}`,
+    "# HELP veil_auth_token_delivery_requests_total Total account token delivery requests.",
+    "# TYPE veil_auth_token_delivery_requests_total counter",
+    `veil_auth_token_delivery_requests_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliveryRequestsTotal}`,
+    "# HELP veil_auth_token_delivery_successes_total Total successful account token deliveries.",
+    "# TYPE veil_auth_token_delivery_successes_total counter",
+    `veil_auth_token_delivery_successes_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliverySuccessesTotal}`,
+    "# HELP veil_auth_token_delivery_failures_total Total failed account token delivery attempts.",
+    "# TYPE veil_auth_token_delivery_failures_total counter",
+    `veil_auth_token_delivery_failures_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliveryFailuresTotal}`,
+    "# HELP veil_auth_token_delivery_retries_total Total account token deliveries scheduled for retry.",
+    "# TYPE veil_auth_token_delivery_retries_total counter",
+    `veil_auth_token_delivery_retries_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliveryRetriesTotal}`,
+    "# HELP veil_auth_token_delivery_dead_letters_total Total account token deliveries that exhausted retries or failed non-retryably.",
+    "# TYPE veil_auth_token_delivery_dead_letters_total counter",
+    `veil_auth_token_delivery_dead_letters_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliveryDeadLettersTotal}`,
+    "# HELP veil_auth_token_delivery_failures_timeout_total Total token delivery failures caused by timeouts.",
+    "# TYPE veil_auth_token_delivery_failures_timeout_total counter",
+    `veil_auth_token_delivery_failures_timeout_total ${health.runtime.auth.tokenDelivery.failureReasons.timeout}`,
+    "# HELP veil_auth_token_delivery_failures_network_total Total token delivery failures caused by network errors.",
+    "# TYPE veil_auth_token_delivery_failures_network_total counter",
+    `veil_auth_token_delivery_failures_network_total ${health.runtime.auth.tokenDelivery.failureReasons.network}`,
+    "# HELP veil_auth_token_delivery_failures_webhook_4xx_total Total token delivery failures caused by non-retryable 4xx webhook responses.",
+    "# TYPE veil_auth_token_delivery_failures_webhook_4xx_total counter",
+    `veil_auth_token_delivery_failures_webhook_4xx_total ${health.runtime.auth.tokenDelivery.failureReasons.webhook_4xx}`,
+    "# HELP veil_auth_token_delivery_failures_webhook_429_total Total token delivery failures caused by retryable 429 webhook responses.",
+    "# TYPE veil_auth_token_delivery_failures_webhook_429_total counter",
+    `veil_auth_token_delivery_failures_webhook_429_total ${health.runtime.auth.tokenDelivery.failureReasons.webhook_429}`,
+    "# HELP veil_auth_token_delivery_failures_webhook_5xx_total Total token delivery failures caused by retryable 5xx webhook responses.",
+    "# TYPE veil_auth_token_delivery_failures_webhook_5xx_total counter",
+    `veil_auth_token_delivery_failures_webhook_5xx_total ${health.runtime.auth.tokenDelivery.failureReasons.webhook_5xx}`,
     "# HELP veil_auth_session_failures_unauthorized_total Total auth session failures caused by missing or invalid credentials.",
     "# TYPE veil_auth_session_failures_unauthorized_total counter",
     `veil_auth_session_failures_unauthorized_total ${health.runtime.auth.sessionFailureReasons.unauthorized}`,
@@ -408,6 +547,57 @@ export function recordAuthInvalidCredentials(): void {
   runtimeObservability.auth.counters.invalidCredentialsTotal += 1;
 }
 
+export function setAuthTokenDeliveryQueueCount(count: number): void {
+  runtimeObservability.auth.tokenDeliveryQueueCount = Math.max(0, Math.floor(count));
+}
+
+export function setAuthTokenDeliveryDeadLetterCount(count: number): void {
+  runtimeObservability.auth.tokenDeliveryDeadLetterCount = Math.max(0, Math.floor(count));
+}
+
+export function recordAuthTokenDeliveryRequest(): void {
+  runtimeObservability.auth.counters.tokenDeliveryRequestsTotal += 1;
+}
+
+export function recordAuthTokenDeliverySuccess(): void {
+  runtimeObservability.auth.counters.tokenDeliverySuccessesTotal += 1;
+}
+
+export function recordAuthTokenDeliveryFailure(reason: AuthTokenDeliveryFailureReason): void {
+  runtimeObservability.auth.counters.tokenDeliveryFailuresTotal += 1;
+  runtimeObservability.auth.tokenDeliveryFailureReasons[reason] += 1;
+}
+
+export function recordAuthTokenDeliveryRetry(): void {
+  runtimeObservability.auth.counters.tokenDeliveryRetriesTotal += 1;
+}
+
+export function recordAuthTokenDeliveryDeadLetter(): void {
+  runtimeObservability.auth.counters.tokenDeliveryDeadLettersTotal += 1;
+}
+
+export function recordAuthTokenDeliveryAttempt(entry: {
+  kind: "account-registration" | "password-recovery";
+  loginId: string;
+  deliveryMode: "disabled" | "dev-token" | "webhook";
+  status: AuthTokenDeliveryAttemptStatus;
+  attemptCount: number;
+  maxAttempts: number;
+  retryable: boolean;
+  message: string;
+  failureReason?: AuthTokenDeliveryFailureReason;
+  statusCode?: number;
+  nextAttemptAt?: string;
+}): void {
+  runtimeObservability.auth.tokenDeliveryRecentAttempts.unshift({
+    timestamp: new Date().toISOString(),
+    ...entry
+  });
+  if (runtimeObservability.auth.tokenDeliveryRecentAttempts.length > RECENT_TOKEN_DELIVERY_ATTEMPTS_LIMIT) {
+    runtimeObservability.auth.tokenDeliveryRecentAttempts.length = RECENT_TOKEN_DELIVERY_ATTEMPTS_LIMIT;
+  }
+}
+
 export function resetRuntimeObservability(): void {
   runtimeObservability.startedAt = Date.now();
   runtimeObservability.rooms.clear();
@@ -424,6 +614,11 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.counters.logoutsTotal = 0;
   runtimeObservability.auth.counters.rateLimitedTotal = 0;
   runtimeObservability.auth.counters.invalidCredentialsTotal = 0;
+  runtimeObservability.auth.counters.tokenDeliveryRequestsTotal = 0;
+  runtimeObservability.auth.counters.tokenDeliverySuccessesTotal = 0;
+  runtimeObservability.auth.counters.tokenDeliveryFailuresTotal = 0;
+  runtimeObservability.auth.counters.tokenDeliveryRetriesTotal = 0;
+  runtimeObservability.auth.counters.tokenDeliveryDeadLettersTotal = 0;
   runtimeObservability.auth.activeGuestSessionCount = 0;
   runtimeObservability.auth.activeAccountSessions.clear();
   runtimeObservability.auth.activeAccountLockCount = 0;
@@ -433,6 +628,15 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.sessionFailureReasons.token_expired = 0;
   runtimeObservability.auth.sessionFailureReasons.token_kind_invalid = 0;
   runtimeObservability.auth.sessionFailureReasons.session_revoked = 0;
+  runtimeObservability.auth.tokenDeliveryQueueCount = 0;
+  runtimeObservability.auth.tokenDeliveryDeadLetterCount = 0;
+  runtimeObservability.auth.tokenDeliveryFailureReasons.misconfigured = 0;
+  runtimeObservability.auth.tokenDeliveryFailureReasons.timeout = 0;
+  runtimeObservability.auth.tokenDeliveryFailureReasons.network = 0;
+  runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_4xx = 0;
+  runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_429 = 0;
+  runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_5xx = 0;
+  runtimeObservability.auth.tokenDeliveryRecentAttempts.length = 0;
 }
 
 export function registerRuntimeObservabilityRoutes(
@@ -481,6 +685,14 @@ export function registerRuntimeObservabilityRoutes(
   app.get("/api/runtime/auth-readiness", async (_request, response) => {
     try {
       sendJson(response, 200, buildAuthReadinessPayload(serviceName));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/runtime/account-token-delivery", async (_request, response) => {
+    try {
+      sendJson(response, 200, buildAuthTokenDeliveryPayload(serviceName));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

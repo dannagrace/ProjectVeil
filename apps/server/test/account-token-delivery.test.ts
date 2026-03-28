@@ -70,6 +70,7 @@ test("dev-token delivery returns the token in-band", async () => {
 
   assert.deepEqual(result, {
     deliveryMode: "dev-token",
+    deliveryStatus: "dev-token",
     responseToken: "dev-token-value"
   });
 });
@@ -97,7 +98,10 @@ test("webhook delivery posts the token payload without returning it in-band", as
   );
 
   assert.deepEqual(result, {
-    deliveryMode: "webhook"
+    deliveryMode: "webhook",
+    deliveryStatus: "delivered",
+    attemptCount: 1,
+    maxAttempts: 4
   });
   assert.equal(webhook.requests.length, 1);
   assert.equal(webhook.requests[0]?.headers.authorization, "Bearer delivery-secret");

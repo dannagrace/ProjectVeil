@@ -29,12 +29,16 @@
 
 - `GET /api/runtime/health` 现已附带 `runtime.auth`，用于和现有运行时健康面一起查看鉴权态势。
 - `GET /api/runtime/auth-readiness` 提供更紧凑的鉴权摘要，适合直接接现有 dashboard / alerting tooling。
+- `GET /api/runtime/account-token-delivery` 提供账号令牌投递专用视图，包含当前重试队列、dead-letter 数、失败原因计数与最近投递尝试明细，便于运维直接排查 webhook 通道状态。
 - `GET /api/runtime/metrics` 现已补充以下 Prometheus 指标：
   - 当前进程内活跃游客会话：`veil_auth_guest_sessions`
   - 当前进程内活跃正式账号设备会话：`veil_auth_account_sessions`
   - 当前登录锁定数：`veil_auth_account_locks`
   - 待确认注册 / 找回令牌：`veil_auth_pending_registrations`、`veil_auth_pending_recoveries`
   - 会话校验、游客登录、账号登录、绑定、注册确认、刷新、退出、限流、口令错误等累计计数：`veil_auth_*_total`
+  - 账号令牌投递队列 / dead-letter gauge：`veil_auth_token_delivery_queue_count`、`veil_auth_token_delivery_dead_letter_count`
+  - 账号令牌投递请求量、成功、失败、重试、耗尽累计计数：`veil_auth_token_delivery_requests_total`、`veil_auth_token_delivery_successes_total`、`veil_auth_token_delivery_failures_total`、`veil_auth_token_delivery_retries_total`、`veil_auth_token_delivery_dead_letters_total`
+  - 账号令牌投递失败原因累计计数：`veil_auth_token_delivery_failures_timeout_total`、`veil_auth_token_delivery_failures_network_total`、`veil_auth_token_delivery_failures_webhook_4xx_total`、`veil_auth_token_delivery_failures_webhook_429_total`、`veil_auth_token_delivery_failures_webhook_5xx_total`
 - 以上“活跃会话”指标是当前服务进程内的运行时视角，适合做本机 readiness / traffic 观测；若部署多实例，应按实例维度抓取再在监控端汇总。
 
 ## 正式注册闭环
@@ -57,8 +61,9 @@
 - 为“全新正式账号”预留 `loginId`，不依赖先创建游客档。
 - 校验 `loginId` 格式、口令账号占用情况，并按来源 IP 走现有滑动窗口限流。
 - 当前默认投递模式为 `VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE=dev-token`，会直接在响应体里回传 `registrationToken` 供联调使用；若切到 `webhook` 或 `disabled`，响应仍返回 `202`，但不会向客户端泄漏令牌。
+- `request` 响应会额外返回 `deliveryStatus`；`webhook` 首次投递成功时是 `delivered`，若首次命中可重试故障则会返回 `retry_scheduled` 并附带 `deliveryAttemptCount / deliveryMaxAttempts / deliveryNextAttemptAt`，方便客户端把它识别为“临时投递异常但服务端仍会继续送达”。
 - 若同一个 `loginId` 仍有未过期的注册申请，服务端会复用现有令牌与到期时间，而不是生成新令牌，避免联调时旧令牌被静默顶掉。
-- `webhook` 模式会把令牌投递到配置的后端通道；若同一申请被重复触发，服务端会重新投递同一枚未过期令牌，而不是生成新令牌。
+- `webhook` 模式会把令牌投递到配置的后端通道；若同一申请被重复触发，服务端会复用同一枚未过期令牌，并在已有重试排队时直接返回当前排队状态，而不是重复生成新任务。
 - 若 `loginId` 已被绑定，接口返回 `409 login_id_taken`。
 - 注册申请事件会在确认成功后补写入新账号的 `recentEventLog`，便于后续统一审计。
 
@@ -68,6 +73,7 @@
 {
   "status": "registration_requested",
   "expiresAt": "2026-03-28T12:34:56.000Z",
+  "deliveryStatus": "dev-token",
   "registrationToken": "dev-token-example"
 }
 ```
@@ -112,8 +118,9 @@
 - 仅对已绑定口令账号生效；不存在的 `loginId` 仍返回 `202`，避免泄漏账号存在性。
 - 服务端生成一次性短时效重置令牌，并按来源 IP 走现有滑动窗口限流。
 - 当前默认投递模式为 `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE=dev-token`，会直接在响应体里回传 `recoveryToken` 供联调使用；若切到 `webhook` 或 `disabled`，响应仍返回 `202`，但不会向客户端泄漏令牌。
+- `request` 响应同样会附带 `deliveryStatus`；若 webhook 首次投递命中可重试异常，接口仍返回 `202 recovery_requested`，但 `deliveryStatus=retry_scheduled`，并给出下一次后台重试时间。
 - 若同一账号已有未过期的找回申请，服务端会复用现有令牌与到期时间，避免重复请求导致先前令牌失效或连续追加重复审计事件。
-- `webhook` 模式会把令牌投递到配置的后端通道；若同一申请被重复触发，服务端会重新投递同一枚未过期令牌，而不是生成新令牌。
+- `webhook` 模式会把令牌投递到配置的后端通道；若同一申请被重复触发，服务端会复用同一枚未过期令牌，并优先复用已有的排队重试状态。
 - 若后续切到 `disabled`，接口仍保留，但不会直接把令牌回传给客户端，也不会尝试外部投递。
 - 成功发起时会向该账号的 `recentEventLog` 追加一条 `category=account` 的审计事件。
 
@@ -123,6 +130,7 @@
 {
   "status": "recovery_requested",
   "expiresAt": "2026-03-28T12:34:56.000Z",
+  "deliveryStatus": "dev-token",
   "recoveryToken": "dev-token-example"
 }
 ```
@@ -168,6 +176,12 @@
   - 可选；若提供，服务端会附带 `Authorization: Bearer <token>`
 - `VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_TIMEOUT_MS`
   - 可选，默认 `10000`
+- `VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_MAX_ATTEMPTS`
+  - 可选，默认 `4`，包含首次同步投递在内
+- `VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_RETRY_BASE_DELAY_MS`
+  - 可选，默认 `5000`
+- `VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_RETRY_MAX_DELAY_MS`
+  - 可选，默认 `60000`
 - `VEIL_RATE_LIMIT_AUTH_WINDOW_MS`
   - 默认 `60000`
 - `VEIL_RATE_LIMIT_AUTH_MAX`
@@ -179,7 +193,10 @@
   - 注册：`{ "event": "account-registration", "loginId": "...", "token": "...", "expiresAt": "...", "requestedDisplayName": "..." }`
   - 找回：`{ "event": "password-recovery", "loginId": "...", "playerId": "...", "token": "...", "expiresAt": "..." }`
 - 若 `webhook` 模式缺少 URL，`request` 接口会返回 `503 *_delivery_misconfigured`。
-- 若 webhook 超时、网络失败或返回非 2xx，`request` 接口会返回 `502 *_delivery_failed`，并保留当前未过期令牌，方便修复通道后重试同一请求重新投递。
+- webhook 超时、网络失败、`429` 或 `5xx` 会被视为可重试故障：`request` 接口仍返回 `202 *_requested`，但 `deliveryStatus=retry_scheduled`，服务端会按 `VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_MAX_ATTEMPTS` 与指数退避策略继续投递，直到成功或耗尽。
+- webhook 其他 `4xx` 会被视为非可重试故障：`request` 接口返回 `502 *_delivery_failed`，并把当前令牌投递任务记入 dead-letter，等待运维修复配置或通道契约。
+- 若后台重试最终耗尽，令牌会进入 dead-letter；客户端拿到的仍是原先的 `202 *_requested`，但运维可通过 `GET /api/runtime/account-token-delivery` 或 Prometheus 指标看到 `deadLetterCount` / `veil_auth_token_delivery_dead_letters_total` 变化。
+- 因此客户端可据此区分三类结果：`401/409` 等业务态错误代表账号 / 令牌本身无效；`503 *_delivery_misconfigured` 代表服务端投递配置缺失；`202 ... deliveryStatus=retry_scheduled` 代表临时通道异常且服务端已接管后续重试。
 - `disabled` 适合作为生产环境的显式兜底占位；`dev-token` 适合作为本地联调回退模式。
 
 ## 本地联调建议

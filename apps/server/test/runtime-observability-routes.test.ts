@@ -3,6 +3,7 @@ import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
+import { resetAccountTokenDeliveryState } from "../src/account-token-delivery";
 import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../src/colyseus-room";
 import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
 
@@ -13,6 +14,7 @@ async function wait(ms: number): Promise<void> {
 async function startObservabilityServer(port: number): Promise<Server> {
   configureRoomSnapshotStore(null);
   resetLobbyRoomRegistry();
+  resetAccountTokenDeliveryState();
   resetRuntimeObservability();
 
   const transport = new WebSocketTransport();
