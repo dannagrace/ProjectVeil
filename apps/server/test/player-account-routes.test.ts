@@ -608,7 +608,7 @@ test("player account routes degrade to local-mode responses when persistence is 
   assert.equal(meProgressPayload.summary.unlockedAchievements, 0);
 });
 
-test("player account battle replay routes return normalized replay summaries with optional limit", async (t) => {
+test("player account battle replay routes return normalized replay summaries with optional limit and offset", async (t) => {
   const port = 40050 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
@@ -636,6 +636,13 @@ test("player account battle replay routes return normalized replay summaries wit
   const detailPayload = (await detailResponse.json()) as { items: PlayerBattleReplaySummary[] };
   assert.equal(detailResponse.status, 200);
   assert.deepEqual(detailPayload.items.map((replay) => replay.id), ["replay-newer"]);
+
+  const pagedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays?limit=1&offset=1`
+  );
+  const pagedPayload = (await pagedResponse.json()) as { items: PlayerBattleReplaySummary[] };
+  assert.equal(pagedResponse.status, 200);
+  assert.deepEqual(pagedPayload.items.map((replay) => replay.id), ["replay-older"]);
 
   const missingResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/missing/battle-replays`);
   assert.equal(missingResponse.status, 404);

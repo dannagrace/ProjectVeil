@@ -490,6 +490,7 @@ h1 {
 
 .account-replay-controls,
 .account-replay-progress,
+.account-replay-impact,
 .account-replay-state,
 .account-replay-step-list {
   display: grid;
@@ -515,6 +516,12 @@ h1 {
 .account-replay-progress div {
   display: grid;
   gap: 4px;
+}
+
+.account-replay-impact {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(74, 120, 178, 0.06);
 }
 
 .account-replay-unit {
@@ -548,6 +555,11 @@ h1 {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
+}
+
+.account-replay-step-copy {
+  display: grid;
+  gap: 4px;
 }
 
 .account-replay-step.is-current {

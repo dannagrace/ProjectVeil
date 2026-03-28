@@ -148,6 +148,7 @@
 - 这轮又补了一层独立的玩家事件历史读模型：`savePlayerAccountProgress()` 会把账号 `recentEventLog` 里新增的结构化事件增量追加到 MySQL `player_event_history`，并开放 `GET /api/player-accounts/:playerId/event-history` / `/me/event-history`（支持 `limit`、`offset` 和现有事件筛选条件），让前端可以先做分页历史回顾而不用等完整战斗回放或完整成就 UI。
 - 玩家事件历史接口现已支持可选 `since` / `until` 时间范围筛选，且本地模式与 MySQL 持久化模式保持一致，方便后续只拉取某个时间窗内的世界事件或成就回顾。
 - 事件日志的共享基础当前收敛在 `packages/shared/src/event-log.ts`：除了事件/成就 schema、归一化和查询助手外，这里也统一提供世界事件日志工厂与成就日志工厂，服务端只负责把共享 `WorldEvent[]` 喂给这些 helper；完整战斗回放、完整成就 UI 和更长历史存储仍留给后续 issue 继续扩展。
+- 战斗回放读模型当前已补上两块更适合前端直接消费的能力：`GET /api/player-accounts/:playerId/battle-replays` 现支持 `limit` + `offset` 分页，shared 侧也新增了可从 `initialState + steps` 推导每步回合与伤害/减员结算的 replay timeline helper，H5 战报面板会直接显示这些逐步结算摘要。
 - H5 账号资料卡现在会额外拉取 `/api/player-accounts/:playerId/progression` 覆盖成就/事件摘要，因此即使基础账号接口只返回轻量档案，前端也能稳定展示最新的成就推进、最近解锁和世界事件日志，而不会继续依赖旧的内嵌快照。
 - H5 账号资料卡的成就/事件展示本轮也补了一层可读性整理：成就卡会把“已解锁”和“最近推进”的项目排到前面，并显示最近推进时间；世界事件日志则会把 `battle.started`、`first_battle` 这类内部 ID 转成中文标签，同时在摘要里补充各事件类别计数，方便后续继续接提示面板或筛选器。
 - H5 左侧面板现已补上账号资料卡：会优先显示服务端账号昵称，也会在浏览器本地记住上次使用的游客昵称；远端房间首次 `connect` 时会把这份 `displayName` 一并带给服务端，用于初始化游客账号资料。`/api/player-accounts/me` 返回的 `globalResources` 也会直接显示成“全局仓库”摘要，方便确认跨房间继承的金币/木材/矿石。

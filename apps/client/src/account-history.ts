@@ -1,11 +1,14 @@
 import {
+  buildBattleReplayTimeline,
   createBattleReplayPlaybackState,
   formatAchievementLabel,
   formatWorldEventTypeLabel,
   getLatestProgressedAchievement,
   getLatestUnlockedAchievement,
   type BattleReplayPlaybackState,
-  type BattleReplayStep
+  type BattleReplayStep,
+  type BattleReplayTimelineEntry,
+  type BattleReplayTimelineUnitChange
 } from "../../../packages/shared/src/index";
 import type { PlayerAccountProfile } from "./player-account";
 
@@ -142,6 +145,25 @@ function formatBattleReplayPlaybackStatus(status: BattleReplayPlaybackState["sta
 
 function formatBattleReplaySourceLabel(source: BattleReplayStep["source"]): string {
   return source === "automated" ? "自动" : "玩家";
+}
+
+function formatBattleReplayRound(entry: BattleReplayTimelineEntry): string {
+  return entry.resultingRound !== entry.round ? `第 ${entry.round} 回合 -> ${entry.resultingRound}` : `第 ${entry.round} 回合`;
+}
+
+function formatBattleReplayChange(change: BattleReplayTimelineUnitChange): string {
+  const parts = [
+    change.hpChange < 0 ? `伤害 ${Math.abs(change.hpChange)}` : "",
+    change.hpChange > 0 ? `恢复 ${change.hpChange}` : "",
+    change.countChange < 0 ? `减员 ${Math.abs(change.countChange)}` : "",
+    change.countChange > 0 ? `增员 ${change.countChange}` : "",
+    change.defeated ? "击倒" : "",
+    change.defendingChanged ? "防御切换" : "",
+    ...change.statusAdded.map((status) => `获得 ${status}`),
+    ...change.statusRemoved.map((status) => `失去 ${status}`)
+  ].filter(Boolean);
+
+  return `${change.stackName}${parts.length > 0 ? ` · ${parts.join(" · ")}` : ""}`;
 }
 
 function formatBattleReplayUnitSummary(playback: BattleReplayPlaybackState): string {
@@ -383,6 +405,9 @@ export function renderBattleReplayInspector(input: {
   }
 
   const playback = input.playback ?? createBattleReplayPlaybackState(input.replay);
+  const timeline = buildBattleReplayTimeline(input.replay);
+  const currentTimelineEntry = timeline[playback.currentStepIndex - 1] ?? null;
+  const nextTimelineEntry = timeline[playback.currentStepIndex] ?? null;
   const activeUnits = Object.values(playback.currentState.units)
     .filter((unit) => unit.count > 0)
     .sort((left, right) => {
@@ -418,9 +443,23 @@ export function renderBattleReplayInspector(input: {
     </div>
     <p class="account-meta">${escapeHtml(input.loading ? "正在刷新回放详情..." : input.status?.trim() || "按步骤回放本场战斗。")}</p>
     <div class="account-replay-progress">
-      <div><strong>当前动作</strong><span>${escapeHtml(formatBattleReplayAction(playback.currentStep))}</span></div>
-      <div><strong>下一动作</strong><span>${escapeHtml(formatBattleReplayAction(playback.nextStep))}</span></div>
+      <div><strong>当前动作</strong><span>${escapeHtml(formatBattleReplayAction(playback.currentStep))}</span><span class="account-meta">${escapeHtml(currentTimelineEntry ? formatBattleReplayRound(currentTimelineEntry) : "等待开始")}</span></div>
+      <div><strong>下一动作</strong><span>${escapeHtml(formatBattleReplayAction(playback.nextStep))}</span><span class="account-meta">${escapeHtml(nextTimelineEntry ? formatBattleReplayRound(nextTimelineEntry) : playback.status === "completed" ? "胜负已结算" : "无下一步")}</span></div>
     </div>
+    ${
+      currentTimelineEntry
+        ? `<div class="account-replay-impact">
+            <strong>本步结算</strong>
+            ${
+              currentTimelineEntry.changes.length > 0
+                ? currentTimelineEntry.changes
+                    .map((change) => `<span class="account-reward-chip">${escapeHtml(formatBattleReplayChange(change))}</span>`)
+                    .join("")
+                : `<span class="account-meta">本步未产生可见结算。</span>`
+            }
+          </div>`
+        : ""
+    }
     <div class="account-replay-state">
       ${
         activeUnits.length > 0
@@ -446,8 +485,9 @@ export function renderBattleReplayInspector(input: {
       }
     </div>
     <div class="account-replay-step-list">
-      ${input.replay.steps
-        .map((step) => {
+      ${timeline
+        .map((entry) => {
+          const step = entry.step;
           const tone =
             step.index === playback.currentStepIndex
               ? "is-current"
@@ -456,7 +496,15 @@ export function renderBattleReplayInspector(input: {
                 : "is-upcoming";
           return `<div class="account-replay-step ${tone}">
             <span class="account-badge">${step.index}</span>
-            <strong>${escapeHtml(formatBattleReplayAction(step))}</strong>
+            <div class="account-replay-step-copy">
+              <strong>${escapeHtml(formatBattleReplayAction(step))}</strong>
+              <span class="account-meta">${escapeHtml(formatBattleReplayRound(entry))}</span>
+              ${
+                entry.changes.length > 0
+                  ? `<span class="account-meta">${escapeHtml(entry.changes.map((change) => formatBattleReplayChange(change)).join(" / "))}</span>`
+                  : ""
+              }
+            </div>
             <span>${escapeHtml(formatBattleReplaySourceLabel(step.source))}</span>
           </div>`;
         })

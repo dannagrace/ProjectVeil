@@ -219,6 +219,7 @@ test("account history renderer shows replay inspector controls and current playb
   assert.match(html, /hero-1-stack 攻击 neutral-1-stack/);
   assert.match(html, /下一动作/);
   assert.match(html, /neutral-1-stack 防御/);
+  assert.match(html, /第 1 回合/);
   assert.match(html, /data-replay-control="play"/);
   assert.match(html, /data-replay-control="step"/);
   assert.match(html, /data-clear-replay="true"/);
