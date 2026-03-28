@@ -161,6 +161,9 @@ function toBattleReplayQueryString(query?: PlayerBattleReplayQuery): string {
   if (query.limit != null) {
     searchParams.set("limit", String(query.limit));
   }
+  if (query.offset != null) {
+    searchParams.set("offset", String(query.offset));
+  }
   if (query.roomId) {
     searchParams.set("roomId", query.roomId);
   }

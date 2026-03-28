@@ -146,6 +146,7 @@ function toReplayResponseFromRequest(
   request: IncomingMessage
 ): { items: PlayerAccountSnapshot["recentBattleReplays"] } {
   const limit = parseLimit(request);
+  const offset = parseOffset(request);
   const roomId = parseOptionalQueryParam(request, "roomId");
   const battleId = parseOptionalQueryParam(request, "battleId");
   const battleKind = parseOptionalQueryParam(request, "battleKind") as
@@ -164,6 +165,7 @@ function toReplayResponseFromRequest(
   return {
     items: queryPlayerBattleReplaySummaries(account.recentBattleReplays, {
       ...(limit != null ? { limit } : {}),
+      ...(offset != null ? { offset } : {}),
       ...(roomId ? { roomId } : {}),
       ...(battleId ? { battleId } : {}),
       ...(battleKind ? { battleKind } : {}),

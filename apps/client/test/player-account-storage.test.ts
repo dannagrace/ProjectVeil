@@ -44,6 +44,7 @@ test("player account helpers can build a local fallback profile", () => {
   assert.deepEqual(createFallbackPlayerAccountProfile("player-9", "room-beta", "本地访客"), {
     playerId: "player-9",
     displayName: "本地访客",
+    eloRating: 1000,
     globalResources: {
       gold: 0,
       wood: 0,
@@ -351,6 +352,49 @@ test("player replay loader sends shared filters and normalizes newest first", as
             },
             steps: [],
             result: "defender_victory"
+          },
+          {
+            id: "replay-older",
+            roomId: "room-alpha",
+            playerId: "player-1",
+            battleId: "battle-3",
+            battleKind: "hero",
+            playerCamp: "defender",
+            heroId: "hero-1",
+            opponentHeroId: "hero-9",
+            startedAt: "2026-03-27T11:59:00.000Z",
+            completedAt: "2026-03-27T12:00:00.000Z",
+            initialState: {
+              id: "battle-3",
+              round: 1,
+              lanes: 1,
+              activeUnitId: "unit-1",
+              turnOrder: ["unit-1"],
+              units: {
+                "unit-1": {
+                  id: "unit-1",
+                  camp: "attacker",
+                  templateId: "hero_guard_basic",
+                  lane: 0,
+                  stackName: "暮火侦骑",
+                  initiative: 4,
+                  attack: 2,
+                  defense: 2,
+                  minDamage: 1,
+                  maxDamage: 2,
+                  count: 10,
+                  currentHp: 10,
+                  maxHp: 10,
+                  hasRetaliated: false,
+                  defending: false
+                }
+              },
+              environment: [],
+              log: [],
+              rng: { seed: 9, cursor: 0 }
+            },
+            steps: [],
+            result: "defender_victory"
           }
         ]
       }),
@@ -366,6 +410,7 @@ test("player replay loader sends shared filters and normalizes newest first", as
   try {
     const replays = await loadPlayerBattleReplaySummaries("player-1", {
       limit: 1,
+      offset: 0,
       roomId: "room-alpha",
       battleKind: "hero",
       playerCamp: "defender",
@@ -375,7 +420,7 @@ test("player replay loader sends shared filters and normalizes newest first", as
     });
     assert.equal(
       requestedUrl,
-      "http://127.0.0.1:2567/api/player-accounts/player-1/battle-replays?limit=1&roomId=room-alpha&battleKind=hero&playerCamp=defender&heroId=hero-1&opponentHeroId=hero-9&result=defender_victory"
+      "http://127.0.0.1:2567/api/player-accounts/player-1/battle-replays?limit=1&offset=0&roomId=room-alpha&battleKind=hero&playerCamp=defender&heroId=hero-1&opponentHeroId=hero-9&result=defender_victory"
     );
     assert.deepEqual(replays.map((replay) => replay.id), ["replay-newer"]);
   } finally {
