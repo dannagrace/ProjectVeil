@@ -117,6 +117,8 @@ npm run dev:client:h5
   - 当前已覆盖 Lobby、地图探索、战斗、账号会话恢复和配置中心跳转的主流程。
 - `docs/phase1-design.md`
   - 更细的产品、技术与小程序部署方案。
+- `docs/test-coverage-audit-issue-199.md`
+  - 当前 server / H5 / Cocos 自动化测试覆盖审计，以及下一批高收益补测建议。
 
 ## 建议的下一步
 
