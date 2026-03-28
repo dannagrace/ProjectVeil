@@ -4,6 +4,7 @@ import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
 import {
+  hashAccountPassword,
   issueAccountAuthSession,
   registerAuthRoutes,
   resetGuestAuthSessions,
@@ -288,6 +289,37 @@ async function sendRequest<T extends ServerMessage["type"]>(
   });
 }
 
+function withEnvOverrides(
+  overrides: Record<string, string | undefined>,
+  cleanup: Array<() => void>
+): void {
+  const previousValues = Object.fromEntries(
+    Object.keys(overrides).map((key) => [key, process.env[key]])
+  ) as Record<string, string | undefined>;
+
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete process.env[key];
+      continue;
+    }
+    process.env[key] = value;
+  }
+
+  cleanup.push(() => {
+    for (const [key, value] of Object.entries(previousValues)) {
+      if (value === undefined) {
+        delete process.env[key];
+        continue;
+      }
+      process.env[key] = value;
+    }
+  });
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 test("guest auth route issues a signed session token", async (t) => {
   const port = 43000 + Math.floor(Math.random() * 1000);
   const server = await startAuthServer(port);
@@ -463,6 +495,238 @@ test("account bind upgrades a guest session into password login and account-logi
   assert.equal(sessionPayload.session.authMode, "account");
   assert.equal(sessionPayload.session.provider, "account-password");
   assert.equal(sessionPayload.session.loginId, "veil-ranger");
+});
+
+test("guest auth route returns 429 after the per-IP rate limit is exceeded", async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_RATE_LIMIT_AUTH_WINDOW_MS: "60000",
+      VEIL_RATE_LIMIT_AUTH_MAX: "2"
+    },
+    cleanup
+  );
+
+  const port = 44625 + Math.floor(Math.random() * 1000);
+  const server = await startAuthServer(port);
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  for (let index = 0; index < 2; index += 1) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        playerId: `guest-rate-limit-${index}`
+      })
+    });
+    assert.equal(response.status, 200);
+  }
+
+  const limitedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "guest-rate-limit-3"
+    })
+  });
+  const limitedPayload = (await limitedResponse.json()) as { error: { code: string } };
+
+  assert.equal(limitedResponse.status, 429);
+  assert.equal(limitedPayload.error.code, "rate_limited");
+  assert.equal(limitedResponse.headers.get("Retry-After"), "60");
+});
+
+test("account login locks after repeated invalid credentials and returns lockedUntil", async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_AUTH_LOCKOUT_THRESHOLD: "2",
+      VEIL_AUTH_LOCKOUT_DURATION_MINUTES: "15"
+    },
+    cleanup
+  );
+
+  const port = 44650 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  await store.ensurePlayerAccount({
+    playerId: "lockout-player",
+    displayName: "锁定骑士"
+  });
+  await store.bindPlayerAccountCredentials("lockout-player", {
+    loginId: "lockout-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  for (let index = 0; index < 2; index += 1) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        loginId: "lockout-ranger",
+        password: "wrong-password"
+      })
+    });
+
+    if (index === 0) {
+      const payload = (await response.json()) as { error: { code: string } };
+      assert.equal(response.status, 401);
+      assert.equal(payload.error.code, "invalid_credentials");
+      continue;
+    }
+
+    const payload = (await response.json()) as { error: { code: string; lockedUntil?: string } };
+    assert.equal(response.status, 403);
+    assert.equal(payload.error.code, "account_locked");
+    assert.ok(payload.error.lockedUntil);
+  }
+
+  const lockedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "lockout-ranger",
+      password: "hunter2"
+    })
+  });
+  const lockedPayload = (await lockedResponse.json()) as { error: { code: string; lockedUntil?: string } };
+
+  assert.equal(lockedResponse.status, 403);
+  assert.equal(lockedPayload.error.code, "account_locked");
+  assert.ok(lockedPayload.error.lockedUntil);
+});
+
+test("account login lockout expires after the configured duration", async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_AUTH_LOCKOUT_THRESHOLD: "2",
+      VEIL_AUTH_LOCKOUT_DURATION_MINUTES: "0.002"
+    },
+    cleanup
+  );
+
+  const port = 44675 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  await store.ensurePlayerAccount({
+    playerId: "lockout-expiry-player",
+    displayName: "解锁骑士"
+  });
+  await store.bindPlayerAccountCredentials("lockout-expiry-player", {
+    loginId: "expiry-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  for (let index = 0; index < 2; index += 1) {
+    await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        loginId: "expiry-ranger",
+        password: "wrong-password"
+      })
+    });
+  }
+
+  await sleep(180);
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "expiry-ranger",
+      password: "hunter2"
+    })
+  });
+  const payload = (await response.json()) as {
+    account: PlayerAccountSnapshot;
+    session: GuestAuthSession;
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.account.playerId, "lockout-expiry-player");
+  assert.equal(payload.session.loginId, "expiry-ranger");
+});
+
+test("guest auth session LRU eviction invalidates the oldest idle guest token", async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_MAX_GUEST_SESSIONS: "2"
+    },
+    cleanup
+  );
+
+  const port = 44700 + Math.floor(Math.random() * 1000);
+  const server = await startAuthServer(port);
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const sessions: GuestAuthSession[] = [];
+  for (const playerId of ["guest-lru-1", "guest-lru-2", "guest-lru-3"]) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ playerId })
+    });
+    const payload = (await response.json()) as { session: GuestAuthSession };
+    assert.equal(response.status, 200);
+    sessions.push(payload.session);
+  }
+
+  const evictedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/session`, {
+    headers: {
+      Authorization: `Bearer ${sessions[0].token}`
+    }
+  });
+  const activeResponse = await fetch(`http://127.0.0.1:${port}/api/auth/session`, {
+    headers: {
+      Authorization: `Bearer ${sessions[2].token}`
+    }
+  });
+  const activePayload = (await activeResponse.json()) as { session: GuestAuthSession };
+
+  assert.equal(evictedResponse.status, 401);
+  assert.equal(activeResponse.status, 200);
+  assert.equal(activePayload.session.playerId, "guest-lru-3");
 });
 
 test("wechat mini game scaffold route returns 501 until mock mode is enabled", { concurrency: false }, async (t) => {

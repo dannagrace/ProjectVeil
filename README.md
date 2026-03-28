@@ -149,6 +149,7 @@
 - Lobby 进入房间前现在会先请求 `POST /api/auth/guest-login`，服务端会签发一个游客登录 token；浏览器会缓存这份游客会话，因此后续页面只带 `?roomId=...` 也能直接进入房间，不再必须把 `playerId` 写进 URL。
 - 服务端还新增了 `GET /api/auth/session` 与 `GET /api/player-accounts/me`、`PUT /api/player-accounts/me`：前者用于校验和刷新当前游客会话，后者用于按当前登录态读取/修改自己的账号资料，不需要前端再手拼 `playerId`。
 - 账号体系现已从“纯游客模式”升级为“双模式骨架”：`player_accounts` 新增 `loginId / passwordHash / credentialBoundAt`，服务端开放 `POST /api/auth/account-bind` 与 `POST /api/auth/account-login`，可把当前游客档绑定成口令账号，并在之后直接用登录 ID + 口令进入房间。
+- 鉴权入口现已补上进程内安全闸门：`POST /api/auth/guest-login`、`/account-login`、`/account-bind` 都会按来源 IP 走滑动窗口限流，`account-login` 还会在连续失败达到阈值后临时锁定账号；默认值分别来自 `VEIL_RATE_LIMIT_AUTH_WINDOW_MS=60000`、`VEIL_RATE_LIMIT_AUTH_MAX=10`、`VEIL_AUTH_LOCKOUT_THRESHOLD=10`、`VEIL_AUTH_LOCKOUT_DURATION_MINUTES=15`，游客会话缓存还会受 `VEIL_MAX_GUEST_SESSIONS=10000` 的 LRU 上限约束。
 - H5 Lobby 现已补上“账号口令登录”表单；游戏内账号资料卡也能直接绑定或更新口令账号，绑定成功后会立即把当前会话升级成账号模式，不需要重新手写 `playerId`，并会继续沿用同一份英雄长期档与全局资源仓库。
 - H5 Lobby 和游戏内都已补上“退出游客会话 / 切换游客账号”入口；当前 token 无效时会自动清掉本地会话并回到大厅。
 - Cocos Web 启动入口现在会复用和 H5 共用的 `project-veil:auth-session`：如果浏览器里已有已签名会话，那么直接访问 `?roomId=...` 就能沿用当前游客或正式账号身份进房，HUD 会标出当前是云端游客、正式账号还是本地/手动参数启动。

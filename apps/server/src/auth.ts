@@ -12,6 +12,7 @@ export interface GuestAuthSession {
   authMode: AuthMode;
   provider: AuthProvider;
   loginId?: string;
+  sessionId?: string;
   issuedAt: string;
   lastUsedAt: string;
 }
@@ -22,7 +23,26 @@ interface GuestAuthTokenPayload {
   authMode?: AuthMode;
   provider?: AuthProvider;
   loginId?: string;
+  sessionId?: string;
   issuedAt: string;
+}
+
+interface AuthRuntimeConfig {
+  rateLimitWindowMs: number;
+  rateLimitMax: number;
+  lockoutThreshold: number;
+  lockoutDurationMs: number;
+  maxGuestSessions: number;
+}
+
+interface RateLimitResult {
+  allowed: boolean;
+  retryAfterSeconds?: number;
+}
+
+interface AccountLockoutState {
+  failedAttempts: number[];
+  lockedUntil?: number;
 }
 
 interface WechatMiniGameLoginConfig {
@@ -48,6 +68,62 @@ interface WechatMiniGameIdentity {
 
 const AUTH_SECRET = process.env.VEIL_AUTH_SECRET?.trim() || "project-veil-dev-secret";
 const MIN_ACCOUNT_PASSWORD_LENGTH = 6;
+const DEFAULT_RATE_LIMIT_AUTH_WINDOW_MS = 60_000;
+const DEFAULT_RATE_LIMIT_AUTH_MAX = 10;
+const DEFAULT_AUTH_LOCKOUT_THRESHOLD = 10;
+const DEFAULT_AUTH_LOCKOUT_DURATION_MINUTES = 15;
+const DEFAULT_MAX_GUEST_SESSIONS = 10_000;
+
+const authRateLimitCounters = new Map<string, number[]>();
+const accountLockoutStateByLoginId = new Map<string, AccountLockoutState>();
+const guestSessionsById = new Map<string, GuestAuthSession>();
+
+function parseEnvNumber(
+  value: string | undefined,
+  fallback: number,
+  options: { minimum?: number; integer?: boolean } = {}
+): number {
+  const parsed = Number(value?.trim());
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const normalized = options.integer ? Math.floor(parsed) : parsed;
+  if (options.minimum != null && normalized < options.minimum) {
+    return fallback;
+  }
+
+  return normalized;
+}
+
+function readAuthRuntimeConfig(env: NodeJS.ProcessEnv = process.env): AuthRuntimeConfig {
+  return {
+    rateLimitWindowMs: parseEnvNumber(env.VEIL_RATE_LIMIT_AUTH_WINDOW_MS, DEFAULT_RATE_LIMIT_AUTH_WINDOW_MS, {
+      minimum: 1,
+      integer: true
+    }),
+    rateLimitMax: parseEnvNumber(env.VEIL_RATE_LIMIT_AUTH_MAX, DEFAULT_RATE_LIMIT_AUTH_MAX, {
+      minimum: 1,
+      integer: true
+    }),
+    lockoutThreshold: parseEnvNumber(env.VEIL_AUTH_LOCKOUT_THRESHOLD, DEFAULT_AUTH_LOCKOUT_THRESHOLD, {
+      minimum: 1,
+      integer: true
+    }),
+    lockoutDurationMs:
+      parseEnvNumber(env.VEIL_AUTH_LOCKOUT_DURATION_MINUTES, DEFAULT_AUTH_LOCKOUT_DURATION_MINUTES, {
+        minimum: 1 / 60_000
+      }) * 60_000,
+    maxGuestSessions: parseEnvNumber(env.VEIL_MAX_GUEST_SESSIONS, DEFAULT_MAX_GUEST_SESSIONS, {
+      minimum: 1,
+      integer: true
+    })
+  };
+}
+
+function nowMs(): number {
+  return Date.now();
+}
 
 function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): WechatMiniGameLoginConfig {
   const normalizedMode = env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
@@ -103,6 +179,11 @@ function normalizeDisplayName(playerId: string, displayName?: string | null): st
 
 function normalizeLoginId(loginId?: string | null): string | undefined {
   const normalized = loginId?.trim().toLowerCase();
+  return normalized ? normalized : undefined;
+}
+
+function normalizeSessionId(sessionId?: string | null): string | undefined {
+  const normalized = sessionId?.trim();
   return normalized ? normalized : undefined;
 }
 
@@ -233,9 +314,11 @@ export function issueAuthSession(input: {
   authMode?: AuthMode;
   provider?: AuthProvider;
   loginId?: string | null;
+  sessionId?: string | null;
 }): GuestAuthSession {
   const timestamp = new Date().toISOString();
   const loginId = normalizeLoginId(input.loginId);
+  const sessionId = normalizeSessionId(input.sessionId);
   const authMode = normalizeAuthMode(input.authMode, loginId);
   const provider = normalizeAuthProvider({
     provider: input.provider,
@@ -248,6 +331,7 @@ export function issueAuthSession(input: {
     authMode,
     provider,
     ...(loginId ? { loginId } : {}),
+    ...(sessionId ? { sessionId } : {}),
     issuedAt: timestamp
   };
   const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -260,17 +344,21 @@ export function issueAuthSession(input: {
     authMode,
     provider,
     ...(loginId ? { loginId } : {}),
+    ...(sessionId ? { sessionId } : {}),
     issuedAt: timestamp,
     lastUsedAt: timestamp
   };
 }
 
 export function issueGuestAuthSession(input: { playerId: string; displayName: string }): GuestAuthSession {
-  return issueAuthSession({
+  const session = issueAuthSession({
     ...input,
     authMode: "guest",
-    provider: "guest"
+    provider: "guest",
+    sessionId: randomUUID()
   });
+  registerGuestSession(session);
+  return session;
 }
 
 export function issueAccountAuthSession(input: {
@@ -348,16 +436,23 @@ export function resolveAuthSession(token: string): GuestAuthSession | null {
     }
 
     const loginId = normalizeLoginId(payload.loginId);
-    return {
+    const sessionId = normalizeSessionId(payload.sessionId);
+    const session = {
       token: normalizedToken,
       playerId: payload.playerId,
       displayName: payload.displayName,
       authMode: normalizeAuthMode(payload.authMode, payload.loginId),
       provider: normalizeAuthProvider(payload),
       ...(loginId ? { loginId } : {}),
+      ...(sessionId ? { sessionId } : {}),
       issuedAt: payload.issuedAt,
       lastUsedAt: new Date().toISOString()
     };
+    if (session.provider === "guest" && session.authMode === "guest" && session.sessionId) {
+      return touchGuestSession(session.sessionId, normalizedToken);
+    }
+
+    return session;
   } catch {
     return null;
   }
@@ -419,8 +514,139 @@ function sendStoreUnavailable(response: ServerResponse): void {
   });
 }
 
+function readHeaderCsvValue(value: string | string[] | undefined): string | null {
+  const headerValue = readHeaderValue(value);
+  return headerValue?.split(",")[0]?.trim() || null;
+}
+
+function resolveRequestIp(request: Pick<IncomingMessage, "headers" | "socket">): string {
+  const forwardedFor = readHeaderCsvValue(request.headers["x-forwarded-for"]);
+  const rawIp = forwardedFor || request.socket.remoteAddress?.trim() || "unknown";
+  return rawIp.startsWith("::ffff:") ? rawIp.slice("::ffff:".length) : rawIp;
+}
+
+function consumeSlidingWindowRateLimit(key: string, config = readAuthRuntimeConfig()): RateLimitResult {
+  const currentTime = nowMs();
+  const windowStart = currentTime - config.rateLimitWindowMs;
+  const timestamps = (authRateLimitCounters.get(key) ?? []).filter((timestamp) => timestamp > windowStart);
+  if (timestamps.length >= config.rateLimitMax) {
+    authRateLimitCounters.set(key, timestamps);
+    const oldestTimestamp = timestamps[0] ?? currentTime;
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(1, Math.ceil((oldestTimestamp + config.rateLimitWindowMs - currentTime) / 1000))
+    };
+  }
+
+  timestamps.push(currentTime);
+  authRateLimitCounters.set(key, timestamps);
+  return { allowed: true };
+}
+
+function enforceAuthRateLimit(
+  request: Pick<IncomingMessage, "headers" | "socket">,
+  response: ServerResponse,
+  endpointKey: string
+): boolean {
+  const rateLimitResult = consumeSlidingWindowRateLimit(`${endpointKey}:${resolveRequestIp(request)}`);
+  if (rateLimitResult.allowed) {
+    return true;
+  }
+
+  response.setHeader("Retry-After", String(rateLimitResult.retryAfterSeconds ?? 1));
+  sendJson(response, 429, {
+    error: {
+      code: "rate_limited",
+      message: "Too many authentication attempts, please retry later"
+    }
+  });
+  return false;
+}
+
+function pruneAccountLockoutState(loginId: string, config = readAuthRuntimeConfig()): AccountLockoutState {
+  const currentTime = nowMs();
+  const windowStart = currentTime - config.rateLimitWindowMs;
+  const existingState = accountLockoutStateByLoginId.get(loginId) ?? { failedAttempts: [] };
+  const nextState: AccountLockoutState = {
+    failedAttempts: existingState.failedAttempts.filter((timestamp) => timestamp > windowStart),
+    ...(existingState.lockedUntil && existingState.lockedUntil > currentTime ? { lockedUntil: existingState.lockedUntil } : {})
+  };
+
+  if (nextState.failedAttempts.length === 0 && !nextState.lockedUntil) {
+    accountLockoutStateByLoginId.delete(loginId);
+    return nextState;
+  }
+
+  accountLockoutStateByLoginId.set(loginId, nextState);
+  return nextState;
+}
+
+function getAccountLockedUntil(loginId: string): number | null {
+  return pruneAccountLockoutState(loginId).lockedUntil ?? null;
+}
+
+function recordAccountLoginFailure(loginId: string, config = readAuthRuntimeConfig()): number | null {
+  const currentTime = nowMs();
+  const nextState = pruneAccountLockoutState(loginId, config);
+  nextState.failedAttempts.push(currentTime);
+  if (nextState.failedAttempts.length >= config.lockoutThreshold) {
+    nextState.lockedUntil = currentTime + config.lockoutDurationMs;
+  }
+  accountLockoutStateByLoginId.set(loginId, nextState);
+  return nextState.lockedUntil ?? null;
+}
+
+function clearAccountLoginFailures(loginId: string): void {
+  accountLockoutStateByLoginId.delete(loginId);
+}
+
+function sendAccountLocked(response: ServerResponse, lockedUntilMs: number): void {
+  const retryAfterSeconds = Math.max(1, Math.ceil((lockedUntilMs - nowMs()) / 1000));
+  response.setHeader("Retry-After", String(retryAfterSeconds));
+  sendJson(response, 403, {
+    error: {
+      code: "account_locked",
+      message: "Account login is temporarily locked",
+      lockedUntil: new Date(lockedUntilMs).toISOString()
+    }
+  });
+}
+
+function registerGuestSession(session: GuestAuthSession, config = readAuthRuntimeConfig()): void {
+  if (session.provider !== "guest" || session.authMode !== "guest" || !session.sessionId) {
+    return;
+  }
+
+  while (guestSessionsById.size >= config.maxGuestSessions) {
+    const oldestSessionId = guestSessionsById.keys().next().value;
+    if (!oldestSessionId) {
+      break;
+    }
+    guestSessionsById.delete(oldestSessionId);
+  }
+
+  guestSessionsById.set(session.sessionId, session);
+}
+
+function touchGuestSession(sessionId: string, token: string): GuestAuthSession | null {
+  const existingSession = guestSessionsById.get(sessionId);
+  if (!existingSession || existingSession.token !== token) {
+    return null;
+  }
+
+  const nextSession: GuestAuthSession = {
+    ...existingSession,
+    lastUsedAt: new Date().toISOString()
+  };
+  guestSessionsById.delete(sessionId);
+  guestSessionsById.set(sessionId, nextSession);
+  return nextSession;
+}
+
 export function resetGuestAuthSessions(): void {
-  // Stateless signed guest tokens do not need in-memory cleanup.
+  authRateLimitCounters.clear();
+  accountLockoutStateByLoginId.clear();
+  guestSessionsById.clear();
 }
 
 export function registerAuthRoutes(
@@ -483,6 +709,10 @@ export function registerAuthRoutes(
   });
 
   app.post("/api/auth/guest-login", async (request, response) => {
+    if (!enforceAuthRateLimit(request, response, "guest-login")) {
+      return;
+    }
+
     try {
       const body = (await readJsonBody(request)) as {
         playerId?: string | null;
@@ -692,6 +922,10 @@ export function registerAuthRoutes(
       return;
     }
 
+    if (!enforceAuthRateLimit(request, response, "account-login")) {
+      return;
+    }
+
     try {
       const body = (await readJsonBody(request)) as {
         loginId?: string | null;
@@ -720,17 +954,29 @@ export function registerAuthRoutes(
 
       const loginId = normalizeAccountLoginId(body.loginId);
       const password = normalizeAccountPassword(body.password);
-      const authAccount = await store.loadPlayerAccountAuthByLoginId(loginId);
-      if (!authAccount || !verifyAccountPassword(password, authAccount.passwordHash)) {
-        sendJson(response, 401, {
-          error: {
-            code: "invalid_credentials",
-            message: "Login ID or password is incorrect"
-          }
-        });
+      const lockedUntil = getAccountLockedUntil(loginId);
+      if (lockedUntil) {
+        sendAccountLocked(response, lockedUntil);
         return;
       }
 
+      const authAccount = await store.loadPlayerAccountAuthByLoginId(loginId);
+      if (!authAccount || !verifyAccountPassword(password, authAccount.passwordHash)) {
+        const nextLockedUntil = recordAccountLoginFailure(loginId);
+        if (nextLockedUntil) {
+          sendAccountLocked(response, nextLockedUntil);
+        } else {
+          sendJson(response, 401, {
+            error: {
+              code: "invalid_credentials",
+              message: "Login ID or password is incorrect"
+            }
+          });
+        }
+        return;
+      }
+
+      clearAccountLoginFailures(loginId);
       const account = await store.ensurePlayerAccount({
         playerId: authAccount.playerId,
         displayName: authAccount.displayName
@@ -751,6 +997,10 @@ export function registerAuthRoutes(
   app.post("/api/auth/account-bind", async (request, response) => {
     if (!store) {
       sendStoreUnavailable(response);
+      return;
+    }
+
+    if (!enforceAuthRateLimit(request, response, "account-bind")) {
       return;
     }
 
