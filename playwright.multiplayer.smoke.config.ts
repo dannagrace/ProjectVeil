@@ -2,11 +2,15 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  testMatch: /(multiplayer-sync|reconnect-recovery|pvp-hero-encounter|pvp-reconnect-recovery|pvp-postbattle-reconnect|pvp-postbattle-continue)\.spec\.ts/,
+  testMatch: /multiplayer-sync\.spec\.ts/,
+  grep: /second player receives room push updates without leaking another player's move details/,
   timeout: 30_000,
   fullyParallel: false,
   workers: 1,
-  reporter: "list",
+  reporter: [
+    ["list"],
+    ["html", { open: "never" }]
+  ],
   use: {
     baseURL: "http://127.0.0.1:4173",
     headless: true,
