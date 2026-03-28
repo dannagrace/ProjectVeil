@@ -1,4 +1,5 @@
 import {
+  normalizeEloRating,
   normalizeEventLogEntries,
   normalizeEventLogQuery,
   type EventLogEntry
@@ -159,6 +160,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       playerId,
       displayName: normalizeDisplayName(playerId, input.displayName ?? existing?.displayName),
       ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
+      eloRating: normalizeEloRating(existing?.eloRating),
       globalResources: structuredClone(existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 }),
       achievements: structuredClone(existing?.achievements ?? []),
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
@@ -238,8 +240,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       this.accounts.set(normalizedPlayerId, {
         ...cloneAccount(account),
         accountSessionVersion: nextAuth.accountSessionVersion,
-        refreshSessionId: nextAuth.refreshSessionId,
-        refreshTokenExpiresAt: nextAuth.refreshTokenExpiresAt,
+        ...(nextAuth.refreshSessionId ? { refreshSessionId: nextAuth.refreshSessionId } : {}),
+        ...(nextAuth.refreshTokenExpiresAt ? { refreshTokenExpiresAt: nextAuth.refreshTokenExpiresAt } : {}),
         updatedAt: new Date().toISOString()
       });
     }
@@ -412,6 +414,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         ...cloneAccount(account),
         displayName: previous?.displayName ?? account.displayName,
         ...(previous?.avatarUrl ? { avatarUrl: previous.avatarUrl } : {}),
+        eloRating: normalizeEloRating(previous?.eloRating ?? account.eloRating),
         achievements: structuredClone(previous?.achievements ?? account.achievements),
         recentEventLog: structuredClone(previous?.recentEventLog ?? account.recentEventLog),
         recentBattleReplays: structuredClone(previous?.recentBattleReplays ?? account.recentBattleReplays ?? []),

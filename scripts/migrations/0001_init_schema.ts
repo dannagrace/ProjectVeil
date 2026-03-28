@@ -63,6 +63,7 @@ export async function up(connection: SchemaMigrationConnection): Promise<void> {
     `CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
       player_id VARCHAR(191) NOT NULL,
       display_name VARCHAR(80) NULL,
+      elo_rating INT NOT NULL DEFAULT 1000,
       global_resources_json LONGTEXT NOT NULL,
       version BIGINT UNSIGNED NOT NULL DEFAULT 1,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
