@@ -99,6 +99,12 @@ const DEFAULT_BUILD_OUTPUT_DIR = "build/wechatgame";
 const DEFAULT_MAIN_PACKAGE_BUDGET_MB = 4;
 const DEFAULT_TOTAL_SUBPACKAGE_BUDGET_MB = 30;
 const DEFAULT_TIMEOUT_MS = 10_000;
+const REQUIRED_BUILD_OUTPUT_FILES = [
+  "game.json",
+  "project.config.json",
+  "codex.wechat.build.json",
+  "README.codex.md"
+] as const;
 
 function normalizeString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -501,6 +507,11 @@ export function analyzeWechatMinigameBuildOutput(
   const errors: string[] = [];
   const files = listFilesRecursively(resolvedOutputDir);
   const totalBytes = files.reduce((sum, file) => sum + file.bytes, 0);
+  for (const requiredFile of REQUIRED_BUILD_OUTPUT_FILES) {
+    if (!files.some((file) => file.relativePath === requiredFile)) {
+      errors.push(`Build output is missing required file: ${requiredFile}`);
+    }
+  }
   const gameJsonPath = path.join(resolvedOutputDir, "game.json");
   let actualSubpackageRoots: string[] = [];
   if (fs.existsSync(gameJsonPath)) {

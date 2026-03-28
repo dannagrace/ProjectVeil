@@ -35,3 +35,23 @@ jobs:
 
       - name: Test
         run: npm test
+
+  wechat-build-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check WeChat mini game build templates
+        run: npm run check:wechat-build
