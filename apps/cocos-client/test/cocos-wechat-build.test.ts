@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   analyzeWechatMinigameBuildOutput,
+  buildWechatMinigameReleaseManifest,
   buildWechatMinigameDomainCoverage,
   buildWechatMinigameTemplateArtifacts,
   normalizeWechatMinigameBuildConfig
@@ -246,6 +247,62 @@ test("analyzeWechatMinigameBuildOutput validates injected config and exported ru
   );
 
   assert.equal(analysis.errors.length, 0);
+});
+
+test("buildWechatMinigameReleaseManifest emits deterministic file hashes for validated exported builds", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-wechat-build-release-"));
+  fs.mkdirSync(path.join(tempDir, "src"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tempDir, "game.json"),
+    JSON.stringify({
+      deviceOrientation: "portrait",
+      networkTimeout: {
+        request: 10000,
+        connectSocket: 10000,
+        uploadFile: 10000,
+        downloadFile: 10000
+      },
+      subpackages: []
+    })
+  );
+  fs.writeFileSync(path.join(tempDir, "game.js"), "\"use strict\";\n");
+  fs.writeFileSync(path.join(tempDir, "application.js"), "\"use strict\";\n");
+  fs.writeFileSync(path.join(tempDir, "src", "settings.json"), JSON.stringify({ subpackages: [] }));
+  const config = normalizeWechatMinigameBuildConfig({
+    runtimeRemoteUrl: "https://veil.example.com/socket",
+    remoteAssetRoot: "https://cdn.example.com/assets",
+    domains: {
+      request: ["https://veil.example.com"],
+      socket: ["wss://veil.example.com"],
+      uploadFile: [],
+      downloadFile: ["https://cdn.example.com"]
+    }
+  });
+  const artifacts = buildWechatMinigameTemplateArtifacts(config);
+  fs.writeFileSync(path.join(tempDir, "project.config.json"), JSON.stringify(artifacts.projectConfigJson));
+  fs.writeFileSync(path.join(tempDir, "codex.wechat.build.json"), JSON.stringify(artifacts.manifestJson));
+  fs.writeFileSync(path.join(tempDir, "README.codex.md"), `${artifacts.releaseChecklistMarkdown}\n`);
+
+  const manifest = buildWechatMinigameReleaseManifest(tempDir, config, {
+    expectExportedRuntime: true,
+    sourceRevision: "abc1234"
+  });
+
+  assert.equal(manifest.schemaVersion, 1);
+  assert.equal(manifest.sourceRevision, "abc1234");
+  assert.equal(manifest.packageSizes.totalBytes, manifest.packageSizes.mainPackageBytes);
+  assert.deepEqual(manifest.files.map((file) => file.relativePath), [
+    "application.js",
+    "codex.wechat.build.json",
+    "game.js",
+    "game.json",
+    "project.config.json",
+    "README.codex.md",
+    "src/settings.json"
+  ]);
+  assert.equal(manifest.files[0]?.sha256.length, 64);
+  assert.match(manifest.files[0]?.sha256 ?? "", /^[a-f0-9]{64}$/);
+  assert.deepEqual(manifest.warnings, ["No subpackages were detected or configured for this build."]);
 });
 
 test("analyzeWechatMinigameBuildOutput reports injected config drift and missing exported bootstrap files", () => {
