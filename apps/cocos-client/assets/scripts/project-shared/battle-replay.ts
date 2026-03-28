@@ -1,5 +1,5 @@
-import { applyBattleAction } from "./battle.ts";
-import type { BattleAction, BattleState } from "./models.ts";
+import { applyBattleAction, getBattleOutcome } from "./battle.ts";
+import type { BattleAction, BattleOutcome, BattleState, UnitStack } from "./models.ts";
 
 export type BattleReplayResult = "attacker_victory" | "defender_victory";
 export type BattleReplaySource = "player" | "automated";
@@ -60,6 +60,28 @@ export interface BattleReplayPlaybackCommand {
   repeat?: number | undefined;
 }
 
+export interface BattleReplayTimelineUnitChange {
+  unitId: string;
+  stackName: string;
+  camp: UnitStack["camp"];
+  lane: number;
+  hpChange: number;
+  countChange: number;
+  defeated: boolean;
+  defendingChanged: boolean;
+  statusAdded: string[];
+  statusRemoved: string[];
+}
+
+export interface BattleReplayTimelineEntry {
+  step: BattleReplayStep;
+  round: number;
+  resultingRound: number;
+  state: BattleState;
+  outcome: BattleOutcome["status"];
+  changes: BattleReplayTimelineUnitChange[];
+}
+
 function normalizeTimestamp(value?: string | null): string | undefined {
   if (!value) {
     return undefined;
@@ -71,6 +93,62 @@ function normalizeTimestamp(value?: string | null): string | undefined {
 
 function cloneBattleState(state: BattleState): BattleState {
   return structuredClone(state);
+}
+
+function unitHpPool(unit?: UnitStack | null): number {
+  if (!unit || unit.count <= 0 || unit.currentHp <= 0) {
+    return 0;
+  }
+
+  return (unit.count - 1) * unit.maxHp + unit.currentHp;
+}
+
+function compareTimelineUnitChanges(beforeState: BattleState, afterState: BattleState): BattleReplayTimelineUnitChange[] {
+  const unitIds = Array.from(new Set([...Object.keys(beforeState.units), ...Object.keys(afterState.units)]));
+
+  return unitIds
+    .map((unitId) => {
+      const beforeUnit = beforeState.units[unitId];
+      const afterUnit = afterState.units[unitId];
+      const reference = afterUnit ?? beforeUnit;
+      if (!reference) {
+        return null;
+      }
+
+      const hpChange = unitHpPool(afterUnit) - unitHpPool(beforeUnit);
+      const countChange = (afterUnit?.count ?? 0) - (beforeUnit?.count ?? 0);
+      const beforeStatuses = new Set((beforeUnit?.statusEffects ?? []).map((status) => status.name));
+      const afterStatuses = new Set((afterUnit?.statusEffects ?? []).map((status) => status.name));
+      const statusAdded = Array.from(afterStatuses).filter((status) => !beforeStatuses.has(status));
+      const statusRemoved = Array.from(beforeStatuses).filter((status) => !afterStatuses.has(status));
+      const defendingChanged = (beforeUnit?.defending ?? false) !== (afterUnit?.defending ?? false);
+
+      if (hpChange === 0 && countChange === 0 && statusAdded.length === 0 && statusRemoved.length === 0 && !defendingChanged) {
+        return null;
+      }
+
+      return {
+        unitId,
+        stackName: reference.stackName,
+        camp: reference.camp,
+        lane: reference.lane,
+        hpChange,
+        countChange,
+        defeated: (beforeUnit?.count ?? 0) > 0 && (afterUnit?.count ?? 0) <= 0,
+        defendingChanged,
+        statusAdded,
+        statusRemoved
+      };
+    })
+    .filter((entry): entry is BattleReplayTimelineUnitChange => Boolean(entry))
+    .sort(
+      (left, right) =>
+        Math.abs(right.hpChange) - Math.abs(left.hpChange) ||
+        Math.abs(right.countChange) - Math.abs(left.countChange) ||
+        left.camp.localeCompare(right.camp) ||
+        left.lane - right.lane ||
+        left.unitId.localeCompare(right.unitId)
+    );
 }
 
 function resolvePlaybackStatus(
@@ -204,6 +282,26 @@ export function applyBattleReplayPlaybackCommand(
     default:
       return playback;
   }
+}
+
+export function buildBattleReplayTimeline(replay: PlayerBattleReplaySummary): BattleReplayTimelineEntry[] {
+  const timeline: BattleReplayTimelineEntry[] = [];
+  let currentState = cloneBattleState(replay.initialState);
+
+  for (const step of replay.steps) {
+    const nextState = applyBattleAction(currentState, step.action);
+    timeline.push({
+      step,
+      round: currentState.round,
+      resultingRound: nextState.round,
+      state: cloneBattleState(nextState),
+      outcome: getBattleOutcome(nextState).status,
+      changes: compareTimelineUnitChanges(currentState, nextState)
+    });
+    currentState = nextState;
+  }
+
+  return timeline;
 }
 
 function normalizeBattleReplayStep(step: Partial<BattleReplayStep> | null | undefined, fallbackIndex: number): BattleReplayStep | null {

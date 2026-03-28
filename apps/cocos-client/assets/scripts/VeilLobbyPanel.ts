@@ -7,6 +7,7 @@ import {
 import type { CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
+import { buildCocosBattleReplayTimelineView } from "./cocos-battle-replay-timeline.ts";
 import {
   lobbyBuildingShowcaseEntries,
   formatLobbyShowcasePhaseLabel,
@@ -23,6 +24,7 @@ import {
   type LobbyShowcasePhase
 } from "./cocos-showcase-gallery.ts";
 import type { CocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
+import { findPlayerBattleReplaySummary } from "./project-shared/battle-replay.ts";
 
 const { ccclass } = _decorator;
 const H_ALIGN_LEFT = 0;
@@ -47,6 +49,12 @@ const ACTION_ACCOUNT_REVIEW = new Color(154, 122, 68, 234);
 const ACTION_ACCOUNT_REVIEW_ACTIVE = new Color(104, 132, 84, 234);
 const SHOWCASE_FILL = new Color(46, 56, 76, 182);
 const SHOWCASE_CARD_HEIGHT = 220;
+const REVIEW_TIMELINE_FILL = new Color(48, 62, 88, 192);
+const REVIEW_TIMELINE_STROKE = new Color(178, 204, 236, 94);
+const REVIEW_TIMELINE_ACCENT = new Color(136, 184, 236, 210);
+const REVIEW_HIGHLIGHT_FILL = new Color(58, 74, 108, 206);
+const REVIEW_HIGHLIGHT_STROKE = new Color(234, 246, 255, 120);
+const REVIEW_HIGHLIGHT_ACCENT = new Color(146, 198, 246, 214);
 
 export interface VeilLobbyRenderState {
   playerId: string;
@@ -98,6 +106,7 @@ export class VeilLobbyPanel extends Component {
     "event-history": 0,
     achievements: 0
   };
+  private selectedBattleReplayId: string | null = null;
   private showcasePhase: LobbyShowcasePhase = "idle";
   private showcaseUnitPage = 0;
   private showcaseTickerStarted = false;
@@ -393,6 +402,16 @@ export class VeilLobbyPanel extends Component {
         this.reviewPages[this.activeAccountReviewSection] ?? 0,
         3
       );
+      const hasBattleReplays = state.account.recentBattleReplays.length > 0;
+      if (!hasBattleReplays) {
+        this.selectedBattleReplayId = null;
+      } else if (
+        (!this.selectedBattleReplayId ||
+          !state.account.recentBattleReplays.some((replay) => replay.id === this.selectedBattleReplayId)) &&
+        review.section === "battle-replays"
+      ) {
+        this.selectedBattleReplayId = state.account.recentBattleReplays[0]?.id ?? null;
+      }
       const unlockedCount = state.account.achievements.filter((achievement) => achievement.unlocked).length;
       rightCursorY = this.renderCard(
         "LobbyAccountReviewHeader",
@@ -485,14 +504,27 @@ export class VeilLobbyPanel extends Component {
               if (this.currentState) {
                 this.render(this.currentState);
               }
-            }
+              }
           : null
       );
 
-      this.renderAccountReviewCards(rightX, rightCursorY - 74, rightWidth, review.items);
+      let reviewCardsTop = rightCursorY - 74;
+      if (review.section === "battle-replays" && hasBattleReplays && this.selectedBattleReplayId) {
+        reviewCardsTop = this.renderBattleReplayTimelineDetail(rightX, reviewCardsTop, rightWidth, state.account);
+        this.renderAccountReviewCards(rightX, reviewCardsTop, rightWidth, review.items, {
+          highlightReplayId: this.selectedBattleReplayId,
+          onSelectReplay: (replayId) => {
+            this.selectBattleReplay(replayId);
+          }
+        });
+      } else {
+        this.hideBattleReplayTimelineCard();
+        this.renderAccountReviewCards(rightX, reviewCardsTop, rightWidth, review.items);
+      }
       this.hideLobbyRooms();
     } else {
       this.hideAccountReviewCards();
+      this.hideBattleReplayTimelineCard();
       rightCursorY = this.renderCard(
         "LobbyRoomsHeader",
         rightX,
@@ -778,12 +810,68 @@ export class VeilLobbyPanel extends Component {
     }
   }
 
+  private selectBattleReplay(replayId: string): void {
+    if (this.selectedBattleReplayId === replayId) {
+      return;
+    }
+
+    this.selectedBattleReplayId = replayId;
+    if (this.currentState) {
+      this.render(this.currentState);
+    }
+  }
+
+  private renderBattleReplayTimelineDetail(
+    centerX: number,
+    topY: number,
+    width: number,
+    account: CocosPlayerAccountProfile
+  ): number {
+    const replay = findPlayerBattleReplaySummary(account.recentBattleReplays, this.selectedBattleReplayId);
+    const view = buildCocosBattleReplayTimelineView(replay);
+    const timelineLines =
+      view.entries.length > 0
+        ? view.entries.map(
+            (entry) =>
+              `${entry.stepLabel} ${entry.actorLabel} · ${entry.actionLabel} · ${entry.outcomeLabel} · ${entry.roundLabel} · ${entry.sourceLabel}`
+          )
+        : [view.emptyMessage ?? "暂无可展示的战报时间线。"];
+    const lines = [view.title, `${view.subtitle} · ${view.badge}`, view.summary, "", ...timelineLines];
+    const height = Math.max(132, 52 + lines.length * 18);
+
+    return this.renderCard(
+      "LobbyBattleReplayTimeline",
+      centerX,
+      topY,
+      width,
+      height,
+      lines,
+      {
+        fill: REVIEW_TIMELINE_FILL,
+        stroke: REVIEW_TIMELINE_STROKE,
+        accent: REVIEW_TIMELINE_ACCENT
+      },
+      null,
+      13,
+      18
+    );
+  }
+
+  private hideBattleReplayTimelineCard(): void {
+    const node = this.node.getChildByName("LobbyBattleReplayTimeline");
+    if (node) {
+      node.active = false;
+    }
+  }
+
   private renderAccountReviewCards(
     centerX: number,
     topY: number,
     width: number,
-    items: CocosAccountReviewItem[]
+    items: CocosAccountReviewItem[],
+    options: { highlightReplayId?: string | null; onSelectReplay?: (replayId: string) => void } = {}
   ): void {
+    const { highlightReplayId = null, onSelectReplay } = options;
     if (items.length === 0) {
       this.renderCard(
         "LobbyAccountReviewEmpty",
@@ -807,14 +895,14 @@ export class VeilLobbyPanel extends Component {
 
     const cardHeight = 78;
     items.forEach((item, index) => {
-      this.renderCard(
-        `LobbyAccountReview-${index}`,
-        centerX,
-        topY - index * (cardHeight + 10),
-        width,
-        cardHeight,
-        [item.title, item.detail, item.footnote],
-        item.emphasis === "positive"
+      const isHighlighted = item.replayId && highlightReplayId && item.replayId === highlightReplayId;
+      const tone = isHighlighted
+        ? {
+            fill: REVIEW_HIGHLIGHT_FILL,
+            stroke: REVIEW_HIGHLIGHT_STROKE,
+            accent: REVIEW_HIGHLIGHT_ACCENT
+          }
+        : item.emphasis === "positive"
           ? {
               fill: new Color(78, 92, 72, 184),
               stroke: new Color(234, 244, 220, 74),
@@ -824,8 +912,17 @@ export class VeilLobbyPanel extends Component {
               fill: new Color(36, 47, 62, 176),
               stroke: new Color(214, 224, 238, 42),
               accent: new Color(110, 152, 214, 164)
-            },
-        null,
+            };
+      const onPress = item.replayId && onSelectReplay ? () => onSelectReplay(item.replayId!) : null;
+      this.renderCard(
+        `LobbyAccountReview-${index}`,
+        centerX,
+        topY - index * (cardHeight + 10),
+        width,
+        cardHeight,
+        [item.title, item.detail, item.footnote],
+        tone,
+        onPress,
         14,
         18
       );
