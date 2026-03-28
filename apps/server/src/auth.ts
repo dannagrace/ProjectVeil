@@ -4,6 +4,7 @@ import { appendEventLogEntries, type EventLogEntry } from "../../../packages/sha
 import {
   AccountTokenDeliveryConfigurationError,
   AccountTokenDeliveryError,
+  clearAccountTokenDeliveryState,
   deliverAccountToken,
   readAccountRegistrationDeliveryMode,
   readPasswordRecoveryDeliveryMode
@@ -16,6 +17,7 @@ import {
   recordAuthInvalidCredentials,
   recordAuthLogout,
   recordAuthRateLimited,
+  recordAuthTokenDeliveryFailure,
   recordAuthRefresh,
   recordAuthSessionCheck,
   recordAuthSessionFailure,
@@ -489,6 +491,7 @@ function getAccountRegistrationState(loginId: string): AccountRegistrationState 
 
   if (isExpiredTimestamp(existing.expiresAt)) {
     accountRegistrationStateByLoginId.delete(loginId);
+    clearAccountTokenDeliveryState("account-registration", loginId);
     syncAuthStateTelemetry();
     return null;
   }
@@ -497,6 +500,7 @@ function getAccountRegistrationState(loginId: string): AccountRegistrationState 
 }
 
 function storeAccountRegistrationState(loginId: string, requestedDisplayName: string, token: string): AccountRegistrationState {
+  clearAccountTokenDeliveryState("account-registration", loginId);
   const issuedAt = new Date().toISOString();
   const expiresAt = new Date(nowMs() + readAccountRegistrationTtlMs()).toISOString();
   const state: AccountRegistrationState = {
@@ -523,6 +527,7 @@ function consumeAccountRegistrationState(loginId: string, token: string): Accoun
   }
 
   accountRegistrationStateByLoginId.delete(loginId);
+  clearAccountTokenDeliveryState("account-registration", loginId);
   syncAuthStateTelemetry();
   return state;
 }
@@ -535,6 +540,7 @@ function getPasswordRecoveryState(loginId: string): PasswordRecoveryState | null
 
   if (isExpiredTimestamp(existing.expiresAt)) {
     passwordRecoveryStateByLoginId.delete(loginId);
+    clearAccountTokenDeliveryState("password-recovery", loginId);
     syncAuthStateTelemetry();
     return null;
   }
@@ -543,6 +549,7 @@ function getPasswordRecoveryState(loginId: string): PasswordRecoveryState | null
 }
 
 function storePasswordRecoveryState(playerId: string, loginId: string, token: string): PasswordRecoveryState {
+  clearAccountTokenDeliveryState("password-recovery", loginId);
   const issuedAt = new Date().toISOString();
   const expiresAt = new Date(nowMs() + readPasswordRecoveryTtlMs()).toISOString();
   const state: PasswordRecoveryState = {
@@ -569,6 +576,7 @@ function consumePasswordRecoveryState(loginId: string, token: string): PasswordR
   }
 
   passwordRecoveryStateByLoginId.delete(loginId);
+  clearAccountTokenDeliveryState("password-recovery", loginId);
   syncAuthStateTelemetry();
   return state;
 }
@@ -1186,6 +1194,7 @@ function sendAccountTokenDeliveryFailure(
   kind: "account-registration" | "password-recovery"
 ): void {
   if (error instanceof AccountTokenDeliveryConfigurationError) {
+    recordAuthTokenDeliveryFailure("misconfigured");
     sendJson(response, 503, {
       error: {
         code: `${kind.replace(/-/g, "_")}_delivery_misconfigured`,
@@ -1873,6 +1882,10 @@ export function registerAuthRoutes(
         sendJson(response, 202, {
           status: "registration_requested",
           expiresAt: registrationState.expiresAt,
+          deliveryStatus: delivery.deliveryStatus,
+          ...(delivery.attemptCount != null ? { deliveryAttemptCount: delivery.attemptCount } : {}),
+          ...(delivery.maxAttempts != null ? { deliveryMaxAttempts: delivery.maxAttempts } : {}),
+          ...(delivery.nextAttemptAt ? { deliveryNextAttemptAt: delivery.nextAttemptAt } : {}),
           ...(delivery.responseToken ? { registrationToken: delivery.responseToken } : {})
         });
       } catch (error) {
@@ -2050,6 +2063,10 @@ export function registerAuthRoutes(
         sendJson(response, 202, {
           status: "recovery_requested",
           expiresAt: recoveryState.expiresAt,
+          deliveryStatus: delivery.deliveryStatus,
+          ...(delivery.attemptCount != null ? { deliveryAttemptCount: delivery.attemptCount } : {}),
+          ...(delivery.maxAttempts != null ? { deliveryMaxAttempts: delivery.maxAttempts } : {}),
+          ...(delivery.nextAttemptAt ? { deliveryNextAttemptAt: delivery.nextAttemptAt } : {}),
           ...(delivery.responseToken ? { recoveryToken: delivery.responseToken } : {})
         });
       } catch (error) {

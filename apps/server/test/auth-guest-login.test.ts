@@ -4,6 +4,7 @@ import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
+import { resetAccountTokenDeliveryState } from "../src/account-token-delivery";
 import {
   hashAccountPassword,
   issueAccountAuthSession,
@@ -328,6 +329,7 @@ class MemoryAuthStore implements RoomSnapshotStore {
 async function startAuthServer(port: number, store: RoomSnapshotStore | null = null): Promise<Server> {
   configureRoomSnapshotStore(store);
   resetGuestAuthSessions();
+  resetAccountTokenDeliveryState();
   resetRuntimeObservability();
   const transport = new WebSocketTransport();
   registerAuthRoutes(transport.getExpressApp() as never, store);
@@ -2062,13 +2064,16 @@ test("password recovery request uses webhook delivery without leaking the token"
   assert.equal(confirmResponse.status, 200);
 });
 
-test("password recovery request returns 502 when the delivery webhook fails", { concurrency: false }, async (t) => {
+test("password recovery request schedules retry for retryable webhook failures and exposes delivery observability", { concurrency: false }, async (t) => {
   const cleanup: Array<() => void> = [];
   const webhook = await startTokenDeliveryWebhookServer({ statusCode: 500 });
   withEnvOverrides(
     {
       VEIL_PASSWORD_RECOVERY_DELIVERY_MODE: "webhook",
-      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL: webhook.url
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL: webhook.url,
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_MAX_ATTEMPTS: "3",
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_RETRY_BASE_DELAY_MS: "20",
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_RETRY_MAX_DELAY_MS: "20"
     },
     cleanup
   );
@@ -2103,6 +2108,125 @@ test("password recovery request returns 502 when the delivery webhook fails", { 
     })
   });
   const payload = (await response.json()) as {
+    status: string;
+    deliveryStatus: string;
+    deliveryAttemptCount?: number;
+    deliveryMaxAttempts?: number;
+    deliveryNextAttemptAt?: string;
+    recoveryToken?: string;
+  };
+
+  assert.equal(response.status, 202);
+  assert.equal(payload.status, "recovery_requested");
+  assert.equal(payload.deliveryStatus, "retry_scheduled");
+  assert.equal(payload.deliveryAttemptCount, 1);
+  assert.equal(payload.deliveryMaxAttempts, 3);
+  assert.ok(payload.deliveryNextAttemptAt);
+  assert.equal(payload.recoveryToken, undefined);
+  assert.equal(webhook.requests.length, 1);
+
+  const queuedResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/account-token-delivery`);
+  const queuedPayload = (await queuedResponse.json()) as {
+    status: string;
+    delivery: {
+      queueCount: number;
+      deadLetterCount: number;
+      counters: {
+        tokenDeliveryRequestsTotal: number;
+        tokenDeliveryFailuresTotal: number;
+        tokenDeliveryRetriesTotal: number;
+      };
+      recentAttempts: Array<{
+        status: string;
+        failureReason?: string;
+      }>;
+    };
+  };
+
+  assert.equal(queuedResponse.status, 200);
+  assert.equal(queuedPayload.status, "warn");
+  assert.equal(queuedPayload.delivery.queueCount, 1);
+  assert.equal(queuedPayload.delivery.deadLetterCount, 0);
+  assert.equal(queuedPayload.delivery.counters.tokenDeliveryRequestsTotal, 1);
+  assert.equal(queuedPayload.delivery.counters.tokenDeliveryFailuresTotal, 1);
+  assert.equal(queuedPayload.delivery.counters.tokenDeliveryRetriesTotal, 1);
+  assert.equal(queuedPayload.delivery.recentAttempts[0]?.status, "retry_scheduled");
+  assert.equal(queuedPayload.delivery.recentAttempts[0]?.failureReason, "webhook_5xx");
+
+  webhook.setStatusCode(204);
+  await sleep(120);
+
+  assert.equal(webhook.requests.length, 2);
+  assert.equal(webhook.requests[1]?.body.token, webhook.requests[0]?.body.token);
+
+  const recoveredResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/account-token-delivery`);
+  const recoveredPayload = (await recoveredResponse.json()) as {
+    status: string;
+    delivery: {
+      queueCount: number;
+      deadLetterCount: number;
+      counters: {
+        tokenDeliverySuccessesTotal: number;
+        tokenDeliveryRetriesTotal: number;
+      };
+      recentAttempts: Array<{
+        status: string;
+      }>;
+    };
+  };
+
+  assert.equal(recoveredResponse.status, 200);
+  assert.equal(recoveredPayload.delivery.queueCount, 0);
+  assert.equal(recoveredPayload.delivery.deadLetterCount, 0);
+  assert.equal(recoveredPayload.delivery.counters.tokenDeliverySuccessesTotal, 1);
+  assert.equal(recoveredPayload.delivery.counters.tokenDeliveryRetriesTotal, 1);
+  assert.equal(recoveredPayload.delivery.recentAttempts[0]?.status, "delivered");
+});
+
+test("password recovery request returns 502 and dead-letters non-retryable webhook failures", { concurrency: false }, async (t) => {
+  const cleanup: Array<() => void> = [];
+  const webhook = await startTokenDeliveryWebhookServer({ statusCode: 400 });
+  withEnvOverrides(
+    {
+      VEIL_PASSWORD_RECOVERY_DELIVERY_MODE: "webhook",
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL: webhook.url,
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_MAX_ATTEMPTS: "3",
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_RETRY_BASE_DELAY_MS: "20",
+      VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_RETRY_MAX_DELAY_MS: "20"
+    },
+    cleanup
+  );
+
+  const port = 44759 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  await store.ensurePlayerAccount({
+    playerId: "dead-letter-recovery-player",
+    displayName: "Dead Letter Recovery"
+  });
+  await store.bindPlayerAccountCredentials("dead-letter-recovery-player", {
+    loginId: "dead-letter-recovery-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    await webhook.close().catch(() => undefined);
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "dead-letter-recovery-ranger"
+    })
+  });
+  const payload = (await response.json()) as {
     error: { code: string; message: string };
     recoveryToken?: string;
   };
@@ -2110,8 +2234,38 @@ test("password recovery request returns 502 when the delivery webhook fails", { 
   assert.equal(response.status, 502);
   assert.equal(payload.error.code, "password_recovery_delivery_failed");
   assert.equal(payload.recoveryToken, undefined);
-  assert.match(payload.error.message, /500/);
+  assert.match(payload.error.message, /400/);
   assert.equal(webhook.requests.length, 1);
+
+  const deliveryResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/account-token-delivery`);
+  const deliveryPayload = (await deliveryResponse.json()) as {
+    status: string;
+    delivery: {
+      queueCount: number;
+      deadLetterCount: number;
+      counters: {
+        tokenDeliveryFailuresTotal: number;
+        tokenDeliveryDeadLettersTotal: number;
+      };
+      failureReasons: {
+        webhook_4xx: number;
+      };
+      recentAttempts: Array<{
+        status: string;
+        failureReason?: string;
+      }>;
+    };
+  };
+
+  assert.equal(deliveryResponse.status, 200);
+  assert.equal(deliveryPayload.status, "warn");
+  assert.equal(deliveryPayload.delivery.queueCount, 0);
+  assert.equal(deliveryPayload.delivery.deadLetterCount, 1);
+  assert.equal(deliveryPayload.delivery.counters.tokenDeliveryFailuresTotal, 1);
+  assert.equal(deliveryPayload.delivery.counters.tokenDeliveryDeadLettersTotal, 1);
+  assert.equal(deliveryPayload.delivery.failureReasons.webhook_4xx, 1);
+  assert.equal(deliveryPayload.delivery.recentAttempts[0]?.status, "dead-lettered");
+  assert.equal(deliveryPayload.delivery.recentAttempts[0]?.failureReason, "webhook_4xx");
 });
 
 test("wechat mini game scaffold route returns 501 until mock mode is enabled", { concurrency: false }, async (t) => {
