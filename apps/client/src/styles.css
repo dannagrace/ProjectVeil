@@ -568,6 +568,7 @@ h1 {
 }
 
 .account-replay-controls,
+.account-replay-report-summary,
 .account-replay-progress,
 .account-replay-impact,
 .account-replay-state,
@@ -580,16 +581,37 @@ h1 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.account-replay-report-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .account-replay-progress {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .account-replay-progress div,
+.account-replay-summary-card,
 .account-replay-unit,
 .account-replay-step {
   padding: 10px 12px;
   border-radius: 12px;
   background: rgba(78, 58, 42, 0.05);
+}
+
+.account-replay-summary-card {
+  display: grid;
+  gap: 6px;
+}
+
+.account-replay-summary-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.account-replay-summary-notes {
+  display: grid;
+  gap: 4px;
 }
 
 .account-replay-progress div {
@@ -1778,6 +1800,7 @@ h1 {
   }
 
   .account-replay-controls,
+  .account-replay-report-summary,
   .account-replay-progress,
   .diagnostics-grid {
     grid-template-columns: 1fr;
