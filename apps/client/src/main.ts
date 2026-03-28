@@ -39,9 +39,9 @@ import {
 } from "./assets";
 import { describeTileObject } from "./object-visuals";
 import {
-  clearCurrentAuthSession,
   loginGuestAuthSession,
   loginPasswordAuthSession,
+  logoutCurrentAuthSession,
   readStoredAuthSession,
   syncCurrentAuthSession,
   type StoredAuthSession
@@ -2790,8 +2790,8 @@ function returnToLobby(): void {
   window.location.assign(nextUrl.toString());
 }
 
-function logoutGuestSession(): void {
-  clearCurrentAuthSession();
+async function logoutGuestSession(): Promise<void> {
+  await logoutCurrentAuthSession();
   state.lobby.authSession = null;
   state.lobby.loginId = "";
   state.lobby.password = "";

@@ -1,6 +1,7 @@
 import {
   buildAuthHeaders,
   clearCurrentAuthSession,
+  fetchAuthJson,
   readStoredAuthSession,
   storeAuthSession,
   type StoredAuthSession
@@ -52,10 +53,13 @@ interface PlayerAccountApiPayload {
   };
   session?: {
     token?: string;
+    refreshToken?: string;
     playerId?: string;
     displayName?: string;
     authMode?: "guest" | "account";
     loginId?: string;
+    expiresAt?: string;
+    refreshExpiresAt?: string;
   };
 }
 
@@ -243,13 +247,31 @@ async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
     });
 
     if (!response.ok) {
-      throw new Error(`player_account_request_failed:${response.status}`);
+      let errorCode = "unknown";
+      try {
+        const payload = (await response.json()) as { error?: { code?: string } };
+        errorCode = payload.error?.code?.trim() || errorCode;
+      } catch {
+        errorCode = "unknown";
+      }
+      throw new Error(`player_account_request_failed:${response.status}:${errorCode}`);
     }
 
     return (await response.json()) as unknown;
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+async function fetchPlayerAccountJson(
+  url: string,
+  init: RequestInit | undefined,
+  authSession: StoredAuthSession | null
+): Promise<unknown> {
+  if (authSession?.token) {
+    return fetchAuthJson(url, init, authSession);
+  }
+  return fetchJson(url, init);
 }
 
 function asStoredAuthSession(
@@ -264,6 +286,17 @@ function asStoredAuthSession(
     authMode: payload?.authMode === "account" || loginId ? "account" : previousSession.authMode,
     ...(loginId ? { loginId } : {}),
     ...(payload?.token ? { token: payload.token } : previousSession.token ? { token: previousSession.token } : {}),
+    ...(payload?.refreshToken
+      ? { refreshToken: payload.refreshToken }
+      : previousSession.refreshToken
+        ? { refreshToken: previousSession.refreshToken }
+        : {}),
+    ...(payload?.expiresAt ? { expiresAt: payload.expiresAt } : previousSession.expiresAt ? { expiresAt: previousSession.expiresAt } : {}),
+    ...(payload?.refreshExpiresAt
+      ? { refreshExpiresAt: payload.refreshExpiresAt }
+      : previousSession.refreshExpiresAt
+        ? { refreshExpiresAt: previousSession.refreshExpiresAt }
+        : {}),
     source: previousSession.source
   };
 }
@@ -306,12 +339,12 @@ async function loadPlayerBattleReplaySummariesWithSession(
     : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays${queryString}`;
 
   try {
-    const payload = (await fetchJson(endpoint, {
+    const payload = (await fetchPlayerAccountJson(endpoint, {
       ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
-    })) as PlayerBattleReplayListApiPayload;
+    }, authSession)) as PlayerBattleReplayListApiPayload;
     return queryPlayerBattleReplaySummaries(payload.items, query);
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("player_account_request_failed:401:")) {
       clearCurrentAuthSession();
     }
     return queryPlayerBattleReplaySummaries(undefined, query);
@@ -396,9 +429,9 @@ export async function loadPlayerAccountProfile(playerId: string, roomId: string)
     : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}`;
 
   try {
-    const payload = (await fetchJson(accountEndpoint, {
+    const payload = (await fetchPlayerAccountJson(accountEndpoint, {
       ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
-    })) as PlayerAccountApiPayload;
+    }, authSession)) as PlayerAccountApiPayload;
     const resolvedPlayerId = payload.account?.playerId?.trim() || authSession?.playerId || playerId;
     const recentBattleReplays = await loadPlayerBattleReplaySummariesWithSession(resolvedPlayerId, authSession ?? null);
     const profile = {
@@ -416,7 +449,7 @@ export async function loadPlayerAccountProfile(playerId: string, roomId: string)
 
     return profile;
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("player_account_request_failed:401:")) {
       clearCurrentAuthSession();
     }
     return createFallbackPlayerAccountProfile(playerId, roomId, storedDisplayName);
@@ -441,12 +474,12 @@ export async function loadPlayerBattleReplayDetail(
     : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays/${encodeURIComponent(replayId)}`;
 
   try {
-    const payload = (await fetchJson(endpoint, {
+    const payload = (await fetchPlayerAccountJson(endpoint, {
       ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
-    })) as PlayerBattleReplayDetailApiPayload;
+    }, authSession)) as PlayerBattleReplayDetailApiPayload;
     return findPlayerBattleReplaySummary(payload.replay ? [payload.replay] : undefined, replayId);
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("player_account_request_failed:401:")) {
       clearCurrentAuthSession();
     }
     return null;
@@ -465,12 +498,12 @@ export async function loadPlayerBattleReplayPlayback(
     : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays/${encodeURIComponent(replayId)}/playback${queryString}`;
 
   try {
-    const payload = (await fetchJson(endpoint, {
+    const payload = (await fetchPlayerAccountJson(endpoint, {
       ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
-    })) as PlayerBattleReplayPlaybackApiPayload;
+    }, authSession)) as PlayerBattleReplayPlaybackApiPayload;
     return normalizePlayerBattleReplayPlayback(replayId, payload.playback);
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("player_account_request_failed:401:")) {
       clearCurrentAuthSession();
     }
     return null;
@@ -485,12 +518,12 @@ export async function loadPlayerEventLog(playerId: string, query?: EventLogQuery
     : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/event-log${queryString}`;
 
   try {
-    const payload = (await fetchJson(endpoint, {
+    const payload = (await fetchPlayerAccountJson(endpoint, {
       ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
-    })) as PlayerEventLogListApiPayload;
+    }, authSession)) as PlayerEventLogListApiPayload;
     return normalizeEventLogEntries(payload.items);
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("player_account_request_failed:401:")) {
       clearCurrentAuthSession();
     }
     return normalizeEventLogEntries();
@@ -508,12 +541,12 @@ export async function loadPlayerAchievementProgress(
     : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/achievements${queryString}`;
 
   try {
-    const payload = (await fetchJson(endpoint, {
+    const payload = (await fetchPlayerAccountJson(endpoint, {
       ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
-    })) as PlayerAchievementListApiPayload;
+    }, authSession)) as PlayerAchievementListApiPayload;
     return queryAchievementProgress(payload.items, query);
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("player_account_request_failed:401:")) {
       clearCurrentAuthSession();
     }
     return queryAchievementProgress(undefined, query);
@@ -528,12 +561,12 @@ export async function loadPlayerProgressionSnapshot(playerId: string, eventLimit
     : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/progression${limitQuery}`;
 
   try {
-    const payload = (await fetchJson(endpoint, {
+    const payload = (await fetchPlayerAccountJson(endpoint, {
       ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
-    })) as PlayerProgressionApiPayload;
+    }, authSession)) as PlayerProgressionApiPayload;
     return normalizePlayerProgressionSnapshot(payload);
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("player_account_request_failed:401:")) {
       clearCurrentAuthSession();
     }
     return normalizePlayerProgressionSnapshot();
@@ -577,7 +610,7 @@ export async function savePlayerAccountDisplayName(
     : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}`;
 
   try {
-    const payload = (await fetchJson(accountEndpoint, {
+    const payload = (await fetchPlayerAccountJson(accountEndpoint, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -587,7 +620,7 @@ export async function savePlayerAccountDisplayName(
         displayName: normalizedDisplayName,
         lastRoomId: roomId
       })
-    })) as PlayerAccountApiPayload;
+    }, authSession)) as PlayerAccountApiPayload;
 
     if (authSession?.token && payload.session) {
       storeAuthSession(asStoredAuthSession(payload.session, authSession));
@@ -596,7 +629,7 @@ export async function savePlayerAccountDisplayName(
     const resolvedPlayerId = payload.account?.playerId?.trim() || authSession?.playerId || playerId;
     return asPlayerAccountProfile(resolvedPlayerId, roomId, "remote", payload.account, normalizedDisplayName);
   } catch (error) {
-    if (authSession?.token && error instanceof Error && error.message === "player_account_request_failed:401") {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("player_account_request_failed:401:")) {
       clearCurrentAuthSession();
     }
     return createFallbackPlayerAccountProfile(playerId, roomId, normalizedDisplayName);
@@ -613,7 +646,7 @@ export async function bindPlayerAccountCredentials(
     throw new Error("auth_session_required");
   }
 
-  const payload = (await fetchJson(`${resolvePlayerAccountApiBaseUrl()}/api/auth/account-bind`, {
+  const payload = (await fetchPlayerAccountJson(`${resolvePlayerAccountApiBaseUrl()}/api/auth/account-bind`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -623,7 +656,7 @@ export async function bindPlayerAccountCredentials(
       loginId: normalizeLoginId(loginId),
       password
     })
-  })) as PlayerAccountApiPayload;
+  }, authSession)) as PlayerAccountApiPayload;
 
   if (payload.session) {
     storeAuthSession(asStoredAuthSession(payload.session, authSession));

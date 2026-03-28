@@ -153,13 +153,14 @@
 - 服务端还新增了 `GET /api/auth/session` 与 `GET /api/player-accounts/me`、`PUT /api/player-accounts/me`：前者用于校验和刷新当前游客会话，后者用于按当前登录态读取/修改自己的账号资料，不需要前端再手拼 `playerId`。
 - 账号体系现已从“纯游客模式”升级为“双模式骨架”：`player_accounts` 新增 `loginId / passwordHash / credentialBoundAt`，服务端开放 `POST /api/auth/account-bind` 与 `POST /api/auth/account-login`，可把当前游客档绑定成口令账号，并在之后直接用登录 ID + 口令进入房间。
 - 鉴权入口现已补上进程内安全闸门：`POST /api/auth/guest-login`、`/account-login`、`/account-bind` 都会按来源 IP 走滑动窗口限流，`account-login` 还会在连续失败达到阈值后临时锁定账号；默认值分别来自 `VEIL_RATE_LIMIT_AUTH_WINDOW_MS=60000`、`VEIL_RATE_LIMIT_AUTH_MAX=10`、`VEIL_AUTH_LOCKOUT_THRESHOLD=10`、`VEIL_AUTH_LOCKOUT_DURATION_MINUTES=15`，游客会话缓存还会受 `VEIL_MAX_GUEST_SESSIONS=10000` 的 LRU 上限约束。
+- 正式账号会话现在补上了过期与撤销链路：访问令牌默认 1 小时（`VEIL_AUTH_ACCESS_TTL_SECONDS`），刷新令牌默认 30 天（`VEIL_AUTH_REFRESH_TTL_SECONDS`），游客 token 默认 7 天（`VEIL_AUTH_GUEST_TTL_SECONDS`）；服务端新增 `POST /api/auth/refresh` 与 `POST /api/auth/logout`，并把当前刷新令牌族持久化到 `player_accounts` 上，账号口令修改也会同步撤销现有会话。
 - H5 Lobby 现已补上“账号口令登录”表单；游戏内账号资料卡也能直接绑定或更新口令账号，绑定成功后会立即把当前会话升级成账号模式，不需要重新手写 `playerId`，并会继续沿用同一份英雄长期档与全局资源仓库。
 - H5 Lobby 和游戏内都已补上“退出游客会话 / 切换游客账号”入口；当前 token 无效时会自动清掉本地会话并回到大厅。
 - Cocos Web 启动入口现在会复用和 H5 共用的 `project-veil:auth-session`：如果浏览器里已有已签名会话，那么直接访问 `?roomId=...` 就能沿用当前游客或正式账号身份进房，HUD 会标出当前是云端游客、正式账号还是本地/手动参数启动。
 - Cocos Web 现在也有真正的 Lobby 面板：没有 `roomId` 查询参数时会先进入大厅，可刷新 `/api/lobby/rooms` 活跃实例、点击字段卡片修改 `playerId / 昵称 / roomId / 登录 ID`、直接游客进入，或走“账号登录并进入”直连正式账号；Lobby 还会通过 `/api/player-accounts/me` / `GET /api/player-accounts/:playerId` 同步当前账号资料与全局仓库摘要。
 - Cocos Lobby 现在也提供“打开配置台”入口，会按当前联机目标自动跳到共享的 `config-center.html`，把配置联调从 H5 侧迁成主客户端可达链路。
 - 服务端新增 `GET /api/lobby/rooms`，会实时返回当前进程内活跃房间的 `roomId / day / seed / connectedPlayers / heroCount / activeBattles / updatedAt` 摘要，便于大厅入口和后续房间浏览器直接复用。
-- 这套账号目前仍是“轻量正式化”阶段：虽然已经有口令绑定和账号登录，但还没有刷新令牌、多端撤销、正式注册流程或第三方身份接入。
+- 这套账号目前仍是“轻量正式化”阶段：虽然已经有口令绑定、刷新令牌轮换和单账号会话撤销，但还没有正式注册流程、真正的多端并行会话管理或更完整的第三方身份接入。
 - H5 会优先连接 `ws://127.0.0.1:2567` 的本地会话服务；若服务未启动，则自动回退到浏览器内嵌房间模式。
 - 本地会话服务已支持房间内 `session.state` 推送同步，后续可在此基础上继续扩展多人联机。
 - 多人原型已支持双英雄同房间联调，以及踩到敌方英雄格时触发玩家对玩家遭遇战。

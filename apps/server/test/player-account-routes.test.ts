@@ -81,6 +81,10 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return this.authByLoginId.get(loginId.trim().toLowerCase()) ?? null;
   }
 
+  async loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null> {
+    return Array.from(this.authByLoginId.values()).find((auth) => auth.playerId === playerId.trim()) ?? null;
+  }
+
   async loadPlayerHeroArchives(_playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
     return [];
   }
@@ -133,9 +137,50 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       displayName: account.displayName,
       loginId: normalizedLoginId,
       passwordHash: input.passwordHash,
+      accountSessionVersion: existing.accountSessionVersion ?? 0,
       credentialBoundAt
     });
     return account;
+  }
+
+  async savePlayerAccountAuthSession(
+    playerId: string,
+    input: { refreshSessionId: string; refreshTokenHash: string; refreshTokenExpiresAt: string }
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const auth = await this.loadPlayerAccountAuthByPlayerId(playerId);
+    if (!auth) {
+      return null;
+    }
+    const nextAuth: PlayerAccountAuthSnapshot = {
+      ...auth,
+      accountSessionVersion: auth.accountSessionVersion + 1,
+      refreshSessionId: input.refreshSessionId,
+      refreshTokenHash: input.refreshTokenHash,
+      refreshTokenExpiresAt: input.refreshTokenExpiresAt
+    };
+    this.authByLoginId.set(auth.loginId, nextAuth);
+    return nextAuth;
+  }
+
+  async revokePlayerAccountAuthSessions(
+    playerId: string,
+    input: { passwordHash?: string; credentialBoundAt?: string } = {}
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const auth = await this.loadPlayerAccountAuthByPlayerId(playerId);
+    if (!auth) {
+      return null;
+    }
+    const nextAuth: PlayerAccountAuthSnapshot = {
+      ...auth,
+      ...(input.passwordHash ? { passwordHash: input.passwordHash } : {}),
+      ...(input.credentialBoundAt ? { credentialBoundAt: input.credentialBoundAt } : {}),
+      accountSessionVersion: auth.accountSessionVersion + 1
+    };
+    delete nextAuth.refreshSessionId;
+    delete nextAuth.refreshTokenHash;
+    delete nextAuth.refreshTokenExpiresAt;
+    this.authByLoginId.set(auth.loginId, nextAuth);
+    return nextAuth;
   }
 
   async bindPlayerAccountWechatMiniGameIdentity(

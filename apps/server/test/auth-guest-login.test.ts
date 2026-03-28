@@ -11,6 +11,7 @@ import {
   type GuestAuthSession
 } from "../src/auth";
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
+import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import type {
   PlayerAccountProgressPatch,
   PlayerAccountAuthSnapshot,
@@ -76,6 +77,10 @@ class MemoryAuthStore implements RoomSnapshotStore {
     return this.authByLoginId.get(loginId.trim().toLowerCase()) ?? null;
   }
 
+  async loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null> {
+    return Array.from(this.authByLoginId.values()).find((auth) => auth.playerId === playerId.trim()) ?? null;
+  }
+
   async loadPlayerHeroArchives(_playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
     return [];
   }
@@ -127,9 +132,52 @@ class MemoryAuthStore implements RoomSnapshotStore {
       displayName: account.displayName,
       loginId: normalizedLoginId,
       passwordHash: input.passwordHash,
+      accountSessionVersion: existing.accountSessionVersion ?? 0,
       ...(account.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {})
     });
     return account;
+  }
+
+  async savePlayerAccountAuthSession(
+    playerId: string,
+    input: { refreshSessionId: string; refreshTokenHash: string; refreshTokenExpiresAt: string }
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const auth = await this.loadPlayerAccountAuthByPlayerId(playerId);
+    if (!auth) {
+      return null;
+    }
+
+    const nextAuth: PlayerAccountAuthSnapshot = {
+      ...auth,
+      accountSessionVersion: auth.accountSessionVersion + 1,
+      refreshSessionId: input.refreshSessionId,
+      refreshTokenHash: input.refreshTokenHash,
+      refreshTokenExpiresAt: input.refreshTokenExpiresAt
+    };
+    this.authByLoginId.set(auth.loginId, nextAuth);
+    return nextAuth;
+  }
+
+  async revokePlayerAccountAuthSessions(
+    playerId: string,
+    input: { passwordHash?: string; credentialBoundAt?: string } = {}
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const auth = await this.loadPlayerAccountAuthByPlayerId(playerId);
+    if (!auth) {
+      return null;
+    }
+
+    const nextAuth: PlayerAccountAuthSnapshot = {
+      ...auth,
+      ...(input.passwordHash ? { passwordHash: input.passwordHash } : {}),
+      ...(input.credentialBoundAt ? { credentialBoundAt: input.credentialBoundAt } : {}),
+      accountSessionVersion: auth.accountSessionVersion + 1
+    };
+    delete nextAuth.refreshSessionId;
+    delete nextAuth.refreshTokenHash;
+    delete nextAuth.refreshTokenExpiresAt;
+    this.authByLoginId.set(auth.loginId, nextAuth);
+    return nextAuth;
   }
 
   async bindPlayerAccountWechatMiniGameIdentity(
@@ -233,6 +281,7 @@ async function startAuthServer(port: number, store: RoomSnapshotStore | null = n
   resetGuestAuthSessions();
   const transport = new WebSocketTransport();
   registerAuthRoutes(transport.getExpressApp() as never, store);
+  registerPlayerAccountRoutes(transport.getExpressApp() as never, store);
   const server = new Server({ transport });
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
@@ -495,6 +544,201 @@ test("account bind upgrades a guest session into password login and account-logi
   assert.equal(sessionPayload.session.authMode, "account");
   assert.equal(sessionPayload.session.provider, "account-password");
   assert.equal(sessionPayload.session.loginId, "veil-ranger");
+});
+
+test("account access tokens expire with token_expired and can be rotated through refresh", async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_AUTH_ACCESS_TTL_SECONDS: "1",
+      VEIL_AUTH_REFRESH_TTL_SECONDS: "30"
+    },
+    cleanup
+  );
+
+  const port = 44540 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  await store.bindPlayerAccountCredentials("expiry-player", {
+    loginId: "expiry-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "expiry-ranger",
+      password: "hunter2"
+    })
+  });
+  const loginPayload = (await loginResponse.json()) as {
+    session: GuestAuthSession;
+  };
+
+  assert.equal(loginResponse.status, 200);
+  assert.equal(typeof loginPayload.session.refreshToken, "string");
+
+  await sleep(1_100);
+
+  const expiredResponse = await fetch(`http://127.0.0.1:${port}/api/auth/session`, {
+    headers: {
+      Authorization: `Bearer ${loginPayload.session.token}`
+    }
+  });
+  const expiredPayload = (await expiredResponse.json()) as { error: { code: string } };
+
+  assert.equal(expiredResponse.status, 401);
+  assert.equal(expiredPayload.error.code, "token_expired");
+
+  const refreshResponse = await fetch(`http://127.0.0.1:${port}/api/auth/refresh`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${loginPayload.session.refreshToken}`
+    }
+  });
+  const refreshPayload = (await refreshResponse.json()) as { session: GuestAuthSession };
+
+  assert.equal(refreshResponse.status, 200);
+  assert.notEqual(refreshPayload.session.token, loginPayload.session.token);
+  assert.notEqual(refreshPayload.session.refreshToken, loginPayload.session.refreshToken);
+});
+
+test("refresh rotation invalidates the previous refresh token and logout revokes the active one", async (t) => {
+  const port = 44580 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  await store.bindPlayerAccountCredentials("rotate-player", {
+    loginId: "rotate-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "rotate-ranger",
+      password: "hunter2"
+    })
+  });
+  const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
+
+  const rotatedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/refresh`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${loginPayload.session.refreshToken}`
+    }
+  });
+  const rotatedPayload = (await rotatedResponse.json()) as { session: GuestAuthSession };
+
+  assert.equal(rotatedResponse.status, 200);
+
+  const staleRefreshResponse = await fetch(`http://127.0.0.1:${port}/api/auth/refresh`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${loginPayload.session.refreshToken}`
+    }
+  });
+  const staleRefreshPayload = (await staleRefreshResponse.json()) as { error: { code: string } };
+
+  assert.equal(staleRefreshResponse.status, 401);
+  assert.equal(staleRefreshPayload.error.code, "session_revoked");
+
+  const logoutResponse = await fetch(`http://127.0.0.1:${port}/api/auth/logout`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${rotatedPayload.session.token}`
+    }
+  });
+  assert.equal(logoutResponse.status, 200);
+
+  const revokedRefreshResponse = await fetch(`http://127.0.0.1:${port}/api/auth/refresh`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${rotatedPayload.session.refreshToken}`
+    }
+  });
+  const revokedRefreshPayload = (await revokedRefreshResponse.json()) as { error: { code: string } };
+
+  assert.equal(revokedRefreshResponse.status, 401);
+  assert.equal(revokedRefreshPayload.error.code, "session_revoked");
+});
+
+test("password changes revoke the current account session family", async (t) => {
+  const port = 44610 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  await store.bindPlayerAccountCredentials("password-player", {
+    loginId: "password-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "password-ranger",
+      password: "hunter2"
+    })
+  });
+  const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
+
+  const passwordChangeResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${loginPayload.session.token}`
+    },
+    body: JSON.stringify({
+      currentPassword: "hunter2",
+      newPassword: "hunter3"
+    })
+  });
+
+  assert.equal(passwordChangeResponse.status, 200);
+
+  const revokedAccessResponse = await fetch(`http://127.0.0.1:${port}/api/auth/session`, {
+    headers: {
+      Authorization: `Bearer ${loginPayload.session.token}`
+    }
+  });
+  const revokedAccessPayload = (await revokedAccessResponse.json()) as { error: { code: string } };
+
+  assert.equal(revokedAccessResponse.status, 401);
+  assert.equal(revokedAccessPayload.error.code, "session_revoked");
+
+  const revokedRefreshResponse = await fetch(`http://127.0.0.1:${port}/api/auth/refresh`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${loginPayload.session.refreshToken}`
+    }
+  });
+  const revokedRefreshPayload = (await revokedRefreshResponse.json()) as { error: { code: string } };
+
+  assert.equal(revokedRefreshResponse.status, 401);
+  assert.equal(revokedRefreshPayload.error.code, "session_revoked");
 });
 
 test("guest auth route returns 429 after the per-IP rate limit is exceeded", async (t) => {

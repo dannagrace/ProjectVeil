@@ -7,6 +7,9 @@ export interface CocosStoredAuthSession {
   provider?: CocosAuthProvider;
   loginId?: string;
   token?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  refreshExpiresAt?: string;
   source: "remote" | "local";
 }
 
@@ -68,6 +71,9 @@ export function readStoredCocosAuthSession(
       provider?: unknown;
       loginId?: unknown;
       token?: unknown;
+      refreshToken?: unknown;
+      expiresAt?: unknown;
+      refreshExpiresAt?: unknown;
       source?: unknown;
     };
     if (typeof parsed.playerId !== "string" || typeof parsed.displayName !== "string") {
@@ -83,6 +89,9 @@ export function readStoredCocosAuthSession(
       provider: normalizeAuthProvider(parsed.provider, authMode, loginId),
       ...(loginId ? { loginId } : {}),
       ...(typeof parsed.token === "string" ? { token: parsed.token } : {}),
+      ...(typeof parsed.refreshToken === "string" ? { refreshToken: parsed.refreshToken } : {}),
+      ...(typeof parsed.expiresAt === "string" ? { expiresAt: parsed.expiresAt } : {}),
+      ...(typeof parsed.refreshExpiresAt === "string" ? { refreshExpiresAt: parsed.refreshExpiresAt } : {}),
       source: parsed.source === "remote" ? "remote" : "local"
     };
   } catch {

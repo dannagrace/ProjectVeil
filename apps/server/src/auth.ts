@@ -7,14 +7,18 @@ export type AuthProvider = "guest" | "account-password" | "wechat-mini-game";
 
 export interface GuestAuthSession {
   token: string;
+  refreshToken?: string;
   playerId: string;
   displayName: string;
   authMode: AuthMode;
   provider: AuthProvider;
   loginId?: string;
   sessionId?: string;
+  sessionVersion?: number;
   issuedAt: string;
+  expiresAt: string;
   lastUsedAt: string;
+  refreshExpiresAt?: string;
 }
 
 interface GuestAuthTokenPayload {
@@ -24,7 +28,10 @@ interface GuestAuthTokenPayload {
   provider?: AuthProvider;
   loginId?: string;
   sessionId?: string;
+  sessionVersion?: number;
+  tokenKind?: "access" | "refresh";
   issuedAt: string;
+  expiresAt: string;
 }
 
 interface AuthRuntimeConfig {
@@ -33,6 +40,14 @@ interface AuthRuntimeConfig {
   lockoutThreshold: number;
   lockoutDurationMs: number;
   maxGuestSessions: number;
+  accessTtlSeconds: number;
+  refreshTtlSeconds: number;
+  guestTokenTtlSeconds: number;
+}
+
+interface ValidateAuthSessionResult {
+  session: GuestAuthSession | null;
+  errorCode?: "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked";
 }
 
 interface RateLimitResult {
@@ -66,6 +81,13 @@ interface WechatMiniGameIdentity {
   unionId?: string;
 }
 
+interface AccountAuthSessionState {
+  sessionVersion: number;
+  refreshSessionId?: string;
+  refreshTokenHash?: string;
+  refreshTokenExpiresAt?: string;
+}
+
 const AUTH_SECRET = process.env.VEIL_AUTH_SECRET?.trim() || "project-veil-dev-secret";
 const MIN_ACCOUNT_PASSWORD_LENGTH = 6;
 const DEFAULT_RATE_LIMIT_AUTH_WINDOW_MS = 60_000;
@@ -73,10 +95,14 @@ const DEFAULT_RATE_LIMIT_AUTH_MAX = 10;
 const DEFAULT_AUTH_LOCKOUT_THRESHOLD = 10;
 const DEFAULT_AUTH_LOCKOUT_DURATION_MINUTES = 15;
 const DEFAULT_MAX_GUEST_SESSIONS = 10_000;
+const DEFAULT_AUTH_ACCESS_TTL_SECONDS = 60 * 60;
+const DEFAULT_AUTH_REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
+const DEFAULT_GUEST_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 const authRateLimitCounters = new Map<string, number[]>();
 const accountLockoutStateByLoginId = new Map<string, AccountLockoutState>();
 const guestSessionsById = new Map<string, GuestAuthSession>();
+const accountAuthStateByPlayerId = new Map<string, AccountAuthSessionState>();
 
 function parseEnvNumber(
   value: string | undefined,
@@ -117,12 +143,62 @@ function readAuthRuntimeConfig(env: NodeJS.ProcessEnv = process.env): AuthRuntim
     maxGuestSessions: parseEnvNumber(env.VEIL_MAX_GUEST_SESSIONS, DEFAULT_MAX_GUEST_SESSIONS, {
       minimum: 1,
       integer: true
+    }),
+    accessTtlSeconds: parseEnvNumber(env.VEIL_AUTH_ACCESS_TTL_SECONDS, DEFAULT_AUTH_ACCESS_TTL_SECONDS, {
+      minimum: 1,
+      integer: true
+    }),
+    refreshTtlSeconds: parseEnvNumber(env.VEIL_AUTH_REFRESH_TTL_SECONDS, DEFAULT_AUTH_REFRESH_TTL_SECONDS, {
+      minimum: 1,
+      integer: true
+    }),
+    guestTokenTtlSeconds: parseEnvNumber(env.VEIL_AUTH_GUEST_TTL_SECONDS, DEFAULT_GUEST_TOKEN_TTL_SECONDS, {
+      minimum: 1,
+      integer: true
     })
   };
 }
 
 function nowMs(): number {
   return Date.now();
+}
+
+function toIsoTimestamp(offsetSeconds = 0): string {
+  return new Date(nowMs() + offsetSeconds * 1000).toISOString();
+}
+
+function isExpiredTimestamp(value: string): boolean {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) || parsed.getTime() <= nowMs();
+}
+
+function hashRefreshToken(token: string): string {
+  return createHmac("sha256", AUTH_SECRET).update(`refresh:${token}`).digest("hex");
+}
+
+function cacheAccountAuthState(input: {
+  playerId: string;
+  accountSessionVersion: number;
+  refreshSessionId?: string;
+  refreshTokenHash?: string;
+  refreshTokenExpiresAt?: string;
+}): void {
+  accountAuthStateByPlayerId.set(input.playerId, {
+    sessionVersion: input.accountSessionVersion,
+    ...(input.refreshSessionId ? { refreshSessionId: input.refreshSessionId } : {}),
+    ...(input.refreshTokenHash ? { refreshTokenHash: input.refreshTokenHash } : {}),
+    ...(input.refreshTokenExpiresAt ? { refreshTokenExpiresAt: input.refreshTokenExpiresAt } : {})
+  });
+}
+
+export function cachePlayerAccountAuthState(input: {
+  playerId: string;
+  accountSessionVersion: number;
+  refreshSessionId?: string;
+  refreshTokenHash?: string;
+  refreshTokenExpiresAt?: string;
+}): void {
+  cacheAccountAuthState(input);
 }
 
 function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): WechatMiniGameLoginConfig {
@@ -185,6 +261,13 @@ function normalizeLoginId(loginId?: string | null): string | undefined {
 function normalizeSessionId(sessionId?: string | null): string | undefined {
   const normalized = sessionId?.trim();
   return normalized ? normalized : undefined;
+}
+
+function normalizeSessionVersion(sessionVersion?: number | null): number | undefined {
+  if (sessionVersion == null || !Number.isFinite(sessionVersion)) {
+    return undefined;
+  }
+  return Math.max(0, Math.floor(sessionVersion));
 }
 
 function normalizeAuthMode(authMode?: string | null, loginId?: string | null): AuthMode {
@@ -308,17 +391,28 @@ async function exchangeWechatMiniGameCode(
   };
 }
 
-export function issueAuthSession(input: {
+function issueSignedToken(payload: GuestAuthTokenPayload): string {
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createHmac("sha256", AUTH_SECRET).update(encodedPayload).digest("base64url");
+  return `${encodedPayload}.${signature}`;
+}
+
+function issueAuthSession(input: {
   playerId: string;
   displayName: string;
   authMode?: AuthMode;
   provider?: AuthProvider;
   loginId?: string | null;
   sessionId?: string | null;
+  sessionVersion?: number | null;
+  tokenKind?: "access" | "refresh";
+  ttlSeconds: number;
 }): GuestAuthSession {
-  const timestamp = new Date().toISOString();
+  const issuedAt = toIsoTimestamp();
+  const expiresAt = toIsoTimestamp(input.ttlSeconds);
   const loginId = normalizeLoginId(input.loginId);
   const sessionId = normalizeSessionId(input.sessionId);
+  const sessionVersion = normalizeSessionVersion(input.sessionVersion);
   const authMode = normalizeAuthMode(input.authMode, loginId);
   const provider = normalizeAuthProvider({
     provider: input.provider,
@@ -332,28 +426,83 @@ export function issueAuthSession(input: {
     provider,
     ...(loginId ? { loginId } : {}),
     ...(sessionId ? { sessionId } : {}),
-    issuedAt: timestamp
+    ...(sessionVersion != null ? { sessionVersion } : {}),
+    ...(input.tokenKind ? { tokenKind: input.tokenKind } : {}),
+    issuedAt,
+    expiresAt
   };
-  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  const signature = createHmac("sha256", AUTH_SECRET).update(encodedPayload).digest("base64url");
 
   return {
-    token: `${encodedPayload}.${signature}`,
+    token: issueSignedToken(payload),
     playerId: input.playerId,
     displayName: input.displayName,
     authMode,
     provider,
     ...(loginId ? { loginId } : {}),
     ...(sessionId ? { sessionId } : {}),
-    issuedAt: timestamp,
-    lastUsedAt: timestamp
+    ...(sessionVersion != null ? { sessionVersion } : {}),
+    issuedAt,
+    expiresAt,
+    lastUsedAt: issuedAt
   };
 }
 
-export function issueGuestAuthSession(input: { playerId: string; displayName: string }): GuestAuthSession {
-  const session = issueAuthSession({
+function issueGuestAccessSession(
+  input: { playerId: string; displayName: string; provider?: AuthProvider; sessionId?: string | null },
+  config = readAuthRuntimeConfig()
+): GuestAuthSession {
+  return issueAuthSession({
     ...input,
     authMode: "guest",
+    provider: input.provider ?? "guest",
+    sessionId: input.sessionId ?? randomUUID(),
+    ttlSeconds: config.guestTokenTtlSeconds
+  });
+}
+
+function issueAccountAccessSession(
+  input: {
+    playerId: string;
+    displayName: string;
+    loginId: string;
+    provider?: AuthProvider;
+    sessionId?: string | null;
+    sessionVersion?: number | null;
+  },
+  config = readAuthRuntimeConfig()
+): GuestAuthSession {
+  return issueAuthSession({
+    ...input,
+    authMode: "account",
+    provider: input.provider ?? "account-password",
+    tokenKind: "access",
+    ttlSeconds: config.accessTtlSeconds
+  });
+}
+
+function issueAccountRefreshSession(
+  input: {
+    playerId: string;
+    displayName: string;
+    loginId: string;
+    provider?: AuthProvider;
+    sessionId: string;
+    sessionVersion: number;
+  },
+  config = readAuthRuntimeConfig()
+): GuestAuthSession {
+  return issueAuthSession({
+    ...input,
+    authMode: "account",
+    provider: input.provider ?? "account-password",
+    tokenKind: "refresh",
+    ttlSeconds: config.refreshTtlSeconds
+  });
+}
+
+export function issueGuestAuthSession(input: { playerId: string; displayName: string }): GuestAuthSession {
+  const session = issueGuestAccessSession({
+    ...input,
     provider: "guest",
     sessionId: randomUUID()
   });
@@ -365,23 +514,39 @@ export function issueAccountAuthSession(input: {
   playerId: string;
   displayName: string;
   loginId: string;
+  sessionId?: string | null;
+  sessionVersion?: number | null;
 }): GuestAuthSession {
-  return issueAuthSession({
-    ...input,
-    authMode: "account",
-    provider: "account-password"
-  });
+  return issueAccountAccessSession(input);
 }
 
 export function issueWechatMiniGameAuthSession(input: {
   playerId: string;
   displayName: string;
   loginId?: string | null;
+  sessionId?: string | null;
+  sessionVersion?: number | null;
 }): GuestAuthSession {
-  return issueAuthSession({
-    ...input,
-    provider: "wechat-mini-game"
+  const loginId = normalizeLoginId(input.loginId);
+  if (loginId) {
+    return issueAccountAccessSession({
+      playerId: input.playerId,
+      displayName: input.displayName,
+      loginId,
+      provider: "wechat-mini-game",
+      sessionId: input.sessionId,
+      sessionVersion: input.sessionVersion
+    });
+  }
+
+  const session = issueGuestAccessSession({
+    playerId: input.playerId,
+    displayName: input.displayName,
+    provider: "wechat-mini-game",
+    sessionId: input.sessionId ?? randomUUID()
   });
+  registerGuestSession(session);
+  return session;
 }
 
 export function issueNextAuthSession(
@@ -389,27 +554,32 @@ export function issueNextAuthSession(
     playerId: string;
     displayName: string;
     loginId?: string | null;
+    sessionId?: string | null;
+    sessionVersion?: number | null;
   },
-  currentSession?: Pick<GuestAuthSession, "authMode" | "loginId" | "provider"> | null
+  currentSession?: Pick<GuestAuthSession, "authMode" | "loginId" | "provider" | "sessionId" | "sessionVersion"> | null
 ): GuestAuthSession {
   const loginId = normalizeLoginId(input.loginId);
   if (currentSession?.authMode === "account" && loginId) {
-    return issueAccountAuthSession({
+    return issueAccountAccessSession({
       playerId: input.playerId,
       displayName: input.displayName,
-      loginId
+      loginId,
+      provider: currentSession.provider,
+      sessionId: input.sessionId ?? currentSession.sessionId,
+      sessionVersion: input.sessionVersion ?? currentSession.sessionVersion
     });
   }
 
-  return issueAuthSession({
+  return issueGuestAccessSession({
     playerId: input.playerId,
     displayName: input.displayName,
-    authMode: "guest",
-    provider: currentSession?.provider ?? "guest"
+    provider: currentSession?.provider ?? "guest",
+    sessionId: input.sessionId ?? currentSession?.sessionId
   });
 }
 
-export function resolveAuthSession(token: string): GuestAuthSession | null {
+function resolveAuthSession(token: string): GuestAuthSession | null {
   const normalizedToken = token.trim();
   if (!normalizedToken) {
     return null;
@@ -430,13 +600,15 @@ export function resolveAuthSession(token: string): GuestAuthSession | null {
     if (
       typeof payload.playerId !== "string" ||
       typeof payload.displayName !== "string" ||
-      typeof payload.issuedAt !== "string"
+      typeof payload.issuedAt !== "string" ||
+      typeof payload.expiresAt !== "string"
     ) {
       return null;
     }
 
     const loginId = normalizeLoginId(payload.loginId);
     const sessionId = normalizeSessionId(payload.sessionId);
+    const sessionVersion = normalizeSessionVersion(payload.sessionVersion);
     const session = {
       token: normalizedToken,
       playerId: payload.playerId,
@@ -445,11 +617,34 @@ export function resolveAuthSession(token: string): GuestAuthSession | null {
       provider: normalizeAuthProvider(payload),
       ...(loginId ? { loginId } : {}),
       ...(sessionId ? { sessionId } : {}),
+      ...(sessionVersion != null ? { sessionVersion } : {}),
       issuedAt: payload.issuedAt,
+      expiresAt: payload.expiresAt,
       lastUsedAt: new Date().toISOString()
     };
-    if (session.provider === "guest" && session.authMode === "guest" && session.sessionId) {
+    if (isExpiredTimestamp(session.expiresAt)) {
+      return null;
+    }
+    if (payload.tokenKind !== "refresh" && session.authMode === "guest" && session.sessionId) {
       return touchGuestSession(session.sessionId, normalizedToken);
+    }
+    if (session.authMode === "account") {
+      const cachedState = accountAuthStateByPlayerId.get(session.playerId);
+      if (cachedState) {
+        if (session.sessionVersion != null && session.sessionVersion !== cachedState.sessionVersion) {
+          return null;
+        }
+        if (session.sessionId && cachedState.refreshSessionId && session.sessionId !== cachedState.refreshSessionId) {
+          return null;
+        }
+        if (
+          payload.tokenKind === "refresh" &&
+          cachedState.refreshTokenHash &&
+          cachedState.refreshTokenHash !== hashRefreshToken(normalizedToken)
+        ) {
+          return null;
+        }
+      }
     }
 
     return session;
@@ -478,14 +673,198 @@ export function readGuestAuthTokenFromRequest(request: Pick<IncomingMessage, "he
   return readHeaderValue(request.headers["x-veil-auth"]);
 }
 
-export function resolveAuthSessionFromRequest(
-  request: Pick<IncomingMessage, "headers">
-): GuestAuthSession | null {
+export function resolveAuthSessionFromRequest(request: Pick<IncomingMessage, "headers">): GuestAuthSession | null {
   const token = readGuestAuthTokenFromRequest(request);
   return token ? resolveAuthSession(token) : null;
 }
 
 export const resolveGuestAuthSessionFromRequest = resolveAuthSessionFromRequest;
+
+async function validateAuthToken(
+  token: string,
+  store: RoomSnapshotStore | null,
+  expectedKind: "access" | "refresh" = "access"
+): Promise<ValidateAuthSessionResult> {
+  const normalizedToken = token.trim();
+  if (!normalizedToken) {
+    return { session: null, errorCode: "unauthorized" };
+  }
+
+  const [encodedPayload, signature] = normalizedToken.split(".");
+  if (!encodedPayload || !signature) {
+    return { session: null, errorCode: "unauthorized" };
+  }
+
+  const expectedSignature = createHmac("sha256", AUTH_SECRET).update(encodedPayload).digest("base64url");
+  if (signature !== expectedSignature) {
+    return { session: null, errorCode: "unauthorized" };
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as GuestAuthTokenPayload;
+    if (
+      typeof payload.playerId !== "string" ||
+      typeof payload.displayName !== "string" ||
+      typeof payload.issuedAt !== "string" ||
+      typeof payload.expiresAt !== "string"
+    ) {
+      return { session: null, errorCode: "unauthorized" };
+    }
+
+    const tokenKind = payload.tokenKind ?? "access";
+    if (tokenKind !== expectedKind) {
+      return { session: null, errorCode: "token_kind_invalid" };
+    }
+
+    const loginId = normalizeLoginId(payload.loginId);
+    const sessionId = normalizeSessionId(payload.sessionId);
+    const sessionVersion = normalizeSessionVersion(payload.sessionVersion);
+    const session: GuestAuthSession = {
+      token: normalizedToken,
+      playerId: payload.playerId,
+      displayName: payload.displayName,
+      authMode: normalizeAuthMode(payload.authMode, payload.loginId),
+      provider: normalizeAuthProvider(payload),
+      ...(loginId ? { loginId } : {}),
+      ...(sessionId ? { sessionId } : {}),
+      ...(sessionVersion != null ? { sessionVersion } : {}),
+      issuedAt: payload.issuedAt,
+      expiresAt: payload.expiresAt,
+      lastUsedAt: new Date().toISOString()
+    };
+
+    if (isExpiredTimestamp(session.expiresAt)) {
+      return { session: null, errorCode: "token_expired" };
+    }
+
+    if (session.authMode === "guest") {
+      if (session.sessionId) {
+        const touchedSession = touchGuestSession(session.sessionId, normalizedToken);
+        if (!touchedSession) {
+          return { session: null, errorCode: "session_revoked" };
+        }
+        return { session: touchedSession };
+      }
+      return { session };
+    }
+
+    if (!store) {
+      return { session };
+    }
+
+    const authAccount = await store.loadPlayerAccountAuthByPlayerId(session.playerId);
+    if (!authAccount) {
+      return session.sessionVersion == null ? { session } : { session: null, errorCode: "session_revoked" };
+    }
+
+    if (
+      session.sessionVersion != null &&
+      session.sessionVersion !== authAccount.accountSessionVersion
+    ) {
+      return { session: null, errorCode: "session_revoked" };
+    }
+
+    if (session.sessionId && authAccount.refreshSessionId && session.sessionId !== authAccount.refreshSessionId) {
+      return { session: null, errorCode: "session_revoked" };
+    }
+
+    if (expectedKind === "refresh") {
+      if (!session.sessionId || !authAccount.refreshSessionId || !authAccount.refreshTokenHash) {
+        return { session: null, errorCode: "session_revoked" };
+      }
+      if (authAccount.refreshTokenExpiresAt && isExpiredTimestamp(authAccount.refreshTokenExpiresAt)) {
+        return { session: null, errorCode: "token_expired" };
+      }
+      if (
+        authAccount.refreshSessionId !== session.sessionId ||
+        authAccount.refreshTokenHash !== hashRefreshToken(normalizedToken)
+      ) {
+        return { session: null, errorCode: "session_revoked" };
+      }
+      return {
+        session: {
+          ...session,
+          refreshExpiresAt: authAccount.refreshTokenExpiresAt
+        }
+      };
+    }
+
+    return {
+      session: {
+        ...session,
+        ...(authAccount.refreshSessionId ? { sessionId: authAccount.refreshSessionId } : {}),
+        sessionVersion: authAccount.accountSessionVersion
+      }
+    };
+  } catch {
+    return { session: null, errorCode: "unauthorized" };
+  }
+}
+
+export async function validateAuthSessionFromRequest(
+  request: Pick<IncomingMessage, "headers">,
+  store: RoomSnapshotStore | null,
+  expectedKind: "access" | "refresh" = "access"
+): Promise<ValidateAuthSessionResult> {
+  const token = readGuestAuthTokenFromRequest(request);
+  return token ? validateAuthToken(token, store, expectedKind) : { session: null, errorCode: "unauthorized" };
+}
+
+async function createAccountSessionBundle(
+  store: RoomSnapshotStore,
+  input: {
+    playerId: string;
+    displayName: string;
+    loginId: string;
+    provider?: AuthProvider;
+  }
+): Promise<GuestAuthSession> {
+  const refreshSessionId = randomUUID();
+  const existingAuth = await store.loadPlayerAccountAuthByPlayerId(input.playerId);
+  if (!existingAuth) {
+    throw new Error("account_auth_not_found");
+  }
+  const nextSessionVersion = existingAuth.accountSessionVersion + 1;
+  const refreshSession = issueAccountRefreshSession({
+    playerId: input.playerId,
+    displayName: input.displayName,
+    loginId: input.loginId,
+    provider: input.provider,
+    sessionId: refreshSessionId,
+    sessionVersion: nextSessionVersion
+  });
+  await store.savePlayerAccountAuthSession(input.playerId, {
+    refreshSessionId,
+    refreshTokenHash: hashRefreshToken(refreshSession.token),
+    refreshTokenExpiresAt: refreshSession.expiresAt
+  });
+  const finalizedAuth = await store.loadPlayerAccountAuthByPlayerId(input.playerId);
+  if (!finalizedAuth) {
+    throw new Error("account_auth_not_found");
+  }
+  cacheAccountAuthState({
+    playerId: finalizedAuth.playerId,
+    accountSessionVersion: finalizedAuth.accountSessionVersion,
+    ...(finalizedAuth.refreshSessionId ? { refreshSessionId: finalizedAuth.refreshSessionId } : {}),
+    ...(finalizedAuth.refreshTokenHash ? { refreshTokenHash: finalizedAuth.refreshTokenHash } : {}),
+    ...(finalizedAuth.refreshTokenExpiresAt ? { refreshTokenExpiresAt: finalizedAuth.refreshTokenExpiresAt } : {})
+  });
+
+  const finalizedAccess = issueAccountAccessSession({
+    playerId: input.playerId,
+    displayName: input.displayName,
+    loginId: input.loginId,
+    provider: input.provider,
+    sessionId: refreshSessionId,
+    sessionVersion: finalizedAuth.accountSessionVersion
+  });
+
+  return {
+    ...finalizedAccess,
+    refreshToken: refreshSession.token,
+    refreshExpiresAt: refreshSession.expiresAt
+  };
+}
 
 export function hashAccountPassword(password: string): string {
   const salt = randomBytes(16).toString("hex");
@@ -510,6 +889,28 @@ function sendStoreUnavailable(response: ServerResponse): void {
     error: {
       code: "auth_persistence_unavailable",
       message: "Account auth requires configured room persistence storage"
+    }
+  });
+}
+
+function sendAuthFailure(
+  response: ServerResponse,
+  errorCode: ValidateAuthSessionResult["errorCode"],
+  fallbackMessage = "Guest auth session is missing or invalid"
+): void {
+  const code = errorCode ?? "unauthorized";
+  const message =
+    code === "token_expired"
+      ? "Auth token has expired"
+      : code === "token_kind_invalid"
+        ? "Auth token kind is invalid for this route"
+        : code === "session_revoked"
+          ? "Auth session has been revoked"
+          : fallbackMessage;
+  sendJson(response, 401, {
+    error: {
+      code,
+      message
     }
   });
 }
@@ -613,7 +1014,7 @@ function sendAccountLocked(response: ServerResponse, lockedUntilMs: number): voi
 }
 
 function registerGuestSession(session: GuestAuthSession, config = readAuthRuntimeConfig()): void {
-  if (session.provider !== "guest" || session.authMode !== "guest" || !session.sessionId) {
+  if (session.authMode !== "guest" || !session.sessionId) {
     return;
   }
 
@@ -647,6 +1048,7 @@ export function resetGuestAuthSessions(): void {
   authRateLimitCounters.clear();
   accountLockoutStateByLoginId.clear();
   guestSessionsById.clear();
+  accountAuthStateByPlayerId.clear();
 }
 
 export function registerAuthRoutes(
@@ -673,14 +1075,9 @@ export function registerAuthRoutes(
 
   app.get("/api/auth/session", async (request, response) => {
     try {
-      const authSession = resolveAuthSessionFromRequest(request);
+      const { session: authSession, errorCode } = await validateAuthSessionFromRequest(request, store);
       if (!authSession) {
-        sendJson(response, 401, {
-          error: {
-            code: "unauthorized",
-            message: "Guest auth session is missing or invalid"
-          }
-        });
+        sendAuthFailure(response, errorCode);
         return;
       }
 
@@ -694,7 +1091,9 @@ export function registerAuthRoutes(
           {
             playerId: account.playerId,
             displayName: account.displayName,
-            ...(account.loginId ? { loginId: account.loginId } : {})
+            ...(account.loginId ? { loginId: account.loginId } : {}),
+            ...(account.refreshSessionId ? { sessionId: account.refreshSessionId } : {}),
+            ...(account.accountSessionVersion != null ? { sessionVersion: account.accountSessionVersion } : {})
           },
           authSession
         );
@@ -703,6 +1102,61 @@ export function registerAuthRoutes(
       sendJson(response, 200, {
         session: nextSession
       });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/auth/refresh", async (request, response) => {
+    if (!store) {
+      sendStoreUnavailable(response);
+      return;
+    }
+
+    try {
+      const { session: refreshSession, errorCode } = await validateAuthSessionFromRequest(request, store, "refresh");
+      if (!refreshSession || refreshSession.authMode !== "account" || !refreshSession.loginId) {
+        sendAuthFailure(response, errorCode, "Refresh token is missing or invalid");
+        return;
+      }
+
+      const account = await store.ensurePlayerAccount({
+        playerId: refreshSession.playerId,
+        displayName: refreshSession.displayName
+      });
+      const session = await createAccountSessionBundle(store, {
+        playerId: account.playerId,
+        displayName: account.displayName,
+        loginId: refreshSession.loginId,
+        provider: refreshSession.provider
+      });
+      sendJson(response, 200, { session });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/auth/logout", async (request, response) => {
+    try {
+      const { session: authSession, errorCode } = await validateAuthSessionFromRequest(request, store);
+      if (!authSession) {
+        sendAuthFailure(response, errorCode);
+        return;
+      }
+
+      if (authSession.authMode === "account" && store) {
+        const revokedAuth = await store.revokePlayerAccountAuthSessions(authSession.playerId);
+        if (revokedAuth) {
+          cacheAccountAuthState({
+            playerId: revokedAuth.playerId,
+            accountSessionVersion: revokedAuth.accountSessionVersion
+          });
+        }
+      } else if (authSession.authMode === "guest" && authSession.sessionId) {
+        guestSessionsById.delete(authSession.sessionId);
+      }
+
+      sendJson(response, 200, { ok: true });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
@@ -764,7 +1218,16 @@ export function registerAuthRoutes(
 
   app.post("/api/auth/wechat-mini-game-login", async (request, response) => {
     try {
-      const authSession = resolveAuthSessionFromRequest(request);
+      let authSession: GuestAuthSession | null = null;
+      const authToken = readGuestAuthTokenFromRequest(request);
+      if (authToken) {
+        const validation = await validateAuthToken(authToken, store);
+        if (!validation.session) {
+          sendAuthFailure(response, validation.errorCode);
+          return;
+        }
+        authSession = validation.session;
+      }
       const body = (await readJsonBody(request)) as {
         code?: string | null;
         playerId?: string | null;
@@ -905,11 +1368,19 @@ export function registerAuthRoutes(
       }
 
       sendJson(response, 200, {
-        session: issueWechatMiniGameAuthSession({
-          playerId,
-          displayName,
-          ...(loginId ? { loginId } : {})
-        })
+        session:
+          store && loginId
+            ? await createAccountSessionBundle(store, {
+                playerId,
+                displayName,
+                loginId,
+                provider: "wechat-mini-game"
+              })
+            : issueWechatMiniGameAuthSession({
+                playerId,
+                displayName,
+                ...(loginId ? { loginId } : {})
+              })
       });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
@@ -983,7 +1454,7 @@ export function registerAuthRoutes(
       });
       sendJson(response, 200, {
         account,
-        session: issueAccountAuthSession({
+        session: await createAccountSessionBundle(store, {
           playerId: account.playerId,
           displayName: account.displayName,
           loginId
@@ -1005,14 +1476,9 @@ export function registerAuthRoutes(
     }
 
     try {
-      const authSession = resolveAuthSessionFromRequest(request);
+      const { session: authSession, errorCode } = await validateAuthSessionFromRequest(request, store);
       if (!authSession) {
-        sendJson(response, 401, {
-          error: {
-            code: "unauthorized",
-            message: "Guest auth session is missing or invalid"
-          }
-        });
+        sendAuthFailure(response, errorCode);
         return;
       }
 
@@ -1050,7 +1516,7 @@ export function registerAuthRoutes(
 
       sendJson(response, 200, {
         account,
-        session: issueAccountAuthSession({
+        session: await createAccountSessionBundle(store, {
           playerId: account.playerId,
           displayName: account.displayName,
           loginId
