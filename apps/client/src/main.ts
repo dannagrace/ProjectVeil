@@ -17,6 +17,7 @@ import {
   stepBattleReplayPlayback,
   tickBattleReplayPlayback,
   totalExperienceRequiredForLevel,
+  serializeRuntimeDiagnosticsSnapshot,
   type BattleReplayPlaybackState,
   type PlayerBattleReplaySummary,
   type BattleAction,
@@ -24,9 +25,11 @@ import {
   type EquipmentType,
   type MovementPlan,
   type PlayerTileView,
-  type PlayerWorldView
+  type PlayerWorldView,
+  type RuntimeDiagnosticsConnectionStatus
 } from "../../../packages/shared/src/index";
 import { createGameSession, readStoredSessionReplay, type SessionUpdate } from "./local-session";
+import { buildH5RuntimeDiagnosticsSnapshot } from "./runtime-diagnostics";
 import {
   buildingAsset,
   markerAsset,
@@ -109,8 +112,6 @@ declare global {
 
 const DEV_DIAGNOSTICS_ENABLED = import.meta.env.DEV;
 
-type DiagnosticsConnectionStatus = "connecting" | "connected" | "reconnecting" | "reconnect_failed";
-
 interface BattleModalState {
   visible: boolean;
   title: string;
@@ -137,7 +138,7 @@ interface TimelineEntry {
 }
 
 interface DiagnosticState {
-  connectionStatus: DiagnosticsConnectionStatus;
+  connectionStatus: RuntimeDiagnosticsConnectionStatus;
   lastUpdateAt: number | null;
   lastUpdateSource: TimelineEntry["source"] | null;
   lastUpdateReason: string | null;
@@ -342,7 +343,7 @@ let sessionPromise: ReturnType<typeof createGameSession> | null = shouldBootGame
     })
   : null;
 
-function diagnosticsConnectionStatusLabel(status: DiagnosticsConnectionStatus): string {
+function diagnosticsConnectionStatusLabel(status: RuntimeDiagnosticsConnectionStatus): string {
   if (status === "connected") {
     return "已连接";
   }
@@ -361,14 +362,9 @@ function diagnosticsConnectionStatusLabel(status: DiagnosticsConnectionStatus): 
 function buildDiagnosticSnapshot() {
   const hero = activeHero();
 
-  return {
-    schemaVersion: 1,
-    exportedAt: new Date().toISOString(),
-    source: {
-      surface: "h5-debug-shell",
-      devOnly: DEV_DIAGNOSTICS_ENABLED,
-      mode: shouldBootGame ? (state.battle ? "battle" : "world") : "lobby"
-    },
+  return buildH5RuntimeDiagnosticsSnapshot({
+    devOnly: DEV_DIAGNOSTICS_ENABLED,
+    mode: shouldBootGame ? (state.battle ? "battle" : "world") : "lobby",
     room: {
       roomId: shouldBootGame ? state.world.meta.roomId : state.lobby.roomId,
       playerId: shouldBootGame ? state.world.playerId : state.lobby.playerId,
@@ -376,68 +372,25 @@ function buildDiagnosticSnapshot() {
       connectionStatus: state.diagnostics.connectionStatus,
       lastUpdateSource: state.diagnostics.lastUpdateSource,
       lastUpdateReason: state.diagnostics.lastUpdateReason,
-      lastUpdateAt: state.diagnostics.lastUpdateAt ? new Date(state.diagnostics.lastUpdateAt).toISOString() : null
+      lastUpdateAt: state.diagnostics.lastUpdateAt
     },
-    world:
-      shouldBootGame
-        ? {
-            map: {
-              width: state.world.map.width,
-              height: state.world.map.height,
-              visibleTileCount: state.world.map.tiles.filter((tile) => tile.fog !== "hidden").length,
-              reachableTileCount: state.reachableTiles.length
-            },
-            resources: { ...state.world.resources },
-            selectedTile: state.selectedTile ? { ...state.selectedTile } : null,
-            hoveredTile: state.hoveredTile ? { ...state.hoveredTile } : null,
-            keyboardCursor: state.keyboardCursor ? { ...state.keyboardCursor } : null,
-            hero:
-              hero == null
-                ? null
-                : {
-                    id: hero.id,
-                    name: hero.name,
-                    position: { x: hero.position.x, y: hero.position.y },
-                    move: { total: hero.move.total, remaining: hero.move.remaining },
-                    stats: { ...hero.stats },
-                    armyTemplateId: hero.armyTemplateId,
-                    armyCount: hero.armyCount,
-                    progression: {
-                      level: hero.progression.level,
-                      experience: hero.progression.experience,
-                      skillPoints: hero.progression.skillPoints,
-                      battlesWon: hero.progression.battlesWon,
-                      neutralBattlesWon: hero.progression.neutralBattlesWon,
-                      pvpBattlesWon: hero.progression.pvpBattlesWon
-                    }
-                  },
-            visibleHeroes: state.world.visibleHeroes.map((item) => ({
-              id: item.id,
-              playerId: item.playerId,
-              position: { x: item.position.x, y: item.position.y }
-            }))
-          }
-        : null,
-    battle:
-      state.battle == null
-        ? null
-        : {
-            id: state.battle.id,
-            round: state.battle.round,
-            activeUnitId: state.battle.activeUnitId,
-            selectedTargetId: state.selectedBattleTargetId,
-            unitCount: Object.keys(state.battle.units).length,
-            environmentCount: state.battle.environment.length,
-            logTail: state.battle.log.slice(-6)
-          },
-    account: {
-      playerId: state.account.playerId,
-      displayName: state.account.displayName,
-      source: state.account.source,
-      loginId: state.account.loginId ?? null,
-      recentEventCount: state.account.recentEventLog.length,
-      recentReplayCount: state.account.recentBattleReplays.length
-    },
+    world: shouldBootGame
+      ? {
+          state: state.world,
+          activeHero: hero,
+          reachableTiles: state.reachableTiles,
+          selectedTile: state.selectedTile,
+          hoveredTile: state.hoveredTile,
+          keyboardCursor: state.keyboardCursor
+        }
+      : null,
+    battle: state.battle
+      ? {
+          state: state.battle,
+          selectedTargetId: state.selectedBattleTargetId
+        }
+      : null,
+    account: state.account,
     diagnostics: {
       eventTypes: state.diagnostics.lastEventTypes,
       timelineTail: state.timeline.slice(0, 6).map((entry) => ({
@@ -447,7 +400,7 @@ function buildDiagnosticSnapshot() {
         text: entry.text
       })),
       logTail: state.log.slice(0, 8),
-      predictionStatus: state.predictionStatus || null,
+      predictionStatus: state.predictionStatus,
       pendingUiTasks: scheduledUiTasks.filter((task) => !task.canceled).length,
       replay:
         state.replayDetail.replay == null
@@ -460,11 +413,11 @@ function buildDiagnosticSnapshot() {
               totalSteps: state.replayDetail.playback?.totalSteps ?? state.replayDetail.replay.steps.length
             }
     }
-  };
+  });
 }
 
 function exportDiagnosticSnapshot(): string {
-  return JSON.stringify(buildDiagnosticSnapshot(), null, 2);
+  return serializeRuntimeDiagnosticsSnapshot(buildDiagnosticSnapshot());
 }
 
 function sanitizeSnapshotFileSegment(value: string): string {
