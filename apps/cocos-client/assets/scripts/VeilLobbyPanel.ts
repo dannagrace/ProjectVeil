@@ -24,6 +24,7 @@ import {
   type LobbyShowcasePhase
 } from "./cocos-showcase-gallery.ts";
 import type { CocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
+import type { CocosAccountLifecycleFieldView, CocosAccountLifecyclePanelView } from "./cocos-account-lifecycle.ts";
 import { findPlayerBattleReplaySummary } from "./project-shared/battle-replay.ts";
 
 const { ccclass } = _decorator;
@@ -72,6 +73,7 @@ export interface VeilLobbyRenderState {
   entering: boolean;
   status: string;
   rooms: CocosLobbyRoomSummary[];
+  accountFlow: CocosAccountLifecyclePanelView | null;
   presentationReadiness: CocosPresentationReadiness;
 }
 
@@ -85,6 +87,10 @@ export interface VeilLobbyPanelOptions {
   onLoginAccount?: () => void;
   onRegisterAccount?: () => void;
   onRecoverAccount?: () => void;
+  onEditAccountFlowField?: (field: CocosAccountLifecycleFieldView["key"]) => void;
+  onRequestAccountFlow?: () => void;
+  onConfirmAccountFlow?: () => void;
+  onCancelAccountFlow?: () => void;
   onOpenConfigCenter?: () => void;
   onLogout?: () => void;
   onJoinRoom?: (roomId: string) => void;
@@ -119,6 +125,10 @@ export class VeilLobbyPanel extends Component {
   private onLoginAccount: (() => void) | undefined;
   private onRegisterAccount: (() => void) | undefined;
   private onRecoverAccount: (() => void) | undefined;
+  private onEditAccountFlowField: ((field: CocosAccountLifecycleFieldView["key"]) => void) | undefined;
+  private onRequestAccountFlow: (() => void) | undefined;
+  private onConfirmAccountFlow: (() => void) | undefined;
+  private onCancelAccountFlow: (() => void) | undefined;
   private onOpenConfigCenter: (() => void) | undefined;
   private onLogout: (() => void) | undefined;
   private onJoinRoom: ((roomId: string) => void) | undefined;
@@ -137,6 +147,10 @@ export class VeilLobbyPanel extends Component {
     this.onLoginAccount = options.onLoginAccount;
     this.onRegisterAccount = options.onRegisterAccount;
     this.onRecoverAccount = options.onRecoverAccount;
+    this.onEditAccountFlowField = options.onEditAccountFlowField;
+    this.onRequestAccountFlow = options.onRequestAccountFlow;
+    this.onConfirmAccountFlow = options.onConfirmAccountFlow;
+    this.onCancelAccountFlow = options.onCancelAccountFlow;
     this.onOpenConfigCenter = options.onOpenConfigCenter;
     this.onLogout = options.onLogout;
     this.onJoinRoom = options.onJoinRoom;
@@ -396,6 +410,7 @@ export class VeilLobbyPanel extends Component {
     );
 
     if (this.showAccountReview) {
+      this.hideAccountFlowPanel();
       const review = buildCocosAccountReviewPage(
         state.account,
         this.activeAccountReviewSection,
@@ -522,7 +537,13 @@ export class VeilLobbyPanel extends Component {
         this.renderAccountReviewCards(rightX, reviewCardsTop, rightWidth, review.items);
       }
       this.hideLobbyRooms();
+    } else if (state.accountFlow) {
+      this.hideAccountReviewCards();
+      this.hideBattleReplayTimelineCard();
+      this.hideLobbyRooms();
+      this.renderAccountFlowPanel(rightX, rightCursorY, rightWidth, state.accountFlow, state.entering);
     } else {
+      this.hideAccountFlowPanel();
       this.hideAccountReviewCards();
       this.hideBattleReplayTimelineCard();
       rightCursorY = this.renderCard(
@@ -968,6 +989,112 @@ export class VeilLobbyPanel extends Component {
       emptyNode.active = false;
     }
     this.hideExtraAccountReviewCards(0);
+  }
+
+  private renderAccountFlowPanel(
+    centerX: number,
+    topY: number,
+    width: number,
+    flow: CocosAccountLifecyclePanelView,
+    entering: boolean
+  ): void {
+    let cursorY = this.renderCard(
+      "LobbyAccountFlowHeader",
+      centerX,
+      topY,
+      width,
+      96,
+      [flow.title, flow.intro, flow.deliveryHint],
+      {
+        fill: TITLE_FILL,
+        stroke: new Color(236, 228, 198, 62),
+        accent: new Color(214, 175, 112, 194)
+      },
+      null,
+      14,
+      18
+    );
+
+    flow.fields.forEach((field) => {
+      cursorY = this.renderCard(
+        `LobbyAccountFlowField-${field.key}`,
+        centerX,
+        cursorY,
+        width,
+        62,
+        [field.label, field.value || field.placeholder, field.hint],
+        {
+          fill: FIELD_FILL,
+          stroke: new Color(224, 235, 246, 52),
+          accent: new Color(110, 152, 214, 196)
+        },
+        entering ? null : () => this.onEditAccountFlowField?.(field.key),
+        13,
+        17
+      );
+    });
+
+    this.renderActionButton(
+      "LobbyAccountFlowRequest",
+      centerX,
+      cursorY - 16,
+      width,
+      28,
+      entering ? "处理中..." : flow.requestLabel,
+      {
+        fill: ACTION_ACCOUNT,
+        stroke: new Color(228, 236, 248, 120),
+        accent: new Color(220, 230, 244, 112)
+      },
+      entering ? null : this.onRequestAccountFlow ?? null
+    );
+    this.renderActionButton(
+      "LobbyAccountFlowConfirm",
+      centerX,
+      cursorY - 50,
+      width,
+      28,
+      entering ? "处理中..." : flow.confirmLabel,
+      {
+        fill: ACTION_ENTER,
+        stroke: new Color(228, 244, 229, 124),
+        accent: new Color(226, 244, 230, 116)
+      },
+      entering ? null : this.onConfirmAccountFlow ?? null
+    );
+    this.renderActionButton(
+      "LobbyAccountFlowCancel",
+      centerX,
+      cursorY - 84,
+      width,
+      28,
+      "收起流程面板",
+      {
+        fill: ACTION_LOGOUT,
+        stroke: new Color(247, 232, 226, 118),
+        accent: new Color(250, 234, 228, 110)
+      },
+      entering ? null : this.onCancelAccountFlow ?? null
+    );
+  }
+
+  private hideAccountFlowPanel(): void {
+    const names = [
+      "LobbyAccountFlowHeader",
+      "LobbyAccountFlowRequest",
+      "LobbyAccountFlowConfirm",
+      "LobbyAccountFlowCancel",
+      "LobbyAccountFlowField-loginId",
+      "LobbyAccountFlowField-displayName",
+      "LobbyAccountFlowField-token",
+      "LobbyAccountFlowField-password"
+    ];
+    names.forEach((name) => {
+      const node = this.node.getChildByName(name);
+      if (node) {
+        node.active = false;
+      }
+    });
   }
 
   private renderPixelShowcase(centerX: number, topY: number, width: number): void {
