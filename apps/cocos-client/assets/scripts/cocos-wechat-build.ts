@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 
 export type WechatMinigameOrientation = "portrait" | "landscape";
@@ -92,6 +93,39 @@ export interface WechatMinigameBuildAnalysisOptions {
   expectExportedRuntime?: boolean;
 }
 
+export interface WechatMinigameReleaseManifestFile {
+  relativePath: string;
+  bytes: number;
+  sha256: string;
+}
+
+export interface WechatMinigameReleaseManifest {
+  schemaVersion: 1;
+  buildTemplatePlatform: "wechatgame";
+  projectName: string;
+  appId: string;
+  buildOutputDir: string;
+  sourceRevision?: string;
+  runtimeRemoteUrl?: string;
+  remoteAssetRoot?: string;
+  budgets: {
+    mainPackageMb: number;
+    totalSubpackageMb: number;
+  };
+  packageSizes: {
+    totalBytes: number;
+    mainPackageBytes: number;
+    totalSubpackageBytes: number;
+  };
+  subpackages: WechatMinigameSubpackageSize[];
+  warnings: string[];
+  files: WechatMinigameReleaseManifestFile[];
+}
+
+export interface WechatMinigameReleaseManifestOptions extends WechatMinigameBuildAnalysisOptions {
+  sourceRevision?: string;
+}
+
 export interface WechatMinigameDomainCoverage {
   required: WechatMinigameDomainMatrix;
   missing: WechatMinigameDomainMatrix;
@@ -109,6 +143,7 @@ const REQUIRED_BUILD_OUTPUT_FILES = [
   "codex.wechat.build.json",
   "README.codex.md"
 ] as const;
+const RELEASE_MANIFEST_FILE = "codex.wechat.release.json";
 const REQUIRED_EXPORTED_RUNTIME_FILES = ["game.js", "application.js", "src/settings.json"] as const;
 
 function normalizeString(value: unknown): string | undefined {
@@ -328,7 +363,9 @@ export function buildWechatMinigameDomainCoverage(
 }
 
 function listFilesRecursively(rootDir: string, currentDir = rootDir): Array<{ relativePath: string; bytes: number }> {
-  const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+  const entries = fs
+    .readdirSync(currentDir, { withFileTypes: true })
+    .sort((left, right) => left.name.localeCompare(right.name));
   const files: Array<{ relativePath: string; bytes: number }> = [];
   for (const entry of entries) {
     const fullPath = path.join(currentDir, entry.name);
@@ -350,7 +387,11 @@ function listFilesRecursively(rootDir: string, currentDir = rootDir): Array<{ re
     });
   }
 
-  return files;
+  return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
+function hashFileSha256(filePath: string): string {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
 function compareExpectedJsonSubset(actual: unknown, expected: unknown, currentPath: string): string[] {
@@ -697,5 +738,47 @@ export function analyzeWechatMinigameBuildOutput(
     missingExpectedSubpackages,
     warnings,
     errors
+  };
+}
+
+export function buildWechatMinigameReleaseManifest(
+  outputDir: string,
+  config: WechatMinigameBuildConfig,
+  options: WechatMinigameReleaseManifestOptions = {}
+): WechatMinigameReleaseManifest {
+  const analysis = analyzeWechatMinigameBuildOutput(outputDir, config, options);
+  const files = analysis.errors.length
+    ? []
+    : listFilesRecursively(analysis.outputDir)
+        .filter((file) => file.relativePath !== RELEASE_MANIFEST_FILE)
+        .map((file) => ({
+          relativePath: file.relativePath,
+          bytes: file.bytes,
+          sha256: hashFileSha256(path.join(analysis.outputDir, file.relativePath))
+        }));
+  const effectiveTotalBytes = files.reduce((sum, file) => sum + file.bytes, 0);
+  const effectiveSubpackageBytes = analysis.subpackages.reduce((sum, subpackage) => sum + subpackage.bytes, 0);
+
+  return {
+    schemaVersion: 1,
+    buildTemplatePlatform: "wechatgame",
+    projectName: config.projectName,
+    appId: config.appId,
+    buildOutputDir: config.buildOutputDir,
+    ...(options.sourceRevision ? { sourceRevision: options.sourceRevision } : {}),
+    ...(config.runtimeRemoteUrl ? { runtimeRemoteUrl: config.runtimeRemoteUrl } : {}),
+    ...(config.remoteAssetRoot ? { remoteAssetRoot: config.remoteAssetRoot } : {}),
+    budgets: {
+      mainPackageMb: config.mainPackageBudgetMb,
+      totalSubpackageMb: config.totalSubpackageBudgetMb
+    },
+    packageSizes: {
+      totalBytes: effectiveTotalBytes,
+      mainPackageBytes: effectiveTotalBytes - effectiveSubpackageBytes,
+      totalSubpackageBytes: effectiveSubpackageBytes
+    },
+    subpackages: analysis.subpackages,
+    warnings: analysis.warnings,
+    files
   };
 }

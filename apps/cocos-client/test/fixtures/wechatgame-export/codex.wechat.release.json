@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "buildTemplatePlatform": "wechatgame",
+  "projectName": "Project Veil",
+  "appId": "touristappid",
+  "buildOutputDir": "build/wechatgame",
+  "runtimeRemoteUrl": "http://127.0.0.1:2567",
+  "budgets": {
+    "mainPackageMb": 4,
+    "totalSubpackageMb": 30
+  },
+  "packageSizes": {
+    "totalBytes": 2486,
+    "mainPackageBytes": 2486,
+    "totalSubpackageBytes": 0
+  },
+  "subpackages": [],
+  "warnings": [
+    "No subpackages were detected or configured for this build."
+  ],
+  "files": [
+    {
+      "relativePath": "application.js",
+      "bytes": 14,
+      "sha256": "77f5eec38c5ef075e11892244ccf9e249d82937e07401398df98319568775a17"
+    },
+    {
+      "relativePath": "codex.wechat.build.json",
+      "bytes": 732,
+      "sha256": "0d5a70ebbd46ca4f52744470d3af820e34d80af287d8048bc84a440e6e685de9"
+    },
+    {
+      "relativePath": "game.js",
+      "bytes": 14,
+      "sha256": "77f5eec38c5ef075e11892244ccf9e249d82937e07401398df98319568775a17"
+    },
+    {
+      "relativePath": "game.json",
+      "bytes": 187,
+      "sha256": "1b8c8c8295b04e1582c12e76da92a81c46ffae40766288eb8dca9486a9c7a977"
+    },
+    {
+      "relativePath": "project.config.json",
+      "bytes": 88,
+      "sha256": "915b4198de26a6e21ee1e14f37d9039b922dcdeb8cc2335d1c6bc8786b20be9c"
+    },
+    {
+      "relativePath": "README.codex.md",
+      "bytes": 1407,
+      "sha256": "6b2418e6bbfa9b735c78709d39b862f77ea3b6ea3cb1a3873ac14db7ceb1294a"
+    },
+    {
+      "relativePath": "src/settings.json",
+      "bytes": 44,
+      "sha256": "efbd3f72fe4ebbfb17ab67e16f0235cea65cbb5c686a80f5f48abd0accdd33a2"
+    }
+  ]
+}

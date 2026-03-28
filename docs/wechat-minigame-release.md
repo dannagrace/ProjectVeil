@@ -8,10 +8,14 @@
   - 校验 `apps/cocos-client/wechat-minigame.build.json` 生成出的模板产物是否已经提交且未漂移
   - 校验 `apps/cocos-client/build-templates/wechatgame/` 中必需文件是否齐全
   - 通过仓库内导出夹具校验注入配置、运行时 bootstrap 文件、主包 / 分包预算，以及运行时域名白名单缺口告警
+- 当前自动化额外会校验一份确定性的发布元数据：`codex.wechat.release.json`
+  - 清单内包含导出目录文件列表、字节数、SHA-256、主包 / 分包体积汇总，以及可选的源码 revision 标识
+  - 当前只生成和校验元数据，不在 CI 中打包 zip 或上传微信后台
 
 ## 本地执行
 
 - 刷新模板：`npm run prepare:wechat-build`
+- 生成发布元数据：`npm run prepare:wechat-release -- --output-dir <wechatgame-build-dir> --expect-exported-runtime [--source-revision <git-sha>]`
 - 只做 CI 同款校验：`npm run check:wechat-build`
 - 校验真实导出目录：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 
@@ -21,7 +25,8 @@
 2. 运行 `npm run prepare:wechat-build`，确认 `apps/cocos-client/build-templates/wechatgame/` 产物已更新。
 3. 在 Cocos Creator 中执行 `wechatgame` 正式导出，并把模板目录内容合入导出目录。
 4. 对真实导出目录执行 `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`。
-5. 将远程资源上传到 CDN，在微信开发者工具中导入构建目录并完成人工 smoke check。
+5. 运行 `npm run prepare:wechat-release -- --output-dir <wechatgame-build-dir> --expect-exported-runtime [--source-revision <git-sha>]`，生成 `codex.wechat.release.json` 供提审留档与后续比对。
+6. 将远程资源上传到 CDN，在微信开发者工具中导入构建目录并完成人工 smoke check。
 
 ## Smoke Check
 
