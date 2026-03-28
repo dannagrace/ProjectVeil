@@ -131,7 +131,7 @@
 - 当前已补上配置中心 MVP：
   - 前端入口：`http://127.0.0.1:4173/config-center.html`
   - 后端 API：`/api/config-center/configs`
-  - 当前支持编辑 `phase1-world.json / phase1-map-objects.json / units.json / battle-skills.json`
+  - 当前支持编辑 `phase1-world.json / phase1-map-objects.json / units.json / battle-skills.json / battle-balance.json`
   - 未配置 MySQL 时走文件系统存储；配置 `VEIL_MYSQL_*` 后切换到 MySQL 主存储
   - 保存后会同时导出到 `configs/*.json`，并同步刷新服务端运行时配置，新建房间和战斗逻辑会直接读取新值
   - 当前已补上版本快照、快照差异对比、历史回滚，以及 Easy / Normal / Hard 三档内置预设和自定义预设保存
@@ -139,6 +139,7 @@
   - 导出除 JSON 注释版外，还支持带 `Meta / Schema / Fields` 工作表的 Excel，以及更轻量的字段清单 CSV
   - 当前编辑 `phase1-world.json` 时，右侧会即时生成一份地图样本预览；可切换预览 seed，对照查看地形、随机资源、保底资源、英雄与中立怪分布
   - 当前编辑 `battle-skills.json` 时，右侧会显示技能编辑器，可直接调整冷却、伤害倍率、目标类型、附加状态和状态持续参数，并同步回写 JSON 草稿
+  - 当前编辑 `battle-balance.json` 时，右侧会显示战斗平衡编辑器，可直接调整伤害公式、路障/陷阱阈值、附加状态和 ELO K；非法值会在 Schema/语义校验里给出修复建议并阻止保存
 - H5 战斗面板现已补上“战术情报”区，会并排展示当前行动单位和已锁定目标的技能、状态、冷却与效果说明，便于直接核对配置是否符合预期。
 - Cocos 战斗面板现已补上技能摘要和目标状态提示，概要区、目标卡与动作按钮都会带出当前技能/状态信息，而不再只有基础攻击指令。
 - `phase1-map-objects.json` 现已支持配置 `buildings`，当前已接入 `recruitment_post` 招募所、`attribute_shrine` 属性神殿和 `resource_mine` 资源矿场；英雄停在建筑格上再次点击当前格即可访问或占领建筑。
@@ -183,7 +184,7 @@
 - `npm run validate:assets` 现在除了校验 schema 和文件存在性，也会拦截缺失元数据、重复槽位和游离元数据；后续正式美术替换可直接沿用同一套 manifest 规则补齐审计信息。
 - `units.json` 现已补上 `faction / rarity` 元数据，前端会自动挂载阵营与品质 badge，占位资源层已经具备继续细化正式 UI 的结构。
 - `battle-skills.json` 现已承载战斗技能与持续状态目录，shared 战斗结算会在创建战斗和执行技能时直接读取运行时配置，不再依赖硬编码技能表。
-- `battle-balance.json` 现已补上第一批战斗平衡基础配置，当前 shared 战斗运行时已经会直接读取其中的伤害公式参数，以及遭遇战环境里路障/陷阱的生成阈值、耐久、伤害和次数；本批还未把它接进配置中心 UI，只先建立 shared 侧可验证的数据驱动链路。
+- `battle-balance.json` 现已接入配置中心：支持可视化编辑伤害公式、遭遇战环境和 PVP ELO 参数，保存后会联动导出 JSON 并直接刷新 shared/runtime 读取链路；实时校验还会检查阈值范围以及陷阱状态是否与 `battle-skills.json` 对齐。
 - 当前示例技能已包含 `投矛射击 / 护甲术 / 战意激发 / 破甲投枪 / 毒牙 / 裂伤嚎叫`，并补充了 `守誓姿态` 模板；守军自动回合也会根据技能目标和效果优先选择施法，而不是固定平砍。
 - 英雄长期成长现已补上技能树：`hero.progressed` 在升级时会发放技能点，H5 英雄卡会直接显示分支、当前阶数和“学习 / 强化”按钮；已学技能会写入英雄长期档，并在下一场战斗里额外挂到英雄部队技能栏。
 - 地图对象也已拆出独立视觉元数据配置，悬停地图时会通过统一对象卡片展示 `interactionType / faction / rarity` 等信息。

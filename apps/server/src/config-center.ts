@@ -4,16 +4,20 @@ import { resolve } from "node:path";
 import { createPool, type Pool, type RowDataPacket } from "mysql2/promise";
 import * as XLSX from "xlsx";
 import {
+  getBattleBalanceConfig,
   createWorldStateFromConfigs,
+  getDefaultBattleBalanceConfig,
   getDefaultBattleSkillCatalog,
   getDefaultMapObjectsConfig,
   getDefaultUnitCatalog,
   getDefaultWorldConfig,
   replaceRuntimeConfigs,
+  validateBattleBalanceConfig,
   validateBattleSkillCatalog,
   validateMapObjectsConfig,
   validateUnitCatalog,
   validateWorldConfig,
+  type BattleBalanceConfig,
   type BattleSkillCatalogConfig,
   type MapObjectsConfig,
   type ResourceKind,
@@ -29,7 +33,7 @@ import {
   readMySqlPersistenceConfig
 } from "./persistence";
 
-export type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills";
+export type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 
 interface ConfigDefinition {
   id: ConfigDocumentId;
@@ -38,7 +42,12 @@ interface ConfigDefinition {
   description: string;
 }
 
-type ParsedConfigDocument = WorldGenerationConfig | MapObjectsConfig | UnitCatalogConfig | BattleSkillCatalogConfig;
+type ParsedConfigDocument =
+  | WorldGenerationConfig
+  | MapObjectsConfig
+  | UnitCatalogConfig
+  | BattleSkillCatalogConfig
+  | BattleBalanceConfig;
 
 interface ErrorPayload {
   code: string;
@@ -240,6 +249,12 @@ const CONFIG_DEFINITIONS: ConfigDefinition[] = [
     fileName: "battle-skills.json",
     title: "技能配置",
     description: "战斗技能、持续状态与效果公式。"
+  },
+  {
+    id: "battleBalance",
+    fileName: "battle-balance.json",
+    title: "战斗平衡",
+    description: "伤害公式、战场环境和 PVP ELO 参数。"
   }
 ];
 
@@ -535,6 +550,59 @@ const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
             defenseModifier: { type: "integer", description: "防御修正。" },
             damagePerTurn: { type: "integer", minimum: 0, description: "每回合伤害。" }
           }
+        }
+      }
+    }
+  },
+  battleBalance: {
+    type: "object",
+    title: "Battle Balance Config",
+    description: "战斗公式、环境生成阈值和 PVP 参数。",
+    required: ["damage", "environment", "pvp"],
+    properties: {
+      damage: {
+        type: "object",
+        description: "伤害公式参数。",
+        required: [
+          "defendingDefenseBonus",
+          "offenseAdvantageStep",
+          "minimumOffenseMultiplier",
+          "varianceBase",
+          "varianceRange"
+        ],
+        properties: {
+          defendingDefenseBonus: { type: "number", description: "防守指令提供的额外防御值。" },
+          offenseAdvantageStep: { type: "number", description: "攻防差每点带来的伤害修正步进。" },
+          minimumOffenseMultiplier: { type: "number", minimum: 0.01, description: "伤害倍率下限。" },
+          varianceBase: { type: "number", minimum: 0.01, description: "伤害波动基础值。" },
+          varianceRange: { type: "number", minimum: 0, description: "伤害波动区间。" }
+        }
+      },
+      environment: {
+        type: "object",
+        description: "遭遇战环境生成参数。",
+        required: [
+          "blockerSpawnThreshold",
+          "blockerDurability",
+          "trapSpawnThreshold",
+          "trapDamage",
+          "trapCharges"
+        ],
+        properties: {
+          blockerSpawnThreshold: { type: "number", minimum: 0, description: "路障生成阈值，范围 0-1。" },
+          blockerDurability: { type: "integer", minimum: 1, description: "路障耐久。" },
+          trapSpawnThreshold: { type: "number", minimum: 0, description: "陷阱生成阈值，范围 0-1。" },
+          trapDamage: { type: "integer", minimum: 0, description: "伤害型陷阱的基础伤害。" },
+          trapCharges: { type: "integer", minimum: 1, description: "陷阱可触发次数。" },
+          trapGrantedStatusId: { type: "string", description: "伤害型陷阱附加的状态 id，可选。" }
+        }
+      },
+      pvp: {
+        type: "object",
+        description: "PVP 匹配与结算参数。",
+        required: ["eloK"],
+        properties: {
+          eloK: { type: "integer", minimum: 1, description: "ELO K 因子。" }
         }
       }
     }
@@ -1121,12 +1189,17 @@ function buildSummary(id: ConfigDocumentId, parsed: unknown): string {
     return `${config.templates.length} unit template(s)`;
   }
 
-  const config = parsed as BattleSkillCatalogConfig;
-  return `${config.skills.length} skill(s) · ${config.statuses.length} status(es)`;
+  if (id === "battleSkills") {
+    const config = parsed as BattleSkillCatalogConfig;
+    return `${config.skills.length} skill(s) · ${config.statuses.length} status(es)`;
+  }
+
+  const config = parsed as BattleBalanceConfig;
+  return `damage/env/pvp · K=${config.pvp.eloK} · trap=${config.environment.trapDamage}`;
 }
 
 function normalizeJsonContent(
-  parsed: WorldGenerationConfig | MapObjectsConfig | UnitCatalogConfig | BattleSkillCatalogConfig
+  parsed: ParsedConfigDocument
 ): string {
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
@@ -1281,6 +1354,50 @@ function applyBattleSkillPreset(
   };
 }
 
+function clampThreshold(value: number): number {
+  return Number(value.toFixed(2));
+}
+
+function applyBattleBalancePreset(
+  config: BattleBalanceConfig,
+  presetId: typeof BUILTIN_PRESET_IDS[number]
+): BattleBalanceConfig {
+  if (presetId === "normal") {
+    return structuredClone(config);
+  }
+
+  const easier = presetId === "easy";
+
+  return {
+    damage: {
+      defendingDefenseBonus: config.damage.defendingDefenseBonus + (easier ? -1 : 1),
+      offenseAdvantageStep: Number((config.damage.offenseAdvantageStep * (easier ? 0.92 : 1.08)).toFixed(3)),
+      minimumOffenseMultiplier: Number(
+        Math.max(0.1, config.damage.minimumOffenseMultiplier * (easier ? 1.05 : 0.9)).toFixed(2)
+      ),
+      varianceBase: Number(config.damage.varianceBase.toFixed(2)),
+      varianceRange: Number(Math.max(0, config.damage.varianceRange * (easier ? 0.9 : 1.1)).toFixed(2))
+    },
+    environment: {
+      blockerSpawnThreshold: clampThreshold(
+        Math.min(1, Math.max(0, config.environment.blockerSpawnThreshold + (easier ? 0.08 : -0.08)))
+      ),
+      blockerDurability: Math.max(1, config.environment.blockerDurability + (easier ? -1 : 1)),
+      trapSpawnThreshold: clampThreshold(
+        Math.min(1, Math.max(0, config.environment.trapSpawnThreshold + (easier ? 0.08 : -0.08)))
+      ),
+      trapDamage: Math.max(0, config.environment.trapDamage + (easier ? -1 : 1)),
+      trapCharges: Math.max(1, config.environment.trapCharges + (easier ? -1 : 1)),
+      ...(config.environment.trapGrantedStatusId
+        ? { trapGrantedStatusId: config.environment.trapGrantedStatusId }
+        : {})
+    },
+    pvp: {
+      eloK: Math.max(1, config.pvp.eloK + (easier ? -4 : 4))
+    }
+  };
+}
+
 function applyBuiltinPresetToContent(
   id: ConfigDocumentId,
   content: string,
@@ -1294,7 +1411,9 @@ function applyBuiltinPresetToContent(
         ? applyMapObjectsPreset(parsed as MapObjectsConfig, presetId)
         : id === "units"
           ? applyUnitPreset(parsed as UnitCatalogConfig, presetId)
-          : applyBattleSkillPreset(parsed as BattleSkillCatalogConfig, presetId);
+          : id === "battleSkills"
+            ? applyBattleSkillPreset(parsed as BattleSkillCatalogConfig, presetId)
+            : applyBattleBalancePreset(parsed as BattleBalanceConfig, presetId);
 
   return normalizeJsonContent(next);
 }
@@ -1355,9 +1474,15 @@ function parseConfigDocument(
     return nextCatalog;
   }
 
-  const nextSkillCatalog = parsed as BattleSkillCatalogConfig;
-  validateBattleSkillCatalog(nextSkillCatalog);
-  return nextSkillCatalog;
+  if (id === "battleSkills") {
+    const nextSkillCatalog = parsed as BattleSkillCatalogConfig;
+    validateBattleSkillCatalog(nextSkillCatalog);
+    return nextSkillCatalog;
+  }
+
+  const nextBattleBalance = parsed as BattleBalanceConfig;
+  validateBattleBalanceConfig(nextBattleBalance);
+  return nextBattleBalance;
 }
 
 function buildRuntimeBundleWithParsedDocument(id: ConfigDocumentId, parsed: ParsedConfigDocument): RuntimeConfigBundle {
@@ -1370,6 +1495,23 @@ function buildRuntimeBundleWithParsedDocument(id: ConfigDocumentId, parsed: Pars
       return buildRuntimeConfigBundle({ units: parsed as UnitCatalogConfig });
     case "battleSkills":
       return buildRuntimeConfigBundle({ battleSkills: parsed as BattleSkillCatalogConfig });
+    case "battleBalance":
+      return buildRuntimeConfigBundle({ battleBalance: parsed as BattleBalanceConfig });
+  }
+}
+
+function contentForDocumentId(bundle: RuntimeConfigBundle, id: ConfigDocumentId): ParsedConfigDocument {
+  switch (id) {
+    case "world":
+      return bundle.world;
+    case "mapObjects":
+      return bundle.mapObjects;
+    case "units":
+      return bundle.units;
+    case "battleSkills":
+      return bundle.battleSkills;
+    case "battleBalance":
+      return bundle.battleBalance ?? getBattleBalanceConfig();
   }
 }
 
@@ -1511,17 +1653,20 @@ function buildRuntimeConfigBundle(
   const mapObjects = documents.mapObjects ?? getDefaultMapObjectsConfig();
   const units = documents.units ?? getDefaultUnitCatalog();
   const battleSkills = documents.battleSkills ?? getDefaultBattleSkillCatalog();
+  const battleBalance = documents.battleBalance ?? getBattleBalanceConfig();
 
   validateWorldConfig(world);
   validateMapObjectsConfig(mapObjects, world, units);
   validateBattleSkillCatalog(battleSkills);
   validateUnitCatalog(units, battleSkills);
+  validateBattleBalanceConfig(battleBalance, battleSkills);
 
   return {
     world,
     mapObjects,
     units,
-    battleSkills
+    battleSkills,
+    battleBalance
   };
 }
 
@@ -1559,12 +1704,14 @@ async function loadValidationDependencies(
   mapObjects: MapObjectsConfig;
   units: UnitCatalogConfig;
   battleSkills: BattleSkillCatalogConfig;
+  battleBalance: BattleBalanceConfig;
 }> {
-  const [worldDocument, mapObjectsDocument, unitsDocument, battleSkillsDocument] = await Promise.all([
+  const [worldDocument, mapObjectsDocument, unitsDocument, battleSkillsDocument, battleBalanceDocument] = await Promise.all([
     id === "world" ? Promise.resolve(null) : store.loadDocument("world"),
     id === "mapObjects" ? Promise.resolve(null) : store.loadDocument("mapObjects"),
     id === "units" ? Promise.resolve(null) : store.loadDocument("units"),
-    id === "battleSkills" ? Promise.resolve(null) : store.loadDocument("battleSkills")
+    id === "battleSkills" ? Promise.resolve(null) : store.loadDocument("battleSkills"),
+    id === "battleBalance" ? Promise.resolve(null) : store.loadDocument("battleBalance")
   ]);
 
   return {
@@ -1589,7 +1736,14 @@ async function loadValidationDependencies(
         : (parseConfigDocument(
             "battleSkills",
             battleSkillsDocument?.content ?? normalizeJsonContent(getDefaultBattleSkillCatalog())
-          ) as BattleSkillCatalogConfig)
+          ) as BattleSkillCatalogConfig),
+    battleBalance:
+      id === "battleBalance"
+        ? getDefaultBattleBalanceConfig()
+        : (parseConfigDocument(
+            "battleBalance",
+            battleBalanceDocument?.content ?? normalizeJsonContent(getDefaultBattleBalanceConfig())
+          ) as BattleBalanceConfig)
   };
 }
 
@@ -1857,6 +2011,59 @@ function validateBattleSkillsDetailed(config: BattleSkillCatalogConfig): Validat
   return issues;
 }
 
+function validateBattleBalanceDetailed(
+  config: BattleBalanceConfig,
+  battleSkills: BattleSkillCatalogConfig
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const statusIds = new Set(battleSkills.statuses.map((status) => status.id));
+
+  if (config.damage.minimumOffenseMultiplier > 1) {
+    pushIssue(issues, {
+      path: "damage.minimumOffenseMultiplier",
+      message: "最低伤害倍率通常不应高于 1。",
+      suggestion: "将 minimumOffenseMultiplier 调整到 0-1 区间内。"
+    });
+  }
+
+  if (config.damage.varianceBase + config.damage.varianceRange <= 0) {
+    pushIssue(issues, {
+      path: "damage.varianceRange",
+      message: "伤害波动上界必须大于 0。",
+      suggestion: "提高 varianceBase 或 varianceRange，避免最终伤害倍率恒为非正数。"
+    });
+  }
+
+  if (config.environment.blockerSpawnThreshold > 1) {
+    pushIssue(issues, {
+      path: "environment.blockerSpawnThreshold",
+      message: "路障生成阈值必须在 0-1 之间。",
+      suggestion: "将 blockerSpawnThreshold 调整到 0-1。"
+    });
+  }
+
+  if (config.environment.trapSpawnThreshold > 1) {
+    pushIssue(issues, {
+      path: "environment.trapSpawnThreshold",
+      message: "陷阱生成阈值必须在 0-1 之间。",
+      suggestion: "将 trapSpawnThreshold 调整到 0-1。"
+    });
+  }
+
+  if (
+    config.environment.trapGrantedStatusId &&
+    !statusIds.has(config.environment.trapGrantedStatusId)
+  ) {
+    pushIssue(issues, {
+      path: "environment.trapGrantedStatusId",
+      message: `陷阱附加状态 ${config.environment.trapGrantedStatusId} 不存在于 battle-skills.json。`,
+      suggestion: "改为 statuses 中已有的状态 id，或先在技能配置里创建该状态。"
+    });
+  }
+
+  return issues;
+}
+
 async function validateDocumentDetailed(
   store: Pick<ConfigCenterStore, "loadDocument">,
   id: ConfigDocumentId,
@@ -1882,7 +2089,12 @@ async function validateDocumentDetailed(
                   parsed as UnitCatalogConfig,
                   dependencies.battleSkills
                 )
-              : validateBattleSkillsDetailed(parsed as BattleSkillCatalogConfig);
+              : id === "battleSkills"
+                ? validateBattleSkillsDetailed(parsed as BattleSkillCatalogConfig)
+                : validateBattleBalanceDetailed(
+                    parsed as BattleBalanceConfig,
+                    dependencies.battleSkills
+                  );
       issues.push(...semanticIssues);
     } catch {
       // Schema issues above already explain malformed structures; skip dependent semantic checks.
@@ -2023,7 +2235,8 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
       this.exportDocumentToFile("world", normalizeJsonContent(bundle.world)),
       this.exportDocumentToFile("mapObjects", normalizeJsonContent(bundle.mapObjects)),
       this.exportDocumentToFile("units", normalizeJsonContent(bundle.units)),
-      this.exportDocumentToFile("battleSkills", normalizeJsonContent(bundle.battleSkills))
+      this.exportDocumentToFile("battleSkills", normalizeJsonContent(bundle.battleSkills)),
+      this.exportDocumentToFile("battleBalance", normalizeJsonContent(contentForDocumentId(bundle, "battleBalance")))
     ]);
   }
 
@@ -2217,7 +2430,7 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
   async saveDocument(id: ConfigDocumentId, content: string): Promise<ConfigDocument> {
     const parsed = parseConfigDocument(id, content);
     const bundle = buildRuntimeBundleWithParsedDocument(id, parsed);
-    const serialized = normalizeJsonContent(bundle[id]);
+    const serialized = normalizeJsonContent(contentForDocumentId(bundle, id));
     const current = await this.loadDocument(id);
 
     if (current.content === serialized) {
@@ -2299,7 +2512,7 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
   async saveDocument(id: ConfigDocumentId, content: string): Promise<ConfigDocument> {
     const parsed = parseConfigDocument(id, content);
     const bundle = buildRuntimeBundleWithParsedDocument(id, parsed);
-    const serialized = normalizeJsonContent(bundle[id]);
+    const serialized = normalizeJsonContent(contentForDocumentId(bundle, id));
     const current = await this.loadDocument(id);
 
     if (current.content === serialized) {
