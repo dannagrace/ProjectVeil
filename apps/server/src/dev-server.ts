@@ -5,6 +5,7 @@ import { FileSystemConfigCenterStore, MySqlConfigCenterStore, registerConfigCent
 import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./colyseus-room";
 import { registerLobbyRoutes } from "./lobby";
 import { registerMatchmakingRoutes } from "./matchmaking";
+import { registerRuntimeObservabilityRoutes } from "./observability";
 import { MySqlRoomSnapshotStore, readMySqlPersistenceConfig } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
@@ -40,6 +41,7 @@ async function startDevServer(
   registerPlayerAccountRoutes(transport.getExpressApp() as never, effectiveSnapshotStore);
   registerLobbyRoutes(transport.getExpressApp() as never, { listRooms: listLobbyRooms });
   registerMatchmakingRoutes(transport.getExpressApp() as never, { store: effectiveSnapshotStore });
+  registerRuntimeObservabilityRoutes(transport.getExpressApp() as never);
 
   const gameServer = new Server({
     transport
@@ -61,6 +63,10 @@ async function startDevServer(
   console.log(`Lobby API available at http://${host}:${port}/api/lobby/rooms`);
   // eslint-disable-next-line no-console
   console.log(`Matchmaking API available at http://${host}:${port}/api/matchmaking/status`);
+  // eslint-disable-next-line no-console
+  console.log(`Runtime health available at http://${host}:${port}/api/runtime/health`);
+  // eslint-disable-next-line no-console
+  console.log(`Runtime metrics available at http://${host}:${port}/api/runtime/metrics`);
   // eslint-disable-next-line no-console
   console.log(`Config center storage: ${configCenterStore.mode}`);
   if (snapshotStore) {

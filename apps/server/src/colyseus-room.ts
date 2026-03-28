@@ -25,6 +25,13 @@ import {
 } from "./persistence";
 import { applyPlayerEventLogAndAchievements } from "./player-achievements";
 import { resolveGuestAuthSession } from "./auth";
+import {
+  recordBattleActionMessage,
+  recordConnectMessage,
+  recordRuntimeRoom,
+  recordWorldActionMessage,
+  removeRuntimeRoom
+} from "./observability";
 
 type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;
 
@@ -153,6 +160,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     this.publishLobbyRoomSummary();
 
     this.onMessage("connect", async (client, message: Extract<ClientMessage, { type: "connect" }>) => {
+      recordConnectMessage();
       const authSession = message.authToken ? resolveGuestAuthSession(message.authToken) : null;
       if (message.authToken && !authSession) {
         sendMessage(client, "error", { requestId: message.requestId, reason: "unauthorized" });
@@ -222,6 +230,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
 
+      recordWorldActionMessage();
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
       const result = this.worldRoom.dispatch(playerId, message.action);
       try {
@@ -257,6 +266,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
 
+      recordBattleActionMessage();
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
       const result = this.worldRoom.dispatchBattle(playerId, message.action);
       try {
@@ -320,6 +330,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
   onDispose(): void {
     lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
+    removeRuntimeRoom(this.metadata.logicalRoomId);
   }
 
   private restoreWorldRoom(snapshot: RoomPersistenceSnapshot): void {
@@ -391,7 +402,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
   private publishLobbyRoomSummary(): void {
     const internalState = this.worldRoom.getInternalState();
-    lobbyRoomSummaries.set(this.metadata.logicalRoomId, {
+    const summary = {
       roomId: this.metadata.logicalRoomId,
       seed: internalState.meta.seed,
       day: internalState.meta.day,
@@ -399,7 +410,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       heroCount: internalState.heroes.length,
       activeBattles: this.worldRoom.getActiveBattles().length,
       updatedAt: new Date().toISOString()
-    });
+    };
+    lobbyRoomSummaries.set(this.metadata.logicalRoomId, summary);
+    recordRuntimeRoom(summary);
   }
 
   private getPlayerId(client: ColyseusClient, fallback?: string): string | undefined {
@@ -466,13 +479,17 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       sendMessage(client, "session.state", {
         requestId: "push",
         delivery: "push",
-        payload: this.buildStatePayload(playerId, {
-          movementPlan: null,
-          ...(extras?.events ? { events: extras.events } : {}),
-          ...(extras?.reason ? { reason: extras.reason } : {})
-        }, {
-          mapBounds
-        })
+        payload: this.buildStatePayload(
+          playerId,
+          {
+            movementPlan: null,
+            ...(extras?.events ? { events: extras.events } : {}),
+            ...(extras?.reason ? { reason: extras.reason } : {})
+          },
+          {
+            mapBounds
+          }
+        )
       });
     }
   }
