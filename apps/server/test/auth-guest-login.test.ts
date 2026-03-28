@@ -1122,6 +1122,70 @@ test("account registration confirm rejects invalid tokens", { concurrency: false
   assert.equal(confirmPayload.error.code, "invalid_registration_token");
 });
 
+test("account registration request reuses the active token for the same loginId until it is consumed", { concurrency: false }, async (t) => {
+  const port = 44721 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const firstResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "stable-registration-ranger",
+      displayName: "雾海守望"
+    })
+  });
+  const firstPayload = (await firstResponse.json()) as {
+    status: string;
+    expiresAt?: string;
+    registrationToken?: string;
+  };
+
+  const secondResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "stable-registration-ranger",
+      displayName: "雾海守望"
+    })
+  });
+  const secondPayload = (await secondResponse.json()) as {
+    status: string;
+    expiresAt?: string;
+    registrationToken?: string;
+  };
+
+  assert.equal(firstResponse.status, 202);
+  assert.equal(secondResponse.status, 202);
+  assert.equal(firstPayload.status, "registration_requested");
+  assert.equal(secondPayload.status, "registration_requested");
+  assert.equal(secondPayload.registrationToken, firstPayload.registrationToken);
+  assert.equal(secondPayload.expiresAt, firstPayload.expiresAt);
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "stable-registration-ranger",
+      registrationToken: firstPayload.registrationToken,
+      password: "hunter2"
+    })
+  });
+
+  assert.equal(confirmResponse.status, 200);
+});
+
 test("account registration request returns 429 after the per-IP rate limit is exceeded", { concurrency: false }, async (t) => {
   const cleanup: Array<() => void> = [];
   withEnvOverrides(
@@ -1326,6 +1390,80 @@ test("password recovery confirm rejects invalid tokens", { concurrency: false },
 
   assert.equal(confirmResponse.status, 401);
   assert.equal(confirmPayload.error.code, "invalid_recovery_token");
+});
+
+test("password recovery request reuses the active token and avoids duplicate audit entries", { concurrency: false }, async (t) => {
+  const port = 44740 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  await store.ensurePlayerAccount({
+    playerId: "recovery-stable-player",
+    displayName: "稳定旅人"
+  });
+  await store.bindPlayerAccountCredentials("recovery-stable-player", {
+    loginId: "stable-recovery-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const firstResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "stable-recovery-ranger"
+    })
+  });
+  const firstPayload = (await firstResponse.json()) as {
+    status: string;
+    expiresAt?: string;
+    recoveryToken?: string;
+  };
+
+  const secondResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "stable-recovery-ranger"
+    })
+  });
+  const secondPayload = (await secondResponse.json()) as {
+    status: string;
+    expiresAt?: string;
+    recoveryToken?: string;
+  };
+
+  assert.equal(firstResponse.status, 202);
+  assert.equal(secondResponse.status, 202);
+  assert.equal(firstPayload.status, "recovery_requested");
+  assert.equal(secondPayload.status, "recovery_requested");
+  assert.equal(secondPayload.recoveryToken, firstPayload.recoveryToken);
+  assert.equal(secondPayload.expiresAt, firstPayload.expiresAt);
+
+  const accountAfterRequests = await store.loadPlayerAccount("recovery-stable-player");
+  assert.equal(accountAfterRequests?.recentEventLog.filter((entry) => /发起密码找回申请/.test(entry.description)).length, 1);
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "stable-recovery-ranger",
+      recoveryToken: firstPayload.recoveryToken,
+      newPassword: "hunter3"
+    })
+  });
+
+  assert.equal(confirmResponse.status, 200);
 });
 
 test("password recovery request returns 429 after the per-IP rate limit is exceeded", { concurrency: false }, async (t) => {
