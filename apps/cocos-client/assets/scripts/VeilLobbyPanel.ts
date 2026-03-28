@@ -1,5 +1,6 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Sprite, SpriteFrame, UITransform } from "cc";
-import type { CocosLobbyRoomSummary } from "./cocos-lobby.ts";
+import { buildCocosAchievementPanelItems } from "./cocos-achievements.ts";
+import type { CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import {
@@ -38,6 +39,7 @@ const ACTION_ENTER = new Color(84, 122, 94, 234);
 const ACTION_ACCOUNT = new Color(88, 118, 164, 234);
 const ACTION_CONFIG = new Color(94, 112, 86, 234);
 const ACTION_LOGOUT = new Color(126, 92, 74, 234);
+const ACTION_ACHIEVEMENTS = new Color(154, 122, 68, 234);
 const SHOWCASE_FILL = new Color(46, 56, 76, 182);
 const SHOWCASE_CARD_HEIGHT = 220;
 
@@ -51,6 +53,7 @@ export interface VeilLobbyRenderState {
   loginActionLabel: string;
   shareHint: string;
   vaultSummary: string;
+  account: CocosPlayerAccountProfile;
   sessionSource: "remote" | "local" | "manual" | "none";
   loading: boolean;
   entering: boolean;
@@ -83,6 +86,7 @@ interface PanelCardTone {
 @ccclass("ProjectVeilLobbyPanel")
 export class VeilLobbyPanel extends Component {
   private currentState: VeilLobbyRenderState | null = null;
+  private showAchievements = false;
   private showcasePhase: LobbyShowcasePhase = "idle";
   private showcaseUnitPage = 0;
   private showcaseTickerStarted = false;
@@ -351,81 +355,134 @@ export class VeilLobbyPanel extends Component {
       },
       state.entering || state.sessionSource === "none" ? null : this.onLogout ?? null
     );
-
-    rightCursorY = this.renderCard(
-      "LobbyRoomsHeader",
-      rightX,
-      rightCursorY,
-      rightWidth,
-      82,
-      [
-        "活跃房间",
-        `${state.rooms.length} 个实例`,
-        "点击右侧卡片即可直接加入；如果列表为空，也可以在左侧输入新的房间 ID。"
-      ],
+    const unlockedCount = state.account.achievements.filter((achievement) => achievement.unlocked).length;
+    this.renderActionButton(
+      "LobbyAchievements",
+      leftX,
+      leftCursorY - 256,
+      leftWidth,
+      28,
+      this.showAchievements
+        ? "收起成就面板"
+        : `成就 ${unlockedCount}/${state.account.achievements.length || 0}`,
       {
-        fill: TITLE_FILL,
-        stroke: new Color(228, 237, 248, 52),
-        accent: new Color(122, 168, 214, 194)
+        fill: ACTION_ACHIEVEMENTS,
+        stroke: new Color(247, 236, 214, 118),
+        accent: new Color(252, 232, 194, 110)
       },
-      null,
-      15,
-      18
+      () => {
+        this.showAchievements = !this.showAchievements;
+        if (this.currentState) {
+          this.render(this.currentState);
+        }
+      }
     );
 
-    const visibleRooms = state.rooms.slice(0, 4);
-    let showcaseTopY = rightCursorY;
-    if (visibleRooms.length === 0) {
-      this.renderCard(
-        "LobbyRoomsEmpty",
+    if (this.showAchievements) {
+      rightCursorY = this.renderCard(
+        "LobbyAchievementsHeader",
         rightX,
         rightCursorY,
         rightWidth,
-        84,
-        ["当前没有活跃房间", "输入新的房间 ID 后点击“进入房间”即可创建一局。", "Lobby API 暂不可达时也可以继续本地进入。"],
+        82,
+        [
+          "账号成就",
+          `${unlockedCount}/${state.account.achievements.length} 已解锁`,
+          "来源于 account.achievements。已解锁条目会显示时间，未解锁条目保留进度与剩余目标。"
+        ],
         {
-          fill: MUTED_FILL,
-          stroke: new Color(214, 224, 238, 42),
-          accent: new Color(128, 146, 170, 156)
+          fill: TITLE_FILL,
+          stroke: new Color(236, 228, 198, 62),
+          accent: new Color(214, 175, 112, 194)
         },
         null,
-        14,
+        15,
         18
       );
-      this.hideExtraRoomCards(0);
-      showcaseTopY = rightCursorY - 96;
+
+      this.renderAchievementCards(rightX, rightCursorY, rightWidth, state.account);
+      this.hideLobbyRooms();
     } else {
-      visibleRooms.forEach((room, index) => {
-        const updatedAt = room.updatedAt.includes("T") ? room.updatedAt.slice(11, 16) : room.updatedAt;
+      this.hideAchievementCards();
+      rightCursorY = this.renderCard(
+        "LobbyRoomsHeader",
+        rightX,
+        rightCursorY,
+        rightWidth,
+        82,
+        [
+          "活跃房间",
+          `${state.rooms.length} 个实例`,
+          "点击右侧卡片即可直接加入；如果列表为空，也可以在左侧输入新的房间 ID。"
+        ],
+        {
+          fill: TITLE_FILL,
+          stroke: new Color(228, 237, 248, 52),
+          accent: new Color(122, 168, 214, 194)
+        },
+        null,
+        15,
+        18
+      );
+
+      const visibleRooms = state.rooms.slice(0, 4);
+      let showcaseTopY = rightCursorY;
+      if (visibleRooms.length === 0) {
         this.renderCard(
-          `LobbyRoom-${index}`,
+          "LobbyRoomsEmpty",
           rightX,
-          rightCursorY - index * 78,
+          rightCursorY,
           rightWidth,
-          68,
+          84,
           [
-            room.roomId,
-            `Day ${room.day} · Seed ${room.seed}`,
-            `玩家 ${room.connectedPlayers} · 英雄 ${room.heroCount} · 战斗 ${room.activeBattles} · ${updatedAt}`
+            "当前没有活跃房间",
+            "输入新的房间 ID 后点击“进入房间”即可创建一局。",
+            "Lobby API 暂不可达时也可以继续本地进入。"
           ],
           {
-            fill: ROOM_FILL,
-            stroke: new Color(220, 232, 244, 52),
-            accent: new Color(132, 186, 142, 186)
+            fill: MUTED_FILL,
+            stroke: new Color(214, 224, 238, 42),
+            accent: new Color(128, 146, 170, 156)
           },
-          state.entering ? null : () => {
-            this.onJoinRoom?.(room.roomId);
-          },
+          null,
           14,
           18
         );
-      });
+        this.hideExtraRoomCards(0);
+        showcaseTopY = rightCursorY - 96;
+      } else {
+        visibleRooms.forEach((room, index) => {
+          const updatedAt = room.updatedAt.includes("T") ? room.updatedAt.slice(11, 16) : room.updatedAt;
+          this.renderCard(
+            `LobbyRoom-${index}`,
+            rightX,
+            rightCursorY - index * 78,
+            rightWidth,
+            68,
+            [
+              room.roomId,
+              `Day ${room.day} · Seed ${room.seed}`,
+              `玩家 ${room.connectedPlayers} · 英雄 ${room.heroCount} · 战斗 ${room.activeBattles} · ${updatedAt}`
+            ],
+            {
+              fill: ROOM_FILL,
+              stroke: new Color(220, 232, 244, 52),
+              accent: new Color(132, 186, 142, 186)
+            },
+            state.entering ? null : () => {
+              this.onJoinRoom?.(room.roomId);
+            },
+            14,
+            18
+          );
+        });
 
-      this.hideExtraRoomCards(visibleRooms.length);
-      showcaseTopY = rightCursorY - visibleRooms.length * 78;
+        this.hideExtraRoomCards(visibleRooms.length);
+        showcaseTopY = rightCursorY - visibleRooms.length * 78;
+      }
+
+      this.renderPixelShowcase(rightX, showcaseTopY, rightWidth);
     }
-
-    this.renderPixelShowcase(rightX, showcaseTopY, rightWidth);
   }
 
   private ensureShowcaseTicker(): void {
@@ -609,6 +666,109 @@ export class VeilLobbyPanel extends Component {
     if (emptyNode) {
       emptyNode.active = visibleCount === 0;
     }
+  }
+
+  private hideLobbyRooms(): void {
+    const roomsHeader = this.node.getChildByName("LobbyRoomsHeader");
+    if (roomsHeader) {
+      roomsHeader.active = false;
+    }
+    for (let index = 0; index < 4; index += 1) {
+      const roomNode = this.node.getChildByName(`LobbyRoom-${index}`);
+      if (roomNode) {
+        roomNode.active = false;
+      }
+    }
+    const emptyNode = this.node.getChildByName("LobbyRoomsEmpty");
+    if (emptyNode) {
+      emptyNode.active = false;
+    }
+    const showcase = this.node.getChildByName("LobbyShowcase");
+    if (showcase) {
+      showcase.active = false;
+    }
+  }
+
+  private renderAchievementCards(
+    centerX: number,
+    topY: number,
+    width: number,
+    account: CocosPlayerAccountProfile
+  ): void {
+    const items = buildCocosAchievementPanelItems(account.achievements).slice(0, 5);
+    if (items.length === 0) {
+      this.renderCard(
+        "LobbyAchievementEmpty",
+        centerX,
+        topY,
+        width,
+        84,
+        ["暂无成就数据", "账号快照尚未返回 achievement 列表。", "刷新 Lobby 后会再次同步。"],
+        {
+          fill: MUTED_FILL,
+          stroke: new Color(214, 224, 238, 42),
+          accent: new Color(128, 146, 170, 156)
+        },
+        null,
+        14,
+        18
+      );
+      this.hideExtraAchievementCards(0);
+      return;
+    }
+
+    const cardHeight = 74;
+    items.forEach((item, index) => {
+      this.renderCard(
+        `LobbyAchievement-${index}`,
+        centerX,
+        topY - index * (cardHeight + 10),
+        width,
+        cardHeight,
+        [item.title, `${item.statusLabel} · ${item.progressLabel}`, item.footnote],
+        item.isUnlocked
+          ? {
+              fill: new Color(78, 92, 72, 184),
+              stroke: new Color(234, 244, 220, 74),
+              accent: new Color(198, 226, 154, 196)
+            }
+          : {
+              fill: new Color(36, 47, 62, 176),
+              stroke: new Color(214, 224, 238, 42),
+              accent: new Color(110, 152, 214, 164)
+            },
+        null,
+        14,
+        18
+      );
+    });
+
+    const emptyNode = this.node.getChildByName("LobbyAchievementEmpty");
+    if (emptyNode) {
+      emptyNode.active = false;
+    }
+    this.hideExtraAchievementCards(items.length);
+  }
+
+  private hideExtraAchievementCards(visibleCount: number): void {
+    for (let index = visibleCount; index < 5; index += 1) {
+      const node = this.node.getChildByName(`LobbyAchievement-${index}`);
+      if (node) {
+        node.active = false;
+      }
+    }
+  }
+
+  private hideAchievementCards(): void {
+    const header = this.node.getChildByName("LobbyAchievementsHeader");
+    if (header) {
+      header.active = false;
+    }
+    const emptyNode = this.node.getChildByName("LobbyAchievementEmpty");
+    if (emptyNode) {
+      emptyNode.active = false;
+    }
+    this.hideExtraAchievementCards(0);
   }
 
   private renderPixelShowcase(centerX: number, topY: number, width: number): void {

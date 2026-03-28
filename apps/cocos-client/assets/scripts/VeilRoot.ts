@@ -62,6 +62,11 @@ import {
   triggerCocosRuntimeGc
 } from "./cocos-runtime-memory.ts";
 import {
+  buildCocosAchievementUnlockNotice,
+  collectAchievementUnlockEventIds,
+  shouldRefreshGameplayAccountProfileForEvents
+} from "./cocos-achievements.ts";
+import {
   buildCocosWechatSharePayload,
   syncCocosWechatShareBridge,
   type CocosWechatShareRuntimeLike
@@ -164,6 +169,7 @@ export class VeilRoot extends Component {
   private loginId = "";
   private sessionSource: "remote" | "local" | "manual" | "none" = "none";
   private levelUpNotice: (HeroProgressNotice & { expiresAt: number }) | null = null;
+  private achievementNotice: ({ title: string; detail: string; expiresAt: number } & { eventId: string }) | null = null;
   private showLobby = false;
   private lobbyRooms: CocosLobbyRoomSummary[] = [];
   private lobbyStatus = "请选择一个房间，或手动输入新的房间 ID。";
@@ -178,6 +184,7 @@ export class VeilRoot extends Component {
   private loginProviders: CocosLoginProviderDescriptor[] = [];
   private audioRuntime = createCocosAudioRuntime(cocosPresentationConfig.audio);
   private pendingPixelSpriteGroups = new Set<"boot" | "battle">();
+  private seenAchievementUnlockEventIds = new Set<string>();
   private wechatShareStatus = "分享功能仅在微信小游戏可用。";
   private wechatShareAvailable = false;
   private runtimeMemoryNotice = "";
@@ -677,6 +684,9 @@ export class VeilRoot extends Component {
     if (this.levelUpNotice && this.levelUpNotice.expiresAt <= Date.now()) {
       this.levelUpNotice = null;
     }
+    if (this.achievementNotice && this.achievementNotice.expiresAt <= Date.now()) {
+      this.achievementNotice = null;
+    }
 
     this.ensurePixelSpriteGroup("boot");
     if (this.lastUpdate?.battle) {
@@ -720,6 +730,7 @@ export class VeilRoot extends Component {
         loginActionLabel: this.primaryLoginProvider().label,
         shareHint: this.describeLobbyShareHint(),
         vaultSummary: this.formatLobbyVaultSummary(),
+        account: this.lobbyAccountProfile,
         sessionSource: this.sessionSource,
         loading: this.lobbyLoading,
         entering: this.lobbyEntering,
@@ -745,6 +756,9 @@ export class VeilRoot extends Component {
       inputDebug: this.inputDebug,
       runtimeHealth: this.describeRuntimeMemoryHealth(),
       levelUpNotice: this.levelUpNotice ? { title: this.levelUpNotice.title, detail: this.levelUpNotice.detail } : null,
+      achievementNotice: this.achievementNotice
+        ? { title: this.achievementNotice.title, detail: this.achievementNotice.detail }
+        : null,
       presentation: this.buildHudPresentationState()
     });
     this.mapBoard?.render(this.lastUpdate);
@@ -842,7 +856,7 @@ export class VeilRoot extends Component {
       return;
     }
 
-    this.lobbyAccountProfile = profile;
+    this.commitAccountProfile(profile, false);
     if (profile.source === "remote") {
       this.displayName = profile.displayName;
       this.loginId = profile.loginId ?? this.loginId;
@@ -2360,15 +2374,7 @@ export class VeilRoot extends Component {
     if (eventEntries.length > 0) {
       this.timelineEntries = collapseAdjacentEntries([...eventEntries, ...this.timelineEntries]).slice(0, 12);
     }
-    if (
-      update.events.some(
-        (event) =>
-          event.type === "battle.started" ||
-          event.type === "battle.resolved" ||
-          event.type === "hero.skillLearned" ||
-          event.type === "hero.equipmentFound"
-      )
-    ) {
+    if (shouldRefreshGameplayAccountProfileForEvents(update.events.map((event) => event.type))) {
       void this.refreshGameplayAccountProfile();
     }
     this.syncSelectedBattleTarget();
@@ -2401,7 +2407,7 @@ export class VeilRoot extends Component {
 
     this.gameplayAccountRefreshInFlight = true;
     try {
-      this.lobbyAccountProfile = await loadCocosPlayerAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
+      const profile = await loadCocosPlayerAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
         storage: this.readWebStorage(),
         authSession: this.authToken
           ? {
@@ -2414,6 +2420,7 @@ export class VeilRoot extends Component {
             }
           : null
       });
+      this.commitAccountProfile(profile, true);
       this.renderView();
     } finally {
       this.gameplayAccountRefreshInFlight = false;
@@ -2434,6 +2441,29 @@ export class VeilRoot extends Component {
     this.pushLog(`${notice.title}。${notice.detail}`);
     this.mapBoard?.playHeroAnimation("victory");
     this.audioRuntime.playCue("level_up");
+  }
+
+  private commitAccountProfile(profile: CocosPlayerAccountProfile, allowAchievementNotice: boolean): void {
+    if (profile.playerId !== this.lobbyAccountProfile.playerId) {
+      this.seenAchievementUnlockEventIds.clear();
+    }
+
+    if (allowAchievementNotice) {
+      const notice = buildCocosAchievementUnlockNotice(profile.recentEventLog, this.seenAchievementUnlockEventIds);
+      if (notice) {
+        this.achievementNotice = {
+          ...notice,
+          expiresAt: Date.now() + 4000
+        };
+        this.pushLog(`${notice.title}：${notice.detail}`);
+      }
+    }
+
+    for (const eventId of collectAchievementUnlockEventIds(profile.recentEventLog)) {
+      this.seenAchievementUnlockEventIds.add(eventId);
+    }
+
+    this.lobbyAccountProfile = profile;
   }
 
   private playMapFeedbackForUpdate(update: SessionUpdate): void {
