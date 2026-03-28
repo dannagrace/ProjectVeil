@@ -218,7 +218,7 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - `apps/cocos-client/assets/scripts/cocos-login-provider.ts`
     - 登录 provider 已支持透传 `authToken`
   - `apps/cocos-client/assets/scripts/VeilRoot.ts`
-    - 小游戏登录状态文案更新为“登录已连通”
+
 - 本轮新增/更新测试：
   - `apps/server/test/auth-guest-login.test.ts`
     - 覆盖 production `code2Session` 交换
@@ -1306,3 +1306,15 @@ Original prompt: 你先学习下当前项目并给出开发的计划
     - 导出 `wechatgame` 构建目录
     - 在微信开发者工具里验证域名、分包、FPS 与内存
     - iOS / Android 真机验收
+
+## Issue #199 - Test coverage audit - 2026-03-29
+
+- 已新增审计文档：
+  - `docs/test-coverage-audit-issue-199.md`
+- 本轮结论：
+  - 服务端当前最需要补的是 `dev-server`、`schema-migrations`、`colyseus-room` 与 replay 编排相关覆盖。
+  - H5 侧当前最大空白是 `apps/client/src/main.ts`、`local-session.ts` 与 `config-center.ts`。
+  - Cocos 侧 helper 覆盖面已经较广，但 `VeilRoot`、`VeilCocosSession` 和各个 `Veil*Panel / VeilMapBoard / VeilTilemapRenderer / VeilUnitAnimator` 这类真正的运行时入口仍缺直接测试。
+- 已顺手修复测试基线偏差：
+  - 根 `npm test` 脚本此前只执行 `57/62` 个已存在的 Node 测试文件。
+  - 本轮已把遗漏的 `account-token-delivery`、battle replay routes、`cocos-battle-replay-timeline`、`cocos-hero-progression` 补回默认测试入口。
