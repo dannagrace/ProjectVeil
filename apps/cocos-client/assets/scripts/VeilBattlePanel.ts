@@ -7,7 +7,7 @@ import {
   type BattleCamp,
   type BattlePanelStageView
 } from "./cocos-battle-panel-model.ts";
-import type { CocosBattleFeedbackTone } from "./cocos-battle-feedback.ts";
+import type { CocosBattleFeedbackTone } from "./project-shared/index.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import type { BattleAction } from "./VeilCocosSession.ts";
 import { getPixelSpriteAssets, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";

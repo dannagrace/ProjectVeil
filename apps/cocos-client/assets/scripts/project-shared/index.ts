@@ -3,6 +3,7 @@ export * from "./battle.ts";
 export * from "./battle-replay.ts";
 export * from "./equipment.ts";
 export * from "./event-log.ts";
+export * from "./feedback.ts";
 export * from "./hero-skills.ts";
 export * from "./hero-progression.ts";
 export * from "./map.ts";

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { BattleState, MovementPlan, PlayerWorldView } from "../../../packages/shared/src/index";
 import type { SessionUpdate } from "../src/local-session";
-import { renderEncounterSourceDetail, renderRoomActionHint } from "../src/room-feedback";
+import { renderEncounterSourceDetail, renderRoomActionHint, resolveRoomFeedbackTone } from "../src/room-feedback";
 
 type EncounterStartedEvent = Extract<SessionUpdate["events"][number], { type: "battle.started" }>;
 
@@ -347,5 +347,71 @@ test("renderRoomActionHint covers settlement and exploration move branches", () 
       }
     }),
     "下一步：当前英雄今日已无移动力，可推进到下一天。"
+  );
+});
+
+test("resolveRoomFeedbackTone covers settlement, battle, preview, reconnect failure, and stable states", () => {
+  assert.equal(
+    resolveRoomFeedbackTone({
+      battle: null,
+      previewPlan: null,
+      lastBattleSettlement: { aftermath: "已结算", tone: "victory" },
+      diagnostics: { connectionStatus: "connected" }
+    }),
+    "victory"
+  );
+
+  assert.equal(
+    resolveRoomFeedbackTone({
+      battle: null,
+      previewPlan: null,
+      lastBattleSettlement: { aftermath: "已结算", tone: "defeat" },
+      diagnostics: { connectionStatus: "connected" }
+    }),
+    "defeat"
+  );
+
+  assert.equal(
+    resolveRoomFeedbackTone({
+      battle: createBattle(),
+      previewPlan: null,
+      lastBattleSettlement: null,
+      diagnostics: { connectionStatus: "connected" }
+    }),
+    "action"
+  );
+
+  assert.equal(
+    resolveRoomFeedbackTone({
+      battle: null,
+      previewPlan: createPreviewPlan({
+        endsInEncounter: true,
+        encounterKind: "hero",
+        encounterRefId: "hero-2"
+      }),
+      lastBattleSettlement: null,
+      diagnostics: { connectionStatus: "connected" }
+    }),
+    "skill"
+  );
+
+  assert.equal(
+    resolveRoomFeedbackTone({
+      battle: null,
+      previewPlan: null,
+      lastBattleSettlement: null,
+      diagnostics: { connectionStatus: "reconnect_failed" }
+    }),
+    "hit"
+  );
+
+  assert.equal(
+    resolveRoomFeedbackTone({
+      battle: null,
+      previewPlan: null,
+      lastBattleSettlement: null,
+      diagnostics: { connectionStatus: "connected" }
+    }),
+    "neutral"
   );
 });

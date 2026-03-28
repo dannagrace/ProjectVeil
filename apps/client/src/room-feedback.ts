@@ -1,4 +1,4 @@
-import type { BattleState, MovementPlan, PlayerWorldView } from "../../../packages/shared/src/index";
+import type { BattleState, CocosBattleFeedbackTone, MovementPlan, PlayerWorldView } from "../../../packages/shared/src/index";
 import type { SessionUpdate } from "./local-session";
 
 interface BattleSettlementSummaryLike {
@@ -28,8 +28,35 @@ export interface RoomActionHintInput {
   activeHero: ActiveHeroLike | null;
 }
 
+export interface AppState {
+  battle: BattleState | null;
+  previewPlan: MovementPlan | null;
+  lastBattleSettlement: (BattleSettlementSummaryLike & { tone?: CocosBattleFeedbackTone }) | null;
+  diagnostics: DiagnosticStateLike;
+}
+
 function ownedHeroIds(world: PlayerWorldView): Set<string> {
   return new Set(world.ownHeroes.map((hero) => hero.id));
+}
+
+export function resolveRoomFeedbackTone(state: AppState): CocosBattleFeedbackTone {
+  if (state.lastBattleSettlement?.tone === "victory" || state.lastBattleSettlement?.tone === "defeat") {
+    return state.lastBattleSettlement.tone;
+  }
+
+  if (state.battle) {
+    return "action";
+  }
+
+  if (state.previewPlan?.endsInEncounter) {
+    return "skill";
+  }
+
+  if (state.diagnostics.connectionStatus === "reconnect_failed") {
+    return "hit";
+  }
+
+  return "neutral";
 }
 
 export function renderEncounterSourceDetail(input: EncounterSourceDetailInput): string {

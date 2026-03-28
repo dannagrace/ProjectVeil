@@ -66,6 +66,43 @@ button {
   color: var(--muted);
 }
 
+[data-tone] {
+  padding: 8px 10px;
+  border-left: 3px solid transparent;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+[data-tone="neutral"] {
+  border-left-color: #8a6f55;
+  background: rgba(120, 104, 89, 0.08);
+}
+
+[data-tone="action"] {
+  border-left-color: #a44d2c;
+  background: rgba(164, 77, 44, 0.1);
+}
+
+[data-tone="skill"] {
+  border-left-color: #8c6a2d;
+  background: rgba(195, 152, 72, 0.14);
+}
+
+[data-tone="hit"] {
+  border-left-color: #8a3131;
+  background: rgba(138, 49, 49, 0.1);
+}
+
+[data-tone="victory"] {
+  border-left-color: #2f6e5b;
+  background: rgba(47, 110, 91, 0.1);
+}
+
+[data-tone="defeat"] {
+  border-left-color: #6b4152;
+  background: rgba(107, 65, 82, 0.1);
+}
+
 .eyebrow {
   font-size: 12px;
   letter-spacing: 0.18em;
