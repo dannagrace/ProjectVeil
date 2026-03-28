@@ -2,7 +2,11 @@
   "name": "project-veil",
   "private": true,
   "version": "0.1.0",
-  "packageManager": "pnpm@10.8.1",
+  "packageManager": "npm@10.9.3",
+  "engines": {
+    "node": ">=22 <25",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev:server": "node --import tsx ./apps/server/src/dev-server.ts",
     "client:primary": "node --eval \"console.log('Primary runtime: open apps/cocos-client in Cocos Creator 3.8.x and preview the VeilRoot scene. H5 debug shell: npm run dev:client:h5')\"",
@@ -20,6 +24,7 @@
     "db:profiles:delete": "node --import tsx ./scripts/manage-player-room-profiles.ts delete",
     "db:profiles:prune": "node --import tsx ./scripts/manage-player-room-profiles.ts prune",
     "demo:flow": "node --import tsx ./scripts/demo.ts",
+    "validate:quickstart": "node ./scripts/validate-local-dev-quickstart.mjs",
     "stress:rooms": "node --import tsx ./scripts/stress-concurrent-rooms.ts",
     "validate:battle": "node --import tsx ./scripts/validate-battle-balance.ts",
     "sync:assets:pixel": "node ./scripts/sync-h5-pixel-assets.mjs",
