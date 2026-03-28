@@ -11,13 +11,13 @@ import {
   type Vec2
 } from "./VeilCocosSession.ts";
 import {
-  clearCurrentCocosAuthSession,
   createFallbackCocosPlayerAccountProfile,
   createCocosGuestPlayerId,
   createCocosLobbyPreferences,
   loadCocosLobbyRooms,
   loadCocosPlayerAccountProfile,
   loginCocosGuestAuthSession,
+  logoutCurrentCocosAuthSession,
   readPreferredCocosDisplayName,
   rememberPreferredCocosDisplayName,
   resolveCocosConfigCenterUrl,
@@ -1641,8 +1641,10 @@ export class VeilRoot extends Component {
     await this.syncLobbyBootstrap();
   }
 
-  private logoutAuthSession(): void {
-    clearCurrentCocosAuthSession(this.readWebStorage());
+  private async logoutAuthSession(): Promise<void> {
+    await logoutCurrentCocosAuthSession(this.remoteUrl, {
+      storage: this.readWebStorage()
+    });
     this.authToken = null;
     this.authMode = "guest";
     this.authProvider = "guest";

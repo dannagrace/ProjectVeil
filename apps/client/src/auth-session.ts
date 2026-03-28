@@ -7,16 +7,22 @@ export interface StoredAuthSession {
   authMode: "guest" | "account";
   loginId?: string;
   token?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  refreshExpiresAt?: string;
   source: "remote" | "local";
 }
 
 interface AuthSessionApiPayload {
   session?: {
     token?: string;
+    refreshToken?: string;
     playerId?: string;
     displayName?: string;
     authMode?: "guest" | "account";
     loginId?: string;
+    expiresAt?: string;
+    refreshExpiresAt?: string;
   };
 }
 
@@ -57,7 +63,7 @@ function asStoredAuthSession(
   payload: AuthSessionApiPayload["session"],
   source: StoredAuthSession["source"],
   fallback: Pick<StoredAuthSession, "playerId" | "displayName" | "authMode"> &
-    Partial<Pick<StoredAuthSession, "loginId" | "token">>
+    Partial<Pick<StoredAuthSession, "loginId" | "token" | "refreshToken" | "expiresAt" | "refreshExpiresAt">>
 ): StoredAuthSession {
   const playerId = normalizePlayerId(payload?.playerId ?? fallback.playerId);
   const loginId = normalizeLoginId(payload?.loginId ?? fallback.loginId);
@@ -69,6 +75,13 @@ function asStoredAuthSession(
     authMode,
     ...(loginId ? { loginId } : {}),
     ...(payload?.token ? { token: payload.token } : fallback.token ? { token: fallback.token } : {}),
+    ...(payload?.refreshToken ? { refreshToken: payload.refreshToken } : fallback.refreshToken ? { refreshToken: fallback.refreshToken } : {}),
+    ...(payload?.expiresAt ? { expiresAt: payload.expiresAt } : fallback.expiresAt ? { expiresAt: fallback.expiresAt } : {}),
+    ...(payload?.refreshExpiresAt
+      ? { refreshExpiresAt: payload.refreshExpiresAt }
+      : fallback.refreshExpiresAt
+        ? { refreshExpiresAt: fallback.refreshExpiresAt }
+        : {}),
     source
   };
 }
@@ -84,7 +97,14 @@ async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
     });
 
     if (!response.ok) {
-      throw new Error(`auth_request_failed:${response.status}`);
+      let errorCode = "unknown";
+      try {
+        const payload = (await response.json()) as { error?: { code?: string } };
+        errorCode = payload.error?.code?.trim() || errorCode;
+      } catch {
+        errorCode = "unknown";
+      }
+      throw new Error(`auth_request_failed:${response.status}:${errorCode}`);
     }
 
     return (await response.json()) as unknown;
@@ -116,6 +136,9 @@ export function readStoredAuthSession(
       authMode?: unknown;
       loginId?: unknown;
       token?: unknown;
+      refreshToken?: unknown;
+      expiresAt?: unknown;
+      refreshExpiresAt?: unknown;
       source?: unknown;
     };
     if (typeof parsed.playerId !== "string" || typeof parsed.displayName !== "string") {
@@ -129,6 +152,9 @@ export function readStoredAuthSession(
       authMode: parsed.authMode === "account" || loginId ? "account" : "guest",
       ...(loginId ? { loginId } : {}),
       ...(typeof parsed.token === "string" ? { token: parsed.token } : {}),
+      ...(typeof parsed.refreshToken === "string" ? { refreshToken: parsed.refreshToken } : {}),
+      ...(typeof parsed.expiresAt === "string" ? { expiresAt: parsed.expiresAt } : {}),
+      ...(typeof parsed.refreshExpiresAt === "string" ? { refreshExpiresAt: parsed.refreshExpiresAt } : {}),
       source: parsed.source === "remote" ? "remote" : "local"
     };
   } catch {
@@ -169,6 +195,87 @@ export function buildAuthHeaders(token?: string | null): HeadersInit {
         Authorization: `Bearer ${token.trim()}`
       }
     : {};
+}
+
+function isAuthError(error: unknown, status: number, code?: string): boolean {
+  return (
+    error instanceof Error &&
+    error.message === `auth_request_failed:${status}:${code ?? "unknown"}`
+  );
+}
+
+function mergeHeaders(headers: HeadersInit | undefined, token?: string | null): HeadersInit {
+  return {
+    ...(headers ?? {}),
+    ...buildAuthHeaders(token)
+  };
+}
+
+export async function refreshCurrentAuthSession(
+  currentSession: StoredAuthSession | null = readStoredAuthSession()
+): Promise<StoredAuthSession | null> {
+  if (!currentSession?.refreshToken) {
+    clearCurrentAuthSession();
+    return null;
+  }
+
+  try {
+    const payload = (await fetchJson(`${resolveAuthApiBaseUrl()}/api/auth/refresh`, {
+      method: "POST",
+      headers: buildAuthHeaders(currentSession.refreshToken)
+    })) as AuthSessionApiPayload;
+    const session = asStoredAuthSession(payload.session, "remote", currentSession);
+    return storeAuthSession(session);
+  } catch {
+    clearCurrentAuthSession();
+    return null;
+  }
+}
+
+export async function fetchAuthJson(
+  url: string,
+  init: RequestInit = {},
+  currentSession: StoredAuthSession | null = readStoredAuthSession()
+): Promise<unknown> {
+  const requestWithToken = {
+    ...init,
+    headers: mergeHeaders(init.headers, currentSession?.token)
+  } satisfies RequestInit;
+
+  try {
+    return await fetchJson(url, requestWithToken);
+  } catch (error) {
+    if (isAuthError(error, 401, "token_expired") && currentSession?.refreshToken) {
+      const refreshedSession = await refreshCurrentAuthSession(currentSession);
+      if (!refreshedSession?.token) {
+        throw error;
+      }
+      return fetchJson(url, {
+        ...init,
+        headers: mergeHeaders(init.headers, refreshedSession.token)
+      });
+    }
+
+    if (error instanceof Error && error.message.startsWith("auth_request_failed:401:")) {
+      clearCurrentAuthSession();
+    }
+    throw error;
+  }
+}
+
+export async function logoutCurrentAuthSession(): Promise<void> {
+  const currentSession = readStoredAuthSession();
+  if (currentSession?.token) {
+    try {
+      await fetchJson(`${resolveAuthApiBaseUrl()}/api/auth/logout`, {
+        method: "POST",
+        headers: buildAuthHeaders(currentSession.token)
+      });
+    } catch {
+      // Local cleanup should still proceed.
+    }
+  }
+  clearCurrentAuthSession();
 }
 
 export async function loginGuestAuthSession(playerId: string, displayName: string): Promise<StoredAuthSession> {
@@ -236,13 +343,17 @@ export async function syncCurrentAuthSession(): Promise<StoredAuthSession | null
   }
 
   try {
-    const payload = (await fetchJson(`${resolveAuthApiBaseUrl()}/api/auth/session`, {
-      headers: buildAuthHeaders(currentSession.token)
-    })) as AuthSessionApiPayload;
+    const payload = (await fetchAuthJson(
+      `${resolveAuthApiBaseUrl()}/api/auth/session`,
+      {
+        headers: {}
+      },
+      currentSession
+    )) as AuthSessionApiPayload;
     const session = asStoredAuthSession(payload.session, "remote", currentSession);
     return storeAuthSession(session);
   } catch (error) {
-    if (error instanceof Error && error.message === "auth_request_failed:401") {
+    if (error instanceof Error && error.message.startsWith("auth_request_failed:401:")) {
       clearCurrentAuthSession();
       return null;
     }

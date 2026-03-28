@@ -25,12 +25,21 @@ export interface RoomSnapshotStore {
   loadPlayerEventHistory(playerId: string, query?: PlayerEventHistoryQuery): Promise<PlayerEventHistorySnapshot>;
   loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]>;
   loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null>;
+  loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]>;
   ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot>;
   bindPlayerAccountCredentials(
     playerId: string,
     input: PlayerAccountCredentialInput
   ): Promise<PlayerAccountSnapshot>;
+  savePlayerAccountAuthSession(
+    playerId: string,
+    input: PlayerAccountAuthSessionInput
+  ): Promise<PlayerAccountAuthSnapshot | null>;
+  revokePlayerAccountAuthSessions(
+    playerId: string,
+    input?: PlayerAccountAuthRevokeInput
+  ): Promise<PlayerAccountAuthSnapshot | null>;
   bindPlayerAccountWechatMiniGameIdentity(
     playerId: string,
     input: PlayerAccountWechatMiniGameIdentityInput
@@ -102,6 +111,10 @@ interface PlayerAccountRow extends RowDataPacket {
   last_room_id: string | null;
   last_seen_at: Date | string | null;
   login_id: string | null;
+  account_session_version: number;
+  refresh_session_id: string | null;
+  refresh_token_hash: string | null;
+  refresh_token_expires_at: Date | string | null;
   wechat_mini_game_open_id: string | null;
   wechat_mini_game_union_id: string | null;
   wechat_mini_game_bound_at: Date | string | null;
@@ -115,6 +128,10 @@ interface PlayerAccountAuthRow extends RowDataPacket {
   display_name: string | null;
   login_id: string | null;
   password_hash: string | null;
+  account_session_version: number;
+  refresh_session_id: string | null;
+  refresh_token_hash: string | null;
+  refresh_token_expires_at: Date | string | null;
   credential_bound_at: Date | string | null;
 }
 
@@ -165,6 +182,9 @@ export interface PlayerRoomProfileSnapshot {
 
 export interface PlayerAccountSnapshot extends PlayerAccountReadModel {
   recentBattleReplays?: PlayerBattleReplaySummary[];
+  accountSessionVersion?: number;
+  refreshSessionId?: string;
+  refreshTokenExpiresAt?: string;
   wechatMiniGameOpenId?: string;
   wechatMiniGameUnionId?: string;
   wechatMiniGameBoundAt?: string;
@@ -177,6 +197,10 @@ export interface PlayerAccountAuthSnapshot {
   displayName: string;
   loginId: string;
   passwordHash: string;
+  accountSessionVersion: number;
+  refreshSessionId?: string;
+  refreshTokenHash?: string;
+  refreshTokenExpiresAt?: string;
   credentialBoundAt?: string;
 }
 
@@ -208,6 +232,17 @@ export interface PlayerAccountProgressPatch {
 export interface PlayerAccountCredentialInput {
   loginId: string;
   passwordHash: string;
+}
+
+export interface PlayerAccountAuthSessionInput {
+  refreshSessionId: string;
+  refreshTokenHash: string;
+  refreshTokenExpiresAt: string;
+}
+
+export interface PlayerAccountAuthRevokeInput {
+  passwordHash?: string;
+  credentialBoundAt?: string;
 }
 
 export interface PlayerAccountWechatMiniGameIdentityInput {
@@ -1216,6 +1251,7 @@ function toPlayerHeroArchiveSnapshot(row: PlayerHeroArchiveRow): PlayerHeroArchi
 
 function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
   const lastSeenAt = formatTimestamp(row.last_seen_at);
+  const refreshTokenExpiresAt = formatTimestamp(row.refresh_token_expires_at);
   const wechatMiniGameBoundAt = formatTimestamp(row.wechat_mini_game_bound_at);
   const credentialBoundAt = formatTimestamp(row.credential_bound_at);
   const createdAt = formatTimestamp(row.created_at);
@@ -1240,6 +1276,9 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(row.display_name ? { displayName: row.display_name } : {}),
     ...(row.last_room_id ? { lastRoomId: row.last_room_id } : {}),
     ...(row.login_id ? { loginId: row.login_id } : {}),
+    ...(row.account_session_version > 0 ? { accountSessionVersion: row.account_session_version } : {}),
+    ...(row.refresh_session_id ? { refreshSessionId: row.refresh_session_id } : {}),
+    ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}),
     ...(row.wechat_mini_game_open_id ? { wechatMiniGameOpenId: row.wechat_mini_game_open_id } : {}),
     ...(row.wechat_mini_game_union_id ? { wechatMiniGameUnionId: row.wechat_mini_game_union_id } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {}),
@@ -1256,11 +1295,16 @@ function toPlayerAccountAuthSnapshot(row: PlayerAccountAuthRow): PlayerAccountAu
   }
 
   const credentialBoundAt = formatTimestamp(row.credential_bound_at);
+  const refreshTokenExpiresAt = formatTimestamp(row.refresh_token_expires_at);
   return {
     playerId: normalizePlayerId(row.player_id),
     displayName: normalizePlayerDisplayName(row.player_id, row.display_name),
     loginId: normalizePlayerLoginId(row.login_id),
     passwordHash: row.password_hash,
+    accountSessionVersion: Math.max(0, Math.floor(row.account_session_version ?? 0)),
+    ...(row.refresh_session_id ? { refreshSessionId: row.refresh_session_id } : {}),
+    ...(row.refresh_token_hash ? { refreshTokenHash: row.refresh_token_hash } : {}),
+    ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {})
   };
 }
@@ -1517,6 +1561,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         account_session_version,
+         refresh_session_id,
+         refresh_token_hash,
+         refresh_token_expires_at,
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
@@ -1547,6 +1595,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         account_session_version,
+         refresh_session_id,
+         refresh_token_hash,
+         refresh_token_expires_at,
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
@@ -1660,6 +1712,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         account_session_version,
+         refresh_session_id,
+         refresh_token_hash,
+         refresh_token_expires_at,
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
@@ -1682,6 +1738,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          login_id,
          password_hash,
+         account_session_version,
+         refresh_session_id,
+         refresh_token_hash,
+         refresh_token_expires_at,
          credential_bound_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
        WHERE login_id = ?
@@ -1746,6 +1806,29 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
   }
 
+  async loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const [rows] = await this.pool.query<PlayerAccountAuthRow[]>(
+      `SELECT
+         player_id,
+         display_name,
+         login_id,
+         password_hash,
+         account_session_version,
+         refresh_session_id,
+         refresh_token_hash,
+         refresh_token_expires_at,
+         credential_bound_at
+       FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       WHERE player_id = ?
+       LIMIT 1`,
+      [normalizedPlayerId]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerAccountAuthSnapshot(row) : null;
+  }
+
   async bindPlayerAccountCredentials(
     playerId: string,
     input: PlayerAccountCredentialInput
@@ -1789,6 +1872,68 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         credentialBoundAt
       })
     );
+  }
+
+  async savePlayerAccountAuthSession(
+    playerId: string,
+    input: PlayerAccountAuthSessionInput
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const refreshSessionId = input.refreshSessionId.trim();
+    const refreshTokenHash = input.refreshTokenHash.trim();
+    const refreshTokenExpiresAt = new Date(input.refreshTokenExpiresAt);
+    if (!refreshSessionId) {
+      throw new Error("refreshSessionId must not be empty");
+    }
+    if (!refreshTokenHash) {
+      throw new Error("refreshTokenHash must not be empty");
+    }
+    if (Number.isNaN(refreshTokenExpiresAt.getTime())) {
+      throw new Error("refreshTokenExpiresAt must be a valid ISO timestamp");
+    }
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET account_session_version = account_session_version + 1,
+           refresh_session_id = ?,
+           refresh_token_hash = ?,
+           refresh_token_expires_at = ?,
+           version = version + 1
+       WHERE player_id = ?`,
+      [refreshSessionId, refreshTokenHash, refreshTokenExpiresAt, normalizedPlayerId]
+    );
+
+    return this.loadPlayerAccountAuthByPlayerId(normalizedPlayerId);
+  }
+
+  async revokePlayerAccountAuthSessions(
+    playerId: string,
+    input: PlayerAccountAuthRevokeInput = {}
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const passwordHash = input.passwordHash?.trim() ?? null;
+    const credentialBoundAt = input.credentialBoundAt ? new Date(input.credentialBoundAt) : null;
+    if (input.passwordHash !== undefined && !passwordHash) {
+      throw new Error("passwordHash must not be empty");
+    }
+    if (input.credentialBoundAt !== undefined && (!credentialBoundAt || Number.isNaN(credentialBoundAt.getTime()))) {
+      throw new Error("credentialBoundAt must be a valid ISO timestamp");
+    }
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET account_session_version = account_session_version + 1,
+           refresh_session_id = NULL,
+           refresh_token_hash = NULL,
+           refresh_token_expires_at = NULL,
+           password_hash = COALESCE(?, password_hash),
+           credential_bound_at = COALESCE(?, credential_bound_at),
+           version = version + 1
+       WHERE player_id = ?`,
+      [passwordHash, credentialBoundAt, normalizedPlayerId]
+    );
+
+    return this.loadPlayerAccountAuthByPlayerId(normalizedPlayerId);
   }
 
   async bindPlayerAccountWechatMiniGameIdentity(

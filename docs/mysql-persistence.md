@@ -83,6 +83,10 @@ When loading older snapshots that predate hero progression, the server will back
 | `last_room_id` | `VARCHAR(191)` | Yes | `NULL` | Last room seen for this account |
 | `last_seen_at` | `DATETIME` | Yes | `NULL` | Last known activity timestamp |
 | `login_id` | `VARCHAR(40)` | Yes | `NULL` | Bound login id for credential auth |
+| `account_session_version` | `BIGINT UNSIGNED` | No | `0` | Monotonic account session family version used to revoke access tokens |
+| `refresh_session_id` | `VARCHAR(64)` | Yes | `NULL` | Current active refresh-token family id |
+| `refresh_token_hash` | `VARCHAR(255)` | Yes | `NULL` | Server-side hash of the currently active refresh token |
+| `refresh_token_expires_at` | `DATETIME` | Yes | `NULL` | Expiry timestamp for the active refresh token |
 | `password_hash` | `VARCHAR(255)` | Yes | `NULL` | Stored password hash |
 | `credential_bound_at` | `DATETIME` | Yes | `NULL` | First credential bind time |
 | `version` | `BIGINT UNSIGNED` | No | `1` | Incremented on every upsert |

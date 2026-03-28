@@ -9,6 +9,8 @@ import {
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
   type RoomSnapshotStore,
   type PlayerAccountAuthSnapshot,
+  type PlayerAccountAuthRevokeInput,
+  type PlayerAccountAuthSessionInput,
   type PlayerAccountCredentialInput,
   type PlayerAccountEnsureInput,
   type PlayerAccountListOptions,
@@ -137,6 +139,12 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     return auth ? structuredClone(auth) : null;
   }
 
+  async loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const auth = Array.from(this.authByLoginId.values()).find((item) => item.playerId === normalizedPlayerId);
+    return auth ? structuredClone(auth) : null;
+  }
+
   async loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
     const playerIdSet = new Set(playerIds.map((playerId) => normalizePlayerId(playerId)));
     return Array.from(this.heroArchives.values())
@@ -162,6 +170,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
           : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.accountSessionVersion != null ? { accountSessionVersion: existing.accountSessionVersion } : {}),
+      ...(existing?.refreshSessionId ? { refreshSessionId: existing.refreshSessionId } : {}),
+      ...(existing?.refreshTokenExpiresAt ? { refreshTokenExpiresAt: existing.refreshTokenExpiresAt } : {}),
       ...(existing?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: existing.wechatMiniGameOpenId } : {}),
       ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
@@ -197,9 +208,82 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       displayName: nextAccount.displayName,
       loginId: normalizedLoginId,
       passwordHash: input.passwordHash,
+      accountSessionVersion: existing.accountSessionVersion ?? 0,
       ...(nextAccount.credentialBoundAt ? { credentialBoundAt: nextAccount.credentialBoundAt } : {})
     });
     return cloneAccount(nextAccount);
+  }
+
+  async savePlayerAccountAuthSession(
+    playerId: string,
+    input: PlayerAccountAuthSessionInput
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existing = await this.loadPlayerAccountAuthByPlayerId(normalizedPlayerId);
+    if (!existing) {
+      return null;
+    }
+
+    const nextAuth: PlayerAccountAuthSnapshot = {
+      ...existing,
+      accountSessionVersion: existing.accountSessionVersion + 1,
+      refreshSessionId: input.refreshSessionId.trim(),
+      refreshTokenHash: input.refreshTokenHash.trim(),
+      refreshTokenExpiresAt: new Date(input.refreshTokenExpiresAt).toISOString()
+    };
+    this.authByLoginId.set(existing.loginId, structuredClone(nextAuth));
+
+    const account = this.accounts.get(normalizedPlayerId);
+    if (account) {
+      this.accounts.set(normalizedPlayerId, {
+        ...cloneAccount(account),
+        accountSessionVersion: nextAuth.accountSessionVersion,
+        refreshSessionId: nextAuth.refreshSessionId,
+        refreshTokenExpiresAt: nextAuth.refreshTokenExpiresAt,
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    return structuredClone(nextAuth);
+  }
+
+  async revokePlayerAccountAuthSessions(
+    playerId: string,
+    input: PlayerAccountAuthRevokeInput = {}
+  ): Promise<PlayerAccountAuthSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existing = await this.loadPlayerAccountAuthByPlayerId(normalizedPlayerId);
+    if (!existing) {
+      return null;
+    }
+
+    const nextCredentialBoundAt =
+      input.credentialBoundAt !== undefined ? new Date(input.credentialBoundAt).toISOString() : existing.credentialBoundAt;
+    const nextAuth: PlayerAccountAuthSnapshot = {
+      ...existing,
+      ...(input.passwordHash ? { passwordHash: input.passwordHash } : {}),
+      ...(nextCredentialBoundAt ? { credentialBoundAt: nextCredentialBoundAt } : {}),
+      accountSessionVersion: existing.accountSessionVersion + 1
+    };
+    delete nextAuth.refreshSessionId;
+    delete nextAuth.refreshTokenHash;
+    delete nextAuth.refreshTokenExpiresAt;
+    this.authByLoginId.set(existing.loginId, structuredClone(nextAuth));
+
+    const account = this.accounts.get(normalizedPlayerId);
+    if (account) {
+      const nextAccount: PlayerAccountSnapshot = {
+        ...cloneAccount(account),
+        ...(nextCredentialBoundAt ? { credentialBoundAt: nextCredentialBoundAt } : {}),
+        accountSessionVersion: nextAuth.accountSessionVersion,
+        updatedAt: new Date().toISOString()
+      };
+      delete nextAccount.refreshSessionId;
+      delete nextAccount.refreshTokenExpiresAt;
+      this.accounts.set(normalizedPlayerId, nextAccount);
+    }
+
+    return structuredClone(nextAuth);
   }
 
   async bindPlayerAccountWechatMiniGameIdentity(
@@ -332,6 +416,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         recentEventLog: structuredClone(previous?.recentEventLog ?? account.recentEventLog),
         recentBattleReplays: structuredClone(previous?.recentBattleReplays ?? account.recentBattleReplays ?? []),
         ...(previous?.loginId ? { loginId: previous.loginId } : {}),
+        ...(previous?.accountSessionVersion != null ? { accountSessionVersion: previous.accountSessionVersion } : {}),
+        ...(previous?.refreshSessionId ? { refreshSessionId: previous.refreshSessionId } : {}),
+        ...(previous?.refreshTokenExpiresAt ? { refreshTokenExpiresAt: previous.refreshTokenExpiresAt } : {}),
         ...(previous?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: previous.wechatMiniGameOpenId } : {}),
         ...(previous?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: previous.wechatMiniGameUnionId } : {}),
         ...(previous?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: previous.wechatMiniGameBoundAt } : {}),

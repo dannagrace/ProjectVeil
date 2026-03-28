@@ -15,7 +15,8 @@ import {
   loginCocosWechatAuthSession,
   rememberPreferredCocosDisplayName,
   resolveCocosApiBaseUrl,
-  resolveCocosConfigCenterUrl
+  resolveCocosConfigCenterUrl,
+  syncCurrentCocosAuthSession
 } from "../assets/scripts/cocos-lobby.ts";
 
 test("createCocosLobbyPreferences reuses stored values and falls back to room-alpha", () => {
@@ -705,4 +706,64 @@ test("loadCocosPlayerProgressionSnapshot clears expired auth sessions and falls 
   assert.equal(snapshot.summary.unlockedAchievements, 0);
   assert.deepEqual(snapshot.recentEventLog, []);
   assert.equal(values.has("project-veil:auth-session"), false);
+});
+
+test("syncCurrentCocosAuthSession refreshes an expired access token and persists the rotated session", async () => {
+  const values = new Map<string, string>([
+    [
+      "project-veil:auth-session",
+      JSON.stringify({
+        playerId: "player-1",
+        displayName: "雾林司灯",
+        authMode: "account",
+        loginId: "veil-ranger",
+        provider: "account-password",
+        token: "expired-access",
+        refreshToken: "refresh-token",
+        source: "remote"
+      })
+    ]
+  ]);
+  const storage = {
+    getItem(key: string): string | null {
+      return values.get(key) ?? null;
+    },
+    setItem(key: string, value: string): void {
+      values.set(key, value);
+    },
+    removeItem(key: string): void {
+      values.delete(key);
+    }
+  };
+  const authorizations: string[] = [];
+  let callIndex = 0;
+
+  const session = await syncCurrentCocosAuthSession("http://127.0.0.1:2567", {
+    storage,
+    fetchImpl: async (_input, init) => {
+      authorizations.push((init?.headers as Record<string, string> | undefined)?.Authorization ?? "");
+      callIndex += 1;
+      if (callIndex === 1) {
+        return new Response(JSON.stringify({ error: { code: "token_expired" } }), { status: 401 });
+      }
+      return new Response(
+        JSON.stringify({
+          session: {
+            token: callIndex === 2 ? "fresh-access" : "fresh-access",
+            refreshToken: callIndex === 2 ? "fresh-refresh" : "fresh-refresh",
+            playerId: "player-1",
+            displayName: "雾林司灯",
+            authMode: "account",
+            provider: "account-password",
+            loginId: "veil-ranger"
+          }
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+  });
+
+  assert.equal(session?.token, "fresh-access");
+  assert.equal(session?.refreshToken, "fresh-refresh");
+  assert.deepEqual(authorizations, ["Bearer expired-access", "Bearer refresh-token", "Bearer fresh-access"]);
 });
