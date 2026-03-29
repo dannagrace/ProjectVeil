@@ -66,6 +66,15 @@ export interface BattlePanelViewModel {
   idle: boolean;
 }
 
+export interface BattlePanelSections {
+  stage: BattlePanelStageView | null;
+  orderItems: BattlePanelOrderItem[];
+  friendlyItems: BattlePanelFriendlyItem[];
+  enemyTargets: BattlePanelUnitView[];
+  actions: BattlePanelActionView[];
+  idle: boolean;
+}
+
 export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelViewModel {
   const battle = state.update?.battle;
   if (!battle) {
@@ -173,6 +182,18 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     enemyTargets,
     actions,
     idle: false
+  };
+}
+
+export function buildBattlePanelSections(state: BattlePanelInput): BattlePanelSections {
+  const model = buildBattlePanelViewModel(state);
+  return {
+    stage: model.stage,
+    orderItems: model.orderItems,
+    friendlyItems: model.friendlyItems,
+    enemyTargets: model.enemyTargets,
+    actions: model.actions,
+    idle: model.idle
   };
 }
 
