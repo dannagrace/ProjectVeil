@@ -130,7 +130,7 @@ test("config center validation surfaces legal JSON success and blocks invalid JS
     throw new Error(`Unexpected request: ${request.method} ${request.url}`);
   });
 
-  const controller = createConfigCenterController({ fetch });
+  const controller = createConfigCenterController({ fetch, confirm: () => true });
   controller.state.current = createDocument("world", "{\n  \"width\": 8\n}\n");
   controller.setDraft("{\n  \"width\": 8\n}\n");
 
@@ -237,17 +237,22 @@ test("config center save flow calls the config API with the edited draft body", 
 
 test("config center snapshot diff exposes non-empty changes for an edited field", async () => {
   const { fetch } = createFetchStub((request) => {
-    if (request.url === "/api/config-center/configs/world/diff" && request.method === "POST") {
+  if (request.url === "/api/config-center/configs/world/diff" && request.method === "POST") {
       return new Response(
         JSON.stringify({
           storage: "filesystem",
           diff: {
             entries: [
               {
-                path: "$.width",
+                path: "width",
                 change: "updated",
                 previousValue: "8",
-                nextValue: "10"
+                nextValue: "10",
+                kind: "value",
+                required: true,
+                fieldType: "integer",
+                description: "地图宽度，单位为格子。 | integer · >= 1",
+                blastRadius: ["配置台编辑器"]
               }
             ]
           }
@@ -271,17 +276,44 @@ test("config center snapshot diff exposes non-empty changes for an edited field"
   await controller.loadSnapshotDiff();
 
   assert.equal(controller.state.snapshotDiff?.entries.length, 1);
-  assert.deepEqual(controller.state.snapshotDiff?.entries[0], {
-    path: "$.width",
-    change: "updated",
-    previousValue: "8",
-    nextValue: "10"
-  });
+  const diffEntry = controller.state.snapshotDiff?.entries[0];
+  assert.equal(diffEntry?.path, "width");
+  assert.equal(diffEntry?.kind, "value");
+  assert.equal(diffEntry?.fieldType.includes("integer"), true);
 });
 
 test("config center rollback restores the previous snapshot content", async () => {
   const rolledBackDocument = createDocument("world", "{\n  \"width\": 8,\n  \"height\": 8\n}\n", { version: 2 });
   const { fetch } = createFetchStub((request) => {
+    if (request.url === "/api/config-center/configs/world/diff" && request.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          storage: "filesystem",
+          diff: {
+            entries: [
+              {
+                path: "width",
+                change: "updated",
+                previousValue: "10",
+                nextValue: "8",
+                kind: "value",
+                required: true,
+                fieldType: "integer",
+                description: "地图宽度。",
+                blastRadius: ["配置台编辑器"]
+              }
+            ]
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
     if (request.url === "/api/config-center/configs/world/rollback" && request.method === "POST") {
       return new Response(
         JSON.stringify({
@@ -354,6 +386,59 @@ test("config center rollback restores the previous snapshot content", async () =
   assert.equal(controller.state.current?.content, "{\n  \"width\": 8,\n  \"height\": 8\n}\n");
   assert.equal(controller.state.draft, "{\n  \"width\": 8,\n  \"height\": 8\n}\n");
   assert.equal(controller.state.statusTone, "success");
+});
+
+test("config center rollback requires confirmation before applying structural diffs", async () => {
+  const confirmMessages: string[] = [];
+  const { fetch, requests } = createFetchStub((request) => {
+    if (request.url === "/api/config-center/configs/world/diff" && request.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          storage: "filesystem",
+          diff: {
+            entries: [
+              {
+                path: "heroes[0].position.x",
+                change: "removed",
+                previousValue: "1",
+                nextValue: "",
+                kind: "field_removed",
+                required: true,
+                fieldType: "integer",
+                description: "英雄初始 X 坐标。 | integer · >= 0",
+                blastRadius: ["配置台编辑器", "世界预览"]
+              }
+            ]
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+  });
+
+  const controller = createConfigCenterController({
+    fetch,
+    confirm: (message) => {
+      confirmMessages.push(message);
+      return false;
+    }
+  });
+  controller.state.current = createDocument("world", "{\n  \"width\": 10,\n  \"height\": 8\n}\n");
+
+  await controller.rollbackSnapshot("snapshot-structural");
+
+  assert.equal(confirmMessages.length, 1);
+  assert.match(confirmMessages[0] ?? "", /结构风险|警告/);
+  assert.equal(requests.some((request) => request.url.includes("/rollback")), false);
+  assert.equal(controller.state.statusTone, "neutral");
+  assert.match(controller.state.statusMessage, /取消/);
 });
 
 test("config center builtin presets apply the expected field changes", async () => {

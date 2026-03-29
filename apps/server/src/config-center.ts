@@ -109,11 +109,18 @@ export interface ConfigSnapshotSummary {
   version: number;
 }
 
+export type ConfigDiffChangeKind = "value" | "field_added" | "field_removed" | "type_changed" | "enum_changed";
+
 export interface ConfigDiffEntry {
   path: string;
   change: "added" | "removed" | "updated";
   previousValue: string;
   nextValue: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
 }
 
 export interface ConfigDiff {
@@ -304,6 +311,15 @@ interface JsonSchemaNode {
 const CONFIG_CENTER_LIBRARY_FILE = ".config-center-library.json";
 const BUILTIN_PRESET_IDS = ["easy", "normal", "hard"] as const;
 const CONFIG_SCHEMA_VERSION = "2026-03-26";
+const BASE_VALUE_IMPACT = ["配置台编辑器"];
+const BASE_SCHEMA_IMPACT = ["配置台编辑器", "Schema 校验器"];
+const CONFIG_RUNTIME_IMPACT: Record<ConfigDocumentId, string[]> = {
+  world: ["世界预览", "地图生成器", "房间校验器"],
+  mapObjects: ["地图对象编辑器", "世界预览"],
+  units: ["战斗模拟器", "招募面板"],
+  battleSkills: ["技能编辑器", "战斗模拟器"],
+  battleBalance: ["战斗平衡计算", "PVP 匹配"]
+};
 
 const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
   world: {
@@ -755,37 +771,113 @@ function flattenConfigValue(value: unknown, path = ""): FlattenedConfigEntry[] {
   ];
 }
 
-function buildConfigDiffEntries(previousContent: string, nextContent: string): ConfigDiffEntry[] {
+function isSchemaPathRequired(schema: JsonSchemaNode, path: string): boolean {
+  if (!path) {
+    return false;
+  }
+
+  const segments = parseJsonPath(path);
+  let current: JsonSchemaNode | undefined = schema;
+  let required = false;
+
+  for (const segment of segments) {
+    if (!current) {
+      return false;
+    }
+
+    if (typeof segment === "number") {
+      current = current.items;
+      required = false;
+      continue;
+    }
+
+    required = Boolean(current.required?.includes(segment));
+    current = current.properties?.[segment];
+  }
+
+  return required;
+}
+
+function classifyDiffKind(
+  previousEntry: FlattenedConfigEntry | undefined,
+  nextEntry: FlattenedConfigEntry | undefined,
+  schemaNode: JsonSchemaNode | undefined
+): ConfigDiffChangeKind {
+  if (!previousEntry && nextEntry) {
+    return "field_added";
+  }
+  if (previousEntry && !nextEntry) {
+    return "field_removed";
+  }
+  if (previousEntry && nextEntry && previousEntry.type !== nextEntry.type) {
+    return "type_changed";
+  }
+  if (
+    schemaNode?.enum &&
+    previousEntry &&
+    nextEntry &&
+    previousEntry.jsonValue !== nextEntry.jsonValue
+  ) {
+    return "enum_changed";
+  }
+  return "value";
+}
+
+function buildBlastRadius(id: ConfigDocumentId, kind: ConfigDiffChangeKind): string[] {
+  const base = kind === "value" ? BASE_VALUE_IMPACT : BASE_SCHEMA_IMPACT;
+  const scoped = kind === "value" ? [] : CONFIG_RUNTIME_IMPACT[id] ?? [];
+  return Array.from(new Set([...base, ...scoped]));
+}
+
+function buildConfigDiffEntries(
+  id: ConfigDocumentId,
+  previousContent: string,
+  nextContent: string
+): ConfigDiffEntry[] {
   const previousMap = new Map(
     flattenConfigValue(JSON.parse(previousContent))
       .filter((entry) => entry.path)
-      .map((entry) => [entry.path, entry.jsonValue])
+      .map((entry) => [entry.path, entry])
   );
   const nextMap = new Map(
     flattenConfigValue(JSON.parse(nextContent))
       .filter((entry) => entry.path)
-      .map((entry) => [entry.path, entry.jsonValue])
+      .map((entry) => [entry.path, entry])
   );
+  const schema = CONFIG_DOCUMENT_SCHEMAS[id];
   const allPaths = new Set([...previousMap.keys(), ...nextMap.keys()]);
 
   return [...allPaths]
     .sort((left, right) => left.localeCompare(right))
     .flatMap((path) => {
-      const previousValue = previousMap.get(path);
-      const nextValue = nextMap.get(path);
+      const previousEntry = previousMap.get(path);
+      const nextEntry = nextMap.get(path);
 
-      if (previousValue === nextValue) {
+      if (previousEntry?.jsonValue === nextEntry?.jsonValue) {
         return [];
       }
+
+      const node = schemaNodeForPath(schema, path);
+      const description = node
+        ? describeSchemaPath(schema, path)
+        : "自定义字段，Schema 未定义。";
+      const fieldType = node
+        ? typeLabelForSchema(node)
+        : nextEntry?.type ?? previousEntry?.type ?? "unknown";
+      const kind = classifyDiffKind(previousEntry, nextEntry, node);
 
       return [
         {
           path,
-          change:
-            previousValue == null ? "added" : nextValue == null ? "removed" : "updated",
-          previousValue: previousValue ?? "",
-          nextValue: nextValue ?? ""
-        } satisfies ConfigDiffEntry
+          change: previousEntry == null ? "added" : nextEntry == null ? "removed" : "updated",
+          previousValue: previousEntry?.jsonValue ?? "",
+          nextValue: nextEntry?.jsonValue ?? "",
+          kind,
+          required: isSchemaPathRequired(schema, path),
+          fieldType,
+          description,
+          blastRadius: buildBlastRadius(id, kind)
+        }
       ];
     });
 }
@@ -2307,7 +2399,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
 
     const current = await this.loadDocument(id);
     return {
-      entries: buildConfigDiffEntries(snapshot.content, current.content)
+      entries: buildConfigDiffEntries(id, snapshot.content, current.content)
     };
   }
 
