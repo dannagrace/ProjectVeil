@@ -1,5 +1,13 @@
 import { expect, test } from "@playwright/test";
-import { buildRoomId, openRoom, pressTile, reloadAndExpectRecoveredSession, withSmokeDiagnostics } from "./smoke-helpers";
+import {
+  buildRoomId,
+  expectHeroMoveSpent,
+  fullMoveTextPattern,
+  openRoom,
+  pressTile,
+  reloadAndExpectRecoveredSession,
+  withSmokeDiagnostics
+} from "./smoke-helpers";
 
 const PLAYER_ID = "player-1";
 
@@ -10,16 +18,16 @@ test("page reload restores the remote room session and preserves world state", a
     await openRoom(page, {
       roomId,
       playerId: PLAYER_ID,
-      expectedMoveText: /Move 6\/6/
+      expectedMoveText: fullMoveTextPattern(PLAYER_ID)
     });
 
   await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*0/);
 
   await pressTile(page, 0, 1);
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 5\/6/);
+  await expectHeroMoveSpent(page, 1, PLAYER_ID);
 
   await pressTile(page, 0, 0);
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 4\/6/);
+  await expectHeroMoveSpent(page, 2, PLAYER_ID);
 
   await pressTile(page, 0, 0);
   await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*5/);
@@ -29,7 +37,7 @@ test("page reload restores the remote room session and preserves world state", a
       playerId: PLAYER_ID
     });
 
-    await expect(page.getByTestId("hero-move")).toHaveText(/Move 4\/6/);
+    await expectHeroMoveSpent(page, 2, PLAYER_ID);
     await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*5/);
   });
 });

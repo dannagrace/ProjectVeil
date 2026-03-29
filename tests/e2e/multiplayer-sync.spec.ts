@@ -1,5 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
-import { buildRoomId, openRoom, pressTile, withSmokeDiagnostics } from "./smoke-helpers";
+import {
+  buildRoomId,
+  expectHeroMoveSpent,
+  fullMoveTextPattern,
+  openRoom,
+  pressTile,
+  withSmokeDiagnostics
+} from "./smoke-helpers";
 
 async function hoverTile(page: Page, x: number, y: number): Promise<void> {
   await page.locator(`[data-x="${x}"][data-y="${y}"]`).hover();
@@ -19,25 +26,25 @@ test("second player receives room push updates without leaking another player's 
           openRoom(playerOnePage, {
             roomId,
             playerId: "player-1",
-            expectedMoveText: /Move 6\/6/
+            expectedMoveText: fullMoveTextPattern("player-1")
           }),
           openRoom(playerTwoPage, {
             roomId,
             playerId: "player-2",
-            expectedMoveText: /Move 6\/6/
+            expectedMoveText: fullMoveTextPattern("player-2")
           })
         ]);
       });
 
       await pressTile(playerOnePage, 0, 1);
 
-      await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 5\/6/);
+      await expectHeroMoveSpent(playerOnePage, 1, "player-1");
       await expect(playerTwoPage.getByTestId("event-log")).toContainText("收到房间同步推送", { timeout: 10_000 });
       await expect(playerTwoPage.getByTestId("room-connection-summary")).toContainText("已连接");
       await expect(playerTwoPage.getByTestId("event-log")).not.toContainText("Moved 1 steps");
       await expect(playerTwoPage.getByTestId("event-log")).not.toContainText("Path:");
       await expect(playerTwoPage.getByTestId("timeline-panel")).not.toContainText("英雄完成移动");
-      await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 6\/6/);
+      await expectHeroMoveSpent(playerTwoPage, 0, "player-2");
     });
   } finally {
     await playerOneContext.close();
@@ -59,24 +66,24 @@ test("building ownership changes are pushed to other clients with the same visib
           openRoom(playerOnePage, {
             roomId,
             playerId: "player-1",
-            expectedMoveText: /Move 6\/6/
+            expectedMoveText: fullMoveTextPattern("player-1")
           }),
           openRoom(playerTwoPage, {
             roomId,
             playerId: "player-2",
-            expectedMoveText: /Move 6\/6/
+            expectedMoveText: fullMoveTextPattern("player-2")
           })
         ]);
       });
 
       await pressTile(playerTwoPage, 3, 3);
-      await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
+      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
 
       await hoverTile(playerTwoPage, 3, 1);
       await expect(playerTwoPage.locator(".object-card-copy")).toContainText("当前无人占领");
 
       await pressTile(playerOnePage, 3, 1);
-      await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 4\/6/);
+      await expectHeroMoveSpent(playerOnePage, 2, "player-1");
       await pressTile(playerOnePage, 3, 1);
 
       await expect(playerTwoPage.getByTestId("event-log")).toContainText("收到房间同步推送", { timeout: 10_000 });

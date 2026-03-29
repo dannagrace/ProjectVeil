@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import {
   attackOnce,
   buildRoomId,
+  expectHeroMoveSpent,
+  fullMoveTextPattern,
   openRoom,
   pressTile,
   reloadAndExpectRecoveredSession,
@@ -22,19 +24,19 @@ test("players can reload during a PvP battle and resume from the same turn state
           openRoom(playerOnePage, {
             roomId,
             playerId: "player-1",
-            expectedMoveText: /Move 6\/6/
+            expectedMoveText: fullMoveTextPattern("player-1")
           }),
           openRoom(playerTwoPage, {
             roomId,
             playerId: "player-2",
-            expectedMoveText: /Move 6\/6/
+            expectedMoveText: fullMoveTextPattern("player-2")
           })
         ]);
       });
 
       await test.step("gameplay: collide heroes into the same battle", async () => {
         await pressTile(playerOnePage, 3, 4);
-        await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
+        await expectHeroMoveSpent(playerOnePage, 5, "player-1");
 
         await pressTile(playerTwoPage, 3, 4);
 

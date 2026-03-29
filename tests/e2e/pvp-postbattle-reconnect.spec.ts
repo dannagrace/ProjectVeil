@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import {
   attackOnce,
   buildRoomId,
+  expectHeroMoveSpent,
+  fullMoveTextPattern,
   openRoom,
   pressTile,
   reloadAndExpectRecoveredSession,
@@ -22,19 +24,19 @@ test("players can reload after a PvP battle resolves and keep the settled world 
           openRoom(playerOnePage, {
             roomId,
             playerId: "player-1",
-            expectedMoveText: /Move 6\/6/
+            expectedMoveText: fullMoveTextPattern("player-1")
           }),
           openRoom(playerTwoPage, {
             roomId,
             playerId: "player-2",
-            expectedMoveText: /Move 6\/6/
+            expectedMoveText: fullMoveTextPattern("player-2")
           })
         ]);
       });
 
       await test.step("gameplay: resolve the PvP battle to settlement", async () => {
         await pressTile(playerOnePage, 3, 4);
-        await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
+        await expectHeroMoveSpent(playerOnePage, 5, "player-1");
 
         await pressTile(playerTwoPage, 3, 4);
 
@@ -78,9 +80,9 @@ test("players can reload after a PvP battle resolves and keep the settled world 
       await expect(playerOnePage.getByTestId("battle-empty")).toHaveText(/No active battle/);
       await expect(playerTwoPage.getByTestId("battle-empty")).toHaveText(/No active battle/);
       await expect(playerOnePage.getByTestId("hero-hp")).toHaveText(/HP 30\/30/);
-      await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
+      await expectHeroMoveSpent(playerOnePage, 5, "player-1");
       await expect(playerTwoPage.getByTestId("hero-hp")).toHaveText(/HP 15\/30/);
-      await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
+      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
     });
   } finally {
     await playerOneContext.close();

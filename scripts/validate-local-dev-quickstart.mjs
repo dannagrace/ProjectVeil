@@ -70,6 +70,8 @@ async function main() {
   }
 
   logStep(`using Node ${process.version}`);
+  logStep("validating e2e config fixtures");
+  await runCommand(npmCommand(), ["run", "validate:e2e:fixtures"], "E2E fixture validation");
   logStep("building the H5 debug shell");
   await runCommand(npmCommand(), ["run", "build:client:h5"], "H5 build");
 

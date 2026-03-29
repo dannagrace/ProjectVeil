@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { buildRoomId, expectRoomReady, withSmokeDiagnostics } from "./smoke-helpers";
+import { buildRoomId, expectRoomReady, fullMoveTextPattern, withSmokeDiagnostics } from "./smoke-helpers";
 
 async function expectEnteredRoom(page: Page, roomId: string, playerId?: string): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
@@ -7,7 +7,7 @@ async function expectEnteredRoom(page: Page, roomId: string, playerId?: string):
     await expectRoomReady(page, {
       roomId,
       playerId,
-      expectedMoveText: /Move 6\/6/
+      expectedMoveText: fullMoveTextPattern()
     });
     return;
   }
@@ -16,7 +16,7 @@ async function expectEnteredRoom(page: Page, roomId: string, playerId?: string):
   await expect(page.getByTestId("diagnostic-panel")).toBeVisible();
   await expect(page.getByTestId("diagnostic-connection-status")).toHaveText("已连接");
   await expect(page.getByTestId("room-connection-summary")).toContainText("已连接");
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
+  await expect(page.getByTestId("hero-move")).toHaveText(fullMoveTextPattern(), { timeout: 10_000 });
 }
 
 test("lobby opens and a guest can enter a room", async ({ page }, testInfo) => {
