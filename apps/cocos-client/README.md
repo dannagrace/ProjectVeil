@@ -86,6 +86,7 @@
   - 负责汇总像素图、资源音频和动画交付状态
   - 当前会统一输出 `表现 像素 ... · 音频 ... · 动画 ...` 这条摘要，供 Lobby 画册和 HUD 状态卡复用
   - 也会给出 `待替换 正式像素美术 / 真实 BGM-SFX / Spine Skeleton` 这类后续收口提示
+  - 发布门禁可通过 `npm run check:cocos-release-readiness` 强制要求表现资源达到 release-ready，再串接微信小游戏构建校验
 - `assets/scripts/cocos-audio-runtime.ts`
   - 轻量合成音频运行时
   - 现在会优先加载 `resources/audio/*` 下的 `AudioClip` 占位资源，再回退到波形合成

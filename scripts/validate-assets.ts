@@ -2,7 +2,11 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import assetConfigJson from "../configs/assets.json";
 import cocosPresentationConfigJson from "../configs/cocos-presentation.json";
-import { formatPresentationReadinessSummary, cocosPresentationReadiness } from "../apps/cocos-client/assets/scripts/cocos-presentation-readiness.ts";
+import {
+  formatPresentationReadinessSummary,
+  getCocosPresentationReleaseGate,
+  cocosPresentationReadiness
+} from "../apps/cocos-client/assets/scripts/cocos-presentation-readiness.ts";
 import unitCatalog from "../configs/units.json";
 import {
   collectAssetPaths,
@@ -14,6 +18,7 @@ import {
 const rootDir = process.cwd();
 const publicDir = path.join(rootDir, "apps/client/public");
 const cocosResourceDir = path.join(rootDir, "apps/cocos-client/assets/resources");
+const args = parseArgs(process.argv);
 
 const errors = [...getAssetConfigValidationErrors(assetConfigJson)];
 const assetConfig = parseOrNull();
@@ -25,6 +30,7 @@ if (assetConfig) {
   validateIssue33Dimensions(assetConfig, errors);
   validateCocosPresentationAudioAssets(errors);
   validateCocosPresentationAnimationProfiles(errors);
+  validateCocosReleaseReadiness(errors, args.requireCocosReleaseReady);
 }
 
 if (errors.length > 0) {
@@ -48,6 +54,29 @@ function parseOrNull() {
     return parseAssetConfig(assetConfigJson);
   } catch {
     return null;
+  }
+}
+
+function parseArgs(argv: string[]): { requireCocosReleaseReady: boolean } {
+  let requireCocosReleaseReady = false;
+  for (let index = 2; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--require-cocos-release-ready") {
+      requireCocosReleaseReady = true;
+      continue;
+    }
+    throw new Error(`Unknown argument: ${arg}`);
+  }
+  return { requireCocosReleaseReady };
+}
+
+function validateCocosReleaseReadiness(errors: string[], required: boolean): void {
+  if (!required) {
+    return;
+  }
+  const releaseGate = getCocosPresentationReleaseGate(cocosPresentationReadiness);
+  if (!releaseGate.ready) {
+    errors.push(`Cocos primary client is not release-ready: ${releaseGate.blockers.join(", ")}`);
   }
 }
 

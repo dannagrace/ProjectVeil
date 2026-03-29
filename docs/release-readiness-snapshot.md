@@ -12,7 +12,7 @@ The default automated checks are:
 - `npm run typecheck:ci`
 - `npm run test:e2e:smoke`
 - `npm run test:e2e:multiplayer:smoke`
-- `npm run check:wechat-build`
+- `npm run check:cocos-release-readiness`
 
 For packaged H5 release-candidate validation, run:
 

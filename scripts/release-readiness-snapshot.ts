@@ -99,8 +99,8 @@ const AUTOMATED_CHECKS: Array<Pick<ReleaseReadinessCheck, "id" | "title" | "comm
   },
   {
     id: "wechat-build-check",
-    title: "WeChat build readiness",
-    command: "npm run check:wechat-build",
+    title: "Cocos asset and WeChat build readiness",
+    command: "npm run check:cocos-release-readiness",
     required: true
   }
 ];

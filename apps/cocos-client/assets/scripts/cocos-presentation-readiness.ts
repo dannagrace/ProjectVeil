@@ -32,6 +32,11 @@ export interface CocosPresentationReadiness {
   animation: CocosAnimationReadinessSection;
 }
 
+export interface CocosPresentationReleaseGate {
+  ready: boolean;
+  blockers: string[];
+}
+
 const assetConfig = parseAssetConfig(assetConfigJson);
 
 function resolveReadinessStage(placeholderCount: number, productionCount: number): CocosPresentationReadinessStage {
@@ -126,16 +131,11 @@ function buildAnimationReadiness(): CocosAnimationReadinessSection {
 }
 
 function buildNextStep(pixel: CocosPresentationReadinessSection, audio: CocosPresentationReadinessSection, animation: CocosAnimationReadinessSection): string {
-  const blockers: string[] = [];
-  if (pixel.stage !== "production") {
-    blockers.push("正式像素美术");
-  }
-  if (audio.stage !== "production") {
-    blockers.push("真实 BGM/SFX");
-  }
-  if (animation.deliveryModes.spine < Object.keys(cocosPresentationConfig.animationProfiles).length) {
-    blockers.push("Spine Skeleton");
-  }
+  const blockers = getCocosPresentationReleaseGate({
+    pixel,
+    audio,
+    animation
+  }).blockers;
   return blockers.length > 0 ? `待替换 ${blockers.join(" / ")}` : "已达到正式表现资源阶段";
 }
 
@@ -154,6 +154,29 @@ export function buildCocosPresentationReadiness(): CocosPresentationReadiness {
 
 export function formatPresentationReadinessSummary(readiness: Pick<CocosPresentationReadiness, "pixel" | "audio" | "animation">): string {
   return `${readiness.pixel.shortLabel} · ${readiness.audio.shortLabel} · ${readiness.animation.shortLabel}`;
+}
+
+export function getCocosPresentationReleaseGate(
+  readiness: Pick<CocosPresentationReadiness, "pixel" | "audio" | "animation">
+): CocosPresentationReleaseGate {
+  const blockers: string[] = [];
+  if (readiness.pixel.stage !== "production") {
+    blockers.push("正式像素美术");
+  }
+  if (readiness.audio.stage !== "production") {
+    blockers.push("真实 BGM/SFX");
+  }
+  if (readiness.animation.stage !== "production") {
+    blockers.push("正式动画资产");
+  }
+  if (readiness.animation.deliveryModes.spine < Object.keys(cocosPresentationConfig.animationProfiles).length) {
+    blockers.push("Spine Skeleton");
+  }
+
+  return {
+    ready: blockers.length === 0,
+    blockers
+  };
 }
 
 export const cocosPresentationReadiness = buildCocosPresentationReadiness();
