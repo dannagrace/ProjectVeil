@@ -201,6 +201,9 @@ test("bootstrapH5App keeps the cached session visible and marks boot failure whe
     "render"
   ]);
   assert.equal(state.diagnostics.connectionStatus, "reconnect_failed");
+  assert.equal(state.lobby.displayName, "访客骑士");
+  assert.equal(state.accountDraftName, "访客骑士");
+  assert.equal(state.accountLoginId, "veil-ranger");
   assert.deepEqual(state.log, ["远端会话暂不可用，当前仅展示最近缓存状态。", "old-line"]);
 });
 
@@ -374,4 +377,37 @@ test("registerAutomationHooks wires CI-facing automation helpers and only expose
   assert.equal(devWindow.render_game_to_text?.(), "rendered-dev");
   assert.equal(devWindow.export_diagnostic_snapshot?.(), "diagnostic-dev");
   assert.equal(devWindow.render_diagnostic_snapshot_to_text?.(), "diagnostic-text-dev");
+});
+
+test("registerAutomationHooks removes dev-only debug exports when the same window is re-registered for non-dev boot", async () => {
+  const sharedWindow: {
+    render_game_to_text?: () => string;
+    export_diagnostic_snapshot?: () => string;
+    render_diagnostic_snapshot_to_text?: () => string;
+    advanceTime?: (ms: number) => Promise<void>;
+  } = {};
+
+  registerAutomationHooks({
+    window: sharedWindow,
+    devDiagnosticsEnabled: true,
+    renderGameToText: () => "rendered-dev",
+    exportDiagnosticSnapshot: () => "diagnostic-dev",
+    renderDiagnosticSnapshotToText: () => "diagnostic-text-dev",
+    advanceUiTime: async () => {}
+  });
+  registerAutomationHooks({
+    window: sharedWindow,
+    devDiagnosticsEnabled: false,
+    renderGameToText: () => "rendered-prod",
+    exportDiagnosticSnapshot: () => "diagnostic-prod",
+    renderDiagnosticSnapshotToText: () => "diagnostic-text-prod",
+    advanceUiTime: async (ms) => {
+      assert.equal(ms, 32);
+    }
+  });
+
+  assert.equal(sharedWindow.render_game_to_text?.(), "rendered-prod");
+  assert.equal(sharedWindow.export_diagnostic_snapshot, undefined);
+  assert.equal(sharedWindow.render_diagnostic_snapshot_to_text, undefined);
+  await assert.doesNotReject(async () => sharedWindow.advanceTime?.(32));
 });
