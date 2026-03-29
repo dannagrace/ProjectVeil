@@ -56,6 +56,7 @@
     "test:e2e:multiplayer": "npm run validate:e2e:fixtures && playwright test --config=playwright.multiplayer.config.ts",
     "test:e2e:multiplayer:smoke": "npm run validate:e2e:fixtures && playwright test --config=playwright.multiplayer.smoke.config.ts",
     "test:e2e:multiplayer:headed": "npm run validate:e2e:fixtures && playwright test --config=playwright.multiplayer.config.ts --headed",
+    "smoke:client:release-candidate": "node --import tsx ./scripts/release-candidate-client-artifact-smoke.ts",
     "test:shared": "node --import tsx --test \"packages/shared/test/**/*.test.ts\"",
     "typecheck:ci": "npm run typecheck:shared && npm run typecheck:server && npm run typecheck:client:h5 && npm run typecheck:cocos",
     "typecheck": "tsc -p tsconfig.base.json --noEmit",

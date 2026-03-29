@@ -144,6 +144,7 @@ npm run dev:client:h5
 - 微信小游戏模板刷新：`npm run prepare:wechat-build`
 - 微信小游戏 CI 同款校验：`npm run check:wechat-build`
 - 发布就绪快照：`npm run release:readiness:snapshot`
+- 打包 H5 客户端 RC 冒烟：`npm run smoke:client:release-candidate`
 - 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
 - Issue #33 开源素材 staging 校验：`npm run check:issue33-assets -- --require-pack`
@@ -155,6 +156,7 @@ npm run dev:client:h5
   `window.export_diagnostic_snapshot()` 返回稳定 JSON；
   `window.render_diagnostic_snapshot_to_text()` 返回与面板一致的紧凑文本摘要，便于自动化留档
 - H5 / Lobby Playwright 冒烟：`npm run test:e2e:smoke`
+- 打包 H5 客户端 RC 冒烟会把结构化结果写入 `artifacts/release-readiness/`
 - 多人联机 Playwright 冒烟：`npm run test:e2e:multiplayer:smoke`
 - GitHub Actions `playwright-smoke` 会执行上述两条冒烟回归，并在失败时上传 Playwright trace / screenshot / video 诊断材料
 - MySQL 首次初始化 / 升级：`npm run db:migrate`

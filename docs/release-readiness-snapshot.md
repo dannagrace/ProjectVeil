@@ -12,6 +12,14 @@ The default automated checks are:
 - `npm run test:e2e:multiplayer:smoke`
 - `npm run check:wechat-build`
 
+For packaged H5 release-candidate validation, run:
+
+```bash
+npm run smoke:client:release-candidate
+```
+
+That flow rebuilds `apps/client/dist`, serves the packaged artifact instead of the dev shell, exercises guest login plus cached-session room boot, and writes machine-readable evidence under `artifacts/release-readiness/`. Pass `--output <path>` when CI or a reviewer needs a stable artifact filename.
+
 The snapshot also supports manual gates, so the same file can carry pending or completed human checks such as runtime endpoint review, reconnect evidence, device smoke acceptance, or RC blocker review.
 
 ## Usage

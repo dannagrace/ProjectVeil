@@ -139,12 +139,41 @@ jobs:
       - name: Verify downloaded WeChat release artifact
         run: npm run verify:wechat-release -- --artifacts-dir "${RUNNER_TEMP}/wechat-release-downloaded" --expected-revision "${GITHUB_SHA}"
 
+  client-release-candidate-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run packaged client RC smoke
+        run: npm run smoke:client:release-candidate -- --output "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json"
+
+      - name: Upload packaged client RC smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-release-candidate-smoke-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness
+          if-no-files-found: error
+
   wechat-release-upload:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs:
       - wechat-build-validation
       - wechat-release-artifact-smoke
+      - client-release-candidate-smoke
     if: |
       (github.event_name == 'workflow_dispatch' && github.event.inputs.upload == 'true') ||
       startsWith(github.ref, 'refs/tags/wechat-release-')
