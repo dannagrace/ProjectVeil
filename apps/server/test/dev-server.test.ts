@@ -136,6 +136,14 @@ function createBaseDependencies() {
   };
 }
 
+function assertStartupLogIncludes(logger: TestLogger, patterns: RegExp[]): void {
+  const logOutput = logger.logs.join("\n");
+
+  for (const pattern of patterns) {
+    assert.match(logOutput, pattern);
+  }
+}
+
 async function flushAsyncWork(): Promise<void> {
   await Promise.resolve();
   await new Promise((resolve) => setImmediate(resolve));
@@ -223,8 +231,16 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.deepEqual(base.gameServer.filterByCalls, [["logicalRoomId"]]);
   assert.deepEqual(base.gameServer.listenCalls, [{ port: 3101, host: "0.0.0.0" }]);
   assert.equal(configCenterStore.initializeCalls, 1);
-  assert.match(base.logger.logs.join("\n"), /Config center storage: filesystem/);
-  assert.match(base.logger.logs.join("\n"), /Local in-memory room persistence enabled/);
+  assert.equal(base.logger.warnings.length, 0);
+  assert.equal(base.logger.errors.length, 0);
+  assertStartupLogIncludes(base.logger, [
+    /Project Veil Colyseus dev server listening on ws:\/\/0\.0\.0\.0:3101/,
+    /Runtime health available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/health/,
+    /Auth readiness available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/auth-readiness/,
+    /Runtime metrics available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/metrics/,
+    /Config center storage: filesystem/,
+    /Local in-memory room persistence enabled/
+  ]);
   assert.ok(base.process.handlers.SIGINT);
   assert.ok(base.process.handlers.SIGTERM);
 
@@ -291,8 +307,14 @@ test("dev server falls back to in-memory persistence and warns when schema migra
   assert.equal(mysqlConfigStoreCreated, false);
   assert.equal(configCenterStore.initializeCalls, 1);
   assert.deepEqual(base.logger.warnings, ["pending migration warning"]);
-  assert.match(base.logger.logs.join("\n"), /Config center storage: filesystem/);
-  assert.match(base.logger.logs.join("\n"), /Local in-memory room persistence enabled/);
+  assert.equal(base.logger.errors.length, 0);
+  assertStartupLogIncludes(base.logger, [
+    /Runtime health available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/health/,
+    /Auth readiness available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/auth-readiness/,
+    /Runtime metrics available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/metrics/,
+    /Config center storage: filesystem/,
+    /Local in-memory room persistence enabled/
+  ]);
 });
 
 test("dev server starts MySQL persistence, runs retention cleanup, schedules pruning, and clears the timer on SIGTERM", async () => {
@@ -369,10 +391,16 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
   assert.equal(memoryStoreCreated, false);
   assert.equal(configCenterStore.initializeCalls, 1);
   assert.equal(mysqlStore.pruneCalls, 1);
-  assert.match(base.logger.logs.join("\n"), /Config center storage: mysql/);
-  assert.match(base.logger.logs.join("\n"), /MySQL room persistence enabled/);
-  assert.match(base.logger.logs.join("\n"), /Snapshot retention: ttl=48h \/ cleanup=15m/);
-  assert.match(base.logger.logs.join("\n"), /Pruned 2 expired room snapshot\(s\)/);
+  assert.equal(base.logger.warnings.length, 0);
+  assertStartupLogIncludes(base.logger, [
+    /Runtime health available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/health/,
+    /Auth readiness available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/auth-readiness/,
+    /Runtime metrics available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/metrics/,
+    /Config center storage: mysql/,
+    /MySQL room persistence enabled/,
+    /Snapshot retention: ttl=48h \/ cleanup=15m/,
+    /Pruned 2 expired room snapshot\(s\)/
+  ]);
   assert.equal(scheduledTimers.length, 1);
   assert.equal(scheduledTimers[0]?.delayMs, 15 * 60 * 1000);
   assert.equal(scheduledTimers[0]?.unrefCalls, 1);
