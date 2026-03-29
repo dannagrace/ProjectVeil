@@ -6,6 +6,7 @@ import {
   VeilCocosSession
 } from "../assets/scripts/VeilCocosSession.ts";
 import {
+  createRawStateReply,
   createMemoryStorage,
   createSdkLoader,
   createSessionUpdate,
@@ -15,6 +16,40 @@ import {
 afterEach(() => {
   resetVeilCocosSessionRuntimeForTests();
 });
+
+function encodeBytes(values: number[]): string {
+  return Buffer.from(Uint8Array.from(values)).toString("base64");
+}
+
+function createEncodedStatePayload(options?: {
+  bounds?: { x: number; y: number; width: number; height: number };
+  terrain?: number[];
+  fog?: number[];
+  walkable?: number[];
+}) {
+  const update = createSessionUpdate(1);
+  return {
+    world: {
+      ...update.world,
+      map: {
+        width: update.world.map.width,
+        height: update.world.map.height,
+        encodedTiles: {
+          format: "typed-array-v1",
+          terrain: encodeBytes(options?.terrain ?? [0, 1, 2, 0]),
+          fog: encodeBytes(options?.fog ?? [2, 1, 0, 2]),
+          walkable: encodeBytes(options?.walkable ?? [1, 1, 1, 1]),
+          overlays: [],
+          ...(options?.bounds ? { bounds: options.bounds } : {})
+        }
+      }
+    },
+    battle: null,
+    events: [],
+    movementPlan: null,
+    reachableTiles: [{ x: 0, y: 0 }]
+  };
+}
 
 test("VeilCocosSession reuses a stored reconnection token and announces recovery", async () => {
   const storage = createMemoryStorage();
@@ -83,6 +118,33 @@ test("VeilCocosSession persists local snapshot replay data from live snapshots a
   await session.dispose();
 });
 
+test("VeilCocosSession reports reconnect lifecycle transitions from the active room", async () => {
+  const storage = createMemoryStorage();
+  const room = new FakeColyseusRoom([createSessionUpdate(3)], "reconnect-token");
+  const events: string[] = [];
+
+  setVeilCocosSessionRuntimeForTests({
+    storage,
+    loadSdk: createSdkLoader({
+      joinRooms: [room]
+    })
+  });
+
+  const session = await VeilCocosSession.create("room-alpha", "player-1", 1001, {
+    onConnectionEvent: (event) => {
+      events.push(event);
+    }
+  });
+
+  await session.snapshot();
+  room.emitDrop();
+  room.emitReconnect();
+
+  assert.deepEqual(events, ["reconnecting", "reconnected"]);
+
+  await session.dispose();
+});
+
 test("VeilCocosSession hands off to a fresh room after reconnect failure and replays a recovery snapshot", async () => {
   const storage = createMemoryStorage();
   const initialRoom = new FakeColyseusRoom([createSessionUpdate(1)], "initial-token");
@@ -124,6 +186,64 @@ test("VeilCocosSession hands off to a fresh room after reconnect failure and rep
     { logicalRoomId: "room-alpha", playerId: "player-1", seed: 1001 }
   ]);
   assert.equal(storage.getItem("project-veil:cocos:reconnection:room-alpha:player-1"), "recovered-token");
+
+  await session.dispose();
+});
+
+test("VeilCocosSession rejects malformed encoded room snapshots", async () => {
+  const storage = createMemoryStorage();
+  const room = new FakeColyseusRoom(
+    [
+      createRawStateReply(
+        createEncodedStatePayload({
+          terrain: [0, 1, 2]
+        })
+      )
+    ],
+    "reconnect-token"
+  );
+
+  setVeilCocosSessionRuntimeForTests({
+    storage,
+    loadSdk: createSdkLoader({
+      joinRooms: [room]
+    })
+  });
+
+  const session = await VeilCocosSession.create("room-alpha", "player-1", 1001);
+
+  await assert.rejects(() => session.snapshot(), /invalid_player_world_view_encoding_length/);
+  assert.equal(VeilCocosSession.readStoredReplay("room-alpha", "player-1"), null);
+
+  await session.dispose();
+});
+
+test("VeilCocosSession rejects delta room snapshots before it has an authoritative base", async () => {
+  const storage = createMemoryStorage();
+  const room = new FakeColyseusRoom(
+    [
+      createRawStateReply(
+        createEncodedStatePayload({
+          bounds: { x: 0, y: 0, width: 1, height: 1 },
+          terrain: [0],
+          fog: [2],
+          walkable: [1]
+        })
+      )
+    ],
+    "reconnect-token"
+  );
+
+  setVeilCocosSessionRuntimeForTests({
+    storage,
+    loadSdk: createSdkLoader({
+      joinRooms: [room]
+    })
+  });
+
+  const session = await VeilCocosSession.create("room-alpha", "player-1", 1001);
+
+  await assert.rejects(() => session.snapshot(), /missing_player_world_view_base/);
 
   await session.dispose();
 });

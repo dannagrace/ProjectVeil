@@ -1,5 +1,17 @@
 import type { SessionUpdate } from "../../assets/scripts/VeilCocosSession.ts";
 
+type FakeRoomReply =
+  | SessionUpdate
+  | {
+      kind: "state";
+      payload: unknown;
+      delivery?: "reply" | "push";
+    }
+  | {
+      kind: "error";
+      reason: string;
+    };
+
 export function createMemoryStorage(): Storage {
   const values = new Map<string, string>();
   return {
@@ -146,18 +158,33 @@ export function toSessionStatePayload(update: SessionUpdate) {
   };
 }
 
+export function createRawStateReply(payload: unknown, delivery: "reply" | "push" = "reply"): FakeRoomReply {
+  return {
+    kind: "state",
+    payload,
+    delivery
+  };
+}
+
+export function createErrorReply(reason: string): FakeRoomReply {
+  return {
+    kind: "error",
+    reason
+  };
+}
+
 type MessageHandler = (type: string, payload: unknown) => void;
 
 export class FakeColyseusRoom {
   reconnectionToken?: string;
   readonly sentMessages: Array<{ type: string; payload: unknown }> = [];
-  readonly connectReplies: SessionUpdate[];
+  readonly connectReplies: FakeRoomReply[];
   private messageHandler: MessageHandler | null = null;
   private dropHandler: (() => void) | null = null;
   private reconnectHandler: (() => void) | null = null;
   private leaveHandler: ((code: number) => void) | null = null;
 
-  constructor(connectReplies: SessionUpdate[], reconnectionToken?: string) {
+  constructor(connectReplies: FakeRoomReply[], reconnectionToken?: string) {
     this.connectReplies = [...connectReplies];
     this.reconnectionToken = reconnectionToken;
   }
@@ -190,21 +217,38 @@ export class FakeColyseusRoom {
         throw new Error("missing_connect_reply");
       }
 
-      this.messageHandler?.("session.state", {
-        type: "session.state",
-        requestId: payload.requestId,
-        delivery: "reply",
-        payload: toSessionStatePayload(reply)
-      });
+      if ("kind" in reply) {
+        if (reply.kind === "error") {
+          this.emitError(payload.requestId, reply.reason);
+          return;
+        }
+
+        this.emitState(reply.payload, reply.delivery ?? "reply", payload.requestId);
+        return;
+      }
+
+      this.emitState(toSessionStatePayload(reply), "reply", payload.requestId);
     }
   }
 
   emitPush(update: SessionUpdate): void {
+    this.emitState(toSessionStatePayload(update), "push", "push-1");
+  }
+
+  emitState(payload: unknown, delivery: "reply" | "push" = "push", requestId = "push-1"): void {
     this.messageHandler?.("session.state", {
       type: "session.state",
-      requestId: "push-1",
-      delivery: "push",
-      payload: toSessionStatePayload(update)
+      requestId,
+      delivery,
+      payload
+    });
+  }
+
+  emitError(requestId: string, reason: string): void {
+    this.messageHandler?.("error", {
+      type: "error",
+      requestId,
+      reason
     });
   }
 

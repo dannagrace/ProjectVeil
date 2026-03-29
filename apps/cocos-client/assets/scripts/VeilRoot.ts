@@ -2626,6 +2626,14 @@ export class VeilRoot extends Component {
       return "房间会话已失效，请点击刷新状态恢复。";
     }
 
+    if (
+      error.message === "unsupported_player_world_view_encoding" ||
+      error.message === "invalid_player_world_view_encoding_length" ||
+      error.message === "missing_player_world_view_base"
+    ) {
+      return "房间状态损坏，请重建房间或检查服务端同步。";
+    }
+
     return error.message || fallback;
   }
 
