@@ -37,6 +37,10 @@ interface AuthObservabilityCounters {
   tokenDeliveryDeadLettersTotal: number;
 }
 
+interface MatchmakingObservabilityCounters {
+  rateLimitedTotal: number;
+}
+
 type AuthSessionFailureReason = "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked";
 type AuthTokenDeliveryFailureReason = "misconfigured" | "timeout" | "network" | "webhook_4xx" | "webhook_429" | "webhook_5xx";
 type AuthTokenDeliveryAttemptStatus = "disabled" | "dev-token" | "delivered" | "retry_scheduled" | "dead-lettered";
@@ -75,6 +79,9 @@ interface RuntimeObservabilityState {
   rooms: Map<string, RuntimeRoomSnapshot>;
   counters: RuntimeObservabilityCounters;
   auth: AuthObservabilityState;
+  matchmaking: {
+    counters: MatchmakingObservabilityCounters;
+  };
 }
 
 interface RuntimeHealthPayload {
@@ -116,6 +123,9 @@ interface RuntimeHealthPayload {
         >;
         failureReasons: Record<AuthTokenDeliveryFailureReason, number>;
       };
+    };
+    matchmaking: {
+      counters: MatchmakingObservabilityCounters;
     };
   };
 }
@@ -195,6 +205,11 @@ const runtimeObservability: RuntimeObservabilityState = {
       webhook_5xx: 0
     },
     tokenDeliveryRecentAttempts: []
+  },
+  matchmaking: {
+    counters: {
+      rateLimitedTotal: 0
+    }
   }
 };
 
@@ -265,6 +280,9 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
           },
           failureReasons: { ...runtimeObservability.auth.tokenDeliveryFailureReasons }
         }
+      },
+      matchmaking: {
+        counters: { ...runtimeObservability.matchmaking.counters }
       }
     }
   };
@@ -406,7 +424,8 @@ function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): Runtim
       logTail: [
         `service ${service} rooms=${health.runtime.activeRoomCount} connections=${health.runtime.connectionCount}`,
         `traffic connect=${health.runtime.gameplayTraffic.connectMessagesTotal} world=${health.runtime.gameplayTraffic.worldActionsTotal} battle=${health.runtime.gameplayTraffic.battleActionsTotal}`,
-        `auth guest=${health.runtime.auth.activeGuestSessionCount} account=${health.runtime.auth.activeAccountSessionCount} queue=${health.runtime.auth.tokenDelivery.queueCount}`
+        `auth guest=${health.runtime.auth.activeGuestSessionCount} account=${health.runtime.auth.activeAccountSessionCount} queue=${health.runtime.auth.tokenDelivery.queueCount} rateLimited=${health.runtime.auth.counters.rateLimitedTotal}`,
+        `matchmaking rateLimited=${health.runtime.matchmaking.counters.rateLimitedTotal}`
       ],
       recoverySummary: null,
       predictionStatus: "server-observability",
@@ -489,6 +508,9 @@ function buildMetricsDocument(): string {
     "# HELP veil_auth_rate_limited_total Total auth requests rejected by rate limiting.",
     "# TYPE veil_auth_rate_limited_total counter",
     `veil_auth_rate_limited_total ${health.runtime.auth.counters.rateLimitedTotal}`,
+    "# HELP veil_matchmaking_rate_limited_total Total matchmaking requests rejected by rate limiting.",
+    "# TYPE veil_matchmaking_rate_limited_total counter",
+    `veil_matchmaking_rate_limited_total ${health.runtime.matchmaking.counters.rateLimitedTotal}`,
     "# HELP veil_auth_invalid_credentials_total Total auth requests rejected for invalid credentials.",
     "# TYPE veil_auth_invalid_credentials_total counter",
     `veil_auth_invalid_credentials_total ${health.runtime.auth.counters.invalidCredentialsTotal}`,
@@ -651,6 +673,10 @@ export function recordAuthRateLimited(): void {
   runtimeObservability.auth.counters.rateLimitedTotal += 1;
 }
 
+export function recordMatchmakingRateLimited(): void {
+  runtimeObservability.matchmaking.counters.rateLimitedTotal += 1;
+}
+
 export function recordAuthInvalidCredentials(): void {
   runtimeObservability.auth.counters.invalidCredentialsTotal += 1;
 }
@@ -745,6 +771,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_429 = 0;
   runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_5xx = 0;
   runtimeObservability.auth.tokenDeliveryRecentAttempts.length = 0;
+  runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
 }
 
 export function registerRuntimeObservabilityRoutes(

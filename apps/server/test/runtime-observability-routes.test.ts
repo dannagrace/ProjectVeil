@@ -5,7 +5,11 @@ import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
 import { resetAccountTokenDeliveryState } from "../src/account-token-delivery";
 import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../src/colyseus-room";
-import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
+import {
+  recordMatchmakingRateLimited,
+  registerRuntimeObservabilityRoutes,
+  resetRuntimeObservability
+} from "../src/observability";
 
 async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -112,6 +116,8 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   );
 
   await wait(100);
+  recordMatchmakingRateLimited();
+  recordMatchmakingRateLimited();
 
   const healthResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/health`);
   const healthPayload = (await healthResponse.json()) as {
@@ -133,6 +139,11 @@ test("runtime observability routes expose live room counts and gameplay traffic"
           sessionChecksTotal: number;
         };
       };
+      matchmaking: {
+        counters: {
+          rateLimitedTotal: number;
+        };
+      };
     };
   };
 
@@ -148,6 +159,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(healthPayload.runtime.auth.activeGuestSessionCount, 0);
   assert.equal(healthPayload.runtime.auth.activeAccountSessionCount, 0);
   assert.equal(healthPayload.runtime.auth.counters.sessionChecksTotal, 0);
+  assert.equal(healthPayload.runtime.matchmaking.counters.rateLimitedTotal, 2);
 
   const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`);
   const readinessPayload = (await readinessResponse.json()) as {
@@ -216,4 +228,5 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(metricsText, /^veil_auth_guest_sessions 0$/m);
   assert.match(metricsText, /^veil_auth_account_sessions 0$/m);
   assert.match(metricsText, /^veil_auth_session_checks_total 0$/m);
+  assert.match(metricsText, /^veil_matchmaking_rate_limited_total 2$/m);
 });

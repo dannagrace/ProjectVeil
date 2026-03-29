@@ -10,9 +10,24 @@ import {
   type MatchmakingRequest
 } from "../../../packages/shared/src/index";
 import { validateAuthSessionFromRequest } from "./auth";
+import { recordMatchmakingRateLimited } from "./observability";
 import type { RoomSnapshotStore } from "./persistence";
 
 export const DEFAULT_MATCHMAKING_QUEUE_TTL_SECONDS = 5 * 60;
+const DEFAULT_RATE_LIMIT_MATCHMAKING_WINDOW_MS = 60_000;
+const DEFAULT_RATE_LIMIT_MATCHMAKING_MAX = 30;
+
+interface MatchmakingRuntimeConfig {
+  rateLimitWindowMs: number;
+  rateLimitMax: number;
+}
+
+interface RateLimitResult {
+  allowed: boolean;
+  retryAfterSeconds?: number;
+}
+
+const matchmakingRateLimitCounters = new Map<string, number[]>();
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -25,6 +40,99 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
     code: error instanceof Error ? error.name || "error" : "error",
     message: error instanceof Error ? error.message : String(error)
   };
+}
+
+function nowMs(): number {
+  return Date.now();
+}
+
+function parseEnvNumber(
+  value: string | undefined,
+  fallback: number,
+  options: { minimum?: number; integer?: boolean } = {}
+): number {
+  const parsed = Number(value?.trim());
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const normalized = options.integer ? Math.floor(parsed) : parsed;
+  if (options.minimum != null && normalized < options.minimum) {
+    return fallback;
+  }
+
+  return normalized;
+}
+
+function readMatchmakingRuntimeConfig(env: NodeJS.ProcessEnv = process.env): MatchmakingRuntimeConfig {
+  return {
+    rateLimitWindowMs: parseEnvNumber(
+      env.VEIL_RATE_LIMIT_MATCHMAKING_WINDOW_MS,
+      DEFAULT_RATE_LIMIT_MATCHMAKING_WINDOW_MS,
+      {
+        minimum: 1,
+        integer: true
+      }
+    ),
+    rateLimitMax: parseEnvNumber(env.VEIL_RATE_LIMIT_MATCHMAKING_MAX, DEFAULT_RATE_LIMIT_MATCHMAKING_MAX, {
+      minimum: 1,
+      integer: true
+    })
+  };
+}
+
+function readHeaderValue(value: string | string[] | undefined): string | null {
+  return Array.isArray(value) ? value[0]?.trim() || null : value?.trim() || null;
+}
+
+function readHeaderCsvValue(value: string | string[] | undefined): string | null {
+  const headerValue = readHeaderValue(value);
+  return headerValue?.split(",")[0]?.trim() || null;
+}
+
+function resolveRequestIp(request: Pick<IncomingMessage, "headers" | "socket">): string {
+  const forwardedFor = readHeaderCsvValue(request.headers["x-forwarded-for"]);
+  const rawIp = forwardedFor || request.socket.remoteAddress?.trim() || "unknown";
+  return rawIp.startsWith("::ffff:") ? rawIp.slice("::ffff:".length) : rawIp;
+}
+
+function consumeSlidingWindowRateLimit(key: string, config = readMatchmakingRuntimeConfig()): RateLimitResult {
+  const currentTime = nowMs();
+  const windowStart = currentTime - config.rateLimitWindowMs;
+  const timestamps = (matchmakingRateLimitCounters.get(key) ?? []).filter((timestamp) => timestamp > windowStart);
+  if (timestamps.length >= config.rateLimitMax) {
+    matchmakingRateLimitCounters.set(key, timestamps);
+    const oldestTimestamp = timestamps[0] ?? currentTime;
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(1, Math.ceil((oldestTimestamp + config.rateLimitWindowMs - currentTime) / 1000))
+    };
+  }
+
+  timestamps.push(currentTime);
+  matchmakingRateLimitCounters.set(key, timestamps);
+  return { allowed: true };
+}
+
+function enforceMatchmakingRateLimit(
+  request: Pick<IncomingMessage, "headers" | "socket">,
+  response: ServerResponse,
+  endpointKey: string
+): boolean {
+  const rateLimitResult = consumeSlidingWindowRateLimit(`${endpointKey}:${resolveRequestIp(request)}`);
+  if (rateLimitResult.allowed) {
+    return true;
+  }
+
+  recordMatchmakingRateLimited();
+  response.setHeader("Retry-After", String(rateLimitResult.retryAfterSeconds ?? 1));
+  sendJson(response, 429, {
+    error: {
+      code: "rate_limited",
+      message: "Too many matchmaking requests, please retry later"
+    }
+  });
+  return false;
 }
 
 async function requireAuthSession(
@@ -201,6 +309,7 @@ let configuredMatchmakingService = new MatchmakingService();
 
 export function resetMatchmakingService(): void {
   configuredMatchmakingService = new MatchmakingService();
+  matchmakingRateLimitCounters.clear();
 }
 
 export function registerMatchmakingRoutes(
@@ -234,6 +343,10 @@ export function registerMatchmakingRoutes(
   });
 
   app.post("/api/matchmaking/enqueue", async (request, response) => {
+    if (!enforceMatchmakingRateLimit(request, response, "enqueue")) {
+      return;
+    }
+
     if (queueTtlMs > 0) {
       service.pruneStaleEntries(queueTtlMs);
     }
@@ -283,7 +396,11 @@ export function registerMatchmakingRoutes(
     }
   });
 
-  app.delete("/api/matchmaking/dequeue", async (request, response) => {
+  const cancelHandler = async (request: IncomingMessage, response: ServerResponse) => {
+    if (!enforceMatchmakingRateLimit(request, response, "cancel")) {
+      return;
+    }
+
     const authSession = await requireAuthSession(request, response, options.store);
     if (!authSession) {
       return;
@@ -296,9 +413,16 @@ export function registerMatchmakingRoutes(
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
-  });
+  };
+
+  app.delete("/api/matchmaking/cancel", cancelHandler);
+  app.delete("/api/matchmaking/dequeue", cancelHandler);
 
   app.get("/api/matchmaking/status", async (request, response) => {
+    if (!enforceMatchmakingRateLimit(request, response, "status")) {
+      return;
+    }
+
     const authSession = await requireAuthSession(request, response, options.store);
     if (!authSession) {
       return;
