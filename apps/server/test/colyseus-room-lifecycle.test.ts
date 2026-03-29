@@ -175,6 +175,8 @@ test("client reconnect within the window restores room state and records reconne
 
   assert.equal(internalRoom.playerIdBySessionId.has("session-original"), false);
   assert.equal(internalRoom.playerIdBySessionId.get("session-reconnected"), "player-1");
+  assert.equal(listLobbyRooms().filter((entry) => entry.roomId === room.roomId).length, 1);
+  assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 1);
 
   const reconnectState = lastSessionState(reconnectedClient, "push");
   assert.deepEqual(reconnectState.payload.world.ownHeroes[0]?.position, { x: 2, y: 1 });
@@ -293,6 +295,36 @@ test("simultaneous rooms keep seeded world state isolated", async (t) => {
   assert.equal(internalRoomB.worldRoom.getInternalState().meta.seed, 2002);
   assert.deepEqual(lastSessionState(clientA, "reply").payload.world.ownHeroes[0]?.position, { x: 2, y: 1 });
   assert.deepEqual(lastSessionState(clientB, "reply").payload.world.ownHeroes[0]?.position, { x: 1, y: 1 });
+});
+
+test("disposing one registered room preserves the other room summary", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const roomA = await createTestRoom(`lifecycle-registry-a-${Date.now()}`, 1001);
+  const roomB = await createTestRoom(`lifecycle-registry-b-${Date.now()}`, 2002);
+
+  t.after(() => {
+    cleanupRoom(roomA);
+    cleanupRoom(roomB);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  assert.deepEqual(
+    listLobbyRooms()
+      .map((entry) => entry.roomId)
+      .sort(),
+    [roomA.roomId, roomB.roomId].sort()
+  );
+
+  roomA.onDispose();
+
+  const remainingRooms = listLobbyRooms();
+  assert.deepEqual(
+    remainingRooms.map((entry) => entry.roomId),
+    [roomB.roomId]
+  );
+  assert.equal(remainingRooms[0]?.seed, 2002);
 });
 
 test("room at maxClients capacity rejects a new join reservation", async (t) => {
