@@ -11,6 +11,7 @@ interface Args {
   wechatRcValidationPath?: string;
   wechatSmokeReportPath?: string;
   wechatArtifactsDir?: string;
+  configCenterLibraryPath?: string;
   outputPath?: string;
   markdownOutputPath?: string;
 }
@@ -90,6 +91,68 @@ interface GateResult {
   source?: GateSource;
 }
 
+type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
+type ConfigRiskLevel = "low" | "medium" | "high";
+
+interface ConfigDiffEntry {
+  path: string;
+  kind?: "value" | "field_added" | "field_removed" | "type_changed" | "enum_changed";
+  blastRadius?: string[];
+}
+
+interface ConfigPublishAuditChange {
+  documentId: ConfigDocumentId;
+  title?: string;
+  changeCount?: number;
+  structuralChangeCount?: number;
+  diffSummary?: ConfigDiffEntry[];
+}
+
+interface ConfigPublishAuditEvent {
+  id: string;
+  author?: string;
+  summary?: string;
+  publishedAt: string;
+  resultStatus?: "applied" | "failed";
+  changes?: ConfigPublishAuditChange[];
+}
+
+interface ConfigCenterLibraryState {
+  publishAuditHistory?: ConfigPublishAuditEvent[];
+}
+
+interface ConfigRiskChangeSummary {
+  documentId: ConfigDocumentId;
+  title: string;
+  riskLevel: ConfigRiskLevel;
+  reason: string;
+  changeCount: number;
+  structuralChangeCount: number;
+  impactedModules: string[];
+  suggestedValidationActions: string[];
+  highlightedPaths: string[];
+  recommendCanary: boolean;
+  recommendRehearsal: boolean;
+}
+
+interface ConfigChangeRiskSummary {
+  status: "available" | "missing";
+  summary: string;
+  source?: {
+    path: string;
+    publishId: string;
+    publishedAt: string;
+    author: string;
+    releaseSummary: string;
+  };
+  overallRisk?: ConfigRiskLevel;
+  recommendCanary?: boolean;
+  recommendRehearsal?: boolean;
+  impactedModules?: string[];
+  suggestedValidationActions?: string[];
+  changes?: ConfigRiskChangeSummary[];
+}
+
 interface ReleaseGateSummaryReport {
   schemaVersion: 1;
   generatedAt: string;
@@ -107,12 +170,99 @@ interface ReleaseGateSummaryReport {
     wechatRcValidationPath?: string;
     wechatSmokeReportPath?: string;
     wechatArtifactsDir?: string;
+    configCenterLibraryPath?: string;
   };
   gates: GateResult[];
+  configChangeRisk: ConfigChangeRiskSummary;
 }
 
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
 const DEFAULT_WECHAT_ARTIFACTS_DIR = path.resolve("artifacts", "wechat-release");
+const DEFAULT_CONFIG_CENTER_LIBRARY_PATH = path.resolve("configs", ".config-center-library.json");
+const RISK_PRIORITY: Record<ConfigRiskLevel, number> = {
+  low: 1,
+  medium: 2,
+  high: 3
+};
+const CONFIG_TITLE_BY_ID: Record<ConfigDocumentId, string> = {
+  world: "World generation",
+  mapObjects: "Map objects",
+  units: "Units",
+  battleSkills: "Battle skills",
+  battleBalance: "Battle balance"
+};
+const CONFIG_RISK_RULES: Record<
+  ConfigDocumentId,
+  {
+    defaultRisk: ConfigRiskLevel;
+    title: string;
+    impactedModules: string[];
+    suggestedValidationActions: string[];
+    recommendCanary: boolean;
+    recommendRehearsal: boolean;
+  }
+> = {
+  world: {
+    defaultRisk: "high",
+    title: "World generation",
+    impactedModules: ["地图生成", "英雄出生点", "资源分布"],
+    suggestedValidationActions: [
+      "config-center 地图预览: 核对 seed 下地形/资源/出生点分布",
+      "npm run release:readiness:snapshot",
+      "npm run smoke:client:release-candidate"
+    ],
+    recommendCanary: true,
+    recommendRehearsal: true
+  },
+  mapObjects: {
+    defaultRisk: "medium",
+    title: "Map objects",
+    impactedModules: ["地图 POI", "招募库存", "资源矿收益"],
+    suggestedValidationActions: [
+      "config-center 地图预览: 核对建筑/守军/资源点布局",
+      "npm run release:readiness:snapshot",
+      "npm run smoke:client:release-candidate"
+    ],
+    recommendCanary: true,
+    recommendRehearsal: false
+  },
+  units: {
+    defaultRisk: "medium",
+    title: "Units",
+    impactedModules: ["单位数值", "招募库存", "战斗节奏"],
+    suggestedValidationActions: [
+      "npm run validate:content-pack",
+      "npm run validate:battle",
+      "npm run smoke:client:release-candidate"
+    ],
+    recommendCanary: true,
+    recommendRehearsal: false
+  },
+  battleSkills: {
+    defaultRisk: "high",
+    title: "Battle skills",
+    impactedModules: ["战斗技能", "状态效果", "伤害结算"],
+    suggestedValidationActions: [
+      "npm run validate:content-pack",
+      "npm run validate:battle",
+      "npm run smoke:client:release-candidate"
+    ],
+    recommendCanary: true,
+    recommendRehearsal: true
+  },
+  battleBalance: {
+    defaultRisk: "high",
+    title: "Battle balance",
+    impactedModules: ["战斗公式", "环境机关", "PVP ELO"],
+    suggestedValidationActions: [
+      "npm run validate:battle",
+      "npm run release:readiness:snapshot",
+      "npm run smoke:client:release-candidate"
+    ],
+    recommendCanary: true,
+    recommendRehearsal: true
+  }
+};
 
 function fail(message: string): never {
   throw new Error(message);
@@ -124,6 +274,7 @@ function parseArgs(argv: string[]): Args {
   let wechatRcValidationPath: string | undefined;
   let wechatSmokeReportPath: string | undefined;
   let wechatArtifactsDir: string | undefined;
+  let configCenterLibraryPath: string | undefined;
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
 
@@ -156,6 +307,11 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--config-center-library" && next) {
+      configCenterLibraryPath = next;
+      index += 1;
+      continue;
+    }
     if (arg === "--output" && next) {
       outputPath = next;
       index += 1;
@@ -176,6 +332,7 @@ function parseArgs(argv: string[]): Args {
     ...(wechatRcValidationPath ? { wechatRcValidationPath } : {}),
     ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
+    ...(configCenterLibraryPath ? { configCenterLibraryPath } : {}),
     ...(outputPath ? { outputPath } : {}),
     ...(markdownOutputPath ? { markdownOutputPath } : {})
   };
@@ -256,6 +413,13 @@ function resolveWechatSmokeReportPath(args: Args, wechatArtifactsDir?: string): 
     return undefined;
   }
   const candidate = path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json");
+  return fs.existsSync(candidate) ? candidate : undefined;
+}
+
+function resolveConfigCenterLibraryPath(args: Args): string | undefined {
+  const candidate = args.configCenterLibraryPath
+    ? path.resolve(args.configCenterLibraryPath)
+    : DEFAULT_CONFIG_CENTER_LIBRARY_PATH;
   return fs.existsSync(candidate) ? candidate : undefined;
 }
 
@@ -455,12 +619,140 @@ export function evaluateWechatGate(
   };
 }
 
+function uniqueStrings(items: Iterable<string>): string[] {
+  return Array.from(new Set([...items].filter((value) => value.length > 0)));
+}
+
+function maxRiskLevel(levels: Iterable<ConfigRiskLevel>): ConfigRiskLevel {
+  let highest: ConfigRiskLevel = "low";
+  for (const level of levels) {
+    if (RISK_PRIORITY[level] > RISK_PRIORITY[highest]) {
+      highest = level;
+    }
+  }
+  return highest;
+}
+
+function summarizeRiskReason(change: ConfigPublishAuditChange, riskLevel: ConfigRiskLevel): string {
+  const pathHints = uniqueStrings((change.diffSummary ?? []).map((entry) => entry.path)).slice(0, 3);
+  const parts = [`${change.changeCount ?? 0} 项变更`];
+  if ((change.structuralChangeCount ?? 0) > 0) {
+    parts.push(`${change.structuralChangeCount} 项结构变更`);
+  }
+  if (pathHints.length > 0) {
+    parts.push(`关注字段: ${pathHints.join(", ")}`);
+  }
+  if (riskLevel === "high" && (change.structuralChangeCount ?? 0) === 0) {
+    parts.push("命中高敏感配置域");
+  }
+  return parts.join("；");
+}
+
+function classifyConfigRisk(change: ConfigPublishAuditChange): ConfigRiskChangeSummary {
+  const rule = CONFIG_RISK_RULES[change.documentId];
+  const highlightedPaths = uniqueStrings((change.diffSummary ?? []).map((entry) => entry.path)).slice(0, 4);
+  const blastRadius = uniqueStrings((change.diffSummary ?? []).flatMap((entry) => entry.blastRadius ?? []));
+  const changeCount = change.changeCount ?? 0;
+  const structuralChangeCount = change.structuralChangeCount ?? 0;
+  let riskLevel = rule.defaultRisk;
+
+  if (change.documentId === "mapObjects") {
+    const highSignal = highlightedPaths.some((entry) =>
+      /(buildings|neutralArmies|guaranteedResources|reward|recruitCount|income|unitTemplateId)/.test(entry)
+    );
+    if (highSignal || structuralChangeCount > 0 || changeCount >= 8) {
+      riskLevel = "high";
+    }
+  } else if (change.documentId === "units") {
+    const highSignal = highlightedPaths.some((entry) =>
+      /(attack|defense|minDamage|maxDamage|maxHp|initiative|skills|templateId)/.test(entry)
+    );
+    if (highSignal || structuralChangeCount > 0 || changeCount >= 10) {
+      riskLevel = "high";
+    }
+  } else if (
+    (change.documentId === "battleSkills" || change.documentId === "battleBalance" || change.documentId === "world") &&
+    changeCount > 0
+  ) {
+    riskLevel = "high";
+  }
+
+  return {
+    documentId: change.documentId,
+    title: change.title ?? rule.title ?? CONFIG_TITLE_BY_ID[change.documentId],
+    riskLevel,
+    reason: summarizeRiskReason(change, riskLevel),
+    changeCount,
+    structuralChangeCount,
+    impactedModules: uniqueStrings([...rule.impactedModules, ...blastRadius]),
+    suggestedValidationActions: [...rule.suggestedValidationActions],
+    highlightedPaths,
+    recommendCanary: rule.recommendCanary || structuralChangeCount > 0,
+    recommendRehearsal: rule.recommendRehearsal || structuralChangeCount > 0
+  };
+}
+
+export function buildConfigChangeRiskSummary(configCenterLibraryPath: string | undefined): ConfigChangeRiskSummary {
+  if (!configCenterLibraryPath || !fs.existsSync(configCenterLibraryPath)) {
+    return {
+      status: "missing",
+      summary: "Config-center publish audit not found; config risk summary unavailable."
+    };
+  }
+
+  const state = readJsonFile<ConfigCenterLibraryState>(configCenterLibraryPath);
+  const publishEvent = (state.publishAuditHistory ?? []).find((entry) => entry.resultStatus === "applied");
+  if (!publishEvent || (publishEvent.changes ?? []).length === 0) {
+    return {
+      status: "missing",
+      summary: "No applied config-center publish event found; config risk summary unavailable."
+    };
+  }
+
+  const changes = (publishEvent.changes ?? [])
+    .filter((change): change is ConfigPublishAuditChange => change.documentId in CONFIG_RISK_RULES)
+    .map((change) => classifyConfigRisk(change))
+    .sort((left, right) => RISK_PRIORITY[right.riskLevel] - RISK_PRIORITY[left.riskLevel]);
+
+  if (changes.length === 0) {
+    return {
+      status: "missing",
+      summary: "Latest applied config publish did not touch tracked release-gated config documents."
+    };
+  }
+
+  const overallRisk = maxRiskLevel(changes.map((change) => change.riskLevel));
+  const recommendCanary = changes.some((change) => change.recommendCanary);
+  const recommendRehearsal = changes.some((change) => change.recommendRehearsal);
+  const impactedModules = uniqueStrings(changes.flatMap((change) => change.impactedModules));
+  const suggestedValidationActions = uniqueStrings(changes.flatMap((change) => change.suggestedValidationActions));
+
+  return {
+    status: "available",
+    summary: `${changes.length} 个配置文档变更，最高风险 ${overallRisk.toUpperCase()}。`,
+    source: {
+      path: configCenterLibraryPath,
+      publishId: publishEvent.id,
+      publishedAt: publishEvent.publishedAt,
+      author: publishEvent.author ?? "unknown",
+      releaseSummary: publishEvent.summary ?? ""
+    },
+    overallRisk,
+    recommendCanary,
+    recommendRehearsal,
+    impactedModules,
+    suggestedValidationActions,
+    changes
+  };
+}
+
 export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision): ReleaseGateSummaryReport {
   const snapshotPath = resolveSnapshotPath(args);
   const h5SmokePath = resolveH5SmokePath(args);
   const wechatArtifactsDir = resolveWechatArtifactsDir(args);
   const wechatRcValidationPath = resolveWechatRcValidationPath(args, wechatArtifactsDir);
   const wechatSmokeReportPath = resolveWechatSmokeReportPath(args, wechatArtifactsDir);
+  const configCenterLibraryPath = resolveConfigCenterLibraryPath(args);
 
   const gates = [
     evaluateReleaseReadinessGate(snapshotPath),
@@ -485,9 +777,11 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
       ...(h5SmokePath ? { h5SmokePath } : {}),
       ...(wechatRcValidationPath ? { wechatRcValidationPath } : {}),
       ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
-      ...(wechatArtifactsDir ? { wechatArtifactsDir } : {})
+      ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
+      ...(configCenterLibraryPath ? { configCenterLibraryPath } : {})
     },
-    gates
+    gates,
+    configChangeRisk: buildConfigChangeRiskSummary(configCenterLibraryPath)
   };
 }
 
@@ -517,6 +811,37 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
     }
     lines.push("");
   }
+
+  lines.push("## Config Change Risk Summary");
+  lines.push("");
+  lines.push(`- Status: ${report.configChangeRisk.summary}`);
+  if (report.configChangeRisk.source) {
+    lines.push(
+      `- Source: \`${path.relative(process.cwd(), report.configChangeRisk.source.path).replace(/\\/g, "/")}\``
+    );
+    lines.push(`- Config publish: \`${report.configChangeRisk.source.publishId}\` by \`${report.configChangeRisk.source.author}\``);
+    lines.push(`- Published at: \`${report.configChangeRisk.source.publishedAt}\``);
+    if (report.configChangeRisk.source.releaseSummary) {
+      lines.push(`- Publish summary: ${report.configChangeRisk.source.releaseSummary}`);
+    }
+  }
+  if (report.configChangeRisk.status === "available") {
+    lines.push(`- Overall risk: **${report.configChangeRisk.overallRisk?.toUpperCase()}**`);
+    lines.push(
+      `- Recommend gray release / canary: ${report.configChangeRisk.recommendCanary ? "yes" : "no"}`
+    );
+    lines.push(`- Recommend rehearsal: ${report.configChangeRisk.recommendRehearsal ? "yes" : "no"}`);
+    lines.push(`- Impacted modules: ${(report.configChangeRisk.impactedModules ?? []).join(", ")}`);
+    lines.push(`- Suggested validation: ${(report.configChangeRisk.suggestedValidationActions ?? []).join(" | ")}`);
+    lines.push("- Changes:");
+    for (const change of report.configChangeRisk.changes ?? []) {
+      const pathSummary = change.highlightedPaths.length > 0 ? ` | 字段: ${change.highlightedPaths.join(", ")}` : "";
+      lines.push(
+        `  - ${change.documentId} [${change.riskLevel.toUpperCase()}]: ${change.reason}${pathSummary}`
+      );
+    }
+  }
+  lines.push("");
 
   return `${lines.join("\n").trim()}\n`;
 }
