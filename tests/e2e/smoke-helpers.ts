@@ -1,4 +1,5 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { getHeroMoveTotal } from "./config-fixtures";
 
 const CLIENT_BASE_URL = "http://127.0.0.1:4173";
 const SERVER_DIAGNOSTICS_URL = "http://127.0.0.1:2567/api/runtime/diagnostic-snapshot?format=text";
@@ -19,6 +20,26 @@ function encodeRoomQuery(roomId: string, playerId: string): string {
 
 export function buildRoomId(prefix: string): string {
   return `${prefix}-${Date.now()}`;
+}
+
+export function moveTextPattern(remaining: number, playerId = "player-1"): RegExp {
+  return new RegExp(`^Move\\s*${remaining}\\/${getHeroMoveTotal(playerId)}$`);
+}
+
+export function fullMoveTextPattern(playerId = "player-1"): RegExp {
+  return moveTextPattern(getHeroMoveTotal(playerId), playerId);
+}
+
+export function moveRemainingAfterSpend(spent: number, playerId = "player-1"): number {
+  return getHeroMoveTotal(playerId) - spent;
+}
+
+export async function expectHeroMove(page: Page, remaining: number, playerId = "player-1"): Promise<void> {
+  await expect(page.getByTestId("hero-move")).toHaveText(moveTextPattern(remaining, playerId), { timeout: 10_000 });
+}
+
+export async function expectHeroMoveSpent(page: Page, spent: number, playerId = "player-1"): Promise<void> {
+  await expectHeroMove(page, moveRemainingAfterSpend(spent, playerId), playerId);
 }
 
 export async function pressTile(page: Page, x: number, y: number): Promise<void> {

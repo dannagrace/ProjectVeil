@@ -1,10 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-
-async function pressTile(page: Page, x: number, y: number): Promise<void> {
-  await page.locator(`[data-x="${x}"][data-y="${y}"]`).dispatchEvent("pointerdown", {
-    button: 0
-  });
-}
+import { getHeroMoveTotal, getNeutralBattleReward, getNeutralBattleRewardText } from "./config-fixtures";
+import { expectHeroMove, pressTile } from "./smoke-helpers";
 
 async function attackUntilResolved(page: Page, maxAttacks = 6): Promise<void> {
   for (let index = 0; index < maxAttacks; index += 1) {
@@ -33,7 +29,7 @@ test("hero can clear a neutral battle and receive the reward", async ({ page }) 
   const roomId = `e2e-battle-${Date.now()}`;
   await page.goto(`/?roomId=${roomId}&playerId=player-1`);
 
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
+  await expectHeroMove(page, getHeroMoveTotal());
   await expect(page.getByTestId("battle-empty")).toHaveText(/No active battle/);
 
   await pressTile(page, 5, 4);
@@ -44,6 +40,6 @@ test("hero can clear a neutral battle and receive the reward", async ({ page }) 
   await attackUntilResolved(page);
 
   await expect(page.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
-  await expect(page.getByTestId("battle-modal-body")).toContainText("gold +300");
-  await expect(page.getByTestId("stat-gold")).toHaveText(/Gold\s*300/);
+  await expect(page.getByTestId("battle-modal-body")).toContainText(getNeutralBattleRewardText());
+  await expect(page.getByTestId("stat-gold")).toHaveText(new RegExp(`Gold\\s*${getNeutralBattleReward().amount}`));
 });

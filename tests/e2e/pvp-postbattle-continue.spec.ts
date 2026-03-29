@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import {
   attackOnce,
   buildRoomId,
+  expectHeroMoveSpent,
+  fullMoveTextPattern,
   openRoom,
   pressTile,
   reloadAndExpectRecoveredSession,
@@ -22,19 +24,19 @@ test("winner can keep moving after a reloaded PvP settlement while loser stays l
           openRoom(playerOnePage, {
             roomId,
             playerId: "player-1",
-            expectedMoveText: /Move 6\/6/
+            expectedMoveText: fullMoveTextPattern("player-1")
           }),
           openRoom(playerTwoPage, {
             roomId,
             playerId: "player-2",
-            expectedMoveText: /Move 6\/6/
+            expectedMoveText: fullMoveTextPattern("player-2")
           })
         ]);
       });
 
       await test.step("gameplay: resolve the battle before settlement reload", async () => {
         await pressTile(playerOnePage, 3, 4);
-        await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
+        await expectHeroMoveSpent(playerOnePage, 5, "player-1");
 
         await pressTile(playerTwoPage, 3, 4);
 
@@ -59,14 +61,14 @@ test("winner can keep moving after a reloaded PvP settlement while loser stays l
         })
       ]);
 
-      await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
-      await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
+      await expectHeroMoveSpent(playerOnePage, 5, "player-1");
+      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
 
       await pressTile(playerOnePage, 2, 4);
-      await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
+      await expectHeroMoveSpent(playerOnePage, 6, "player-1");
 
       await pressTile(playerTwoPage, 2, 5);
-      await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
+      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
       await expect(playerTwoPage.getByTestId("event-log")).toContainText("Action rejected: not_enough_move_points");
     });
   } finally {

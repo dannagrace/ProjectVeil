@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { getHeroMoveTotal } from "./config-fixtures";
+import { expectHeroMove } from "./smoke-helpers";
 
 interface DiagnosticSnapshot {
   schemaVersion: number;
@@ -27,7 +29,7 @@ test("developer diagnostics panel exports a compact gameplay snapshot", async ({
   const roomId = `e2e-diagnostic-${Date.now()}`;
   await page.goto(`/?roomId=${roomId}&playerId=player-1`);
 
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
+  await expectHeroMove(page, getHeroMoveTotal());
   await expect(page.getByTestId("diagnostic-panel")).toBeVisible();
   await expect(page.getByTestId("diagnostic-connection-status")).toHaveText("已连接");
   await expect(page.getByTestId("diagnostic-alert-list")).toContainText("链路稳定");

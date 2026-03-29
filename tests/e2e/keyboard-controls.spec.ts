@@ -1,4 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
+import {
+  getHeroMoveTotal,
+  getMineClaimLogText,
+  getMineIncome,
+  getNeutralBattleReward,
+  getNeutralBattleRewardText
+} from "./config-fixtures";
+import { expectHeroMove, expectHeroMoveSpent } from "./smoke-helpers";
 
 interface AutomationState {
   keyboardCursor?: {
@@ -52,19 +60,19 @@ test("keyboard shortcuts can collect wood, claim a mine, and end the day", async
   const roomId = `e2e-keyboard-world-${Date.now()}`;
   await page.goto(`/?roomId=${roomId}&playerId=player-1`);
 
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
+  await expectHeroMove(page, getHeroMoveTotal());
 
   await expect.poll(async () => (await readAutomationState(page)).keyboardCursor).toEqual({ x: 1, y: 1 });
 
   await pressKey(page, "ArrowLeft");
   await expect.poll(async () => (await readAutomationState(page)).keyboardCursor).toEqual({ x: 0, y: 1 });
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 5\/6/);
+  await expectHeroMoveSpent(page, 1);
 
   await pressKey(page, "ArrowUp");
   await expect.poll(async () => (await readAutomationState(page)).keyboardCursor).toEqual({ x: 0, y: 0 });
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 4\/6/);
+  await expectHeroMoveSpent(page, 2);
 
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*5/);
@@ -74,25 +82,25 @@ test("keyboard shortcuts can collect wood, claim a mine, and end the day", async
   await expect.poll(async () => (await readAutomationState(page)).keyboardCursor).toEqual({ x: 3, y: 1 });
 
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
+  await expectHeroMoveSpent(page, 6);
 
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*10/);
-  await expect(page.getByTestId("event-log")).toContainText("Claimed mine: 木材 +5/天");
+  await expect(page.getByTestId("stat-wood")).toHaveText(new RegExp(`Wood\\s*${5 + getMineIncome()}`));
+  await expect(page.getByTestId("event-log")).toContainText(getMineClaimLogText());
 
   await page.keyboard.press("b");
   await expect(page.getByTestId("stat-day")).toHaveText(/2/);
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 6\/6/);
+  await expectHeroMove(page, getHeroMoveTotal());
 
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*15/);
+  await expect(page.getByTestId("stat-wood")).toHaveText(new RegExp(`Wood\\s*${5 + getMineIncome() * 2}`));
 });
 
 test("keyboard shortcuts can enter battle, attack, and close the victory modal", async ({ page }) => {
   const roomId = `e2e-keyboard-battle-${Date.now()}`;
   await page.goto(`/?roomId=${roomId}&playerId=player-1`);
 
-  await expect(page.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
+  await expectHeroMove(page, getHeroMoveTotal());
 
   await pressKey(page, "ArrowRight", 4);
   await pressKey(page, "ArrowDown", 3);
@@ -104,9 +112,9 @@ test("keyboard shortcuts can enter battle, attack, and close the victory modal",
   await attackUntilResolvedByKeyboard(page);
 
   await expect(page.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
-  await expect(page.getByTestId("battle-modal-body")).toContainText("gold +300");
+  await expect(page.getByTestId("battle-modal-body")).toContainText(getNeutralBattleRewardText());
   await page.keyboard.press("Enter");
 
   await expect(page.getByTestId("battle-modal")).toBeHidden();
-  await expect(page.getByTestId("stat-gold")).toHaveText(/Gold\s*300/);
+  await expect(page.getByTestId("stat-gold")).toHaveText(new RegExp(`Gold\\s*${getNeutralBattleReward().amount}`));
 });
