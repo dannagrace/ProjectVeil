@@ -340,9 +340,11 @@ test("registerAutomationHooks wires CI-facing automation helpers and only expose
   const prodWindow: {
     render_game_to_text?: () => string;
     export_diagnostic_snapshot?: () => string;
+    render_diagnostic_snapshot_to_text?: () => string;
     advanceTime?: (ms: number) => Promise<void>;
   } = {
-    export_diagnostic_snapshot: () => "stale"
+    export_diagnostic_snapshot: () => "stale",
+    render_diagnostic_snapshot_to_text: () => "stale-text"
   };
   const devWindow: typeof prodWindow = {};
 
@@ -351,6 +353,7 @@ test("registerAutomationHooks wires CI-facing automation helpers and only expose
     devDiagnosticsEnabled: false,
     renderGameToText: () => "rendered",
     exportDiagnosticSnapshot: () => "diagnostic",
+    renderDiagnosticSnapshotToText: () => "diagnostic-text",
     advanceUiTime: async (ms) => {
       assert.equal(ms, 16);
     }
@@ -360,12 +363,15 @@ test("registerAutomationHooks wires CI-facing automation helpers and only expose
     devDiagnosticsEnabled: true,
     renderGameToText: () => "rendered-dev",
     exportDiagnosticSnapshot: () => "diagnostic-dev",
+    renderDiagnosticSnapshotToText: () => "diagnostic-text-dev",
     advanceUiTime: async () => {}
   });
 
   assert.equal(prodWindow.render_game_to_text?.(), "rendered");
   assert.equal(prodWindow.export_diagnostic_snapshot, undefined);
+  assert.equal(prodWindow.render_diagnostic_snapshot_to_text, undefined);
   await assert.doesNotReject(async () => prodWindow.advanceTime?.(16));
   assert.equal(devWindow.render_game_to_text?.(), "rendered-dev");
   assert.equal(devWindow.export_diagnostic_snapshot?.(), "diagnostic-dev");
+  assert.equal(devWindow.render_diagnostic_snapshot_to_text?.(), "diagnostic-text-dev");
 });

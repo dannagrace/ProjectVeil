@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { serializeRuntimeDiagnosticsSnapshot, type PlayerBattleReplaySummary } from "../../../packages/shared/src/index";
+import {
+  renderRuntimeDiagnosticsSnapshotText,
+  serializeRuntimeDiagnosticsSnapshot,
+  type PlayerBattleReplaySummary
+} from "../../../packages/shared/src/index";
 import { buildH5RuntimeDiagnosticsSnapshot } from "../src/runtime-diagnostics";
 import type { PlayerAccountProfile } from "../src/player-account";
 
@@ -250,4 +254,9 @@ test("buildH5RuntimeDiagnosticsSnapshot creates a stable export payload for dev 
   assert.match(serialized, /"surface": "h5-debug-shell"/);
   assert.match(serialized, /"reachableTileCount": 2/);
   assert.match(serialized, /"predictionStatus": null/);
+
+  const summary = renderRuntimeDiagnosticsSnapshotText(snapshot);
+  assert.match(summary, /Room room-alpha \/ Player player-1 \/ Sync connected/);
+  assert.match(summary, /Resources gold=150 wood=10 ore=4/);
+  assert.match(summary, /Events battle.started, battle.resolved/);
 });

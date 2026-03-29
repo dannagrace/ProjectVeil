@@ -151,6 +151,9 @@ npm run dev:client:h5
 - H5 调试壳开发服务：`npm run dev:client:h5`
 - H5 调试壳构建验证：`npm run build:client:h5`
 - H5 调试壳类型检查：`npm run typecheck:client:h5`
+- H5 开发态诊断导出：
+  `window.export_diagnostic_snapshot()` 返回稳定 JSON；
+  `window.render_diagnostic_snapshot_to_text()` 返回与面板一致的紧凑文本摘要，便于自动化留档
 - H5 / Lobby Playwright 冒烟：`npm run test:e2e:smoke`
 - 多人联机 Playwright 冒烟：`npm run test:e2e:multiplayer:smoke`
 - GitHub Actions `playwright-smoke` 会执行上述两条冒烟回归，并在失败时上传 Playwright trace / screenshot / video 诊断材料

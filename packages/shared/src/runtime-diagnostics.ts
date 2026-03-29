@@ -116,6 +116,82 @@ export interface RuntimeDiagnosticsSnapshot {
   };
 }
 
+export function buildRuntimeDiagnosticsSummaryLines(snapshot: RuntimeDiagnosticsSnapshot): string[] {
+  const lines = [
+    `Mode ${snapshot.source.mode} (${snapshot.source.surface})`,
+    `Room ${snapshot.room.roomId} / Player ${snapshot.room.playerId} / Sync ${snapshot.room.connectionStatus}`
+  ];
+
+  if (snapshot.room.day != null) {
+    lines.push(`Day ${snapshot.room.day}`);
+  }
+
+  if (snapshot.room.lastUpdateSource || snapshot.room.lastUpdateReason || snapshot.room.lastUpdateAt) {
+    const updateParts = [
+      snapshot.room.lastUpdateSource ? `source=${snapshot.room.lastUpdateSource}` : null,
+      snapshot.room.lastUpdateReason ? `reason=${snapshot.room.lastUpdateReason}` : null,
+      snapshot.room.lastUpdateAt ? `at=${snapshot.room.lastUpdateAt}` : null
+    ].filter((value): value is string => value != null);
+
+    lines.push(`Last update ${updateParts.join(" / ")}`);
+  }
+
+  if (snapshot.world) {
+    lines.push(
+      `World ${snapshot.world.map.width}x${snapshot.world.map.height} / visible ${snapshot.world.map.visibleTileCount} / reachable ${snapshot.world.map.reachableTileCount}`
+    );
+    lines.push(
+      `Resources gold=${snapshot.world.resources.gold} wood=${snapshot.world.resources.wood} ore=${snapshot.world.resources.ore}`
+    );
+
+    if (snapshot.world.hero) {
+      lines.push(
+        `Hero ${snapshot.world.hero.name} @ ${snapshot.world.hero.position.x},${snapshot.world.hero.position.y} / MOV ${snapshot.world.hero.move.remaining}/${snapshot.world.hero.move.total} / HP ${snapshot.world.hero.stats.hp}/${snapshot.world.hero.stats.maxHp}`
+      );
+    }
+  }
+
+  if (snapshot.battle) {
+    lines.push(
+      `Battle ${snapshot.battle.id} / round ${snapshot.battle.round} / units ${snapshot.battle.unitCount} / environment ${snapshot.battle.environmentCount}`
+    );
+  }
+
+  lines.push(
+    `Account ${snapshot.account.displayName} (${snapshot.account.source}) / events ${snapshot.account.recentEventCount} / replays ${snapshot.account.recentReplayCount}`
+  );
+
+  if (snapshot.diagnostics.eventTypes.length > 0) {
+    lines.push(`Events ${snapshot.diagnostics.eventTypes.join(", ")}`);
+  }
+
+  if (snapshot.diagnostics.predictionStatus) {
+    lines.push(`Prediction ${snapshot.diagnostics.predictionStatus}`);
+  }
+
+  lines.push(`Pending UI tasks ${snapshot.diagnostics.pendingUiTasks}`);
+
+  if (snapshot.diagnostics.replay) {
+    lines.push(
+      `Replay ${snapshot.diagnostics.replay.replayId} / ${snapshot.diagnostics.replay.status} / step ${snapshot.diagnostics.replay.currentStepIndex}/${snapshot.diagnostics.replay.totalSteps}`
+    );
+  }
+
+  for (const entry of snapshot.diagnostics.timelineTail.slice(0, 3)) {
+    lines.push(`Timeline [${entry.source}/${entry.tone}] ${entry.text}`);
+  }
+
+  for (const line of snapshot.diagnostics.logTail.slice(0, 3)) {
+    lines.push(`Log ${line}`);
+  }
+
+  return lines;
+}
+
+export function renderRuntimeDiagnosticsSnapshotText(snapshot: RuntimeDiagnosticsSnapshot): string {
+  return buildRuntimeDiagnosticsSummaryLines(snapshot).join("\n");
+}
+
 export function serializeRuntimeDiagnosticsSnapshot(snapshot: RuntimeDiagnosticsSnapshot): string {
   return JSON.stringify(snapshot, null, 2);
 }

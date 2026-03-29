@@ -1,5 +1,6 @@
 import "./styles.css";
 import {
+  renderRuntimeDiagnosticsSnapshotText,
   createBattleReplayPlaybackState,
   createHeroSkillTreeView,
   createHeroAttributeBreakdown,
@@ -107,6 +108,7 @@ declare global {
   interface Window {
     render_game_to_text?: () => string;
     export_diagnostic_snapshot?: () => string;
+    render_diagnostic_snapshot_to_text?: () => string;
     advanceTime?: (ms: number) => Promise<void>;
   }
 }
@@ -423,6 +425,10 @@ function exportDiagnosticSnapshot(): string {
   return serializeRuntimeDiagnosticsSnapshot(buildDiagnosticSnapshot());
 }
 
+function renderDiagnosticSnapshotToText(): string {
+  return renderRuntimeDiagnosticsSnapshotText(buildDiagnosticSnapshot());
+}
+
 function sanitizeSnapshotFileSegment(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
   return normalized || "unknown";
@@ -454,6 +460,7 @@ function renderDiagnosticPanel(): string {
   }
 
   const hero = activeHero();
+  const snapshotSummary = escapeHtml(renderDiagnosticSnapshotToText());
 
   return `
     <div class="log-panel diagnostics-panel" data-testid="diagnostic-panel">
@@ -486,6 +493,7 @@ function renderDiagnosticPanel(): string {
           <p class="muted">${escapeHtml(`${state.account.source} · replays ${state.account.recentBattleReplays.length} · events ${state.account.recentEventLog.length}`)}</p>
         </div>
       </div>
+      <pre class="diagnostics-summary" data-testid="diagnostic-summary">${snapshotSummary}</pre>
       <p class="muted diagnostics-export-status" data-testid="diagnostic-export-status">${escapeHtml(state.diagnostics.exportStatus)}</p>
     </div>
   `;
@@ -4778,10 +4786,11 @@ async function onBindAccountProfile(): Promise<void> {
 }
 
 void bootstrap();
-registerAutomationHooks({
-  window,
-  devDiagnosticsEnabled: DEV_DIAGNOSTICS_ENABLED,
-  renderGameToText,
-  exportDiagnosticSnapshot,
-  advanceUiTime
-});
+  registerAutomationHooks({
+    window,
+    devDiagnosticsEnabled: DEV_DIAGNOSTICS_ENABLED,
+    renderGameToText,
+    exportDiagnosticSnapshot,
+    renderDiagnosticSnapshotToText,
+    advanceUiTime
+  });
