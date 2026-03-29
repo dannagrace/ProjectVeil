@@ -373,6 +373,13 @@ function createBuildingState(config: MapObjectsConfig["buildings"][number]): Map
     };
   }
 
+  if (config.kind === "watchtower") {
+    return {
+      ...config,
+      position: { ...config.position }
+    };
+  }
+
   return {
     ...config,
     position: { ...config.position }
@@ -506,6 +513,16 @@ function clonePlayerBuildingView(building: MapBuildingState): PlayerBuildingView
     };
   }
 
+  if (building.kind === "watchtower") {
+    return {
+      id: building.id,
+      kind: building.kind,
+      label: building.label,
+      visionBonus: building.visionBonus,
+      ...(typeof building.lastUsedDay === "number" ? { lastUsedDay: building.lastUsedDay } : {})
+    };
+  }
+
   return {
     id: building.id,
     kind: building.kind,
@@ -530,6 +547,13 @@ function cloneBuildingState(building: MapBuildingState): MapBuildingState {
       ...building,
       position: { ...building.position },
       bonus: cloneHeroStatBonus(building.bonus)
+    };
+  }
+
+  if (building.kind === "watchtower") {
+    return {
+      ...building,
+      position: { ...building.position }
     };
   }
 
@@ -566,6 +590,13 @@ function applyHeroStatBonus(hero: HeroState, bonus: HeroStatBonus): HeroState {
       power: hero.stats.power + bonus.power,
       knowledge: hero.stats.knowledge + bonus.knowledge
     }
+  };
+}
+
+function applyHeroVisionBonus(hero: HeroState, visionBonus: number): HeroState {
+  return {
+    ...hero,
+    vision: hero.vision + visionBonus
   };
 }
 
@@ -1678,7 +1709,7 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
       };
     }
 
-    if (tile.building.kind !== "attribute_shrine") {
+    if (tile.building.kind !== "attribute_shrine" && tile.building.kind !== "watchtower") {
       return {
         world: view,
         movementPlan: null,
@@ -1699,18 +1730,24 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
 
     const predictedWorld: PlayerWorldView = {
       ...view,
-      ownHeroes: view.ownHeroes.map((item) =>
-        item.id === hero.id ? applyHeroStatBonus(item, building.bonus) : item
-      ),
+      ownHeroes: view.ownHeroes.map((item) => {
+        if (item.id !== hero.id) {
+          return item;
+        }
+
+        return building.kind === "attribute_shrine"
+          ? applyHeroStatBonus(item, building.bonus)
+          : applyHeroVisionBonus(item, building.visionBonus);
+      }),
       map: {
         ...view.map,
         tiles: view.map.tiles.map((item) =>
-          samePosition(item.position, hero.position) && item.building?.kind === "attribute_shrine"
+          samePosition(item.position, hero.position) &&
+          (item.building?.kind === "attribute_shrine" || item.building?.kind === "watchtower")
             ? {
                 ...item,
                 building: {
                   ...item.building,
-                  bonus: cloneHeroStatBonus(item.building.bonus),
                   lastUsedDay: view.meta.day
                 }
               }
@@ -1937,7 +1974,7 @@ export function validateWorldAction(state: WorldState, action: WorldAction): Val
       return { valid: false, reason: "hero_not_on_building" };
     }
 
-    if (building.kind !== "attribute_shrine") {
+    if (building.kind !== "attribute_shrine" && building.kind !== "watchtower") {
       return { valid: false, reason: "building_not_visitable" };
     }
 
@@ -2325,19 +2362,23 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
   if (action.type === "hero.visit") {
     const hero = state.heroes.find((item) => item.id === action.heroId);
     const building = state.buildings[action.buildingId];
-    if (!hero || !building || building.kind !== "attribute_shrine") {
+    if (!hero || !building || (building.kind !== "attribute_shrine" && building.kind !== "watchtower")) {
       return { state, events: [] };
     }
 
     const heroes = state.heroes.map((item) =>
-      item.id === hero.id ? applyHeroStatBonus(item, building.bonus) : item
+      item.id === hero.id
+        ? building.kind === "attribute_shrine"
+          ? applyHeroStatBonus(item, building.bonus)
+          : applyHeroVisionBonus(item, building.visionBonus)
+        : item
     );
     const buildings = {
       ...state.buildings,
       [building.id]: {
         ...building,
         position: { ...building.position },
-        bonus: cloneHeroStatBonus(building.bonus),
+        ...(building.kind === "attribute_shrine" ? { bonus: cloneHeroStatBonus(building.bonus) } : {}),
         lastUsedDay: state.meta.day
       }
     };
@@ -2346,13 +2387,21 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
     return {
       state: nextState,
       events: [
-        {
-          type: "hero.visited",
-          heroId: hero.id,
-          buildingId: building.id,
-          buildingKind: building.kind,
-          bonus: cloneHeroStatBonus(building.bonus)
-        }
+        building.kind === "attribute_shrine"
+          ? {
+              type: "hero.visited",
+              heroId: hero.id,
+              buildingId: building.id,
+              buildingKind: building.kind,
+              bonus: cloneHeroStatBonus(building.bonus)
+            }
+          : {
+              type: "hero.visited",
+              heroId: hero.id,
+              buildingId: building.id,
+              buildingKind: building.kind,
+              visionBonus: building.visionBonus
+            }
       ]
     };
   }

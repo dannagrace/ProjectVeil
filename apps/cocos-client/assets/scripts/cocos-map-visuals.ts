@@ -179,15 +179,17 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
 
     if (event.type === "hero.visited" && heroPosition) {
       const firstBonus =
-        event.bonus.attack > 0
-          ? "ATK"
-          : event.bonus.defense > 0
-            ? "DEF"
-            : event.bonus.power > 0
-              ? "POW"
-              : event.bonus.knowledge > 0
-                ? "KNW"
-                : "STAT";
+        event.buildingKind === "watchtower"
+          ? "VIS"
+          : event.bonus.attack > 0
+            ? "ATK"
+            : event.bonus.defense > 0
+              ? "DEF"
+              : event.bonus.power > 0
+                ? "POW"
+                : event.bonus.knowledge > 0
+                  ? "KNW"
+                  : "STAT";
       entries.push({
         position: heroPosition,
         text: resolveMapBoardFeedbackLabel(event) ?? `+${firstBonus}`,

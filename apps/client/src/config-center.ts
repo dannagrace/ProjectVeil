@@ -172,7 +172,7 @@ interface WorldConfigPreviewTile {
           power: number;
           knowledge: number;
         };
-        visitedCount: number;
+        lastUsedDay?: number;
       }
     | {
         kind: "resource_mine";
@@ -180,7 +180,14 @@ interface WorldConfigPreviewTile {
         label: string;
         resourceKind: ResourceKind;
         income: number;
-        ownerPlayerId?: string;
+        lastHarvestDay?: number;
+      }
+    | {
+        kind: "watchtower";
+        refId: string;
+        label: string;
+        visionBonus: number;
+        lastUsedDay?: number;
       }
     | undefined;
 }
@@ -594,9 +601,11 @@ function buildWorldPreviewTileTitle(tile: WorldConfigPreviewTile): string {
         tile.building.bonus.power > 0 ? `力量 +${tile.building.bonus.power}` : "",
         tile.building.bonus.knowledge > 0 ? `知识 +${tile.building.bonus.knowledge}` : ""
       ].filter(Boolean);
-      parts.push(`建筑: ${tile.building.label} / ${bonus.join("、") || "属性加成"} / 访问 ${tile.building.visitedCount}`);
+      parts.push(`建筑: ${tile.building.label} / ${bonus.join("、") || "属性加成"}${typeof tile.building.lastUsedDay === "number" ? ` / 第 ${tile.building.lastUsedDay} 天已访问` : ""}`);
+    } else if (tile.building.kind === "resource_mine") {
+      parts.push(`建筑: ${tile.building.label} / ${tile.building.resourceKind} +${tile.building.income}/day${typeof tile.building.lastHarvestDay === "number" ? ` / 第 ${tile.building.lastHarvestDay} 天已采集` : ""}`);
     } else {
-      parts.push(`建筑: ${tile.building.label} / ${tile.building.resourceKind} +${tile.building.income}/day${tile.building.ownerPlayerId ? ` / ${tile.building.ownerPlayerId}` : ""}`);
+      parts.push(`建筑: ${tile.building.label} / 视野 +${tile.building.visionBonus}${typeof tile.building.lastUsedDay === "number" ? ` / 第 ${tile.building.lastUsedDay} 天已登塔` : ""}`);
     }
   }
 

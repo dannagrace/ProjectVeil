@@ -3,6 +3,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { createPool, type Pool, type RowDataPacket } from "mysql2/promise";
 import * as XLSX from "xlsx";
+import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
+import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
+import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
 import {
   getBattleBalanceConfig,
   createWorldStateFromConfigs,
@@ -185,6 +189,13 @@ export interface WorldConfigPreviewTile {
         income: number;
         lastHarvestDay?: number;
       }
+    | {
+        kind: "watchtower";
+        refId: string;
+        label: string;
+        visionBonus: number;
+        lastUsedDay?: number;
+      }
     | undefined;
 }
 
@@ -309,7 +320,9 @@ interface JsonSchemaNode {
 }
 
 const CONFIG_CENTER_LIBRARY_FILE = ".config-center-library.json";
-const BUILTIN_PRESET_IDS = ["easy", "normal", "hard"] as const;
+const BUILTIN_DIFFICULTY_PRESET_IDS = ["easy", "normal", "hard"] as const;
+const BUILTIN_WORLD_LAYOUT_PRESETS = ["layout_phase1", "layout_frontier_basin", "layout_contested_basin"] as const;
+const BUILTIN_MAP_OBJECT_LAYOUT_PRESETS = ["layout_phase1", "layout_frontier_basin", "layout_contested_basin"] as const;
 const CONFIG_SCHEMA_VERSION = "2026-03-26";
 const BASE_VALUE_IMPACT = ["配置台编辑器"];
 const BASE_SCHEMA_IMPACT = ["配置台编辑器", "Schema 校验器"];
@@ -470,7 +483,7 @@ const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
           required: ["id", "kind", "position", "label"],
           properties: {
             id: { type: "string", description: "建筑 id。" },
-            kind: { type: "string", description: "建筑种类。" },
+            kind: { type: "string", enum: ["recruitment_post", "attribute_shrine", "resource_mine", "watchtower"], description: "建筑种类。" },
             label: { type: "string", description: "建筑显示名。" },
             position: {
               type: "object",
@@ -479,7 +492,14 @@ const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
                 x: { type: "integer", minimum: 0, description: "X 坐标。" },
                 y: { type: "integer", minimum: 0, description: "Y 坐标。" }
               }
-            }
+            },
+            unitTemplateId: { type: "string", description: "招募建筑使用的兵种模板 id。" },
+            recruitCount: { type: "integer", minimum: 1, description: "招募建筑每次提供的兵力数量。" },
+            cost: { type: "object", description: "招募建筑的资源消耗。" },
+            bonus: { type: "object", description: "属性神殿提供的永久属性加成。" },
+            resourceKind: { type: "string", enum: ["gold", "wood", "ore"], description: "资源矿场的产出类型。" },
+            income: { type: "integer", minimum: 1, description: "资源矿场的每日产出。" },
+            visionBonus: { type: "integer", minimum: 1, description: "瞭望塔提供的永久视野加成。" }
           }
         }
       }
@@ -1214,7 +1234,7 @@ function parseWorkbookToContent(workbookBuffer: Buffer): string {
   return `${JSON.stringify(root, null, 2)}\n`;
 }
 
-function buildBuiltinPresetSummary(id: typeof BUILTIN_PRESET_IDS[number]): ConfigPresetSummary {
+function buildBuiltinPresetSummary(id: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]): ConfigPresetSummary {
   const title = id === "easy" ? "Easy" : id === "normal" ? "Normal" : "Hard";
   const description =
     id === "easy"
@@ -1296,7 +1316,7 @@ function normalizeJsonContent(
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
-function applyWorldPreset(config: WorldGenerationConfig, presetId: typeof BUILTIN_PRESET_IDS[number]): WorldGenerationConfig {
+function applyWorldPreset(config: WorldGenerationConfig, presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]): WorldGenerationConfig {
   if (presetId === "normal") {
     return structuredClone(config);
   }
@@ -1333,7 +1353,7 @@ function applyWorldPreset(config: WorldGenerationConfig, presetId: typeof BUILTI
   };
 }
 
-function applyMapObjectsPreset(config: MapObjectsConfig, presetId: typeof BUILTIN_PRESET_IDS[number]): MapObjectsConfig {
+function applyMapObjectsPreset(config: MapObjectsConfig, presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]): MapObjectsConfig {
   if (presetId === "normal") {
     return structuredClone(config);
   }
@@ -1378,6 +1398,13 @@ function applyMapObjectsPreset(config: MapObjectsConfig, presetId: typeof BUILTI
         };
       }
 
+      if (building.kind === "watchtower") {
+        return {
+          ...building,
+          visionBonus: Math.max(1, Math.round(building.visionBonus * rewardScale))
+        };
+      }
+
       return {
         ...building,
         income: Math.max(1, Math.round(building.income * rewardScale))
@@ -1386,7 +1413,7 @@ function applyMapObjectsPreset(config: MapObjectsConfig, presetId: typeof BUILTI
   };
 }
 
-function applyUnitPreset(config: UnitCatalogConfig, presetId: typeof BUILTIN_PRESET_IDS[number]): UnitCatalogConfig {
+function applyUnitPreset(config: UnitCatalogConfig, presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]): UnitCatalogConfig {
   if (presetId === "normal") {
     return structuredClone(config);
   }
@@ -1409,7 +1436,7 @@ function applyUnitPreset(config: UnitCatalogConfig, presetId: typeof BUILTIN_PRE
 
 function applyBattleSkillPreset(
   config: BattleSkillCatalogConfig,
-  presetId: typeof BUILTIN_PRESET_IDS[number]
+  presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]
 ): BattleSkillCatalogConfig {
   if (presetId === "normal") {
     return structuredClone(config);
@@ -1452,7 +1479,7 @@ function clampThreshold(value: number): number {
 
 function applyBattleBalancePreset(
   config: BattleBalanceConfig,
-  presetId: typeof BUILTIN_PRESET_IDS[number]
+  presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]
 ): BattleBalanceConfig {
   if (presetId === "normal") {
     return structuredClone(config);
@@ -1493,7 +1520,7 @@ function applyBattleBalancePreset(
 function applyBuiltinPresetToContent(
   id: ConfigDocumentId,
   content: string,
-  presetId: typeof BUILTIN_PRESET_IDS[number]
+  presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]
 ): string {
   const parsed = parseConfigDocument(id, content);
   const next =
@@ -1508,6 +1535,76 @@ function applyBuiltinPresetToContent(
             : applyBattleBalancePreset(parsed as BattleBalanceConfig, presetId);
 
   return normalizeJsonContent(next);
+}
+
+function buildLayoutPresetSummary(id: typeof BUILTIN_WORLD_LAYOUT_PRESETS[number]): ConfigPresetSummary {
+  const name =
+    id === "layout_frontier_basin"
+      ? "Frontier Basin"
+      : id === "layout_contested_basin"
+        ? "Contested Basin"
+        : "Phase 1";
+  const description =
+    id === "layout_frontier_basin"
+      ? "切换为首个峡谷盆地布局，适合验证水域与矿点分布。"
+      : id === "layout_contested_basin"
+        ? "切换为争夺盆地布局，包含新巡逻守军与瞭望塔。"
+        : "恢复默认 Phase 1 地图布局。";
+
+  return {
+    id,
+    name,
+    kind: "builtin",
+    updatedAt: new Date(0).toISOString(),
+    description
+  };
+}
+
+function getBuiltinPresetSummaries(id: ConfigDocumentId): ConfigPresetSummary[] {
+  const summaries = BUILTIN_DIFFICULTY_PRESET_IDS.map((presetId) => buildBuiltinPresetSummary(presetId));
+  if (id === "world") {
+    summaries.push(...BUILTIN_WORLD_LAYOUT_PRESETS.map((presetId) => buildLayoutPresetSummary(presetId)));
+  }
+  if (id === "mapObjects") {
+    summaries.push(...BUILTIN_MAP_OBJECT_LAYOUT_PRESETS.map((presetId) => buildLayoutPresetSummary(presetId)));
+  }
+  return summaries;
+}
+
+function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: string, presetId: string): string | null {
+  if (BUILTIN_DIFFICULTY_PRESET_IDS.includes(presetId as typeof BUILTIN_DIFFICULTY_PRESET_IDS[number])) {
+    return applyBuiltinPresetToContent(
+      id,
+      currentContent,
+      presetId as typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]
+    );
+  }
+
+  if (id === "world") {
+    if (presetId === "layout_phase1") {
+      return normalizeJsonContent(getDefaultWorldConfig());
+    }
+    if (presetId === "layout_frontier_basin") {
+      return normalizeJsonContent(frontierBasinWorldConfig as WorldGenerationConfig);
+    }
+    if (presetId === "layout_contested_basin") {
+      return normalizeJsonContent(contestedBasinWorldConfig as WorldGenerationConfig);
+    }
+  }
+
+  if (id === "mapObjects") {
+    if (presetId === "layout_phase1") {
+      return normalizeJsonContent(getDefaultMapObjectsConfig());
+    }
+    if (presetId === "layout_frontier_basin") {
+      return normalizeJsonContent(frontierBasinMapObjectsConfig as MapObjectsConfig);
+    }
+    if (presetId === "layout_contested_basin") {
+      return normalizeJsonContent(contestedBasinMapObjectsConfig as MapObjectsConfig);
+    }
+  }
+
+  return null;
 }
 
 function positionKey(position: { x: number; y: number }): string {
@@ -1689,7 +1786,8 @@ export function createWorldConfigPreview(
               },
               ...(typeof tile.building.lastUsedDay === "number" ? { lastUsedDay: tile.building.lastUsedDay } : {})
             }
-          : {
+          : tile.building.kind === "resource_mine"
+            ? {
               kind: tile.building.kind,
               refId: tile.building.id,
               label: tile.building.label,
@@ -1698,6 +1796,13 @@ export function createWorldConfigPreview(
               ...(typeof tile.building.lastHarvestDay === "number"
                 ? { lastHarvestDay: tile.building.lastHarvestDay }
                 : {})
+            }
+            : {
+              kind: tile.building.kind,
+              refId: tile.building.id,
+              label: tile.building.label,
+              visionBonus: tile.building.visionBonus,
+              ...(typeof tile.building.lastUsedDay === "number" ? { lastUsedDay: tile.building.lastUsedDay } : {})
             };
 
     return {
@@ -2410,7 +2515,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
       kind: "custom" as const
     }));
 
-    return [...BUILTIN_PRESET_IDS.map((presetId) => buildBuiltinPresetSummary(presetId)), ...customPresets].sort((left, right) =>
+    return [...getBuiltinPresetSummaries(id), ...customPresets].sort((left, right) =>
       left.kind === right.kind ? right.updatedAt.localeCompare(left.updatedAt) : left.kind === "builtin" ? -1 : 1
     );
   }
@@ -2447,9 +2552,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
     const customPreset = (state.presets[id] ?? []).find((item) => item.id === presetId);
     const presetContent = customPreset
       ? customPreset.content
-      : BUILTIN_PRESET_IDS.includes(presetId as typeof BUILTIN_PRESET_IDS[number])
-        ? applyBuiltinPresetToContent(id, current.content, presetId as typeof BUILTIN_PRESET_IDS[number])
-        : null;
+      : resolveBuiltinPresetContent(id, current.content, presetId);
 
     if (!presetContent) {
       throw new Error(`Preset not found: ${presetId}`);

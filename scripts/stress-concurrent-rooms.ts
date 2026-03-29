@@ -129,6 +129,7 @@ interface RuntimeHealthSummary {
 const DEFAULT_BATTLE_DESTINATION: Vec2 = { x: 5, y: 4 };
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_ROOM_PLAYER_ID = "player-1";
+const STRESS_ROOM_VARIANTS = ["phase1", "frontier_basin", "contested_basin"] as const;
 const COLYSEUS_RECONNECT_MIN_UPTIME_LOG = "[Colyseus reconnection]: ❌ Room has not been up for long enough for automatic reconnection.";
 const DEFAULT_RECONNECT_SOAK_ARTIFACT_PATH = path.resolve("artifacts", "release-readiness", "colyseus-reconnect-soak-summary.json");
 
@@ -497,7 +498,8 @@ async function connectRooms(
 ): Promise<{ contexts: RoomContext[]; completedActions: number }> {
   const indexes = Array.from({ length: options.rooms }, (_, index) => index);
   const contexts = await mapConcurrent(indexes, options.connectConcurrency, async (index) => {
-    const roomId = `stress-${scenario}-${index}`;
+    const variant = STRESS_ROOM_VARIANTS[index % STRESS_ROOM_VARIANTS.length] ?? "phase1";
+    const roomId = `stress-${scenario}-${index}[map:${variant}]`;
     const room = await joinRoomWithRetry(options.host, options.port, roomId, DEFAULT_ROOM_PLAYER_ID);
     const response = await sendRequest(
       room,

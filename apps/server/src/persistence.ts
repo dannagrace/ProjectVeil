@@ -623,6 +623,7 @@ function mergeHeroArchiveIntoFreshHero(baseHero: HeroState, archive: PlayerHeroA
 
   return normalizeHeroState({
     ...baseHero,
+    vision: archivedHero.vision,
     stats: {
       ...archivedHero.stats,
       hp: archivedHero.stats.maxHp

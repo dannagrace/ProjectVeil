@@ -1665,7 +1665,7 @@ export class VeilRoot extends Component {
                 heroId: hero.id,
                 buildingId: tile.building.id
               }
-            : tile.building.kind === "attribute_shrine"
+            : tile.building.kind === "attribute_shrine" || tile.building.kind === "watchtower"
               ? {
                   type: "hero.visit",
                   heroId: hero.id,
@@ -1680,6 +1680,8 @@ export class VeilRoot extends Component {
             ? `预演招募 ${tile.building.availableCount} 单位`
             : tile.building.kind === "attribute_shrine"
               ? `预演获得 ${formatHeroStatBonus(tile.building.bonus)}`
+              : tile.building.kind === "watchtower"
+                ? `预演提高视野 ${tile.building.visionBonus}`
               : `预演占领矿场，改为每日产出 ${tile.building.income} ${formatResourceKindLabel(tile.building.resourceKind)}`
         );
         this.renderView();
@@ -1689,7 +1691,7 @@ export class VeilRoot extends Component {
           await this.applySessionUpdate(
             tile.building.kind === "recruitment_post"
               ? await this.session.recruit(hero.id, tile.building.id)
-              : tile.building.kind === "attribute_shrine"
+              : tile.building.kind === "attribute_shrine" || tile.building.kind === "watchtower"
                 ? await this.session.visitBuilding(hero.id, tile.building.id)
                 : await this.session.claimMine(hero.id, tile.building.id)
           );
@@ -1698,6 +1700,8 @@ export class VeilRoot extends Component {
               ? "招募已结算。"
               : tile.building.kind === "attribute_shrine"
                 ? "神殿访问已结算。"
+                : tile.building.kind === "watchtower"
+                  ? "瞭望塔访问已结算。"
                 : "矿场占领已结算。"
           );
         } catch (error) {
@@ -1706,7 +1710,7 @@ export class VeilRoot extends Component {
               ? error.message
               : tile.building.kind === "recruitment_post"
                 ? "招募失败。"
-                : tile.building.kind === "attribute_shrine"
+                : tile.building.kind === "attribute_shrine" || tile.building.kind === "watchtower"
                   ? "访问失败。"
                   : "占领失败。"
           );

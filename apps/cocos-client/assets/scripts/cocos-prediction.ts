@@ -7,6 +7,7 @@ import type {
   PlayerWorldView,
   RecruitmentBuildingView,
   ResourceMineBuildingView,
+  WatchtowerBuildingView,
   Vec2
 } from "./VeilCocosSession.ts";
 
@@ -334,7 +335,7 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
       };
     }
 
-    if (!isAttributeShrineBuilding(building)) {
+    if (!isAttributeShrineBuilding(building) && !isWatchtowerBuilding(building)) {
       return {
         world: view,
         movementPlan: null,
@@ -354,25 +355,37 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
 
     const predictedWorld: PlayerWorldView = {
       ...view,
-      ownHeroes: view.ownHeroes.map((item) =>
-        item.id === hero.id
-          ? {
-              ...item,
-              stats: {
-                ...item.stats,
-                attack: item.stats.attack + building.bonus.attack,
-                defense: item.stats.defense + building.bonus.defense,
-                power: item.stats.power + building.bonus.power,
-                knowledge: item.stats.knowledge + building.bonus.knowledge
-              }
+      ownHeroes: view.ownHeroes.map((item) => {
+        if (item.id !== hero.id) {
+          return item;
+        }
+
+        if (isAttributeShrineBuilding(building)) {
+          return {
+            ...item,
+            stats: {
+              ...item.stats,
+              attack: item.stats.attack + building.bonus.attack,
+              defense: item.stats.defense + building.bonus.defense,
+              power: item.stats.power + building.bonus.power,
+              knowledge: item.stats.knowledge + building.bonus.knowledge
             }
-          : item
-      ),
+          };
+        }
+
+        return {
+          ...item,
+          vision: item.vision + building.visionBonus
+        };
+      }),
       map: {
         ...view.map,
         tiles: view.map.tiles.map((item) => {
           const currentBuilding = item.building;
-          if (!samePosition(item.position, hero.position) || !isAttributeShrineBuilding(currentBuilding)) {
+          if (
+            !samePosition(item.position, hero.position) ||
+            (!isAttributeShrineBuilding(currentBuilding) && !isWatchtowerBuilding(currentBuilding))
+          ) {
             return item;
           }
 
@@ -380,7 +393,6 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
             ...item,
             building: {
               ...currentBuilding,
-              bonus: { ...currentBuilding.bonus },
               lastUsedDay: view.meta.day
             }
           };
@@ -711,6 +723,10 @@ function isRecruitmentBuilding(building: PlayerTileView["building"]): building i
 
 function isAttributeShrineBuilding(building: PlayerTileView["building"]): building is AttributeShrineBuildingView {
   return building?.kind === "attribute_shrine";
+}
+
+function isWatchtowerBuilding(building: PlayerTileView["building"]): building is WatchtowerBuildingView {
+  return building?.kind === "watchtower";
 }
 
 function isResourceMineBuilding(building: PlayerTileView["building"]): building is ResourceMineBuildingView {

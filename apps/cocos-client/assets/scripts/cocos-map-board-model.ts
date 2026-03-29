@@ -92,6 +92,10 @@ export function resolveMapBoardFeedbackLabel(
   }
 
   if (event.type === "hero.visited") {
+    if (event.buildingKind === "watchtower") {
+      return `+VIS ${event.visionBonus}`;
+    }
+
     return event.bonus.attack > 0
       ? "+ATK"
       : event.bonus.defense > 0

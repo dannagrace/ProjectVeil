@@ -115,7 +115,7 @@ interface WorldConfigPreviewTile {
           power: number;
           knowledge: number;
         };
-        visitedCount: number;
+        lastUsedDay?: number;
       }
     | {
         kind: "resource_mine";
@@ -123,7 +123,14 @@ interface WorldConfigPreviewTile {
         label: string;
         resourceKind: ResourceKind;
         income: number;
-        ownerPlayerId?: string;
+        lastHarvestDay?: number;
+      }
+    | {
+        kind: "watchtower";
+        refId: string;
+        label: string;
+        visionBonus: number;
+        lastUsedDay?: number;
       }
     | undefined;
 }

@@ -320,6 +320,61 @@ test("room allows visiting an attribute shrine once and persists the stat bonus"
   assert.equal(revisitResult.reason, "building_on_cooldown");
 });
 
+test("room allows visiting the contested basin watchtower and persists the vision bonus", () => {
+  const room = createRoom("room-watchtower[map:contested_basin]", 1001);
+
+  const moveResult = room.dispatch("player-1", {
+    type: "hero.move",
+    heroId: "hero-1",
+    destination: { x: 4, y: 5 }
+  });
+
+  assert.equal(moveResult.ok, true);
+  assert.deepEqual(moveResult.snapshot.state.ownHeroes[0]?.position, { x: 4, y: 5 });
+
+  const nextDayResult = room.dispatch("player-1", {
+    type: "turn.endDay"
+  });
+
+  assert.equal(nextDayResult.ok, true);
+
+  const finalMoveResult = room.dispatch("player-1", {
+    type: "hero.move",
+    heroId: "hero-1",
+    destination: { x: 5, y: 4 }
+  });
+
+  assert.equal(finalMoveResult.ok, true);
+  assert.deepEqual(finalMoveResult.snapshot.state.ownHeroes[0]?.position, { x: 5, y: 4 });
+
+  const visitResult = room.dispatch("player-1", {
+    type: "hero.visit",
+    heroId: "hero-1",
+    buildingId: "watchtower-basin-1"
+  });
+
+  assert.equal(visitResult.ok, true);
+  assert.deepEqual(visitResult.events, [
+    {
+      type: "hero.visited",
+      heroId: "hero-1",
+      buildingId: "watchtower-basin-1",
+      buildingKind: "watchtower",
+      visionBonus: 2
+    }
+  ]);
+  assert.equal(visitResult.snapshot.state.ownHeroes[0]?.vision, 4);
+
+  const revisitResult = room.dispatch("player-1", {
+    type: "hero.visit",
+    heroId: "hero-1",
+    buildingId: "watchtower-basin-1"
+  });
+
+  assert.equal(revisitResult.ok, false);
+  assert.equal(revisitResult.reason, "building_on_cooldown");
+});
+
 test("room allows harvesting a resource mine and restores it on the next day", () => {
   const room = createRoom("room-mine", 1001);
 

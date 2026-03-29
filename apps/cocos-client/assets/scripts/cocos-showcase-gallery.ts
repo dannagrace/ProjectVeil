@@ -15,7 +15,7 @@ export interface LobbyTerrainShowcaseEntry {
 export interface LobbyBuildingShowcaseEntry {
   id: string;
   label: string;
-  iconKey: "recruitment" | "shrine" | "mine" | "battle";
+  iconKey: "recruitment" | "shrine" | "mine" | "tower";
 }
 
 export interface LobbyShowcaseAssets<Frame = unknown> {
@@ -58,7 +58,7 @@ export const lobbyBuildingShowcaseEntries: LobbyBuildingShowcaseEntry[] = [
   { id: "recruitment_post", label: "招募", iconKey: "recruitment" },
   { id: "attribute_shrine", label: "神社", iconKey: "shrine" },
   { id: "resource_mine", label: "矿场", iconKey: "mine" },
-  { id: "forge_hall", label: "锻炉", iconKey: "battle" }
+  { id: "watchtower", label: "塔楼", iconKey: "tower" }
 ];
 
 export function getLobbyShowcaseUnitPageCount(): number {

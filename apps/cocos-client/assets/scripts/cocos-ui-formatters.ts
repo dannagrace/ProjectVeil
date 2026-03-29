@@ -56,7 +56,9 @@ function formatWorldEvent(event: WorldEvent): string | null {
   }
 
   if (event.type === "hero.visited") {
-    return `访问属性建筑，获得 ${formatHeroStatBonus(event.bonus)}。`;
+    return event.buildingKind === "watchtower"
+      ? `登上瞭望塔，视野提高 ${event.visionBonus}。`
+      : `访问属性建筑，获得 ${formatHeroStatBonus(event.bonus)}。`;
   }
 
   if (event.type === "hero.claimedMine") {

@@ -15,7 +15,7 @@ export interface ResourceLedger {
 export type FogState = "hidden" | "explored" | "visible";
 export type TerrainType = "grass" | "dirt" | "sand" | "water" | "unknown";
 export type OccupantKind = "hero" | "neutral" | "building";
-export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_mine";
+export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_mine" | "watchtower";
 
 export interface HeroProgression {
   level: number;
@@ -164,10 +164,19 @@ export interface ResourceMineBuildingView {
   lastHarvestDay?: number;
 }
 
+export interface WatchtowerBuildingView {
+  id: string;
+  kind: "watchtower";
+  label: string;
+  visionBonus: number;
+  lastUsedDay?: number;
+}
+
 export type PlayerBuildingView =
   | RecruitmentBuildingView
   | AttributeShrineBuildingView
-  | ResourceMineBuildingView;
+  | ResourceMineBuildingView
+  | WatchtowerBuildingView;
 
 export interface UnitStack {
   id: string;
@@ -318,6 +327,13 @@ export type WorldEvent =
       buildingId: string;
       buildingKind: "attribute_shrine";
       bonus: HeroStatBonus;
+    }
+  | {
+      type: "hero.visited";
+      heroId: string;
+      buildingId: string;
+      buildingKind: "watchtower";
+      visionBonus: number;
     }
   | {
       type: "hero.claimedMine";
