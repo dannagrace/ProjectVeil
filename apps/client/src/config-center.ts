@@ -1,4 +1,5 @@
 import "./config-center.css";
+import { createConfigCenterController } from "./config-center-controller";
 
 type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 type TerrainType = "grass" | "dirt" | "sand" | "water";
@@ -249,42 +250,42 @@ if (!appRoot) {
 
 const root = appRoot;
 
-const state: AppState = {
-  items: [],
-  current: null,
-  selectedId: null,
-  storageMode: null,
-  loading: true,
-  saving: false,
-  statusTone: "neutral",
-  statusMessage: "正在加载配置中心...",
-  draft: "",
-  previewSeed: 1001,
-  worldPreview: null,
-  previewLoading: false,
-  previewError: "",
-  validation: null,
-  validationLoading: false,
-  snapshots: [],
-  selectedSnapshotId: null,
-  snapshotDiff: null,
-  historyLoading: false,
-  presets: [],
-  presetsLoading: false
-};
+const controller = createConfigCenterController({
+  onStateChange: () => {
+    render();
+  },
+  prompt: (message, defaultValue) => window.prompt(message, defaultValue),
+  download: ({ blob, fileName, fallbackFileName }) => {
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = fileName ?? fallbackFileName;
+    anchor.click();
+    URL.revokeObjectURL(href);
+  }
+});
 
-const EMPTY_SCHEMA_SUMMARY: ConfigSchemaSummary = {
-  id: "project-veil.config-center.unknown",
-  title: "Unknown Schema",
-  version: "0",
-  description: "Schema 信息暂不可用。",
-  required: []
-};
-
-let previewRequestVersion = 0;
-let previewDebounceTimer: number | null = null;
-let validationRequestVersion = 0;
-let validationDebounceTimer: number | null = null;
+const {
+  state,
+  getDraftParseState,
+  normalizePreviewSeed,
+  loadList,
+  loadSnapshots,
+  loadPresets,
+  loadSnapshotDiff,
+  loadWorldPreview,
+  loadValidation,
+  scheduleWorldPreview,
+  loadDocument,
+  saveCurrentDocument,
+  restoreCurrentDocument,
+  createSnapshot,
+  rollbackSnapshot,
+  applyPreset,
+  saveCurrentAsPreset,
+  exportCurrentDocument,
+  importWorkbook
+} = controller;
 
 function formatTime(value: string): string {
   const date = new Date(value);
@@ -301,20 +302,7 @@ function escapeHtml(value: string): string {
 }
 
 function currentParseState(): { valid: boolean; detail: string; rootKeys: number } {
-  try {
-    const parsed = JSON.parse(state.draft || "{}") as Record<string, unknown>;
-    return {
-      valid: true,
-      detail: "JSON 语法有效",
-      rootKeys: Object.keys(parsed).length
-    };
-  } catch (error) {
-    return {
-      valid: false,
-      detail: error instanceof Error ? error.message : "JSON 语法无效",
-      rootKeys: 0
-    };
-  }
+  return getDraftParseState();
 }
 
 function currentBattleSkillCatalogState(): {
@@ -370,16 +358,8 @@ function isBattleBalanceDocumentSelected(): boolean {
   return state.current?.id === "battleBalance";
 }
 
-function normalizePreviewSeed(value: number, fallback = state.previewSeed): number {
-  if (!Number.isFinite(value)) {
-    return fallback;
-  }
-
-  return Math.max(0, Math.floor(value));
-}
-
 function setDraftContent(nextDraft: string): void {
-  state.draft = nextDraft;
+  controller.setDraft(nextDraft);
   const textarea = document.querySelector<HTMLTextAreaElement>("[data-role='editor']");
   if (textarea && textarea.value !== nextDraft) {
     textarea.value = nextDraft;
@@ -530,577 +510,6 @@ async function requestDownload(input: RequestInfo, init?: RequestInit): Promise<
 
 function serializeDisplayValue(value: string): string {
   return value.length > 48 ? `${value.slice(0, 48)}...` : value || "空";
-}
-
-function clearWorldPreview(cancelPending = true): void {
-  if (cancelPending && previewDebounceTimer != null) {
-    window.clearTimeout(previewDebounceTimer);
-    previewDebounceTimer = null;
-  }
-
-  previewRequestVersion += 1;
-  state.worldPreview = null;
-  state.previewLoading = false;
-  state.previewError = "";
-}
-
-async function loadList(): Promise<void> {
-  const response = await requestJson<{
-    storage: "filesystem" | "mysql";
-    items: ConfigDocumentSummary[];
-  }>("/api/config-center/configs");
-  state.storageMode = response.storage;
-  state.items = response.items;
-}
-
-async function loadSnapshots(id: ConfigDocumentId): Promise<void> {
-  state.historyLoading = true;
-  refreshPreviewPane();
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      snapshots: ConfigSnapshotSummary[];
-    }>(`/api/config-center/configs/${id}/snapshots`);
-    state.storageMode = response.storage;
-    state.snapshots = response.snapshots;
-    if (!state.snapshots.some((item) => item.id === state.selectedSnapshotId)) {
-      state.selectedSnapshotId = state.snapshots[0]?.id ?? null;
-      state.snapshotDiff = null;
-    }
-  } finally {
-    state.historyLoading = false;
-    refreshPreviewPane();
-  }
-
-  if (state.selectedSnapshotId) {
-    await loadSnapshotDiff();
-  }
-}
-
-async function loadPresets(id: ConfigDocumentId): Promise<void> {
-  state.presetsLoading = true;
-  refreshPreviewPane();
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      presets: ConfigPresetSummary[];
-    }>(`/api/config-center/configs/${id}/presets`);
-    state.storageMode = response.storage;
-    state.presets = response.presets;
-  } finally {
-    state.presetsLoading = false;
-    refreshPreviewPane();
-  }
-}
-
-async function loadSnapshotDiff(): Promise<void> {
-  if (!state.current || !state.selectedSnapshotId) {
-    state.snapshotDiff = null;
-    refreshPreviewPane();
-    return;
-  }
-
-  const response = await requestJson<{
-    storage: "filesystem" | "mysql";
-    diff: ConfigDiff;
-  }>(`/api/config-center/configs/${state.current.id}/diff`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      snapshotId: state.selectedSnapshotId
-    })
-  });
-  state.storageMode = response.storage;
-  state.snapshotDiff = response.diff;
-  refreshPreviewPane();
-}
-
-async function loadWorldPreview(): Promise<void> {
-  if (!isWorldDocumentSelected()) {
-    clearWorldPreview();
-    refreshPreviewPane();
-    return;
-  }
-
-  const parseState = currentParseState();
-  if (!parseState.valid) {
-    state.previewLoading = false;
-    state.worldPreview = null;
-    state.previewError = `JSON 语法无效：${parseState.detail}`;
-    refreshPreviewPane();
-    return;
-  }
-
-  const requestVersion = ++previewRequestVersion;
-
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      preview: WorldConfigPreview;
-    }>("/api/config-center/configs/world/preview", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        content: state.draft,
-        seed: state.previewSeed
-      })
-    });
-
-    if (requestVersion !== previewRequestVersion || !isWorldDocumentSelected()) {
-      return;
-    }
-
-    state.storageMode = response.storage;
-    state.worldPreview = response.preview;
-    state.previewError = "";
-  } catch (error) {
-    if (requestVersion !== previewRequestVersion) {
-      return;
-    }
-
-    state.worldPreview = null;
-    state.previewError = error instanceof Error ? error.message : "地图预览生成失败";
-  } finally {
-    if (requestVersion === previewRequestVersion) {
-      state.previewLoading = false;
-      refreshPreviewPane();
-    }
-  }
-}
-
-async function loadValidation(delayMs = 0): Promise<void> {
-  if (!state.current) {
-    state.validation = null;
-    refreshPreviewPane();
-    return;
-  }
-
-  if (validationDebounceTimer != null) {
-    window.clearTimeout(validationDebounceTimer);
-    validationDebounceTimer = null;
-  }
-
-  const run = async () => {
-    const requestVersion = ++validationRequestVersion;
-    state.validationLoading = true;
-    refreshPreviewPane();
-
-    try {
-      const response = await requestJson<{
-        storage: "filesystem" | "mysql";
-        validation: ValidationReport;
-      }>(`/api/config-center/configs/${state.current?.id}/validate`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          content: state.draft
-        })
-      });
-
-      if (requestVersion !== validationRequestVersion) {
-        return;
-      }
-
-      state.storageMode = response.storage;
-      state.validation = response.validation;
-    } catch (error) {
-      if (requestVersion !== validationRequestVersion) {
-        return;
-      }
-
-      state.validation = {
-        valid: false,
-        summary: error instanceof Error ? error.message : "校验失败",
-        issues: [
-          {
-            path: "$",
-            severity: "error",
-            message: error instanceof Error ? error.message : "校验失败",
-            suggestion: "检查 JSON 语法和字段格式后重试。"
-          }
-        ],
-        schema: state.validation?.schema ?? EMPTY_SCHEMA_SUMMARY
-      };
-    } finally {
-      if (requestVersion === validationRequestVersion) {
-        state.validationLoading = false;
-        refreshPreviewPane();
-      }
-    }
-  };
-
-  if (delayMs <= 0) {
-    await run();
-    return;
-  }
-
-  validationDebounceTimer = window.setTimeout(() => {
-    validationDebounceTimer = null;
-    void run();
-  }, delayMs);
-}
-
-function scheduleWorldPreview(delayMs = WORLD_PREVIEW_DEBOUNCE_MS): void {
-  if (!isWorldDocumentSelected()) {
-    clearWorldPreview();
-    refreshPreviewPane();
-    return;
-  }
-
-  if (previewDebounceTimer != null) {
-    window.clearTimeout(previewDebounceTimer);
-    previewDebounceTimer = null;
-  }
-
-  const parseState = currentParseState();
-  if (!parseState.valid) {
-    state.previewLoading = false;
-    state.worldPreview = null;
-    state.previewError = `JSON 语法无效：${parseState.detail}`;
-    refreshPreviewPane();
-    return;
-  }
-
-  state.previewLoading = true;
-  state.previewError = "";
-  refreshPreviewPane();
-
-  previewDebounceTimer = window.setTimeout(() => {
-    previewDebounceTimer = null;
-    void loadWorldPreview();
-  }, delayMs);
-}
-
-async function loadDocument(id: ConfigDocumentId): Promise<void> {
-  state.loading = true;
-  state.statusTone = "neutral";
-  state.statusMessage = `正在加载 ${id} 配置...`;
-  render();
-
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      document: ConfigDocument;
-    }>(`/api/config-center/configs/${id}`);
-    state.storageMode = response.storage;
-    state.current = response.document;
-    state.selectedId = response.document.id;
-    state.draft = response.document.content;
-    state.validation = null;
-    state.snapshots = [];
-    state.presets = [];
-    state.snapshotDiff = null;
-    state.selectedSnapshotId = null;
-    state.statusMessage = `${response.document.title} 已加载`;
-
-    if (response.document.id === "world") {
-      state.worldPreview = null;
-      state.previewLoading = true;
-      state.previewError = "";
-    } else {
-      clearWorldPreview();
-    }
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "加载配置失败";
-  } finally {
-    state.loading = false;
-    render();
-
-    if (isWorldDocumentSelected()) {
-      void loadWorldPreview();
-    }
-    void loadValidation();
-    void loadSnapshots(id);
-    void loadPresets(id);
-  }
-}
-
-async function saveCurrentDocument(): Promise<void> {
-  if (!state.current || state.saving) {
-    return;
-  }
-
-  if (state.validation && !state.validation.valid) {
-    state.statusTone = "error";
-    state.statusMessage = "当前配置存在校验问题，已阻止保存";
-    render();
-    return;
-  }
-
-  state.saving = true;
-  state.statusTone = "neutral";
-  state.statusMessage = `正在保存 ${state.current.title}...`;
-  render();
-
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      document: ConfigDocument;
-    }>(`/api/config-center/configs/${state.current.id}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        content: state.draft
-      })
-    });
-
-    state.storageMode = response.storage;
-    state.current = response.document;
-    state.draft = response.document.content;
-    state.statusTone = "success";
-    state.statusMessage = `${response.document.title} 已保存，并同步刷新服务端运行时配置`;
-    await loadList();
-    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
-
-    if (response.document.id === "world") {
-      state.previewLoading = true;
-      state.previewError = "";
-    }
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "保存配置失败";
-  } finally {
-    state.saving = false;
-    render();
-
-    if (isWorldDocumentSelected()) {
-      void loadWorldPreview();
-    }
-  }
-}
-
-function restoreCurrentDocument(): void {
-  if (!state.current) {
-    return;
-  }
-
-  state.draft = state.current.content;
-  state.statusTone = "neutral";
-  state.statusMessage = `${state.current.title} 已恢复到上次加载内容`;
-
-  if (isWorldDocumentSelected()) {
-    state.previewLoading = true;
-    state.previewError = "";
-  }
-
-  render();
-
-  if (isWorldDocumentSelected()) {
-    void loadWorldPreview();
-  }
-  void loadValidation();
-}
-
-async function createSnapshot(): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  const label = window.prompt("快照名称（可选）", `${state.current.title} v${state.current.version ?? 1}`) ?? "";
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      snapshot: ConfigSnapshotSummary;
-    }>(`/api/config-center/configs/${state.current.id}/snapshots`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        content: state.draft,
-        label
-      })
-    });
-    state.storageMode = response.storage;
-    state.statusTone = "success";
-    state.statusMessage = `已保存快照 ${response.snapshot.label}`;
-    await loadSnapshots(state.current.id);
-    render();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "保存快照失败";
-    render();
-  }
-}
-
-async function rollbackSnapshot(snapshotId: string): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      document: ConfigDocument;
-    }>(`/api/config-center/configs/${state.current.id}/rollback`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ snapshotId })
-    });
-    state.storageMode = response.storage;
-    state.current = response.document;
-    state.draft = response.document.content;
-    state.statusTone = "success";
-    state.statusMessage = `已回滚到快照 ${snapshotId}`;
-    await loadList();
-    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
-    render();
-    if (isWorldDocumentSelected()) {
-      void loadWorldPreview();
-    }
-    void loadValidation();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "回滚快照失败";
-    render();
-  }
-}
-
-async function applyPreset(presetId: string): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      document: ConfigDocument;
-    }>(`/api/config-center/configs/${state.current.id}/presets/${presetId}/apply`, {
-      method: "POST"
-    });
-    state.storageMode = response.storage;
-    state.current = response.document;
-    state.draft = response.document.content;
-    state.statusTone = "success";
-    state.statusMessage = `已应用预设 ${presetId}，运行时配置已刷新`;
-    await loadList();
-    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
-    render();
-    if (isWorldDocumentSelected()) {
-      void loadWorldPreview();
-    }
-    void loadValidation();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "应用预设失败";
-    render();
-  }
-}
-
-async function saveCurrentAsPreset(): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  const name = window.prompt("自定义预设名称", `${state.current.title} 自定义预设`);
-  if (!name) {
-    return;
-  }
-
-  try {
-    await requestJson<{
-      storage: "filesystem" | "mysql";
-      preset: ConfigPresetSummary;
-    }>(`/api/config-center/configs/${state.current.id}/presets`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        name,
-        content: state.draft
-      })
-    });
-    state.statusTone = "success";
-    state.statusMessage = `已保存自定义预设 ${name}`;
-    await loadPresets(state.current.id);
-    render();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "保存预设失败";
-    render();
-  }
-}
-
-async function exportCurrentDocument(format: "xlsx" | "jsonc" | "csv"): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  try {
-    const download = await requestDownload(`/api/config-center/configs/${state.current.id}/export?format=${format}`);
-    const href = URL.createObjectURL(download.blob);
-    const anchor = document.createElement("a");
-    anchor.href = href;
-    anchor.download = download.fileName ?? `${state.current.id}.${format}`;
-    anchor.click();
-    URL.revokeObjectURL(href);
-    if (state.current) {
-      state.current.exportedAt = download.exportedAt ?? new Date().toISOString();
-      const item = state.items.find((entry) => entry.id === state.current?.id);
-      if (item) {
-        item.exportedAt = state.current.exportedAt;
-      }
-    }
-    state.statusTone = "success";
-    state.statusMessage =
-      format === "xlsx" ? "已导出 Excel 工作簿" : format === "csv" ? "已导出字段清单 CSV" : "已导出 JSON 注释版";
-    render();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "导出失败";
-    render();
-  }
-}
-
-async function importWorkbook(file: File): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  try {
-    const buffer = await file.arrayBuffer();
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      document: ConfigDocument;
-    }>(`/api/config-center/configs/${state.current.id}/import`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        workbookBase64: base64
-      })
-    });
-    state.storageMode = response.storage;
-    state.current = response.document;
-    state.draft = response.document.content;
-    state.statusTone = "success";
-    state.statusMessage = `已从 ${file.name} 导入并覆盖当前配置`;
-    await loadList();
-    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
-    render();
-    if (isWorldDocumentSelected()) {
-      void loadWorldPreview();
-    }
-    void loadValidation();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "Excel 导入失败";
-    render();
-  }
 }
 
 function jumpToValidationIssue(line?: number): void {
