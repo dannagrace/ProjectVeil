@@ -589,6 +589,14 @@ body {
   background: rgba(255, 255, 255, 0.8);
 }
 
+.publish-history-head,
+.publish-change-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
 .publish-history-card strong {
   display: block;
   margin-bottom: 4px;
@@ -599,6 +607,80 @@ body {
   display: block;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+.history-filters {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.history-filters label {
+  display: grid;
+  gap: 6px;
+  min-width: 160px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.history-filters select {
+  border: 1px solid rgba(138, 90, 43, 0.14);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fffdf9;
+  color: var(--text-main);
+  font: inherit;
+}
+
+.publish-result-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(138, 90, 43, 0.12);
+  color: var(--text-main);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.publish-result-pill.is-applied {
+  background: rgba(45, 122, 74, 0.14);
+  color: var(--success);
+}
+
+.publish-result-pill.is-failed {
+  background: rgba(178, 69, 47, 0.14);
+  color: var(--danger);
+}
+
+.publish-change-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.publish-change-card {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(244, 239, 228, 0.7);
+  border: 1px solid rgba(138, 90, 43, 0.12);
+}
+
+.publish-diff-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.publish-diff-chip {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(138, 90, 43, 0.12);
+  color: var(--text-main);
+  font-size: 12px;
 }
 
 .validation-item,

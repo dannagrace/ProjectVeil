@@ -459,6 +459,164 @@ test("config center rollback requires confirmation before applying structural di
   assert.match(controller.state.statusMessage, /取消/);
 });
 
+test("config center publish audit history supports filters and snapshot inspection links", async () => {
+  const worldDocument = createDocument("world", "{\n  \"width\": 10,\n  \"height\": 8\n}\n", { version: 3 });
+  const { fetch, requests } = createFetchStub((request) => {
+    if (request.url === "/api/config-center/publish-history") {
+      return new Response(
+        JSON.stringify({
+          storage: "filesystem",
+          history: [
+            {
+              id: "publish-1",
+              author: "ConfigOps",
+              summary: "扩图并补资源",
+              publishedAt: "2026-03-30T05:00:00.000Z",
+              resultStatus: "applied",
+              resultMessage: "运行时配置已刷新",
+              changes: [
+                {
+                  documentId: "world",
+                  title: "世界配置",
+                  fromVersion: 2,
+                  toVersion: 3,
+                  changeCount: 2,
+                  structuralChangeCount: 0,
+                  snapshotId: "snapshot-world-3",
+                  runtimeStatus: "applied",
+                  runtimeMessage: "运行时已刷新",
+                  diffSummary: [
+                    {
+                      path: "width",
+                      change: "updated",
+                      previousValue: "8",
+                      nextValue: "10",
+                      kind: "value",
+                      required: true,
+                      fieldType: "integer",
+                      description: "地图宽度",
+                      blastRadius: ["配置台编辑器"]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (request.url === "/api/config-center/configs/world") {
+      return new Response(JSON.stringify({ storage: "filesystem", document: worldDocument }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    if (request.url === "/api/config-center/configs/world/validate") {
+      return new Response(JSON.stringify({ storage: "filesystem", validation: createValidationReport(true) }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    if (request.url === "/api/config-center/configs/world/snapshots") {
+      return new Response(
+        JSON.stringify({
+          storage: "filesystem",
+          snapshots: [{ id: "snapshot-world-3", label: "世界配置 v3", createdAt: "2026-03-30T05:00:00.000Z", version: 3 }],
+          publishHistory: []
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (request.url === "/api/config-center/configs/world/presets") {
+      return new Response(JSON.stringify({ storage: "filesystem", presets: [] }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    if (request.url === "/api/config-center/configs/world/diff" && request.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          storage: "filesystem",
+          diff: {
+            entries: [
+              {
+                path: "width",
+                change: "updated",
+                previousValue: "10",
+                nextValue: "8",
+                kind: "value",
+                required: true,
+                fieldType: "integer",
+                description: "地图宽度",
+                blastRadius: ["配置台编辑器"]
+              }
+            ]
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (request.url === "/api/config-center/configs/world/preview") {
+      return new Response(JSON.stringify({ storage: "filesystem", preview: createWorldPreview() }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+  });
+
+  const controller = createConfigCenterController({ fetch });
+
+  await controller.loadPublishAuditHistory();
+  assert.equal(controller.state.publishAuditHistory.length, 1);
+
+  controller.setPublishAuditFilters({ documentId: "world", resultStatus: "applied" });
+  assert.equal(controller.state.publishAuditFilterId, "world");
+  assert.equal(controller.state.publishAuditFilterStatus, "applied");
+
+  await controller.inspectPublishedSnapshot("world", "snapshot-world-3");
+
+  assert.equal(controller.state.current?.id, "world");
+  assert.equal(controller.state.selectedSnapshotId, "snapshot-world-3");
+  assert.equal(controller.state.snapshotDiff?.entries[0]?.path, "width");
+  assert.equal(requests.some((request) => request.url === "/api/config-center/publish-history"), true);
+  assert.equal(
+    requests.some((request) => request.url === "/api/config-center/configs/world/diff" && request.method === "POST"),
+    true
+  );
+});
+
 test("config center builtin presets apply the expected field changes", async () => {
   const baseDocument = createDocument(
     "battleBalance",

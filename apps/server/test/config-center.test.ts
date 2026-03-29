@@ -662,7 +662,7 @@ test("config center staged publish applies bundled drafts and records publish hi
         guaranteedResources: [
           ...MAP_OBJECTS_CONFIG.guaranteedResources,
           {
-            position: { x: 1, y: 1 },
+            position: { x: 0, y: 0 },
             resource: { kind: "ore", amount: 20 }
           }
         ]
@@ -688,6 +688,14 @@ test("config center staged publish applies bundled drafts and records publish hi
   const mapHistory = await store.listPublishHistory("mapObjects");
   assert.equal(mapHistory[0]?.documentId, "mapObjects");
   assert.equal((mapHistory[0]?.structuralChangeCount ?? 0) >= 0, true);
+
+  const auditHistory = await store.listPublishAuditHistory();
+  assert.equal(auditHistory[0]?.author, "ConfigOps");
+  assert.equal(auditHistory[0]?.resultStatus, "applied");
+  assert.equal(auditHistory[0]?.changes.length, 2);
+  assert.equal(auditHistory[0]?.changes[0]?.runtimeStatus, "applied");
+  assert.equal(typeof auditHistory[0]?.changes[0]?.snapshotId, "string");
+  assert.equal((auditHistory[0]?.changes[0]?.diffSummary.length ?? 0) > 0, true);
 
   const stageAfter = await store.getStagedDraft();
   assert.equal(stageAfter, null);
