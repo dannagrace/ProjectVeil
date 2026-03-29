@@ -1,4 +1,5 @@
 import {
+  createHeroEquipmentBonusSummary,
   createHeroEquipmentLoadoutView,
   formatEquipmentBonusSummary,
   formatEquipmentRarityLabel,
@@ -27,6 +28,11 @@ export interface CocosEquipmentActionRow {
   rarityLabel: string;
   bonusSummary: string;
   inventory: CocosEquipmentInventoryItem[];
+}
+
+export interface CocosEquipmentStatSummaryLine {
+  label: string;
+  value: number;
 }
 
 function toHeroState(hero: HeroView): HeroState {
@@ -146,10 +152,50 @@ export function formatInventorySummaryLines(hero: HeroView | null): string[] {
   const totalCount = items.reduce((sum, item) => sum + item.count, 0);
   const detailLines = items.map((item) => {
     const countLabel = item.count > 1 ? ` x${item.count}` : "";
-    return `${formatEquipmentSlotLabel(item.slot)} ${item.name}${countLabel}`;
+    return `${formatEquipmentSlotLabel(item.slot)} ${item.rarityLabel} ${item.name}${countLabel} · ${item.bonusSummary}`;
   });
 
   return [`背包 ${totalCount} 件（${items.length} 类）`, ...detailLines];
+}
+
+export function formatEquipmentStatSummary(hero: HeroView | null): CocosEquipmentStatSummaryLine[] {
+  if (!hero) {
+    return [];
+  }
+
+  const summary = createHeroEquipmentBonusSummary(toHeroState(hero));
+  return [
+    { label: "攻", value: summary.attack },
+    { label: "防", value: summary.defense },
+    { label: "力", value: summary.power },
+    { label: "知", value: summary.knowledge },
+    { label: "生命", value: summary.maxHp }
+  ].filter((entry) => entry.value !== 0);
+}
+
+export function formatEquipmentOverviewLines(hero: HeroView | null): string[] {
+  if (!hero) {
+    return ["装备 等待房间状态..."];
+  }
+
+  const loadout = createHeroEquipmentLoadoutView(toHeroState(hero));
+  const equipped = loadout.slots.map((slot) => `${slot.label} ${slot.itemName}`);
+  const detail = loadout.slots.map((slot) => {
+    const meta = slot.rarityLabel ? `${slot.rarityLabel} · ${slot.bonusSummary}` : slot.bonusSummary;
+    return `${slot.label} ${slot.itemName} · ${meta}`;
+  });
+  const descriptions = loadout.slots
+    .filter((slot) => slot.description)
+    .map((slot) => `${slot.label} 说明 ${slot.description}`);
+  const summary = formatEquipmentStatSummary(hero);
+  const summaryLine = summary.length > 0
+    ? `装备总加成 ${summary.map((entry) => `${entry.label} +${entry.value}`).join("  ·  ")}`
+    : "装备总加成 当前无额外属性";
+  const effects = loadout.summary.specialEffects.length > 0
+    ? [`特效 ${loadout.summary.specialEffects.map((effect) => effect.name).join(" / ")}`]
+    : [];
+
+  return [`装备 ${equipped.join("  ·  ")}`, ...detail, summaryLine, ...effects, ...descriptions];
 }
 
 export function formatRecentLootLines(

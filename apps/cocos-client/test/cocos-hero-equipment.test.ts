@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildHeroEquipmentActionRows,
   formatEquipmentActionReason,
+  formatEquipmentOverviewLines,
   formatInventorySummaryLines,
   formatRecentLootLines,
   inventoryItemsForSlot
@@ -139,9 +140,45 @@ test("formatInventorySummaryLines exposes the current backpack as grouped readab
     ),
     [
       "背包 4 件（3 类）",
-      "武器 民兵长枪 x2",
-      "护甲 厚绗布甲",
-      "饰品 斥候罗盘"
+      "武器 普通 民兵长枪 x2 · 攻击 +6%",
+      "护甲 普通 厚绗布甲 · 防御 +6% / 生命上限 +2",
+      "饰品 普通 斥候罗盘 · 攻击 +3% / 知识 +1"
+    ]
+  );
+});
+
+test("formatEquipmentOverviewLines exposes slot metadata and resolved equipment stat gains", () => {
+  assert.deepEqual(
+    formatEquipmentOverviewLines(
+      createHero({
+        stats: {
+          attack: 2,
+          defense: 2,
+          power: 1,
+          knowledge: 1,
+          hp: 30,
+          maxHp: 30
+        },
+        loadout: {
+          learnedSkills: [],
+          equipment: {
+            weaponId: "vanguard_blade",
+            armorId: "padded_gambeson",
+            trinketIds: []
+          },
+          inventory: ["scout_compass"]
+        }
+      })
+    ),
+    [
+      "装备 武器 先锋战刃  ·  护甲 厚绗布甲  ·  饰品 未装备",
+      "武器 先锋战刃 · 稀有 · 攻击 +10%",
+      "护甲 厚绗布甲 · 普通 · 防御 +6% / 生命上限 +2",
+      "饰品 未装备 · 等待拾取或替换",
+      "装备总加成 生命 +2",
+      "特效 抢攻",
+      "武器 说明 鼓励先手突击的军团佩剑。",
+      "护甲 说明 最基础的防护甲衣。"
     ]
   );
 });
