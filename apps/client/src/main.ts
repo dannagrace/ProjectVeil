@@ -79,7 +79,14 @@ import {
   renderBattleReportReplayCenter,
   renderRecentAccountEvents
 } from "./account-history";
-import { renderEncounterSourceDetail, renderRecoverySummary, renderRoomActionHint, resolveRoomFeedbackTone } from "./room-feedback";
+import {
+  renderEncounterSourceDetail,
+  renderRecoverySummary,
+  renderRoomActionHint,
+  renderRoomResultSummary,
+  resolveRecoveryRoomStateLabel,
+  resolveRoomFeedbackTone
+} from "./room-feedback";
 
 const params = new URLSearchParams(window.location.search);
 const queryRoomId = params.get("roomId")?.trim() ?? "";
@@ -1967,26 +1974,33 @@ function resolveEncounterOpponentContext(): {
   detail: string;
 } | null {
   const playerCamp = state.battle ? controlledBattleCamp(state.battle, state.world) : null;
+  const recoveryRoomState = resolveRecoveryRoomStateLabel({
+    diagnostics: state.diagnostics,
+    predictionStatus: state.predictionStatus
+  });
+  const roomStateLabel = recoveryRoomState ? `房间态：${recoveryRoomState}` : null;
 
   if (state.battle?.defenderHeroId) {
     const opponentId = opposingHeroId(state.battle, state.world);
     const opponent = findHeroSnapshot(opponentId, state.world);
     return {
       label: "对手信息",
-      detail: `${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：战斗中 · ${battleSessionSummary(
+      detail: `${formatVisibleHeroSummary(opponent, opponentId)} · ${roomStateLabel ?? "房间态：战斗中"} · ${battleSessionSummary(
         state.battle.id,
         state.world.meta.roomId
-      )} · ${battleTurnContextLabel(state.battle, state.world)} · 我方席位：${playerCamp === "attacker" ? "进攻方" : "防守方"}`
+      )} · ${recoveryRoomState ? "当前回合：等待权威恢复" : battleTurnContextLabel(state.battle, state.world)} · 我方席位：${
+        playerCamp === "attacker" ? "进攻方" : "防守方"
+      }`
     };
   }
 
   if (state.battle?.neutralArmyId) {
     return {
       label: "遭遇目标",
-      detail: `${state.battle.neutralArmyId} · 房间态：战斗中 · ${battleSessionSummary(
+      detail: `${state.battle.neutralArmyId} · ${roomStateLabel ?? "房间态：战斗中"} · ${battleSessionSummary(
         state.battle.id,
         state.world.meta.roomId
-      )} · ${battleTurnContextLabel(state.battle, state.world)}`
+      )} · ${recoveryRoomState ? "当前回合：等待权威恢复" : battleTurnContextLabel(state.battle, state.world)}`
     };
   }
 
@@ -2014,7 +2028,7 @@ function resolveEncounterOpponentContext(): {
       const opponent = findHeroSnapshot(opponentId, state.world);
       return {
         label: "最近对手",
-        detail: `${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：已结算 · ${battleSessionSummary(
+        detail: `${formatVisibleHeroSummary(opponent, opponentId)} · ${roomStateLabel ?? "房间态：已结算"} · ${battleSessionSummary(
           state.lastEncounterStarted.battleId,
           state.world.meta.roomId
         )}`
@@ -2023,7 +2037,7 @@ function resolveEncounterOpponentContext(): {
 
     return {
       label: "最近遭遇",
-      detail: `${state.lastEncounterStarted.neutralArmyId ?? "neutral"} · 房间态：已结算 · ${battleSessionSummary(
+      detail: `${state.lastEncounterStarted.neutralArmyId ?? "neutral"} · ${roomStateLabel ?? "房间态：已结算"} · ${battleSessionSummary(
         state.lastEncounterStarted.battleId,
         state.world.meta.roomId
       )}`
@@ -2031,33 +2045,6 @@ function resolveEncounterOpponentContext(): {
   }
 
   return null;
-}
-
-function renderRoomResultSummary(): string {
-  if (state.lastBattleSettlement) {
-    return `房间结果：${state.lastBattleSettlement.roomState}`;
-  }
-
-  if (state.battle) {
-    return `房间结果：多人遭遇战已接管地图行动，当前由 ${battleSessionSummary(
-      state.battle.id,
-      state.world.meta.roomId
-    )} 驱动；待战斗链路关闭后统一回写房间状态。`;
-  }
-
-  if (state.diagnostics.connectionStatus === "reconnecting") {
-    return "恢复状态：正在恢复连接与房间主状态，期间可能短暂保留上一帧视图。";
-  }
-
-  if (state.diagnostics.connectionStatus === "reconnect_failed") {
-    return "恢复状态：正在通过最近快照回补房间，等待权威状态确认当前可行动信息。";
-  }
-
-  if (state.predictionStatus.includes("已回放本地缓存状态")) {
-    return `恢复状态：${state.predictionStatus}`;
-  }
-
-  return "房间结果：当前处于稳定探索态，等待新的移动、交互或多人遭遇。";
 }
 
 function buildBattleSettlementSummary(
@@ -3612,7 +3599,13 @@ function renderRoomStatusPanel(): string {
         diagnostics: state.diagnostics,
         predictionStatus: state.predictionStatus
       })}</p>
-      <p class="muted" data-testid="room-result-summary" data-tone="${roomFeedbackTone}">${renderRoomResultSummary()}</p>
+      <p class="muted" data-testid="room-result-summary" data-tone="${roomFeedbackTone}">${renderRoomResultSummary({
+        battle: state.battle,
+        lastBattleSettlement: state.lastBattleSettlement,
+        diagnostics: state.diagnostics,
+        predictionStatus: state.predictionStatus,
+        roomId: state.world.meta.roomId
+      })}</p>
       <p class="muted" data-testid="opponent-summary">${opponentLine}</p>
       <div class="room-status-chips">
         <span class="battle-intel-chip" data-testid="room-player-summary">${playerSummary}</span>
