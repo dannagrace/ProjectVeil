@@ -1,5 +1,7 @@
 import "./styles.css";
 import {
+  buildAchievementUiItems,
+  groupAchievementUiItems,
   buildRuntimeDiagnosticsTriageView,
   describeAccountAuthFailure,
   renderRuntimeDiagnosticsSnapshotText,
@@ -70,6 +72,7 @@ import {
 import {
   createFallbackPlayerAccountProfile as createLocalAccountProfile,
   loadPlayerAccountProfileWithProgression as loadAccountProfileWithProgression,
+  loadPlayerAchievementProgress,
   bindPlayerAccountCredentials as bindAccountCredentials,
   loadPlayerAccountSessions,
   loadPlayerBattleReplayDetail,
@@ -223,6 +226,17 @@ interface AppState {
   lastEncounterStarted: Extract<SessionUpdate["events"][number], { type: "battle.started" }> | null;
   predictionStatus: string;
   diagnostics: DiagnosticState;
+  achievementPanel: {
+    open: boolean;
+    loading: boolean;
+    status: string;
+    items: ClientPlayerAccountProfile["achievements"];
+  };
+  achievementToast: {
+    eventId: string;
+    title: string;
+    detail: string;
+  } | null;
 }
 
 type BattleUnitView = BattleState["units"][string];
@@ -314,10 +328,18 @@ const state: AppState = {
     lastEventTypes: [],
     exportStatus: "等待导出诊断快照",
     recoverySummary: null
-  }
+  },
+  achievementPanel: {
+    open: false,
+    loading: false,
+    status: "打开后将从成就接口同步最新进度。",
+    items: []
+  },
+  achievementToast: null
 };
 
 let accountRefreshPromise: Promise<void> | null = null;
+let achievementPanelRefreshPromise: Promise<void> | null = null;
 let uiClockMs = 0;
 let nextUiTaskId = 1;
 let scheduledUiTasks: ScheduledUiTask[] = [];
@@ -326,6 +348,10 @@ let battleFxTaskId: number | null = null;
 let replayPlaybackTaskId: number | null = null;
 let keyboardShortcutsBound = false;
 let replayLoadToken = 0;
+let achievementToastTaskId: number | null = null;
+const seenAchievementToastEventIds = new Set<string>();
+const pendingAchievementToasts: Array<{ eventId: string; title: string; detail: string }> = [];
+let hasHydratedAchievementFeed = false;
 
 interface PendingPrediction {
   world: PlayerWorldView;
@@ -593,6 +619,84 @@ function renderDiagnosticPanel(): string {
   `;
 }
 
+function renderAchievementToast(): string {
+  if (!state.achievementToast) {
+    return "";
+  }
+
+  return `
+    <div class="achievement-toast" data-testid="achievement-toast">
+      <span class="achievement-toast-kicker">成就解锁</span>
+      <strong>${escapeHtml(state.achievementToast.title)}</strong>
+      <p>${escapeHtml(state.achievementToast.detail)}</p>
+    </div>
+  `;
+}
+
+function renderGameplayAchievementPanel(): string {
+  if (!state.achievementPanel.open) {
+    return "";
+  }
+
+  const groups = groupAchievementUiItems(buildAchievementUiItems(state.achievementPanel.items));
+  return `
+    <aside class="achievement-panel-shell" data-testid="achievement-panel">
+      <div class="achievement-panel">
+        <div class="achievement-panel-head">
+          <div>
+            <span class="account-eyebrow">Gameplay</span>
+            <h3>成就总览</h3>
+          </div>
+          <div class="achievement-panel-actions">
+            <button class="session-link" data-refresh-achievements="true" ${state.achievementPanel.loading ? "disabled" : ""}>${state.achievementPanel.loading ? "同步中..." : "刷新"}</button>
+            <button class="session-link" data-close-achievements="true">关闭</button>
+          </div>
+        </div>
+        <p class="achievement-panel-status muted">${escapeHtml(state.achievementPanel.status)}</p>
+        <div class="achievement-panel-groups">
+          ${
+            groups.length > 0
+              ? groups
+                  .map(
+                    (group) => `
+                      <section class="achievement-panel-group">
+                        <div class="achievement-panel-group-head">
+                          <strong>${escapeHtml(group.category.label)}</strong>
+                          <span>${group.items.filter((item) => item.isUnlocked).length}/${group.items.length}</span>
+                        </div>
+                        <div class="achievement-panel-list">
+                          ${group.items
+                            .map(
+                              (item) => `
+                                <article class="achievement-panel-item ${item.isUnlocked ? "is-unlocked" : ""}">
+                                  <div class="achievement-panel-item-head">
+                                    <strong>${escapeHtml(item.title)}</strong>
+                                    <span>${escapeHtml(item.statusLabel)}</span>
+                                  </div>
+                                  <p>${escapeHtml(item.description)}</p>
+                                  <div class="achievement-panel-item-meta">
+                                    <span>${item.progressLabel}</span>
+                                    <span>${item.progressPercent}%</span>
+                                  </div>
+                                  <div class="achievement-panel-bar"><span style="width:${item.progressPercent}%"></span></div>
+                                  <div class="achievement-panel-foot">${escapeHtml(item.footnote)}</div>
+                                </article>
+                              `
+                            )
+                            .join("")}
+                        </div>
+                      </section>
+                    `
+                  )
+                  .join("")
+              : `<div class="achievement-panel-empty muted">当前没有可展示的成就数据。</div>`
+          }
+        </div>
+      </div>
+    </aside>
+  `;
+}
+
 async function getSession() {
   if (!sessionPromise) {
     throw new Error("session_not_ready");
@@ -773,6 +877,96 @@ function renderAccountSessionPanel(): string {
       </div>
     </div>
   `;
+}
+
+function isAchievementUnlockEntry(entry: ClientPlayerAccountProfile["recentEventLog"][number]): boolean {
+  return entry.category === "achievement" && (entry.description.startsWith("解锁成就：") || entry.rewards.some((reward) => reward.type === "badge"));
+}
+
+function buildAchievementToastNotice(
+  entry: ClientPlayerAccountProfile["recentEventLog"][number]
+): { eventId: string; title: string; detail: string } {
+  const achievementTitle =
+    entry.rewards.find((reward) => reward.type === "badge")?.label
+    ?? (entry.description.replace(/^解锁成就：/, "").trim() || "未知成就");
+  return {
+    eventId: entry.id,
+    title: achievementTitle,
+    detail: entry.description
+  };
+}
+
+function flushNextAchievementToast(): void {
+  if (state.achievementToast || pendingAchievementToasts.length === 0) {
+    return;
+  }
+
+  const nextToast = pendingAchievementToasts.shift() ?? null;
+  if (!nextToast) {
+    return;
+  }
+
+  cancelUiTask(achievementToastTaskId);
+  state.achievementToast = nextToast;
+  achievementToastTaskId = scheduleUiTask(3200, () => {
+    state.achievementToast = null;
+    achievementToastTaskId = null;
+    flushNextAchievementToast();
+    render();
+  });
+}
+
+function syncAchievementToastFeed(account: ClientPlayerAccountProfile, allowToast: boolean): void {
+  const unseenUnlocks = [...account.recentEventLog]
+    .reverse()
+    .filter((entry) => isAchievementUnlockEntry(entry) && !seenAchievementToastEventIds.has(entry.id));
+
+  unseenUnlocks.forEach((entry) => {
+    seenAchievementToastEventIds.add(entry.id);
+    if (allowToast) {
+      pendingAchievementToasts.push(buildAchievementToastNotice(entry));
+    }
+  });
+
+  if (allowToast) {
+    flushNextAchievementToast();
+  }
+}
+
+async function refreshAchievementPanelData(renderAfter = true): Promise<void> {
+  if (achievementPanelRefreshPromise) {
+    return achievementPanelRefreshPromise;
+  }
+
+  state.achievementPanel.loading = true;
+  state.achievementPanel.status = "正在同步成就目录...";
+  if (renderAfter) {
+    render();
+  }
+
+  achievementPanelRefreshPromise = (async () => {
+    const items = await loadPlayerAchievementProgress(state.account.playerId);
+    state.achievementPanel.items = items;
+    state.account = {
+      ...state.account,
+      achievements: items
+    };
+    state.achievementPanel.loading = false;
+    state.achievementPanel.status = items.length > 0 ? `已同步 ${items.length} 条成就进度。` : "当前没有可展示的成就进度。";
+    render();
+  })().finally(() => {
+    achievementPanelRefreshPromise = null;
+  });
+
+  return achievementPanelRefreshPromise;
+}
+
+function setAchievementPanelOpen(open: boolean): void {
+  state.achievementPanel.open = open;
+  if (open) {
+    void refreshAchievementPanelData(false);
+  }
+  render();
 }
 
 function findReplaySummary(replayId: string | null | undefined): PlayerBattleReplaySummary | null {
@@ -2753,6 +2947,12 @@ async function refreshAccountProfileFromServer(): Promise<void> {
   accountRefreshPromise = (async () => {
     const account = await loadAccountProfileWithProgression(playerId, roomId);
     state.account = account;
+    syncAchievementToastFeed(account, hasHydratedAchievementFeed);
+    hasHydratedAchievementFeed = true;
+    if (state.achievementPanel.open) {
+      state.achievementPanel.items = account.achievements;
+      void refreshAchievementPanelData(false);
+    }
     if (!state.accountSaving) {
       state.accountDraftName = account.displayName;
     }
@@ -4334,13 +4534,15 @@ function render(): void {
     .join("");
 
   root.innerHTML = `
-    <main class="shell">
+    ${renderAchievementToast()}
+    <main class="shell ${state.achievementPanel.open ? "has-achievement-panel" : ""}">
       <section class="hero-panel">
         <div class="eyebrow">Project Veil</div>
         <h1>H5 调试壳</h1>
         <p class="lead">这里保留给浏览器调试、配置联调和回归验证使用；主客户端运行时已切到 Cocos Creator。</p>
         <div class="session-meta-row">
           <p class="muted" data-testid="session-meta">Room: ${roomId} · Player: ${playerId}</p>
+          <button class="session-link" data-toggle-achievements="true">${state.achievementPanel.open ? "收起成就" : "成就面板"}</button>
           <button class="session-link" data-return-lobby="true">返回大厅</button>
           <button class="session-link" data-logout-guest="true">切换游客账号</button>
         </div>
@@ -4521,6 +4723,7 @@ function render(): void {
         ${renderBattleLog()}
       </section>
     </main>
+    ${renderGameplayAchievementPanel()}
     ${renderModal()}
   `;
 
@@ -4739,6 +4942,24 @@ function render(): void {
     });
   }
 
+  for (const toggleAchievementsButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-toggle-achievements]"))) {
+    toggleAchievementsButton.addEventListener("click", () => {
+      setAchievementPanelOpen(!state.achievementPanel.open);
+    });
+  }
+
+  for (const closeAchievementsButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-close-achievements]"))) {
+    closeAchievementsButton.addEventListener("click", () => {
+      setAchievementPanelOpen(false);
+    });
+  }
+
+  for (const refreshAchievementsButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-refresh-achievements]"))) {
+    refreshAchievementsButton.addEventListener("click", () => {
+      void refreshAchievementPanelData();
+    });
+  }
+
   for (const returnLobbyButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-return-lobby]"))) {
     returnLobbyButton.addEventListener("click", () => {
       returnToLobby();
@@ -4793,6 +5014,9 @@ async function syncPlayerAccountProfile(): Promise<void> {
     clearReplayDetail,
     render
   });
+  syncAchievementToastFeed(state.account, false);
+  hasHydratedAchievementFeed = true;
+  state.achievementPanel.items = state.account.achievements;
 }
 
 async function onRevokeAccountSession(sessionId: string): Promise<void> {

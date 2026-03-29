@@ -231,6 +231,39 @@ test("VeilRoot connect replays cached session state before applying the live sna
   assert.equal(root.lastUpdate?.world.meta.day, 3);
 });
 
+test("VeilRoot gameplay achievement panel loads achievement progress from the account endpoint", async () => {
+  const root = createVeilRootHarness();
+  root.playerId = "player-1";
+  root.roomId = "room-alpha";
+  root.remoteUrl = "http://127.0.0.1:2567";
+
+  let loadCalls = 0;
+  installVeilRootRuntime({
+    loadAchievementProgress: async () => {
+      loadCalls += 1;
+      return [
+        {
+          id: "first_battle",
+          title: "初次交锋",
+          description: "首次进入战斗。",
+          metric: "battles_started",
+          current: 1,
+          target: 1,
+          unlocked: true,
+          unlockedAt: "2026-03-29T01:00:00.000Z"
+        }
+      ];
+    }
+  });
+
+  await (root as VeilRoot & Record<string, unknown>).toggleGameplayAchievementPanel(true);
+
+  assert.equal(loadCalls, 1);
+  assert.equal(root.gameplayAchievementPanelOpen, true);
+  assert.equal((root.gameplayAchievementItems as Array<{ id: string }>)[0]?.id, "first_battle");
+  assert.match(String(root.gameplayAchievementPanelStatus), /已同步 1 条成就进度/);
+});
+
 test("VeilRoot hands control to a fresh session when starting a new run", async () => {
   const root = createVeilRootHarness();
   root.roomId = "room-alpha";

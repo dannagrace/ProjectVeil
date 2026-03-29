@@ -140,6 +140,7 @@ export interface VeilHudRenderState {
 export interface VeilHudPanelOptions {
   onNewRun?: () => void;
   onRefresh?: () => void;
+  onToggleAchievements?: () => void;
   onLearnSkill?: (skillId: string) => void;
   onEquipItem?: (slot: EquipmentType, equipmentId: string) => void;
   onUnequipItem?: (slot: EquipmentType) => void;
@@ -240,6 +241,7 @@ export class VeilHudPanel extends Component {
   private requestedIcons = false;
   private onNewRun: (() => void) | undefined;
   private onRefresh: (() => void) | undefined;
+  private onToggleAchievements: (() => void) | undefined;
   private onLearnSkill: ((skillId: string) => void) | undefined;
   private onEquipItem: ((slot: EquipmentType, equipmentId: string) => void) | undefined;
   private onUnequipItem: ((slot: EquipmentType) => void) | undefined;
@@ -250,6 +252,7 @@ export class VeilHudPanel extends Component {
   configure(options: VeilHudPanelOptions): void {
     this.onNewRun = options.onNewRun;
     this.onRefresh = options.onRefresh;
+    this.onToggleAchievements = options.onToggleAchievements;
     this.onLearnSkill = options.onLearnSkill;
     this.onEquipItem = options.onEquipItem;
     this.onUnequipItem = options.onUnequipItem;
@@ -1288,6 +1291,7 @@ export class VeilHudPanel extends Component {
 
     this.ensureActionButton(actionsNode, "HudNewRun", "新开一局");
     this.ensureActionButton(actionsNode, "HudRefresh", "刷新状态");
+    this.ensureActionButton(actionsNode, "HudAchievements", "成就总览");
     this.ensureActionButton(actionsNode, "HudEndDay", "推进一天");
     this.ensureActionButton(actionsNode, "HudReturnLobby", "返回大厅");
   }
@@ -1301,12 +1305,13 @@ export class VeilHudPanel extends Component {
     }
 
     const actionsTransform = actionsNode.getComponent(UITransform) ?? actionsNode.addComponent(UITransform);
-    actionsTransform.setContentSize(Math.max(164, transform.width - 28), 146);
+    actionsTransform.setContentSize(Math.max(164, transform.width - 28), 176);
     actionsNode.setPosition(0, transform.height / 2 - 118, 1);
 
     const buttons: HudActionButtonState[] = [
       { name: "HudNewRun", label: "新开一局", callback: this.onNewRun ?? null },
       { name: "HudRefresh", label: "刷新状态", callback: this.onRefresh ?? null },
+      { name: "HudAchievements", label: "成就总览", callback: this.onToggleAchievements ?? null },
       { name: "HudEndDay", label: "推进一天", callback: this.onEndDay ?? null },
       { name: "HudReturnLobby", label: "返回大厅", callback: this.onReturnLobby ?? null }
     ];
@@ -1321,7 +1326,7 @@ export class VeilHudPanel extends Component {
       const buttonWidth = Math.floor(actionsTransform.width - 8);
       const buttonHeight = 28;
       buttonTransform.setContentSize(buttonWidth, buttonHeight);
-      const buttonY = index === 0 ? 45 : index === 1 ? 15 : index === 2 ? -15 : -45;
+      const buttonY = 60 - index * 30;
       node.setPosition(0, buttonY, 0);
 
       const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
@@ -1332,6 +1337,8 @@ export class VeilHudPanel extends Component {
           : index === 1
             ? new Color(51, 70, 99, 228)
             : index === 2
+              ? new Color(73, 88, 62, 230)
+              : index === 3
               ? new Color(92, 86, 54, 232)
               : new Color(121, 84, 70, 234);
       graphics.strokeColor =
@@ -1340,13 +1347,15 @@ export class VeilHudPanel extends Component {
           : index === 1
             ? new Color(218, 229, 242, 112)
             : index === 2
+              ? new Color(224, 240, 199, 108)
+              : index === 3
               ? new Color(242, 224, 171, 120)
               : new Color(244, 225, 213, 116);
       graphics.lineWidth = 2;
       graphics.roundRect(-buttonWidth / 2, -buttonHeight / 2, buttonWidth, buttonHeight, 10);
       graphics.fill();
       graphics.stroke();
-      graphics.fillColor = new Color(255, 255, 255, index === 0 ? 22 : index === 1 ? 14 : index === 2 ? 18 : 16);
+      graphics.fillColor = new Color(255, 255, 255, index === 0 ? 22 : index === 1 ? 14 : index === 2 ? 16 : index === 3 ? 18 : 16);
       graphics.roundRect(-buttonWidth / 2 + 12, buttonHeight / 2 - 9, buttonWidth - 24, 3, 2);
       graphics.fill();
 
