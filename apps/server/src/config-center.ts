@@ -155,6 +155,32 @@ export interface ConfigPublishHistoryEntry {
   structuralChangeCount: number;
 }
 
+export type ConfigPublishResultStatus = "applied" | "failed";
+export type ConfigPublishChangeRuntimeStatus = "applied" | "failed" | "pending";
+
+export interface ConfigPublishAuditChange {
+  documentId: ConfigDocumentId;
+  title: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+  snapshotId: string | null;
+  runtimeStatus: ConfigPublishChangeRuntimeStatus;
+  runtimeMessage: string;
+  diffSummary: ConfigDiffEntry[];
+}
+
+export interface ConfigPublishAuditEvent {
+  id: string;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  resultStatus: ConfigPublishResultStatus;
+  resultMessage: string;
+  changes: ConfigPublishAuditChange[];
+}
+
 export interface ConfigPublishChangeSummary {
   documentId: ConfigDocumentId;
   title: string;
@@ -285,6 +311,7 @@ export interface ConfigCenterStore {
   rollbackToSnapshot(id: ConfigDocumentId, snapshotId: string): Promise<ConfigDocument>;
   diffWithSnapshot(id: ConfigDocumentId, snapshotId: string): Promise<ConfigDiff>;
   listPublishHistory(id: ConfigDocumentId): Promise<ConfigPublishHistoryEntry[]>;
+  listPublishAuditHistory(): Promise<ConfigPublishAuditEvent[]>;
   listPresets(id: ConfigDocumentId): Promise<ConfigPresetSummary[]>;
   savePreset(id: ConfigDocumentId, name: string, content: string): Promise<ConfigPresetSummary>;
   applyPreset(id: ConfigDocumentId, presetId: string): Promise<ConfigDocument>;
@@ -375,6 +402,7 @@ interface ConfigCenterLibraryState {
   presets: Partial<Record<ConfigDocumentId, ConfigPresetRecord[]>>;
   stagedDraft: ConfigStageRecord | null;
   publishHistory: Partial<Record<ConfigDocumentId, ConfigPublishHistoryEntry[]>>;
+  publishAuditHistory: ConfigPublishAuditEvent[];
 }
 
 interface FlattenedConfigEntry {
@@ -732,7 +760,8 @@ function createEmptyLibraryState(): ConfigCenterLibraryState {
     snapshots: {},
     presets: {},
     stagedDraft: null,
-    publishHistory: {}
+    publishHistory: {},
+    publishAuditHistory: []
   };
 }
 
@@ -2514,7 +2543,8 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
         snapshots: parsed.snapshots ?? {},
         presets: parsed.presets ?? {},
         stagedDraft: parsed.stagedDraft ?? null,
-        publishHistory: parsed.publishHistory ?? {}
+        publishHistory: parsed.publishHistory ?? {},
+        publishAuditHistory: parsed.publishAuditHistory ?? []
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -2670,6 +2700,11 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
     return [...(state.publishHistory[id] ?? [])];
   }
 
+  async listPublishAuditHistory(): Promise<ConfigPublishAuditEvent[]> {
+    const state = await this.readLibraryState();
+    return [...(state.publishAuditHistory ?? [])].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+  }
+
   async getStagedDraft(): Promise<ConfigStageState | null> {
     const state = await this.readLibraryState();
     return this.mapStageRecordToState(state.stagedDraft);
@@ -2707,55 +2742,128 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
     const publishedAt = new Date().toISOString();
     const publishChanges: ConfigPublishChangeSummary[] = [];
     const historyEntries: ConfigPublishHistoryEntry[] = [];
+    const auditChanges: ConfigPublishAuditChange[] = [];
+    const stagedContent = new Map(staged.documents.map((document) => [document.id, document.content] as const));
 
     for (const stagedDocument of staged.documents) {
       const current = await this.loadDocument(stagedDocument.id);
       const diffEntries = buildConfigDiffEntries(stagedDocument.id, current.content, stagedDocument.content);
       const structuralCount = diffEntries.filter((entry) => entry.kind !== "value").length;
-      const saved = await this.saveDocument(stagedDocument.id, stagedDocument.content);
       const definition = configDefinitionFor(stagedDocument.id);
       const fromVersion = current.version ?? 1;
-      const toVersion = saved.version ?? fromVersion;
-
-      publishChanges.push({
+      auditChanges.push({
         documentId: stagedDocument.id,
         title: definition?.title ?? stagedDocument.id,
         fromVersion,
-        toVersion,
+        toVersion: fromVersion,
         changeCount: diffEntries.length,
-        structuralChangeCount: structuralCount
-      });
-      historyEntries.push({
-        id: publishId,
-        documentId: stagedDocument.id,
-        author: metadata.author,
-        summary: metadata.summary,
-        publishedAt,
-        fromVersion,
-        toVersion,
-        changeCount: diffEntries.length,
-        structuralChangeCount: structuralCount
+        structuralChangeCount: structuralCount,
+        snapshotId: null,
+        runtimeStatus: "pending",
+        runtimeMessage: "等待运行时应用",
+        diffSummary: diffEntries.slice(0, 4)
       });
     }
 
-    state.stagedDraft = null;
-    state.publishHistory = state.publishHistory ?? {};
-    for (const entry of historyEntries) {
-      const existing = state.publishHistory[entry.documentId] ?? [];
-      state.publishHistory[entry.documentId] = [entry, ...existing].slice(0, MAX_PUBLISH_HISTORY_ENTRIES);
-    }
-    await this.writeLibraryState(state);
+    try {
+      for (const auditChange of auditChanges) {
+        const nextContent = stagedContent.get(auditChange.documentId);
+        if (typeof nextContent !== "string") {
+          throw new Error(`Missing staged document content: ${auditChange.documentId}`);
+        }
 
-    return {
-      stage: null,
-      publish: {
-        id: publishId,
-        author: metadata.author,
-        summary: metadata.summary,
-        publishedAt,
-        changes: publishChanges
+        const saved = await this.saveDocument(auditChange.documentId, nextContent);
+        const toVersion = saved.version ?? auditChange.fromVersion;
+        const snapshot = await this.findSnapshotByVersion(auditChange.documentId, toVersion);
+
+        auditChange.toVersion = toVersion;
+        auditChange.snapshotId = snapshot?.id ?? null;
+        auditChange.runtimeStatus = "applied";
+        auditChange.runtimeMessage = "运行时已刷新";
+        publishChanges.push({
+          documentId: auditChange.documentId,
+          title: auditChange.title,
+          fromVersion: auditChange.fromVersion,
+          toVersion,
+          changeCount: auditChange.changeCount,
+          structuralChangeCount: auditChange.structuralChangeCount
+        });
+        historyEntries.push({
+          id: publishId,
+          documentId: auditChange.documentId,
+          author: metadata.author,
+          summary: metadata.summary,
+          publishedAt,
+          fromVersion: auditChange.fromVersion,
+          toVersion,
+          changeCount: auditChange.changeCount,
+          structuralChangeCount: auditChange.structuralChangeCount
+        });
       }
-    };
+
+      state.stagedDraft = null;
+      state.publishHistory = state.publishHistory ?? {};
+      for (const entry of historyEntries) {
+        const existing = state.publishHistory[entry.documentId] ?? [];
+        state.publishHistory[entry.documentId] = [entry, ...existing].slice(0, MAX_PUBLISH_HISTORY_ENTRIES);
+      }
+      const appliedAuditEvent: ConfigPublishAuditEvent = {
+        id: publishId,
+        author: metadata.author,
+        summary: metadata.summary,
+        publishedAt,
+        resultStatus: "applied",
+        resultMessage: "运行时配置已刷新",
+        changes: auditChanges
+      };
+      state.publishAuditHistory = [appliedAuditEvent, ...(state.publishAuditHistory ?? [])].slice(
+        0,
+        MAX_PUBLISH_HISTORY_ENTRIES
+      );
+      await this.writeLibraryState(state);
+
+      return {
+        stage: null,
+        publish: {
+          id: publishId,
+          author: metadata.author,
+          summary: metadata.summary,
+          publishedAt,
+          changes: publishChanges
+        }
+      };
+    } catch (error) {
+      const failedMessage = error instanceof Error ? error.message : "发布配置失败";
+      const failedChange = auditChanges.find((entry) => entry.runtimeStatus === "pending");
+      if (failedChange) {
+        failedChange.runtimeStatus = "failed";
+        failedChange.runtimeMessage = failedMessage;
+      }
+
+      const failedAuditEvent: ConfigPublishAuditEvent = {
+        id: publishId,
+        author: metadata.author,
+        summary: metadata.summary,
+        publishedAt,
+        resultStatus: "failed",
+        resultMessage: failedMessage,
+        changes: auditChanges
+      };
+      state.publishAuditHistory = [failedAuditEvent, ...(state.publishAuditHistory ?? [])].slice(
+        0,
+        MAX_PUBLISH_HISTORY_ENTRIES
+      );
+      await this.writeLibraryState(state);
+      throw error;
+    }
+  }
+
+  protected async findSnapshotByVersion(
+    id: ConfigDocumentId,
+    version: number
+  ): Promise<ConfigSnapshotSummary | null> {
+    const snapshots = await this.listSnapshots(id);
+    return snapshots.find((snapshot) => snapshot.version === version) ?? null;
   }
 
   protected mapStageRecordToState(stage: ConfigStageRecord | null): ConfigStageState | null {
@@ -2801,13 +2909,10 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
       seen.add(document.id);
     }
 
-    const normalizedDocuments = documents.map((document) => {
-      const parsed = parseConfigDocument(document.id, document.content);
-      return {
-        id: document.id,
-        content: normalizeJsonContent(parsed)
-      };
-    });
+    const normalizedDocuments = documents.map((document) => ({
+      id: document.id,
+      content: normalizeJsonContent(JSON.parse(document.content) as ParsedConfigDocument)
+    }));
     const overrides: Partial<Record<ConfigDocumentId, string>> = {};
     for (const normalized of normalizedDocuments) {
       overrides[normalized.id] = normalized.content;
@@ -3272,6 +3377,17 @@ export function registerConfigCenterRoutes(
       sendJson(response, 200, {
         storage: store.mode,
         stage: await store.getStagedDraft()
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/config-center/publish-history", async (_request, response) => {
+    try {
+      sendJson(response, 200, {
+        storage: store.mode,
+        history: await store.listPublishAuditHistory()
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });

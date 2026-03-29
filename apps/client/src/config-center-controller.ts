@@ -93,6 +93,32 @@ interface ConfigPublishHistoryEntry {
   structuralChangeCount: number;
 }
 
+type ConfigPublishResultStatus = "applied" | "failed";
+type ConfigPublishChangeRuntimeStatus = "applied" | "failed" | "pending";
+
+interface ConfigPublishAuditChange {
+  documentId: ConfigDocumentId;
+  title: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+  snapshotId: string | null;
+  runtimeStatus: ConfigPublishChangeRuntimeStatus;
+  runtimeMessage: string;
+  diffSummary: ConfigDiffEntry[];
+}
+
+interface ConfigPublishAuditEvent {
+  id: string;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  resultStatus: ConfigPublishResultStatus;
+  resultMessage: string;
+  changes: ConfigPublishAuditChange[];
+}
+
 interface ConfigStageDocumentSummary {
   id: ConfigDocumentId;
   title: string;
@@ -228,6 +254,9 @@ interface AppState {
   presets: ConfigPresetSummary[];
   presetsLoading: boolean;
   publishHistory: ConfigPublishHistoryEntry[];
+  publishAuditHistory: ConfigPublishAuditEvent[];
+  publishAuditFilterId: ConfigDocumentId | "all";
+  publishAuditFilterStatus: ConfigPublishResultStatus | "all";
   publishStage: ConfigStageState | null;
   publishStageLoading: boolean;
 }
@@ -352,6 +381,9 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     presets: [],
     presetsLoading: false,
     publishHistory: [],
+    publishAuditHistory: [],
+    publishAuditFilterId: "all",
+    publishAuditFilterStatus: "all",
     publishStage: null,
     publishStageLoading: false
   };
@@ -571,6 +603,66 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     }
   }
 
+  async function loadPublishAuditHistory(): Promise<void> {
+    state.historyLoading = true;
+    notify();
+    try {
+      const response = await requestJson<{
+        storage: "filesystem" | "mysql";
+        history: ConfigPublishAuditEvent[];
+      }>("/api/config-center/publish-history");
+      state.storageMode = response.storage;
+      state.publishAuditHistory = response.history ?? [];
+    } catch (error) {
+      state.statusTone = "error";
+      state.statusMessage = error instanceof Error ? error.message : "加载发布审计记录失败";
+    } finally {
+      state.historyLoading = false;
+      notify();
+    }
+  }
+
+  function setPublishAuditFilters(filters: {
+    documentId?: ConfigDocumentId | "all";
+    resultStatus?: ConfigPublishResultStatus | "all";
+  }): void {
+    if (filters.documentId) {
+      state.publishAuditFilterId = filters.documentId;
+    }
+    if (filters.resultStatus) {
+      state.publishAuditFilterStatus = filters.resultStatus;
+    }
+    notify();
+  }
+
+  async function inspectPublishedSnapshot(documentId: ConfigDocumentId, snapshotId: string): Promise<void> {
+    if (!snapshotId) {
+      return;
+    }
+
+    if (state.current?.id !== documentId) {
+      await loadDocument(documentId);
+    } else if (state.snapshots.length === 0) {
+      await loadSnapshots(documentId);
+    }
+
+    state.selectedSnapshotId = snapshotId;
+    notify();
+    await loadSnapshotDiff(snapshotId);
+  }
+
+  async function rollbackPublishedSnapshot(documentId: ConfigDocumentId, snapshotId: string): Promise<void> {
+    if (!snapshotId) {
+      return;
+    }
+
+    if (state.current?.id !== documentId) {
+      await loadDocument(documentId);
+    }
+
+    await rollbackSnapshot(snapshotId);
+  }
+
   async function persistStageDocuments(
     documents: Array<{ id: ConfigDocumentId; content: string }>,
     successMessage: string
@@ -717,6 +809,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       state.publishStage = response.stage ?? null;
       state.statusTone = "success";
       state.statusMessage = `已发布 ${response.publish.changes.length} 个草稿，并刷新运行时配置。`;
+      await loadPublishAuditHistory();
       const activeDocumentId = state.current?.id ?? null;
       await loadList();
       if (activeDocumentId && publishedDocumentIds.includes(activeDocumentId)) {
@@ -1247,6 +1340,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     loadPresets,
     loadSnapshotDiff,
     loadPublishStage,
+    loadPublishAuditHistory,
     loadWorldPreview,
     loadValidation,
     scheduleWorldPreview,
@@ -1263,6 +1357,9 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     removeDocumentFromStage,
     clearPublishStage,
     publishStageDrafts,
+    setPublishAuditFilters,
+    inspectPublishedSnapshot,
+    rollbackPublishedSnapshot,
     parseDownloadFileName
   };
 }
@@ -1274,6 +1371,8 @@ export type {
   ConfigDocumentId,
   ConfigDocumentSummary,
   ConfigPresetSummary,
+  ConfigPublishAuditEvent,
+  ConfigPublishAuditChange,
   ConfigPublishHistoryEntry,
   ConfigSchemaSummary,
   ConfigSnapshotSummary,

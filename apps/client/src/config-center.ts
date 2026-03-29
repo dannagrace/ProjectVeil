@@ -153,6 +153,32 @@ interface ConfigPublishHistoryEntry {
   structuralChangeCount: number;
 }
 
+type ConfigPublishResultStatus = "applied" | "failed";
+type ConfigPublishChangeRuntimeStatus = "applied" | "failed" | "pending";
+
+interface ConfigPublishAuditChange {
+  documentId: ConfigDocumentId;
+  title: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+  snapshotId: string | null;
+  runtimeStatus: ConfigPublishChangeRuntimeStatus;
+  runtimeMessage: string;
+  diffSummary: ConfigDiffEntry[];
+}
+
+interface ConfigPublishAuditEvent {
+  id: string;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  resultStatus: ConfigPublishResultStatus;
+  resultMessage: string;
+  changes: ConfigPublishAuditChange[];
+}
+
 interface ConfigStageDocumentSummary {
   id: ConfigDocumentId;
   title: string;
@@ -285,6 +311,9 @@ interface AppState {
   presets: ConfigPresetSummary[];
   presetsLoading: boolean;
   publishHistory: ConfigPublishHistoryEntry[];
+  publishAuditHistory: ConfigPublishAuditEvent[];
+  publishAuditFilterId: ConfigDocumentId | "all";
+  publishAuditFilterStatus: ConfigPublishResultStatus | "all";
   publishStage: ConfigStageState | null;
   publishStageLoading: boolean;
 }
@@ -360,6 +389,7 @@ const {
   loadPresets,
   loadSnapshotDiff,
   loadPublishStage,
+  loadPublishAuditHistory,
   loadWorldPreview,
   loadValidation,
   scheduleWorldPreview,
@@ -375,7 +405,10 @@ const {
   stageCurrentDraft,
   removeDocumentFromStage,
   clearPublishStage,
-  publishStageDrafts
+  publishStageDrafts,
+  setPublishAuditFilters,
+  inspectPublishedSnapshot,
+  rollbackPublishedSnapshot
 } = controller;
 
 function formatTime(value: string): string {
@@ -1331,38 +1364,135 @@ function renderSnapshotDiffPanel(): string {
 }
 
 function renderPublishHistoryList(): string {
-  const entries = state.publishHistory;
-  if (state.historyLoading && entries.length === 0) {
+  const entries = state.publishAuditHistory.filter((entry) => {
+    const matchesDocument =
+      state.publishAuditFilterId === "all" ||
+      entry.changes.some((change) => change.documentId === state.publishAuditFilterId);
+    const matchesResult =
+      state.publishAuditFilterStatus === "all" || entry.resultStatus === state.publishAuditFilterStatus;
+    return matchesDocument && matchesResult;
+  });
+  if (state.historyLoading && entries.length === 0 && state.publishAuditHistory.length === 0) {
     return `<div class="world-preview-empty">正在加载发布记录...</div>`;
   }
 
   if (entries.length === 0) {
-    return `<div class="world-preview-empty">暂无发布记录，先使用“发布草稿”功能再回来查看。</div>`;
+    return `
+      <section class="history-section">
+        <div class="config-preview-subhead">
+          <h4>发布审计历史</h4>
+          <span class="config-meta">0 条匹配记录</span>
+        </div>
+        <div class="history-filters">
+          <label>
+            <span>配置类型</span>
+            <select data-role="publish-filter-doc">
+              <option value="all">全部</option>
+              <option value="world" ${state.publishAuditFilterId === "world" ? "selected" : ""}>世界配置</option>
+              <option value="mapObjects" ${state.publishAuditFilterId === "mapObjects" ? "selected" : ""}>地图物件</option>
+              <option value="units" ${state.publishAuditFilterId === "units" ? "selected" : ""}>兵种配置</option>
+              <option value="battleSkills" ${state.publishAuditFilterId === "battleSkills" ? "selected" : ""}>技能配置</option>
+              <option value="battleBalance" ${state.publishAuditFilterId === "battleBalance" ? "selected" : ""}>战斗平衡</option>
+            </select>
+          </label>
+          <label>
+            <span>结果状态</span>
+            <select data-role="publish-filter-status">
+              <option value="all">全部</option>
+              <option value="applied" ${state.publishAuditFilterStatus === "applied" ? "selected" : ""}>已应用</option>
+              <option value="failed" ${state.publishAuditFilterStatus === "failed" ? "selected" : ""}>失败</option>
+            </select>
+          </label>
+        </div>
+        <div class="world-preview-empty">暂无匹配的发布记录，先使用“发布草稿”功能再回来查看。</div>
+      </section>
+    `;
   }
 
   return `
-    <div class="publish-history">
+    <section class="history-section publish-history">
       <div class="config-preview-subhead">
-        <h4>发布记录</h4>
-        <span class="config-meta">${entries.length} 次发布</span>
+        <h4>发布审计历史</h4>
+        <span class="config-meta">${entries.length} 条记录</span>
+      </div>
+      <div class="history-filters">
+        <label>
+          <span>配置类型</span>
+          <select data-role="publish-filter-doc">
+            <option value="all">全部</option>
+            <option value="world" ${state.publishAuditFilterId === "world" ? "selected" : ""}>世界配置</option>
+            <option value="mapObjects" ${state.publishAuditFilterId === "mapObjects" ? "selected" : ""}>地图物件</option>
+            <option value="units" ${state.publishAuditFilterId === "units" ? "selected" : ""}>兵种配置</option>
+            <option value="battleSkills" ${state.publishAuditFilterId === "battleSkills" ? "selected" : ""}>技能配置</option>
+            <option value="battleBalance" ${state.publishAuditFilterId === "battleBalance" ? "selected" : ""}>战斗平衡</option>
+          </select>
+        </label>
+        <label>
+          <span>结果状态</span>
+          <select data-role="publish-filter-status">
+            <option value="all">全部</option>
+            <option value="applied" ${state.publishAuditFilterStatus === "applied" ? "selected" : ""}>已应用</option>
+            <option value="failed" ${state.publishAuditFilterStatus === "failed" ? "selected" : ""}>失败</option>
+          </select>
+        </label>
       </div>
       <div class="publish-history-list">
         ${entries
-          .slice(0, 6)
+          .slice(0, 10)
           .map(
             (entry) => `
               <article class="publish-history-card">
-                <div>
-                  <strong>${escapeHtml(entry.summary)}</strong>
-                  <span>${escapeHtml(entry.author)} · ${formatTime(entry.publishedAt)}</span>
-                  <small>v${entry.fromVersion} → v${entry.toVersion} · ${entry.changeCount} 项变更${entry.structuralChangeCount ? `，其中 ${entry.structuralChangeCount} 项结构风险` : ""}</small>
+                <div class="publish-history-head">
+                  <div>
+                    <strong>${escapeHtml(entry.summary)}</strong>
+                    <span>${escapeHtml(entry.author)} · ${formatTime(entry.publishedAt)}</span>
+                  </div>
+                  <span class="publish-result-pill is-${entry.resultStatus}">${entry.resultStatus === "applied" ? "已应用" : "失败"}</span>
+                </div>
+                <small>${escapeHtml(entry.resultMessage)}</small>
+                <div class="config-badge-row">
+                  ${entry.changes.map((change) => `<span class="config-badge">${escapeHtml(change.title)} · v${change.fromVersion}→v${change.toVersion}</span>`).join("")}
+                </div>
+                <div class="publish-change-list">
+                  ${entry.changes
+                    .map(
+                      (change) => `
+                        <section class="publish-change-card">
+                          <div class="publish-change-head">
+                            <strong>${escapeHtml(change.title)}</strong>
+                            <span>${change.changeCount} 项变更${change.structuralChangeCount ? ` · ${change.structuralChangeCount} 项结构风险` : ""}</span>
+                          </div>
+                          <small>${escapeHtml(change.runtimeMessage)}</small>
+                          <div class="publish-diff-summary">
+                            ${
+                              change.diffSummary.length > 0
+                                ? change.diffSummary
+                                    .map(
+                                      (diff) => `
+                                        <span class="publish-diff-chip">
+                                          ${escapeHtml(diff.path)} · ${escapeHtml(diffKindLabel(diff.kind))}
+                                        </span>
+                                      `
+                                    )
+                                    .join("")
+                                : `<span class="publish-diff-chip">无字段差异</span>`
+                            }
+                          </div>
+                          <div class="history-actions">
+                            <button class="config-button is-secondary config-button-compact" data-action="inspect-publish-change" data-doc-id="${change.documentId}" data-snapshot-id="${change.snapshotId ?? ""}" ${change.snapshotId ? "" : "disabled"}>查看快照</button>
+                            <button class="config-button is-secondary config-button-compact" data-action="rollback-publish-change" data-doc-id="${change.documentId}" data-snapshot-id="${change.snapshotId ?? ""}" ${change.snapshotId ? "" : "disabled"}>快速回滚</button>
+                          </div>
+                        </section>
+                      `
+                    )
+                    .join("")}
                 </div>
               </article>
             `
           )
           .join("")}
       </div>
-    </div>
+    </section>
   `;
 }
 
@@ -1731,6 +1861,40 @@ function bindPublishStageControls(): void {
       }
     });
   });
+
+  const documentFilter = document.querySelector<HTMLSelectElement>("[data-role='publish-filter-doc']");
+  documentFilter?.addEventListener("change", () => {
+    setPublishAuditFilters({
+      documentId: (documentFilter.value || "all") as ConfigDocumentId | "all"
+    });
+  });
+
+  const statusFilter = document.querySelector<HTMLSelectElement>("[data-role='publish-filter-status']");
+  statusFilter?.addEventListener("change", () => {
+    setPublishAuditFilters({
+      resultStatus: (statusFilter.value || "all") as ConfigPublishResultStatus | "all"
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-action='inspect-publish-change']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const docId = button.dataset.docId as ConfigDocumentId | undefined;
+      const snapshotId = button.dataset.snapshotId;
+      if (docId && snapshotId) {
+        void inspectPublishedSnapshot(docId, snapshotId);
+      }
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-action='rollback-publish-change']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const docId = button.dataset.docId as ConfigDocumentId | undefined;
+      const snapshotId = button.dataset.snapshotId;
+      if (docId && snapshotId) {
+        void rollbackPublishedSnapshot(docId, snapshotId);
+      }
+    });
+  });
 }
 
 function refreshPreviewPane(): void {
@@ -1932,6 +2096,7 @@ async function bootstrap(): Promise<void> {
   try {
     await loadList();
     await loadPublishStage();
+    await loadPublishAuditHistory();
     const requestedId = new URLSearchParams(window.location.search).get("config") as ConfigDocumentId | null;
     const initialId = requestedId && state.items.some((item) => item.id === requestedId) ? requestedId : state.items[0]?.id ?? null;
 
