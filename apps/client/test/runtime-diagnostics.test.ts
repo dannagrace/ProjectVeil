@@ -224,6 +224,7 @@ test("buildH5RuntimeDiagnosticsSnapshot creates a stable export payload for dev 
         }
       ],
       logTail: ["Room room-alpha connected", "Battle resolved"],
+      recoverySummary: "权威房间状态已恢复，战后结果与地图状态已经重新对齐。",
       predictionStatus: "",
       pendingUiTasks: 2,
       replay: {
@@ -246,6 +247,7 @@ test("buildH5RuntimeDiagnosticsSnapshot creates a stable export payload for dev 
   assert.equal(snapshot.world?.hero?.id, "hero-1");
   assert.deepEqual(snapshot.world?.resources, { gold: 150, wood: 10, ore: 4 });
   assert.equal(snapshot.account.recentReplayCount, 1);
+  assert.equal(snapshot.diagnostics.recoverySummary, "权威房间状态已恢复，战后结果与地图状态已经重新对齐。");
   assert.equal(snapshot.diagnostics.predictionStatus, null);
   assert.equal(snapshot.diagnostics.replay?.totalSteps, 3);
 
@@ -253,10 +255,12 @@ test("buildH5RuntimeDiagnosticsSnapshot creates a stable export payload for dev 
   assert.match(serialized, /"schemaVersion": 1/);
   assert.match(serialized, /"surface": "h5-debug-shell"/);
   assert.match(serialized, /"reachableTileCount": 2/);
+  assert.match(serialized, /"recoverySummary": "权威房间状态已恢复，战后结果与地图状态已经重新对齐。"/);
   assert.match(serialized, /"predictionStatus": null/);
 
   const summary = renderRuntimeDiagnosticsSnapshotText(snapshot);
   assert.match(summary, /Room room-alpha \/ Player player-1 \/ Sync connected/);
   assert.match(summary, /Resources gold=150 wood=10 ore=4/);
   assert.match(summary, /Events battle.started, battle.resolved/);
+  assert.match(summary, /Recovery 权威房间状态已恢复，战后结果与地图状态已经重新对齐。/);
 });

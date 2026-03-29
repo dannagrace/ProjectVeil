@@ -79,7 +79,7 @@ import {
   renderBattleReportReplayCenter,
   renderRecentAccountEvents
 } from "./account-history";
-import { renderEncounterSourceDetail, renderRoomActionHint, resolveRoomFeedbackTone } from "./room-feedback";
+import { renderEncounterSourceDetail, renderRecoverySummary, renderRoomActionHint, resolveRoomFeedbackTone } from "./room-feedback";
 
 const params = new URLSearchParams(window.location.search);
 const queryRoomId = params.get("roomId")?.trim() ?? "";
@@ -149,6 +149,7 @@ interface DiagnosticState {
   lastUpdateReason: string | null;
   lastEventTypes: string[];
   exportStatus: string;
+  recoverySummary: string | null;
 }
 
 interface LobbyViewState {
@@ -298,7 +299,8 @@ const state: AppState = {
     lastUpdateSource: null,
     lastUpdateReason: null,
     lastEventTypes: [],
-    exportStatus: "等待导出诊断快照"
+    exportStatus: "等待导出诊断快照",
+    recoverySummary: null
   }
 };
 
@@ -335,6 +337,12 @@ let sessionPromise: ReturnType<typeof createGameSession> | null = shouldBootGame
       onConnectionEvent: (event) => {
         state.diagnostics.connectionStatus =
           event === "reconnecting" ? "reconnecting" : event === "reconnect_failed" ? "reconnect_failed" : "connected";
+        state.diagnostics.recoverySummary =
+          event === "reconnecting"
+            ? "连接暂时中断，正在尝试重新加入房间。"
+            : event === "reconnected"
+              ? "连接已恢复，正在用最新房间状态校正地图与战斗结果。"
+              : "旧连接未恢复，正在改用持久化快照补救当前房间状态。";
         state.log.unshift(
           event === "reconnecting"
             ? "连接中断，正在尝试重连..."
@@ -405,6 +413,7 @@ function buildDiagnosticSnapshot() {
         text: entry.text
       })),
       logTail: state.log.slice(0, 8),
+      recoverySummary: state.diagnostics.recoverySummary,
       predictionStatus: state.predictionStatus,
       pendingUiTasks: scheduledUiTasks.filter((task) => !task.canceled).length,
       replay:
@@ -2205,6 +2214,7 @@ function applyReplayedUpdate(update: SessionUpdate): void {
     state.lastEncounterStarted = replayStarted;
   }
   state.predictionStatus = "已回放本地缓存状态，正在等待房间同步...";
+  state.diagnostics.recoverySummary = "已回放本地缓存状态，等待权威房间同步完成最终校正。";
   state.log.unshift("已从本地缓存回放最近房间状态");
   state.log = state.log.slice(0, 12);
   pushTimeline([
@@ -2542,6 +2552,9 @@ function extractDamageText(lines: string[]): string | null {
 }
 
 function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "local"): void {
+  const previousConnectionStatus = state.diagnostics.connectionStatus;
+  const previousRecoverySummary = state.diagnostics.recoverySummary;
+  const previousPredictionStatus = state.predictionStatus;
   clearPendingPrediction();
   const hadBattle = Boolean(state.battle);
   const previousBattle = state.battle;
@@ -2647,6 +2660,20 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
     )
   ) {
     void refreshAccountProfileFromServer();
+  }
+
+  const recoveredFromFallback =
+    previousConnectionStatus === "reconnecting" ||
+    previousConnectionStatus === "reconnect_failed" ||
+    previousPredictionStatus.includes("已回放本地缓存状态");
+  if (recoveredFromFallback) {
+    state.diagnostics.recoverySummary = update.battle
+      ? "权威战斗状态已恢复，当前行动顺序与房间归属重新对齐。"
+      : state.lastBattleSettlement
+        ? "权威房间状态已恢复，战后结果与地图状态已经重新对齐。"
+        : "权威房间状态已恢复，当前地图探索状态已经重新对齐。";
+  } else if (source === "local" && previousRecoverySummary && !update.reason) {
+    state.diagnostics.recoverySummary = null;
   }
 
   syncKeyboardCursor();
@@ -3575,6 +3602,12 @@ function renderRoomStatusPanel(): string {
         lastEncounterStarted: state.lastEncounterStarted,
         world: state.world,
         previewPlan: state.previewPlan,
+        lastBattleSettlement: state.lastBattleSettlement,
+        diagnostics: state.diagnostics,
+        predictionStatus: state.predictionStatus
+      })}</p>
+      <p class="muted" data-testid="room-recovery-summary" data-tone="${roomFeedbackTone}">${renderRecoverySummary({
+        battle: state.battle,
         lastBattleSettlement: state.lastBattleSettlement,
         diagnostics: state.diagnostics,
         predictionStatus: state.predictionStatus

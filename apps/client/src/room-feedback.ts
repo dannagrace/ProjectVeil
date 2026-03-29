@@ -8,6 +8,7 @@ interface BattleSettlementSummaryLike {
 
 interface DiagnosticStateLike {
   connectionStatus: "connecting" | "connected" | "reconnecting" | "reconnect_failed";
+  recoverySummary?: string | null;
 }
 
 type EncounterStartedEvent = Extract<SessionUpdate["events"][number], { type: "battle.started" }>;
@@ -36,6 +37,7 @@ export interface AppState {
   previewPlan: MovementPlan | null;
   lastBattleSettlement: (BattleSettlementSummaryLike & { tone?: CocosBattleFeedbackTone }) | null;
   diagnostics: DiagnosticStateLike;
+  predictionStatus?: string;
 }
 
 function ownedHeroIds(world: PlayerWorldView): Set<string> {
@@ -131,4 +133,35 @@ export function renderRoomActionHint(input: RoomActionHintInput): string {
   return input.activeHero.move.remaining > 0
     ? "下一步：选择地图格继续探索；若接敌，将自动切入对抗。"
     : "下一步：当前英雄今日已无移动力，可推进到下一天。";
+}
+
+export function renderRecoverySummary(input: {
+  battle: BattleState | null;
+  lastBattleSettlement: BattleSettlementSummaryLike | null;
+  diagnostics: DiagnosticStateLike;
+  predictionStatus: string;
+}): string {
+  if (input.diagnostics.connectionStatus === "reconnecting") {
+    return "恢复状态：正在重新加入多人房间并校正战斗归属，结果请以恢复后的权威状态为准。";
+  }
+
+  if (input.diagnostics.connectionStatus === "reconnect_failed") {
+    return "恢复状态：旧连接恢复失败，已切换到快照回补链路；当前先展示最近缓存与回补进度。";
+  }
+
+  if (input.predictionStatus.includes("已回放本地缓存状态")) {
+    return `恢复状态：${input.predictionStatus}`;
+  }
+
+  if (input.diagnostics.recoverySummary) {
+    return `恢复状态：${input.diagnostics.recoverySummary}`;
+  }
+
+  if (input.lastBattleSettlement) {
+    return input.battle
+      ? "恢复状态：战后房间仍在切换阶段，等待当前战斗链路完全关闭。"
+      : "恢复状态：最近一场遭遇的结算与地图房间态已经重新对齐。";
+  }
+
+  return "恢复状态：当前未触发重连补救，房间同步保持稳定。";
 }

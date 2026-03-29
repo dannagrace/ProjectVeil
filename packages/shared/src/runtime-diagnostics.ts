@@ -110,6 +110,7 @@ export interface RuntimeDiagnosticsSnapshot {
       text: string;
     }>;
     logTail: string[];
+    recoverySummary: string | null;
     predictionStatus: string | null;
     pendingUiTasks: number;
     replay: RuntimeDiagnosticsReplaySnapshot | null;
@@ -167,6 +168,10 @@ export function buildRuntimeDiagnosticsSummaryLines(snapshot: RuntimeDiagnostics
 
   if (snapshot.diagnostics.predictionStatus) {
     lines.push(`Prediction ${snapshot.diagnostics.predictionStatus}`);
+  }
+
+  if (snapshot.diagnostics.recoverySummary) {
+    lines.push(`Recovery ${snapshot.diagnostics.recoverySummary}`);
   }
 
   lines.push(`Pending UI tasks ${snapshot.diagnostics.pendingUiTasks}`);

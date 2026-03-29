@@ -47,6 +47,9 @@ test("players can reload after a PvP battle resolves and keep the settled world 
   await expect(playerTwoPage.getByTestId("session-meta")).toContainText(`Room: ${roomId}`);
   await expect(playerOnePage.getByTestId("event-log")).toContainText("连接已恢复", { timeout: 10_000 });
   await expect(playerTwoPage.getByTestId("event-log")).toContainText("连接已恢复", { timeout: 10_000 });
+  await expect(playerOnePage.getByTestId("room-recovery-summary")).toContainText("权威房间状态已恢复");
+  await expect(playerOnePage.getByTestId("room-recovery-summary")).toContainText("战后结果与地图状态已经重新对齐");
+  await expect(playerTwoPage.getByTestId("room-recovery-summary")).toContainText("权威房间状态已恢复");
   await expect(playerOnePage.getByTestId("room-phase")).toHaveText("已结算");
   await expect(playerTwoPage.getByTestId("room-phase")).toHaveText("已结算");
   await expect(playerOnePage.getByTestId("battle-settlement-summary")).toContainText("已击败");
