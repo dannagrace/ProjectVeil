@@ -98,6 +98,33 @@ const DEFAULT_MAP_WIDTH_TILES = 8;
 const DEFAULT_MAP_HEIGHT_TILES = 8;
 const BATTLE_FEEDBACK_DURATION_MS = 2600;
 
+interface VeilRootRuntime {
+  createSession: typeof VeilCocosSession.create;
+  readStoredReplay: typeof VeilCocosSession.readStoredReplay;
+  loadLobbyRooms: typeof loadCocosLobbyRooms;
+  syncAuthSession: typeof syncCurrentCocosAuthSession;
+  loadAccountProfile: typeof loadCocosPlayerAccountProfile;
+  loginGuestAuthSession: typeof loginCocosGuestAuthSession;
+}
+
+const defaultVeilRootRuntime: VeilRootRuntime = {
+  createSession: (...args) => VeilCocosSession.create(...args),
+  readStoredReplay: (...args) => VeilCocosSession.readStoredReplay(...args),
+  loadLobbyRooms: (...args) => loadCocosLobbyRooms(...args),
+  syncAuthSession: (...args) => syncCurrentCocosAuthSession(...args),
+  loadAccountProfile: (...args) => loadCocosPlayerAccountProfile(...args),
+  loginGuestAuthSession: (...args) => loginCocosGuestAuthSession(...args)
+};
+
+let testVeilRootRuntimeOverrides: Partial<VeilRootRuntime> | null = null;
+
+function resolveVeilRootRuntime(): VeilRootRuntime {
+  return {
+    ...defaultVeilRootRuntime,
+    ...testVeilRootRuntimeOverrides
+  };
+}
+
 function formatHeroStatBonus(bonus: { attack: number; defense: number; power: number; knowledge: number }): string {
   return [
     bonus.attack > 0 ? `攻击 +${bonus.attack}` : "",
@@ -258,7 +285,7 @@ export class VeilRoot extends Component {
     }
 
     this.pushLog(`正在连接 ${this.remoteUrl} ...`);
-    const replayed = VeilCocosSession.readStoredReplay(this.roomId, this.playerId);
+    const replayed = resolveVeilRootRuntime().readStoredReplay(this.roomId, this.playerId);
     if (replayed) {
       this.applyReplayedSessionUpdate(replayed);
       this.pushLog("已回放本地缓存，等待房间实时同步。");
@@ -268,7 +295,12 @@ export class VeilRoot extends Component {
     const sessionEpoch = this.bumpSessionEpoch();
     let nextSession: VeilCocosSession | null = null;
     try {
-      nextSession = await VeilCocosSession.create(this.roomId, this.playerId, this.seed, this.createSessionOptions(sessionEpoch));
+      nextSession = await resolveVeilRootRuntime().createSession(
+        this.roomId,
+        this.playerId,
+        this.seed,
+        this.createSessionOptions(sessionEpoch)
+      );
       if (!this.isActiveSessionEpoch(sessionEpoch)) {
         await nextSession.dispose().catch(() => undefined);
         return;
@@ -850,7 +882,7 @@ export class VeilRoot extends Component {
     const requestEpoch = this.bumpLobbyAccountEpoch();
     const storedSession = readStoredCocosAuthSession(storage);
     const activeSession = storedSession?.playerId === this.playerId ? storedSession : null;
-    const syncedSession = await syncCurrentCocosAuthSession(this.remoteUrl, {
+    const syncedSession = await resolveVeilRootRuntime().syncAuthSession(this.remoteUrl, {
       storage,
       session: activeSession
     });
@@ -874,7 +906,7 @@ export class VeilRoot extends Component {
       this.sessionSource = "none";
     }
 
-    const profile = await loadCocosPlayerAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
+    const profile = await resolveVeilRootRuntime().loadAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
       storage,
       authSession: syncedSession
     });
@@ -1422,7 +1454,12 @@ export class VeilRoot extends Component {
     this.renderView();
 
     try {
-      freshSession = await VeilCocosSession.create(nextRoomId, this.playerId, nextSeed, this.createSessionOptions(nextSessionEpoch));
+      freshSession = await resolveVeilRootRuntime().createSession(
+        nextRoomId,
+        this.playerId,
+        nextSeed,
+        this.createSessionOptions(nextSessionEpoch)
+      );
       if (!this.isActiveSessionEpoch(nextSessionEpoch)) {
         await freshSession.dispose().catch(() => undefined);
         return;
@@ -1470,7 +1507,7 @@ export class VeilRoot extends Component {
     this.renderView();
 
     try {
-      const rooms = await loadCocosLobbyRooms(this.remoteUrl);
+      const rooms = await resolveVeilRootRuntime().loadLobbyRooms(this.remoteUrl);
       this.lobbyRooms = rooms;
       this.lobbyStatus =
         rooms.length > 0
@@ -1506,7 +1543,7 @@ export class VeilRoot extends Component {
     try {
       let authSession: Awaited<ReturnType<typeof loginCocosGuestAuthSession>>;
       if (this.authMode === "account" && this.authToken) {
-        const syncedSession = await syncCurrentCocosAuthSession(this.remoteUrl, {
+        const syncedSession = await resolveVeilRootRuntime().syncAuthSession(this.remoteUrl, {
           storage,
           session: readStoredCocosAuthSession(storage)
         });
@@ -1515,7 +1552,7 @@ export class VeilRoot extends Component {
         }
         authSession = syncedSession;
       } else {
-        authSession = await loginCocosGuestAuthSession(this.remoteUrl, preferences.playerId, displayName, {
+        authSession = await resolveVeilRootRuntime().loginGuestAuthSession(this.remoteUrl, preferences.playerId, displayName, {
           storage
         });
       }
@@ -2677,6 +2714,17 @@ export class VeilRoot extends Component {
     };
   }
 
+}
+
+export function setVeilRootRuntimeForTests(runtime: Partial<VeilRootRuntime>): void {
+  testVeilRootRuntimeOverrides = {
+    ...testVeilRootRuntimeOverrides,
+    ...runtime
+  };
+}
+
+export function resetVeilRootRuntimeForTests(): void {
+  testVeilRootRuntimeOverrides = null;
 }
 
 function cloneSessionUpdate(update: SessionUpdate): SessionUpdate {
