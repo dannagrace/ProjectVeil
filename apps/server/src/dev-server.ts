@@ -8,6 +8,7 @@ import { registerMatchmakingRoutes } from "./matchmaking";
 import { registerRuntimeObservabilityRoutes } from "./observability";
 import { MySqlRoomSnapshotStore, readMySqlPersistenceConfig } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
+import { registerConfigViewerRoutes } from "./config-viewer";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
 
@@ -38,6 +39,7 @@ async function startDevServer(
   const transport = new WebSocketTransport();
   registerAuthRoutes(transport.getExpressApp() as never, effectiveSnapshotStore);
   registerConfigCenterRoutes(transport.getExpressApp() as never, configCenterStore);
+  registerConfigViewerRoutes(transport.getExpressApp() as never, configCenterStore);
   registerPlayerAccountRoutes(transport.getExpressApp() as never, effectiveSnapshotStore);
   registerLobbyRoutes(transport.getExpressApp() as never, { listRooms: listLobbyRooms });
   registerMatchmakingRoutes(transport.getExpressApp() as never, { store: effectiveSnapshotStore });
@@ -53,6 +55,8 @@ async function startDevServer(
   console.log(`Project Veil Colyseus dev server listening on ws://${host}:${port}`);
   // eslint-disable-next-line no-console
   console.log(`Config center API available at http://${host}:${port}/api/config-center/configs`);
+  // eslint-disable-next-line no-console
+  console.log(`Config viewer available at http://${host}:${port}/config-viewer`);
   // eslint-disable-next-line no-console
   console.log(`Player account API available at http://${host}:${port}/api/player-accounts`);
   // eslint-disable-next-line no-console
