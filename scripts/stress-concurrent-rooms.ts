@@ -1,12 +1,28 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 import os from "node:os";
+import util from "node:util";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
-import { pickAutomatedBattleAction, type BattleAction, type ClientMessage, type ServerMessage, type SessionStatePayload, type Vec2 } from "../packages/shared/src/index";
+import {
+  decodePlayerWorldView,
+  pickAutomatedBattleAction,
+  type BattleAction,
+  type BattleState,
+  type ClientMessage,
+  type PlayerWorldView,
+  type ServerMessage,
+  type SessionStatePayload,
+  type Vec2
+} from "../packages/shared/src/index";
 import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../apps/server/src/colyseus-room";
+import { createMemoryRoomSnapshotStore } from "../apps/server/src/memory-room-snapshot-store";
 import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../apps/server/src/observability";
+import type { RoomSnapshotStore } from "../apps/server/src/persistence";
+import type { RoomPersistenceSnapshot } from "../apps/server/src/index";
 
-type ScenarioName = "world_progression" | "battle_settlement" | "reconnect";
+type ScenarioName = "world_progression" | "battle_settlement" | "reconnect" | "reconnect_soak";
 
 interface StressOptions {
   rooms: number;
@@ -17,6 +33,8 @@ interface StressOptions {
   actionConcurrency: number;
   reconnectPauseMs: number;
   maxBattleTurns: number;
+  reconnectCycles: number;
+  artifactPath: string;
   scenarios: ScenarioName[];
 }
 
@@ -50,7 +68,29 @@ interface ScenarioResult {
   peakActiveHandles: number;
   runtimeHealthAfterConnect?: RuntimeHealthSummary;
   runtimeHealthAfterScenario?: RuntimeHealthSummary;
+  soakSummary?: ReconnectSoakSummary;
   errorMessage?: string;
+}
+
+interface ReconnectSoakSummary {
+  reconnectCycles: number;
+  reconnectAttempts: number;
+  invariantChecks: number;
+  worldReconnectCycles: number;
+  battleReconnectCycles: number;
+  finalBattleRooms: number;
+  finalDayRange: {
+    min: number;
+    max: number;
+  };
+  sampleRoomStates: Array<{
+    roomId: string;
+    playerId: string;
+    day: number;
+    inBattle: boolean;
+    heroPosition: Vec2 | null;
+    visibleTiles: number;
+  }>;
 }
 
 interface ResourceSnapshot {
@@ -90,6 +130,7 @@ const DEFAULT_BATTLE_DESTINATION: Vec2 = { x: 5, y: 4 };
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_ROOM_PLAYER_ID = "player-1";
 const COLYSEUS_RECONNECT_MIN_UPTIME_LOG = "[Colyseus reconnection]: ❌ Room has not been up for long enough for automatic reconnection.";
+const DEFAULT_RECONNECT_SOAK_ARTIFACT_PATH = path.resolve("artifacts", "release-readiness", "colyseus-reconnect-soak-summary.json");
 
 let requestCounter = 0;
 
@@ -114,7 +155,7 @@ function toMegabytes(bytes: number): number {
 }
 
 function parseIntegerFlag(name: string, fallback: number): number {
-  const argument = process.argv.find((item) => item.startsWith(`--${name}=`));
+  const argument = process.argv.findLast((item) => item.startsWith(`--${name}=`));
   if (!argument) {
     return fallback;
   }
@@ -127,8 +168,22 @@ function parseIntegerFlag(name: string, fallback: number): number {
   return value;
 }
 
+function parseStringFlag(name: string, fallback: string): string {
+  const argument = process.argv.findLast((item) => item.startsWith(`--${name}=`));
+  if (!argument) {
+    return fallback;
+  }
+
+  const value = argument.slice(name.length + 3).trim();
+  if (!value) {
+    throw new Error(`--${name} must not be empty`);
+  }
+
+  return value;
+}
+
 function parseScenarioFlag(): ScenarioName[] {
-  const argument = process.argv.find((item) => item.startsWith("--scenarios="));
+  const argument = process.argv.findLast((item) => item.startsWith("--scenarios="));
   if (!argument) {
     return ["world_progression", "battle_settlement", "reconnect"];
   }
@@ -139,7 +194,7 @@ function parseScenarioFlag(): ScenarioName[] {
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const knownScenarios: ScenarioName[] = ["world_progression", "battle_settlement", "reconnect"];
+  const knownScenarios: ScenarioName[] = ["world_progression", "battle_settlement", "reconnect", "reconnect_soak"];
   const invalid = requested.filter((item) => !knownScenarios.includes(item as ScenarioName));
   if (invalid.length > 0) {
     throw new Error(`Unknown scenarios: ${invalid.join(", ")}`);
@@ -158,6 +213,8 @@ function parseStressOptions(): StressOptions {
     actionConcurrency: parseIntegerFlag("action-concurrency", 24),
     reconnectPauseMs: parseIntegerFlag("reconnect-pause-ms", 100),
     maxBattleTurns: parseIntegerFlag("max-battle-turns", 24),
+    reconnectCycles: parseIntegerFlag("reconnect-cycles", 6),
+    artifactPath: path.resolve(parseStringFlag("artifact-path", DEFAULT_RECONNECT_SOAK_ARTIFACT_PATH)),
     scenarios: parseScenarioFlag()
   };
 }
@@ -221,8 +278,13 @@ function installLogFilter(): () => void {
   const originalLog = console.log;
   const originalInfo = console.info;
   const originalWarn = console.warn;
+  const originalError = console.error;
   const shouldSuppress = (args: unknown[]): boolean =>
-    args.some((arg) => typeof arg === "string" && arg.includes(COLYSEUS_RECONNECT_MIN_UPTIME_LOG));
+    args.some(
+      (arg) =>
+        typeof arg === "string" &&
+        (arg.includes(COLYSEUS_RECONNECT_MIN_UPTIME_LOG) || arg.includes("@colyseus/sdk: onMessage() not registered for type 'session.state'."))
+    );
 
   console.log = (...args: Parameters<typeof console.log>) => {
     if (!shouldSuppress(args)) {
@@ -239,11 +301,17 @@ function installLogFilter(): () => void {
       originalWarn(...args);
     }
   };
+  console.error = (...args: Parameters<typeof console.error>) => {
+    if (!shouldSuppress(args)) {
+      originalError(...args);
+    }
+  };
 
   return () => {
     console.log = originalLog;
     console.info = originalInfo;
     console.warn = originalWarn;
+    console.error = originalError;
   };
 }
 
@@ -303,8 +371,8 @@ class ResourceMonitor {
   }
 }
 
-async function startStressServer(port: number, host: string): Promise<Server> {
-  configureRoomSnapshotStore(null);
+async function startStressServer(port: number, host: string, store: RoomSnapshotStore | null): Promise<Server> {
+  configureRoomSnapshotStore(store);
   resetLobbyRoomRegistry();
   resetRuntimeObservability();
 
@@ -537,6 +605,239 @@ function selectPlayerBattleAction(payload: SessionStatePayload): BattleAction {
   );
 }
 
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`).join(",")}}`;
+}
+
+function formatValue(value: unknown): string {
+  return util.inspect(value, {
+    depth: 6,
+    breakLength: 120,
+    maxArrayLength: 16
+  });
+}
+
+function countVisibleTiles(view: PlayerWorldView): number {
+  return view.map.tiles.filter((tile) => tile.fog !== "hidden").length;
+}
+
+function assertParity(
+  invariant: string,
+  expected: unknown,
+  actual: unknown,
+  context: {
+    roomId: string;
+    playerId: string;
+    cycle: number;
+  }
+): void {
+  if (stableSerialize(expected) === stableSerialize(actual)) {
+    return;
+  }
+
+  throw new Error(
+    `[${invariant}] drift in room ${context.roomId} player ${context.playerId} cycle ${context.cycle}: expected ${formatValue(expected)} but received ${formatValue(actual)}`
+  );
+}
+
+async function loadPersistedSnapshot(store: RoomSnapshotStore | null, roomId: string): Promise<RoomPersistenceSnapshot | null> {
+  if (!store) {
+    return null;
+  }
+
+  return await store.load(roomId);
+}
+
+async function captureReconnectBaseline(
+  context: RoomContext,
+  cycle: number,
+  store: RoomSnapshotStore | null
+): Promise<{
+  cycle: number;
+  snapshot: RoomPersistenceSnapshot | null;
+  world: PlayerWorldView;
+  battle: BattleState | null;
+  reachableTiles: Vec2[];
+}> {
+  return {
+    cycle,
+    snapshot: await loadPersistedSnapshot(store, context.roomId),
+    world: decodePlayerWorldView(context.payload.world),
+    battle: context.payload.battle ? structuredClone(context.payload.battle) : null,
+    reachableTiles: structuredClone(context.payload.reachableTiles)
+  };
+}
+
+function summarizeWorldState(view: PlayerWorldView): {
+  day: number;
+  heroPosition: Vec2 | null;
+  moveRemaining: number | null;
+  visibleTiles: number;
+  resources: PlayerWorldView["resources"];
+} {
+  const hero = view.ownHeroes[0];
+  return {
+    day: view.meta.day,
+    heroPosition: hero ? { ...hero.position } : null,
+    moveRemaining: hero?.move.remaining ?? null,
+    visibleTiles: countVisibleTiles(view),
+    resources: structuredClone(view.resources)
+  };
+}
+
+async function assertReconnectParity(
+  context: RoomContext,
+  baseline: Awaited<ReturnType<typeof captureReconnectBaseline>>,
+  store: RoomSnapshotStore | null
+): Promise<number> {
+  const reconnectedWorld = decodePlayerWorldView(context.payload.world);
+  const currentSnapshot = await loadPersistedSnapshot(store, context.roomId);
+  const roomContext = {
+    roomId: context.roomId,
+    playerId: context.playerId,
+    cycle: baseline.cycle
+  };
+
+  assertParity("room_snapshot_parity", baseline.snapshot, currentSnapshot, roomContext);
+  assertParity("player_visible_world_parity", baseline.world, reconnectedWorld, roomContext);
+  assertParity("player_visible_fog_state_parity", baseline.world.map.tiles, reconnectedWorld.map.tiles, roomContext);
+  assertParity("battle_state_parity", baseline.battle, context.payload.battle ?? null, roomContext);
+  assertParity("reachable_tiles_parity", baseline.reachableTiles, context.payload.reachableTiles, roomContext);
+  assertParity("world_progression_invariant", summarizeWorldState(baseline.world), summarizeWorldState(reconnectedWorld), roomContext);
+
+  return 6;
+}
+
+async function prepareReconnectSoakCycle(context: RoomContext, cycle: number): Promise<{
+  actions: number;
+  phase: "world" | "battle";
+}> {
+  const hero = context.payload.world.ownHeroes[0];
+  if (!hero) {
+    throw new Error(`No owned hero found for room ${context.roomId}`);
+  }
+
+  if (context.payload.battle) {
+    const advancedBattle = await sendRequest(
+      context.room,
+      {
+        type: "battle.action",
+        requestId: nextRequestId("soak-battle-turn"),
+        action: selectPlayerBattleAction(context.payload)
+      },
+      "session.state"
+    );
+    context.payload = advancedBattle.payload;
+    return {
+      actions: 1,
+      phase: "battle"
+    };
+  }
+
+  if (cycle % 2 === 0) {
+    const destination = pickWorldProgressionDestination(context.payload);
+    if (destination) {
+      const moved = await sendRequest(
+        context.room,
+        {
+          type: "world.action",
+          requestId: nextRequestId("soak-world-move"),
+          action: {
+            type: "hero.move",
+            heroId: hero.id,
+            destination
+          }
+        },
+        "session.state"
+      );
+      context.payload = moved.payload;
+      return {
+        actions: 1,
+        phase: "world"
+      };
+    }
+  }
+
+  const movedToBattle = await sendRequest(
+    context.room,
+    {
+      type: "world.action",
+      requestId: nextRequestId("soak-battle-entry"),
+      action: {
+        type: "hero.move",
+        heroId: hero.id,
+        destination: DEFAULT_BATTLE_DESTINATION
+      }
+    },
+    "session.state"
+  );
+  context.payload = movedToBattle.payload;
+
+  if (context.payload.battle) {
+    return {
+      actions: 1,
+      phase: "battle"
+    };
+  }
+
+  const advancedDay = await sendRequest(
+    context.room,
+    {
+      type: "world.action",
+      requestId: nextRequestId("soak-end-day"),
+      action: {
+        type: "turn.endDay"
+      }
+    },
+    "session.state"
+  );
+  context.payload = advancedDay.payload;
+  return {
+    actions: 2,
+    phase: "world"
+  };
+}
+
+function buildReconnectSoakSummary(contexts: RoomContext[], options: StressOptions, counters: {
+  invariantChecks: number;
+  worldReconnectCycles: number;
+  battleReconnectCycles: number;
+}): ReconnectSoakSummary {
+  const days = contexts.map((context) => context.payload.world.meta.day);
+  return {
+    reconnectCycles: options.reconnectCycles,
+    reconnectAttempts: options.rooms * options.reconnectCycles,
+    invariantChecks: counters.invariantChecks,
+    worldReconnectCycles: counters.worldReconnectCycles,
+    battleReconnectCycles: counters.battleReconnectCycles,
+    finalBattleRooms: contexts.filter((context) => Boolean(context.payload.battle)).length,
+    finalDayRange: {
+      min: Math.min(...days),
+      max: Math.max(...days)
+    },
+    sampleRoomStates: contexts.slice(0, Math.min(5, contexts.length)).map((context) => {
+      const world = decodePlayerWorldView(context.payload.world);
+      return {
+        roomId: context.roomId,
+        playerId: context.playerId,
+        day: world.meta.day,
+        inBattle: Boolean(context.payload.battle),
+        heroPosition: world.ownHeroes[0] ? { ...world.ownHeroes[0].position } : null,
+        visibleTiles: countVisibleTiles(world)
+      };
+    })
+  };
+}
+
 async function runBattleSettlementScenario(contexts: RoomContext[], options: StressOptions): Promise<number> {
   const actionsPerRoom = await mapConcurrent(contexts, options.actionConcurrency, async (context) => {
     const heroId = context.payload.world.ownHeroes[0]?.id;
@@ -649,11 +950,65 @@ async function runReconnectScenario(contexts: RoomContext[], options: StressOpti
   return actionsPerRoom.reduce((total, value) => total + value, 0);
 }
 
+async function runReconnectSoakScenario(
+  contexts: RoomContext[],
+  options: StressOptions,
+  store: RoomSnapshotStore | null
+): Promise<{ completedActions: number; soakSummary: ReconnectSoakSummary }> {
+  const counters = {
+    invariantChecks: 0,
+    worldReconnectCycles: 0,
+    battleReconnectCycles: 0
+  };
+
+  const actionsPerRoom = await mapConcurrent(contexts, options.actionConcurrency, async (context) => {
+    let actions = 0;
+
+    for (let cycle = 1; cycle <= options.reconnectCycles; cycle += 1) {
+      const prepared = await prepareReconnectSoakCycle(context, cycle);
+      actions += prepared.actions;
+      if (prepared.phase === "battle") {
+        counters.battleReconnectCycles += 1;
+      } else {
+        counters.worldReconnectCycles += 1;
+      }
+
+      const baseline = await captureReconnectBaseline(context, cycle, store);
+
+      context.room.connection.close();
+      context.room.removeAllListeners();
+      await wait(options.reconnectPauseMs);
+
+      context.room = await joinRoomWithRetry(options.host, options.port, context.roomId, context.playerId);
+      const reconnected = await sendRequest(
+        context.room,
+        {
+          type: "connect",
+          requestId: nextRequestId("reconnect-soak"),
+          roomId: context.roomId,
+          playerId: context.playerId
+        },
+        "session.state"
+      );
+      context.payload = reconnected.payload;
+      actions += 1;
+      counters.invariantChecks += await assertReconnectParity(context, baseline, store);
+    }
+
+    return actions;
+  });
+
+  return {
+    completedActions: actionsPerRoom.reduce((total, value) => total + value, 0),
+    soakSummary: buildReconnectSoakSummary(contexts, options, counters)
+  };
+}
+
 async function cleanupRooms(contexts: RoomContext[]): Promise<void> {
   await Promise.all(contexts.map((context) => closeRoom(context.room).catch(() => undefined)));
 }
 
-async function runScenario(scenario: ScenarioName, options: StressOptions): Promise<ScenarioResult> {
+async function runScenario(scenario: ScenarioName, options: StressOptions, store: RoomSnapshotStore | null): Promise<ScenarioResult> {
   const monitor = new ResourceMonitor(options.sampleIntervalMs);
   let contexts: RoomContext[] = [];
   let runtimeHealthAfterConnect: RuntimeHealthSummary | undefined;
@@ -669,8 +1024,37 @@ async function runScenario(scenario: ScenarioName, options: StressOptions): Prom
       completedActions += await runWorldProgressionScenario(contexts, options);
     } else if (scenario === "battle_settlement") {
       completedActions += await runBattleSettlementScenario(contexts, options);
-    } else {
+    } else if (scenario === "reconnect") {
       completedActions += await runReconnectScenario(contexts, options);
+    } else {
+      const soak = await runReconnectSoakScenario(contexts, options, store);
+      completedActions += soak.completedActions;
+      runtimeHealthAfterScenario = await fetchRuntimeHealthSummary(options.host, options.port);
+      const resources = monitor.stop();
+      return {
+        scenario,
+        rooms: options.rooms,
+        successfulRooms: options.rooms,
+        failedRooms: 0,
+        completedActions,
+        durationMs: resources.durationMs,
+        roomsPerSecond: Number((options.rooms / (resources.durationMs / 1000)).toFixed(2)),
+        actionsPerSecond: Number((completedActions / (resources.durationMs / 1000)).toFixed(2)),
+        cpuUserMs: resources.cpuUserMs,
+        cpuSystemMs: resources.cpuSystemMs,
+        cpuTotalMs: resources.cpuTotalMs,
+        cpuCoreUtilizationPct: resources.cpuCoreUtilizationPct,
+        rssStartMb: resources.rssStartMb,
+        rssPeakMb: resources.rssPeakMb,
+        rssEndMb: resources.rssEndMb,
+        heapStartMb: resources.heapStartMb,
+        heapPeakMb: resources.heapPeakMb,
+        heapEndMb: resources.heapEndMb,
+        peakActiveHandles: resources.peakActiveHandles,
+        soakSummary: soak.soakSummary,
+        ...(runtimeHealthAfterConnect ? { runtimeHealthAfterConnect } : {}),
+        ...(runtimeHealthAfterScenario ? { runtimeHealthAfterScenario } : {})
+      };
     }
     runtimeHealthAfterScenario = await fetchRuntimeHealthSummary(options.host, options.port);
 
@@ -753,26 +1137,77 @@ function printSummary(results: ScenarioResult[], options: StressOptions): void {
       rssPeakMb: result.rssPeakMb,
       heapPeakMb: result.heapPeakMb,
       peakHandles: result.peakActiveHandles,
+      reconnectCycles: result.soakSummary?.reconnectCycles ?? "",
+      invariantChecks: result.soakSummary?.invariantChecks ?? "",
       error: result.errorMessage ?? ""
     }))
   );
+  const soakResult = results.find((result) => result.scenario === "reconnect_soak");
+  if (soakResult?.soakSummary) {
+    console.log(
+      `Reconnect soak summary: ${soakResult.successfulRooms}/${soakResult.rooms} rooms, ${soakResult.soakSummary.reconnectAttempts} reconnects, ${soakResult.soakSummary.invariantChecks} invariant checks, world cycles ${soakResult.soakSummary.worldReconnectCycles}, battle cycles ${soakResult.soakSummary.battleReconnectCycles}.`
+    );
+  }
   console.log("STRESS_RESULT_JSON_START");
   console.log(JSON.stringify({ options, results }, null, 2));
   console.log("STRESS_RESULT_JSON_END");
 }
 
+function emitArtifact(results: ScenarioResult[], options: StressOptions): void {
+  const executedAt = new Date().toISOString();
+  const soakResult = results.find((result) => result.scenario === "reconnect_soak");
+  const artifact = {
+    schemaVersion: 1,
+    generatedAt: executedAt,
+    command: `npm run stress:rooms:reconnect-soak -- --rooms=${options.rooms} --connect-concurrency=${options.connectConcurrency} --action-concurrency=${options.actionConcurrency} --sample-interval-ms=${options.sampleIntervalMs} --reconnect-pause-ms=${options.reconnectPauseMs} --reconnect-cycles=${options.reconnectCycles}`,
+    status: results.some((result) => result.failedRooms > 0) ? "failed" : "passed",
+    options,
+    summary: soakResult?.soakSummary ?? null,
+    results
+  };
+
+  mkdirSync(path.dirname(options.artifactPath), { recursive: true });
+  writeFileSync(options.artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+  console.log(`Wrote reconnect soak artifact: ${path.relative(process.cwd(), options.artifactPath).replace(/\\/g, "/")}`);
+  if (soakResult?.soakSummary) {
+    console.log("RECONNECT_SOAK_ARTIFACT_SUMMARY");
+    console.log(
+      JSON.stringify(
+        {
+          status: artifact.status,
+          artifactPath: path.relative(process.cwd(), options.artifactPath).replace(/\\/g, "/"),
+          rooms: soakResult.rooms,
+          reconnectAttempts: soakResult.soakSummary.reconnectAttempts,
+          invariantChecks: soakResult.soakSummary.invariantChecks,
+          worldReconnectCycles: soakResult.soakSummary.worldReconnectCycles,
+          battleReconnectCycles: soakResult.soakSummary.battleReconnectCycles,
+          finalBattleRooms: soakResult.soakSummary.finalBattleRooms,
+          finalDayRange: soakResult.soakSummary.finalDayRange
+        },
+        null,
+        2
+      )
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const options = parseStressOptions();
   const restoreLoggers = installLogFilter();
-  const server = await startStressServer(options.port, options.host);
+  const needsSnapshotStore = options.scenarios.includes("reconnect_soak");
+  const snapshotStore = needsSnapshotStore ? createMemoryRoomSnapshotStore() : null;
+  const server = await startStressServer(options.port, options.host, snapshotStore);
 
   try {
     const results: ScenarioResult[] = [];
     for (const scenario of options.scenarios) {
-      results.push(await runScenario(scenario, options));
+      results.push(await runScenario(scenario, options, snapshotStore));
     }
 
     printSummary(results, options);
+    if (options.scenarios.includes("reconnect_soak")) {
+      emitArtifact(results, options);
+    }
 
     if (results.some((result) => result.failedRooms > 0)) {
       process.exitCode = 1;
@@ -781,6 +1216,7 @@ async function main(): Promise<void> {
     restoreLoggers();
     configureRoomSnapshotStore(null);
     resetLobbyRoomRegistry();
+    await snapshotStore?.close().catch(() => undefined);
     await server.gracefullyShutdown(false).catch(() => undefined);
   }
 }

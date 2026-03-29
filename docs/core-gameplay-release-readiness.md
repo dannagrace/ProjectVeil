@@ -16,6 +16,7 @@
 - 多人同步冒烟：`npm run test:e2e:multiplayer:smoke`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 多人放量基线：`docs/multiplayer-loadtest-gate.md`
+- 长时 reconnect soak：`docs/reconnect-soak-gate.md`
 - 微信小游戏构建校验：`npm run check:wechat-build`
 - 发布就绪快照：`npm run release:readiness:snapshot`
 - Phase 1 发布就绪看板：`npm run release:readiness:dashboard`
@@ -62,6 +63,7 @@
 - [ ] 双客户端或多客户端进入同一房间后，同步不会出现长期分叉；断线重连后能收敛到权威状态。
 - [ ] reconnect 验收必须复用 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 的唯一场景和最小成功信号，而不是只写“重连成功”。
 - [ ] wider playtest 前必须复用 [`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md) 中固定的 smoke + `stress:rooms` 命令组合、阈值、回退动作和重跑触发条件。
+- [ ] shipping / release candidate 前，任何涉及房间状态、reconnect、战斗或快照恢复的改动都必须额外通过 [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md) 中的长时 reconnect soak。
 - [ ] 失败路径可读：非法 action、超时、会话失效时，客户端能收到明确错误而不是静默卡死。
 
 `P1 follow-up`
@@ -74,6 +76,7 @@
 - `npm test`
 - `npm run test:e2e:multiplayer:smoke`
 - wider playtest 前必跑：[`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md)
+- shipping / RC 前必跑：[`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md)
 
 ### 2. H5 调试壳与回归验证面
 
