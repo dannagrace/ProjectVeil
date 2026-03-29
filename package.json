@@ -45,6 +45,7 @@
     "release:readiness:snapshot": "node --import tsx ./scripts/release-readiness-snapshot.ts",
     "release:readiness:dashboard": "node --import tsx ./scripts/release-readiness-dashboard.ts",
     "release:gate:summary": "node --import tsx ./scripts/release-gate-summary.ts",
+    "release:wechat:rehearsal": "node --import tsx ./scripts/wechat-release-rehearsal.ts",
     "ci:trend-summary": "node --import tsx ./scripts/publish-ci-trend-summary.ts",
     "release:cocos-rc:snapshot": "node --import tsx ./scripts/cocos-release-candidate-snapshot.ts",
     "check:wechat-build": "node --import tsx ./scripts/prepare-wechat-minigame-build.ts --check && node --import tsx ./scripts/validate-wechat-minigame-build.ts --output-dir apps/cocos-client/build-templates/wechatgame && node --import tsx ./scripts/validate-wechat-minigame-build.ts --output-dir apps/cocos-client/test/fixtures/wechatgame-export --expect-exported-runtime && node --import tsx ./scripts/prepare-wechat-minigame-release.ts --output-dir apps/cocos-client/test/fixtures/wechatgame-export --expect-exported-runtime --check",

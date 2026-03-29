@@ -25,6 +25,7 @@
 - 生成发布元数据：`npm run prepare:wechat-release -- --output-dir <wechatgame-build-dir> --expect-exported-runtime [--source-revision <git-sha>]`
 - 产出发布归档：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
 - 聚合校验 RC artifact：`npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>] [--require-smoke-report]`
+- 发布彩排与汇总：`npm run release:wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> [--summary <json>] [--markdown <md>]`（顺序执行 prepare / package / verify / validate，并输出结构化 + Markdown 摘要）
 - 上传已打包产物：`npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`
 - 按 SHA 下载 CI artifact：`npm run download:wechat-release -- --sha <git-sha> [--output-dir artifacts/downloaded/wechat-release-<git-sha>]`
 - 验收已下载 artifact：`npm run verify:wechat-release -- --artifacts-dir <downloaded-artifact-dir> [--expected-revision <git-sha>]`
@@ -72,6 +73,18 @@
 11. 复制 `docs/release-evidence/cocos-wechat-rc-checklist.template.md` 与 `docs/release-evidence/cocos-wechat-rc-blockers.template.md`，为当前 candidate 回填设备、结论和 blocker。
 12. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
 13. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
+
+## 发布彩排摘要
+
+`npm run release:wechat:rehearsal` 用于把准备 / 打包 / 验证 / RC 聚合这四个阶段一次跑完，并把结果写成稳定的 CI 证据：
+
+- 默认读取 `apps/cocos-client/wechat-minigame.build.json`，也可用 `--build-dir` / `--artifacts-dir` 覆盖输入输出。
+- 顺序执行 `prepare:wechat-release`、`package:wechat-release`、`verify:wechat-release`、`validate:wechat-rc`，任一阶段失败后续阶段会被标记为 `skipped`。
+- 结构化摘要默认写到 `artifacts/wechat-release/wechat-release-rehearsal-<short-sha>.json`，Markdown 摘要写到同名 `.md`；可通过 `--summary` / `--markdown` 改写路径。
+- JSON 摘要包含阶段命令、耗时、stdout / stderr tail 以及首个失败阶段的诊断，Markdown 版本可直接贴到 CI Summary 或 PR。
+- `--source-revision`、`--expected-revision`、`--package-name`、`--version`、`--require-smoke-report` 会透传给对应脚本，方便对齐真实提审参数。
+- 适合在本地 release rehearsal、或在 CI 下载模板导出夹具时，一次性确认整个链路仍能跑通。
+
 
 ## 下载与验收
 
