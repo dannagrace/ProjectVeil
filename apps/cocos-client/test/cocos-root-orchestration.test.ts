@@ -222,3 +222,49 @@ test("VeilRoot keeps the lobby visible and explains when an account session has 
   assert.equal(root.sessionSource, "none");
   assert.equal(root.lobbyStatus, "账号会话已失效，请重新登录后再进入房间。");
 });
+
+test("VeilRoot forwards session connection events into runtime diagnostics and logs", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-alpha";
+  root.playerId = "player-1";
+  root.displayName = "暮潮守望";
+  root.authToken = "account.token";
+
+  const liveUpdate = createSessionUpdate(7);
+  let capturedOptions:
+    | {
+        onConnectionEvent?: ((event: "reconnecting" | "reconnected" | "reconnect_failed") => void) | undefined;
+        getDisplayName?: (() => string) | undefined;
+        getAuthToken?: (() => string | null) | undefined;
+      }
+    | undefined;
+
+  installVeilRootRuntime({
+    createSession: async (_roomId, _playerId, _seed, options) => {
+      capturedOptions = options;
+      return {
+        async snapshot() {
+          return liveUpdate;
+        },
+        async dispose() {}
+      } as never;
+    }
+  });
+
+  await root.connect();
+
+  assert.equal(capturedOptions?.getDisplayName?.(), "暮潮守望");
+  assert.equal(capturedOptions?.getAuthToken?.(), "account.token");
+
+  capturedOptions?.onConnectionEvent?.("reconnecting");
+  assert.equal(root.diagnosticsConnectionStatus, "reconnecting");
+  assert.equal(root.logLines[0], "连接已中断，正在尝试重连...");
+
+  capturedOptions?.onConnectionEvent?.("reconnected");
+  assert.equal(root.diagnosticsConnectionStatus, "connected");
+  assert.equal(root.logLines[0], "连接已恢复。");
+
+  capturedOptions?.onConnectionEvent?.("reconnect_failed");
+  assert.equal(root.diagnosticsConnectionStatus, "reconnect_failed");
+  assert.equal(root.logLines[0], "重连失败，正在尝试恢复房间快照...");
+});

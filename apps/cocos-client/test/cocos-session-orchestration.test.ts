@@ -127,3 +127,38 @@ test("VeilCocosSession hands off to a fresh room after reconnect failure and rep
 
   await session.dispose();
 });
+
+test("VeilCocosSession includes display name and auth token in the authenticated connect payload", async () => {
+  const storage = createMemoryStorage();
+  const room = new FakeColyseusRoom([createSessionUpdate(8)], "reconnect-token");
+
+  setVeilCocosSessionRuntimeForTests({
+    storage,
+    loadSdk: createSdkLoader({
+      joinRooms: [room]
+    })
+  });
+
+  const session = await VeilCocosSession.create("room-alpha", "player-1", 1001, {
+    getDisplayName: () => "暮潮守望",
+    getAuthToken: () => "account.token"
+  });
+
+  await session.snapshot();
+
+  assert.deepEqual(room.sentMessages, [
+    {
+      type: "connect",
+      payload: {
+        type: "connect",
+        requestId: "cocos-req-1",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        displayName: "暮潮守望",
+        authToken: "account.token"
+      }
+    }
+  ]);
+
+  await session.dispose();
+});
