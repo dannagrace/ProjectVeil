@@ -20,6 +20,8 @@
 - 发布就绪快照：`npm run release:readiness:snapshot`
 - Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
 - Cocos 发布证据模板：`docs/cocos-release-evidence-template.md`
+- Cocos / WeChat RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
+- Cocos / WeChat RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - 微信小游戏提审前冒烟：`docs/wechat-minigame-release.md`
 
 ## 发布判断规则
@@ -28,9 +30,9 @@
 - `P1 follow-up`：可以进入受控范围测试，但必须有明确 owner 和修复窗口。
 - `P2 polish`：不阻断测试扩大，但需要继续收口体验。
 
-建议在每次 release candidate 上记录状态：`pass / partial / fail / n/a`，并附上证据链接、执行人和日期。
+建议在每次 release candidate 上记录状态：`pass / partial / fail / n/a`，并附上证据链接、执行人和日期。对于 Cocos / WeChat RC，再额外固定两份人类可读附件：一份 checklist，一份 blocker register。
 
-如果希望把自动化门禁和人工门禁统一收口成一个结构化记录，可执行 `npm run release:readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json`，生成当前 revision 的快照并保留 pending manual check。Cocos 主链路证据则统一用 `npm run release:cocos-rc:snapshot` 生成单独的 RC 快照，并在同一份 JSON 中回填 Creator 预览或微信 RC 证据。
+如果希望把自动化门禁和人工门禁统一收口成一个结构化记录，可执行 `npm run release:readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json`，生成当前 revision 的快照并保留 pending manual check。Cocos 主链路证据则统一用 `npm run release:cocos-rc:snapshot` 生成单独的 RC 快照，并在同一份 JSON 中回填 Creator 预览或微信 RC 证据；人工 reviewer 则复用 `docs/release-evidence/cocos-wechat-rc-checklist.template.md` 和 `docs/release-evidence/cocos-wechat-rc-blockers.template.md`，不要在 issue 或 PR 中重新发明字段。
 
 ## 必过用户旅程
 
@@ -112,6 +114,8 @@
 - `npm test`
 - `npm run check:wechat-build`
 - `npm run release:cocos-rc:snapshot -- --output <snapshot-path>`
+- `docs/release-evidence/cocos-wechat-rc-checklist.template.md`
+- `docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 中定义的 reconnect 证据
 - 按 [`docs/wechat-minigame-release.md`](/home/gpt/project/ProjectVeil/docs/wechat-minigame-release.md) 完成 `verify` 与 `smoke`
 
@@ -161,6 +165,7 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
 - `Cocos 主链路发布证据`
   - 固定一条 Lobby -> 进房 -> 战斗 -> 重连 -> 返回世界的验收脚本
   - 使用 `npm run release:cocos-rc:snapshot` 产出统一 evidence，并参考 `docs/release-evidence/cocos-rc-snapshot.example.json` 回填
+  - 同步复制 RC checklist 与 blocker 模板，避免 PR 中只看到截图没有结论
 - `多人放量门禁`
   - 复用 `docs/multiplayer-loadtest-gate.md`
   - 固定压测参数、阈值、回退条件与样例记录
