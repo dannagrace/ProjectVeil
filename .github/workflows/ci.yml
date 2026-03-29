@@ -50,8 +50,23 @@ jobs:
       - name: Typecheck
         run: npm run typecheck:ci
 
-      - name: Test
-        run: npm test
+      - name: Test With V8 Coverage
+        run: npm run test:coverage:ci
+
+      - name: Publish coverage summary
+        if: always()
+        run: |
+          if [[ -f .coverage/summary.md ]]; then
+            cat .coverage/summary.md >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload V8 coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-coverage-${{ github.sha }}
+          path: .coverage
+          if-no-files-found: error
 
   wechat-build-validation:
     runs-on: ubuntu-latest
