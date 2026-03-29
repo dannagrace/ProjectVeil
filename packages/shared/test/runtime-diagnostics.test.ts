@@ -74,6 +74,7 @@ function createRuntimeDiagnosticsSnapshot(): RuntimeDiagnosticsSnapshot {
       recentEventCount: 3,
       recentReplayCount: 1
     },
+    overview: null,
     diagnostics: {
       eventTypes: ["battle.started", "battle.resolved"],
       timelineTail: [
@@ -117,4 +118,68 @@ test("runtime diagnostics summary text stays stable for panel and automation con
   assert.match(rendered, /Recovery 连接已恢复，当前地图与战斗状态来自最新权威快照。/);
   assert.match(rendered, /Replay room-alpha:battle-1:player-1 \/ paused \/ step 1\/3/);
   assert.match(rendered, /Timeline \[push\/battle\] Room room-alpha finished battle battle-1/);
+});
+
+test("runtime diagnostics summary text supports aggregate server snapshots", () => {
+  const lines = buildRuntimeDiagnosticsSummaryLines({
+    schemaVersion: 1,
+    exportedAt: "2026-03-29T07:15:00.000Z",
+    source: {
+      surface: "server-observability",
+      devOnly: false,
+      mode: "server"
+    },
+    room: null,
+    world: null,
+    battle: null,
+    account: null,
+    overview: {
+      service: "project-veil-server",
+      activeRoomCount: 2,
+      connectionCount: 3,
+      activeBattleCount: 1,
+      heroCount: 4,
+      gameplayTraffic: {
+        connectMessagesTotal: 5,
+        worldActionsTotal: 8,
+        battleActionsTotal: 2,
+        actionMessagesTotal: 10
+      },
+      auth: {
+        activeGuestSessionCount: 1,
+        activeAccountSessionCount: 2,
+        pendingRegistrationCount: 0,
+        pendingRecoveryCount: 0,
+        tokenDeliveryQueueCount: 1,
+        tokenDeliveryDeadLetterCount: 0
+      },
+      roomSummaries: [
+        {
+          roomId: "room-alpha",
+          day: 3,
+          connectedPlayers: 2,
+          heroCount: 2,
+          activeBattles: 1,
+          updatedAt: "2026-03-29T07:14:00.000Z"
+        }
+      ]
+    },
+    diagnostics: {
+      eventTypes: [],
+      timelineTail: [],
+      logTail: ["project-veil-server rooms=2 connections=3"],
+      recoverySummary: null,
+      predictionStatus: "server-observability",
+      pendingUiTasks: 0,
+      replay: null
+    }
+  });
+
+  assert.deepEqual(lines.slice(0, 5), [
+    "Mode server (server-observability)",
+    "Runtime rooms 2 / connections 3 / battles 1 / heroes 4",
+    "Traffic connect=5 / world=8 / battle=2",
+    "Auth guest=1 / account=2 / queue=1 / deadLetters=0",
+    "Room summary room-alpha / day 3 / players 2 / heroes 2 / battles 1"
+  ]);
 });

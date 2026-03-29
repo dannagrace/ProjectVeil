@@ -1,4 +1,4 @@
-export type RuntimeDiagnosticsMode = "lobby" | "world" | "battle";
+export type RuntimeDiagnosticsMode = "lobby" | "world" | "battle" | "server";
 
 export type RuntimeDiagnosticsConnectionStatus = "connecting" | "connected" | "reconnecting" | "reconnect_failed";
 
@@ -85,6 +85,38 @@ export interface RuntimeDiagnosticsAccountSnapshot {
   recentReplayCount: number;
 }
 
+export interface RuntimeDiagnosticsOverviewRoomSnapshot {
+  roomId: string;
+  day: number | null;
+  connectedPlayers: number;
+  heroCount: number;
+  activeBattles: number;
+  updatedAt: string | null;
+}
+
+export interface RuntimeDiagnosticsOverviewSnapshot {
+  service: string;
+  activeRoomCount: number;
+  connectionCount: number;
+  activeBattleCount: number;
+  heroCount: number;
+  gameplayTraffic: {
+    connectMessagesTotal: number;
+    worldActionsTotal: number;
+    battleActionsTotal: number;
+    actionMessagesTotal: number;
+  } | null;
+  auth: {
+    activeGuestSessionCount: number;
+    activeAccountSessionCount: number;
+    pendingRegistrationCount: number;
+    pendingRecoveryCount: number;
+    tokenDeliveryQueueCount: number;
+    tokenDeliveryDeadLetterCount: number;
+  } | null;
+  roomSummaries: RuntimeDiagnosticsOverviewRoomSnapshot[];
+}
+
 export interface RuntimeDiagnosticsReplaySnapshot {
   replayId: string;
   loading: boolean;
@@ -97,10 +129,11 @@ export interface RuntimeDiagnosticsSnapshot {
   schemaVersion: number;
   exportedAt: string;
   source: RuntimeDiagnosticsSnapshotSource;
-  room: RuntimeDiagnosticsRoomSnapshot;
+  room: RuntimeDiagnosticsRoomSnapshot | null;
   world: RuntimeDiagnosticsWorldSnapshot | null;
   battle: RuntimeDiagnosticsBattleSnapshot | null;
-  account: RuntimeDiagnosticsAccountSnapshot;
+  account: RuntimeDiagnosticsAccountSnapshot | null;
+  overview: RuntimeDiagnosticsOverviewSnapshot | null;
   diagnostics: {
     eventTypes: string[];
     timelineTail: Array<{
@@ -118,16 +151,23 @@ export interface RuntimeDiagnosticsSnapshot {
 }
 
 export function buildRuntimeDiagnosticsSummaryLines(snapshot: RuntimeDiagnosticsSnapshot): string[] {
-  const lines = [
-    `Mode ${snapshot.source.mode} (${snapshot.source.surface})`,
-    `Room ${snapshot.room.roomId} / Player ${snapshot.room.playerId} / Sync ${snapshot.room.connectionStatus}`
-  ];
+  const lines = [`Mode ${snapshot.source.mode} (${snapshot.source.surface})`];
 
-  if (snapshot.room.day != null) {
+  if (snapshot.room) {
+    lines.push(`Room ${snapshot.room.roomId} / Player ${snapshot.room.playerId} / Sync ${snapshot.room.connectionStatus}`);
+  }
+
+  if (snapshot.overview) {
+    lines.push(
+      `Runtime rooms ${snapshot.overview.activeRoomCount} / connections ${snapshot.overview.connectionCount} / battles ${snapshot.overview.activeBattleCount} / heroes ${snapshot.overview.heroCount}`
+    );
+  }
+
+  if (snapshot.room?.day != null) {
     lines.push(`Day ${snapshot.room.day}`);
   }
 
-  if (snapshot.room.lastUpdateSource || snapshot.room.lastUpdateReason || snapshot.room.lastUpdateAt) {
+  if (snapshot.room && (snapshot.room.lastUpdateSource || snapshot.room.lastUpdateReason || snapshot.room.lastUpdateAt)) {
     const updateParts = [
       snapshot.room.lastUpdateSource ? `source=${snapshot.room.lastUpdateSource}` : null,
       snapshot.room.lastUpdateReason ? `reason=${snapshot.room.lastUpdateReason}` : null,
@@ -158,9 +198,29 @@ export function buildRuntimeDiagnosticsSummaryLines(snapshot: RuntimeDiagnostics
     );
   }
 
-  lines.push(
-    `Account ${snapshot.account.displayName} (${snapshot.account.source}) / events ${snapshot.account.recentEventCount} / replays ${snapshot.account.recentReplayCount}`
-  );
+  if (snapshot.account) {
+    lines.push(
+      `Account ${snapshot.account.displayName} (${snapshot.account.source}) / events ${snapshot.account.recentEventCount} / replays ${snapshot.account.recentReplayCount}`
+    );
+  }
+
+  if (snapshot.overview?.gameplayTraffic) {
+    lines.push(
+      `Traffic connect=${snapshot.overview.gameplayTraffic.connectMessagesTotal} / world=${snapshot.overview.gameplayTraffic.worldActionsTotal} / battle=${snapshot.overview.gameplayTraffic.battleActionsTotal}`
+    );
+  }
+
+  if (snapshot.overview?.auth) {
+    lines.push(
+      `Auth guest=${snapshot.overview.auth.activeGuestSessionCount} / account=${snapshot.overview.auth.activeAccountSessionCount} / queue=${snapshot.overview.auth.tokenDeliveryQueueCount} / deadLetters=${snapshot.overview.auth.tokenDeliveryDeadLetterCount}`
+    );
+  }
+
+  for (const roomSummary of snapshot.overview?.roomSummaries.slice(0, 3) ?? []) {
+    lines.push(
+      `Room summary ${roomSummary.roomId} / day ${roomSummary.day ?? "?"} / players ${roomSummary.connectedPlayers} / heroes ${roomSummary.heroCount} / battles ${roomSummary.activeBattles}`
+    );
+  }
 
   if (snapshot.diagnostics.eventTypes.length > 0) {
     lines.push(`Events ${snapshot.diagnostics.eventTypes.join(", ")}`);

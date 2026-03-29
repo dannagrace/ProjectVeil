@@ -143,6 +143,7 @@ export function buildH5RuntimeDiagnosticsSnapshot(
       recentEventCount: input.account.recentEventLog.length,
       recentReplayCount: input.account.recentBattleReplays.length
     },
+    overview: null,
     diagnostics: {
       eventTypes: [...input.diagnostics.eventTypes],
       timelineTail: input.diagnostics.timelineTail.map((entry) => ({

@@ -237,6 +237,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     /Project Veil Colyseus dev server listening on ws:\/\/0\.0\.0\.0:3101/,
     /Runtime health available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/health/,
     /Auth readiness available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/auth-readiness/,
+    /Runtime diagnostic snapshot available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/diagnostic-snapshot/,
     /Runtime metrics available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/metrics/,
     /Config center storage: filesystem/,
     /Local in-memory room persistence enabled/
@@ -311,6 +312,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
   assertStartupLogIncludes(base.logger, [
     /Runtime health available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/health/,
     /Auth readiness available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/auth-readiness/,
+    /Runtime diagnostic snapshot available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/diagnostic-snapshot/,
     /Runtime metrics available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/metrics/,
     /Config center storage: filesystem/,
     /Local in-memory room persistence enabled/
@@ -395,6 +397,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
   assertStartupLogIncludes(base.logger, [
     /Runtime health available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/health/,
     /Auth readiness available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/auth-readiness/,
+    /Runtime diagnostic snapshot available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/diagnostic-snapshot/,
     /Runtime metrics available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/metrics/,
     /Config center storage: mysql/,
     /MySQL room persistence enabled/,

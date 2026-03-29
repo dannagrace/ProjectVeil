@@ -1,10 +1,16 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import {
+  renderRuntimeDiagnosticsSnapshotText,
+  type RuntimeDiagnosticsSnapshot
+} from "../../../packages/shared/src/index";
 
 export interface RuntimeRoomSnapshot {
   roomId: string;
+  day: number | null;
   connectedPlayers: number;
   heroCount: number;
   activeBattles: number;
+  updatedAt: string;
 }
 
 interface RuntimeObservabilityCounters {
@@ -304,6 +310,70 @@ function buildAuthTokenDeliveryPayload(service = "project-veil-server"): AuthTok
     delivery: {
       ...health.runtime.auth.tokenDelivery,
       recentAttempts
+    }
+  };
+}
+
+function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): RuntimeDiagnosticsSnapshot {
+  const health = buildHealthPayload(service);
+  const roomSummaries = Array.from(runtimeObservability.rooms.values()).sort(
+    (left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.roomId.localeCompare(right.roomId)
+  );
+  const checkedAt = new Date().toISOString();
+
+  return {
+    schemaVersion: 1,
+    exportedAt: checkedAt,
+    source: {
+      surface: "server-observability",
+      devOnly: false,
+      mode: "server"
+    },
+    room: null,
+    world: null,
+    battle: null,
+    account: null,
+    overview: {
+      service,
+      activeRoomCount: health.runtime.activeRoomCount,
+      connectionCount: health.runtime.connectionCount,
+      activeBattleCount: health.runtime.activeBattleCount,
+      heroCount: health.runtime.heroCount,
+      gameplayTraffic: { ...health.runtime.gameplayTraffic },
+      auth: {
+        activeGuestSessionCount: health.runtime.auth.activeGuestSessionCount,
+        activeAccountSessionCount: health.runtime.auth.activeAccountSessionCount,
+        pendingRegistrationCount: health.runtime.auth.pendingRegistrationCount,
+        pendingRecoveryCount: health.runtime.auth.pendingRecoveryCount,
+        tokenDeliveryQueueCount: health.runtime.auth.tokenDelivery.queueCount,
+        tokenDeliveryDeadLetterCount: health.runtime.auth.tokenDelivery.deadLetterCount
+      },
+      roomSummaries: roomSummaries.map((room) => ({
+        roomId: room.roomId,
+        day: room.day,
+        connectedPlayers: room.connectedPlayers,
+        heroCount: room.heroCount,
+        activeBattles: room.activeBattles,
+        updatedAt: room.updatedAt
+      }))
+    },
+    diagnostics: {
+      eventTypes: [],
+      timelineTail: roomSummaries.slice(0, 5).map((room) => ({
+        id: `room:${room.roomId}:${room.updatedAt}`,
+        tone: room.activeBattles > 0 ? "battle" : "system",
+        source: "runtime-observability",
+        text: `Room ${room.roomId} day=${room.day ?? "?"} players=${room.connectedPlayers} heroes=${room.heroCount} battles=${room.activeBattles}`
+      })),
+      logTail: [
+        `service ${service} rooms=${health.runtime.activeRoomCount} connections=${health.runtime.connectionCount}`,
+        `traffic connect=${health.runtime.gameplayTraffic.connectMessagesTotal} world=${health.runtime.gameplayTraffic.worldActionsTotal} battle=${health.runtime.gameplayTraffic.battleActionsTotal}`,
+        `auth guest=${health.runtime.auth.activeGuestSessionCount} account=${health.runtime.auth.activeAccountSessionCount} queue=${health.runtime.auth.tokenDelivery.queueCount}`
+      ],
+      recoverySummary: null,
+      predictionStatus: "server-observability",
+      pendingUiTasks: 0,
+      replay: null
     }
   };
 }
@@ -685,6 +755,24 @@ export function registerRuntimeObservabilityRoutes(
   app.get("/api/runtime/auth-readiness", async (_request, response) => {
     try {
       sendJson(response, 200, buildAuthReadinessPayload(serviceName));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/runtime/diagnostic-snapshot", async (request, response) => {
+    try {
+      const snapshot = buildRuntimeDiagnosticSnapshot(serviceName);
+      const url = new URL(request.url ?? "/api/runtime/diagnostic-snapshot", "http://runtime.local");
+
+      if (url.searchParams.get("format") === "text") {
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "text/plain; charset=utf-8");
+        response.end(`${renderRuntimeDiagnosticsSnapshotText(snapshot)}\n`);
+        return;
+      }
+
+      sendJson(response, 200, snapshot);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
