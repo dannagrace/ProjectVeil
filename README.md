@@ -162,6 +162,7 @@ npm run dev:client:h5
 - H5 / Lobby Playwright 冒烟：`npm run test:e2e:smoke`
 - 打包 H5 客户端 RC 冒烟会把结构化结果写入 `artifacts/release-readiness/`
 - 多人联机 Playwright 冒烟：`npm run test:e2e:multiplayer:smoke`
+- 多人同步治理矩阵：`npm run test:sync-governance:matrix`（输出 `artifacts/release-readiness/sync-governance-matrix-<short-sha>.json`）
 - GitHub Actions `playwright-smoke` 会执行上述两条冒烟回归，并在失败时上传 Playwright trace / screenshot / video 诊断材料
 - MySQL 首次初始化 / 升级：`npm run db:migrate`
 - MySQL 回滚上一版 schema：`npm run db:migrate:rollback`
@@ -178,6 +179,7 @@ npm run dev:client:h5
 - 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
 - 核心玩法发布门禁清单：`docs/core-gameplay-release-readiness.md`
 - 发布就绪快照说明：`docs/release-readiness-snapshot.md`
+- 多人同步治理矩阵说明：`docs/sync-governance-matrix.md`
 - 共享 contract 快照说明：`docs/shared-contract-snapshots.md`
 - 当前 H5 调试壳仍支持：地图点击移动、可达格高亮、悬停路径预览、资源/明雷信息提示、轻量路径播放反馈、可视化战斗单位面板、目标选中、伤害飘字与战后结果弹窗。
 - 当前 H5 联机体验已支持：客户端预测、断线自动重连、刷新后本地快照首帧回放，再由权威房间状态收敛。

@@ -12,6 +12,7 @@ The default automated checks are:
 - `npm run typecheck:ci`
 - `npm run test:e2e:smoke`
 - `npm run test:e2e:multiplayer:smoke`
+- `npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json`
 - `npm run check:cocos-release-readiness`
 
 For packaged H5 release-candidate validation, run:
