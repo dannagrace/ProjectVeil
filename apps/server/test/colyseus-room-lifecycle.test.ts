@@ -429,6 +429,35 @@ test("disposing one registered room preserves the other room summary", async (t)
   assert.equal(remainingRooms[0]?.seed, 2002);
 });
 
+test("stale leave and dispose from a previous room instance do not overwrite a reused logical room summary", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const logicalRoomId = `lifecycle-reuse-${Date.now()}`;
+  const roomA = await createTestRoom(logicalRoomId, 1001);
+  const roomB = await createTestRoom(logicalRoomId, 2002);
+  const clientA = createFakeClient("session-reuse-a");
+  const clientB = createFakeClient("session-reuse-b");
+
+  t.after(() => {
+    cleanupRoom(roomA);
+    cleanupRoom(roomB);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(roomA, clientA, "player-1", "connect-reuse-a");
+  await connectPlayer(roomB, clientB, "player-2", "connect-reuse-b");
+
+  roomA.onLeave(clientA);
+  roomA.onDispose();
+
+  const reusedRoomSummary = listLobbyRooms().find((entry) => entry.roomId === logicalRoomId);
+  assert.ok(reusedRoomSummary);
+  assert.equal(reusedRoomSummary.seed, 2002);
+  assert.equal(reusedRoomSummary.connectedPlayers, 1);
+  assert.equal(lastSessionState(clientB, "reply").payload.world.ownHeroes[0]?.playerId, "player-2");
+});
+
 test("battle replay persistence runs once at settlement and is drained from the room buffer", async (t) => {
   resetLobbyRoomRegistry();
   const store = new InstrumentedRoomSnapshotStore();

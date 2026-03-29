@@ -54,6 +54,8 @@ const MAP_SYNC_CHUNK_SIZE = 8;
 const MAP_SYNC_CHUNK_PADDING = 1;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
+const lobbyRoomOwnerTokens = new Map<string, number>();
+let nextLobbyRoomOwnerToken = 1;
 
 export interface LobbyRoomSummary {
   roomId: string;
@@ -77,6 +79,7 @@ export function listLobbyRooms(): LobbyRoomSummary[] {
 
 export function resetLobbyRoomRegistry(): void {
   lobbyRoomSummaries.clear();
+  lobbyRoomOwnerTokens.clear();
 }
 
 function sendMessage<T extends ServerMessage["type"]>(
@@ -124,12 +127,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   patchRate = null;
 
   private worldRoom!: AuthoritativeWorldRoom;
+  private readonly lobbyRoomOwnerToken = nextLobbyRoomOwnerToken++;
   private readonly playerIdBySessionId = new Map<string, string>();
   private readonly reconnectedAtByPlayerId = new Map<string, string>();
 
   async onCreate(options: JoinOptions): Promise<void> {
     const logicalRoomId = options.logicalRoomId ?? "room-alpha";
     this.metadata = { logicalRoomId };
+    lobbyRoomOwnerTokens.set(logicalRoomId, this.lobbyRoomOwnerToken);
     this.setState({});
     const persistedSnapshot = configuredRoomSnapshotStore
       ? await configuredRoomSnapshotStore.load(logicalRoomId)
@@ -331,6 +336,11 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   }
 
   onDispose(): void {
+    if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) !== this.lobbyRoomOwnerToken) {
+      return;
+    }
+
+    lobbyRoomOwnerTokens.delete(this.metadata.logicalRoomId);
     lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
     removeRuntimeRoom(this.metadata.logicalRoomId);
   }
@@ -403,6 +413,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   }
 
   private publishLobbyRoomSummary(): void {
+    if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) !== this.lobbyRoomOwnerToken) {
+      return;
+    }
+
     const internalState = this.worldRoom.getInternalState();
     const summary = {
       roomId: this.metadata.logicalRoomId,
