@@ -2871,6 +2871,9 @@ export class VeilRoot extends Component {
         : event === "reconnected"
           ? "连接已恢复。"
           : "重连失败，正在尝试恢复房间快照...";
+    if (this.showLobby) {
+      this.lobbyStatus = label;
+    }
     this.pushLog(label);
     this.renderView();
   }
