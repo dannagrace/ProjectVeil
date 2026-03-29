@@ -16,6 +16,7 @@
 - 多人同步冒烟：`npm run test:e2e:multiplayer:smoke`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 微信小游戏构建校验：`npm run check:wechat-build`
+- 发布就绪快照：`npm run release:readiness:snapshot`
 - Cocos 发布证据模板：`docs/cocos-release-evidence-template.md`
 - 微信小游戏提审前冒烟：`docs/wechat-minigame-release.md`
 
@@ -26,6 +27,8 @@
 - `P2 polish`：不阻断测试扩大，但需要继续收口体验。
 
 建议在每次 release candidate 上记录状态：`pass / partial / fail / n/a`，并附上证据链接、执行人和日期。
+
+如果希望把自动化门禁和人工门禁统一收口成一个结构化记录，可执行 `npm run release:readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json`，生成当前 revision 的快照并保留 pending manual check。
 
 ## 必过用户旅程
 
