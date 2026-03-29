@@ -98,6 +98,12 @@ const AUTOMATED_CHECKS: Array<Pick<ReleaseReadinessCheck, "id" | "title" | "comm
     required: true
   },
   {
+    id: "sync-governance-matrix",
+    title: "Deterministic sync-governance matrix",
+    command: "npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json",
+    required: true
+  },
+  {
     id: "wechat-build-check",
     title: "Cocos asset and WeChat build readiness",
     command: "npm run check:cocos-release-readiness",
