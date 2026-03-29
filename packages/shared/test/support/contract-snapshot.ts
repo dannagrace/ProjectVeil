@@ -13,7 +13,7 @@ function formatSnapshot(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function describeFirstDifference(expected: string, actual: string): string {
+export function describeFirstDifference(expected: string, actual: string): string {
   const expectedLines = expected.split("\n");
   const actualLines = actual.split("\n");
   const maxLineCount = Math.max(expectedLines.length, actualLines.length);
@@ -27,31 +27,69 @@ function describeFirstDifference(expected: string, actual: string): string {
   return "contents differ";
 }
 
-export function assertContractSnapshot(snapshotFilePath: string, value: unknown): void {
+export interface ContractSnapshotComparison {
+  status: "matched" | "missing" | "changed";
+  relativeSnapshotPath: string;
+  expected?: string;
+  actual: string;
+  difference?: string;
+}
+
+export function compareContractSnapshot(snapshotFilePath: string, value: unknown): ContractSnapshotComparison {
   const actual = formatSnapshot(value);
   const relativeSnapshotPath = path.relative(process.cwd(), snapshotFilePath);
 
+  if (!existsSync(snapshotFilePath)) {
+    return {
+      status: "missing",
+      relativeSnapshotPath,
+      actual
+    };
+  }
+
+  const expected = readFileSync(snapshotFilePath, "utf8");
+  if (expected !== actual) {
+    return {
+      status: "changed",
+      relativeSnapshotPath,
+      expected,
+      actual,
+      difference: describeFirstDifference(expected, actual)
+    };
+  }
+
+  return {
+    status: "matched",
+    relativeSnapshotPath,
+    expected,
+    actual
+  };
+}
+
+export function assertContractSnapshot(snapshotFilePath: string, value: unknown): void {
   if (shouldUpdateContractSnapshots()) {
+    const actual = formatSnapshot(value);
     mkdirSync(path.dirname(snapshotFilePath), { recursive: true });
     writeFileSync(snapshotFilePath, actual, "utf8");
     return;
   }
 
-  if (!existsSync(snapshotFilePath)) {
+  const comparison = compareContractSnapshot(snapshotFilePath, value);
+
+  if (comparison.status === "missing") {
     assert.fail(
       [
-        `Missing contract snapshot: ${relativeSnapshotPath}`,
+        `Missing contract snapshot: ${comparison.relativeSnapshotPath}`,
         `Create or refresh it with: ${CONTRACT_SNAPSHOT_UPDATE_COMMAND}`
       ].join("\n")
     );
   }
 
-  const expected = readFileSync(snapshotFilePath, "utf8");
-  if (expected !== actual) {
+  if (comparison.status === "changed") {
     assert.fail(
       [
-        `Contract snapshot mismatch: ${relativeSnapshotPath}`,
-        describeFirstDifference(expected, actual),
+        `Contract snapshot mismatch: ${comparison.relativeSnapshotPath}`,
+        comparison.difference ?? "contents differ",
         `If this structural change is intentional, review the diff and rerun: ${CONTRACT_SNAPSHOT_UPDATE_COMMAND}`
       ].join("\n")
     );

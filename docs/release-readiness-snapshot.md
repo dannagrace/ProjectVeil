@@ -13,6 +13,7 @@ The default automated checks are:
 - `npm run test:e2e:smoke`
 - `npm run test:e2e:multiplayer:smoke`
 - `npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json`
+- `npm run test:multiplayer-protocol-compatibility -- --output artifacts/release-readiness/multiplayer-protocol-compatibility.json`
 - `npm run check:cocos-release-readiness`
 
 For packaged H5 release-candidate validation, run:

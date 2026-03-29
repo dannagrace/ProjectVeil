@@ -5,6 +5,8 @@ Issue `#328` adds file-backed shared contract snapshots for high-value client-fa
 ## Covered Payloads
 
 - `SessionStatePayload`
+- `ClientMessage[]`
+- `ServerMessage[]`
 - `PlayerProgressionSnapshot`
 - `RuntimeDiagnosticsSnapshot`
 
@@ -12,6 +14,15 @@ The contract test lives in `packages/shared/test/client-payload-contracts.test.t
 
 - `npm run test:contracts`
 - `npm run test:shared`
+
+For release-readiness and CI evidence, generate the compatibility report with:
+
+```bash
+npm run test:multiplayer-protocol-compatibility -- \
+  --output artifacts/release-readiness/multiplayer-protocol-compatibility.json
+```
+
+That report compares the checked-in multiplayer contract snapshots against the current representative `SessionStatePayload`, `ClientMessage[]`, and `ServerMessage[]` fixtures and records the first diff line for any incompatible change.
 
 ## Failure Mode
 
