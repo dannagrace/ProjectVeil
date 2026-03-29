@@ -125,6 +125,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
   private worldRoom!: AuthoritativeWorldRoom;
   private readonly playerIdBySessionId = new Map<string, string>();
+  private readonly reconnectedAtByPlayerId = new Map<string, string>();
 
   async onCreate(options: JoinOptions): Promise<void> {
     const logicalRoomId = options.logicalRoomId ?? "room-alpha";
@@ -311,6 +312,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       const reconnectedClient = await this.allowReconnection(client, RECONNECTION_WINDOW_SECONDS);
       this.playerIdBySessionId.delete(client.sessionId);
       this.playerIdBySessionId.set(reconnectedClient.sessionId, playerId);
+      this.reconnectedAtByPlayerId.set(playerId, new Date().toISOString());
       this.publishLobbyRoomSummary();
       sendMessage(reconnectedClient, "session.state", {
         requestId: "push",
