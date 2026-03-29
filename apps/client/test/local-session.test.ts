@@ -206,6 +206,19 @@ test("createGameSession falls back to a local session when remote bootstrap is u
   assert.equal(update.world.playerId, "player-1");
 });
 
+test("createGameSession falls back to a local session when remote bootstrap times out", async () => {
+  const session = await localSessionTestHooks.createGameSessionWithRuntime("room-alpha", "player-1", 1001, undefined, {
+    async connectRemoteGameSession() {
+      throw new Error("connect_timeout");
+    }
+  });
+
+  const update = await session.snapshot("timeout-fallback");
+  assert.equal(update.reason, "timeout-fallback");
+  assert.equal(update.world.meta.roomId, "room-alpha");
+  assert.equal(update.world.playerId, "player-1");
+});
+
 test("createGameSession surfaces stored-token recovery as a successful remote resume", async () => {
   const events: ConnectionEvent[] = [];
   const session = await localSessionTestHooks.createGameSessionWithRuntime(
