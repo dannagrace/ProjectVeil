@@ -98,7 +98,13 @@ import { buildCocosRuntimeTriageSummaryLines } from "./cocos-runtime-diagnostics
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
 import { cocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
-import type { RuntimeDiagnosticsConnectionStatus } from "../../../../packages/shared/src/index.ts";
+import {
+  describeAccountAuthFailure,
+  type RuntimeDiagnosticsConnectionStatus,
+  validateAccountLifecycleConfirm,
+  validateAccountLifecycleRequest,
+  validateAccountPassword
+} from "../../../../packages/shared/src/index.ts";
 
 const { ccclass, property } = _decorator;
 
@@ -1883,8 +1889,9 @@ export class VeilRoot extends Component {
     if (nextLoginId === undefined) {
       return;
     }
-    if (!nextLoginId) {
-      this.lobbyStatus = "请输入登录 ID 后再使用正式账号进入。";
+    const loginIdError = validateAccountLifecycleRequest("registration", nextLoginId);
+    if (loginIdError) {
+      this.lobbyStatus = loginIdError.message;
       this.renderView();
       return;
     }
@@ -1893,8 +1900,9 @@ export class VeilRoot extends Component {
     if (password == null) {
       return;
     }
-    if (!password.trim()) {
-      this.lobbyStatus = "请输入账号口令后再登录。";
+    const passwordError = validateAccountPassword(password, "password", "账号口令");
+    if (passwordError) {
+      this.lobbyStatus = passwordError.message;
       this.renderView();
       return;
     }
@@ -1963,20 +1971,9 @@ export class VeilRoot extends Component {
       return error instanceof Error ? error.message : fallback;
     }
 
-    if (failure.status === 409 && failure.code === "login_id_taken") {
-      return "登录 ID 已被占用，请更换后重试。";
-    }
-    if (failure.status === 401 && options.invalidTokenCode && failure.code === options.invalidTokenCode) {
-      return "令牌无效或已过期，请重新申请后再确认。";
-    }
-    if (failure.status === 401) {
-      return "登录 ID 或口令不正确，请检查后重试。";
-    }
-    if (failure.status === 400) {
-      return "输入格式不合法，请检查登录 ID、令牌和口令后重试。";
-    }
-    if (failure.status === 429) {
-      return "请求过于频繁，请稍后再试。";
+    const message = describeAccountAuthFailure(failure, options);
+    if (message) {
+      return message;
     }
 
     return error instanceof Error ? error.message : fallback;
@@ -2212,8 +2209,9 @@ export class VeilRoot extends Component {
       return;
     }
     const loginId = this.loginId.trim().toLowerCase();
-    if (!loginId) {
-      this.lobbyStatus = "请输入登录 ID 后再申请令牌。";
+    const validationError = validateAccountLifecycleRequest(this.activeAccountFlow, loginId);
+    if (validationError) {
+      this.lobbyStatus = validationError.message;
       this.renderView();
       return;
     }
@@ -2264,38 +2262,23 @@ export class VeilRoot extends Component {
       return;
     }
     const loginId = this.loginId.trim().toLowerCase();
-    if (!loginId) {
-      this.lobbyStatus = "请输入登录 ID 后再确认。";
+    this.loginId = loginId;
+    const validationError = validateAccountLifecycleConfirm(this.activeAccountFlow, {
+      loginId,
+      token: this.activeAccountFlow === "registration" ? this.registrationToken : this.recoveryToken,
+      password: this.activeAccountFlow === "registration" ? this.registrationPassword : this.recoveryPassword
+    });
+    if (validationError) {
+      this.lobbyStatus = validationError.message;
       this.renderView();
       return;
     }
-    this.loginId = loginId;
 
     if (this.activeAccountFlow === "registration") {
-      if (!this.registrationToken.trim()) {
-        this.lobbyStatus = "请先填写注册令牌。";
-        this.renderView();
-        return;
-      }
-      if (!this.registrationPassword.trim()) {
-        this.lobbyStatus = "请输入注册口令后再确认。";
-        this.renderView();
-        return;
-      }
       await this.confirmLobbyAccountRegistration(loginId);
       return;
     }
 
-    if (!this.recoveryToken.trim()) {
-      this.lobbyStatus = "请先填写找回令牌。";
-      this.renderView();
-      return;
-    }
-    if (!this.recoveryPassword.trim()) {
-      this.lobbyStatus = "请输入新口令后再确认重置。";
-      this.renderView();
-      return;
-    }
     await this.confirmLobbyAccountRecovery(loginId);
   }
 

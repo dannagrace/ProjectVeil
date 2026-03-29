@@ -1,3 +1,4 @@
+export * from "./auth-ui.ts";
 export * from "./assets-config.ts";
 export * from "./battle.ts";
 export * from "./battle-replay.ts";
