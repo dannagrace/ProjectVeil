@@ -4,7 +4,7 @@ import type { PlayerTileView } from "./VeilCocosSession.ts";
 type FactionKey = "crown" | "wild";
 type RarityKey = "common" | "elite";
 type InteractionKey = "move" | "pickup" | "battle";
-export type CocosTileMarkerIconKey = "wood" | "gold" | "ore" | "neutral" | "hero" | "recruitment" | "shrine" | "mine";
+export type CocosTileMarkerIconKey = "wood" | "gold" | "ore" | "neutral" | "hero" | "recruitment" | "shrine" | "mine" | "tower";
 
 export interface CocosTileVisualDescriptor {
   title: string;
@@ -78,6 +78,19 @@ export function describeCocosTileObject(tile: PlayerTileView | null): CocosTileV
       subtitle: `${formatResourceKindLabel(tile.building.resourceKind)} +${tile.building.income}${typeof tile.building.lastHarvestDay === "number" ? " · 今日已采集" : " · 可立即采集"}`,
       shortLabel: "矿场",
       tag: "采集",
+      faction: toFactionKey(config.faction),
+      rarity: toRarityKey(config.rarity),
+      interactionType: toInteractionKey(config.interactionType)
+    };
+  }
+
+  if (tile.building?.kind === "watchtower") {
+    const config = objectVisuals.buildings.watchtower;
+    return {
+      title: tile.building.label || config.title,
+      subtitle: `视野 +${tile.building.visionBonus}${typeof tile.building.lastUsedDay === "number" ? " · 今日已观测" : " · 可立即登塔"}`,
+      shortLabel: "塔楼",
+      tag: "访问",
       faction: toFactionKey(config.faction),
       rarity: toRarityKey(config.rarity),
       interactionType: toInteractionKey(config.interactionType)
@@ -184,6 +197,9 @@ export function buildCocosTileMarkerText(tile: PlayerTileView | null): string {
     if (tile.building.kind === "resource_mine") {
       return ">M";
     }
+    if (tile.building.kind === "watchtower") {
+      return ">T";
+    }
     return ">B";
   }
 
@@ -246,6 +262,10 @@ function resolveMarkerIconKey(tile: PlayerTileView | null): CocosTileMarkerIconK
 
   if (tile?.building?.kind === "resource_mine") {
     return "mine";
+  }
+
+  if (tile?.building?.kind === "watchtower") {
+    return "tower";
   }
 
   return null;

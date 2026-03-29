@@ -1733,7 +1733,15 @@ function buildAutomationTilePayload(tile: PlayerTileView) {
                     bonus: { ...tile.building.bonus },
                     ...(typeof tile.building.lastUsedDay === "number" ? { lastUsedDay: tile.building.lastUsedDay } : {})
                   }
-                : {
+                : tile.building.kind === "watchtower"
+                  ? {
+                      id: tile.building.id,
+                      kind: tile.building.kind,
+                      label: tile.building.label,
+                      visionBonus: tile.building.visionBonus,
+                      ...(typeof tile.building.lastUsedDay === "number" ? { lastUsedDay: tile.building.lastUsedDay } : {})
+                    }
+                  : {
                     id: tile.building.id,
                     kind: tile.building.kind,
                     label: tile.building.label,
@@ -2520,7 +2528,11 @@ function appendLog(update: SessionUpdate): void {
     } else if (event.type === "hero.recruited") {
       state.log.unshift(`Recruited ${event.unitTemplateId} x${event.count}`);
     } else if (event.type === "hero.visited") {
-      state.log.unshift(`Visited ${event.buildingId}: ${formatHeroStatBonus(event.bonus)}`);
+      state.log.unshift(
+        event.buildingKind === "watchtower"
+          ? `Visited ${event.buildingId}: vision +${event.visionBonus}`
+          : `Visited ${event.buildingId}: ${formatHeroStatBonus(event.bonus)}`
+      );
     } else if (event.type === "hero.claimedMine") {
       state.log.unshift(`Claimed mine: ${formatDailyIncome(event.resourceKind, event.income)}`);
     } else if (event.type === "resource.produced") {
@@ -2632,7 +2644,10 @@ function buildTimelineEntries(update: SessionUpdate, source: TimelineEntry["sour
         id: `${stamp}-visit-${index}`,
         tone: "loot",
         source,
-        text: `访问属性建筑，获得 ${formatHeroStatBonus(event.bonus)}`
+        text:
+          event.buildingKind === "watchtower"
+            ? `登上瞭望塔，视野提高 ${event.visionBonus}`
+            : `访问属性建筑，获得 ${formatHeroStatBonus(event.bonus)}`
       });
       return;
     }
@@ -3010,6 +3025,7 @@ async function onTileClick(x: number, y: number): Promise<void> {
               buildingId: targetTile.building.id
             } as const)
           : targetTile.building.kind === "attribute_shrine"
+            || targetTile.building.kind === "watchtower"
             ? ({
                 type: "hero.visit",
                 heroId: hero.id,
@@ -3032,6 +3048,8 @@ async function onTileClick(x: number, y: number): Promise<void> {
               ? `预演中：在 ${targetTile.building.label} 招募 ${targetTile.building.availableCount} 单位`
               : targetTile.building.kind === "attribute_shrine"
                 ? `预演中：访问 ${targetTile.building.label}，获得 ${formatHeroStatBonus(targetTile.building.bonus)}`
+                : targetTile.building.kind === "watchtower"
+                  ? `预演中：登上 ${targetTile.building.label}，视野提高 ${targetTile.building.visionBonus}`
                 : `预演中：占领 ${targetTile.building.label}，改为每日产出 ${formatDailyIncome(targetTile.building.resourceKind, targetTile.building.income)}`,
           tone: "loot"
         });
@@ -3042,7 +3060,7 @@ async function onTileClick(x: number, y: number): Promise<void> {
         applyUpdate(
           targetTile.building.kind === "recruitment_post"
             ? await session.recruit(hero.id, targetTile.building.id)
-            : targetTile.building.kind === "attribute_shrine"
+            : targetTile.building.kind === "attribute_shrine" || targetTile.building.kind === "watchtower"
               ? await session.visitBuilding(hero.id, targetTile.building.id)
               : await session.claimMine(hero.id, targetTile.building.id)
         );
@@ -3052,7 +3070,7 @@ async function onTileClick(x: number, y: number): Promise<void> {
             ? error.message
             : targetTile.building.kind === "recruitment_post"
               ? "recruit_failed"
-              : targetTile.building.kind === "attribute_shrine"
+              : targetTile.building.kind === "attribute_shrine" || targetTile.building.kind === "watchtower"
                 ? "visit_failed"
                 : "claim_failed"
         );

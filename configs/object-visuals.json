@@ -40,6 +40,13 @@
       "interactionType": "move",
       "faction": "crown",
       "rarity": "elite"
+    },
+    "watchtower": {
+      "title": "前线瞭望塔",
+      "subtitle": "访问后可永久扩大英雄的视野范围。",
+      "interactionType": "move",
+      "faction": "crown",
+      "rarity": "elite"
     }
   },
   "resources": {

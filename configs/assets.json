@@ -43,7 +43,8 @@
   "buildings": {
     "recruitment_post": "/assets/pixel/buildings/recruitment-post.png",
     "attribute_shrine": "/assets/pixel/buildings/attribute-shrine.png",
-    "resource_mine": "/assets/pixel/buildings/resource-mine.png"
+    "resource_mine": "/assets/pixel/buildings/resource-mine.png",
+    "watchtower": "/assets/pixel/buildings/forge-hall.png"
   },
   "units": {
     "hero_guard_basic": {
@@ -59,6 +60,22 @@
         "idle": "/assets/pixel/units/wolf-pack.png",
         "selected": "/assets/pixel/units/wolf-pack-selected.png",
         "hit": "/assets/pixel/units/wolf-pack-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "moss_stalker": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/moss-stalker.png",
+        "selected": "/assets/pixel/showcase-units/moss-stalker-selected.png",
+        "hit": "/assets/pixel/showcase-units/moss-stalker-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "iron_walker": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/iron-walker.png",
+        "selected": "/assets/pixel/showcase-units/iron-walker-selected.png",
+        "hit": "/assets/pixel/showcase-units/iron-walker-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-enemy.png"
     }
@@ -487,6 +504,7 @@
     "snow": "/assets/pixel/showcase-terrain/snow-tile.png"
   },
   "showcaseBuildings": {
-    "forge_hall": "/assets/pixel/buildings/forge-hall.png"
+    "forge_hall": "/assets/pixel/buildings/forge-hall.png",
+    "watchtower": "/assets/pixel/buildings/forge-hall.png"
   }
 }

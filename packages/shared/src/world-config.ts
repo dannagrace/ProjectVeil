@@ -1,9 +1,11 @@
 import defaultBattleSkillsConfig from "../../../configs/battle-skills.json";
 import defaultBattleBalanceConfig from "../../../configs/battle-balance.json";
 import defaultHeroSkillTreesConfig from "../../../configs/hero-skill-trees-full.json";
+import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
 import defaultMapObjectsConfig from "../../../configs/phase1-map-objects.json";
 import defaultUnitsConfig from "../../../configs/units.json";
+import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
 import defaultWorldConfig from "../../../configs/phase1-world.json";
 import type {
@@ -30,6 +32,7 @@ let runtimeHeroSkillTree: HeroSkillTreeConfig = structuredClone(defaultHeroSkill
 
 export const DEFAULT_MAP_VARIANT_ID = "phase1";
 export const FRONTIER_BASIN_MAP_VARIANT_ID = "frontier_basin";
+export const CONTESTED_BASIN_MAP_VARIANT_ID = "contested_basin";
 
 export interface RuntimeConfigBundle {
   world: WorldGenerationConfig;
@@ -623,6 +626,10 @@ export function validateMapObjectsConfig(
       if (!Number.isInteger(building.income) || building.income <= 0) {
         throw new Error(`Map building ${building.id} income must be a positive integer`);
       }
+    } else if (building.kind === "watchtower") {
+      if (!Number.isInteger(building.visionBonus) || building.visionBonus <= 0) {
+        throw new Error(`Map building ${building.id} visionBonus must be a positive integer`);
+      }
     } else {
       throw new Error(`Map building has invalid kind: ${String((building as { kind?: unknown }).kind)}`);
     }
@@ -719,7 +726,7 @@ function parseRequestedMapVariantId(roomId: string): string | undefined {
 }
 
 function getAvailableMapVariantIds(): string[] {
-  return [DEFAULT_MAP_VARIANT_ID, FRONTIER_BASIN_MAP_VARIANT_ID];
+  return [DEFAULT_MAP_VARIANT_ID, FRONTIER_BASIN_MAP_VARIANT_ID, CONTESTED_BASIN_MAP_VARIANT_ID];
 }
 
 export function resolveMapVariantIdForRoom(roomId: string, seed = 1001): string {
@@ -731,7 +738,11 @@ export function resolveMapVariantIdForRoom(roomId: string, seed = 1001): string 
     const variants = getAvailableMapVariantIds();
     return variants[hashVariantSeed(roomId, seed) % variants.length] ?? DEFAULT_MAP_VARIANT_ID;
   }
-  if (requested === DEFAULT_MAP_VARIANT_ID || requested === FRONTIER_BASIN_MAP_VARIANT_ID) {
+  if (
+    requested === DEFAULT_MAP_VARIANT_ID ||
+    requested === FRONTIER_BASIN_MAP_VARIANT_ID ||
+    requested === CONTESTED_BASIN_MAP_VARIANT_ID
+  ) {
     return requested;
   }
   return DEFAULT_MAP_VARIANT_ID;
@@ -746,11 +757,15 @@ export function getRuntimeConfigBundleForRoom(roomId: string, seed = 1001): Room
   const world =
     mapVariantId === FRONTIER_BASIN_MAP_VARIANT_ID
       ? cloneWorldConfig(frontierBasinWorldConfig as WorldGenerationConfig)
-      : getDefaultWorldConfig();
+      : mapVariantId === CONTESTED_BASIN_MAP_VARIANT_ID
+        ? cloneWorldConfig(contestedBasinWorldConfig as WorldGenerationConfig)
+        : getDefaultWorldConfig();
   const mapObjects =
     mapVariantId === FRONTIER_BASIN_MAP_VARIANT_ID
       ? cloneMapObjectsConfig(frontierBasinMapObjectsConfig as MapObjectsConfig)
-      : getDefaultMapObjectsConfig();
+      : mapVariantId === CONTESTED_BASIN_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(contestedBasinMapObjectsConfig as MapObjectsConfig)
+        : getDefaultMapObjectsConfig();
 
   validateWorldConfig(world);
   validateMapObjectsConfig(mapObjects, world, units);

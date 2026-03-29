@@ -2,7 +2,7 @@ export type TerrainType = "grass" | "dirt" | "sand" | "water";
 export type FogState = "hidden" | "explored" | "visible";
 export type ResourceKind = "gold" | "wood" | "ore";
 export type OccupantKind = "hero" | "neutral" | "building";
-export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_mine";
+export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_mine" | "watchtower";
 export type ResourceLedger = Record<ResourceKind, number>;
 export type WorldResourceLedger = Record<string, ResourceLedger>;
 
@@ -220,10 +220,19 @@ export interface ResourceMineBuildingConfig {
   income: number;
 }
 
+export interface WatchtowerBuildingConfig {
+  id: string;
+  kind: "watchtower";
+  position: Vec2;
+  label: string;
+  visionBonus: number;
+}
+
 export type MapBuildingConfig =
   | RecruitmentBuildingConfig
   | AttributeShrineBuildingConfig
-  | ResourceMineBuildingConfig;
+  | ResourceMineBuildingConfig
+  | WatchtowerBuildingConfig;
 
 export interface RecruitmentBuildingState extends RecruitmentBuildingConfig {
   availableCount: number;
@@ -238,10 +247,15 @@ export interface ResourceMineBuildingState extends ResourceMineBuildingConfig {
   lastHarvestDay?: number;
 }
 
+export interface WatchtowerBuildingState extends WatchtowerBuildingConfig {
+  lastUsedDay?: number;
+}
+
 export type MapBuildingState =
   | RecruitmentBuildingState
   | AttributeShrineBuildingState
-  | ResourceMineBuildingState;
+  | ResourceMineBuildingState
+  | WatchtowerBuildingState;
 
 export interface RecruitmentBuildingView {
   id: string;
@@ -271,10 +285,19 @@ export interface ResourceMineBuildingView {
   lastHarvestDay?: number;
 }
 
+export interface WatchtowerBuildingView {
+  id: string;
+  kind: "watchtower";
+  label: string;
+  visionBonus: number;
+  lastUsedDay?: number;
+}
+
 export type PlayerBuildingView =
   | RecruitmentBuildingView
   | AttributeShrineBuildingView
-  | ResourceMineBuildingView;
+  | ResourceMineBuildingView
+  | WatchtowerBuildingView;
 
 export interface TileState {
   position: Vec2;
@@ -591,6 +614,13 @@ export type WorldEvent =
       buildingId: string;
       buildingKind: "attribute_shrine";
       bonus: HeroStatBonus;
+    }
+  | {
+      type: "hero.visited";
+      heroId: string;
+      buildingId: string;
+      buildingKind: "watchtower";
+      visionBonus: number;
     }
   | {
       type: "hero.claimedMine";

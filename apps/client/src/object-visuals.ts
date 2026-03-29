@@ -101,6 +101,20 @@ export function describeTileObject(tile: PlayerTileView | null): TileCardDescrip
     };
   }
 
+  if (tile.building?.kind === "watchtower") {
+    const config = objectVisuals.buildings.watchtower;
+    const visited = typeof tile.building.lastUsedDay === "number";
+    return {
+      title: tile.building.label || config.title,
+      subtitle: `${config.subtitle}${visited ? " 本局已完成勘察。" : " 当前仍可登塔。"}`,
+      value: `视野 +${tile.building.visionBonus}${visited ? " · 已记录塔顶视域" : ""}`.trim(),
+      icon: buildingAsset(tile.building.kind),
+      faction: toFactionKey(config.faction),
+      rarity: toRarityKey(config.rarity),
+      interactionType: toInteractionKey(config.interactionType)
+    };
+  }
+
   if (tile.occupant?.kind === "hero") {
     return {
       title: objectVisuals.hero.title,

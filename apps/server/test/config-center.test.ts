@@ -474,6 +474,24 @@ test("config center snapshots support diff and rollback", async () => {
   assert.equal(JSON.parse(rolledBack.content).width, WORLD_CONFIG.width);
 });
 
+test("config center exposes built-in layout presets for the additional map variants", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const worldPresets = await store.listPresets("world");
+  const mapObjectPresets = await store.listPresets("mapObjects");
+
+  assert.ok(worldPresets.some((preset) => preset.id === "layout_contested_basin"));
+  assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_contested_basin"));
+
+  const worldDocument = await store.applyPreset("world", "layout_contested_basin");
+  const mapObjectsDocument = await store.applyPreset("mapObjects", "layout_contested_basin");
+
+  assert.match(worldDocument.content, /"width": 10/);
+  assert.match(mapObjectsDocument.content, /"kind": "watchtower"/);
+});
+
 test("config center diff classifies added, removed, and type changes", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
   await seedConfigRoot(rootDir);
