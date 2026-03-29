@@ -4,6 +4,8 @@
 
 If you want a single human-readable Phase 1 dashboard on top of the snapshot plus runtime/WeChat/Cocos evidence, use `npm run release:readiness:dashboard` and see `docs/release-readiness-dashboard.md`.
 
+If you want a CI-oriented pass/fail summary that also folds in packaged H5 smoke and WeChat release evidence, use `npm run release:gate:summary` and see `docs/release-gate-summary.md`.
+
 The default automated checks are:
 
 - `npm test`
