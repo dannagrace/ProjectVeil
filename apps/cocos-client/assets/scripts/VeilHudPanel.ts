@@ -121,6 +121,7 @@ export interface VeilHudRenderState {
   predictionStatus: string;
   inputDebug: string;
   runtimeHealth: string;
+  triageSummaryLines: string[];
   levelUpNotice: {
     title: string;
     detail: string;
@@ -306,6 +307,19 @@ export class VeilHudPanel extends Component {
         : hero && hero.move.remaining <= 0
           ? "今天已经没有移动点了。"
           : "点击地块移动，点击脚下资源即可采集。");
+    const statusLines = [
+      statusTitle,
+      statusDetail,
+      state.runtimeHealth,
+      ...state.triageSummaryLines,
+      formatAchievementSummary(state.account),
+      formatRecentEventLog(state.account),
+      latestBattleReport.title,
+      latestBattleReport.detail,
+      formatPresentationAudioSummary(state.presentation.audio),
+      formatPresentationLoadSummary(state.presentation.pixelAssets),
+      `表现 ${formatPresentationReadinessSummary(state.presentation.readiness)}`
+    ];
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const cardWidth = Math.max(168, transform.width - 28);
     const leftX = -transform.width / 2 + 14 + cardWidth / 2;
@@ -399,25 +413,14 @@ export class VeilHudPanel extends Component {
     cursorY = this.renderCardBlock(
       this.statusLabel,
       `${CARD_PREFIX}-status`,
-      [
-        statusTitle,
-        statusDetail,
-        state.runtimeHealth,
-        formatAchievementSummary(state.account),
-        formatRecentEventLog(state.account),
-        latestBattleReport.title,
-        latestBattleReport.detail,
-        formatPresentationAudioSummary(state.presentation.audio),
-        formatPresentationLoadSummary(state.presentation.pixelAssets),
-        `表现 ${formatPresentationReadinessSummary(state.presentation.readiness)}`
-      ],
+      statusLines,
       cursorY,
       12,
       16,
       cardWidth,
       leftX,
       4,
-      174
+      Math.max(174, 52 + statusLines.length * 16)
     );
 
     if (resources) {

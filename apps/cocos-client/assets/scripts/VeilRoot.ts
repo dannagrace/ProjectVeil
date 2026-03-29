@@ -83,9 +83,11 @@ import { type CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
 import { createCocosBattlePresentationController } from "./cocos-battle-presentation-controller.ts";
 import { createCocosAudioRuntime } from "./cocos-audio-runtime.ts";
 import { createCocosAudioAssetBridge } from "./cocos-audio-resources.ts";
+import { buildCocosRuntimeTriageSummaryLines } from "./cocos-runtime-diagnostics.ts";
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
 import { cocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
+import type { RuntimeDiagnosticsConnectionStatus } from "../../../../packages/shared/src/index.ts";
 
 const { ccclass, property } = _decorator;
 
@@ -224,6 +226,10 @@ export class VeilRoot extends Component {
   private wechatShareStatus = "分享功能仅在微信小游戏可用。";
   private wechatShareAvailable = false;
   private runtimeMemoryNotice = "";
+  private diagnosticsConnectionStatus: RuntimeDiagnosticsConnectionStatus = "connecting";
+  private lastRoomUpdateSource: string | null = null;
+  private lastRoomUpdateReason: string | null = null;
+  private lastRoomUpdateAtMs: number | null = null;
   private stopRuntimeMemoryWarnings: (() => void) | null = null;
   private battlePresentation = createCocosBattlePresentationController();
 
@@ -285,6 +291,7 @@ export class VeilRoot extends Component {
       return;
     }
 
+    this.diagnosticsConnectionStatus = "connecting";
     this.pushLog(`正在连接 ${this.remoteUrl} ...`);
     const replayed = resolveVeilRootRuntime().readStoredReplay(this.roomId, this.playerId);
     if (replayed) {
@@ -813,6 +820,22 @@ export class VeilRoot extends Component {
       predictionStatus: this.predictionStatus,
       inputDebug: this.inputDebug,
       runtimeHealth: this.describeRuntimeMemoryHealth(),
+      triageSummaryLines: buildCocosRuntimeTriageSummaryLines({
+        devOnly: true,
+        mode: this.lastUpdate?.battle ? "battle" : "world",
+        roomId: this.roomId,
+        playerId: this.playerId,
+        connectionStatus: this.diagnosticsConnectionStatus,
+        lastUpdateSource: this.lastRoomUpdateSource,
+        lastUpdateReason: this.lastRoomUpdateReason,
+        lastUpdateAt: this.lastRoomUpdateAtMs,
+        update: this.lastUpdate,
+        account: this.lobbyAccountProfile,
+        timelineEntries: this.timelineEntries,
+        logLines: this.logLines,
+        predictionStatus: this.predictionStatus,
+        recoverySummary: this.predictionStatus.includes("回放缓存状态") ? this.predictionStatus : null
+      }),
       levelUpNotice: this.levelUpNotice ? { title: this.levelUpNotice.title, detail: this.levelUpNotice.detail } : null,
       achievementNotice: this.achievementNotice
         ? { title: this.achievementNotice.title, detail: this.achievementNotice.detail }
@@ -2481,6 +2504,8 @@ export class VeilRoot extends Component {
   }
 
   private handleConnectionEvent(event: ConnectionEvent): void {
+    this.diagnosticsConnectionStatus =
+      event === "reconnecting" ? "reconnecting" : event === "reconnected" ? "connected" : "reconnect_failed";
     const label =
       event === "reconnecting"
         ? "连接已中断，正在尝试重连..."
@@ -2539,6 +2564,10 @@ export class VeilRoot extends Component {
 
     this.pendingPrediction = null;
     this.predictionStatus = "";
+    this.diagnosticsConnectionStatus = "connected";
+    this.lastRoomUpdateSource = "session";
+    this.lastRoomUpdateReason = update.reason ?? "snapshot";
+    this.lastRoomUpdateAtMs = Date.now();
     this.lastUpdate = update;
     const eventEntries = buildTimelineEntriesFromUpdate(update);
     if (eventEntries.length > 0) {
@@ -2650,6 +2679,9 @@ export class VeilRoot extends Component {
   private applyReplayedSessionUpdate(update: SessionUpdate): void {
     this.pendingPrediction = null;
     this.predictionStatus = "已回放缓存状态，等待房间同步...";
+    this.lastRoomUpdateSource = "replay";
+    this.lastRoomUpdateReason = "cached_snapshot";
+    this.lastRoomUpdateAtMs = Date.now();
     this.lastUpdate = {
       ...update,
       events: [],

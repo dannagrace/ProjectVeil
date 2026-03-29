@@ -98,6 +98,16 @@ button {
   background: rgba(47, 110, 91, 0.1);
 }
 
+[data-tone="warning"] {
+  border-left-color: #b07a20;
+  background: rgba(176, 122, 32, 0.12);
+}
+
+[data-tone="danger"] {
+  border-left-color: #8a3131;
+  background: rgba(138, 49, 49, 0.12);
+}
+
 [data-tone="defeat"] {
   border-left-color: #6b4152;
   background: rgba(107, 65, 82, 0.1);
@@ -299,6 +309,13 @@ h1 {
   gap: 12px;
 }
 
+.diagnostics-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .diagnostics-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -329,11 +346,75 @@ h1 {
   margin-top: 8px;
 }
 
-.diagnostics-summary {
-  margin: 0;
+.diagnostics-alert-list,
+.diagnostics-triage-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.diagnostics-alert-list {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.diagnostics-alert {
+  padding: 12px;
+  border-radius: 14px;
+}
+
+.diagnostics-alert strong,
+.diagnostics-alert p {
+  display: block;
+}
+
+.diagnostics-alert p {
+  margin-top: 6px;
+}
+
+.diagnostics-triage-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.diagnostics-triage-section,
+.diagnostics-summary-shell {
   padding: 12px;
   border-radius: 14px;
   border: 1px solid rgba(78, 58, 42, 0.08);
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.diagnostics-triage-head h4 {
+  font-size: 14px;
+}
+
+.diagnostics-triage-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.diagnostics-triage-row {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(247, 239, 228, 0.68);
+}
+
+.diagnostics-triage-row span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.diagnostics-summary-shell summary {
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.diagnostics-summary {
+  margin: 10px 0 0;
+  padding: 12px;
+  border-radius: 14px;
   background: rgba(255, 248, 239, 0.88);
   color: #4f3f2f;
   font-size: 12px;
@@ -1814,11 +1895,14 @@ h1 {
   .account-replay-controls,
   .account-replay-report-summary,
   .account-replay-progress,
-  .diagnostics-grid {
+  .diagnostics-grid,
+  .diagnostics-triage-grid,
+  .diagnostics-alert-list {
     grid-template-columns: 1fr;
   }
 
   .account-editor,
+  .diagnostics-actions,
   .lobby-actions,
   .session-meta-row,
   .lobby-room-card-head {

@@ -1,5 +1,6 @@
 import "./styles.css";
 import {
+  buildRuntimeDiagnosticsTriageView,
   renderRuntimeDiagnosticsSnapshotText,
   createBattleReplayPlaybackState,
   createHeroSkillTreeView,
@@ -27,7 +28,8 @@ import {
   type MovementPlan,
   type PlayerTileView,
   type PlayerWorldView,
-  type RuntimeDiagnosticsConnectionStatus
+  type RuntimeDiagnosticsConnectionStatus,
+  type RuntimeDiagnosticsTriageSection
 } from "../../../packages/shared/src/index";
 import { createGameSession, readStoredSessionReplay, type SessionUpdate } from "./local-session";
 import { buildH5RuntimeDiagnosticsSnapshot } from "./runtime-diagnostics";
@@ -470,22 +472,89 @@ function triggerDiagnosticSnapshotExport(): void {
   render();
 }
 
+async function copyDiagnosticSnapshotText(): Promise<void> {
+  if (!DEV_DIAGNOSTICS_ENABLED) {
+    return;
+  }
+
+  const snapshotText = renderDiagnosticSnapshotToText();
+  try {
+    if (!navigator.clipboard?.writeText) {
+      throw new Error("clipboard_unavailable");
+    }
+
+    await navigator.clipboard.writeText(snapshotText);
+    state.diagnostics.exportStatus = "已复制紧凑摘要";
+  } catch {
+    state.diagnostics.exportStatus = "复制失败：当前运行时不支持剪贴板写入";
+  }
+  render();
+}
+
+function renderDiagnosticsTriageSection(section: RuntimeDiagnosticsTriageSection): string {
+  const rows = section.items
+    .map(
+      (item) => `
+        <div class="diagnostics-triage-row"${item.tone ? ` data-tone="${item.tone}"` : ""}>
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${escapeHtml(item.value)}</strong>
+        </div>
+      `
+    )
+    .join("");
+
+  return `
+    <section class="diagnostics-triage-section" data-testid="diagnostic-section-${section.id}">
+      <div class="diagnostics-triage-head">
+        <h4>${escapeHtml(section.title)}</h4>
+      </div>
+      <div class="diagnostics-triage-list">
+        ${rows}
+      </div>
+    </section>
+  `;
+}
+
 function renderDiagnosticPanel(): string {
   if (!DEV_DIAGNOSTICS_ENABLED || !shouldBootGame) {
     return "";
   }
 
   const hero = activeHero();
-  const snapshotSummary = escapeHtml(renderDiagnosticSnapshotToText());
+  const snapshot = buildDiagnosticSnapshot();
+  const triage = buildRuntimeDiagnosticsTriageView(snapshot);
+  const snapshotSummary = escapeHtml(renderRuntimeDiagnosticsSnapshotText(snapshot));
+  const alertMarkup =
+    triage.alerts.length > 0
+      ? triage.alerts
+          .map(
+            (alert, index) => `
+              <div class="diagnostics-alert" data-tone="${alert.tone}" data-testid="diagnostic-alert-${index}">
+                <strong>${escapeHtml(alert.label)}</strong>
+                <p>${escapeHtml(alert.detail)}</p>
+              </div>
+            `
+          )
+          .join("")
+      : `
+          <div class="diagnostics-alert" data-tone="neutral" data-testid="diagnostic-alert-0">
+            <strong>链路稳定</strong>
+            <p>当前没有发现明显的同步滞后或缺失快照。</p>
+          </div>
+        `;
+  const triageSections = triage.sections.map((section) => renderDiagnosticsTriageSection(section)).join("");
 
   return `
     <div class="log-panel diagnostics-panel" data-testid="diagnostic-panel">
       <div class="diagnostics-head">
         <div>
           <h3>开发态诊断</h3>
-          <p class="muted">统一查看房间、英雄、同步与最近链路状态。</p>
+          <p class="muted">统一查看房间、玩家、英雄、战斗与同步链路，直接定位问题更像是共享层、房间状态还是客户端渲染。</p>
         </div>
-        <button class="session-link" data-export-diagnostic="true" data-testid="diagnostic-export">导出快照</button>
+        <div class="diagnostics-actions">
+          <button class="session-link" data-copy-diagnostic-text="true" data-testid="diagnostic-copy-text">复制摘要</button>
+          <button class="session-link" data-export-diagnostic="true" data-testid="diagnostic-export">导出快照</button>
+        </div>
       </div>
       <div class="diagnostics-grid">
         <div class="diagnostics-card">
@@ -509,7 +578,12 @@ function renderDiagnosticPanel(): string {
           <p class="muted">${escapeHtml(`${state.account.source} · replays ${state.account.recentBattleReplays.length} · events ${state.account.recentEventLog.length}`)}</p>
         </div>
       </div>
-      <pre class="diagnostics-summary" data-testid="diagnostic-summary">${snapshotSummary}</pre>
+      <div class="diagnostics-alert-list" data-testid="diagnostic-alert-list">${alertMarkup}</div>
+      <div class="diagnostics-triage-grid">${triageSections}</div>
+      <details class="diagnostics-summary-shell">
+        <summary>紧凑摘要</summary>
+        <pre class="diagnostics-summary" data-testid="diagnostic-summary">${snapshotSummary}</pre>
+      </details>
       <p class="muted diagnostics-export-status" data-testid="diagnostic-export-status">${escapeHtml(state.diagnostics.exportStatus)}</p>
     </div>
   `;
@@ -4692,6 +4766,12 @@ function render(): void {
 
   for (const exportButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-export-diagnostic]"))) {
     exportButton.addEventListener("click", triggerDiagnosticSnapshotExport);
+  }
+
+  for (const copyButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-copy-diagnostic-text]"))) {
+    copyButton.addEventListener("click", () => {
+      void copyDiagnosticSnapshotText();
+    });
   }
 }
 

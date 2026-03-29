@@ -150,6 +150,285 @@ export interface RuntimeDiagnosticsSnapshot {
   };
 }
 
+export type RuntimeDiagnosticsTriageTone = "neutral" | "warning" | "danger";
+
+export interface RuntimeDiagnosticsTriageAlert {
+  tone: RuntimeDiagnosticsTriageTone;
+  label: string;
+  detail: string;
+}
+
+export interface RuntimeDiagnosticsTriageItem {
+  label: string;
+  value: string;
+  tone?: RuntimeDiagnosticsTriageTone;
+}
+
+export interface RuntimeDiagnosticsTriageSection {
+  id: "room" | "players" | "heroes" | "battle" | "sync" | "recent-events";
+  title: string;
+  items: RuntimeDiagnosticsTriageItem[];
+}
+
+export interface RuntimeDiagnosticsTriageView {
+  alerts: RuntimeDiagnosticsTriageAlert[];
+  sections: RuntimeDiagnosticsTriageSection[];
+}
+
+function formatSyncAge(ms: number): string {
+  if (ms < 1_000) {
+    return `${ms}ms`;
+  }
+
+  if (ms < 60_000) {
+    return `${(ms / 1_000).toFixed(ms >= 10_000 ? 0 : 1)}s`;
+  }
+
+  return `${(ms / 60_000).toFixed(1)}m`;
+}
+
+export function getRuntimeDiagnosticsLastSyncAgeMs(
+  snapshot: RuntimeDiagnosticsSnapshot,
+  now: number | string | Date = Date.now()
+): number | null {
+  if (!snapshot.room?.lastUpdateAt) {
+    return null;
+  }
+
+  const nowMs = typeof now === "number" ? now : new Date(now).getTime();
+  const lastUpdateMs = Date.parse(snapshot.room.lastUpdateAt);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(lastUpdateMs)) {
+    return null;
+  }
+
+  return Math.max(0, nowMs - lastUpdateMs);
+}
+
+export function buildRuntimeDiagnosticsTriageView(
+  snapshot: RuntimeDiagnosticsSnapshot,
+  now: number | string | Date = Date.now()
+): RuntimeDiagnosticsTriageView {
+  const alerts: RuntimeDiagnosticsTriageAlert[] = [];
+  const lastSyncAgeMs = getRuntimeDiagnosticsLastSyncAgeMs(snapshot, now);
+  const visiblePlayerIds = Array.from(
+    new Set([
+      ...(snapshot.world?.hero ? [snapshot.room?.playerId ?? snapshot.account?.playerId ?? ""] : []),
+      ...(snapshot.world?.visibleHeroes.map((hero) => hero.playerId) ?? [])
+    ].filter((value) => value.length > 0))
+  );
+
+  if (snapshot.room?.connectionStatus === "reconnecting") {
+    alerts.push({
+      tone: "warning",
+      label: "同步中断",
+      detail: "客户端正在尝试重连房间。"
+    });
+  } else if (snapshot.room?.connectionStatus === "reconnect_failed") {
+    alerts.push({
+      tone: "danger",
+      label: "重连失败",
+      detail: "需要依赖本地缓存或重新进入房间。"
+    });
+  }
+
+  if (lastSyncAgeMs != null && lastSyncAgeMs >= 15_000) {
+    alerts.push({
+      tone: lastSyncAgeMs >= 30_000 ? "danger" : "warning",
+      label: "同步滞后",
+      detail: `最后权威更新距今 ${formatSyncAge(lastSyncAgeMs)}。`
+    });
+  }
+
+  if (snapshot.source.mode !== "server" && snapshot.source.mode !== "lobby" && snapshot.world == null) {
+    alerts.push({
+      tone: "danger",
+      label: "世界快照缺失",
+      detail: "当前客户端没有可用于排障的世界状态。"
+    });
+  }
+
+  if (snapshot.source.mode === "world" && snapshot.world && snapshot.world.hero == null) {
+    alerts.push({
+      tone: "warning",
+      label: "可控英雄缺失",
+      detail: "世界状态已存在，但当前玩家没有可控英雄。"
+    });
+  }
+
+  if (snapshot.source.mode === "battle" && snapshot.battle == null) {
+    alerts.push({
+      tone: "warning",
+      label: "战斗快照缺失",
+      detail: "客户端处于战斗模式，但当前没有活动战斗状态。"
+    });
+  }
+
+  if (snapshot.diagnostics.pendingUiTasks > 0) {
+    alerts.push({
+      tone: snapshot.diagnostics.pendingUiTasks >= 5 ? "warning" : "neutral",
+      label: "待处理 UI 任务",
+      detail: `前端仍有 ${snapshot.diagnostics.pendingUiTasks} 个排队任务。`
+    });
+  }
+
+  if (snapshot.diagnostics.recoverySummary) {
+    alerts.push({
+      tone: "neutral",
+      label: "恢复链路",
+      detail: snapshot.diagnostics.recoverySummary
+    });
+  }
+
+  const sections: RuntimeDiagnosticsTriageSection[] = [
+    {
+      id: "room",
+      title: "房间",
+      items: snapshot.room
+        ? [
+            { label: "房间", value: snapshot.room.roomId },
+            { label: "玩家", value: snapshot.room.playerId },
+            ...(() => {
+              const tone: RuntimeDiagnosticsTriageTone | null =
+                snapshot.room.connectionStatus === "reconnect_failed"
+                  ? "danger"
+                  : snapshot.room.connectionStatus === "reconnecting"
+                    ? "warning"
+                    : null;
+              return [
+                tone
+                  ? { label: "连接", value: snapshot.room.connectionStatus, tone }
+                  : { label: "连接", value: snapshot.room.connectionStatus }
+              ];
+            })(),
+            { label: "天数", value: snapshot.room.day == null ? "未知" : `Day ${snapshot.room.day}` },
+            {
+              label: "最后更新",
+              value:
+                snapshot.room.lastUpdateSource || snapshot.room.lastUpdateReason
+                  ? `${snapshot.room.lastUpdateSource ?? "unknown"} / ${snapshot.room.lastUpdateReason ?? "snapshot"}`
+                  : "未记录"
+            }
+          ]
+        : [{ label: "状态", value: "当前快照没有房间上下文", tone: "warning" }]
+    },
+    {
+      id: "players",
+      title: "玩家",
+      items: [
+        {
+          label: "账号",
+          value: snapshot.account ? `${snapshot.account.displayName} (${snapshot.account.source})` : "未加载"
+        },
+        {
+          label: "可见玩家",
+          value: visiblePlayerIds.length > 0 ? visiblePlayerIds.join(", ") : "仅本地玩家"
+        },
+        {
+          label: "最近事件数",
+          value: snapshot.account ? `${snapshot.account.recentEventCount}` : "0"
+        },
+        {
+          label: "最近回放数",
+          value: snapshot.account ? `${snapshot.account.recentReplayCount}` : "0"
+        }
+      ]
+    },
+    {
+      id: "heroes",
+      title: "英雄",
+      items: snapshot.world
+        ? [
+            {
+              label: "主控英雄",
+              value: snapshot.world.hero ? `${snapshot.world.hero.name} @ ${snapshot.world.hero.position.x},${snapshot.world.hero.position.y}` : "缺失",
+              tone: snapshot.world.hero ? "neutral" : "warning"
+            },
+            {
+              label: "移动力",
+              value: snapshot.world.hero
+                ? `${snapshot.world.hero.move.remaining}/${snapshot.world.hero.move.total}`
+                : "未知"
+            },
+            {
+              label: "生命",
+              value: snapshot.world.hero
+                ? `${snapshot.world.hero.stats.hp}/${snapshot.world.hero.stats.maxHp}`
+                : "未知"
+            },
+            {
+              label: "可见英雄",
+              value:
+                snapshot.world.visibleHeroes.length > 0
+                  ? snapshot.world.visibleHeroes
+                      .map((hero) => `${hero.playerId}:${hero.id}@${hero.position.x},${hero.position.y}`)
+                      .join(" | ")
+                  : "无"
+            }
+          ]
+        : [{ label: "状态", value: "当前没有世界快照", tone: "warning" }]
+    },
+    {
+      id: "battle",
+      title: "战斗",
+      items: snapshot.battle
+        ? [
+            { label: "战斗", value: snapshot.battle.id },
+            { label: "回合", value: `${snapshot.battle.round}` },
+            { label: "行动单位", value: snapshot.battle.activeUnitId ?? "无" },
+            { label: "锁定目标", value: snapshot.battle.selectedTargetId ?? "无" }
+          ]
+        : [{ label: "状态", value: "当前不在战斗中" }]
+    },
+    {
+      id: "sync",
+      title: "同步",
+      items: [
+        {
+          label: "最后同步年龄",
+          value: lastSyncAgeMs == null ? "未记录" : formatSyncAge(lastSyncAgeMs),
+          ...(lastSyncAgeMs != null && lastSyncAgeMs >= 15_000
+            ? { tone: lastSyncAgeMs >= 30_000 ? ("danger" as const) : ("warning" as const) }
+            : {})
+        },
+        {
+          label: "预测状态",
+          value: snapshot.diagnostics.predictionStatus ?? "空闲"
+        },
+        {
+          label: "恢复状态",
+          value: snapshot.diagnostics.recoverySummary ?? "无"
+        },
+        {
+          label: "事件类型",
+          value: snapshot.diagnostics.eventTypes.length > 0 ? snapshot.diagnostics.eventTypes.join(", ") : "无"
+        }
+      ]
+    },
+    {
+      id: "recent-events",
+      title: "最近事件",
+      items: [
+        {
+          label: "时间线",
+          value:
+            snapshot.diagnostics.timelineTail.length > 0
+              ? snapshot.diagnostics.timelineTail
+                  .slice(0, 2)
+                  .map((entry) => `[${entry.source}/${entry.tone}] ${entry.text}`)
+                  .join(" | ")
+              : "无"
+        },
+        {
+          label: "日志",
+          value: snapshot.diagnostics.logTail.length > 0 ? snapshot.diagnostics.logTail.slice(0, 2).join(" | ") : "无"
+        }
+      ]
+    }
+  ];
+
+  return { alerts, sections };
+}
+
 export function buildRuntimeDiagnosticsSummaryLines(snapshot: RuntimeDiagnosticsSnapshot): string[] {
   const lines = [`Mode ${snapshot.source.mode} (${snapshot.source.surface})`];
 
