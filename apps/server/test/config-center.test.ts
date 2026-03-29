@@ -643,3 +643,74 @@ test("config center presets and workbook import/export roundtrip", async () => {
   const restored = await store.applyPreset("battleSkills", preset.id);
   assert.equal(restored.content, original.content);
 });
+
+test("config center staged publish applies bundled drafts and records publish history", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  const staged = await store.saveStagedDraft([
+    {
+      id: "world",
+      content: JSON.stringify({ ...WORLD_CONFIG, width: WORLD_CONFIG.width + 2 })
+    },
+    {
+      id: "mapObjects",
+      content: JSON.stringify({
+        ...MAP_OBJECTS_CONFIG,
+        guaranteedResources: [
+          ...MAP_OBJECTS_CONFIG.guaranteedResources,
+          {
+            position: { x: 1, y: 1 },
+            resource: { kind: "ore", amount: 20 }
+          }
+        ]
+      })
+    }
+  ]);
+  assert.equal(staged?.documents.length, 2);
+  assert.equal(staged?.valid, true);
+
+  const published = await store.publishStagedDraft({ author: "ConfigOps", summary: "调大地图并补齐资源" });
+  assert.equal(published.stage, null);
+  assert.equal(published.publish.changes.length, 2);
+  assert.equal(published.publish.author, "ConfigOps");
+
+  const worldDocument = await store.loadDocument("world");
+  assert.match(worldDocument.content, new RegExp(`\"width\": ${WORLD_CONFIG.width + 2}`));
+
+  const worldHistory = await store.listPublishHistory("world");
+  assert.equal(worldHistory[0]?.author, "ConfigOps");
+  assert.equal(worldHistory[0]?.summary, "调大地图并补齐资源");
+  assert.equal((worldHistory[0]?.changeCount ?? 0) > 0, true);
+
+  const mapHistory = await store.listPublishHistory("mapObjects");
+  assert.equal(mapHistory[0]?.documentId, "mapObjects");
+  assert.equal((mapHistory[0]?.structuralChangeCount ?? 0) >= 0, true);
+
+  const stageAfter = await store.getStagedDraft();
+  assert.equal(stageAfter, null);
+});
+
+test("config center staged publish blocks invalid drafts", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const staged = await store.saveStagedDraft([
+    {
+      id: "world",
+      content: JSON.stringify({
+        ...WORLD_CONFIG,
+        width: 0
+      })
+    }
+  ]);
+  assert.equal(staged?.valid, false);
+
+  await assert.rejects(
+    () => store.publishStagedDraft({ author: "Ops", summary: "bad publish" }),
+    /未通过校验|修复/
+  );
+});

@@ -81,6 +81,35 @@ interface ConfigPresetSummary {
   description: string;
 }
 
+interface ConfigPublishHistoryEntry {
+  id: string;
+  documentId: ConfigDocumentId;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+}
+
+interface ConfigStageDocumentSummary {
+  id: ConfigDocumentId;
+  title: string;
+  fileName: string;
+  content: string;
+  updatedAt: string;
+  validation: ValidationReport;
+}
+
+interface ConfigStageState {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  documents: ConfigStageDocumentSummary[];
+  valid: boolean;
+}
+
 type TerrainType = "grass" | "dirt" | "sand" | "water";
 type ResourceKind = "gold" | "wood" | "ore";
 
@@ -198,6 +227,9 @@ interface AppState {
   historyLoading: boolean;
   presets: ConfigPresetSummary[];
   presetsLoading: boolean;
+  publishHistory: ConfigPublishHistoryEntry[];
+  publishStage: ConfigStageState | null;
+  publishStageLoading: boolean;
 }
 
 interface ConfigCenterControllerOptions {
@@ -218,6 +250,7 @@ export interface DraftParseState {
 }
 
 const WORLD_PREVIEW_DEBOUNCE_MS = 260;
+export const MAX_STAGE_DOCUMENTS = 5;
 const DIFF_KIND_LABELS: Record<ConfigDiffChangeKind, string> = {
   value: "字段值变更",
   field_added: "新增字段",
@@ -317,7 +350,10 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     snapshotDiff: null,
     historyLoading: false,
     presets: [],
-    presetsLoading: false
+    presetsLoading: false,
+    publishHistory: [],
+    publishStage: null,
+    publishStageLoading: false
   };
 
   let previewRequestVersion = 0;
@@ -441,9 +477,11 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       const response = await requestJson<{
         storage: "filesystem" | "mysql";
         snapshots: ConfigSnapshotSummary[];
+        publishHistory?: ConfigPublishHistoryEntry[];
       }>(`/api/config-center/configs/${id}/snapshots`);
       state.storageMode = response.storage;
       state.snapshots = response.snapshots;
+      state.publishHistory = response.publishHistory ?? [];
       if (!state.snapshots.some((item) => item.id === state.selectedSnapshotId)) {
         state.selectedSnapshotId = state.snapshots[0]?.id ?? null;
         state.snapshotDiff = null;
@@ -512,6 +550,187 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     }
 
     return loadSnapshotDiff(snapshotId);
+  }
+
+  async function loadPublishStage(): Promise<void> {
+    state.publishStageLoading = true;
+    notify();
+    try {
+      const response = await requestJson<{
+        storage: "filesystem" | "mysql";
+        stage: ConfigStageState | null;
+      }>("/api/config-center/publish-stage");
+      state.storageMode = response.storage;
+      state.publishStage = response.stage ?? null;
+    } catch (error) {
+      state.statusTone = "error";
+      state.statusMessage = error instanceof Error ? error.message : "加载发布草稿失败";
+    } finally {
+      state.publishStageLoading = false;
+      notify();
+    }
+  }
+
+  async function persistStageDocuments(
+    documents: Array<{ id: ConfigDocumentId; content: string }>,
+    successMessage: string
+  ): Promise<void> {
+    state.publishStageLoading = true;
+    state.statusTone = "neutral";
+    state.statusMessage = "正在同步发布草稿...";
+    notify();
+
+    try {
+      const response = await requestJson<{
+        storage: "filesystem" | "mysql";
+        stage: ConfigStageState | null;
+      }>("/api/config-center/publish-stage", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ documents })
+      });
+      state.storageMode = response.storage;
+      state.publishStage = response.stage ?? null;
+      state.statusTone = "success";
+      state.statusMessage = successMessage;
+    } catch (error) {
+      state.statusTone = "error";
+      state.statusMessage = error instanceof Error ? error.message : "更新发布草稿失败";
+    } finally {
+      state.publishStageLoading = false;
+      notify();
+    }
+  }
+
+  async function stageCurrentDraft(): Promise<void> {
+    if (!state.current) {
+      return;
+    }
+
+    const stagedDocuments = state.publishStage?.documents ?? [];
+    const alreadyIncluded = stagedDocuments.some((document) => document.id === state.current?.id);
+    if (!alreadyIncluded && stagedDocuments.length >= MAX_STAGE_DOCUMENTS) {
+      state.statusTone = "error";
+      state.statusMessage = `最多只能准备 ${MAX_STAGE_DOCUMENTS} 个草稿，请先清理后再添加。`;
+      notify();
+      return;
+    }
+
+    const documents = stagedDocuments
+      .filter((document) => document.id !== state.current?.id)
+      .map((document) => ({
+        id: document.id,
+        content: document.content
+      }));
+    documents.push({
+      id: state.current.id,
+      content: state.draft
+    });
+
+    await persistStageDocuments(documents, `${state.current.title} 已加入发布草稿`);
+  }
+
+  async function removeDocumentFromStage(documentId: ConfigDocumentId): Promise<void> {
+    if (!state.publishStage) {
+      return;
+    }
+
+    const documents = state.publishStage.documents
+      .filter((document) => document.id !== documentId)
+      .map((document) => ({
+        id: document.id,
+        content: document.content
+      }));
+
+    await persistStageDocuments(documents, "已移除发布草稿");
+  }
+
+  async function clearPublishStage(): Promise<void> {
+    if (!state.publishStage || state.publishStage.documents.length === 0) {
+      return;
+    }
+    await persistStageDocuments([], "发布草稿已清空");
+  }
+
+  async function publishStageDrafts(): Promise<void> {
+    const stage = state.publishStage;
+    if (!stage || stage.documents.length === 0) {
+      state.statusTone = "error";
+      state.statusMessage = "当前没有待发布的草稿。";
+      notify();
+      return;
+    }
+
+    if (!stage.valid) {
+      state.statusTone = "error";
+      state.statusMessage = "草稿存在校验问题，发布前需要先修复。";
+      notify();
+      return;
+    }
+
+    const author = promptImpl("发布人（用于记录到历史）", "ConfigOps")?.trim();
+    if (!author) {
+      state.statusTone = "neutral";
+      state.statusMessage = "已取消发布（未填写发布人）。";
+      notify();
+      return;
+    }
+
+    const summary = promptImpl("发布说明（记录变更摘要）", "描述本次调参目的")?.trim();
+    if (!summary) {
+      state.statusTone = "neutral";
+      state.statusMessage = "已取消发布（未填写发布说明）。";
+      notify();
+      return;
+    }
+
+    const publishedDocumentIds = stage.documents.map((document) => document.id);
+    state.publishStageLoading = true;
+    state.statusTone = "neutral";
+    state.statusMessage = "正在发布配置...";
+    notify();
+
+    try {
+      const response = await requestJson<{
+        storage: "filesystem" | "mysql";
+        stage: ConfigStageState | null;
+        publish: {
+          id: string;
+          author: string;
+          summary: string;
+          publishedAt: string;
+          changes: Array<{ documentId: ConfigDocumentId }>;
+        };
+      }>("/api/config-center/publish-stage/publish", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          author,
+          summary
+        })
+      });
+      state.storageMode = response.storage;
+      state.publishStage = response.stage ?? null;
+      state.statusTone = "success";
+      state.statusMessage = `已发布 ${response.publish.changes.length} 个草稿，并刷新运行时配置。`;
+      const activeDocumentId = state.current?.id ?? null;
+      await loadList();
+      if (activeDocumentId && publishedDocumentIds.includes(activeDocumentId)) {
+        await loadDocument(activeDocumentId);
+      } else if (activeDocumentId) {
+        await loadSnapshots(activeDocumentId);
+      }
+    } catch (error) {
+      state.statusTone = "error";
+      state.statusMessage = error instanceof Error ? error.message : "发布草稿失败";
+    } finally {
+      state.publishStageLoading = false;
+      notify();
+    }
   }
 
   async function loadWorldPreview(): Promise<void> {
@@ -692,6 +911,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       state.draft = response.document.content;
       state.validation = null;
       state.snapshots = [];
+      state.publishHistory = [];
       state.presets = [];
       state.snapshotDiff = null;
       state.selectedSnapshotId = null;
@@ -1026,6 +1246,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     loadSnapshots,
     loadPresets,
     loadSnapshotDiff,
+    loadPublishStage,
     loadWorldPreview,
     loadValidation,
     scheduleWorldPreview,
@@ -1038,6 +1259,10 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     saveCurrentAsPreset,
     exportCurrentDocument,
     importWorkbook,
+    stageCurrentDraft,
+    removeDocumentFromStage,
+    clearPublishStage,
+    publishStageDrafts,
     parseDownloadFileName
   };
 }
@@ -1049,8 +1274,10 @@ export type {
   ConfigDocumentId,
   ConfigDocumentSummary,
   ConfigPresetSummary,
+  ConfigPublishHistoryEntry,
   ConfigSchemaSummary,
   ConfigSnapshotSummary,
+  ConfigStageState,
   DownloadPayload,
   ValidationIssue,
   ValidationReport,

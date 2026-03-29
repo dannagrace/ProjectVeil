@@ -1,5 +1,5 @@
 import "./config-center.css";
-import { createConfigCenterController } from "./config-center-controller";
+import { createConfigCenterController, MAX_STAGE_DOCUMENTS } from "./config-center-controller";
 
 type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 type TerrainType = "grass" | "dirt" | "sand" | "water";
@@ -141,6 +141,35 @@ interface ConfigPresetSummary {
   description: string;
 }
 
+interface ConfigPublishHistoryEntry {
+  id: string;
+  documentId: ConfigDocumentId;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+}
+
+interface ConfigStageDocumentSummary {
+  id: ConfigDocumentId;
+  title: string;
+  fileName: string;
+  content: string;
+  updatedAt: string;
+  validation: ValidationReport;
+}
+
+interface ConfigStageState {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  documents: ConfigStageDocumentSummary[];
+  valid: boolean;
+}
+
 interface WorldConfigPreviewTile {
   position: {
     x: number;
@@ -255,6 +284,9 @@ interface AppState {
   historyLoading: boolean;
   presets: ConfigPresetSummary[];
   presetsLoading: boolean;
+  publishHistory: ConfigPublishHistoryEntry[];
+  publishStage: ConfigStageState | null;
+  publishStageLoading: boolean;
 }
 
 const WORLD_PREVIEW_DEBOUNCE_MS = 260;
@@ -327,6 +359,7 @@ const {
   loadSnapshots,
   loadPresets,
   loadSnapshotDiff,
+  loadPublishStage,
   loadWorldPreview,
   loadValidation,
   scheduleWorldPreview,
@@ -338,7 +371,11 @@ const {
   applyPreset,
   saveCurrentAsPreset,
   exportCurrentDocument,
-  importWorkbook
+  importWorkbook,
+  stageCurrentDraft,
+  removeDocumentFromStage,
+  clearPublishStage,
+  publishStageDrafts
 } = controller;
 
 function formatTime(value: string): string {
@@ -1110,6 +1147,60 @@ function renderValidationSection(): string {
   `;
 }
 
+function renderPublishStageSection(): string {
+  if (!state.current) {
+    return "";
+  }
+
+  const stage = state.publishStage;
+  const documents = stage?.documents ?? [];
+  const stagedCount = documents.length;
+  const activeDocumentId = state.current?.id ?? null;
+  const isCurrentInStage = documents.some((document) => document.id === activeDocumentId);
+  const limitReached = !isCurrentInStage && stagedCount >= MAX_STAGE_DOCUMENTS;
+  const stageMeta = stage
+    ? `${stagedCount}/${MAX_STAGE_DOCUMENTS} 个草稿 · ${stage.valid ? "全部通过校验" : "存在阻塞"}`
+    : `0/${MAX_STAGE_DOCUMENTS} 个草稿`;
+
+  return `
+    <section class="history-section">
+      <div class="config-preview-subhead">
+        <h4>发布草稿队列</h4>
+        <span class="config-meta">${stageMeta}</span>
+      </div>
+      <p class="config-hint">可将多个配置草稿绑定在同一次发布中并统一校验，全部通过后再一键发布。发布记录会同步到版本历史，便于代码审计和追溯。</p>
+      <div class="history-actions">
+        <button class="config-button is-secondary config-button-compact" data-action="stage-current" ${state.current && !limitReached && !state.publishStageLoading ? "" : "disabled"}>${state.publishStageLoading ? "同步中..." : "将当前草稿加入队列"}</button>
+        <button class="config-button is-secondary config-button-compact" data-action="clear-stage" ${stage && stagedCount > 0 && !state.publishStageLoading ? "" : "disabled"}>清空草稿</button>
+        <button class="config-button config-button-compact" data-action="publish-stage" ${stage && stage.valid && stagedCount > 0 && !state.publishStageLoading ? "" : "disabled"}>${state.publishStageLoading ? "处理中..." : "发布草稿"}</button>
+      </div>
+      ${
+        state.publishStageLoading && stagedCount === 0
+          ? `<div class="world-preview-empty">正在加载发布草稿...</div>`
+          : stagedCount === 0
+            ? `<div class="world-preview-empty">暂无待发布草稿，可在左侧编辑器完成修改后加入队列。</div>`
+            : `
+        <div class="stage-list">
+          ${documents
+            .map(
+              (document) => `
+                <article class="stage-card ${document.validation.valid ? "" : "is-invalid"}">
+                  <div>
+                    <strong>${escapeHtml(document.title)}</strong>
+                    <span>${document.validation.valid ? "校验通过" : document.validation.summary}</span>
+                    <small>最近同步：${formatTime(document.updatedAt)}</small>
+                  </div>
+                  <button class="config-button is-secondary config-button-compact" data-action="remove-stage-doc" data-doc-id="${document.id}">移除</button>
+                </article>
+              `
+            )
+            .join("")}
+        </div>`
+      }
+    </section>
+  `;
+}
+
 function renderPresetSection(): string {
   if (!state.current) {
     return "";
@@ -1182,6 +1273,7 @@ function renderSnapshotSection(): string {
                 .join("")}
       </div>
       ${renderSnapshotDiffPanel()}
+      ${renderPublishHistoryList()}
     </section>
   `;
 }
@@ -1234,6 +1326,42 @@ function renderSnapshotDiffPanel(): string {
           `
         )
         .join("")}
+    </div>
+  `;
+}
+
+function renderPublishHistoryList(): string {
+  const entries = state.publishHistory;
+  if (state.historyLoading && entries.length === 0) {
+    return `<div class="world-preview-empty">正在加载发布记录...</div>`;
+  }
+
+  if (entries.length === 0) {
+    return `<div class="world-preview-empty">暂无发布记录，先使用“发布草稿”功能再回来查看。</div>`;
+  }
+
+  return `
+    <div class="publish-history">
+      <div class="config-preview-subhead">
+        <h4>发布记录</h4>
+        <span class="config-meta">${entries.length} 次发布</span>
+      </div>
+      <div class="publish-history-list">
+        ${entries
+          .slice(0, 6)
+          .map(
+            (entry) => `
+              <article class="publish-history-card">
+                <div>
+                  <strong>${escapeHtml(entry.summary)}</strong>
+                  <span>${escapeHtml(entry.author)} · ${formatTime(entry.publishedAt)}</span>
+                  <small>v${entry.fromVersion} → v${entry.toVersion} · ${entry.changeCount} 项变更${entry.structuralChangeCount ? `，其中 ${entry.structuralChangeCount} 项结构风险` : ""}</small>
+                </div>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
     </div>
   `;
 }
@@ -1335,6 +1463,7 @@ function renderPreviewContent(): string {
     <div class="config-badge-row">${badges}</div>
     <p class="config-hint">保存后会先写主存储，再导出到 <code>configs/*.json</code>，并同步刷新服务端运行时配置。新建房间、战斗公式和世界生成会直接读取最新版本。</p>
     ${renderValidationSection()}
+    ${renderPublishStageSection()}
     ${renderPresetSection()}
     ${renderSnapshotSection()}
     ${renderExportSection()}
@@ -1402,6 +1531,8 @@ function bindPreviewControls(): void {
       scheduleWorldPreview(0);
     };
   }
+
+  bindPublishStageControls();
 }
 
 function bindSkillEditorControls(): void {
@@ -1576,6 +1707,29 @@ function bindBattleBalanceEditorControls(): void {
         return config;
       });
     };
+  });
+}
+
+function bindPublishStageControls(): void {
+  document.querySelector<HTMLButtonElement>("[data-action='stage-current']")?.addEventListener("click", () => {
+    void stageCurrentDraft();
+  });
+
+  document.querySelector<HTMLButtonElement>("[data-action='clear-stage']")?.addEventListener("click", () => {
+    void clearPublishStage();
+  });
+
+  document.querySelector<HTMLButtonElement>("[data-action='publish-stage']")?.addEventListener("click", () => {
+    void publishStageDrafts();
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-action='remove-stage-doc']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const docId = button.dataset.docId as ConfigDocumentId | undefined;
+      if (docId) {
+        void removeDocumentFromStage(docId);
+      }
+    });
   });
 }
 
@@ -1777,6 +1931,7 @@ async function bootstrap(): Promise<void> {
   render();
   try {
     await loadList();
+    await loadPublishStage();
     const requestedId = new URLSearchParams(window.location.search).get("config") as ConfigDocumentId | null;
     const initialId = requestedId && state.items.some((item) => item.id === requestedId) ? requestedId : state.items[0]?.id ?? null;
 
