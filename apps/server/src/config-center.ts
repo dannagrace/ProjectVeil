@@ -143,6 +143,57 @@ export interface ConfigPresetSummary {
   description: string;
 }
 
+export interface ConfigPublishHistoryEntry {
+  id: string;
+  documentId: ConfigDocumentId;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+}
+
+export interface ConfigPublishChangeSummary {
+  documentId: ConfigDocumentId;
+  title: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+}
+
+export interface ConfigPublishEventSummary {
+  id: string;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  changes: ConfigPublishChangeSummary[];
+}
+
+export interface ConfigStageDocumentInput {
+  id: ConfigDocumentId;
+  content: string;
+}
+
+export interface ConfigStageDocumentSummary {
+  id: ConfigDocumentId;
+  title: string;
+  fileName: string;
+  content: string;
+  updatedAt: string;
+  validation: ValidationReport;
+}
+
+export interface ConfigStageState {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  documents: ConfigStageDocumentSummary[];
+  valid: boolean;
+}
+
 export interface WorldConfigPreviewTile {
   position: {
     x: number;
@@ -233,6 +284,7 @@ export interface ConfigCenterStore {
   createSnapshot(id: ConfigDocumentId, content: string, label?: string): Promise<ConfigSnapshotSummary>;
   rollbackToSnapshot(id: ConfigDocumentId, snapshotId: string): Promise<ConfigDocument>;
   diffWithSnapshot(id: ConfigDocumentId, snapshotId: string): Promise<ConfigDiff>;
+  listPublishHistory(id: ConfigDocumentId): Promise<ConfigPublishHistoryEntry[]>;
   listPresets(id: ConfigDocumentId): Promise<ConfigPresetSummary[]>;
   savePreset(id: ConfigDocumentId, name: string, content: string): Promise<ConfigPresetSummary>;
   applyPreset(id: ConfigDocumentId, presetId: string): Promise<ConfigDocument>;
@@ -243,6 +295,12 @@ export interface ConfigCenterStore {
     exportedAt: string;
   }>;
   importDocumentFromWorkbook(id: ConfigDocumentId, workbook: Buffer): Promise<ConfigDocument>;
+  getStagedDraft(): Promise<ConfigStageState | null>;
+  saveStagedDraft(documents: ConfigStageDocumentInput[]): Promise<ConfigStageState | null>;
+  publishStagedDraft(metadata: { author: string; summary: string }): Promise<{
+    stage: ConfigStageState | null;
+    publish: ConfigPublishEventSummary;
+  }>;
   close(): Promise<void>;
   readonly mode: "filesystem" | "mysql";
 }
@@ -296,11 +354,27 @@ interface ConfigPresetRecord {
   content: string;
 }
 
+interface ConfigStageDocumentRecord {
+  id: ConfigDocumentId;
+  content: string;
+  validation: ValidationReport;
+  updatedAt: string;
+}
+
+interface ConfigStageRecord {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  documents: ConfigStageDocumentRecord[];
+}
+
 interface ConfigCenterLibraryState {
   filesystemVersions: Partial<Record<ConfigDocumentId, number>>;
   filesystemExports: Partial<Record<ConfigDocumentId, string>>;
   snapshots: Partial<Record<ConfigDocumentId, ConfigSnapshotRecord[]>>;
   presets: Partial<Record<ConfigDocumentId, ConfigPresetRecord[]>>;
+  stagedDraft: ConfigStageRecord | null;
+  publishHistory: Partial<Record<ConfigDocumentId, ConfigPublishHistoryEntry[]>>;
 }
 
 interface FlattenedConfigEntry {
@@ -324,6 +398,8 @@ interface JsonSchemaNode {
 }
 
 const CONFIG_CENTER_LIBRARY_FILE = ".config-center-library.json";
+const MAX_STAGE_DOCUMENTS = 5;
+const MAX_PUBLISH_HISTORY_ENTRIES = 20;
 const BUILTIN_DIFFICULTY_PRESET_IDS = ["easy", "normal", "hard"] as const;
 const BUILTIN_WORLD_LAYOUT_PRESETS = ["layout_phase1", "layout_frontier_basin", "layout_contested_basin"] as const;
 const BUILTIN_MAP_OBJECT_LAYOUT_PRESETS = ["layout_phase1", "layout_frontier_basin", "layout_contested_basin"] as const;
@@ -654,7 +730,9 @@ function createEmptyLibraryState(): ConfigCenterLibraryState {
     filesystemVersions: {},
     filesystemExports: {},
     snapshots: {},
-    presets: {}
+    presets: {},
+    stagedDraft: null,
+    publishHistory: {}
   };
 }
 
@@ -1899,7 +1977,8 @@ function formatTimestamp(value: Date | string | null | undefined): string | null
 
 async function loadValidationDependencies(
   store: Pick<ConfigCenterStore, "loadDocument">,
-  id: ConfigDocumentId
+  id: ConfigDocumentId,
+  overrides: Partial<Record<ConfigDocumentId, string>> = {}
 ): Promise<{
   world: WorldGenerationConfig;
   mapObjects: MapObjectsConfig;
@@ -1907,43 +1986,59 @@ async function loadValidationDependencies(
   battleSkills: BattleSkillCatalogConfig;
   battleBalance: BattleBalanceConfig;
 }> {
-  const [worldDocument, mapObjectsDocument, unitsDocument, battleSkillsDocument, battleBalanceDocument] = await Promise.all([
-    id === "world" ? Promise.resolve(null) : store.loadDocument("world"),
-    id === "mapObjects" ? Promise.resolve(null) : store.loadDocument("mapObjects"),
-    id === "units" ? Promise.resolve(null) : store.loadDocument("units"),
-    id === "battleSkills" ? Promise.resolve(null) : store.loadDocument("battleSkills"),
-    id === "battleBalance" ? Promise.resolve(null) : store.loadDocument("battleBalance")
+  const loadContent = async (docId: ConfigDocumentId): Promise<string | null> => {
+    if (docId === id) {
+      return null;
+    }
+
+    if (overrides[docId]) {
+      return overrides[docId] ?? null;
+    }
+
+    const document = await store.loadDocument(docId);
+    return document.content;
+  };
+
+  const [worldContent, mapObjectsContent, unitsContent, battleSkillsContent, battleBalanceContent] = await Promise.all([
+    id === "world" ? Promise.resolve(null) : loadContent("world"),
+    id === "mapObjects" ? Promise.resolve(null) : loadContent("mapObjects"),
+    id === "units" ? Promise.resolve(null) : loadContent("units"),
+    id === "battleSkills" ? Promise.resolve(null) : loadContent("battleSkills"),
+    id === "battleBalance" ? Promise.resolve(null) : loadContent("battleBalance")
   ]);
 
   return {
     world:
       id === "world"
         ? getDefaultWorldConfig()
-        : (parseConfigDocument("world", worldDocument?.content ?? normalizeJsonContent(getDefaultWorldConfig())) as WorldGenerationConfig),
+        : (parseConfigDocument(
+            "world",
+            worldContent ?? overrides.world ?? normalizeJsonContent(getDefaultWorldConfig())
+          ) as WorldGenerationConfig),
     mapObjects:
       id === "mapObjects"
         ? getDefaultMapObjectsConfig()
         : (parseConfigDocument(
             "mapObjects",
-            mapObjectsDocument?.content ?? normalizeJsonContent(getDefaultMapObjectsConfig())
+            mapObjectsContent ?? overrides.mapObjects ?? normalizeJsonContent(getDefaultMapObjectsConfig())
           ) as MapObjectsConfig),
     units:
       id === "units"
         ? getDefaultUnitCatalog()
-        : (parseConfigDocument("units", unitsDocument?.content ?? normalizeJsonContent(getDefaultUnitCatalog())) as UnitCatalogConfig),
+        : (parseConfigDocument("units", unitsContent ?? overrides.units ?? normalizeJsonContent(getDefaultUnitCatalog())) as UnitCatalogConfig),
     battleSkills:
       id === "battleSkills"
         ? getDefaultBattleSkillCatalog()
         : (parseConfigDocument(
             "battleSkills",
-            battleSkillsDocument?.content ?? normalizeJsonContent(getDefaultBattleSkillCatalog())
+            battleSkillsContent ?? overrides.battleSkills ?? normalizeJsonContent(getDefaultBattleSkillCatalog())
           ) as BattleSkillCatalogConfig),
     battleBalance:
       id === "battleBalance"
         ? getDefaultBattleBalanceConfig()
         : (parseConfigDocument(
             "battleBalance",
-            battleBalanceDocument?.content ?? normalizeJsonContent(getDefaultBattleBalanceConfig())
+            battleBalanceContent ?? overrides.battleBalance ?? normalizeJsonContent(getDefaultBattleBalanceConfig())
           ) as BattleBalanceConfig)
   };
 }
@@ -2313,7 +2408,8 @@ function mapContentPackIssuesToValidationIssues(report: ContentPackValidationRep
 async function validateDocumentDetailed(
   store: Pick<ConfigCenterStore, "loadDocument">,
   id: ConfigDocumentId,
-  content: string
+  content: string,
+  options: { overrides?: Partial<Record<ConfigDocumentId, string>> } = {}
 ): Promise<ValidationReport> {
   try {
     const parsed = JSON.parse(content) as ParsedConfigDocument;
@@ -2328,7 +2424,7 @@ async function validateDocumentDetailed(
     };
     validateSchemaNode(parsed, CONFIG_DOCUMENT_SCHEMAS[id], "", issues);
     try {
-      const dependencies = await loadValidationDependencies(store, id);
+      const dependencies = await loadValidationDependencies(store, id, options.overrides);
       const semanticIssues =
         id === "world"
           ? validateWorldConfigDetailed(parsed as WorldGenerationConfig)
@@ -2416,7 +2512,9 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
         filesystemVersions: parsed.filesystemVersions ?? {},
         filesystemExports: parsed.filesystemExports ?? {},
         snapshots: parsed.snapshots ?? {},
-        presets: parsed.presets ?? {}
+        presets: parsed.presets ?? {},
+        stagedDraft: parsed.stagedDraft ?? null,
+        publishHistory: parsed.publishHistory ?? {}
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -2565,6 +2663,174 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
     return {
       entries: buildConfigDiffEntries(id, snapshot.content, current.content)
     };
+  }
+
+  async listPublishHistory(id: ConfigDocumentId): Promise<ConfigPublishHistoryEntry[]> {
+    const state = await this.readLibraryState();
+    return [...(state.publishHistory[id] ?? [])];
+  }
+
+  async getStagedDraft(): Promise<ConfigStageState | null> {
+    const state = await this.readLibraryState();
+    return this.mapStageRecordToState(state.stagedDraft);
+  }
+
+  async saveStagedDraft(documents: ConfigStageDocumentInput[]): Promise<ConfigStageState | null> {
+    const state = await this.readLibraryState();
+    if (documents.length === 0) {
+      state.stagedDraft = null;
+      await this.writeLibraryState(state);
+      return null;
+    }
+
+    const stageRecord = await this.buildStageRecord(documents, state.stagedDraft);
+    state.stagedDraft = stageRecord;
+    await this.writeLibraryState(state);
+    return this.mapStageRecordToState(stageRecord);
+  }
+
+  async publishStagedDraft(metadata: { author: string; summary: string }): Promise<{
+    stage: ConfigStageState | null;
+    publish: ConfigPublishEventSummary;
+  }> {
+    const state = await this.readLibraryState();
+    const staged = state.stagedDraft;
+    if (!staged || staged.documents.length === 0) {
+      throw new Error("当前没有待发布的草稿。");
+    }
+
+    if (staged.documents.some((entry) => !entry.validation.valid)) {
+      throw new Error("存在未通过校验的草稿，发布前请先修复。");
+    }
+
+    const publishId = createId("publish");
+    const publishedAt = new Date().toISOString();
+    const publishChanges: ConfigPublishChangeSummary[] = [];
+    const historyEntries: ConfigPublishHistoryEntry[] = [];
+
+    for (const stagedDocument of staged.documents) {
+      const current = await this.loadDocument(stagedDocument.id);
+      const diffEntries = buildConfigDiffEntries(stagedDocument.id, current.content, stagedDocument.content);
+      const structuralCount = diffEntries.filter((entry) => entry.kind !== "value").length;
+      const saved = await this.saveDocument(stagedDocument.id, stagedDocument.content);
+      const definition = configDefinitionFor(stagedDocument.id);
+      const fromVersion = current.version ?? 1;
+      const toVersion = saved.version ?? fromVersion;
+
+      publishChanges.push({
+        documentId: stagedDocument.id,
+        title: definition?.title ?? stagedDocument.id,
+        fromVersion,
+        toVersion,
+        changeCount: diffEntries.length,
+        structuralChangeCount: structuralCount
+      });
+      historyEntries.push({
+        id: publishId,
+        documentId: stagedDocument.id,
+        author: metadata.author,
+        summary: metadata.summary,
+        publishedAt,
+        fromVersion,
+        toVersion,
+        changeCount: diffEntries.length,
+        structuralChangeCount: structuralCount
+      });
+    }
+
+    state.stagedDraft = null;
+    state.publishHistory = state.publishHistory ?? {};
+    for (const entry of historyEntries) {
+      const existing = state.publishHistory[entry.documentId] ?? [];
+      state.publishHistory[entry.documentId] = [entry, ...existing].slice(0, MAX_PUBLISH_HISTORY_ENTRIES);
+    }
+    await this.writeLibraryState(state);
+
+    return {
+      stage: null,
+      publish: {
+        id: publishId,
+        author: metadata.author,
+        summary: metadata.summary,
+        publishedAt,
+        changes: publishChanges
+      }
+    };
+  }
+
+  protected mapStageRecordToState(stage: ConfigStageRecord | null): ConfigStageState | null {
+    if (!stage) {
+      return null;
+    }
+
+    return {
+      id: stage.id,
+      createdAt: stage.createdAt,
+      updatedAt: stage.updatedAt,
+      documents: stage.documents.map((document) => {
+        const definition = configDefinitionFor(document.id);
+        return {
+          id: document.id,
+          title: definition?.title ?? document.id,
+          fileName: definition?.fileName ?? document.id,
+          content: document.content,
+          updatedAt: document.updatedAt,
+          validation: document.validation
+        };
+      }),
+      valid: stage.documents.every((document) => document.validation.valid)
+    };
+  }
+
+  private async buildStageRecord(
+    documents: ConfigStageDocumentInput[],
+    existing: ConfigStageRecord | null
+  ): Promise<ConfigStageRecord> {
+    if (documents.length > MAX_STAGE_DOCUMENTS) {
+      throw new Error(`一次最多只能准备 ${MAX_STAGE_DOCUMENTS} 个草稿。`);
+    }
+
+    const seen = new Set<ConfigDocumentId>();
+    for (const document of documents) {
+      if (!configDefinitionFor(document.id)) {
+        throw new Error(`Unsupported config id: ${document.id}`);
+      }
+      if (seen.has(document.id)) {
+        throw new Error("同一配置文档只能加入一次草稿捆绑。");
+      }
+      seen.add(document.id);
+    }
+
+    const normalizedDocuments = documents.map((document) => {
+      const parsed = parseConfigDocument(document.id, document.content);
+      return {
+        id: document.id,
+        content: normalizeJsonContent(parsed)
+      };
+    });
+    const overrides: Partial<Record<ConfigDocumentId, string>> = {};
+    for (const normalized of normalizedDocuments) {
+      overrides[normalized.id] = normalized.content;
+    }
+
+    const timestamp = new Date().toISOString();
+    const stageRecord: ConfigStageRecord = {
+      id: existing?.id ?? createId("stage"),
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+      documents: []
+    };
+
+    for (const normalized of normalizedDocuments) {
+      stageRecord.documents.push({
+        id: normalized.id,
+        content: normalized.content,
+        validation: await validateDocumentDetailed(this, normalized.id, normalized.content, { overrides }),
+        updatedAt: timestamp
+      });
+    }
+
+    return stageRecord;
   }
 
   async listPresets(id: ConfigDocumentId): Promise<ConfigPresetSummary[]> {
@@ -2987,12 +3253,93 @@ export function registerConfigCenterRoutes(
     }
 
     try {
+      const [snapshots, publishHistory] = await Promise.all([
+        store.listSnapshots(definition.id),
+        store.listPublishHistory(definition.id)
+      ]);
       sendJson(response, 200, {
         storage: store.mode,
-        snapshots: await store.listSnapshots(definition.id)
+        snapshots,
+        publishHistory
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/config-center/publish-stage", async (_request, response) => {
+    try {
+      sendJson(response, 200, {
+        storage: store.mode,
+        stage: await store.getStagedDraft()
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.put("/api/config-center/publish-stage", async (request, response) => {
+    try {
+      const body = (await readJsonBody(request)) as {
+        documents?: Array<{ id?: string; content?: string }>;
+      };
+      if (!Array.isArray(body.documents)) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected array field: documents"
+          }
+        });
+        return;
+      }
+
+      const documents: ConfigStageDocumentInput[] = body.documents.map((entry) => {
+        if (typeof entry.id !== "string" || typeof entry.content !== "string") {
+          throw new Error("Expected staged draft entries with string id and content");
+        }
+        const definition = configDefinitionFor(entry.id);
+        if (!definition) {
+          throw new Error(`Unsupported config id: ${entry.id}`);
+        }
+        return {
+          id: definition.id,
+          content: entry.content
+        };
+      });
+
+      sendJson(response, 200, {
+        storage: store.mode,
+        stage: await store.saveStagedDraft(documents)
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/config-center/publish-stage/publish", async (request, response) => {
+    try {
+      const body = (await readJsonBody(request)) as { author?: string; summary?: string };
+      if (typeof body.author !== "string" || !body.author.trim() || typeof body.summary !== "string" || !body.summary.trim()) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected non-empty strings: author, summary"
+          }
+        });
+        return;
+      }
+
+      const result = await store.publishStagedDraft({
+        author: body.author.trim(),
+        summary: body.summary.trim()
+      });
+      sendJson(response, 200, {
+        storage: store.mode,
+        stage: result.stage,
+        publish: result.publish
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
     }
   });
 

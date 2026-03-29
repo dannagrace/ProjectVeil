@@ -538,6 +538,69 @@ body {
   margin-top: 12px;
 }
 
+.stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.stage-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid rgba(138, 90, 43, 0.2);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.stage-card.is-invalid {
+  border-color: rgba(178, 69, 47, 0.35);
+  background: rgba(178, 69, 47, 0.08);
+}
+
+.stage-card strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.stage-card span,
+.stage-card small {
+  display: block;
+  color: var(--text-muted);
+}
+
+.publish-history {
+  margin-top: 18px;
+}
+
+.publish-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.publish-history-card {
+  border: 1px solid rgba(138, 90, 43, 0.18);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.publish-history-card strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.publish-history-card span,
+.publish-history-card small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .validation-item,
 .snapshot-main {
   width: 100%;
