@@ -231,6 +231,99 @@ test("VeilRoot connect replays cached session state before applying the live sna
   assert.equal(root.lastUpdate?.world.meta.day, 3);
 });
 
+test("VeilRoot replays cached state before reconnect recovery converges on the authoritative snapshot", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-alpha";
+  root.playerId = "player-1";
+  root.remoteUrl = "http://127.0.0.1:2567";
+
+  const replayedUpdate = createSessionUpdate(2);
+  replayedUpdate.events = [
+    {
+      type: "battle.resolved",
+      battleId: "battle-1",
+      battleKind: "neutral",
+      heroId: "hero-1",
+      result: "attacker_victory",
+      resourcesGained: {
+        gold: 0,
+        wood: 0,
+        ore: 0
+      },
+      experienceGained: 10,
+      skillPointsAwarded: 0
+    }
+  ];
+  const liveUpdate = createSessionUpdate(3);
+  const recoveredUpdate = createSessionUpdate(4);
+  recoveredUpdate.events = [
+    {
+      type: "battle.resolved",
+      battleId: "battle-1",
+      battleKind: "neutral",
+      heroId: "hero-1",
+      result: "attacker_victory",
+      resourcesGained: {
+        gold: 0,
+        wood: 0,
+        ore: 0
+      },
+      experienceGained: 10,
+      skillPointsAwarded: 0
+    }
+  ];
+
+  const order: string[] = [];
+  let capturedOptions:
+    | {
+        onPushUpdate?: ((update: SessionUpdate) => void) | undefined;
+        onConnectionEvent?: ((event: "reconnecting" | "reconnected" | "reconnect_failed") => void) | undefined;
+      }
+    | undefined;
+
+  const fakeSession = {
+    async snapshot() {
+      return liveUpdate;
+    },
+    async dispose() {}
+  };
+
+  root.applyReplayedSessionUpdate = (update) => {
+    order.push(`replay:${update.world.meta.day}:events=${update.events.length}`);
+    root.lastUpdate = {
+      ...update,
+      events: [],
+      movementPlan: null
+    };
+  };
+  root.applySessionUpdate = async (update) => {
+    order.push(`live:${update.world.meta.day}:events=${update.events.length}`);
+    root.lastUpdate = update;
+  };
+
+  installVeilRootRuntime({
+    readStoredReplay: () => replayedUpdate,
+    createSession: async (_roomId, _playerId, _seed, options) => {
+      capturedOptions = options;
+      return fakeSession as never;
+    }
+  });
+
+  await root.connect();
+
+  capturedOptions?.onConnectionEvent?.("reconnect_failed");
+  capturedOptions?.onPushUpdate?.(recoveredUpdate);
+  capturedOptions?.onConnectionEvent?.("reconnected");
+  await flushMicrotasks();
+
+  assert.deepEqual(order, ["replay:2:events=1", "live:3:events=0", "live:4:events=1"]);
+  assert.equal(root.lastUpdate?.world.meta.day, 4);
+  assert.deepEqual(root.lastUpdate?.events, recoveredUpdate.events);
+  assert.equal(root.diagnosticsConnectionStatus, "connected");
+  assert.equal(root.logLines[0], "连接已恢复。");
+  assert.match(String(root.logLines[1]), /已收到房间推送更新。/);
+});
+
 test("VeilRoot surfaces broken room snapshots with a stable runtime error message", async () => {
   const root = createVeilRootHarness();
   root.roomId = "room-alpha";
