@@ -131,7 +131,8 @@ test("buildBattlePanelSections groups ally, enemy and queue rows from a battle s
     controlledCamp: "attacker",
     selectedTargetId: "neutral-1-stack",
     actionPending: false,
-    feedback: null
+    feedback: null,
+    presentationState: null
   });
 
   assert.equal(sections.idle, false);
@@ -148,7 +149,8 @@ test("battle panel stage banner derives the PVE terrain title from the encounter
     controlledCamp: "attacker",
     selectedTargetId: null,
     actionPending: false,
-    feedback: null
+    feedback: null,
+    presentationState: null
   });
 
   assert.deepEqual(sections.stage, {
@@ -171,7 +173,8 @@ test("battle panel actions disable when it is not the controlled camp's turn", (
     controlledCamp: "attacker",
     selectedTargetId: "neutral-1-stack",
     actionPending: false,
-    feedback: null
+    feedback: null,
+    presentationState: null
   });
 
   assert.equal(sections.actions.every((action) => action.enabled === false), true);

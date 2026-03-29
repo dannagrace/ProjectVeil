@@ -2,6 +2,11 @@ import { _decorator, Color, Component, Graphics, Label, Node, Sprite, Tween, UIO
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import type { BattleTransitionCopy } from "./cocos-battle-transition-copy.ts";
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
+import {
+  getPlaceholderSpriteAssets,
+  releasePlaceholderSpriteAssets,
+  retainPlaceholderSpriteAssets
+} from "./cocos-placeholder-sprites.ts";
 
 const { ccclass, property } = _decorator;
 
@@ -37,11 +42,20 @@ export class VeilBattleTransition extends Component {
   private titleLabel: Label | null = null;
   private subtitleLabel: Label | null = null;
   private sequenceToken = 0;
+  private placeholderAssetsRetained = false;
 
   onLoad(): void {
     this.ensureOverlay();
+    void this.retainPlaceholderAssets();
     if (this.overlayNode) {
       this.overlayNode.active = false;
+    }
+  }
+
+  onDestroy(): void {
+    if (this.placeholderAssetsRetained) {
+      releasePlaceholderSpriteAssets("battle");
+      this.placeholderAssetsRetained = false;
     }
   }
 
@@ -256,7 +270,9 @@ export class VeilBattleTransition extends Component {
     const terrainFrame =
       copy.terrain === null
         ? null
-        : (getPixelSpriteAssets()?.tiles[copy.terrain].find((frame) => Boolean(frame)) ?? null);
+        : (getPixelSpriteAssets()?.tiles[copy.terrain].find((frame) => Boolean(frame))
+          ?? getPlaceholderSpriteAssets()?.tiles[copy.terrain][0]
+          ?? null);
     if (terrainNode) {
       terrainNode.active = Boolean(terrainFrame);
     }
@@ -273,6 +289,16 @@ export class VeilBattleTransition extends Component {
     subtitleTransform.setContentSize(hasTerrain ? panelTransform.width - 192 : panelTransform.width - 52, hasChips ? 40 : 48);
     this.titleLabel.node.setPosition(hasTerrain ? 38 : 0, 8, 1);
     this.subtitleLabel.node.setPosition(hasTerrain ? 42 : 0, hasChips ? -28 : -46, 1);
+  }
+
+  private async retainPlaceholderAssets(): Promise<void> {
+    if (this.placeholderAssetsRetained) {
+      return;
+    }
+    this.placeholderAssetsRetained = true;
+    await retainPlaceholderSpriteAssets("battle").catch(() => {
+      this.placeholderAssetsRetained = false;
+    });
   }
 
   private syncDetailChips(copy: BattleTransitionCopy): void {

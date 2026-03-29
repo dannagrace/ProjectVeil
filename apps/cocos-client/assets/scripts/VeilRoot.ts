@@ -80,7 +80,7 @@ import { readStoredCocosAuthSession, resolveCocosLaunchIdentity, type CocosAuthP
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
 import { type CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
-import { buildBattleActionPresentation, buildBattlePresentationPlan } from "./cocos-battle-presentation.ts";
+import { createCocosBattlePresentationController } from "./cocos-battle-presentation-controller.ts";
 import { createCocosAudioRuntime } from "./cocos-audio-runtime.ts";
 import { createCocosAudioAssetBridge } from "./cocos-audio-resources.ts";
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
@@ -225,6 +225,7 @@ export class VeilRoot extends Component {
   private wechatShareAvailable = false;
   private runtimeMemoryNotice = "";
   private stopRuntimeMemoryWarnings: (() => void) | null = null;
+  private battlePresentation = createCocosBattlePresentationController();
 
   onLoad(): void {
     this.audioRuntime.dispose();
@@ -825,7 +826,8 @@ export class VeilRoot extends Component {
       controlledCamp: this.controlledBattleCamp(),
       selectedTargetId: this.selectedBattleTargetId,
       actionPending: this.battleActionInFlight,
-      feedback: this.battleFeedback
+      feedback: this.battleFeedback,
+      presentationState: this.battlePresentation.getState()
     });
     this.timelinePanel?.render({
       entries: this.timelineEntries
@@ -2225,6 +2227,8 @@ export class VeilRoot extends Component {
     this.selectedBattleTargetId = null;
     this.moveInFlight = false;
     this.battleActionInFlight = false;
+    this.battleFeedback = null;
+    this.battlePresentation.reset();
     this.predictionStatus = "";
     this.inputDebug = "input waiting";
     this.timelineEntries = [];
@@ -2493,7 +2497,7 @@ export class VeilRoot extends Component {
     }
 
     this.battleActionInFlight = true;
-    const actionPresentation = buildBattleActionPresentation(action, this.lastUpdate?.battle ?? null);
+    const actionPresentation = this.battlePresentation.previewAction(action, this.lastUpdate?.battle ?? null);
     const skillName =
       action.type === "battle.skill"
         ? this.lastUpdate?.battle?.units[action.unitId]?.skills?.find((skill) => skill.id === action.skillId)?.name ?? action.skillId
@@ -2531,7 +2535,7 @@ export class VeilRoot extends Component {
   private async applySessionUpdate(update: SessionUpdate): Promise<void> {
     const previousBattle = this.lastUpdate?.battle ?? null;
     const heroId = this.activeHero()?.id ?? null;
-    const presentation = buildBattlePresentationPlan(previousBattle, update, heroId);
+    const presentation = this.battlePresentation.applyUpdate(previousBattle, update, heroId);
 
     this.pendingPrediction = null;
     this.predictionStatus = "";
@@ -2651,6 +2655,7 @@ export class VeilRoot extends Component {
       events: [],
       movementPlan: null
     };
+    this.battlePresentation.reset();
     this.renderView();
   }
 

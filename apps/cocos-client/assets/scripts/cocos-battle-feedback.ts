@@ -8,6 +8,13 @@ export interface CocosBattleFeedbackView {
   tone: CocosBattleFeedbackTone;
 }
 
+export interface BattleProgressAnalysis {
+  latestLog: string;
+  defeatedUnits: string[];
+  damagedUnits: string[];
+  skillTriggered: boolean;
+}
+
 export function buildBattleActionFeedback(
   action: BattleAction,
   battle: BattleState | null
@@ -94,6 +101,53 @@ export function buildBattleProgressFeedback(
   previousBattle: BattleState | null,
   nextBattle: BattleState | null
 ): CocosBattleFeedbackView | null {
+  const analysis = analyzeBattleProgress(previousBattle, nextBattle);
+  if (!analysis) {
+    return null;
+  }
+
+  if (analysis.defeatedUnits.length > 0) {
+    const primaryTarget = analysis.defeatedUnits[0];
+    return {
+      title: `${primaryTarget} 已被击倒`,
+      detail: analysis.latestLog || "单位已离场，战线出现缺口",
+      badge: "K.O.",
+      tone: "hit"
+    };
+  }
+
+  if (analysis.skillTriggered) {
+    return {
+      title: "主动技能已触发",
+      detail: analysis.latestLog || "技能进入结算阶段",
+      badge: "SKILL",
+      tone: "skill"
+    };
+  }
+
+  if (analysis.damagedUnits.length > 0) {
+    return {
+      title: `${analysis.damagedUnits[0]} 受到打击`,
+      detail: analysis.latestLog || "伤害已结算",
+      badge: "HIT",
+      tone: "hit"
+    };
+  }
+
+  return analysis.latestLog
+    ? {
+        title: "战斗状态更新",
+        detail: analysis.latestLog,
+        badge: "LOG",
+        tone: "neutral"
+      }
+    : null;
+}
+
+export function analyzeBattleProgress(
+  previousBattle: BattleState | null,
+  nextBattle: BattleState | null
+): BattleProgressAnalysis | null {
   if (!previousBattle || !nextBattle) {
     return null;
   }
@@ -119,41 +173,10 @@ export function buildBattleProgressFeedback(
     }
   }
 
-  if (defeatedUnits.length > 0) {
-    return {
-      title: `${defeatedUnits.join(" / ")} 溃散`,
-      detail: latestLog || "单位已被击倒",
-      badge: "K.O.",
-      tone: "hit"
-    };
-  }
-
-  if (latestLog.includes("施放")) {
-    return {
-      title: "技能已触发",
-      detail: latestLog,
-      badge: "SKILL",
-      tone: "skill"
-    };
-  }
-
-  if (damagedUnits.length > 0) {
-    return {
-      title: `${damagedUnits[0]} 受到打击`,
-      detail: latestLog || "伤害已结算",
-      badge: "HIT",
-      tone: "hit"
-    };
-  }
-
-  if (!latestLog) {
-    return null;
-  }
-
   return {
-    title: "战斗状态更新",
-    detail: latestLog,
-    badge: "LOG",
-    tone: "neutral"
+    latestLog,
+    defeatedUnits,
+    damagedUnits,
+    skillTriggered: latestLog.includes("施放")
   };
 }
