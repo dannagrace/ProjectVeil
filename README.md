@@ -169,6 +169,8 @@ npm run dev:client:h5
 - 并发房间压测启动后，也可直接查看同进程观测面：`/api/runtime/health`、`/api/runtime/auth-readiness` 与 `/api/runtime/metrics`
 - 战斗平衡验证：`npm run validate:battle -- --count=1000 --scenario=all --skill-config=configs/battle-skills-v1.1.json`
 - 内容包一致性验证：`npm run validate:content-pack -- --report-path artifacts/content-pack-validation-report.json`
+- 覆盖率 CI 同款校验：`npm run test:coverage:ci`
+- 覆盖率摘要：`.coverage/summary.md`
 - 共享客户端载荷 contract 快照：`npm run test:contracts`
 - 并发房间压测会按 `world_progression / battle_settlement / reconnect` 三种场景分开跑数，并输出 CPU、内存、房间吞吐、动作吞吐等指标；可通过 `--scenarios=world_progression,reconnect` 等参数缩小范围
 - 当前客户端边界：`apps/cocos-client` 负责主玩法运行时；`apps/client` 只保留浏览器调试、配置联调和回归验证。
@@ -218,6 +220,19 @@ npm run dev:client:h5
 - 这轮又补了一层独立的玩家事件历史读模型：`savePlayerAccountProgress()` 会把账号 `recentEventLog` 里新增的结构化事件增量追加到 MySQL `player_event_history`，并开放 `GET /api/player-accounts/:playerId/event-history` / `/me/event-history`（支持 `limit`、`offset` 和现有事件筛选条件），让前端可以先做分页历史回顾而不用等完整战斗回放或完整成就 UI。
 - 玩家事件历史接口现已支持可选 `since` / `until` 时间范围筛选，且本地模式与 MySQL 持久化模式保持一致，方便后续只拉取某个时间窗内的世界事件或成就回顾。
 - 事件日志的共享基础当前收敛在 `packages/shared/src/event-log.ts`：除了事件/成就 schema、归一化和查询助手外，这里也统一提供世界事件日志工厂与成就日志工厂，服务端只负责把共享 `WorldEvent[]` 喂给这些 helper；完整战斗回放、完整成就 UI 和更长历史存储仍留给后续 issue 继续扩展。
+
+## Coverage Policy
+
+`npm run test:coverage:ci` 是 coverage CI 的本地复现命令。它会按 `shared`、`server`、`client`、`cocos-client` 四个 scope 分开运行 `node:test`，并同时执行 line、branch、function 三类 floor 校验。
+
+当前 policy 是：
+
+- `shared`: lines `90%`, branches `70%`, functions `90%`
+- `server`: lines `75%`, branches `65%`, functions `75%`
+- `client`: lines `78%`, branches `65%`, functions `70%`
+- `cocos-client`: lines `55%`, branches `70%`, functions `60%`
+
+运行后会生成 `.coverage/summary.md` 和 `.coverage/summary.json`。如果任一 scope 的任一 metric 低于 floor，摘要顶部会明确列出失败的 scope 和具体阈值差距，方便直接对照 CI 失败原因。
 - 战斗回放读模型当前已补上两块更适合前端直接消费的能力：`GET /api/player-accounts/:playerId/battle-replays` 现支持 `limit` + `offset` 分页，shared 侧也新增了可从 `initialState + steps` 推导每步回合与伤害/减员结算的 replay timeline helper，H5 战报面板会直接显示这些逐步结算摘要。
 - Cocos Lobby 现已复用这套 timeline helper：账号资料回顾的“战报”卡片可直接点击进入战报时间线面板，会按行动阵营/单位、动作类型和主要结算概览显示最近 6 条步骤，并在没有战斗或回放缺失时回退提示。
 - H5 账号资料卡现在会额外拉取 `/api/player-accounts/:playerId/progression` 覆盖成就/事件摘要，因此即使基础账号接口只返回轻量档案，前端也能稳定展示最新的成就推进、最近解锁和世界事件日志，而不会继续依赖旧的内嵌快照。
