@@ -3,7 +3,7 @@
 ## 自动化边界
 
 - CI 入口：GitHub Actions `wechat-build-validation`
-- 执行命令：`npm run check:wechat-build`
+- 执行命令：`npm run check:cocos-release-readiness`
 - 当前自动化会做三件事：
   - 校验 `apps/cocos-client/wechat-minigame.build.json` 生成出的模板产物是否已经提交且未漂移
   - 校验 `apps/cocos-client/build-templates/wechatgame/` 中必需文件是否齐全
@@ -34,7 +34,7 @@
 - 统一 Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
 - RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
 - RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
-- 只做 CI 同款校验：`npm run check:wechat-build`
+- 只做 CI 同款校验：`npm run check:cocos-release-readiness`
 - 校验真实导出目录：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 
 ## 上传凭据

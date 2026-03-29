@@ -17,7 +17,7 @@
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 多人放量基线：`docs/multiplayer-loadtest-gate.md`
 - 长时 reconnect soak：`docs/reconnect-soak-gate.md`
-- 微信小游戏构建校验：`npm run check:wechat-build`
+- Cocos 资源 + 微信小游戏构建门禁：`npm run check:cocos-release-readiness`
 - 发布就绪快照：`npm run release:readiness:snapshot`
 - Phase 1 发布就绪看板：`npm run release:readiness:dashboard`
 - Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
@@ -118,7 +118,7 @@
 建议证据：
 
 - `npm test`
-- `npm run check:wechat-build`
+- `npm run check:cocos-release-readiness`
 - `npm run release:cocos-rc:snapshot -- --output <snapshot-path>`
 - `docs/release-evidence/cocos-wechat-rc-checklist.template.md`
 - `docs/release-evidence/cocos-wechat-rc-blockers.template.md`
@@ -183,7 +183,7 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
 
 1. 先跑 `npm run typecheck:ci` 和 `npm test`，确认 shared/server/client 基线未坏。
 2. 再跑 `npm run test:e2e:smoke` 与 `npm run test:e2e:multiplayer:smoke`，确认 H5 回归面和多人主链路。
-3. 若候选包涉及微信小游戏，再跑 `npm run check:wechat-build`，并按微信发布文档回填真实 smoke 报告。
+3. 若候选包涉及微信小游戏，再跑 `npm run check:cocos-release-readiness`，并按微信发布文档回填真实 smoke 报告。
 4. 用本清单逐项标记 `pass / partial / fail`，只要存在 `P0 blocker = fail`，该候选版本就不应进入更广范围测试。
 
 ## 多人遭遇反馈本地验收流

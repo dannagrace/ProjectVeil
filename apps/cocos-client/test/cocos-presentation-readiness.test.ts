@@ -3,7 +3,8 @@ import test from "node:test";
 import {
   buildCocosPresentationReadiness,
   cocosPresentationReadiness,
-  formatPresentationReadinessSummary
+  formatPresentationReadinessSummary,
+  getCocosPresentationReleaseGate
 } from "../assets/scripts/cocos-presentation-readiness";
 
 test("presentation readiness summarizes placeholder pixel, audio and fallback animation coverage", () => {
@@ -17,6 +18,10 @@ test("presentation readiness summarizes placeholder pixel, audio and fallback an
   assert.equal(readiness.animation.deliveryModes.spine, 0);
   assert.match(readiness.nextStep, /正式像素美术/);
   assert.match(readiness.nextStep, /Spine Skeleton/);
+  assert.deepEqual(getCocosPresentationReleaseGate(readiness), {
+    ready: false,
+    blockers: ["正式像素美术", "真实 BGM/SFX", "正式动画资产", "Spine Skeleton"]
+  });
 });
 
 test("presentation readiness summary stays concise for Lobby and HUD surfaces", () => {
