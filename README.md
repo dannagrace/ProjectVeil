@@ -147,6 +147,7 @@ npm run dev:client:h5
 - 打包 H5 客户端 RC 冒烟：`npm run smoke:client:release-candidate`
 - 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
+- 微信小游戏 RC artifact 聚合验收：`npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>]`
 - Issue #33 开源素材 staging 校验：`npm run check:issue33-assets -- --require-pack`
 - GitHub Actions `wechat-build-validation` 会把发布归档与 sidecar 元数据作为 artifact `wechat-release-<sha>` 上传，便于提审前下载与回溯
 - H5 调试壳开发服务：`npm run dev:client:h5`
