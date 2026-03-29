@@ -4,11 +4,13 @@ import { Server, WebSocketTransport } from "colyseus";
 import {
   createDefaultHeroLoadout,
   createDefaultHeroProgression,
+  createMatchmakingHeroSnapshot,
   type HeroState,
+  type MatchmakingRequest,
   type WorldState
 } from "../../../packages/shared/src/index";
 import { issueGuestAuthSession, resetGuestAuthSessions } from "../src/auth";
-import { registerMatchmakingRoutes, resetMatchmakingService } from "../src/matchmaking";
+import { MatchmakingService, registerMatchmakingRoutes, resetMatchmakingService } from "../src/matchmaking";
 import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import type { RoomSnapshotStore } from "../src/persistence";
 
@@ -65,14 +67,44 @@ function createSnapshot(roomId: string, heroes: HeroState[]): { state: WorldStat
   };
 }
 
-async function startMatchmakingServer(store: RoomSnapshotStore, port: number): Promise<Server> {
+async function startMatchmakingServer(
+  store: RoomSnapshotStore,
+  port: number,
+  options?: { service?: MatchmakingService; queueTtlSeconds?: number }
+): Promise<Server> {
   resetGuestAuthSessions();
   resetMatchmakingService();
   const transport = new WebSocketTransport();
-  registerMatchmakingRoutes(transport.getExpressApp() as never, { store });
+  registerMatchmakingRoutes(transport.getExpressApp() as never, {
+    store,
+    service: options?.service,
+    queueTtlSeconds: options?.queueTtlSeconds
+  });
   const server = new Server({ transport });
   await server.listen(port, "127.0.0.1");
   return server;
+}
+
+function seedQueue(service: MatchmakingService, requests: MatchmakingRequest[]): void {
+  const queue = Reflect.get(service as Record<string, unknown>, "queueByPlayerId") as Map<
+    string,
+    MatchmakingRequest
+  >;
+  const results = Reflect.get(service as Record<string, unknown>, "resultsByPlayerId") as Map<string, unknown>;
+  queue.clear();
+  results?.clear();
+  for (const request of requests) {
+    queue.set(request.playerId, request);
+  }
+}
+
+function createQueueRequest(playerId: string, enqueuedAt: string): MatchmakingRequest {
+  return {
+    playerId,
+    heroSnapshot: createMatchmakingHeroSnapshot(createHero(playerId, `${playerId}-hero`)),
+    rating: 1000,
+    enqueuedAt
+  };
 }
 
 test("matchmaking routes enqueue, match, report status, and dequeue cleanly", async (t) => {
@@ -167,4 +199,70 @@ test("matchmaking routes enqueue, match, report status, and dequeue cleanly", as
   });
   const dequeueOnePayload = (await dequeueOne.json()) as { status: string };
   assert.equal(dequeueOnePayload.status, "idle");
+});
+
+test("matchmaking enqueue prunes stale queue entries before adding new players", async (t) => {
+  const store = createMemoryRoomSnapshotStore();
+  await store.save(
+    "room-prune",
+    createSnapshot("room-prune", [createHero("player-stale", "hero-stale"), createHero("player-new", "hero-new")])
+  );
+  await store.ensurePlayerAccount({ playerId: "player-stale", displayName: "Ghost", lastRoomId: "room-prune" });
+  await store.ensurePlayerAccount({ playerId: "player-new", displayName: "New", lastRoomId: "room-prune" });
+
+  const service = new MatchmakingService();
+  service.enqueue({
+    playerId: "player-stale",
+    heroSnapshot: createMatchmakingHeroSnapshot(createHero("player-stale", "hero-stale")),
+    rating: 950,
+    enqueuedAt: "2026-03-24T00:00:00.000Z"
+  });
+
+  const port = 43000 + Math.floor(Math.random() * 1000);
+  const server = await startMatchmakingServer(store, port, { service, queueTtlSeconds: 60 });
+  const session = issueGuestAuthSession({ playerId: "player-new", displayName: "New" });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    resetMatchmakingService();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const enqueueResponse = await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  assert.equal(enqueueResponse.status, 200);
+  assert.equal(service.getStatus("player-stale").status, "idle");
+});
+
+test("pruneStaleEntries retains entries newer than TTL", () => {
+  const service = new MatchmakingService();
+  seedQueue(service, [
+    createQueueRequest("player-fresh", "2026-03-28T08:04:30.000Z"),
+    createQueueRequest("player-other", "2026-03-28T08:04:40.000Z")
+  ]);
+
+  const removed = service.pruneStaleEntries(60 * 1000, new Date("2026-03-28T08:05:00.000Z"));
+  assert.equal(removed, 0);
+  assert.equal(service.getStatus("player-fresh").status, "queued");
+  assert.equal(service.getStatus("player-other").status, "queued");
+});
+
+test("pruneStaleEntries reports number of expired entries and keeps fresh ones", () => {
+  const service = new MatchmakingService();
+  seedQueue(service, [
+    createQueueRequest("player-expired-1", "2026-03-28T08:00:00.000Z"),
+    createQueueRequest("player-expired-2", "2026-03-28T08:01:00.000Z"),
+    createQueueRequest("player-fresh", "2026-03-28T08:04:30.000Z")
+  ]);
+
+  const removed = service.pruneStaleEntries(2 * 60 * 1000, new Date("2026-03-28T08:05:00.000Z"));
+  assert.equal(removed, 2);
+  assert.equal(service.getStatus("player-expired-1").status, "idle");
+  assert.equal(service.getStatus("player-expired-2").status, "idle");
+  assert.equal(service.getStatus("player-fresh").status, "queued");
 });

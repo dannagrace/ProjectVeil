@@ -12,6 +12,8 @@ import {
 import { validateAuthSessionFromRequest } from "./auth";
 import type { RoomSnapshotStore } from "./persistence";
 
+export const DEFAULT_MATCHMAKING_QUEUE_TTL_SECONDS = 5 * 60;
+
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -172,6 +174,27 @@ export class MatchmakingService {
       this.resultsByPlayerId.set(right.playerId, result);
     }
   }
+
+  pruneStaleEntries(maxAgeMs: number, now = new Date()): number {
+    if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
+      return 0;
+    }
+    const referenceTime = now.getTime();
+    if (!Number.isFinite(referenceTime)) {
+      return 0;
+    }
+
+    let removed = 0;
+    for (const [playerId, request] of this.queueByPlayerId.entries()) {
+      const enqueuedAtMs = new Date(request.enqueuedAt).getTime();
+      if (Number.isNaN(enqueuedAtMs) || referenceTime - enqueuedAtMs > maxAgeMs) {
+        this.queueByPlayerId.delete(playerId);
+        this.resultsByPlayerId.delete(playerId);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
 }
 
 let configuredMatchmakingService = new MatchmakingService();
@@ -190,9 +213,11 @@ export function registerMatchmakingRoutes(
   options: {
     store: RoomSnapshotStore | null;
     service?: MatchmakingService;
+    queueTtlSeconds?: number;
   }
 ): void {
   const service = options.service ?? configuredMatchmakingService;
+  const queueTtlMs = resolveQueueTtlMs(options.queueTtlSeconds);
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -209,6 +234,10 @@ export function registerMatchmakingRoutes(
   });
 
   app.post("/api/matchmaking/enqueue", async (request, response) => {
+    if (queueTtlMs > 0) {
+      service.pruneStaleEntries(queueTtlMs);
+    }
+
     const authSession = await requireAuthSession(request, response, options.store);
     if (!authSession) {
       return;
@@ -281,4 +310,30 @@ export function registerMatchmakingRoutes(
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
+}
+
+function resolveQueueTtlMs(explicitSeconds: number | undefined): number {
+  const normalizedExplicit = normalizePositiveSeconds(explicitSeconds);
+  if (normalizedExplicit != null) {
+    return normalizedExplicit * 1000;
+  }
+
+  const envSeconds = normalizePositiveSeconds(parseEnvSeconds(process.env.VEIL_MATCHMAKING_QUEUE_TTL_SECONDS));
+  const seconds = envSeconds ?? DEFAULT_MATCHMAKING_QUEUE_TTL_SECONDS;
+  return seconds * 1000;
+}
+
+function parseEnvSeconds(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value.trim(), 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function normalizePositiveSeconds(value: number | undefined): number | null {
+  if (value == null || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return Math.floor(value);
 }
