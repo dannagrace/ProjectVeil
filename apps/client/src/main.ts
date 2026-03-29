@@ -41,6 +41,7 @@ import {
   unitFrameAsset
 } from "./assets";
 import { describeTileObject } from "./object-visuals";
+import { bootstrapH5App, registerAutomationHooks, syncH5PlayerAccountProfile } from "./main-boot";
 import {
   confirmAccountRegistration,
   confirmPasswordRecovery,
@@ -4661,67 +4662,36 @@ function render(): void {
 }
 
 async function bootstrap(): Promise<void> {
-  bindKeyboardShortcuts();
-  render();
-  const syncedAuthSession = await syncCurrentAuthSession();
-  state.lobby.authSession = syncedAuthSession;
-  if (syncedAuthSession) {
-    state.lobby.playerId = syncedAuthSession.playerId;
-    state.lobby.displayName = syncedAuthSession.displayName;
-    state.lobby.loginId = syncedAuthSession.loginId ?? state.lobby.loginId;
-    state.accountDraftName = syncedAuthSession.displayName;
-    state.accountLoginId = syncedAuthSession.loginId ?? state.accountLoginId;
-  }
-
-  if (!shouldBootGame) {
-    await refreshLobbyRoomList();
-    return;
-  }
-
-  if (!queryPlayerId && !syncedAuthSession?.playerId) {
-    logoutGuestSession();
-    return;
-  }
-
-  const replayed = readStoredSessionReplay(roomId, playerId);
-  if (replayed) {
-    applyReplayedUpdate(replayed);
-  }
-  const session = await getSession();
-  const initial = await session.snapshot();
-  state.diagnostics.connectionStatus = "connected";
-  state.log = [
-    `会话已连接。Room ${roomId} / Player ${playerId}`,
-    ...state.log.filter(
-      (line) => line !== "正在连接本地会话服务..." && line !== `会话已连接。Room ${roomId} / Player ${playerId}`
-    )
-  ].slice(0, 12);
-  applyUpdate(initial, "system");
-  void syncPlayerAccountProfile();
+  await bootstrapH5App({
+    state,
+    shouldBootGame,
+    queryPlayerId,
+    roomId,
+    playerId,
+    bindKeyboardShortcuts,
+    render,
+    syncCurrentAuthSession,
+    refreshLobbyRoomList,
+    logoutGuestSession,
+    readStoredSessionReplay,
+    applyReplayedUpdate,
+    getSession,
+    applyUpdate,
+    syncPlayerAccountProfile
+  });
 }
 
 async function syncPlayerAccountProfile(): Promise<void> {
-  state.accountSessionsLoading = true;
-  const account = await loadAccountProfileWithProgression(playerId, roomId);
-  const accountSessions =
-    state.lobby.authSession?.authMode === "account" || readStoredAuthSession()?.authMode === "account"
-      ? await loadPlayerAccountSessions()
-      : [];
-  state.account = account;
-  state.accountSessions = accountSessions;
-  state.accountDraftName = account.displayName;
-  state.accountLoginId = account.loginId ?? state.accountLoginId;
-  state.accountStatus =
-    account.source === "remote"
-      ? account.loginId
-        ? `账号资料与全局仓库已同步，当前已绑定登录 ID ${account.loginId}。`
-        : "账号资料与全局仓库已同步，可继续把当前游客档升级成口令账号。"
-      : "当前运行在本地游客档，昵称仅保存在浏览器。";
-  if (state.replayDetail.selectedReplayId && !account.recentBattleReplays.some((replay) => replay.id === state.replayDetail.selectedReplayId)) {
-    clearReplayDetail("最近战报已刷新，当前选中的回放已不可用。");
-  }
-  state.accountSessionsLoading = false;
-  render();
+  await syncH5PlayerAccountProfile({
+    state,
+    playerId,
+    roomId,
+    loadAccountProfileWithProgression: loadAccountProfileWithProgression,
+    loadPlayerAccountSessions,
+    readStoredAuthSession,
+    clearReplayDetail,
+    render
+  });
 }
 
 async function onRevokeAccountSession(sessionId: string): Promise<void> {
@@ -4808,8 +4778,10 @@ async function onBindAccountProfile(): Promise<void> {
 }
 
 void bootstrap();
-window.render_game_to_text = renderGameToText;
-if (DEV_DIAGNOSTICS_ENABLED) {
-  window.export_diagnostic_snapshot = exportDiagnosticSnapshot;
-}
-window.advanceTime = advanceUiTime;
+registerAutomationHooks({
+  window,
+  devDiagnosticsEnabled: DEV_DIAGNOSTICS_ENABLED,
+  renderGameToText,
+  exportDiagnosticSnapshot,
+  advanceUiTime
+});
