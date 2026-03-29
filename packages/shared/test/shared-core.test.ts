@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import assetConfig from "../../../configs/assets.json";
+import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
+import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
 import {
   applyBattleAction,
   appendEventLogEntries,
@@ -33,6 +35,7 @@ import {
   decodePlayerWorldView,
   encodePlayerWorldView,
   filterWorldEventsForPlayer,
+  FRONTIER_BASIN_MAP_VARIANT_ID,
   getBattleBalanceConfig,
   getAchievementDefinitions,
   getAssetConfigValidationErrors,
@@ -68,7 +71,10 @@ import {
   setBattleBalanceConfig,
   setBattleSkillCatalog,
   setUnitCatalog,
+  getRuntimeConfigBundleForRoom,
+  validateMapObjectsConfig,
   validateBattleAction,
+  validateWorldConfig,
   validateWorldAction,
   type BattleOutcome,
   type BattleState,
@@ -78,6 +84,8 @@ import {
   type ResourceNode,
   type TileState,
   type UnitStack,
+  type MapObjectsConfig,
+  type WorldGenerationConfig,
   type WorldState
 } from "../src/index";
 
@@ -2172,6 +2180,78 @@ test("createInitialWorldState selects the frontier basin variant and supports th
     }
   ]);
   assert.equal(claimed.state.resources["player-1"]?.ore, 4);
+});
+
+test("createWorldStateFromConfigs produces a valid frontier basin world", () => {
+  const roomId = "preview-frontier[map:frontier_basin]";
+  const seed = 4077;
+  const bundle = getRuntimeConfigBundleForRoom(roomId, seed);
+
+  assert.equal(bundle.mapVariantId, FRONTIER_BASIN_MAP_VARIANT_ID);
+
+  const state = createWorldStateFromConfigs(bundle.world, bundle.mapObjects, seed, roomId);
+  assert.ok(state.map.tiles.length > 0);
+
+  const validTerrains = new Set(["grass", "dirt", "sand", "water"]);
+  assert.ok(
+    state.map.tiles.every((tile) => validTerrains.has(tile.terrain)),
+    "frontier basin tiles must have a valid terrain type"
+  );
+
+  for (const hero of state.heroes) {
+    const tile = state.map.tiles.find(
+      (candidate) => candidate.position.x === hero.position.x && candidate.position.y === hero.position.y
+    );
+    assert.ok(tile, `hero ${hero.id} must occupy a tile in the generated world`);
+    assert.equal(tile.walkable, true, `hero ${hero.id} must start on a walkable tile`);
+  }
+});
+
+test("frontier basin generates a distinct layout from the default phase1 variant", () => {
+  const seed = 5124;
+  const defaultRoomId = "preview-default";
+  const frontierRoomId = "preview-frontier[map:frontier_basin]";
+
+  const defaultBundle = getRuntimeConfigBundleForRoom(defaultRoomId, seed);
+  const frontierBundle = getRuntimeConfigBundleForRoom(frontierRoomId, seed);
+
+  const defaultState = createWorldStateFromConfigs(defaultBundle.world, defaultBundle.mapObjects, seed, defaultRoomId);
+  const frontierState = createWorldStateFromConfigs(
+    frontierBundle.world,
+    frontierBundle.mapObjects,
+    seed,
+    frontierRoomId
+  );
+
+  assert.notDeepEqual(
+    defaultState.map.tiles.map((tile) => tile.terrain),
+    frontierState.map.tiles.map((tile) => tile.terrain),
+    "frontier basin terrain layout should differ from the default variant"
+  );
+  assert.equal(defaultState.buildings["mine-ore-1"], undefined);
+  assert.ok(frontierState.buildings["mine-ore-1"]);
+  assert.notEqual(
+    Object.keys(defaultState.neutralArmies).length,
+    Object.keys(frontierState.neutralArmies).length
+  );
+});
+
+test("frontier basin configs validate alongside the default configs", () => {
+  const units = getDefaultUnitCatalog();
+  const frontierWorld = frontierBasinWorldConfig as WorldGenerationConfig;
+  const frontierMapObjects = frontierBasinMapObjectsConfig as MapObjectsConfig;
+  const defaultWorld = getDefaultWorldConfig();
+  const defaultMapObjects = getDefaultMapObjectsConfig();
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(defaultWorld);
+    validateWorldConfig(frontierWorld);
+  });
+
+  assert.doesNotThrow(() => {
+    validateMapObjectsConfig(defaultMapObjects, defaultWorld, units);
+    validateMapObjectsConfig(frontierMapObjects, frontierWorld, units);
+  });
 });
 
 test("applyBattleOutcomeToWorld grants neutral rewards and moves the hero onto the defeated army tile", () => {
