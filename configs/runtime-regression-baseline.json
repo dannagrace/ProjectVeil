@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "baselineId": "server-runtime-regression",
+  "title": "Key server runtime regression baseline",
+  "artifactType": "stress-runtime-metrics",
+  "sourceCommand": "npm run stress:rooms:baseline",
+  "defaults": {
+    "failedRoomsMax": 0,
+    "rssPeakMbMax": 320,
+    "heapPeakMbMax": 110,
+    "peakActiveHandlesMax": 120,
+    "requireRuntimeHealthAfterConnect": true,
+    "requireRuntimeHealthAfterScenario": true,
+    "requireEmptyErrorMessage": true
+  },
+  "scenarios": {
+    "world_progression": {
+      "rooms": 48,
+      "successfulRoomsMin": 48,
+      "actionsPerSecondMin": 150,
+      "durationMsMax": 1200,
+      "cpuCoreUtilizationPctMax": 80,
+      "runtimeHealthAfterConnect": {
+        "activeRoomCountEq": 48,
+        "connectionCountEq": 48
+      },
+      "runtimeHealthAfterScenario": {
+        "worldActionsTotalMin": 96
+      }
+    },
+    "battle_settlement": {
+      "rooms": 48,
+      "successfulRoomsMin": 48,
+      "actionsPerSecondMin": 250,
+      "durationMsMax": 1200,
+      "cpuCoreUtilizationPctMax": 75,
+      "runtimeHealthAfterConnect": {
+        "activeRoomCountEq": 48,
+        "connectionCountEq": 48
+      },
+      "runtimeHealthAfterScenario": {
+        "worldActionsTotalMin": 144,
+        "battleActionsTotalMin": 144
+      }
+    },
+    "reconnect": {
+      "rooms": 48,
+      "successfulRoomsMin": 48,
+      "actionsPerSecondMin": 100,
+      "durationMsMax": 1500,
+      "cpuCoreUtilizationPctMax": 50,
+      "runtimeHealthAfterConnect": {
+        "activeRoomCountEq": 48,
+        "connectionCountEq": 48
+      },
+      "runtimeHealthAfterScenario": {
+        "connectMessagesTotalMin": 192,
+        "actionMessagesTotalMin": 336,
+        "connectionCountMin": 96
+      }
+    }
+  }
+}

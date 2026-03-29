@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -36,6 +37,13 @@ interface StressOptions {
   reconnectCycles: number;
   artifactPath: string;
   scenarios: ScenarioName[];
+}
+
+interface GitRevision {
+  commit: string;
+  shortCommit: string;
+  branch: string;
+  dirty: boolean;
 }
 
 interface RoomContext {
@@ -126,12 +134,30 @@ interface RuntimeHealthSummary {
   actionMessagesTotal: number;
 }
 
+interface StressArtifact {
+  schemaVersion: 1;
+  artifactType: "stress-runtime-metrics";
+  generatedAt: string;
+  command: string;
+  revision: GitRevision;
+  status: "passed" | "failed";
+  options: StressOptions;
+  summary: {
+    totalScenarios: number;
+    failedScenarios: number;
+    scenarioNames: ScenarioName[];
+  };
+  soakSummary: ReconnectSoakSummary | null;
+  results: ScenarioResult[];
+}
+
 const DEFAULT_BATTLE_DESTINATION: Vec2 = { x: 5, y: 4 };
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_ROOM_PLAYER_ID = "player-1";
 const STRESS_ROOM_VARIANTS = ["phase1", "frontier_basin", "contested_basin"] as const;
 const COLYSEUS_RECONNECT_MIN_UPTIME_LOG = "[Colyseus reconnection]: ❌ Room has not been up for long enough for automatic reconnection.";
 const DEFAULT_RECONNECT_SOAK_ARTIFACT_PATH = path.resolve("artifacts", "release-readiness", "colyseus-reconnect-soak-summary.json");
+const DEFAULT_STRESS_ARTIFACT_PATH = path.resolve("artifacts", "release-readiness", "stress-rooms-runtime-metrics.json");
 
 let requestCounter = 0;
 
@@ -205,6 +231,10 @@ function parseScenarioFlag(): ScenarioName[] {
 }
 
 function parseStressOptions(): StressOptions {
+  const scenarios = parseScenarioFlag();
+  const defaultArtifactPath = scenarios.includes("reconnect_soak")
+    ? DEFAULT_RECONNECT_SOAK_ARTIFACT_PATH
+    : DEFAULT_STRESS_ARTIFACT_PATH;
   return {
     rooms: parseIntegerFlag("rooms", 120),
     port: parseIntegerFlag("port", 39000 + Math.floor(Math.random() * 1000)),
@@ -215,9 +245,43 @@ function parseStressOptions(): StressOptions {
     reconnectPauseMs: parseIntegerFlag("reconnect-pause-ms", 100),
     maxBattleTurns: parseIntegerFlag("max-battle-turns", 24),
     reconnectCycles: parseIntegerFlag("reconnect-cycles", 6),
-    artifactPath: path.resolve(parseStringFlag("artifact-path", DEFAULT_RECONNECT_SOAK_ARTIFACT_PATH)),
-    scenarios: parseScenarioFlag()
+    artifactPath: path.resolve(parseStringFlag("artifact-path", defaultArtifactPath)),
+    scenarios
   };
+}
+
+function readGitRevision(): GitRevision {
+  const command = spawnSync("git", ["rev-parse", "HEAD", "--abbrev-ref", "HEAD"], {
+    encoding: "utf8"
+  });
+  const status = spawnSync("git", ["status", "--short"], {
+    encoding: "utf8"
+  });
+
+  if (command.status !== 0 || !command.stdout.trim()) {
+    return {
+      commit: "unknown",
+      shortCommit: "unknown",
+      branch: "unknown",
+      dirty: false
+    };
+  }
+
+  const [commit, branch] = command.stdout
+    .trim()
+    .split("\n")
+    .map((value) => value.trim());
+
+  return {
+    commit,
+    shortCommit: commit.slice(0, 7),
+    branch,
+    dirty: Boolean(status.stdout.trim())
+  };
+}
+
+function buildCommandString(): string {
+  return ["node", "--import", "tsx", "./scripts/stress-concurrent-rooms.ts", ...process.argv.slice(2)].join(" ");
 }
 
 async function fetchRuntimeHealthSummary(host: string, port: number): Promise<RuntimeHealthSummary | undefined> {
@@ -1155,36 +1219,46 @@ function printSummary(results: ScenarioResult[], options: StressOptions): void {
   console.log("STRESS_RESULT_JSON_END");
 }
 
-function emitArtifact(results: ScenarioResult[], options: StressOptions): void {
-  const executedAt = new Date().toISOString();
+function buildArtifact(results: ScenarioResult[], options: StressOptions): StressArtifact {
   const soakResult = results.find((result) => result.scenario === "reconnect_soak");
-  const artifact = {
+  return {
     schemaVersion: 1,
-    generatedAt: executedAt,
-    command: `npm run stress:rooms:reconnect-soak -- --rooms=${options.rooms} --connect-concurrency=${options.connectConcurrency} --action-concurrency=${options.actionConcurrency} --sample-interval-ms=${options.sampleIntervalMs} --reconnect-pause-ms=${options.reconnectPauseMs} --reconnect-cycles=${options.reconnectCycles}`,
+    artifactType: "stress-runtime-metrics",
+    generatedAt: new Date().toISOString(),
+    command: buildCommandString(),
+    revision: readGitRevision(),
     status: results.some((result) => result.failedRooms > 0) ? "failed" : "passed",
     options,
-    summary: soakResult?.soakSummary ?? null,
+    summary: {
+      totalScenarios: results.length,
+      failedScenarios: results.filter((result) => result.failedRooms > 0).length,
+      scenarioNames: results.map((result) => result.scenario)
+    },
+    soakSummary: soakResult?.soakSummary ?? null,
     results
   };
+}
 
+function emitArtifact(results: ScenarioResult[], options: StressOptions): void {
+  const artifact = buildArtifact(results, options);
+  const soakResult = results.find((result) => result.scenario === "reconnect_soak");
   mkdirSync(path.dirname(options.artifactPath), { recursive: true });
   writeFileSync(options.artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
-  console.log(`Wrote reconnect soak artifact: ${path.relative(process.cwd(), options.artifactPath).replace(/\\/g, "/")}`);
-  if (soakResult?.soakSummary) {
+  console.log(`Wrote stress artifact: ${path.relative(process.cwd(), options.artifactPath).replace(/\\/g, "/")}`);
+  if (artifact.soakSummary) {
     console.log("RECONNECT_SOAK_ARTIFACT_SUMMARY");
     console.log(
       JSON.stringify(
         {
           status: artifact.status,
           artifactPath: path.relative(process.cwd(), options.artifactPath).replace(/\\/g, "/"),
-          rooms: soakResult.rooms,
-          reconnectAttempts: soakResult.soakSummary.reconnectAttempts,
-          invariantChecks: soakResult.soakSummary.invariantChecks,
-          worldReconnectCycles: soakResult.soakSummary.worldReconnectCycles,
-          battleReconnectCycles: soakResult.soakSummary.battleReconnectCycles,
-          finalBattleRooms: soakResult.soakSummary.finalBattleRooms,
-          finalDayRange: soakResult.soakSummary.finalDayRange
+          rooms: soakResult?.rooms ?? 0,
+          reconnectAttempts: artifact.soakSummary.reconnectAttempts,
+          invariantChecks: artifact.soakSummary.invariantChecks,
+          worldReconnectCycles: artifact.soakSummary.worldReconnectCycles,
+          battleReconnectCycles: artifact.soakSummary.battleReconnectCycles,
+          finalBattleRooms: artifact.soakSummary.finalBattleRooms,
+          finalDayRange: artifact.soakSummary.finalDayRange
         },
         null,
         2
@@ -1207,9 +1281,7 @@ async function main(): Promise<void> {
     }
 
     printSummary(results, options);
-    if (options.scenarios.includes("reconnect_soak")) {
-      emitArtifact(results, options);
-    }
+    emitArtifact(results, options);
 
     if (results.some((result) => result.failedRooms > 0)) {
       process.exitCode = 1;

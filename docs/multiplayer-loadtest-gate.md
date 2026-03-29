@@ -4,6 +4,8 @@
 
 它是 [`docs/core-gameplay-release-readiness.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-214/docs/core-gameplay-release-readiness.md) 中“权威玩法与多人同步”门禁的唯一放量基线。
 
+如果需要把一次 `stress:rooms` 执行结果和固定 runtime regression baseline 做自动对比，参见 [`docs/runtime-regression-baseline.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-327-0330-0003/docs/runtime-regression-baseline.md)。
+
 如果目标是 release candidate / shipping 候选包，或本次改动涉及 reconnect 生命周期、房间快照恢复、战斗恢复，不要只跑本说明；还必须额外通过 [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md)。
 
 ## Standard Command Set
@@ -19,12 +21,25 @@ npm run test:e2e:multiplayer:smoke
 2. 多房间基线压测
 
 ```bash
+npm run stress:rooms:baseline
+```
+
+等价展开命令：
+
+```bash
 npm run stress:rooms -- \
   --rooms=48 \
   --connect-concurrency=12 \
   --action-concurrency=12 \
   --sample-interval-ms=100 \
-  --reconnect-pause-ms=150
+  --reconnect-pause-ms=150 \
+  --artifact-path=artifacts/release-readiness/stress-rooms-runtime-metrics.json
+```
+
+3. 基线回归对比
+
+```bash
+npm run perf:runtime:compare
 ```
 
 说明：
@@ -32,6 +47,7 @@ npm run stress:rooms -- \
 - `48 rooms` 是当前 wider playtest 前的固定基线，不在本门禁里临时上调。
 - 默认场景固定为 `world_progression,battle_settlement,reconnect`，不要删场景只跑其中一段。
 - `test:e2e:multiplayer:smoke` 负责回答“多人主链路还通不通”，`stress:rooms` 负责回答“同一套候选包在多房间下是否还在可接受性能区间内”。
+- `perf:runtime:compare` 负责回答“这次运行是否已经明显偏离固定 runtime baseline”。
 
 若环境无法跑 Playwright，但 `stress:rooms` 能跑，请把 Playwright 阻塞原因和缺失依赖写进本次记录，不能直接把 smoke 视为通过。
 
