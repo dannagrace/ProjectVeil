@@ -158,6 +158,39 @@ test("VeilRoot boots into lobby mode and triggers lobby bootstrap when no roomId
   assert.equal(bootstrapCalls, 1);
 });
 
+test("VeilRoot account lifecycle flow switches panels and surfaces validation feedback", async () => {
+  const root = createVeilRootHarness();
+
+  await root.registerLobbyAccount();
+  assert.equal(root.activeAccountFlow, "registration");
+  assert.match(String(root.lobbyStatus), /已打开正式注册面板/);
+
+  root.loginId = "A";
+  await root.requestActiveAccountFlow();
+  assert.equal(root.lobbyEntering, false);
+  assert.equal(root.activeAccountFlow, "registration");
+  assert.equal(root.lobbyStatus, "登录 ID 需为 3-40 位小写字母、数字、下划线或连字符。");
+
+  root.loginId = "veil-ranger";
+  root.registrationToken = "dev-registration-token";
+  root.registrationPassword = "123";
+  await root.confirmActiveAccountFlow();
+  assert.equal(root.lobbyEntering, false);
+  assert.equal(root.lobbyStatus, "注册口令至少 6 位。");
+
+  root.closeLobbyAccountFlow();
+  assert.equal(root.activeAccountFlow, null);
+  assert.match(String(root.lobbyStatus), /已收起账号生命周期面板/);
+
+  await root.recoverLobbyAccountPassword();
+  assert.equal(root.activeAccountFlow, "recovery");
+  root.loginId = "veil-ranger";
+  root.recoveryToken = "";
+  root.recoveryPassword = "hunter3";
+  await root.confirmActiveAccountFlow();
+  assert.equal(root.lobbyStatus, "请先申请并填写找回令牌。");
+});
+
 test("VeilRoot connect replays cached session state before applying the live snapshot", async () => {
   const root = createVeilRootHarness();
   root.roomId = "room-alpha";

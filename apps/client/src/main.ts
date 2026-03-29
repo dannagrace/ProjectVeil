@@ -1,6 +1,7 @@
 import "./styles.css";
 import {
   buildRuntimeDiagnosticsTriageView,
+  describeAccountAuthFailure,
   renderRuntimeDiagnosticsSnapshotText,
   createBattleReplayPlaybackState,
   createHeroSkillTreeView,
@@ -29,7 +30,10 @@ import {
   type PlayerTileView,
   type PlayerWorldView,
   type RuntimeDiagnosticsConnectionStatus,
-  type RuntimeDiagnosticsTriageSection
+  type RuntimeDiagnosticsTriageSection,
+  validateAccountLifecycleConfirm,
+  validateAccountLifecycleRequest,
+  validateAccountPassword
 } from "../../../packages/shared/src/index";
 import { createGameSession, readStoredSessionReplay, type SessionUpdate } from "./local-session";
 import { buildH5RuntimeDiagnosticsSnapshot } from "./runtime-diagnostics";
@@ -3270,20 +3274,9 @@ function describeAccountFlowError(
     return error instanceof Error ? error.message : fallback;
   }
 
-  if (failure.status === 409 && failure.code === "login_id_taken") {
-    return "登录 ID 已被占用，请更换后重试。";
-  }
-  if (failure.status === 401 && options.invalidTokenCode && failure.code === options.invalidTokenCode) {
-    return "令牌无效或已过期，请重新申请后再确认。";
-  }
-  if (failure.status === 401) {
-    return "登录 ID 或口令不正确，请检查后重试。";
-  }
-  if (failure.status === 400) {
-    return "输入格式不合法，请检查登录 ID、令牌和口令后重试。";
-  }
-  if (failure.status === 429) {
-    return "请求过于频繁，请稍后再试。";
+  const message = describeAccountAuthFailure(failure, options);
+  if (message) {
+    return message;
   }
 
   return error instanceof Error ? error.message : fallback;
@@ -3318,14 +3311,16 @@ async function enterLobbyRoom(roomIdOverride?: string): Promise<void> {
 async function loginLobbyAccount(roomIdOverride?: string): Promise<void> {
   const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
   const loginId = state.lobby.loginId.trim().toLowerCase();
-  if (!loginId) {
-    state.lobby.status = "请输入登录 ID 后再使用口令登录。";
+  const loginIdError = validateAccountLifecycleRequest("registration", loginId);
+  if (loginIdError) {
+    state.lobby.status = loginIdError.message;
     render();
     return;
   }
 
-  if (!state.lobby.password.trim()) {
-    state.lobby.status = "请输入账号口令后再登录。";
+  const passwordError = validateAccountPassword(state.lobby.password, "password", "账号口令");
+  if (passwordError) {
+    state.lobby.status = passwordError.message;
     render();
     return;
   }
@@ -3359,8 +3354,9 @@ async function loginLobbyAccount(roomIdOverride?: string): Promise<void> {
 
 async function requestLobbyAccountRegistration(): Promise<void> {
   const loginId = state.lobby.loginId.trim().toLowerCase();
-  if (!loginId) {
-    state.lobby.status = "请输入登录 ID 后再申请正式注册令牌。";
+  const validationError = validateAccountLifecycleRequest("registration", loginId);
+  if (validationError) {
+    state.lobby.status = validationError.message;
     render();
     return;
   }
@@ -3387,18 +3383,13 @@ async function requestLobbyAccountRegistration(): Promise<void> {
 async function confirmLobbyAccountRegistration(roomIdOverride?: string): Promise<void> {
   const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
   const loginId = state.lobby.loginId.trim().toLowerCase();
-  if (!loginId) {
-    state.lobby.status = "请输入登录 ID 后再确认正式注册。";
-    render();
-    return;
-  }
-  if (!state.lobby.registrationToken.trim()) {
-    state.lobby.status = "请先申请并填写注册令牌。";
-    render();
-    return;
-  }
-  if (!state.lobby.registrationPassword.trim()) {
-    state.lobby.status = "请输入注册口令后再确认。";
+  const validationError = validateAccountLifecycleConfirm("registration", {
+    loginId,
+    token: state.lobby.registrationToken,
+    password: state.lobby.registrationPassword
+  });
+  if (validationError) {
+    state.lobby.status = validationError.message;
     render();
     return;
   }
@@ -3436,8 +3427,9 @@ async function confirmLobbyAccountRegistration(roomIdOverride?: string): Promise
 
 async function requestLobbyPasswordRecovery(): Promise<void> {
   const loginId = state.lobby.loginId.trim().toLowerCase();
-  if (!loginId) {
-    state.lobby.status = "请输入登录 ID 后再申请密码找回令牌。";
+  const validationError = validateAccountLifecycleRequest("recovery", loginId);
+  if (validationError) {
+    state.lobby.status = validationError.message;
     render();
     return;
   }
@@ -3464,18 +3456,13 @@ async function requestLobbyPasswordRecovery(): Promise<void> {
 async function confirmLobbyPasswordRecovery(roomIdOverride?: string): Promise<void> {
   const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
   const loginId = state.lobby.loginId.trim().toLowerCase();
-  if (!loginId) {
-    state.lobby.status = "请输入登录 ID 后再确认密码重置。";
-    render();
-    return;
-  }
-  if (!state.lobby.recoveryToken.trim()) {
-    state.lobby.status = "请先申请并填写找回令牌。";
-    render();
-    return;
-  }
-  if (!state.lobby.recoveryPassword.trim()) {
-    state.lobby.status = "请输入新口令后再确认重置。";
+  const validationError = validateAccountLifecycleConfirm("recovery", {
+    loginId,
+    token: state.lobby.recoveryToken,
+    password: state.lobby.recoveryPassword
+  });
+  if (validationError) {
+    state.lobby.status = validationError.message;
     render();
     return;
   }
