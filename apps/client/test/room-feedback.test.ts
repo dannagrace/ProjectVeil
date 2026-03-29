@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { BattleState, MovementPlan, PlayerWorldView } from "../../../packages/shared/src/index";
 import type { SessionUpdate } from "../src/local-session";
-import { renderEncounterSourceDetail, renderRecoverySummary, renderRoomActionHint, resolveRoomFeedbackTone } from "../src/room-feedback";
+import {
+  renderEncounterSourceDetail,
+  renderRecoverySummary,
+  renderRoomActionHint,
+  renderRoomResultSummary,
+  resolveRecoveryRoomStateLabel,
+  resolveRoomFeedbackTone
+} from "../src/room-feedback";
 
 type EncounterStartedEvent = Extract<SessionUpdate["events"][number], { type: "battle.started" }>;
 
@@ -472,6 +479,106 @@ test("renderRecoverySummary covers reconnect, replay fallback, explicit recovery
       predictionStatus: ""
     }),
     "恢复状态：当前未触发重连补救，房间同步保持稳定。"
+  );
+});
+
+test("resolveRecoveryRoomStateLabel distinguishes pending, fallback, and restored authority states", () => {
+  assert.equal(
+    resolveRecoveryRoomStateLabel({
+      diagnostics: {
+        connectionStatus: "reconnecting"
+      },
+      predictionStatus: ""
+    }),
+    "恢复中（等待权威同步）"
+  );
+
+  assert.equal(
+    resolveRecoveryRoomStateLabel({
+      diagnostics: {
+        connectionStatus: "reconnect_failed"
+      },
+      predictionStatus: ""
+    }),
+    "快照回补中"
+  );
+
+  assert.equal(
+    resolveRecoveryRoomStateLabel({
+      diagnostics: {
+        connectionStatus: "connected"
+      },
+      predictionStatus: "已回放本地缓存状态，正在等待房间同步..."
+    }),
+    "缓存已回放，等待校正"
+  );
+
+  assert.equal(
+    resolveRecoveryRoomStateLabel({
+      diagnostics: {
+        connectionStatus: "connected",
+        recoverySummary: "权威房间状态已恢复，战后结果与地图状态已经重新对齐。"
+      },
+      predictionStatus: ""
+    }),
+    "已恢复并完成校正"
+  );
+
+  assert.equal(
+    resolveRecoveryRoomStateLabel({
+      diagnostics: {
+        connectionStatus: "connected"
+      },
+      predictionStatus: ""
+    }),
+    null
+  );
+});
+
+test("renderRoomResultSummary prioritizes reconnect guidance over stale settlement copy and surfaces restored state", () => {
+  assert.equal(
+    renderRoomResultSummary({
+      battle: null,
+      lastBattleSettlement: {
+        roomState: "房间已回到地图探索阶段。"
+      },
+      diagnostics: {
+        connectionStatus: "reconnecting"
+      },
+      predictionStatus: "",
+      roomId: "room-alpha"
+    }),
+    "房间结果：正在恢复连接与房间主状态，期间请以恢复后的权威结果为准。"
+  );
+
+  assert.equal(
+    renderRoomResultSummary({
+      battle: createBattle(),
+      lastBattleSettlement: null,
+      diagnostics: {
+        connectionStatus: "connected",
+        recoverySummary: "权威战斗状态已恢复，当前行动顺序与房间归属重新对齐。"
+      },
+      predictionStatus: "",
+      roomId: "room-alpha"
+    }),
+    "房间结果：权威战斗状态已恢复，当前行动顺序与房间归属重新对齐；当前仍由 room-alpha/battle-1 驱动本场对抗。"
+  );
+
+  assert.equal(
+    renderRoomResultSummary({
+      battle: null,
+      lastBattleSettlement: {
+        roomState: "房间已回到地图探索阶段。"
+      },
+      diagnostics: {
+        connectionStatus: "connected",
+        recoverySummary: "权威房间状态已恢复，战后结果与地图状态已经重新对齐。"
+      },
+      predictionStatus: "",
+      roomId: "room-alpha"
+    }),
+    "房间结果：权威房间状态已恢复，战后结果与地图状态已经重新对齐；当前结算已同步回写。"
   );
 });
 
