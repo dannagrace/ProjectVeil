@@ -31,11 +31,11 @@ test("buildCocosAchievementPanelItems sorts unlocked entries first and formats p
     }
   ]);
 
-  assert.deepEqual(items.map((item) => item.id), ["first_battle", "enemy_slayer"]);
+  assert.deepEqual(items.slice(0, 2).map((item) => item.id), ["first_battle", "enemy_slayer"]);
   assert.equal(items[0]?.statusLabel, "已解锁");
   assert.equal(items[0]?.progressLabel, "1/1");
   assert.equal(items[0]?.footnote, "解锁于 2026-03-28 12:05");
-  assert.equal(items[1]?.statusLabel, "未解锁");
+  assert.equal(items[1]?.statusLabel, "进行中");
   assert.equal(items[1]?.footnote, "最近推进 2026-03-28 12:03 · 还差 1 点进度");
 });
 

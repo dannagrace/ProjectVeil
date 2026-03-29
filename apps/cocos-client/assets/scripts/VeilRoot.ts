@@ -1,4 +1,4 @@
-import { _decorator, Camera, Canvas, Component, EventMouse, EventTouch, input, Input, Layers, Node, sys, UITransform, view } from "cc";
+import { _decorator, Camera, Canvas, Color, Component, EventMouse, EventTouch, Graphics, input, Input, Label, Layers, Node, sys, UITransform, view } from "cc";
 import { getEquipmentDefinition, type EquipmentType } from "./project-shared/index.ts";
 import {
   type BattleAction,
@@ -99,6 +99,8 @@ import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
 import { cocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import {
+  buildAchievementUiItems,
+  groupAchievementUiItems,
   describeAccountAuthFailure,
   type RuntimeDiagnosticsConnectionStatus,
   validateAccountLifecycleConfirm,
@@ -113,6 +115,7 @@ const MAP_NODE_NAME = "ProjectVeilMap";
 const BATTLE_NODE_NAME = "ProjectVeilBattlePanel";
 const TIMELINE_NODE_NAME = "ProjectVeilTimelinePanel";
 const LOBBY_NODE_NAME = "ProjectVeilLobbyPanel";
+const ACHIEVEMENT_PANEL_NODE_NAME = "ProjectVeilAchievementPanel";
 const DEFAULT_MAP_WIDTH_TILES = 8;
 const DEFAULT_MAP_HEIGHT_TILES = 8;
 const BATTLE_FEEDBACK_DURATION_MS = 2600;
@@ -233,6 +236,10 @@ export class VeilRoot extends Component {
   private lobbyAccountReviewState: CocosAccountReviewState = createCocosAccountReviewState(this.lobbyAccountProfile);
   private lobbyAccountEpoch = 0;
   private gameplayAccountRefreshInFlight = false;
+  private gameplayAchievementPanelOpen = false;
+  private gameplayAchievementPanelLoading = false;
+  private gameplayAchievementPanelStatus = "打开后将从成就接口同步最新进度。";
+  private gameplayAchievementItems: CocosPlayerAccountProfile["achievements"] = [];
   private activeAccountFlow: CocosAccountLifecycleKind | null = null;
   private registrationDisplayName = "";
   private registrationToken = "";
@@ -602,6 +609,9 @@ export class VeilRoot extends Component {
       onRefresh: () => {
         void this.refreshSnapshot();
       },
+      onToggleAchievements: () => {
+        void this.toggleGameplayAchievementPanel();
+      },
       onLearnSkill: (skillId) => {
         void this.learnHeroSkill(skillId);
       },
@@ -764,6 +774,15 @@ export class VeilRoot extends Component {
     timelineTransform.setContentSize(rightWidth, timelineHeight);
     this.timelinePanel = timelineNode.getComponent(VeilTimelinePanel) ?? timelineNode.addComponent(VeilTimelinePanel);
 
+    let achievementPanelNode = this.node.getChildByName(ACHIEVEMENT_PANEL_NODE_NAME);
+    if (!achievementPanelNode) {
+      achievementPanelNode = new Node(ACHIEVEMENT_PANEL_NODE_NAME);
+      achievementPanelNode.parent = this.node;
+    }
+    assignUiLayer(achievementPanelNode);
+    const achievementTransform = achievementPanelNode.getComponent(UITransform) ?? achievementPanelNode.addComponent(UITransform);
+    achievementTransform.setContentSize(Math.max(320, Math.min(420, visibleSize.width - 56)), Math.max(360, visibleSize.height - 96));
+
     this.battleTransition = this.node.getComponent(VeilBattleTransition) ?? this.node.addComponent(VeilBattleTransition);
     this.updateLayout();
   }
@@ -823,6 +842,7 @@ export class VeilRoot extends Component {
     const mapNode = this.node.getChildByName(MAP_NODE_NAME);
     const battleNode = this.node.getChildByName(BATTLE_NODE_NAME);
     const timelineNode = this.node.getChildByName(TIMELINE_NODE_NAME);
+    const achievementPanelNode = this.node.getChildByName(ACHIEVEMENT_PANEL_NODE_NAME);
     const showingGame = !this.showLobby;
 
     if (lobbyNode) {
@@ -839,6 +859,9 @@ export class VeilRoot extends Component {
     }
     if (timelineNode) {
       timelineNode.active = showingGame;
+    }
+    if (achievementPanelNode) {
+      achievementPanelNode.active = showingGame && this.gameplayAchievementPanelOpen;
     }
 
     if (this.showLobby) {
@@ -918,6 +941,69 @@ export class VeilRoot extends Component {
     this.timelinePanel?.render({
       entries: this.timelineEntries
     });
+    this.renderGameplayAchievementPanel();
+  }
+
+  private renderGameplayAchievementPanel(): void {
+    const panelNode = this.node.getChildByName(ACHIEVEMENT_PANEL_NODE_NAME);
+    if (!panelNode) {
+      return;
+    }
+
+    if (!this.gameplayAchievementPanelOpen) {
+      panelNode.active = false;
+      return;
+    }
+
+    panelNode.active = true;
+    assignUiLayer(panelNode);
+    const transform = panelNode.getComponent(UITransform) ?? panelNode.addComponent(UITransform);
+    const width = transform.width || 360;
+    const height = transform.height || 420;
+
+    const graphics = panelNode.getComponent(Graphics) ?? panelNode.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(21, 28, 38, 236);
+    graphics.strokeColor = new Color(242, 230, 188, 122);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 18);
+    graphics.fill();
+    graphics.stroke();
+    graphics.fillColor = new Color(255, 248, 214, 20);
+    graphics.roundRect(-width / 2 + 16, height / 2 - 20, width - 32, 6, 3);
+    graphics.fill();
+
+    const groups = groupAchievementUiItems(buildAchievementUiItems(this.gameplayAchievementItems));
+    const panelText = groups.length > 0
+      ? groups
+          .map((group) =>
+            [
+              `${group.category.label} ${group.items.filter((item) => item.isUnlocked).length}/${group.items.length}`,
+              ...group.items.flatMap((item) => [
+                `${item.title} · ${item.statusLabel} · ${item.progressLabel} (${item.progressPercent}%)`,
+                item.description,
+                item.footnote
+              ])
+            ].join("\n")
+          )
+          .join("\n\n")
+      : "当前没有可展示的成就数据。";
+
+    let labelNode = panelNode.getChildByName("Label");
+    if (!labelNode) {
+      labelNode = new Node("Label");
+      labelNode.parent = panelNode;
+    }
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(width - 34, height - 62);
+    labelNode.setPosition(0, -12, 1);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
+    label.string = `成就总览\n${this.gameplayAchievementPanelLoading ? "同步中...\n" : ""}${this.gameplayAchievementPanelStatus}\n\n${panelText}`;
+    label.fontSize = 14;
+    label.lineHeight = 19;
+    label.enableWrapText = true;
+    label.color = new Color(245, 239, 226, 255);
   }
 
   private formatLobbyVaultSummary(): string {
@@ -1084,6 +1170,39 @@ export class VeilRoot extends Component {
     this.renderView();
   }
 
+  private async toggleGameplayAchievementPanel(forceOpen?: boolean): Promise<void> {
+    const nextOpen = forceOpen ?? !this.gameplayAchievementPanelOpen;
+    this.gameplayAchievementPanelOpen = nextOpen;
+    if (!nextOpen) {
+      this.renderView();
+      return;
+    }
+
+    this.gameplayAchievementItems = this.lobbyAccountProfile.achievements;
+    this.gameplayAchievementPanelStatus = "正在同步成就目录...";
+    this.renderView();
+    await this.refreshGameplayAchievementPanel();
+  }
+
+  private async refreshGameplayAchievementPanel(): Promise<void> {
+    this.gameplayAchievementPanelLoading = true;
+    this.renderView();
+
+    try {
+      const items = await resolveVeilRootRuntime().loadAchievementProgress(this.remoteUrl, this.playerId, undefined, {
+        storage: this.readWebStorage(),
+        authSession: this.currentLobbyAuthSession()
+      });
+      this.gameplayAchievementItems = items;
+      this.gameplayAchievementPanelStatus = items.length > 0 ? `已同步 ${items.length} 条成就进度。` : "当前没有可展示的成就数据。";
+    } catch (error) {
+      this.gameplayAchievementPanelStatus = this.describeAccountReviewLoadError(error);
+    } finally {
+      this.gameplayAchievementPanelLoading = false;
+      this.renderView();
+    }
+  }
+
   private async refreshAccountReviewPage(
     section: "battle-replays" | "event-history",
     page: number
@@ -1238,6 +1357,7 @@ export class VeilRoot extends Component {
     const battleNode = this.node.getChildByName(BATTLE_NODE_NAME);
     const timelineNode = this.node.getChildByName(TIMELINE_NODE_NAME);
     const lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
+    const achievementPanelNode = this.node.getChildByName(ACHIEVEMENT_PANEL_NODE_NAME);
 
     this.mapBoard?.configure({
       tileSize: effectiveTileSize,
@@ -1260,6 +1380,9 @@ export class VeilRoot extends Component {
         },
         onRefresh: () => {
           void this.refreshSnapshot();
+        },
+        onToggleAchievements: () => {
+          void this.toggleGameplayAchievementPanel();
         },
         onLearnSkill: (skillId) => {
           void this.learnHeroSkill(skillId);
@@ -1311,6 +1434,12 @@ export class VeilRoot extends Component {
       lobbyTransform.setContentSize(Math.max(360, Math.min(860, visibleSize.width - 40)), Math.max(520, visibleSize.height - 48));
       lobbyNode.setPosition(0, 0, 0);
     }
+
+    if (achievementPanelNode) {
+      const achievementTransform = achievementPanelNode.getComponent(UITransform) ?? achievementPanelNode.addComponent(UITransform);
+      achievementTransform.setContentSize(Math.max(320, Math.min(420, visibleSize.width - 56)), Math.max(360, visibleSize.height - 96));
+      achievementPanelNode.setPosition(0, 0, 4);
+    }
   }
 
   private handleHudActionInput(...args: unknown[]): void {
@@ -1341,6 +1470,12 @@ export class VeilRoot extends Component {
       return;
     }
 
+    if (action === "achievements") {
+      this.inputDebug = "button achievements";
+      void this.toggleGameplayAchievementPanel();
+      return;
+    }
+
     if (action === "return-lobby") {
       this.inputDebug = "button return-lobby";
       void this.returnToLobby();
@@ -1351,7 +1486,7 @@ export class VeilRoot extends Component {
     void this.advanceDay();
   }
 
-  private resolveHudActionAt(uiX: number, uiY: number): "new-run" | "refresh" | "end-day" | "return-lobby" | null {
+  private resolveHudActionAt(uiX: number, uiY: number): "new-run" | "refresh" | "achievements" | "end-day" | "return-lobby" | null {
     const visibleSize = view.getVisibleSize();
     const centeredX = uiX - visibleSize.width / 2;
     const centeredY = uiY - visibleSize.height / 2;
@@ -1377,19 +1512,23 @@ export class VeilRoot extends Component {
     const buttonWidth = Math.max(156, hudTransform.width - 36);
     const buttonHeight = 28;
 
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 45, buttonWidth, buttonHeight)) {
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 60, buttonWidth, buttonHeight)) {
       return "new-run";
     }
 
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 15, buttonWidth, buttonHeight)) {
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 30, buttonWidth, buttonHeight)) {
       return "refresh";
     }
 
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 15, buttonWidth, buttonHeight)) {
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY, buttonWidth, buttonHeight)) {
+      return "achievements";
+    }
+
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 30, buttonWidth, buttonHeight)) {
       return "end-day";
     }
 
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 45, buttonWidth, buttonHeight)) {
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 60, buttonWidth, buttonHeight)) {
       return "return-lobby";
     }
 
@@ -2069,6 +2208,7 @@ export class VeilRoot extends Component {
     this.displayName = rememberPreferredCocosDisplayName(this.playerId, this.displayName || this.playerId, storage);
     await this.disposeCurrentSession();
     this.resetSessionViewport("已返回 Cocos Lobby。");
+    this.gameplayAchievementPanelOpen = false;
     this.showLobby = true;
     this.syncWechatShareBridge();
     this.lobbyStatus = "已返回大厅，可继续选房或创建新实例。";
@@ -2866,6 +3006,9 @@ export class VeilRoot extends Component {
     }
 
     this.lobbyAccountProfile = profile;
+    if (this.gameplayAchievementPanelOpen) {
+      this.gameplayAchievementItems = profile.achievements;
+    }
     this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
       type: "account.synced",
       account: profile
