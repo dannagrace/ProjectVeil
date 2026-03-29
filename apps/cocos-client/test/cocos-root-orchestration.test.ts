@@ -231,6 +231,29 @@ test("VeilRoot connect replays cached session state before applying the live sna
   assert.equal(root.lastUpdate?.world.meta.day, 3);
 });
 
+test("VeilRoot surfaces broken room snapshots with a stable runtime error message", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-alpha";
+  root.playerId = "player-1";
+  root.remoteUrl = "http://127.0.0.1:2567";
+
+  installVeilRootRuntime({
+    createSession: async () =>
+      ({
+        async snapshot() {
+          throw new Error("missing_player_world_view_base");
+        },
+        async dispose() {}
+      }) as never
+  });
+
+  await root.connect();
+
+  assert.equal(root.session, null);
+  assert.equal(root.predictionStatus, "房间状态损坏，请重建房间或检查服务端同步。");
+  assert.equal(root.logLines[0], "房间状态损坏，请重建房间或检查服务端同步。");
+});
+
 test("VeilRoot gameplay achievement panel loads achievement progress from the account endpoint", async () => {
   const root = createVeilRootHarness();
   root.playerId = "player-1";
