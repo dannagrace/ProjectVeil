@@ -30,6 +30,7 @@ export interface PlayerBattleReplaySummary {
 
 export interface PlayerBattleReplayQuery {
   limit?: number | undefined;
+  offset?: number | undefined;
   roomId?: string | undefined;
   battleId?: string | undefined;
   battleKind?: PlayerBattleReplaySummary["battleKind"] | undefined;

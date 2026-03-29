@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildCocosAccountReviewPage, createCocosAccountReviewState } from "../assets/scripts/cocos-account-review.ts";
 import {
   buildLobbyAccountIdentityView,
   buildLobbyGuestEntryView,
@@ -10,6 +11,7 @@ import {
 import type { VeilLobbyRenderState } from "../assets/scripts/VeilLobbyPanel";
 
 function createLobbyState(overrides: Partial<VeilLobbyRenderState> = {}): VeilLobbyRenderState {
+  const account = createLobbyPanelTestAccount();
   return {
     playerId: "guest-1001",
     displayName: "",
@@ -20,7 +22,9 @@ function createLobbyState(overrides: Partial<VeilLobbyRenderState> = {}): VeilLo
     loginActionLabel: "账号登录并进入",
     shareHint: "共享存档未启用",
     vaultSummary: "本地存档",
-    account: createLobbyPanelTestAccount(),
+    account,
+    accountReview: buildCocosAccountReviewPage(createCocosAccountReviewState(account)),
+    selectedBattleReplayId: null,
     sessionSource: "none",
     loading: false,
     entering: false,

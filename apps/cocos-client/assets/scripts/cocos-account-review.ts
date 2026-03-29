@@ -1,7 +1,19 @@
-import type { CocosPlayerAccountProfile } from "./cocos-lobby.ts";
+import {
+  buildPlayerProgressionSnapshot,
+  formatAchievementLabel,
+  formatWorldEventTypeLabel,
+  getLatestProgressedAchievement,
+  getLatestUnlockedAchievement,
+  type EventLogEntry,
+  type PlayerAchievementProgress,
+  type PlayerBattleReplaySummary,
+  type PlayerProgressionSnapshot
+} from "./project-shared/index.ts";
 import { buildCocosAchievementPanelItems } from "./cocos-achievements.ts";
+import type { CocosPlayerAccountProfile } from "./cocos-lobby.ts";
 
-export type CocosAccountReviewSection = "battle-replays" | "event-history" | "achievements";
+export type CocosAccountReviewSection = "progression" | "battle-replays" | "event-history" | "achievements";
+export type CocosAccountReviewSectionStatus = "idle" | "loading" | "ready" | "error";
 
 export interface CocosAccountReviewTab {
   section: CocosAccountReviewSection;
@@ -17,19 +29,281 @@ export interface CocosAccountReviewItem {
   replayId?: string;
 }
 
+export interface CocosAccountReviewStateBanner {
+  title: string;
+  detail: string;
+  tone: "neutral" | "negative";
+}
+
 export interface CocosAccountReviewPage {
   section: CocosAccountReviewSection;
   title: string;
   subtitle: string;
   items: CocosAccountReviewItem[];
   page: number;
-  totalPages: number;
+  pageLabel: string;
   hasPreviousPage: boolean;
   hasNextPage: boolean;
   tabs: CocosAccountReviewTab[];
+  banner: CocosAccountReviewStateBanner | null;
+  showRetry: boolean;
 }
 
-const SECTION_ORDER: CocosAccountReviewSection[] = ["battle-replays", "event-history", "achievements"];
+interface CocosAccountReviewCollectionState<T> {
+  status: CocosAccountReviewSectionStatus;
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number | null;
+  hasMore: boolean;
+  errorMessage: string | null;
+}
+
+interface CocosAccountProgressionReviewState {
+  status: CocosAccountReviewSectionStatus;
+  snapshot: PlayerProgressionSnapshot;
+  errorMessage: string | null;
+}
+
+export interface CocosAccountReviewState {
+  activeSection: CocosAccountReviewSection;
+  selectedBattleReplayId: string | null;
+  progression: CocosAccountProgressionReviewState;
+  achievements: CocosAccountReviewCollectionState<PlayerAchievementProgress>;
+  eventHistory: CocosAccountReviewCollectionState<EventLogEntry>;
+  battleReplays: CocosAccountReviewCollectionState<PlayerBattleReplaySummary>;
+}
+
+export type CocosAccountReviewAction =
+  | { type: "account.synced"; account: CocosPlayerAccountProfile }
+  | { type: "section.selected"; section: CocosAccountReviewSection }
+  | { type: "battle-replay.selected"; replayId: string | null }
+  | { type: "section.loading"; section: CocosAccountReviewSection }
+  | { type: "progression.loaded"; snapshot: PlayerProgressionSnapshot }
+  | { type: "achievements.loaded"; items: PlayerAchievementProgress[] }
+  | { type: "event-history.loaded"; items: EventLogEntry[]; page: number; pageSize: number; total: number; hasMore: boolean }
+  | {
+      type: "battle-replays.loaded";
+      items: PlayerBattleReplaySummary[];
+      page: number;
+      pageSize: number;
+      hasMore: boolean;
+    }
+  | { type: "section.failed"; section: CocosAccountReviewSection; message: string };
+
+const SECTION_ORDER: CocosAccountReviewSection[] = ["progression", "battle-replays", "event-history", "achievements"];
+const DEFAULT_PAGE_SIZE = 3;
+
+function createEmptyCollectionState<T>(pageSize = DEFAULT_PAGE_SIZE): CocosAccountReviewCollectionState<T> {
+  return {
+    status: "idle",
+    items: [],
+    page: 0,
+    pageSize,
+    total: 0,
+    hasMore: false,
+    errorMessage: null
+  };
+}
+
+function deriveProgressionSnapshot(account: Pick<CocosPlayerAccountProfile, "achievements" | "recentEventLog">): PlayerProgressionSnapshot {
+  return buildPlayerProgressionSnapshot(account.achievements, account.recentEventLog, account.recentEventLog.length || 12);
+}
+
+function seedCollectionState<T>(items: T[], pageSize = DEFAULT_PAGE_SIZE): CocosAccountReviewCollectionState<T> {
+  return {
+    status: "ready",
+    items: items.slice(0, pageSize),
+    page: 0,
+    pageSize,
+    total: items.length,
+    hasMore: items.length > pageSize,
+    errorMessage: null
+  };
+}
+
+function seedBattleReplaySelection(
+  previousReplayId: string | null,
+  items: readonly PlayerBattleReplaySummary[]
+): string | null {
+  if (previousReplayId && items.some((replay) => replay.id === previousReplayId)) {
+    return previousReplayId;
+  }
+
+  return items[0]?.id ?? null;
+}
+
+export function createCocosAccountReviewState(account: CocosPlayerAccountProfile): CocosAccountReviewState {
+  return {
+    activeSection: "progression",
+    selectedBattleReplayId: account.recentBattleReplays[0]?.id ?? null,
+    progression: {
+      status: "ready",
+      snapshot: deriveProgressionSnapshot(account),
+      errorMessage: null
+    },
+    achievements: seedCollectionState(account.achievements),
+    eventHistory: seedCollectionState(account.recentEventLog),
+    battleReplays: seedCollectionState(account.recentBattleReplays)
+  };
+}
+
+export function transitionCocosAccountReviewState(
+  state: CocosAccountReviewState,
+  action: CocosAccountReviewAction
+): CocosAccountReviewState {
+  switch (action.type) {
+    case "account.synced":
+      return {
+        ...createCocosAccountReviewState(action.account),
+        activeSection: state.activeSection,
+        selectedBattleReplayId: seedBattleReplaySelection(state.selectedBattleReplayId, action.account.recentBattleReplays)
+      };
+    case "section.selected":
+      return {
+        ...state,
+        activeSection: action.section
+      };
+    case "battle-replay.selected":
+      return {
+        ...state,
+        selectedBattleReplayId: action.replayId
+      };
+    case "section.loading":
+      if (action.section === "progression") {
+        return {
+          ...state,
+          progression: {
+            ...state.progression,
+            status: "loading",
+            errorMessage: null
+          }
+        };
+      }
+
+      if (action.section === "achievements") {
+        return {
+          ...state,
+          achievements: {
+            ...state.achievements,
+            status: "loading",
+            errorMessage: null
+          }
+        };
+      }
+
+      if (action.section === "event-history") {
+        return {
+          ...state,
+          eventHistory: {
+            ...state.eventHistory,
+            status: "loading",
+            errorMessage: null
+          }
+        };
+      }
+
+      return {
+        ...state,
+        battleReplays: {
+          ...state.battleReplays,
+          status: "loading",
+          errorMessage: null
+        }
+      };
+    case "progression.loaded":
+      return {
+        ...state,
+        progression: {
+          status: "ready",
+          snapshot: action.snapshot,
+          errorMessage: null
+        }
+      };
+    case "achievements.loaded":
+      return {
+        ...state,
+        achievements: {
+          status: "ready",
+          items: action.items,
+          page: 0,
+          pageSize: state.achievements.pageSize,
+          total: action.items.length,
+          hasMore: false,
+          errorMessage: null
+        }
+      };
+    case "event-history.loaded":
+      return {
+        ...state,
+        eventHistory: {
+          status: "ready",
+          items: action.items,
+          page: action.page,
+          pageSize: action.pageSize,
+          total: action.total,
+          hasMore: action.hasMore,
+          errorMessage: null
+        }
+      };
+    case "battle-replays.loaded":
+      return {
+        ...state,
+        selectedBattleReplayId: seedBattleReplaySelection(state.selectedBattleReplayId, action.items),
+        battleReplays: {
+          status: "ready",
+          items: action.items,
+          page: action.page,
+          pageSize: action.pageSize,
+          total: action.hasMore ? null : action.page * action.pageSize + action.items.length,
+          hasMore: action.hasMore,
+          errorMessage: null
+        }
+      };
+    case "section.failed":
+      if (action.section === "progression") {
+        return {
+          ...state,
+          progression: {
+            ...state.progression,
+            status: "error",
+            errorMessage: action.message
+          }
+        };
+      }
+
+      if (action.section === "achievements") {
+        return {
+          ...state,
+          achievements: {
+            ...state.achievements,
+            status: "error",
+            errorMessage: action.message
+          }
+        };
+      }
+
+      if (action.section === "event-history") {
+        return {
+          ...state,
+          eventHistory: {
+            ...state.eventHistory,
+            status: "error",
+            errorMessage: action.message
+          }
+        };
+      }
+
+      return {
+        ...state,
+        battleReplays: {
+          ...state.battleReplays,
+          status: "error",
+          errorMessage: action.message
+        }
+      };
+  }
+}
 
 function formatReviewTimestamp(value?: string): string {
   if (!value) {
@@ -44,7 +318,74 @@ function formatReviewTimestamp(value?: string): string {
   return parsed.toISOString().slice(0, 16).replace("T", " ");
 }
 
-function formatBattleReplayTitle(replay: CocosPlayerAccountProfile["recentBattleReplays"][number]): string {
+function formatProgressionHeadline(snapshot: PlayerProgressionSnapshot): string {
+  const summary = snapshot.summary;
+  const latestUnlocked = getLatestUnlockedAchievement(snapshot.achievements);
+  const latestProgressed = getLatestProgressedAchievement(snapshot.achievements);
+  if (latestUnlocked && latestProgressed && latestUnlocked.id !== latestProgressed.id) {
+    return `成就 ${summary.unlockedAchievements}/${summary.totalAchievements} 已解锁 · 最新 ${latestUnlocked.title} · 最近推进 ${latestProgressed.title} ${latestProgressed.current}/${latestProgressed.target}`;
+  }
+
+  if (latestUnlocked) {
+    return `成就 ${summary.unlockedAchievements}/${summary.totalAchievements} 已解锁 · 最新 ${latestUnlocked.title}`;
+  }
+
+  if (latestProgressed) {
+    return `成就 ${summary.unlockedAchievements}/${summary.totalAchievements} 已解锁 · 最近推进 ${latestProgressed.title} ${latestProgressed.current}/${latestProgressed.target}`;
+  }
+
+  return `成就 ${summary.unlockedAchievements}/${summary.totalAchievements} 已解锁`;
+}
+
+function buildProgressionItems(snapshot: PlayerProgressionSnapshot): CocosAccountReviewItem[] {
+  const summary = snapshot.summary;
+  const latestUnlocked = getLatestUnlockedAchievement(snapshot.achievements);
+  const latestProgressed = getLatestProgressedAchievement(snapshot.achievements);
+
+  const items: CocosAccountReviewItem[] = [
+    {
+      title: "成长概览",
+      detail: formatProgressionHeadline(snapshot),
+      footnote: summary.latestEventAt
+        ? `最近事件 ${formatReviewTimestamp(summary.latestEventAt)} · 共 ${summary.recentEventCount} 条`
+        : `最近事件 ${summary.recentEventCount} 条`,
+      emphasis: summary.unlockedAchievements > 0 || summary.inProgressAchievements > 0 ? "positive" : "neutral"
+    }
+  ];
+
+  if (latestUnlocked) {
+    items.push({
+      title: `最新解锁 · ${latestUnlocked.title}`,
+      detail: latestUnlocked.description,
+      footnote: `解锁于 ${formatReviewTimestamp(latestUnlocked.unlockedAt ?? latestUnlocked.progressUpdatedAt)}`,
+      emphasis: "positive"
+    });
+  }
+
+  if (latestProgressed && (!latestUnlocked || latestProgressed.id !== latestUnlocked.id)) {
+    items.push({
+      title: `最近推进 · ${latestProgressed.title}`,
+      detail: `${latestProgressed.current}/${latestProgressed.target} · ${latestProgressed.description}`,
+      footnote: latestProgressed.progressUpdatedAt
+        ? `更新于 ${formatReviewTimestamp(latestProgressed.progressUpdatedAt)}`
+        : "进度待同步",
+      emphasis: "neutral"
+    });
+  }
+
+  if (snapshot.recentEventLog[0]) {
+    items.push({
+      title: "最近事件",
+      detail: snapshot.recentEventLog[0].description,
+      footnote: formatReviewTimestamp(snapshot.recentEventLog[0].timestamp),
+      emphasis: snapshot.recentEventLog[0].category === "achievement" ? "positive" : "neutral"
+    });
+  }
+
+  return items;
+}
+
+function formatBattleReplayTitle(replay: PlayerBattleReplaySummary): string {
   const resultLabel = replay.result === "attacker_victory" ? "胜利" : "失利";
   const battleKindLabel = replay.battleKind === "hero" ? "PVP" : "PVE";
   const encounterLabel = replay.battleKind === "hero"
@@ -57,13 +398,13 @@ function formatBattleReplayTitle(replay: CocosPlayerAccountProfile["recentBattle
   return `${resultLabel} · ${battleKindLabel} · ${encounterLabel}`;
 }
 
-function formatBattleReplayFootnote(replay: CocosPlayerAccountProfile["recentBattleReplays"][number]): string {
+function formatBattleReplayFootnote(replay: PlayerBattleReplaySummary): string {
   const campLabel = replay.playerCamp === "attacker" ? "攻方" : "守方";
   return `${formatReviewTimestamp(replay.completedAt)} · ${campLabel} · 房间 ${replay.roomId}`;
 }
 
-function buildBattleReplayItems(account: CocosPlayerAccountProfile): CocosAccountReviewItem[] {
-  return account.recentBattleReplays.map((replay) => ({
+function buildBattleReplayItems(items: readonly PlayerBattleReplaySummary[]): CocosAccountReviewItem[] {
+  return items.map((replay) => ({
     title: formatBattleReplayTitle(replay),
     detail: `英雄 ${replay.heroId} · ${replay.steps.length} 步文本回顾`,
     footnote: formatBattleReplayFootnote(replay),
@@ -72,22 +413,28 @@ function buildBattleReplayItems(account: CocosPlayerAccountProfile): CocosAccoun
   }));
 }
 
-function buildEventHistoryItems(account: CocosPlayerAccountProfile): CocosAccountReviewItem[] {
-  return account.recentEventLog.map((entry) => ({
+function buildEventHistoryItems(items: readonly EventLogEntry[]): CocosAccountReviewItem[] {
+  return items.map((entry) => ({
     title: entry.description,
-    detail: `分类 ${entry.category}${entry.worldEventType ? ` · ${entry.worldEventType}` : ""}`,
+    detail: [
+      `分类 ${entry.category}`,
+      entry.worldEventType ? `事件 ${formatWorldEventTypeLabel(entry.worldEventType)}` : "",
+      entry.achievementId ? `成就 ${formatAchievementLabel(entry.achievementId)}` : ""
+    ]
+      .filter(Boolean)
+      .join(" · "),
     footnote: formatReviewTimestamp(entry.timestamp),
     emphasis: entry.category === "achievement" ? "positive" : "neutral"
   }));
 }
 
-function buildAchievementItems(account: CocosPlayerAccountProfile): CocosAccountReviewItem[] {
-  const featuredAchievements = account.achievements.filter(
+function buildAchievementItems(items: readonly PlayerAchievementProgress[]): CocosAccountReviewItem[] {
+  const featuredAchievements = items.filter(
     (achievement) => achievement.unlocked || achievement.current > 0 || Boolean(achievement.progressUpdatedAt)
   );
-  const source = featuredAchievements.length > 0 ? featuredAchievements : account.achievements;
+  const source = featuredAchievements.length > 0 ? featuredAchievements : items;
 
-  return buildCocosAchievementPanelItems(source).map((item) => ({
+  return buildCocosAchievementPanelItems([...source]).map((item) => ({
     title: `${item.title} · ${item.statusLabel}`,
     detail: `${item.progressLabel} · ${item.description}`,
     footnote: item.footnote,
@@ -95,82 +442,153 @@ function buildAchievementItems(account: CocosPlayerAccountProfile): CocosAccount
   }));
 }
 
-function buildItems(account: CocosPlayerAccountProfile, section: CocosAccountReviewSection): CocosAccountReviewItem[] {
-  switch (section) {
-    case "battle-replays":
-      return buildBattleReplayItems(account);
-    case "event-history":
-      return buildEventHistoryItems(account);
-    case "achievements":
-      return buildAchievementItems(account);
-  }
-}
-
-function buildSubtitle(section: CocosAccountReviewSection, count: number): string {
-  switch (section) {
-    case "battle-replays":
-      return count > 0
-        ? `最近 ${count} 条战报摘要，当前先提供文本化复盘入口。`
-        : "最近还没有战报；完成战斗后会同步摘要。";
-    case "event-history":
-      return count > 0
-        ? `最近 ${count} 条事件历史，按时间倒序分页查看。`
-        : "最近还没有事件历史；进入房间后触发探索或战斗即可积累。";
-    case "achievements":
-      return count > 0
-        ? "优先展示已解锁与最近推进的成就，没有进度时回退全量目录。"
-        : "成就目录暂未同步。";
-  }
-}
-
-function buildTabs(account: CocosPlayerAccountProfile): CocosAccountReviewTab[] {
+function buildTabs(state: CocosAccountReviewState): CocosAccountReviewTab[] {
   return [
+    {
+      section: "progression",
+      label: "成长",
+      count: Math.max(1, buildProgressionItems(state.progression.snapshot).length)
+    },
     {
       section: "battle-replays",
       label: "战报",
-      count: account.recentBattleReplays.length
+      count: state.battleReplays.total ?? state.battleReplays.items.length
     },
     {
       section: "event-history",
       label: "事件",
-      count: account.recentEventLog.length
+      count: state.eventHistory.total ?? state.eventHistory.items.length
     },
     {
       section: "achievements",
       label: "成就",
-      count: buildAchievementItems(account).length
+      count: state.achievements.total ?? state.achievements.items.length
     }
   ];
 }
 
-export function buildCocosAccountReviewPage(
-  account: CocosPlayerAccountProfile,
-  section: CocosAccountReviewSection,
-  page: number,
-  pageSize = 3
-): CocosAccountReviewPage {
-  const safePageSize = Math.max(1, Math.floor(pageSize));
-  const items = buildItems(account, section);
-  const totalPages = Math.max(1, Math.ceil(items.length / safePageSize));
-  const safePage = Math.max(0, Math.min(totalPages - 1, Math.floor(page)));
-  const start = safePage * safePageSize;
+function buildPageLabel(page: number, total: number | null, pageSize: number, hasMore: boolean): string {
+  if (total != null) {
+    return `${page + 1}/${Math.max(1, Math.ceil(total / Math.max(1, pageSize)))}`;
+  }
 
+  return hasMore ? `${page + 1}/更多` : `${page + 1}/${page + 1}`;
+}
+
+function buildSectionSubtitle(section: CocosAccountReviewSection, itemCount: number): string {
+  switch (section) {
+    case "progression":
+      return itemCount > 0 ? "成长摘要会优先显示最新解锁、最近推进和最新事件。" : "成长摘要暂未同步。";
+    case "battle-replays":
+      return itemCount > 0 ? "按页查看最近战报，并可在上方切换文本时间线。" : "最近还没有战报。";
+    case "event-history":
+      return itemCount > 0 ? "按页查看最近事件历史，适配移动端的短卡片阅读。" : "最近还没有事件历史。";
+    case "achievements":
+      return itemCount > 0 ? "优先展示已解锁与最近推进的成就。" : "成就目录暂未同步。";
+  }
+}
+
+function buildBanner(
+  status: CocosAccountReviewSectionStatus,
+  errorMessage: string | null,
+  hasItems: boolean,
+  sectionTitle: string
+): CocosAccountReviewStateBanner | null {
+  if (status === "loading") {
+    return {
+      title: `正在同步${sectionTitle}`,
+      detail: hasItems ? "已先展示本地缓存摘要，稍后会自动更新。" : "请稍候，移动端会在当前面板内完成刷新。",
+      tone: "neutral"
+    };
+  }
+
+  if (status === "error") {
+    return {
+      title: `${sectionTitle}同步失败`,
+      detail: errorMessage ?? "网络暂不可用，请稍后重试。",
+      tone: "negative"
+    };
+  }
+
+  return null;
+}
+
+export function buildCocosAccountReviewPage(state: CocosAccountReviewState): CocosAccountReviewPage {
+  const tabs = buildTabs(state).sort((left, right) => SECTION_ORDER.indexOf(left.section) - SECTION_ORDER.indexOf(right.section));
+
+  if (state.activeSection === "progression") {
+    const items = buildProgressionItems(state.progression.snapshot);
+    return {
+      section: "progression",
+      title: "账号成长",
+      subtitle: buildSectionSubtitle("progression", items.length),
+      items,
+      page: 0,
+      pageLabel: "1/1",
+      hasPreviousPage: false,
+      hasNextPage: false,
+      tabs,
+      banner: buildBanner(state.progression.status, state.progression.errorMessage, items.length > 0, "成长摘要"),
+      showRetry: state.progression.status === "error"
+    };
+  }
+
+  if (state.activeSection === "battle-replays") {
+    const items = buildBattleReplayItems(state.battleReplays.items);
+    return {
+      section: "battle-replays",
+      title: "账号战报",
+      subtitle: buildSectionSubtitle("battle-replays", items.length),
+      items,
+      page: state.battleReplays.page,
+      pageLabel: buildPageLabel(
+        state.battleReplays.page,
+        state.battleReplays.total,
+        state.battleReplays.pageSize,
+        state.battleReplays.hasMore
+      ),
+      hasPreviousPage: state.battleReplays.page > 0,
+      hasNextPage: state.battleReplays.hasMore,
+      tabs,
+      banner: buildBanner(state.battleReplays.status, state.battleReplays.errorMessage, items.length > 0, "战报列表"),
+      showRetry: state.battleReplays.status === "error"
+    };
+  }
+
+  if (state.activeSection === "event-history") {
+    const items = buildEventHistoryItems(state.eventHistory.items);
+    return {
+      section: "event-history",
+      title: "事件历史",
+      subtitle: buildSectionSubtitle("event-history", items.length),
+      items,
+      page: state.eventHistory.page,
+      pageLabel: buildPageLabel(
+        state.eventHistory.page,
+        state.eventHistory.total,
+        state.eventHistory.pageSize,
+        state.eventHistory.hasMore
+      ),
+      hasPreviousPage: state.eventHistory.page > 0,
+      hasNextPage: state.eventHistory.hasMore,
+      tabs,
+      banner: buildBanner(state.eventHistory.status, state.eventHistory.errorMessage, items.length > 0, "事件历史"),
+      showRetry: state.eventHistory.status === "error"
+    };
+  }
+
+  const items = buildAchievementItems(state.achievements.items);
   return {
-    section,
-    title:
-      section === "battle-replays"
-        ? "账号战报"
-        : section === "event-history"
-          ? "事件历史"
-          : "成就回顾",
-    subtitle: buildSubtitle(section, items.length),
-    items: items.slice(start, start + safePageSize),
-    page: safePage,
-    totalPages,
-    hasPreviousPage: safePage > 0,
-    hasNextPage: safePage < totalPages - 1,
-    tabs: buildTabs(account).sort(
-      (left, right) => SECTION_ORDER.indexOf(left.section) - SECTION_ORDER.indexOf(right.section)
-    )
+    section: "achievements",
+    title: "成就回顾",
+    subtitle: buildSectionSubtitle("achievements", items.length),
+    items,
+    page: 0,
+    pageLabel: "1/1",
+    hasPreviousPage: false,
+    hasNextPage: false,
+    tabs,
+    banner: buildBanner(state.achievements.status, state.achievements.errorMessage, items.length > 0, "成就目录"),
+    showRetry: state.achievements.status === "error"
   };
 }
