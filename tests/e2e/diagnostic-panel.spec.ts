@@ -30,9 +30,12 @@ test("developer diagnostics panel exports a compact gameplay snapshot", async ({
   await expect(page.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
   await expect(page.getByTestId("diagnostic-panel")).toBeVisible();
   await expect(page.getByTestId("diagnostic-connection-status")).toHaveText("已连接");
+  await expect(page.getByTestId("diagnostic-summary")).toContainText(`Room ${roomId} / Player player-1 / Sync connected`);
 
   const exported = await page.evaluate(() => window.export_diagnostic_snapshot?.() ?? null);
   expect(exported).not.toBeNull();
+  const exportedText = await page.evaluate(() => window.render_diagnostic_snapshot_to_text?.() ?? null);
+  expect(exportedText).toContain(`Room ${roomId} / Player player-1 / Sync connected`);
 
   const snapshot = JSON.parse(exported!) as DiagnosticSnapshot;
   expect(snapshot.schemaVersion).toBe(1);

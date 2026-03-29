@@ -74,11 +74,13 @@ interface RegisterAutomationHooksOptions {
   window: {
     render_game_to_text?: () => string;
     export_diagnostic_snapshot?: () => string;
+    render_diagnostic_snapshot_to_text?: () => string;
     advanceTime?: (ms: number) => Promise<void>;
   };
   devDiagnosticsEnabled: boolean;
   renderGameToText: () => string;
   exportDiagnosticSnapshot: () => string;
+  renderDiagnosticSnapshotToText: () => string;
   advanceUiTime: (ms: number) => Promise<void>;
 }
 
@@ -202,13 +204,16 @@ export function registerAutomationHooks({
   devDiagnosticsEnabled,
   renderGameToText,
   exportDiagnosticSnapshot,
+  renderDiagnosticSnapshotToText,
   advanceUiTime
 }: RegisterAutomationHooksOptions): void {
   window.render_game_to_text = renderGameToText;
   if (devDiagnosticsEnabled) {
     window.export_diagnostic_snapshot = exportDiagnosticSnapshot;
+    window.render_diagnostic_snapshot_to_text = renderDiagnosticSnapshotToText;
   } else {
     delete window.export_diagnostic_snapshot;
+    delete window.render_diagnostic_snapshot_to_text;
   }
   window.advanceTime = advanceUiTime;
 }
