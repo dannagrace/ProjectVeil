@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCocosAccountReviewPage } from "../assets/scripts/cocos-account-review.ts";
+import {
+  buildCocosAccountReviewPage,
+  createCocosAccountReviewState,
+  transitionCocosAccountReviewState
+} from "../assets/scripts/cocos-account-review.ts";
 import type { CocosPlayerAccountProfile } from "../assets/scripts/cocos-lobby.ts";
 
 function createProfile(): CocosPlayerAccountProfile {
@@ -167,37 +171,55 @@ function createProfile(): CocosPlayerAccountProfile {
   };
 }
 
-test("buildCocosAccountReviewPage paginates event history and exposes tab counts", () => {
-  const review = buildCocosAccountReviewPage(createProfile(), "event-history", 1, 2);
+test("buildCocosAccountReviewPage formats the progression surface from the latest unlock and activity", () => {
+  const state = createCocosAccountReviewState(createProfile());
+  const review = buildCocosAccountReviewPage(state);
 
-  assert.equal(review.title, "事件历史");
-  assert.equal(review.page, 1);
-  assert.equal(review.totalPages, 2);
-  assert.equal(review.hasPreviousPage, true);
-  assert.equal(review.hasNextPage, false);
-  assert.deepEqual(review.items.map((item) => item.title), ["向东移动 1 格"]);
-  assert.deepEqual(
-    review.tabs.map((tab) => `${tab.label}:${tab.count}`),
-    ["战报:2", "事件:3", "成就:2"]
-  );
+  assert.equal(review.section, "progression");
+  assert.equal(review.title, "账号成长");
+  assert.equal(review.pageLabel, "1/1");
+  assert.match(review.items[0]?.detail ?? "", /^成就 1\/5 已解锁 · 最新 初次交锋$/);
+  assert.equal(review.items[1]?.title, "最新解锁 · 初次交锋");
+  assert.equal(review.items.at(-1)?.title, "最近事件");
+  assert.equal(review.tabs.map((tab) => `${tab.label}:${tab.count}`).join(" | "), "成长:3 | 战报:2 | 事件:3 | 成就:3");
 });
 
-test("buildCocosAccountReviewPage prefers unlocked and recently progressed achievements", () => {
-  const review = buildCocosAccountReviewPage(createProfile(), "achievements", 0, 5);
+test("transitionCocosAccountReviewState exposes loading and error banners for paged history sections", () => {
+  let state = createCocosAccountReviewState(createProfile());
+  state = transitionCocosAccountReviewState(state, { type: "section.selected", section: "event-history" });
+  state = transitionCocosAccountReviewState(state, { type: "section.loading", section: "event-history" });
 
-  assert.equal(review.totalPages, 1);
-  assert.deepEqual(
-    review.items.map((item) => item.title),
-    ["初次交锋 · 已解锁", "猎敌者 · 未解锁"]
-  );
-  assert.match(review.items[1]?.detail ?? "", /^2\/3 · 击败 3 名敌人或中立守军。$/);
+  let review = buildCocosAccountReviewPage(state);
+  assert.equal(review.section, "event-history");
+  assert.equal(review.banner?.title, "正在同步事件历史");
+  assert.equal(review.showRetry, false);
+
+  state = transitionCocosAccountReviewState(state, {
+    type: "section.failed",
+    section: "event-history",
+    message: "history_fetch_failed"
+  });
+  review = buildCocosAccountReviewPage(state);
+  assert.equal(review.banner?.title, "事件历史同步失败");
+  assert.equal(review.banner?.detail, "history_fetch_failed");
+  assert.equal(review.showRetry, true);
 });
 
-test("buildCocosAccountReviewPage clamps invalid pages for battle replays", () => {
-  const review = buildCocosAccountReviewPage(createProfile(), "battle-replays", 99, 1);
+test("transitionCocosAccountReviewState keeps replay selection aligned with the currently loaded page", () => {
+  let state = createCocosAccountReviewState(createProfile());
+  assert.equal(state.selectedBattleReplayId, "replay-1");
 
-  assert.equal(review.page, 1);
-  assert.equal(review.totalPages, 2);
+  state = transitionCocosAccountReviewState(state, { type: "section.selected", section: "battle-replays" });
+  state = transitionCocosAccountReviewState(state, {
+    type: "battle-replays.loaded",
+    items: [createProfile().recentBattleReplays[1]!],
+    page: 1,
+    pageSize: 1,
+    hasMore: false
+  });
+
+  const review = buildCocosAccountReviewPage(state);
+  assert.equal(state.selectedBattleReplayId, "replay-2");
+  assert.equal(review.pageLabel, "2/2");
   assert.equal(review.items[0]?.title, "失利 · PVP · 对手 hero-9");
-  assert.equal(review.items[0]?.footnote, "2026-03-28 11:52 · 守方 · 房间 room-beta");
 });

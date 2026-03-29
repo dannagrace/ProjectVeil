@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { sys } from "cc";
+import { createCocosAccountReviewState, transitionCocosAccountReviewState } from "../assets/scripts/cocos-account-review.ts";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
 import type { BattleAction, BattleState, SessionUpdate, VeilCocosSessionOptions } from "../assets/scripts/VeilCocosSession.ts";
@@ -453,4 +454,51 @@ test("VeilRoot runtime harness carries the first battle back to world state", as
   assert.deepEqual(transitionCalls, ["enter:遭遇中立守军", "exit:战斗胜利"]);
   assert.equal(root.battlePresentation.getState().phase, "resolution");
   assert.equal(root.battlePresentation.getState().result, "victory");
+});
+
+test("VeilRoot refreshAccountReviewPage loads paged event history into the lobby review state", async () => {
+  const root = createVeilRootHarness();
+  root.playerId = "player-1";
+  root.displayName = "雾林司灯";
+  root.lobbyAccountProfile = {
+    playerId: "player-1",
+    displayName: "雾林司灯",
+    globalResources: { gold: 0, wood: 0, ore: 0 },
+    achievements: [],
+    recentEventLog: [],
+    recentBattleReplays: [],
+    source: "remote"
+  };
+  root.lobbyAccountReviewState = createCocosAccountReviewState(root.lobbyAccountProfile);
+  root.lobbyAccountReviewState = transitionCocosAccountReviewState(root.lobbyAccountReviewState, {
+    type: "section.selected",
+    section: "event-history"
+  });
+
+  installVeilRootRuntime({
+    loadEventHistory: async () => ({
+      items: [
+        {
+          id: "event-page-2",
+          timestamp: "2026-03-29T12:08:00.000Z",
+          roomId: "room-alpha",
+          playerId: "player-1",
+          category: "combat",
+          description: "翻到第二页",
+          rewards: []
+        }
+      ],
+      total: 4,
+      offset: 3,
+      limit: 3,
+      hasMore: false
+    })
+  });
+
+  await root.refreshAccountReviewPage("event-history", 1);
+
+  assert.equal(root.lobbyAccountReviewState.eventHistory.status, "ready");
+  assert.equal(root.lobbyAccountReviewState.eventHistory.page, 1);
+  assert.equal(root.lobbyAccountReviewState.eventHistory.total, 4);
+  assert.equal(root.lobbyAccountReviewState.eventHistory.items[0]?.id, "event-page-2");
 });
