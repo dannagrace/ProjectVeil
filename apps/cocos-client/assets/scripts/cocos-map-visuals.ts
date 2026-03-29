@@ -1,4 +1,5 @@
 import type { PlayerTileView, SessionUpdate, Vec2 } from "./VeilCocosSession.ts";
+import { resolveMapBoardFeedbackLabel } from "./cocos-map-board-model.ts";
 
 const NORTH_BIT = 1;
 const EAST_BIT = 2;
@@ -152,7 +153,7 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
     if (event.type === "hero.moved" && event.path.length > 0) {
       entries.push({
         position: event.path[event.path.length - 1]!,
-        text: `MOVE ${event.moveCost}`,
+        text: resolveMapBoardFeedbackLabel(event) ?? `MOVE ${event.moveCost}`,
         durationSeconds: 0.7
       });
       continue;
@@ -161,7 +162,7 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
     if (event.type === "hero.collected" && heroPosition) {
       entries.push({
         position: heroPosition,
-        text: `+${event.resource.kind.toUpperCase()}`,
+        text: resolveMapBoardFeedbackLabel(event) ?? `+${event.resource.kind.toUpperCase()}`,
         durationSeconds: 0.85
       });
       continue;
@@ -170,7 +171,7 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
     if (event.type === "hero.recruited" && heroPosition) {
       entries.push({
         position: heroPosition,
-        text: `+${event.count}`,
+        text: resolveMapBoardFeedbackLabel(event) ?? `+${event.count}`,
         durationSeconds: 0.9
       });
       continue;
@@ -189,7 +190,7 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
                 : "STAT";
       entries.push({
         position: heroPosition,
-        text: `+${firstBonus}`,
+        text: resolveMapBoardFeedbackLabel(event) ?? `+${firstBonus}`,
         durationSeconds: 0.92
       });
       continue;
@@ -200,7 +201,7 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
       if (buildingPosition) {
         entries.push({
           position: buildingPosition,
-          text: `+${event.resourceKind.toUpperCase()}`,
+          text: resolveMapBoardFeedbackLabel(event) ?? `+${event.resourceKind.toUpperCase()}`,
           durationSeconds: 0.94
         });
       }
@@ -212,7 +213,7 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
       if (buildingPosition) {
         entries.push({
           position: buildingPosition,
-          text: `+${event.resource.kind.toUpperCase()}`,
+          text: resolveMapBoardFeedbackLabel(event) ?? `+${event.resource.kind.toUpperCase()}`,
           durationSeconds: 0.9
         });
       }
@@ -222,7 +223,7 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
     if (event.type === "neutral.moved") {
       entries.push({
         position: event.to,
-        text: event.reason === "chase" ? "CHASE" : event.reason === "return" ? "GUARD" : "PATROL",
+        text: resolveMapBoardFeedbackLabel(event) ?? (event.reason === "chase" ? "CHASE" : event.reason === "return" ? "GUARD" : "PATROL"),
         durationSeconds: 0.88
       });
       continue;
@@ -231,7 +232,7 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
     if (event.type === "hero.progressed" && heroPosition) {
       entries.push({
         position: heroPosition,
-        text: event.levelsGained > 0 ? `LV ${event.level}` : `XP +${event.experienceGained}`,
+        text: resolveMapBoardFeedbackLabel(event) ?? (event.levelsGained > 0 ? `LV ${event.level}` : `XP +${event.experienceGained}`),
         durationSeconds: 1
       });
       continue;
@@ -242,7 +243,7 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
       if (position) {
         entries.push({
           position,
-          text: event.encounterKind === "hero" ? "PVP" : "PVE",
+          text: resolveMapBoardFeedbackLabel(event) ?? (event.encounterKind === "hero" ? "PVP" : "PVE"),
           durationSeconds: 0.95
         });
       }
@@ -252,7 +253,7 @@ export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?
     if (event.type === "battle.resolved" && heroPosition && heroId) {
       entries.push({
         position: heroPosition,
-        text: didHeroWin(event, heroId) ? "VICTORY" : "DEFEAT",
+        text: resolveMapBoardFeedbackLabel(event, { heroId }) ?? (didHeroWin(event, heroId) ? "VICTORY" : "DEFEAT"),
         durationSeconds: 1.1
       });
     }
