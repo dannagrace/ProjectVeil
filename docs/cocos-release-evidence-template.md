@@ -1,162 +1,135 @@
 # Cocos Release Evidence Template
 
-本模板用于每次 `apps/cocos-client` release candidate 的统一验收留档。目标不是重复写发布说明，而是把每个必过门禁对应到一条可复用的“命令证据或人工证据”记录，避免不同候选包的证明口径漂移。
-
-适用场景：
-
-- Cocos Creator Web 预览候选包
-- 微信小游戏导出、预览、提审候选包
-- 任何需要证明 `Lobby -> 进房 -> 首场战斗 -> 重连恢复 -> 返回世界` 主链路可用的 release candidate
+本模板现在以 `npm run release:cocos-rc:snapshot` 生成的 machine-readable JSON 为主，Markdown 只保留使用说明、字段规则和样例路径。目标是把 Cocos Creator 预览与微信小游戏 RC 的证据收口到同一份可归档、可校验、可对比的快照里。
 
 相关文档：
 
 - 核心玩法发布就绪总清单：`docs/core-gameplay-release-readiness.md`
+- 发布就绪自动化快照：`docs/release-readiness-snapshot.md`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 微信小游戏构建 / 打包 / 验收：`docs/wechat-minigame-release.md`
-- Cocos 主客户端运行说明：`apps/cocos-client/README.md`
+- 样例快照：`docs/release-evidence/cocos-rc-snapshot.example.json`
 
-## 使用规则
+## 标准流程
 
-1. 每个 release candidate 复制一份本模板，建议命名为 `docs/release-evidence/cocos-release-evidence-<yyyymmdd>-<candidate>.md`。
-2. 所有门禁都必须填写 `Owner / Date / Status / Evidence`。
-3. `Status` 只允许使用：`pass / partial / fail / n/a`。
-4. 有自动化命令时，优先附命令、结果摘要和产物路径。
-5. 自动化无法覆盖 Cocos 真机 / headed 场景时，必须补人工证据，不得只写“手工验证通过”。
-6. 只要任一 `P0` 为 `fail`，该候选包不能视为发布就绪。
+1. 先跑自动化基线，并保留自动化快照：
 
-## Candidate Header
-
-将以下头部复制到每次候选包记录中并回填：
-
-```md
-# Cocos Release Evidence - <candidate-name>
-
-- Candidate: `<candidate-name>`
-- Scope: `apps/cocos-client`
-- Branch / Commit: `<branch>` / `<git-sha>`
-- Build Surface: `Creator Web Preview | WeChat Preview | WeChat Upload Candidate | Other`
-- Owner: `<name>`
-- Date: `<YYYY-MM-DD>`
-- Overall Status: `pass | partial | fail | n/a`
-- Runtime / Env:
-  - Server: `<local/staging URL>`
-  - Cocos Creator: `<3.8.x version>` or `n/a`
-  - WeChat DevTools / Device: `<version / device>` or `n/a`
-- Notes: `<candidate summary / known risk / linked issue>`
+```bash
+npm run release:readiness:snapshot -- \
+  --manual-checks docs/release-readiness-manual-checks.example.json
 ```
 
-## Evidence Attachment Rules
+2. 生成一份 Cocos RC 快照模板：
 
-### Cocos Creator Preview Required
-
-当 Web 自动化不能证明 Cocos 表现层时，至少附以下任意两类证据，且必须包含一条视觉证据：
-
-- Cocos Creator 预览窗口截图或短录屏
-- Console / HUD / Timeline 的关键文本截图，能看出房间号、玩家身份、战斗结果或恢复提示
-- 预览使用的场景、Inspector 配置、`remoteUrl`、`roomId`、`playerId` 记录
-- 若涉及音频、动画或 Tilemap，只写“观察正常”不够，需要补截图、录屏或 Creator 面板状态截图
-
-建议在记录中直接写：
-
-```md
-- Evidence:
-  - `Creator preview screenshot: <path-or-link>`
-  - `Creator preview video: <path-or-link>`
-  - `Scene: VeilRoot in <scene-name>`
-  - `Runtime config: remoteUrl=<...> roomId=<...> playerId=<...>`
+```bash
+npm run release:cocos-rc:snapshot -- \
+  --candidate rc-2026-03-29 \
+  --build-surface creator_preview \
+  --output artifacts/release-evidence/rc-2026-03-29.creator.json
 ```
 
-### WeChat Preview Required
+3. 若目标面是微信小游戏，先完成 `verify` 与 `smoke`，再把 smoke 报告挂到同一份 RC 快照：
 
-当门禁必须在微信开发者工具、真机或准真机完成时，至少附以下证据：
-
-- `codex.wechat.smoke-report.json` 路径
-- 微信开发者工具预览截图、真机录屏或分享回流截图
-- 开发者工具 `Console / Network / 安全域名` 相关告警截图或说明
-- 使用的 artifact 目录、`sourceRevision`、`archiveSha256` 或上传回执 `*.upload.json`
-
-建议顺序：
-
-1. 先按 `docs/wechat-minigame-release.md` 跑 `verify`。
-2. 再生成并回填 `codex.wechat.smoke-report.json`。
-3. 最后把真机 / 准真机截图、录屏、分享回流结果附到对应 evidence 字段。
-
-## Baseline Gate
-
-这些命令不直接替代主链路证据，但每次候选包都应先记录：
-
-| Gate | Priority | Command / Proof | Expected Result | Owner | Date | Status | Evidence | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Shared / Server / Client baseline | P0 | `npm run typecheck:ci` | 全量 typecheck 通过 | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<log path or CI URL>` | `<notes>` |
-| Unit + contract baseline | P0 | `npm test` | shared/server/H5/Cocos 单测通过 | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<log path or CI URL>` | `<notes>` |
-| H5 smoke reference | P1 | `npm run test:e2e:smoke` | H5 lobby / battle / reconnect 基线通过 | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<Playwright artifact>` | `只作为 Cocos 发布参考，不替代 Cocos 人工证据` |
-| Multiplayer smoke reference | P1 | `npm run test:e2e:multiplayer:smoke` | 多人 / PvP / 结算恢复基线通过 | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<Playwright artifact>` | `用于对照状态收敛与结算回写` |
-
-## Required Release Gates
-
-以下五项是每次 Cocos 候选包必须留存的最小证据。若同一条证据同时覆盖多项，可交叉引用，但每一行都必须单独填状态。
-
-| Gate | Priority | Automated Command Reference | Manual Proof Steps | Required Evidence | Owner | Date | Status | Evidence | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Lobby entry | P0 | `npm run test:e2e:smoke`（覆盖 `tests/e2e/lobby-smoke.spec.ts`）；`npm test`（覆盖 `apps/cocos-client/test/cocos-lobby.test.ts`） | 在 Cocos Creator 预览或微信预览中冷启动；确认先进入 Lobby；记录大厅标题、玩家身份态、活跃房间列表或错误提示；若使用账号态，记录登录 ID / 游客降级情况 | 至少 1 张 Lobby 截图；若需 Creator/WeChat 预览，再补预览窗口或真机录屏 | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<paths/links>` | `<notes>` |
-| Room join | P0 | `npm run test:e2e:smoke`（`tests/e2e/lobby-smoke.spec.ts`）；`npm test`（`apps/server/test/lobby-routes.test.ts`、`apps/cocos-client/test/cocos-session-launch.test.ts`） | 从 Lobby 创建或加入房间；确认房间号、玩家 ID、HUD 基础状态、地图已加载；如依赖 staging 服务，写明 `remoteUrl` 与房间号 | 房间内 HUD / session 信息截图，能看见 `roomId` 和玩家身份 | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<paths/links>` | `<notes>` |
-| First battle | P0 | `npm run test:e2e:smoke`（`tests/e2e/battle-flow.spec.ts`）；`npm test`（`apps/cocos-client/test/cocos-battle-feedback.test.ts`、`apps/cocos-client/test/cocos-battle-panel-model.test.ts`、`apps/cocos-client/test/cocos-battle-report.test.ts`） | 从房间进入首场遭遇战；至少执行一场完整结算；记录进入战斗、攻击/等待/防御反馈、胜败弹窗、奖励或伤害结果 | 战斗中截图 + 结算截图；若自动化不足，补 Creator/WeChat 录屏证明输入到结算完整闭环 | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<paths/links>` | `<notes>` |
-| Reconnect / session restore | P0 | `npm run test:e2e:smoke`（`tests/e2e/reconnect-recovery.spec.ts`）；`npm run test:e2e:multiplayer:smoke`（`tests/e2e/pvp-reconnect-recovery.spec.ts`、`tests/e2e/pvp-postbattle-reconnect.spec.ts`）；`npm test`（`apps/client/test/reconnection-storage.test.ts`、`apps/server/test/colyseus-persistence-recovery.test.ts`、`apps/cocos-client/test/cocos-runtime-memory.test.ts`） | 按 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 的 canonical scenario 执行一次恢复；在房间或战斗后主动刷新、切后台、断网或切换网络；确认恢复到原房间并显示可接受的恢复提示；记录是否丢失房间上下文、战斗状态或奖励结果 | 恢复后截图，必须能看见恢复提示、原房间号和关键状态未丢失；微信预览时附 `codex.wechat.smoke-report.json` 对应 case | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<paths/links>` | `失败时按 reconnect gate 文档附诊断项，不要只写“恢复失败”` |
-| Return to world | P0 | `npm run test:e2e:multiplayer:smoke`（`tests/e2e/pvp-postbattle-reconnect.spec.ts`、`tests/e2e/pvp-postbattle-continue.spec.ts`）；`npm test`（`apps/cocos-client/test/cocos-map-visuals.test.ts`、`apps/cocos-client/test/cocos-battle-transition-copy.test.ts`） | 首场战斗结算后确认房间已回到世界探索态；`No active battle`、地图/HUD 可继续交互，且结算已回写；若胜者仍可行动或败者移动归零，也一并记录 | 战后返回地图截图，需能看见世界 HUD、结算摘要或 `No active battle`；如需 headed 证明，补录屏展示“战斗结束 -> 回到世界”全过程 | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<paths/links>` | `<notes>` |
-
-## WeChat-Specific Gate
-
-若候选包目标面是微信小游戏，以下三项必须附加记录：
-
-| Gate | Priority | Command / Proof | Expected Result | Owner | Date | Status | Evidence | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| WeChat build validation | P0 | `npm run check:wechat-build` | 模板、导出夹具、release metadata 校验通过 | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<log path or CI URL>` | `<notes>` |
-| Exported runtime validation | P0 | `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime` | 真实导出目录通过 | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<log path>` | `<notes>` |
-| Artifact verify + smoke report | P0 | `npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime --source-revision <git-sha>`；`npm run verify:wechat-release -- --artifacts-dir <release-artifacts-dir> --expected-revision <git-sha>`；`npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>`；回填后执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check --expected-revision <git-sha>` | 归档、sidecar、release manifest、真机 smoke 报告全部可追溯 | `<owner>` | `<date>` | `pass/partial/fail/n/a` | `<artifact dir / smoke-report / screenshots / upload receipt>` | `若用开发者工具预览或真机，需补截图或录屏，不可只留 JSON` |
-
-## Manual Proof Checklist
-
-以下清单可直接贴到候选包文档末尾，补齐人工观察项：
-
-```md
-## Manual Proof Notes
-
-- Candidate: `<candidate-name>`
-- Owner: `<name>`
-- Date: `<YYYY-MM-DD>`
-- Runtime: `Creator Preview | WeChat DevTools | WeChat Device`
-
-- [ ] Lobby entry
-  - 观察结果：`<text>`
-  - 证据：`<path-or-link>`
-- [ ] Room join
-  - 观察结果：`<text>`
-  - 证据：`<path-or-link>`
-- [ ] First battle
-  - 观察结果：`<text>`
-  - 证据：`<path-or-link>`
-- [ ] Reconnect / session restore
-  - 观察结果：`<text>`
-  - 证据：`<path-or-link>`
-- [ ] Return to world
-  - 观察结果：`<text>`
-  - 证据：`<path-or-link>`
+```bash
+npm run release:cocos-rc:snapshot -- \
+  --candidate rc-2026-03-29 \
+  --build-surface wechat_preview \
+  --wechat-smoke-report artifacts/wechat-rc/codex.wechat.smoke-report.json \
+  --release-readiness-snapshot artifacts/release-readiness/rc-2026-03-29.json \
+  --output artifacts/release-evidence/rc-2026-03-29.wechat.json
 ```
 
-## Release Decision
+4. 回填后执行校验：
 
-最终结论建议固定写成以下格式：
+```bash
+npm run release:cocos-rc:snapshot -- \
+  --output artifacts/release-evidence/rc-2026-03-29.creator.json \
+  --check
+```
 
-```md
-## Release Decision
+## 快照结构
 
-- Owner: `<name>`
-- Date: `<YYYY-MM-DD>`
-- Final Status: `pass | partial | fail`
-- Blocking Issues:
-  - `<issue-or-none>`
-- Follow-ups:
-  - `<issue-or-none>`
-- Evidence Index:
-  - `<artifact / screenshot bundle / smoke report / PR / CI run>`
+快照固定包含以下区块：
+
+- `candidate`
+  - 候选包名、分支、commit、构建面
+- `execution`
+  - 执行人、执行时间、最终状态、结论摘要
+- `environment`
+  - 服务端地址、Creator 版本、微信客户端/开发者工具版本、设备
+- `linkedEvidence`
+  - 自动化发布快照、微信 smoke 报告等外部证据引用
+- `requiredEvidence`
+  - 四个强制证据字段：`roomId`、`reconnectPrompt`、`restoredState`、`firstBattleResult`
+- `journey`
+  - 六个固定主链路节点：`lobby-entry`、`room-join`、`map-explore`、`first-battle`、`reconnect-restore`、`return-to-world`
+- `mappings`
+  - Creator 预览观察项与 WeChat smoke 报告字段如何映射回同一份 RC 快照
+
+## 必填与可选
+
+必填字段：
+
+- `execution.owner`
+- `execution.executedAt`
+- `execution.overallStatus`
+- `execution.summary`
+- `environment.server`
+- `requiredEvidence.roomId`
+- `requiredEvidence.reconnectPrompt`
+- `requiredEvidence.restoredState`
+- `requiredEvidence.firstBattleResult`
+- 所有 `journey[*].status`
+
+可选补充：
+
+- `environment.cocosCreatorVersion`
+- `environment.wechatClient`
+- `environment.device`
+- `linkedEvidence.releaseReadinessSnapshot`
+- `linkedEvidence.wechatSmokeReport`
+- 任意截图、录屏、日志、artifact 路径
+
+## 字段映射规则
+
+同一份模板覆盖 Creator 预览与微信 RC，统一口径如下：
+
+| 来源 | 回填位置 | 说明 |
+| --- | --- | --- |
+| Creator HUD / Session 文本 | `requiredEvidence.roomId` | 必须能看到权威 `roomId` |
+| Creator 恢复提示 | `requiredEvidence.reconnectPrompt` | 必须复用 reconnect canonical scenario |
+| Creator 恢复后 HUD / 世界态 | `requiredEvidence.restoredState` | 必须说明恢复后关键状态未回档 |
+| Creator 首战结算面板 | `requiredEvidence.firstBattleResult` | 必须说明首战胜负和关键结果 |
+| `codex.wechat.smoke-report.json:cases[login-lobby]` | `journey[lobby-entry]` | 登录 / Lobby 结果直接复用 |
+| `codex.wechat.smoke-report.json:cases[room-entry]` | `journey[room-join]` | 进房结果直接复用 |
+| `codex.wechat.smoke-report.json:cases[reconnect-recovery]` | `journey[reconnect-restore]` + 三个恢复类证据字段 | 不能只写“恢复成功” |
+| `codex.wechat.smoke-report.json:execution.summary` | `execution.summary` | 微信 RC 可复用 smoke 总结，但仍需补齐首战与返回世界 |
+
+## 回填建议
+
+Creator 预览至少补：
+
+- 1 张 Lobby 截图
+- 1 张房间/HUD 截图，必须能看见 `roomId`
+- 1 张首战结算截图或录屏片段
+- 1 张恢复后截图，必须能看见恢复提示和关键状态
+
+微信 RC 至少补：
+
+- `codex.wechat.smoke-report.json`
+- 真机或准真机截图 / 录屏
+- 若有发布包，则附 artifact 目录或 `*.upload.json`
+
+## 样例
+
+可直接复制并回填：
+
+- JSON 样例：`docs/release-evidence/cocos-rc-snapshot.example.json`
+- 生成命令：
+
+```bash
+npm run release:cocos-rc:snapshot -- \
+  --candidate rc-<date> \
+  --build-surface creator_preview \
+  --output artifacts/release-evidence/rc-<date>.json
 ```
