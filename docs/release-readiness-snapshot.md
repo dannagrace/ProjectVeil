@@ -10,7 +10,7 @@ The default automated checks are:
 - `npm run test:e2e:multiplayer:smoke`
 - `npm run check:wechat-build`
 
-The snapshot also supports manual gates, so the same file can carry pending or completed human checks such as runtime endpoint review, reconnect evidence, or device smoke acceptance.
+The snapshot also supports manual gates, so the same file can carry pending or completed human checks such as runtime endpoint review, reconnect evidence, device smoke acceptance, or RC blocker review.
 
 ## Usage
 
@@ -80,6 +80,17 @@ Example:
     "notes": "Complete npm run smoke:wechat-release against the packaged RC build.",
     "evidence": [
       "docs/wechat-minigame-release.md"
+    ]
+  },
+  {
+    "id": "cocos-rc-blocker-review",
+    "title": "Cocos/WeChat RC blocker register reviewed",
+    "status": "pending",
+    "required": true,
+    "notes": "Attach the completed RC checklist and blocker template for the candidate before marking release-ready.",
+    "evidence": [
+      "docs/release-evidence/cocos-wechat-rc-checklist.template.md",
+      "docs/release-evidence/cocos-wechat-rc-blockers.template.md"
     ]
   }
 ]

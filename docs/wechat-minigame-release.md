@@ -30,6 +30,8 @@
 - 生成 / 校验真机冒烟报告：`npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> [--report <report-path>] [--check --expected-revision <git-sha>]`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 统一 Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
+- RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
+- RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - 只做 CI 同款校验：`npm run check:wechat-build`
 - 校验真实导出目录：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 
@@ -62,8 +64,9 @@
 8. 完成真机 / 准真机冒烟后，执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`，确认登录、进房、重连、分享回流、关键资源加载都已有结果记录。
    - `reconnect-recovery` 必须复用 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 的 canonical scenario、最小成功信号和失败诊断口径。
 9. 运行 `npm run release:cocos-rc:snapshot -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json --output artifacts/release-evidence/<candidate-name>.wechat.json`，把微信 smoke 结果映射回统一的 Cocos RC 快照，并补齐首战 / 返回世界证据。
-10. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
-11. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
+10. 复制 `docs/release-evidence/cocos-wechat-rc-checklist.template.md` 与 `docs/release-evidence/cocos-wechat-rc-blockers.template.md`，为当前 candidate 回填设备、结论和 blocker。
+11. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
+12. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
 
 ## 下载与验收
 
@@ -103,8 +106,9 @@
    - `reconnect-recovery` 至少要记录原 `roomId`、恢复提示、恢复后未回档状态三项证据；细则见 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md)
 4. 回填完成后执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`
 5. 再执行 `npm run release:cocos-rc:snapshot -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json --output artifacts/release-evidence/<candidate-name>.wechat.json`，把 `login-lobby`、`room-entry`、`reconnect-recovery` 映射到统一 RC 快照，并补齐 `firstBattleResult` 与 `return-to-world` 证据。
+6. 复制并回填 `docs/release-evidence/cocos-wechat-rc-checklist.template.md` 与 `docs/release-evidence/cocos-wechat-rc-blockers.template.md`，确保 reviewer 能直接看到当前 RC 的设备、结论与未关闭风险。
 
-若某项因当前包能力受限无法完整验证，可把 case 标记为 `not_applicable`，并在 `notes` 中写明原因与替代观察证据；其余必填项不得保留 `pending`。
+若某项因当前包能力受限无法完整验证，可把 case 标记为 `not_applicable`，并在 `notes` 中写明原因与替代观察证据；其余必填项不得保留 `pending`。若因此形成风险，必须同步写入 blocker 模板，而不是只留在 smoke report 备注里。
 
 ## 回滚演练
 

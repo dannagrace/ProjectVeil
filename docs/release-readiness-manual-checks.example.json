@@ -20,5 +20,16 @@
     "evidence": [
       "docs/wechat-minigame-release.md"
     ]
+  },
+  {
+    "id": "cocos-rc-blocker-review",
+    "title": "Cocos/WeChat RC blocker register reviewed",
+    "status": "pending",
+    "required": true,
+    "notes": "Attach the completed RC checklist and blocker template before marking the candidate release-ready.",
+    "evidence": [
+      "docs/release-evidence/cocos-wechat-rc-checklist.template.md",
+      "docs/release-evidence/cocos-wechat-rc-blockers.template.md"
+    ]
   }
 ]
