@@ -2268,7 +2268,7 @@ test("password recovery request returns 502 and dead-letters non-retryable webho
   assert.equal(deliveryPayload.delivery.recentAttempts[0]?.failureReason, "webhook_4xx");
 });
 
-test("wechat mini game scaffold route returns 501 until mock mode is enabled", { concurrency: false }, async (t) => {
+test("wechat login defaults to mock mode outside production", { concurrency: false }, async (t) => {
   const port = 44750 + Math.floor(Math.random() * 1000);
   const server = await startAuthServer(port);
 
@@ -2280,7 +2280,37 @@ test("wechat mini game scaffold route returns 501 until mock mode is enabled", {
   });
 
   delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
-  const response = await fetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wechat-dev-code",
+      playerId: "wechat-player",
+      displayName: "云桥旅人"
+    })
+  });
+  const payload = (await response.json()) as { session: GuestAuthSession };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.session.playerId, "wechat-player");
+  assert.equal(payload.session.provider, "wechat-mini-game");
+});
+
+test("wechat login route can be explicitly disabled", { concurrency: false }, async (t) => {
+  const port = 44850 + Math.floor(Math.random() * 1000);
+  const server = await startAuthServer(port, new MemoryAuthStore());
+
+  t.after(async () => {
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "disabled";
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -2297,8 +2327,8 @@ test("wechat mini game scaffold route returns 501 until mock mode is enabled", {
   assert.equal(payload.error.code, "wechat_login_not_enabled");
 });
 
-test("wechat mini game scaffold route issues a provider-tagged session in mock mode", { concurrency: false }, async (t) => {
-  const port = 44850 + Math.floor(Math.random() * 1000);
+test("legacy wechat mini game route remains available as an alias", { concurrency: false }, async (t) => {
+  const port = 44855 + Math.floor(Math.random() * 1000);
   const server = await startAuthServer(port, new MemoryAuthStore());
 
   t.after(async () => {
@@ -2384,7 +2414,7 @@ test("wechat mini game production exchange binds code2Session identity onto an a
     );
   };
 
-  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
+  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -2455,7 +2485,7 @@ test("wechat mini game login reuses the bound player even when later requests sp
       }
     );
 
-  const firstResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
+  const firstResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -2468,7 +2498,7 @@ test("wechat mini game login reuses the bound player even when later requests sp
   });
   const firstPayload = (await firstResponse.json()) as { session: GuestAuthSession };
 
-  const secondResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
+  const secondResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"

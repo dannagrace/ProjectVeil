@@ -126,7 +126,13 @@ interface AuthReadinessPayload {
   checkedAt: string;
   headline: string;
   alerts: string[];
-  auth: RuntimeHealthPayload["runtime"]["auth"];
+  auth: RuntimeHealthPayload["runtime"]["auth"] & {
+    wechatLogin: {
+      mode: "disabled" | "mock" | "production";
+      credentialsStatus: "not_required" | "missing" | "configured";
+      route: string;
+    };
+  };
 }
 
 interface AuthTokenDeliveryPayload {
@@ -267,6 +273,23 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
 function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadinessPayload {
   const health = buildHealthPayload(service);
   const alerts: string[] = [];
+  const normalizedWechatMode = process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
+  const wechatMode =
+    normalizedWechatMode === "mock"
+      ? "mock"
+      : normalizedWechatMode === "production" || normalizedWechatMode === "code2session"
+        ? "production"
+        : normalizedWechatMode === "disabled"
+          ? "disabled"
+          : process.env.NODE_ENV?.trim().toLowerCase() === "production"
+            ? "disabled"
+            : "mock";
+  const wechatCredentialsStatus =
+    wechatMode === "production"
+      ? process.env.VEIL_WECHAT_MINIGAME_APP_ID?.trim() && process.env.VEIL_WECHAT_MINIGAME_APP_SECRET?.trim()
+        ? "configured"
+        : "missing"
+      : "not_required";
 
   if (health.runtime.auth.activeAccountLockCount > 0) {
     alerts.push(`${health.runtime.auth.activeAccountLockCount} account lockout(s) active`);
@@ -288,13 +311,28 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
     alerts.push(`${health.runtime.auth.tokenDelivery.queueCount} token deliveries waiting for retry`);
   }
 
+  if (wechatCredentialsStatus === "missing") {
+    alerts.push("WeChat login production credentials are missing");
+  }
+
   return {
     status: alerts.length > 0 ? "warn" : "ok",
     service,
     checkedAt: health.checkedAt,
-    headline: `auth ready; guest=${health.runtime.auth.activeGuestSessionCount} account=${health.runtime.auth.activeAccountSessionCount} lockouts=${health.runtime.auth.activeAccountLockCount}`,
+    headline:
+      `auth ready; guest=${health.runtime.auth.activeGuestSessionCount} ` +
+      `account=${health.runtime.auth.activeAccountSessionCount} ` +
+      `lockouts=${health.runtime.auth.activeAccountLockCount} ` +
+      `wechat=${wechatMode}/${wechatCredentialsStatus}`,
     alerts,
-    auth: health.runtime.auth
+    auth: {
+      ...health.runtime.auth,
+      wechatLogin: {
+        mode: wechatMode,
+        credentialsStatus: wechatCredentialsStatus,
+        route: "/api/auth/wechat-login"
+      }
+    }
   };
 }
 
