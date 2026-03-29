@@ -6,6 +6,8 @@ type CoverageSuite = {
   name: string;
   include: string;
   lineThreshold: number;
+  branchThreshold: number;
+  functionThreshold: number;
   tests: string[];
 };
 
@@ -22,24 +24,32 @@ const suites: CoverageSuite[] = [
     name: "shared",
     include: "packages/shared/src/**/*.ts",
     lineThreshold: 90,
+    branchThreshold: 70,
+    functionThreshold: 90,
     tests: ["packages/shared/test/**/*.test.ts"],
   },
   {
     name: "server",
     include: "apps/server/src/**/*.ts",
     lineThreshold: 75,
+    branchThreshold: 65,
+    functionThreshold: 75,
     tests: ["apps/server/test/**/*.test.ts"],
   },
   {
     name: "client",
     include: "apps/client/src/**/*.ts",
     lineThreshold: 78,
+    branchThreshold: 65,
+    functionThreshold: 70,
     tests: ["apps/client/test/**/*.test.ts"],
   },
   {
     name: "cocos-client",
     include: "apps/cocos-client/assets/scripts/**/*.ts",
     lineThreshold: 55,
+    branchThreshold: 70,
+    functionThreshold: 60,
     tests: ["apps/cocos-client/test/**/*.test.ts"],
   },
 ];
@@ -61,6 +71,8 @@ async function main() {
       "--experimental-test-coverage",
       `--test-coverage-include=${suite.include}`,
       `--test-coverage-lines=${suite.lineThreshold}`,
+      `--test-coverage-branches=${suite.branchThreshold}`,
+      `--test-coverage-functions=${suite.functionThreshold}`,
       ...suite.tests,
     ];
 
@@ -130,13 +142,13 @@ async function writeSummary(
   const lines = [
     "# V8 Coverage Summary",
     "",
-    "| Scope | Line Threshold | Line % | Branch % | Function % |",
-    "| --- | ---: | ---: | ---: | ---: |",
+    "| Scope | Lines | Branches | Functions |",
+    "| --- | --- | --- | --- |",
     ...summaries.map(({ suite, metrics }) => {
       if (!metrics) {
-        return `| ${suite.name} | ${suite.lineThreshold}% | n/a | n/a | n/a |`;
+        return `| ${suite.name} | n/a vs ${suite.lineThreshold}% | n/a vs ${suite.branchThreshold}% | n/a vs ${suite.functionThreshold}% |`;
       }
-      return `| ${suite.name} | ${suite.lineThreshold}% | ${metrics.lines.toFixed(2)}% | ${metrics.branches.toFixed(2)}% | ${metrics.functions.toFixed(2)}% |`;
+      return `| ${suite.name} | ${formatMetric(metrics.lines, suite.lineThreshold)} | ${formatMetric(metrics.branches, suite.branchThreshold)} | ${formatMetric(metrics.functions, suite.functionThreshold)} |`;
     }),
     "",
     `Raw V8 coverage artifacts: \`${path.relative(process.cwd(), path.join(coverageRoot, "v8"))}\``,
@@ -149,12 +161,19 @@ async function writeSummary(
       summaries.map(({ suite, metrics }) => ({
         scope: suite.name,
         lineThreshold: suite.lineThreshold,
+        branchThreshold: suite.branchThreshold,
+        functionThreshold: suite.functionThreshold,
         metrics,
       })),
       null,
       2,
     )}\n`,
   );
+}
+
+function formatMetric(actual: number, threshold: number): string {
+  const passed = actual >= threshold;
+  return `${passed ? "PASS" : "FAIL"} ${actual.toFixed(2)}% vs ${threshold}%`;
 }
 
 main().catch((error) => {
