@@ -36,6 +36,16 @@
 - `npm run test:e2e:smoke`
 - `npm run test:e2e:multiplayer:smoke`
 
+## Smoke Hardening Notes
+
+当前 Playwright 冒烟链路针对两类高频假失败做了固定收口：
+
+- reload / 刷新前必须先确认 reconnect token 已经写入存储，再触发页面恢复；不要用裸 `page.reload()` 直接赌时序。
+- 多人房间断言前必须先确认 `session-meta`、`diagnostic-connection-status`、`room-connection-summary` 都已经回到稳定的“已连接”态，再判断玩法同步或结算结果。
+- 若 spec 失败，优先查看 Playwright 附件里的 client automation state、diagnostic snapshot text/json，以及 server diagnostic snapshot text，先区分是房间未启动、客户端未完成握手，还是玩法状态真实回归。
+
+这三条的目标是把“基础设施 / 启动时序问题”和“玩法断言失败”拆开，减少 CI 因偶发 race condition 误报。
+
 ## Minimum Success Signals
 
 ### Local Run

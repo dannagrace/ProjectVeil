@@ -1,60 +1,76 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import {
+  attackOnce,
+  buildRoomId,
+  openRoom,
+  pressTile,
+  reloadAndExpectRecoveredSession,
+  withSmokeDiagnostics
+} from "./smoke-helpers";
 
-async function pressTile(page: Page, x: number, y: number): Promise<void> {
-  await page.locator(`[data-x="${x}"][data-y="${y}"]`).dispatchEvent("pointerdown", {
-    button: 0
-  });
-}
-
-async function attackOnce(page: Page): Promise<void> {
-  await expect(page.getByTestId("battle-attack")).toBeVisible({ timeout: 10_000 });
-  await page.getByTestId("battle-attack").click();
-}
-
-test("winner can keep moving after a reloaded PvP settlement while loser stays locked by zero movement", async ({ browser }) => {
-  const roomId = `e2e-pvp-postbattle-continue-${Date.now()}`;
+test("winner can keep moving after a reloaded PvP settlement while loser stays locked by zero movement", async ({ browser }, testInfo) => {
+  const roomId = buildRoomId("e2e-pvp-postbattle-continue");
   const playerOneContext = await browser.newContext();
   const playerTwoContext = await browser.newContext();
   const playerOnePage = await playerOneContext.newPage();
   const playerTwoPage = await playerTwoContext.newPage();
 
-  await Promise.all([
-    playerOnePage.goto(`http://127.0.0.1:4173/?roomId=${roomId}&playerId=player-1`),
-    playerTwoPage.goto(`http://127.0.0.1:4173/?roomId=${roomId}&playerId=player-2`)
-  ]);
+  try {
+    await withSmokeDiagnostics(testInfo, [playerOnePage, playerTwoPage], async () => {
+      await test.step("setup: both players join the room", async () => {
+        await Promise.all([
+          openRoom(playerOnePage, {
+            roomId,
+            playerId: "player-1",
+            expectedMoveText: /Move 6\/6/
+          }),
+          openRoom(playerTwoPage, {
+            roomId,
+            playerId: "player-2",
+            expectedMoveText: /Move 6\/6/
+          })
+        ]);
+      });
 
-  await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
-  await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
+      await test.step("gameplay: resolve the battle before settlement reload", async () => {
+        await pressTile(playerOnePage, 3, 4);
+        await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
 
-  await pressTile(playerOnePage, 3, 4);
-  await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
+        await pressTile(playerTwoPage, 3, 4);
 
-  await pressTile(playerTwoPage, 3, 4);
+        await attackOnce(playerTwoPage);
+        await attackOnce(playerOnePage);
+        await attackOnce(playerTwoPage);
+        await attackOnce(playerOnePage);
+        await attackOnce(playerTwoPage);
 
-  await attackOnce(playerTwoPage);
-  await attackOnce(playerOnePage);
-  await attackOnce(playerTwoPage);
-  await attackOnce(playerOnePage);
-  await attackOnce(playerTwoPage);
+        await expect(playerOnePage.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
+        await expect(playerTwoPage.getByTestId("battle-modal-title")).toHaveText("战斗失败");
+      });
 
-  await expect(playerOnePage.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
-  await expect(playerTwoPage.getByTestId("battle-modal-title")).toHaveText("战斗失败");
+      await Promise.all([
+        reloadAndExpectRecoveredSession(playerOnePage, {
+          roomId,
+          playerId: "player-1"
+        }),
+        reloadAndExpectRecoveredSession(playerTwoPage, {
+          roomId,
+          playerId: "player-2"
+        })
+      ]);
 
-  await playerOnePage.reload();
-  await playerTwoPage.reload();
+      await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
+      await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
 
-  await expect(playerOnePage.getByTestId("event-log")).toContainText("连接已恢复", { timeout: 10_000 });
-  await expect(playerTwoPage.getByTestId("event-log")).toContainText("连接已恢复", { timeout: 10_000 });
-  await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
-  await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
+      await pressTile(playerOnePage, 2, 4);
+      await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
 
-  await pressTile(playerOnePage, 2, 4);
-  await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
-
-  await pressTile(playerTwoPage, 2, 5);
-  await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
-  await expect(playerTwoPage.getByTestId("event-log")).toContainText("Action rejected: not_enough_move_points");
-
-  await playerOneContext.close();
-  await playerTwoContext.close();
+      await pressTile(playerTwoPage, 2, 5);
+      await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
+      await expect(playerTwoPage.getByTestId("event-log")).toContainText("Action rejected: not_enough_move_points");
+    });
+  } finally {
+    await playerOneContext.close();
+    await playerTwoContext.close();
+  }
 });
