@@ -4,6 +4,8 @@
 
 它是 [`docs/core-gameplay-release-readiness.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-214/docs/core-gameplay-release-readiness.md) 中“权威玩法与多人同步”门禁的唯一放量基线。
 
+如果目标是 release candidate / shipping 候选包，或本次改动涉及 reconnect 生命周期、房间快照恢复、战斗恢复，不要只跑本说明；还必须额外通过 [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md)。
+
 ## Standard Command Set
 
 扩大测试范围前，至少按下面顺序执行一次：
@@ -91,6 +93,7 @@ npm run stress:rooms -- \
 
 - `apps/server`、`packages/shared` 中任何影响房间状态、战斗、同步、reconnect、持久化的改动
 - `apps/client` 或 `apps/cocos-client` 中任何影响多人房间进入、状态恢复、事件驱动的改动
+- 进入 release candidate / shipping 候选包，尤其是 reconnect / 快照恢复相关候选包
 - 调整 `stress:rooms` 参数、默认场景、阈值，或 observability 指标口径
 - 准备把 playtest 范围扩大到更多玩家、更多时段，或从 H5 过渡到 Cocos 主客户端验证
 - 距离上一次基线记录已超过 14 天
