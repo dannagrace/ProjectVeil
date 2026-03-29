@@ -180,6 +180,7 @@ export async function startDevServer(
   deps.logger.log(`Matchmaking API available at http://${host}:${port}/api/matchmaking/status`);
   deps.logger.log(`Runtime health available at http://${host}:${port}/api/runtime/health`);
   deps.logger.log(`Auth readiness available at http://${host}:${port}/api/runtime/auth-readiness`);
+  deps.logger.log(`Runtime diagnostic snapshot available at http://${host}:${port}/api/runtime/diagnostic-snapshot`);
   deps.logger.log(`Runtime metrics available at http://${host}:${port}/api/runtime/metrics`);
   deps.logger.log(`Config center storage: ${configCenterStore.mode}`);
   if (snapshotStore) {
