@@ -53,6 +53,14 @@ export async function attackOnce(page: Page): Promise<void> {
   await page.getByTestId("battle-attack").click();
 }
 
+export async function dismissBattleModal(page: Page): Promise<void> {
+  await test.step("gameplay: dismiss settlement modal", async () => {
+    await expect(page.getByTestId("battle-modal")).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId("battle-modal-close").click();
+    await expect(page.getByTestId("battle-modal")).toBeHidden();
+  });
+}
+
 export async function openRoom(page: Page, options: RoomSessionOptions): Promise<void> {
   await test.step(`setup: open ${options.playerId} in ${options.roomId}`, async () => {
     await page.goto(encodeRoomQuery(options.roomId, options.playerId));
@@ -102,6 +110,42 @@ export async function reloadAndExpectRecoveredSession(page: Page, options: Recon
     await expect(page.getByTestId("event-log")).toContainText("连接已恢复", { timeout: 10_000 });
     await expect(page.getByTestId("room-recovery-summary")).toContainText("已恢复");
   });
+}
+
+interface SettlementRecoveryExpectations {
+  phase: string;
+  recoverySummaryIncludes: string[];
+  settlementSummary: string;
+  settlementRoomState: string;
+  settlementNextAction: string;
+  hpPattern: RegExp;
+  resultSummaryIncludes?: string[];
+  opponentSummaryIncludes?: string[];
+}
+
+export async function expectRecoveredBattleSettlement(
+  page: Page,
+  expectations: SettlementRecoveryExpectations
+): Promise<void> {
+  await expect(page.getByTestId("room-phase")).toHaveText(expectations.phase);
+  for (const summaryText of expectations.recoverySummaryIncludes) {
+    await expect(page.getByTestId("room-recovery-summary")).toContainText(summaryText);
+  }
+  await expect(page.getByTestId("battle-settlement-summary")).toContainText(expectations.settlementSummary);
+  await expect(page.getByTestId("battle-settlement-room-state")).toContainText(expectations.settlementRoomState);
+  await expect(page.getByTestId("battle-settlement-next-action")).toContainText(expectations.settlementNextAction);
+  if (expectations.resultSummaryIncludes) {
+    for (const resultText of expectations.resultSummaryIncludes) {
+      await expect(page.getByTestId("room-result-summary")).toContainText(resultText);
+    }
+  }
+  if (expectations.opponentSummaryIncludes) {
+    for (const opponentText of expectations.opponentSummaryIncludes) {
+      await expect(page.getByTestId("opponent-summary")).toContainText(opponentText);
+    }
+  }
+  await expect(page.getByTestId("battle-empty")).toHaveText(/No active battle/);
+  await expect(page.getByTestId("hero-hp")).toHaveText(expectations.hpPattern);
 }
 
 async function attachText(testInfo: TestInfo, name: string, body: string | null): Promise<void> {
