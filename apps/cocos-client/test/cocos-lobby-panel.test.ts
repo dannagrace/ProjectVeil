@@ -1,8 +1,8 @@
+import { VeilLobbyPanel } from "../assets/scripts/VeilLobbyPanel";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createBattleReplayPlaybackState } from "../assets/scripts/project-shared/battle-replay";
 import { buildCocosBattleReplayCenterView } from "../assets/scripts/cocos-battle-replay-center";
-import { buildCocosAccountReviewPage, createCocosAccountReviewState } from "../assets/scripts/cocos-account-review.ts";
 import {
   buildLobbyAccountIdentityView,
   buildLobbyGuestEntryView,
@@ -11,39 +11,13 @@ import {
   summarizeLobbyShowcaseInventory
 } from "../assets/scripts/cocos-lobby-panel-model";
 import type { VeilLobbyRenderState } from "../assets/scripts/VeilLobbyPanel";
-
-function createLobbyState(overrides: Partial<VeilLobbyRenderState> = {}): VeilLobbyRenderState {
-  const account = createLobbyPanelTestAccount();
-  return {
-    playerId: "guest-1001",
-    displayName: "",
-    roomId: "",
-    authMode: "guest",
-    loginId: "",
-    loginHint: "游客模式",
-    loginActionLabel: "账号登录并进入",
-    shareHint: "共享存档未启用",
-    vaultSummary: "本地存档",
-    account,
-    accountReview: buildCocosAccountReviewPage(createCocosAccountReviewState(account)),
-    battleReplayItems: account.recentBattleReplays,
-    battleReplaySectionStatus: "idle",
-    battleReplaySectionError: null,
-    selectedBattleReplayId: null,
-    sessionSource: "none",
-    loading: false,
-    entering: false,
-    status: "等待操作...",
-    rooms: [],
-    accountFlow: null,
-    presentationReadiness: {
-      ready: false,
-      summary: "等待表现资源",
-      nextStep: "等待资源包"
-    },
-    ...overrides
-  };
-}
+import {
+  createBattleReplaySummary,
+  createComponentHarness,
+  createErroredBattleReplayReviewState,
+  createLobbyState,
+  createReplayReadyLobbyState
+} from "./helpers/cocos-panel-harness.ts";
 
 test("lobby panel room cards render active room summaries from the server response", () => {
   const cards = buildLobbyRoomCards([
@@ -113,88 +87,7 @@ test("showcase gallery inventory stays aligned with the configured hero, terrain
 });
 
 test("battle replay center view exposes controls and a loaded replay snapshot for account review", () => {
-  const replay = {
-    id: "replay-1",
-    roomId: "room-alpha",
-    playerId: "player-1",
-    battleId: "battle-1",
-    battleKind: "neutral" as const,
-    playerCamp: "attacker" as const,
-    heroId: "hero-1",
-    neutralArmyId: "neutral-1",
-    startedAt: "2026-03-27T12:00:00.000Z",
-    completedAt: "2026-03-27T12:03:00.000Z",
-    initialState: {
-      id: "battle-1",
-      round: 1,
-      lanes: 1,
-      activeUnitId: "hero-1-stack",
-      turnOrder: ["hero-1-stack", "neutral-1-stack"],
-      units: {
-        "hero-1-stack": {
-          id: "hero-1-stack",
-          templateId: "hero_guard_basic",
-          camp: "attacker" as const,
-          lane: 0,
-          stackName: "Guard",
-          initiative: 7,
-          attack: 4,
-          defense: 4,
-          minDamage: 1,
-          maxDamage: 2,
-          count: 12,
-          currentHp: 10,
-          maxHp: 10,
-          hasRetaliated: false,
-          defending: false,
-          skills: [],
-          statusEffects: []
-        },
-        "neutral-1-stack": {
-          id: "neutral-1-stack",
-          templateId: "wolf_pack",
-          camp: "defender" as const,
-          lane: 0,
-          stackName: "Wolf",
-          initiative: 5,
-          attack: 3,
-          defense: 3,
-          minDamage: 1,
-          maxDamage: 2,
-          count: 8,
-          currentHp: 9,
-          maxHp: 9,
-          hasRetaliated: false,
-          defending: false,
-          skills: [],
-          statusEffects: []
-        }
-      },
-      environment: [],
-      log: [],
-      rng: { seed: 1, cursor: 0 },
-      encounterPosition: { x: 0, y: 0 }
-    },
-    steps: [
-      {
-        index: 1,
-        source: "player" as const,
-        action: {
-          type: "battle.wait" as const,
-          unitId: "hero-1-stack"
-        }
-      },
-      {
-        index: 2,
-        source: "automated" as const,
-        action: {
-          type: "battle.defend" as const,
-          unitId: "neutral-1-stack"
-        }
-      }
-    ],
-    result: "attacker_victory" as const
-  };
+  const replay = createBattleReplaySummary();
   const view = buildCocosBattleReplayCenterView({
     replays: [replay],
     selectedReplayId: replay.id,
@@ -217,4 +110,69 @@ test("battle replay center view exposes controls and a loaded replay snapshot fo
       ["reset", false]
     ]
   );
+});
+
+test("VeilLobbyPanel retains the loading lobby snapshot and creates base panel chrome", () => {
+  const { component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const state = createLobbyState({
+    loading: true,
+    rooms: [
+      {
+        roomId: "room-alpha",
+        seed: 1001,
+        day: 3,
+        connectedPlayers: 1,
+        heroCount: 2,
+        activeBattles: 1,
+        updatedAt: "2026-03-29T12:00:00.000Z"
+      }
+    ]
+  });
+
+  component.configure({});
+  component.scheduleOnce = () => undefined;
+  component.render(state);
+  const statefulComponent = component as VeilLobbyPanel & Record<string, unknown>;
+
+  assert.equal(statefulComponent.currentState, state);
+  assert.equal((statefulComponent.currentState as VeilLobbyRenderState).rooms[0]?.roomId, "room-alpha");
+  assert.equal((statefulComponent.currentState as VeilLobbyRenderState).loading, true);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel advances replay playback when the replay control state transitions", () => {
+  const { component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const state = createReplayReadyLobbyState();
+
+  component.configure({});
+  component.scheduleOnce = () => undefined;
+  (component as VeilLobbyPanel & Record<string, unknown>).showAccountReview = true;
+  component.render(state);
+  const statefulComponent = component as VeilLobbyPanel & Record<string, unknown>;
+  assert.equal((statefulComponent.replayPlayback as { currentStepIndex?: number } | null)?.currentStepIndex, 0);
+  (statefulComponent.applyReplayControl as (action: "step-forward") => void)("step-forward");
+
+  assert.equal((statefulComponent.replayPlayback as { currentStepIndex?: number } | null)?.currentStepIndex, 1);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel keeps empty-room rendering separate from replay transport failures", () => {
+  const { component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const erroredState = createLobbyState({
+    accountReview: createErroredBattleReplayReviewState("Lobby transport failure: 502 Bad Gateway"),
+    battleReplaySectionStatus: "error",
+    battleReplaySectionError: "Lobby transport failure: 502 Bad Gateway"
+  });
+
+  component.configure({});
+  component.scheduleOnce = () => undefined;
+  component.render(createLobbyState());
+  const statefulComponent = component as VeilLobbyPanel & Record<string, unknown>;
+  assert.equal((statefulComponent.currentState as VeilLobbyRenderState).rooms.length, 0);
+  statefulComponent.showAccountReview = true;
+  component.render(erroredState);
+
+  assert.equal((statefulComponent.currentState as VeilLobbyRenderState).battleReplaySectionStatus, "error");
+  assert.match(String(statefulComponent.replayPlaybackStatus ?? ""), /502 Bad Gateway/);
+  component.onDestroy();
 });

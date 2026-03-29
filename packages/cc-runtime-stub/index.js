@@ -61,7 +61,7 @@ export class Node {
 
   constructor(name = "") {
     this.name = name;
-    this.parent = null;
+    this._parent = null;
     this.active = true;
     this.layer = 0;
     this.position = new Vec3();
@@ -83,6 +83,26 @@ export class Node {
     return this.components.get(Type) ?? null;
   }
 
+  get parent() {
+    return this._parent;
+  }
+
+  set parent(value) {
+    if (this._parent === value) {
+      return;
+    }
+
+    if (this._parent) {
+      this._parent.children = this._parent.children.filter((child) => child !== this);
+    }
+
+    this._parent = value;
+
+    if (value && !value.children.includes(this)) {
+      value.children.push(this);
+    }
+  }
+
   removeComponent(component) {
     for (const [Type, value] of this.components.entries()) {
       if (value === component) {
@@ -97,7 +117,6 @@ export class Node {
 
   addChild(child) {
     child.parent = this;
-    this.children.push(child);
   }
 
   destroy() {
@@ -137,6 +156,12 @@ export class Node {
       type,
       this.listeners.get(type).filter((listener) => listener.callback !== callback || listener.target !== target)
     );
+  }
+
+  emit(type, ...args) {
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener.callback.apply(listener.target ?? this, args);
+    }
   }
 }
 

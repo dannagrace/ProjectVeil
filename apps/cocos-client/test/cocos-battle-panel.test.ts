@@ -2,126 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildBattlePanelSections } from "../assets/scripts/cocos-battle-panel-model";
 import { resolveBattlePanelUnitVisual } from "../assets/scripts/cocos-battle-unit-visuals";
-import type { SessionUpdate, TerrainType } from "../assets/scripts/VeilCocosSession";
-
-function createTile(position: { x: number; y: number }, terrain: TerrainType = "grass") {
-  return {
-    position,
-    fog: "visible" as const,
-    terrain,
-    walkable: true,
-    resource: undefined,
-    occupant: undefined,
-    building: undefined
-  };
-}
+import { VeilBattlePanel } from "../assets/scripts/VeilBattlePanel";
+import type { SessionUpdate } from "../assets/scripts/VeilCocosSession";
+import {
+  createBattlePanelState,
+  createBattleUpdate as createBattleUpdateFixture,
+  createComponentHarness
+} from "./helpers/cocos-panel-harness.ts";
 
 function createBattleUpdate(): SessionUpdate {
-  return {
-    world: {
-      meta: {
-        roomId: "room-alpha",
-        seed: 1001,
-        day: 1
-      },
-      map: {
-        width: 2,
-        height: 2,
-        tiles: [createTile({ x: 0, y: 0 }, "grass"), createTile({ x: 1, y: 1 }, "sand")]
-      },
-      ownHeroes: [
-        {
-          id: "hero-1",
-          playerId: "player-1",
-          name: "Katherine",
-          position: { x: 1, y: 1 },
-          vision: 4,
-          move: { total: 6, remaining: 6 },
-          stats: {
-            attack: 2,
-            defense: 2,
-            power: 1,
-            knowledge: 1,
-            hp: 30,
-            maxHp: 30
-          },
-          progression: {
-            level: 1,
-            experience: 0,
-            skillPoints: 0,
-            battlesWon: 0,
-            neutralBattlesWon: 0,
-            pvpBattlesWon: 0
-          },
-          armyCount: 12,
-          armyTemplateId: "hero_guard_basic",
-          learnedSkills: []
-        }
-      ],
-      visibleHeroes: [],
-      resources: {
-        gold: 0,
-        wood: 0,
-        ore: 0
-      },
-      playerId: "player-1"
-    },
-    battle: {
-      id: "battle-1",
-      round: 2,
-      lanes: 1,
-      activeUnitId: "hero-1-stack",
-      turnOrder: ["hero-1-stack", "neutral-1-stack"],
-      units: {
-        "hero-1-stack": {
-          id: "hero-1-stack",
-          templateId: "hero_guard_basic",
-          camp: "attacker",
-          lane: 0,
-          stackName: "Guard",
-          initiative: 7,
-          attack: 4,
-          defense: 4,
-          minDamage: 1,
-          maxDamage: 2,
-          count: 12,
-          currentHp: 10,
-          maxHp: 10,
-          hasRetaliated: false,
-          defending: false,
-          skills: [],
-          statusEffects: []
-        },
-        "neutral-1-stack": {
-          id: "neutral-1-stack",
-          templateId: "orc_warrior",
-          camp: "defender",
-          lane: 0,
-          stackName: "Orc",
-          initiative: 5,
-          attack: 3,
-          defense: 3,
-          minDamage: 1,
-          maxDamage: 3,
-          count: 8,
-          currentHp: 9,
-          maxHp: 9,
-          hasRetaliated: true,
-          defending: false,
-          skills: [],
-          statusEffects: []
-        }
-      },
-      environment: [],
-      log: [],
-      rng: { seed: 1, cursor: 0 },
-      worldHeroId: "hero-1",
-      neutralArmyId: "neutral-1"
-    },
-    events: [],
-    movementPlan: null,
-    reachableTiles: []
-  };
+  return createBattleUpdateFixture();
 }
 
 test("buildBattlePanelSections groups ally, enemy and queue rows from a battle state", () => {
@@ -183,4 +73,37 @@ test("battle panel actions disable when it is not the controlled camp's turn", (
 test("battle unit visuals switch to the selected portrait variant for the chosen target", () => {
   assert.equal(resolveBattlePanelUnitVisual("orc_warrior", { selected: false }).portraitState, "idle");
   assert.equal(resolveBattlePanelUnitVisual("orc_warrior", { selected: true }).portraitState, "selected");
+});
+
+test("VeilBattlePanel renders an idle placeholder when no battle payload is present", () => {
+  const { component } = createComponentHarness(VeilBattlePanel, { name: "BattlePanelRoot", width: 272, height: 400 });
+
+  component.configure({});
+  component.render(createBattlePanelState({ update: { ...createBattleUpdate(), battle: null } }));
+
+  const statefulComponent = component as VeilBattlePanel & Record<string, unknown>;
+
+  assert.equal((statefulComponent.titleLabel as { string: string } | null)?.string, "战斗面板");
+  assert.match(String((statefulComponent.summaryLabel as { string: string } | null)?.string ?? ""), /当前没有战斗/);
+  assert.equal(statefulComponent.stageBanner, null);
+  component.onDestroy();
+});
+
+test("VeilBattlePanel rerenders from an active turn into a pending-resolution state", () => {
+  const { component } = createComponentHarness(VeilBattlePanel, { name: "BattlePanelRoot", width: 272, height: 520 });
+
+  component.configure({});
+  component.render(createBattlePanelState());
+
+  const statefulComponent = component as VeilBattlePanel & Record<string, unknown>;
+  const stageBanner = statefulComponent.stageBanner as { title: { string: string } } | null;
+  const summaryBefore = String((statefulComponent.summaryLabel as { string: string } | null)?.string ?? "");
+
+  assert.match(String(stageBanner?.title.string ?? ""), /中立遭遇/);
+  assert.match(summaryBefore, /阶段：轮到我方/);
+
+  component.render(createBattlePanelState({ actionPending: true }));
+
+  assert.match(String((statefulComponent.summaryLabel as { string: string } | null)?.string ?? ""), /阶段：正在结算行动/);
+  component.onDestroy();
 });
