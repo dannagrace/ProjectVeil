@@ -56,6 +56,25 @@ jobs:
       - name: Test With V8 Coverage
         run: npm run test:coverage:ci
 
+      - name: Capture runtime regression artifact
+        if: always()
+        run: |
+          node --import tsx ./scripts/stress-concurrent-rooms.ts \
+            --rooms=48 \
+            --connect-concurrency=12 \
+            --action-concurrency=12 \
+            --sample-interval-ms=100 \
+            --reconnect-pause-ms=150 \
+            --artifact-path "${RUNNER_TEMP}/release-readiness/stress-rooms-runtime-metrics-${GITHUB_SHA}.json"
+
+      - name: Compare runtime regression against baseline
+        if: always()
+        run: |
+          node --import tsx ./scripts/compare-runtime-regression.ts \
+            --baseline ./configs/runtime-regression-baseline.json \
+            --artifact "${RUNNER_TEMP}/release-readiness/stress-rooms-runtime-metrics-${GITHUB_SHA}.json" \
+            --output "${RUNNER_TEMP}/release-readiness/runtime-regression-report-${GITHUB_SHA}.json"
+
       - name: Publish coverage summary
         if: always()
         run: |
@@ -77,6 +96,14 @@ jobs:
         with:
           name: content-pack-validation-${{ github.sha }}
           path: ${{ runner.temp }}/content-pack-validation-report.json
+          if-no-files-found: error
+
+      - name: Upload runtime regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-regression-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness
           if-no-files-found: error
 
   wechat-build-validation:
@@ -164,6 +191,91 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: client-release-candidate-smoke-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness
+          if-no-files-found: error
+
+  publish-release-signal-trend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - validate
+      - wechat-build-validation
+      - client-release-candidate-smoke
+    if: always()
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Download runtime regression artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-regression-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-regression
+
+      - name: Download packaged client RC smoke artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: client-release-candidate-smoke-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness
+
+      - name: Download WeChat release artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: wechat-release-${{ github.sha }}
+          path: ${{ runner.temp }}/wechat-release
+
+      - name: Build release gate summary artifact
+        continue-on-error: true
+        run: |
+          args=(
+            --output "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json"
+            --markdown-output "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.md"
+          )
+          if [[ -f "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json" ]]; then
+            args+=(--h5-smoke "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json")
+          fi
+          if [[ -d "${RUNNER_TEMP}/wechat-release" ]]; then
+            args+=(--wechat-artifacts-dir "${RUNNER_TEMP}/wechat-release")
+          fi
+          npm run release:gate:summary -- "${args[@]}"
+
+      - name: Publish trend summary
+        run: |
+          args=(
+            --output "${RUNNER_TEMP}/release-readiness/ci-trend-summary-${GITHUB_SHA}.json"
+            --markdown-output "${RUNNER_TEMP}/release-readiness/ci-trend-summary-${GITHUB_SHA}.md"
+            --github-step-summary "${GITHUB_STEP_SUMMARY}"
+          )
+          if [[ -f "${RUNNER_TEMP}/runtime-regression/runtime-regression-report-${GITHUB_SHA}.json" ]]; then
+            args+=(--runtime-report "${RUNNER_TEMP}/runtime-regression/runtime-regression-report-${GITHUB_SHA}.json")
+          fi
+          if [[ -f "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json" ]]; then
+            args+=(--release-gate-report "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json")
+          fi
+          if [[ ${#args[@]} -le 3 ]]; then
+            echo "No current runtime or release-gate report was available to summarize." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          npm run ci:trend-summary -- "${args[@]}"
+
+      - name: Upload release signal trend artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-trend-summary-${{ github.sha }}
           path: ${{ runner.temp }}/release-readiness
           if-no-files-found: error
 
