@@ -1,7 +1,6 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Sprite, UIOpacity, UITransform } from "cc";
 import {
   createHeroAttributeBreakdown,
-  createHeroEquipmentLoadoutView,
   createHeroProgressMeterView,
   type EquipmentType,
   getLatestUnlockedAchievement
@@ -21,6 +20,7 @@ import {
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import {
   buildHeroEquipmentActionRows,
+  formatEquipmentOverviewLines,
   formatInventorySummaryLines,
   formatRecentLootLines
 } from "./cocos-hero-equipment.ts";
@@ -155,19 +155,12 @@ function formatHeroEquipmentLines(
     return ["装备 等待房间状态...", ""];
   }
 
-  const loadout = createHeroEquipmentLoadoutView(toHeroSkillState(hero));
-  const equipped = loadout.slots.map((slot) => `${slot.label} ${slot.itemName}`);
-  const detail = loadout.slots
-    .filter((slot) => slot.itemId && slot.item)
-    .map((slot) => `${slot.label} ${slot.bonusSummary}`);
-  const effectLine = loadout.summary.specialEffects.map((effect) => effect.name).join(" / ");
+  const equipmentLines = formatEquipmentOverviewLines(hero);
   const inventoryLines = formatInventorySummaryLines(hero);
   const lootLines = formatRecentLootLines(recentEventLog, hero.id);
 
   return [
-    `装备 ${equipped.join("  ·  ")}`,
-    detail.length > 0 ? detail.join("  ·  ") : "装备效果 等待拾取或替换",
-    ...(effectLine ? [`特效 ${effectLine}`] : []),
+    ...equipmentLines,
     ...inventoryLines,
     ...lootLines
   ];
@@ -349,6 +342,11 @@ export class VeilHudPanel extends Component {
     const equipmentLines = formatHeroEquipmentLines(hero, state.account.recentEventLog);
     const equipmentRows = buildHeroEquipmentActionRows(hero);
     const equipmentButtons = this.buildEquipmentButtonStates(equipmentRows);
+    const equipmentLineCount = (hero ? 1 + equipmentLines.length : 3);
+    const equipmentCardHeight = Math.max(
+      156,
+      50 + equipmentLineCount * 16 + (equipmentButtons.length > 0 ? Math.ceil(equipmentButtons.length / 2) * 24 : 0)
+    );
     const latestBattleReport = summarizeLatestBattleReplay(state.account.recentBattleReplays);
     const reachableAhead =
       state.update?.reachableTiles.filter((tile) => !hero || tile.x !== hero.position.x || tile.y !== hero.position.y).length ?? 0;
@@ -441,7 +439,7 @@ export class VeilHudPanel extends Component {
       cardWidth,
       leftX,
       6,
-      Math.max(124, 76 + (equipmentButtons.length > 0 ? Math.ceil(equipmentButtons.length / 2) * 24 : 0))
+      equipmentCardHeight
     );
 
     cursorY = this.renderCardBlock(
