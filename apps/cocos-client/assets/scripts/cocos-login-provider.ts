@@ -120,7 +120,7 @@ export function resolveCocosLoginRuntimeConfig(
       exchangePath:
         normalizeString(runtimeWechat?.exchangePath) ??
         normalizeString(env.VEIL_WECHAT_MINIGAME_LOGIN_EXCHANGE_PATH) ??
-        "/api/auth/wechat-mini-game-login",
+        "/api/auth/wechat-login",
       ...(normalizeString(runtimeWechat?.mockCode) ?? normalizeString(env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE)
         ? {
             mockCode:
@@ -160,8 +160,8 @@ export function resolveCocosLoginProviders(input: {
   const canUseMockCode = Boolean(input.config.wechatMiniGame.mockCode);
   providers.push({
     id: "wechat-mini-game",
-    label: "微信登录并进入",
-    available: hasWechatRuntime && input.config.wechatMiniGame.enabled && (hasWechatLoginApi || canUseMockCode),
+    label: "微信登录",
+    available: hasWechatRuntime && input.config.wechatMiniGame.enabled && hasWechatLoginApi,
     message: !hasWechatRuntime
       ? "仅在微信小游戏运行时暴露。"
       : !input.config.wechatMiniGame.enabled
@@ -169,8 +169,8 @@ export function resolveCocosLoginProviders(input: {
         : hasWechatLoginApi
           ? "将尝试调用 wx.login()，再把 code 交给服务端交换会话。"
           : canUseMockCode
-            ? "当前没有原生 wx.login()，将退化成配置中的 mock code 交换。"
-            : "当前小游戏壳没有暴露 wx.login()，且也未配置 mock code。"
+            ? "当前小游戏壳没有暴露 wx.login()，因此入口保持隐藏；开发联调可继续用 mock code 直调接口。"
+            : "当前小游戏壳没有暴露 wx.login()。"
   });
 
   return providers;

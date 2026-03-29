@@ -124,6 +124,8 @@ interface PlayerAccountRow extends RowDataPacket {
   refresh_session_id: string | null;
   refresh_token_hash: string | null;
   refresh_token_expires_at: Date | string | null;
+  wechat_open_id: string | null;
+  wechat_union_id: string | null;
   wechat_mini_game_open_id: string | null;
   wechat_mini_game_union_id: string | null;
   wechat_mini_game_bound_at: Date | string | null;
@@ -325,6 +327,7 @@ export const MYSQL_PLAYER_ACCOUNT_TABLE = "player_accounts";
 export const MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX = "idx_player_accounts_updated_at";
 export const MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX = "uidx_player_accounts_login_id";
 export const MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX = "uidx_player_accounts_wechat_open_id";
+export const MYSQL_PLAYER_ACCOUNT_WECHAT_IDP_OPEN_ID_INDEX = "uidx_player_accounts_wechat_idp_open_id";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_TABLE = "player_account_sessions";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX = "idx_player_account_sessions_player_last_used";
 export const MYSQL_PLAYER_EVENT_HISTORY_TABLE = "player_event_history";
@@ -782,6 +785,8 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   last_room_id VARCHAR(191) NULL,
   last_seen_at DATETIME NULL DEFAULT NULL,
   login_id VARCHAR(40) NULL,
+  wechat_open_id VARCHAR(191) NULL,
+  wechat_union_id VARCHAR(191) NULL,
   wechat_mini_game_open_id VARCHAR(191) NULL,
   wechat_mini_game_union_id VARCHAR(191) NULL,
   wechat_mini_game_bound_at DATETIME NULL DEFAULT NULL,
@@ -1018,6 +1023,42 @@ PREPARE veil_player_accounts_password_hash_stmt FROM @veil_player_accounts_passw
 EXECUTE veil_player_accounts_password_hash_stmt;
 DEALLOCATE PREPARE veil_player_accounts_password_hash_stmt;
 
+SET @veil_player_accounts_wechat_idp_open_id_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'wechat_open_id'
+);
+
+SET @veil_player_accounts_wechat_idp_open_id_sql := IF(
+  @veil_player_accounts_wechat_idp_open_id_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`wechat_open_id\` VARCHAR(191) NULL AFTER \`password_hash\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_wechat_idp_open_id_stmt FROM @veil_player_accounts_wechat_idp_open_id_sql;
+EXECUTE veil_player_accounts_wechat_idp_open_id_stmt;
+DEALLOCATE PREPARE veil_player_accounts_wechat_idp_open_id_stmt;
+
+SET @veil_player_accounts_wechat_idp_union_id_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'wechat_union_id'
+);
+
+SET @veil_player_accounts_wechat_idp_union_id_sql := IF(
+  @veil_player_accounts_wechat_idp_union_id_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`wechat_union_id\` VARCHAR(191) NULL AFTER \`wechat_open_id\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_wechat_idp_union_id_stmt FROM @veil_player_accounts_wechat_idp_union_id_sql;
+EXECUTE veil_player_accounts_wechat_idp_union_id_stmt;
+DEALLOCATE PREPARE veil_player_accounts_wechat_idp_union_id_stmt;
+
 SET @veil_player_accounts_wechat_open_id_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.COLUMNS
@@ -1143,6 +1184,24 @@ SET @veil_player_accounts_wechat_open_id_idx_sql := IF(
 PREPARE veil_player_accounts_wechat_open_id_idx_stmt FROM @veil_player_accounts_wechat_open_id_idx_sql;
 EXECUTE veil_player_accounts_wechat_open_id_idx_stmt;
 DEALLOCATE PREPARE veil_player_accounts_wechat_open_id_idx_stmt;
+
+SET @veil_player_accounts_wechat_idp_open_id_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_ACCOUNT_WECHAT_IDP_OPEN_ID_INDEX}'
+);
+
+SET @veil_player_accounts_wechat_idp_open_id_idx_sql := IF(
+  @veil_player_accounts_wechat_idp_open_id_idx_exists = 0,
+  'CREATE UNIQUE INDEX \`${MYSQL_PLAYER_ACCOUNT_WECHAT_IDP_OPEN_ID_INDEX}\` ON \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (wechat_open_id)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_wechat_idp_open_id_idx_stmt FROM @veil_player_accounts_wechat_idp_open_id_idx_sql;
+EXECUTE veil_player_accounts_wechat_idp_open_id_idx_stmt;
+DEALLOCATE PREPARE veil_player_accounts_wechat_idp_open_id_idx_stmt;
 
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
@@ -1340,6 +1399,8 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
   const credentialBoundAt = formatTimestamp(row.credential_bound_at);
   const createdAt = formatTimestamp(row.created_at);
   const updatedAt = formatTimestamp(row.updated_at);
+  const wechatOpenId = row.wechat_open_id ?? row.wechat_mini_game_open_id;
+  const wechatUnionId = row.wechat_union_id ?? row.wechat_mini_game_union_id;
 
   return normalizePlayerAccountSnapshot({
     playerId: row.player_id,
@@ -1364,8 +1425,8 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(row.account_session_version > 0 ? { accountSessionVersion: row.account_session_version } : {}),
     ...(row.refresh_session_id ? { refreshSessionId: row.refresh_session_id } : {}),
     ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}),
-    ...(row.wechat_mini_game_open_id ? { wechatMiniGameOpenId: row.wechat_mini_game_open_id } : {}),
-    ...(row.wechat_mini_game_union_id ? { wechatMiniGameUnionId: row.wechat_mini_game_union_id } : {}),
+    ...(wechatOpenId ? { wechatMiniGameOpenId: wechatOpenId } : {}),
+    ...(wechatUnionId ? { wechatMiniGameUnionId: wechatUnionId } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {}),
     ...(wechatMiniGameBoundAt ? { wechatMiniGameBoundAt } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
@@ -1676,6 +1737,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          refresh_session_id,
          refresh_token_hash,
          refresh_token_expires_at,
+         wechat_open_id,
+         wechat_union_id,
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
@@ -1711,6 +1774,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          refresh_session_id,
          refresh_token_hash,
          refresh_token_expires_at,
+         wechat_open_id,
+         wechat_union_id,
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
@@ -1718,9 +1783,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
-       WHERE wechat_mini_game_open_id = ?
+       WHERE wechat_open_id = ?
+          OR wechat_mini_game_open_id = ?
        LIMIT 1`,
-      [normalizedOpenId]
+      [normalizedOpenId, normalizedOpenId]
     );
 
     const row = rows[0];
@@ -1829,6 +1895,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          refresh_session_id,
          refresh_token_hash,
          refresh_token_expires_at,
+         wechat_open_id,
+         wechat_union_id,
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
@@ -2192,6 +2260,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
          SET display_name = COALESCE(?, display_name),
              avatar_url = COALESCE(?, avatar_url),
+             wechat_open_id = ?,
+             wechat_union_id = COALESCE(?, wechat_union_id),
              wechat_mini_game_open_id = ?,
              wechat_mini_game_union_id = COALESCE(?, wechat_mini_game_union_id),
              wechat_mini_game_bound_at = COALESCE(wechat_mini_game_bound_at, ?),
@@ -2200,6 +2270,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         [
           displayName,
           normalizedAvatarUrl ?? null,
+          normalizedOpenId,
+          normalizedUnionId ?? null,
           normalizedOpenId,
           normalizedUnionId ?? null,
           new Date(boundAt),
@@ -2406,6 +2478,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         wechat_open_id,
+         wechat_union_id,
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,

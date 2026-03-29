@@ -175,7 +175,7 @@ export async function startDevServer(
   deps.logger.log(`Config viewer available at http://${host}:${port}/config-viewer`);
   deps.logger.log(`Player account API available at http://${host}:${port}/api/player-accounts`);
   deps.logger.log(`Guest auth API available at http://${host}:${port}/api/auth/guest-login`);
-  deps.logger.log(`WeChat mini game auth scaffold available at http://${host}:${port}/api/auth/wechat-mini-game-login`);
+  deps.logger.log(`WeChat auth API available at http://${host}:${port}/api/auth/wechat-login`);
   deps.logger.log(`Lobby API available at http://${host}:${port}/api/lobby/rooms`);
   deps.logger.log(`Matchmaking API available at http://${host}:${port}/api/matchmaking/status`);
   deps.logger.log(`Runtime health available at http://${host}:${port}/api/runtime/health`);

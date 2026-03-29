@@ -1105,7 +1105,7 @@ export async function loginCocosWechatAuthSession(
     ...(options?.timeoutMs != null ? { timeoutMs: options.timeoutMs } : {}),
     ...(options?.mockCode ? { mockCode: options.mockCode } : {})
   });
-  const exchangePath = options?.exchangePath?.trim() || "/api/auth/wechat-mini-game-login";
+  const exchangePath = options?.exchangePath?.trim() || "/api/auth/wechat-login";
 
   const payload = (await fetchJson(
     `${resolveCocosApiBaseUrl(remoteUrl)}${exchangePath.startsWith("/") ? exchangePath : `/${exchangePath}`}`,

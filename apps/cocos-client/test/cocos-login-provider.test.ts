@@ -22,7 +22,7 @@ test("resolveCocosLoginRuntimeConfig reads runtime overrides and keeps the defau
       wechatMiniGame: {
         enabled: true,
         appId: "wx123",
-        exchangePath: "/api/auth/wechat-mini-game-login",
+        exchangePath: "/api/auth/wechat-login",
         mockCode: "wx-dev-code"
       }
     }
@@ -36,7 +36,7 @@ test("resolveCocosLoginProviders promotes wechat login in mini game runtime when
     config: {
       wechatMiniGame: {
         enabled: true,
-        exchangePath: "/api/auth/wechat-mini-game-login"
+        exchangePath: "/api/auth/wechat-login"
       }
     },
     wx: {
@@ -67,7 +67,7 @@ test("loginWithCocosProvider sends wx.login code to the scaffold exchange endpoi
       config: {
         wechatMiniGame: {
           enabled: true,
-          exchangePath: "/api/auth/wechat-mini-game-login"
+          exchangePath: "/api/auth/wechat-login"
         }
       },
       fetchImpl: async (input, init) => {
@@ -94,7 +94,7 @@ test("loginWithCocosProvider sends wx.login code to the scaffold exchange endpoi
     }
   );
 
-  assert.equal(requestedUrl, "http://127.0.0.1:2567/api/auth/wechat-mini-game-login");
+  assert.equal(requestedUrl, "http://127.0.0.1:2567/api/auth/wechat-login");
   assert.match(requestedBody, /"code":"wx-code-123"/);
   assert.deepEqual(session, {
     token: "wechat.token",
@@ -106,40 +106,20 @@ test("loginWithCocosProvider sends wx.login code to the scaffold exchange endpoi
   });
 });
 
-test("loginWithCocosProvider falls back to configured mock code when wx.login is unavailable", async () => {
-  let requestedBody = "";
-  await loginWithCocosProvider(
-    "http://127.0.0.1:2567",
-    {
-      provider: "wechat-mini-game",
-      playerId: "guest-mini",
-      displayName: "雾海旅人"
-    },
-    {
-      config: {
-        wechatMiniGame: {
-          enabled: true,
-          exchangePath: "/api/auth/wechat-mini-game-login",
-          mockCode: "wx-dev-code"
-        }
-      },
-      fetchImpl: async (_input, init) => {
-        requestedBody = String(init?.body ?? "");
-        return new Response(
-          JSON.stringify({
-            session: {
-              token: "wechat.token",
-              playerId: "guest-mini",
-              displayName: "雾海旅人",
-              authMode: "guest",
-              provider: "wechat-mini-game"
-            }
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        );
+test("resolveCocosLoginProviders hides wechat login when wx.login is unavailable", () => {
+  const providers = resolveCocosLoginProviders({
+    platform: "wechat-game",
+    capabilities: resolveCocosRuntimeCapabilities("wechat-game"),
+    config: {
+      wechatMiniGame: {
+        enabled: true,
+        exchangePath: "/api/auth/wechat-login",
+        mockCode: "wx-dev-code"
       }
-    }
-  );
+    },
+    wx: {}
+  });
 
-  assert.match(requestedBody, /"code":"wx-dev-code"/);
+  assert.equal(providers.find((provider) => provider.id === "wechat-mini-game")?.available, false);
+  assert.equal(providers.find((provider) => provider.id === "wechat-mini-game")?.label, "微信登录");
 });
