@@ -71,7 +71,7 @@ test("players can reload during PvP settlement and recover the settled world sta
         settlementRoomState: "房间已回到地图探索阶段",
         settlementNextAction: "仍可继续移动",
         hpPattern: /HP 30\/30/,
-        opponentSummaryIncludes: ["最近对手", `遭遇会话：${roomId}/battle-`]
+        opponentSummaryIncludes: ["\u6700\u8fd1\u5bf9\u624b", `遭遇会话：${roomId}/battle-`]
       });
       await expectRecoveredBattleSettlement(playerTwoPage, {
         phase: "已结算",
