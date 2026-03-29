@@ -31,6 +31,17 @@ interface LinkedEvidenceRef {
   sourceRevision?: string;
 }
 
+interface ReleaseReadinessSnapshotCheck {
+  id: string;
+  kind?: "automated" | "manual";
+  required?: boolean;
+  status?: "passed" | "failed" | "pending" | "not_applicable";
+}
+
+interface ReleaseReadinessSnapshot {
+  checks?: ReleaseReadinessSnapshotCheck[];
+}
+
 interface CanonicalEvidenceField {
   id: CanonicalEvidenceId;
   label: string;
@@ -491,6 +502,22 @@ function assertSnapshotResult(value: unknown): SnapshotResult {
   fail(`execution.overallStatus has unsupported value: ${String(value)}`);
 }
 
+function validateLinkedReleaseReadinessSnapshot(snapshotRef: LinkedEvidenceRef | undefined): void {
+  if (!snapshotRef) {
+    return;
+  }
+
+  const readinessSnapshot = readJsonFile<ReleaseReadinessSnapshot>(snapshotRef.path);
+  const pendingRequiredManualChecks = (readinessSnapshot.checks ?? []).filter(
+    (check) => check.kind === "manual" && check.required === true && check.status === "pending"
+  );
+  if (pendingRequiredManualChecks.length > 0) {
+    fail(
+      `Linked release readiness snapshot still has pending required manual checks: ${pendingRequiredManualChecks.map((check) => check.id).join(", ")}.`
+    );
+  }
+}
+
 function validateSnapshot(snapshot: CocosReleaseCandidateSnapshot): void {
   if (snapshot.schemaVersion !== 1) {
     fail(`Snapshot schemaVersion must be 1, received ${JSON.stringify(snapshot.schemaVersion)}.`);
@@ -548,6 +575,8 @@ function validateSnapshot(snapshot: CocosReleaseCandidateSnapshot): void {
       fail(`Missing required evidence field: ${requiredId}`);
     }
   }
+
+  validateLinkedReleaseReadinessSnapshot(snapshot.linkedEvidence.releaseReadinessSnapshot);
 }
 
 function main(): void {
