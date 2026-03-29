@@ -5,86 +5,15 @@ import {
   moveMapBoardKeyboardCursor,
   resolveMapBoardFeedbackLabel
 } from "../assets/scripts/cocos-map-board-model";
-import type { PlayerTileView, SessionUpdate } from "../assets/scripts/VeilCocosSession";
-
-function createTile(
-  position: { x: number; y: number },
-  overrides: Partial<PlayerTileView> = {}
-): PlayerTileView {
-  return {
-    position,
-    fog: "visible",
-    terrain: "grass",
-    walkable: true,
-    resource: undefined,
-    occupant: undefined,
-    building: undefined,
-    ...overrides
-  };
-}
+import { VeilMapBoard } from "../assets/scripts/VeilMapBoard";
+import type { SessionUpdate } from "../assets/scripts/VeilCocosSession";
+import {
+  createComponentHarness,
+  createWorldUpdate
+} from "./helpers/cocos-panel-harness.ts";
 
 function createBaseUpdate(): SessionUpdate {
-  return {
-    world: {
-      meta: {
-        roomId: "room-alpha",
-        seed: 1001,
-        day: 1
-      },
-      map: {
-        width: 3,
-        height: 3,
-        tiles: [
-          createTile({ x: 0, y: 0 }, { fog: "explored" }),
-          createTile({ x: 1, y: 1 }, { resource: { kind: "wood", amount: 5 } }),
-          createTile({ x: 2, y: 2 })
-        ]
-      },
-      ownHeroes: [
-        {
-          id: "hero-1",
-          playerId: "player-1",
-          name: "Katherine",
-          position: { x: 1, y: 1 },
-          vision: 4,
-          move: {
-            total: 6,
-            remaining: 4
-          },
-          stats: {
-            attack: 2,
-            defense: 2,
-            power: 1,
-            knowledge: 1,
-            hp: 30,
-            maxHp: 30
-          },
-          progression: {
-            level: 2,
-            experience: 40,
-            skillPoints: 1,
-            battlesWon: 1,
-            neutralBattlesWon: 1,
-            pvpBattlesWon: 0
-          },
-          armyCount: 11,
-          armyTemplateId: "hero_guard_basic",
-          learnedSkills: []
-        }
-      ],
-      visibleHeroes: [],
-      resources: {
-        gold: 0,
-        wood: 0,
-        ore: 0
-      },
-      playerId: "player-1"
-    },
-    battle: null,
-    events: [],
-    movementPlan: null,
-    reachableTiles: [{ x: 1, y: 1 }, { x: 2, y: 2 }]
-  };
+  return createWorldUpdate();
 }
 
 test("buildTileViewModel exposes interactable, reachable and fog flags from the world snapshot", () => {
@@ -176,4 +105,54 @@ test("resolveMapBoardFeedbackLabel maps move, resource, battle-start and battle-
     ),
     "VICTORY"
   );
+});
+
+test("VeilMapBoard renders a waiting empty state when no world snapshot is available", () => {
+  const { component } = createComponentHarness(VeilMapBoard, { name: "MapBoardRoot", width: 300, height: 300 });
+
+  component.configure({ tileSize: 48 });
+  component.render(null);
+
+  const statefulComponent = component as VeilMapBoard & Record<string, unknown>;
+
+  assert.match(String((statefulComponent.emptyStateLabel as { string: string } | null)?.string ?? ""), /等待房间状态/);
+  assert.equal((statefulComponent.inputOverlayNode as { active: boolean } | null)?.active, undefined);
+  assert.equal((statefulComponent.heroNode as { active: boolean } | null)?.active, false);
+  component.onDestroy();
+});
+
+test("VeilMapBoard renders live tiles and forwards tile presses without double-selecting the same tap burst", () => {
+  const selections: string[] = [];
+  const debugMessages: string[] = [];
+  const update = createBaseUpdate();
+  const { component } = createComponentHarness(VeilMapBoard, { name: "MapBoardRoot", width: 300, height: 300 });
+
+  component.configure({
+    tileSize: 48,
+    onTileSelected: (tile) => {
+      selections.push(`${tile.position.x}-${tile.position.y}`);
+    },
+    onInputDebug: (message) => {
+      debugMessages.push(message);
+    }
+  });
+  component.render(null);
+  component.render(update);
+
+  const statefulComponent = component as VeilMapBoard & Record<string, unknown>;
+  const tileNodes = statefulComponent.tileNodes as Map<string, unknown>;
+
+  assert.equal((statefulComponent.emptyStateNode as { active: boolean } | null)?.active, false);
+  assert.equal((statefulComponent.heroNode as { active: boolean } | null)?.active, true);
+  assert.ok(tileNodes.has("2-2"));
+  assert.equal((statefulComponent.objectNodes as Map<string, unknown>).size, 0);
+
+  const targetTile = update.world.map.tiles.find((entry) => entry.position.x === 2 && entry.position.y === 2) ?? null;
+  assert.ok(targetTile);
+  (statefulComponent.selectTile as (tile: typeof targetTile) => void)(targetTile);
+  (statefulComponent.selectTile as (tile: typeof targetTile) => void)(targetTile);
+
+  assert.deepEqual(selections, ["2-2"]);
+  assert.match(debugMessages.join("\n"), /selected tile \(2,2\)/);
+  component.onDestroy();
 });
