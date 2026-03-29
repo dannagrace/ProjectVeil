@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildRuntimeDiagnosticsTriageView,
   buildRuntimeDiagnosticsSummaryLines,
+  getRuntimeDiagnosticsLastSyncAgeMs,
   renderRuntimeDiagnosticsSnapshotText,
   type RuntimeDiagnosticsSnapshot
 } from "../src/index";
@@ -182,4 +184,31 @@ test("runtime diagnostics summary text supports aggregate server snapshots", () 
     "Auth guest=1 / account=2 / queue=1 / deadLetters=0",
     "Room summary room-alpha / day 3 / players 2 / heroes 2 / battles 1"
   ]);
+});
+
+test("runtime diagnostics triage view highlights stale sync and missing hero state", () => {
+  const snapshot = createRuntimeDiagnosticsSnapshot();
+  snapshot.world!.hero = null;
+  snapshot.room!.lastUpdateAt = "2026-03-29T07:08:30.000Z";
+
+  const ageMs = getRuntimeDiagnosticsLastSyncAgeMs(snapshot, "2026-03-29T07:09:10.000Z");
+  assert.equal(ageMs, 40_000);
+
+  const triage = buildRuntimeDiagnosticsTriageView(snapshot, "2026-03-29T07:09:10.000Z");
+  assert.deepEqual(
+    triage.alerts.map((alert) => alert.label),
+    ["同步滞后", "可控英雄缺失", "待处理 UI 任务", "恢复链路"]
+  );
+  assert.equal(triage.sections[0]?.id, "room");
+  assert.equal(triage.sections[4]?.id, "sync");
+  assert.deepEqual(triage.sections[4]?.items[0], {
+    label: "最后同步年龄",
+    value: "40s",
+    tone: "danger"
+  });
+  assert.deepEqual(triage.sections[2]?.items[0], {
+    label: "主控英雄",
+    value: "缺失",
+    tone: "warning"
+  });
 });
