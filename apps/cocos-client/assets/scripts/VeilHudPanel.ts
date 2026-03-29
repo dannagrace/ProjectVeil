@@ -5,9 +5,6 @@ import {
   type EquipmentType,
   getLatestUnlockedAchievement
 } from "./project-shared/index.ts";
-import { createHeroSkillTreeView } from "./project-shared/hero-skills.ts";
-import type { BattleSkillId, HeroState } from "./project-shared/models.ts";
-import { getDefaultBattleSkillCatalog } from "./project-shared/world-config.ts";
 import type { SessionUpdate } from "./VeilCocosSession.ts";
 import type { CocosPlayerAccountProfile } from "./cocos-lobby.ts";
 import { getPixelSpriteAssets, loadPixelSpriteAssets, type PixelSpriteLoadStatus } from "./cocos-pixel-sprites.ts";
@@ -30,6 +27,11 @@ import {
   formatPresentationReadinessSummary,
   type CocosPresentationReadiness
 } from "./cocos-presentation-readiness.ts";
+import {
+  buildCocosHudSkillPanelView,
+  toHudHeroSkillState,
+  type CocosHudSkillPanelAction
+} from "./cocos-hud-skill-panel.ts";
 
 const { ccclass } = _decorator;
 const H_ALIGN_LEFT = 0;
@@ -64,14 +66,6 @@ const SKILL_BUTTON_PREFIX = "HudSkillButton";
 const EQUIPMENT_BUTTON_PREFIX = "HudEquipButton";
 const ACHIEVEMENT_NOTICE_NODE_NAME = "HudAchievementNotice";
 
-interface HudLearnableSkillState {
-  id: string;
-  name: string;
-  branchName: string;
-  nextRank: number | null;
-  grantedBattleSkillLabels: string[];
-}
-
 interface HudActionButtonState {
   name: string;
   label: string;
@@ -83,59 +77,6 @@ interface HudEquipmentButtonState {
   label: string;
   tone: "equip" | "unequip";
   callback: (() => void) | null;
-}
-
-const battleSkillNameById = new Map<BattleSkillId, string>(
-  getDefaultBattleSkillCatalog().skills.map((skill) => [skill.id, skill.name])
-);
-
-function toHeroSkillState(
-  hero: NonNullable<VeilHudRenderState["update"]>["world"]["ownHeroes"][number]
-): HeroState {
-  return {
-    id: hero.id,
-    playerId: hero.playerId,
-    name: hero.name,
-    position: { ...hero.position },
-    vision: hero.vision,
-    move: { ...hero.move },
-    stats: { ...hero.stats },
-    progression: { ...hero.progression },
-    loadout: {
-      learnedSkills: hero.loadout.learnedSkills.map((skill) => ({ ...skill })),
-      equipment: {
-        ...hero.loadout.equipment,
-        trinketIds: [...hero.loadout.equipment.trinketIds]
-      },
-      inventory: [...hero.loadout.inventory]
-    },
-    armyTemplateId: hero.armyTemplateId,
-    armyCount: hero.armyCount,
-    learnedSkills: hero.learnedSkills.map((skill) => ({ ...skill }))
-  };
-}
-
-function listLearnableHeroSkills(
-  hero: NonNullable<VeilHudRenderState["update"]>["world"]["ownHeroes"][number] | null
-): HudLearnableSkillState[] {
-  if (!hero) {
-    return [];
-  }
-
-  const tree = createHeroSkillTreeView(toHeroSkillState(hero));
-  return tree.branches.flatMap((branch) =>
-    branch.skills
-      .filter((skill) => skill.canLearn)
-      .map((skill) => ({
-        id: skill.id,
-        name: skill.name,
-        branchName: branch.name,
-        nextRank: skill.nextRank,
-        grantedBattleSkillLabels: skill.nextGrantedBattleSkillIds.map(
-          (battleSkillId) => battleSkillNameById.get(battleSkillId) ?? battleSkillId
-        )
-      }))
-  );
 }
 
 function formatHeroLearnedSkills(hero: NonNullable<VeilHudRenderState["update"]>["world"]["ownHeroes"][number] | null): string {
@@ -336,9 +277,9 @@ export class VeilHudPanel extends Component {
     const world = state.update?.world;
     const resources = world?.resources;
     const battle = state.update?.battle;
-    const learnableSkills = listLearnableHeroSkills(hero);
-    const progressMeter = hero ? createHeroProgressMeterView(toHeroSkillState(hero)) : null;
-    const attributeRows = hero ? createHeroAttributeBreakdown(toHeroSkillState(hero), world ?? undefined) : [];
+    const skillPanelView = buildCocosHudSkillPanelView(state.update, this.onLearnSkill);
+    const progressMeter = hero ? createHeroProgressMeterView({ progression: { ...hero.progression } }) : null;
+    const attributeRows = hero ? createHeroAttributeBreakdown(toHudHeroSkillState(hero), world ?? undefined) : [];
     const equipmentLines = formatHeroEquipmentLines(hero, state.account.recentEventLog);
     const equipmentRows = buildHeroEquipmentActionRows(hero);
     const equipmentButtons = this.buildEquipmentButtonStates(equipmentRows);
@@ -445,25 +386,14 @@ export class VeilHudPanel extends Component {
     cursorY = this.renderCardBlock(
       this.skillLabel,
       `${CARD_PREFIX}-skills`,
-      hero
-        ? learnableSkills.length > 0
-          ? [
-              `学习新技能  ${learnableSkills.length} 项`,
-              ...learnableSkills.map((skill) =>
-                `${skill.name}${skill.nextRank && skill.nextRank > 1 ? ` R${skill.nextRank}` : ""} · ${skill.branchName}${skill.grantedBattleSkillLabels.length > 0 ? ` · 解锁 ${skill.grantedBattleSkillLabels.join(" / ")}` : ""}`
-              )
-            ]
-          : hero.progression.skillPoints > 0
-            ? ["学习新技能", "当前没有满足等级或前置要求的技能。"]
-            : ["学习新技能", "英雄升级后获得技能点，可在这里学习新的战斗能力。"]
-        : ["学习新技能", "等待房间状态..."],
+      skillPanelView.lines,
       cursorY,
       12,
       16,
       cardWidth,
       leftX,
       6,
-      learnableSkills.length > 0 ? Math.max(96, 52 + learnableSkills.length * 30) : 76
+      skillPanelView.actions.length > 0 ? Math.max(96, 52 + skillPanelView.actions.length * 30) : 76
     );
 
     cursorY = this.renderCardBlock(
@@ -509,7 +439,7 @@ export class VeilHudPanel extends Component {
       this.renderHeroMeters(`${CARD_PREFIX}-hero`, hero.move.remaining, hero.move.total, hero.stats.hp, hero.stats.maxHp, hero.armyCount);
       this.tightenHeroLabelLayout(leftX, cardWidth);
       this.renderEquipmentActionButtons(`${CARD_PREFIX}-equipment`, equipmentButtons);
-      this.renderLearnableSkillButtons(`${CARD_PREFIX}-skills`, learnableSkills);
+      this.renderLearnableSkillButtons(`${CARD_PREFIX}-skills`, skillPanelView.actions);
     } else {
       this.hideCardDecorations(`${CARD_PREFIX}-hero`, BADGE_PREFIX);
       this.hideCardDecorations(`${CARD_PREFIX}-hero`, HERO_PROGRESS_PREFIX);
@@ -518,7 +448,7 @@ export class VeilHudPanel extends Component {
       this.hideCardDecorations(`${CARD_PREFIX}-skills`, SKILL_BUTTON_PREFIX);
     }
 
-    if (hero && learnableSkills.length === 0) {
+    if (hero && skillPanelView.actions.length === 0) {
       this.hideCardDecorations(`${CARD_PREFIX}-skills`, SKILL_BUTTON_PREFIX);
     }
 
@@ -1041,7 +971,7 @@ export class VeilHudPanel extends Component {
     label.color = new Color(246, 249, 252, 255);
   }
 
-  private renderLearnableSkillButtons(cardName: string, skills: HudLearnableSkillState[]): void {
+  private renderLearnableSkillButtons(cardName: string, skills: CocosHudSkillPanelAction[]): void {
     const cardNode = this.node.getChildByName(cardName);
     if (!cardNode) {
       return;
@@ -1060,7 +990,7 @@ export class VeilHudPanel extends Component {
     const startY = -cardTransform.height / 2 + 18 + totalHeight - buttonHeight / 2;
 
     skills.forEach((skill, index) => {
-      const nodeName = `${SKILL_BUTTON_PREFIX}-${skill.id}`;
+      const nodeName = `${SKILL_BUTTON_PREFIX}-${skill.skillId}`;
       let buttonNode = cardNode.getChildByName(nodeName);
       if (!buttonNode) {
         buttonNode = new Node(nodeName);
@@ -1095,7 +1025,7 @@ export class VeilHudPanel extends Component {
       labelTransform.setContentSize(buttonWidth - 16, buttonHeight - 8);
       labelNode.setPosition(0, 0, 0.1);
       const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
-      label.string = `学习 ${skill.name}`;
+      label.string = skill.label;
       label.fontSize = 11;
       label.lineHeight = 13;
       label.horizontalAlign = H_ALIGN_CENTER;
@@ -1105,19 +1035,15 @@ export class VeilHudPanel extends Component {
 
       buttonNode.off(Node.EventType.TOUCH_END);
       buttonNode.off(Node.EventType.MOUSE_UP);
-      if (this.onLearnSkill) {
-        buttonNode.on(Node.EventType.TOUCH_END, () => {
-          this.onLearnSkill?.(skill.id);
-        });
-        buttonNode.on(Node.EventType.MOUSE_UP, () => {
-          this.onLearnSkill?.(skill.id);
-        });
+      if (skill.onSelect) {
+        buttonNode.on(Node.EventType.TOUCH_END, skill.onSelect);
+        buttonNode.on(Node.EventType.MOUSE_UP, skill.onSelect);
       }
     });
 
     const childNodes = (cardNode as unknown as { children?: Node[] }).children ?? [];
     for (const child of childNodes) {
-      if (child.name.startsWith(SKILL_BUTTON_PREFIX) && !skills.some((skill) => child.name === `${SKILL_BUTTON_PREFIX}-${skill.id}`)) {
+      if (child.name.startsWith(SKILL_BUTTON_PREFIX) && !skills.some((skill) => child.name === `${SKILL_BUTTON_PREFIX}-${skill.skillId}`)) {
         child.active = false;
       }
     }
