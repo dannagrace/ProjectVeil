@@ -61,6 +61,7 @@
     "smoke:client:release-candidate": "node --import tsx ./scripts/release-candidate-client-artifact-smoke.ts",
     "test:release-gate-summary": "node --import tsx --test ./scripts/test/release-gate-summary.test.ts",
     "test:shared": "node --import tsx --test \"packages/shared/test/**/*.test.ts\"",
+    "test:contracts": "node --import tsx --test ./packages/shared/test/client-payload-contracts.test.ts",
     "typecheck:ci": "npm run typecheck:shared && npm run typecheck:server && npm run typecheck:client:h5 && npm run typecheck:cocos",
     "typecheck": "tsc -p tsconfig.base.json --noEmit",
     "typecheck:cocos": "tsc -p apps/cocos-client/tsconfig.json --noEmit",
