@@ -3,11 +3,125 @@ import { afterEach, test } from "node:test";
 import { sys } from "cc";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
+import type { BattleAction, BattleState, SessionUpdate, VeilCocosSessionOptions } from "../assets/scripts/VeilCocosSession.ts";
 
 afterEach(() => {
   resetVeilRootRuntime();
   (sys as unknown as { localStorage: Storage | null }).localStorage = null;
 });
+
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
+function createFirstBattleState(): BattleState {
+  return {
+    id: "battle-1",
+    round: 1,
+    lanes: 1,
+    activeUnitId: "hero-1-stack",
+    turnOrder: ["hero-1-stack", "neutral-1-stack"],
+    units: {
+      "hero-1-stack": {
+        id: "hero-1-stack",
+        templateId: "hero_guard_basic",
+        camp: "attacker",
+        lane: 0,
+        stackName: "Guard",
+        initiative: 7,
+        attack: 4,
+        defense: 4,
+        minDamage: 1,
+        maxDamage: 2,
+        count: 12,
+        currentHp: 10,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false,
+        skills: [],
+        statusEffects: []
+      },
+      "neutral-1-stack": {
+        id: "neutral-1-stack",
+        templateId: "orc_warrior",
+        camp: "defender",
+        lane: 0,
+        stackName: "Orc",
+        initiative: 5,
+        attack: 3,
+        defense: 3,
+        minDamage: 1,
+        maxDamage: 3,
+        count: 8,
+        currentHp: 9,
+        maxHp: 9,
+        hasRetaliated: false,
+        defending: false,
+        skills: [],
+        statusEffects: []
+      }
+    },
+    environment: [],
+    log: ["战斗开始"],
+    rng: {
+      seed: 1001,
+      cursor: 0
+    },
+    worldHeroId: "hero-1",
+    neutralArmyId: "neutral-1",
+    encounterPosition: { x: 1, y: 0 }
+  };
+}
+
+function createFirstBattleUpdate(): SessionUpdate {
+  const update = createSessionUpdate(1);
+  update.battle = createFirstBattleState();
+  update.events = [
+    {
+      type: "battle.started",
+      heroId: "hero-1",
+      encounterKind: "neutral",
+      neutralArmyId: "neutral-1",
+      initiator: "hero",
+      battleId: "battle-1",
+      path: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+      moveCost: 1
+    }
+  ];
+  update.world.ownHeroes[0]!.position = { x: 1, y: 0 };
+  update.reachableTiles = [];
+  return update;
+}
+
+function createReturnToWorldUpdate(): SessionUpdate {
+  const update = createSessionUpdate(1);
+  update.world.ownHeroes[0]!.position = { x: 1, y: 0 };
+  update.world.ownHeroes[0]!.progression = {
+    ...update.world.ownHeroes[0]!.progression,
+    battlesWon: 1,
+    neutralBattlesWon: 1,
+    experience: 10
+  };
+  update.events = [
+    {
+      type: "battle.resolved",
+      battleId: "battle-1",
+      battleKind: "neutral",
+      heroId: "hero-1",
+      result: "attacker_victory",
+      resourcesGained: {
+        gold: 0,
+        wood: 0,
+        ore: 0
+      },
+      experienceGained: 10,
+      skillPointsAwarded: 0
+    }
+  ];
+  return update;
+}
 
 test("VeilRoot boots into lobby mode and triggers lobby bootstrap when no roomId is provided", async () => {
   const storage = createMemoryStorage();
@@ -267,4 +381,76 @@ test("VeilRoot forwards session connection events into runtime diagnostics and l
   capturedOptions?.onConnectionEvent?.("reconnect_failed");
   assert.equal(root.diagnosticsConnectionStatus, "reconnect_failed");
   assert.equal(root.logLines[0], "重连失败，正在尝试恢复房间快照...");
+});
+
+test("VeilRoot runtime harness carries the first battle back to world state", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-alpha";
+  root.playerId = "player-1";
+  delete root.applySessionUpdate;
+  root.refreshGameplayAccountProfile = async () => undefined;
+
+  const worldUpdate = createSessionUpdate(1);
+  const battleUpdate = createFirstBattleUpdate();
+  const returnToWorldUpdate = createReturnToWorldUpdate();
+  const battleActions: BattleAction[] = [];
+  const transitionCalls: string[] = [];
+  let capturedOptions: VeilCocosSessionOptions | undefined;
+
+  const fakeSession = {
+    async snapshot() {
+      return worldUpdate;
+    },
+    async actInBattle(action: BattleAction) {
+      battleActions.push(action);
+      return returnToWorldUpdate;
+    },
+    async dispose() {}
+  };
+
+  installVeilRootRuntime({
+    createSession: async (_roomId, _playerId, _seed, options) => {
+      capturedOptions = options;
+      return fakeSession as never;
+    }
+  });
+
+  Object.assign(root, {
+    battleTransition: {
+      async playEnter(copy: { title: string }) {
+        transitionCalls.push(`enter:${copy.title}`);
+      },
+      async playExit(copy: { title: string }) {
+        transitionCalls.push(`exit:${copy.title}`);
+      }
+    }
+  });
+
+  await root.connect();
+  capturedOptions?.onPushUpdate?.(battleUpdate);
+  await flushMicrotasks();
+
+  assert.equal(root.lastUpdate?.battle?.id, "battle-1");
+  assert.equal(root.selectedBattleTargetId, "neutral-1-stack");
+  assert.deepEqual(transitionCalls, ["enter:遭遇中立守军"]);
+
+  await root.actInBattle({
+    type: "battle.attack",
+    attackerId: "hero-1-stack",
+    defenderId: "neutral-1-stack"
+  });
+
+  assert.deepEqual(battleActions, [
+    {
+      type: "battle.attack",
+      attackerId: "hero-1-stack",
+      defenderId: "neutral-1-stack"
+    }
+  ]);
+  assert.equal(root.lastUpdate?.battle, null);
+  assert.equal(root.selectedBattleTargetId, null);
+  assert.equal(root.lastUpdate?.world.ownHeroes[0]?.progression.battlesWon, 1);
+  assert.deepEqual(transitionCalls, ["enter:遭遇中立守军", "exit:战斗胜利"]);
+  assert.equal(root.battlePresentation.getState().phase, "resolution");
+  assert.equal(root.battlePresentation.getState().result, "victory");
 });
