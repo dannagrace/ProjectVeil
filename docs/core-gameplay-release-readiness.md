@@ -15,6 +15,7 @@
 - H5 / Lobby 冒烟：`npm run test:e2e:smoke`
 - 多人同步冒烟：`npm run test:e2e:multiplayer:smoke`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
+- 多人放量基线：`docs/multiplayer-loadtest-gate.md`
 - 微信小游戏构建校验：`npm run check:wechat-build`
 - 发布就绪快照：`npm run release:readiness:snapshot`
 - Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
@@ -54,7 +55,8 @@
 - [ ] 英雄移动、资源拾取、建筑访问、战斗结算都由 shared/server 权威结果驱动，而不是前端本地写死。
 - [ ] 至少覆盖一条“探索 -> 遭遇战 -> 战后回写世界状态”的完整回归链路。
 - [ ] 双客户端或多客户端进入同一房间后，同步不会出现长期分叉；断线重连后能收敛到权威状态。
-- [ ] reconnect 验收必须复用 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 的唯一场景和最小成功信号，而不是只写“重连成功”。
+- [ ] reconnect 验收必须复用 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 的唯一场景和最小成功信号，而不是只写“重连成功”。
+- [ ] wider playtest 前必须复用 [`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md) 中固定的 smoke + `stress:rooms` 命令组合、阈值、回退动作和重跑触发条件。
 - [ ] 失败路径可读：非法 action、超时、会话失效时，客户端能收到明确错误而不是静默卡死。
 
 `P1 follow-up`
@@ -66,7 +68,7 @@
 
 - `npm test`
 - `npm run test:e2e:multiplayer:smoke`
-- 必要时补跑：`npm run stress:rooms -- --rooms=<n>`
+- wider playtest 前必跑：[`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md)
 
 ### 2. H5 调试壳与回归验证面
 
@@ -87,7 +89,7 @@
 建议证据：
 
 - `npm run test:e2e:smoke`
-- [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 中定义的 reconnect 证据
+- [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 中定义的 reconnect 证据
 - 必要时补跑：`npm run test:e2e`
 
 ### 3. Cocos 主客户端体验面
@@ -110,7 +112,7 @@
 - `npm test`
 - `npm run check:wechat-build`
 - `npm run release:cocos-rc:snapshot -- --output <snapshot-path>`
-- [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 中定义的 reconnect 证据
+- [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 中定义的 reconnect 证据
 - 按 [`docs/wechat-minigame-release.md`](/home/gpt/project/ProjectVeil/docs/wechat-minigame-release.md) 完成 `verify` 与 `smoke`
 
 ### 4. 观测、诊断与运维门禁
@@ -160,8 +162,8 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
   - 固定一条 Lobby -> 进房 -> 战斗 -> 重连 -> 返回世界的验收脚本
   - 使用 `npm run release:cocos-rc:snapshot` 产出统一 evidence，并参考 `docs/release-evidence/cocos-rc-snapshot.example.json` 回填
 - `多人放量门禁`
-  - 固定压测参数
-  - 记录可接受阈值和回退条件
+  - 复用 `docs/multiplayer-loadtest-gate.md`
+  - 固定压测参数、阈值、回退条件与样例记录
 - `微信提审门禁`
   - 固定 smoke 设备矩阵
   - 固定分享回流、资源白名单和登录回归证据

@@ -48,6 +48,8 @@ interface ScenarioResult {
   heapPeakMb: number;
   heapEndMb: number;
   peakActiveHandles: number;
+  runtimeHealthAfterConnect?: RuntimeHealthSummary;
+  runtimeHealthAfterScenario?: RuntimeHealthSummary;
   errorMessage?: string;
 }
 
@@ -70,6 +72,18 @@ interface ResourceReport extends ResourceSnapshot {
   heapPeakMb: number;
   heapEndMb: number;
   peakActiveHandles: number;
+}
+
+interface RuntimeHealthSummary {
+  checkedAt: string;
+  activeRoomCount: number;
+  connectionCount: number;
+  activeBattleCount: number;
+  heroCount: number;
+  connectMessagesTotal: number;
+  worldActionsTotal: number;
+  battleActionsTotal: number;
+  actionMessagesTotal: number;
 }
 
 const DEFAULT_BATTLE_DESTINATION: Vec2 = { x: 5, y: 4 };
@@ -146,6 +160,61 @@ function parseStressOptions(): StressOptions {
     maxBattleTurns: parseIntegerFlag("max-battle-turns", 24),
     scenarios: parseScenarioFlag()
   };
+}
+
+async function fetchRuntimeHealthSummary(host: string, port: number): Promise<RuntimeHealthSummary | undefined> {
+  try {
+    const response = await fetch(`http://${host}:${port}/api/runtime/health`);
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const payload = (await response.json()) as {
+      checkedAt?: string;
+      runtime?: {
+        activeRoomCount?: number;
+        connectionCount?: number;
+        activeBattleCount?: number;
+        heroCount?: number;
+        gameplayTraffic?: {
+          connectMessagesTotal?: number;
+          worldActionsTotal?: number;
+          battleActionsTotal?: number;
+          actionMessagesTotal?: number;
+        };
+      };
+    };
+
+    const runtime = payload.runtime;
+    const gameplayTraffic = runtime?.gameplayTraffic;
+    if (
+      !payload.checkedAt ||
+      typeof runtime?.activeRoomCount !== "number" ||
+      typeof runtime.connectionCount !== "number" ||
+      typeof runtime.activeBattleCount !== "number" ||
+      typeof runtime.heroCount !== "number" ||
+      typeof gameplayTraffic?.connectMessagesTotal !== "number" ||
+      typeof gameplayTraffic.worldActionsTotal !== "number" ||
+      typeof gameplayTraffic.battleActionsTotal !== "number" ||
+      typeof gameplayTraffic.actionMessagesTotal !== "number"
+    ) {
+      return undefined;
+    }
+
+    return {
+      checkedAt: payload.checkedAt,
+      activeRoomCount: runtime.activeRoomCount,
+      connectionCount: runtime.connectionCount,
+      activeBattleCount: runtime.activeBattleCount,
+      heroCount: runtime.heroCount,
+      connectMessagesTotal: gameplayTraffic.connectMessagesTotal,
+      worldActionsTotal: gameplayTraffic.worldActionsTotal,
+      battleActionsTotal: gameplayTraffic.battleActionsTotal,
+      actionMessagesTotal: gameplayTraffic.actionMessagesTotal
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function installLogFilter(): () => void {
@@ -587,10 +656,13 @@ async function cleanupRooms(contexts: RoomContext[]): Promise<void> {
 async function runScenario(scenario: ScenarioName, options: StressOptions): Promise<ScenarioResult> {
   const monitor = new ResourceMonitor(options.sampleIntervalMs);
   let contexts: RoomContext[] = [];
+  let runtimeHealthAfterConnect: RuntimeHealthSummary | undefined;
+  let runtimeHealthAfterScenario: RuntimeHealthSummary | undefined;
 
   try {
     const connected = await connectRooms(options, scenario);
     contexts = connected.contexts;
+    runtimeHealthAfterConnect = await fetchRuntimeHealthSummary(options.host, options.port);
     let completedActions = connected.completedActions;
 
     if (scenario === "world_progression") {
@@ -600,6 +672,7 @@ async function runScenario(scenario: ScenarioName, options: StressOptions): Prom
     } else {
       completedActions += await runReconnectScenario(contexts, options);
     }
+    runtimeHealthAfterScenario = await fetchRuntimeHealthSummary(options.host, options.port);
 
     const resources = monitor.stop();
     return {
@@ -621,9 +694,12 @@ async function runScenario(scenario: ScenarioName, options: StressOptions): Prom
       heapStartMb: resources.heapStartMb,
       heapPeakMb: resources.heapPeakMb,
       heapEndMb: resources.heapEndMb,
-      peakActiveHandles: resources.peakActiveHandles
+      peakActiveHandles: resources.peakActiveHandles,
+      ...(runtimeHealthAfterConnect ? { runtimeHealthAfterConnect } : {}),
+      ...(runtimeHealthAfterScenario ? { runtimeHealthAfterScenario } : {})
     };
   } catch (error) {
+    runtimeHealthAfterScenario = await fetchRuntimeHealthSummary(options.host, options.port);
     const resources = monitor.stop();
     return {
       scenario,
@@ -645,6 +721,8 @@ async function runScenario(scenario: ScenarioName, options: StressOptions): Prom
       heapPeakMb: resources.heapPeakMb,
       heapEndMb: resources.heapEndMb,
       peakActiveHandles: resources.peakActiveHandles,
+      ...(runtimeHealthAfterConnect ? { runtimeHealthAfterConnect } : {}),
+      ...(runtimeHealthAfterScenario ? { runtimeHealthAfterScenario } : {}),
       errorMessage: error instanceof Error ? error.message : String(error)
     };
   } finally {
@@ -663,6 +741,9 @@ function printSummary(results: ScenarioResult[], options: StressOptions): void {
       rooms: result.rooms,
       success: result.successfulRooms,
       failed: result.failedRooms,
+      activeRooms: result.runtimeHealthAfterConnect?.activeRoomCount ?? "",
+      connections: result.runtimeHealthAfterConnect?.connectionCount ?? "",
+      actionMsgs: result.runtimeHealthAfterScenario?.actionMessagesTotal ?? "",
       durationMs: result.durationMs,
       roomsPerSec: result.roomsPerSecond,
       actions: result.completedActions,
