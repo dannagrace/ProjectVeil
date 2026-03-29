@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 type CoverageSuite = {
   name: string;
@@ -17,9 +18,21 @@ type CoverageMetrics = {
   functions: number;
 };
 
-const coverageRoot = path.resolve(".coverage");
+type CoverageFailure = {
+  metric: keyof CoverageMetrics;
+  actual: number | null;
+  threshold: number;
+};
 
-const suites: CoverageSuite[] = [
+type CoverageSummary = {
+  suite: CoverageSuite;
+  metrics: CoverageMetrics | null;
+  failures: CoverageFailure[];
+};
+
+export const coverageRoot = path.resolve(".coverage");
+
+export const suites: CoverageSuite[] = [
   {
     name: "shared",
     include: "packages/shared/src/**/*.ts",
@@ -58,7 +71,7 @@ async function main() {
   await rm(coverageRoot, { force: true, recursive: true });
   await mkdir(path.join(coverageRoot, "v8"), { recursive: true });
 
-  const summaries: Array<{ suite: CoverageSuite; metrics: CoverageMetrics | null }> = [];
+  const summaries: CoverageSummary[] = [];
 
   for (const suite of suites) {
     const suiteCoverageDir = path.join(coverageRoot, "v8", suite.name);
@@ -85,10 +98,12 @@ async function main() {
     await writeFile(path.join(coverageRoot, `${suite.name}.log`), output);
 
     const metrics = parseCoverageMetrics(output);
-    summaries.push({ suite, metrics });
+    const summary = buildCoverageSummary(suite, metrics);
+    summaries.push(summary);
 
     if (code !== 0) {
       await writeSummary(summaries);
+      printFailureReport(summaries);
       process.exit(code ?? 1);
     }
   }
@@ -123,7 +138,7 @@ function runNodeCommand(args: string[], env: NodeJS.ProcessEnv) {
   });
 }
 
-function parseCoverageMetrics(output: string): CoverageMetrics | null {
+export function parseCoverageMetrics(output: string): CoverageMetrics | null {
   const match = output.match(/all files\s+\|\s+([\d.]+)\s+\|\s+([\d.]+)\s+\|\s+([\d.]+)/);
   if (!match) {
     return null;
@@ -136,11 +151,45 @@ function parseCoverageMetrics(output: string): CoverageMetrics | null {
   };
 }
 
-async function writeSummary(
-  summaries: Array<{ suite: CoverageSuite; metrics: CoverageMetrics | null }>,
-) {
+export function buildCoverageSummary(
+  suite: CoverageSuite,
+  metrics: CoverageMetrics | null,
+): CoverageSummary {
+  const failures: CoverageFailure[] = [];
+
+  if (!metrics) {
+    failures.push(
+      { metric: "lines", actual: null, threshold: suite.lineThreshold },
+      { metric: "branches", actual: null, threshold: suite.branchThreshold },
+      { metric: "functions", actual: null, threshold: suite.functionThreshold },
+    );
+  } else {
+    if (metrics.lines < suite.lineThreshold) {
+      failures.push({ metric: "lines", actual: metrics.lines, threshold: suite.lineThreshold });
+    }
+    if (metrics.branches < suite.branchThreshold) {
+      failures.push({ metric: "branches", actual: metrics.branches, threshold: suite.branchThreshold });
+    }
+    if (metrics.functions < suite.functionThreshold) {
+      failures.push({ metric: "functions", actual: metrics.functions, threshold: suite.functionThreshold });
+    }
+  }
+
+  return {
+    suite,
+    metrics,
+    failures,
+  };
+}
+
+export async function writeSummary(summaries: CoverageSummary[]) {
+  const failedSummaries = summaries.filter((summary) => summary.failures.length > 0);
   const lines = [
     "# V8 Coverage Summary",
+    "",
+    `Overall status: **${failedSummaries.length > 0 ? "FAILED" : "PASSED"}**`,
+    "",
+    ...renderFailureSection(failedSummaries),
     "",
     "| Scope | Lines | Branches | Functions |",
     "| --- | --- | --- | --- |",
@@ -158,12 +207,13 @@ async function writeSummary(
   await writeFile(
     path.join(coverageRoot, "summary.json"),
     `${JSON.stringify(
-      summaries.map(({ suite, metrics }) => ({
+      summaries.map(({ suite, metrics, failures }) => ({
         scope: suite.name,
         lineThreshold: suite.lineThreshold,
         branchThreshold: suite.branchThreshold,
         functionThreshold: suite.functionThreshold,
         metrics,
+        failures,
       })),
       null,
       2,
@@ -171,12 +221,49 @@ async function writeSummary(
   );
 }
 
+export function renderFailureSection(failedSummaries: CoverageSummary[]): string[] {
+  if (failedSummaries.length === 0) {
+    return ["## Threshold Failures", "", "None. All configured line, branch, and function coverage floors passed."];
+  }
+
+  return [
+    "## Threshold Failures",
+    "",
+    ...failedSummaries.map(({ suite, failures }) => {
+      const details = failures.map((failure) => formatFailure(failure)).join("; ");
+      return `- ${suite.name}: ${details}`;
+    }),
+  ];
+}
+
+export function printFailureReport(summaries: CoverageSummary[]): void {
+  const failedSummaries = summaries.filter((summary) => summary.failures.length > 0);
+  if (failedSummaries.length === 0) {
+    return;
+  }
+
+  process.stderr.write("\nCoverage threshold failures:\n");
+  for (const line of renderFailureSection(failedSummaries).slice(2)) {
+    process.stderr.write(`${line}\n`);
+  }
+}
+
+function formatFailure(failure: CoverageFailure): string {
+  if (failure.actual === null) {
+    return `${failure.metric} missing coverage output vs ${failure.threshold}% floor`;
+  }
+
+  return `${failure.metric} ${failure.actual.toFixed(2)}% below ${failure.threshold}% floor`;
+}
+
 function formatMetric(actual: number, threshold: number): string {
   const passed = actual >= threshold;
   return `${passed ? "PASS" : "FAIL"} ${actual.toFixed(2)}% vs ${threshold}%`;
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
