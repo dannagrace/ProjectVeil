@@ -1291,7 +1291,7 @@ export class VeilHudPanel extends Component {
 
     this.ensureActionButton(actionsNode, "HudNewRun", "新开一局");
     this.ensureActionButton(actionsNode, "HudRefresh", "刷新状态");
-    this.ensureActionButton(actionsNode, "HudAchievements", "成就总览");
+    this.ensureActionButton(actionsNode, "HudAchievements", "成长回顾");
     this.ensureActionButton(actionsNode, "HudEndDay", "推进一天");
     this.ensureActionButton(actionsNode, "HudReturnLobby", "返回大厅");
   }
@@ -1311,7 +1311,7 @@ export class VeilHudPanel extends Component {
     const buttons: HudActionButtonState[] = [
       { name: "HudNewRun", label: "新开一局", callback: this.onNewRun ?? null },
       { name: "HudRefresh", label: "刷新状态", callback: this.onRefresh ?? null },
-      { name: "HudAchievements", label: "成就总览", callback: this.onToggleAchievements ?? null },
+      { name: "HudAchievements", label: "成长回顾", callback: this.onToggleAchievements ?? null },
       { name: "HudEndDay", label: "推进一天", callback: this.onEndDay ?? null },
       { name: "HudReturnLobby", label: "返回大厅", callback: this.onReturnLobby ?? null }
     ];

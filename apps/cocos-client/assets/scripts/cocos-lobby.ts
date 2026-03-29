@@ -396,6 +396,7 @@ export async function loadCocosBattleReplaySummaries(
     fetchImpl?: FetchLike;
     authSession?: CocosStoredAuthSession | null;
     storage?: Pick<Storage, "removeItem"> | null;
+    throwOnError?: boolean;
   }
 ): Promise<PlayerBattleReplaySummary[]> {
   const authSession = options?.authSession ?? null;
@@ -422,6 +423,9 @@ export async function loadCocosBattleReplaySummaries(
     if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && options?.storage) {
       clearStoredCocosAuthSession(options.storage);
     }
+    if (options?.throwOnError) {
+      throw error;
+    }
     return normalizePlayerBattleReplaySummaries();
   }
 }
@@ -434,6 +438,7 @@ export async function loadCocosBattleReplayHistoryPage(
     fetchImpl?: FetchLike;
     authSession?: CocosStoredAuthSession | null;
     storage?: Pick<Storage, "removeItem"> | null;
+    throwOnError?: boolean;
   }
 ): Promise<CocosBattleReplayHistoryPage> {
   const safeLimit = Math.max(1, Math.floor(query.limit ?? DEFAULT_HISTORY_PAGE_SIZE));
@@ -1295,6 +1300,7 @@ export async function loadCocosPlayerEventHistory(
     fetchImpl?: FetchLike;
     storage?: Pick<Storage, "getItem" | "removeItem"> | null;
     authSession?: CocosStoredAuthSession | null;
+    throwOnError?: boolean;
   }
 ): Promise<CocosEventHistoryPage> {
   const storage = options?.storage ?? getCocosStorage();
@@ -1332,6 +1338,9 @@ export async function loadCocosPlayerEventHistory(
     if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
       clearStoredCocosAuthSession(storage);
     }
+    if (options?.throwOnError) {
+      throw error;
+    }
     const safeLimit = Math.max(1, Math.floor(query?.limit ?? DEFAULT_HISTORY_PAGE_SIZE));
     const safeOffset = Math.max(0, Math.floor(query?.offset ?? 0));
     return {
@@ -1352,6 +1361,7 @@ export async function loadCocosPlayerAchievementProgress(
     fetchImpl?: FetchLike;
     storage?: Pick<Storage, "getItem" | "removeItem"> | null;
     authSession?: CocosStoredAuthSession | null;
+    throwOnError?: boolean;
   }
 ): Promise<PlayerAchievementProgress[]> {
   const storage = options?.storage ?? getCocosStorage();
@@ -1380,6 +1390,9 @@ export async function loadCocosPlayerAchievementProgress(
     if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
       clearStoredCocosAuthSession(storage);
     }
+    if (options?.throwOnError) {
+      throw error;
+    }
     return queryAchievementProgress(undefined, query);
   }
 }
@@ -1392,6 +1405,7 @@ export async function loadCocosPlayerProgressionSnapshot(
     fetchImpl?: FetchLike;
     storage?: Pick<Storage, "getItem" | "removeItem"> | null;
     authSession?: CocosStoredAuthSession | null;
+    throwOnError?: boolean;
   }
 ): Promise<PlayerProgressionSnapshot> {
   const storage = options?.storage ?? getCocosStorage();
@@ -1419,6 +1433,9 @@ export async function loadCocosPlayerProgressionSnapshot(
   } catch (error) {
     if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
       clearStoredCocosAuthSession(storage);
+    }
+    if (options?.throwOnError) {
+      throw error;
     }
     return normalizePlayerProgressionSnapshot();
   }
