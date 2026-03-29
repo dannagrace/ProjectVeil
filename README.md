@@ -89,6 +89,7 @@ npm run dev:client:h5
 - H5 调试壳：`http://127.0.0.1:5173/`
 - 配置台：`http://127.0.0.1:5173/config-center.html`
 - 服务端健康检查：`http://127.0.0.1:2567/api/runtime/health`
+- 匹配队列默认会把断线玩家 5 分钟后清理掉，可用 `VEIL_MATCHMAKING_QUEUE_TTL_SECONDS`（默认 `300` 秒）覆盖
 
 如果你要启用 MySQL 持久化，再复制 `.env.example` 到 `.env`，填入 `VEIL_MYSQL_*`，然后执行 `npm run db:migrate`。更多说明见 `docs/mysql-persistence.md`。
 
