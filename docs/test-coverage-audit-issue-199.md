@@ -4,10 +4,10 @@ Issue [#199](https://github.com/dannagrace/ProjectVeil/issues/199) asks for a re
 
 ## Audit Baseline
 
-- Shared core currently has `6` Node test files.
-- Server currently has `18` Node test files under `apps/server/test`.
-- H5 debug shell currently has `7` Node test files under `apps/client/test`.
-- Cocos client currently has `31` Node test files under `apps/cocos-client/test`.
+- Shared core currently has `7` Node test files.
+- Server currently has `23` Node test files under `apps/server/test`.
+- H5 debug shell currently has `10` Node test files under `apps/client/test`.
+- Cocos client currently has `41` Node test files under `apps/cocos-client/test`.
 - Browser regression currently has `11` Playwright specs under `tests/e2e`.
 
 ### Important tooling note
@@ -28,17 +28,18 @@ This PR updates `package.json` so `npm test` now exercises all checked-in Node t
 
 Strongest coverage today sits around room simulation, persistence retention, player-account routes, lobby/matchmaking routes, and observability endpoints. The tested areas are mostly reducer-heavy and HTTP-heavy code paths where the repo already has stable seams for `node:test`.
 
-Highest-risk gaps with weak or missing direct coverage:
+Recent coverage improvements closed two previously high-risk entrypoint gaps:
 
-1. `apps/server/src/dev-server.ts`
-   Boot wiring has no direct test coverage. Route registration, MySQL-vs-memory startup branching, schema-warning behavior, and retention cleanup scheduling are all high-blast-radius paths that currently rely on manual verification.
-2. `apps/server/src/schema-migrations.ts`
-   Migration discovery and bootstrap logic are untested. A bad migration filename, invalid module export, or metadata-table drift could break deployment-time startup without a focused unit suite catching it early.
-3. `apps/server/src/colyseus-room.ts`
+- `apps/server/test/dev-server.test.ts` now directly covers the `apps/server/src/dev-server.ts` bootstrap seam, including route registration, in-memory startup, MySQL startup, migration-warning fallback, and retention cleanup scheduling.
+- `apps/server/test/schema-migrations.test.ts` now directly covers `apps/server/src/schema-migrations.ts` migration discovery, invalid module exports, pending migration detection, missing database/table status, and metadata drift warning output.
+
+Highest-risk gaps with weaker direct coverage now center on:
+
+1. `apps/server/src/colyseus-room.ts`
    Room lifecycle integration is only covered indirectly through persistence and route tests. Reconnect, disposal, and multi-room registration behavior remain comparatively exposed.
-4. `apps/server/src/index.ts` and `apps/server/src/battle-replays.ts`
+2. `apps/server/src/index.ts` and `apps/server/src/battle-replays.ts`
    Core room orchestration is covered by `authoritative-room.test.ts`, but replay capture lifecycle and battle replay emission are still not locked down module-by-module. That matters because replay routes already exist and were previously omitted from the default root test run.
-5. `apps/server/src/player-accounts.ts`
+3. `apps/server/src/player-accounts.ts`
    This file has route coverage, but the module remains large and risk is concentrated in cross-cutting account flows: fallback behavior without MySQL, account session revocation, replay/history pagination, and credential/WeChat interactions.
 
 ### H5 Debug Shell (`apps/client`)
@@ -77,8 +78,6 @@ The largest remaining gap is that most actual scene/controller entry points are 
 
 ### Priority 1: Highest payoff
 
-- Add a focused server startup suite around `apps/server/src/dev-server.ts` by extracting the app/bootstrap wiring into a testable factory.
-- Add migration-loader tests for `apps/server/src/schema-migrations.ts`, especially invalid module export, pending migration detection, and metadata-table discovery.
 - Add a thin H5 boot regression suite around `apps/client/src/main.ts` for cached-session boot, local fallback boot, and automation-hook registration.
 - Add a Cocos harness around `VeilRoot.ts` plus `VeilCocosSession.ts` to lock reconnect, lobby boot, and session handoff behavior.
 
@@ -109,9 +108,9 @@ The current tooling makes coverage expansion slower than it needs to be:
 
 If the goal is maximum stabilization value per PR, the next coverage-focused issue should target:
 
-1. `apps/server/src/dev-server.ts`
-2. `apps/server/src/schema-migrations.ts`
-3. `apps/client/src/main.ts`
-4. `apps/cocos-client/assets/scripts/VeilRoot.ts`
+1. `apps/client/src/main.ts`
+2. `apps/cocos-client/assets/scripts/VeilRoot.ts`
+3. `apps/server/src/colyseus-room.ts`
+4. `apps/server/src/index.ts`
 
 Those four seams cover the startup and orchestration paths most likely to produce high-severity regressions that the current suite would miss.

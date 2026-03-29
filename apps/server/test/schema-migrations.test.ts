@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { Pool, RowDataPacket } from "mysql2/promise";
 import {
+  formatSchemaMigrationWarning,
   getSchemaMigrationStatus,
   loadSchemaMigrations,
   schemaMigrationTableName,
@@ -143,4 +144,31 @@ test("getSchemaMigrationStatus reports all migrations pending when metadata tabl
   assert.equal(status.hasMigrationTable, false);
   assert.deepEqual(status.applied, []);
   assert.deepEqual(status.pending.map((migration) => migration.id), ["0001"]);
+});
+
+test("getSchemaMigrationStatus reports a missing database as fully pending and formats a bootstrap warning", async (t) => {
+  const migrationsDirectory = await createMigrationDirectory({
+    "0002_add_sessions.ts": "export async function up() {}\nexport async function down() {}\n",
+    "0001_init_schema.ts": "export async function up() {}\nexport async function down() {}\n"
+  });
+
+  t.after(async () => {
+    await rm(migrationsDirectory, { recursive: true, force: true });
+  });
+
+  const status = await getSchemaMigrationStatus(TEST_CONFIG, {
+    migrationsDirectory,
+    createConnectionFn: async () => createBootstrapConnection(false) as never,
+    createPoolFn: async () => {
+      throw new Error("pool should not be created when the database is missing");
+    }
+  });
+
+  assert.equal(status.hasDatabase, false);
+  assert.equal(status.hasMigrationTable, false);
+  assert.deepEqual(status.applied, []);
+  assert.deepEqual(status.pending.map((migration) => migration.id), ["0001", "0002"]);
+  const warning = formatSchemaMigrationWarning(status);
+  assert.match(warning, /Pending migrations: 0001_init_schema, 0002_add_sessions\./);
+  assert.match(warning, /Database does not exist yet\.$/);
 });
