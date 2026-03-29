@@ -24,6 +24,7 @@ declare module "cc" {
     active: boolean;
     layer: number;
     position: Vec3;
+    children: Node[];
 
     constructor(name?: string);
 
@@ -37,6 +38,7 @@ declare module "cc" {
     setScale(x: number, y?: number, z?: number): void;
     on(type: string, callback: (...args: unknown[]) => void, target?: unknown): void;
     off(type: string, callback?: (...args: unknown[]) => void, target?: unknown): void;
+    emit(type: string, ...args: unknown[]): void;
   }
 
   export class Canvas extends Component {}
