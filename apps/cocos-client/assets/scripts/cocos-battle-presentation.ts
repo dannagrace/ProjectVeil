@@ -4,6 +4,7 @@ import { buildBattleEnterCopy, buildBattleExitCopy, type BattleTransitionCopy } 
 import {
   analyzeBattleProgress,
   buildBattleActionFeedback,
+  buildBattleSettlementLines,
   buildBattleProgressFeedback,
   buildBattleTransitionFeedback,
   type CocosBattleFeedbackView
@@ -68,7 +69,16 @@ export function buildBattleActionPresentation(
         : "idle",
     transition: null,
     moment,
-    state: buildPresentationState("command", moment, battle?.id ?? null, feedback, null)
+    state: buildPresentationState("command", moment, battle?.id ?? null, feedback, null, {
+      cue: action.type === "battle.attack" ? "attack" : action.type === "battle.skill" ? "skill" : null,
+      animation:
+        action.type === "battle.attack" || (action.type === "battle.skill" && action.targetId && action.targetId !== action.unitId)
+          ? "attack"
+          : "idle",
+      transition: null,
+      durationMs: null,
+      summaryLines: []
+    })
   };
 }
 
@@ -92,27 +102,41 @@ export function buildBattlePresentationPlan(
         copy: buildBattleEnterCopy(update)
       },
       moment: "battle_enter",
-      state: buildPresentationState("enter", "battle_enter", nextBattle.id, feedback, null)
+      state: buildPresentationState("enter", "battle_enter", nextBattle.id, feedback, null, {
+        cue: null,
+        animation: "attack",
+        transition: "enter",
+        durationMs: null,
+        summaryLines: []
+      })
     };
   }
 
   if (previousBattle && !nextBattle) {
     const didWin = resolveBattleResolution(update, heroId);
-    const feedback = buildBattleTransitionFeedback(update, heroId);
+    const feedback = buildBattleTransitionFeedback(update, heroId, previousBattle);
     const result = didWin === null ? null : didWin ? "victory" : "defeat";
     const moment = didWin ? "result_victory" : "result_defeat";
+    const cue = didWin === null ? null : didWin ? "victory" : "defeat";
+    const animation = didWin === null ? "idle" : didWin ? "victory" : "defeat";
     return {
       phase: "resolution",
       feedback,
       feedbackDurationMs: RESOLUTION_FEEDBACK_DURATION_MS,
-      cue: didWin === null ? null : didWin ? "victory" : "defeat",
-      animation: didWin === null ? "idle" : didWin ? "victory" : "defeat",
+      cue,
+      animation,
       transition: {
         kind: "exit",
         copy: buildBattleExitCopy(previousBattle, update, didWin ?? false)
       },
       moment,
-      state: buildPresentationState("resolution", moment, previousBattle.id, feedback, result)
+      state: buildPresentationState("resolution", moment, previousBattle.id, feedback, result, {
+        cue,
+        animation,
+        transition: "exit",
+        durationMs: RESOLUTION_FEEDBACK_DURATION_MS,
+        summaryLines: buildBattleSettlementLines(previousBattle, update, heroId)
+      })
     };
   }
 
@@ -134,7 +158,13 @@ export function buildBattlePresentationPlan(
       animation,
       transition: null,
       moment,
-      state: buildPresentationState(phase, moment, nextBattle.id, feedback, null)
+      state: buildPresentationState(phase, moment, nextBattle.id, feedback, null, {
+        cue,
+        animation,
+        transition: null,
+        durationMs: null,
+        summaryLines: []
+      })
     };
   }
 
@@ -146,7 +176,13 @@ export function buildBattlePresentationPlan(
     animation: "idle",
     transition: null,
     moment: "idle",
-    state: buildPresentationState("idle", "idle", null, null, null)
+    state: buildPresentationState("idle", "idle", null, null, null, {
+      cue: null,
+      animation: "idle",
+      transition: null,
+      durationMs: null,
+      summaryLines: []
+    })
   };
 }
 
@@ -187,7 +223,8 @@ function buildPresentationState(
   moment: CocosBattlePresentationMoment,
   battleId: string | null,
   feedback: CocosBattleFeedbackView | null,
-  result: CocosBattlePresentationState["result"]
+  result: CocosBattlePresentationState["result"],
+  feedbackLayer: CocosBattlePresentationState["feedbackLayer"] & { summaryLines: string[] }
 ): CocosBattlePresentationState {
   if (!feedback) {
     return {
@@ -198,7 +235,9 @@ function buildPresentationState(
       detail: phase === "idle" ? "当前没有战斗。" : "等待新的战斗反馈。",
       badge: phase === "idle" ? "IDLE" : "LIVE",
       tone: phase === "idle" ? "neutral" : "action",
-      result
+      result,
+      summaryLines: buildPresentationSummaryLines(null, feedbackLayer),
+      feedbackLayer
     };
   }
 
@@ -210,8 +249,61 @@ function buildPresentationState(
     detail: feedback.detail,
     badge: feedback.badge,
     tone: feedback.tone,
-    result
+    result,
+    summaryLines: buildPresentationSummaryLines(feedback, feedbackLayer),
+    feedbackLayer
   };
+}
+
+function buildPresentationSummaryLines(
+  feedback: CocosBattleFeedbackView | null,
+  feedbackLayer: CocosBattlePresentationState["feedbackLayer"] & { summaryLines: string[] }
+): string[] {
+  const lines: string[] = [];
+  const layerParts = [`动画 ${formatAnimationLabel(feedbackLayer.animation)}`];
+  if (feedbackLayer.cue) {
+    layerParts.push(`音效 ${formatCueLabel(feedbackLayer.cue)}`);
+  }
+  if (feedbackLayer.transition) {
+    layerParts.push(`转场 ${feedbackLayer.transition === "enter" ? "开战" : "结算"}`);
+  }
+  lines.push(`反馈层：${layerParts.join(" / ")}`);
+  if (feedback?.detail) {
+    lines.push(`播报：${feedback.detail}`);
+  }
+  return lines.concat(feedbackLayer.summaryLines);
+}
+
+function formatAnimationLabel(animation: CocosBattlePresentationAnimation): string {
+  switch (animation) {
+    case "attack":
+      return "攻击";
+    case "hit":
+      return "受击";
+    case "victory":
+      return "胜利";
+    case "defeat":
+      return "失败";
+    default:
+      return "待机";
+  }
+}
+
+function formatCueLabel(cue: CocosAudioCue): string {
+  switch (cue) {
+    case "attack":
+      return "攻击";
+    case "skill":
+      return "技能";
+    case "hit":
+      return "受击";
+    case "victory":
+      return "胜利";
+    case "defeat":
+      return "失败";
+    default:
+      return cue;
+  }
 }
 
 function resolvePresentationLabel(moment: CocosBattlePresentationMoment, fallback: string): string {

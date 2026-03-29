@@ -16,6 +16,17 @@ export interface CocosBattlePresentationState {
   badge: string;
   tone: CocosBattleFeedbackTone;
   result: "victory" | "defeat" | null;
+  summaryLines: string[];
+  feedbackLayer: {
+    animation: CocosBattlePresentationPlan["animation"];
+    cue: CocosBattlePresentationPlan["cue"];
+    transition: CocosBattlePresentationPlan["transition"] extends infer Transition
+      ? Transition extends { kind: infer Kind }
+        ? Kind | null
+        : null
+      : null;
+    durationMs: number | null;
+  };
 }
 
 export interface CocosBattlePresentationController {
@@ -33,7 +44,14 @@ const IDLE_STATE: CocosBattlePresentationState = {
   detail: "当前没有战斗。",
   badge: "IDLE",
   tone: "neutral",
-  result: null
+  result: null,
+  summaryLines: [],
+  feedbackLayer: {
+    animation: "idle",
+    cue: null,
+    transition: null,
+    durationMs: null
+  }
 };
 
 export function createCocosBattlePresentationController(): CocosBattlePresentationController {

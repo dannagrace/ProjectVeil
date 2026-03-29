@@ -95,6 +95,52 @@ test("buildBattlePanelViewModel keeps idle summary focused on battle state", () 
   assert.equal(view.actions.length, 0);
 });
 
+test("buildBattlePanelViewModel surfaces settlement and presentation layer summaries after battle exit", () => {
+  const view = buildBattlePanelViewModel({
+    update: createBaseUpdate(),
+    timelineEntries: [],
+    controlledCamp: null,
+    selectedTargetId: null,
+    actionPending: false,
+    feedback: {
+      title: "战斗胜利",
+      detail: "战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+      badge: "WIN",
+      tone: "victory"
+    },
+    presentationState: {
+      battleId: "battle-1",
+      phase: "resolution",
+      moment: "result_victory",
+      label: "战斗胜利",
+      detail: "战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+      badge: "WIN",
+      tone: "victory",
+      result: "victory",
+      summaryLines: [
+        "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
+        "播报：战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+        "战利品：金币 +12"
+      ],
+      feedbackLayer: {
+        animation: "victory",
+        cue: "victory",
+        transition: "exit",
+        durationMs: 4200
+      }
+    }
+  });
+
+  assert.equal(view.idle, true);
+  assert.equal(view.title, "战斗结算");
+  assert.deepEqual(view.summaryLines, [
+    "战斗胜利",
+    "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
+    "播报：战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+    "战利品：金币 +12"
+  ]);
+});
+
 test("buildBattlePanelViewModel enables attack actions on the player's turn", () => {
   const update = createBaseUpdate();
   update.battle = {
