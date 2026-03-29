@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "gate": "multiplayer-loadtest-baseline",
+  "executedAt": "2026-03-29T08:12:22+08:00",
+  "revision": {
+    "branch": "codex/issue-214-loadtest-gate-0329-0811",
+    "commit": "034737d3c1724f7a069745c97077406b55d07719",
+    "shortCommit": "034737d"
+  },
+  "status": "blocked",
+  "summary": "The fixed 48-room stress baseline passed all thresholds. Multiplayer Playwright smoke was blocked in the container because Chromium could not load libatk-bridge-2.0.so.0, so the overall record is blocked rather than passed.",
+  "commands": [
+    "npm run test:e2e:multiplayer:smoke",
+    "npm run stress:rooms -- --rooms=48 --connect-concurrency=12 --action-concurrency=12 --sample-interval-ms=100 --reconnect-pause-ms=150"
+  ],
+  "thresholds": {
+    "rooms": 48,
+    "successfulRoomsPerScenario": 48,
+    "failedRoomsPerScenario": 0,
+    "activeRoomCountAfterConnect": 48,
+    "connectionCountAfterConnect": 48,
+    "worldProgression": {
+      "worldActionsTotalMin": 96,
+      "actionsPerSecondMin": 150,
+      "durationMsMax": 1200,
+      "cpuCoreUtilizationPctMax": 80
+    },
+    "battleSettlement": {
+      "worldActionsTotalMin": 144,
+      "battleActionsTotalMin": 144,
+      "actionsPerSecondMin": 250,
+      "durationMsMax": 1200,
+      "cpuCoreUtilizationPctMax": 75
+    },
+    "reconnect": {
+      "connectMessagesTotalMin": 192,
+      "actionMessagesTotalMin": 336,
+      "successRate": "100%",
+      "actionsPerSecondMin": 100,
+      "durationMsMax": 1500,
+      "cpuCoreUtilizationPctMax": 50
+    },
+    "rssPeakMbMax": 320,
+    "heapPeakMbMax": 110,
+    "peakActiveHandlesMax": 120
+  },
+  "validation": {
+    "multiplayerSmoke": {
+      "status": "blocked",
+      "command": "npm run test:e2e:multiplayer:smoke",
+      "notes": "Playwright Chromium failed to launch in the container because libatk-bridge-2.0.so.0 was missing.",
+      "error": "browserType.launch: chrome-headless-shell: error while loading shared libraries: libatk-bridge-2.0.so.0: cannot open shared object file: No such file or directory"
+    },
+    "stressRooms": {
+      "status": "passed",
+      "command": "npm run stress:rooms -- --rooms=48 --connect-concurrency=12 --action-concurrency=12 --sample-interval-ms=100 --reconnect-pause-ms=150",
+      "notes": "All three fixed scenarios passed on the local embedded Colyseus server."
+    }
+  },
+  "results": [
+    {
+      "scenario": "world_progression",
+      "status": "passed",
+      "rooms": 48,
+      "successfulRooms": 48,
+      "failedRooms": 0,
+      "completedActions": 144,
+      "durationMs": 821.43,
+      "roomsPerSecond": 58.43,
+      "actionsPerSecond": 175.3,
+      "cpuCoreUtilizationPct": 71.5,
+      "rssPeakMb": 213.95,
+      "heapPeakMb": 55.42,
+      "peakActiveHandles": 105,
+      "runtimeHealthAfterConnect": {
+        "checkedAt": "2026-03-29T00:13:59.240Z",
+        "activeRoomCount": 48,
+        "connectionCount": 48,
+        "activeBattleCount": 0,
+        "heroCount": 96,
+        "connectMessagesTotal": 48,
+        "worldActionsTotal": 0,
+        "battleActionsTotal": 0,
+        "actionMessagesTotal": 0
+      },
+      "runtimeHealthAfterScenario": {
+        "checkedAt": "2026-03-29T00:13:59.417Z",
+        "activeRoomCount": 48,
+        "connectionCount": 48,
+        "activeBattleCount": 48,
+        "heroCount": 96,
+        "connectMessagesTotal": 48,
+        "worldActionsTotal": 96,
+        "battleActionsTotal": 0,
+        "actionMessagesTotal": 96
+      }
+    },
+    {
+      "scenario": "battle_settlement",
+      "status": "passed",
+      "rooms": 48,
+      "successfulRooms": 48,
+      "failedRooms": 0,
+      "completedActions": 240,
+      "durationMs": 763.29,
+      "roomsPerSecond": 62.89,
+      "actionsPerSecond": 314.43,
+      "cpuCoreUtilizationPct": 62.36,
+      "rssPeakMb": 227.58,
+      "heapPeakMb": 68.78,
+      "peakActiveHandles": 105,
+      "runtimeHealthAfterConnect": {
+        "checkedAt": "2026-03-29T00:13:59.851Z",
+        "activeRoomCount": 48,
+        "connectionCount": 48,
+        "activeBattleCount": 0,
+        "heroCount": 96,
+        "connectMessagesTotal": 96,
+        "worldActionsTotal": 96,
+        "battleActionsTotal": 0,
+        "actionMessagesTotal": 96
+      },
+      "runtimeHealthAfterScenario": {
+        "checkedAt": "2026-03-29T00:14:00.203Z",
+        "activeRoomCount": 48,
+        "connectionCount": 48,
+        "activeBattleCount": 0,
+        "heroCount": 96,
+        "connectMessagesTotal": 96,
+        "worldActionsTotal": 144,
+        "battleActionsTotal": 144,
+        "actionMessagesTotal": 288
+      }
+    },
+    {
+      "scenario": "reconnect",
+      "status": "passed",
+      "rooms": 48,
+      "successfulRooms": 48,
+      "failedRooms": 0,
+      "completedActions": 144,
+      "durationMs": 1181.68,
+      "roomsPerSecond": 40.62,
+      "actionsPerSecond": 121.86,
+      "cpuCoreUtilizationPct": 37.81,
+      "rssPeakMb": 268.21,
+      "heapPeakMb": 91.6,
+      "peakActiveHandles": 106,
+      "reconnectSuccessRate": "100%",
+      "runtimeHealthAfterConnect": {
+        "checkedAt": "2026-03-29T00:14:00.660Z",
+        "activeRoomCount": 48,
+        "connectionCount": 48,
+        "activeBattleCount": 0,
+        "heroCount": 96,
+        "connectMessagesTotal": 144,
+        "worldActionsTotal": 144,
+        "battleActionsTotal": 144,
+        "actionMessagesTotal": 288
+      },
+      "runtimeHealthAfterScenario": {
+        "checkedAt": "2026-03-29T00:14:01.400Z",
+        "activeRoomCount": 48,
+        "connectionCount": 96,
+        "activeBattleCount": 48,
+        "heroCount": 96,
+        "connectMessagesTotal": 192,
+        "worldActionsTotal": 192,
+        "battleActionsTotal": 144,
+        "actionMessagesTotal": 336
+      }
+    }
+  ],
+  "rollbackDecision": {
+    "required": false,
+    "notes": "No rollback is needed for the stress baseline itself. Re-run the smoke gate in an environment with Playwright system dependencies before marking the overall wider-playtest gate as passed."
+  }
+}
