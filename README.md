@@ -163,6 +163,7 @@ npm run dev:client:h5
 - 并发房间压测：`npm run stress:rooms -- --rooms=120 --connect-concurrency=24 --action-concurrency=24`
 - 并发房间压测启动后，也可直接查看同进程观测面：`/api/runtime/health`、`/api/runtime/auth-readiness` 与 `/api/runtime/metrics`
 - 战斗平衡验证：`npm run validate:battle -- --count=1000 --scenario=all --skill-config=configs/battle-skills-v1.1.json`
+- 内容包一致性验证：`npm run validate:content-pack -- --report-path artifacts/content-pack-validation-report.json`
 - 并发房间压测会按 `world_progression / battle_settlement / reconnect` 三种场景分开跑数，并输出 CPU、内存、房间吞吐、动作吞吐等指标；可通过 `--scenarios=world_progression,reconnect` 等参数缩小范围
 - 当前客户端边界：`apps/cocos-client` 负责主玩法运行时；`apps/client` 只保留浏览器调试、配置联调和回归验证。
 - 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
@@ -192,7 +193,7 @@ npm run dev:client:h5
   - 未配置 MySQL 时走文件系统存储；配置 `VEIL_MYSQL_*` 后切换到 MySQL 主存储
   - 保存后会同时导出到 `configs/*.json`，并同步刷新服务端运行时配置，新建房间和战斗逻辑会直接读取新值
   - 当前已补上版本快照、快照差异对比、历史回滚，以及 Easy / Normal / Hard 三档内置预设和自定义预设保存
-  - 实时校验现已带出对应配置 schema 摘要、必填根字段和逐项修复建议；非法值会阻止保存
+  - 实时校验现已带出对应配置 schema 摘要、必填根字段、逐项修复建议，以及跨 `world / mapObjects / units / battleSkills / battleBalance` 的 content-pack 一致性结果；非法值会阻止保存
   - 导出除 JSON 注释版外，还支持带 `Meta / Schema / Fields` 工作表的 Excel，以及更轻量的字段清单 CSV
   - 当前编辑 `phase1-world.json` 时，右侧会即时生成一份地图样本预览；可切换预览 seed，对照查看地形、随机资源、保底资源、英雄与中立怪分布
   - 当前编辑 `battle-skills.json` 时，右侧会显示技能编辑器，可直接调整冷却、伤害倍率、目标类型、附加状态和状态持续参数，并同步回写 JSON 草稿
@@ -245,6 +246,7 @@ npm run dev:client:h5
 - `units.json` 现已补上 `faction / rarity` 元数据，前端会自动挂载阵营与品质 badge，占位资源层已经具备继续细化正式 UI 的结构。
 - `battle-skills.json` 现已承载战斗技能与持续状态目录，shared 战斗结算会在创建战斗和执行技能时直接读取运行时配置，不再依赖硬编码技能表。
 - `battle-balance.json` 现已接入配置中心：支持可视化编辑伤害公式、遭遇战环境和 PVP ELO 参数，保存后会联动导出 JSON 并直接刷新 shared/runtime 读取链路；实时校验还会检查阈值范围以及陷阱状态是否与 `battle-skills.json` 对齐。
+- `docs/release-evidence/content-pack-validation-report.example.json` 提供了一份 bundle-level 内容包校验样例，可直接对照 CI 产出的同结构 report 做 release review。
 - 当前示例技能已包含 `投矛射击 / 护甲术 / 战意激发 / 破甲投枪 / 毒牙 / 裂伤嚎叫`，并补充了 `守誓姿态` 模板；守军自动回合也会根据技能目标和效果优先选择施法，而不是固定平砍。
 - 英雄长期成长现已补上技能树：`hero.progressed` 在升级时会发放技能点，H5 英雄卡会直接显示分支、当前阶数和“学习 / 强化”按钮；已学技能会写入英雄长期档，并在下一场战斗里额外挂到英雄部队技能栏。
 - 地图对象也已拆出独立视觉元数据配置，悬停地图时会通过统一对象卡片展示 `interactionType / faction / rarity` 等信息。

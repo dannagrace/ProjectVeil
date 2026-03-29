@@ -17,6 +17,7 @@ interface ConfigDocument extends ConfigDocumentSummary {
 }
 
 interface ValidationIssue {
+  documentId?: ConfigDocumentId;
   path: string;
   severity: "error" | "warning";
   message: string;
@@ -37,6 +38,14 @@ interface ValidationReport {
   summary: string;
   issues: ValidationIssue[];
   schema: ConfigSchemaSummary;
+  contentPack: {
+    schemaVersion: 1;
+    valid: boolean;
+    summary: string;
+    issueCount: number;
+    checkedDocuments: ConfigDocumentId[];
+    issues: ValidationIssue[];
+  };
 }
 
 interface ConfigSnapshotSummary {
@@ -255,6 +264,15 @@ const EMPTY_SCHEMA_SUMMARY: ConfigSchemaSummary = {
   version: "0",
   description: "Schema 信息暂不可用。",
   required: []
+};
+
+const EMPTY_CONTENT_PACK_REPORT: ValidationReport["contentPack"] = {
+  schemaVersion: 1,
+  valid: true,
+  summary: "Content-pack consistency information is not available yet.",
+  issueCount: 0,
+  checkedDocuments: ["world", "mapObjects", "units", "battleSkills", "battleBalance"],
+  issues: []
 };
 
 function encodeBase64(buffer: ArrayBuffer): string {
@@ -604,7 +622,8 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
               suggestion: "检查 JSON 语法和字段格式后重试。"
             }
           ],
-          schema: state.validation?.schema ?? EMPTY_SCHEMA_SUMMARY
+          schema: state.validation?.schema ?? EMPTY_SCHEMA_SUMMARY,
+          contentPack: state.validation?.contentPack ?? EMPTY_CONTENT_PACK_REPORT
         };
       } finally {
         if (requestVersion === validationRequestVersion) {

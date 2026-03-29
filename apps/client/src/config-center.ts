@@ -77,6 +77,7 @@ interface ConfigDocument extends ConfigDocumentSummary {
 }
 
 interface ValidationIssue {
+  documentId?: ConfigDocumentId;
   path: string;
   severity: "error" | "warning";
   message: string;
@@ -89,6 +90,14 @@ interface ValidationReport {
   summary: string;
   issues: ValidationIssue[];
   schema: ConfigSchemaSummary;
+  contentPack: {
+    schemaVersion: 1;
+    valid: boolean;
+    summary: string;
+    issueCount: number;
+    checkedDocuments: ConfigDocumentId[];
+    issues: ValidationIssue[];
+  };
 }
 
 interface ConfigSchemaSummary {
@@ -1028,6 +1037,42 @@ function renderValidationSection(): string {
   }
 
   const validation = state.validation;
+  const renderSchemaIssues = (issues: ValidationIssue[]) =>
+    issues.length > 0
+      ? `
+        <div class="validation-list">
+          ${issues
+            .map(
+              (issue, index) => `
+                <button class="validation-item" data-action="validation-jump" data-index="${index}">
+                  <strong>${escapeHtml(issue.path)}</strong>
+                  <span>${escapeHtml(issue.message)}</span>
+                  <small>${escapeHtml(issue.suggestion)}${issue.line ? ` · 第 ${issue.line} 行` : ""}</small>
+                </button>
+              `
+            )
+            .join("")}
+        </div>
+      `
+      : `<p class="config-hint">当前草稿满足 Schema / 运行时校验。</p>`;
+  const renderContentPackIssues = (issues: ValidationIssue[]) =>
+    issues.length > 0
+      ? `
+        <div class="validation-list">
+          ${issues
+            .map(
+              (issue) => `
+                <div class="validation-item">
+                  <strong>${escapeHtml(`${issue.documentId ?? state.current?.id ?? "config"}:${issue.path}`)}</strong>
+                  <span>${escapeHtml(issue.message)}</span>
+                  <small>${escapeHtml(issue.suggestion)}</small>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+      `
+      : `<p class="config-hint">当前草稿对应的内容包引用关系保持一致。</p>`;
   const content =
     state.validationLoading && !validation
       ? `<div class="world-preview-empty">正在进行 Schema 校验...</div>`
@@ -1044,31 +1089,20 @@ function renderValidationSection(): string {
             <small>${escapeHtml(validation.schema.id)} · v${escapeHtml(validation.schema.version)}</small>
             <small>必填根字段: ${escapeHtml(validation.schema.required.join(", ") || "无")}</small>
           </div>
-          ${
-            validation.issues.length > 0
-              ? `
-                <div class="validation-list">
-                  ${validation.issues
-                    .map(
-                      (issue, index) => `
-                        <button class="validation-item" data-action="validation-jump" data-index="${index}">
-                          <strong>${escapeHtml(issue.path)}</strong>
-                          <span>${escapeHtml(issue.message)}</span>
-                          <small>${escapeHtml(issue.suggestion)}${issue.line ? ` · 第 ${issue.line} 行` : ""}</small>
-                        </button>
-                      `
-                    )
-                    .join("")}
-                </div>
-              `
-              : `<p class="config-hint">当前草稿满足实时校验，保存时会继续经过服务端运行时校验。</p>`
-          }
+          <div class="schema-card">
+            <strong>内容包一致性</strong>
+            <span>${escapeHtml(validation.contentPack.summary)}</span>
+            <small>schema v${validation.contentPack.schemaVersion} · ${validation.contentPack.checkedDocuments.length} 个配置面</small>
+            <small>${escapeHtml(validation.contentPack.checkedDocuments.join(" / "))}</small>
+          </div>
+          ${renderSchemaIssues(validation.issues)}
+          ${renderContentPackIssues(validation.contentPack.issues)}
         `;
 
   return `
     <section class="validation-section">
       <div class="config-preview-subhead">
-        <h4>Schema 校验</h4>
+        <h4>配置校验</h4>
         <span class="config-meta">${validation?.valid ? "可提交" : "保存前需修复"}</span>
       </div>
       ${content}

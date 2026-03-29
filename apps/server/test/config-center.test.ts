@@ -393,6 +393,7 @@ test("config center can validate invalid world config with structured issues", a
   assert.match(report.issues.map((issue) => issue.path).join(","), /width|heroes\[0\]\.position\.x/);
   assert.equal(report.schema.id, "project-veil.config-center.world");
   assert.match(report.schema.version, /\d{4}-\d{2}-\d{2}/);
+  assert.equal(report.contentPack.valid, true);
 });
 
 test("config center schema validation reports missing and mistyped fields", async () => {
@@ -444,6 +445,38 @@ test("config center validates battle balance against thresholds and status refer
     /environment\.trapSpawnThreshold|environment\.trapGrantedStatusId/
   );
   assert.equal(report.schema.id, "project-veil.config-center.battleBalance");
+  assert.equal(report.contentPack.valid, false);
+  assert.match(
+    report.contentPack.issues.map((issue) => `${issue.documentId}:${issue.path}`).join(","),
+    /battleBalance:environment\.trapGrantedStatusId/
+  );
+});
+
+test("config center validation exposes content-pack issues from other config files", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const report = await store.validateDocument(
+    "world",
+    JSON.stringify({
+      ...WORLD_CONFIG,
+      heroes: [
+        {
+          ...WORLD_CONFIG.heroes[0],
+          armyTemplateId: "missing_template"
+        }
+      ]
+    })
+  );
+
+  assert.equal(report.valid, false);
+  assert.equal(report.issues.length, 0);
+  assert.equal(report.contentPack.valid, false);
+  assert.match(
+    report.contentPack.issues.map((issue) => `${issue.documentId}:${issue.path}`).join(","),
+    /world:heroes\[0\]\.armyTemplateId/
+  );
 });
 
 test("config center snapshots support diff and rollback", async () => {
