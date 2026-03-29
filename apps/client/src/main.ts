@@ -50,8 +50,8 @@ import {
   unitFrameAsset
 } from "./assets";
 import { describeTileObject } from "./object-visuals";
-import { startH5ClientApp } from "./main-entry";
-import { bootstrapH5App, registerAutomationHooks, syncH5PlayerAccountProfile } from "./main-boot";
+import { launchH5ClientApp } from "./main-launch";
+import { bootstrapH5App, syncH5PlayerAccountProfile } from "./main-boot";
 import {
   confirmAccountRegistration,
   confirmPasswordRecovery,
@@ -5121,15 +5121,26 @@ async function onBindAccountProfile(): Promise<void> {
   }
 }
 
-startH5ClientApp({
-  bootstrapApp: bootstrap,
-  registerAutomationHooks: () =>
-    registerAutomationHooks({
-    window,
-    devDiagnosticsEnabled: DEV_DIAGNOSTICS_ENABLED,
-    renderGameToText,
-    exportDiagnosticSnapshot,
-    renderDiagnosticSnapshotToText,
-    advanceUiTime
-    })
+launchH5ClientApp({
+  state,
+  shouldBootGame,
+  queryPlayerId,
+  roomId,
+  playerId,
+  bindKeyboardShortcuts,
+  render,
+  syncCurrentAuthSession,
+  refreshLobbyRoomList,
+  logoutGuestSession,
+  readStoredSessionReplay,
+  applyReplayedUpdate,
+  getSession,
+  applyUpdate,
+  syncPlayerAccountProfile,
+  window,
+  devDiagnosticsEnabled: DEV_DIAGNOSTICS_ENABLED,
+  renderGameToText,
+  exportDiagnosticSnapshot,
+  renderDiagnosticSnapshotToText,
+  advanceUiTime
 });
