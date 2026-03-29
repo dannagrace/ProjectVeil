@@ -254,6 +254,12 @@ interface RemoteConnectOptions {
   connectTimeoutMs?: number;
 }
 
+interface LocalSessionRuntime {
+  connectRemoteGameSession: typeof connectRemoteGameSession;
+  createLocalSession: (roomId: string, playerId: string, seed: number) => GameSession;
+  wait: typeof wait;
+}
+
 class LocalGameSession implements GameSession {
   private readonly room: AuthoritativeWorldRoom;
   private readonly playerId: string;
@@ -897,6 +903,12 @@ async function connectRemoteGameSession(
   };
 }
 
+const defaultLocalSessionRuntime: LocalSessionRuntime = {
+  connectRemoteGameSession,
+  createLocalSession: (roomId, playerId, seed) => new LocalGameSession(roomId, playerId, seed),
+  wait
+};
+
 class RecoverableRemoteGameSession implements GameSession {
   private currentSession!: RemoteGameSession;
   private recoveryPromise: Promise<void> | null = null;
@@ -905,16 +917,18 @@ class RecoverableRemoteGameSession implements GameSession {
     private readonly roomId: string,
     private readonly playerId: string,
     private readonly seed: number,
-    private readonly options?: GameSessionOptions
+    private readonly options?: GameSessionOptions,
+    private readonly runtime: LocalSessionRuntime = defaultLocalSessionRuntime
   ) {}
 
   static async create(
     roomId: string,
     playerId: string,
     seed = 1001,
-    options?: GameSessionOptions
+    options?: GameSessionOptions,
+    runtime: LocalSessionRuntime = defaultLocalSessionRuntime
   ): Promise<RecoverableRemoteGameSession> {
-    const session = new RecoverableRemoteGameSession(roomId, playerId, seed, options);
+    const session = new RecoverableRemoteGameSession(roomId, playerId, seed, options, runtime);
     const { session: remoteSession, recoveredFromStoredToken } = await session.openRemoteSession(true);
     session.currentSession = remoteSession;
     if (recoveredFromStoredToken) {
@@ -933,7 +947,7 @@ class RecoverableRemoteGameSession implements GameSession {
       onConnectionEvent: (event) => this.handleConnectionEvent(event)
     };
 
-    return connectRemoteGameSession(
+    return this.runtime.connectRemoteGameSession(
       this.roomId,
       this.playerId,
       this.seed,
@@ -972,7 +986,7 @@ class RecoverableRemoteGameSession implements GameSession {
           this.options?.onConnectionEvent?.("reconnected");
           return;
         } catch {
-          await wait(REMOTE_RECOVERY_RETRY_MS);
+          await this.runtime.wait(REMOTE_RECOVERY_RETRY_MS);
         }
       }
     })().finally(() => {
@@ -1061,15 +1075,48 @@ class RecoverableRemoteGameSession implements GameSession {
   }
 }
 
+async function createGameSessionWithRuntime(
+  roomId: string,
+  playerId: string,
+  seed = 1001,
+  options?: GameSessionOptions,
+  runtime: LocalSessionRuntime = defaultLocalSessionRuntime
+): Promise<GameSession> {
+  try {
+    return await RecoverableRemoteGameSession.create(roomId, playerId, seed, options, runtime);
+  } catch {
+    return runtime.createLocalSession(roomId, playerId, seed);
+  }
+}
+
 export async function createGameSession(
   roomId: string,
   playerId: string,
   seed = 1001,
   options?: GameSessionOptions
 ): Promise<GameSession> {
-  try {
-    return await RecoverableRemoteGameSession.create(roomId, playerId, seed, options);
-  } catch {
-    return new LocalGameSession(roomId, playerId, seed);
-  }
+  return createGameSessionWithRuntime(roomId, playerId, seed, options);
 }
+
+export const localSessionTestHooks = {
+  createGameSessionWithRuntime(
+    roomId: string,
+    playerId: string,
+    seed = 1001,
+    options?: GameSessionOptions,
+    runtimeOverrides?: Partial<LocalSessionRuntime>
+  ): Promise<GameSession> {
+    return createGameSessionWithRuntime(roomId, playerId, seed, options, {
+      ...defaultLocalSessionRuntime,
+      ...runtimeOverrides
+    });
+  },
+  createRemoteGameSession(
+    room: ColyseusRoom,
+    roomId: string,
+    playerId: string,
+    options?: GameSessionOptions
+  ): GameSession {
+    return new RemoteGameSession(room, roomId, playerId, options);
+  }
+};
