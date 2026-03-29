@@ -179,6 +179,7 @@ test("battle presentation controller formalizes command, casualty, and result fl
     label: "战斗展开",
     badge: "ENGAGE"
   });
+  assert.equal(controller.getState().summaryLines[0], "反馈层：动画 攻击 / 转场 开战");
 
   controller.previewAction(
     {
@@ -195,6 +196,7 @@ test("battle presentation controller formalizes command, casualty, and result fl
     tone: "skill",
     badge: "SKILL"
   });
+  assert.equal(controller.getState().feedbackLayer.cue, "skill");
 
   controller.applyUpdate(
     battle,
@@ -247,4 +249,6 @@ test("battle presentation controller formalizes command, casualty, and result fl
     tone: "victory",
     result: "victory"
   });
+  assert.equal(controller.getState().feedbackLayer.transition, "exit");
+  assert.match(controller.getState().summaryLines[1] ?? "", /战线：我方剩余 1 队 \/ 对方剩余 1 队/);
 });

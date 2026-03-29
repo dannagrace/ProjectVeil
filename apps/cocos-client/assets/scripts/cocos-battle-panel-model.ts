@@ -81,7 +81,7 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
   const battle = state.update?.battle;
   if (!battle) {
     const presentationSummary = state.presentationState
-      ? [state.presentationState.label, state.presentationState.detail]
+      ? [state.presentationState.label, ...state.presentationState.summaryLines]
       : ["当前没有战斗。"];
     return {
       title: state.presentationState?.result ? "战斗结算" : "战斗面板",
@@ -168,12 +168,13 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
   const statusSummary = activeUnit ? buildStatusSummary(activeUnit) : "无异常";
 
   return {
-    title: "战斗面板",
+    title: state.presentationState?.phase === "enter" ? "战斗展开" : "战斗面板",
     stage: buildBattleStageView(state.update, battle),
     feedback: state.feedback,
     summaryLines: [
       `${battle.id} · 第 ${battle.round} 回合`,
       `流程：${state.presentationState?.label ?? "战斗进行中"}`,
+      ...(state.presentationState?.summaryLines ?? []),
       `阵营：${controlLabel}`,
       `阶段：${turnLabel}`,
       `行动单位：${activeUnit ? formatActiveUnitLine(activeUnit) : "等待中"}`,
