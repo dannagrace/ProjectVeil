@@ -1,4 +1,8 @@
-import { VeilRoot } from "../../assets/scripts/VeilRoot.ts";
+import {
+  resetVeilRootRuntimeForTests,
+  setVeilRootRuntimeForTests,
+  VeilRoot
+} from "../../assets/scripts/VeilRoot.ts";
 import type { SessionUpdate } from "../../assets/scripts/VeilCocosSession.ts";
 
 export function createVeilRootHarness(): VeilRoot & Record<string, unknown> {
@@ -27,4 +31,12 @@ export function createVeilRootHarness(): VeilRoot & Record<string, unknown> {
   root.refreshLobbyRoomList = async () => undefined;
   root.refreshLobbyAccountProfile = async () => undefined;
   return root;
+}
+
+export function installVeilRootRuntime(overrides: Parameters<typeof setVeilRootRuntimeForTests>[0]): void {
+  setVeilRootRuntimeForTests(overrides);
+}
+
+export function resetVeilRootRuntime(): void {
+  resetVeilRootRuntimeForTests();
 }

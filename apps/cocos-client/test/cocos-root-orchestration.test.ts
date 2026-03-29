@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { afterEach, test } from "node:test";
 import { sys } from "cc";
-import { VeilCocosSession } from "../assets/scripts/VeilCocosSession.ts";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
-import { createVeilRootHarness } from "./helpers/veil-root-harness.ts";
+import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
+
+afterEach(() => {
+  resetVeilRootRuntime();
+  (sys as unknown as { localStorage: Storage | null }).localStorage = null;
+});
 
 test("VeilRoot boots into lobby mode and triggers lobby bootstrap when no roomId is provided", async () => {
   const storage = createMemoryStorage();
@@ -53,12 +57,6 @@ test("VeilRoot connect replays cached session state before applying the live sna
     },
     async dispose() {}
   };
-  const sessionClass = VeilCocosSession as unknown as {
-    readStoredReplay: (roomId: string, playerId: string) => unknown;
-    create: (...args: unknown[]) => Promise<unknown>;
-  };
-  const originalReadStoredReplay = sessionClass.readStoredReplay;
-  const originalCreate = sessionClass.create;
 
   root.applyReplayedSessionUpdate = (update) => {
     order.push(`replay:${update.world.meta.day}`);
@@ -73,15 +71,12 @@ test("VeilRoot connect replays cached session state before applying the live sna
     root.lastUpdate = update;
   };
 
-  sessionClass.readStoredReplay = () => replayedUpdate;
-  sessionClass.create = async () => fakeSession;
+  installVeilRootRuntime({
+    readStoredReplay: () => replayedUpdate,
+    createSession: async () => fakeSession as never
+  });
 
-  try {
-    await root.connect();
-  } finally {
-    sessionClass.readStoredReplay = originalReadStoredReplay;
-    sessionClass.create = originalCreate;
-  }
+  await root.connect();
 
   assert.deepEqual(order, ["replay:2", "live:3"]);
   assert.equal(root.session, fakeSession);
@@ -118,18 +113,15 @@ test("VeilRoot hands control to a fresh session when starting a new run", async 
     handoffOrder.push(`query:${roomId}`);
   };
 
-  const sessionClass = VeilCocosSession as unknown as {
-    create: (...args: unknown[]) => Promise<unknown>;
-  };
-  const originalCreate = sessionClass.create;
   const originalDateNow = Date.now;
-  sessionClass.create = async () => freshSession;
+  installVeilRootRuntime({
+    createSession: async () => freshSession as never
+  });
   Date.now = () => 1234567890123;
 
   try {
     await root.startNewRun();
   } finally {
-    sessionClass.create = originalCreate;
     Date.now = originalDateNow;
   }
 
@@ -142,4 +134,91 @@ test("VeilRoot hands control to a fresh session when starting a new run", async 
     "apply:run-fr4nch",
     "dispose:previous"
   ]);
+});
+
+test("VeilRoot lobby handoff enters a room with the authenticated session and live snapshot", async () => {
+  const storage = createMemoryStorage();
+  (sys as unknown as { localStorage: Storage }).localStorage = storage;
+
+  const root = createVeilRootHarness();
+  root.showLobby = true;
+  root.roomId = "room-bravo";
+  root.playerId = "guest-7";
+  root.displayName = "Guest 7";
+
+  const liveUpdate = createSessionUpdate(4, "room-bravo", "guest-7");
+  const fakeSession = {
+    async snapshot() {
+      return liveUpdate;
+    },
+    async dispose() {}
+  };
+  const queryUpdates: Array<string | null> = [];
+  root.syncBrowserRoomQuery = (roomId: string | null) => {
+    queryUpdates.push(roomId);
+  };
+
+  installVeilRootRuntime({
+    loginGuestAuthSession: async () => ({
+      token: "guest.token",
+      playerId: "guest-7",
+      displayName: "Guest 7",
+      authMode: "guest",
+      provider: "guest",
+      source: "remote"
+    }),
+    createSession: async () => fakeSession as never
+  });
+
+  await root.enterLobbyRoom();
+
+  assert.equal(root.showLobby, false);
+  assert.equal(root.session, fakeSession);
+  assert.equal(root.playerId, "guest-7");
+  assert.equal(root.authToken, "guest.token");
+  assert.equal(root.sessionSource, "remote");
+  assert.equal(root.lastUpdate?.world.meta.day, 4);
+  assert.deepEqual(queryUpdates, ["room-bravo"]);
+});
+
+test("VeilRoot keeps the lobby visible and explains when an account session has expired", async () => {
+  const storage = createMemoryStorage();
+  storage.setItem(
+    "project-veil:auth-session",
+    JSON.stringify({
+      token: "expired.token",
+      playerId: "account-player",
+      displayName: "暮潮守望",
+      authMode: "account",
+      provider: "account-password",
+      loginId: "veil-ranger",
+      source: "remote"
+    })
+  );
+  (sys as unknown as { localStorage: Storage }).localStorage = storage;
+
+  const root = createVeilRootHarness();
+  root.showLobby = true;
+  root.roomId = "room-charlie";
+  root.playerId = "account-player";
+  root.displayName = "暮潮守望";
+  root.authMode = "account";
+  root.authToken = "expired.token";
+  root.authProvider = "account-password";
+  root.loginId = "veil-ranger";
+  root.sessionSource = "remote";
+
+  installVeilRootRuntime({
+    syncAuthSession: async () => null
+  });
+
+  await root.enterLobbyRoom();
+
+  assert.equal(root.showLobby, true);
+  assert.equal(root.session, null);
+  assert.equal(root.authToken, null);
+  assert.equal(root.authMode, "guest");
+  assert.equal(root.authProvider, "guest");
+  assert.equal(root.sessionSource, "none");
+  assert.equal(root.lobbyStatus, "账号会话已失效，请重新登录后再进入房间。");
 });
