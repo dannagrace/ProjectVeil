@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { BattleState, MovementPlan, PlayerWorldView } from "../../../packages/shared/src/index";
 import type { SessionUpdate } from "../src/local-session";
-import { renderEncounterSourceDetail, renderRoomActionHint, resolveRoomFeedbackTone } from "../src/room-feedback";
+import { renderEncounterSourceDetail, renderRecoverySummary, renderRoomActionHint, resolveRoomFeedbackTone } from "../src/room-feedback";
 
 type EncounterStartedEvent = Extract<SessionUpdate["events"][number], { type: "battle.started" }>;
 
@@ -407,6 +407,71 @@ test("renderRoomActionHint covers settlement and exploration move branches", () 
       predictionStatus: ""
     }),
     "下一步：当前英雄今日已无移动力，可推进到下一天。"
+  );
+});
+
+test("renderRecoverySummary covers reconnect, replay fallback, explicit recovery, and steady state branches", () => {
+  assert.equal(
+    renderRecoverySummary({
+      battle: null,
+      lastBattleSettlement: null,
+      diagnostics: {
+        connectionStatus: "reconnecting"
+      },
+      predictionStatus: ""
+    }),
+    "恢复状态：正在重新加入多人房间并校正战斗归属，结果请以恢复后的权威状态为准。"
+  );
+
+  assert.equal(
+    renderRecoverySummary({
+      battle: null,
+      lastBattleSettlement: null,
+      diagnostics: {
+        connectionStatus: "connected"
+      },
+      predictionStatus: "已回放本地缓存状态，正在等待房间同步..."
+    }),
+    "恢复状态：已回放本地缓存状态，正在等待房间同步..."
+  );
+
+  assert.equal(
+    renderRecoverySummary({
+      battle: null,
+      lastBattleSettlement: null,
+      diagnostics: {
+        connectionStatus: "connected",
+        recoverySummary: "权威房间状态已恢复，战后结果与地图状态已经重新对齐。"
+      },
+      predictionStatus: ""
+    }),
+    "恢复状态：权威房间状态已恢复，战后结果与地图状态已经重新对齐。"
+  );
+
+  assert.equal(
+    renderRecoverySummary({
+      battle: null,
+      lastBattleSettlement: {
+        aftermath: "已结算"
+      },
+      diagnostics: {
+        connectionStatus: "connected"
+      },
+      predictionStatus: ""
+    }),
+    "恢复状态：最近一场遭遇的结算与地图房间态已经重新对齐。"
+  );
+
+  assert.equal(
+    renderRecoverySummary({
+      battle: null,
+      lastBattleSettlement: null,
+      diagnostics: {
+        connectionStatus: "connected"
+      },
+      predictionStatus: ""
+    }),
+    "恢复状态：当前未触发重连补救，房间同步保持稳定。"
   );
 });
 
