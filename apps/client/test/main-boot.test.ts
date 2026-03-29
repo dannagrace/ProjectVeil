@@ -132,6 +132,141 @@ test("bootstrapH5App replays cached session state before the fresh snapshot and 
   assert.deepEqual(state.log, ["会话已连接。Room room-alpha / Player player-auth", "old-line"]);
 });
 
+test("bootstrapH5App keeps the cached session visible and marks boot failure when the remote snapshot is unavailable", async () => {
+  const replayed = createSessionUpdate("cached");
+  const events: string[] = [];
+  const state = {
+    lobby: {
+      playerId: "player-auth",
+      displayName: "访客骑士",
+      loginId: "",
+      authSession: null
+    },
+    accountDraftName: "访客骑士",
+    accountLoginId: "",
+    diagnostics: {
+      connectionStatus: "connecting" as const
+    },
+    log: ["正在连接本地会话服务...", "old-line"]
+  };
+
+  await bootstrapH5App({
+    state,
+    shouldBootGame: true,
+    queryPlayerId: "player-auth",
+    roomId: "room-alpha",
+    playerId: "player-auth",
+    bindKeyboardShortcuts: () => {
+      events.push("bindKeyboardShortcuts");
+    },
+    render: () => {
+      events.push("render");
+    },
+    syncCurrentAuthSession: async () => {
+      events.push("syncCurrentAuthSession");
+      return createStoredSession({ source: "local" });
+    },
+    refreshLobbyRoomList: async () => {
+      events.push("refreshLobbyRoomList");
+    },
+    logoutGuestSession: () => {
+      events.push("logoutGuestSession");
+    },
+    readStoredSessionReplay: () => {
+      events.push("readStoredSessionReplay");
+      return replayed;
+    },
+    applyReplayedUpdate: (update) => {
+      events.push(`applyReplayedUpdate:${update.reason}`);
+    },
+    getSession: async () => {
+      events.push("getSession");
+      throw new Error("session_unavailable");
+    },
+    applyUpdate: () => {
+      events.push("applyUpdate");
+    },
+    syncPlayerAccountProfile: () => {
+      events.push("syncPlayerAccountProfile");
+    }
+  });
+
+  assert.deepEqual(events, [
+    "bindKeyboardShortcuts",
+    "render",
+    "syncCurrentAuthSession",
+    "readStoredSessionReplay",
+    "applyReplayedUpdate:cached",
+    "getSession",
+    "render"
+  ]);
+  assert.equal(state.diagnostics.connectionStatus, "reconnect_failed");
+  assert.deepEqual(state.log, ["远端会话暂不可用，当前仅展示最近缓存状态。", "old-line"]);
+});
+
+test("bootstrapH5App logs out when no query player or synced session can restore the boot identity", async () => {
+  const events: string[] = [];
+  const state = {
+    lobby: {
+      playerId: "guest-001",
+      displayName: "本地游客",
+      loginId: "",
+      authSession: createStoredSession({ authMode: "guest", source: "local", playerId: "guest-001", loginId: undefined })
+    },
+    accountDraftName: "本地游客",
+    accountLoginId: "",
+    diagnostics: {
+      connectionStatus: "connecting" as const
+    },
+    log: ["正在连接本地会话服务..."]
+  };
+
+  await bootstrapH5App({
+    state,
+    shouldBootGame: true,
+    queryPlayerId: "",
+    roomId: "room-alpha",
+    playerId: "guest-001",
+    bindKeyboardShortcuts: () => {
+      events.push("bindKeyboardShortcuts");
+    },
+    render: () => {
+      events.push("render");
+    },
+    syncCurrentAuthSession: async () => {
+      events.push("syncCurrentAuthSession");
+      return null;
+    },
+    refreshLobbyRoomList: async () => {
+      events.push("refreshLobbyRoomList");
+    },
+    logoutGuestSession: () => {
+      events.push("logoutGuestSession");
+    },
+    readStoredSessionReplay: () => {
+      events.push("readStoredSessionReplay");
+      return null;
+    },
+    applyReplayedUpdate: () => {
+      events.push("applyReplayedUpdate");
+    },
+    getSession: async () => {
+      events.push("getSession");
+      throw new Error("should_not_fetch_session");
+    },
+    applyUpdate: () => {
+      events.push("applyUpdate");
+    },
+    syncPlayerAccountProfile: () => {
+      events.push("syncPlayerAccountProfile");
+    }
+  });
+
+  assert.deepEqual(events, ["bindKeyboardShortcuts", "render", "syncCurrentAuthSession", "logoutGuestSession"]);
+  assert.equal(state.lobby.authSession, null);
+  assert.equal(state.diagnostics.connectionStatus, "connecting");
+});
+
 test("syncH5PlayerAccountProfile keeps boot usable when progression falls back to local storage", async () => {
   const events: string[] = [];
   const state = {

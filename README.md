@@ -113,6 +113,8 @@ npm run dev:client:h5
 - `apps/client`
   - H5 调试 / 回归壳。
   - 当前保留给浏览器内快速验证、配置联调和回归测试使用，不再作为主客户端运行时。
+  - `apps/client/test/main-boot.test.ts` 额外承担一层轻量 boot/session 回归：固定 `main.ts` 启动阶段的缓存会话回放、远端会话不可用时的本地回退或失败信号、以及 automation/debug hooks 注册结果。
+  - 这层回归不覆盖真实浏览器导航、Colyseus 长链路重连、或 Cocos 主客户端集成；这些仍由 Playwright、`local-session.ts`/server 测试和 `apps/cocos-client` 自动化承担。
 - `apps/cocos-client`
   - Cocos Creator 3.x 主客户端运行时。
   - 当前已覆盖 Lobby、地图探索、战斗、账号会话恢复和配置中心跳转的主流程。
