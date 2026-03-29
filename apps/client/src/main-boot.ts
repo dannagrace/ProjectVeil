@@ -82,6 +82,18 @@ interface RegisterAutomationHooksOptions {
   advanceUiTime: (ms: number) => Promise<void>;
 }
 
+function summarizeBootSessionFailure(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "会话恢复失败，请刷新页面或稍后重试。";
+  }
+
+  if (error.message === "session_not_ready" || error.message === "session_unavailable") {
+    return "会话恢复失败，请返回大厅后重新进入房间。";
+  }
+
+  return `会话恢复失败：${error.message}`;
+}
+
 export async function bootstrapH5App({
   state,
   shouldBootGame,
@@ -127,17 +139,26 @@ export async function bootstrapH5App({
     applyReplayedUpdate(replayed);
   }
 
-  const session = await getSession();
-  const initial = await session.snapshot();
-  state.diagnostics.connectionStatus = "connected";
-  state.log = [
-    `会话已连接。Room ${roomId} / Player ${playerId}`,
-    ...state.log.filter(
-      (line) => line !== "正在连接本地会话服务..." && line !== `会话已连接。Room ${roomId} / Player ${playerId}`
-    )
-  ].slice(0, 12);
-  applyUpdate(initial, "system");
-  void syncPlayerAccountProfile();
+  try {
+    const session = await getSession();
+    const initial = await session.snapshot();
+    state.diagnostics.connectionStatus = "connected";
+    state.log = [
+      `会话已连接。Room ${roomId} / Player ${playerId}`,
+      ...state.log.filter(
+        (line) => line !== "正在连接本地会话服务..." && line !== `会话已连接。Room ${roomId} / Player ${playerId}`
+      )
+    ].slice(0, 12);
+    applyUpdate(initial, "system");
+    void syncPlayerAccountProfile();
+  } catch (error) {
+    state.diagnostics.connectionStatus = "reconnect_failed";
+    state.log = [
+      replayed ? "远端会话暂不可用，当前仅展示最近缓存状态。" : summarizeBootSessionFailure(error),
+      ...state.log.filter((line) => line !== "正在连接本地会话服务...")
+    ].slice(0, 12);
+    render();
+  }
 }
 
 export async function syncH5PlayerAccountProfile({
