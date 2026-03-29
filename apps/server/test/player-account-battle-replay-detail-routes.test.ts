@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
+import { ClientState, matchMaker } from "colyseus";
+import type { Client } from "colyseus";
 import { issueGuestAuthSession } from "../src/auth";
+import { VeilColyseusRoom, configureRoomSnapshotStore, resetLobbyRoomRegistry } from "../src/colyseus-room";
+import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import type {
   PlayerAccountAuthSnapshot,
@@ -17,7 +21,17 @@ import type {
   RoomSnapshotStore
 } from "../src/persistence";
 import type { RoomPersistenceSnapshot } from "../src/index";
-import { createEmptyBattleState, queryEventLogEntries, type PlayerBattleReplaySummary } from "../../../packages/shared/src/index";
+import {
+  createEmptyBattleState,
+  queryEventLogEntries,
+  type BattleState,
+  type PlayerBattleReplaySummary,
+  type ServerMessage
+} from "../../../packages/shared/src/index";
+
+interface FakeClient extends Client {
+  sent: ServerMessage[];
+}
 
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
@@ -146,6 +160,152 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
   }
 }
 
+function createFakeClient(sessionId: string): FakeClient {
+  return {
+    sessionId,
+    state: ClientState.JOINED,
+    sent: [],
+    ref: {
+      removeAllListeners() {},
+      removeListener() {},
+      once() {}
+    },
+    send(type: string | number, payload?: unknown) {
+      this.sent.push({ type, ...(payload as object) } as ServerMessage);
+    },
+    leave() {},
+    enqueueRaw() {},
+    raw() {}
+  } as FakeClient;
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await Promise.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function createTestRoom(logicalRoomId: string, seed = 1001): Promise<VeilColyseusRoom> {
+  await matchMaker.setup(
+    undefined,
+    {
+      async update() {},
+      async remove() {},
+      async persist() {}
+    } as never,
+    "http://127.0.0.1"
+  );
+
+  const room = new VeilColyseusRoom();
+  const internalRoom = room as VeilColyseusRoom & {
+    __init(): void;
+    _listing: Record<string, unknown>;
+    _internalState: number;
+  };
+
+  internalRoom.roomId = logicalRoomId;
+  internalRoom.roomName = "veil";
+  internalRoom._listing = {
+    roomId: logicalRoomId,
+    clients: 0,
+    locked: false,
+    private: false,
+    unlisted: false,
+    metadata: {}
+  };
+
+  internalRoom.__init();
+  await room.onCreate({ logicalRoomId, seed });
+  internalRoom._internalState = 1;
+  return room;
+}
+
+function cleanupRoom(room: VeilColyseusRoom): void {
+  const internalRoom = room as VeilColyseusRoom & {
+    _autoDisposeTimeout?: NodeJS.Timeout;
+    _events: {
+      emit(event: string): void;
+    };
+  };
+
+  if (internalRoom._autoDisposeTimeout) {
+    clearTimeout(internalRoom._autoDisposeTimeout);
+    internalRoom._autoDisposeTimeout = undefined;
+  }
+
+  internalRoom._events.emit("dispose");
+  room.clock.clear();
+  room.clock.stop();
+}
+
+async function emitRoomMessage(room: VeilColyseusRoom, type: string, client: FakeClient, payload: object): Promise<void> {
+  const internalRoom = room as VeilColyseusRoom & {
+    onMessageEvents: {
+      emit(event: string, ...args: unknown[]): void;
+    };
+  };
+
+  internalRoom.onMessageEvents.emit(type, client, payload);
+  await flushAsyncWork();
+}
+
+async function connectPlayer(
+  room: VeilColyseusRoom,
+  client: FakeClient,
+  playerId: string,
+  requestId: string
+): Promise<void> {
+  room.clients.push(client);
+  room.onJoin(client, { playerId });
+  await emitRoomMessage(room, "connect", client, {
+    type: "connect",
+    requestId,
+    roomId: room.roomId,
+    playerId
+  });
+}
+
+function getBattleForPlayer(room: VeilColyseusRoom, playerId: string): BattleState | null {
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: {
+      getBattleForPlayer(playerId: string): BattleState | null;
+    };
+  };
+
+  return internalRoom.worldRoom.getBattleForPlayer(playerId);
+}
+
+async function resolveBattleThroughRoom(room: VeilColyseusRoom, client: FakeClient, playerId: string): Promise<number> {
+  let steps = 0;
+  while (steps < 20) {
+    const battle = getBattleForPlayer(room, playerId);
+    if (!battle) {
+      return steps;
+    }
+
+    const activeUnitId = battle.activeUnitId;
+    const activeUnit = activeUnitId ? battle.units[activeUnitId] : undefined;
+    const target = activeUnit
+      ? Object.values(battle.units).find((unit) => unit.camp !== activeUnit.camp && unit.count > 0)
+      : undefined;
+
+    assert.ok(activeUnitId, "expected an active unit while battle is in progress");
+    assert.ok(target, "expected a valid battle target while battle is in progress");
+
+    await emitRoomMessage(room, "battle.action", client, {
+      type: "battle.action",
+      requestId: `battle-route-step-${steps + 1}`,
+      action: {
+        type: "battle.attack",
+        attackerId: activeUnitId,
+        defenderId: target.id
+      }
+    });
+    steps += 1;
+  }
+
+  assert.fail(`expected battle for ${playerId} to resolve within 20 player actions`);
+}
+
 async function startAccountRouteServer(port: number, store: RoomSnapshotStore | null): Promise<Server> {
   const transport = new WebSocketTransport();
   registerPlayerAccountRoutes(transport.getExpressApp() as never, store);
@@ -250,4 +410,48 @@ test("player account battle replay detail routes return 404s for missing resourc
 
   const unauthorizedResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/battle-replays/replay-detail`);
   assert.equal(unauthorizedResponse.status, 401);
+});
+
+test("player account battle replay detail routes read a replay captured and persisted from a live room lifecycle", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const logicalRoomId = `replay-detail-lifecycle-${Date.now()}`;
+  const room = await createTestRoom(logicalRoomId);
+  const client = createFakeClient("session-replay-detail-route");
+  const port = 43050 + Math.floor(Math.random() * 1000);
+  const server = await startAccountRouteServer(port, store);
+
+  t.after(async () => {
+    cleanupRoom(room);
+    await server.gracefullyShutdown(false).catch(() => undefined);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-replay-detail-route");
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: "move-replay-detail-route",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 5, y: 4 }
+    }
+  });
+  const playerSteps = await resolveBattleThroughRoom(room, client, "player-1");
+  assert.ok(playerSteps > 0);
+
+  const account = await store.loadPlayerAccount("player-1");
+  const replay = account?.recentBattleReplays?.[0];
+  assert.ok(replay, "expected a persisted replay to be saved for player-1");
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/${replay.id}`);
+  const payload = (await response.json()) as { replay: PlayerBattleReplaySummary };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.replay.id, replay.id);
+  assert.equal(payload.replay.roomId, logicalRoomId);
+  assert.equal(payload.replay.steps.filter((step) => step.source === "player").length, playerSteps);
+  assert.ok(payload.replay.steps.some((step) => step.source === "automated"));
 });
