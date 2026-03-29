@@ -205,6 +205,24 @@ test("transitionCocosAccountReviewState exposes loading and error banners for pa
   assert.equal(review.showRetry, true);
 });
 
+test("buildCocosAccountReviewPage returns an empty-state subtitle for empty event history", () => {
+  let state = createCocosAccountReviewState(createProfile());
+  state = transitionCocosAccountReviewState(state, { type: "section.selected", section: "event-history" });
+  state = transitionCocosAccountReviewState(state, {
+    type: "event-history.loaded",
+    items: [],
+    page: 0,
+    pageSize: 3,
+    total: 0,
+    hasMore: false
+  });
+
+  const review = buildCocosAccountReviewPage(state);
+  assert.equal(review.section, "event-history");
+  assert.equal(review.subtitle, "最近还没有事件历史。");
+  assert.deepEqual(review.items, []);
+});
+
 test("transitionCocosAccountReviewState keeps replay selection aligned with the currently loaded page", () => {
   let state = createCocosAccountReviewState(createProfile());
   assert.equal(state.selectedBattleReplayId, "replay-1");

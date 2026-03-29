@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { sys } from "cc";
-import { createCocosAccountReviewState, transitionCocosAccountReviewState } from "../assets/scripts/cocos-account-review.ts";
+import {
+  buildCocosAccountReviewPage,
+  createCocosAccountReviewState,
+  transitionCocosAccountReviewState
+} from "../assets/scripts/cocos-account-review.ts";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
 import type { BattleAction, BattleState, SessionUpdate, VeilCocosSessionOptions } from "../assets/scripts/VeilCocosSession.ts";
@@ -347,7 +351,7 @@ test("VeilRoot surfaces broken room snapshots with a stable runtime error messag
   assert.equal(root.logLines[0], "房间状态损坏，请重建房间或检查服务端同步。");
 });
 
-test("VeilRoot gameplay achievement panel loads achievement progress from the account endpoint", async () => {
+test("VeilRoot gameplay account review panel loads progression snapshot from the account endpoint", async () => {
   const root = createVeilRootHarness();
   root.playerId = "player-1";
   root.roomId = "room-alpha";
@@ -355,29 +359,51 @@ test("VeilRoot gameplay achievement panel loads achievement progress from the ac
 
   let loadCalls = 0;
   installVeilRootRuntime({
-    loadAchievementProgress: async () => {
+    loadProgressionSnapshot: async () => {
       loadCalls += 1;
-      return [
-        {
-          id: "first_battle",
-          title: "初次交锋",
-          description: "首次进入战斗。",
-          metric: "battles_started",
-          current: 1,
-          target: 1,
-          unlocked: true,
-          unlockedAt: "2026-03-29T01:00:00.000Z"
-        }
-      ];
+      return {
+        summary: {
+          totalAchievements: 5,
+          unlockedAchievements: 1,
+          inProgressAchievements: 1,
+          recentEventCount: 2,
+          latestEventAt: "2026-03-29T01:03:00.000Z"
+        },
+        achievements: [
+          {
+            id: "first_battle",
+            title: "初次交锋",
+            description: "首次进入战斗。",
+            metric: "battles_started",
+            current: 1,
+            target: 1,
+            unlocked: true,
+            unlockedAt: "2026-03-29T01:00:00.000Z"
+          }
+        ],
+        recentEventLog: [
+          {
+            id: "event-1",
+            timestamp: "2026-03-29T01:03:00.000Z",
+            roomId: "room-alpha",
+            playerId: "player-1",
+            category: "achievement",
+            description: "解锁成就：初次交锋",
+            achievementId: "first_battle",
+            rewards: []
+          }
+        ]
+      };
     }
   });
 
-  await (root as VeilRoot & Record<string, unknown>).toggleGameplayAchievementPanel(true);
+  await (root as VeilRoot & Record<string, unknown>).toggleGameplayAccountReviewPanel(true);
 
   assert.equal(loadCalls, 1);
-  assert.equal(root.gameplayAchievementPanelOpen, true);
-  assert.equal((root.gameplayAchievementItems as Array<{ id: string }>)[0]?.id, "first_battle");
-  assert.match(String(root.gameplayAchievementPanelStatus), /已同步 1 条成就进度/);
+  assert.equal(root.gameplayAccountReviewPanelOpen, true);
+  assert.equal(root.lobbyAccountReviewState.progression.status, "ready");
+  assert.equal(root.lobbyAccountReviewState.progression.snapshot.summary.unlockedAchievements, 1);
+  assert.equal(root.lobbyAccountReviewState.progression.snapshot.recentEventLog[0]?.id, "event-1");
 });
 
 test("VeilRoot hands control to a fresh session when starting a new run", async () => {
@@ -683,4 +709,58 @@ test("VeilRoot refreshAccountReviewPage loads paged event history into the lobby
   assert.equal(root.lobbyAccountReviewState.eventHistory.page, 1);
   assert.equal(root.lobbyAccountReviewState.eventHistory.total, 4);
   assert.equal(root.lobbyAccountReviewState.eventHistory.items[0]?.id, "event-page-2");
+});
+
+test("VeilRoot review refresh keeps empty event history as a ready empty state", async () => {
+  const root = createVeilRootHarness();
+  root.playerId = "player-1";
+  root.lobbyAccountReviewState = transitionCocosAccountReviewState(
+    createCocosAccountReviewState(root.lobbyAccountProfile),
+    {
+      type: "section.selected",
+      section: "event-history"
+    }
+  );
+
+  installVeilRootRuntime({
+    loadEventHistory: async () => ({
+      items: [],
+      total: 0,
+      offset: 0,
+      limit: 3,
+      hasMore: false
+    })
+  });
+
+  await root.refreshActiveAccountReviewSection();
+
+  assert.equal(root.lobbyAccountReviewState.eventHistory.status, "ready");
+  assert.deepEqual(root.lobbyAccountReviewState.eventHistory.items, []);
+  assert.equal(root.lobbyAccountReviewState.eventHistory.total, 0);
+  assert.equal(buildCocosAccountReviewPage(root.lobbyAccountReviewState).subtitle, "最近还没有事件历史。");
+});
+
+test("VeilRoot review refresh exposes transport failures as an error state", async () => {
+  const root = createVeilRootHarness();
+  root.playerId = "player-1";
+  root.lobbyAccountReviewState = transitionCocosAccountReviewState(
+    createCocosAccountReviewState(root.lobbyAccountProfile),
+    {
+      type: "section.selected",
+      section: "achievements"
+    }
+  );
+
+  installVeilRootRuntime({
+    loadAchievementProgress: async () => {
+      throw new Error("cocos_request_failed:503:history_unavailable");
+    }
+  });
+
+  await root.refreshActiveAccountReviewSection();
+
+  assert.equal(root.lobbyAccountReviewState.achievements.status, "error");
+  const review = buildCocosAccountReviewPage(root.lobbyAccountReviewState);
+  assert.equal(review.banner?.title, "成就目录同步失败");
+  assert.equal(review.showRetry, true);
 });
