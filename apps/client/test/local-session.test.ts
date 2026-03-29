@@ -206,6 +206,65 @@ test("createGameSession falls back to a local session when remote bootstrap is u
   assert.equal(update.world.playerId, "player-1");
 });
 
+test("createGameSession keeps the remote bootstrap session when the initial connection succeeds", async () => {
+  const expected = createSessionUpdate("remote-live", 9);
+  const remoteSession = {
+    async snapshot(reason?: string) {
+      return reason ? { ...expected, reason } : expected;
+    },
+    async moveHero() {
+      throw new Error("not_implemented");
+    },
+    async collect() {
+      throw new Error("not_implemented");
+    },
+    async learnSkill() {
+      throw new Error("not_implemented");
+    },
+    async equipHeroItem() {
+      throw new Error("not_implemented");
+    },
+    async unequipHeroItem() {
+      throw new Error("not_implemented");
+    },
+    async recruit() {
+      throw new Error("not_implemented");
+    },
+    async visitBuilding() {
+      throw new Error("not_implemented");
+    },
+    async claimMine() {
+      throw new Error("not_implemented");
+    },
+    async endDay() {
+      throw new Error("not_implemented");
+    },
+    async actInBattle() {
+      throw new Error("not_implemented");
+    },
+    async previewMovement() {
+      throw new Error("not_implemented");
+    },
+    async listReachable() {
+      throw new Error("not_implemented");
+    }
+  };
+
+  const session = await localSessionTestHooks.createGameSessionWithRuntime("room-alpha", "player-1", 1001, undefined, {
+    async connectRemoteGameSession() {
+      return {
+        session: remoteSession as never,
+        recoveredFromStoredToken: false
+      };
+    },
+    createLocalSession() {
+      throw new Error("local_session_should_not_be_used");
+    }
+  });
+
+  assert.deepEqual(await session.snapshot("boot"), { ...expected, reason: "boot" });
+});
+
 test("createGameSession falls back to a local session when remote bootstrap times out", async () => {
   const session = await localSessionTestHooks.createGameSessionWithRuntime("room-alpha", "player-1", 1001, undefined, {
     async connectRemoteGameSession() {
@@ -248,6 +307,19 @@ test("createGameSession surfaces stored-token recovery as a successful remote re
   assert.deepEqual(events, ["reconnected"]);
   assert.equal(update.reason, "boot");
   assert.equal(update.world.meta.day, 5);
+});
+
+test("createGameSession falls back to a local session when remote bootstrap throws a non-recoverable error", async () => {
+  const session = await localSessionTestHooks.createGameSessionWithRuntime("room-alpha", "player-1", 1001, undefined, {
+    async connectRemoteGameSession() {
+      throw new Error("unexpected_bootstrap_failure");
+    }
+  });
+
+  const update = await session.snapshot("local-after-unexpected-failure");
+  assert.equal(update.reason, "local-after-unexpected-failure");
+  assert.equal(update.world.meta.roomId, "room-alpha");
+  assert.equal(update.world.playerId, "player-1");
 });
 
 test("remote game sessions persist push updates and reconnection tokens", () => {

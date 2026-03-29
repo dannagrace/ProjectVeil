@@ -50,6 +50,7 @@ import {
   unitFrameAsset
 } from "./assets";
 import { describeTileObject } from "./object-visuals";
+import { startH5ClientApp } from "./main-entry";
 import { bootstrapH5App, registerAutomationHooks, syncH5PlayerAccountProfile } from "./main-boot";
 import {
   confirmAccountRegistration,
@@ -5120,12 +5121,15 @@ async function onBindAccountProfile(): Promise<void> {
   }
 }
 
-void bootstrap();
-  registerAutomationHooks({
+startH5ClientApp({
+  bootstrapApp: bootstrap,
+  registerAutomationHooks: () =>
+    registerAutomationHooks({
     window,
     devDiagnosticsEnabled: DEV_DIAGNOSTICS_ENABLED,
     renderGameToText,
     exportDiagnosticSnapshot,
     renderDiagnosticSnapshotToText,
     advanceUiTime
-  });
+    })
+});
