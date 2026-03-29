@@ -1,0 +1,395 @@
+[
+  {
+    "type": "session.state",
+    "requestId": "req-session-state-001",
+    "delivery": "push",
+    "payload": {
+      "world": {
+        "meta": {
+          "roomId": "room-contract",
+          "seed": 328,
+          "day": 7,
+          "mapVariantId": "frontier-basin"
+        },
+        "map": {
+          "width": 3,
+          "height": 2,
+          "encodedTiles": {
+            "format": "typed-array-v1",
+            "bounds": {
+              "x": 0,
+              "y": 0,
+              "width": 3,
+              "height": 2
+            },
+            "terrain": "AAIDAQAA",
+            "fog": "AgIBAgIC",
+            "walkable": "AQEAAQEB",
+            "overlays": [
+              {
+                "index": 0,
+                "occupant": {
+                  "kind": "hero",
+                  "refId": "hero-1"
+                }
+              },
+              {
+                "index": 1,
+                "resource": {
+                  "kind": "wood",
+                  "amount": 4
+                }
+              },
+              {
+                "index": 4,
+                "occupant": {
+                  "kind": "neutral",
+                  "refId": "neutral-1"
+                }
+              },
+              {
+                "index": 5,
+                "occupant": {
+                  "kind": "hero",
+                  "refId": "hero-2"
+                }
+              }
+            ]
+          }
+        },
+        "ownHeroes": [
+          {
+            "id": "hero-1",
+            "playerId": "player-1",
+            "name": "暮火侦骑",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "vision": 3,
+            "move": {
+              "total": 6,
+              "remaining": 4
+            },
+            "stats": {
+              "attack": 3,
+              "defense": 2,
+              "power": 1,
+              "knowledge": 1,
+              "hp": 26,
+              "maxHp": 30
+            },
+            "progression": {
+              "level": 2,
+              "experience": 120,
+              "skillPoints": 1,
+              "battlesWon": 2,
+              "neutralBattlesWon": 2,
+              "pvpBattlesWon": 0
+            },
+            "loadout": {
+              "learnedSkills": [],
+              "equipment": {
+                "trinketIds": []
+              },
+              "inventory": []
+            },
+            "armyTemplateId": "hero_guard_basic",
+            "armyCount": 14,
+            "learnedSkills": []
+          }
+        ],
+        "visibleHeroes": [
+          {
+            "id": "hero-2",
+            "playerId": "player-2",
+            "name": "霜牙掠影",
+            "position": {
+              "x": 2,
+              "y": 1
+            }
+          }
+        ],
+        "resources": {
+          "gold": 180,
+          "wood": 12,
+          "ore": 5
+        },
+        "playerId": "player-1"
+      },
+      "battle": {
+        "id": "battle-demo",
+        "round": 1,
+        "lanes": 1,
+        "activeUnitId": "wolf-d",
+        "turnOrder": [
+          "wolf-d",
+          "pikeman-a"
+        ],
+        "units": {
+          "pikeman-a": {
+            "id": "pikeman-a",
+            "templateId": "hero_guard_basic",
+            "camp": "attacker",
+            "lane": 0,
+            "stackName": "枪兵",
+            "initiative": 8,
+            "attack": 4,
+            "defense": 5,
+            "minDamage": 1,
+            "maxDamage": 3,
+            "count": 12,
+            "currentHp": 10,
+            "maxHp": 10,
+            "hasRetaliated": false,
+            "defending": false,
+            "skills": [
+              {
+                "id": "power_shot",
+                "name": "投矛射击",
+                "description": "远程压制目标，伤害略低，但不会触发反击。",
+                "kind": "active",
+                "target": "enemy",
+                "delivery": "ranged",
+                "cooldown": 2,
+                "remainingCooldown": 0
+              },
+              {
+                "id": "armor_spell",
+                "name": "护甲术",
+                "description": "为自己附加护甲术，在后续回合提升防御。",
+                "kind": "active",
+                "target": "self",
+                "cooldown": 3,
+                "remainingCooldown": 0
+              },
+              {
+                "id": "battle_focus",
+                "name": "战意激发",
+                "description": "短暂提升自身攻击，适合在贴身缠斗前蓄势。",
+                "kind": "active",
+                "target": "self",
+                "cooldown": 3,
+                "remainingCooldown": 0
+              },
+              {
+                "id": "sundering_spear",
+                "name": "破甲投枪",
+                "description": "投出破甲短枪，伤害略低，但能在数回合内撕开目标防线。",
+                "kind": "active",
+                "target": "enemy",
+                "delivery": "ranged",
+                "cooldown": 2,
+                "remainingCooldown": 0
+              }
+            ],
+            "statusEffects": []
+          },
+          "wolf-d": {
+            "id": "wolf-d",
+            "templateId": "wolf_pack",
+            "camp": "defender",
+            "lane": 0,
+            "stackName": "恶狼",
+            "initiative": 10,
+            "attack": 6,
+            "defense": 4,
+            "minDamage": 2,
+            "maxDamage": 4,
+            "count": 8,
+            "currentHp": 8,
+            "maxHp": 8,
+            "hasRetaliated": false,
+            "defending": false,
+            "skills": [
+              {
+                "id": "venomous_fangs",
+                "name": "毒牙",
+                "description": "命中后让目标陷入中毒，回合开始时持续掉血。",
+                "kind": "passive",
+                "target": "enemy",
+                "cooldown": 0,
+                "remainingCooldown": 0
+              },
+              {
+                "id": "crippling_howl",
+                "name": "裂伤嚎叫",
+                "description": "发出撕裂嚎叫，压低伤害换取削弱效果，且不触发反击。",
+                "kind": "active",
+                "target": "enemy",
+                "delivery": "ranged",
+                "cooldown": 3,
+                "remainingCooldown": 0
+              }
+            ],
+            "statusEffects": []
+          }
+        },
+        "environment": [],
+        "log": [
+          "战斗开始"
+        ],
+        "rng": {
+          "seed": 4242,
+          "cursor": 0
+        }
+      },
+      "events": [
+        {
+          "type": "hero.moved",
+          "heroId": "hero-1",
+          "path": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0,
+              "y": 1
+            }
+          ],
+          "moveCost": 1
+        },
+        {
+          "type": "battle.started",
+          "heroId": "hero-1",
+          "attackerPlayerId": "player-1",
+          "encounterKind": "neutral",
+          "neutralArmyId": "neutral-1",
+          "battleId": "battle-demo",
+          "path": [
+            {
+              "x": 0,
+              "y": 1
+            },
+            {
+              "x": 1,
+              "y": 1
+            }
+          ],
+          "moveCost": 1
+        }
+      ],
+      "movementPlan": {
+        "heroId": "hero-1",
+        "destination": {
+          "x": 1,
+          "y": 1
+        },
+        "path": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 1
+          },
+          {
+            "x": 1,
+            "y": 1
+          }
+        ],
+        "travelPath": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 1
+          }
+        ],
+        "moveCost": 1,
+        "endsInEncounter": true,
+        "encounterKind": "neutral",
+        "encounterRefId": "neutral-1"
+      },
+      "reachableTiles": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 1
+        },
+        {
+          "x": 1,
+          "y": 1
+        }
+      ],
+      "reason": "battle.started"
+    }
+  },
+  {
+    "type": "world.preview",
+    "requestId": "req-world-preview-001",
+    "movementPlan": {
+      "heroId": "hero-1",
+      "destination": {
+        "x": 1,
+        "y": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 1
+        },
+        {
+          "x": 1,
+          "y": 1
+        }
+      ],
+      "travelPath": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 1
+        }
+      ],
+      "moveCost": 1,
+      "endsInEncounter": true,
+      "encounterKind": "neutral",
+      "encounterRefId": "neutral-1"
+    }
+  },
+  {
+    "type": "world.reachable",
+    "requestId": "req-world-reachable-001",
+    "reachableTiles": [
+      {
+        "x": 0,
+        "y": 0
+      },
+      {
+        "x": 1,
+        "y": 0
+      },
+      {
+        "x": 0,
+        "y": 1
+      },
+      {
+        "x": 1,
+        "y": 1
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "requestId": "req-world-action-002",
+    "reason": "destination_occupied"
+  }
+]

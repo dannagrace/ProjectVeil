@@ -104,6 +104,12 @@ const AUTOMATED_CHECKS: Array<Pick<ReleaseReadinessCheck, "id" | "title" | "comm
     required: true
   },
   {
+    id: "multiplayer-protocol-compatibility",
+    title: "Multiplayer protocol compatibility snapshot diff",
+    command: "npm run test:multiplayer-protocol-compatibility -- --output artifacts/release-readiness/multiplayer-protocol-compatibility.json",
+    required: true
+  },
+  {
     id: "wechat-build-check",
     title: "Cocos asset and WeChat build readiness",
     command: "npm run check:cocos-release-readiness",
