@@ -98,12 +98,22 @@
 - `share-roundtrip`：验证分享链路与回流后房间号 / 邀请参数恢复
 - `key-assets`：验证首屏、Lobby、房间或首场战斗关键资源加载无白名单 / 缺图 / 404
 
+其中两条 case 额外带有强制结构化证据字段，`--check` 时会直接校验：
+
+- `reconnect-recovery.requiredEvidence.roomId`：恢复后确认仍在原权威房间
+- `reconnect-recovery.requiredEvidence.reconnectPrompt`：记录“连接已恢复”或等效恢复提示
+- `reconnect-recovery.requiredEvidence.restoredState`：记录恢复后未回档的关键状态
+- `share-roundtrip.requiredEvidence.shareScene`：记录从 Lobby / 世界 / 战斗中的哪个入口触发分享
+- `share-roundtrip.requiredEvidence.shareQuery`：记录分享 query 或等效 payload 摘要，至少覆盖 `roomId` / `inviterId` 等关键参数
+- `share-roundtrip.requiredEvidence.roundtripState`：记录回流后识别到的房间号、邀请参数或恢复到的界面状态
+
 推荐执行方式：
 
 1. 先跑 `npm run verify:wechat-release -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>]`
 2. 再跑 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成模板
 3. 在真机或微信开发者工具真机调试模式中逐项填写 `tester`、`device`、`executedAt`、`summary` 以及每个 case 的 `status` / `notes` / `evidence`
-   - `reconnect-recovery` 至少要记录原 `roomId`、恢复提示、恢复后未回档状态三项证据；细则见 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md)
+   - `reconnect-recovery.requiredEvidence` 下的 `roomId`、`reconnectPrompt`、`restoredState` 都必须填非空字符串；细则见 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md)
+   - `share-roundtrip.requiredEvidence` 下的 `shareScene`、`shareQuery`、`roundtripState` 也都必须填非空字符串，用来说明分享入口、参数和回流结果
 4. 回填完成后执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`
 5. 再执行 `npm run release:cocos-rc:snapshot -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json --output artifacts/release-evidence/<candidate-name>.wechat.json`，把 `login-lobby`、`room-entry`、`reconnect-recovery` 映射到统一 RC 快照，并补齐 `firstBattleResult` 与 `return-to-world` 证据。
 6. 复制并回填 `docs/release-evidence/cocos-wechat-rc-checklist.template.md` 与 `docs/release-evidence/cocos-wechat-rc-blockers.template.md`，确保 reviewer 能直接看到当前 RC 的设备、结论与未关闭风险。

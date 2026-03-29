@@ -29,6 +29,21 @@ interface WechatMinigameReleasePackageMetadata {
 
 type SmokeStatus = "pending" | "passed" | "failed" | "not_applicable";
 
+type ReconnectEvidenceFieldId = "roomId" | "reconnectPrompt" | "restoredState";
+type ShareRoundtripEvidenceFieldId = "shareScene" | "shareQuery" | "roundtripState";
+
+interface ReconnectRecoveryEvidence {
+  roomId: string;
+  reconnectPrompt: string;
+  restoredState: string;
+}
+
+interface ShareRoundtripEvidence {
+  shareScene: string;
+  shareQuery: string;
+  roundtripState: string;
+}
+
 interface WechatMinigameSmokeCase {
   id: "login-lobby" | "room-entry" | "reconnect-recovery" | "share-roundtrip" | "key-assets";
   title: string;
@@ -37,6 +52,7 @@ interface WechatMinigameSmokeCase {
   notes: string;
   evidence: string[];
   steps: string[];
+  requiredEvidence?: ReconnectRecoveryEvidence | ShareRoundtripEvidence;
 }
 
 interface WechatMinigameSmokeReport {
@@ -209,6 +225,11 @@ function buildSmokeCases(): WechatMinigameSmokeCase[] {
       required: true,
       notes: "",
       evidence: [],
+      requiredEvidence: {
+        roomId: "",
+        reconnectPrompt: "",
+        restoredState: ""
+      },
       steps: [
         "在房间内主动切到飞行模式、关闭 Wi-Fi 或切后台后恢复网络。",
         "确认客户端能自动重连、恢复到原房间，或给出可接受的恢复提示。",
@@ -222,6 +243,11 @@ function buildSmokeCases(): WechatMinigameSmokeCase[] {
       required: true,
       notes: "",
       evidence: [],
+      requiredEvidence: {
+        shareScene: "",
+        shareQuery: "",
+        roundtripState: ""
+      },
       steps: [
         "从 Lobby、世界或战斗入口触发分享。",
         "完成一次真实分享或准真机回流，确认小游戏回到前台后状态正常。",
@@ -286,6 +312,121 @@ function validateReportShape(report: WechatMinigameSmokeReport): void {
   }
 }
 
+interface ValidationErrorDetail {
+  code: "missing_required_field" | "invalid_case_shape";
+  path: string;
+  message: string;
+}
+
+function failStructured(error: ValidationErrorDetail): never {
+  fail(`Smoke report validation error: ${JSON.stringify(error)}`);
+}
+
+function findCase(report: WechatMinigameSmokeReport, caseId: WechatMinigameSmokeCase["id"]): { entry: WechatMinigameSmokeCase; index: number } {
+  const index = report.cases.findIndex((entry) => entry.id === caseId);
+  if (index < 0) {
+    fail(`Smoke report is missing required case ${caseId}.`);
+  }
+  const entry = report.cases[index];
+  if (!entry) {
+    fail(`Smoke report is missing required case ${caseId}.`);
+  }
+  return { entry, index };
+}
+
+function validateRequiredStringField(
+  caseId: WechatMinigameSmokeCase["id"],
+  caseIndex: number,
+  fieldGroup: string,
+  fieldName: string,
+  value: unknown,
+  message: string
+): void {
+  if (typeof value !== "string" || !value.trim()) {
+    failStructured({
+      code: "missing_required_field",
+      path: `cases[${caseIndex}]#${caseId}.${fieldGroup}.${fieldName}`,
+      message
+    });
+  }
+}
+
+function validateReconnectRecoveryEvidence(report: WechatMinigameSmokeReport): void {
+  const { entry, index } = findCase(report, "reconnect-recovery");
+  const requiredEvidence = entry.requiredEvidence;
+  if (!requiredEvidence || typeof requiredEvidence !== "object" || Array.isArray(requiredEvidence)) {
+    failStructured({
+      code: "invalid_case_shape",
+      path: `cases[${index}]#reconnect-recovery.requiredEvidence`,
+      message: "Reconnect case must include a requiredEvidence object."
+    });
+  }
+
+  const reconnectEvidence = requiredEvidence as Partial<Record<ReconnectEvidenceFieldId, unknown>>;
+  validateRequiredStringField(
+    "reconnect-recovery",
+    index,
+    "requiredEvidence",
+    "roomId",
+    reconnectEvidence.roomId,
+    "Reconnect case must record the restored roomId."
+  );
+  validateRequiredStringField(
+    "reconnect-recovery",
+    index,
+    "requiredEvidence",
+    "reconnectPrompt",
+    reconnectEvidence.reconnectPrompt,
+    "Reconnect case must record the reconnect prompt or equivalent recovery signal."
+  );
+  validateRequiredStringField(
+    "reconnect-recovery",
+    index,
+    "requiredEvidence",
+    "restoredState",
+    reconnectEvidence.restoredState,
+    "Reconnect case must record the post-recovery state that proves no rollback occurred."
+  );
+}
+
+function validateShareRoundtripEvidence(report: WechatMinigameSmokeReport): void {
+  const { entry, index } = findCase(report, "share-roundtrip");
+  const requiredEvidence = entry.requiredEvidence;
+  if (!requiredEvidence || typeof requiredEvidence !== "object" || Array.isArray(requiredEvidence)) {
+    failStructured({
+      code: "invalid_case_shape",
+      path: `cases[${index}]#share-roundtrip.requiredEvidence`,
+      message: "Share-roundtrip case must include a requiredEvidence object."
+    });
+  }
+
+  const shareEvidence = requiredEvidence as Partial<Record<ShareRoundtripEvidenceFieldId, unknown>>;
+  validateRequiredStringField(
+    "share-roundtrip",
+    index,
+    "requiredEvidence",
+    "shareScene",
+    shareEvidence.shareScene,
+    "Share-roundtrip case must record where the share was triggered."
+  );
+  validateRequiredStringField(
+    "share-roundtrip",
+    index,
+    "requiredEvidence",
+    "shareQuery",
+    shareEvidence.shareQuery,
+    "Share-roundtrip case must record the emitted share query or equivalent payload summary."
+  );
+  validateRequiredStringField(
+    "share-roundtrip",
+    index,
+    "requiredEvidence",
+    "roundtripState",
+    shareEvidence.roundtripState,
+    "Share-roundtrip case must record the state restored after returning to the mini game."
+  );
+}
+
 function validateReportAgainstMetadata(
   report: WechatMinigameSmokeReport,
   metadata: WechatMinigameReleasePackageMetadata,
@@ -343,6 +484,9 @@ function validateReportAgainstMetadata(
   if (report.execution.result === "pending") {
     fail("Smoke report execution.result must be passed or failed before validation.");
   }
+
+  validateReconnectRecoveryEvidence(report);
+  validateShareRoundtripEvidence(report);
 
   const hasFailedCase = report.cases.some((entry) => entry.status === "failed");
   if (report.execution.result === "passed" && hasFailedCase) {
