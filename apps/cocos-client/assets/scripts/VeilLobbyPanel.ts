@@ -2,12 +2,17 @@ import { _decorator, Color, Component, Graphics, Label, Node, Sprite, SpriteFram
 import {
   type CocosAccountReviewItem,
   type CocosAccountReviewPage,
-  type CocosAccountReviewSection
+  type CocosAccountReviewSection,
+  type CocosAccountReviewSectionStatus
 } from "./cocos-account-review.ts";
 import type { CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildCocosBattleReplayTimelineView } from "./cocos-battle-replay-timeline.ts";
+import {
+  buildCocosBattleReplayCenterView,
+  type CocosBattleReplayCenterControlAction
+} from "./cocos-battle-replay-center.ts";
 import {
   lobbyBuildingShowcaseEntries,
   formatLobbyShowcasePhaseLabel,
@@ -25,7 +30,18 @@ import {
 } from "./cocos-showcase-gallery.ts";
 import type { CocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import type { CocosAccountLifecycleFieldView, CocosAccountLifecyclePanelView } from "./cocos-account-lifecycle.ts";
-import { findPlayerBattleReplaySummary } from "./project-shared/battle-replay.ts";
+import {
+  createBattleReplayPlaybackState,
+  findPlayerBattleReplaySummary,
+  pauseBattleReplayPlayback,
+  playBattleReplayPlayback,
+  resetBattleReplayPlayback,
+  stepBackBattleReplayPlayback,
+  stepBattleReplayPlayback,
+  tickBattleReplayPlayback,
+  type BattleReplayPlaybackState,
+  type PlayerBattleReplaySummary
+} from "./project-shared/battle-replay.ts";
 
 const { ccclass } = _decorator;
 const H_ALIGN_LEFT = 0;
@@ -56,6 +72,8 @@ const REVIEW_TIMELINE_ACCENT = new Color(136, 184, 236, 210);
 const REVIEW_HIGHLIGHT_FILL = new Color(58, 74, 108, 206);
 const REVIEW_HIGHLIGHT_STROKE = new Color(234, 246, 255, 120);
 const REVIEW_HIGHLIGHT_ACCENT = new Color(146, 198, 246, 214);
+const REPLAY_CONTROL_FILL = new Color(64, 92, 128, 220);
+const REPLAY_CONTROL_ACTIVE_FILL = new Color(84, 122, 94, 220);
 
 export interface VeilLobbyRenderState {
   playerId: string;
@@ -69,6 +87,9 @@ export interface VeilLobbyRenderState {
   vaultSummary: string;
   account: CocosPlayerAccountProfile;
   accountReview: CocosAccountReviewPage;
+  battleReplayItems: PlayerBattleReplaySummary[];
+  battleReplaySectionStatus: CocosAccountReviewSectionStatus;
+  battleReplaySectionError: string | null;
   selectedBattleReplayId: string | null;
   sessionSource: "remote" | "local" | "manual" | "none";
   loading: boolean;
@@ -137,8 +158,13 @@ export class VeilLobbyPanel extends Component {
   private onSelectAccountReviewPage: ((section: "battle-replays" | "event-history", page: number) => void) | undefined;
   private onRetryAccountReviewSection: ((section: CocosAccountReviewSection) => void) | undefined;
   private onSelectBattleReplayReview: ((replayId: string) => void) | undefined;
+  private replayPlayback: BattleReplayPlaybackState | null = null;
+  private replayPlaybackReplayId: string | null = null;
+  private replayPlaybackStatus = "选择一场最近战斗，即可查看逐步回放。";
+  private replayPlaybackTimer: ReturnType<typeof setInterval> | null = null;
 
   onDestroy(): void {
+    this.stopReplayPlaybackLoop();
     this.unscheduleAllCallbacks();
   }
 
@@ -168,6 +194,7 @@ export class VeilLobbyPanel extends Component {
 
   render(state: VeilLobbyRenderState): void {
     this.currentState = state;
+    this.syncReplayPlaybackState(state);
     this.ensureShowcaseTicker();
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const width = transform.width || 760;
@@ -423,7 +450,7 @@ export class VeilLobbyPanel extends Component {
     if (this.showAccountReview) {
       this.hideAccountFlowPanel();
       const review = state.accountReview;
-      const hasBattleReplays = state.account.recentBattleReplays.length > 0;
+      const hasBattleReplays = state.battleReplayItems.length > 0;
       const unlockedCount = state.account.achievements.filter((achievement) => achievement.unlocked).length;
       rightCursorY = this.renderCard(
         "LobbyAccountReviewHeader",
@@ -535,7 +562,7 @@ export class VeilLobbyPanel extends Component {
 
       let reviewCardsTop = rightCursorY - 108;
       if (review.section === "battle-replays" && hasBattleReplays && state.selectedBattleReplayId) {
-        reviewCardsTop = this.renderBattleReplayTimelineDetail(rightX, reviewCardsTop, rightWidth, state.account);
+        reviewCardsTop = this.renderBattleReplayCenter(rightX, reviewCardsTop, rightWidth, state);
         this.renderAccountReviewCards(rightX, reviewCardsTop, rightWidth, review.items, {
           highlightReplayId: state.selectedBattleReplayId,
           banner: review.banner,
@@ -544,7 +571,11 @@ export class VeilLobbyPanel extends Component {
           }
         });
       } else {
-        this.hideBattleReplayTimelineCard();
+        if (review.section === "battle-replays") {
+          reviewCardsTop = this.renderBattleReplayCenter(rightX, reviewCardsTop, rightWidth, state);
+        } else {
+          this.hideBattleReplayTimelineCard();
+        }
         this.renderAccountReviewCards(rightX, reviewCardsTop, rightWidth, review.items, {
           banner: review.banner
         });
@@ -888,11 +919,170 @@ export class VeilLobbyPanel extends Component {
     );
   }
 
+  private renderBattleReplayCenter(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
+    const view = buildCocosBattleReplayCenterView({
+      replays: state.battleReplayItems,
+      selectedReplayId: state.selectedBattleReplayId,
+      playback: this.replayPlayback,
+      status: state.battleReplaySectionStatus,
+      errorMessage: state.battleReplaySectionError || this.replayPlaybackStatus
+    });
+    const lines = [view.title, `${view.subtitle} · ${view.badge}`, ...view.detailLines];
+    const height = Math.max(148, 52 + lines.length * 18);
+    const nextTopY = this.renderCard(
+      "LobbyBattleReplayTimeline",
+      centerX,
+      topY,
+      width,
+      height,
+      lines,
+      {
+        fill: REVIEW_TIMELINE_FILL,
+        stroke: REVIEW_TIMELINE_STROKE,
+        accent: REVIEW_TIMELINE_ACCENT
+      },
+      null,
+      13,
+      18
+    );
+
+    const controlWidth = Math.floor((width - 24) / 5);
+    const startX = centerX - width / 2 + controlWidth / 2;
+    view.controls.forEach((control, index) => {
+      this.renderActionButton(
+        `LobbyReplayControl-${control.action}`,
+        startX + index * (controlWidth + 6),
+        nextTopY - 14,
+        controlWidth,
+        26,
+        control.label,
+        {
+          fill: control.action === "play" ? REPLAY_CONTROL_ACTIVE_FILL : REPLAY_CONTROL_FILL,
+          stroke: new Color(233, 242, 250, 130),
+          accent: new Color(218, 230, 242, 120)
+        },
+        control.enabled ? () => this.applyReplayControl(control.action) : null
+      );
+    });
+
+    return nextTopY - 34;
+  }
+
   private hideBattleReplayTimelineCard(): void {
     const node = this.node.getChildByName("LobbyBattleReplayTimeline");
     if (node) {
       node.active = false;
     }
+    (["play", "pause", "step-back", "step-forward", "reset"] as CocosBattleReplayCenterControlAction[]).forEach((action) => {
+      const control = this.node.getChildByName(`LobbyReplayControl-${action}`);
+      if (control) {
+        control.active = false;
+      }
+    });
+  }
+
+  private syncReplayPlaybackState(state: VeilLobbyRenderState): void {
+    const replay = this.resolveSelectedReplay(state);
+    if (!replay) {
+      this.stopReplayPlaybackLoop();
+      this.replayPlayback = null;
+      this.replayPlaybackReplayId = null;
+      this.replayPlaybackStatus =
+        state.battleReplaySectionStatus === "loading"
+          ? "正在同步最近战斗..."
+          : state.battleReplaySectionStatus === "error"
+            ? (state.battleReplaySectionError?.trim() || "回放同步失败。")
+            : "选择一场最近战斗，即可查看逐步回放。";
+      return;
+    }
+
+    if (this.replayPlaybackReplayId === replay.id && this.replayPlayback?.replay.id === replay.id) {
+      return;
+    }
+
+    this.stopReplayPlaybackLoop();
+    this.replayPlayback = createBattleReplayPlaybackState(replay);
+    this.replayPlaybackReplayId = replay.id;
+    this.replayPlaybackStatus = "已加载完整回放，可逐步回看。";
+  }
+
+  private resolveSelectedReplay(state: VeilLobbyRenderState): PlayerBattleReplaySummary | null {
+    return (
+      findPlayerBattleReplaySummary(state.battleReplayItems, state.selectedBattleReplayId)
+      ?? findPlayerBattleReplaySummary(state.account.recentBattleReplays, state.selectedBattleReplayId)
+    );
+  }
+
+  private applyReplayControl(action: CocosBattleReplayCenterControlAction): void {
+    if (!this.replayPlayback) {
+      return;
+    }
+
+    if (action !== "play") {
+      this.stopReplayPlaybackLoop();
+    }
+
+    switch (action) {
+      case "play":
+        this.replayPlayback = playBattleReplayPlayback(this.replayPlayback);
+        this.replayPlaybackStatus = "正在自动播放。";
+        if (this.replayPlayback.status === "playing") {
+          this.startReplayPlaybackLoop();
+        }
+        break;
+      case "pause":
+        this.replayPlayback = pauseBattleReplayPlayback(this.replayPlayback);
+        this.replayPlaybackStatus = "已暂停回放。";
+        break;
+      case "step-back":
+        this.replayPlayback = stepBackBattleReplayPlayback(this.replayPlayback);
+        this.replayPlaybackStatus = "已后退一步。";
+        break;
+      case "step-forward":
+        this.replayPlayback = stepBattleReplayPlayback(this.replayPlayback);
+        this.replayPlaybackStatus = this.replayPlayback.status === "completed" ? "已播放至结算。" : "已前进一步。";
+        break;
+      case "reset":
+        this.replayPlayback = resetBattleReplayPlayback(this.replayPlayback);
+        this.replayPlaybackStatus = "已回到开场快照。";
+        break;
+    }
+
+    if (this.currentState) {
+      this.render(this.currentState);
+    }
+  }
+
+  private startReplayPlaybackLoop(): void {
+    if (this.replayPlaybackTimer) {
+      return;
+    }
+
+    this.replayPlaybackTimer = setInterval(() => {
+      if (!this.replayPlayback) {
+        this.stopReplayPlaybackLoop();
+        return;
+      }
+
+      this.replayPlayback = tickBattleReplayPlayback(this.replayPlayback);
+      if (this.replayPlayback.status !== "playing") {
+        this.replayPlaybackStatus = this.replayPlayback.status === "completed" ? "已播放至结算。" : "已暂停回放。";
+        this.stopReplayPlaybackLoop();
+      }
+
+      if (this.currentState) {
+        this.render(this.currentState);
+      }
+    }, 700);
+  }
+
+  private stopReplayPlaybackLoop(): void {
+    if (!this.replayPlaybackTimer) {
+      return;
+    }
+
+    clearInterval(this.replayPlaybackTimer);
+    this.replayPlaybackTimer = null;
   }
 
   private renderAccountReviewCards(
