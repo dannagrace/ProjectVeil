@@ -42,7 +42,7 @@ export interface PlayerBattleReplayQuery {
 }
 
 export type BattleReplayPlaybackStatus = "paused" | "playing" | "completed";
-export type BattleReplayPlaybackAction = "play" | "pause" | "step" | "tick" | "reset";
+export type BattleReplayPlaybackAction = "play" | "pause" | "step" | "tick" | "reset" | "step-back";
 
 export interface BattleReplayPlaybackState {
   replay: PlayerBattleReplaySummary;
@@ -247,6 +247,14 @@ export function stepBattleReplayPlayback(playback: BattleReplayPlaybackState): B
   return buildPlaybackState(playback.replay, nextState, nextStepIndex, nextStatus);
 }
 
+export function stepBackBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
+  if (playback.currentStepIndex <= 0) {
+    return resetBattleReplayPlayback(playback);
+  }
+
+  return restoreBattleReplayPlaybackState(playback.replay, playback.currentStepIndex - 1, "paused");
+}
+
 export function tickBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
   if (playback.status !== "playing") {
     return playback;
@@ -269,6 +277,11 @@ export function applyBattleReplayPlaybackCommand(
       return pauseBattleReplayPlayback(playback);
     case "reset":
       return resetBattleReplayPlayback(playback);
+    case "step-back":
+      for (let iteration = 0; iteration < repeat; iteration += 1) {
+        playback = stepBackBattleReplayPlayback(playback);
+      }
+      return playback;
     case "step":
       for (let iteration = 0; iteration < repeat; iteration += 1) {
         playback = stepBattleReplayPlayback(playback);
