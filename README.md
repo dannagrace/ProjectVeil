@@ -149,6 +149,7 @@ npm run dev:client:h5
 - 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
 - 微信小游戏 RC artifact 聚合验收：`npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>]`
+- 微信小游戏发布彩排：`npm run release:wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir>`（顺序执行 prepare / package / verify / validate，并在 `artifacts/wechat-release/` 输出 JSON + Markdown 摘要）
 - Issue #33 开源素材 staging 校验：`npm run check:issue33-assets -- --require-pack`
 - GitHub Actions `wechat-build-validation` 会把发布归档与 sidecar 元数据作为 artifact `wechat-release-<sha>` 上传，便于提审前下载与回溯
 - 统一发布门禁汇总默认输出到 `artifacts/release-readiness/release-gate-summary-<short-sha>.json` 和 `.md`，用于 CI artifact、PR 评论或人工巡检；详情见 `docs/release-gate-summary.md`
