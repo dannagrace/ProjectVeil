@@ -1,0 +1,205 @@
+{
+  "schemaVersion": 1,
+  "candidate": {
+    "name": "rc-2026-03-29-example",
+    "scope": "apps/cocos-client",
+    "branch": "main",
+    "commit": "abc1234567890example",
+    "shortCommit": "abc1234",
+    "buildSurface": "creator_preview"
+  },
+  "execution": {
+    "owner": "codex",
+    "executedAt": "2026-03-29T09:15:00+08:00",
+    "overallStatus": "passed",
+    "summary": "Canonical Cocos RC path passed in Creator preview and the reconnect evidence matched the shared gate.",
+    "notes": "Example snapshot for future RCs. Replace all paths and runtime values with real candidate evidence."
+  },
+  "environment": {
+    "server": "ws://127.0.0.1:2567",
+    "cocosCreatorVersion": "3.8.6",
+    "wechatClient": "n/a",
+    "device": "macOS 14 / Creator Preview"
+  },
+  "linkedEvidence": {
+    "releaseReadinessSnapshot": {
+      "path": "artifacts/release-readiness/rc-2026-03-29.json",
+      "summary": "Release readiness snapshot reference",
+      "result": "passed",
+      "sourceRevision": "abc1234"
+    }
+  },
+  "mappings": [
+    {
+      "source": "creator-preview",
+      "sourceField": "HUD / Session text",
+      "target": "requiredEvidence.roomId",
+      "notes": "Creator 预览截图或录屏必须能直接看到房间号。"
+    },
+    {
+      "source": "creator-preview",
+      "sourceField": "恢复提示文本",
+      "target": "requiredEvidence.reconnectPrompt",
+      "notes": "使用 reconnect canonical scenario 的同一组成功信号。"
+    },
+    {
+      "source": "creator-preview",
+      "sourceField": "恢复后的 HUD / 世界状态",
+      "target": "requiredEvidence.restoredState",
+      "notes": "记录恢复后关键状态未回档，例如位置、资源、房间阶段或战斗摘要。"
+    },
+    {
+      "source": "creator-preview",
+      "sourceField": "首战结算面板",
+      "target": "requiredEvidence.firstBattleResult",
+      "notes": "至少记录胜负与关键奖励/伤害结果。"
+    },
+    {
+      "source": "wechat-smoke-report",
+      "sourceField": "cases[login-lobby]",
+      "target": "journey[lobby-entry]",
+      "notes": "微信 smoke 的登录/Lobby 结果映射到统一主链路起点。"
+    },
+    {
+      "source": "wechat-smoke-report",
+      "sourceField": "cases[room-entry]",
+      "target": "journey[room-join]",
+      "notes": "房间进入结果保留在同一 RC 快照，而不是另起口径。"
+    },
+    {
+      "source": "wechat-smoke-report",
+      "sourceField": "cases[reconnect-recovery]",
+      "target": "journey[reconnect-restore] + requiredEvidence.roomId + requiredEvidence.reconnectPrompt + requiredEvidence.restoredState",
+      "notes": "同一条 reconnect case 必须同时说明原 roomId、恢复提示和恢复后关键状态。"
+    },
+    {
+      "source": "wechat-smoke-report",
+      "sourceField": "execution.summary",
+      "target": "execution.summary",
+      "notes": "WeChat RC 结果可以复用 smoke 总结，但仍需补齐首战与返回世界证据。"
+    }
+  ],
+  "requiredEvidence": [
+    {
+      "id": "roomId",
+      "label": "Room ID",
+      "required": true,
+      "value": "room-7d3f1",
+      "notes": "首个 Creator 进房与 reconnect 后房间号一致。",
+      "evidence": [
+        "artifacts/cocos-rc/lobby-room-hud.png"
+      ]
+    },
+    {
+      "id": "reconnectPrompt",
+      "label": "Reconnect Prompt",
+      "required": true,
+      "value": "Recovered session for room room-7d3f1",
+      "notes": "文案与 reconnect gate 预期一致。",
+      "evidence": [
+        "artifacts/cocos-rc/reconnect-toast.png"
+      ]
+    },
+    {
+      "id": "restoredState",
+      "label": "Restored State",
+      "required": true,
+      "value": "Returned to world with the same roomId, resource totals, and post-battle world phase.",
+      "notes": "恢复后未回档到战前状态。",
+      "evidence": [
+        "artifacts/cocos-rc/reconnect-world-state.png"
+      ]
+    },
+    {
+      "id": "firstBattleResult",
+      "label": "First Battle Result",
+      "required": true,
+      "value": "Victory. Hero survived with remaining HP and rewards were applied before returning to world.",
+      "notes": "首战结算后 HUD 与地图态一致。",
+      "evidence": [
+        "artifacts/cocos-rc/first-battle-settlement.mp4"
+      ]
+    }
+  ],
+  "journey": [
+    {
+      "id": "lobby-entry",
+      "title": "Lobby entry",
+      "required": true,
+      "status": "passed",
+      "notes": "Cold start reached Lobby with expected guest identity.",
+      "evidence": [
+        "artifacts/cocos-rc/lobby.png"
+      ],
+      "sourceRefs": [
+        "creator-preview"
+      ]
+    },
+    {
+      "id": "room-join",
+      "title": "Room join",
+      "required": true,
+      "status": "passed",
+      "notes": "Joined room room-7d3f1 and HUD showed player identity.",
+      "evidence": [
+        "artifacts/cocos-rc/room-join.png"
+      ],
+      "sourceRefs": [
+        "creator-preview"
+      ]
+    },
+    {
+      "id": "map-explore",
+      "title": "Map explore",
+      "required": true,
+      "status": "passed",
+      "notes": "Moved on the world map and interacted with the first exploration point.",
+      "evidence": [
+        "artifacts/cocos-rc/map-explore.mp4"
+      ],
+      "sourceRefs": [
+        "creator-preview"
+      ]
+    },
+    {
+      "id": "first-battle",
+      "title": "First battle",
+      "required": true,
+      "status": "passed",
+      "notes": "Completed the first encounter and settlement flow.",
+      "evidence": [
+        "artifacts/cocos-rc/first-battle.png"
+      ],
+      "sourceRefs": [
+        "creator-preview"
+      ]
+    },
+    {
+      "id": "reconnect-restore",
+      "title": "Reconnect / restore",
+      "required": true,
+      "status": "passed",
+      "notes": "Reconnect canonical scenario preserved roomId and post-battle state.",
+      "evidence": [
+        "artifacts/cocos-rc/reconnect.png"
+      ],
+      "sourceRefs": [
+        "creator-preview",
+        "docs/reconnect-smoke-gate.md"
+      ]
+    },
+    {
+      "id": "return-to-world",
+      "title": "Return to world",
+      "required": true,
+      "status": "passed",
+      "notes": "After settlement the session returned to world exploration with interactive HUD.",
+      "evidence": [
+        "artifacts/cocos-rc/return-to-world.png"
+      ],
+      "sourceRefs": [
+        "creator-preview"
+      ]
+    }
+  ]
+}

@@ -17,6 +17,7 @@
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 微信小游戏构建校验：`npm run check:wechat-build`
 - 发布就绪快照：`npm run release:readiness:snapshot`
+- Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
 - Cocos 发布证据模板：`docs/cocos-release-evidence-template.md`
 - 微信小游戏提审前冒烟：`docs/wechat-minigame-release.md`
 
@@ -28,7 +29,7 @@
 
 建议在每次 release candidate 上记录状态：`pass / partial / fail / n/a`，并附上证据链接、执行人和日期。
 
-如果希望把自动化门禁和人工门禁统一收口成一个结构化记录，可执行 `npm run release:readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json`，生成当前 revision 的快照并保留 pending manual check。
+如果希望把自动化门禁和人工门禁统一收口成一个结构化记录，可执行 `npm run release:readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json`，生成当前 revision 的快照并保留 pending manual check。Cocos 主链路证据则统一用 `npm run release:cocos-rc:snapshot` 生成单独的 RC 快照，并在同一份 JSON 中回填 Creator 预览或微信 RC 证据。
 
 ## 必过用户旅程
 
@@ -108,6 +109,7 @@
 
 - `npm test`
 - `npm run check:wechat-build`
+- `npm run release:cocos-rc:snapshot -- --output <snapshot-path>`
 - [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 中定义的 reconnect 证据
 - 按 [`docs/wechat-minigame-release.md`](/home/gpt/project/ProjectVeil/docs/wechat-minigame-release.md) 完成 `verify` 与 `smoke`
 
@@ -156,7 +158,7 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
   - 首场战斗反馈统一到正式动画 / 音频方案
 - `Cocos 主链路发布证据`
   - 固定一条 Lobby -> 进房 -> 战斗 -> 重连 -> 返回世界的验收脚本
-  - 使用 `docs/cocos-release-evidence-template.md` 回填统一 evidence
+  - 使用 `npm run release:cocos-rc:snapshot` 产出统一 evidence，并参考 `docs/release-evidence/cocos-rc-snapshot.example.json` 回填
 - `多人放量门禁`
   - 固定压测参数
   - 记录可接受阈值和回退条件
