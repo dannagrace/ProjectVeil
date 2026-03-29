@@ -106,11 +106,18 @@ interface ConfigSnapshotSummary {
   version: number;
 }
 
+type ConfigDiffChangeKind = "value" | "field_added" | "field_removed" | "type_changed" | "enum_changed";
+
 interface ConfigDiffEntry {
   path: string;
   change: "added" | "removed" | "updated";
   previousValue: string;
   nextValue: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
 }
 
 interface ConfigDiff {
@@ -242,6 +249,36 @@ const RESOURCE_SHORT_LABEL: Record<ResourceKind, string> = {
   ore: "O"
 };
 
+const DIFF_KIND_LABELS: Record<ConfigDiffChangeKind, string> = {
+  value: "字段值变更",
+  field_added: "新增字段",
+  field_removed: "删除字段",
+  type_changed: "字段类型变更",
+  enum_changed: "枚举约束变更"
+};
+
+function diffKindLabel(kind: ConfigDiffChangeKind): string {
+  return DIFF_KIND_LABELS[kind] ?? "字段值变更";
+}
+
+function isStructuralDiff(entry: ConfigDiffEntry): boolean {
+  return entry.kind !== "value";
+}
+
+function sortDiffEntries(entries: ConfigDiffEntry[]): ConfigDiffEntry[] {
+  return [...entries].sort((left, right) => {
+    const riskDelta = Number(isStructuralDiff(right)) - Number(isStructuralDiff(left));
+    if (riskDelta !== 0) {
+      return riskDelta;
+    }
+    return left.path.localeCompare(right.path);
+  });
+}
+
+function countStructuralEntries(diff: ConfigDiff): number {
+  return diff.entries.filter(isStructuralDiff).length;
+}
+
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 
 if (!appRoot) {
@@ -255,6 +292,7 @@ const controller = createConfigCenterController({
     render();
   },
   prompt: (message, defaultValue) => window.prompt(message, defaultValue),
+  confirm: (message) => window.confirm(message),
   download: ({ blob, fileName, fallbackFileName }) => {
     const href = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -1100,32 +1138,60 @@ function renderSnapshotSection(): string {
                 )
                 .join("")}
       </div>
-      ${
-        state.selectedSnapshotId && state.snapshotDiff
-          ? `
-            <div class="config-hint">当前展示 ${Math.min(state.snapshotDiff.entries.length, 12)} / ${state.snapshotDiff.entries.length} 条差异。</div>
-            <div class="diff-list">
-              ${
-                state.snapshotDiff.entries.length === 0
-                  ? `<div class="world-preview-empty">当前版本与该快照没有差异。</div>`
-                  : state.snapshotDiff.entries
-                      .slice(0, 12)
-                      .map(
-                        (entry) => `
-                          <article class="diff-item">
-                            <strong>${escapeHtml(entry.path)}</strong>
-                            <span>${entry.change}</span>
-                            <small>${escapeHtml(serializeDisplayValue(entry.previousValue))} → ${escapeHtml(serializeDisplayValue(entry.nextValue))}</small>
-                          </article>
-                        `
-                      )
-                      .join("")
-              }
-            </div>
-          `
-          : ""
-      }
+      ${renderSnapshotDiffPanel()}
     </section>
+  `;
+}
+
+function renderSnapshotDiffPanel(): string {
+  if (!state.selectedSnapshotId || !state.snapshotDiff) {
+    return "";
+  }
+
+  const total = state.snapshotDiff.entries.length;
+  const visibleEntries = sortDiffEntries(state.snapshotDiff.entries).slice(0, 12);
+  const structuralCount = countStructuralEntries(state.snapshotDiff);
+  const summary =
+    total === 0
+      ? "当前版本与该快照没有差异。"
+      : structuralCount > 0
+          ? `警告：检测到 ${structuralCount}/${total} 条结构变更，优先展示高风险字段（最多 ${visibleEntries.length} 条）。`
+          : `当前展示 ${visibleEntries.length} / ${total} 条差异。`;
+
+  if (total === 0) {
+    return `
+      <div class="config-hint">${summary}</div>
+      <div class="world-preview-empty">当前版本与该快照没有差异。</div>
+    `;
+  }
+
+  return `
+    <div class="config-hint">${summary}</div>
+    <div class="diff-list">
+      ${visibleEntries
+        .map(
+          (entry) => `
+            <article class="diff-item ${isStructuralDiff(entry) ? "is-structural" : ""}">
+              <div class="diff-item-body">
+                <strong>${escapeHtml(entry.path)}</strong>
+                <span>${escapeHtml(entry.description || "该字段在 Schema 中暂无描述。")}</span>
+              </div>
+              <div class="diff-item-tags">
+                <span class="diff-chip ${isStructuralDiff(entry) ? "is-alert" : ""}">${diffKindLabel(entry.kind)}</span>
+                <span class="diff-chip is-muted">${escapeHtml(entry.fieldType)}</span>
+                ${entry.required ? `<span class="diff-chip is-required">必填</span>` : ""}
+              </div>
+              <small>${escapeHtml(serializeDisplayValue(entry.previousValue))} → ${escapeHtml(serializeDisplayValue(entry.nextValue))}</small>
+              ${
+                entry.blastRadius.length
+                  ? `<small class="diff-blast">影响：${entry.blastRadius.map((label) => `<span>${escapeHtml(label)}</span>`).join(" / ")}</small>`
+                  : ""
+              }
+            </article>
+          `
+        )
+        .join("")}
+    </div>
   `;
 }
 

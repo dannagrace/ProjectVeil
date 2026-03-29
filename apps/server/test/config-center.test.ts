@@ -464,10 +464,57 @@ test("config center snapshots support diff and rollback", async () => {
   );
 
   const diff = await store.diffWithSnapshot("world", snapshot.id);
-  assert.equal(diff.entries.some((entry) => entry.path === "width"), true);
+  const widthEntry = diff.entries.find((entry) => entry.path === "width");
+  assert.ok(widthEntry);
+  assert.equal(widthEntry?.kind, "value");
+  assert.equal(widthEntry?.fieldType.includes("integer"), true);
+  assert.equal(widthEntry?.blastRadius.includes("配置台编辑器"), true);
 
   const rolledBack = await store.rollbackToSnapshot("world", snapshot.id);
   assert.equal(JSON.parse(rolledBack.content).width, WORLD_CONFIG.width);
+});
+
+test("config center diff classifies added, removed, and type changes", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  const baseline = await store.loadDocument("battleBalance");
+  const snapshot = await store.createSnapshot("battleBalance", baseline.content, "baseline");
+
+  const mutated = JSON.parse(baseline.content) as Record<string, any>;
+  mutated.environment = {
+    ...mutated.environment,
+    experimentalTrapMode: true
+  };
+  delete mutated.environment.trapGrantedStatusId;
+  await store.saveDocument("battleBalance", JSON.stringify(mutated));
+
+  const libraryPath = join(rootDir, ".config-center-library.json");
+  const state = JSON.parse(await readFile(libraryPath, "utf8")) as {
+    snapshots: Record<string, Array<{ id: string; content: string }>>;
+  };
+  const snapshotRecord = state.snapshots.battleBalance?.find((item) => item.id === snapshot.id);
+  assert.ok(snapshotRecord);
+  const snapshotPayload = JSON.parse(snapshotRecord.content) as Record<string, any>;
+  snapshotPayload.environment.trapDamage = "9";
+  snapshotRecord.content = JSON.stringify(snapshotPayload, null, 2);
+  await writeFile(libraryPath, JSON.stringify(state), "utf8");
+
+  const diff = await store.diffWithSnapshot("battleBalance", snapshot.id);
+  const byPath = Object.fromEntries(diff.entries.map((entry) => [entry.path, entry]));
+
+  assert.equal(byPath["environment.experimentalTrapMode"]?.kind, "field_added");
+  assert.equal(byPath["environment.trapGrantedStatusId"]?.kind, "field_removed");
+  assert.equal(byPath["environment.trapDamage"]?.kind, "type_changed");
+  assert.equal(byPath["environment.trapDamage"]?.required, true);
+  assert.equal(byPath["environment.trapGrantedStatusId"]?.required, false);
+  assert.ok(
+    (byPath["environment.trapDamage"]?.blastRadius ?? []).some(
+      (label) => label.includes("战斗平衡") || label.includes("PVP")
+    )
+  );
 });
 
 test("config center save creates automatic version snapshots and skips no-op saves", async () => {

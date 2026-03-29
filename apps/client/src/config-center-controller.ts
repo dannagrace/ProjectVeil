@@ -46,11 +46,18 @@ interface ConfigSnapshotSummary {
   version: number;
 }
 
+type ConfigDiffChangeKind = "value" | "field_added" | "field_removed" | "type_changed" | "enum_changed";
+
 interface ConfigDiffEntry {
   path: string;
   change: "added" | "removed" | "updated";
   previousValue: string;
   nextValue: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
 }
 
 interface ConfigDiff {
@@ -181,6 +188,7 @@ interface ConfigCenterControllerOptions {
   fetch?: typeof fetch;
   onStateChange?: () => void;
   prompt?: (message?: string, defaultValue?: string) => string | null;
+  confirm?: (message: string) => boolean;
   download?: (payload: DownloadPayload & { fallbackFileName: string }) => void;
   setTimeout?: typeof globalThis.setTimeout;
   clearTimeout?: typeof globalThis.clearTimeout;
@@ -194,6 +202,45 @@ export interface DraftParseState {
 }
 
 const WORLD_PREVIEW_DEBOUNCE_MS = 260;
+const DIFF_KIND_LABELS: Record<ConfigDiffChangeKind, string> = {
+  value: "字段值变更",
+  field_added: "新增字段",
+  field_removed: "删除字段",
+  type_changed: "字段类型变更",
+  enum_changed: "枚举约束变更"
+};
+
+function labelForDiffKind(kind: ConfigDiffChangeKind): string {
+  return DIFF_KIND_LABELS[kind] ?? "字段值变更";
+}
+
+function structuralDiffEntries(diff: ConfigDiff | null): ConfigDiffEntry[] {
+  return diff?.entries.filter((entry) => entry.kind !== "value") ?? [];
+}
+
+function buildDiffConfirmationMessage(snapshotId: string, diff: ConfigDiff | null): string {
+  if (!diff) {
+    return `确认将当前配置回滚到快照 ${snapshotId} 并立即刷新运行时配置？`;
+  }
+  if (diff.entries.length === 0) {
+    return `快照 ${snapshotId} 与当前版本没有差异。仍要继续回滚并刷新运行时配置？`;
+  }
+
+  const structural = structuralDiffEntries(diff);
+  const total = diff.entries.length;
+  const focus = structural.length > 0 ? structural : diff.entries;
+  const lines = focus.slice(0, 3).map((entry) => {
+    const impact = entry.blastRadius.length ? `影响：${entry.blastRadius.join(" / ")}` : "";
+    return `• ${entry.path}（${labelForDiffKind(entry.kind)}）${impact ? ` ${impact}` : ""}`;
+  });
+  const overflow =
+    focus.length > 3 || (structural.length === 0 && diff.entries.length > 3) ? "• ..." : "";
+  const headline =
+    structural.length > 0
+      ? `警告：将应用 ${total} 项变更，其中 ${structural.length} 项为结构风险。`
+      : `将应用 ${total} 项字段变更。`;
+  return [headline, ...lines, overflow, "确认继续并立即刷新运行时配置？"].filter(Boolean).join("\n");
+}
 
 const EMPTY_SCHEMA_SUMMARY: ConfigSchemaSummary = {
   id: "project-veil.config-center.unknown",
@@ -216,6 +263,9 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
   const fetchImpl = options.fetch ?? fetch;
   const notify = options.onStateChange ?? (() => {});
   const promptImpl = options.prompt ?? (() => null);
+  const confirmImpl =
+    options.confirm ??
+    (typeof window !== "undefined" && typeof window.confirm === "function" ? window.confirm.bind(window) : () => true);
   const downloadImpl = options.download ?? (() => {});
   const setTimer = options.setTimeout ?? globalThis.setTimeout.bind(globalThis);
   const clearTimer = options.clearTimeout ?? globalThis.clearTimeout.bind(globalThis);
@@ -399,11 +449,11 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     }
   }
 
-  async function loadSnapshotDiff(): Promise<void> {
-    if (!state.current || !state.selectedSnapshotId) {
+  async function loadSnapshotDiff(snapshotId = state.selectedSnapshotId): Promise<ConfigDiff | null> {
+    if (!state.current || !snapshotId) {
       state.snapshotDiff = null;
       notify();
-      return;
+      return null;
     }
 
     const response = await requestJson<{
@@ -415,12 +465,28 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        snapshotId: state.selectedSnapshotId
+        snapshotId
       })
     });
     state.storageMode = response.storage;
-    state.snapshotDiff = response.diff;
-    notify();
+    if (snapshotId === state.selectedSnapshotId) {
+      state.snapshotDiff = response.diff;
+      notify();
+    }
+    return response.diff;
+  }
+
+  async function ensureSnapshotDiff(snapshotId: string): Promise<ConfigDiff | null> {
+    if (!state.current) {
+      return null;
+    }
+
+    if (state.selectedSnapshotId !== snapshotId) {
+      state.selectedSnapshotId = snapshotId;
+      notify();
+    }
+
+    return loadSnapshotDiff(snapshotId);
   }
 
   async function loadWorldPreview(): Promise<void> {
@@ -740,6 +806,24 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
 
   async function rollbackSnapshot(snapshotId: string): Promise<void> {
     if (!state.current) {
+      return;
+    }
+
+    let diff: ConfigDiff | null = null;
+    try {
+      diff = await ensureSnapshotDiff(snapshotId);
+    } catch (error) {
+      state.statusTone = "error";
+      state.statusMessage = error instanceof Error ? error.message : "加载快照差异失败";
+      notify();
+      return;
+    }
+
+    const shouldRollback = confirmImpl(buildDiffConfirmationMessage(snapshotId, diff));
+    if (!shouldRollback) {
+      state.statusTone = "neutral";
+      state.statusMessage = "已取消快照回滚";
+      notify();
       return;
     }
 
