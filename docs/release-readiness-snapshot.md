@@ -2,6 +2,8 @@
 
 `npm run release:readiness:snapshot` generates a machine-readable snapshot for the current revision and records the release gate results in one place.
 
+If you want a single human-readable Phase 1 dashboard on top of the snapshot plus runtime/WeChat/Cocos evidence, use `npm run release:readiness:dashboard` and see `docs/release-readiness-dashboard.md`.
+
 The default automated checks are:
 
 - `npm test`
