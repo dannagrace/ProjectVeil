@@ -12,6 +12,7 @@
   - 清单内包含导出目录文件列表、字节数、SHA-256、主包 / 分包体积汇总，以及可选的源码 revision 标识
 - 当前自动化可把已校验导出目录打成确定性的 `tar.gz` 发布包，并输出 sidecar 元数据 `codex.wechat.package.json`
   - sidecar 会记录归档文件名、SHA-256、字节数、导出目录来源，以及归档内文件清单摘要
+- 当前自动化还会运行 `npm run audit:cocos-primary-delivery`，把 primary client 的导出校验与 artifact 校验收口成一份简明 JSON / Markdown 摘要
 - CI 会把上述归档与 sidecar 元数据作为 GitHub Actions artifact `wechat-release-<sha>` 上传，供提审前下载、留档与回滚追溯
 - CI 额外会把刚上传的 artifact 再下载一次，并运行 `npm run verify:wechat-release` 做 artifact 级 smoke 验收
 - GitHub Actions 现支持在 `workflow_dispatch` 时显式开启 `upload`，或推送 `wechat-release-<version>` tag 后自动执行 `miniprogram-ci` 上传
@@ -32,6 +33,8 @@
 - 生成 / 校验真机冒烟报告：`npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> [--report <report-path>] [--check --expected-revision <git-sha>]`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 统一 Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
+- Primary client delivery checklist：`docs/cocos-primary-client-delivery.md`
+- Primary client delivery audit：`npm run audit:cocos-primary-delivery -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--expected-revision <git-sha>]`
 - RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
 - RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - 只做 CI 同款校验：`npm run check:cocos-release-readiness`

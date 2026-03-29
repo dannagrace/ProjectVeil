@@ -131,11 +131,29 @@ jobs:
       - name: Package WeChat exported fixture
         run: npm run package:wechat-release -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir "${WECHAT_RELEASE_ARTIFACTS_DIR}" --expect-exported-runtime --source-revision "${GITHUB_SHA}"
 
+      - name: Audit primary Cocos client delivery readiness
+        run: |
+          npm run audit:cocos-primary-delivery -- \
+            --output-dir apps/cocos-client/test/fixtures/wechatgame-export \
+            --artifacts-dir "${WECHAT_RELEASE_ARTIFACTS_DIR}" \
+            --expect-exported-runtime \
+            --expected-revision "${GITHUB_SHA}" \
+            --output "${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.json" \
+            --markdown-output "${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.md" \
+            --github-step-summary "${GITHUB_STEP_SUMMARY}"
+
       - name: Upload WeChat release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: wechat-release-${{ github.sha }}
           path: ${{ env.WECHAT_RELEASE_ARTIFACTS_DIR }}
+          if-no-files-found: error
+
+      - name: Upload primary Cocos delivery audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: cocos-primary-delivery-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness/cocos-primary-delivery-audit-${{ github.sha }}.*
           if-no-files-found: error
 
   wechat-release-artifact-smoke:

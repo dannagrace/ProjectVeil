@@ -5,6 +5,7 @@
 相关文档：
 
 - 核心玩法发布就绪总清单：`docs/core-gameplay-release-readiness.md`
+- Primary client delivery checklist：`docs/cocos-primary-client-delivery.md`
 - 发布就绪自动化快照：`docs/release-readiness-snapshot.md`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 微信小游戏构建 / 打包 / 验收：`docs/wechat-minigame-release.md`
