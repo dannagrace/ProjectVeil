@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-03-29T12:48:16.045Z",
+  "rootDir": "configs",
+  "valid": true,
+  "documentValidation": {
+    "valid": true,
+    "issueCount": 0,
+    "issues": []
+  },
+  "contentPack": {
+    "valid": true,
+    "issueCount": 0,
+    "summary": "Content-pack consistency passed across world, map objects, units, battle skills, and battle balance.",
+    "issues": []
+  }
+}

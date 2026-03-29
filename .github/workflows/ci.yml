@@ -50,6 +50,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck:ci
 
+      - name: Validate content-pack consistency
+        run: npm run validate:content-pack -- --report-path "${RUNNER_TEMP}/content-pack-validation-report.json"
+
       - name: Test With V8 Coverage
         run: npm run test:coverage:ci
 
@@ -66,6 +69,14 @@ jobs:
         with:
           name: v8-coverage-${{ github.sha }}
           path: .coverage
+          if-no-files-found: error
+
+      - name: Upload content-pack validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-pack-validation-${{ github.sha }}
+          path: ${{ runner.temp }}/content-pack-validation-report.json
           if-no-files-found: error
 
   wechat-build-validation:

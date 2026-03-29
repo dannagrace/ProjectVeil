@@ -10,6 +10,7 @@ import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.j
 import {
   getBattleBalanceConfig,
   createWorldStateFromConfigs,
+  validateContentPackConsistency,
   getDefaultBattleBalanceConfig,
   getDefaultBattleSkillCatalog,
   getDefaultMapObjectsConfig,
@@ -21,6 +22,7 @@ import {
   validateMapObjectsConfig,
   validateUnitCatalog,
   validateWorldConfig,
+  type ContentPackValidationReport,
   type BattleBalanceConfig,
   type BattleSkillCatalogConfig,
   type MapObjectsConfig,
@@ -84,6 +86,7 @@ export interface ConfigDocument extends ConfigDocumentSummary {
 }
 
 export interface ValidationIssue {
+  documentId?: ConfigDocumentId;
   path: string;
   severity: "error" | "warning";
   message: string;
@@ -96,6 +99,7 @@ export interface ValidationReport {
   summary: string;
   issues: ValidationIssue[];
   schema: ConfigSchemaSummary;
+  contentPack: ContentPackValidationReport;
 }
 
 export interface ConfigSchemaSummary {
@@ -1959,16 +1963,31 @@ function buildValidationReportFromError(id: ConfigDocumentId, error: Error, cont
         ...(line != null ? { line } : {})
       }
     ],
-    schema
+    schema,
+    contentPack: {
+      schemaVersion: 1,
+      valid: false,
+      summary: "Content-pack consistency was not evaluated because the current document could not be parsed.",
+      issueCount: 0,
+      checkedDocuments: ["world", "mapObjects", "units", "battleSkills", "battleBalance"],
+      issues: []
+    }
   };
 }
 
-function summarizeIssues(issues: ValidationIssue[]): string {
-  if (issues.length === 0) {
-    return "Schema 校验通过，可以保存并立即生效。";
+function summarizeIssues(issues: ValidationIssue[], contentPack: ContentPackValidationReport): string {
+  if (issues.length === 0 && contentPack.issueCount === 0) {
+    return "Schema 与内容包一致性校验通过，可以保存并立即生效。";
   }
 
-  return `发现 ${issues.length} 个配置问题，需要先修复再保存。`;
+  const parts: string[] = [];
+  if (issues.length > 0) {
+    parts.push(`${issues.length} 个当前文档问题`);
+  }
+  if (contentPack.issueCount > 0) {
+    parts.push(`${contentPack.issueCount} 个内容包一致性问题`);
+  }
+  return `发现 ${parts.join("，")}，需要先修复再保存。`;
 }
 
 function validateWorldConfigDetailed(config: WorldGenerationConfig): ValidationIssue[] {
@@ -2261,6 +2280,36 @@ function validateBattleBalanceDetailed(
   return issues;
 }
 
+function buildCandidateRuntimeBundle(
+  id: ConfigDocumentId,
+  parsed: ParsedConfigDocument,
+  dependencies: {
+    world: WorldGenerationConfig;
+    mapObjects: MapObjectsConfig;
+    units: UnitCatalogConfig;
+    battleSkills: BattleSkillCatalogConfig;
+    battleBalance: BattleBalanceConfig;
+  }
+): RuntimeConfigBundle {
+  return {
+    world: id === "world" ? (parsed as WorldGenerationConfig) : dependencies.world,
+    mapObjects: id === "mapObjects" ? (parsed as MapObjectsConfig) : dependencies.mapObjects,
+    units: id === "units" ? (parsed as UnitCatalogConfig) : dependencies.units,
+    battleSkills: id === "battleSkills" ? (parsed as BattleSkillCatalogConfig) : dependencies.battleSkills,
+    battleBalance: id === "battleBalance" ? (parsed as BattleBalanceConfig) : dependencies.battleBalance
+  };
+}
+
+function mapContentPackIssuesToValidationIssues(report: ContentPackValidationReport): ValidationIssue[] {
+  return report.issues.map((issue) => ({
+    documentId: issue.documentId,
+    path: issue.path,
+    severity: issue.severity,
+    message: issue.message,
+    suggestion: issue.suggestion
+  }));
+}
+
 async function validateDocumentDetailed(
   store: Pick<ConfigCenterStore, "loadDocument">,
   id: ConfigDocumentId,
@@ -2269,6 +2318,14 @@ async function validateDocumentDetailed(
   try {
     const parsed = JSON.parse(content) as ParsedConfigDocument;
     const issues: ValidationIssue[] = [];
+    let contentPack: ContentPackValidationReport = {
+      schemaVersion: 1,
+      valid: true,
+      summary: "Content-pack consistency checks are pending.",
+      issueCount: 0,
+      checkedDocuments: ["world", "mapObjects", "units", "battleSkills", "battleBalance"],
+      issues: []
+    };
     validateSchemaNode(parsed, CONFIG_DOCUMENT_SCHEMAS[id], "", issues);
     try {
       const dependencies = await loadValidationDependencies(store, id);
@@ -2288,11 +2345,12 @@ async function validateDocumentDetailed(
                 )
               : id === "battleSkills"
                 ? validateBattleSkillsDetailed(parsed as BattleSkillCatalogConfig)
-                : validateBattleBalanceDetailed(
-                    parsed as BattleBalanceConfig,
-                    dependencies.battleSkills
-                  );
+              : validateBattleBalanceDetailed(
+                  parsed as BattleBalanceConfig,
+                  dependencies.battleSkills
+                );
       issues.push(...semanticIssues);
+      contentPack = validateContentPackConsistency(buildCandidateRuntimeBundle(id, parsed, dependencies));
     } catch {
       // Schema issues above already explain malformed structures; skip dependent semantic checks.
     }
@@ -2310,10 +2368,11 @@ async function validateDocumentDetailed(
     }
 
     return {
-      valid: issues.length === 0,
-      summary: summarizeIssues(issues),
+      valid: issues.length === 0 && contentPack.valid,
+      summary: summarizeIssues(issues, contentPack),
       issues,
-      schema: buildSchemaSummary(id)
+      schema: buildSchemaSummary(id),
+      contentPack
     };
   } catch (error) {
     return buildValidationReportFromError(id, error as Error, content);

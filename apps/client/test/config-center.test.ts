@@ -44,6 +44,24 @@ function createValidationReport(valid = true) {
       version: "1",
       description: "World config schema",
       required: ["width", "height"]
+    },
+    contentPack: {
+      schemaVersion: 1 as const,
+      valid,
+      summary: valid ? "Content-pack consistency passed" : "Found content-pack issues",
+      issueCount: valid ? 0 : 1,
+      checkedDocuments: ["world", "mapObjects", "units", "battleSkills", "battleBalance"] as const,
+      issues: valid
+        ? []
+        : [
+            {
+              documentId: "world" as const,
+              path: "heroes[0].armyTemplateId",
+              severity: "error" as const,
+              message: "missing unit template",
+              suggestion: "修正跨文件引用后重试。"
+            }
+          ]
     }
   };
 }
