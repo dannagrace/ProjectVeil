@@ -141,6 +141,12 @@
    - 点击同一卡片下方的装备/卸下按钮，确认英雄关键属性、装备摘要与背包内容立即刷新
    - 更完整的共享/服务端/Cocos 链路审计与验证步骤见 `docs/cocos-equipment-loot-validation.md`
 
+## 回归入口
+
+- Cocos 主客户端的会话恢复专项回归位于 `apps/cocos-client/test/cocos-root-orchestration.test.ts`
+- 只跑这组快速回归可执行：`node --import tsx --test apps/cocos-client/test/cocos-root-orchestration.test.ts`
+- 其中“本地快照回放 + 断线恢复后权威状态收敛”的专项用例是 `VeilRoot replays cached state before reconnect recovery converges on the authoritative snapshot`
+
 ## 下一步建议
 
 - 把资源、美术占位图和对象卡片映射继续迁到 Cocos 资源系统
