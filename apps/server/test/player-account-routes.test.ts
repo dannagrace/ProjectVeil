@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
-import { issueAccountAuthSession, issueGuestAuthSession } from "../src/auth";
+import { issueAccountAuthSession, issueGuestAuthSession, issueWechatMiniGameAuthSession, hashAccountPassword } from "../src/auth";
 import { applyPlayerEventLogAndAchievements } from "../src/player-achievements";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import type {
@@ -569,6 +569,77 @@ test("player account routes list and fetch stored accounts", async (t) => {
   assert.equal(detailResponse.status, 200);
   assert.equal(detailPayload.account.playerId, "player-1");
   assert.equal(detailPayload.account.lastRoomId, "room-alpha");
+});
+
+test("player account public routes redact credential and WeChat identity bindings while owner access keeps them", async (t) => {
+  const port = 40012 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "player-bound",
+    displayName: "云岚信使"
+  });
+  await store.bindPlayerAccountCredentials("player-bound", {
+    loginId: "veil-ranger",
+    passwordHash: "hashed-password"
+  });
+  await store.bindPlayerAccountWechatMiniGameIdentity("player-bound", {
+    openId: "wx-openid-bound",
+    unionId: "wx-union-bound",
+    displayName: "云岚信使",
+    avatarUrl: "https://cdn.example.test/avatar.png"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueWechatMiniGameAuthSession({
+    playerId: "player-bound",
+    displayName: "云岚信使",
+    loginId: "veil-ranger"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const listResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts`);
+  const listPayload = (await listResponse.json()) as { items: PlayerAccountSnapshot[] };
+  assert.equal(listResponse.status, 200);
+  assert.equal(listPayload.items[0]?.playerId, "player-bound");
+  assert.equal("loginId" in (listPayload.items[0] ?? {}), false);
+  assert.equal("credentialBoundAt" in (listPayload.items[0] ?? {}), false);
+  assert.equal("wechatMiniGameOpenId" in (listPayload.items[0] ?? {}), false);
+  assert.equal("wechatMiniGameUnionId" in (listPayload.items[0] ?? {}), false);
+
+  const detailResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-bound`);
+  const detailPayload = (await detailResponse.json()) as { account: PlayerAccountSnapshot };
+  assert.equal(detailResponse.status, 200);
+  assert.equal("loginId" in detailPayload.account, false);
+  assert.equal("credentialBoundAt" in detailPayload.account, false);
+  assert.equal("wechatMiniGameOpenId" in detailPayload.account, false);
+  assert.equal("wechatMiniGameUnionId" in detailPayload.account, false);
+  assert.match(detailPayload.account.wechatMiniGameBoundAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+
+  const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const mePayload = (await meResponse.json()) as {
+    account: PlayerAccountSnapshot;
+    session: {
+      token: string;
+      authMode: "guest" | "account";
+      provider?: string;
+      loginId?: string;
+    };
+  };
+
+  assert.equal(meResponse.status, 200);
+  assert.equal(mePayload.account.loginId, "veil-ranger");
+  assert.match(mePayload.account.credentialBoundAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(mePayload.account.wechatMiniGameOpenId, "wx-openid-bound");
+  assert.equal(mePayload.account.wechatMiniGameUnionId, "wx-union-bound");
+  assert.equal(mePayload.session.authMode, "account");
+  assert.equal(mePayload.session.provider, "wechat-mini-game");
+  assert.equal(mePayload.session.loginId, "veil-ranger");
 });
 
 test("player account routes degrade to local-mode responses when persistence is unavailable", async (t) => {
@@ -1679,6 +1750,13 @@ test("player account session routes list active devices and revoke a selected no
     sessionId: "session-current",
     sessionVersion: 0
   });
+  const otherSession = issueAccountAuthSession({
+    playerId: "account-player",
+    displayName: "暮潮守望",
+    loginId: "veil-ranger",
+    sessionId: "session-other",
+    sessionVersion: 0
+  });
 
   t.after(async () => {
     await server.gracefullyShutdown(false).catch(() => undefined);
@@ -1716,6 +1794,18 @@ test("player account session routes list active devices and revoke a selected no
   assert.deepEqual(revokePayload.items.map((item) => item.sessionId), ["session-current"]);
   assert.equal(await store.loadPlayerAccountAuthSession("account-player", "session-other"), null);
 
+  const revokedSessionMeResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${otherSession.token}`
+    }
+  });
+  const revokedSessionMePayload = (await revokedSessionMeResponse.json()) as {
+    error: { code: string };
+  };
+
+  assert.equal(revokedSessionMeResponse.status, 401);
+  assert.equal(revokedSessionMePayload.error.code, "session_revoked");
+
   const revokeCurrentResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/sessions/session-current`, {
     method: "DELETE",
     headers: {
@@ -1728,6 +1818,71 @@ test("player account session routes list active devices and revoke a selected no
 
   assert.equal(revokeCurrentResponse.status, 400);
   assert.equal(revokeCurrentPayload.error.code, "current_session_revoke_forbidden");
+});
+
+test("player account password changes revoke the current access session family", async (t) => {
+  const port = 42140 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "password-player",
+    displayName: "暮潮守望"
+  });
+  await store.bindPlayerAccountCredentials("password-player", {
+    loginId: "veil-ranger",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+  await store.savePlayerAccountAuthSession("password-player", {
+    refreshSessionId: "session-password",
+    refreshTokenHash: "hash-password",
+    refreshTokenExpiresAt: "2026-04-28T08:00:00.000Z",
+    deviceLabel: "Current Browser",
+    lastUsedAt: "2026-03-29T08:00:00.000Z"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueAccountAuthSession({
+    playerId: "password-player",
+    displayName: "暮潮守望",
+    loginId: "veil-ranger",
+    sessionId: "session-password",
+    sessionVersion: 0
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const updateResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      currentPassword: "hunter2",
+      newPassword: "hunter3"
+    })
+  });
+  const updatePayload = (await updateResponse.json()) as { account: PlayerAccountSnapshot };
+
+  assert.equal(updateResponse.status, 200);
+  assert.equal(updatePayload.account.playerId, "password-player");
+  assert.match(updatePayload.account.credentialBoundAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+
+  const authState = await store.loadPlayerAccountAuthByPlayerId("password-player");
+  assert.equal(authState?.accountSessionVersion, 1);
+  assert.equal(await store.loadPlayerAccountAuthSession("password-player", "session-password"), null);
+
+  const revokedMeResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const revokedMePayload = (await revokedMeResponse.json()) as {
+    error: { code: string };
+  };
+
+  assert.equal(revokedMeResponse.status, 401);
+  assert.equal(revokedMePayload.error.code, "session_revoked");
 });
 
 test("player account update routes reject oversized JSON bodies with 413", async (t) => {
