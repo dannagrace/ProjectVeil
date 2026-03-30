@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 type GateStatus = "pass" | "warn" | "fail";
 
@@ -479,7 +480,7 @@ function buildAuthGate(serverUrl: string | undefined, authPayload: AuthReadiness
   };
 }
 
-function summarizeSnapshot(snapshotPath: string | undefined, snapshot: ReleaseReadinessSnapshot | undefined): {
+export function summarizeSnapshot(snapshotPath: string | undefined, snapshot: ReleaseReadinessSnapshot | undefined): {
   status: GateStatus;
   detail: string;
   evidence?: EvidenceItem;
@@ -531,7 +532,7 @@ function summarizeSnapshot(snapshotPath: string | undefined, snapshot: ReleaseRe
   };
 }
 
-function summarizeWechatPackage(metadataPath: string | undefined, metadata: WechatPackageMetadata | undefined): {
+export function summarizeWechatPackage(metadataPath: string | undefined, metadata: WechatPackageMetadata | undefined): {
   status: GateStatus;
   detail: string;
   evidence?: EvidenceItem;
@@ -566,7 +567,7 @@ function summarizeWechatPackage(metadataPath: string | undefined, metadata: Wech
   };
 }
 
-function summarizeWechatSmoke(reportPath: string | undefined, report: WechatSmokeReport | undefined): {
+export function summarizeWechatSmoke(reportPath: string | undefined, report: WechatSmokeReport | undefined): {
   status: GateStatus;
   detail: string;
   evidence?: EvidenceItem;
@@ -610,7 +611,7 @@ function summarizeWechatSmoke(reportPath: string | undefined, report: WechatSmok
   };
 }
 
-function summarizeCocosRc(snapshotPath: string | undefined, snapshot: CocosReleaseCandidateSnapshot | undefined): {
+export function summarizeCocosRc(snapshotPath: string | undefined, snapshot: CocosReleaseCandidateSnapshot | undefined): {
   status: GateStatus;
   detail: string;
   evidence?: EvidenceItem;
@@ -639,7 +640,7 @@ function summarizeCocosRc(snapshotPath: string | undefined, snapshot: CocosRelea
   };
 }
 
-function buildBuildPackageGate(
+export function buildBuildPackageGate(
   snapshotSummary: ReturnType<typeof summarizeSnapshot>,
   packageSummary: ReturnType<typeof summarizeWechatPackage>,
   smokeSummary: ReturnType<typeof summarizeWechatSmoke>
@@ -662,7 +663,7 @@ function buildBuildPackageGate(
   };
 }
 
-function buildCriticalEvidenceGate(
+export function buildCriticalEvidenceGate(
   maxEvidenceAgeDays: number,
   evidenceItems: Array<EvidenceItem | undefined>
 ): GateReport {
@@ -847,4 +848,6 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main();
+}
