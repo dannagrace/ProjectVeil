@@ -26,7 +26,9 @@ test("summarizeSnapshot fails when a required release-readiness check is missing
 
   assert.equal(summary.status, "fail");
   assert.match(summary.detail, /missing=e2e-multiplayer-smoke/);
-  assert.equal(summary.evidence?.status, "fail");
+  assert.equal(summary.evidence.status, "fail");
+  assert.deepEqual(summary.failReasons, ["release_readiness_required_checks_missing"]);
+  assert.equal(summary.evidence.availability, "present");
 });
 
 test("buildBuildPackageGate aggregates snapshot, package, and smoke evidence into a failing gate", () => {
@@ -56,6 +58,8 @@ test("buildBuildPackageGate aggregates snapshot, package, and smoke evidence int
 
   assert.equal(gate.status, "fail");
   assert.match(gate.summary, /failed/i);
+  assert.deepEqual(gate.failReasons, ["wechat_package_metadata_missing", "wechat_smoke_failed"]);
+  assert.deepEqual(gate.warnReasons, ["release_readiness_snapshot_pending", "release_readiness_required_checks_pending"]);
   assert.deepEqual(gate.details, [
     "snapshot=partial | pending=e2e-multiplayer-smoke",
     "WeChat package metadata missing.",
@@ -99,7 +103,29 @@ test("buildCriticalEvidenceGate downgrades stale evidence to warn and preserves 
   ]);
 
   assert.equal(gate.status, "fail");
-  assert.match(gate.summary, /failing readiness signals/i);
+  assert.match(gate.summary, /missing or includes failing signals/i);
   assert.match(gate.details[0] ?? "", /older than 14 day\(s\)/);
   assert.match(gate.details[1] ?? "", /2026-03-30T00:05:00.000Z/);
+  assert.deepEqual(gate.failReasons, ["wechat_smoke_failed"]);
+  assert.deepEqual(gate.warnReasons, ["evidence_stale"]);
+  assert.equal(gate.evidence[0]?.freshness, "stale");
+  assert.equal(gate.evidence[1]?.freshness, "fresh");
+});
+
+test("buildCriticalEvidenceGate fails when a critical artifact is missing and exposes machine-readable evidence fields", () => {
+  const gate = buildCriticalEvidenceGate(14, [
+    summarizeSnapshot(undefined, undefined).evidence,
+    summarizeWechatPackage(undefined, undefined).evidence,
+    summarizeWechatSmoke(undefined, undefined).evidence
+  ]);
+
+  assert.equal(gate.status, "fail");
+  assert.deepEqual(gate.failReasons, [
+    "release_readiness_snapshot_missing",
+    "wechat_package_metadata_missing",
+    "wechat_smoke_report_missing"
+  ]);
+  assert.deepEqual(gate.warnReasons, []);
+  assert.equal(gate.evidence.every((entry) => entry.availability === "missing"), true);
+  assert.equal(gate.details.every((detail) => detail.endsWith("missing artifact")), true);
 });

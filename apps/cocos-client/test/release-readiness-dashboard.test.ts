@@ -179,7 +179,13 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
     assert.match(output, /Overall status: pass/);
     const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
       overallStatus: string;
-      gates: Array<{ id: string; status: string }>;
+      gates: Array<{
+        id: string;
+        status: string;
+        failReasons: string[];
+        warnReasons: string[];
+        evidence: Array<{ availability: string; freshness: string }>;
+      }>;
     };
     assert.equal(report.overallStatus, "pass");
     assert.deepEqual(
@@ -191,6 +197,8 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
         ["critical-evidence", "pass"]
       ]
     );
+    assert.deepEqual(report.gates.every((gate) => gate.failReasons.length === 0), true);
+    assert.equal(report.gates[3]?.evidence.every((entry) => entry.availability === "present"), true);
     assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Phase 1 Release Readiness Dashboard/);
   } finally {
     await new Promise<void>((resolve, reject) => {
@@ -268,7 +276,13 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
   assert.match(output, /Overall status: fail/);
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
     overallStatus: string;
-    gates: Array<{ id: string; status: string }>;
+    gates: Array<{
+      id: string;
+      status: string;
+      failReasons: string[];
+      warnReasons: string[];
+      evidence: Array<{ availability: string; freshness: string; reasonCodes: string[] }>;
+    }>;
   };
   assert.equal(report.overallStatus, "fail");
   assert.deepEqual(
@@ -280,5 +294,12 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
       ["critical-evidence", "fail"]
     ]
   );
+  assert.deepEqual(report.gates[2]?.failReasons, [
+    "release_readiness_snapshot_failed",
+    "release_readiness_required_checks_failed",
+    "wechat_package_metadata_incomplete"
+  ]);
+  assert.deepEqual(report.gates[2]?.warnReasons, ["wechat_smoke_pending", "wechat_smoke_cases_pending"]);
+  assert.equal(report.gates[3]?.evidence.some((entry) => entry.freshness === "fresh"), true);
   assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Release validation evidence is incomplete or still pending|One or more release validation surfaces failed/);
 });

@@ -3,6 +3,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 type GateStatus = "pass" | "warn" | "fail";
+type EvidenceAvailability = "present" | "missing";
+type EvidenceFreshness = "unknown" | "fresh" | "stale" | "missing_timestamp" | "invalid_timestamp";
 
 interface Args {
   serverUrl?: string;
@@ -101,8 +103,11 @@ interface EvidenceItem {
   label: string;
   path: string;
   status: GateStatus;
+  availability: EvidenceAvailability;
+  freshness: EvidenceFreshness;
   observedAt?: string;
   summary: string;
+  reasonCodes: string[];
 }
 
 interface GateReport {
@@ -110,6 +115,8 @@ interface GateReport {
   label: string;
   status: GateStatus;
   summary: string;
+  failReasons: string[];
+  warnReasons: string[];
   details: string[];
   evidence: EvidenceItem[];
 }
@@ -346,6 +353,36 @@ function describeAge(observedAt: string | undefined, maxAgeDays: number): { stat
   };
 }
 
+function createEvidenceItem(input: {
+  label: string;
+  path: string;
+  status: GateStatus;
+  observedAt?: string;
+  summary: string;
+  availability?: EvidenceAvailability;
+  freshness?: EvidenceFreshness;
+  reasonCodes?: string[];
+}): EvidenceItem {
+  return {
+    label: input.label,
+    path: input.path,
+    status: input.status,
+    availability: input.availability ?? "present",
+    freshness: input.freshness ?? "unknown",
+    observedAt: input.observedAt,
+    summary: input.summary,
+    reasonCodes: input.reasonCodes ?? []
+  };
+}
+
+interface EvidenceSummary {
+  status: GateStatus;
+  detail: string;
+  evidence: EvidenceItem;
+  failReasons: string[];
+  warnReasons: string[];
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -374,6 +411,8 @@ function buildHealthGate(
       label: "Server health",
       status: "warn",
       summary: "Live runtime endpoints were not checked.",
+      failReasons: [],
+      warnReasons: ["server_runtime_not_checked"],
       details: ["Pass --server-url <base-url> to probe /api/runtime/health and /api/runtime/metrics."],
       evidence: []
     };
@@ -385,6 +424,8 @@ function buildHealthGate(
       label: "Server health",
       status: "fail",
       summary: "Runtime health endpoint could not be read.",
+      failReasons: ["server_health_unavailable"],
+      warnReasons: [],
       details: [metricsError ? `Metrics endpoint error: ${metricsError}` : "Health endpoint request failed."],
       evidence: []
     };
@@ -407,6 +448,8 @@ function buildHealthGate(
     id: "server-health",
     label: "Server health",
     status,
+    failReasons: status === "fail" ? ["server_health_incomplete"] : [],
+    warnReasons: [],
     summary:
       status === "pass"
         ? "Runtime health and core metrics endpoints are available."
@@ -417,15 +460,21 @@ function buildHealthGate(
         label: "Runtime health",
         path: `${serverUrl.replace(/\/$/, "")}/api/runtime/health`,
         status: healthPayload.status === "ok" ? "pass" : "fail",
+        availability: "present",
+        freshness: "unknown",
         observedAt: healthPayload.checkedAt,
-        summary: `status=${healthPayload.status ?? "<missing>"}`
+        summary: `status=${healthPayload.status ?? "<missing>"}`,
+        reasonCodes: healthPayload.status === "ok" ? [] : ["server_health_status_not_ok"]
       },
       {
         label: "Runtime metrics",
         path: `${serverUrl.replace(/\/$/, "")}/api/runtime/metrics`,
         status: missingMetrics.length === 0 ? "pass" : "fail",
+        availability: "present",
+        freshness: "unknown",
         observedAt: healthPayload.checkedAt,
-        summary: missingMetrics.length === 0 ? "Required Prometheus metrics present." : `Missing ${missingMetrics.length} required metric(s).`
+        summary: missingMetrics.length === 0 ? "Required Prometheus metrics present." : `Missing ${missingMetrics.length} required metric(s).`,
+        reasonCodes: missingMetrics.length === 0 ? [] : ["server_metrics_missing_required"]
       }
     ]
   };
@@ -438,6 +487,8 @@ function buildAuthGate(serverUrl: string | undefined, authPayload: AuthReadiness
       label: "Auth readiness",
       status: "warn",
       summary: "Live auth-readiness evidence was not checked.",
+      failReasons: [],
+      warnReasons: ["auth_readiness_not_checked"],
       details: ["Pass --server-url <base-url> to probe /api/runtime/auth-readiness."],
       evidence: []
     };
@@ -449,6 +500,8 @@ function buildAuthGate(serverUrl: string | undefined, authPayload: AuthReadiness
       label: "Auth readiness",
       status: "fail",
       summary: "Auth readiness endpoint could not be read.",
+      failReasons: ["auth_readiness_unavailable"],
+      warnReasons: [],
       details: [error ?? "Request failed."],
       evidence: []
     };
@@ -461,6 +514,8 @@ function buildAuthGate(serverUrl: string | undefined, authPayload: AuthReadiness
     id: "auth-readiness",
     label: "Auth readiness",
     status,
+    failReasons: [],
+    warnReasons: status === "warn" ? ["auth_readiness_alerts_present"] : [],
     summary: authPayload.headline?.trim() || (status === "pass" ? "Auth readiness is healthy." : "Auth readiness raised alerts."),
     details: [
       `checkedAt=${authPayload.checkedAt ?? "<missing>"}`,
@@ -473,8 +528,11 @@ function buildAuthGate(serverUrl: string | undefined, authPayload: AuthReadiness
         label: "Auth readiness",
         path: `${serverUrl.replace(/\/$/, "")}/api/runtime/auth-readiness`,
         status,
+        availability: "present",
+        freshness: "unknown",
         observedAt: authPayload.checkedAt,
-        summary: authPayload.headline?.trim() || `status=${authPayload.status ?? "<missing>"}`
+        summary: authPayload.headline?.trim() || `status=${authPayload.status ?? "<missing>"}`,
+        reasonCodes: status === "warn" ? ["auth_readiness_alerts_present"] : []
       }
     ]
   };
@@ -483,12 +541,24 @@ function buildAuthGate(serverUrl: string | undefined, authPayload: AuthReadiness
 export function summarizeSnapshot(snapshotPath: string | undefined, snapshot: ReleaseReadinessSnapshot | undefined): {
   status: GateStatus;
   detail: string;
-  evidence?: EvidenceItem;
+  evidence: EvidenceItem;
+  failReasons: string[];
+  warnReasons: string[];
 } {
   if (!snapshotPath || !snapshot) {
     return {
-      status: "warn",
-      detail: "Release readiness snapshot missing."
+      status: "fail",
+      detail: "Release readiness snapshot missing.",
+      evidence: createEvidenceItem({
+        label: "Release readiness snapshot",
+        path: snapshotPath ?? "<missing-release-readiness-snapshot>",
+        status: "fail",
+        availability: "missing",
+        summary: "Release readiness snapshot missing.",
+        reasonCodes: ["release_readiness_snapshot_missing"]
+      }),
+      failReasons: ["release_readiness_snapshot_missing"],
+      warnReasons: []
     };
   }
 
@@ -508,6 +578,24 @@ export function summarizeSnapshot(snapshotPath: string | undefined, snapshot: Re
     status = "warn";
   }
 
+  const failReasons: string[] = [];
+  const warnReasons: string[] = [];
+  if (snapshot.summary?.status === "failed") {
+    failReasons.push("release_readiness_snapshot_failed");
+  }
+  if (failedRequiredChecks.length > 0) {
+    failReasons.push("release_readiness_required_checks_failed");
+  }
+  if (missingRequiredChecks.length > 0) {
+    failReasons.push("release_readiness_required_checks_missing");
+  }
+  if (snapshot.summary?.status === "pending" || snapshot.summary?.status === "partial") {
+    warnReasons.push("release_readiness_snapshot_pending");
+  }
+  if (pendingRequiredChecks.length > 0) {
+    warnReasons.push("release_readiness_required_checks_pending");
+  }
+
   const parts = [`snapshot=${snapshot.summary?.status ?? "<missing>"}`];
   if (failedRequiredChecks.length > 0) {
     parts.push(`failed=${failedRequiredChecks.join(", ")}`);
@@ -522,25 +610,40 @@ export function summarizeSnapshot(snapshotPath: string | undefined, snapshot: Re
   return {
     status,
     detail: parts.join(" | "),
-    evidence: {
+    evidence: createEvidenceItem({
       label: "Release readiness snapshot",
       path: snapshotPath,
       status,
       observedAt: snapshot.generatedAt,
-      summary: parts.join(" | ")
-    }
+      summary: parts.join(" | "),
+      reasonCodes: status === "fail" ? failReasons : warnReasons
+    }),
+    failReasons,
+    warnReasons
   };
 }
 
 export function summarizeWechatPackage(metadataPath: string | undefined, metadata: WechatPackageMetadata | undefined): {
   status: GateStatus;
   detail: string;
-  evidence?: EvidenceItem;
+  evidence: EvidenceItem;
+  failReasons: string[];
+  warnReasons: string[];
 } {
   if (!metadataPath || !metadata) {
     return {
-      status: "warn",
-      detail: "WeChat package metadata missing."
+      status: "fail",
+      detail: "WeChat package metadata missing.",
+      evidence: createEvidenceItem({
+        label: "WeChat package metadata",
+        path: metadataPath ?? "<missing-wechat-package-metadata>",
+        status: "fail",
+        availability: "missing",
+        summary: "WeChat package metadata missing.",
+        reasonCodes: ["wechat_package_metadata_missing"]
+      }),
+      failReasons: ["wechat_package_metadata_missing"],
+      warnReasons: []
     };
   }
 
@@ -550,32 +653,48 @@ export function summarizeWechatPackage(metadataPath: string | undefined, metadat
   const archiveExists = archivePath ? fs.existsSync(archivePath) : false;
   const valid = metadata.schemaVersion === 1 && Boolean(archiveFileName) && Boolean(archiveSha256) && archiveExists;
   const status: GateStatus = valid ? "pass" : "fail";
+  const failReasons = valid ? [] : ["wechat_package_metadata_incomplete"];
   return {
     status,
     detail: valid
       ? `archive=${archiveFileName} sha=${archiveSha256?.slice(0, 12)}…`
       : "Sidecar, archive, or SHA evidence is incomplete.",
-    evidence: {
+    evidence: createEvidenceItem({
       label: "WeChat package metadata",
       path: metadataPath,
       status,
       observedAt: new Date(fs.statSync(metadataPath).mtimeMs).toISOString(),
       summary: valid
         ? `archive=${archiveFileName} sha=${archiveSha256?.slice(0, 12)}…`
-        : "Package metadata is incomplete or the archive is missing."
-    }
+        : "Package metadata is incomplete or the archive is missing.",
+      reasonCodes: failReasons
+    }),
+    failReasons,
+    warnReasons: []
   };
 }
 
 export function summarizeWechatSmoke(reportPath: string | undefined, report: WechatSmokeReport | undefined): {
   status: GateStatus;
   detail: string;
-  evidence?: EvidenceItem;
+  evidence: EvidenceItem;
+  failReasons: string[];
+  warnReasons: string[];
 } {
   if (!reportPath || !report) {
     return {
-      status: "warn",
-      detail: "WeChat smoke report missing."
+      status: "fail",
+      detail: "WeChat smoke report missing.",
+      evidence: createEvidenceItem({
+        label: "WeChat smoke report",
+        path: reportPath ?? "<missing-wechat-smoke-report>",
+        status: "fail",
+        availability: "missing",
+        summary: "WeChat smoke report missing.",
+        reasonCodes: ["wechat_smoke_report_missing"]
+      }),
+      failReasons: ["wechat_smoke_report_missing"],
+      warnReasons: []
     };
   }
 
@@ -589,6 +708,17 @@ export function summarizeWechatSmoke(reportPath: string | undefined, report: Wec
   } else if (result === "failed" || failedCases.length > 0) {
     status = "fail";
   }
+  const failReasons: string[] = [];
+  const warnReasons: string[] = [];
+  if (result === "failed" || failedCases.length > 0) {
+    failReasons.push("wechat_smoke_failed");
+  }
+  if (result !== "passed" && status === "warn") {
+    warnReasons.push("wechat_smoke_pending");
+  }
+  if (pendingCases.length > 0) {
+    warnReasons.push("wechat_smoke_cases_pending");
+  }
 
   const parts = [`result=${result ?? "<missing>"}`];
   if (failedCases.length > 0) {
@@ -601,42 +731,62 @@ export function summarizeWechatSmoke(reportPath: string | undefined, report: Wec
   return {
     status,
     detail: parts.join(" | "),
-    evidence: {
+    evidence: createEvidenceItem({
       label: "WeChat smoke report",
       path: reportPath,
       status,
       observedAt: report.execution?.executedAt,
-      summary: parts.join(" | ")
-    }
+      summary: parts.join(" | "),
+      reasonCodes: status === "fail" ? failReasons : warnReasons
+    }),
+    failReasons,
+    warnReasons
   };
 }
 
 export function summarizeCocosRc(snapshotPath: string | undefined, snapshot: CocosReleaseCandidateSnapshot | undefined): {
   status: GateStatus;
   detail: string;
-  evidence?: EvidenceItem;
+  evidence: EvidenceItem;
+  failReasons: string[];
+  warnReasons: string[];
 } {
   if (!snapshotPath || !snapshot) {
     return {
-      status: "warn",
-      detail: "Cocos RC snapshot missing."
+      status: "fail",
+      detail: "Cocos RC snapshot missing.",
+      evidence: createEvidenceItem({
+        label: "Cocos RC snapshot",
+        path: snapshotPath ?? "<missing-cocos-rc-snapshot>",
+        status: "fail",
+        availability: "missing",
+        summary: "Cocos RC snapshot missing.",
+        reasonCodes: ["cocos_rc_snapshot_missing"]
+      }),
+      failReasons: ["cocos_rc_snapshot_missing"],
+      warnReasons: []
     };
   }
 
   const overallStatus = snapshot.execution?.overallStatus;
   const status: GateStatus =
     overallStatus === "passed" ? "pass" : overallStatus === "failed" ? "fail" : "warn";
+  const failReasons = status === "fail" ? ["cocos_rc_snapshot_failed"] : [];
+  const warnReasons = status === "warn" ? ["cocos_rc_snapshot_pending"] : [];
 
   return {
     status,
     detail: `overallStatus=${overallStatus ?? "<missing>"}${snapshot.execution?.summary ? ` | ${snapshot.execution.summary}` : ""}`,
-    evidence: {
+    evidence: createEvidenceItem({
       label: "Cocos RC snapshot",
       path: snapshotPath,
       status,
       observedAt: snapshot.execution?.executedAt,
-      summary: `overallStatus=${overallStatus ?? "<missing>"}`
-    }
+      summary: `overallStatus=${overallStatus ?? "<missing>"}`,
+      reasonCodes: status === "fail" ? failReasons : warnReasons
+    }),
+    failReasons,
+    warnReasons
   };
 }
 
@@ -646,10 +796,14 @@ export function buildBuildPackageGate(
   smokeSummary: ReturnType<typeof summarizeWechatSmoke>
 ): GateReport {
   const status = mergeStatuses([snapshotSummary.status, packageSummary.status, smokeSummary.status]);
+  const failReasons = [...snapshotSummary.failReasons, ...packageSummary.failReasons, ...smokeSummary.failReasons];
+  const warnReasons = [...snapshotSummary.warnReasons, ...packageSummary.warnReasons, ...smokeSummary.warnReasons];
   return {
     id: "build-package-validation",
     label: "Smoke/build/package validation",
     status,
+    failReasons,
+    warnReasons,
     summary:
       status === "pass"
         ? "Automated regression, WeChat package sidecar, and smoke report all passed."
@@ -672,8 +826,10 @@ export function buildCriticalEvidenceGate(
     return {
       id: "critical-evidence",
       label: "Critical readiness evidence",
-      status: "warn",
-      summary: "No recent readiness evidence files were found.",
+      status: "fail",
+      summary: "Critical readiness evidence is missing.",
+      failReasons: ["critical_evidence_missing"],
+      warnReasons: [],
       details: [
         "Generate or point the dashboard at release snapshot, WeChat smoke report, and Cocos RC snapshot evidence files."
       ],
@@ -685,21 +841,60 @@ export function buildCriticalEvidenceGate(
     entry,
     age: describeAge(entry.observedAt, maxEvidenceAgeDays)
   }));
-  const statuses = ageChecks.map(({ entry, age }) => (statusRank(age.status) > statusRank(entry.status) ? age.status : entry.status));
+  const evaluatedEvidence = ageChecks.map(({ entry, age }) => {
+    let freshness: EvidenceFreshness = "fresh";
+    let freshnessReasonCode: string | undefined;
+    if (entry.availability === "missing") {
+      freshness = "unknown";
+    } else if (!entry.observedAt) {
+      freshness = "missing_timestamp";
+      freshnessReasonCode = "evidence_timestamp_missing";
+    } else if (parseIsoDate(entry.observedAt) === undefined) {
+      freshness = "invalid_timestamp";
+      freshnessReasonCode = "evidence_timestamp_invalid";
+    } else if (age.status === "warn") {
+      freshness = "stale";
+      freshnessReasonCode = "evidence_stale";
+    }
+
+    const status = statusRank(age.status) > statusRank(entry.status) ? age.status : entry.status;
+    return {
+      status,
+      age,
+      entry: {
+        ...entry,
+        freshness,
+        reasonCodes: freshnessReasonCode && !entry.reasonCodes.includes(freshnessReasonCode)
+          ? [...entry.reasonCodes, freshnessReasonCode]
+          : entry.reasonCodes
+      }
+    };
+  });
+  const statuses = evaluatedEvidence.map(({ status }) => status);
   const status = mergeStatuses(statuses);
+  const failReasons = [...new Set(evaluatedEvidence.flatMap(({ entry }) => (entry.status === "fail" ? entry.reasonCodes : [])))];
+  const warnReasons = [
+    ...new Set(
+      evaluatedEvidence.flatMap(({ entry, status: evaluatedStatus }) =>
+        evaluatedStatus === "warn" ? entry.reasonCodes : []
+      )
+    )
+  ];
 
   return {
     id: "critical-evidence",
     label: "Critical readiness evidence",
     status,
+    failReasons,
+    warnReasons,
     summary:
       status === "pass"
         ? "Recent release evidence is present for the key Phase 1 gates."
         : status === "fail"
-          ? "Recent evidence includes failing readiness signals."
+          ? "Critical readiness evidence is missing or includes failing signals."
           : "Some readiness evidence is missing or older than the freshness target.",
-    details: ageChecks.map(({ entry, age }) => `${entry.label}: ${age.detail}`),
-    evidence: presentEvidence
+    details: evaluatedEvidence.map(({ entry, age }) => `${entry.label}: ${entry.availability === "missing" ? "missing artifact" : age.detail}`),
+    evidence: evaluatedEvidence.map(({ entry }) => entry)
   };
 }
 
@@ -735,6 +930,12 @@ function renderMarkdown(report: DashboardReport): string {
     lines.push("");
     lines.push(`- Status: ${gate.status.toUpperCase()}`);
     lines.push(`- Summary: ${gate.summary}`);
+    if (gate.failReasons.length > 0) {
+      lines.push(`- Fail reasons: ${gate.failReasons.join(", ")}`);
+    }
+    if (gate.warnReasons.length > 0) {
+      lines.push(`- Warn reasons: ${gate.warnReasons.join(", ")}`);
+    }
     for (const detail of gate.details) {
       lines.push(`- ${detail}`);
     }
@@ -742,8 +943,13 @@ function renderMarkdown(report: DashboardReport): string {
       lines.push("- Evidence:");
       for (const item of gate.evidence) {
         const observedAt = item.observedAt ? ` @ ${item.observedAt}` : "";
-        lines.push(`  - ${item.label}: ${item.status.toUpperCase()}${observedAt} (${item.path})`);
+        lines.push(
+          `  - ${item.label}: ${item.status.toUpperCase()}${observedAt} (${item.path}) [availability=${item.availability} freshness=${item.freshness}]`
+        );
         lines.push(`    - ${item.summary}`);
+        if (item.reasonCodes.length > 0) {
+          lines.push(`    - reasonCodes=${item.reasonCodes.join(",")}`);
+        }
       }
     }
     lines.push("");
