@@ -211,3 +211,103 @@ test("battle replay capture skips unresolved outcomes and empty replay appends",
   const account = createAccount();
   assert.equal(appendCompletedBattleReplaysToAccount(account, []), account);
 });
+
+test("battle replay capture records sequential immutable steps for each action appended", () => {
+  const capture = createBattleReplayCapture(
+    "room-steps-272",
+    createBattleState({
+      id: "battle-steps-272",
+      worldHeroId: "hero-replay"
+    }),
+    { attackerPlayerId: "player-step" },
+    "2026-03-29T15:00:00.000Z"
+  );
+
+  const firstAction: BattleAction = {
+    type: "battle.attack",
+    attackerId: "hero-stack",
+    defenderId: "wolf-stack"
+  };
+  const withFirstStep = appendBattleReplayStep(capture, firstAction, "player");
+  firstAction.attackerId = "mutated-after-append";
+
+  const secondAction: BattleAction = {
+    type: "battle.wait",
+    unitId: "hero-stack"
+  };
+  const withSecondStep = appendBattleReplayStep(withFirstStep, secondAction, "automated");
+  secondAction.unitId = "mutated-after-append";
+
+  assert.equal(withSecondStep.steps.length, 2);
+  assert.deepEqual(withSecondStep.steps[0], {
+    index: 1,
+    source: "player",
+    action: {
+      type: "battle.attack",
+      attackerId: "hero-stack",
+      defenderId: "wolf-stack"
+    }
+  });
+  assert.deepEqual(withSecondStep.steps[1], {
+    index: 2,
+    source: "automated",
+    action: {
+      type: "battle.wait",
+      unitId: "hero-stack"
+    }
+  });
+});
+
+test("battle replay emission requires hero identifiers before generating summaries", () => {
+  const attackerCapture = finalizeBattleReplayCapture(
+    createBattleReplayCapture(
+      "room-prereq-272",
+      createBattleState({
+        id: "battle-prereq-272"
+      }),
+      { attackerPlayerId: "player-hero-prereq" },
+      "2026-03-29T15:10:00.000Z"
+    ),
+    createBattleState({
+      id: "battle-prereq-272"
+    }),
+    {
+      status: "attacker_victory",
+      survivingAttackers: [],
+      survivingDefenders: []
+    },
+    "2026-03-29T15:11:00.000Z"
+  );
+
+  assert.ok(attackerCapture);
+  assert.deepEqual(buildPlayerBattleReplaySummariesForPlayer(attackerCapture, "player-hero-prereq"), []);
+
+  const defenderBattle = createBattleState({
+    id: "battle-prereq-defender-272",
+    worldHeroId: "hero-attacker-prereq"
+  });
+  const defenderCapture = finalizeBattleReplayCapture(
+    createBattleReplayCapture(
+      "room-prereq-272",
+      defenderBattle,
+      {
+        attackerPlayerId: "player-hero-prereq",
+        defenderPlayerId: "player-hero-prereq-defender"
+      },
+      "2026-03-29T15:12:00.000Z"
+    ),
+    defenderBattle,
+    {
+      status: "defender_victory",
+      survivingAttackers: [],
+      survivingDefenders: []
+    },
+    "2026-03-29T15:13:00.000Z"
+  );
+
+  assert.ok(defenderCapture);
+  assert.deepEqual(
+    buildPlayerBattleReplaySummariesForPlayer(defenderCapture, "player-hero-prereq-defender"),
+    []
+  );
+});
