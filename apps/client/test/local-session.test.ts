@@ -172,7 +172,7 @@ class FakeRoom {
   }
 }
 
-test("readStoredSessionReplay loads the cached browser session replay for H5 boot", () => {
+test("readStoredSessionReplay loads the cached browser session replay for H5 boot", { concurrency: false }, () => {
   const update = createSessionUpdate("cached", 4);
   const storage = createMemoryStorage([
     [
@@ -193,20 +193,37 @@ test("readStoredSessionReplay loads the cached browser session replay for H5 boo
   }
 });
 
-test("createGameSession falls back to a local session when remote bootstrap is unavailable", async () => {
-  const session = await localSessionTestHooks.createGameSessionWithRuntime("room-alpha", "player-1", 1001, undefined, {
-    async connectRemoteGameSession() {
-      throw new Error("connect_failed");
+test("createGameSession falls back to a local session when remote bootstrap is unavailable", { concurrency: false }, async () => {
+  const events: ConnectionEvent[] = [];
+  const pushed: SessionUpdate[] = [];
+  const session = await localSessionTestHooks.createGameSessionWithRuntime(
+    "room-alpha",
+    "player-1",
+    1001,
+    {
+      onConnectionEvent: (event) => {
+        events.push(event);
+      },
+      onPushUpdate: (update) => {
+        pushed.push(update);
+      }
+    },
+    {
+      async connectRemoteGameSession() {
+        throw new Error("connect_failed");
+      }
     }
-  });
+  );
 
   const update = await session.snapshot("local-fallback");
   assert.equal(update.reason, "local-fallback");
   assert.equal(update.world.meta.roomId, "room-alpha");
   assert.equal(update.world.playerId, "player-1");
+  assert.deepEqual(events, []);
+  assert.deepEqual(pushed, []);
 });
 
-test("createGameSession keeps the remote bootstrap session when the initial connection succeeds", async () => {
+test("createGameSession keeps the remote bootstrap session when the initial connection succeeds", { concurrency: false }, async () => {
   const expected = createSessionUpdate("remote-live", 9);
   const remoteSession = {
     async snapshot(reason?: string) {
@@ -265,7 +282,7 @@ test("createGameSession keeps the remote bootstrap session when the initial conn
   assert.deepEqual(await session.snapshot("boot"), { ...expected, reason: "boot" });
 });
 
-test("createGameSession falls back to a local session when remote bootstrap times out", async () => {
+test("createGameSession falls back to a local session when remote bootstrap times out", { concurrency: false }, async () => {
   const session = await localSessionTestHooks.createGameSessionWithRuntime("room-alpha", "player-1", 1001, undefined, {
     async connectRemoteGameSession() {
       throw new Error("connect_timeout");
@@ -278,7 +295,80 @@ test("createGameSession falls back to a local session when remote bootstrap time
   assert.equal(update.world.playerId, "player-1");
 });
 
-test("createGameSession surfaces stored-token recovery as a successful remote resume", async () => {
+test(
+  "recoverable remote sessions surface the recovered snapshot as a push update before a retried request resolves",
+  { concurrency: false },
+  async () => {
+    const storage = createMemoryStorage([
+      [getReconnectionStorageKey("room-alpha", "player-1"), "stale-token"] as const
+    ]);
+    const restoreWindow = installWindow(storage);
+    const firstRoom = new FakeRoom("token-first");
+    const secondRoom = new FakeRoom("token-second");
+    const pushed: SessionUpdate[] = [];
+    const events: ConnectionEvent[] = [];
+    let connectAttempts = 0;
+
+    try {
+      const session = await localSessionTestHooks.createGameSessionWithRuntime(
+        "room-alpha",
+        "player-1",
+        1001,
+        {
+          onPushUpdate: (update) => {
+            pushed.push(update);
+          },
+          onConnectionEvent: (event) => {
+            events.push(event);
+          }
+        },
+        {
+          async connectRemoteGameSession(roomId, playerId, seed, options) {
+            connectAttempts += 1;
+            const room = connectAttempts === 1 ? firstRoom : secondRoom;
+            return {
+              session: localSessionTestHooks.createRemoteGameSession(
+                room as unknown as ColyseusRoom,
+                roomId,
+                playerId,
+                options
+              ) as never,
+              recoveredFromStoredToken: false
+            };
+          },
+          async wait() {}
+        }
+      );
+
+      const snapshotPromise = session.snapshot("boot");
+      await waitFor(() => firstRoom.sent.length === 1, "initial remote snapshot was not requested");
+      firstRoom.emitLeave(CloseCode.FAILED_TO_RECONNECT);
+
+      await waitFor(() => secondRoom.sent.length >= 1, "recovery snapshot was not requested");
+      const recoveredUpdate = createSessionUpdate("recovered", 7);
+      const recoveryRequestId = (secondRoom.sent[0]?.payload as { requestId: string }).requestId;
+      secondRoom.emitMessage(toServerMessage(recoveryRequestId, recoveredUpdate));
+
+      await waitFor(() => events.length === 2, "recovery reconnect event was not emitted");
+      await waitFor(() => pushed.length === 1, "recovered snapshot push update was not emitted");
+      assert.deepEqual(events, ["reconnect_failed", "reconnected"]);
+      assert.deepEqual(pushed, [recoveredUpdate]);
+
+      await waitFor(() => secondRoom.sent.length >= 2, "retry snapshot was not requested");
+      const liveUpdate = createSessionUpdate("live", 8);
+      const retryRequestId = (secondRoom.sent[1]?.payload as { requestId: string }).requestId;
+      secondRoom.emitMessage(toServerMessage(retryRequestId, liveUpdate));
+
+      const update = await snapshotPromise;
+      assert.equal(update.reason, "boot");
+      assert.equal(update.world.meta.day, 8);
+    } finally {
+      restoreWindow();
+    }
+  }
+);
+
+test("createGameSession surfaces stored-token recovery as a successful remote resume", { concurrency: false }, async () => {
   const events: ConnectionEvent[] = [];
   const session = await localSessionTestHooks.createGameSessionWithRuntime(
     "room-alpha",
@@ -309,7 +399,10 @@ test("createGameSession surfaces stored-token recovery as a successful remote re
   assert.equal(update.world.meta.day, 5);
 });
 
-test("createGameSession falls back to a local session when remote bootstrap throws a non-recoverable error", async () => {
+test(
+  "createGameSession falls back to a local session when remote bootstrap throws a non-recoverable error",
+  { concurrency: false },
+  async () => {
   const session = await localSessionTestHooks.createGameSessionWithRuntime("room-alpha", "player-1", 1001, undefined, {
     async connectRemoteGameSession() {
       throw new Error("unexpected_bootstrap_failure");
@@ -320,9 +413,10 @@ test("createGameSession falls back to a local session when remote bootstrap thro
   assert.equal(update.reason, "local-after-unexpected-failure");
   assert.equal(update.world.meta.roomId, "room-alpha");
   assert.equal(update.world.playerId, "player-1");
-});
+  }
+);
 
-test("remote game sessions persist push updates and reconnection tokens", () => {
+test("remote game sessions persist push updates and reconnection tokens", { concurrency: false }, () => {
   const storage = createMemoryStorage();
   const restoreWindow = installWindow(storage);
   const room = new FakeRoom("token-initial");
@@ -362,7 +456,7 @@ test("remote game sessions persist push updates and reconnection tokens", () => 
   }
 });
 
-test("recoverable remote sessions retry after room loss and replay the recovered snapshot", async () => {
+test("recoverable remote sessions retry after room loss and replay the recovered snapshot", { concurrency: false }, async () => {
   const storage = createMemoryStorage([
     [getReconnectionStorageKey("room-alpha", "player-1"), "stale-token"] as const
   ]);

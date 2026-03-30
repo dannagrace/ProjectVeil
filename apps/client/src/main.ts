@@ -97,6 +97,7 @@ import {
   resolveRecoveryRoomStateLabel,
   resolveRoomFeedbackTone
 } from "./room-feedback";
+import { createMainSessionRuntime } from "./main-session-runtime";
 
 const params = new URLSearchParams(window.location.search);
 const queryRoomId = params.get("roomId")?.trim() ?? "";
@@ -365,34 +366,18 @@ interface PendingPrediction {
 
 let pendingPrediction: PendingPrediction | null = null;
 
+const mainSessionRuntime = createMainSessionRuntime({
+  state,
+  applyUpdate,
+  render
+});
+
 let sessionPromise: ReturnType<typeof createGameSession> | null = shouldBootGame
   ? createGameSession(roomId, playerId, 1001, {
-      getDisplayName: () => state.accountDraftName,
-      getAuthToken: () => state.lobby.authSession?.token ?? null,
-      onPushUpdate: (update) => {
-        state.log.unshift("收到房间同步推送");
-        state.log = state.log.slice(0, 12);
-        applyUpdate(update, "push");
-      },
-      onConnectionEvent: (event) => {
-        state.diagnostics.connectionStatus =
-          event === "reconnecting" ? "reconnecting" : event === "reconnect_failed" ? "reconnect_failed" : "connected";
-        state.diagnostics.recoverySummary =
-          event === "reconnecting"
-            ? "连接暂时中断，正在尝试重新加入房间。"
-            : event === "reconnected"
-              ? "连接已恢复，正在用最新房间状态校正地图与战斗结果。"
-              : "旧连接未恢复，正在改用持久化快照补救当前房间状态。";
-        state.log.unshift(
-          event === "reconnecting"
-            ? "连接中断，正在尝试重连..."
-            : event === "reconnected"
-              ? "连接已恢复"
-              : "旧连接恢复失败，正在尝试从持久化快照恢复房间..."
-        );
-        state.log = state.log.slice(0, 12);
-        render();
-      }
+      getDisplayName: mainSessionRuntime.getDisplayName,
+      getAuthToken: mainSessionRuntime.getAuthToken,
+      onPushUpdate: mainSessionRuntime.onPushUpdate,
+      onConnectionEvent: mainSessionRuntime.onConnectionEvent
     })
   : null;
 
