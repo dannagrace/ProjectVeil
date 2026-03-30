@@ -1,5 +1,10 @@
 name: CI
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 on:
   push:
     branches:
@@ -234,6 +239,13 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Download V8 coverage artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: v8-coverage-${{ github.sha }}
+          path: .coverage
+
       - name: Download runtime regression artifacts
         continue-on-error: true
         uses: actions/download-artifact@v4
@@ -258,7 +270,14 @@ jobs:
       - name: Build release gate summary artifact
         continue-on-error: true
         run: |
+          node --import tsx ./scripts/ci-release-readiness-snapshot.ts \
+            --validate-status "${{ needs.validate.result }}" \
+            --wechat-build-status "${{ needs.wechat-build-validation.result }}" \
+            --client-rc-smoke-status "${{ needs.client-release-candidate-smoke.result }}" \
+            --output "${RUNNER_TEMP}/release-readiness/release-readiness-${GITHUB_SHA}.json"
+
           args=(
+            --snapshot "${RUNNER_TEMP}/release-readiness/release-readiness-${GITHUB_SHA}.json"
             --output "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json"
             --markdown-output "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.md"
           )
@@ -288,6 +307,70 @@ jobs:
             exit 0
           fi
           npm run ci:trend-summary -- "${args[@]}"
+
+      - name: Build release health summary artifact
+        continue-on-error: true
+        run: |
+          args=(
+            --release-readiness "${RUNNER_TEMP}/release-readiness/release-readiness-${GITHUB_SHA}.json"
+            --release-gate-summary "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json"
+            --ci-trend-summary "${RUNNER_TEMP}/release-readiness/ci-trend-summary-${GITHUB_SHA}.json"
+            --output "${RUNNER_TEMP}/release-readiness/release-health-summary-${GITHUB_SHA}.json"
+            --markdown-output "${RUNNER_TEMP}/release-readiness/release-health-summary-${GITHUB_SHA}.md"
+          )
+          if [[ -f ".coverage/summary.json" ]]; then
+            args+=(--coverage-summary ".coverage/summary.json")
+          fi
+          npm run release:health:summary -- "${args[@]}" || true
+
+      - name: Build PR release summary comment
+        if: |
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          node --import tsx ./scripts/release-pr-comment.ts \
+            --release-gate-summary "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json" \
+            --release-health-summary "${RUNNER_TEMP}/release-readiness/release-health-summary-${GITHUB_SHA}.json" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output "${RUNNER_TEMP}/release-readiness/release-pr-comment-${GITHUB_SHA}.md"
+
+      - name: Comment PR with release summary
+        if: |
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        env:
+          COMMENT_PATH: ${{ runner.temp }}/release-readiness/release-pr-comment-${{ github.sha }}.md
+        with:
+          script: |
+            const fs = require("node:fs");
+            const marker = "<!-- project-veil-release-summary -->";
+            const body = fs.readFileSync(process.env.COMMENT_PATH, "utf8");
+            const issue_number = context.payload.pull_request.number;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              per_page: 100
+            });
+            const existing = comments.find((comment) => comment.user?.type === "Bot" && comment.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body
+              });
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              body
+            });
 
       - name: Upload release signal trend artifacts
         if: always()
