@@ -373,6 +373,31 @@ async function requireAuthSession(
   return result.session;
 }
 
+async function requireAuthorizedPlayerScope(
+  request: IncomingMessage,
+  response: ServerResponse,
+  store: RoomSnapshotStore | null,
+  playerId?: string | null
+) {
+  const normalizedPlayerId = playerId?.trim();
+  if (!normalizedPlayerId) {
+    sendNotFound(response);
+    return null;
+  }
+
+  const authSession = await requireAuthSession(request, response, store);
+  if (!authSession) {
+    return null;
+  }
+
+  if (authSession.playerId !== normalizedPlayerId) {
+    sendForbidden(response);
+    return null;
+  }
+
+  return authSession;
+}
+
 function toPublicPlayerAccount(
   account: PlayerAccountSnapshot
 ): Omit<
@@ -944,6 +969,11 @@ export function registerPlayerAccountRoutes(
       return;
     }
 
+    const authSession = await requireAuthorizedPlayerScope(request, response, store, playerId);
+    if (!authSession) {
+      return;
+    }
+
     if (!store) {
       sendJson(response, 404, {
         error: {
@@ -955,25 +985,17 @@ export function registerPlayerAccountRoutes(
     }
 
     try {
-      const account = await store.loadPlayerAccount(playerId);
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
       if (!account) {
-        if (isEphemeralGuestPlayerId(playerId)) {
-          sendJson(
-            response,
-            200,
-            toEventLogResponse(
-              createLocalModeAccount({
-                playerId
-              }),
-              request
-            )
-          );
-          return;
-        }
         sendJson(response, 404, {
           error: {
-            code: "player_account_not_found",
-            message: `Player account not found: ${playerId}`
+            code: "player_battle_replay_not_found",
+            message: `Player battle replay not found: ${replayId}`
           }
         });
         return;
@@ -1004,6 +1026,11 @@ export function registerPlayerAccountRoutes(
       return;
     }
 
+    const authSession = await requireAuthorizedPlayerScope(request, response, store, playerId);
+    if (!authSession) {
+      return;
+    }
+
     if (!store) {
       sendJson(response, 404, {
         error: {
@@ -1015,25 +1042,17 @@ export function registerPlayerAccountRoutes(
     }
 
     try {
-      const account = await store.loadPlayerAccount(playerId);
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
       if (!account) {
-        if (isEphemeralGuestPlayerId(playerId)) {
-          sendJson(
-            response,
-            200,
-            toAchievementResponse(
-              createLocalModeAccount({
-                playerId
-              }),
-              request
-            )
-          );
-          return;
-        }
         sendJson(response, 404, {
           error: {
-            code: "player_account_not_found",
-            message: `Player account not found: ${playerId}`
+            code: "player_battle_replay_not_found",
+            message: `Player battle replay not found: ${replayId}`
           }
         });
         return;
@@ -1058,6 +1077,11 @@ export function registerPlayerAccountRoutes(
 
   app.get("/api/player-accounts/:playerId/event-log", async (request, response) => {
     const playerId = request.params.playerId?.trim();
+    const authSession = await requireAuthorizedPlayerScope(request, response, store, playerId);
+    if (!authSession) {
+      return;
+    }
+
     if (!playerId) {
       sendNotFound(response);
       return;
@@ -1069,7 +1093,9 @@ export function registerPlayerAccountRoutes(
         200,
         toEventLogResponse(
           createLocalModeAccount({
-            playerId
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            ...(authSession.loginId ? { loginId: authSession.loginId } : {})
           }),
           request
         )
@@ -1078,29 +1104,12 @@ export function registerPlayerAccountRoutes(
     }
 
     try {
-      const account = await store.loadPlayerAccount(playerId);
-      if (!account) {
-        if (isEphemeralGuestPlayerId(playerId)) {
-          sendJson(
-            response,
-            200,
-            toEventLogResponse(
-              createLocalModeAccount({
-                playerId
-              }),
-              request
-            )
-          );
-          return;
-        }
-        sendJson(response, 404, {
-          error: {
-            code: "player_account_not_found",
-            message: `Player account not found: ${playerId}`
-          }
-        });
-        return;
-      }
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
 
       sendJson(response, 200, toEventLogResponse(account, request));
     } catch (error) {
@@ -1110,6 +1119,11 @@ export function registerPlayerAccountRoutes(
 
   app.get("/api/player-accounts/:playerId/event-history", async (request, response) => {
     const playerId = request.params.playerId?.trim();
+    const authSession = await requireAuthorizedPlayerScope(request, response, store, playerId);
+    if (!authSession) {
+      return;
+    }
+
     if (!playerId) {
       sendNotFound(response);
       return;
@@ -1129,7 +1143,7 @@ export function registerPlayerAccountRoutes(
     }
 
     try {
-      const history = await store.loadPlayerEventHistory(playerId, query);
+      const history = await store.loadPlayerEventHistory(authSession.playerId, query);
       sendJson(response, 200, {
         ...history,
         offset: Math.max(0, Math.floor(query.offset ?? 0)),
