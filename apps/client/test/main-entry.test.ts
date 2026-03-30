@@ -46,3 +46,27 @@ test("startH5ClientApp reports boot failures while still wiring automation hooks
   await Promise.resolve();
   assert.deepEqual(events, ["bootstrap:start", "registerAutomationHooks", "reportBootstrapError:true"]);
 });
+
+test("startH5ClientApp keeps automation hook registration stable across repeated boots", async () => {
+  const events: string[] = [];
+
+  startH5ClientApp({
+    bootstrapApp: async () => {
+      events.push("bootstrap:first");
+    },
+    registerAutomationHooks: () => {
+      events.push("register:first");
+    }
+  });
+  startH5ClientApp({
+    bootstrapApp: async () => {
+      events.push("bootstrap:second");
+    },
+    registerAutomationHooks: () => {
+      events.push("register:second");
+    }
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(events, ["bootstrap:first", "register:first", "bootstrap:second", "register:second"]);
+});
