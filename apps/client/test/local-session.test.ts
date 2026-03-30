@@ -456,6 +456,34 @@ test("remote game sessions persist push updates and reconnection tokens", { conc
   }
 });
 
+test("remote game sessions clear persisted replay and reconnection token after a consented leave", { concurrency: false }, () => {
+  const storage = createMemoryStorage();
+  const restoreWindow = installWindow(storage);
+  const room = new FakeRoom("token-initial");
+  const pushed: SessionUpdate[] = [];
+
+  try {
+    localSessionTestHooks.createRemoteGameSession(room as unknown as ColyseusRoom, "room-alpha", "player-1", {
+      onPushUpdate: (update) => {
+        pushed.push(update);
+      }
+    });
+
+    const pushedUpdate = createSessionUpdate("push-sync", 6);
+    room.emitMessage(toServerMessage("push-1", pushedUpdate, "push"));
+    assert.deepEqual(pushed, [pushedUpdate]);
+    assert.deepEqual(readSessionReplay(storage, "room-alpha", "player-1"), pushedUpdate);
+    assert.equal(readReconnectionToken(storage, "room-alpha", "player-1"), "token-initial");
+
+    room.emitLeave(CloseCode.CONSENTED);
+
+    assert.equal(readSessionReplay(storage, "room-alpha", "player-1"), null);
+    assert.equal(readReconnectionToken(storage, "room-alpha", "player-1"), null);
+  } finally {
+    restoreWindow();
+  }
+});
+
 test("recoverable remote sessions retry after room loss and replay the recovered snapshot", { concurrency: false }, async () => {
   const storage = createMemoryStorage([
     [getReconnectionStorageKey("room-alpha", "player-1"), "stale-token"] as const

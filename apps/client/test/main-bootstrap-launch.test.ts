@@ -294,3 +294,84 @@ test("launchMainH5App keeps cached local state when the remote session is unavai
   assert.equal(state.diagnostics.connectionStatus, "reconnect_failed");
   assert.deepEqual(state.log, ["远端会话暂不可用，当前仅展示最近缓存状态。", "old-line"]);
 });
+
+test("launchMainH5App logs out before session bootstrap when no query player or synced auth session can restore identity", async () => {
+  const events: string[] = [];
+  const state = createState();
+  const hookedWindow: {
+    render_game_to_text?: () => string;
+    export_diagnostic_snapshot?: () => string;
+    render_diagnostic_snapshot_to_text?: () => string;
+    advanceTime?: (ms: number) => Promise<void>;
+  } = {};
+
+  launchMainH5App({
+    state,
+    shouldBootGame: true,
+    queryPlayerId: "",
+    roomId: "room-alpha",
+    playerId: "guest-001",
+    bindKeyboardShortcuts: () => {
+      events.push("bindKeyboardShortcuts");
+    },
+    render: () => {
+      events.push("render");
+    },
+    syncCurrentAuthSession: async () => {
+      events.push("syncCurrentAuthSession");
+      return null;
+    },
+    refreshLobbyRoomList: async () => {
+      events.push("refreshLobbyRoomList");
+    },
+    logoutGuestSession: () => {
+      events.push("logoutGuestSession");
+    },
+    readStoredSessionReplay: () => {
+      events.push("readStoredSessionReplay");
+      return createSessionUpdate("cached");
+    },
+    applyReplayedUpdate: (update) => {
+      events.push(`applyReplayedUpdate:${update.reason}`);
+    },
+    getSession: async () => {
+      events.push("getSession");
+      return {
+        snapshot: async () => createSessionUpdate("snapshot")
+      };
+    },
+    applyUpdate: (update, source) => {
+      events.push(`applyUpdate:${source}:${update.reason}`);
+    },
+    loadAccountProfileWithProgression: async () => {
+      throw new Error("loadAccountProfileWithProgression should not run after logout");
+    },
+    loadPlayerAccountSessions: async () => {
+      throw new Error("loadPlayerAccountSessions should not run after logout");
+    },
+    readStoredAuthSession: () => null,
+    clearReplayDetail: () => {
+      events.push("clearReplayDetail");
+    },
+    onPlayerAccountProfileSynced: () => {
+      events.push("onPlayerAccountProfileSynced");
+    },
+    window: hookedWindow,
+    devDiagnosticsEnabled: false,
+    renderGameToText: () => "rendered",
+    exportDiagnosticSnapshot: () => "diagnostic",
+    renderDiagnosticSnapshotToText: () => "diagnostic-text",
+    advanceUiTime: async (ms) => {
+      events.push(`advanceUiTime:${ms}`);
+    }
+  });
+
+  await Promise.resolve();
+
+  assert.deepEqual(events, ["bindKeyboardShortcuts", "render", "syncCurrentAuthSession", "logoutGuestSession"]);
+  assert.equal(state.diagnostics.connectionStatus, "connecting");
+  assert.deepEqual(state.log, ["正在连接本地会话服务...", "old-line"]);
+  assert.equal(hookedWindow.render_game_to_text?.(), "rendered");
+  assert.equal(hookedWindow.export_diagnostic_snapshot, undefined);
+  assert.equal(hookedWindow.render_diagnostic_snapshot_to_text, undefined);
+});
