@@ -1148,6 +1148,74 @@ test("player account event-history routes page dedicated history entries beyond 
   assert.deepEqual(rangedPayload.items.map((entry) => entry.id), ["event-history-2"]);
 });
 
+test("player account event-history routes do not fall back to the recent snapshot when dedicated history is empty", async (t) => {
+  const port = 42071 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-history-empty",
+    displayName: "霜灯抄录员",
+    globalResources: { gold: 22, wood: 7, ore: 1 },
+    achievements: [],
+    recentEventLog: [
+      {
+        id: "event-recent-only",
+        timestamp: "2026-03-27T12:05:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-history-empty",
+        category: "achievement",
+        description: "recent snapshot entry",
+        heroId: "hero-1",
+        achievementId: "first_battle",
+        rewards: [{ type: "badge", label: "初次交锋" }]
+      }
+    ],
+    recentBattleReplays: [],
+    lastRoomId: "room-alpha",
+    lastSeenAt: new Date("2026-03-27T12:06:00.000Z").toISOString()
+  });
+  store.seedEventHistory("player-history-empty", []);
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-history-empty",
+    displayName: "霜灯抄录员"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const eventLogResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/event-log`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const eventLogPayload = (await eventLogResponse.json()) as {
+    items: PlayerAccountSnapshot["recentEventLog"];
+  };
+  assert.equal(eventLogResponse.status, 200);
+  assert.deepEqual(eventLogPayload.items.map((entry) => entry.id), ["event-recent-only"]);
+
+  const historyResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/event-history`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const historyPayload = (await historyResponse.json()) as {
+    items: PlayerAccountSnapshot["recentEventLog"];
+    total: number;
+    offset: number;
+    limit: number;
+    hasMore: boolean;
+  };
+
+  assert.equal(historyResponse.status, 200);
+  assert.deepEqual(historyPayload.items, []);
+  assert.equal(historyPayload.total, 0);
+  assert.equal(historyPayload.offset, 0);
+  assert.equal(historyPayload.limit, 0);
+  assert.equal(historyPayload.hasMore, false);
+});
+
 test("player account achievement routes filter normalized progress without loading event history", async (t) => {
   const port = 42072 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
@@ -1762,6 +1830,53 @@ test("player account me route preserves account-mode sessions and returns the gl
   });
   assert.equal(mePayload.session.authMode, "account");
   assert.equal(mePayload.session.loginId, "veil-ranger");
+});
+
+test("player account me route upgrades a legacy account session fallback to the stored session version", async (t) => {
+  const port = 42112 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "legacy-account-player",
+    displayName: "暮潮守望"
+  });
+  await store.bindPlayerAccountCredentials("legacy-account-player", {
+    loginId: "veil-ranger",
+    passwordHash: "hashed-password"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const legacySession = issueAccountAuthSession({
+    playerId: "legacy-account-player",
+    displayName: "暮潮守望",
+    loginId: "veil-ranger"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${legacySession.token}`
+    }
+  });
+  const mePayload = (await meResponse.json()) as {
+    account: PlayerAccountSnapshot;
+    session: {
+      token: string;
+      playerId: string;
+      displayName: string;
+      authMode: "guest" | "account";
+      loginId?: string;
+      sessionVersion?: number;
+    };
+  };
+
+  assert.equal(meResponse.status, 200);
+  assert.equal(mePayload.account.playerId, "legacy-account-player");
+  assert.equal(mePayload.session.authMode, "account");
+  assert.equal(mePayload.session.loginId, "veil-ranger");
+  assert.equal(mePayload.session.sessionVersion, 0);
+  assert.equal(mePayload.session.playerId, "legacy-account-player");
 });
 
 test("player account session routes list active devices and revoke a selected non-current session", async (t) => {
