@@ -411,3 +411,16 @@ test("pruneStaleEntries reports number of expired entries and keeps fresh ones",
   assert.equal(service.getStatus("player-expired-2").status, "idle");
   assert.equal(service.getStatus("player-fresh").status, "queued");
 });
+
+test("pruneStaleEntries keeps entries at the TTL boundary and expires only older ones", () => {
+  const service = new MatchmakingService();
+  seedQueue(service, [
+    createQueueRequest("player-expired", "2026-03-28T08:02:59.999Z"),
+    createQueueRequest("player-boundary", "2026-03-28T08:03:00.000Z")
+  ]);
+
+  const removed = service.pruneStaleEntries(2 * 60 * 1000, new Date("2026-03-28T08:05:00.000Z"));
+  assert.equal(removed, 1);
+  assert.equal(service.getStatus("player-expired").status, "idle");
+  assert.equal(service.getStatus("player-boundary").status, "queued");
+});
