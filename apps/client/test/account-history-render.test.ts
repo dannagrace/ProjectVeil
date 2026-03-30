@@ -201,6 +201,11 @@ test("account history renderer groups battle list and replay detail into a repla
   assert.match(html, /最近累计 2 场战斗/);
   assert.match(html, /支持从列表进入详情或基础回放/);
   assert.match(html, /战报 2/);
+  assert.match(html, /查看最新战报/);
+  assert.match(html, /进入回放中心/);
+  assert.match(html, /可直接打开最新结算，或进入逐步回放/);
+  assert.match(html, /class="account-replay-entry-point is-primary"/);
+  assert.match(html, /data-select-replay="room-alpha:battle-1:player-1"/);
   assert.match(html, /回放详情/);
 });
 
@@ -260,6 +265,8 @@ test("account history renderer shows replay center empty state without blank con
   assert.match(html, /战报与回放中心/);
   assert.match(html, /暂无可回看的战斗记录/);
   assert.match(html, /暂无战报/);
+  assert.match(html, /等待首场战报/);
+  assert.match(html, /回放中心待解锁/);
   assert.match(html, /尚未记录可回看的战斗摘要/);
   assert.match(html, /选择一场最近战斗/);
 });
