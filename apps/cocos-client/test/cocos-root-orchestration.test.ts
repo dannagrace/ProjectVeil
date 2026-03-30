@@ -6,6 +6,9 @@ import {
   createCocosAccountReviewState,
   transitionCocosAccountReviewState
 } from "../assets/scripts/cocos-account-review.ts";
+import { createCocosAudioRuntime } from "../assets/scripts/cocos-audio-runtime.ts";
+import { cocosPresentationConfig } from "../assets/scripts/cocos-presentation-config.ts";
+import { VeilRoot } from "../assets/scripts/VeilRoot.ts";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
 import type { BattleAction, BattleState, SessionUpdate, VeilCocosSessionOptions } from "../assets/scripts/VeilCocosSession.ts";
@@ -709,6 +712,74 @@ test("VeilRoot runtime harness carries the first battle back to world state", as
   assert.deepEqual(transitionCalls, ["enter:遭遇中立守军", "exit:战斗胜利"]);
   assert.equal(root.battlePresentation.getState().phase, "resolution");
   assert.equal(root.battlePresentation.getState().result, "victory");
+});
+
+test("VeilRoot battle flow switches transition state and fallback audio scenes through enter and resolution", async () => {
+  const root = createVeilRootHarness();
+  const transitionCalls: string[] = [];
+  const animationCalls: string[] = [];
+
+  root.showLobby = false;
+  root.playerId = "player-1";
+  root.lastUpdate = createSessionUpdate(1);
+  root.mapBoard = {
+    playHeroAnimation(animation: string) {
+      animationCalls.push(animation);
+    },
+    showTileFeedback() {},
+    pulseObject() {}
+  } as never;
+  root.battleTransition = {
+    async playEnter(copy: { title: string }) {
+      transitionCalls.push(`enter:${copy.title}`);
+    },
+    async playExit(copy: { title: string }) {
+      transitionCalls.push(`exit:${copy.title}`);
+    }
+  } as never;
+  root.audioRuntime = createCocosAudioRuntime(cocosPresentationConfig.audio, {
+    setTimeout: (() => ({ id: 1 } as ReturnType<typeof setTimeout>)) as typeof setTimeout,
+    clearTimeout: (() => undefined) as typeof clearTimeout
+  }) as never;
+  root.renderView = (() => {
+    (VeilRoot.prototype as VeilRoot & Record<string, unknown>).syncMusicScene.call(root);
+  }) as typeof root.renderView;
+  root.syncWechatShareBridge = () => undefined;
+  root.refreshGameplayAccountProfile = async () => undefined;
+  delete root.applySessionUpdate;
+
+  await root.applySessionUpdate(createFirstBattleUpdate());
+
+  assert.deepEqual(transitionCalls, ["enter:遭遇中立守军"]);
+  assert.deepEqual(animationCalls, ["attack"]);
+  assert.deepEqual(root.audioRuntime.getState(), {
+    supported: false,
+    assetBacked: false,
+    unlocked: false,
+    currentScene: "battle",
+    lastCue: null,
+    cueCount: 0,
+    musicMode: "synth",
+    cueMode: "idle"
+  });
+  assert.equal(root.battlePresentation.getState().phase, "enter");
+
+  await root.applySessionUpdate(createReturnToWorldUpdate());
+
+  assert.deepEqual(transitionCalls, ["enter:遭遇中立守军", "exit:战斗胜利"]);
+  assert.deepEqual(animationCalls, ["attack", "victory"]);
+  assert.deepEqual(root.audioRuntime.getState(), {
+    supported: false,
+    assetBacked: false,
+    unlocked: false,
+    currentScene: "explore",
+    lastCue: "victory",
+    cueCount: 1,
+    musicMode: "synth",
+    cueMode: "idle"
+  });
+  assert.equal(root.battlePresentation.getState().phase, "resolution");
+  root.audioRuntime.dispose();
 });
 
 test("VeilRoot refreshAccountReviewPage loads paged event history into the lobby review state", async () => {
