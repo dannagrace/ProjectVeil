@@ -217,6 +217,40 @@ jobs:
           path: ${{ runner.temp }}/release-readiness
           if-no-files-found: error
 
+  h5-connectivity-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run H5 connectivity smoke
+        run: npm run test:e2e:h5:connectivity
+
+      - name: Upload H5 connectivity smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h5-connectivity-smoke-${{ github.sha }}
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 14
+
   publish-release-signal-trend:
     runs-on: ubuntu-latest
     timeout-minutes: 10
