@@ -59,6 +59,7 @@
     "check:issue33-assets": "node ./scripts/check-issue-33-art-staging.mjs",
     "test": "node --import tsx --test \"packages/shared/test/**/*.test.ts\" \"apps/server/test/**/*.test.ts\" \"apps/client/test/**/*.test.ts\" \"apps/cocos-client/test/**/*.test.ts\"",
     "test:coverage:ci": "node --import tsx ./scripts/ci-v8-coverage.ts",
+    "test:cocos:runtime-smoke": "node --import tsx --test ./apps/cocos-client/test/cocos-primary-runtime-smoke.test.ts",
     "test:e2e": "npm run validate:e2e:fixtures && playwright test",
     "test:e2e:headed": "npm run validate:e2e:fixtures && playwright test --headed",
     "test:e2e:all": "npm run test:e2e && npm run test:e2e:multiplayer",
