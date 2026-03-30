@@ -35,6 +35,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quickstart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Pin npm runtime
+        run: npm install --global npm@10.9.3
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Validate contributor quickstart
+        run: npm run validate:quickstart
+
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
