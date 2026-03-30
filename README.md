@@ -145,6 +145,7 @@ npm run dev:client:h5
 - 微信小游戏 CI 同款校验：`npm run check:wechat-build`
 - 发布就绪快照：`npm run release:readiness:snapshot`
 - 统一发布门禁汇总：`npm run release:gate:summary`
+- 发布健康度聚合摘要：`npm run release:health:summary`
 - 打包 H5 客户端 RC 冒烟：`npm run smoke:client:release-candidate`
 - 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
@@ -179,6 +180,7 @@ npm run dev:client:h5
 - 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
 - 核心玩法发布门禁清单：`docs/core-gameplay-release-readiness.md`
 - 发布就绪快照说明：`docs/release-readiness-snapshot.md`
+- 发布健康度聚合说明：`docs/release-health-summary.md`
 - 多人同步治理矩阵说明：`docs/sync-governance-matrix.md`
 - 共享 contract 快照说明：`docs/shared-contract-snapshots.md`
 - 当前 H5 调试壳仍支持：地图点击移动、可达格高亮、悬停路径预览、资源/明雷信息提示、轻量路径播放反馈、可视化战斗单位面板、目标选中、伤害飘字与战后结果弹窗。
