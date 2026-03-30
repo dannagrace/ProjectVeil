@@ -1,0 +1,161 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+const repoRoot = path.resolve(__dirname, "../..");
+
+function writeJson(filePath: string, payload: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+function createTempWorkspace(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "veil-release-health-cli-"));
+}
+
+function runReleaseHealthSummary(args: string[]) {
+  return spawnSync("node", ["--import", "tsx", "./scripts/release-health-summary.ts", ...args], {
+    cwd: repoRoot,
+    encoding: "utf8"
+  });
+}
+
+test("release:health:summary exits 0 for a healthy report", () => {
+  const workspace = createTempWorkspace();
+  const releaseReadinessPath = path.join(workspace, "release-readiness-pass.json");
+  const releaseGateSummaryPath = path.join(workspace, "release-gate-summary-pass.json");
+  const ciTrendSummaryPath = path.join(workspace, "ci-trend-summary-pass.json");
+  const coverageSummaryPath = path.join(workspace, "summary.json");
+  const syncGovernancePath = path.join(workspace, "sync-governance-pass.json");
+  const outputPath = path.join(workspace, "release-health-summary.json");
+  const markdownOutputPath = path.join(workspace, "release-health-summary.md");
+
+  writeJson(releaseReadinessPath, {
+    summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
+    checks: [{ id: "npm-test", required: true, status: "passed" }]
+  });
+  writeJson(releaseGateSummaryPath, {
+    summary: { status: "passed", failedGateIds: [] },
+    gates: [{ id: "release-readiness", status: "passed", summary: "ok" }]
+  });
+  writeJson(ciTrendSummaryPath, {
+    summary: { overallStatus: "passed", totalFindings: 0, newFindings: 0, ongoingFindings: 0, recoveredFindings: 0 },
+    runtime: { findings: [] },
+    releaseGate: { findings: [] }
+  });
+  writeJson(coverageSummaryPath, [
+    {
+      scope: "shared",
+      lineThreshold: 90,
+      branchThreshold: 70,
+      functionThreshold: 90,
+      metrics: { lines: 95, branches: 80, functions: 96 },
+      failures: []
+    }
+  ]);
+  writeJson(syncGovernancePath, {
+    execution: { status: "passed" },
+    summary: { passed: 2, failed: 0, skipped: 0 },
+    scenarios: [{ id: "room-push-redaction", status: "passed" }]
+  });
+
+  const result = runReleaseHealthSummary([
+    "--release-readiness",
+    releaseReadinessPath,
+    "--release-gate-summary",
+    releaseGateSummaryPath,
+    "--ci-trend-summary",
+    ciTrendSummaryPath,
+    "--coverage-summary",
+    coverageSummaryPath,
+    "--sync-governance",
+    syncGovernancePath,
+    "--output",
+    outputPath,
+    "--markdown-output",
+    markdownOutputPath
+  ]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Wrote release health JSON summary:/);
+  assert.equal(fs.existsSync(outputPath), true);
+  assert.equal(fs.existsSync(markdownOutputPath), true);
+});
+
+test("release:health:summary exits 1 when release readiness is blocking", () => {
+  const workspace = createTempWorkspace();
+  const releaseReadinessPath = path.join(workspace, "release-readiness-fail.json");
+  const releaseGateSummaryPath = path.join(workspace, "release-gate-summary-pass.json");
+  const outputPath = path.join(workspace, "release-health-summary.json");
+  const markdownOutputPath = path.join(workspace, "release-health-summary.md");
+
+  writeJson(releaseReadinessPath, {
+    summary: { status: "failed", requiredFailed: 1, requiredPending: 0 },
+    checks: [{ id: "npm-test", required: true, status: "failed" }]
+  });
+  writeJson(releaseGateSummaryPath, {
+    summary: { status: "passed", failedGateIds: [] },
+    gates: [{ id: "release-readiness", status: "passed", summary: "ok" }]
+  });
+
+  const result = runReleaseHealthSummary([
+    "--release-readiness",
+    releaseReadinessPath,
+    "--release-gate-summary",
+    releaseGateSummaryPath,
+    "--output",
+    outputPath,
+    "--markdown-output",
+    markdownOutputPath
+  ]);
+
+  assert.equal(result.status, 1, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.equal(fs.existsSync(outputPath), true);
+  const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as { summary: { status: string; blockingSignalIds: string[] } };
+  assert.equal(report.summary.status, "blocking");
+  assert.deepEqual(report.summary.blockingSignalIds, ["release-readiness"]);
+});
+
+test("release:health:summary exits 1 when sync governance is blocking", () => {
+  const workspace = createTempWorkspace();
+  const releaseReadinessPath = path.join(workspace, "release-readiness-pass.json");
+  const releaseGateSummaryPath = path.join(workspace, "release-gate-summary-pass.json");
+  const syncGovernancePath = path.join(workspace, "sync-governance-fail.json");
+  const outputPath = path.join(workspace, "release-health-summary.json");
+  const markdownOutputPath = path.join(workspace, "release-health-summary.md");
+
+  writeJson(releaseReadinessPath, {
+    summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
+    checks: [{ id: "npm-test", required: true, status: "passed" }]
+  });
+  writeJson(releaseGateSummaryPath, {
+    summary: { status: "passed", failedGateIds: [] },
+    gates: [{ id: "release-readiness", status: "passed", summary: "ok" }]
+  });
+  writeJson(syncGovernancePath, {
+    execution: { status: "failed" },
+    summary: { passed: 1, failed: 1, skipped: 0 },
+    scenarios: [{ id: "battle-reconnect-turn-resume", status: "failed" }]
+  });
+
+  const result = runReleaseHealthSummary([
+    "--release-readiness",
+    releaseReadinessPath,
+    "--release-gate-summary",
+    releaseGateSummaryPath,
+    "--sync-governance",
+    syncGovernancePath,
+    "--output",
+    outputPath,
+    "--markdown-output",
+    markdownOutputPath
+  ]);
+
+  assert.equal(result.status, 1, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as { summary: { status: string; blockingSignalIds: string[] } };
+  assert.equal(report.summary.status, "blocking");
+  assert.deepEqual(report.summary.blockingSignalIds, ["sync-governance"]);
+});

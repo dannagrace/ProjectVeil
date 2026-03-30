@@ -27,6 +27,15 @@ The output normalizes findings into three severities:
 
 This makes the JSON easy for bots to consume while keeping the Markdown readable for daily release checks or PR comments.
 
+## PR Gate Rule
+
+In CI, the `Release health gate` check runs `npm run release:health:summary` after the release readiness, release gate, and trend artifacts are assembled.
+
+- `blocking` summary status fails the PR check.
+- `warning` and `healthy` summary statuses keep the check green, while still publishing the JSON/Markdown summary and the PR comment.
+
+That keeps the existing summary/comment flow usable without turning warning-only noise into a merge blocker.
+
 ## Usage
 
 Use the latest local artifacts discovered under `artifacts/release-readiness/` plus `.coverage/summary.json`:

@@ -72,7 +72,7 @@
     "test:runtime-regression": "node --import tsx --test ./scripts/test/compare-runtime-regression.test.ts",
     "test:multiplayer-protocol-compatibility": "node --import tsx ./scripts/multiplayer-protocol-compatibility.ts",
     "test:release-gate-summary": "node --import tsx --test ./scripts/test/release-gate-summary.test.ts",
-    "test:release-health-summary": "node --import tsx --test ./scripts/test/release-health-summary.test.ts",
+    "test:release-health-summary": "node --import tsx --test ./scripts/test/release-health-summary.test.ts ./scripts/test/release-health-summary-cli.test.ts",
     "test:sync-governance-matrix": "node --import tsx --test ./scripts/test/sync-governance-matrix.test.ts",
     "test:validate-assets": "node --import tsx --test ./scripts/test/validate-assets.test.ts",
     "test:ci-trend-summary": "node --import tsx --test ./scripts/test/publish-ci-trend-summary.test.ts",
