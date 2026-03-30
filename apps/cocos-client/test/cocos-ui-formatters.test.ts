@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildTimelineEntriesFromUpdate,
+  describeMoveAttemptFeedback,
+  describeSessionActionOutcome,
+  formatSessionActionReason,
   formatSystemTimelineEntry,
   pickRecentBattleTimeline
 } from "../assets/scripts/cocos-ui-formatters";
@@ -195,6 +198,38 @@ test("buildTimelineEntriesFromUpdate keeps repeated move events readable by dest
   ]);
 });
 
+test("buildTimelineEntriesFromUpdate translates known rejection reasons for the timeline", () => {
+  const entries = buildTimelineEntriesFromUpdate({
+    world: {
+      meta: {
+        roomId: "room-alpha",
+        seed: 1001,
+        day: 1
+      },
+      map: {
+        width: 1,
+        height: 1,
+        tiles: []
+      },
+      ownHeroes: [],
+      visibleHeroes: [],
+      resources: {
+        gold: 0,
+        wood: 0,
+        ore: 0
+      },
+      playerId: "player-1"
+    },
+    battle: null,
+    events: [],
+    movementPlan: null,
+    reachableTiles: [],
+    reason: "friendly_fire_blocked"
+  });
+
+  assert.deepEqual(entries, ["系统：操作被拒绝，原因是 不能攻击友军"]);
+});
+
 test("formatSystemTimelineEntry and pickRecentBattleTimeline keep timeline presentation stable", () => {
   const entries = [
     formatSystemTimelineEntry("连接已恢复。"),
@@ -208,4 +243,75 @@ test("formatSystemTimelineEntry and pickRecentBattleTimeline keep timeline prese
     "事件：战斗结束：进攻方获胜。",
     "事件：遭遇中立守军 neutral-1。"
   ]);
+});
+
+test("formatSessionActionReason translates shared rejection reasons into player-facing copy", () => {
+  assert.equal(formatSessionActionReason("building_on_cooldown"), "这个建筑今天已经结算过了");
+  assert.equal(formatSessionActionReason("not_enough_skill_points"), "技能点不足");
+  assert.equal(formatSessionActionReason("equipment_not_in_inventory"), "背包里没有这件装备");
+  assert.equal(formatSessionActionReason("friendly_fire_blocked"), "不能攻击友军");
+  assert.equal(formatSessionActionReason("skill_on_cooldown"), "这个技能还在冷却中");
+  assert.equal(formatSessionActionReason("unit_not_active"), "当前还没轮到这个单位行动");
+  assert.equal(formatSessionActionReason("custom_reason"), "custom_reason");
+});
+
+test("describeSessionActionOutcome distinguishes accepted and rejected session updates", () => {
+  assert.deepEqual(
+    describeSessionActionOutcome(
+      { reason: undefined },
+      {
+        successMessage: "神殿访问已结算。",
+        rejectedLabel: "神殿访问"
+      }
+    ),
+    {
+      accepted: true,
+      message: "神殿访问已结算。"
+    }
+  );
+
+  assert.deepEqual(
+    describeSessionActionOutcome(
+      { reason: "building_on_cooldown" },
+      {
+        successMessage: "神殿访问已结算。",
+        rejectedLabel: "神殿访问"
+      }
+    ),
+    {
+      accepted: false,
+      message: "神殿访问被拒绝：这个建筑今天已经结算过了"
+    }
+  );
+
+  assert.deepEqual(
+    describeSessionActionOutcome(
+      { reason: "friendly_fire_blocked" },
+      {
+        successMessage: "战斗指令已结算。",
+        rejectedLabel: "战斗指令"
+      }
+    ),
+    {
+      accepted: false,
+      message: "战斗指令被拒绝：不能攻击友军"
+    }
+  );
+});
+
+test("describeMoveAttemptFeedback distinguishes move-point failures from blocked tiles", () => {
+  assert.deepEqual(describeMoveAttemptFeedback({ x: 3, y: 2 }, "not_enough_move_points"), {
+    message: "移动被拒绝：移动力不足",
+    tileFeedback: "不足"
+  });
+
+  assert.deepEqual(describeMoveAttemptFeedback({ x: 4, y: 1 }, "destination_occupied"), {
+    message: "地块 (4, 1) 已被友军占据。",
+    tileFeedback: "占用"
+  });
+
+  assert.deepEqual(describeMoveAttemptFeedback({ x: 6, y: 5 }, "path_not_found"), {
+    message: "地块 (6, 5) 当前不可达。",
+    tileFeedback: "不可达"
+  });
 });

@@ -4,7 +4,7 @@ import {
   analyzeWechatMinigameBuildOutput,
   buildWechatMinigameReleaseManifest,
   normalizeWechatMinigameBuildConfig
-} from "../apps/cocos-client/assets/scripts/cocos-wechat-build.ts";
+} from "../apps/cocos-client/tooling/cocos-wechat-build.ts";
 
 interface Args {
   configPath: string;

@@ -1,5 +1,6 @@
 import { getEquipmentDefinition } from "./project-shared/index.ts";
-import type { SessionUpdate, WorldEvent } from "./VeilCocosSession.ts";
+import { formatEquipmentActionReason } from "./cocos-hero-equipment.ts";
+import type { SessionUpdate, Vec2, WorldEvent } from "./VeilCocosSession.ts";
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -26,6 +27,128 @@ function formatEquipmentSlotLabel(slot: string): string {
 
 function formatNeutralMoveReason(reason: string): string {
   return reason === "chase" ? "主动追击" : reason === "return" ? "返回守位" : "沿巡逻路线移动";
+}
+
+export function formatSessionActionReason(reason: string): string {
+  if (!reason) {
+    return "未知原因";
+  }
+
+  if (reason.startsWith("equipment_")) {
+    return formatEquipmentActionReason(reason);
+  }
+
+  switch (reason) {
+    case "hero_not_found":
+      return "当前英雄不存在";
+    case "hero_not_on_building":
+      return "英雄没有站在目标建筑上";
+    case "hero_not_on_tile":
+      return "英雄没有站在目标格子上";
+    case "building_not_found":
+      return "目标建筑不存在";
+    case "building_not_recruitable":
+      return "这个建筑当前不能招募";
+    case "building_not_visitable":
+      return "这个建筑当前不能访问";
+    case "building_not_claimable":
+      return "这个建筑当前不能占领";
+    case "building_depleted":
+      return "这个建筑今天已经没有可领取内容了";
+    case "building_on_cooldown":
+      return "这个建筑今天已经结算过了";
+    case "not_enough_resources":
+      return "当前资源不足";
+    case "resource_tile_not_found":
+      return "目标资源地块不存在";
+    case "resource_missing":
+      return "当前格子没有可采集资源";
+    case "destination_not_found":
+      return "目标地块不存在";
+    case "destination_blocked":
+      return "目标地块不可通行";
+    case "destination_occupied":
+      return "目标地块已被占据";
+    case "path_not_found":
+      return "当前找不到可行路径";
+    case "not_enough_move_points":
+      return "移动力不足";
+    case "unit_not_active":
+    case "attacker_not_active":
+      return "当前还没轮到这个单位行动";
+    case "unit_not_available":
+    case "attacker_not_available":
+      return "出手单位不存在或已经离场";
+    case "defender_not_available":
+      return "目标单位不存在或已经离场";
+    case "friendly_fire_blocked":
+      return "不能攻击友军";
+    case "skill_not_available":
+      return "当前单位没有这个技能";
+    case "skill_disabled":
+      return "这个技能当前不可用";
+    case "skill_on_cooldown":
+      return "这个技能还在冷却中";
+    case "invalid_skill_target":
+      return "这个技能不能指定这个目标";
+    case "skill_target_missing":
+      return "技能目标不存在";
+    case "hero_skill_not_found":
+      return "目标技能不存在";
+    case "hero_skill_branch_not_found":
+      return "技能分支配置缺失";
+    case "not_enough_skill_points":
+      return "技能点不足";
+    case "hero_level_too_low":
+      return "英雄等级不足";
+    case "skill_max_rank_reached":
+      return "该技能已经升满";
+    case "skill_prerequisite_missing":
+      return "缺少前置技能";
+    default:
+      return reason;
+  }
+}
+
+export function describeSessionActionOutcome(
+  update: Pick<SessionUpdate, "reason">,
+  options: {
+    successMessage: string;
+    rejectedLabel: string;
+  }
+): { accepted: boolean; message: string } {
+  if (!update.reason) {
+    return {
+      accepted: true,
+      message: options.successMessage
+    };
+  }
+
+  return {
+    accepted: false,
+    message: `${options.rejectedLabel}被拒绝：${formatSessionActionReason(update.reason)}`
+  };
+}
+
+export function describeMoveAttemptFeedback(destination: Vec2, reason?: string): { message: string; tileFeedback: string } {
+  if (reason === "not_enough_move_points") {
+    return {
+      message: "移动被拒绝：移动力不足",
+      tileFeedback: "不足"
+    };
+  }
+
+  if (reason === "destination_occupied") {
+    return {
+      message: `地块 (${destination.x}, ${destination.y}) 已被友军占据。`,
+      tileFeedback: "占用"
+    };
+  }
+
+  return {
+    message: `地块 (${destination.x}, ${destination.y}) 当前不可达。`,
+    tileFeedback: "不可达"
+  };
 }
 
 function formatWorldEvent(event: WorldEvent): string | null {
@@ -132,7 +255,7 @@ export function buildTimelineEntriesFromUpdate(update: SessionUpdate): string[] 
   const entries: string[] = [];
 
   if (update.reason) {
-    entries.push(`系统：操作被拒绝，原因是 ${update.reason}`);
+    entries.push(`系统：操作被拒绝，原因是 ${formatSessionActionReason(update.reason)}`);
   }
 
   if (update.movementPlan && update.movementPlan.travelPath.length > 1) {

@@ -118,6 +118,9 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     const existing = await this.ensurePlayerAccount({ playerId });
     const account: PlayerAccountSnapshot = {
       ...existing,
+      globalResources: structuredClone(
+        (patch.globalResources as PlayerAccountSnapshot["globalResources"] | undefined) ?? existing.globalResources
+      ),
       achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
       recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
       recentBattleReplays: structuredClone(

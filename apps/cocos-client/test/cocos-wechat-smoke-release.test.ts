@@ -7,7 +7,7 @@ import test from "node:test";
 import {
   buildWechatMinigameTemplateArtifacts,
   normalizeWechatMinigameBuildConfig
-} from "../assets/scripts/cocos-wechat-build.ts";
+} from "../tooling/cocos-wechat-build.ts";
 
 function createPackagedWechatReleaseArtifact(): {
   artifactsDir: string;

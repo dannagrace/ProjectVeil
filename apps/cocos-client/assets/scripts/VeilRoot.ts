@@ -37,11 +37,17 @@ import {
   type CocosLoginProviderDescriptor,
   type CocosLoginRuntimeConfig
 } from "./cocos-login-provider.ts";
+import { predictPlayerWorldAction as predictSharedPlayerWorldAction } from "./project-shared/map.ts";
 import { type CocosWorldAction, predictPlayerWorldAction } from "./cocos-prediction.ts";
 import { VeilBattleTransition } from "./VeilBattleTransition.ts";
 import { VeilBattlePanel } from "./VeilBattlePanel.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
-import { buildTimelineEntriesFromUpdate } from "./cocos-ui-formatters.ts";
+import {
+  buildTimelineEntriesFromUpdate,
+  describeMoveAttemptFeedback,
+  describeSessionActionOutcome,
+  formatSessionActionReason
+} from "./cocos-ui-formatters.ts";
 import { buildHeroProgressNotice, type HeroProgressNotice } from "./cocos-hero-progression.ts";
 import { VeilHudPanel, type VeilHudRenderState } from "./VeilHudPanel.ts";
 import { VeilLobbyPanel } from "./VeilLobbyPanel.ts";
@@ -385,8 +391,12 @@ export class VeilRoot extends Component {
     this.renderView();
 
     try {
-      await this.applySessionUpdate(await this.session.learnSkill(hero.id, skillId));
-      this.pushLog("技能学习已结算。");
+      const update = await this.session.learnSkill(hero.id, skillId);
+      await this.applySessionUpdate(update);
+      this.pushSessionActionOutcome(update, {
+        successMessage: "技能学习已结算。",
+        rejectedLabel: "技能学习"
+      });
     } catch (error) {
       const failureMessage = this.describeSessionError(error, "技能学习失败。");
       this.pushLog(failureMessage);
@@ -438,8 +448,12 @@ export class VeilRoot extends Component {
     this.renderView();
 
     try {
-      await this.applySessionUpdate(await this.session.equipHeroItem(hero.id, slot, equipmentId));
-      this.pushLog("装备已结算。");
+      const update = await this.session.equipHeroItem(hero.id, slot, equipmentId);
+      await this.applySessionUpdate(update);
+      this.pushSessionActionOutcome(update, {
+        successMessage: "装备已结算。",
+        rejectedLabel: "装备调整"
+      });
     } catch (error) {
       this.rollbackPrediction(error instanceof Error ? formatEquipmentActionReason(error.message) : "装备失败。");
     } finally {
@@ -494,8 +508,12 @@ export class VeilRoot extends Component {
     this.renderView();
 
     try {
-      await this.applySessionUpdate(await this.session.unequipHeroItem(hero.id, slot));
-      this.pushLog("卸装已结算。");
+      const update = await this.session.unequipHeroItem(hero.id, slot);
+      await this.applySessionUpdate(update);
+      this.pushSessionActionOutcome(update, {
+        successMessage: "卸装已结算。",
+        rejectedLabel: "卸装"
+      });
     } catch (error) {
       this.rollbackPrediction(error instanceof Error ? formatEquipmentActionReason(error.message) : "卸装失败。");
     } finally {
@@ -1263,20 +1281,27 @@ export class VeilRoot extends Component {
 
         try {
           this.mapBoard?.playHeroAnimation("attack");
-          await this.applySessionUpdate(
+          const update =
             tile.building.kind === "recruitment_post"
               ? await this.session.recruit(hero.id, tile.building.id)
               : tile.building.kind === "attribute_shrine"
                 ? await this.session.visitBuilding(hero.id, tile.building.id)
-                : await this.session.claimMine(hero.id, tile.building.id)
-          );
-          this.pushLog(
-            tile.building.kind === "recruitment_post"
-              ? "招募已结算。"
-              : tile.building.kind === "attribute_shrine"
-                ? "神殿访问已结算。"
-                : "矿场占领已结算。"
-          );
+                : await this.session.claimMine(hero.id, tile.building.id);
+          await this.applySessionUpdate(update);
+          this.pushSessionActionOutcome(update, {
+            successMessage:
+              tile.building.kind === "recruitment_post"
+                ? "招募已结算。"
+                : tile.building.kind === "attribute_shrine"
+                  ? "神殿访问已结算。"
+                  : "矿场占领已结算。",
+            rejectedLabel:
+              tile.building.kind === "recruitment_post"
+                ? "招募"
+                : tile.building.kind === "attribute_shrine"
+                  ? "神殿访问"
+                  : "矿场占领"
+          });
         } catch (error) {
           this.rollbackPrediction(
             error instanceof Error
@@ -1318,8 +1343,12 @@ export class VeilRoot extends Component {
 
       try {
         this.mapBoard?.playHeroAnimation("attack");
-        await this.applySessionUpdate(await this.session.collect(hero.id, tile.position));
-        this.pushLog("采集已结算。");
+        const update = await this.session.collect(hero.id, tile.position);
+        await this.applySessionUpdate(update);
+        this.pushSessionActionOutcome(update, {
+          successMessage: "采集已结算。",
+          rejectedLabel: "采集"
+        });
       } catch (error) {
         this.rollbackPrediction(error instanceof Error ? error.message : "采集失败。");
       } finally {
@@ -1340,9 +1369,20 @@ export class VeilRoot extends Component {
 
     const target = reachableTiles.find((node) => node.x === tile.position.x && node.y === tile.position.y) ?? null;
     if (!target) {
-      this.pushLog(`地块 (${tile.position.x}, ${tile.position.y}) 当前不可达。`);
+      const movePrediction = this.lastUpdate
+        ? predictSharedPlayerWorldAction(this.lastUpdate.world, {
+            type: "hero.move",
+            heroId: hero.id,
+            destination: tile.position
+          })
+        : null;
+      const moveFeedback = describeMoveAttemptFeedback(tile.position, movePrediction?.reason);
+      this.pushLog(moveFeedback.message);
+      if (movePrediction?.reason === "not_enough_move_points") {
+        this.predictionStatus = moveFeedback.message;
+      }
       this.mapBoard?.pulseTile(tile.position, 1.08, 0.18);
-      this.mapBoard?.showTileFeedback(tile.position, "不可达", 0.6);
+      this.mapBoard?.showTileFeedback(tile.position, moveFeedback.tileFeedback, 0.6);
       this.renderView();
       return;
     }
@@ -1367,8 +1407,12 @@ export class VeilRoot extends Component {
 
     try {
       this.mapBoard?.playHeroAnimation("move");
-      await this.applySessionUpdate(await this.session.moveHero(hero.id, target));
-      this.pushLog("移动已结算。");
+      const update = await this.session.moveHero(hero.id, target);
+      await this.applySessionUpdate(update);
+      this.pushSessionActionOutcome(update, {
+        successMessage: "移动已结算。",
+        rejectedLabel: "移动"
+      });
     } catch (error) {
       this.rollbackPrediction(error instanceof Error ? error.message : "移动失败。");
     } finally {
@@ -2211,7 +2255,27 @@ export class VeilRoot extends Component {
       return "房间会话已失效，请点击刷新状态恢复。";
     }
 
+    const formattedReason = formatSessionActionReason(error.message);
+    if (formattedReason !== error.message) {
+      return formattedReason;
+    }
+
     return error.message || fallback;
+  }
+
+  private pushSessionActionOutcome(
+    update: SessionUpdate,
+    options: {
+      successMessage: string;
+      rejectedLabel: string;
+    }
+  ): void {
+    const outcome = describeSessionActionOutcome(update, options);
+    this.pushLog(outcome.message);
+    if (!outcome.accepted) {
+      this.predictionStatus = outcome.message;
+      this.mapBoard?.playHeroAnimation("hit");
+    }
   }
 
   private bumpSessionEpoch(): number {
@@ -2481,7 +2545,14 @@ export class VeilRoot extends Component {
         this.mapBoard?.playHeroAnimation(actionPresentation.animation);
       }
 
-      await this.applySessionUpdate(await this.session.actInBattle(action));
+      const update = await this.session.actInBattle(action);
+      await this.applySessionUpdate(update);
+      if (update.reason) {
+        this.pushSessionActionOutcome(update, {
+          successMessage: "战斗指令已结算。",
+          rejectedLabel: "战斗指令"
+        });
+      }
     } catch (error) {
       this.pushLog(error instanceof Error ? error.message : "战斗操作失败。");
       this.mapBoard?.playHeroAnimation("hit");

@@ -254,6 +254,7 @@ export interface PlayerAccountProfilePatch {
 }
 
 export interface PlayerAccountProgressPatch {
+  globalResources?: Partial<ResourceLedger> | null;
   achievements?: Partial<PlayerAchievementProgress>[] | null;
   recentEventLog?: Partial<EventLogEntry>[] | null;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null;
@@ -2320,6 +2321,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     const nextAccount = normalizePlayerAccountSnapshot({
       ...existing,
       playerId: normalizedPlayerId,
+      globalResources: patch.globalResources ?? existing.globalResources,
       achievements: patch.achievements ?? existing.achievements,
       recentEventLog: patch.recentEventLog ?? existing.recentEventLog,
       recentBattleReplays: patch.recentBattleReplays ?? existing.recentBattleReplays,

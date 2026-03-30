@@ -52,6 +52,7 @@ const IDLE_HINT_NODE_NAME = "BattleIdleHint";
 const IDLE_BADGE_NODE_NAME = "BattleIdleBadge";
 const SECTION_CARD_PREFIX = "BattleSectionCard";
 const STAGE_BANNER_NODE_NAME = "BattleStageBanner";
+const BADGE_BACKGROUND_SUFFIX = "-Background";
 const UNIT_ART_SIZE = 34;
 const UNIT_FRAME_SIZE = 38;
 const UNIT_BADGE_SIZE = 10;
@@ -1286,7 +1287,7 @@ export class VeilBattlePanel extends Component {
     transform.setContentSize(64, 18);
     label.node.setPosition(PANEL_WIDTH / 2 - PANEL_PADDING - 40, centerY, 1);
 
-    const graphics = label.node.getComponent(Graphics) ?? label.node.addComponent(Graphics);
+    const graphics = this.ensureBadgeBackgroundGraphics(label.node);
     graphics.clear();
     graphics.fillColor = new Color(210, 117, 88, 38);
     graphics.strokeColor = new Color(233, 181, 142, 126);
@@ -1297,6 +1298,26 @@ export class VeilBattlePanel extends Component {
     graphics.fillColor = new Color(255, 255, 255, 18);
     graphics.roundRect(-24, 2, 48, 4, 3);
     graphics.fill();
+  }
+
+  private ensureBadgeBackgroundGraphics(node: Node): Graphics {
+    const legacyGraphics = node.getComponent(Graphics);
+    if (legacyGraphics) {
+      node.removeComponent(legacyGraphics);
+    }
+
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    const backgroundNodeName = `${node.name}${BADGE_BACKGROUND_SUFFIX}`;
+    let backgroundNode = node.getChildByName(backgroundNodeName);
+    if (!backgroundNode) {
+      backgroundNode = new Node(backgroundNodeName);
+      backgroundNode.parent = node;
+    }
+    assignUiLayer(backgroundNode);
+    backgroundNode.setPosition(0, 0, -0.1);
+    const backgroundTransform = backgroundNode.getComponent(UITransform) ?? backgroundNode.addComponent(UITransform);
+    backgroundTransform.setContentSize(transform.width, transform.height);
+    return backgroundNode.getComponent(Graphics) ?? backgroundNode.addComponent(Graphics);
   }
 
   private styleTargetNode(node: Node, title: Label, meta: Label, badge: Label, selected: boolean, selectable: boolean): void {
@@ -1365,7 +1386,7 @@ export class VeilBattlePanel extends Component {
     const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
     const width = transform.width;
     const height = transform.height;
-    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    const graphics = this.ensureBadgeBackgroundGraphics(node);
     graphics.clear();
     graphics.fillColor = fillColor;
     graphics.strokeColor = new Color(245, 247, 250, 70);

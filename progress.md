@@ -118,6 +118,36 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 已给地图格子增加 `is-keyboard-cursor` 视觉高亮，便于从截图判断自动化光标位置。
 - 已让 `advanceTime(ms)` 在推进 UI 定时任务之外，额外等待一个很短的真实时间片；这样技能脚本逐帧推进时，房间同步和战斗结算的异步回包也能稳定落地，不会因为动作发送过快而“抢跑”。
 
+## Bugfix branch - Cocos battle rejection feedback - 2026-03-29
+
+- 已修复 Cocos Preview 中的战斗拒绝态反馈缺失：
+  - `apps/cocos-client/assets/scripts/VeilRoot.ts`
+  - `apps/cocos-client/assets/scripts/cocos-ui-formatters.ts`
+  - `apps/cocos-client/test/cocos-ui-formatters.test.ts`
+- 现在 `battle.attack / battle.skill / battle.wait / battle.defend` 这类战斗指令在返回 `SessionUpdate.reason` 时，会像世界操作一样把拒绝结果写进顶层日志和 `predictionStatus`，并统一翻译 battle reason：
+  - `friendly_fire_blocked -> 不能攻击友军`
+  - `skill_on_cooldown -> 这个技能还在冷却中`
+  - `skill_target_missing -> 技能目标不存在`
+  - `unit_not_active / attacker_not_active -> 当前还没轮到这个单位行动`
+- 进一步修复时间线中的系统拒绝项仍显示内部 reason code 的问题；现在时间线会显示中文原因，而不是 `friendly_fire_blocked` 这类内部字符串。
+- Cocos Preview 实跑验证：
+  - `New Run -> 移动到 (5,4) -> 非法攻击自己`
+    - 顶部日志：`战斗指令被拒绝：不能攻击友军`
+    - 状态栏：`战斗指令被拒绝：不能攻击友军`
+    - 时间线：`系统：操作被拒绝，原因是 不能攻击友军`
+  - 在同一场战斗里，随后对敌方打出一次合法普攻，旧拒绝状态会清空，不会残留。
+  - `power_shot` 首次施放成功，第二次会正确返回并显示 `这个技能还在冷却中`。
+- 自动验证：
+  - `node --import tsx --test ./apps/cocos-client/test/cocos-ui-formatters.test.ts`
+  - `npm run typecheck:cocos`
+  - `npm test` 通过（`424/424`）
+- 运行时产物：
+  - `output/cocos-battle-rejection-runtime-3/battle-rejection.png`
+  - `output/cocos-battle-rejection-runtime-3/result.json`
+- 备注：
+  - 一次技能 probe 误把 `targetId` 写成了 `targetUnitId`，导致假性 `skill_target_missing`；已确认这是测试脚本误传，不是客户端 bug。
+  - `develop-web-game` 技能脚本对 Cocos Preview 的 headless 截图仍是黑屏（`output/cocos-battle-rejection-baseline-2/shot-0.png`），所以本轮仍以 headed Playwright + Creator Preview 截图为准。
+
 ## Keyboard verification - 2026-03-27
 
 - 新增 E2E：
@@ -1318,3 +1348,114 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 已顺手修复测试基线偏差：
   - 根 `npm test` 脚本此前只执行 `57/62` 个已存在的 Node 测试文件。
   - 本轮已把遗漏的 `account-token-delivery`、battle replay routes、`cocos-battle-replay-timeline`、`cocos-hero-progression` 补回默认测试入口。
+
+## Bugfix branch - Cocos preview runtime - 2026-03-29
+
+- 当前工作分支：
+  - `codex/bugfix-cocos-preview-runtime`
+- 这轮已直接修掉两个阻断 Cocos Preview 主链路的 bug：
+  - 微信小游戏构建工具原先放在 `apps/cocos-client/assets/scripts/cocos-wechat-build.ts`，会被 Preview 运行时打包并在浏览器里尝试加载 `node:fs` / `node:path`，导致 Preview 黑屏。
+    - 现已迁到 `apps/cocos-client/tooling/cocos-wechat-build.ts`
+    - 对应脚本和测试 import 已全部改到 `tooling/`
+  - guest / formal account 以非模板 `playerId` 首次进入新房间时，会因为默认世界只给 `player-1` / `player-2` 分配英雄而落成“旁观者视角”，`ownHeroes = []`、迷雾全黑。
+    - `apps/server/src/colyseus-room.ts` 现在会在 connect 时认领一个可用默认槽位，把英雄、房间资源和可见性键位从 `player-*` 重绑到真实账号 `playerId`
+    - 同时补了一个回归修复：认领默认槽位时不会再把现有账号的 `globalResources` 误覆盖成新房间的 `0/0/0`
+- 这轮补的服务端兼容 / 测试调整：
+  - `apps/server/src/persistence.ts`
+  - `apps/server/src/memory-room-snapshot-store.ts`
+  - `apps/server/test/auth-guest-login.test.ts`
+  - `apps/server/test/colyseus-persistence-recovery.test.ts`
+  - `apps/server/test/player-account-routes.test.ts`
+  - `apps/server/test/player-account-battle-replay-detail-routes.test.ts`
+  - `apps/server/test/player-account-battle-replay-playback-routes.test.ts`
+  - `savePlayerAccountProgress()` 现在支持可选 `globalResources` patch，方便在“房间快照保存”和“账号全局资源”语义需要拆开的场景里做最小修复
+- 已重新按最新代码重启本地 dev server，并实际在 Cocos Preview 跑通完整链路：
+  - `Lobby -> New Run -> 移动开图 -> 遭遇 neutral-1 -> 两次攻击结算战斗 -> 次日回前线招募所补兵`
+  - 最终 smoke 结果：
+    - `gold = 60`
+    - `armyCount = 16`
+    - 英雄停在 `(1,3)`
+    - 无新的浏览器 console error
+  - 运行态截图：
+    - `output/cocos-preview-final-smoke.png`
+- 本轮验证结果：
+  - `npm run typecheck:cocos` 通过
+  - `npm run typecheck:server` 通过
+  - `npm test` 通过（`421/421`）
+- 仍值得继续扫的 Cocos 运行态边角：
+  - 战后立即学习技能 / 打开技能面板的完整 UI 路径
+  - 神殿访问后的前端表现和 toast / 时间线一致性
+  - 矿场次日产出在 Cocos HUD / 时间线中的持续反馈
+  - 账号面板 / 战报面板在 Preview 内的连续切换与刷新稳定性
+
+## Bugfix branch - Cocos preview runtime follow-up - 2026-03-29
+
+- 本轮继续针对 Cocos Preview 跑运行态回归，并实际修掉了两个前端 bug：
+  - `apps/cocos-client/assets/scripts/VeilRoot.ts`
+    - 之前 `learnSkill / equip / unequip / recruit / visit / claimMine / collect / move` 这些入口只要拿到 `SessionUpdate` 就会无条件写“已结算”成功日志，即使服务端返回了 `update.reason`
+    - 现在统一走 `pushSessionActionOutcome()`，会把 `reason` 翻译成玩家可读文案，并在拒绝时播放 `hit` 动画，不再误报成功
+    - `describeSessionError()` 也补上了共享 reason 到中文文案的映射，避免直接把内部 reason code 暴露给前端日志
+  - `apps/cocos-client/assets/scripts/VeilBattlePanel.ts`
+    - battle 面板里的 `IdleBadge / StageBanner badge / roster badge` 之前直接在 `Label` 节点上追加 `Graphics`
+    - Creator Preview 会反复报 `Can't add renderable component to this node because it already have one.`
+    - 现在 badge 背景改挂到专门的子节点 `${badgeNodeName}-Background`，并在运行时清掉遗留在 `Label` 节点上的旧 `Graphics`
+- 本轮新增纯逻辑覆盖：
+  - `apps/cocos-client/assets/scripts/cocos-ui-formatters.ts`
+    - 新增 `formatSessionActionReason()` 与 `describeSessionActionOutcome()`
+  - `apps/cocos-client/test/cocos-ui-formatters.test.ts`
+    - 锁住 `building_on_cooldown / not_enough_skill_points / equipment_not_in_inventory` 的用户向文案
+    - 锁住“成功 / 拒绝”两类 `SessionUpdate.reason` 分支的结果
+- 本轮 Creator / Playwright 运行态实测：
+  - 已用 Creator Preview + 有头 Playwright 直接调用运行时组件验证：
+    - `New Run -> neutral-1 战斗 -> 战斗结算`
+      - `battleSteps = 2`
+      - 战后 `gold = 300`
+      - 英雄到 `Lv 2`
+      - `skillPoints = 1`
+      - 浏览器 `warning/error = 0`
+    - `次日回前线招募所 -> 第一次招募成功 -> 第二次同日重复招募`
+      - 第一次后 `armyCount = 16`
+      - `gold = 60`
+      - `availableCount = 0`
+      - 第二次时间线正确出现 `系统：操作被拒绝，原因是 building_depleted`
+      - 前端日志正确出现 `招募被拒绝：这个建筑今天已经没有可领取内容了`
+      - 不再出现误导性的第二条 `招募已结算。`
+    - `战后学习 war_banner -> 再次学习`
+      - 时间线正确出现 `not_enough_skill_points`
+      - 说明技能学习这条也吃到了统一拒绝态后置处理
+  - 已通过运行时钩子确认 battle 面板不再向已有 `Label` 节点追加 `Graphics`
+    - 重新 `项目 -> 刷新预览` 后，battle enter 阶段的重复 renderable warning 已清零
+- 本轮验证结果：
+  - `node --import tsx --test ./apps/cocos-client/test/cocos-ui-formatters.test.ts` 通过
+  - `npm run typecheck:cocos` 通过
+  - `npm test` 通过（`423/423`）
+- 当前剩余值得继续扫的运行态边角：
+  - 如果后续还要继续测“神殿冷却”这条，需要先找到带 `attribute_shrine` 的种子或房间布局；当前这轮自动 smoke 的地图里只有 `recruit-post-1` 与 `mine-wood-1`
+  - `npm test` 里仍会出现已有的 `MaxListenersExceededWarning` / `--localstorage-file` warning，它们不是这轮新引入的
+
+## Bugfix branch - Cocos move feedback polish - 2026-03-29
+
+- 本轮继续针对 Cocos Preview 做交互拒绝态回归，并修掉了“移动力不足被误报成不可达”的前端提示问题：
+  - `apps/cocos-client/assets/scripts/VeilRoot.ts`
+    - 当英雄点击的目标格不在当前 `reachableTiles` 里时，不再一律写 `地块 (x, y) 当前不可达`
+    - 现在会额外用 shared `predictPlayerWorldAction()` 复核一次目标，如果是 `not_enough_move_points`，前端会明确提示 `移动被拒绝：移动力不足`
+    - 对应 tile feedback 也从统一的 `不可达` 区分成了 `不足 / 占用 / 不可达`
+  - `apps/cocos-client/assets/scripts/cocos-ui-formatters.ts`
+    - 新增 `describeMoveAttemptFeedback()`，把移动失败的玩家文案和格子反馈 chip 抽成纯函数
+  - `apps/cocos-client/test/cocos-ui-formatters.test.ts`
+    - 新增对 `not_enough_move_points / destination_occupied / path_not_found` 三类移动反馈文案的覆盖
+- 本轮 Creator / Playwright 运行态实测：
+  - 先通过运行时探针确认 `(6,1)` 附近存在一批“可见可走但本回合走不完”的格子：
+    - `(5,2) / (4,1) / (6,3) / (7,2)`
+  - Creator `项目 -> 刷新预览` 后，实际复跑：
+    - `New Run -> 移动到 (6,1) -> 剩余移动力 1 -> 点击 (5,2)`
+    - 现在前端日志首条正确变成 `移动被拒绝：移动力不足`
+    - `predictionStatus` 同步为 `移动被拒绝：移动力不足`
+    - 英雄位置保持在 `(6,1)`，移动力仍为 `1`
+    - 浏览器 `warning/error = 0`
+  - 额外确认：
+    - 同一目标 `(5,2)` 在 `advanceDay()` 之后可以正常移动成功，说明这条修复针对的确实是“移动力不足”，不是路径本身不可达
+- 本轮验证结果：
+  - `node --import tsx --test ./apps/cocos-client/test/cocos-ui-formatters.test.ts` 通过
+  - `npm run typecheck:cocos` 通过
+  - `npm test` 通过（`424/424`）

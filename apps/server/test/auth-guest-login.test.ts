@@ -296,6 +296,9 @@ class MemoryAuthStore implements RoomSnapshotStore {
     const existing = await this.ensurePlayerAccount({ playerId });
     const account: PlayerAccountSnapshot = {
       ...existing,
+      globalResources: structuredClone(
+        (patch.globalResources as PlayerAccountSnapshot["globalResources"] | undefined) ?? existing.globalResources
+      ),
       achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
       recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
       ...(patch.lastRoomId !== undefined
@@ -572,6 +575,49 @@ test("connect message prefers auth token identity over a spoofed playerId", asyn
   );
 
   assert.equal(response.payload.world.playerId, "trusted-player");
+});
+
+test("guest auth connect claims a default hero slot for non-template player ids", async (t) => {
+  const port = 44250 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "guest-rune",
+      displayName: "灰烬行者"
+    })
+  });
+  const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
+  const room = await joinRoom(port, "guest-slot-room", "spoofed-player");
+
+  t.after(async () => {
+    await room.leave(true).catch(() => undefined);
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await sendRequest(
+    room,
+    {
+      type: "connect",
+      requestId: "guest-slot-connect",
+      roomId: "guest-slot-room",
+      playerId: "spoofed-player",
+      authToken: loginPayload.session.token
+    },
+    "session.state"
+  );
+
+  assert.equal(response.payload.world.playerId, "guest-rune");
+  assert.equal(response.payload.world.meta.day, 1);
+  assert.equal(response.payload.world.ownHeroes.length, 1);
+  assert.equal(response.payload.world.ownHeroes[0]?.playerId, "guest-rune");
+  assert.ok(response.payload.reachableTiles.length > 0);
+  assert.equal((await store.loadPlayerAccount("guest-rune"))?.lastRoomId, "guest-slot-room");
 });
 
 test("account bind upgrades a guest session into password login and account-login restores it", async (t) => {

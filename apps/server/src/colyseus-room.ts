@@ -21,6 +21,7 @@ import {
 import {
   applyPlayerAccountsToWorldState,
   applyPlayerHeroArchivesToWorldState,
+  type PlayerAccountSnapshot,
   type RoomSnapshotStore
 } from "./persistence";
 import { applyPlayerEventLogAndAchievements } from "./player-achievements";
@@ -52,6 +53,7 @@ interface JoinOptions {
 const RECONNECTION_WINDOW_SECONDS = 20;
 const MAP_SYNC_CHUNK_SIZE = 8;
 const MAP_SYNC_CHUNK_PADDING = 1;
+const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
 
@@ -89,6 +91,64 @@ function sendMessage<T extends ServerMessage["type"]>(
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function compareDefaultPlayerSlotIds(left: string, right: string): number {
+  const leftMatch = DEFAULT_PLAYER_SLOT_ID.exec(left);
+  const rightMatch = DEFAULT_PLAYER_SLOT_ID.exec(right);
+  if (!leftMatch || !rightMatch) {
+    return left.localeCompare(right);
+  }
+
+  return Number(leftMatch[1]) - Number(rightMatch[1]) || left.localeCompare(right);
+}
+
+function isDefaultPlayerSlotId(playerId: string): boolean {
+  return DEFAULT_PLAYER_SLOT_ID.test(playerId);
+}
+
+function cloneResourceLedger(ledger?: { gold: number; wood: number; ore: number }): { gold: number; wood: number; ore: number } {
+  return {
+    gold: ledger?.gold ?? 0,
+    wood: ledger?.wood ?? 0,
+    ore: ledger?.ore ?? 0
+  };
+}
+
+function rebindWorldStatePlayerId(
+  state: RoomPersistenceSnapshot["state"],
+  previousPlayerId: string,
+  nextPlayerId: string
+): RoomPersistenceSnapshot["state"] {
+  if (previousPlayerId === nextPlayerId) {
+    return state;
+  }
+
+  const nextHeroes = state.heroes.map((hero) =>
+    hero.playerId === previousPlayerId
+      ? {
+          ...hero,
+          playerId: nextPlayerId
+        }
+      : hero
+  );
+
+  const nextResources = { ...state.resources };
+  nextResources[nextPlayerId] = cloneResourceLedger(nextResources[nextPlayerId] ?? nextResources[previousPlayerId]);
+  delete nextResources[previousPlayerId];
+
+  const nextVisibilityByPlayer = { ...state.visibilityByPlayer };
+  if (nextVisibilityByPlayer[previousPlayerId]) {
+    nextVisibilityByPlayer[nextPlayerId] = [...nextVisibilityByPlayer[previousPlayerId]!];
+    delete nextVisibilityByPlayer[previousPlayerId];
+  }
+
+  return {
+    ...state,
+    heroes: nextHeroes,
+    resources: nextResources,
+    visibilityByPlayer: nextVisibilityByPlayer
+  };
 }
 
 function resolveFocusedMapBounds(world: SessionStatePayload["world"]): { x: number; y: number; width: number; height: number } | null {
@@ -174,11 +234,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       }
 
       this.playerIdBySessionId.set(client.sessionId, playerId);
-      this.publishLobbyRoomSummary();
-
+      let ensuredAccount: PlayerAccountSnapshot | null = null;
       if (configuredRoomSnapshotStore) {
         try {
-          await configuredRoomSnapshotStore.ensurePlayerAccount({
+          ensuredAccount = await configuredRoomSnapshotStore.ensurePlayerAccount({
             playerId,
             ...((authSession?.displayName ?? message.displayName?.trim())
               ? { displayName: authSession?.displayName ?? message.displayName?.trim() ?? playerId }
@@ -186,9 +245,11 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             lastRoomId: logicalRoomId
           });
         } catch {
-          // Keep session bootstrap resilient even if account metadata refresh fails.
+          ensuredAccount = null;
         }
       }
+      await this.ensurePlayerWorldSlot(playerId, ensuredAccount);
+      this.publishLobbyRoomSummary();
 
       sendMessage(client, "session.state", {
         requestId: message.requestId,
@@ -422,6 +483,52 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     return playerId;
+  }
+
+  private async ensurePlayerWorldSlot(
+    playerId: string,
+    ensuredAccount: PlayerAccountSnapshot | null
+  ): Promise<void> {
+    const internalState = this.worldRoom.getInternalState();
+    if (internalState.heroes.some((hero) => hero.playerId === playerId)) {
+      return;
+    }
+
+    const connectedPlayerIds = new Set(this.playerIdBySessionId.values());
+    const availableSlotId = Array.from(
+      new Set([...internalState.heroes.map((hero) => hero.playerId), ...Object.keys(internalState.resources)])
+    )
+      .filter((candidatePlayerId) => {
+        if (!isDefaultPlayerSlotId(candidatePlayerId)) {
+          return false;
+        }
+
+        return !connectedPlayerIds.has(candidatePlayerId);
+      })
+      .sort(compareDefaultPlayerSlotIds)[0];
+
+    if (!availableSlotId) {
+      return;
+    }
+
+    const snapshot = this.worldRoom.serializePersistenceSnapshot();
+    let nextState = rebindWorldStatePlayerId(snapshot.state, availableSlotId, playerId);
+    if (configuredRoomSnapshotStore) {
+      const heroArchives = await configuredRoomSnapshotStore.loadPlayerHeroArchives([playerId]);
+      nextState = applyPlayerHeroArchivesToWorldState(nextState, heroArchives);
+    }
+
+    this.restoreWorldRoom({
+      ...snapshot,
+      state: nextState
+    });
+    await this.persistRoomState();
+    if (ensuredAccount && configuredRoomSnapshotStore) {
+      await configuredRoomSnapshotStore.savePlayerAccountProgress(playerId, {
+        globalResources: ensuredAccount.globalResources,
+        lastRoomId: this.metadata.logicalRoomId
+      });
+    }
   }
 
   private buildStatePayload(
