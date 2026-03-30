@@ -252,6 +252,7 @@ jobs:
           retention-days: 14
 
   publish-release-signal-trend:
+    name: Release health gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs:
@@ -343,7 +344,6 @@ jobs:
           npm run ci:trend-summary -- "${args[@]}"
 
       - name: Build release health summary artifact
-        continue-on-error: true
         run: |
           args=(
             --release-readiness "${RUNNER_TEMP}/release-readiness/release-readiness-${GITHUB_SHA}.json"
@@ -355,7 +355,8 @@ jobs:
           if [[ -f ".coverage/summary.json" ]]; then
             args+=(--coverage-summary ".coverage/summary.json")
           fi
-          npm run release:health:summary -- "${args[@]}" || true
+          # release-health-summary exits non-zero only for blocking conditions; warnings still publish artifacts/comments.
+          npm run release:health:summary -- "${args[@]}"
 
       - name: Build PR release summary comment
         if: |
