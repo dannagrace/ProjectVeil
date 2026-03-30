@@ -179,6 +179,7 @@ export class FakeColyseusRoom {
   reconnectionToken?: string;
   readonly sentMessages: Array<{ type: string; payload: unknown }> = [];
   readonly connectReplies: FakeRoomReply[];
+  leaveCalls = 0;
   private messageHandler: MessageHandler | null = null;
   private dropHandler: (() => void) | null = null;
   private reconnectHandler: (() => void) | null = null;
@@ -206,6 +207,7 @@ export class FakeColyseusRoom {
   }
 
   async leave(): Promise<void> {
+    this.leaveCalls += 1;
     this.leaveHandler?.(1000);
   }
 

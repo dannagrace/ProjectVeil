@@ -252,6 +252,30 @@ test("Cocos lifecycle harness recovers VeilRoot through VeilCocosSession reconne
   );
 });
 
+test("Cocos lifecycle harness disposes the recovered VeilCocosSession room after reconnect handoff", async () => {
+  const initialRoom = new FakeColyseusRoom([createSessionUpdate(3, "room-dispose", "player-373")], "initial-token");
+  const recoveredUpdate = createSessionUpdate(5, "room-dispose", "player-373");
+  const recoveredRoom = new FakeColyseusRoom([recoveredUpdate, recoveredUpdate], "recovered-token");
+  const harness = createVeilCocosSessionRuntimeHarness({
+    joinRooms: [initialRoom, recoveredRoom],
+    wait: async () => undefined
+  });
+
+  const session = await harness.create("room-dispose", "player-373");
+  await session.snapshot();
+
+  initialRoom.emitLeave(4002);
+  await flushMicrotasks();
+  await session.dispose();
+
+  assert.equal(initialRoom.leaveCalls, 0);
+  assert.equal(recoveredRoom.leaveCalls, 1);
+  assert.equal(
+    harness.storage.getItem("project-veil:cocos:reconnection:room-dispose:player-373"),
+    null
+  );
+});
+
 test("Cocos lifecycle harness hands lobby auth off into a live VeilRoot session", async () => {
   const storage = createMemoryStorage();
   writeStoredCocosAuthSession(storage, {
@@ -301,4 +325,26 @@ test("Cocos lifecycle harness hands lobby auth off into a live VeilRoot session"
       }
     }
   ]);
+});
+
+test("Cocos lifecycle harness tears down the active VeilRoot session on destroy", async () => {
+  const room = new FakeColyseusRoom([createSessionUpdate(6, "room-destroy", "player-373")], "destroy-token");
+  const harness = createVeilRootSessionLifecycleHarness({
+    joinRooms: [room]
+  });
+
+  harness.root.roomId = "room-destroy";
+  harness.root.playerId = "player-373";
+  harness.root.displayName = "Player 373";
+
+  await harness.root.connect();
+  harness.root.onDestroy();
+  await flushMicrotasks();
+
+  assert.equal(room.leaveCalls, 1);
+  assert.equal(harness.root.session, null);
+  assert.equal(
+    harness.storage.getItem("project-veil:cocos:reconnection:room-destroy:player-373"),
+    null
+  );
 });
