@@ -523,6 +523,57 @@ test("simultaneous rooms keep seeded world state isolated", async (t) => {
   assert.deepEqual(lastSessionState(clientB, "reply").payload.world.ownHeroes[0]?.position, { x: 1, y: 1 });
 });
 
+test("reconnect and disposal stay scoped to the originating room when the same player joins multiple rooms", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const roomA = await createTestRoom(`lifecycle-scope-a-${Date.now()}`, 1001);
+  const roomB = await createTestRoom(`lifecycle-scope-b-${Date.now()}`, 2002);
+  const originalClientA = createFakeClient("session-scope-a-original");
+  const resumedClientA = createFakeClient("session-scope-a-resumed");
+  const clientB = createFakeClient("session-scope-b");
+  const internalRoomA = roomA as VeilColyseusRoom & {
+    worldRoom: {
+      dispatch(playerId: string, action: object): unknown;
+    };
+    allowReconnection(client: Client, seconds: number): Promise<Client>;
+  };
+
+  t.after(() => {
+    cleanupRoom(roomA);
+    cleanupRoom(roomB);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(roomA, originalClientA, "player-1", "connect-scope-a");
+  await connectPlayer(roomB, clientB, "player-1", "connect-scope-b");
+
+  internalRoomA.worldRoom.dispatch("player-1", {
+    type: "hero.move",
+    heroId: "hero-1",
+    destination: { x: 2, y: 1 }
+  });
+
+  internalRoomA.allowReconnection = async () => resumedClientA;
+  await roomA.onDrop(originalClientA);
+
+  const roomSummariesAfterReconnect = listLobbyRooms();
+  assert.equal(roomSummariesAfterReconnect.length, 2);
+  assert.equal(roomSummariesAfterReconnect.find((entry) => entry.roomId === roomA.roomId)?.connectedPlayers, 1);
+  assert.equal(roomSummariesAfterReconnect.find((entry) => entry.roomId === roomB.roomId)?.connectedPlayers, 1);
+  assert.deepEqual(lastSessionState(resumedClientA, "push").payload.world.ownHeroes[0]?.position, { x: 2, y: 1 });
+  assert.deepEqual(lastSessionState(clientB, "reply").payload.world.ownHeroes[0]?.position, { x: 1, y: 1 });
+
+  roomA.onDispose();
+
+  const remainingRooms = listLobbyRooms();
+  assert.deepEqual(
+    remainingRooms.map((entry) => entry.roomId),
+    [roomB.roomId]
+  );
+  assert.equal(remainingRooms[0]?.connectedPlayers, 1);
+});
+
 test("disposing one registered room preserves the other room summary", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
