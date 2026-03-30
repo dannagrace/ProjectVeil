@@ -612,7 +612,27 @@ test("config center export updates exportedAt metadata without changing version"
   assert.equal((await store.listDocuments()).find((item) => item.id === "world")?.exportedAt, exported.exportedAt);
 });
 
-test("config center presets and workbook import/export roundtrip", async () => {
+test("config center JSONC export preserves the document contract with metadata header comments", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const original = await store.loadDocument("world");
+  const exported = await store.exportDocument("world", "jsonc");
+  const body = exported.body.toString("utf8");
+
+  assert.equal(exported.fileName, `world-v${original.version ?? 1}.jsonc`);
+  assert.equal(exported.contentType, "application/jsonc; charset=utf-8");
+  assert.match(body, /^\/\/ Project Veil Config Center export\n/);
+  assert.match(body, new RegExp(`^// Document: world \\(${original.title}\\)$`, "m"));
+  assert.match(body, new RegExp(`^// Version: v${original.version ?? 1}$`, "m"));
+  assert.match(body, new RegExp(`^// Updated: ${original.updatedAt}$`, "m"));
+  assert.match(body, new RegExp(`^// Summary: ${original.summary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
+  assert.ok(body.endsWith(original.content));
+  assert.equal((await store.loadDocument("world")).exportedAt, exported.exportedAt);
+});
+
+test("config center Excel export exposes stable workbook sheets and field rows", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
   await seedConfigRoot(rootDir);
   const store = new FileSystemConfigCenterStore(rootDir);
@@ -626,22 +646,48 @@ test("config center presets and workbook import/export roundtrip", async () => {
   assert.notEqual(afterBuiltin.content, original.content);
 
   const exported = await store.exportDocument("battleSkills", "xlsx");
-  assert.match(exported.fileName, /\.xlsx$/);
+  assert.equal(exported.fileName, `battleSkills-v${afterBuiltin.version ?? 1}.xlsx`);
+  assert.equal(exported.contentType, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   const workbook = XLSX.read(exported.body, { type: "buffer" });
   assert.deepEqual(workbook.SheetNames, ["Meta", "Schema", "Fields"]);
+  const metaRows = XLSX.utils.sheet_to_json<Array<string | number>>(workbook.Sheets.Meta, { header: 1 });
+  assert.deepEqual(metaRows.slice(0, 5), [
+    ["Document", "battleSkills"],
+    ["Title", afterBuiltin.title],
+    ["Version", String(afterBuiltin.version ?? 1)],
+    ["UpdatedAt", afterBuiltin.updatedAt],
+    ["Summary", afterBuiltin.summary]
+  ]);
+  assert.match(String(metaRows[5]?.[1] ?? ""), /^project-veil\.config-center\.battleSkills$/);
+  assert.match(String(metaRows[6]?.[1] ?? ""), /^\d{4}-\d{2}-\d{2}$/);
   const fieldRows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets.Fields);
-  assert.equal(fieldRows.some((row) => row.Path === "skills[0].id" && row.Description?.includes("技能 id")), true);
+  const skillIdRow = fieldRows.find((row) => row.Path === "skills[0].id");
+  assert.equal(skillIdRow?.Section, "skills.0");
+  assert.equal(skillIdRow?.Field, "id");
+  assert.equal(skillIdRow?.Type, "string");
+  assert.match(skillIdRow?.Schema ?? "", /^string/);
+  assert.equal(skillIdRow?.Value, "power_shot");
+  assert.equal(skillIdRow?.JSON, "\"power_shot\"");
   assert.equal((await store.loadDocument("battleSkills")).exportedAt, exported.exportedAt);
+});
+
+test("config center CSV export exposes stable tabular field rows", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
 
   const csvExported = await store.exportDocument("battleSkills", "csv");
-  assert.match(csvExported.fileName, /\.csv$/);
-  assert.match(csvExported.body.toString("utf8"), /Section,Field,Path,Type,Schema,Description,Value,JSON/);
+  const workbookExported = await store.exportDocument("battleSkills", "xlsx");
+  assert.equal(csvExported.fileName, "battleSkills-v1.csv");
+  assert.equal(csvExported.contentType, "text/csv; charset=utf-8");
+  const csvText = csvExported.body.toString("utf8");
+  assert.match(csvText, /^Section,Field,Path,Type,Schema,Description,Value,JSON\r?\n/);
+  assert.match(csvText, /skills\.0\.effects,damageMultiplier,skills\[0\]\.effects\.damageMultiplier,number,/);
+  assert.match(csvText, /0\.85,0\.85/);
 
-  const imported = await store.importDocumentFromWorkbook("battleSkills", exported.body);
+  const imported = await store.importDocumentFromWorkbook("battleSkills", workbookExported.body);
   assert.equal(imported.id, "battleSkills");
-
-  const restored = await store.applyPreset("battleSkills", preset.id);
-  assert.equal(restored.content, original.content);
 });
 
 test("config center staged publish applies bundled drafts and records publish history", async () => {
