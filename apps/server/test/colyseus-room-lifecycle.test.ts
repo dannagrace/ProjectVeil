@@ -110,6 +110,7 @@ async function emitRoomMessage(room: VeilColyseusRoom, type: string, client: Fak
     };
   };
 
+  // Tests emit against the registered Colyseus handler directly so lifecycle coverage stays transport-free and CI-stable.
   internalRoom.onMessageEvents.emit(type, client, payload);
   await flushAsyncWork();
 }
@@ -170,6 +171,64 @@ async function resolveBattleThroughRoom(room: VeilColyseusRoom, client: FakeClie
   }
 
   assert.fail(`expected battle for ${playerId} to resolve within 20 player actions`);
+}
+
+async function resolvePvPBattleThroughRoom(
+  room: VeilColyseusRoom,
+  clientsByPlayerId: Record<string, FakeClient>
+): Promise<number> {
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: {
+      getInternalState(): {
+        heroes: Array<{
+          id: string;
+          playerId: string;
+        }>;
+      };
+    };
+  };
+
+  let steps = 0;
+  while (steps < 20) {
+    const attackerBattle = getBattleForPlayer(room, "player-1");
+    const defenderBattle = getBattleForPlayer(room, "player-2");
+    const battle = attackerBattle ?? defenderBattle;
+    if (!battle) {
+      return steps;
+    }
+
+    const activeUnitId = battle.activeUnitId;
+    const activeUnit = activeUnitId ? battle.units[activeUnitId] : undefined;
+    const target = activeUnit
+      ? Object.values(battle.units).find((unit) => unit.camp !== activeUnit.camp && unit.count > 0)
+      : undefined;
+    const attackerHero = battle.worldHeroId
+      ? internalRoom.worldRoom.getInternalState().heroes.find((hero) => hero.id === battle.worldHeroId)
+      : undefined;
+    const defenderHero = battle.defenderHeroId
+      ? internalRoom.worldRoom.getInternalState().heroes.find((hero) => hero.id === battle.defenderHeroId)
+      : undefined;
+    const playerId = activeUnit?.camp === "attacker" ? attackerHero?.playerId : defenderHero?.playerId;
+    const client = clientsByPlayerId[playerId];
+
+    assert.ok(activeUnitId, "expected an active unit while battle is in progress");
+    assert.ok(activeUnit, "expected an active unit while battle is in progress");
+    assert.ok(target, "expected a valid battle target while battle is in progress");
+    assert.ok(client, `expected a client for ${playerId}`);
+
+    await emitRoomMessage(room, "battle.action", client, {
+      type: "battle.action",
+      requestId: `pvp-battle-step-${steps + 1}`,
+      action: {
+        type: "battle.attack",
+        attackerId: activeUnitId,
+        defenderId: target.id
+      }
+    });
+    steps += 1;
+  }
+
+  assert.fail("expected PvP battle to resolve within 20 player actions");
 }
 
 function lastSessionState(client: FakeClient, delivery?: "reply" | "push"): Extract<ServerMessage, { type: "session.state" }> {
@@ -684,6 +743,79 @@ test("battle replay survives a reconnect mid-battle and persists once from the r
   assert.equal(replaySaves.length, 1);
   assert.equal(replaySaves[0]?.patch.recentBattleReplays?.[0]?.id, replay?.id);
   assert.deepEqual(internalRoom.worldRoom.consumeCompletedBattleReplays(), []);
+});
+
+test("pvp replay persistence captures both attacker and defender accounts from room settlement", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-replay-pvp-${Date.now()}`);
+  const attackerClient = createFakeClient("session-replay-pvp-attacker");
+  const defenderClient = createFakeClient("session-replay-pvp-defender");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, attackerClient, "player-1", "connect-replay-pvp-attacker");
+  await connectPlayer(room, defenderClient, "player-2", "connect-replay-pvp-defender");
+
+  await emitRoomMessage(room, "world.action", attackerClient, {
+    type: "world.action",
+    requestId: "move-replay-pvp-attacker",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 3, y: 4 }
+    }
+  });
+  await emitRoomMessage(room, "world.action", defenderClient, {
+    type: "world.action",
+    requestId: "move-replay-pvp-defender",
+    action: {
+      type: "hero.move",
+      heroId: "hero-2",
+      destination: { x: 3, y: 4 }
+    }
+  });
+
+  const steps = await resolvePvPBattleThroughRoom(room, {
+    "player-1": attackerClient,
+    "player-2": defenderClient
+  });
+  const attackerAccount = await store.loadPlayerAccount("player-1");
+  const defenderAccount = await store.loadPlayerAccount("player-2");
+  const attackerReplay = attackerAccount?.recentBattleReplays?.[0];
+  const defenderReplay = defenderAccount?.recentBattleReplays?.[0];
+  const replaySaves = store.progressSaves.filter(
+    (entry) => (entry.patch.recentBattleReplays?.length ?? 0) > 0 && (entry.playerId === "player-1" || entry.playerId === "player-2")
+  );
+
+  assert.ok(steps > 0);
+  assert.equal(attackerAccount?.recentBattleReplays?.length, 1);
+  assert.equal(defenderAccount?.recentBattleReplays?.length, 1);
+  assert.ok(attackerReplay);
+  assert.ok(defenderReplay);
+  assert.match(attackerReplay.battleId, /^battle-hero-[12]-vs-hero-[12]$/);
+  assert.equal(defenderReplay.battleId, attackerReplay.battleId);
+  assert.equal(attackerReplay.roomId, room.roomId);
+  assert.equal(defenderReplay.roomId, room.roomId);
+  assert.deepEqual(
+    [attackerReplay.playerCamp, defenderReplay.playerCamp].sort(),
+    ["attacker", "defender"]
+  );
+  assert.equal(attackerReplay.opponentHeroId, defenderReplay.heroId);
+  assert.equal(defenderReplay.opponentHeroId, attackerReplay.heroId);
+  assert.equal(attackerReplay.steps.length, steps);
+  assert.equal(defenderReplay.steps.length, steps);
+  assert.deepEqual(defenderReplay.steps, attackerReplay.steps);
+  assert.equal(defenderReplay.result, attackerReplay.result);
+  assert.deepEqual(
+    replaySaves.map((entry) => entry.playerId).sort(),
+    ["player-1", "player-2"]
+  );
 });
 
 test("room at maxClients capacity rejects a new join reservation", async (t) => {
