@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { buildRoomId, fullMoveTextPattern, withSmokeDiagnostics } from "./smoke-helpers";
+import { buildRoomId, fullMoveTextPattern, waitForLobbyReady, withSmokeDiagnostics } from "./smoke-helpers";
 
 interface RuntimeDiagnosticSnapshot {
   room?: {
@@ -40,14 +40,12 @@ test("h5 smoke reaches lobby http path and room websocket path", async ({ page }
       return response.url().includes("/api/lobby/rooms") && response.request().method() === "GET";
     });
 
-    await page.goto("/");
-
+    await waitForLobbyReady(page);
     const lobbyRoomsResponse = await lobbyRoomsResponsePromise;
     expect(lobbyRoomsResponse.ok()).toBeTruthy();
-    await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
 
-    const runtimeHealth = await fetchJsonFromBrowser<{ ok?: boolean }>(page, "/api/runtime/health");
-    expect(runtimeHealth.ok).toBe(true);
+    const runtimeHealth = await fetchJsonFromBrowser<{ status?: string }>(page, "/api/runtime/health");
+    expect(runtimeHealth.status).toBe("ok");
 
     const lobbyRooms = await fetchJsonFromBrowser<{ rooms?: unknown[] }>(page, "/api/lobby/rooms");
     expect(Array.isArray(lobbyRooms.rooms)).toBe(true);

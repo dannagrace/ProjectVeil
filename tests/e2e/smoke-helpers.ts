@@ -14,6 +14,18 @@ interface ReconnectOptions extends RoomSessionOptions {
   storage?: "sessionStorage" | "localStorage";
 }
 
+interface RuntimeHealthPayload {
+  status?: string;
+}
+
+interface AuthReadinessPayload {
+  status?: string;
+}
+
+interface LobbyRoomsPayload {
+  rooms?: unknown[];
+}
+
 function encodeRoomQuery(roomId: string, playerId: string): string {
   return `${CLIENT_BASE_URL}/?roomId=${encodeURIComponent(roomId)}&playerId=${encodeURIComponent(playerId)}`;
 }
@@ -32,6 +44,51 @@ export function fullMoveTextPattern(playerId = "player-1"): RegExp {
 
 export function moveRemainingAfterSpend(spent: number, playerId = "player-1"): number {
   return getHeroMoveTotal(playerId) - spent;
+}
+
+async function fetchJsonFromBrowser<T>(page: Page, path: string): Promise<T> {
+  return await page.evaluate(async (requestPath) => {
+    const response = await fetch(requestPath);
+    if (!response.ok) {
+      throw new Error(`browser_fetch_failed:${requestPath}:${response.status}`);
+    }
+    return (await response.json()) as T;
+  }, path);
+}
+
+export async function waitForLobbyReady(page: Page): Promise<void> {
+  await test.step("setup: wait for lobby smoke readiness", async () => {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
+    await expect(page.getByText("活跃房间")).toBeVisible();
+    await expect
+      .poll(
+        async () => (await fetchJsonFromBrowser<RuntimeHealthPayload>(page, "/api/runtime/health")).status ?? null,
+        {
+          message: "waiting for runtime health endpoint",
+          timeout: 15_000
+        }
+      )
+      .toBe("ok");
+    await expect
+      .poll(
+        async () => (await fetchJsonFromBrowser<AuthReadinessPayload>(page, "/api/runtime/auth-readiness")).status ?? null,
+        {
+          message: "waiting for auth readiness endpoint",
+          timeout: 15_000
+        }
+      )
+      .toBe("ok");
+    await expect
+      .poll(
+        async () => Array.isArray((await fetchJsonFromBrowser<LobbyRoomsPayload>(page, "/api/lobby/rooms")).rooms),
+        {
+          message: "waiting for lobby room listing",
+          timeout: 15_000
+        }
+      )
+      .toBe(true);
+  });
 }
 
 export async function expectHeroMove(page: Page, remaining: number, playerId = "player-1"): Promise<void> {

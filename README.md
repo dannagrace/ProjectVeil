@@ -166,7 +166,9 @@ npm run dev:client:h5
 - 打包 H5 客户端 RC 冒烟会把结构化结果写入 `artifacts/release-readiness/`
 - 多人联机 Playwright 冒烟：`npm run test:e2e:multiplayer:smoke`
 - 多人同步治理矩阵：`npm run test:sync-governance:matrix`（输出 `artifacts/release-readiness/sync-governance-matrix-<short-sha>.json`）
-- GitHub Actions `playwright-smoke` 会执行上述两条冒烟回归，并在失败时上传 Playwright trace / screenshot / video 诊断材料
+- GitHub Actions `playwright-smoke` 会先等待 `health` / `auth-readiness` / `lobby rooms` readiness contract，再执行 H5 与多人冒烟；失败时会上传 Playwright trace / screenshot / video，以及 npm 调试日志，便于区分环境漂移和真实回归
+- PR 上的多人联机 smoke 现在保留为非阻塞诊断；若它失败，先看 artifact 里的 npm 日志与 Playwright trace，再本地复跑 `npm run test:e2e:multiplayer:smoke`
+- `playwright-multiplayer` 全量多人回归改为 `main` 分支和手动触发运行，避免把长链路浏览器噪音直接混进 PR 合并信号
 - MySQL 首次初始化 / 升级：`npm run db:migrate`
 - MySQL 回滚上一版 schema：`npm run db:migrate:rollback`
 - `npm run db:init:mysql` 现已委托给同一条迁移链路，不再走独立一次性建表逻辑

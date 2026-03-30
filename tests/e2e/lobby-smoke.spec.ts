@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { buildRoomId, expectRoomReady, fullMoveTextPattern, withSmokeDiagnostics } from "./smoke-helpers";
+import { buildRoomId, expectRoomReady, fullMoveTextPattern, waitForLobbyReady, withSmokeDiagnostics } from "./smoke-helpers";
 
 async function expectEnteredRoom(page: Page, roomId: string, playerId?: string): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
@@ -24,10 +24,7 @@ test("lobby opens and a guest can enter a room", async ({ page }, testInfo) => {
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
     await test.step("setup: open lobby shell", async () => {
-      await page.goto("/");
-
-      await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
-      await expect(page.getByText("活跃房间")).toBeVisible();
+      await waitForLobbyReady(page);
     });
 
     await page.locator("[data-lobby-room-id]").fill(roomId);
@@ -56,8 +53,7 @@ test("lobby reuses a cached guest session when entering a room", async ({ page }
   });
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
-    await page.goto("/");
-
+    await waitForLobbyReady(page);
     await expect(page.getByText("已缓存本地会话：cached-guest-1")).toBeVisible();
     await page.locator("[data-lobby-room-id]").fill(roomId);
     await page.locator("[data-enter-room]").click();
@@ -75,9 +71,7 @@ test("lobby supports formal registration and enters the room with an account ses
   const password = "formal-pass-1";
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
-    await page.goto("/");
-
-    await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
+    await waitForLobbyReady(page);
     await page.locator("[data-lobby-room-id]").fill(roomId);
     await page.locator("[data-lobby-login-id]").fill(loginId);
     await page.locator("[data-registration-display-name]").fill(displayName);
@@ -138,9 +132,7 @@ test("lobby supports password recovery and rotates the account password before e
   expect(confirmRegistrationResponse.ok()).toBeTruthy();
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
-    await page.goto("/");
-
-    await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
+    await waitForLobbyReady(page);
     await page.locator("[data-lobby-room-id]").fill(roomId);
     await page.locator("[data-lobby-login-id]").fill(loginId);
     await page.locator("[data-request-recovery]").click();

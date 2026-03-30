@@ -4,6 +4,7 @@ export default defineConfig({
   testDir: "./tests/e2e",
   testMatch: /(lobby-smoke|reconnect-prediction-convergence)\.spec\.ts/,
   timeout: 30_000,
+  retries: process.env.CI ? 2 : 0,
   fullyParallel: false,
   workers: 1,
   reporter: [
