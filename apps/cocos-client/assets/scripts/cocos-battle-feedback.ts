@@ -13,6 +13,7 @@ export interface BattleProgressAnalysis {
   defeatedUnits: string[];
   damagedUnits: string[];
   skillTriggered: boolean;
+  skillName: string | null;
 }
 
 interface BattleSettlementSummary {
@@ -118,11 +119,22 @@ export function buildBattleProgressFeedback(
 
   if (analysis.defeatedUnits.length > 0) {
     const primaryTarget = analysis.defeatedUnits[0];
+    const skillPrefix = analysis.skillName ? `${analysis.skillName} 命中，` : "";
     return {
-      title: `${primaryTarget} 已被击倒`,
+      title: `${skillPrefix}${primaryTarget} 已被击倒`,
       detail: analysis.latestLog || "单位已离场，战线出现缺口",
       badge: "K.O.",
       tone: "hit"
+    };
+  }
+
+  if (analysis.skillTriggered && analysis.damagedUnits.length > 0) {
+    const primaryTarget = analysis.damagedUnits[0];
+    return {
+      title: `${analysis.skillName ?? "主动技能"} 命中，${primaryTarget} 受到打击`,
+      detail: analysis.latestLog || "技能伤害已结算",
+      badge: "SKILL",
+      tone: "skill"
     };
   }
 
@@ -136,8 +148,9 @@ export function buildBattleProgressFeedback(
   }
 
   if (analysis.damagedUnits.length > 0) {
+    const skillPrefix = analysis.skillName ? `${analysis.skillName} 命中，` : "";
     return {
-      title: `${analysis.damagedUnits[0]} 受到打击`,
+      title: `${skillPrefix}${analysis.damagedUnits[0]} 受到打击`,
       detail: analysis.latestLog || "伤害已结算",
       badge: "HIT",
       tone: "hit"
@@ -187,8 +200,26 @@ export function analyzeBattleProgress(
     latestLog,
     defeatedUnits,
     damagedUnits,
-    skillTriggered: latestLog.includes("施放")
+    skillTriggered: latestLog.includes("施放"),
+    skillName: inferTriggeredSkillName(nextBattle, latestLog)
   };
+}
+
+function inferTriggeredSkillName(nextBattle: BattleState, latestLog: string): string | null {
+  if (!latestLog.includes("施放")) {
+    return null;
+  }
+
+  for (const unit of Object.values(nextBattle.units)) {
+    for (const skill of unit.skills ?? []) {
+      if (skill.name && latestLog.includes(skill.name)) {
+        return skill.name;
+      }
+    }
+  }
+
+  const matched = latestLog.match(/施放\s+(.+?)(?:，|。|,|$)/);
+  return matched?.[1]?.trim() || null;
 }
 
 export function buildBattleSettlementLines(
