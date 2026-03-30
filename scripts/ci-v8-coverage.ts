@@ -34,6 +34,19 @@ export const coverageRoot = path.resolve(".coverage");
 
 export const suites: CoverageSuite[] = [
   {
+    name: "release-scripts",
+    include:
+      "{scripts/validate-wechat-release-candidate.ts,scripts/verify-wechat-minigame-artifact.ts}",
+    lineThreshold: 80,
+    branchThreshold: 55,
+    functionThreshold: 85,
+    tests: [
+      "scripts/test/wechat-release-artifacts.test.ts",
+      "apps/cocos-client/test/cocos-wechat-build.test.ts",
+      "apps/cocos-client/test/cocos-wechat-rc-validation.test.ts",
+    ],
+  },
+  {
     name: "shared",
     include: "packages/shared/src/**/*.ts",
     lineThreshold: 90,
