@@ -261,6 +261,44 @@ test("client reconnect within the window restores room state and records reconne
   assert.equal(new Date(reconnectedAt).toISOString(), reconnectedAt);
 });
 
+test("reconnect preserves lobby registration counts while other players stay connected", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-reconnect-multi-${Date.now()}`);
+  const reconnectingClient = createFakeClient("session-reconnect-multi");
+  const reconnectedClient = createFakeClient("session-reconnect-multi-resumed");
+  const otherClient = createFakeClient("session-reconnect-multi-other");
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+    allowReconnection(client: Client, seconds: number): Promise<Client>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, reconnectingClient, "player-reconnect-multi", "connect-reconnect-multi");
+  await connectPlayer(room, otherClient, "player-other-multi", "connect-other-multi");
+
+  assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 2);
+
+  internalRoom.allowReconnection = async () => {
+    room.clients.push(reconnectedClient);
+    return reconnectedClient;
+  };
+  await room.onDrop(reconnectingClient);
+
+  assert.equal(internalRoom.playerIdBySessionId.get(reconnectedClient.sessionId), "player-reconnect-multi");
+  assert.equal(internalRoom.playerIdBySessionId.get(otherClient.sessionId), "player-other-multi");
+  assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 2);
+
+  const resumedState = lastSessionState(reconnectedClient, "push");
+  assert.equal(resumedState.requestId, "push");
+  assert.equal(resumedState.delivery, "push");
+});
+
 test("stale leave after a successful reconnect does not clear the resumed player slot", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
@@ -341,6 +379,33 @@ test("room disposal after the last client leaves removes it from the active room
   room.onDispose();
 
   assert.equal(listLobbyRooms().some((entry) => entry.roomId === room.roomId), false);
+});
+
+test("stale room disposal cannot unregister a replacement room with the same logical id", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const logicalRoomId = `lifecycle-multi-room-${Date.now()}`;
+  const firstRoom = await createTestRoom(logicalRoomId, 3101);
+  const secondRoom = await createTestRoom(logicalRoomId, 4202);
+
+  t.after(() => {
+    cleanupRoom(firstRoom);
+    cleanupRoom(secondRoom);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  const summaryAfterReplacement = listLobbyRooms().find((entry) => entry.roomId === logicalRoomId);
+  assert.ok(summaryAfterReplacement);
+  assert.equal(summaryAfterReplacement.seed, 4202);
+
+  firstRoom.onDispose();
+  const summaryAfterStaleDispose = listLobbyRooms().find((entry) => entry.roomId === logicalRoomId);
+  assert.ok(summaryAfterStaleDispose);
+  assert.equal(summaryAfterStaleDispose.seed, 4202);
+
+  secondRoom.onDispose();
+  assert.equal(listLobbyRooms().some((entry) => entry.roomId === logicalRoomId), false);
 });
 
 test("simultaneous rooms keep seeded world state isolated", async (t) => {
