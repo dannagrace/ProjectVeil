@@ -1,4 +1,3 @@
-import "./config-center.css";
 import { createConfigCenterController, MAX_STAGE_DOCUMENTS } from "./config-center-controller";
 
 type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
@@ -381,60 +380,468 @@ function impactRiskLabel(riskLevel: ConfigImpactRiskLevel): string {
   return "低风险";
 }
 
-const appRoot = document.querySelector<HTMLDivElement>("#app");
-
-if (!appRoot) {
-  throw new Error("Missing #app");
+interface ConfigCenterValidationSectionInput {
+  currentDocumentId: ConfigDocumentId | null;
+  validation: ValidationReport | null;
+  validationLoading: boolean;
 }
 
-const root = appRoot;
+interface ConfigCenterImpactSummarySectionInput {
+  currentDocumentId: ConfigDocumentId | null;
+  lastSavedImpactSummary: ConfigImpactSummary | null;
+}
 
-const controller = createConfigCenterController({
-  onStateChange: () => {
-    render();
-  },
-  prompt: (message, defaultValue) => window.prompt(message, defaultValue),
-  confirm: (message) => window.confirm(message),
-  download: ({ blob, fileName, fallbackFileName }) => {
-    const href = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = href;
-    anchor.download = fileName ?? fallbackFileName;
-    anchor.click();
-    URL.revokeObjectURL(href);
+interface ConfigCenterSnapshotDiffPanelInput {
+  selectedSnapshotId: string | null;
+  snapshotDiff: ConfigDiff | null;
+}
+
+interface ConfigCenterPublishHistorySectionInput {
+  publishAuditHistory: ConfigPublishAuditEvent[];
+  publishAuditFilterId: ConfigDocumentId | "all";
+  publishAuditFilterStatus: ConfigPublishResultStatus | "all";
+  historyLoading: boolean;
+}
+
+interface ConfigCenterSaveActionState {
+  currentDocumentId: ConfigDocumentId | null;
+  loading: boolean;
+  saving: boolean;
+  validationLoading: boolean;
+  validation: ValidationReport | null;
+}
+
+export function isConfigCenterSaveDisabled({
+  currentDocumentId,
+  loading,
+  saving,
+  validationLoading,
+  validation
+}: ConfigCenterSaveActionState): boolean {
+  return !currentDocumentId || loading || saving || validationLoading || !(validation?.valid ?? true);
+}
+
+export function renderConfigCenterValidationSection({
+  currentDocumentId,
+  validation,
+  validationLoading
+}: ConfigCenterValidationSectionInput): string {
+  if (!currentDocumentId) {
+    return "";
   }
-});
 
-const {
-  state,
-  getDraftParseState,
-  normalizePreviewSeed,
-  loadList,
-  loadSnapshots,
-  loadPresets,
-  loadSnapshotDiff,
-  loadPublishStage,
-  loadPublishAuditHistory,
-  loadWorldPreview,
-  loadValidation,
-  scheduleWorldPreview,
-  loadDocument,
-  saveCurrentDocument,
-  restoreCurrentDocument,
-  createSnapshot,
-  rollbackSnapshot,
-  applyPreset,
-  saveCurrentAsPreset,
-  exportCurrentDocument,
-  importWorkbook,
-  stageCurrentDraft,
-  removeDocumentFromStage,
-  clearPublishStage,
-  publishStageDrafts,
-  setPublishAuditFilters,
-  inspectPublishedSnapshot,
-  rollbackPublishedSnapshot
-} = controller;
+  const renderSchemaIssues = (issues: ValidationIssue[]) =>
+    issues.length > 0
+      ? `
+        <div class="validation-list">
+          ${issues
+            .map(
+              (issue, index) => `
+                <button class="validation-item" data-action="validation-jump" data-index="${index}">
+                  <strong>${escapeHtml(issue.path)}</strong>
+                  <span>${escapeHtml(issue.message)}</span>
+                  <small>${escapeHtml(issue.suggestion)}${issue.line ? ` · 第 ${issue.line} 行` : ""}</small>
+                </button>
+              `
+            )
+            .join("")}
+        </div>
+      `
+      : `<p class="config-hint">当前草稿满足 Schema / 运行时校验。</p>`;
+  const renderContentPackIssues = (issues: ValidationIssue[]) =>
+    issues.length > 0
+      ? `
+        <div class="validation-list">
+          ${issues
+            .map(
+              (issue) => `
+                <div class="validation-item">
+                  <strong>${escapeHtml(`${issue.documentId ?? currentDocumentId}:${issue.path}`)}</strong>
+                  <span>${escapeHtml(issue.message)}</span>
+                  <small>${escapeHtml(issue.suggestion)}</small>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+      `
+      : `<p class="config-hint">当前草稿对应的内容包引用关系保持一致。</p>`;
+  const content =
+    validationLoading && !validation
+      ? `<div class="world-preview-empty">正在进行 Schema 校验...</div>`
+      : !validation
+        ? `<div class="world-preview-empty">等待校验结果...</div>`
+        : `
+          <div class="validation-summary ${validation.valid ? "is-valid" : "is-invalid"}">
+            <strong>${validation.valid ? "校验通过" : "发现问题"}</strong>
+            <span>${escapeHtml(validation.summary)}</span>
+          </div>
+          <div class="schema-card">
+            <strong>${escapeHtml(validation.schema.title)}</strong>
+            <span>${escapeHtml(validation.schema.description)}</span>
+            <small>${escapeHtml(validation.schema.id)} · v${escapeHtml(validation.schema.version)}</small>
+            <small>必填根字段: ${escapeHtml(validation.schema.required.join(", ") || "无")}</small>
+          </div>
+          <div class="schema-card">
+            <strong>内容包一致性</strong>
+            <span>${escapeHtml(validation.contentPack.summary)}</span>
+            <small>schema v${validation.contentPack.schemaVersion} · ${validation.contentPack.checkedDocuments.length} 个配置面</small>
+            <small>${escapeHtml(validation.contentPack.checkedDocuments.join(" / "))}</small>
+          </div>
+          ${renderSchemaIssues(validation.issues)}
+          ${renderContentPackIssues(validation.contentPack.issues)}
+        `;
+
+  return `
+    <section class="validation-section">
+      <div class="config-preview-subhead">
+        <h4>配置校验</h4>
+        <span class="config-meta">${validation?.valid ? "可提交" : "保存前需修复"}</span>
+      </div>
+      ${content}
+    </section>
+  `;
+}
+
+export function renderConfigCenterImpactSummarySection({
+  currentDocumentId,
+  lastSavedImpactSummary
+}: ConfigCenterImpactSummarySectionInput): string {
+  if (!currentDocumentId || !lastSavedImpactSummary) {
+    return "";
+  }
+
+  return `
+    <section class="history-section">
+      <div class="config-preview-subhead">
+        <h4>变更影响摘要</h4>
+        <span class="config-meta">${impactRiskLabel(lastSavedImpactSummary.riskLevel)}</span>
+      </div>
+      <p class="config-hint">${escapeHtml(lastSavedImpactSummary.summary)}</p>
+      <div class="config-badge-row">
+        ${lastSavedImpactSummary.impactedModules.map((label) => `<span class="config-badge">${escapeHtml(label)}</span>`).join("")}
+      </div>
+      <div class="impact-summary-grid">
+        <article class="impact-summary-card">
+          <strong>变更字段</strong>
+          <span>${escapeHtml(lastSavedImpactSummary.changedFields.join(" / ") || "无")}</span>
+        </article>
+        <article class="impact-summary-card">
+          <strong>潜在风险</strong>
+          <span>${escapeHtml(lastSavedImpactSummary.riskHints.join(" / ") || "未检测到额外风险提示")}</span>
+        </article>
+        <article class="impact-summary-card">
+          <strong>建议验证</strong>
+          <span>${escapeHtml(lastSavedImpactSummary.suggestedValidationActions.join(" / ") || "无")}</span>
+        </article>
+      </div>
+    </section>
+  `;
+}
+
+export function renderConfigCenterSnapshotDiffPanel({
+  selectedSnapshotId,
+  snapshotDiff
+}: ConfigCenterSnapshotDiffPanelInput): string {
+  if (!selectedSnapshotId || !snapshotDiff) {
+    return "";
+  }
+
+  const total = snapshotDiff.entries.length;
+  const visibleEntries = sortDiffEntries(snapshotDiff.entries).slice(0, 12);
+  const structuralCount = countStructuralEntries(snapshotDiff);
+  const summary =
+    total === 0
+      ? "当前版本与该快照没有差异。"
+      : structuralCount > 0
+          ? `警告：检测到 ${structuralCount}/${total} 条结构变更，优先展示高风险字段（最多 ${visibleEntries.length} 条）。`
+          : `当前展示 ${visibleEntries.length} / ${total} 条差异。`;
+
+  if (total === 0) {
+    return `
+      <div class="config-hint">${summary}</div>
+      <div class="world-preview-empty">当前版本与该快照没有差异。</div>
+    `;
+  }
+
+  return `
+    <div class="config-hint">${summary}</div>
+    <div class="diff-list">
+      ${visibleEntries
+        .map(
+          (entry) => `
+            <article class="diff-item ${isStructuralDiff(entry) ? "is-structural" : ""}">
+              <div class="diff-item-body">
+                <strong>${escapeHtml(entry.path)}</strong>
+                <span>${escapeHtml(entry.description || "该字段在 Schema 中暂无描述。")}</span>
+              </div>
+              <div class="diff-item-tags">
+                <span class="diff-chip ${isStructuralDiff(entry) ? "is-alert" : ""}">${diffKindLabel(entry.kind)}</span>
+                <span class="diff-chip is-muted">${escapeHtml(entry.fieldType)}</span>
+                ${entry.required ? `<span class="diff-chip is-required">必填</span>` : ""}
+              </div>
+              <small>${escapeHtml(serializeDisplayValue(entry.previousValue))} → ${escapeHtml(serializeDisplayValue(entry.nextValue))}</small>
+              ${
+                entry.blastRadius.length
+                  ? `<small class="diff-blast">影响：${entry.blastRadius.map((label) => `<span>${escapeHtml(label)}</span>`).join(" / ")}</small>`
+                  : ""
+              }
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+export function renderConfigCenterPublishHistoryList({
+  publishAuditHistory,
+  publishAuditFilterId,
+  publishAuditFilterStatus,
+  historyLoading
+}: ConfigCenterPublishHistorySectionInput): string {
+  const entries = publishAuditHistory.filter((entry) => {
+    const matchesDocument =
+      publishAuditFilterId === "all" ||
+      entry.changes.some((change) => change.documentId === publishAuditFilterId);
+    const matchesResult =
+      publishAuditFilterStatus === "all" || entry.resultStatus === publishAuditFilterStatus;
+    return matchesDocument && matchesResult;
+  });
+  if (historyLoading && entries.length === 0 && publishAuditHistory.length === 0) {
+    return `<div class="world-preview-empty">正在加载发布记录...</div>`;
+  }
+
+  if (entries.length === 0) {
+    return `
+      <section class="history-section">
+        <div class="config-preview-subhead">
+          <h4>发布审计历史</h4>
+          <span class="config-meta">0 条匹配记录</span>
+        </div>
+        <div class="history-filters">
+          <label>
+            <span>配置类型</span>
+            <select data-role="publish-filter-doc">
+              <option value="all">全部</option>
+              <option value="world" ${publishAuditFilterId === "world" ? "selected" : ""}>世界配置</option>
+              <option value="mapObjects" ${publishAuditFilterId === "mapObjects" ? "selected" : ""}>地图物件</option>
+              <option value="units" ${publishAuditFilterId === "units" ? "selected" : ""}>兵种配置</option>
+              <option value="battleSkills" ${publishAuditFilterId === "battleSkills" ? "selected" : ""}>技能配置</option>
+              <option value="battleBalance" ${publishAuditFilterId === "battleBalance" ? "selected" : ""}>战斗平衡</option>
+            </select>
+          </label>
+          <label>
+            <span>结果状态</span>
+            <select data-role="publish-filter-status">
+              <option value="all">全部</option>
+              <option value="applied" ${publishAuditFilterStatus === "applied" ? "selected" : ""}>已应用</option>
+              <option value="failed" ${publishAuditFilterStatus === "failed" ? "selected" : ""}>失败</option>
+            </select>
+          </label>
+        </div>
+        <div class="world-preview-empty">暂无匹配的发布记录，先使用“发布草稿”功能再回来查看。</div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="history-section publish-history">
+      <div class="config-preview-subhead">
+        <h4>发布审计历史</h4>
+        <span class="config-meta">${entries.length} 条记录</span>
+      </div>
+      <div class="history-filters">
+        <label>
+          <span>配置类型</span>
+          <select data-role="publish-filter-doc">
+            <option value="all">全部</option>
+            <option value="world" ${publishAuditFilterId === "world" ? "selected" : ""}>世界配置</option>
+            <option value="mapObjects" ${publishAuditFilterId === "mapObjects" ? "selected" : ""}>地图物件</option>
+            <option value="units" ${publishAuditFilterId === "units" ? "selected" : ""}>兵种配置</option>
+            <option value="battleSkills" ${publishAuditFilterId === "battleSkills" ? "selected" : ""}>技能配置</option>
+            <option value="battleBalance" ${publishAuditFilterId === "battleBalance" ? "selected" : ""}>战斗平衡</option>
+          </select>
+        </label>
+        <label>
+          <span>结果状态</span>
+          <select data-role="publish-filter-status">
+            <option value="all">全部</option>
+            <option value="applied" ${publishAuditFilterStatus === "applied" ? "selected" : ""}>已应用</option>
+            <option value="failed" ${publishAuditFilterStatus === "failed" ? "selected" : ""}>失败</option>
+          </select>
+        </label>
+      </div>
+      <div class="publish-history-list">
+        ${entries
+          .slice(0, 10)
+          .map(
+            (entry) => `
+              <article class="publish-history-card">
+                <div class="publish-history-head">
+                  <div>
+                    <strong>${escapeHtml(entry.summary)}</strong>
+                    <span>${escapeHtml(entry.author)} · ${formatTime(entry.publishedAt)}</span>
+                  </div>
+                  <span class="publish-result-pill is-${entry.resultStatus}">${entry.resultStatus === "applied" ? "已应用" : "失败"}</span>
+                </div>
+                <small>${escapeHtml(entry.resultMessage)}</small>
+                <div class="config-badge-row">
+                  ${entry.changes.map((change) => `<span class="config-badge">${escapeHtml(change.title)} · v${change.fromVersion}→v${change.toVersion}</span>`).join("")}
+                </div>
+                <div class="publish-change-list">
+                  ${entry.changes
+                    .map(
+                      (change) => `
+                        <section class="publish-change-card">
+                          <div class="publish-change-head">
+                            <strong>${escapeHtml(change.title)}</strong>
+                            <span>${change.changeCount} 项变更${change.structuralChangeCount ? ` · ${change.structuralChangeCount} 项结构风险` : ""}</span>
+                          </div>
+                          <small>${escapeHtml(change.runtimeMessage)}</small>
+                          ${
+                            change.impactSummary
+                              ? `
+                                <div class="impact-summary-grid is-compact">
+                                  <article class="impact-summary-card">
+                                    <strong>${impactRiskLabel(change.impactSummary.riskLevel)}</strong>
+                                    <span>${escapeHtml(change.impactSummary.summary)}</span>
+                                  </article>
+                                  <article class="impact-summary-card">
+                                    <strong>影响模块</strong>
+                                    <span>${escapeHtml(change.impactSummary.impactedModules.join(" / "))}</span>
+                                  </article>
+                                  <article class="impact-summary-card">
+                                    <strong>风险提示</strong>
+                                    <span>${escapeHtml(change.impactSummary.riskHints.join(" / ") || "无")}</span>
+                                  </article>
+                                </div>
+                              `
+                              : ""
+                          }
+                          <div class="publish-diff-summary">
+                            ${
+                              change.diffSummary.length > 0
+                                ? change.diffSummary
+                                    .map(
+                                      (diff) => `
+                                        <span class="publish-diff-chip">
+                                          ${escapeHtml(diff.path)} · ${escapeHtml(diffKindLabel(diff.kind))}
+                                        </span>
+                                      `
+                                    )
+                                    .join("")
+                                : `<span class="publish-diff-chip">无字段差异</span>`
+                            }
+                          </div>
+                          <div class="history-actions">
+                            <button class="config-button is-secondary config-button-compact" data-action="inspect-publish-change" data-doc-id="${change.documentId}" data-snapshot-id="${change.snapshotId ?? ""}" ${change.snapshotId ? "" : "disabled"}>查看快照</button>
+                            <button class="config-button is-secondary config-button-compact" data-action="rollback-publish-change" data-doc-id="${change.documentId}" data-snapshot-id="${change.snapshotId ?? ""}" ${change.snapshotId ? "" : "disabled"}>快速回滚</button>
+                          </div>
+                        </section>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+let root!: HTMLDivElement;
+let controller!: ReturnType<typeof createConfigCenterController>;
+let state!: ReturnType<typeof createConfigCenterController>["state"];
+let getDraftParseState!: ReturnType<typeof createConfigCenterController>["getDraftParseState"];
+let normalizePreviewSeed!: ReturnType<typeof createConfigCenterController>["normalizePreviewSeed"];
+let loadList!: ReturnType<typeof createConfigCenterController>["loadList"];
+let loadSnapshots!: ReturnType<typeof createConfigCenterController>["loadSnapshots"];
+let loadPresets!: ReturnType<typeof createConfigCenterController>["loadPresets"];
+let loadSnapshotDiff!: ReturnType<typeof createConfigCenterController>["loadSnapshotDiff"];
+let loadPublishStage!: ReturnType<typeof createConfigCenterController>["loadPublishStage"];
+let loadPublishAuditHistory!: ReturnType<typeof createConfigCenterController>["loadPublishAuditHistory"];
+let loadWorldPreview!: ReturnType<typeof createConfigCenterController>["loadWorldPreview"];
+let loadValidation!: ReturnType<typeof createConfigCenterController>["loadValidation"];
+let scheduleWorldPreview!: ReturnType<typeof createConfigCenterController>["scheduleWorldPreview"];
+let loadDocument!: ReturnType<typeof createConfigCenterController>["loadDocument"];
+let saveCurrentDocument!: ReturnType<typeof createConfigCenterController>["saveCurrentDocument"];
+let restoreCurrentDocument!: ReturnType<typeof createConfigCenterController>["restoreCurrentDocument"];
+let createSnapshot!: ReturnType<typeof createConfigCenterController>["createSnapshot"];
+let rollbackSnapshot!: ReturnType<typeof createConfigCenterController>["rollbackSnapshot"];
+let applyPreset!: ReturnType<typeof createConfigCenterController>["applyPreset"];
+let saveCurrentAsPreset!: ReturnType<typeof createConfigCenterController>["saveCurrentAsPreset"];
+let exportCurrentDocument!: ReturnType<typeof createConfigCenterController>["exportCurrentDocument"];
+let importWorkbook!: ReturnType<typeof createConfigCenterController>["importWorkbook"];
+let stageCurrentDraft!: ReturnType<typeof createConfigCenterController>["stageCurrentDraft"];
+let removeDocumentFromStage!: ReturnType<typeof createConfigCenterController>["removeDocumentFromStage"];
+let clearPublishStage!: ReturnType<typeof createConfigCenterController>["clearPublishStage"];
+let publishStageDrafts!: ReturnType<typeof createConfigCenterController>["publishStageDrafts"];
+let setPublishAuditFilters!: ReturnType<typeof createConfigCenterController>["setPublishAuditFilters"];
+let inspectPublishedSnapshot!: ReturnType<typeof createConfigCenterController>["inspectPublishedSnapshot"];
+let rollbackPublishedSnapshot!: ReturnType<typeof createConfigCenterController>["rollbackPublishedSnapshot"];
+let runtimeInitialized = false;
+
+function initializeConfigCenterRuntime(): void {
+  if (runtimeInitialized) {
+    return;
+  }
+
+  const appRoot = document.querySelector<HTMLDivElement>("#app");
+  if (!appRoot) {
+    throw new Error("Missing #app");
+  }
+
+  root = appRoot;
+  controller = createConfigCenterController({
+    onStateChange: () => {
+      render();
+    },
+    prompt: (message, defaultValue) => window.prompt(message, defaultValue),
+    confirm: (message) => window.confirm(message),
+    download: ({ blob, fileName, fallbackFileName }) => {
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = fileName ?? fallbackFileName;
+      anchor.click();
+      URL.revokeObjectURL(href);
+    }
+  });
+  ({
+    state,
+    getDraftParseState,
+    normalizePreviewSeed,
+    loadList,
+    loadSnapshots,
+    loadPresets,
+    loadSnapshotDiff,
+    loadPublishStage,
+    loadPublishAuditHistory,
+    loadWorldPreview,
+    loadValidation,
+    scheduleWorldPreview,
+    loadDocument,
+    saveCurrentDocument,
+    restoreCurrentDocument,
+    createSnapshot,
+    rollbackSnapshot,
+    applyPreset,
+    saveCurrentAsPreset,
+    exportCurrentDocument,
+    importWorkbook,
+    stageCurrentDraft,
+    removeDocumentFromStage,
+    clearPublishStage,
+    publishStageDrafts,
+    setPublishAuditFilters,
+    inspectPublishedSnapshot,
+    rollbackPublishedSnapshot
+  } = controller);
+  runtimeInitialized = true;
+}
 
 function formatTime(value: string): string {
   const date = new Date(value);
@@ -1127,116 +1534,18 @@ function renderBattleBalanceEditorSection(): string {
 }
 
 function renderValidationSection(): string {
-  if (!state.current) {
-    return "";
-  }
-
-  const validation = state.validation;
-  const renderSchemaIssues = (issues: ValidationIssue[]) =>
-    issues.length > 0
-      ? `
-        <div class="validation-list">
-          ${issues
-            .map(
-              (issue, index) => `
-                <button class="validation-item" data-action="validation-jump" data-index="${index}">
-                  <strong>${escapeHtml(issue.path)}</strong>
-                  <span>${escapeHtml(issue.message)}</span>
-                  <small>${escapeHtml(issue.suggestion)}${issue.line ? ` · 第 ${issue.line} 行` : ""}</small>
-                </button>
-              `
-            )
-            .join("")}
-        </div>
-      `
-      : `<p class="config-hint">当前草稿满足 Schema / 运行时校验。</p>`;
-  const renderContentPackIssues = (issues: ValidationIssue[]) =>
-    issues.length > 0
-      ? `
-        <div class="validation-list">
-          ${issues
-            .map(
-              (issue) => `
-                <div class="validation-item">
-                  <strong>${escapeHtml(`${issue.documentId ?? state.current?.id ?? "config"}:${issue.path}`)}</strong>
-                  <span>${escapeHtml(issue.message)}</span>
-                  <small>${escapeHtml(issue.suggestion)}</small>
-                </div>
-              `
-            )
-            .join("")}
-        </div>
-      `
-      : `<p class="config-hint">当前草稿对应的内容包引用关系保持一致。</p>`;
-  const content =
-    state.validationLoading && !validation
-      ? `<div class="world-preview-empty">正在进行 Schema 校验...</div>`
-      : !validation
-        ? `<div class="world-preview-empty">等待校验结果...</div>`
-        : `
-          <div class="validation-summary ${validation.valid ? "is-valid" : "is-invalid"}">
-            <strong>${validation.valid ? "校验通过" : "发现问题"}</strong>
-            <span>${escapeHtml(validation.summary)}</span>
-          </div>
-          <div class="schema-card">
-            <strong>${escapeHtml(validation.schema.title)}</strong>
-            <span>${escapeHtml(validation.schema.description)}</span>
-            <small>${escapeHtml(validation.schema.id)} · v${escapeHtml(validation.schema.version)}</small>
-            <small>必填根字段: ${escapeHtml(validation.schema.required.join(", ") || "无")}</small>
-          </div>
-          <div class="schema-card">
-            <strong>内容包一致性</strong>
-            <span>${escapeHtml(validation.contentPack.summary)}</span>
-            <small>schema v${validation.contentPack.schemaVersion} · ${validation.contentPack.checkedDocuments.length} 个配置面</small>
-            <small>${escapeHtml(validation.contentPack.checkedDocuments.join(" / "))}</small>
-          </div>
-          ${renderSchemaIssues(validation.issues)}
-          ${renderContentPackIssues(validation.contentPack.issues)}
-        `;
-
-  return `
-    <section class="validation-section">
-      <div class="config-preview-subhead">
-        <h4>配置校验</h4>
-        <span class="config-meta">${validation?.valid ? "可提交" : "保存前需修复"}</span>
-      </div>
-      ${content}
-    </section>
-  `;
+  return renderConfigCenterValidationSection({
+    currentDocumentId: state.current?.id ?? null,
+    validation: state.validation,
+    validationLoading: state.validationLoading
+  });
 }
 
 function renderImpactSummarySection(): string {
-  if (!state.current || !state.lastSavedImpactSummary) {
-    return "";
-  }
-
-  const summary = state.lastSavedImpactSummary;
-  return `
-    <section class="history-section">
-      <div class="config-preview-subhead">
-        <h4>变更影响摘要</h4>
-        <span class="config-meta">${impactRiskLabel(summary.riskLevel)}</span>
-      </div>
-      <p class="config-hint">${escapeHtml(summary.summary)}</p>
-      <div class="config-badge-row">
-        ${summary.impactedModules.map((label) => `<span class="config-badge">${escapeHtml(label)}</span>`).join("")}
-      </div>
-      <div class="impact-summary-grid">
-        <article class="impact-summary-card">
-          <strong>变更字段</strong>
-          <span>${escapeHtml(summary.changedFields.join(" / ") || "无")}</span>
-        </article>
-        <article class="impact-summary-card">
-          <strong>潜在风险</strong>
-          <span>${escapeHtml(summary.riskHints.join(" / ") || "未检测到额外风险提示")}</span>
-        </article>
-        <article class="impact-summary-card">
-          <strong>建议验证</strong>
-          <span>${escapeHtml(summary.suggestedValidationActions.join(" / ") || "无")}</span>
-        </article>
-      </div>
-    </section>
-  `;
+  return renderConfigCenterImpactSummarySection({
+    currentDocumentId: state.current?.id ?? null,
+    lastSavedImpactSummary: state.lastSavedImpactSummary
+  });
 }
 
 function renderPublishStageSection(): string {
@@ -1371,208 +1680,19 @@ function renderSnapshotSection(): string {
 }
 
 function renderSnapshotDiffPanel(): string {
-  if (!state.selectedSnapshotId || !state.snapshotDiff) {
-    return "";
-  }
-
-  const total = state.snapshotDiff.entries.length;
-  const visibleEntries = sortDiffEntries(state.snapshotDiff.entries).slice(0, 12);
-  const structuralCount = countStructuralEntries(state.snapshotDiff);
-  const summary =
-    total === 0
-      ? "当前版本与该快照没有差异。"
-      : structuralCount > 0
-          ? `警告：检测到 ${structuralCount}/${total} 条结构变更，优先展示高风险字段（最多 ${visibleEntries.length} 条）。`
-          : `当前展示 ${visibleEntries.length} / ${total} 条差异。`;
-
-  if (total === 0) {
-    return `
-      <div class="config-hint">${summary}</div>
-      <div class="world-preview-empty">当前版本与该快照没有差异。</div>
-    `;
-  }
-
-  return `
-    <div class="config-hint">${summary}</div>
-    <div class="diff-list">
-      ${visibleEntries
-        .map(
-          (entry) => `
-            <article class="diff-item ${isStructuralDiff(entry) ? "is-structural" : ""}">
-              <div class="diff-item-body">
-                <strong>${escapeHtml(entry.path)}</strong>
-                <span>${escapeHtml(entry.description || "该字段在 Schema 中暂无描述。")}</span>
-              </div>
-              <div class="diff-item-tags">
-                <span class="diff-chip ${isStructuralDiff(entry) ? "is-alert" : ""}">${diffKindLabel(entry.kind)}</span>
-                <span class="diff-chip is-muted">${escapeHtml(entry.fieldType)}</span>
-                ${entry.required ? `<span class="diff-chip is-required">必填</span>` : ""}
-              </div>
-              <small>${escapeHtml(serializeDisplayValue(entry.previousValue))} → ${escapeHtml(serializeDisplayValue(entry.nextValue))}</small>
-              ${
-                entry.blastRadius.length
-                  ? `<small class="diff-blast">影响：${entry.blastRadius.map((label) => `<span>${escapeHtml(label)}</span>`).join(" / ")}</small>`
-                  : ""
-              }
-            </article>
-          `
-        )
-        .join("")}
-    </div>
-  `;
+  return renderConfigCenterSnapshotDiffPanel({
+    selectedSnapshotId: state.selectedSnapshotId,
+    snapshotDiff: state.snapshotDiff
+  });
 }
 
 function renderPublishHistoryList(): string {
-  const entries = state.publishAuditHistory.filter((entry) => {
-    const matchesDocument =
-      state.publishAuditFilterId === "all" ||
-      entry.changes.some((change) => change.documentId === state.publishAuditFilterId);
-    const matchesResult =
-      state.publishAuditFilterStatus === "all" || entry.resultStatus === state.publishAuditFilterStatus;
-    return matchesDocument && matchesResult;
+  return renderConfigCenterPublishHistoryList({
+    publishAuditHistory: state.publishAuditHistory,
+    publishAuditFilterId: state.publishAuditFilterId,
+    publishAuditFilterStatus: state.publishAuditFilterStatus,
+    historyLoading: state.historyLoading
   });
-  if (state.historyLoading && entries.length === 0 && state.publishAuditHistory.length === 0) {
-    return `<div class="world-preview-empty">正在加载发布记录...</div>`;
-  }
-
-  if (entries.length === 0) {
-    return `
-      <section class="history-section">
-        <div class="config-preview-subhead">
-          <h4>发布审计历史</h4>
-          <span class="config-meta">0 条匹配记录</span>
-        </div>
-        <div class="history-filters">
-          <label>
-            <span>配置类型</span>
-            <select data-role="publish-filter-doc">
-              <option value="all">全部</option>
-              <option value="world" ${state.publishAuditFilterId === "world" ? "selected" : ""}>世界配置</option>
-              <option value="mapObjects" ${state.publishAuditFilterId === "mapObjects" ? "selected" : ""}>地图物件</option>
-              <option value="units" ${state.publishAuditFilterId === "units" ? "selected" : ""}>兵种配置</option>
-              <option value="battleSkills" ${state.publishAuditFilterId === "battleSkills" ? "selected" : ""}>技能配置</option>
-              <option value="battleBalance" ${state.publishAuditFilterId === "battleBalance" ? "selected" : ""}>战斗平衡</option>
-            </select>
-          </label>
-          <label>
-            <span>结果状态</span>
-            <select data-role="publish-filter-status">
-              <option value="all">全部</option>
-              <option value="applied" ${state.publishAuditFilterStatus === "applied" ? "selected" : ""}>已应用</option>
-              <option value="failed" ${state.publishAuditFilterStatus === "failed" ? "selected" : ""}>失败</option>
-            </select>
-          </label>
-        </div>
-        <div class="world-preview-empty">暂无匹配的发布记录，先使用“发布草稿”功能再回来查看。</div>
-      </section>
-    `;
-  }
-
-  return `
-    <section class="history-section publish-history">
-      <div class="config-preview-subhead">
-        <h4>发布审计历史</h4>
-        <span class="config-meta">${entries.length} 条记录</span>
-      </div>
-      <div class="history-filters">
-        <label>
-          <span>配置类型</span>
-          <select data-role="publish-filter-doc">
-            <option value="all">全部</option>
-            <option value="world" ${state.publishAuditFilterId === "world" ? "selected" : ""}>世界配置</option>
-            <option value="mapObjects" ${state.publishAuditFilterId === "mapObjects" ? "selected" : ""}>地图物件</option>
-            <option value="units" ${state.publishAuditFilterId === "units" ? "selected" : ""}>兵种配置</option>
-            <option value="battleSkills" ${state.publishAuditFilterId === "battleSkills" ? "selected" : ""}>技能配置</option>
-            <option value="battleBalance" ${state.publishAuditFilterId === "battleBalance" ? "selected" : ""}>战斗平衡</option>
-          </select>
-        </label>
-        <label>
-          <span>结果状态</span>
-          <select data-role="publish-filter-status">
-            <option value="all">全部</option>
-            <option value="applied" ${state.publishAuditFilterStatus === "applied" ? "selected" : ""}>已应用</option>
-            <option value="failed" ${state.publishAuditFilterStatus === "failed" ? "selected" : ""}>失败</option>
-          </select>
-        </label>
-      </div>
-      <div class="publish-history-list">
-        ${entries
-          .slice(0, 10)
-          .map(
-            (entry) => `
-              <article class="publish-history-card">
-                <div class="publish-history-head">
-                  <div>
-                    <strong>${escapeHtml(entry.summary)}</strong>
-                    <span>${escapeHtml(entry.author)} · ${formatTime(entry.publishedAt)}</span>
-                  </div>
-                  <span class="publish-result-pill is-${entry.resultStatus}">${entry.resultStatus === "applied" ? "已应用" : "失败"}</span>
-                </div>
-                <small>${escapeHtml(entry.resultMessage)}</small>
-                <div class="config-badge-row">
-                  ${entry.changes.map((change) => `<span class="config-badge">${escapeHtml(change.title)} · v${change.fromVersion}→v${change.toVersion}</span>`).join("")}
-                </div>
-                <div class="publish-change-list">
-                  ${entry.changes
-                    .map(
-                      (change) => `
-                        <section class="publish-change-card">
-                          <div class="publish-change-head">
-                            <strong>${escapeHtml(change.title)}</strong>
-                            <span>${change.changeCount} 项变更${change.structuralChangeCount ? ` · ${change.structuralChangeCount} 项结构风险` : ""}</span>
-                          </div>
-                          <small>${escapeHtml(change.runtimeMessage)}</small>
-                          ${
-                            change.impactSummary
-                              ? `
-                                <div class="impact-summary-grid is-compact">
-                                  <article class="impact-summary-card">
-                                    <strong>${impactRiskLabel(change.impactSummary.riskLevel)}</strong>
-                                    <span>${escapeHtml(change.impactSummary.summary)}</span>
-                                  </article>
-                                  <article class="impact-summary-card">
-                                    <strong>影响模块</strong>
-                                    <span>${escapeHtml(change.impactSummary.impactedModules.join(" / "))}</span>
-                                  </article>
-                                  <article class="impact-summary-card">
-                                    <strong>风险提示</strong>
-                                    <span>${escapeHtml(change.impactSummary.riskHints.join(" / ") || "无")}</span>
-                                  </article>
-                                </div>
-                              `
-                              : ""
-                          }
-                          <div class="publish-diff-summary">
-                            ${
-                              change.diffSummary.length > 0
-                                ? change.diffSummary
-                                    .map(
-                                      (diff) => `
-                                        <span class="publish-diff-chip">
-                                          ${escapeHtml(diff.path)} · ${escapeHtml(diffKindLabel(diff.kind))}
-                                        </span>
-                                      `
-                                    )
-                                    .join("")
-                                : `<span class="publish-diff-chip">无字段差异</span>`
-                            }
-                          </div>
-                          <div class="history-actions">
-                            <button class="config-button is-secondary config-button-compact" data-action="inspect-publish-change" data-doc-id="${change.documentId}" data-snapshot-id="${change.snapshotId ?? ""}" ${change.snapshotId ? "" : "disabled"}>查看快照</button>
-                            <button class="config-button is-secondary config-button-compact" data-action="rollback-publish-change" data-doc-id="${change.documentId}" data-snapshot-id="${change.snapshotId ?? ""}" ${change.snapshotId ? "" : "disabled"}>快速回滚</button>
-                          </div>
-                        </section>
-                      `
-                    )
-                    .join("")}
-                </div>
-              </article>
-            `
-          )
-          .join("")}
-      </div>
-    </section>
-  `;
 }
 
 function renderExportSection(): string {
@@ -2104,6 +2224,13 @@ function bindEvents(): void {
 }
 
 function render(): void {
+  const saveDisabled = isConfigCenterSaveDisabled({
+    currentDocumentId: state.current?.id ?? null,
+    loading: state.loading,
+    saving: state.saving,
+    validationLoading: state.validationLoading,
+    validation: state.validation
+  });
   const statusClass =
     state.statusTone === "error"
       ? "config-status tone-error"
@@ -2143,7 +2270,7 @@ function render(): void {
             <div class="config-actions">
               <button class="config-button is-secondary" data-action="reload" ${state.current ? "" : "disabled"}>重新加载</button>
               <button class="config-button is-secondary" data-action="restore" ${state.current ? "" : "disabled"}>放弃修改</button>
-              <button class="config-button" data-action="save" ${state.current && !state.loading && !state.saving && !state.validationLoading && (state.validation?.valid ?? true) ? "" : "disabled"}>${state.saving ? "保存中..." : "保存配置"}</button>
+              <button class="config-button" data-action="save" ${saveDisabled ? "disabled" : ""}>${state.saving ? "保存中..." : "保存配置"}</button>
             </div>
           </div>
           <div class="${statusClass}" data-role="status">${state.loading ? "正在加载..." : state.statusMessage}</div>
@@ -2171,7 +2298,8 @@ function render(): void {
   bindEvents();
 }
 
-async function bootstrap(): Promise<void> {
+export async function bootstrapConfigCenterApp(): Promise<void> {
+  initializeConfigCenterRuntime();
   render();
   try {
     await loadList();
@@ -2197,5 +2325,3 @@ async function bootstrap(): Promise<void> {
     render();
   }
 }
-
-void bootstrap();
