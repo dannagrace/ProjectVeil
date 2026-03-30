@@ -498,6 +498,8 @@ export function renderBattleReportReplayCenter(input: {
   status?: string;
 }): string {
   const replayCount = input.account.recentBattleReplays.length;
+  const latestReplay = input.account.recentBattleReplays[0] ?? null;
+  const focusReplayId = input.selectedReplayId?.trim() || latestReplay?.id || null;
   const headline =
     replayCount > 0
       ? `最近累计 ${replayCount} 场战斗，支持从列表进入详情或基础回放。`
@@ -511,6 +513,19 @@ export function renderBattleReportReplayCenter(input: {
       </div>
       <span class="account-badge">${replayCount > 0 ? `战报 ${replayCount}` : "暂无战报"}</span>
     </div>
+    <div class="account-replay-entry-points">
+      <button
+        type="button"
+        class="account-replay-entry-point is-primary"
+        ${latestReplay ? `data-select-replay="${escapeHtml(latestReplay.id)}"` : "disabled"}
+      >${latestReplay ? "查看最新战报" : "等待首场战报"}</button>
+      <button
+        type="button"
+        class="account-replay-entry-point"
+        ${focusReplayId ? `data-select-replay="${escapeHtml(focusReplayId)}"` : "disabled"}
+      >${focusReplayId ? "进入回放中心" : "回放中心待解锁"}</button>
+    </div>
+    <p class="account-meta">可直接打开最新结算，或进入逐步回放。</p>
     ${renderRecentBattleReplays(input.account, {
       ...(input.selectedReplayId !== undefined ? { selectedReplayId: input.selectedReplayId } : {})
     })}

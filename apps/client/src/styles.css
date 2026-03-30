@@ -506,6 +506,37 @@ h1 {
   gap: 10px;
 }
 
+.account-replay-entry-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.account-replay-entry-point {
+  border: 1px solid rgba(78, 58, 42, 0.12);
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.account-replay-entry-point:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 16px rgba(84, 57, 35, 0.08);
+}
+
+.account-replay-entry-point.is-primary {
+  border-color: rgba(74, 120, 178, 0.22);
+  background: rgba(74, 120, 178, 0.1);
+}
+
+.account-replay-entry-point:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .account-achievement-list,
 .account-event-list,
 .account-replay-list {
