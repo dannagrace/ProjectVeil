@@ -6,6 +6,8 @@ import {
 import type { SessionUpdate } from "../../assets/scripts/VeilCocosSession.ts";
 
 export function createVeilRootHarness(): VeilRoot & Record<string, unknown> {
+  // This harness keeps VeilRoot's startup/reconnect logic intact while stubbing
+  // only engine-facing rendering and platform adapters that are irrelevant to CI.
   const root = new VeilRoot() as VeilRoot & Record<string, unknown>;
   root.renderView = () => undefined;
   root.syncBrowserRoomQuery = () => undefined;

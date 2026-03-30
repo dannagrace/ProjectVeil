@@ -3082,6 +3082,8 @@ export class VeilRoot extends Component {
 }
 
 export function setVeilRootRuntimeForTests(runtime: Partial<VeilRootRuntime>): void {
+  // Tests only replace transport/persistence edges here so the VeilRoot boot,
+  // reconnect, and handoff orchestration still runs through the production code.
   testVeilRootRuntimeOverrides = {
     ...testVeilRootRuntimeOverrides,
     ...runtime

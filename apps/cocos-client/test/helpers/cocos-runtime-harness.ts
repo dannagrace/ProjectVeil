@@ -82,6 +82,8 @@ export function createVeilCocosSessionRuntimeHarness(options?: {
   reconnectRooms?: FakeColyseusRoom[];
   wait?: (() => Promise<void>) | null;
 }) {
+  // Uses the real VeilCocosSession runtime with fake storage/Colyseus rooms so
+  // lifecycle tests exercise snapshot persistence and reconnect handoff logic.
   const storage = options?.storage ?? createMemoryStorage();
   const reconnectTokens: string[] = [];
   const endpoints: string[] = [];
@@ -126,6 +128,9 @@ export function createVeilRootSessionLifecycleHarness(options?: {
     source: "remote" | "local";
   } | null;
 }) {
+  // This is the closest CI harness to a Cocos client launch: VeilRoot uses the
+  // real VeilCocosSession orchestration, while only storage/network boundaries
+  // are faked to avoid needing a live editor/runtime session.
   const storage = options?.storage ?? createMemoryStorage();
   const reconnectTokens: string[] = [];
   const endpoints: string[] = [];

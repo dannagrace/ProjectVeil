@@ -1520,6 +1520,8 @@ export function setVeilCocosSessionRuntimeForTests(runtime: {
   loadSdk?: (() => Promise<ColyseusSdkRuntime>) | null;
   wait?: ((ms: number) => Promise<void>) | null;
 }): void {
+  // Keep the session state machine real in tests; only storage, SDK loading,
+  // and retry timing are swapped so reconnect orchestration stays exercised.
   if ("storage" in runtime) {
     testStorageOverride = runtime.storage;
   }
