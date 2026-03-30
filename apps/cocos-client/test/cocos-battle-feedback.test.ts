@@ -182,6 +182,23 @@ test("battle feedback summarizes action, progress, and outcome", () => {
   const progressFeedback = buildBattleProgressFeedback(battle, nextBattle);
   assert.equal(progressFeedback?.badge, "K.O.");
   assert.equal(progressFeedback?.tone, "hit");
+  assert.match(progressFeedback?.title ?? "", /Orc 已被击倒/);
+
+  const skillImpactBattle: BattleState = {
+    ...battle,
+    units: {
+      ...battle.units,
+      "neutral-1-stack": {
+        ...battle.units["neutral-1-stack"]!,
+        count: 6,
+        currentHp: 4
+      }
+    },
+    log: battle.log.concat("Guard 施放 投矛射击，Orc 受到 5 点伤害")
+  };
+  const skillImpactFeedback = buildBattleProgressFeedback(battle, skillImpactBattle);
+  assert.equal(skillImpactFeedback?.badge, "SKILL");
+  assert.match(skillImpactFeedback?.title ?? "", /投矛射击 命中，Orc 受到打击/);
 
   const victoryFeedback = buildBattleTransitionFeedback(createResolvedUpdate("attacker_victory"), "hero-1");
   assert.equal(victoryFeedback?.tone, "victory");

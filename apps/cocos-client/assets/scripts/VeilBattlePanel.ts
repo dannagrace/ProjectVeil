@@ -153,18 +153,19 @@ export class VeilBattlePanel extends Component {
 
     if (model.idle) {
       this.hideStageBanner();
-      this.syncIdleBadge(false, 0, "");
-      this.hideSection(this.feedbackLabel);
+      cursorY = this.renderBattleFeedback(model.feedback, cursorY - 4);
       cursorY = this.renderCardTextBlock(
         this.summaryLabel,
         "IdleSummary",
-        ["当前没有战斗。", "继续探索即可触发遭遇。"],
+        model.summaryLines.length > 0 ? model.summaryLines : ["当前没有战斗。", "继续探索即可触发遭遇。"],
         cursorY - 4,
         12,
         16,
         0,
         IDLE_SUMMARY_FILL
       );
+      const idleBadge = model.feedback?.badge ?? (model.summaryLines[0] === "当前没有战斗。" ? "" : "IDLE");
+      this.syncIdleBadge(!model.feedback && Boolean(idleBadge), this.summaryLabel?.node.position.y ?? 0, idleBadge);
       this.hideSection(this.idleHintLabel);
       this.hideSection(this.orderLabel);
       this.hideSection(this.friendlyLabel);

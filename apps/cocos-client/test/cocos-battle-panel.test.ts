@@ -89,6 +89,52 @@ test("VeilBattlePanel renders an idle placeholder when no battle payload is pres
   component.onDestroy();
 });
 
+test("VeilBattlePanel preserves settlement feedback after battle resolution", () => {
+  const { component, node } = createComponentHarness(VeilBattlePanel, { name: "BattlePanelRoot", width: 272, height: 420 });
+
+  component.configure({});
+  component.render(
+    createBattlePanelState({
+      update: { ...createBattleUpdate(), battle: null },
+      feedback: {
+        title: "战斗胜利",
+        detail: "战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+        badge: "WIN",
+        tone: "victory"
+      },
+      presentationState: {
+        battleId: "battle-1",
+        phase: "resolution",
+        moment: "result_victory",
+        label: "战斗胜利",
+        detail: "战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+        badge: "WIN",
+        tone: "victory",
+        result: "victory",
+        summaryLines: [
+          "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
+          "播报：战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+          "战利品：金币 +12"
+        ],
+        feedbackLayer: {
+          animation: "victory",
+          cue: "victory",
+          transition: "exit",
+          durationMs: 4200
+        }
+      }
+    })
+  );
+
+  const statefulComponent = component as VeilBattlePanel & Record<string, unknown>;
+
+  assert.equal((statefulComponent.titleLabel as { string: string } | null)?.string, "战斗结算");
+  assert.match(String((statefulComponent.feedbackLabel as { string: string } | null)?.string ?? ""), /战斗胜利/);
+  assert.match(String((statefulComponent.summaryLabel as { string: string } | null)?.string ?? ""), /反馈层：动画 胜利/);
+  assert.match(String((statefulComponent.summaryLabel as { string: string } | null)?.string ?? ""), /战利品：金币 \+12/);
+  component.onDestroy();
+});
+
 test("VeilBattlePanel rerenders from an active turn into a pending-resolution state", () => {
   const { component } = createComponentHarness(VeilBattlePanel, { name: "BattlePanelRoot", width: 272, height: 520 });
 
