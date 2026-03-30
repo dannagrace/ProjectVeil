@@ -27,6 +27,7 @@
     "validate:quickstart": "node ./scripts/validate-local-dev-quickstart.mjs",
     "validate:e2e:fixtures": "node --import tsx ./scripts/validate-e2e-config-fixtures.ts",
     "validate:content-pack": "node --import tsx ./scripts/validate-content-pack.ts",
+    "validate:content-pack:all": "node --import tsx ./scripts/validate-content-pack.ts --map-pack frontier-basin --map-pack phase2",
     "stress:rooms": "node --import tsx ./scripts/stress-concurrent-rooms.ts",
     "stress:rooms:baseline": "node --import tsx ./scripts/stress-concurrent-rooms.ts --rooms=48 --connect-concurrency=12 --action-concurrency=12 --sample-interval-ms=100 --reconnect-pause-ms=150 --artifact-path=artifacts/release-readiness/stress-rooms-runtime-metrics.json",
     "stress:rooms:reconnect-soak": "node --import tsx ./scripts/stress-concurrent-rooms.ts --scenarios=reconnect_soak --rooms=48 --connect-concurrency=12 --action-concurrency=12 --sample-interval-ms=100 --reconnect-pause-ms=150 --reconnect-cycles=8",
