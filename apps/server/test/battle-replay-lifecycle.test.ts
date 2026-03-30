@@ -3,6 +3,7 @@ import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
+import { issueGuestAuthSession } from "../src/auth";
 import {
   VeilColyseusRoom,
   configureRoomSnapshotStore,
@@ -200,6 +201,8 @@ test("authoritative room captures and drains a completed neutral battle replay",
     destination: { x: 5, y: 4 }
   });
 
+  assert.deepEqual(room.consumeCompletedBattleReplays(), []);
+
   let playerSteps = 0;
   while (playerSteps < 20) {
     const battle = room.getBattleForPlayer("player-1");
@@ -222,6 +225,10 @@ test("authoritative room captures and drains a completed neutral battle replay",
       defenderId: target.id
     });
     playerSteps += 1;
+
+    if (room.getBattleForPlayer("player-1")) {
+      assert.deepEqual(room.consumeCompletedBattleReplays(), []);
+    }
   }
 
   const completed = room.consumeCompletedBattleReplays();
@@ -290,6 +297,10 @@ test("battle replay playback route hands off a persisted live-room replay", asyn
   const client = createFakeClient("session-replay-route");
   const port = 43100 + Math.floor(Math.random() * 1000);
   const server = await startReplayRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-1",
+    displayName: "Replay Route Tester"
+  });
 
   t.after(async () => {
     cleanupRoom(room);
@@ -314,7 +325,12 @@ test("battle replay playback route hands off a persisted live-room replay", asyn
   assert.ok(replay, "expected a persisted replay before route handoff");
 
   const detailResponse = await fetch(
-    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/${replay.id}`
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/${replay.id}`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
   );
   const detailPayload = (await detailResponse.json()) as { replay: PlayerBattleReplaySummary };
   assert.equal(detailResponse.status, 200);
@@ -322,7 +338,12 @@ test("battle replay playback route hands off a persisted live-room replay", asyn
   assert.equal(detailPayload.replay.roomId, logicalRoomId);
 
   const playbackResponse = await fetch(
-    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/${replay.id}/playback?action=tick&repeat=999`
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/${replay.id}/playback?action=tick&repeat=999`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
   );
   const playbackPayload = (await playbackResponse.json()) as { playback: BattleReplayPlaybackState };
 
@@ -336,4 +357,52 @@ test("battle replay playback route hands off a persisted live-room replay", asyn
     playerSteps
   );
   assert.ok(playbackPayload.playback.replay.steps.some((step) => step.source === "automated"));
+
+  const rewindResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/${replay.id}/playback` +
+      `?currentStepIndex=${replay.steps.length}&action=step-back`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const rewindPayload = (await rewindResponse.json()) as { playback: BattleReplayPlaybackState };
+  assert.equal(rewindResponse.status, 200);
+  assert.equal(rewindPayload.playback.currentStepIndex, replay.steps.length - 1);
+  assert.equal(rewindPayload.playback.status, "paused");
+  assert.equal(rewindPayload.playback.currentStep?.index, replay.steps.length - 1);
+  assert.equal(rewindPayload.playback.nextStep?.index, replay.steps.length);
+
+  const restoreResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/${replay.id}/playback` +
+      `?currentStepIndex=1&status=playing`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const restorePayload = (await restoreResponse.json()) as { playback: BattleReplayPlaybackState };
+  assert.equal(restoreResponse.status, 200);
+  assert.equal(restorePayload.playback.currentStepIndex, 1);
+  assert.equal(restorePayload.playback.status, "playing");
+  assert.equal(restorePayload.playback.currentStep?.index, 1);
+  assert.equal(restorePayload.playback.nextStep?.index, 2);
+
+  const resetResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/${replay.id}/playback` +
+      `?currentStepIndex=1&status=playing&action=reset`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const resetPayload = (await resetResponse.json()) as { playback: BattleReplayPlaybackState };
+  assert.equal(resetResponse.status, 200);
+  assert.equal(resetPayload.playback.currentStepIndex, 0);
+  assert.equal(resetPayload.playback.status, "paused");
+  assert.equal(resetPayload.playback.currentStep, null);
+  assert.equal(resetPayload.playback.nextStep?.index, 1);
 });
