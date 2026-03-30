@@ -220,6 +220,8 @@ jobs:
   h5-connectivity-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      NPM_CONFIG_LOGS_DIR: ${{ runner.temp }}/npm-logs
 
     steps:
       - name: Checkout
@@ -230,6 +232,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      - name: Pin npm runtime
+        run: npm install --global npm@10.9.3
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
@@ -248,6 +253,15 @@ jobs:
           path: |
             playwright-report
             test-results
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload H5 connectivity npm logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h5-connectivity-npm-logs-${{ github.sha }}
+          path: ${{ runner.temp }}/npm-logs
           if-no-files-found: ignore
           retention-days: 14
 
