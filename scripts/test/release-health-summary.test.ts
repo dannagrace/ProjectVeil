@@ -100,7 +100,11 @@ test("buildReleaseHealthSummaryReport aggregates passing artifacts into a health
   assert.equal(report.summary.infoCount, 5);
   assert.deepEqual(report.summary.blockingSignalIds, []);
   assert.deepEqual(report.summary.warningSignalIds, []);
+  assert.deepEqual(report.triage.blockers, []);
+  assert.deepEqual(report.triage.warnings, []);
   assert.match(renderMarkdown(report), /Overall status: \*\*HEALTHY\*\*/);
+  assert.match(renderMarkdown(report), /## Triage/);
+  assert.match(renderMarkdown(report), /### Blockers \(0\)/);
   assert.match(renderMarkdown(report), /Coverage thresholds passed in 1 scope\(s\)\./);
 });
 
@@ -170,8 +174,20 @@ test("buildReleaseHealthSummaryReport classifies blockers and warnings from mixe
   assert.equal(report.summary.warningCount > 0, true);
   assert.deepEqual(report.summary.blockingSignalIds, ["release-readiness", "release-gate", "sync-governance"]);
   assert.deepEqual(report.summary.warningSignalIds, ["ci-trend", "coverage"]);
+  assert.deepEqual(report.triage.blockers.map((entry) => entry.signalId), [
+    "release-readiness",
+    "release-gate",
+    "sync-governance"
+  ]);
+  assert.deepEqual(report.triage.warnings.map((entry) => entry.signalId), ["ci-trend", "coverage"]);
+  assert.match(report.triage.blockers[0]?.nextStep ?? "", /release-readiness/);
+  assert.match(report.triage.blockers[1]?.nextStep ?? "", /validate:wechat-rc/);
+  assert.match(report.triage.warnings[1]?.summary ?? "", /server lines coverage/);
   assert.match(renderMarkdown(report), /## Blocker Findings/);
   assert.match(renderMarkdown(report), /## Warning Findings/);
+  assert.match(renderMarkdown(report), /### Blockers \(3\)/);
+  assert.match(renderMarkdown(report), /Next step: Open `.*release-readiness-fail\.json` and clear the unresolved required checks/);
+  assert.match(renderMarkdown(report), /Next step: Open `.*release-gate-summary\.json`, rerun `npm run validate:wechat-rc`/);
   assert.match(renderMarkdown(report), /Upload receipt mismatch\./);
   assert.match(renderMarkdown(report), /Coverage thresholds failed in 1 scope\(s\)\./);
 });
@@ -244,6 +260,8 @@ test("buildReleaseHealthSummaryReport uses fallback details for sparse degraded 
   assert.equal(report.summary.status, "blocking");
   assert.deepEqual(report.summary.blockingSignalIds, ["release-readiness", "release-gate", "sync-governance"]);
   assert.deepEqual(report.summary.warningSignalIds, ["ci-trend", "coverage"]);
+  assert.equal(report.triage.blockers.length, 3);
+  assert.equal(report.triage.warnings.length, 2);
   assert.deepEqual(
     report.findings.filter((finding) => finding.severity === "blocker").map((finding) => finding.summary),
     [
@@ -259,6 +277,10 @@ test("buildReleaseHealthSummaryReport uses fallback details for sparse degraded 
       "client functions coverage output is missing (floor 85%)."
     ]
   );
+  assert.match(report.triage.blockers[0]?.summary ?? "", /summary status is "pending"/);
+  assert.match(report.triage.blockers[2]?.summary ?? "", /execution status is "failed"/);
+  assert.match(report.triage.warnings[0]?.nextStep ?? "", /compare the new or ongoing regressions/);
+  assert.match(report.triage.warnings[1]?.nextStep ?? "", /test:coverage:ci/);
   assert.match(renderMarkdown(report), /Snapshot summary status is "pending"\./);
   assert.match(renderMarkdown(report), /Release gate overall status is "failed"\./);
   assert.match(renderMarkdown(report), /Sync governance execution status is "failed"\./);
@@ -353,6 +375,8 @@ test("buildReleaseHealthSummaryReport aggregates degraded warning signals withou
   assert.equal(report.summary.warningCount, 4);
   assert.deepEqual(report.summary.blockingSignalIds, []);
   assert.deepEqual(report.summary.warningSignalIds, ["ci-trend", "coverage"]);
+  assert.deepEqual(report.triage.blockers, []);
+  assert.deepEqual(report.triage.warnings.map((entry) => entry.signalId), ["ci-trend", "coverage"]);
   assert.deepEqual(
     report.findings.filter((finding) => finding.signalId === "ci-trend").map((finding) => finding.summary),
     ["Runtime latency regressed by 18%.", "WeChat gate duration remains elevated."]

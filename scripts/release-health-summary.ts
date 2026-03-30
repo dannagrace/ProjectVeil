@@ -42,6 +42,7 @@ interface ReleaseReadinessSnapshot {
     title?: string;
     status?: "passed" | "failed" | "pending" | "not_applicable";
     required?: boolean;
+    command?: string;
   }>;
 }
 
@@ -58,6 +59,7 @@ interface ReleaseGateSummaryReport {
     summary?: string;
     failures?: string[];
     source?: {
+      kind?: "release-readiness-snapshot" | "h5-release-candidate-smoke" | "wechat-rc-validation" | "wechat-smoke-report";
       path?: string;
     };
   }>;
@@ -125,12 +127,29 @@ interface ReleaseHealthSource {
   generatedAt?: string;
 }
 
+export interface ReleaseHealthArtifactReference {
+  label: string;
+  path: string;
+  generatedAt?: string;
+}
+
 export interface ReleaseHealthFinding {
   id: string;
   signalId: ReleaseHealthSignalId;
   severity: FindingSeverity;
   summary: string;
   source?: ReleaseHealthSource;
+}
+
+export interface ReleaseHealthTriageEntry {
+  id: string;
+  signalId: ReleaseHealthSignalId;
+  severity: Exclude<FindingSeverity, "info">;
+  title: string;
+  summary: string;
+  nextStep: string;
+  details: string[];
+  artifacts: ReleaseHealthArtifactReference[];
 }
 
 export interface ReleaseHealthSignal {
@@ -161,6 +180,10 @@ export interface ReleaseHealthSummaryReport {
     ciTrendSummaryPath?: string;
     coverageSummaryPath?: string;
     syncGovernancePath?: string;
+  };
+  triage: {
+    blockers: ReleaseHealthTriageEntry[];
+    warnings: ReleaseHealthTriageEntry[];
   };
   signals: ReleaseHealthSignal[];
   findings: ReleaseHealthFinding[];
@@ -343,6 +366,23 @@ function createSource(pathValue: string | undefined, generatedAt?: string): Rele
   };
 }
 
+function toDisplayPath(filePath: string): string {
+  return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
+}
+
+function createArtifactReference(label: string, filePath: string | undefined, generatedAt?: string): ReleaseHealthArtifactReference[] {
+  if (!filePath) {
+    return [];
+  }
+  return [
+    {
+      label,
+      path: filePath,
+      ...(generatedAt ? { generatedAt } : {})
+    }
+  ];
+}
+
 function buildSignal(
   id: ReleaseHealthSignalId,
   label: string,
@@ -358,6 +398,28 @@ function buildSignal(
     summary,
     details,
     ...(source ? { source } : {})
+  };
+}
+
+function buildTriageEntry(
+  id: string,
+  signalId: ReleaseHealthSignalId,
+  severity: Exclude<FindingSeverity, "info">,
+  title: string,
+  summary: string,
+  nextStep: string,
+  details: string[],
+  artifacts: ReleaseHealthArtifactReference[]
+): ReleaseHealthTriageEntry {
+  return {
+    id,
+    signalId,
+    severity,
+    title,
+    summary,
+    nextStep,
+    details,
+    artifacts
   };
 }
 
@@ -648,6 +710,248 @@ function evaluateSyncGovernanceSignal(filePath: string | undefined): { signal: R
   };
 }
 
+function buildReleaseReadinessTriage(filePath: string | undefined): ReleaseHealthTriageEntry[] {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return [
+      buildTriageEntry(
+        "release-readiness:missing",
+        "release-readiness",
+        "blocker",
+        "Release readiness snapshot",
+        "Release readiness snapshot is missing, so the branch gate state is unknown.",
+        "Run `npm run release:readiness:snapshot` to rebuild the snapshot, then inspect the required checks it records.",
+        [],
+        []
+      )
+    ];
+  }
+
+  const report = readJsonFile<ReleaseReadinessSnapshot>(filePath);
+  const requiredChecks = (report.checks ?? []).filter((check) => check.required !== false);
+  const unresolvedCheck = requiredChecks.find((check) => check.status === "failed" || check.status === "pending");
+  if (!unresolvedCheck && report.summary?.status === "passed") {
+    return [];
+  }
+
+  const summary = unresolvedCheck
+    ? `Required release-readiness check is ${unresolvedCheck.status}: ${unresolvedCheck.title ?? unresolvedCheck.id ?? "unknown-check"} (${unresolvedCheck.id ?? "unknown-check"}).`
+    : `Release readiness summary status is ${JSON.stringify(report.summary?.status ?? "missing")}.`;
+  const nextStep = unresolvedCheck?.command
+    ? `Re-run \`${unresolvedCheck.command}\`, then inspect \`${toDisplayPath(filePath)}\` for the recorded stdout/stderr tail and updated check status.`
+    : `Open \`${toDisplayPath(filePath)}\` and clear the unresolved required checks before rebuilding the release gate summary.`;
+
+  return [
+    buildTriageEntry(
+      "release-readiness:triage",
+      "release-readiness",
+      "blocker",
+      "Release readiness snapshot",
+      summary,
+      nextStep,
+      unresolvedCheck ? [`Check id: ${unresolvedCheck.id ?? "unknown-check"}.`] : [],
+      createArtifactReference("Release readiness snapshot", filePath, report.generatedAt)
+    )
+  ];
+}
+
+function buildReleaseGateNextStep(gate: NonNullable<ReleaseGateSummaryReport["gates"]>[number], fallbackPath: string): string {
+  const sourcePath = gate.source?.path ?? fallbackPath;
+  if (gate.id === "release-readiness") {
+    return `Open \`${toDisplayPath(sourcePath)}\` and clear the failing or pending readiness checks, then rerun \`npm run release:gate:summary\`.`;
+  }
+  if (gate.id === "h5-release-candidate-smoke") {
+    return `Open \`${toDisplayPath(sourcePath)}\`, rerun \`npm run smoke:client:release-candidate\` to reproduce the packaged H5 failure, then rerun \`npm run release:gate:summary\`.`;
+  }
+  if (gate.id === "wechat-release") {
+    const command =
+      gate.source?.kind === "wechat-smoke-report"
+        ? "npm run smoke:wechat-release -- --check"
+        : "npm run validate:wechat-rc";
+    return `Open \`${toDisplayPath(sourcePath)}\`, rerun \`${command}\` to refresh the WeChat evidence, then rerun \`npm run release:gate:summary\`.`;
+  }
+  return `Open \`${toDisplayPath(sourcePath)}\` to inspect the failing gate evidence, then rerun \`npm run release:gate:summary\`.`;
+}
+
+function buildReleaseGateTriage(filePath: string | undefined): ReleaseHealthTriageEntry[] {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return [
+      buildTriageEntry(
+        "release-gate:missing",
+        "release-gate",
+        "blocker",
+        "Release gate summary",
+        "Release gate summary is missing, so packaged release evidence was not normalized.",
+        "Run `npm run release:gate:summary` after producing the readiness and release artifacts.",
+        [],
+        []
+      )
+    ];
+  }
+
+  const report = readJsonFile<ReleaseGateSummaryReport>(filePath);
+  const failingGates = (report.gates ?? []).filter((gate) => gate.status === "failed");
+  if (failingGates.length === 0 && report.summary?.status === "passed") {
+    return [];
+  }
+
+  const firstGate = failingGates[0];
+  const summary = firstGate
+    ? `${firstGate.label ?? firstGate.id ?? "Release gate"} failed: ${firstGate.failures?.[0] ?? firstGate.summary ?? "no detail recorded"}.`
+    : `Release gate overall status is ${JSON.stringify(report.summary?.status ?? "missing")}.`;
+
+  return [
+    buildTriageEntry(
+      "release-gate:triage",
+      "release-gate",
+      "blocker",
+      "Release gate summary",
+      summary,
+      firstGate
+        ? buildReleaseGateNextStep(firstGate, filePath)
+        : `Open \`${toDisplayPath(filePath)}\` to inspect the failed gate summary, then rerun \`npm run release:gate:summary\`.`,
+      failingGates.map((gate) => `${gate.id ?? gate.label ?? "unknown-gate"}: ${gate.failures?.[0] ?? gate.summary ?? "failed"}`),
+      [
+        ...createArtifactReference("Release gate summary", filePath, report.generatedAt),
+        ...failingGates.flatMap((gate) =>
+          createArtifactReference(gate.label ?? gate.id ?? "Underlying release artifact", gate.source?.path)
+        )
+      ]
+    )
+  ];
+}
+
+function buildCiTrendTriage(filePath: string | undefined): ReleaseHealthTriageEntry[] {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return [
+      buildTriageEntry(
+        "ci-trend:missing",
+        "ci-trend",
+        "warning",
+        "CI trend summary",
+        "CI trend summary is missing, so recent regressions cannot be compared against the prior baseline.",
+        "Run `npm run ci:trend-summary` when current and previous release artifacts are available.",
+        [],
+        []
+      )
+    ];
+  }
+
+  const report = readJsonFile<CiTrendSummaryReport>(filePath);
+  const activeFindings = [...(report.runtime?.findings ?? []), ...(report.releaseGate?.findings ?? [])].filter(
+    (finding) => finding.status !== "recovered"
+  );
+  if (report.summary?.overallStatus !== "failed" && activeFindings.length === 0) {
+    return [];
+  }
+
+  return [
+    buildTriageEntry(
+      "ci-trend:triage",
+      "ci-trend",
+      "warning",
+      "CI trend summary",
+      activeFindings[0]?.summary?.trim() || `CI trend overall status is ${JSON.stringify(report.summary?.overallStatus ?? "missing")}.`,
+      `Open \`${toDisplayPath(filePath)}\` and compare the new or ongoing regressions against the current runtime and release-gate artifacts before retrying the affected job.`,
+      activeFindings.map((finding) => finding.summary?.trim()).filter((value): value is string => Boolean(value)),
+      createArtifactReference("CI trend summary", filePath, report.generatedAt)
+    )
+  ];
+}
+
+function buildCoverageTriage(filePath: string | undefined): ReleaseHealthTriageEntry[] {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return [
+      buildTriageEntry(
+        "coverage:missing",
+        "coverage",
+        "warning",
+        "Coverage summary",
+        "Coverage summary is missing, so line, branch, and function thresholds were not evaluated.",
+        "Run `npm run test:coverage:ci` to regenerate `.coverage/summary.json`.",
+        [],
+        []
+      )
+    ];
+  }
+
+  const report = readJsonFile<CoverageSummaryEntry[]>(filePath);
+  const failingScopes = report.filter((entry) => entry.failures.length > 0);
+  if (failingScopes.length === 0) {
+    return [];
+  }
+
+  const firstScope = failingScopes[0];
+  const firstFailure = firstScope.failures[0];
+  const actualValue = firstFailure?.actual == null ? "missing" : `${firstFailure.actual}%`;
+
+  return [
+    buildTriageEntry(
+      "coverage:triage",
+      "coverage",
+      "warning",
+      "Coverage summary",
+      `${firstScope.scope} ${firstFailure?.metric ?? "coverage"} coverage is ${actualValue} against a ${firstFailure?.threshold ?? "unknown"}% floor.`,
+      `Open \`${toDisplayPath(filePath)}\` to inspect the failing scope, raise coverage above the threshold, then rerun \`npm run test:coverage:ci\`.`,
+      failingScopes.map((entry) => `${entry.scope}: ${entry.failures.length} threshold failure(s).`),
+      createArtifactReference("Coverage summary", filePath)
+    )
+  ];
+}
+
+function buildSyncGovernanceTriage(filePath: string | undefined): ReleaseHealthTriageEntry[] {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return [
+      buildTriageEntry(
+        "sync-governance:missing",
+        "sync-governance",
+        "warning",
+        "Sync governance matrix",
+        "Sync governance matrix is missing, so deterministic replay coverage was not verified.",
+        "Run `npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json` to rebuild the matrix artifact.",
+        [],
+        []
+      )
+    ];
+  }
+
+  const report = readJsonFile<SyncGovernanceMatrixReport>(filePath);
+  const failedScenarios = (report.scenarios ?? []).filter((scenario) => scenario.status === "failed");
+  if (report.execution?.status === "passed" && failedScenarios.length === 0) {
+    return [];
+  }
+
+  return [
+    buildTriageEntry(
+      "sync-governance:triage",
+      "sync-governance",
+      "blocker",
+      "Sync governance matrix",
+      failedScenarios[0]
+        ? `Sync governance scenario failed: ${failedScenarios[0].title ?? failedScenarios[0].id ?? "unknown-scenario"}.`
+        : `Sync governance execution status is ${JSON.stringify(report.execution?.status ?? "missing")}.`,
+      `Open \`${toDisplayPath(filePath)}\`, reproduce the failing deterministic sync scenario, then rerun \`npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json\`.`,
+      failedScenarios.map((scenario) => scenario.title ?? scenario.id ?? "unknown-scenario"),
+      createArtifactReference("Sync governance matrix", filePath, report.generatedAt)
+    )
+  ];
+}
+
+function buildTriageReport(inputs: ReleaseHealthSummaryReport["inputs"]): ReleaseHealthSummaryReport["triage"] {
+  const syncGovernanceTriage = buildSyncGovernanceTriage(inputs.syncGovernancePath);
+  return {
+    blockers: [
+      ...buildReleaseReadinessTriage(inputs.releaseReadinessPath),
+      ...buildReleaseGateTriage(inputs.releaseGateSummaryPath),
+      ...syncGovernanceTriage.filter((entry) => entry.severity === "blocker")
+    ],
+    warnings: [
+      ...buildCiTrendTriage(inputs.ciTrendSummaryPath),
+      ...buildCoverageTriage(inputs.coverageSummaryPath),
+      ...syncGovernanceTriage.filter((entry) => entry.severity === "warning")
+    ]
+  };
+}
+
 export function buildReleaseHealthSummaryReport(args: Args, revision: GitRevision): ReleaseHealthSummaryReport {
   const inputs = resolveInputPaths(args);
   const signalResults = [
@@ -662,6 +966,7 @@ export function buildReleaseHealthSummaryReport(args: Args, revision: GitRevisio
   const blockerCount = findings.filter((finding) => finding.severity === "blocker").length;
   const warningCount = findings.filter((finding) => finding.severity === "warning").length;
   const infoCount = findings.filter((finding) => finding.severity === "info").length;
+  const triage = buildTriageReport(inputs);
 
   return {
     schemaVersion: 1,
@@ -677,6 +982,7 @@ export function buildReleaseHealthSummaryReport(args: Args, revision: GitRevisio
       warningSignalIds: signals.filter((signal) => signal.status === "warn").map((signal) => signal.id)
     },
     inputs,
+    triage,
     signals,
     findings
   };
@@ -696,6 +1002,37 @@ export function renderMarkdown(report: ReleaseHealthSummaryReport): string {
     `- Findings: ${report.summary.blockerCount} blocker, ${report.summary.warningCount} warning, ${report.summary.infoCount} info`,
     ""
   ];
+
+  lines.push("## Triage");
+  lines.push("");
+  lines.push(`### Blockers (${report.triage.blockers.length})`);
+  lines.push("");
+  if (report.triage.blockers.length === 0) {
+    lines.push("- None.");
+  } else {
+    for (const entry of report.triage.blockers) {
+      lines.push(`- **${entry.title}**: ${entry.summary}`);
+      lines.push(`  Next step: ${entry.nextStep}`);
+      if (entry.artifacts.length > 0) {
+        lines.push(`  Artifacts: ${entry.artifacts.map((artifact) => `\`${toDisplayPath(artifact.path)}\``).join(", ")}`);
+      }
+    }
+  }
+  lines.push("");
+  lines.push(`### Warnings (${report.triage.warnings.length})`);
+  lines.push("");
+  if (report.triage.warnings.length === 0) {
+    lines.push("- None.");
+  } else {
+    for (const entry of report.triage.warnings) {
+      lines.push(`- **${entry.title}**: ${entry.summary}`);
+      lines.push(`  Next step: ${entry.nextStep}`);
+      if (entry.artifacts.length > 0) {
+        lines.push(`  Artifacts: ${entry.artifacts.map((artifact) => `\`${toDisplayPath(artifact.path)}\``).join(", ")}`);
+      }
+    }
+  }
+  lines.push("");
 
   const findingsBySeverity: FindingSeverity[] = ["blocker", "warning", "info"];
   for (const severity of findingsBySeverity) {
@@ -719,7 +1056,7 @@ export function renderMarkdown(report: ReleaseHealthSummaryReport): string {
     lines.push(`- Status: **${signal.status.toUpperCase()}**`);
     lines.push(`- Summary: ${signal.summary}`);
     if (signal.source) {
-      lines.push(`- Source: \`${path.relative(process.cwd(), signal.source.path).replace(/\\/g, "/")}\``);
+      lines.push(`- Source: \`${toDisplayPath(signal.source.path)}\``);
       if (signal.source.generatedAt) {
         lines.push(`- Artifact generated at: \`${signal.source.generatedAt}\``);
       }
