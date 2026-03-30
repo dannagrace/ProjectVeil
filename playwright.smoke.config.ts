@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  testMatch: /lobby-smoke\.spec\.ts/,
+  testMatch: /(lobby-smoke|reconnect-prediction-convergence)\.spec\.ts/,
   timeout: 30_000,
   fullyParallel: false,
   workers: 1,

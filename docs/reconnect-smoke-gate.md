@@ -13,20 +13,22 @@
 
 1. 进入同一个候选包对应的房间，确认 `roomId` 与 `playerId` 已显示。
 2. 在世界态先做一个可见且可回读的状态变化：
-   - 默认基线使用 `tests/e2e/reconnect-recovery.spec.ts` 的路径
+   - 默认基线使用 `tests/e2e/reconnect-prediction-convergence.spec.ts` 的路径
    - 角色从初始位置移动两次
    - 领取一次木材资源
 3. 在状态变化已经落地后，主动触发一次恢复动作：
    - 本地：刷新页面
    - RC：切后台再回前台、断网再恢复、刷新或重进前台容器，三选一即可
-4. 等待恢复完成，确认客户端回到原房间，并继续显示断线前已经发生的状态变化。
+4. 等待恢复完成，确认客户端先回放最近缓存状态，再收敛回原权威房间，并继续显示断线前已经发生的状态变化。
+5. 在恢复完成后再执行一个后续操作，确认房间不是停留在“看起来活着”的假恢复状态。
 
 这条门禁的目标不是证明“重新连上了 socket”而已，而是证明“重新连上后仍回到同一权威房间，且权威世界状态未丢”。
 
 ## Automation Reference
 
-- 本地 canonical smoke：`npm run test:e2e:smoke -- reconnect-recovery`
-- 覆盖用例：`tests/e2e/reconnect-recovery.spec.ts`
+- 本地 canonical smoke：`npm run test:e2e:smoke`
+- 单测例过滤：`npm run test:e2e:smoke -- reconnect-prediction-convergence`
+- 覆盖用例：`tests/e2e/reconnect-prediction-convergence.spec.ts`
 - 辅助多人 / 结算恢复参考：
   - `npm run test:e2e:multiplayer:smoke -- pvp-reconnect-recovery`
   - `npm run test:e2e:multiplayer:smoke -- pvp-postbattle-reconnect`
@@ -54,10 +56,14 @@
 
 1. `session-meta` 仍显示原 `roomId`。
 2. `event-log` 出现“连接已恢复”。
-3. 角色移动力没有重置，仍保留断线前的消耗结果。
+3. 恢复过程中可确认客户端确实回放过本地缓存，再等待权威状态完成校正。
+   - 当前基线值：event log 含 `已从本地缓存回放最近房间状态`
+4. 角色移动力没有重置，仍保留断线前的消耗结果。
    - 当前基线值：`Move 4/6`
-4. 世界状态没有回档。
+5. 世界状态没有回档。
    - 当前基线值：`Wood 5`
+6. 恢复后仍能继续执行一个新动作并得到权威结果。
+   - 当前基线值：再移动 1 步后变成 `Move 3/6`
 
 ### Release-Candidate Run
 

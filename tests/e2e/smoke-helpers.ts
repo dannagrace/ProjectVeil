@@ -112,6 +112,21 @@ export async function reloadAndExpectRecoveredSession(page: Page, options: Recon
   });
 }
 
+export async function reloadAndExpectAuthoritativeConvergence(page: Page, options: ReconnectOptions): Promise<void> {
+  await test.step(`reconnect: converge ${options.playerId} in ${options.roomId}`, async () => {
+    await waitForReconnectionToken(page, options);
+    await page.reload();
+    await expectRoomReady(page, {
+      ...options,
+      expectedMoveText: options.expectedMoveText ?? null
+    });
+    await expect(page.getByTestId("event-log")).toContainText("已从本地缓存回放最近房间状态", { timeout: 10_000 });
+    await expect(page.getByTestId("event-log")).toContainText("连接已恢复", { timeout: 10_000 });
+    await expect(page.getByTestId("room-recovery-summary")).toContainText("权威房间状态已恢复");
+    await expect(page.getByTestId("prediction-status")).toHaveCount(0);
+  });
+}
+
 interface SettlementRecoveryExpectations {
   phase: string;
   recoverySummaryIncludes: string[];
