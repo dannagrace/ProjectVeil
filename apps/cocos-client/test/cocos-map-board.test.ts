@@ -5,12 +5,11 @@ import {
   moveMapBoardKeyboardCursor,
   resolveMapBoardFeedbackLabel
 } from "../assets/scripts/cocos-map-board-model";
-import { VeilMapBoard } from "../assets/scripts/VeilMapBoard";
 import type { SessionUpdate } from "../assets/scripts/VeilCocosSession";
 import {
-  createComponentHarness,
   createWorldUpdate
 } from "./helpers/cocos-panel-harness.ts";
+import { createMapBoardHarness } from "./helpers/cocos-map-board-harness.ts";
 
 function createBaseUpdate(): SessionUpdate {
   return createWorldUpdate();
@@ -108,26 +107,23 @@ test("resolveMapBoardFeedbackLabel maps move, resource, battle-start and battle-
 });
 
 test("VeilMapBoard renders a waiting empty state when no world snapshot is available", () => {
-  const { component } = createComponentHarness(VeilMapBoard, { name: "MapBoardRoot", width: 300, height: 300 });
+  const harness = createMapBoardHarness({ width: 300, height: 300, tileSize: 48 });
 
-  component.configure({ tileSize: 48 });
-  component.render(null);
+  harness.render(null);
 
-  const statefulComponent = component as VeilMapBoard & Record<string, unknown>;
-
-  assert.match(String((statefulComponent.emptyStateLabel as { string: string } | null)?.string ?? ""), /等待房间状态/);
-  assert.equal((statefulComponent.inputOverlayNode as { active: boolean } | null)?.active, undefined);
-  assert.equal((statefulComponent.heroNode as { active: boolean } | null)?.active, false);
-  component.onDestroy();
+  assert.match(harness.emptyStateText(), /等待房间状态/);
+  assert.equal(harness.inputOverlayActive(), undefined);
+  assert.equal(harness.heroActive(), false);
+  harness.destroy();
 });
 
-test("VeilMapBoard renders live tiles and forwards tile presses without double-selecting the same tap burst", () => {
+test("VeilMapBoard translates overlay pointer input into one tile selection per tap burst", () => {
   const selections: string[] = [];
   const debugMessages: string[] = [];
   const update = createBaseUpdate();
-  const { component } = createComponentHarness(VeilMapBoard, { name: "MapBoardRoot", width: 300, height: 300 });
-
-  component.configure({
+  const harness = createMapBoardHarness({
+    width: 300,
+    height: 300,
     tileSize: 48,
     onTileSelected: (tile) => {
       selections.push(`${tile.position.x}-${tile.position.y}`);
@@ -136,25 +132,20 @@ test("VeilMapBoard renders live tiles and forwards tile presses without double-s
       debugMessages.push(message);
     }
   });
-  component.render(null);
-  component.render(update);
 
-  const statefulComponent = component as VeilMapBoard & Record<string, unknown>;
-  const tileNodes = statefulComponent.tileNodes as Map<string, unknown>;
+  harness.render(null);
+  harness.render(update);
 
-  assert.equal((statefulComponent.emptyStateNode as { active: boolean } | null)?.active, false);
-  assert.equal((statefulComponent.heroNode as { active: boolean } | null)?.active, true);
-  assert.ok(tileNodes.has("2-2"));
-  assert.equal((statefulComponent.objectNodes as Map<string, unknown>).size, 0);
+  assert.equal(harness.heroActive(), true);
+  assert.equal(harness.hasTile("2-2"), true);
 
-  const targetTile = update.world.map.tiles.find((entry) => entry.position.x === 2 && entry.position.y === 2) ?? null;
-  assert.ok(targetTile);
-  (statefulComponent.selectTile as (tile: typeof targetTile) => void)(targetTile);
-  (statefulComponent.selectTile as (tile: typeof targetTile) => void)(targetTile);
+  harness.tapTile(update, { x: 2, y: 2 });
+  harness.tapTile(update, { x: 2, y: 2 });
 
   assert.deepEqual(selections, ["2-2"]);
+  assert.match(debugMessages.join("\n"), /tile\(2,2\)/);
   assert.match(debugMessages.join("\n"), /selected tile \(2,2\)/);
-  component.onDestroy();
+  harness.destroy();
 });
 
 test("VeilMapBoard refreshes fog overlays when the pulse phase changes", () => {
@@ -182,31 +173,21 @@ test("VeilMapBoard refreshes fog overlays when the pulse phase changes", () => {
   update.world.ownHeroes[0]!.position = { x: 1, y: 0 };
   update.reachableTiles = [];
 
-  const { component } = createComponentHarness(VeilMapBoard, { name: "MapBoardRoot", width: 220, height: 120 });
-  component.configure({ tileSize: 48 });
-  component.render(update);
+  const harness = createMapBoardHarness({ width: 220, height: 120, tileSize: 48 });
+  harness.render(update);
 
-  const statefulComponent = component as VeilMapBoard & Record<string, unknown>;
-  const tileNodes = statefulComponent.tileNodes as Map<string, { fogOverlay: { render: (style: unknown, enabled?: boolean) => void } }>;
-  const exploredTile = tileNodes.get("0-0");
-  assert.ok(exploredTile, "Expected explored tile view to exist for fog refresh coverage.");
+  const capturedStyles = harness.captureFogStyles("0-0");
+  assert.equal(capturedStyles.length, 0);
 
-  const capturedStyles: Array<Record<string, number | string | null>> = [];
-  const originalRender = exploredTile.fogOverlay.render.bind(exploredTile.fogOverlay);
-  exploredTile.fogOverlay.render = (style, enabled) => {
-    capturedStyles.push((style ?? null) as Record<string, number | string | null>);
-    originalRender(style, enabled);
-  };
-
-  component.setFogPulsePhase(1);
-  component.render(update);
+  harness.component.setFogPulsePhase(1);
+  harness.render(update);
 
   assert.equal(capturedStyles.length, 1);
   assert.equal(capturedStyles[0]?.tone, "explored");
   assert.equal(capturedStyles[0]?.featherMask, 2);
   assert.equal(capturedStyles[0]?.opacity, 78);
   assert.equal(capturedStyles[0]?.edgeOpacity, 24);
-  component.onDestroy();
+  harness.destroy();
 });
 
 test("VeilMapBoard renders object overlays and keeps tap feedback visible for an interactable object tile", () => {
@@ -241,18 +222,18 @@ test("VeilMapBoard renders object overlays and keeps tap feedback visible for an
   update.world.ownHeroes[0]!.position = { x: 2, y: 2 };
   update.reachableTiles = [{ x: 0, y: 1 }];
 
-  const { component } = createComponentHarness(VeilMapBoard, { name: "MapBoardRoot", width: 300, height: 300 });
-  component.scheduleOnce = () => undefined;
-  component.configure({
+  const harness = createMapBoardHarness({
+    width: 300,
+    height: 300,
     tileSize: 48,
     onTileSelected: (tile) => {
       selections.push(`${tile.position.x}-${tile.position.y}`);
     }
   });
-  component.render(update);
+  harness.component.scheduleOnce = () => undefined;
+  harness.render(update);
 
-  const statefulComponent = component as VeilMapBoard & Record<string, unknown>;
-  const objectNode = (statefulComponent.objectNodes as Map<string, { node: { active: boolean }; label: { string: string }; spriteNode: { active: boolean } }>).get("0-1");
+  const objectNode = harness.objectNode("0-1");
   assert.ok(objectNode, "Expected resource overlay node to exist.");
   assert.equal(objectNode.node.active, true);
   assert.ok(
@@ -260,15 +241,13 @@ test("VeilMapBoard renders object overlays and keeps tap feedback visible for an
     "Expected resource overlay to render either a fallback label or a sprite chip."
   );
 
-  const resourceTile = update.world.map.tiles.find((tile) => tile.position.x === 0 && tile.position.y === 1) ?? null;
-  assert.ok(resourceTile);
-  (statefulComponent.selectTile as (tile: typeof resourceTile) => void)(resourceTile);
-  component.render(update);
+  harness.tapTile(update, { x: 0, y: 1 });
+  harness.render(update);
 
-  const feedbackNode = (statefulComponent.feedbackNodes as Map<string, { node: { active: boolean }; label: { string: string } }>).get("0-1");
+  const feedbackNode = harness.feedbackNode("0-1");
   assert.deepEqual(selections, ["0-1"]);
   assert.ok(feedbackNode, "Expected tap feedback node to exist after selecting an object tile.");
   assert.equal(feedbackNode.node.active, true);
   assert.equal(feedbackNode.label.string, "TAP");
-  component.onDestroy();
+  harness.destroy();
 });
