@@ -15,6 +15,7 @@ import type {
   UnitStack,
   ValidationResult
 } from "./models.ts";
+import { validateAction } from "./action-precheck.ts";
 import { nextDeterministicRandom } from "./deterministic-rng.ts";
 import { createHeroEquipmentBonusSummary } from "./equipment.ts";
 import { grantedHeroBattleSkillIds } from "./hero-skills.ts";
@@ -61,6 +62,16 @@ function withNormalizedCollections(unit: UnitStack): UnitStack {
 
 function hazardsOf(state: BattleState): BattleHazardState[] {
   return state.environment ?? [];
+}
+
+function normalizeBattleState(state: BattleState): BattleState {
+  return {
+    ...state,
+    units: Object.fromEntries(
+      Object.entries(state.units).map(([unitId, unit]) => [unitId, withNormalizedCollections(unit)])
+    ),
+    environment: hazardsOf(state).map(cloneHazardState)
+  };
 }
 
 function battleCatalogIndexFor(catalog: BattleSkillCatalogConfig): BattleCatalogIndex {
@@ -1407,14 +1418,12 @@ export function getBattleOutcome(state: BattleState): BattleOutcome {
 }
 
 export function applyBattleAction(state: BattleState, action: BattleAction): BattleState {
-  const normalizedState: BattleState = {
-    ...state,
-    units: Object.fromEntries(
-      Object.entries(state.units).map(([unitId, unit]) => [unitId, withNormalizedCollections(unit)])
-    ),
-    environment: hazardsOf(state).map(cloneHazardState)
-  };
-  const validation = validateBattleAction(normalizedState, action);
+  const { state: normalizedState, validation } = validateAction(
+    state,
+    action,
+    validateBattleAction,
+    normalizeBattleState
+  );
   if (!validation.valid) {
     return {
       ...normalizedState,
