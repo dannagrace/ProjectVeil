@@ -915,9 +915,19 @@ test("config center world preview posts the current phase1-world draft and store
   assert.equal(controller.state.worldPreview?.counts.heroes, 2);
 });
 
-test("config center export flow preserves the server MIME type for Excel and CSV downloads", async () => {
+test("config center export flow preserves the server contract for JSONC, Excel, and CSV downloads", async () => {
   const downloads: Array<{ fileName: string | null; fallbackFileName: string; type: string }> = [];
   const { fetch } = createFetchStub((request) => {
+    if (request.url.endsWith("format=jsonc")) {
+      return new Response(new Blob(["// jsonc"], { type: "application/jsonc" }), {
+        status: 200,
+        headers: {
+          "Content-Disposition": "attachment; filename=phase1-world.jsonc",
+          "X-Config-Exported-At": "2026-03-29T06:29:00.000Z"
+        }
+      });
+    }
+
     if (request.url.endsWith("format=xlsx")) {
       return new Response(new Blob(["xlsx"], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), {
         status: 200,
@@ -954,10 +964,16 @@ test("config center export flow preserves the server MIME type for Excel and CSV
   controller.state.current = createDocument("world", "{\n  \"width\": 8\n}\n", { exportedAt: null });
   controller.state.items = [createDocument("world", "{\n  \"width\": 8\n}\n", { exportedAt: null })];
 
+  await controller.exportCurrentDocument("jsonc");
   await controller.exportCurrentDocument("xlsx");
   await controller.exportCurrentDocument("csv");
 
   assert.deepEqual(downloads, [
+    {
+      fileName: "phase1-world.jsonc",
+      fallbackFileName: "world.jsonc",
+      type: "application/jsonc"
+    },
     {
       fileName: "phase1-world.xlsx",
       fallbackFileName: "world.xlsx",
@@ -969,5 +985,6 @@ test("config center export flow preserves the server MIME type for Excel and CSV
       type: "text/csv"
     }
   ]);
+  assert.equal(controller.state.statusMessage, "已导出字段清单 CSV");
   assert.equal(controller.state.current?.exportedAt, "2026-03-29T06:31:00.000Z");
 });
