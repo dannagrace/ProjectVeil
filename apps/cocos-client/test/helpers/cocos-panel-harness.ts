@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { Label, Node, UITransform } from "cc";
-import { buildCocosAccountReviewPage, createCocosAccountReviewState, transitionCocosAccountReviewState } from "../../assets/scripts/cocos-account-review.ts";
+import {
+  buildCocosAccountReviewPage,
+  createCocosAccountReviewState,
+  transitionCocosAccountReviewState,
+  type CocosAccountReviewAction,
+  type CocosAccountReviewPage
+} from "../../assets/scripts/cocos-account-review.ts";
 import { buildCocosBattleReplayCenterView } from "../../assets/scripts/cocos-battle-replay-center.ts";
 import { createLobbyPanelTestAccount } from "../../assets/scripts/cocos-lobby-panel-model.ts";
 import { createBattleReplayPlaybackState, type PlayerBattleReplaySummary } from "../../assets/scripts/project-shared/battle-replay.ts";
@@ -409,6 +415,98 @@ export function createReplayReadyLobbyState(): VeilLobbyRenderState {
     battleReplaySectionStatus: "ready",
     selectedBattleReplayId: replay.id
   });
+}
+
+export function createProgressionPanelPage(
+  actions: CocosAccountReviewAction[] = []
+): CocosAccountReviewPage {
+  const account = createLobbyPanelTestAccount({
+    achievements: [
+      {
+        id: "first_battle",
+        title: "初次交锋",
+        description: "首次进入战斗。",
+        metric: "battles_started",
+        current: 1,
+        target: 1,
+        unlocked: true,
+        unlockedAt: "2026-03-28T12:05:00.000Z"
+      },
+      {
+        id: "enemy_slayer",
+        title: "猎敌者",
+        description: "击败 3 名敌人或中立守军。",
+        metric: "battles_won",
+        current: 2,
+        target: 3,
+        unlocked: false,
+        progressUpdatedAt: "2026-03-28T12:03:00.000Z"
+      },
+      {
+        id: "skill_scholar",
+        title: "秘法学徒",
+        description: "学习 3 个长期技能。",
+        metric: "skills_learned",
+        current: 0,
+        target: 3,
+        unlocked: false
+      }
+    ],
+    recentEventLog: [
+      {
+        id: "event-new",
+        timestamp: "2026-03-28T12:06:00.000Z",
+        roomId: "room-alpha",
+        playerId: "guest-1001",
+        category: "achievement",
+        description: "解锁成就：初次交锋",
+        achievementId: "first_battle",
+        rewards: [{ type: "badge", label: "初次交锋" }]
+      },
+      {
+        id: "event-mid",
+        timestamp: "2026-03-28T12:04:00.000Z",
+        roomId: "room-alpha",
+        playerId: "guest-1001",
+        category: "combat",
+        description: "击退了北侧守军",
+        worldEventType: "battle.resolved",
+        rewards: []
+      },
+      {
+        id: "event-old",
+        timestamp: "2026-03-28T12:02:00.000Z",
+        roomId: "room-alpha",
+        playerId: "guest-1001",
+        category: "movement",
+        description: "向东移动 1 格",
+        worldEventType: "hero.moved",
+        rewards: []
+      }
+    ],
+    recentBattleReplays: [
+      createBattleReplaySummary(),
+      {
+        ...createBattleReplaySummary(),
+        id: "replay-2",
+        roomId: "room-beta",
+        battleId: "battle-2",
+        battleKind: "hero",
+        playerCamp: "defender",
+        opponentHeroId: "hero-9",
+        neutralArmyId: undefined,
+        completedAt: "2026-03-28T11:52:00.000Z",
+        result: "defender_victory",
+        steps: []
+      }
+    ]
+  });
+  const state = actions.reduce(
+    (currentState, action) => transitionCocosAccountReviewState(currentState, action),
+    createCocosAccountReviewState(account)
+  );
+
+  return buildCocosAccountReviewPage(state);
 }
 
 export function assertLobbyFixture(state: VeilLobbyRenderState): void {
