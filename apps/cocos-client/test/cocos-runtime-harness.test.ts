@@ -236,15 +236,29 @@ test("Cocos lifecycle harness recovers VeilRoot through VeilCocosSession reconne
   };
 
   await harness.root.connect();
+  const connectedSession = harness.root.session;
   initialRoom.emitLeave(4002);
   await flushMicrotasks();
 
   assert.deepEqual(order, ["replay:2", "live:3", "live:5"]);
+  assert.equal(harness.root.session, connectedSession);
   assert.equal(harness.root.lastUpdate?.world.meta.day, 5);
   assert.equal(harness.root.diagnosticsConnectionStatus, "connected");
   assert.deepEqual(harness.joinedOptions, [
     { logicalRoomId: "room-recover", playerId: "player-349", seed: 1001 },
     { logicalRoomId: "room-recover", playerId: "player-349", seed: 1001 }
+  ]);
+  assert.deepEqual(recoveredRoom.sentMessages, [
+    {
+      type: "connect",
+      payload: {
+        type: "connect",
+        requestId: "cocos-req-1",
+        roomId: "room-recover",
+        playerId: "player-349",
+        displayName: "Player 349"
+      }
+    }
   ]);
   assert.equal(
     harness.storage.getItem("project-veil:cocos:reconnection:room-recover:player-349"),
