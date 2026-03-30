@@ -63,6 +63,7 @@
     "test:e2e:headed": "npm run validate:e2e:fixtures && playwright test --headed",
     "test:e2e:all": "npm run test:e2e && npm run test:e2e:multiplayer",
     "test:e2e:smoke": "npm run validate:e2e:fixtures && playwright test --config=playwright.smoke.config.ts",
+    "test:e2e:h5:connectivity": "npm run validate:e2e:fixtures && playwright test --config=playwright.h5-connectivity.config.ts",
     "test:e2e:multiplayer": "npm run validate:e2e:fixtures && playwright test --config=playwright.multiplayer.config.ts",
     "test:e2e:multiplayer:smoke": "npm run validate:e2e:fixtures && playwright test --config=playwright.multiplayer.smoke.config.ts",
     "test:e2e:multiplayer:headed": "npm run validate:e2e:fixtures && playwright test --config=playwright.multiplayer.config.ts --headed",

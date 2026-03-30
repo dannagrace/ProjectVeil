@@ -160,6 +160,7 @@ npm run dev:client:h5
 - H5 开发态诊断导出：
   `window.export_diagnostic_snapshot()` 返回稳定 JSON；
   `window.render_diagnostic_snapshot_to_text()` 返回与面板一致的紧凑文本摘要，便于自动化留档
+- H5 连接性 CI 冒烟：`npm run test:e2e:h5:connectivity`
 - H5 Playwright 冒烟：`npm run test:e2e:smoke`
   当前覆盖 Lobby 入口与 reconnect predicted-state -> authoritative convergence canonical smoke
 - 打包 H5 客户端 RC 冒烟会把结构化结果写入 `artifacts/release-readiness/`
