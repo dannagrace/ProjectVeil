@@ -156,3 +156,119 @@ test("VeilMapBoard renders live tiles and forwards tile presses without double-s
   assert.match(debugMessages.join("\n"), /selected tile \(2,2\)/);
   component.onDestroy();
 });
+
+test("VeilMapBoard refreshes fog overlays when the pulse phase changes", () => {
+  const update = createBaseUpdate();
+  update.world.map.width = 2;
+  update.world.map.height = 1;
+  update.world.map.tiles = [
+    {
+      ...update.world.map.tiles[0]!,
+      position: { x: 0, y: 0 },
+      fog: "explored",
+      resource: undefined,
+      occupant: undefined,
+      building: undefined
+    },
+    {
+      ...update.world.map.tiles[1]!,
+      position: { x: 1, y: 0 },
+      fog: "visible",
+      resource: undefined,
+      occupant: undefined,
+      building: undefined
+    }
+  ];
+  update.world.ownHeroes[0]!.position = { x: 1, y: 0 };
+  update.reachableTiles = [];
+
+  const { component } = createComponentHarness(VeilMapBoard, { name: "MapBoardRoot", width: 220, height: 120 });
+  component.configure({ tileSize: 48 });
+  component.render(update);
+
+  const statefulComponent = component as VeilMapBoard & Record<string, unknown>;
+  const tileNodes = statefulComponent.tileNodes as Map<string, { fogOverlay: { render: (style: unknown, enabled?: boolean) => void } }>;
+  const exploredTile = tileNodes.get("0-0");
+  assert.ok(exploredTile, "Expected explored tile view to exist for fog refresh coverage.");
+
+  const capturedStyles: Array<Record<string, number | string | null>> = [];
+  const originalRender = exploredTile.fogOverlay.render.bind(exploredTile.fogOverlay);
+  exploredTile.fogOverlay.render = (style, enabled) => {
+    capturedStyles.push((style ?? null) as Record<string, number | string | null>);
+    originalRender(style, enabled);
+  };
+
+  component.setFogPulsePhase(1);
+  component.render(update);
+
+  assert.equal(capturedStyles.length, 1);
+  assert.equal(capturedStyles[0]?.tone, "explored");
+  assert.equal(capturedStyles[0]?.featherMask, 2);
+  assert.equal(capturedStyles[0]?.opacity, 78);
+  assert.equal(capturedStyles[0]?.edgeOpacity, 24);
+  component.onDestroy();
+});
+
+test("VeilMapBoard renders object overlays and keeps tap feedback visible for an interactable object tile", () => {
+  const selections: string[] = [];
+  const update = createBaseUpdate();
+  update.world.map.tiles = [
+    {
+      ...update.world.map.tiles[0]!,
+      position: { x: 0, y: 0 },
+      fog: "visible",
+      resource: undefined,
+      occupant: undefined,
+      building: undefined
+    },
+    {
+      ...update.world.map.tiles[1]!,
+      position: { x: 0, y: 1 },
+      fog: "visible",
+      resource: { kind: "wood", amount: 5 },
+      occupant: undefined,
+      building: undefined
+    },
+    {
+      ...update.world.map.tiles[2]!,
+      position: { x: 2, y: 2 },
+      fog: "visible",
+      resource: undefined,
+      occupant: undefined,
+      building: undefined
+    }
+  ];
+  update.world.ownHeroes[0]!.position = { x: 2, y: 2 };
+  update.reachableTiles = [{ x: 0, y: 1 }];
+
+  const { component } = createComponentHarness(VeilMapBoard, { name: "MapBoardRoot", width: 300, height: 300 });
+  component.scheduleOnce = () => undefined;
+  component.configure({
+    tileSize: 48,
+    onTileSelected: (tile) => {
+      selections.push(`${tile.position.x}-${tile.position.y}`);
+    }
+  });
+  component.render(update);
+
+  const statefulComponent = component as VeilMapBoard & Record<string, unknown>;
+  const objectNode = (statefulComponent.objectNodes as Map<string, { node: { active: boolean }; label: { string: string }; spriteNode: { active: boolean } }>).get("0-1");
+  assert.ok(objectNode, "Expected resource overlay node to exist.");
+  assert.equal(objectNode.node.active, true);
+  assert.ok(
+    objectNode.label.string === "木材" || objectNode.spriteNode.active,
+    "Expected resource overlay to render either a fallback label or a sprite chip."
+  );
+
+  const resourceTile = update.world.map.tiles.find((tile) => tile.position.x === 0 && tile.position.y === 1) ?? null;
+  assert.ok(resourceTile);
+  (statefulComponent.selectTile as (tile: typeof resourceTile) => void)(resourceTile);
+  component.render(update);
+
+  const feedbackNode = (statefulComponent.feedbackNodes as Map<string, { node: { active: boolean }; label: { string: string } }>).get("0-1");
+  assert.deepEqual(selections, ["0-1"]);
+  assert.ok(feedbackNode, "Expected tap feedback node to exist after selecting an object tile.");
+  assert.equal(feedbackNode.node.active, true);
+  assert.equal(feedbackNode.label.string, "TAP");
+  component.onDestroy();
+});
