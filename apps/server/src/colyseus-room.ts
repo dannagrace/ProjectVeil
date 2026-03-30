@@ -5,6 +5,7 @@ import {
   filterWorldEventsForPlayer,
   listReachableTiles,
   planHeroMovement,
+  type PlayerWorldView,
   type PlayerBattleReplaySummary,
   type ClientMessage,
   type MovementPlan,
@@ -454,9 +455,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         width: number;
         height: number;
       } | null;
+      snapshot?: PlayerWorldView;
     }
   ): SessionStatePayload {
-    const snapshot = this.worldRoom.getSnapshot(playerId).state;
+    const snapshot = options?.snapshot ?? this.worldRoom.getSnapshot(playerId).state;
     const world = encodePlayerWorldView(snapshot, options?.mapBounds ? { bounds: options.mapBounds } : undefined);
     const battle = this.worldRoom.getBattleForPlayer(playerId);
     const heroId = world.ownHeroes[0]?.id;
@@ -490,8 +492,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         continue;
       }
 
-      const fullState = this.worldRoom.getSnapshot(playerId).state;
-      const mapBounds = resolveFocusedMapBounds(fullState);
+      const snapshot = this.worldRoom.getSnapshot(playerId).state;
+      const mapBounds = resolveFocusedMapBounds(snapshot);
       sendMessage(client, "session.state", {
         requestId: "push",
         delivery: "push",
@@ -503,7 +505,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             ...(extras?.reason ? { reason: extras.reason } : {})
           },
           {
-            mapBounds
+            mapBounds,
+            snapshot
           }
         )
       });

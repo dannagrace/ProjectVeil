@@ -656,6 +656,14 @@ test("colyseus room broadcasts bounded typed-array map chunks to non-source clie
   const decoded = decodePlayerWorldView(pushed.payload.world, decodePlayerWorldView(observerInitial.payload.world));
   assert.equal(decoded.ownHeroes[0]?.id, "hero-2");
   assert.equal(decoded.map.tiles.length, 24 * 24);
+  assert.deepEqual(
+    decoded.visibleHeroes.map((hero) => hero.id),
+    []
+  );
+  const hiddenSourceTile = decoded.map.tiles.find((tile) => tile.position.x === 2 && tile.position.y === 1);
+  assert.equal(hiddenSourceTile?.fog, "hidden");
+  assert.equal(hiddenSourceTile?.terrain, "unknown");
+  assert.equal(hiddenSourceTile?.occupant, undefined);
 });
 
 test("colyseus room hydrates long-term hero archives into fresh rooms", async (t) => {
