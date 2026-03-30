@@ -611,6 +611,81 @@ test("battle replay persistence stays isolated to the room that settled the batt
   assert.equal(listLobbyRooms().find((entry) => entry.roomId === roomB.roomId)?.activeBattles, 0);
 });
 
+test("battle replay survives a reconnect mid-battle and persists once from the resumed session", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-replay-reconnect-${Date.now()}`);
+  const originalClient = createFakeClient("session-replay-reconnect-original");
+  const reconnectedClient = createFakeClient("session-replay-reconnect-resumed");
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+    worldRoom: {
+      consumeCompletedBattleReplays(): unknown[];
+    };
+    allowReconnection(client: Client, seconds: number): Promise<Client>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, originalClient, "player-1", "connect-replay-reconnect");
+  await emitRoomMessage(room, "world.action", originalClient, {
+    type: "world.action",
+    requestId: "move-replay-reconnect",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 5, y: 4 }
+    }
+  });
+
+  await emitRoomMessage(room, "battle.action", originalClient, {
+    type: "battle.action",
+    requestId: "battle-replay-reconnect-before-drop",
+    action: {
+      type: "battle.wait",
+      unitId: "hero-1-stack"
+    }
+  });
+
+  internalRoom.allowReconnection = async () => {
+    room.clients.push(reconnectedClient);
+    return reconnectedClient;
+  };
+  await room.onDrop(originalClient);
+  room.onLeave(originalClient);
+
+  const resumedState = lastSessionState(reconnectedClient, "push");
+  assert.ok(resumedState.payload.battle, "expected reconnect push to preserve the active battle");
+  assert.equal(internalRoom.playerIdBySessionId.get(reconnectedClient.sessionId), "player-1");
+  assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 1);
+  assert.equal((await store.loadPlayerAccount("player-1"))?.recentBattleReplays?.length ?? 0, 0);
+
+  const resumedSteps = await resolveBattleThroughRoom(room, reconnectedClient, "player-1");
+  const account = await store.loadPlayerAccount("player-1");
+  const replay = account?.recentBattleReplays?.[0];
+  const replaySaves = store.progressSaves.filter(
+    (entry) => entry.playerId === "player-1" && (entry.patch.recentBattleReplays?.length ?? 0) > 0
+  );
+
+  assert.ok(resumedSteps > 0);
+  assert.equal(account?.recentBattleReplays?.length, 1);
+  assert.equal(replay?.roomId, room.roomId);
+  assert.equal(replay?.steps.filter((step) => step.source === "player").length, resumedSteps + 1);
+  assert.ok(
+    replay?.steps.some(
+      (step) => step.source === "player" && step.action.type === "battle.wait" && step.action.unitId === "hero-1-stack"
+    )
+  );
+  assert.equal(replaySaves.length, 1);
+  assert.equal(replaySaves[0]?.patch.recentBattleReplays?.[0]?.id, replay?.id);
+  assert.deepEqual(internalRoom.worldRoom.consumeCompletedBattleReplays(), []);
+});
+
 test("room at maxClients capacity rejects a new join reservation", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
