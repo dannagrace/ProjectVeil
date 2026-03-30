@@ -2,6 +2,12 @@
 
 `npm run release:health:summary` aggregates the existing release/readiness artifacts into one stable JSON summary plus a Markdown digest.
 
+The summary now includes a unified `triage` section so maintainers can see, in one place:
+
+- which signals are blocking vs warning-only
+- which underlying artifact(s) to open next
+- the next debugging command or inspection step for each failing signal
+
 It reuses the current artifact producers instead of redefining them:
 
 - `npm run release:readiness:snapshot`
@@ -84,5 +90,8 @@ The JSON report contains:
   - per-artifact status, summary, detail lines, and source path
 - `findings`
   - flattened machine-readable findings with `severity`, `signalId`, and source path
+- `triage`
+  - `blockers` and `warnings`
+  - each entry includes a concise summary, next step, and artifact references
 
 Use this as the top-level release health entry point when a person, bot, or PR comment needs one answer for the current branch state.
