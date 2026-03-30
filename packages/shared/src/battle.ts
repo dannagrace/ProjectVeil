@@ -15,15 +15,11 @@ import type {
   UnitStack,
   ValidationResult
 } from "./models.ts";
+import { nextDeterministicRandom } from "./deterministic-rng.ts";
 import { createHeroEquipmentBonusSummary } from "./equipment.ts";
 import { grantedHeroBattleSkillIds } from "./hero-skills.ts";
 import { requireValue, withOptionalProperty } from "./invariant.ts";
 import { getBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultUnitCatalog } from "./world-config.ts";
-
-interface RngStep {
-  nextSeed: number;
-  value: number;
-}
 
 interface ContactResolutionResult {
   state: BattleState;
@@ -33,14 +29,6 @@ interface ContactResolutionResult {
 interface BattleCatalogIndex {
   skillById: Map<BattleSkillId, BattleSkillConfig>;
   statusById: Map<BattleStatusEffectId, BattleStatusEffectConfig>;
-}
-
-function nextRng(seed: number): RngStep {
-  const nextSeed = (seed * 1664525 + 1013904223) >>> 0;
-  return {
-    nextSeed,
-    value: nextSeed / 0x100000000
-  };
 }
 
 function cloneSkillState(skill: BattleSkillState): BattleSkillState {
@@ -193,9 +181,9 @@ export function createBattleEnvironmentState(lanes: number, seed: number): Battl
   let environmentSeed = (seed ^ 0x9e3779b9) >>> 0;
   const hazards: BattleHazardState[] = [];
 
-  const blockerRoll = nextRng(environmentSeed);
+  const blockerRoll = nextDeterministicRandom(environmentSeed);
   environmentSeed = blockerRoll.nextSeed;
-  const blockerLaneRoll = nextRng(environmentSeed);
+  const blockerLaneRoll = nextDeterministicRandom(environmentSeed);
   environmentSeed = blockerLaneRoll.nextSeed;
   if (blockerRoll.value >= balance.blockerSpawnThreshold) {
     hazards.push({
@@ -209,13 +197,13 @@ export function createBattleEnvironmentState(lanes: number, seed: number): Battl
     });
   }
 
-  const trapRoll = nextRng(environmentSeed);
+  const trapRoll = nextDeterministicRandom(environmentSeed);
   environmentSeed = trapRoll.nextSeed;
-  const trapLaneRoll = nextRng(environmentSeed);
+  const trapLaneRoll = nextDeterministicRandom(environmentSeed);
   environmentSeed = trapLaneRoll.nextSeed;
   if (trapRoll.value >= balance.trapSpawnThreshold) {
     const lane = Math.min(resolvedLanes - 1, Math.floor(trapLaneRoll.value * resolvedLanes));
-    const trapTypeRoll = nextRng(environmentSeed);
+    const trapTypeRoll = nextDeterministicRandom(environmentSeed);
     const trapType = trapTypeRoll.value < 1 / 3 ? "damage" : trapTypeRoll.value < 2 / 3 ? "slow" : "silence";
     const trapBase =
       trapType === "damage"
@@ -904,7 +892,7 @@ function applyAttackSequence(
 
   const attacker = preparedState.state.units[attackerId]!;
   const defender = preparedState.state.units[defenderId]!;
-  const attackRoll = nextRng(preparedState.state.rng.seed);
+  const attackRoll = nextDeterministicRandom(preparedState.state.rng.seed);
   const attackDamage = estimateDamage(attacker, defender, attackRoll.value, options?.damageMultiplier ?? 1);
   const nextUnits: Record<string, UnitStack> = {
     ...preparedState.state.units,
@@ -929,7 +917,7 @@ function applyAttackSequence(
   nextUnits[defender.id] = damagedDefender;
 
   if ((options?.allowRetaliation ?? true) && damagedDefender.count > 0 && !damagedDefender.hasRetaliated) {
-    const retaliationRoll = nextRng(nextRngState.seed);
+    const retaliationRoll = nextDeterministicRandom(nextRngState.seed);
     const retaliationDamage = estimateDamage(damagedDefender, attacker, retaliationRoll.value);
     let damagedAttacker = applyDamage(attacker, retaliationDamage);
     damagedAttacker = applyOnHitStatuses(damagedDefender, damagedAttacker, log, catalogIndex);
