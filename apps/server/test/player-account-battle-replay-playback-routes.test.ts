@@ -218,20 +218,29 @@ test("player account battle replay playback routes derive stateless playback con
     playerId: "player-1",
     displayName: "回声骑士"
   });
+  const otherSession = issueGuestAuthSession({
+    playerId: "player-2",
+    displayName: "异乡旅人"
+  });
 
   t.after(async () => {
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
-  const publicResponse = await fetch(
-    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/replay-playback/playback?action=tick&repeat=2`
+  const playerResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/replay-playback/playback?action=tick&repeat=2`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
   );
-  const publicPayload = (await publicResponse.json()) as { playback: BattleReplayPlaybackState };
-  assert.equal(publicResponse.status, 200);
-  assert.equal(publicPayload.playback.replay.id, "replay-playback");
-  assert.equal(publicPayload.playback.currentStepIndex, 2);
-  assert.equal(publicPayload.playback.status, "completed");
-  assert.equal(publicPayload.playback.currentStep?.index, 2);
+  const playerPayload = (await playerResponse.json()) as { playback: BattleReplayPlaybackState };
+  assert.equal(playerResponse.status, 200);
+  assert.equal(playerPayload.playback.replay.id, "replay-playback");
+  assert.equal(playerPayload.playback.currentStepIndex, 2);
+  assert.equal(playerPayload.playback.status, "completed");
+  assert.equal(playerPayload.playback.currentStep?.index, 2);
 
   const meResponse = await fetch(
     `http://127.0.0.1:${port}/api/player-accounts/me/battle-replays/replay-playback/playback?currentStepIndex=1&status=playing&action=pause`,
@@ -246,9 +255,19 @@ test("player account battle replay playback routes derive stateless playback con
   assert.equal(mePayload.playback.currentStepIndex, 1);
   assert.equal(mePayload.playback.status, "paused");
   assert.equal(mePayload.playback.nextStep?.index, 2);
+
+  const crossAccountResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/replay-playback/playback`,
+    {
+      headers: {
+        Authorization: `Bearer ${otherSession.token}`
+      }
+    }
+  );
+  assert.equal(crossAccountResponse.status, 403);
 });
 
-test("player account battle replay playback routes return 404s for missing resources and 401 without auth", async (t) => {
+test("player account battle replay playback routes require auth before exposing account-scoped data", async (t) => {
   const port = 43040 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
@@ -267,12 +286,26 @@ test("player account battle replay playback routes return 404s for missing resou
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
-  const missingReplayResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/missing-replay/playback`);
-  assert.equal(missingReplayResponse.status, 404);
-
-  const missingPlayerResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/missing/battle-replays/replay-playback/playback`);
-  assert.equal(missingPlayerResponse.status, 404);
-
   const unauthorizedResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/battle-replays/replay-playback/playback`);
   assert.equal(unauthorizedResponse.status, 401);
+
+  const protectedUnauthorizedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/replay-playback/playback`
+  );
+  assert.equal(protectedUnauthorizedResponse.status, 401);
+
+  const session = issueGuestAuthSession({
+    playerId: "player-1",
+    displayName: "回声骑士"
+  });
+
+  const missingReplayResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/missing-replay/playback`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  assert.equal(missingReplayResponse.status, 404);
 });

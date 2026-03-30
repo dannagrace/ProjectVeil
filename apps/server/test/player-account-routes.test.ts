@@ -729,7 +729,7 @@ test("player account routes degrade to local-mode responses when persistence is 
   assert.equal(meProgressPayload.summary.unlockedAchievements, 0);
 });
 
-test("public guest player routes return empty fallback payloads instead of 404 noise", async (t) => {
+test("public guest player routes keep only intended public payloads exposed", async (t) => {
   const port = 40045 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
   const server = await startAccountRouteServer(port, store);
@@ -751,9 +751,7 @@ test("public guest player routes return empty fallback payloads instead of 404 n
   assert.deepEqual(replayPayload.items, []);
 
   const eventLogResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview/event-log?limit=2`);
-  const eventLogPayload = (await eventLogResponse.json()) as { items: PlayerAccountSnapshot["recentEventLog"] };
-  assert.equal(eventLogResponse.status, 200);
-  assert.deepEqual(eventLogPayload.items ?? [], []);
+  assert.equal(eventLogResponse.status, 401);
 
   const achievementResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview/achievements?limit=2`);
   const achievementPayload = (await achievementResponse.json()) as { items: PlayerAchievementProgress[] };
@@ -958,17 +956,31 @@ test("player account event-log routes filter recent entries without loading prog
     playerId: "player-events",
     displayName: "星炬记录官"
   });
+  const otherSession = issueGuestAuthSession({
+    playerId: "player-other",
+    displayName: "旁观者"
+  });
 
   t.after(async () => {
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
-  const publicResponse = await fetch(
+  const unauthorizedResponse = await fetch(
     `http://127.0.0.1:${port}/api/player-accounts/player-events/event-log?category=achievement&achievementId=first_battle&heroId=hero-1`
   );
-  const publicPayload = (await publicResponse.json()) as { items: PlayerAccountSnapshot["recentEventLog"] };
-  assert.equal(publicResponse.status, 200);
-  assert.deepEqual(publicPayload.items.map((entry) => entry.id), ["event-achievement"]);
+  assert.equal(unauthorizedResponse.status, 401);
+
+  const playerResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-events/event-log?category=achievement&achievementId=first_battle&heroId=hero-1`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const playerPayload = (await playerResponse.json()) as { items: PlayerAccountSnapshot["recentEventLog"] };
+  assert.equal(playerResponse.status, 200);
+  assert.deepEqual(playerPayload.items.map((entry) => entry.id), ["event-achievement"]);
 
   const meResponse = await fetch(
     `http://127.0.0.1:${port}/api/player-accounts/me/event-log?heroId=hero-1&limit=1`,
@@ -981,6 +993,13 @@ test("player account event-log routes filter recent entries without loading prog
   const mePayload = (await meResponse.json()) as { items: PlayerAccountSnapshot["recentEventLog"] };
   assert.equal(meResponse.status, 200);
   assert.deepEqual(mePayload.items.map((entry) => entry.id), ["event-achievement"]);
+
+  const crossAccountResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-events/event-log`, {
+    headers: {
+      Authorization: `Bearer ${otherSession.token}`
+    }
+  });
+  assert.equal(crossAccountResponse.status, 403);
 });
 
 test("player account event-history routes page dedicated history entries beyond the recent snapshot", async (t) => {
@@ -1048,27 +1067,41 @@ test("player account event-history routes page dedicated history entries beyond 
     playerId: "player-history",
     displayName: "霜灯抄录员"
   });
+  const otherSession = issueGuestAuthSession({
+    playerId: "player-other",
+    displayName: "旁观者"
+  });
 
   t.after(async () => {
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
-  const publicResponse = await fetch(
+  const unauthorizedResponse = await fetch(
     `http://127.0.0.1:${port}/api/player-accounts/player-history/event-history?heroId=hero-1&offset=1&limit=1`
   );
-  const publicPayload = (await publicResponse.json()) as {
+  assert.equal(unauthorizedResponse.status, 401);
+
+  const playerResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-history/event-history?heroId=hero-1&offset=1&limit=1`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const playerPayload = (await playerResponse.json()) as {
     items: PlayerAccountSnapshot["recentEventLog"];
     total: number;
     offset: number;
     limit: number;
     hasMore: boolean;
   };
-  assert.equal(publicResponse.status, 200);
-  assert.equal(publicPayload.total, 3);
-  assert.equal(publicPayload.offset, 1);
-  assert.equal(publicPayload.limit, 1);
-  assert.equal(publicPayload.hasMore, true);
-  assert.deepEqual(publicPayload.items.map((entry) => entry.id), ["event-history-2"]);
+  assert.equal(playerResponse.status, 200);
+  assert.equal(playerPayload.total, 3);
+  assert.equal(playerPayload.offset, 1);
+  assert.equal(playerPayload.limit, 1);
+  assert.equal(playerPayload.hasMore, true);
+  assert.deepEqual(playerPayload.items.map((entry) => entry.id), ["event-history-2"]);
 
   const meResponse = await fetch(
     `http://127.0.0.1:${port}/api/player-accounts/me/event-history?category=combat`,
@@ -1088,8 +1121,20 @@ test("player account event-history routes page dedicated history entries beyond 
   assert.equal(mePayload.hasMore, false);
   assert.deepEqual(mePayload.items.map((entry) => entry.id), ["event-history-2", "event-history-1"]);
 
+  const crossAccountResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-history/event-history`, {
+    headers: {
+      Authorization: `Bearer ${otherSession.token}`
+    }
+  });
+  assert.equal(crossAccountResponse.status, 403);
+
   const rangedResponse = await fetch(
-    `http://127.0.0.1:${port}/api/player-accounts/player-history/event-history?since=2026-03-27T12:02:00.000Z&until=2026-03-27T12:04:00.000Z`
+    `http://127.0.0.1:${port}/api/player-accounts/player-history/event-history?since=2026-03-27T12:02:00.000Z&until=2026-03-27T12:04:00.000Z`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
   );
   const rangedPayload = (await rangedResponse.json()) as {
     items: PlayerAccountSnapshot["recentEventLog"];
