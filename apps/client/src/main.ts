@@ -50,8 +50,7 @@ import {
   unitFrameAsset
 } from "./assets";
 import { describeTileObject } from "./object-visuals";
-import { launchH5ClientApp } from "./main-launch";
-import { bootstrapH5App, syncH5PlayerAccountProfile } from "./main-boot";
+import { launchMainH5App } from "./main-bootstrap-launch";
 import {
   confirmAccountRegistration,
   confirmPasswordRecovery,
@@ -4987,42 +4986,6 @@ function render(): void {
   }
 }
 
-async function bootstrap(): Promise<void> {
-  await bootstrapH5App({
-    state,
-    shouldBootGame,
-    queryPlayerId,
-    roomId,
-    playerId,
-    bindKeyboardShortcuts,
-    render,
-    syncCurrentAuthSession,
-    refreshLobbyRoomList,
-    logoutGuestSession,
-    readStoredSessionReplay,
-    applyReplayedUpdate,
-    getSession,
-    applyUpdate,
-    syncPlayerAccountProfile
-  });
-}
-
-async function syncPlayerAccountProfile(): Promise<void> {
-  await syncH5PlayerAccountProfile({
-    state,
-    playerId,
-    roomId,
-    loadAccountProfileWithProgression: loadAccountProfileWithProgression,
-    loadPlayerAccountSessions,
-    readStoredAuthSession,
-    clearReplayDetail,
-    render
-  });
-  syncAchievementToastFeed(state.account, false);
-  hasHydratedAchievementFeed = true;
-  state.achievementPanel.items = state.account.achievements;
-}
-
 async function onRevokeAccountSession(sessionId: string): Promise<void> {
   state.accountSessionRevokingId = sessionId;
   state.accountStatus = "正在撤销所选设备会话...";
@@ -5106,7 +5069,7 @@ async function onBindAccountProfile(): Promise<void> {
   }
 }
 
-launchH5ClientApp({
+launchMainH5App({
   state,
   shouldBootGame,
   queryPlayerId,
@@ -5121,7 +5084,15 @@ launchH5ClientApp({
   applyReplayedUpdate,
   getSession,
   applyUpdate,
-  syncPlayerAccountProfile,
+  loadAccountProfileWithProgression,
+  loadPlayerAccountSessions,
+  readStoredAuthSession,
+  clearReplayDetail,
+  onPlayerAccountProfileSynced: () => {
+    syncAchievementToastFeed(state.account, false);
+    hasHydratedAchievementFeed = true;
+    state.achievementPanel.items = state.account.achievements;
+  },
   window,
   devDiagnosticsEnabled: DEV_DIAGNOSTICS_ENABLED,
   renderGameToText,
