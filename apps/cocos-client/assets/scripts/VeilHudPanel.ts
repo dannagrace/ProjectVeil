@@ -79,6 +79,13 @@ interface HudEquipmentButtonState {
   callback: (() => void) | null;
 }
 
+type HudResolvedAction =
+  | {
+      debugLabel: string;
+      callback: (() => void) | null;
+    }
+  | null;
+
 function formatHeroLearnedSkills(hero: NonNullable<VeilHudRenderState["update"]>["world"]["ownHeroes"][number] | null): string {
   const learnedSkills = hero?.learnedSkills ?? [];
   if (!hero || learnedSkills.length === 0) {
@@ -484,6 +491,16 @@ export class VeilHudPanel extends Component {
     }
   }
 
+  dispatchPointerUp(localX: number, localY: number): string | null {
+    const action = this.resolvePointerAction(localX, localY);
+    if (!action) {
+      return null;
+    }
+
+    action.callback?.();
+    return action.debugLabel;
+  }
+
   private syncChrome(): void {
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const graphics = this.node.getComponent(Graphics) ?? this.node.addComponent(Graphics);
@@ -505,6 +522,84 @@ export class VeilHudPanel extends Component {
     graphics.fillColor = HUD_ACCENT_SOFT;
     graphics.roundRect(-width / 2 + 18, height / 2 - 46, Math.min(72, width * 0.22), 6, 4);
     graphics.fill();
+  }
+
+  private resolvePointerAction(localX: number, localY: number): HudResolvedAction {
+    const chromeActions: Array<{ nodeName: string; debugLabel: string; callback: (() => void) | null }> = [
+      { nodeName: "HudNewRun", debugLabel: "new-run", callback: this.onNewRun ?? null },
+      { nodeName: "HudRefresh", debugLabel: "refresh", callback: this.onRefresh ?? null },
+      { nodeName: "HudAchievements", debugLabel: "achievements", callback: this.onToggleAchievements ?? null },
+      { nodeName: "HudEndDay", debugLabel: "end-day", callback: this.onEndDay ?? null },
+      { nodeName: "HudReturnLobby", debugLabel: "return-lobby", callback: this.onReturnLobby ?? null }
+    ];
+
+    const actionsNode = this.node.getChildByName(ACTIONS_NODE_NAME);
+    for (const action of chromeActions) {
+      const node = actionsNode?.getChildByName(action.nodeName) ?? null;
+      if (this.pointInNode(localX, localY, node)) {
+        return {
+          debugLabel: action.debugLabel,
+          callback: action.callback
+        };
+      }
+    }
+
+    const skillCard = this.node.getChildByName(`${CARD_PREFIX}-skills`);
+    const skillActions = buildCocosHudSkillPanelView(this.currentState?.update ?? null, this.onLearnSkill).actions;
+    for (const skill of skillActions) {
+      const node = skillCard?.getChildByName(`${SKILL_BUTTON_PREFIX}-${skill.skillId}`) ?? null;
+      if (this.pointInNode(localX, localY, node)) {
+        return {
+          debugLabel: `learn-skill:${skill.skillId}`,
+          callback: skill.onSelect ?? null
+        };
+      }
+    }
+
+    const hero = this.currentState?.update?.world.ownHeroes[0] ?? null;
+    const equipmentCard = this.node.getChildByName(`${CARD_PREFIX}-equipment`);
+    const equipmentButtons = this.buildEquipmentButtonStates(buildHeroEquipmentActionRows(hero));
+    for (const button of equipmentButtons) {
+      const node = equipmentCard?.getChildByName(button.name) ?? null;
+      if (this.pointInNode(localX, localY, node)) {
+        return {
+          debugLabel: button.name,
+          callback: button.callback
+        };
+      }
+    }
+
+    return null;
+  }
+
+  private pointInNode(localX: number, localY: number, node: Node | null): boolean {
+    if (!node || !node.active) {
+      return false;
+    }
+
+    const transform = node.getComponent(UITransform) ?? null;
+    if (!transform) {
+      return false;
+    }
+
+    let centerX = 0;
+    let centerY = 0;
+    let current: Node | null = node;
+    while (current && current !== this.node) {
+      centerX += current.position.x;
+      centerY += current.position.y;
+      current = current.parent;
+    }
+
+    if (current !== this.node) {
+      return false;
+    }
+
+    return this.pointInRect(localX, localY, centerX, centerY, transform.width, transform.height);
+  }
+
+  private pointInRect(x: number, y: number, centerX: number, centerY: number, width: number, height: number): boolean {
+    return x >= centerX - width / 2 && x <= centerX + width / 2 && y >= centerY - height / 2 && y <= centerY + height / 2;
   }
 
   private ensureSectionLabels(): void {

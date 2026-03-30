@@ -162,6 +162,51 @@ test("VeilRoot boots into lobby mode and triggers lobby bootstrap when no roomId
   assert.equal(bootstrapCalls, 1);
 });
 
+test("VeilRoot wires the equipment loot loop through equip and unequip session updates", async () => {
+  const root = createVeilRootHarness();
+  const baseUpdate = createSessionUpdate(1, "room-equipment", "player-1");
+  baseUpdate.world.ownHeroes[0]!.loadout.inventory = ["militia_pike"];
+  const equippedUpdate = createSessionUpdate(1, "room-equipment", "player-1");
+  equippedUpdate.world.ownHeroes[0]!.loadout.equipment.weaponId = "militia_pike";
+  equippedUpdate.world.ownHeroes[0]!.loadout.inventory = [];
+  const unequippedUpdate = createSessionUpdate(1, "room-equipment", "player-1");
+  unequippedUpdate.world.ownHeroes[0]!.loadout.inventory = ["militia_pike"];
+
+  const calls: Array<{ kind: "equip" | "unequip"; slot: string; equipmentId?: string }> = [];
+  root.lastUpdate = baseUpdate;
+  root.session = {
+    async equipHeroItem(heroId, slot, equipmentId) {
+      calls.push({ kind: "equip", slot, equipmentId });
+      assert.equal(heroId, "hero-1");
+      return equippedUpdate;
+    },
+    async unequipHeroItem(heroId, slot) {
+      calls.push({ kind: "unequip", slot });
+      assert.equal(heroId, "hero-1");
+      return unequippedUpdate;
+    }
+  } as never;
+
+  await root.equipHeroItem("weapon", "militia_pike");
+  assert.equal(root.lastUpdate?.world.ownHeroes[0]?.loadout.equipment.weaponId, "militia_pike");
+  assert.deepEqual(root.lastUpdate?.world.ownHeroes[0]?.loadout.inventory, []);
+
+  await root.unequipHeroItem("weapon");
+  assert.equal(root.lastUpdate?.world.ownHeroes[0]?.loadout.equipment.weaponId, undefined);
+  assert.deepEqual(root.lastUpdate?.world.ownHeroes[0]?.loadout.inventory, ["militia_pike"]);
+  assert.deepEqual(calls, [
+    {
+      kind: "equip",
+      slot: "weapon",
+      equipmentId: "militia_pike"
+    },
+    {
+      kind: "unequip",
+      slot: "weapon"
+    }
+  ]);
+});
+
 test("VeilRoot account lifecycle flow switches panels and surfaces validation feedback", async () => {
   const root = createVeilRootHarness();
 

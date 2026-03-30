@@ -1438,90 +1438,32 @@ export class VeilRoot extends Component {
       return;
     }
 
-    const action = this.resolveHudActionAt(event.getUILocation().x, event.getUILocation().y);
-    if (!action) {
-      return;
-    }
-
-    if (action === "new-run") {
-      this.inputDebug = "button new-run";
-      void this.startNewRun();
-      return;
-    }
-
-    if (action === "refresh") {
-      this.inputDebug = "button refresh";
-      void this.refreshSnapshot();
-      return;
-    }
-
-    if (action === "achievements") {
-      this.inputDebug = "button achievements";
-      void this.toggleGameplayAccountReviewPanel();
-      return;
-    }
-
-    if (action === "return-lobby") {
-      this.inputDebug = "button return-lobby";
-      void this.returnToLobby();
-      return;
-    }
-
-    this.inputDebug = "button end-day";
-    void this.advanceDay();
-  }
-
-  private resolveHudActionAt(uiX: number, uiY: number): "new-run" | "refresh" | "achievements" | "end-day" | "return-lobby" | null {
     const visibleSize = view.getVisibleSize();
-    const centeredX = uiX - visibleSize.width / 2;
-    const centeredY = uiY - visibleSize.height / 2;
+    const centeredX = event.getUILocation().x - visibleSize.width / 2;
+    const centeredY = event.getUILocation().y - visibleSize.height / 2;
     const hudNode = this.node.getChildByName(HUD_NODE_NAME);
     const hudTransform = hudNode?.getComponent(UITransform) ?? null;
     if (!hudNode || !hudTransform) {
-      return null;
+      return;
     }
 
     const hudLocalX = centeredX - hudNode.position.x;
     const hudLocalY = centeredY - hudNode.position.y;
-
     if (
       hudLocalX < -hudTransform.width / 2 ||
       hudLocalX > hudTransform.width / 2 ||
       hudLocalY < -hudTransform.height / 2 ||
       hudLocalY > hudTransform.height / 2
     ) {
-      return null;
+      return;
     }
 
-    const actionsCenterY = hudTransform.height / 2 - 118;
-    const buttonWidth = Math.max(156, hudTransform.width - 36);
-    const buttonHeight = 28;
-
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 60, buttonWidth, buttonHeight)) {
-      return "new-run";
+    const action = this.hudPanel?.dispatchPointerUp(hudLocalX, hudLocalY) ?? null;
+    if (!action) {
+      return;
     }
 
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 30, buttonWidth, buttonHeight)) {
-      return "refresh";
-    }
-
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY, buttonWidth, buttonHeight)) {
-      return "achievements";
-    }
-
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 30, buttonWidth, buttonHeight)) {
-      return "end-day";
-    }
-
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 60, buttonWidth, buttonHeight)) {
-      return "return-lobby";
-    }
-
-    return null;
-  }
-
-  private pointInRect(x: number, y: number, centerX: number, centerY: number, width: number, height: number): boolean {
-    return x >= centerX - width / 2 && x <= centerX + width / 2 && y >= centerY - height / 2 && y <= centerY + height / 2;
+    this.inputDebug = `button ${action}`;
   }
 
   private scheduleFogPulseTick(): void {
