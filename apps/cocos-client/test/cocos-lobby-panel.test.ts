@@ -1,0 +1,178 @@
+import { VeilLobbyPanel } from "../assets/scripts/VeilLobbyPanel";
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createBattleReplayPlaybackState } from "../assets/scripts/project-shared/battle-replay";
+import { buildCocosBattleReplayCenterView } from "../assets/scripts/cocos-battle-replay-center";
+import {
+  buildLobbyAccountIdentityView,
+  buildLobbyGuestEntryView,
+  buildLobbyRoomCards,
+  createLobbyPanelTestAccount,
+  summarizeLobbyShowcaseInventory
+} from "../assets/scripts/cocos-lobby-panel-model";
+import type { VeilLobbyRenderState } from "../assets/scripts/VeilLobbyPanel";
+import {
+  createBattleReplaySummary,
+  createComponentHarness,
+  createErroredBattleReplayReviewState,
+  createLobbyState,
+  createReplayReadyLobbyState
+} from "./helpers/cocos-panel-harness.ts";
+
+test("lobby panel room cards render active room summaries from the server response", () => {
+  const cards = buildLobbyRoomCards([
+    {
+      roomId: "room-alpha",
+      seed: 1001,
+      day: 3,
+      connectedPlayers: 1,
+      heroCount: 2,
+      activeBattles: 1,
+      updatedAt: "2026-03-29T12:00:00.000Z"
+    }
+  ]);
+
+  assert.deepEqual(cards, [
+    {
+      roomId: "room-alpha",
+      title: "room-alpha",
+      meta: "Day 3 · Seed 1001 · 玩家 1 · 英雄 2 · 战斗 1"
+    }
+  ]);
+});
+
+test("guest login view resolves displayName and room ID from account and lobby state", () => {
+  const view = buildLobbyGuestEntryView(
+    createLobbyState({
+      playerId: "guest-202503",
+      account: createLobbyPanelTestAccount({
+        displayName: "晶塔旅人",
+        lastRoomId: "room-beta"
+      })
+    })
+  );
+
+  assert.deepEqual(view, {
+    displayName: "晶塔旅人",
+    roomId: "room-beta"
+  });
+});
+
+test("account identity view shows the loginId field only when credentials are bound", () => {
+  const bound = buildLobbyAccountIdentityView(
+    createLobbyState({
+      authMode: "account",
+      loginId: "veil-ranger",
+      account: createLobbyPanelTestAccount({
+        loginId: "veil-ranger",
+        credentialBoundAt: "2026-03-28T12:34:56.000Z"
+      })
+    })
+  );
+  assert.equal(bound.showLoginId, true);
+  assert.equal(bound.loginIdValue, "veil-ranger");
+
+  const guest = buildLobbyAccountIdentityView(createLobbyState());
+  assert.equal(guest.showLoginId, false);
+});
+
+test("showcase gallery inventory stays aligned with the configured hero, terrain, building and unit counts", () => {
+  assert.deepEqual(summarizeLobbyShowcaseInventory(), {
+    heroes: 4,
+    terrain: 5,
+    buildings: 4,
+    units: 6,
+    rotatingUnitPages: 2
+  });
+});
+
+test("battle replay center view exposes controls and a loaded replay snapshot for account review", () => {
+  const replay = createBattleReplaySummary();
+  const view = buildCocosBattleReplayCenterView({
+    replays: [replay],
+    selectedReplayId: replay.id,
+    playback: createBattleReplayPlaybackState(replay),
+    status: "ready"
+  });
+
+  assert.equal(view.state, "ready");
+  assert.match(view.title, /战报回放中心/);
+  assert.match(view.subtitle, /PVE/);
+  assert.match(view.detailLines.join("\n"), /当前动作：暂无动作/);
+  assert.match(view.detailLines.join("\n"), /下一动作：hero-1-stack 等待/);
+  assert.deepEqual(
+    view.controls.map((control) => [control.action, control.enabled]),
+    [
+      ["play", true],
+      ["pause", false],
+      ["step-back", false],
+      ["step-forward", true],
+      ["reset", false]
+    ]
+  );
+});
+
+test("VeilLobbyPanel retains the loading lobby snapshot and creates base panel chrome", () => {
+  const { component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const state = createLobbyState({
+    loading: true,
+    rooms: [
+      {
+        roomId: "room-alpha",
+        seed: 1001,
+        day: 3,
+        connectedPlayers: 1,
+        heroCount: 2,
+        activeBattles: 1,
+        updatedAt: "2026-03-29T12:00:00.000Z"
+      }
+    ]
+  });
+
+  component.configure({});
+  component.scheduleOnce = () => undefined;
+  component.render(state);
+  const statefulComponent = component as VeilLobbyPanel & Record<string, unknown>;
+
+  assert.equal(statefulComponent.currentState, state);
+  assert.equal((statefulComponent.currentState as VeilLobbyRenderState).rooms[0]?.roomId, "room-alpha");
+  assert.equal((statefulComponent.currentState as VeilLobbyRenderState).loading, true);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel advances replay playback when the replay control state transitions", () => {
+  const { component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const state = createReplayReadyLobbyState();
+
+  component.configure({});
+  component.scheduleOnce = () => undefined;
+  (component as VeilLobbyPanel & Record<string, unknown>).showAccountReview = true;
+  component.render(state);
+  const statefulComponent = component as VeilLobbyPanel & Record<string, unknown>;
+  assert.equal((statefulComponent.replayPlayback as { currentStepIndex?: number } | null)?.currentStepIndex, 0);
+  (statefulComponent.applyReplayControl as (action: "step-forward") => void)("step-forward");
+
+  assert.equal((statefulComponent.replayPlayback as { currentStepIndex?: number } | null)?.currentStepIndex, 1);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel keeps empty-room rendering separate from replay transport failures", () => {
+  const { component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const erroredState = createLobbyState({
+    accountReview: createErroredBattleReplayReviewState("Lobby transport failure: 502 Bad Gateway"),
+    battleReplaySectionStatus: "error",
+    battleReplaySectionError: "Lobby transport failure: 502 Bad Gateway"
+  });
+
+  component.configure({});
+  component.scheduleOnce = () => undefined;
+  component.render(createLobbyState());
+  const statefulComponent = component as VeilLobbyPanel & Record<string, unknown>;
+  assert.equal((statefulComponent.currentState as VeilLobbyRenderState).rooms.length, 0);
+  statefulComponent.showAccountReview = true;
+  component.render(erroredState);
+
+  assert.equal((statefulComponent.currentState as VeilLobbyRenderState).battleReplaySectionStatus, "error");
+  assert.match(String(statefulComponent.replayPlaybackStatus ?? ""), /502 Bad Gateway/);
+  component.onDestroy();
+});

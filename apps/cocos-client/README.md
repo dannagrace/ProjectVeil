@@ -86,6 +86,7 @@
   - 负责汇总像素图、资源音频和动画交付状态
   - 当前会统一输出 `表现 像素 ... · 音频 ... · 动画 ...` 这条摘要，供 Lobby 画册和 HUD 状态卡复用
   - 也会给出 `待替换 正式像素美术 / 真实 BGM-SFX / Spine Skeleton` 这类后续收口提示
+  - 发布门禁可通过 `npm run check:cocos-release-readiness` 强制要求表现资源达到 release-ready，再串接微信小游戏构建校验
 - `assets/scripts/cocos-audio-runtime.ts`
   - 轻量合成音频运行时
   - 现在会优先加载 `resources/audio/*` 下的 `AudioClip` 占位资源，再回退到波形合成
@@ -140,6 +141,12 @@
    - 查看 HUD “装备配置”卡中的“背包”分组清单，确认新掉落已进入当前英雄背包
    - 点击同一卡片下方的装备/卸下按钮，确认英雄关键属性、装备摘要与背包内容立即刷新
    - 更完整的共享/服务端/Cocos 链路审计与验证步骤见 `docs/cocos-equipment-loot-validation.md`
+
+## 回归入口
+
+- Cocos 主客户端的会话恢复专项回归位于 `apps/cocos-client/test/cocos-root-orchestration.test.ts`
+- 只跑这组快速回归可执行：`node --import tsx --test apps/cocos-client/test/cocos-root-orchestration.test.ts`
+- 其中“本地快照回放 + 断线恢复后权威状态收敛”的专项用例是 `VeilRoot replays cached state before reconnect recovery converges on the authoritative snapshot`
 
 ## 下一步建议
 

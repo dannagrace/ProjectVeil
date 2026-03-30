@@ -5,6 +5,7 @@ import {
   filterWorldEventsForPlayer,
   listReachableTiles,
   planHeroMovement,
+  type PlayerWorldView,
   type PlayerBattleReplaySummary,
   type ClientMessage,
   type MovementPlan,
@@ -56,6 +57,8 @@ const MAP_SYNC_CHUNK_PADDING = 1;
 const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
+const lobbyRoomOwnerTokens = new Map<string, number>();
+let nextLobbyRoomOwnerToken = 1;
 
 export interface LobbyRoomSummary {
   roomId: string;
@@ -79,6 +82,7 @@ export function listLobbyRooms(): LobbyRoomSummary[] {
 
 export function resetLobbyRoomRegistry(): void {
   lobbyRoomSummaries.clear();
+  lobbyRoomOwnerTokens.clear();
 }
 
 function sendMessage<T extends ServerMessage["type"]>(
@@ -184,11 +188,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   patchRate = null;
 
   private worldRoom!: AuthoritativeWorldRoom;
+  private readonly lobbyRoomOwnerToken = nextLobbyRoomOwnerToken++;
   private readonly playerIdBySessionId = new Map<string, string>();
+  private readonly reconnectedAtByPlayerId = new Map<string, string>();
 
   async onCreate(options: JoinOptions): Promise<void> {
     const logicalRoomId = options.logicalRoomId ?? "room-alpha";
     this.metadata = { logicalRoomId };
+    lobbyRoomOwnerTokens.set(logicalRoomId, this.lobbyRoomOwnerToken);
     this.setState({});
     const persistedSnapshot = configuredRoomSnapshotStore
       ? await configuredRoomSnapshotStore.load(logicalRoomId)
@@ -372,6 +379,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       const reconnectedClient = await this.allowReconnection(client, RECONNECTION_WINDOW_SECONDS);
       this.playerIdBySessionId.delete(client.sessionId);
       this.playerIdBySessionId.set(reconnectedClient.sessionId, playerId);
+      this.reconnectedAtByPlayerId.set(playerId, new Date().toISOString());
       this.publishLobbyRoomSummary();
       sendMessage(reconnectedClient, "session.state", {
         requestId: "push",
@@ -390,6 +398,11 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   }
 
   onDispose(): void {
+    if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) !== this.lobbyRoomOwnerToken) {
+      return;
+    }
+
+    lobbyRoomOwnerTokens.delete(this.metadata.logicalRoomId);
     lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
     removeRuntimeRoom(this.metadata.logicalRoomId);
   }
@@ -462,6 +475,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   }
 
   private publishLobbyRoomSummary(): void {
+    if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) !== this.lobbyRoomOwnerToken) {
+      return;
+    }
+
     const internalState = this.worldRoom.getInternalState();
     const summary = {
       roomId: this.metadata.logicalRoomId,
@@ -545,9 +562,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         width: number;
         height: number;
       } | null;
+      snapshot?: PlayerWorldView;
     }
   ): SessionStatePayload {
-    const snapshot = this.worldRoom.getSnapshot(playerId).state;
+    const snapshot = options?.snapshot ?? this.worldRoom.getSnapshot(playerId).state;
     const world = encodePlayerWorldView(snapshot, options?.mapBounds ? { bounds: options.mapBounds } : undefined);
     const battle = this.worldRoom.getBattleForPlayer(playerId);
     const heroId = world.ownHeroes[0]?.id;
@@ -581,8 +599,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         continue;
       }
 
-      const fullState = this.worldRoom.getSnapshot(playerId).state;
-      const mapBounds = resolveFocusedMapBounds(fullState);
+      const snapshot = this.worldRoom.getSnapshot(playerId).state;
+      const mapBounds = resolveFocusedMapBounds(snapshot);
       sendMessage(client, "session.state", {
         requestId: "push",
         delivery: "push",
@@ -594,7 +612,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             ...(extras?.reason ? { reason: extras.reason } : {})
           },
           {
-            mapBounds
+            mapBounds,
+            snapshot
           }
         )
       });

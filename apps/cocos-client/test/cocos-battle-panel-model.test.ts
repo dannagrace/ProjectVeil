@@ -82,7 +82,8 @@ test("buildBattlePanelViewModel keeps idle summary focused on battle state", () 
     controlledCamp: null,
     selectedTargetId: null,
     actionPending: false,
-    feedback: null
+    feedback: null,
+    presentationState: null
   });
 
   assert.equal(view.idle, true);
@@ -92,6 +93,52 @@ test("buildBattlePanelViewModel keeps idle summary focused on battle state", () 
   assert.deepEqual(view.orderLines, []);
   assert.equal(view.enemyTargets.length, 0);
   assert.equal(view.actions.length, 0);
+});
+
+test("buildBattlePanelViewModel surfaces settlement and presentation layer summaries after battle exit", () => {
+  const view = buildBattlePanelViewModel({
+    update: createBaseUpdate(),
+    timelineEntries: [],
+    controlledCamp: null,
+    selectedTargetId: null,
+    actionPending: false,
+    feedback: {
+      title: "战斗胜利",
+      detail: "战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+      badge: "WIN",
+      tone: "victory"
+    },
+    presentationState: {
+      battleId: "battle-1",
+      phase: "resolution",
+      moment: "result_victory",
+      label: "战斗胜利",
+      detail: "战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+      badge: "WIN",
+      tone: "victory",
+      result: "victory",
+      summaryLines: [
+        "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
+        "播报：战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+        "战利品：金币 +12"
+      ],
+      feedbackLayer: {
+        animation: "victory",
+        cue: "victory",
+        transition: "exit",
+        durationMs: 4200
+      }
+    }
+  });
+
+  assert.equal(view.idle, true);
+  assert.equal(view.title, "战斗结算");
+  assert.deepEqual(view.summaryLines, [
+    "战斗胜利",
+    "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
+    "播报：战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+    "战利品：金币 +12"
+  ]);
 });
 
 test("buildBattlePanelViewModel enables attack actions on the player's turn", () => {
@@ -193,7 +240,8 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
     controlledCamp: "attacker",
     selectedTargetId: "neutral-1-stack",
     actionPending: false,
-    feedback: null
+    feedback: null,
+    presentationState: null
   });
 
   assert.equal(view.idle, false);
@@ -203,10 +251,11 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
     subtitle: "坐标 (0,0) · 1 陷阱",
     badge: "PVE"
   });
-  assert.equal(view.summaryLines[2], "阶段：轮到我方");
-  assert.equal(view.summaryLines[4], "技能1：投矛射击[敌/就绪] / 护甲术[自/就绪]");
-  assert.equal(view.summaryLines[5], "状态：无异常");
-  assert.equal(view.summaryLines[6], "环境1：1线 捕兽夹陷阱 · 2伤 · 1次");
+  assert.equal(view.summaryLines[2], "阵营：我方先攻");
+  assert.equal(view.summaryLines[3], "阶段：轮到我方");
+  assert.equal(view.summaryLines[5], "技能1：投矛射击[敌/就绪] / 护甲术[自/就绪]");
+  assert.equal(view.summaryLines[6], "状态：无异常");
+  assert.equal(view.summaryLines[7], "环境1：1线 捕兽夹陷阱 · 2伤 · 1次");
   assert.equal(view.orderLines[0], "行动顺序");
   assert.equal(view.orderLines[1], "> Guard x12");
   assert.equal(view.orderLines[2], "2. Orc x8 (DEF/RET)");
@@ -319,7 +368,8 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
     controlledCamp: "attacker",
     selectedTargetId: "hero-2-stack",
     actionPending: false,
-    feedback: null
+    feedback: null,
+    presentationState: null
   });
 
   assert.deepEqual(view.stage, {
@@ -328,9 +378,10 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
     subtitle: "坐标 (0,0) · 无额外障碍",
     badge: "PVP"
   });
-  assert.equal(view.summaryLines[2], "阶段：轮到对方");
-  assert.equal(view.summaryLines[4], "技能：普通攻击");
-  assert.equal(view.summaryLines[5], "状态：无异常");
+  assert.equal(view.summaryLines[2], "阵营：我方先攻");
+  assert.equal(view.summaryLines[3], "阶段：轮到对方");
+  assert.equal(view.summaryLines[5], "技能：普通攻击");
+  assert.equal(view.summaryLines[6], "状态：无异常");
   assert.equal(view.orderLines[1], "> Raider x11");
   assert.equal(view.orderItems[0]!.badge, "行动中");
   assert.equal(view.orderItems[1]!.badge, "2");
@@ -453,7 +504,8 @@ test("buildBattlePanelViewModel hides unrevealed traps and disables skills while
     controlledCamp: "attacker",
     selectedTargetId: "neutral-1-stack",
     actionPending: false,
-    feedback: null
+    feedback: null,
+    presentationState: null
   });
 
   assert.equal(view.summaryLines.includes("环境：当前战场没有额外障碍或陷阱"), false);
@@ -569,7 +621,8 @@ test("buildBattlePanelViewModel derives stage terrain from encounter position an
     controlledCamp: "attacker",
     selectedTargetId: "neutral-2-stack",
     actionPending: false,
-    feedback: null
+    feedback: null,
+    presentationState: null
   });
 
   assert.deepEqual(view.stage, {

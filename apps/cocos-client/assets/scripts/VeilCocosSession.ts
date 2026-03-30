@@ -15,7 +15,7 @@ export interface ResourceLedger {
 export type FogState = "hidden" | "explored" | "visible";
 export type TerrainType = "grass" | "dirt" | "sand" | "water" | "unknown";
 export type OccupantKind = "hero" | "neutral" | "building";
-export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_mine";
+export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_mine" | "watchtower";
 
 export interface HeroProgression {
   level: number;
@@ -164,10 +164,19 @@ export interface ResourceMineBuildingView {
   lastHarvestDay?: number;
 }
 
+export interface WatchtowerBuildingView {
+  id: string;
+  kind: "watchtower";
+  label: string;
+  visionBonus: number;
+  lastUsedDay?: number;
+}
+
 export type PlayerBuildingView =
   | RecruitmentBuildingView
   | AttributeShrineBuildingView
-  | ResourceMineBuildingView;
+  | ResourceMineBuildingView
+  | WatchtowerBuildingView;
 
 export interface UnitStack {
   id: string;
@@ -318,6 +327,13 @@ export type WorldEvent =
       buildingId: string;
       buildingKind: "attribute_shrine";
       bonus: HeroStatBonus;
+    }
+  | {
+      type: "hero.visited";
+      heroId: string;
+      buildingId: string;
+      buildingKind: "watchtower";
+      visionBonus: number;
     }
   | {
       type: "hero.claimedMine";
@@ -581,6 +597,9 @@ const REMOTE_CONNECT_TIMEOUT_MS = 1500;
 const REMOTE_RECOVERY_RETRY_MS = 1500;
 const REMOTE_REQUEST_TIMEOUT_MS = 3000;
 let cachedColyseusSdkPromise: Promise<ColyseusSdkRuntime> | null = null;
+let testStorageOverride: Storage | null | undefined;
+let testSdkLoaderOverride: (() => Promise<ColyseusSdkRuntime>) | null = null;
+let testWaitOverride: ((ms: number) => Promise<void>) | null = null;
 
 interface StoredSessionReplayEnvelope {
   version: number;
@@ -698,6 +717,10 @@ function fromPayload(payload: SessionStatePayload, previousWorld?: PlayerWorldVi
 }
 
 function getStorage(): Storage | null {
+  if (typeof testStorageOverride !== "undefined") {
+    return testStorageOverride;
+  }
+
   try {
     return sys.localStorage ?? null;
   } catch {
@@ -720,6 +743,10 @@ function getRemoteUrl(explicitUrl?: string): string {
 }
 
 function wait(ms: number): Promise<void> {
+  if (testWaitOverride) {
+    return testWaitOverride(ms);
+  }
+
   return new Promise((resolve) => {
     globalThis.setTimeout(resolve, ms);
   });
@@ -1488,7 +1515,39 @@ export class VeilCocosSession {
   }
 }
 
+export function setVeilCocosSessionRuntimeForTests(runtime: {
+  storage?: Storage | null;
+  loadSdk?: (() => Promise<ColyseusSdkRuntime>) | null;
+  wait?: ((ms: number) => Promise<void>) | null;
+}): void {
+  // Keep the session state machine real in tests; only storage, SDK loading,
+  // and retry timing are swapped so reconnect orchestration stays exercised.
+  if ("storage" in runtime) {
+    testStorageOverride = runtime.storage;
+  }
+
+  if ("loadSdk" in runtime) {
+    testSdkLoaderOverride = runtime.loadSdk ?? null;
+    cachedColyseusSdkPromise = null;
+  }
+
+  if ("wait" in runtime) {
+    testWaitOverride = runtime.wait ?? null;
+  }
+}
+
+export function resetVeilCocosSessionRuntimeForTests(): void {
+  testStorageOverride = undefined;
+  testSdkLoaderOverride = null;
+  testWaitOverride = null;
+  cachedColyseusSdkPromise = null;
+}
+
 async function loadColyseusSdk(): Promise<ColyseusSdkRuntime> {
+  if (testSdkLoaderOverride) {
+    return testSdkLoaderOverride();
+  }
+
   if (!cachedColyseusSdkPromise) {
     cachedColyseusSdkPromise = (async () => {
       const globalRecord = globalThis as Record<string, unknown>;

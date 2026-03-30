@@ -27,6 +27,12 @@
       "summary": "Release readiness snapshot reference",
       "result": "passed",
       "sourceRevision": "abc1234"
+    },
+    "wechatSmokeReport": {
+      "path": "artifacts/wechat-rc/codex.wechat.smoke-report.json",
+      "summary": "WeChat RC smoke report reference",
+      "result": "passed",
+      "sourceRevision": "abc1234"
     }
   },
   "mappings": [

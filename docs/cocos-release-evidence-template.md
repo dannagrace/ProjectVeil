@@ -1,14 +1,32 @@
 # Cocos Release Evidence Template
 
-本模板现在以 `npm run release:cocos-rc:snapshot` 生成的 machine-readable JSON 为主，Markdown 只保留使用说明、字段规则和样例路径。目标是把 Cocos Creator 预览与微信小游戏 RC 的证据收口到同一份可归档、可校验、可对比的快照里。
+本模板现在以 `npm run release:cocos-rc:snapshot` 生成的 machine-readable JSON 为主，Markdown 只保留使用说明、字段规则和样例路径。目标是把 Cocos Creator 预览与微信小游戏 RC 的证据收口到同一份可归档、可校验、可对比的快照里，并配套一份可直接复制的检查清单与 blocker 记录。
 
 相关文档：
 
 - 核心玩法发布就绪总清单：`docs/core-gameplay-release-readiness.md`
+- Primary client delivery checklist：`docs/cocos-primary-client-delivery.md`
 - 发布就绪自动化快照：`docs/release-readiness-snapshot.md`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 微信小游戏构建 / 打包 / 验收：`docs/wechat-minigame-release.md`
 - 样例快照：`docs/release-evidence/cocos-rc-snapshot.example.json`
+- RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
+- RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
+
+## RC Evidence Packet
+
+每个 Cocos / WeChat release candidate 都固定产出同一组证据：
+
+1. `artifacts/release-readiness/<candidate>.json`
+   - 自动化 + manual gate 的统一发布快照
+2. `artifacts/release-evidence/<candidate>.<surface>.json`
+   - `npm run release:cocos-rc:snapshot` 生成并回填的结构化 RC 证据
+3. `docs/release-evidence/cocos-wechat-rc-checklist.template.md`
+   - 执行人复制后填写的人工检查清单，明确每一步是否已完成
+4. `docs/release-evidence/cocos-wechat-rc-blockers.template.md`
+   - 记录 `P0/P1/P2` blocker、owner、退出条件和放行决定
+
+其中 2 是权威 machine-readable 记录，3 和 4 是 reviewer / release owner 快速扫读的补充视图。不要为同一个 RC 另外发明独立格式。
 
 ## 标准流程
 
@@ -47,6 +65,15 @@ npm run release:cocos-rc:snapshot -- \
   --check
 ```
 
+5. 复制 RC 检查清单与 blocker 模板，作为 PR 或 release issue 的人类可读附件：
+
+```bash
+cp docs/release-evidence/cocos-wechat-rc-checklist.template.md \
+  artifacts/release-evidence/rc-2026-03-29.checklist.md
+cp docs/release-evidence/cocos-wechat-rc-blockers.template.md \
+  artifacts/release-evidence/rc-2026-03-29.blockers.md
+```
+
 ## 快照结构
 
 快照固定包含以下区块：
@@ -80,6 +107,7 @@ npm run release:cocos-rc:snapshot -- \
 - `requiredEvidence.restoredState`
 - `requiredEvidence.firstBattleResult`
 - 所有 `journey[*].status`
+- 如存在 blocker，必须在配套 blocker 模板中写明 `severity`、`owner`、`next update`、`exit criteria`
 
 可选补充：
 
@@ -119,12 +147,16 @@ Creator 预览至少补：
 - `codex.wechat.smoke-report.json`
 - 真机或准真机截图 / 录屏
 - 若有发布包，则附 artifact 目录或 `*.upload.json`
+- 对应 RC checklist 中的设备、客户端版本、执行人和放行结论
+- 对应 blocker 模板中的未关闭风险与是否允许带风险推进
 
 ## 样例
 
 可直接复制并回填：
 
 - JSON 样例：`docs/release-evidence/cocos-rc-snapshot.example.json`
+- Markdown 检查清单：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
+- Markdown blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - 生成命令：
 
 ```bash

@@ -2,6 +2,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 type CheckStatus = "passed" | "failed" | "pending" | "not_applicable";
 type SnapshotStatus = "passed" | "failed" | "pending" | "partial";
@@ -98,9 +99,21 @@ const AUTOMATED_CHECKS: Array<Pick<ReleaseReadinessCheck, "id" | "title" | "comm
     required: true
   },
   {
+    id: "sync-governance-matrix",
+    title: "Deterministic sync-governance matrix",
+    command: "npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json",
+    required: true
+  },
+  {
+    id: "multiplayer-protocol-compatibility",
+    title: "Multiplayer protocol compatibility snapshot diff",
+    command: "npm run test:multiplayer-protocol-compatibility -- --output artifacts/release-readiness/multiplayer-protocol-compatibility.json",
+    required: true
+  },
+  {
     id: "wechat-build-check",
-    title: "WeChat build readiness",
-    command: "npm run check:wechat-build",
+    title: "Cocos asset and WeChat build readiness",
+    command: "npm run check:cocos-release-readiness",
     required: true
   }
 ];
@@ -149,7 +162,7 @@ function parseArgs(argv: string[]): Args {
   };
 }
 
-function sanitizeStatus(value: unknown, context: string): CheckStatus {
+export function sanitizeStatus(value: unknown, context: string): CheckStatus {
   if (value === undefined) {
     return "pending";
   }
@@ -159,7 +172,7 @@ function sanitizeStatus(value: unknown, context: string): CheckStatus {
   fail(`Unsupported check status for ${context}: ${String(value)}`);
 }
 
-function normalizeManualCheck(entry: ManualCheckInput, source: "file" | "cli"): ReleaseReadinessCheck {
+export function normalizeManualCheck(entry: ManualCheckInput, source: "file" | "cli"): ReleaseReadinessCheck {
   const id = entry.id?.trim();
   const title = entry.title?.trim();
   if (!id) {
@@ -183,7 +196,7 @@ function normalizeManualCheck(entry: ManualCheckInput, source: "file" | "cli"): 
   };
 }
 
-function parseManualCheckArg(value: string): ReleaseReadinessCheck {
+export function parseManualCheckArg(value: string): ReleaseReadinessCheck {
   const separatorIndex = value.indexOf(":");
   if (separatorIndex <= 0 || separatorIndex === value.length - 1) {
     fail(`Manual check must use "<id>:<title>" format, received: ${value}`);
@@ -198,7 +211,7 @@ function parseManualCheckArg(value: string): ReleaseReadinessCheck {
   );
 }
 
-function parseManualChecksFile(filePath: string): ReleaseReadinessCheck[] {
+export function parseManualChecksFile(filePath: string): ReleaseReadinessCheck[] {
   const resolvedPath = path.resolve(filePath);
   const raw = JSON.parse(fs.readFileSync(resolvedPath, "utf8")) as ManualCheckInput[] | { checks?: ManualCheckInput[] };
   const entries = Array.isArray(raw) ? raw : raw.checks;
@@ -208,7 +221,7 @@ function parseManualChecksFile(filePath: string): ReleaseReadinessCheck[] {
   return entries.map((entry) => normalizeManualCheck(entry, "file"));
 }
 
-function ensureUniqueIds(checks: ReleaseReadinessCheck[]): void {
+export function ensureUniqueIds(checks: ReleaseReadinessCheck[]): void {
   const seen = new Set<string>();
   for (const check of checks) {
     if (seen.has(check.id)) {
@@ -251,7 +264,10 @@ function tailText(value: string | undefined): string | undefined {
   return normalized.length > OUTPUT_TAIL_BYTES ? normalized.slice(-OUTPUT_TAIL_BYTES) : normalized;
 }
 
-function buildAutomatedCheckStatus(definition: Pick<ReleaseReadinessCheck, "id" | "title" | "command" | "required">, noRun: boolean): ReleaseReadinessCheck {
+export function buildAutomatedCheckStatus(
+  definition: Pick<ReleaseReadinessCheck, "id" | "title" | "command" | "required">,
+  noRun: boolean
+): ReleaseReadinessCheck {
   if (noRun) {
     return {
       id: definition.id,
@@ -334,7 +350,7 @@ function isGitDirty(): boolean {
   return result.stdout.trim().length > 0;
 }
 
-function computeSnapshotStatus(checks: ReleaseReadinessCheck[]): SnapshotStatus {
+export function computeSnapshotStatus(checks: ReleaseReadinessCheck[]): SnapshotStatus {
   const requiredFailed = checks.some((check) => check.required && check.status === "failed");
   if (requiredFailed) {
     return "failed";
@@ -354,7 +370,7 @@ function computeSnapshotStatus(checks: ReleaseReadinessCheck[]): SnapshotStatus 
   return "passed";
 }
 
-function buildSummary(checks: ReleaseReadinessCheck[]): ReleaseReadinessSnapshot["summary"] {
+export function buildSummary(checks: ReleaseReadinessCheck[]): ReleaseReadinessSnapshot["summary"] {
   return {
     total: checks.length,
     passed: checks.filter((check) => check.status === "passed").length,
@@ -367,6 +383,22 @@ function buildSummary(checks: ReleaseReadinessCheck[]): ReleaseReadinessSnapshot
   };
 }
 
+export function buildReleaseReadinessSnapshot(input: {
+  generatedAt: string;
+  revision: ReleaseReadinessSnapshot["revision"];
+  runner: ReleaseReadinessSnapshot["runner"];
+  checks: ReleaseReadinessCheck[];
+}): ReleaseReadinessSnapshot {
+  return {
+    schemaVersion: 1,
+    generatedAt: input.generatedAt,
+    revision: input.revision,
+    runner: input.runner,
+    summary: buildSummary(input.checks),
+    checks: input.checks
+  };
+}
+
 function main(): void {
   const args = parseArgs(process.argv);
   const outputPath = getOutputPath(args.outputPath);
@@ -376,8 +408,7 @@ function main(): void {
   const checks = [...automatedChecks, ...manualChecksFromFile, ...manualChecksFromCli];
   ensureUniqueIds(checks);
 
-  const snapshot: ReleaseReadinessSnapshot = {
-    schemaVersion: 1,
+  const snapshot = buildReleaseReadinessSnapshot({
     generatedAt: new Date().toISOString(),
     revision: {
       commit: getGitValue(["rev-parse", "HEAD"]),
@@ -391,9 +422,8 @@ function main(): void {
       hostname: os.hostname(),
       cwd: process.cwd()
     },
-    summary: buildSummary(checks),
     checks
-  };
+  });
 
   writeJsonFile(outputPath, snapshot);
 
@@ -405,4 +435,6 @@ function main(): void {
   );
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

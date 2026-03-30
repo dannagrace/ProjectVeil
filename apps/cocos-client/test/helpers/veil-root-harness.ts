@@ -1,0 +1,44 @@
+import {
+  resetVeilRootRuntimeForTests,
+  setVeilRootRuntimeForTests,
+  VeilRoot
+} from "../../assets/scripts/VeilRoot.ts";
+import type { SessionUpdate } from "../../assets/scripts/VeilCocosSession.ts";
+
+export function createVeilRootHarness(): VeilRoot & Record<string, unknown> {
+  // This harness keeps VeilRoot's startup/reconnect logic intact while stubbing
+  // only engine-facing rendering and platform adapters that are irrelevant to CI.
+  const root = new VeilRoot() as VeilRoot & Record<string, unknown>;
+  root.renderView = () => undefined;
+  root.syncBrowserRoomQuery = () => undefined;
+  root.syncWechatShareBridge = () => ({
+    available: false,
+    menuEnabled: false,
+    handlerRegistered: false,
+    canShareDirectly: false,
+    immediateShared: false,
+    payload: null,
+    message: "disabled"
+  });
+  root.applySessionUpdate = async (update: SessionUpdate) => {
+    root.lastUpdate = update;
+  };
+  root.applyReplayedSessionUpdate = (update: SessionUpdate) => {
+    root.lastUpdate = {
+      ...update,
+      events: [],
+      movementPlan: null
+    };
+  };
+  root.refreshLobbyRoomList = async () => undefined;
+  root.refreshLobbyAccountProfile = async () => undefined;
+  return root;
+}
+
+export function installVeilRootRuntime(overrides: Parameters<typeof setVeilRootRuntimeForTests>[0]): void {
+  setVeilRootRuntimeForTests(overrides);
+}
+
+export function resetVeilRootRuntime(): void {
+  resetVeilRootRuntimeForTests();
+}

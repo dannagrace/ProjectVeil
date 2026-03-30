@@ -129,6 +129,52 @@
         "allowRetaliation": false,
         "onHitStatusId": "weakened"
       }
+    },
+    {
+      "id": "ambush_pounce",
+      "name": "伏击扑杀",
+      "description": "借助地形突然扑击，压低单次伤害但留下破甲创口。",
+      "kind": "active",
+      "target": "enemy",
+      "cooldown": 2,
+      "effects": {
+        "damageMultiplier": 0.95,
+        "onHitStatusId": "armor_break"
+      }
+    },
+    {
+      "id": "bog_veil",
+      "name": "沼雾潜行",
+      "description": "借雾气隐蔽身形，短时间内提高先手并削弱敌方反击节奏。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 3,
+      "effects": {
+        "grantedStatusId": "mist_shroud"
+      }
+    },
+    {
+      "id": "shield_bash",
+      "name": "塔盾猛击",
+      "description": "以厚盾撞击敌军，伤害稳定并附带短暂压制。",
+      "kind": "active",
+      "target": "enemy",
+      "cooldown": 3,
+      "effects": {
+        "damageMultiplier": 1.05,
+        "onHitStatusId": "weakened"
+      }
+    },
+    {
+      "id": "watcher_stance",
+      "name": "瞭望戒备",
+      "description": "驻守时主动收紧阵线，提高防御并延后敌方节奏。",
+      "kind": "active",
+      "target": "self",
+      "cooldown": 4,
+      "effects": {
+        "grantedStatusId": "watchful_guard"
+      }
     }
   ],
   "statuses": [
@@ -219,6 +265,28 @@
       "damagePerTurn": 0,
       "initiativeModifier": 0,
       "blocksActiveSkills": true
+    },
+    {
+      "id": "mist_shroud",
+      "name": "沼雾隐迹",
+      "description": "在迷雾掩护下行动，先手提升且更难被压制。",
+      "duration": 2,
+      "attackModifier": 0,
+      "defenseModifier": 1,
+      "damagePerTurn": 0,
+      "initiativeModifier": 3,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "watchful_guard",
+      "name": "瞭望戒备",
+      "description": "重整盾阵，提升防御并稳住站位。",
+      "duration": 2,
+      "attackModifier": 0,
+      "defenseModifier": 3,
+      "damagePerTurn": 0,
+      "initiativeModifier": -1,
+      "blocksActiveSkills": false
     }
   ]
 }

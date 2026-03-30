@@ -186,6 +186,7 @@ test("battle feedback summarizes action, progress, and outcome", () => {
   const victoryFeedback = buildBattleTransitionFeedback(createResolvedUpdate("attacker_victory"), "hero-1");
   assert.equal(victoryFeedback?.tone, "victory");
   assert.equal(victoryFeedback?.badge, "WIN");
+  assert.match(victoryFeedback?.detail ?? "", /准备返回世界地图/);
 
   const defeatFeedback = buildBattleTransitionFeedback(createResolvedUpdate("defender_victory"), "hero-1");
   assert.equal(defeatFeedback?.tone, "defeat");
@@ -262,4 +263,47 @@ test("battle presentation plan formalizes enter, impact, and resolution phases",
   assert.equal(resolutionPlan.feedbackDurationMs, 4200);
   assert.equal(resolutionPlan.transition?.kind, "exit");
   assert.equal(resolutionPlan.transition?.copy.badge, "VICTORY");
+  assert.deepEqual(resolutionPlan.state.summaryLines.slice(0, 2), [
+    "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
+    "播报：战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图"
+  ]);
+});
+
+test("battle transition feedback summarizes settlement rewards and field state", () => {
+  const battle = createBattleState();
+  const update: SessionUpdate = {
+    ...createResolvedUpdate("attacker_victory"),
+    events: [
+      {
+        type: "battle.resolved",
+        battleId: "battle-1",
+        battleKind: "neutral",
+        heroId: "hero-1",
+        result: "attacker_victory",
+        resourcesGained: {
+          gold: 12,
+          wood: 0,
+          ore: 3
+        },
+        experienceGained: 25,
+        skillPointsAwarded: 1
+      },
+      {
+        type: "hero.equipmentFound",
+        heroId: "hero-1",
+        battleId: "battle-1",
+        battleKind: "neutral",
+        equipmentId: "iron_spear",
+        equipmentName: "铁枪",
+        rarity: "common"
+      }
+    ]
+  };
+
+  const feedback = buildBattleTransitionFeedback(update, "hero-1", battle);
+  assert.equal(feedback?.badge, "WIN");
+  assert.match(feedback?.detail ?? "", /战线：我方剩余 1 队 \/ 对方剩余 1 队/);
+  assert.match(feedback?.detail ?? "", /战利品：金币 \+12 \/ 矿石 \+3/);
+  assert.match(feedback?.detail ?? "", /成长：XP \+25 \/ 技能点 \+1/);
+  assert.match(feedback?.detail ?? "", /掉落：铁枪/);
 });

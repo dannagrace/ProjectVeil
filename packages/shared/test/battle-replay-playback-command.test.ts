@@ -6,6 +6,8 @@ import {
   createEmptyBattleState,
   queryPlayerBattleReplaySummaries,
   restoreBattleReplayPlaybackState,
+  stepBackBattleReplayPlayback,
+  stepBattleReplayPlayback,
   type PlayerBattleReplaySummary
 } from "../src/index";
 
@@ -107,6 +109,27 @@ test("applyBattleReplayPlaybackCommand supports play, pause, and reset from a re
   assert.equal(reset.currentStepIndex, 0);
   assert.equal(reset.currentStep, null);
   assert.equal(reset.nextStep?.index, 1);
+});
+
+test("battle replay playback can step backward from partial and completed states", () => {
+  const replay = createReplay();
+
+  const firstStep = stepBattleReplayPlayback(restoreBattleReplayPlaybackState(replay));
+  const secondStep = stepBattleReplayPlayback(firstStep);
+  assert.equal(secondStep.status, "completed");
+  assert.equal(secondStep.currentStepIndex, 2);
+
+  const rewoundCompleted = stepBackBattleReplayPlayback(secondStep);
+  assert.equal(rewoundCompleted.status, "paused");
+  assert.equal(rewoundCompleted.currentStepIndex, 1);
+  assert.equal(rewoundCompleted.currentStep?.index, 1);
+  assert.equal(rewoundCompleted.nextStep?.index, 2);
+
+  const rewoundToStart = stepBackBattleReplayPlayback(rewoundCompleted);
+  assert.equal(rewoundToStart.status, "paused");
+  assert.equal(rewoundToStart.currentStepIndex, 0);
+  assert.equal(rewoundToStart.currentStep, null);
+  assert.equal(rewoundToStart.nextStep?.index, 1);
 });
 
 test("battle replay timeline derives round-aware state deltas", () => {

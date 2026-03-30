@@ -1,0 +1,46 @@
+[
+  {
+    "type": "connect",
+    "requestId": "req-connect-001",
+    "roomId": "room-contract",
+    "playerId": "player-1",
+    "displayName": "暮火侦骑",
+    "authToken": "token-contract",
+    "seed": 328
+  },
+  {
+    "type": "world.action",
+    "requestId": "req-world-action-001",
+    "action": {
+      "type": "hero.move",
+      "heroId": "hero-1",
+      "destination": {
+        "x": 1,
+        "y": 1
+      }
+    }
+  },
+  {
+    "type": "battle.action",
+    "requestId": "req-battle-action-001",
+    "action": {
+      "type": "battle.attack",
+      "attackerId": "wolf-d",
+      "defenderId": "pikeman-a"
+    }
+  },
+  {
+    "type": "world.preview",
+    "requestId": "req-world-preview-001",
+    "heroId": "hero-1",
+    "destination": {
+      "x": 1,
+      "y": 1
+    }
+  },
+  {
+    "type": "world.reachable",
+    "requestId": "req-world-reachable-001",
+    "heroId": "hero-1"
+  }
+]

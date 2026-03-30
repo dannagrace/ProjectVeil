@@ -5,7 +5,11 @@ import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
 import { resetAccountTokenDeliveryState } from "../src/account-token-delivery";
 import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../src/colyseus-room";
-import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
+import {
+  recordMatchmakingRateLimited,
+  registerRuntimeObservabilityRoutes,
+  resetRuntimeObservability
+} from "../src/observability";
 
 async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -112,6 +116,8 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   );
 
   await wait(100);
+  recordMatchmakingRateLimited();
+  recordMatchmakingRateLimited();
 
   const healthResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/health`);
   const healthPayload = (await healthResponse.json()) as {
@@ -133,6 +139,11 @@ test("runtime observability routes expose live room counts and gameplay traffic"
           sessionChecksTotal: number;
         };
       };
+      matchmaking: {
+        counters: {
+          rateLimitedTotal: number;
+        };
+      };
     };
   };
 
@@ -148,6 +159,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(healthPayload.runtime.auth.activeGuestSessionCount, 0);
   assert.equal(healthPayload.runtime.auth.activeAccountSessionCount, 0);
   assert.equal(healthPayload.runtime.auth.counters.sessionChecksTotal, 0);
+  assert.equal(healthPayload.runtime.matchmaking.counters.rateLimitedTotal, 2);
 
   const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`);
   const readinessPayload = (await readinessResponse.json()) as {
@@ -158,6 +170,49 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(readinessResponse.status, 200);
   assert.equal(readinessPayload.status, "ok");
   assert.match(readinessPayload.headline, /guest=0 account=0 lockouts=0/);
+
+  const diagnosticResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/diagnostic-snapshot`);
+  const diagnosticPayload = (await diagnosticResponse.json()) as {
+    source: {
+      surface: string;
+      mode: string;
+    };
+    room: null;
+    overview: {
+      activeRoomCount: number;
+      connectionCount: number;
+      roomSummaries: Array<{
+        roomId: string;
+        day: number | null;
+        connectedPlayers: number;
+      }>;
+    };
+    diagnostics: {
+      predictionStatus: string | null;
+      logTail: string[];
+    };
+  };
+
+  assert.equal(diagnosticResponse.status, 200);
+  assert.equal(diagnosticPayload.source.surface, "server-observability");
+  assert.equal(diagnosticPayload.source.mode, "server");
+  assert.equal(diagnosticPayload.room, null);
+  assert.equal(diagnosticPayload.overview.activeRoomCount, 1);
+  assert.equal(diagnosticPayload.overview.connectionCount, 1);
+  assert.equal(diagnosticPayload.overview.roomSummaries[0]?.roomId, "room-observability-alpha");
+  assert.equal(diagnosticPayload.overview.roomSummaries[0]?.day, 1);
+  assert.equal(diagnosticPayload.overview.roomSummaries[0]?.connectedPlayers, 1);
+  assert.equal(diagnosticPayload.diagnostics.predictionStatus, "server-observability");
+  assert.match(diagnosticPayload.diagnostics.logTail[0] ?? "", /rooms=1 connections=1/);
+
+  const diagnosticTextResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/diagnostic-snapshot?format=text`);
+  const diagnosticText = await diagnosticTextResponse.text();
+
+  assert.equal(diagnosticTextResponse.status, 200);
+  assert.match(diagnosticTextResponse.headers.get("content-type") ?? "", /^text\/plain/);
+  assert.match(diagnosticText, /Mode server \(server-observability\)/);
+  assert.match(diagnosticText, /Runtime rooms 1 \/ connections 1 \/ battles 0/);
+  assert.match(diagnosticText, /Room summary room-observability-alpha \/ day 1 \/ players 1/);
 
   const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`);
   const metricsText = await metricsResponse.text();
@@ -173,4 +228,5 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(metricsText, /^veil_auth_guest_sessions 0$/m);
   assert.match(metricsText, /^veil_auth_account_sessions 0$/m);
   assert.match(metricsText, /^veil_auth_session_checks_total 0$/m);
+  assert.match(metricsText, /^veil_matchmaking_rate_limited_total 2$/m);
 });

@@ -24,6 +24,7 @@ export interface PixelIconSpriteManifest {
   recruitment: string;
   shrine: string;
   mine: string;
+  tower: string;
   hud: string;
   battle: string;
   timeline: string;
@@ -85,6 +86,7 @@ export const pixelSpriteManifest: PixelSpriteManifest = {
     recruitment: requireResourcePath(assetConfig.buildings.recruitment_post, "buildings.recruitment_post"),
     shrine: requireResourcePath(assetConfig.buildings.attribute_shrine, "buildings.attribute_shrine"),
     mine: requireResourcePath(assetConfig.buildings.resource_mine, "buildings.resource_mine"),
+    tower: requireResourcePath(assetConfig.buildings.watchtower, "buildings.watchtower"),
     hud: "pixel/ui/hud-icon",
     battle: "pixel/ui/battle-icon",
     timeline: "pixel/ui/timeline-icon"

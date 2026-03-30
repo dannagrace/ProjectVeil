@@ -4,8 +4,11 @@ import test from "node:test";
 import assetConfig from "../../../configs/assets.json";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
+import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
 import {
   applyBattleAction,
+  applyWorldAction,
   appendEventLogEntries,
   appendPlayerBattleReplaySummaries,
   applyBattleOutcomeToWorld,
@@ -23,6 +26,7 @@ import {
   createBattleEnvironmentState,
   createBattleReplayPlaybackState,
   createDemoBattleState,
+  nextDeterministicRandom,
   createEmptyBattleState,
   executeBattleSkill,
   createHeroBattleState,
@@ -32,6 +36,7 @@ import {
   createInitialWorldState,
   createPlayerWorldView,
   createWorldStateFromConfigs,
+  CONTESTED_BASIN_MAP_VARIANT_ID,
   decodePlayerWorldView,
   encodePlayerWorldView,
   filterWorldEventsForPlayer,
@@ -311,7 +316,8 @@ test("asset config validation reports missing terrain variants and bad asset roo
     buildings: {
       recruitment_post: "/assets/buildings/recruitment-post.svg",
       attribute_shrine: "/assets/buildings/attribute-shrine.svg",
-      resource_mine: "/assets/buildings/resource-mine.svg"
+      resource_mine: "/assets/buildings/resource-mine.svg",
+      watchtower: "/assets/buildings/watchtower.svg"
     },
     units: {
       hero_guard_basic: {
@@ -401,7 +407,8 @@ test("asset config validation accepts prototype stage and open-source provenance
     buildings: {
       recruitment_post: "/assets/buildings/recruitment-post.png",
       attribute_shrine: "/assets/buildings/attribute-shrine.png",
-      resource_mine: "/assets/buildings/resource-mine.png"
+      resource_mine: "/assets/buildings/resource-mine.png",
+      watchtower: "/assets/buildings/watchtower.png"
     },
     heroes: {
       hero_knight: {
@@ -498,6 +505,11 @@ test("asset config validation accepts prototype stage and open-source provenance
       },
       "/assets/buildings/resource-mine.png": {
         slot: "building.resource_mine",
+        stage: "prototype",
+        source: "open-source"
+      },
+      "/assets/buildings/watchtower.png": {
+        slot: "building.watchtower",
         stage: "prototype",
         source: "open-source"
       },
@@ -760,7 +772,8 @@ test("asset config validation reports missing metadata coverage", () => {
     buildings: {
       recruitment_post: "/assets/pixel/buildings/recruitment-post.png",
       attribute_shrine: "/assets/pixel/buildings/attribute-shrine.png",
-      resource_mine: "/assets/pixel/buildings/resource-mine.png"
+      resource_mine: "/assets/pixel/buildings/resource-mine.png",
+      watchtower: "/assets/pixel/buildings/watchtower.png"
     },
     heroes: {
       hero_guard_basic: {
@@ -826,6 +839,7 @@ test("asset config validation reports missing metadata coverage", () => {
   });
 
   assert.ok(errors.includes("metadata[/assets/pixel/terrain/fog-tile.png] is missing for referenced asset path"));
+  assert.ok(errors.includes("metadata[/assets/pixel/buildings/watchtower.png] is missing for referenced asset path"));
 });
 
 test("achievement helpers unlock milestones and preserve catalog order", () => {
@@ -2207,6 +2221,20 @@ test("createWorldStateFromConfigs produces a valid frontier basin world", () => 
   }
 });
 
+test("createInitialWorldState selects the contested basin variant with the new content pack", () => {
+  const state = createInitialWorldState(1001, "preview-contested[map:contested_basin]");
+
+  assert.equal(state.meta.mapVariantId, "contested_basin");
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 2);
+  assert.equal(state.buildings["watchtower-basin-1"]?.kind, "watchtower");
+  assert.equal(state.buildings["watchtower-basin-1"]?.visionBonus, 2);
+  assert.equal(state.neutralArmies["neutral-reed-patrol"]?.behavior?.mode, "patrol");
+  assert.equal(state.neutralArmies["neutral-watch-guard"]?.behavior?.mode, "guard");
+  assert.equal(state.neutralArmies["neutral-watch-guard"]?.stacks[0]?.templateId, "iron_walker");
+  assert.equal(state.neutralArmies["neutral-reed-patrol"]?.stacks[0]?.templateId, "moss_stalker");
+});
+
 test("frontier basin generates a distinct layout from the default phase1 variant", () => {
   const seed = 5124;
   const defaultRoomId = "preview-default";
@@ -2251,6 +2279,20 @@ test("frontier basin configs validate alongside the default configs", () => {
   assert.doesNotThrow(() => {
     validateMapObjectsConfig(defaultMapObjects, defaultWorld, units);
     validateMapObjectsConfig(frontierMapObjects, frontierWorld, units);
+  });
+});
+
+test("contested basin configs validate alongside the existing variants", () => {
+  const units = getDefaultUnitCatalog();
+  const contestedWorld = contestedBasinWorldConfig as WorldGenerationConfig;
+  const contestedMapObjects = contestedBasinMapObjectsConfig as MapObjectsConfig;
+  const bundle = getRuntimeConfigBundleForRoom("preview-contested[map:contested_basin]", 5124);
+
+  assert.equal(bundle.mapVariantId, CONTESTED_BASIN_MAP_VARIANT_ID);
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(contestedWorld);
+    validateMapObjectsConfig(contestedMapObjects, contestedWorld, units);
   });
 });
 
@@ -3206,6 +3248,82 @@ test("resolveWorldAction visits an attribute shrine once, grants permanent stats
   assert.equal(nextDayOutcome.state.heroes[0]?.stats.power, 2);
 });
 
+test("resolveWorldAction visits a watchtower once, grants permanent vision, and keeps it after day advance", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 1, y: 1 }
+  });
+  const state = createWorldState({
+    width: 2,
+    height: 2,
+    heroes: [hero],
+    buildings: {
+      "tower-1": {
+        id: "tower-1",
+        kind: "watchtower",
+        position: { x: 1, y: 1 },
+        label: "回声瞭望塔",
+        visionBonus: 2,
+        lastUsedDay: undefined
+      }
+    },
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(0, 1),
+      createTile(1, 1, {
+        occupant: { kind: "hero", refId: "hero-1" },
+        building: {
+          id: "tower-1",
+          kind: "watchtower",
+          position: { x: 1, y: 1 },
+          label: "回声瞭望塔",
+          visionBonus: 2,
+          lastUsedDay: undefined
+        }
+      })
+    ],
+    visibilityByPlayer: {
+      "player-1": ["visible", "visible", "visible", "visible"]
+    }
+  });
+
+  const visitOutcome = resolveWorldAction(state, {
+    type: "hero.visit",
+    heroId: "hero-1",
+    buildingId: "tower-1"
+  });
+
+  assert.equal(visitOutcome.state.heroes[0]?.vision, 4);
+  assert.equal(visitOutcome.state.buildings["tower-1"]?.lastUsedDay, 1);
+  assert.deepEqual(visitOutcome.events, [
+    {
+      type: "hero.visited",
+      heroId: "hero-1",
+      buildingId: "tower-1",
+      buildingKind: "watchtower",
+      visionBonus: 2
+    }
+  ]);
+
+  assert.equal(
+    predictPlayerWorldAction(createPlayerWorldView(state, "player-1"), {
+      type: "hero.visit",
+      heroId: "hero-1",
+      buildingId: "tower-1"
+    }).world.ownHeroes[0]?.vision,
+    4
+  );
+
+  const nextDayOutcome = resolveWorldAction(visitOutcome.state, {
+    type: "turn.endDay"
+  });
+
+  assert.equal(nextDayOutcome.state.heroes[0]?.vision, 4);
+});
+
 test("resolveWorldAction harvests a resource mine immediately and unlocks it again on the next day", () => {
   const hero = createHero({
     id: "hero-1",
@@ -4136,6 +4254,45 @@ test("applyBattleAction uses deterministic damage and retaliation flow", () => {
   ]);
 });
 
+test("nextDeterministicRandom is repeatable for the same seed", () => {
+  const firstRun = [
+    nextDeterministicRandom(4242),
+    nextDeterministicRandom(3779851977),
+    nextDeterministicRandom(188715412)
+  ];
+  const secondStep = nextDeterministicRandom(4242);
+  const thirdStep = nextDeterministicRandom(secondStep.nextSeed);
+  const fourthStep = nextDeterministicRandom(thirdStep.nextSeed);
+  const secondRun = [secondStep, thirdStep, fourthStep];
+
+  assert.deepEqual(secondRun, firstRun);
+  assert.deepEqual(
+    firstRun.map((step) => step.value),
+    [0.8800653687212616, 0.04393873084336519, 0.35202502529136837]
+  );
+});
+
+test("applyBattleAction repeats battle damage variance for the same seed", () => {
+  const firstState = createDemoBattleState();
+  const secondState = createDemoBattleState();
+
+  const firstResult = applyBattleAction(firstState, {
+    type: "battle.attack",
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  });
+  const secondResult = applyBattleAction(secondState, {
+    type: "battle.attack",
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  });
+
+  assert.equal(firstResult.log.at(-4), "恶狼 对 枪兵 造成 27 伤害");
+  assert.deepEqual(secondResult.log, firstResult.log);
+  assert.deepEqual(secondResult.units, firstResult.units);
+  assert.deepEqual(secondResult.rng, firstResult.rng);
+});
+
 test("applyBattleAction supports active ranged skills without retaliation", () => {
   const initial = createDemoBattleState();
   initial.activeUnitId = "pikeman-a";
@@ -4535,6 +4692,32 @@ test("applyBattleAction logs rejected actions without mutating battle flow", () 
   assert.equal(next.activeUnitId, initial.activeUnitId);
   assert.deepEqual(next.turnOrder, initial.turnOrder);
   assert.equal(next.log.at(-1), "Action rejected: attacker_not_active");
+});
+
+test("applyWorldAction rejects invalid movement before mutating world state", () => {
+  const hero = createHero({
+    id: "hero-blocked",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 0 },
+    move: { total: 6, remaining: 1 }
+  });
+  const initial = createWorldState({
+    width: 3,
+    height: 1,
+    heroes: [hero],
+    tiles: [createTile(0, 0), createTile(1, 0), createTile(2, 0)]
+  });
+
+  const next = applyWorldAction(initial, {
+    type: "hero.move",
+    heroId: "hero-blocked",
+    destination: { x: 2, y: 0 }
+  });
+
+  assert.equal(next, initial);
+  assert.deepEqual(next.heroes[0]?.position, { x: 0, y: 0 });
+  assert.equal(next.heroes[0]?.move.remaining, 1);
 });
 
 test("applyBattleAction resolves wait plus turn-start poison death and cooldown ticking", () => {

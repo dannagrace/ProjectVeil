@@ -1,5 +1,10 @@
 import "./styles.css";
 import {
+  buildAchievementUiItems,
+  groupAchievementUiItems,
+  buildRuntimeDiagnosticsTriageView,
+  describeAccountAuthFailure,
+  renderRuntimeDiagnosticsSnapshotText,
   createBattleReplayPlaybackState,
   createHeroSkillTreeView,
   createHeroAttributeBreakdown,
@@ -26,7 +31,11 @@ import {
   type MovementPlan,
   type PlayerTileView,
   type PlayerWorldView,
-  type RuntimeDiagnosticsConnectionStatus
+  type RuntimeDiagnosticsConnectionStatus,
+  type RuntimeDiagnosticsTriageSection,
+  validateAccountLifecycleConfirm,
+  validateAccountLifecycleRequest,
+  validateAccountPassword
 } from "../../../packages/shared/src/index";
 import { createGameSession, readStoredSessionReplay, type SessionUpdate } from "./local-session";
 import { buildH5RuntimeDiagnosticsSnapshot } from "./runtime-diagnostics";
@@ -41,6 +50,7 @@ import {
   unitFrameAsset
 } from "./assets";
 import { describeTileObject } from "./object-visuals";
+import { launchMainH5App } from "./main-bootstrap-launch";
 import {
   confirmAccountRegistration,
   confirmPasswordRecovery,
@@ -62,6 +72,7 @@ import {
 import {
   createFallbackPlayerAccountProfile as createLocalAccountProfile,
   loadPlayerAccountProfileWithProgression as loadAccountProfileWithProgression,
+  loadPlayerAchievementProgress,
   bindPlayerAccountCredentials as bindAccountCredentials,
   loadPlayerAccountSessions,
   loadPlayerBattleReplayDetail,
@@ -77,7 +88,15 @@ import {
   renderBattleReportReplayCenter,
   renderRecentAccountEvents
 } from "./account-history";
-import { renderEncounterSourceDetail, renderRoomActionHint, resolveRoomFeedbackTone } from "./room-feedback";
+import {
+  renderEncounterSourceDetail,
+  renderRecoverySummary,
+  renderRoomActionHint,
+  renderRoomResultSummary,
+  resolveRecoveryRoomStateLabel,
+  resolveRoomFeedbackTone
+} from "./room-feedback";
+import { createMainSessionRuntime } from "./main-session-runtime";
 
 const params = new URLSearchParams(window.location.search);
 const queryRoomId = params.get("roomId")?.trim() ?? "";
@@ -106,6 +125,7 @@ declare global {
   interface Window {
     render_game_to_text?: () => string;
     export_diagnostic_snapshot?: () => string;
+    render_diagnostic_snapshot_to_text?: () => string;
     advanceTime?: (ms: number) => Promise<void>;
   }
 }
@@ -146,6 +166,7 @@ interface DiagnosticState {
   lastUpdateReason: string | null;
   lastEventTypes: string[];
   exportStatus: string;
+  recoverySummary: string | null;
 }
 
 interface LobbyViewState {
@@ -206,6 +227,17 @@ interface AppState {
   lastEncounterStarted: Extract<SessionUpdate["events"][number], { type: "battle.started" }> | null;
   predictionStatus: string;
   diagnostics: DiagnosticState;
+  achievementPanel: {
+    open: boolean;
+    loading: boolean;
+    status: string;
+    items: ClientPlayerAccountProfile["achievements"];
+  };
+  achievementToast: {
+    eventId: string;
+    title: string;
+    detail: string;
+  } | null;
 }
 
 type BattleUnitView = BattleState["units"][string];
@@ -295,11 +327,20 @@ const state: AppState = {
     lastUpdateSource: null,
     lastUpdateReason: null,
     lastEventTypes: [],
-    exportStatus: "等待导出诊断快照"
-  }
+    exportStatus: "等待导出诊断快照",
+    recoverySummary: null
+  },
+  achievementPanel: {
+    open: false,
+    loading: false,
+    status: "打开后将从成就接口同步最新进度。",
+    items: []
+  },
+  achievementToast: null
 };
 
 let accountRefreshPromise: Promise<void> | null = null;
+let achievementPanelRefreshPromise: Promise<void> | null = null;
 let uiClockMs = 0;
 let nextUiTaskId = 1;
 let scheduledUiTasks: ScheduledUiTask[] = [];
@@ -308,6 +349,10 @@ let battleFxTaskId: number | null = null;
 let replayPlaybackTaskId: number | null = null;
 let keyboardShortcutsBound = false;
 let replayLoadToken = 0;
+let achievementToastTaskId: number | null = null;
+const seenAchievementToastEventIds = new Set<string>();
+const pendingAchievementToasts: Array<{ eventId: string; title: string; detail: string }> = [];
+let hasHydratedAchievementFeed = false;
 
 interface PendingPrediction {
   world: PlayerWorldView;
@@ -320,28 +365,18 @@ interface PendingPrediction {
 
 let pendingPrediction: PendingPrediction | null = null;
 
+const mainSessionRuntime = createMainSessionRuntime({
+  state,
+  applyUpdate,
+  render
+});
+
 let sessionPromise: ReturnType<typeof createGameSession> | null = shouldBootGame
   ? createGameSession(roomId, playerId, 1001, {
-      getDisplayName: () => state.accountDraftName,
-      getAuthToken: () => state.lobby.authSession?.token ?? null,
-      onPushUpdate: (update) => {
-        state.log.unshift("收到房间同步推送");
-        state.log = state.log.slice(0, 12);
-        applyUpdate(update, "push");
-      },
-      onConnectionEvent: (event) => {
-        state.diagnostics.connectionStatus =
-          event === "reconnecting" ? "reconnecting" : event === "reconnect_failed" ? "reconnect_failed" : "connected";
-        state.log.unshift(
-          event === "reconnecting"
-            ? "连接中断，正在尝试重连..."
-            : event === "reconnected"
-              ? "连接已恢复"
-              : "旧连接恢复失败，正在尝试从持久化快照恢复房间..."
-        );
-        state.log = state.log.slice(0, 12);
-        render();
-      }
+      getDisplayName: mainSessionRuntime.getDisplayName,
+      getAuthToken: mainSessionRuntime.getAuthToken,
+      onPushUpdate: mainSessionRuntime.onPushUpdate,
+      onConnectionEvent: mainSessionRuntime.onConnectionEvent
     })
   : null;
 
@@ -402,6 +437,7 @@ function buildDiagnosticSnapshot() {
         text: entry.text
       })),
       logTail: state.log.slice(0, 8),
+      recoverySummary: state.diagnostics.recoverySummary,
       predictionStatus: state.predictionStatus,
       pendingUiTasks: scheduledUiTasks.filter((task) => !task.canceled).length,
       replay:
@@ -420,6 +456,10 @@ function buildDiagnosticSnapshot() {
 
 function exportDiagnosticSnapshot(): string {
   return serializeRuntimeDiagnosticsSnapshot(buildDiagnosticSnapshot());
+}
+
+function renderDiagnosticSnapshotToText(): string {
+  return renderRuntimeDiagnosticsSnapshotText(buildDiagnosticSnapshot());
 }
 
 function sanitizeSnapshotFileSegment(value: string): string {
@@ -447,21 +487,89 @@ function triggerDiagnosticSnapshotExport(): void {
   render();
 }
 
+async function copyDiagnosticSnapshotText(): Promise<void> {
+  if (!DEV_DIAGNOSTICS_ENABLED) {
+    return;
+  }
+
+  const snapshotText = renderDiagnosticSnapshotToText();
+  try {
+    if (!navigator.clipboard?.writeText) {
+      throw new Error("clipboard_unavailable");
+    }
+
+    await navigator.clipboard.writeText(snapshotText);
+    state.diagnostics.exportStatus = "已复制紧凑摘要";
+  } catch {
+    state.diagnostics.exportStatus = "复制失败：当前运行时不支持剪贴板写入";
+  }
+  render();
+}
+
+function renderDiagnosticsTriageSection(section: RuntimeDiagnosticsTriageSection): string {
+  const rows = section.items
+    .map(
+      (item) => `
+        <div class="diagnostics-triage-row"${item.tone ? ` data-tone="${item.tone}"` : ""}>
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${escapeHtml(item.value)}</strong>
+        </div>
+      `
+    )
+    .join("");
+
+  return `
+    <section class="diagnostics-triage-section" data-testid="diagnostic-section-${section.id}">
+      <div class="diagnostics-triage-head">
+        <h4>${escapeHtml(section.title)}</h4>
+      </div>
+      <div class="diagnostics-triage-list">
+        ${rows}
+      </div>
+    </section>
+  `;
+}
+
 function renderDiagnosticPanel(): string {
   if (!DEV_DIAGNOSTICS_ENABLED || !shouldBootGame) {
     return "";
   }
 
   const hero = activeHero();
+  const snapshot = buildDiagnosticSnapshot();
+  const triage = buildRuntimeDiagnosticsTriageView(snapshot);
+  const snapshotSummary = escapeHtml(renderRuntimeDiagnosticsSnapshotText(snapshot));
+  const alertMarkup =
+    triage.alerts.length > 0
+      ? triage.alerts
+          .map(
+            (alert, index) => `
+              <div class="diagnostics-alert" data-tone="${alert.tone}" data-testid="diagnostic-alert-${index}">
+                <strong>${escapeHtml(alert.label)}</strong>
+                <p>${escapeHtml(alert.detail)}</p>
+              </div>
+            `
+          )
+          .join("")
+      : `
+          <div class="diagnostics-alert" data-tone="neutral" data-testid="diagnostic-alert-0">
+            <strong>链路稳定</strong>
+            <p>当前没有发现明显的同步滞后或缺失快照。</p>
+          </div>
+        `;
+  const triageSections = triage.sections.map((section) => renderDiagnosticsTriageSection(section)).join("");
 
   return `
     <div class="log-panel diagnostics-panel" data-testid="diagnostic-panel">
       <div class="diagnostics-head">
         <div>
           <h3>开发态诊断</h3>
-          <p class="muted">统一查看房间、英雄、同步与最近链路状态。</p>
+          <p class="muted">统一查看房间、玩家、英雄、战斗与同步链路，直接定位问题更像是共享层、房间状态还是客户端渲染。</p>
         </div>
-        <button class="session-link" data-export-diagnostic="true" data-testid="diagnostic-export">导出快照</button>
+        <div class="diagnostics-actions">
+          <button class="session-link" data-copy-diagnostic-text="true" data-testid="diagnostic-copy-text">复制摘要</button>
+          <button class="session-link" data-export-diagnostic="true" data-testid="diagnostic-export">导出快照</button>
+        </div>
       </div>
       <div class="diagnostics-grid">
         <div class="diagnostics-card">
@@ -485,8 +593,92 @@ function renderDiagnosticPanel(): string {
           <p class="muted">${escapeHtml(`${state.account.source} · replays ${state.account.recentBattleReplays.length} · events ${state.account.recentEventLog.length}`)}</p>
         </div>
       </div>
+      <div class="diagnostics-alert-list" data-testid="diagnostic-alert-list">${alertMarkup}</div>
+      <div class="diagnostics-triage-grid">${triageSections}</div>
+      <details class="diagnostics-summary-shell">
+        <summary>紧凑摘要</summary>
+        <pre class="diagnostics-summary" data-testid="diagnostic-summary">${snapshotSummary}</pre>
+      </details>
       <p class="muted diagnostics-export-status" data-testid="diagnostic-export-status">${escapeHtml(state.diagnostics.exportStatus)}</p>
     </div>
+  `;
+}
+
+function renderAchievementToast(): string {
+  if (!state.achievementToast) {
+    return "";
+  }
+
+  return `
+    <div class="achievement-toast" data-testid="achievement-toast">
+      <span class="achievement-toast-kicker">成就解锁</span>
+      <strong>${escapeHtml(state.achievementToast.title)}</strong>
+      <p>${escapeHtml(state.achievementToast.detail)}</p>
+    </div>
+  `;
+}
+
+function renderGameplayAchievementPanel(): string {
+  if (!state.achievementPanel.open) {
+    return "";
+  }
+
+  const groups = groupAchievementUiItems(buildAchievementUiItems(state.achievementPanel.items));
+  return `
+    <aside class="achievement-panel-shell" data-testid="achievement-panel">
+      <div class="achievement-panel">
+        <div class="achievement-panel-head">
+          <div>
+            <span class="account-eyebrow">Gameplay</span>
+            <h3>成就总览</h3>
+          </div>
+          <div class="achievement-panel-actions">
+            <button class="session-link" data-refresh-achievements="true" ${state.achievementPanel.loading ? "disabled" : ""}>${state.achievementPanel.loading ? "同步中..." : "刷新"}</button>
+            <button class="session-link" data-close-achievements="true">关闭</button>
+          </div>
+        </div>
+        <p class="achievement-panel-status muted">${escapeHtml(state.achievementPanel.status)}</p>
+        <div class="achievement-panel-groups">
+          ${
+            groups.length > 0
+              ? groups
+                  .map(
+                    (group) => `
+                      <section class="achievement-panel-group">
+                        <div class="achievement-panel-group-head">
+                          <strong>${escapeHtml(group.category.label)}</strong>
+                          <span>${group.items.filter((item) => item.isUnlocked).length}/${group.items.length}</span>
+                        </div>
+                        <div class="achievement-panel-list">
+                          ${group.items
+                            .map(
+                              (item) => `
+                                <article class="achievement-panel-item ${item.isUnlocked ? "is-unlocked" : ""}">
+                                  <div class="achievement-panel-item-head">
+                                    <strong>${escapeHtml(item.title)}</strong>
+                                    <span>${escapeHtml(item.statusLabel)}</span>
+                                  </div>
+                                  <p>${escapeHtml(item.description)}</p>
+                                  <div class="achievement-panel-item-meta">
+                                    <span>${item.progressLabel}</span>
+                                    <span>${item.progressPercent}%</span>
+                                  </div>
+                                  <div class="achievement-panel-bar"><span style="width:${item.progressPercent}%"></span></div>
+                                  <div class="achievement-panel-foot">${escapeHtml(item.footnote)}</div>
+                                </article>
+                              `
+                            )
+                            .join("")}
+                        </div>
+                      </section>
+                    `
+                  )
+                  .join("")
+              : `<div class="achievement-panel-empty muted">当前没有可展示的成就数据。</div>`
+          }
+        </div>
+      </div>
+    </aside>
   `;
 }
 
@@ -670,6 +862,96 @@ function renderAccountSessionPanel(): string {
       </div>
     </div>
   `;
+}
+
+function isAchievementUnlockEntry(entry: ClientPlayerAccountProfile["recentEventLog"][number]): boolean {
+  return entry.category === "achievement" && (entry.description.startsWith("解锁成就：") || entry.rewards.some((reward) => reward.type === "badge"));
+}
+
+function buildAchievementToastNotice(
+  entry: ClientPlayerAccountProfile["recentEventLog"][number]
+): { eventId: string; title: string; detail: string } {
+  const achievementTitle =
+    entry.rewards.find((reward) => reward.type === "badge")?.label
+    ?? (entry.description.replace(/^解锁成就：/, "").trim() || "未知成就");
+  return {
+    eventId: entry.id,
+    title: achievementTitle,
+    detail: entry.description
+  };
+}
+
+function flushNextAchievementToast(): void {
+  if (state.achievementToast || pendingAchievementToasts.length === 0) {
+    return;
+  }
+
+  const nextToast = pendingAchievementToasts.shift() ?? null;
+  if (!nextToast) {
+    return;
+  }
+
+  cancelUiTask(achievementToastTaskId);
+  state.achievementToast = nextToast;
+  achievementToastTaskId = scheduleUiTask(3200, () => {
+    state.achievementToast = null;
+    achievementToastTaskId = null;
+    flushNextAchievementToast();
+    render();
+  });
+}
+
+function syncAchievementToastFeed(account: ClientPlayerAccountProfile, allowToast: boolean): void {
+  const unseenUnlocks = [...account.recentEventLog]
+    .reverse()
+    .filter((entry) => isAchievementUnlockEntry(entry) && !seenAchievementToastEventIds.has(entry.id));
+
+  unseenUnlocks.forEach((entry) => {
+    seenAchievementToastEventIds.add(entry.id);
+    if (allowToast) {
+      pendingAchievementToasts.push(buildAchievementToastNotice(entry));
+    }
+  });
+
+  if (allowToast) {
+    flushNextAchievementToast();
+  }
+}
+
+async function refreshAchievementPanelData(renderAfter = true): Promise<void> {
+  if (achievementPanelRefreshPromise) {
+    return achievementPanelRefreshPromise;
+  }
+
+  state.achievementPanel.loading = true;
+  state.achievementPanel.status = "正在同步成就目录...";
+  if (renderAfter) {
+    render();
+  }
+
+  achievementPanelRefreshPromise = (async () => {
+    const items = await loadPlayerAchievementProgress(state.account.playerId);
+    state.achievementPanel.items = items;
+    state.account = {
+      ...state.account,
+      achievements: items
+    };
+    state.achievementPanel.loading = false;
+    state.achievementPanel.status = items.length > 0 ? `已同步 ${items.length} 条成就进度。` : "当前没有可展示的成就进度。";
+    render();
+  })().finally(() => {
+    achievementPanelRefreshPromise = null;
+  });
+
+  return achievementPanelRefreshPromise;
+}
+
+function setAchievementPanelOpen(open: boolean): void {
+  state.achievementPanel.open = open;
+  if (open) {
+    void refreshAchievementPanelData(false);
+  }
+  render();
 }
 
 function findReplaySummary(replayId: string | null | undefined): PlayerBattleReplaySummary | null {
@@ -1436,7 +1718,15 @@ function buildAutomationTilePayload(tile: PlayerTileView) {
                     bonus: { ...tile.building.bonus },
                     ...(typeof tile.building.lastUsedDay === "number" ? { lastUsedDay: tile.building.lastUsedDay } : {})
                   }
-                : {
+                : tile.building.kind === "watchtower"
+                  ? {
+                      id: tile.building.id,
+                      kind: tile.building.kind,
+                      label: tile.building.label,
+                      visionBonus: tile.building.visionBonus,
+                      ...(typeof tile.building.lastUsedDay === "number" ? { lastUsedDay: tile.building.lastUsedDay } : {})
+                    }
+                  : {
                     id: tile.building.id,
                     kind: tile.building.kind,
                     label: tile.building.label,
@@ -1949,26 +2239,33 @@ function resolveEncounterOpponentContext(): {
   detail: string;
 } | null {
   const playerCamp = state.battle ? controlledBattleCamp(state.battle, state.world) : null;
+  const recoveryRoomState = resolveRecoveryRoomStateLabel({
+    diagnostics: state.diagnostics,
+    predictionStatus: state.predictionStatus
+  });
+  const roomStateLabel = recoveryRoomState ? `房间态：${recoveryRoomState}` : null;
 
   if (state.battle?.defenderHeroId) {
     const opponentId = opposingHeroId(state.battle, state.world);
     const opponent = findHeroSnapshot(opponentId, state.world);
     return {
       label: "对手信息",
-      detail: `${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：战斗中 · ${battleSessionSummary(
+      detail: `${formatVisibleHeroSummary(opponent, opponentId)} · ${roomStateLabel ?? "房间态：战斗中"} · ${battleSessionSummary(
         state.battle.id,
         state.world.meta.roomId
-      )} · ${battleTurnContextLabel(state.battle, state.world)} · 我方席位：${playerCamp === "attacker" ? "进攻方" : "防守方"}`
+      )} · ${recoveryRoomState ? "当前回合：等待权威恢复" : battleTurnContextLabel(state.battle, state.world)} · 我方席位：${
+        playerCamp === "attacker" ? "进攻方" : "防守方"
+      }`
     };
   }
 
   if (state.battle?.neutralArmyId) {
     return {
       label: "遭遇目标",
-      detail: `${state.battle.neutralArmyId} · 房间态：战斗中 · ${battleSessionSummary(
+      detail: `${state.battle.neutralArmyId} · ${roomStateLabel ?? "房间态：战斗中"} · ${battleSessionSummary(
         state.battle.id,
         state.world.meta.roomId
-      )} · ${battleTurnContextLabel(state.battle, state.world)}`
+      )} · ${recoveryRoomState ? "当前回合：等待权威恢复" : battleTurnContextLabel(state.battle, state.world)}`
     };
   }
 
@@ -1996,7 +2293,7 @@ function resolveEncounterOpponentContext(): {
       const opponent = findHeroSnapshot(opponentId, state.world);
       return {
         label: "最近对手",
-        detail: `${formatVisibleHeroSummary(opponent, opponentId)} · 房间态：已结算 · ${battleSessionSummary(
+        detail: `${formatVisibleHeroSummary(opponent, opponentId)} · ${roomStateLabel ?? "房间态：已结算"} · ${battleSessionSummary(
           state.lastEncounterStarted.battleId,
           state.world.meta.roomId
         )}`
@@ -2005,7 +2302,7 @@ function resolveEncounterOpponentContext(): {
 
     return {
       label: "最近遭遇",
-      detail: `${state.lastEncounterStarted.neutralArmyId ?? "neutral"} · 房间态：已结算 · ${battleSessionSummary(
+      detail: `${state.lastEncounterStarted.neutralArmyId ?? "neutral"} · ${roomStateLabel ?? "房间态：已结算"} · ${battleSessionSummary(
         state.lastEncounterStarted.battleId,
         state.world.meta.roomId
       )}`
@@ -2013,33 +2310,6 @@ function resolveEncounterOpponentContext(): {
   }
 
   return null;
-}
-
-function renderRoomResultSummary(): string {
-  if (state.lastBattleSettlement) {
-    return `房间结果：${state.lastBattleSettlement.roomState}`;
-  }
-
-  if (state.battle) {
-    return `房间结果：多人遭遇战已接管地图行动，当前由 ${battleSessionSummary(
-      state.battle.id,
-      state.world.meta.roomId
-    )} 驱动；待战斗链路关闭后统一回写房间状态。`;
-  }
-
-  if (state.diagnostics.connectionStatus === "reconnecting") {
-    return "恢复状态：正在恢复连接与房间主状态，期间可能短暂保留上一帧视图。";
-  }
-
-  if (state.diagnostics.connectionStatus === "reconnect_failed") {
-    return "恢复状态：正在通过最近快照回补房间，等待权威状态确认当前可行动信息。";
-  }
-
-  if (state.predictionStatus.includes("已回放本地缓存状态")) {
-    return `恢复状态：${state.predictionStatus}`;
-  }
-
-  return "房间结果：当前处于稳定探索态，等待新的移动、交互或多人遭遇。";
 }
 
 function buildBattleSettlementSummary(
@@ -2196,6 +2466,7 @@ function applyReplayedUpdate(update: SessionUpdate): void {
     state.lastEncounterStarted = replayStarted;
   }
   state.predictionStatus = "已回放本地缓存状态，正在等待房间同步...";
+  state.diagnostics.recoverySummary = "已回放本地缓存状态，等待权威房间同步完成最终校正。";
   state.log.unshift("已从本地缓存回放最近房间状态");
   state.log = state.log.slice(0, 12);
   pushTimeline([
@@ -2242,7 +2513,11 @@ function appendLog(update: SessionUpdate): void {
     } else if (event.type === "hero.recruited") {
       state.log.unshift(`Recruited ${event.unitTemplateId} x${event.count}`);
     } else if (event.type === "hero.visited") {
-      state.log.unshift(`Visited ${event.buildingId}: ${formatHeroStatBonus(event.bonus)}`);
+      state.log.unshift(
+        event.buildingKind === "watchtower"
+          ? `Visited ${event.buildingId}: vision +${event.visionBonus}`
+          : `Visited ${event.buildingId}: ${formatHeroStatBonus(event.bonus)}`
+      );
     } else if (event.type === "hero.claimedMine") {
       state.log.unshift(`Claimed mine: ${formatDailyIncome(event.resourceKind, event.income)}`);
     } else if (event.type === "resource.produced") {
@@ -2354,7 +2629,10 @@ function buildTimelineEntries(update: SessionUpdate, source: TimelineEntry["sour
         id: `${stamp}-visit-${index}`,
         tone: "loot",
         source,
-        text: `访问属性建筑，获得 ${formatHeroStatBonus(event.bonus)}`
+        text:
+          event.buildingKind === "watchtower"
+            ? `登上瞭望塔，视野提高 ${event.visionBonus}`
+            : `访问属性建筑，获得 ${formatHeroStatBonus(event.bonus)}`
       });
       return;
     }
@@ -2533,6 +2811,9 @@ function extractDamageText(lines: string[]): string | null {
 }
 
 function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "local"): void {
+  const previousConnectionStatus = state.diagnostics.connectionStatus;
+  const previousRecoverySummary = state.diagnostics.recoverySummary;
+  const previousPredictionStatus = state.predictionStatus;
   clearPendingPrediction();
   const hadBattle = Boolean(state.battle);
   const previousBattle = state.battle;
@@ -2640,6 +2921,20 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
     void refreshAccountProfileFromServer();
   }
 
+  const recoveredFromFallback =
+    previousConnectionStatus === "reconnecting" ||
+    previousConnectionStatus === "reconnect_failed" ||
+    previousPredictionStatus.includes("已回放本地缓存状态");
+  if (recoveredFromFallback) {
+    state.diagnostics.recoverySummary = update.battle
+      ? "权威战斗状态已恢复，当前行动顺序与房间归属重新对齐。"
+      : state.lastBattleSettlement
+        ? "权威房间状态已恢复，战后结果与地图状态已经重新对齐。"
+        : "权威房间状态已恢复，当前地图探索状态已经重新对齐。";
+  } else if (source === "local" && previousRecoverySummary && !update.reason) {
+    state.diagnostics.recoverySummary = null;
+  }
+
   syncKeyboardCursor();
   render();
 }
@@ -2652,6 +2947,12 @@ async function refreshAccountProfileFromServer(): Promise<void> {
   accountRefreshPromise = (async () => {
     const account = await loadAccountProfileWithProgression(playerId, roomId);
     state.account = account;
+    syncAchievementToastFeed(account, hasHydratedAchievementFeed);
+    hasHydratedAchievementFeed = true;
+    if (state.achievementPanel.open) {
+      state.achievementPanel.items = account.achievements;
+      void refreshAchievementPanelData(false);
+    }
     if (!state.accountSaving) {
       state.accountDraftName = account.displayName;
     }
@@ -2709,6 +3010,7 @@ async function onTileClick(x: number, y: number): Promise<void> {
               buildingId: targetTile.building.id
             } as const)
           : targetTile.building.kind === "attribute_shrine"
+            || targetTile.building.kind === "watchtower"
             ? ({
                 type: "hero.visit",
                 heroId: hero.id,
@@ -2731,6 +3033,8 @@ async function onTileClick(x: number, y: number): Promise<void> {
               ? `预演中：在 ${targetTile.building.label} 招募 ${targetTile.building.availableCount} 单位`
               : targetTile.building.kind === "attribute_shrine"
                 ? `预演中：访问 ${targetTile.building.label}，获得 ${formatHeroStatBonus(targetTile.building.bonus)}`
+                : targetTile.building.kind === "watchtower"
+                  ? `预演中：登上 ${targetTile.building.label}，视野提高 ${targetTile.building.visionBonus}`
                 : `预演中：占领 ${targetTile.building.label}，改为每日产出 ${formatDailyIncome(targetTile.building.resourceKind, targetTile.building.income)}`,
           tone: "loot"
         });
@@ -2741,7 +3045,7 @@ async function onTileClick(x: number, y: number): Promise<void> {
         applyUpdate(
           targetTile.building.kind === "recruitment_post"
             ? await session.recruit(hero.id, targetTile.building.id)
-            : targetTile.building.kind === "attribute_shrine"
+            : targetTile.building.kind === "attribute_shrine" || targetTile.building.kind === "watchtower"
               ? await session.visitBuilding(hero.id, targetTile.building.id)
               : await session.claimMine(hero.id, targetTile.building.id)
         );
@@ -2751,7 +3055,7 @@ async function onTileClick(x: number, y: number): Promise<void> {
             ? error.message
             : targetTile.building.kind === "recruitment_post"
               ? "recruit_failed"
-              : targetTile.building.kind === "attribute_shrine"
+              : targetTile.building.kind === "attribute_shrine" || targetTile.building.kind === "watchtower"
                 ? "visit_failed"
                 : "claim_failed"
         );
@@ -3173,20 +3477,9 @@ function describeAccountFlowError(
     return error instanceof Error ? error.message : fallback;
   }
 
-  if (failure.status === 409 && failure.code === "login_id_taken") {
-    return "登录 ID 已被占用，请更换后重试。";
-  }
-  if (failure.status === 401 && options.invalidTokenCode && failure.code === options.invalidTokenCode) {
-    return "令牌无效或已过期，请重新申请后再确认。";
-  }
-  if (failure.status === 401) {
-    return "登录 ID 或口令不正确，请检查后重试。";
-  }
-  if (failure.status === 400) {
-    return "输入格式不合法，请检查登录 ID、令牌和口令后重试。";
-  }
-  if (failure.status === 429) {
-    return "请求过于频繁，请稍后再试。";
+  const message = describeAccountAuthFailure(failure, options);
+  if (message) {
+    return message;
   }
 
   return error instanceof Error ? error.message : fallback;
@@ -3221,14 +3514,16 @@ async function enterLobbyRoom(roomIdOverride?: string): Promise<void> {
 async function loginLobbyAccount(roomIdOverride?: string): Promise<void> {
   const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
   const loginId = state.lobby.loginId.trim().toLowerCase();
-  if (!loginId) {
-    state.lobby.status = "请输入登录 ID 后再使用口令登录。";
+  const loginIdError = validateAccountLifecycleRequest("registration", loginId);
+  if (loginIdError) {
+    state.lobby.status = loginIdError.message;
     render();
     return;
   }
 
-  if (!state.lobby.password.trim()) {
-    state.lobby.status = "请输入账号口令后再登录。";
+  const passwordError = validateAccountPassword(state.lobby.password, "password", "账号口令");
+  if (passwordError) {
+    state.lobby.status = passwordError.message;
     render();
     return;
   }
@@ -3262,8 +3557,9 @@ async function loginLobbyAccount(roomIdOverride?: string): Promise<void> {
 
 async function requestLobbyAccountRegistration(): Promise<void> {
   const loginId = state.lobby.loginId.trim().toLowerCase();
-  if (!loginId) {
-    state.lobby.status = "请输入登录 ID 后再申请正式注册令牌。";
+  const validationError = validateAccountLifecycleRequest("registration", loginId);
+  if (validationError) {
+    state.lobby.status = validationError.message;
     render();
     return;
   }
@@ -3290,18 +3586,13 @@ async function requestLobbyAccountRegistration(): Promise<void> {
 async function confirmLobbyAccountRegistration(roomIdOverride?: string): Promise<void> {
   const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
   const loginId = state.lobby.loginId.trim().toLowerCase();
-  if (!loginId) {
-    state.lobby.status = "请输入登录 ID 后再确认正式注册。";
-    render();
-    return;
-  }
-  if (!state.lobby.registrationToken.trim()) {
-    state.lobby.status = "请先申请并填写注册令牌。";
-    render();
-    return;
-  }
-  if (!state.lobby.registrationPassword.trim()) {
-    state.lobby.status = "请输入注册口令后再确认。";
+  const validationError = validateAccountLifecycleConfirm("registration", {
+    loginId,
+    token: state.lobby.registrationToken,
+    password: state.lobby.registrationPassword
+  });
+  if (validationError) {
+    state.lobby.status = validationError.message;
     render();
     return;
   }
@@ -3339,8 +3630,9 @@ async function confirmLobbyAccountRegistration(roomIdOverride?: string): Promise
 
 async function requestLobbyPasswordRecovery(): Promise<void> {
   const loginId = state.lobby.loginId.trim().toLowerCase();
-  if (!loginId) {
-    state.lobby.status = "请输入登录 ID 后再申请密码找回令牌。";
+  const validationError = validateAccountLifecycleRequest("recovery", loginId);
+  if (validationError) {
+    state.lobby.status = validationError.message;
     render();
     return;
   }
@@ -3367,18 +3659,13 @@ async function requestLobbyPasswordRecovery(): Promise<void> {
 async function confirmLobbyPasswordRecovery(roomIdOverride?: string): Promise<void> {
   const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
   const loginId = state.lobby.loginId.trim().toLowerCase();
-  if (!loginId) {
-    state.lobby.status = "请输入登录 ID 后再确认密码重置。";
-    render();
-    return;
-  }
-  if (!state.lobby.recoveryToken.trim()) {
-    state.lobby.status = "请先申请并填写找回令牌。";
-    render();
-    return;
-  }
-  if (!state.lobby.recoveryPassword.trim()) {
-    state.lobby.status = "请输入新口令后再确认重置。";
+  const validationError = validateAccountLifecycleConfirm("recovery", {
+    loginId,
+    token: state.lobby.recoveryToken,
+    password: state.lobby.recoveryPassword
+  });
+  if (validationError) {
+    state.lobby.status = validationError.message;
     render();
     return;
   }
@@ -3570,7 +3857,19 @@ function renderRoomStatusPanel(): string {
         diagnostics: state.diagnostics,
         predictionStatus: state.predictionStatus
       })}</p>
-      <p class="muted" data-testid="room-result-summary" data-tone="${roomFeedbackTone}">${renderRoomResultSummary()}</p>
+      <p class="muted" data-testid="room-recovery-summary" data-tone="${roomFeedbackTone}">${renderRecoverySummary({
+        battle: state.battle,
+        lastBattleSettlement: state.lastBattleSettlement,
+        diagnostics: state.diagnostics,
+        predictionStatus: state.predictionStatus
+      })}</p>
+      <p class="muted" data-testid="room-result-summary" data-tone="${roomFeedbackTone}">${renderRoomResultSummary({
+        battle: state.battle,
+        lastBattleSettlement: state.lastBattleSettlement,
+        diagnostics: state.diagnostics,
+        predictionStatus: state.predictionStatus,
+        roomId: state.world.meta.roomId
+      })}</p>
       <p class="muted" data-testid="opponent-summary">${opponentLine}</p>
       <div class="room-status-chips">
         <span class="battle-intel-chip" data-testid="room-player-summary">${playerSummary}</span>
@@ -4238,13 +4537,15 @@ function render(): void {
     .join("");
 
   root.innerHTML = `
-    <main class="shell">
+    ${renderAchievementToast()}
+    <main class="shell ${state.achievementPanel.open ? "has-achievement-panel" : ""}">
       <section class="hero-panel">
         <div class="eyebrow">Project Veil</div>
         <h1>H5 调试壳</h1>
         <p class="lead">这里保留给浏览器调试、配置联调和回归验证使用；主客户端运行时已切到 Cocos Creator。</p>
         <div class="session-meta-row">
           <p class="muted" data-testid="session-meta">Room: ${roomId} · Player: ${playerId}</p>
+          <button class="session-link" data-toggle-achievements="true">${state.achievementPanel.open ? "收起成就" : "成就面板"}</button>
           <button class="session-link" data-return-lobby="true">返回大厅</button>
           <button class="session-link" data-logout-guest="true">切换游客账号</button>
         </div>
@@ -4425,6 +4726,7 @@ function render(): void {
         ${renderBattleLog()}
       </section>
     </main>
+    ${renderGameplayAchievementPanel()}
     ${renderModal()}
   `;
 
@@ -4643,6 +4945,24 @@ function render(): void {
     });
   }
 
+  for (const toggleAchievementsButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-toggle-achievements]"))) {
+    toggleAchievementsButton.addEventListener("click", () => {
+      setAchievementPanelOpen(!state.achievementPanel.open);
+    });
+  }
+
+  for (const closeAchievementsButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-close-achievements]"))) {
+    closeAchievementsButton.addEventListener("click", () => {
+      setAchievementPanelOpen(false);
+    });
+  }
+
+  for (const refreshAchievementsButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-refresh-achievements]"))) {
+    refreshAchievementsButton.addEventListener("click", () => {
+      void refreshAchievementPanelData();
+    });
+  }
+
   for (const returnLobbyButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-return-lobby]"))) {
     returnLobbyButton.addEventListener("click", () => {
       returnToLobby();
@@ -4658,70 +4978,12 @@ function render(): void {
   for (const exportButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-export-diagnostic]"))) {
     exportButton.addEventListener("click", triggerDiagnosticSnapshotExport);
   }
-}
 
-async function bootstrap(): Promise<void> {
-  bindKeyboardShortcuts();
-  render();
-  const syncedAuthSession = await syncCurrentAuthSession();
-  state.lobby.authSession = syncedAuthSession;
-  if (syncedAuthSession) {
-    state.lobby.playerId = syncedAuthSession.playerId;
-    state.lobby.displayName = syncedAuthSession.displayName;
-    state.lobby.loginId = syncedAuthSession.loginId ?? state.lobby.loginId;
-    state.accountDraftName = syncedAuthSession.displayName;
-    state.accountLoginId = syncedAuthSession.loginId ?? state.accountLoginId;
+  for (const copyButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-copy-diagnostic-text]"))) {
+    copyButton.addEventListener("click", () => {
+      void copyDiagnosticSnapshotText();
+    });
   }
-
-  if (!shouldBootGame) {
-    await refreshLobbyRoomList();
-    return;
-  }
-
-  if (!queryPlayerId && !syncedAuthSession?.playerId) {
-    logoutGuestSession();
-    return;
-  }
-
-  const replayed = readStoredSessionReplay(roomId, playerId);
-  if (replayed) {
-    applyReplayedUpdate(replayed);
-  }
-  const session = await getSession();
-  const initial = await session.snapshot();
-  state.diagnostics.connectionStatus = "connected";
-  state.log = [
-    `会话已连接。Room ${roomId} / Player ${playerId}`,
-    ...state.log.filter(
-      (line) => line !== "正在连接本地会话服务..." && line !== `会话已连接。Room ${roomId} / Player ${playerId}`
-    )
-  ].slice(0, 12);
-  applyUpdate(initial, "system");
-  void syncPlayerAccountProfile();
-}
-
-async function syncPlayerAccountProfile(): Promise<void> {
-  state.accountSessionsLoading = true;
-  const account = await loadAccountProfileWithProgression(playerId, roomId);
-  const accountSessions =
-    state.lobby.authSession?.authMode === "account" || readStoredAuthSession()?.authMode === "account"
-      ? await loadPlayerAccountSessions()
-      : [];
-  state.account = account;
-  state.accountSessions = accountSessions;
-  state.accountDraftName = account.displayName;
-  state.accountLoginId = account.loginId ?? state.accountLoginId;
-  state.accountStatus =
-    account.source === "remote"
-      ? account.loginId
-        ? `账号资料与全局仓库已同步，当前已绑定登录 ID ${account.loginId}。`
-        : "账号资料与全局仓库已同步，可继续把当前游客档升级成口令账号。"
-      : "当前运行在本地游客档，昵称仅保存在浏览器。";
-  if (state.replayDetail.selectedReplayId && !account.recentBattleReplays.some((replay) => replay.id === state.replayDetail.selectedReplayId)) {
-    clearReplayDetail("最近战报已刷新，当前选中的回放已不可用。");
-  }
-  state.accountSessionsLoading = false;
-  render();
 }
 
 async function onRevokeAccountSession(sessionId: string): Promise<void> {
@@ -4807,9 +5069,34 @@ async function onBindAccountProfile(): Promise<void> {
   }
 }
 
-void bootstrap();
-window.render_game_to_text = renderGameToText;
-if (DEV_DIAGNOSTICS_ENABLED) {
-  window.export_diagnostic_snapshot = exportDiagnosticSnapshot;
-}
-window.advanceTime = advanceUiTime;
+launchMainH5App({
+  state,
+  shouldBootGame,
+  queryPlayerId,
+  roomId,
+  playerId,
+  bindKeyboardShortcuts,
+  render,
+  syncCurrentAuthSession,
+  refreshLobbyRoomList,
+  logoutGuestSession,
+  readStoredSessionReplay,
+  applyReplayedUpdate,
+  getSession,
+  applyUpdate,
+  loadAccountProfileWithProgression,
+  loadPlayerAccountSessions,
+  readStoredAuthSession,
+  clearReplayDetail,
+  onPlayerAccountProfileSynced: () => {
+    syncAchievementToastFeed(state.account, false);
+    hasHydratedAchievementFeed = true;
+    state.achievementPanel.items = state.account.achievements;
+  },
+  window,
+  devDiagnosticsEnabled: DEV_DIAGNOSTICS_ENABLED,
+  renderGameToText,
+  exportDiagnosticSnapshot,
+  renderDiagnosticSnapshotToText,
+  advanceUiTime
+});

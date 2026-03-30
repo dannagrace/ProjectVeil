@@ -51,6 +51,17 @@ export interface SchemaMigrationRollbackSummary {
 
 export type SchemaMigrationConnection = Pool | PoolConnection;
 
+export interface SchemaMigrationLoaderOptions {
+  migrationsDirectory?: string;
+  readdirFn?: typeof readdir;
+  importModule?: (modulePath: string) => Promise<Partial<SchemaMigrationModule>>;
+}
+
+export interface SchemaMigrationStatusOptions extends SchemaMigrationLoaderOptions {
+  createConnectionFn?: typeof createConnection;
+  createPoolFn?: typeof createSchemaMigrationPool;
+}
+
 const SCHEMA_MIGRATIONS_TABLE = "schema_migrations";
 const MIGRATION_FILE_PATTERN = /^(\d{4})_(.+)\.ts$/;
 const MIGRATIONS_DIRECTORY = resolve(dirname(fileURLToPath(import.meta.url)), "../../../scripts/migrations");
@@ -200,8 +211,13 @@ export async function dropIndexIfExists(
   }
 }
 
-export async function loadSchemaMigrations(): Promise<SchemaMigration[]> {
-  const fileNames = (await readdir(MIGRATIONS_DIRECTORY))
+export async function loadSchemaMigrations(options: SchemaMigrationLoaderOptions = {}): Promise<SchemaMigration[]> {
+  const migrationsDirectory = options.migrationsDirectory ?? MIGRATIONS_DIRECTORY;
+  const readMigrationDirectory = options.readdirFn ?? readdir;
+  const importModule =
+    options.importModule ?? (async (modulePath: string): Promise<Partial<SchemaMigrationModule>> => import(modulePath));
+
+  const fileNames = (await readMigrationDirectory(migrationsDirectory))
     .filter((fileName) => MIGRATION_FILE_PATTERN.test(fileName))
     .sort((left, right) => left.localeCompare(right));
 
@@ -213,8 +229,8 @@ export async function loadSchemaMigrations(): Promise<SchemaMigration[]> {
       continue;
     }
 
-    const modulePath = pathToFileURL(resolve(MIGRATIONS_DIRECTORY, fileName)).href;
-    const loaded = (await import(modulePath)) as Partial<SchemaMigrationModule>;
+    const modulePath = pathToFileURL(resolve(migrationsDirectory, fileName)).href;
+    const loaded = await importModule(modulePath);
     if (typeof loaded.up !== "function" || typeof loaded.down !== "function") {
       throw new Error(`Invalid schema migration module: ${fileName}`);
     }
@@ -230,9 +246,14 @@ export async function loadSchemaMigrations(): Promise<SchemaMigration[]> {
   return migrations;
 }
 
-export async function getSchemaMigrationStatus(config: SchemaMigrationConfig): Promise<SchemaMigrationStatus> {
-  const expected = await loadSchemaMigrations();
-  const bootstrap = await createConnection({
+export async function getSchemaMigrationStatus(
+  config: SchemaMigrationConfig,
+  options: SchemaMigrationStatusOptions = {}
+): Promise<SchemaMigrationStatus> {
+  const expected = await loadSchemaMigrations(options);
+  const bootstrapConnection = options.createConnectionFn ?? createConnection;
+  const createPoolForStatus = options.createPoolFn ?? createSchemaMigrationPool;
+  const bootstrap = await bootstrapConnection({
     host: config.host,
     port: config.port,
     user: config.user,
@@ -262,7 +283,7 @@ export async function getSchemaMigrationStatus(config: SchemaMigrationConfig): P
     await bootstrap.end();
   }
 
-  const pool = await createSchemaMigrationPool(config);
+  const pool = await createPoolForStatus(config);
 
   try {
     const [tableRows] = await pool.query<RowDataPacket[]>(

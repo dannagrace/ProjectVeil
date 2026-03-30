@@ -1,10 +1,16 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import {
+  renderRuntimeDiagnosticsSnapshotText,
+  type RuntimeDiagnosticsSnapshot
+} from "../../../packages/shared/src/index";
 
 export interface RuntimeRoomSnapshot {
   roomId: string;
+  day: number | null;
   connectedPlayers: number;
   heroCount: number;
   activeBattles: number;
+  updatedAt: string;
 }
 
 interface RuntimeObservabilityCounters {
@@ -29,6 +35,10 @@ interface AuthObservabilityCounters {
   tokenDeliveryFailuresTotal: number;
   tokenDeliveryRetriesTotal: number;
   tokenDeliveryDeadLettersTotal: number;
+}
+
+interface MatchmakingObservabilityCounters {
+  rateLimitedTotal: number;
 }
 
 type AuthSessionFailureReason = "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked";
@@ -69,6 +79,9 @@ interface RuntimeObservabilityState {
   rooms: Map<string, RuntimeRoomSnapshot>;
   counters: RuntimeObservabilityCounters;
   auth: AuthObservabilityState;
+  matchmaking: {
+    counters: MatchmakingObservabilityCounters;
+  };
 }
 
 interface RuntimeHealthPayload {
@@ -111,6 +124,9 @@ interface RuntimeHealthPayload {
         failureReasons: Record<AuthTokenDeliveryFailureReason, number>;
       };
     };
+    matchmaking: {
+      counters: MatchmakingObservabilityCounters;
+    };
   };
 }
 
@@ -120,7 +136,13 @@ interface AuthReadinessPayload {
   checkedAt: string;
   headline: string;
   alerts: string[];
-  auth: RuntimeHealthPayload["runtime"]["auth"];
+  auth: RuntimeHealthPayload["runtime"]["auth"] & {
+    wechatLogin: {
+      mode: "disabled" | "mock" | "production";
+      credentialsStatus: "not_required" | "missing" | "configured";
+      route: string;
+    };
+  };
 }
 
 interface AuthTokenDeliveryPayload {
@@ -183,6 +205,11 @@ const runtimeObservability: RuntimeObservabilityState = {
       webhook_5xx: 0
     },
     tokenDeliveryRecentAttempts: []
+  },
+  matchmaking: {
+    counters: {
+      rateLimitedTotal: 0
+    }
   }
 };
 
@@ -253,6 +280,9 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
           },
           failureReasons: { ...runtimeObservability.auth.tokenDeliveryFailureReasons }
         }
+      },
+      matchmaking: {
+        counters: { ...runtimeObservability.matchmaking.counters }
       }
     }
   };
@@ -261,6 +291,23 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
 function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadinessPayload {
   const health = buildHealthPayload(service);
   const alerts: string[] = [];
+  const normalizedWechatMode = process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
+  const wechatMode =
+    normalizedWechatMode === "mock"
+      ? "mock"
+      : normalizedWechatMode === "production" || normalizedWechatMode === "code2session"
+        ? "production"
+        : normalizedWechatMode === "disabled"
+          ? "disabled"
+          : process.env.NODE_ENV?.trim().toLowerCase() === "production"
+            ? "disabled"
+            : "mock";
+  const wechatCredentialsStatus =
+    wechatMode === "production"
+      ? process.env.VEIL_WECHAT_MINIGAME_APP_ID?.trim() && process.env.VEIL_WECHAT_MINIGAME_APP_SECRET?.trim()
+        ? "configured"
+        : "missing"
+      : "not_required";
 
   if (health.runtime.auth.activeAccountLockCount > 0) {
     alerts.push(`${health.runtime.auth.activeAccountLockCount} account lockout(s) active`);
@@ -282,13 +329,28 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
     alerts.push(`${health.runtime.auth.tokenDelivery.queueCount} token deliveries waiting for retry`);
   }
 
+  if (wechatCredentialsStatus === "missing") {
+    alerts.push("WeChat login production credentials are missing");
+  }
+
   return {
     status: alerts.length > 0 ? "warn" : "ok",
     service,
     checkedAt: health.checkedAt,
-    headline: `auth ready; guest=${health.runtime.auth.activeGuestSessionCount} account=${health.runtime.auth.activeAccountSessionCount} lockouts=${health.runtime.auth.activeAccountLockCount}`,
+    headline:
+      `auth ready; guest=${health.runtime.auth.activeGuestSessionCount} ` +
+      `account=${health.runtime.auth.activeAccountSessionCount} ` +
+      `lockouts=${health.runtime.auth.activeAccountLockCount} ` +
+      `wechat=${wechatMode}/${wechatCredentialsStatus}`,
     alerts,
-    auth: health.runtime.auth
+    auth: {
+      ...health.runtime.auth,
+      wechatLogin: {
+        mode: wechatMode,
+        credentialsStatus: wechatCredentialsStatus,
+        route: "/api/auth/wechat-login"
+      }
+    }
   };
 }
 
@@ -304,6 +366,71 @@ function buildAuthTokenDeliveryPayload(service = "project-veil-server"): AuthTok
     delivery: {
       ...health.runtime.auth.tokenDelivery,
       recentAttempts
+    }
+  };
+}
+
+function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): RuntimeDiagnosticsSnapshot {
+  const health = buildHealthPayload(service);
+  const roomSummaries = Array.from(runtimeObservability.rooms.values()).sort(
+    (left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.roomId.localeCompare(right.roomId)
+  );
+  const checkedAt = new Date().toISOString();
+
+  return {
+    schemaVersion: 1,
+    exportedAt: checkedAt,
+    source: {
+      surface: "server-observability",
+      devOnly: false,
+      mode: "server"
+    },
+    room: null,
+    world: null,
+    battle: null,
+    account: null,
+    overview: {
+      service,
+      activeRoomCount: health.runtime.activeRoomCount,
+      connectionCount: health.runtime.connectionCount,
+      activeBattleCount: health.runtime.activeBattleCount,
+      heroCount: health.runtime.heroCount,
+      gameplayTraffic: { ...health.runtime.gameplayTraffic },
+      auth: {
+        activeGuestSessionCount: health.runtime.auth.activeGuestSessionCount,
+        activeAccountSessionCount: health.runtime.auth.activeAccountSessionCount,
+        pendingRegistrationCount: health.runtime.auth.pendingRegistrationCount,
+        pendingRecoveryCount: health.runtime.auth.pendingRecoveryCount,
+        tokenDeliveryQueueCount: health.runtime.auth.tokenDelivery.queueCount,
+        tokenDeliveryDeadLetterCount: health.runtime.auth.tokenDelivery.deadLetterCount
+      },
+      roomSummaries: roomSummaries.map((room) => ({
+        roomId: room.roomId,
+        day: room.day,
+        connectedPlayers: room.connectedPlayers,
+        heroCount: room.heroCount,
+        activeBattles: room.activeBattles,
+        updatedAt: room.updatedAt
+      }))
+    },
+    diagnostics: {
+      eventTypes: [],
+      timelineTail: roomSummaries.slice(0, 5).map((room) => ({
+        id: `room:${room.roomId}:${room.updatedAt}`,
+        tone: room.activeBattles > 0 ? "battle" : "system",
+        source: "runtime-observability",
+        text: `Room ${room.roomId} day=${room.day ?? "?"} players=${room.connectedPlayers} heroes=${room.heroCount} battles=${room.activeBattles}`
+      })),
+      logTail: [
+        `service ${service} rooms=${health.runtime.activeRoomCount} connections=${health.runtime.connectionCount}`,
+        `traffic connect=${health.runtime.gameplayTraffic.connectMessagesTotal} world=${health.runtime.gameplayTraffic.worldActionsTotal} battle=${health.runtime.gameplayTraffic.battleActionsTotal}`,
+        `auth guest=${health.runtime.auth.activeGuestSessionCount} account=${health.runtime.auth.activeAccountSessionCount} queue=${health.runtime.auth.tokenDelivery.queueCount} rateLimited=${health.runtime.auth.counters.rateLimitedTotal}`,
+        `matchmaking rateLimited=${health.runtime.matchmaking.counters.rateLimitedTotal}`
+      ],
+      recoverySummary: null,
+      predictionStatus: "server-observability",
+      pendingUiTasks: 0,
+      replay: null
     }
   };
 }
@@ -381,6 +508,9 @@ function buildMetricsDocument(): string {
     "# HELP veil_auth_rate_limited_total Total auth requests rejected by rate limiting.",
     "# TYPE veil_auth_rate_limited_total counter",
     `veil_auth_rate_limited_total ${health.runtime.auth.counters.rateLimitedTotal}`,
+    "# HELP veil_matchmaking_rate_limited_total Total matchmaking requests rejected by rate limiting.",
+    "# TYPE veil_matchmaking_rate_limited_total counter",
+    `veil_matchmaking_rate_limited_total ${health.runtime.matchmaking.counters.rateLimitedTotal}`,
     "# HELP veil_auth_invalid_credentials_total Total auth requests rejected for invalid credentials.",
     "# TYPE veil_auth_invalid_credentials_total counter",
     `veil_auth_invalid_credentials_total ${health.runtime.auth.counters.invalidCredentialsTotal}`,
@@ -543,6 +673,10 @@ export function recordAuthRateLimited(): void {
   runtimeObservability.auth.counters.rateLimitedTotal += 1;
 }
 
+export function recordMatchmakingRateLimited(): void {
+  runtimeObservability.matchmaking.counters.rateLimitedTotal += 1;
+}
+
 export function recordAuthInvalidCredentials(): void {
   runtimeObservability.auth.counters.invalidCredentialsTotal += 1;
 }
@@ -637,6 +771,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_429 = 0;
   runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_5xx = 0;
   runtimeObservability.auth.tokenDeliveryRecentAttempts.length = 0;
+  runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
 }
 
 export function registerRuntimeObservabilityRoutes(
@@ -685,6 +820,24 @@ export function registerRuntimeObservabilityRoutes(
   app.get("/api/runtime/auth-readiness", async (_request, response) => {
     try {
       sendJson(response, 200, buildAuthReadinessPayload(serviceName));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/runtime/diagnostic-snapshot", async (request, response) => {
+    try {
+      const snapshot = buildRuntimeDiagnosticSnapshot(serviceName);
+      const url = new URL(request.url ?? "/api/runtime/diagnostic-snapshot", "http://runtime.local");
+
+      if (url.searchParams.get("format") === "text") {
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "text/plain; charset=utf-8");
+        response.end(`${renderRuntimeDiagnosticsSnapshotText(snapshot)}\n`);
+        return;
+      }
+
+      sendJson(response, 200, snapshot);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

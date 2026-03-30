@@ -1,0 +1,43 @@
+# Primary Cocos Client Delivery Checklist
+
+This checklist is the maintained delivery baseline for the primary client at [`apps/cocos-client`](/home/gpt/project/ProjectVeil/apps/cocos-client). It keeps the release path small and stable by splitting release readiness into two automated artifact audits plus a short manual sign-off list.
+
+## Automated Delivery Audit
+
+Run the audit after exporting and packaging the WeChat build:
+
+```bash
+npm run audit:cocos-primary-delivery -- \
+  --output-dir <wechatgame-build-dir> \
+  --artifacts-dir <release-artifacts-dir> \
+  --expect-exported-runtime \
+  --expected-revision <git-sha>
+```
+
+The audit currently enforces two stable checks:
+
+1. `exported-build-validation`
+   - Re-runs `validate:wechat-build` against the exported primary-client build.
+   - Confirms required files, injected templates/runtime bootstrap, and package budget constraints still match the checked-in config.
+2. `packaged-artifact-audit`
+   - Re-runs `validate:wechat-rc` against the packaged release artifact directory.
+   - Confirms the archive, sidecar, release manifest, and revision metadata still form a valid release candidate.
+
+The command emits a concise JSON plus Markdown summary under `artifacts/release-readiness/` by default, and CI appends the Markdown summary to the GitHub step summary.
+
+## Manual Release Sign-Off
+
+Keep these manual items short and attach evidence through the existing release evidence flow instead of inventing a new format:
+
+1. Complete the current candidate snapshot with `npm run release:cocos-rc:snapshot`.
+2. Copy and fill the RC checklist/template files in [`docs/release-evidence`](/home/gpt/project/ProjectVeil/docs/release-evidence).
+3. Record any open risk in the blocker template before sign-off.
+4. Confirm the release candidate still matches the intended commit/revision.
+
+## Related Commands
+
+- Export template refresh: `npm run prepare:wechat-build`
+- Export validation: `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
+- Package artifact: `npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime --source-revision <git-sha>`
+- RC artifact validation: `npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> --expected-revision <git-sha>`
+- Unified Cocos evidence snapshot: `npm run release:cocos-rc:snapshot`

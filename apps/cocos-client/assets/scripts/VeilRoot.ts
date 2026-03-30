@@ -1,4 +1,4 @@
-import { _decorator, Camera, Canvas, Component, EventMouse, EventTouch, input, Input, Layers, Node, sys, UITransform, view } from "cc";
+import { _decorator, Camera, Canvas, Color, Component, EventMouse, EventTouch, Graphics, input, Input, Label, Layers, Node, sys, UITransform, view } from "cc";
 import { getEquipmentDefinition, type EquipmentType } from "./project-shared/index.ts";
 import {
   type BattleAction,
@@ -11,13 +11,24 @@ import {
   type Vec2
 } from "./VeilCocosSession.ts";
 import {
+  buildCocosAccountReviewPage,
+  createCocosAccountReviewState,
+  transitionCocosAccountReviewState,
+  type CocosAccountReviewSection,
+  type CocosAccountReviewState
+} from "./cocos-account-review.ts";
+import {
   confirmCocosAccountRegistration,
   confirmCocosPasswordRecovery,
   createFallbackCocosPlayerAccountProfile,
   createCocosGuestPlayerId,
+  loadCocosBattleReplayHistoryPage,
   createCocosLobbyPreferences,
   loadCocosLobbyRooms,
   loadCocosPlayerAccountProfile,
+  loadCocosPlayerAchievementProgress,
+  loadCocosPlayerEventHistory,
+  loadCocosPlayerProgressionSnapshot,
   loginCocosGuestAuthSession,
   logoutCurrentCocosAuthSession,
   readPreferredCocosDisplayName,
@@ -84,14 +95,23 @@ import {
 } from "./cocos-wechat-share.ts";
 import { readStoredCocosAuthSession, resolveCocosLaunchIdentity, type CocosAuthProvider } from "./cocos-session-launch.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
+import { VeilProgressionPanel } from "./VeilProgressionPanel.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
 import { type CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
-import { buildBattleActionPresentation, buildBattlePresentationPlan } from "./cocos-battle-presentation.ts";
+import { createCocosBattlePresentationController } from "./cocos-battle-presentation-controller.ts";
 import { createCocosAudioRuntime } from "./cocos-audio-runtime.ts";
 import { createCocosAudioAssetBridge } from "./cocos-audio-resources.ts";
+import { buildCocosRuntimeTriageSummaryLines } from "./cocos-runtime-diagnostics.ts";
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
 import { cocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
+import {
+  describeAccountAuthFailure,
+  type RuntimeDiagnosticsConnectionStatus,
+  validateAccountLifecycleConfirm,
+  validateAccountLifecycleRequest,
+  validateAccountPassword
+} from "../../../../packages/shared/src/index.ts";
 
 const { ccclass, property } = _decorator;
 
@@ -100,9 +120,46 @@ const MAP_NODE_NAME = "ProjectVeilMap";
 const BATTLE_NODE_NAME = "ProjectVeilBattlePanel";
 const TIMELINE_NODE_NAME = "ProjectVeilTimelinePanel";
 const LOBBY_NODE_NAME = "ProjectVeilLobbyPanel";
+const ACCOUNT_REVIEW_PANEL_NODE_NAME = "ProjectVeilAccountReviewPanel";
 const DEFAULT_MAP_WIDTH_TILES = 8;
 const DEFAULT_MAP_HEIGHT_TILES = 8;
 const BATTLE_FEEDBACK_DURATION_MS = 2600;
+const ACCOUNT_REVIEW_PAGE_SIZE = 3;
+
+interface VeilRootRuntime {
+  createSession: typeof VeilCocosSession.create;
+  readStoredReplay: typeof VeilCocosSession.readStoredReplay;
+  loadLobbyRooms: typeof loadCocosLobbyRooms;
+  syncAuthSession: typeof syncCurrentCocosAuthSession;
+  loadAccountProfile: typeof loadCocosPlayerAccountProfile;
+  loadProgressionSnapshot: typeof loadCocosPlayerProgressionSnapshot;
+  loadAchievementProgress: typeof loadCocosPlayerAchievementProgress;
+  loadEventHistory: typeof loadCocosPlayerEventHistory;
+  loadBattleReplayHistoryPage: typeof loadCocosBattleReplayHistoryPage;
+  loginGuestAuthSession: typeof loginCocosGuestAuthSession;
+}
+
+const defaultVeilRootRuntime: VeilRootRuntime = {
+  createSession: (...args) => VeilCocosSession.create(...args),
+  readStoredReplay: (...args) => VeilCocosSession.readStoredReplay(...args),
+  loadLobbyRooms: (...args) => loadCocosLobbyRooms(...args),
+  syncAuthSession: (...args) => syncCurrentCocosAuthSession(...args),
+  loadAccountProfile: (...args) => loadCocosPlayerAccountProfile(...args),
+  loadProgressionSnapshot: (...args) => loadCocosPlayerProgressionSnapshot(...args),
+  loadAchievementProgress: (...args) => loadCocosPlayerAchievementProgress(...args),
+  loadEventHistory: (...args) => loadCocosPlayerEventHistory(...args),
+  loadBattleReplayHistoryPage: (...args) => loadCocosBattleReplayHistoryPage(...args),
+  loginGuestAuthSession: (...args) => loginCocosGuestAuthSession(...args)
+};
+
+let testVeilRootRuntimeOverrides: Partial<VeilRootRuntime> | null = null;
+
+function resolveVeilRootRuntime(): VeilRootRuntime {
+  return {
+    ...defaultVeilRootRuntime,
+    ...testVeilRootRuntimeOverrides
+  };
+}
 
 function formatHeroStatBonus(bonus: { attack: number; defense: number; power: number; knowledge: number }): string {
   return [
@@ -181,8 +238,11 @@ export class VeilRoot extends Component {
   private lobbyLoading = false;
   private lobbyEntering = false;
   private lobbyAccountProfile: CocosPlayerAccountProfile = createFallbackCocosPlayerAccountProfile("player-1", "test-room");
+  private lobbyAccountReviewState: CocosAccountReviewState = createCocosAccountReviewState(this.lobbyAccountProfile);
   private lobbyAccountEpoch = 0;
   private gameplayAccountRefreshInFlight = false;
+  private gameplayAccountReviewPanel: VeilProgressionPanel | null = null;
+  private gameplayAccountReviewPanelOpen = false;
   private activeAccountFlow: CocosAccountLifecycleKind | null = null;
   private registrationDisplayName = "";
   private registrationToken = "";
@@ -203,7 +263,12 @@ export class VeilRoot extends Component {
   private wechatShareStatus = "分享功能仅在微信小游戏可用。";
   private wechatShareAvailable = false;
   private runtimeMemoryNotice = "";
+  private diagnosticsConnectionStatus: RuntimeDiagnosticsConnectionStatus = "connecting";
+  private lastRoomUpdateSource: string | null = null;
+  private lastRoomUpdateReason: string | null = null;
+  private lastRoomUpdateAtMs: number | null = null;
   private stopRuntimeMemoryWarnings: (() => void) | null = null;
+  private battlePresentation = createCocosBattlePresentationController();
 
   onLoad(): void {
     this.audioRuntime.dispose();
@@ -263,8 +328,9 @@ export class VeilRoot extends Component {
       return;
     }
 
+    this.diagnosticsConnectionStatus = "connecting";
     this.pushLog(`正在连接 ${this.remoteUrl} ...`);
-    const replayed = VeilCocosSession.readStoredReplay(this.roomId, this.playerId);
+    const replayed = resolveVeilRootRuntime().readStoredReplay(this.roomId, this.playerId);
     if (replayed) {
       this.applyReplayedSessionUpdate(replayed);
       this.pushLog("已回放本地缓存，等待房间实时同步。");
@@ -274,7 +340,12 @@ export class VeilRoot extends Component {
     const sessionEpoch = this.bumpSessionEpoch();
     let nextSession: VeilCocosSession | null = null;
     try {
-      nextSession = await VeilCocosSession.create(this.roomId, this.playerId, this.seed, this.createSessionOptions(sessionEpoch));
+      nextSession = await resolveVeilRootRuntime().createSession(
+        this.roomId,
+        this.playerId,
+        this.seed,
+        this.createSessionOptions(sessionEpoch)
+      );
       if (!this.isActiveSessionEpoch(sessionEpoch)) {
         await nextSession.dispose().catch(() => undefined);
         return;
@@ -553,6 +624,9 @@ export class VeilRoot extends Component {
       onRefresh: () => {
         void this.refreshSnapshot();
       },
+      onToggleAchievements: () => {
+        void this.toggleGameplayAccountReviewPanel();
+      },
       onLearnSkill: (skillId) => {
         void this.learnHeroSkill(skillId);
       },
@@ -627,6 +701,37 @@ export class VeilRoot extends Component {
       },
       onJoinRoom: (roomId) => {
         void this.enterLobbyRoom(roomId);
+      },
+      onToggleAccountReview: (open) => {
+        if (open) {
+          void this.refreshActiveAccountReviewSection();
+        }
+      },
+      onSelectAccountReviewSection: (section) => {
+        this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+          type: "section.selected",
+          section
+        });
+        this.renderView();
+        void this.refreshActiveAccountReviewSection();
+      },
+      onSelectAccountReviewPage: (section, page) => {
+        this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+          type: "section.selected",
+          section
+        });
+        this.renderView();
+        void this.refreshAccountReviewPage(section, page);
+      },
+      onRetryAccountReviewSection: (section) => {
+        void this.refreshActiveAccountReviewSection(section);
+      },
+      onSelectBattleReplayReview: (replayId) => {
+        this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+          type: "battle-replay.selected",
+          replayId
+        });
+        this.renderView();
       }
     });
 
@@ -683,6 +788,41 @@ export class VeilRoot extends Component {
     const timelineTransform = timelineNode.getComponent(UITransform) ?? timelineNode.addComponent(UITransform);
     timelineTransform.setContentSize(rightWidth, timelineHeight);
     this.timelinePanel = timelineNode.getComponent(VeilTimelinePanel) ?? timelineNode.addComponent(VeilTimelinePanel);
+
+    let accountReviewPanelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
+    if (!accountReviewPanelNode) {
+      accountReviewPanelNode = new Node(ACCOUNT_REVIEW_PANEL_NODE_NAME);
+      accountReviewPanelNode.parent = this.node;
+    }
+    assignUiLayer(accountReviewPanelNode);
+    const accountReviewTransform = accountReviewPanelNode.getComponent(UITransform) ?? accountReviewPanelNode.addComponent(UITransform);
+    accountReviewTransform.setContentSize(Math.max(320, Math.min(420, visibleSize.width - 56)), Math.max(360, visibleSize.height - 96));
+    this.gameplayAccountReviewPanel =
+      accountReviewPanelNode.getComponent(VeilProgressionPanel) ?? accountReviewPanelNode.addComponent(VeilProgressionPanel);
+    this.gameplayAccountReviewPanel.configure({
+      onClose: () => {
+        void this.toggleGameplayAccountReviewPanel(false);
+      },
+      onSelectSection: (section) => {
+        this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+          type: "section.selected",
+          section
+        });
+        this.renderView();
+        void this.refreshActiveAccountReviewSection();
+      },
+      onSelectPage: (section, page) => {
+        this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+          type: "section.selected",
+          section
+        });
+        this.renderView();
+        void this.refreshAccountReviewPage(section, page);
+      },
+      onRetrySection: (section) => {
+        void this.refreshActiveAccountReviewSection(section);
+      }
+    });
 
     this.battleTransition = this.node.getComponent(VeilBattleTransition) ?? this.node.addComponent(VeilBattleTransition);
     this.updateLayout();
@@ -743,6 +883,7 @@ export class VeilRoot extends Component {
     const mapNode = this.node.getChildByName(MAP_NODE_NAME);
     const battleNode = this.node.getChildByName(BATTLE_NODE_NAME);
     const timelineNode = this.node.getChildByName(TIMELINE_NODE_NAME);
+    const accountReviewPanelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
     const showingGame = !this.showLobby;
 
     if (lobbyNode) {
@@ -760,6 +901,9 @@ export class VeilRoot extends Component {
     if (timelineNode) {
       timelineNode.active = showingGame;
     }
+    if (accountReviewPanelNode) {
+      accountReviewPanelNode.active = showingGame && this.gameplayAccountReviewPanelOpen;
+    }
 
     if (this.showLobby) {
       this.lobbyPanel?.render({
@@ -773,6 +917,11 @@ export class VeilRoot extends Component {
         shareHint: this.describeLobbyShareHint(),
         vaultSummary: this.formatLobbyVaultSummary(),
         account: this.lobbyAccountProfile,
+        accountReview: buildCocosAccountReviewPage(this.lobbyAccountReviewState),
+        battleReplayItems: this.lobbyAccountReviewState.battleReplays.items,
+        battleReplaySectionStatus: this.lobbyAccountReviewState.battleReplays.status,
+        battleReplaySectionError: this.lobbyAccountReviewState.battleReplays.errorMessage,
+        selectedBattleReplayId: this.lobbyAccountReviewState.selectedBattleReplayId,
         sessionSource: this.sessionSource,
         loading: this.lobbyLoading,
         entering: this.lobbyEntering,
@@ -798,6 +947,22 @@ export class VeilRoot extends Component {
       predictionStatus: this.predictionStatus,
       inputDebug: this.inputDebug,
       runtimeHealth: this.describeRuntimeMemoryHealth(),
+      triageSummaryLines: buildCocosRuntimeTriageSummaryLines({
+        devOnly: true,
+        mode: this.lastUpdate?.battle ? "battle" : "world",
+        roomId: this.roomId,
+        playerId: this.playerId,
+        connectionStatus: this.diagnosticsConnectionStatus,
+        lastUpdateSource: this.lastRoomUpdateSource,
+        lastUpdateReason: this.lastRoomUpdateReason,
+        lastUpdateAt: this.lastRoomUpdateAtMs,
+        update: this.lastUpdate,
+        account: this.lobbyAccountProfile,
+        timelineEntries: this.timelineEntries,
+        logLines: this.logLines,
+        predictionStatus: this.predictionStatus,
+        recoverySummary: this.predictionStatus.includes("回放缓存状态") ? this.predictionStatus : null
+      }),
       levelUpNotice: this.levelUpNotice ? { title: this.levelUpNotice.title, detail: this.levelUpNotice.detail } : null,
       achievementNotice: this.achievementNotice
         ? { title: this.achievementNotice.title, detail: this.achievementNotice.detail }
@@ -811,10 +976,29 @@ export class VeilRoot extends Component {
       controlledCamp: this.controlledBattleCamp(),
       selectedTargetId: this.selectedBattleTargetId,
       actionPending: this.battleActionInFlight,
-      feedback: this.battleFeedback
+      feedback: this.battleFeedback,
+      presentationState: this.battlePresentation.getState()
     });
     this.timelinePanel?.render({
       entries: this.timelineEntries
+    });
+    this.renderGameplayAccountReviewPanel();
+  }
+
+  private renderGameplayAccountReviewPanel(): void {
+    const panelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
+    if (!panelNode) {
+      return;
+    }
+
+    if (!this.gameplayAccountReviewPanelOpen) {
+      panelNode.active = false;
+      return;
+    }
+
+    panelNode.active = true;
+    this.gameplayAccountReviewPanel?.render({
+      page: buildCocosAccountReviewPage(this.lobbyAccountReviewState)
     });
   }
 
@@ -868,7 +1052,7 @@ export class VeilRoot extends Component {
     const requestEpoch = this.bumpLobbyAccountEpoch();
     const storedSession = readStoredCocosAuthSession(storage);
     const activeSession = storedSession?.playerId === this.playerId ? storedSession : null;
-    const syncedSession = await syncCurrentCocosAuthSession(this.remoteUrl, {
+    const syncedSession = await resolveVeilRootRuntime().syncAuthSession(this.remoteUrl, {
       storage,
       session: activeSession
     });
@@ -892,7 +1076,7 @@ export class VeilRoot extends Component {
       this.sessionSource = "none";
     }
 
-    const profile = await loadCocosPlayerAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
+    const profile = await resolveVeilRootRuntime().loadAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
       storage,
       authSession: syncedSession
     });
@@ -907,6 +1091,186 @@ export class VeilRoot extends Component {
     }
     this.syncWechatShareBridge();
     this.renderView();
+  }
+
+  private async refreshActiveAccountReviewSection(section = this.lobbyAccountReviewState.activeSection): Promise<void> {
+    if (section === "progression") {
+      await this.refreshProgressionReview();
+      return;
+    }
+
+    if (section === "achievements") {
+      await this.refreshAchievementReview();
+      return;
+    }
+
+    if (section === "event-history") {
+      await this.refreshAccountReviewPage("event-history", this.lobbyAccountReviewState.eventHistory.page);
+      return;
+    }
+
+    await this.refreshAccountReviewPage("battle-replays", this.lobbyAccountReviewState.battleReplays.page);
+  }
+
+  private async refreshProgressionReview(): Promise<void> {
+    this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+      type: "section.loading",
+      section: "progression"
+    });
+    this.renderView();
+
+    try {
+      const snapshot = await resolveVeilRootRuntime().loadProgressionSnapshot(this.remoteUrl, this.playerId, 6, {
+        storage: this.readWebStorage(),
+        authSession: this.currentLobbyAuthSession(),
+        throwOnError: true
+      });
+      this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+        type: "progression.loaded",
+        snapshot
+      });
+    } catch (error) {
+      this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+        type: "section.failed",
+        section: "progression",
+        message: this.describeAccountReviewLoadError(error)
+      });
+    }
+
+    this.renderView();
+  }
+
+  private async refreshAchievementReview(): Promise<void> {
+    this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+      type: "section.loading",
+      section: "achievements"
+    });
+    this.renderView();
+
+    try {
+      const items = await resolveVeilRootRuntime().loadAchievementProgress(this.remoteUrl, this.playerId, undefined, {
+        storage: this.readWebStorage(),
+        authSession: this.currentLobbyAuthSession(),
+        throwOnError: true
+      });
+      this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+        type: "achievements.loaded",
+        items
+      });
+    } catch (error) {
+      this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+        type: "section.failed",
+        section: "achievements",
+        message: this.describeAccountReviewLoadError(error)
+      });
+    }
+
+    this.renderView();
+  }
+
+  private async toggleGameplayAccountReviewPanel(forceOpen?: boolean): Promise<void> {
+    const nextOpen = forceOpen ?? !this.gameplayAccountReviewPanelOpen;
+    this.gameplayAccountReviewPanelOpen = nextOpen;
+    if (!nextOpen) {
+      this.renderView();
+      return;
+    }
+
+    this.renderView();
+    await this.refreshActiveAccountReviewSection();
+  }
+
+  private async refreshAccountReviewPage(
+    section: "battle-replays" | "event-history",
+    page: number
+  ): Promise<void> {
+    const safePage = Math.max(0, Math.floor(page));
+    this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+      type: "section.loading",
+      section
+    });
+    this.renderView();
+
+    try {
+      if (section === "event-history") {
+        const history = await resolveVeilRootRuntime().loadEventHistory(
+          this.remoteUrl,
+          this.playerId,
+          {
+            limit: ACCOUNT_REVIEW_PAGE_SIZE,
+            offset: safePage * ACCOUNT_REVIEW_PAGE_SIZE
+          },
+          {
+            storage: this.readWebStorage(),
+            authSession: this.currentLobbyAuthSession(),
+            throwOnError: true
+          }
+        );
+        this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+          type: "event-history.loaded",
+          items: history.items,
+          page: Math.floor(history.offset / Math.max(1, history.limit)),
+          pageSize: history.limit,
+          total: history.total,
+          hasMore: history.hasMore
+        });
+      } else {
+        const history = await resolveVeilRootRuntime().loadBattleReplayHistoryPage(
+          this.remoteUrl,
+          this.playerId,
+          {
+            limit: ACCOUNT_REVIEW_PAGE_SIZE,
+            offset: safePage * ACCOUNT_REVIEW_PAGE_SIZE
+          },
+          {
+            storage: this.readWebStorage(),
+            authSession: this.currentLobbyAuthSession(),
+            throwOnError: true
+          }
+        );
+        this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+          type: "battle-replays.loaded",
+          items: history.items,
+          page: Math.floor(history.offset / Math.max(1, history.limit)),
+          pageSize: history.limit,
+          hasMore: history.hasMore
+        });
+      }
+    } catch (error) {
+      this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+        type: "section.failed",
+        section,
+        message: this.describeAccountReviewLoadError(error)
+      });
+    }
+
+    this.renderView();
+  }
+
+  private currentLobbyAuthSession(): {
+    token: string;
+    playerId: string;
+    displayName: string;
+    authMode: "guest" | "account";
+    loginId?: string;
+    source: "remote";
+  } | null {
+    if (!this.authToken) {
+      return null;
+    }
+
+    return {
+      token: this.authToken,
+      playerId: this.playerId,
+      displayName: this.displayName || this.playerId,
+      authMode: this.authMode,
+      ...(this.loginId ? { loginId: this.loginId } : {}),
+      source: "remote"
+    };
+  }
+
+  private describeAccountReviewLoadError(error: unknown): string {
+    return error instanceof Error && error.message.trim() ? error.message : "网络暂不可用，请稍后重试。";
   }
 
   private computeLayoutMetrics(): {
@@ -972,6 +1336,7 @@ export class VeilRoot extends Component {
     const battleNode = this.node.getChildByName(BATTLE_NODE_NAME);
     const timelineNode = this.node.getChildByName(TIMELINE_NODE_NAME);
     const lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
+    const accountReviewPanelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
 
     this.mapBoard?.configure({
       tileSize: effectiveTileSize,
@@ -994,6 +1359,9 @@ export class VeilRoot extends Component {
         },
         onRefresh: () => {
           void this.refreshSnapshot();
+        },
+        onToggleAchievements: () => {
+          void this.toggleGameplayAccountReviewPanel();
         },
         onLearnSkill: (skillId) => {
           void this.learnHeroSkill(skillId);
@@ -1045,6 +1413,13 @@ export class VeilRoot extends Component {
       lobbyTransform.setContentSize(Math.max(360, Math.min(860, visibleSize.width - 40)), Math.max(520, visibleSize.height - 48));
       lobbyNode.setPosition(0, 0, 0);
     }
+
+    if (accountReviewPanelNode) {
+      const accountReviewTransform =
+        accountReviewPanelNode.getComponent(UITransform) ?? accountReviewPanelNode.addComponent(UITransform);
+      accountReviewTransform.setContentSize(Math.max(320, Math.min(420, visibleSize.width - 56)), Math.max(360, visibleSize.height - 96));
+      accountReviewPanelNode.setPosition(0, 0, 4);
+    }
   }
 
   private handleHudActionInput(...args: unknown[]): void {
@@ -1075,6 +1450,12 @@ export class VeilRoot extends Component {
       return;
     }
 
+    if (action === "achievements") {
+      this.inputDebug = "button achievements";
+      void this.toggleGameplayAccountReviewPanel();
+      return;
+    }
+
     if (action === "return-lobby") {
       this.inputDebug = "button return-lobby";
       void this.returnToLobby();
@@ -1085,7 +1466,7 @@ export class VeilRoot extends Component {
     void this.advanceDay();
   }
 
-  private resolveHudActionAt(uiX: number, uiY: number): "new-run" | "refresh" | "end-day" | "return-lobby" | null {
+  private resolveHudActionAt(uiX: number, uiY: number): "new-run" | "refresh" | "achievements" | "end-day" | "return-lobby" | null {
     const visibleSize = view.getVisibleSize();
     const centeredX = uiX - visibleSize.width / 2;
     const centeredY = uiY - visibleSize.height / 2;
@@ -1111,19 +1492,23 @@ export class VeilRoot extends Component {
     const buttonWidth = Math.max(156, hudTransform.width - 36);
     const buttonHeight = 28;
 
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 45, buttonWidth, buttonHeight)) {
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 60, buttonWidth, buttonHeight)) {
       return "new-run";
     }
 
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 15, buttonWidth, buttonHeight)) {
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY + 30, buttonWidth, buttonHeight)) {
       return "refresh";
     }
 
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 15, buttonWidth, buttonHeight)) {
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY, buttonWidth, buttonHeight)) {
+      return "achievements";
+    }
+
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 30, buttonWidth, buttonHeight)) {
       return "end-day";
     }
 
-    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 45, buttonWidth, buttonHeight)) {
+    if (this.pointInRect(hudLocalX, hudLocalY, 0, actionsCenterY - 60, buttonWidth, buttonHeight)) {
       return "return-lobby";
     }
 
@@ -1260,7 +1645,7 @@ export class VeilRoot extends Component {
                 heroId: hero.id,
                 buildingId: tile.building.id
               }
-            : tile.building.kind === "attribute_shrine"
+            : tile.building.kind === "attribute_shrine" || tile.building.kind === "watchtower"
               ? {
                   type: "hero.visit",
                   heroId: hero.id,
@@ -1275,6 +1660,8 @@ export class VeilRoot extends Component {
             ? `预演招募 ${tile.building.availableCount} 单位`
             : tile.building.kind === "attribute_shrine"
               ? `预演获得 ${formatHeroStatBonus(tile.building.bonus)}`
+              : tile.building.kind === "watchtower"
+                ? `预演提高视野 ${tile.building.visionBonus}`
               : `预演占领矿场，改为每日产出 ${tile.building.income} ${formatResourceKindLabel(tile.building.resourceKind)}`
         );
         this.renderView();
@@ -1284,7 +1671,7 @@ export class VeilRoot extends Component {
           const update =
             tile.building.kind === "recruitment_post"
               ? await this.session.recruit(hero.id, tile.building.id)
-              : tile.building.kind === "attribute_shrine"
+              : tile.building.kind === "attribute_shrine" || tile.building.kind === "watchtower"
                 ? await this.session.visitBuilding(hero.id, tile.building.id)
                 : await this.session.claimMine(hero.id, tile.building.id);
           await this.applySessionUpdate(update);
@@ -1294,12 +1681,16 @@ export class VeilRoot extends Component {
                 ? "招募已结算。"
                 : tile.building.kind === "attribute_shrine"
                   ? "神殿访问已结算。"
+                  : tile.building.kind === "watchtower"
+                    ? "瞭望塔访问已结算。"
                   : "矿场占领已结算。",
             rejectedLabel:
               tile.building.kind === "recruitment_post"
                 ? "招募"
                 : tile.building.kind === "attribute_shrine"
                   ? "神殿访问"
+                  : tile.building.kind === "watchtower"
+                    ? "瞭望塔访问"
                   : "矿场占领"
           });
         } catch (error) {
@@ -1308,7 +1699,7 @@ export class VeilRoot extends Component {
               ? error.message
               : tile.building.kind === "recruitment_post"
                 ? "招募失败。"
-                : tile.building.kind === "attribute_shrine"
+                : tile.building.kind === "attribute_shrine" || tile.building.kind === "watchtower"
                   ? "访问失败。"
                   : "占领失败。"
           );
@@ -1466,7 +1857,12 @@ export class VeilRoot extends Component {
     this.renderView();
 
     try {
-      freshSession = await VeilCocosSession.create(nextRoomId, this.playerId, nextSeed, this.createSessionOptions(nextSessionEpoch));
+      freshSession = await resolveVeilRootRuntime().createSession(
+        nextRoomId,
+        this.playerId,
+        nextSeed,
+        this.createSessionOptions(nextSessionEpoch)
+      );
       if (!this.isActiveSessionEpoch(nextSessionEpoch)) {
         await freshSession.dispose().catch(() => undefined);
         return;
@@ -1514,7 +1910,7 @@ export class VeilRoot extends Component {
     this.renderView();
 
     try {
-      const rooms = await loadCocosLobbyRooms(this.remoteUrl);
+      const rooms = await resolveVeilRootRuntime().loadLobbyRooms(this.remoteUrl);
       this.lobbyRooms = rooms;
       this.lobbyStatus =
         rooms.length > 0
@@ -1550,7 +1946,7 @@ export class VeilRoot extends Component {
     try {
       let authSession: Awaited<ReturnType<typeof loginCocosGuestAuthSession>>;
       if (this.authMode === "account" && this.authToken) {
-        const syncedSession = await syncCurrentCocosAuthSession(this.remoteUrl, {
+        const syncedSession = await resolveVeilRootRuntime().syncAuthSession(this.remoteUrl, {
           storage,
           session: readStoredCocosAuthSession(storage)
         });
@@ -1559,7 +1955,7 @@ export class VeilRoot extends Component {
         }
         authSession = syncedSession;
       } else {
-        authSession = await loginCocosGuestAuthSession(this.remoteUrl, preferences.playerId, displayName, {
+        authSession = await resolveVeilRootRuntime().loginGuestAuthSession(this.remoteUrl, preferences.playerId, displayName, {
           storage
         });
       }
@@ -1591,7 +1987,10 @@ export class VeilRoot extends Component {
         return;
       }
 
-      this.lobbyAccountProfile = createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName);
+      this.commitAccountProfile(
+        createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName),
+        false
+      );
       this.renderView();
     } catch (error) {
       this.showLobby = true;
@@ -1641,8 +2040,9 @@ export class VeilRoot extends Component {
     if (nextLoginId === undefined) {
       return;
     }
-    if (!nextLoginId) {
-      this.lobbyStatus = "请输入登录 ID 后再使用正式账号进入。";
+    const loginIdError = validateAccountLifecycleRequest("registration", nextLoginId);
+    if (loginIdError) {
+      this.lobbyStatus = loginIdError.message;
       this.renderView();
       return;
     }
@@ -1651,8 +2051,9 @@ export class VeilRoot extends Component {
     if (password == null) {
       return;
     }
-    if (!password.trim()) {
-      this.lobbyStatus = "请输入账号口令后再登录。";
+    const passwordError = validateAccountPassword(password, "password", "账号口令");
+    if (passwordError) {
+      this.lobbyStatus = passwordError.message;
       this.renderView();
       return;
     }
@@ -1721,20 +2122,9 @@ export class VeilRoot extends Component {
       return error instanceof Error ? error.message : fallback;
     }
 
-    if (failure.status === 409 && failure.code === "login_id_taken") {
-      return "登录 ID 已被占用，请更换后重试。";
-    }
-    if (failure.status === 401 && options.invalidTokenCode && failure.code === options.invalidTokenCode) {
-      return "令牌无效或已过期，请重新申请后再确认。";
-    }
-    if (failure.status === 401) {
-      return "登录 ID 或口令不正确，请检查后重试。";
-    }
-    if (failure.status === 400) {
-      return "输入格式不合法，请检查登录 ID、令牌和口令后重试。";
-    }
-    if (failure.status === 429) {
-      return "请求过于频繁，请稍后再试。";
+    const message = describeAccountAuthFailure(failure, options);
+    if (message) {
+      return message;
     }
 
     return error instanceof Error ? error.message : fallback;
@@ -1830,6 +2220,7 @@ export class VeilRoot extends Component {
     this.displayName = rememberPreferredCocosDisplayName(this.playerId, this.displayName || this.playerId, storage);
     await this.disposeCurrentSession();
     this.resetSessionViewport("已返回 Cocos Lobby。");
+    this.gameplayAccountReviewPanelOpen = false;
     this.showLobby = true;
     this.syncWechatShareBridge();
     this.lobbyStatus = "已返回大厅，可继续选房或创建新实例。";
@@ -1848,7 +2239,7 @@ export class VeilRoot extends Component {
     this.loginId = "";
     this.sessionSource = "none";
     this.displayName = readPreferredCocosDisplayName(this.playerId, this.readWebStorage());
-    this.lobbyAccountProfile = createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName);
+    this.commitAccountProfile(createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName), false);
     this.syncWechatShareBridge();
     this.lobbyStatus = "已退出当前会话，请重新选择游客身份或使用正式账号进入。";
     this.renderView();
@@ -1970,8 +2361,9 @@ export class VeilRoot extends Component {
       return;
     }
     const loginId = this.loginId.trim().toLowerCase();
-    if (!loginId) {
-      this.lobbyStatus = "请输入登录 ID 后再申请令牌。";
+    const validationError = validateAccountLifecycleRequest(this.activeAccountFlow, loginId);
+    if (validationError) {
+      this.lobbyStatus = validationError.message;
       this.renderView();
       return;
     }
@@ -2022,38 +2414,23 @@ export class VeilRoot extends Component {
       return;
     }
     const loginId = this.loginId.trim().toLowerCase();
-    if (!loginId) {
-      this.lobbyStatus = "请输入登录 ID 后再确认。";
+    this.loginId = loginId;
+    const validationError = validateAccountLifecycleConfirm(this.activeAccountFlow, {
+      loginId,
+      token: this.activeAccountFlow === "registration" ? this.registrationToken : this.recoveryToken,
+      password: this.activeAccountFlow === "registration" ? this.registrationPassword : this.recoveryPassword
+    });
+    if (validationError) {
+      this.lobbyStatus = validationError.message;
       this.renderView();
       return;
     }
-    this.loginId = loginId;
 
     if (this.activeAccountFlow === "registration") {
-      if (!this.registrationToken.trim()) {
-        this.lobbyStatus = "请先填写注册令牌。";
-        this.renderView();
-        return;
-      }
-      if (!this.registrationPassword.trim()) {
-        this.lobbyStatus = "请输入注册口令后再确认。";
-        this.renderView();
-        return;
-      }
       await this.confirmLobbyAccountRegistration(loginId);
       return;
     }
 
-    if (!this.recoveryToken.trim()) {
-      this.lobbyStatus = "请先填写找回令牌。";
-      this.renderView();
-      return;
-    }
-    if (!this.recoveryPassword.trim()) {
-      this.lobbyStatus = "请输入新口令后再确认重置。";
-      this.renderView();
-      return;
-    }
     await this.confirmLobbyAccountRecovery(loginId);
   }
 
@@ -2232,6 +2609,8 @@ export class VeilRoot extends Component {
     this.selectedBattleTargetId = null;
     this.moveInFlight = false;
     this.battleActionInFlight = false;
+    this.battleFeedback = null;
+    this.battlePresentation.reset();
     this.predictionStatus = "";
     this.inputDebug = "input waiting";
     this.timelineEntries = [];
@@ -2253,6 +2632,14 @@ export class VeilRoot extends Component {
 
     if (error.message === "room_left" || error.message === "session_unavailable") {
       return "房间会话已失效，请点击刷新状态恢复。";
+    }
+
+    if (
+      error.message === "unsupported_player_world_view_encoding" ||
+      error.message === "invalid_player_world_view_encoding_length" ||
+      error.message === "missing_player_world_view_base"
+    ) {
+      return "房间状态损坏，请重建房间或检查服务端同步。";
     }
 
     const formattedReason = formatSessionActionReason(error.message);
@@ -2396,7 +2783,7 @@ export class VeilRoot extends Component {
       this.authProvider = storedSession?.playerId === this.playerId ? storedSession.provider ?? "guest" : "guest";
       this.loginId = storedSession?.playerId === this.playerId ? storedSession.loginId ?? "" : "";
       this.sessionSource = storedSession?.playerId === this.playerId ? storedSession.source : "none";
-      this.lobbyAccountProfile = createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName);
+      this.commitAccountProfile(createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName), false);
       this.showLobby = true;
       this.autoConnect = false;
       this.lobbyStatus = storedSession
@@ -2416,7 +2803,7 @@ export class VeilRoot extends Component {
     this.loginId = launchIdentity.loginId ?? "";
     this.authToken = launchIdentity.authToken;
     this.sessionSource = launchIdentity.sessionSource;
-    this.lobbyAccountProfile = createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName);
+    this.commitAccountProfile(createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName), false);
 
     if (launchIdentity.usedStoredSession) {
       this.pushLog(
@@ -2504,12 +2891,17 @@ export class VeilRoot extends Component {
   }
 
   private handleConnectionEvent(event: ConnectionEvent): void {
+    this.diagnosticsConnectionStatus =
+      event === "reconnecting" ? "reconnecting" : event === "reconnected" ? "connected" : "reconnect_failed";
     const label =
       event === "reconnecting"
         ? "连接已中断，正在尝试重连..."
         : event === "reconnected"
           ? "连接已恢复。"
           : "重连失败，正在尝试恢复房间快照...";
+    if (this.showLobby) {
+      this.lobbyStatus = label;
+    }
     this.pushLog(label);
     this.renderView();
   }
@@ -2520,7 +2912,7 @@ export class VeilRoot extends Component {
     }
 
     this.battleActionInFlight = true;
-    const actionPresentation = buildBattleActionPresentation(action, this.lastUpdate?.battle ?? null);
+    const actionPresentation = this.battlePresentation.previewAction(action, this.lastUpdate?.battle ?? null);
     const skillName =
       action.type === "battle.skill"
         ? this.lastUpdate?.battle?.units[action.unitId]?.skills?.find((skill) => skill.id === action.skillId)?.name ?? action.skillId
@@ -2565,10 +2957,14 @@ export class VeilRoot extends Component {
   private async applySessionUpdate(update: SessionUpdate): Promise<void> {
     const previousBattle = this.lastUpdate?.battle ?? null;
     const heroId = this.activeHero()?.id ?? null;
-    const presentation = buildBattlePresentationPlan(previousBattle, update, heroId);
+    const presentation = this.battlePresentation.applyUpdate(previousBattle, update, heroId);
 
     this.pendingPrediction = null;
     this.predictionStatus = "";
+    this.diagnosticsConnectionStatus = "connected";
+    this.lastRoomUpdateSource = "session";
+    this.lastRoomUpdateReason = update.reason ?? "snapshot";
+    this.lastRoomUpdateAtMs = Date.now();
     this.lastUpdate = update;
     const eventEntries = buildTimelineEntriesFromUpdate(update);
     if (eventEntries.length > 0) {
@@ -2660,6 +3056,10 @@ export class VeilRoot extends Component {
     }
 
     this.lobbyAccountProfile = profile;
+    this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+      type: "account.synced",
+      account: profile
+    });
   }
 
   private playMapFeedbackForUpdate(update: SessionUpdate): void {
@@ -2680,11 +3080,15 @@ export class VeilRoot extends Component {
   private applyReplayedSessionUpdate(update: SessionUpdate): void {
     this.pendingPrediction = null;
     this.predictionStatus = "已回放缓存状态，等待房间同步...";
+    this.lastRoomUpdateSource = "replay";
+    this.lastRoomUpdateReason = "cached_snapshot";
+    this.lastRoomUpdateAtMs = Date.now();
     this.lastUpdate = {
       ...update,
       events: [],
       movementPlan: null
     };
+    this.battlePresentation.reset();
     this.renderView();
   }
 
@@ -2748,6 +3152,19 @@ export class VeilRoot extends Component {
     };
   }
 
+}
+
+export function setVeilRootRuntimeForTests(runtime: Partial<VeilRootRuntime>): void {
+  // Tests only replace transport/persistence edges here so the VeilRoot boot,
+  // reconnect, and handoff orchestration still runs through the production code.
+  testVeilRootRuntimeOverrides = {
+    ...testVeilRootRuntimeOverrides,
+    ...runtime
+  };
+}
+
+export function resetVeilRootRuntimeForTests(): void {
+  testVeilRootRuntimeOverrides = null;
 }
 
 function cloneSessionUpdate(update: SessionUpdate): SessionUpdate {

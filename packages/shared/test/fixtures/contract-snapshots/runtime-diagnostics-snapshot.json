@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-03-29T07:10:00.000Z",
+  "source": {
+    "surface": "cocos-runtime-overlay",
+    "devOnly": true,
+    "mode": "battle"
+  },
+  "room": {
+    "roomId": "room-contract",
+    "playerId": "player-1",
+    "day": 7,
+    "connectionStatus": "connected",
+    "lastUpdateSource": "push",
+    "lastUpdateReason": "battle.started",
+    "lastUpdateAt": "2026-03-29T07:09:30.000Z"
+  },
+  "world": {
+    "map": {
+      "width": 3,
+      "height": 2,
+      "visibleTileCount": 5,
+      "reachableTileCount": 4
+    },
+    "resources": {
+      "gold": 180,
+      "wood": 12,
+      "ore": 5
+    },
+    "selectedTile": {
+      "x": 1,
+      "y": 1
+    },
+    "hoveredTile": {
+      "x": 1,
+      "y": 1
+    },
+    "keyboardCursor": {
+      "x": 0,
+      "y": 1
+    },
+    "hero": {
+      "id": "hero-1",
+      "name": "暮火侦骑",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "move": {
+        "total": 6,
+        "remaining": 4
+      },
+      "stats": {
+        "attack": 3,
+        "defense": 2,
+        "power": 1,
+        "knowledge": 1,
+        "hp": 26,
+        "maxHp": 30
+      },
+      "armyTemplateId": "hero_guard_basic",
+      "armyCount": 14,
+      "progression": {
+        "level": 2,
+        "experience": 120,
+        "skillPoints": 1,
+        "battlesWon": 2,
+        "neutralBattlesWon": 2,
+        "pvpBattlesWon": 0
+      }
+    },
+    "visibleHeroes": [
+      {
+        "id": "hero-2",
+        "playerId": "player-2",
+        "position": {
+          "x": 2,
+          "y": 1
+        }
+      }
+    ]
+  },
+  "battle": {
+    "id": "battle-demo",
+    "round": 1,
+    "activeUnitId": "wolf-d",
+    "selectedTargetId": "pikeman-a",
+    "unitCount": 2,
+    "environmentCount": 0,
+    "logTail": [
+      "战斗开始",
+      "恶狼率先行动"
+    ]
+  },
+  "account": {
+    "playerId": "player-1",
+    "displayName": "暮火侦骑",
+    "source": "remote",
+    "loginId": "veil-ranger",
+    "recentEventCount": 3,
+    "recentReplayCount": 1
+  },
+  "overview": null,
+  "diagnostics": {
+    "eventTypes": [
+      "hero.moved",
+      "battle.started"
+    ],
+    "timelineTail": [
+      {
+        "id": "timeline-1",
+        "tone": "neutral",
+        "source": "push",
+        "text": "Room room-contract entered battle battle-demo"
+      },
+      {
+        "id": "timeline-2",
+        "tone": "warning",
+        "source": "prediction",
+        "text": "Predicted path resolved into neutral encounter"
+      }
+    ],
+    "logTail": [
+      "Connected to room-contract",
+      "Pushed authoritative battle snapshot"
+    ],
+    "recoverySummary": "权威房间已接管预测结果，战斗态一致。",
+    "predictionStatus": "server-authoritative",
+    "pendingUiTasks": 1,
+    "replay": {
+      "replayId": "room-contract:battle-demo:player-1",
+      "loading": false,
+      "status": "paused",
+      "currentStepIndex": 0,
+      "totalSteps": 2
+    }
+  }
+}

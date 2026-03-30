@@ -33,6 +33,38 @@
         "venomous_fangs",
         "crippling_howl"
       ]
+    },
+    {
+      "id": "moss_stalker",
+      "stackName": "苔痕潜猎者",
+      "faction": "wild",
+      "rarity": "elite",
+      "initiative": 11,
+      "attack": 5,
+      "defense": 3,
+      "minDamage": 2,
+      "maxDamage": 5,
+      "maxHp": 7,
+      "battleSkills": [
+        "ambush_pounce",
+        "bog_veil"
+      ]
+    },
+    {
+      "id": "iron_walker",
+      "stackName": "铁卫行者",
+      "faction": "wild",
+      "rarity": "elite",
+      "initiative": 7,
+      "attack": 6,
+      "defense": 7,
+      "minDamage": 3,
+      "maxDamage": 5,
+      "maxHp": 14,
+      "battleSkills": [
+        "shield_bash",
+        "watcher_stance"
+      ]
     }
   ]
 }

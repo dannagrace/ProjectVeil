@@ -3,7 +3,7 @@
 ## 自动化边界
 
 - CI 入口：GitHub Actions `wechat-build-validation`
-- 执行命令：`npm run check:wechat-build`
+- 执行命令：`npm run check:cocos-release-readiness`
 - 当前自动化会做三件事：
   - 校验 `apps/cocos-client/wechat-minigame.build.json` 生成出的模板产物是否已经提交且未漂移
   - 校验 `apps/cocos-client/build-templates/wechatgame/` 中必需文件是否齐全
@@ -12,6 +12,7 @@
   - 清单内包含导出目录文件列表、字节数、SHA-256、主包 / 分包体积汇总，以及可选的源码 revision 标识
 - 当前自动化可把已校验导出目录打成确定性的 `tar.gz` 发布包，并输出 sidecar 元数据 `codex.wechat.package.json`
   - sidecar 会记录归档文件名、SHA-256、字节数、导出目录来源，以及归档内文件清单摘要
+- 当前自动化还会运行 `npm run audit:cocos-primary-delivery`，把 primary client 的导出校验与 artifact 校验收口成一份简明 JSON / Markdown 摘要
 - CI 会把上述归档与 sidecar 元数据作为 GitHub Actions artifact `wechat-release-<sha>` 上传，供提审前下载、留档与回滚追溯
 - CI 额外会把刚上传的 artifact 再下载一次，并运行 `npm run verify:wechat-release` 做 artifact 级 smoke 验收
 - GitHub Actions 现支持在 `workflow_dispatch` 时显式开启 `upload`，或推送 `wechat-release-<version>` tag 后自动执行 `miniprogram-ci` 上传
@@ -24,13 +25,19 @@
 - 刷新模板：`npm run prepare:wechat-build`
 - 生成发布元数据：`npm run prepare:wechat-release -- --output-dir <wechatgame-build-dir> --expect-exported-runtime [--source-revision <git-sha>]`
 - 产出发布归档：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
+- 聚合校验 RC artifact：`npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>] [--require-smoke-report]`
+- 发布彩排与汇总：`npm run release:wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> [--summary <json>] [--markdown <md>]`（顺序执行 prepare / package / verify / validate，并输出结构化 + Markdown 摘要）
 - 上传已打包产物：`npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`
 - 按 SHA 下载 CI artifact：`npm run download:wechat-release -- --sha <git-sha> [--output-dir artifacts/downloaded/wechat-release-<git-sha>]`
 - 验收已下载 artifact：`npm run verify:wechat-release -- --artifacts-dir <downloaded-artifact-dir> [--expected-revision <git-sha>]`
 - 生成 / 校验真机冒烟报告：`npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> [--report <report-path>] [--check --expected-revision <git-sha>]`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 统一 Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
-- 只做 CI 同款校验：`npm run check:wechat-build`
+- Primary client delivery checklist：`docs/cocos-primary-client-delivery.md`
+- Primary client delivery audit：`npm run audit:cocos-primary-delivery -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--expected-revision <git-sha>]`
+- RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
+- RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
+- 只做 CI 同款校验：`npm run check:cocos-release-readiness`
 - 校验真实导出目录：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 
 ## 上传凭据
@@ -58,12 +65,29 @@
 4. 对真实导出目录执行 `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`。
 5. 运行 `npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`，生成包含 `codex.wechat.release.json` 的归档包与 sidecar 元数据。
 6. 运行 `npm run verify:wechat-release -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>]`，在上传前先做一次本地 artifact 级冒烟验收。
-7. 运行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成 `codex.wechat.smoke-report.json` 模板，并在真机或准真机上逐项填写结果。
-8. 完成真机 / 准真机冒烟后，执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`，确认登录、进房、重连、分享回流、关键资源加载都已有结果记录。
+7. 如需把 sidecar、归档、可选 smoke report / upload receipt 收口成单条门禁，运行 `npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>] [--require-smoke-report]`。
+   - 该命令会稳定输出 `codex.wechat.rc-validation-report.json`
+   - JSON 至少包含 `version`、`commit`、artifact 路径、逐项检查结果和 `failureSummary`
+   - `--version` 会要求并校验 `*.upload.json`；`--require-smoke-report` 会把 `codex.wechat.smoke-report.json` 设为必需门禁
+8. 运行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成 `codex.wechat.smoke-report.json` 模板，并在真机或准真机上逐项填写结果。
+9. 完成真机 / 准真机冒烟后，执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`，确认登录、进房、重连、分享回流、关键资源加载都已有结果记录。
    - `reconnect-recovery` 必须复用 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 的 canonical scenario、最小成功信号和失败诊断口径。
-9. 运行 `npm run release:cocos-rc:snapshot -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json --output artifacts/release-evidence/<candidate-name>.wechat.json`，把微信 smoke 结果映射回统一的 Cocos RC 快照，并补齐首战 / 返回世界证据。
-10. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
-11. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
+10. 运行 `npm run release:cocos-rc:snapshot -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json --output artifacts/release-evidence/<candidate-name>.wechat.json`，把微信 smoke 结果映射回统一的 Cocos RC 快照，并补齐首战 / 返回世界证据。
+11. 复制 `docs/release-evidence/cocos-wechat-rc-checklist.template.md` 与 `docs/release-evidence/cocos-wechat-rc-blockers.template.md`，为当前 candidate 回填设备、结论和 blocker。
+12. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
+13. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
+
+## 发布彩排摘要
+
+`npm run release:wechat:rehearsal` 用于把准备 / 打包 / 验证 / RC 聚合这四个阶段一次跑完，并把结果写成稳定的 CI 证据：
+
+- 默认读取 `apps/cocos-client/wechat-minigame.build.json`，也可用 `--build-dir` / `--artifacts-dir` 覆盖输入输出。
+- 顺序执行 `prepare:wechat-release`、`package:wechat-release`、`verify:wechat-release`、`validate:wechat-rc`，任一阶段失败后续阶段会被标记为 `skipped`。
+- 结构化摘要默认写到 `artifacts/wechat-release/wechat-release-rehearsal-<short-sha>.json`，Markdown 摘要写到同名 `.md`；可通过 `--summary` / `--markdown` 改写路径。
+- JSON 摘要包含阶段命令、耗时、stdout / stderr tail 以及首个失败阶段的诊断，Markdown 版本可直接贴到 CI Summary 或 PR。
+- `--source-revision`、`--expected-revision`、`--package-name`、`--version`、`--require-smoke-report` 会透传给对应脚本，方便对齐真实提审参数。
+- 适合在本地 release rehearsal、或在 CI 下载模板导出夹具时，一次性确认整个链路仍能跑通。
+
 
 ## 下载与验收
 
@@ -83,6 +107,13 @@
 - release manifest 中记录的文件列表、字节数、SHA-256 是否与归档内真实内容一致
 - `project.config.json` / `codex.wechat.build.json` 是否仍指向微信小游戏构建
 
+`validate:wechat-rc` 会在 `verify:wechat-release` 之上额外统一输出一份稳定 JSON 报告，并收口以下门禁：
+
+- release sidecar 基本字段是否完整，SHA / 字节数 / fileCount 是否具备有效形状
+- artifact 归档与 sidecar 是否仍能通过 `verify:wechat-release`
+- 若存在 `codex.wechat.smoke-report.json`，则复用 `smoke:wechat-release --check` 校验其结果；传 `--require-smoke-report` 时缺失也会直接失败
+- 若存在 `*.upload.json`，则校验其与 sidecar 的 archive / SHA / commit 一致；传 `--version <wechat-version>` 时会把 upload receipt 设为必需并校验版本号
+
 ## 提审前 Smoke Check
 
 `npm run smoke:wechat-release` 会生成 `codex.wechat.smoke-report.json`，默认与 release artifact 放在同一目录。该文件是提审前必须保留的最小验收记录，建议直接随 artifact 归档保存。
@@ -95,16 +126,27 @@
 - `share-roundtrip`：验证分享链路与回流后房间号 / 邀请参数恢复
 - `key-assets`：验证首屏、Lobby、房间或首场战斗关键资源加载无白名单 / 缺图 / 404
 
+其中两条 case 额外带有强制结构化证据字段，`--check` 时会直接校验：
+
+- `reconnect-recovery.requiredEvidence.roomId`：恢复后确认仍在原权威房间
+- `reconnect-recovery.requiredEvidence.reconnectPrompt`：记录“连接已恢复”或等效恢复提示
+- `reconnect-recovery.requiredEvidence.restoredState`：记录恢复后未回档的关键状态
+- `share-roundtrip.requiredEvidence.shareScene`：记录从 Lobby / 世界 / 战斗中的哪个入口触发分享
+- `share-roundtrip.requiredEvidence.shareQuery`：记录分享 query 或等效 payload 摘要，至少覆盖 `roomId` / `inviterId` 等关键参数
+- `share-roundtrip.requiredEvidence.roundtripState`：记录回流后识别到的房间号、邀请参数或恢复到的界面状态
+
 推荐执行方式：
 
 1. 先跑 `npm run verify:wechat-release -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>]`
 2. 再跑 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成模板
 3. 在真机或微信开发者工具真机调试模式中逐项填写 `tester`、`device`、`executedAt`、`summary` 以及每个 case 的 `status` / `notes` / `evidence`
-   - `reconnect-recovery` 至少要记录原 `roomId`、恢复提示、恢复后未回档状态三项证据；细则见 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md)
+   - `reconnect-recovery.requiredEvidence` 下的 `roomId`、`reconnectPrompt`、`restoredState` 都必须填非空字符串；细则见 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md)
+   - `share-roundtrip.requiredEvidence` 下的 `shareScene`、`shareQuery`、`roundtripState` 也都必须填非空字符串，用来说明分享入口、参数和回流结果
 4. 回填完成后执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`
 5. 再执行 `npm run release:cocos-rc:snapshot -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json --output artifacts/release-evidence/<candidate-name>.wechat.json`，把 `login-lobby`、`room-entry`、`reconnect-recovery` 映射到统一 RC 快照，并补齐 `firstBattleResult` 与 `return-to-world` 证据。
+6. 复制并回填 `docs/release-evidence/cocos-wechat-rc-checklist.template.md` 与 `docs/release-evidence/cocos-wechat-rc-blockers.template.md`，确保 reviewer 能直接看到当前 RC 的设备、结论与未关闭风险。
 
-若某项因当前包能力受限无法完整验证，可把 case 标记为 `not_applicable`，并在 `notes` 中写明原因与替代观察证据；其余必填项不得保留 `pending`。
+若某项因当前包能力受限无法完整验证，可把 case 标记为 `not_applicable`，并在 `notes` 中写明原因与替代观察证据；其余必填项不得保留 `pending`。若因此形成风险，必须同步写入 blocker 模板，而不是只留在 smoke report 备注里。
 
 ## 回滚演练
 

@@ -1,13 +1,18 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Sprite, SpriteFrame, UITransform } from "cc";
 import {
-  buildCocosAccountReviewPage,
   type CocosAccountReviewItem,
-  type CocosAccountReviewSection
+  type CocosAccountReviewPage,
+  type CocosAccountReviewSection,
+  type CocosAccountReviewSectionStatus
 } from "./cocos-account-review.ts";
 import type { CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildCocosBattleReplayTimelineView } from "./cocos-battle-replay-timeline.ts";
+import {
+  buildCocosBattleReplayCenterView,
+  type CocosBattleReplayCenterControlAction
+} from "./cocos-battle-replay-center.ts";
 import {
   lobbyBuildingShowcaseEntries,
   formatLobbyShowcasePhaseLabel,
@@ -25,7 +30,18 @@ import {
 } from "./cocos-showcase-gallery.ts";
 import type { CocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import type { CocosAccountLifecycleFieldView, CocosAccountLifecyclePanelView } from "./cocos-account-lifecycle.ts";
-import { findPlayerBattleReplaySummary } from "./project-shared/battle-replay.ts";
+import {
+  createBattleReplayPlaybackState,
+  findPlayerBattleReplaySummary,
+  pauseBattleReplayPlayback,
+  playBattleReplayPlayback,
+  resetBattleReplayPlayback,
+  stepBackBattleReplayPlayback,
+  stepBattleReplayPlayback,
+  tickBattleReplayPlayback,
+  type BattleReplayPlaybackState,
+  type PlayerBattleReplaySummary
+} from "./project-shared/battle-replay.ts";
 
 const { ccclass } = _decorator;
 const H_ALIGN_LEFT = 0;
@@ -56,6 +72,8 @@ const REVIEW_TIMELINE_ACCENT = new Color(136, 184, 236, 210);
 const REVIEW_HIGHLIGHT_FILL = new Color(58, 74, 108, 206);
 const REVIEW_HIGHLIGHT_STROKE = new Color(234, 246, 255, 120);
 const REVIEW_HIGHLIGHT_ACCENT = new Color(146, 198, 246, 214);
+const REPLAY_CONTROL_FILL = new Color(64, 92, 128, 220);
+const REPLAY_CONTROL_ACTIVE_FILL = new Color(84, 122, 94, 220);
 
 export interface VeilLobbyRenderState {
   playerId: string;
@@ -68,6 +86,11 @@ export interface VeilLobbyRenderState {
   shareHint: string;
   vaultSummary: string;
   account: CocosPlayerAccountProfile;
+  accountReview: CocosAccountReviewPage;
+  battleReplayItems: PlayerBattleReplaySummary[];
+  battleReplaySectionStatus: CocosAccountReviewSectionStatus;
+  battleReplaySectionError: string | null;
+  selectedBattleReplayId: string | null;
   sessionSource: "remote" | "local" | "manual" | "none";
   loading: boolean;
   entering: boolean;
@@ -94,6 +117,11 @@ export interface VeilLobbyPanelOptions {
   onOpenConfigCenter?: () => void;
   onLogout?: () => void;
   onJoinRoom?: (roomId: string) => void;
+  onToggleAccountReview?: (open: boolean) => void;
+  onSelectAccountReviewSection?: (section: CocosAccountReviewSection) => void;
+  onSelectAccountReviewPage?: (section: "battle-replays" | "event-history", page: number) => void;
+  onRetryAccountReviewSection?: (section: CocosAccountReviewSection) => void;
+  onSelectBattleReplayReview?: (replayId: string) => void;
 }
 
 interface PanelCardTone {
@@ -106,13 +134,6 @@ interface PanelCardTone {
 export class VeilLobbyPanel extends Component {
   private currentState: VeilLobbyRenderState | null = null;
   private showAccountReview = false;
-  private activeAccountReviewSection: CocosAccountReviewSection = "battle-replays";
-  private reviewPages: Record<CocosAccountReviewSection, number> = {
-    "battle-replays": 0,
-    "event-history": 0,
-    achievements: 0
-  };
-  private selectedBattleReplayId: string | null = null;
   private showcasePhase: LobbyShowcasePhase = "idle";
   private showcaseUnitPage = 0;
   private showcaseTickerStarted = false;
@@ -132,8 +153,18 @@ export class VeilLobbyPanel extends Component {
   private onOpenConfigCenter: (() => void) | undefined;
   private onLogout: (() => void) | undefined;
   private onJoinRoom: ((roomId: string) => void) | undefined;
+  private onToggleAccountReview: ((open: boolean) => void) | undefined;
+  private onSelectAccountReviewSection: ((section: CocosAccountReviewSection) => void) | undefined;
+  private onSelectAccountReviewPage: ((section: "battle-replays" | "event-history", page: number) => void) | undefined;
+  private onRetryAccountReviewSection: ((section: CocosAccountReviewSection) => void) | undefined;
+  private onSelectBattleReplayReview: ((replayId: string) => void) | undefined;
+  private replayPlayback: BattleReplayPlaybackState | null = null;
+  private replayPlaybackReplayId: string | null = null;
+  private replayPlaybackStatus = "选择一场最近战斗，即可查看逐步回放。";
+  private replayPlaybackTimer: ReturnType<typeof setInterval> | null = null;
 
   onDestroy(): void {
+    this.stopReplayPlaybackLoop();
     this.unscheduleAllCallbacks();
   }
 
@@ -154,10 +185,16 @@ export class VeilLobbyPanel extends Component {
     this.onOpenConfigCenter = options.onOpenConfigCenter;
     this.onLogout = options.onLogout;
     this.onJoinRoom = options.onJoinRoom;
+    this.onToggleAccountReview = options.onToggleAccountReview;
+    this.onSelectAccountReviewSection = options.onSelectAccountReviewSection;
+    this.onSelectAccountReviewPage = options.onSelectAccountReviewPage;
+    this.onRetryAccountReviewSection = options.onRetryAccountReviewSection;
+    this.onSelectBattleReplayReview = options.onSelectBattleReplayReview;
   }
 
   render(state: VeilLobbyRenderState): void {
     this.currentState = state;
+    this.syncReplayPlaybackState(state);
     this.ensureShowcaseTicker();
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const width = transform.width || 760;
@@ -403,6 +440,7 @@ export class VeilLobbyPanel extends Component {
       },
       () => {
         this.showAccountReview = !this.showAccountReview;
+        this.onToggleAccountReview?.(this.showAccountReview);
         if (this.currentState) {
           this.render(this.currentState);
         }
@@ -411,22 +449,8 @@ export class VeilLobbyPanel extends Component {
 
     if (this.showAccountReview) {
       this.hideAccountFlowPanel();
-      const review = buildCocosAccountReviewPage(
-        state.account,
-        this.activeAccountReviewSection,
-        this.reviewPages[this.activeAccountReviewSection] ?? 0,
-        3
-      );
-      const hasBattleReplays = state.account.recentBattleReplays.length > 0;
-      if (!hasBattleReplays) {
-        this.selectedBattleReplayId = null;
-      } else if (
-        (!this.selectedBattleReplayId ||
-          !state.account.recentBattleReplays.some((replay) => replay.id === this.selectedBattleReplayId)) &&
-        review.section === "battle-replays"
-      ) {
-        this.selectedBattleReplayId = state.account.recentBattleReplays[0]?.id ?? null;
-      }
+      const review = state.accountReview;
+      const hasBattleReplays = state.battleReplayItems.length > 0;
       const unlockedCount = state.account.achievements.filter((achievement) => achievement.unlocked).length;
       rightCursorY = this.renderCard(
         "LobbyAccountReviewHeader",
@@ -438,7 +462,7 @@ export class VeilLobbyPanel extends Component {
           "账号资料回顾",
           `战报 ${state.account.recentBattleReplays.length} · 事件 ${state.account.recentEventLog.length} · 成就 ${unlockedCount}/${state.account.achievements.length}`,
           review.subtitle,
-          `当前页 ${review.page + 1}/${review.totalPages}`
+          `当前页 ${review.pageLabel}`
         ],
         {
           fill: TITLE_FILL,
@@ -450,7 +474,7 @@ export class VeilLobbyPanel extends Component {
         18
       );
 
-      const tabWidth = Math.floor((rightWidth - 12) / 3);
+      const tabWidth = Math.floor((rightWidth - 18) / 4);
       const tabStartX = rightX - rightWidth / 2 + tabWidth / 2;
       review.tabs.forEach((tab, index) => {
         const isActive = tab.section === review.section;
@@ -473,7 +497,7 @@ export class VeilLobbyPanel extends Component {
                 accent: new Color(252, 232, 194, 110)
               },
           () => {
-            this.activeAccountReviewSection = tab.section;
+            this.onSelectAccountReviewSection?.(tab.section);
             if (this.currentState) {
               this.render(this.currentState);
             }
@@ -494,9 +518,8 @@ export class VeilLobbyPanel extends Component {
         },
         review.hasPreviousPage
           ? () => {
-              this.reviewPages[review.section] = review.page - 1;
-              if (this.currentState) {
-                this.render(this.currentState);
+              if (review.section === "battle-replays" || review.section === "event-history") {
+                this.onSelectAccountReviewPage?.(review.section, review.page - 1);
               }
             }
           : null
@@ -515,26 +538,47 @@ export class VeilLobbyPanel extends Component {
         },
         review.hasNextPage
           ? () => {
-              this.reviewPages[review.section] = review.page + 1;
-              if (this.currentState) {
-                this.render(this.currentState);
+              if (review.section === "battle-replays" || review.section === "event-history") {
+                this.onSelectAccountReviewPage?.(review.section, review.page + 1);
               }
-              }
+            }
           : null
       );
 
-      let reviewCardsTop = rightCursorY - 74;
-      if (review.section === "battle-replays" && hasBattleReplays && this.selectedBattleReplayId) {
-        reviewCardsTop = this.renderBattleReplayTimelineDetail(rightX, reviewCardsTop, rightWidth, state.account);
+      this.renderActionButton(
+        "LobbyAccountReviewRetry",
+        rightX,
+        rightCursorY - 84,
+        rightWidth,
+        24,
+        "重新同步当前面板",
+        {
+          fill: ACTION_REFRESH,
+          stroke: new Color(233, 242, 250, 130),
+          accent: new Color(218, 230, 242, 120)
+        },
+        review.showRetry ? () => this.onRetryAccountReviewSection?.(review.section) : null
+      );
+
+      let reviewCardsTop = rightCursorY - 108;
+      if (review.section === "battle-replays" && hasBattleReplays && state.selectedBattleReplayId) {
+        reviewCardsTop = this.renderBattleReplayCenter(rightX, reviewCardsTop, rightWidth, state);
         this.renderAccountReviewCards(rightX, reviewCardsTop, rightWidth, review.items, {
-          highlightReplayId: this.selectedBattleReplayId,
+          highlightReplayId: state.selectedBattleReplayId,
+          banner: review.banner,
           onSelectReplay: (replayId) => {
             this.selectBattleReplay(replayId);
           }
         });
       } else {
-        this.hideBattleReplayTimelineCard();
-        this.renderAccountReviewCards(rightX, reviewCardsTop, rightWidth, review.items);
+        if (review.section === "battle-replays") {
+          reviewCardsTop = this.renderBattleReplayCenter(rightX, reviewCardsTop, rightWidth, state);
+        } else {
+          this.hideBattleReplayTimelineCard();
+        }
+        this.renderAccountReviewCards(rightX, reviewCardsTop, rightWidth, review.items, {
+          banner: review.banner
+        });
       }
       this.hideLobbyRooms();
     } else if (state.accountFlow) {
@@ -832,14 +876,11 @@ export class VeilLobbyPanel extends Component {
   }
 
   private selectBattleReplay(replayId: string): void {
-    if (this.selectedBattleReplayId === replayId) {
+    if (this.currentState?.selectedBattleReplayId === replayId) {
       return;
     }
 
-    this.selectedBattleReplayId = replayId;
-    if (this.currentState) {
-      this.render(this.currentState);
-    }
+    this.onSelectBattleReplayReview?.(replayId);
   }
 
   private renderBattleReplayTimelineDetail(
@@ -848,7 +889,7 @@ export class VeilLobbyPanel extends Component {
     width: number,
     account: CocosPlayerAccountProfile
   ): number {
-    const replay = findPlayerBattleReplaySummary(account.recentBattleReplays, this.selectedBattleReplayId);
+    const replay = findPlayerBattleReplaySummary(account.recentBattleReplays, this.currentState?.selectedBattleReplayId);
     const view = buildCocosBattleReplayTimelineView(replay);
     const timelineLines =
       view.entries.length > 0
@@ -878,11 +919,170 @@ export class VeilLobbyPanel extends Component {
     );
   }
 
+  private renderBattleReplayCenter(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
+    const view = buildCocosBattleReplayCenterView({
+      replays: state.battleReplayItems,
+      selectedReplayId: state.selectedBattleReplayId,
+      playback: this.replayPlayback,
+      status: state.battleReplaySectionStatus,
+      errorMessage: state.battleReplaySectionError || this.replayPlaybackStatus
+    });
+    const lines = [view.title, `${view.subtitle} · ${view.badge}`, ...view.detailLines];
+    const height = Math.max(148, 52 + lines.length * 18);
+    const nextTopY = this.renderCard(
+      "LobbyBattleReplayTimeline",
+      centerX,
+      topY,
+      width,
+      height,
+      lines,
+      {
+        fill: REVIEW_TIMELINE_FILL,
+        stroke: REVIEW_TIMELINE_STROKE,
+        accent: REVIEW_TIMELINE_ACCENT
+      },
+      null,
+      13,
+      18
+    );
+
+    const controlWidth = Math.floor((width - 24) / 5);
+    const startX = centerX - width / 2 + controlWidth / 2;
+    view.controls.forEach((control, index) => {
+      this.renderActionButton(
+        `LobbyReplayControl-${control.action}`,
+        startX + index * (controlWidth + 6),
+        nextTopY - 14,
+        controlWidth,
+        26,
+        control.label,
+        {
+          fill: control.action === "play" ? REPLAY_CONTROL_ACTIVE_FILL : REPLAY_CONTROL_FILL,
+          stroke: new Color(233, 242, 250, 130),
+          accent: new Color(218, 230, 242, 120)
+        },
+        control.enabled ? () => this.applyReplayControl(control.action) : null
+      );
+    });
+
+    return nextTopY - 34;
+  }
+
   private hideBattleReplayTimelineCard(): void {
     const node = this.node.getChildByName("LobbyBattleReplayTimeline");
     if (node) {
       node.active = false;
     }
+    (["play", "pause", "step-back", "step-forward", "reset"] as CocosBattleReplayCenterControlAction[]).forEach((action) => {
+      const control = this.node.getChildByName(`LobbyReplayControl-${action}`);
+      if (control) {
+        control.active = false;
+      }
+    });
+  }
+
+  private syncReplayPlaybackState(state: VeilLobbyRenderState): void {
+    const replay = this.resolveSelectedReplay(state);
+    if (!replay) {
+      this.stopReplayPlaybackLoop();
+      this.replayPlayback = null;
+      this.replayPlaybackReplayId = null;
+      this.replayPlaybackStatus =
+        state.battleReplaySectionStatus === "loading"
+          ? "正在同步最近战斗..."
+          : state.battleReplaySectionStatus === "error"
+            ? (state.battleReplaySectionError?.trim() || "回放同步失败。")
+            : "选择一场最近战斗，即可查看逐步回放。";
+      return;
+    }
+
+    if (this.replayPlaybackReplayId === replay.id && this.replayPlayback?.replay.id === replay.id) {
+      return;
+    }
+
+    this.stopReplayPlaybackLoop();
+    this.replayPlayback = createBattleReplayPlaybackState(replay);
+    this.replayPlaybackReplayId = replay.id;
+    this.replayPlaybackStatus = "已加载完整回放，可逐步回看。";
+  }
+
+  private resolveSelectedReplay(state: VeilLobbyRenderState): PlayerBattleReplaySummary | null {
+    return (
+      findPlayerBattleReplaySummary(state.battleReplayItems, state.selectedBattleReplayId)
+      ?? findPlayerBattleReplaySummary(state.account.recentBattleReplays, state.selectedBattleReplayId)
+    );
+  }
+
+  private applyReplayControl(action: CocosBattleReplayCenterControlAction): void {
+    if (!this.replayPlayback) {
+      return;
+    }
+
+    if (action !== "play") {
+      this.stopReplayPlaybackLoop();
+    }
+
+    switch (action) {
+      case "play":
+        this.replayPlayback = playBattleReplayPlayback(this.replayPlayback);
+        this.replayPlaybackStatus = "正在自动播放。";
+        if (this.replayPlayback.status === "playing") {
+          this.startReplayPlaybackLoop();
+        }
+        break;
+      case "pause":
+        this.replayPlayback = pauseBattleReplayPlayback(this.replayPlayback);
+        this.replayPlaybackStatus = "已暂停回放。";
+        break;
+      case "step-back":
+        this.replayPlayback = stepBackBattleReplayPlayback(this.replayPlayback);
+        this.replayPlaybackStatus = "已后退一步。";
+        break;
+      case "step-forward":
+        this.replayPlayback = stepBattleReplayPlayback(this.replayPlayback);
+        this.replayPlaybackStatus = this.replayPlayback.status === "completed" ? "已播放至结算。" : "已前进一步。";
+        break;
+      case "reset":
+        this.replayPlayback = resetBattleReplayPlayback(this.replayPlayback);
+        this.replayPlaybackStatus = "已回到开场快照。";
+        break;
+    }
+
+    if (this.currentState) {
+      this.render(this.currentState);
+    }
+  }
+
+  private startReplayPlaybackLoop(): void {
+    if (this.replayPlaybackTimer) {
+      return;
+    }
+
+    this.replayPlaybackTimer = setInterval(() => {
+      if (!this.replayPlayback) {
+        this.stopReplayPlaybackLoop();
+        return;
+      }
+
+      this.replayPlayback = tickBattleReplayPlayback(this.replayPlayback);
+      if (this.replayPlayback.status !== "playing") {
+        this.replayPlaybackStatus = this.replayPlayback.status === "completed" ? "已播放至结算。" : "已暂停回放。";
+        this.stopReplayPlaybackLoop();
+      }
+
+      if (this.currentState) {
+        this.render(this.currentState);
+      }
+    }, 700);
+  }
+
+  private stopReplayPlaybackLoop(): void {
+    if (!this.replayPlaybackTimer) {
+      return;
+    }
+
+    clearInterval(this.replayPlaybackTimer);
+    this.replayPlaybackTimer = null;
   }
 
   private renderAccountReviewCards(
@@ -890,14 +1090,50 @@ export class VeilLobbyPanel extends Component {
     topY: number,
     width: number,
     items: CocosAccountReviewItem[],
-    options: { highlightReplayId?: string | null; onSelectReplay?: (replayId: string) => void } = {}
+    options: {
+      highlightReplayId?: string | null;
+      onSelectReplay?: (replayId: string) => void;
+      banner?: CocosAccountReviewPage["banner"];
+    } = {}
   ): void {
-    const { highlightReplayId = null, onSelectReplay } = options;
+    const { highlightReplayId = null, onSelectReplay, banner = null } = options;
+    let currentTopY = topY;
+
+    if (banner) {
+      currentTopY = this.renderCard(
+        "LobbyAccountReviewBanner",
+        centerX,
+        currentTopY,
+        width,
+        72,
+        [banner.title, banner.detail],
+        banner.tone === "negative"
+          ? {
+              fill: new Color(96, 62, 62, 190),
+              stroke: new Color(246, 214, 214, 84),
+              accent: new Color(236, 176, 176, 188)
+            }
+          : {
+              fill: MUTED_FILL,
+              stroke: new Color(214, 224, 238, 42),
+              accent: new Color(128, 146, 170, 156)
+            },
+        null,
+        13,
+        17
+      );
+    } else {
+      const bannerNode = this.node.getChildByName("LobbyAccountReviewBanner");
+      if (bannerNode) {
+        bannerNode.active = false;
+      }
+    }
+
     if (items.length === 0) {
       this.renderCard(
         "LobbyAccountReviewEmpty",
         centerX,
-        topY,
+        currentTopY,
         width,
         84,
         ["暂无回顾数据", "当前账号快照还没有战报、事件或成就进度。", "刷新 Lobby 或完成一局流程后会再次同步。"],
@@ -938,7 +1174,7 @@ export class VeilLobbyPanel extends Component {
       this.renderCard(
         `LobbyAccountReview-${index}`,
         centerX,
-        topY - index * (cardHeight + 10),
+        currentTopY - index * (cardHeight + 10),
         width,
         cardHeight,
         [item.title, item.detail, item.footnote],
@@ -970,7 +1206,7 @@ export class VeilLobbyPanel extends Component {
     if (header) {
       header.active = false;
     }
-    (["battle-replays", "event-history", "achievements"] as CocosAccountReviewSection[]).forEach((section) => {
+    (["progression", "battle-replays", "event-history", "achievements"] as CocosAccountReviewSection[]).forEach((section) => {
       const tab = this.node.getChildByName(`LobbyAccountReviewTab-${section}`);
       if (tab) {
         tab.active = false;
@@ -987,6 +1223,14 @@ export class VeilLobbyPanel extends Component {
     const emptyNode = this.node.getChildByName("LobbyAccountReviewEmpty");
     if (emptyNode) {
       emptyNode.active = false;
+    }
+    const bannerNode = this.node.getChildByName("LobbyAccountReviewBanner");
+    if (bannerNode) {
+      bannerNode.active = false;
+    }
+    const retryButton = this.node.getChildByName("LobbyAccountReviewRetry");
+    if (retryButton) {
+      retryButton.active = false;
     }
     this.hideExtraAccountReviewCards(0);
   }

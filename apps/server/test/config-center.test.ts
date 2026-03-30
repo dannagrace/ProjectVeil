@@ -393,6 +393,7 @@ test("config center can validate invalid world config with structured issues", a
   assert.match(report.issues.map((issue) => issue.path).join(","), /width|heroes\[0\]\.position\.x/);
   assert.equal(report.schema.id, "project-veil.config-center.world");
   assert.match(report.schema.version, /\d{4}-\d{2}-\d{2}/);
+  assert.equal(report.contentPack.valid, true);
 });
 
 test("config center schema validation reports missing and mistyped fields", async () => {
@@ -444,6 +445,38 @@ test("config center validates battle balance against thresholds and status refer
     /environment\.trapSpawnThreshold|environment\.trapGrantedStatusId/
   );
   assert.equal(report.schema.id, "project-veil.config-center.battleBalance");
+  assert.equal(report.contentPack.valid, false);
+  assert.match(
+    report.contentPack.issues.map((issue) => `${issue.documentId}:${issue.path}`).join(","),
+    /battleBalance:environment\.trapGrantedStatusId/
+  );
+});
+
+test("config center validation exposes content-pack issues from other config files", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const report = await store.validateDocument(
+    "world",
+    JSON.stringify({
+      ...WORLD_CONFIG,
+      heroes: [
+        {
+          ...WORLD_CONFIG.heroes[0],
+          armyTemplateId: "missing_template"
+        }
+      ]
+    })
+  );
+
+  assert.equal(report.valid, false);
+  assert.equal(report.issues.length, 0);
+  assert.equal(report.contentPack.valid, false);
+  assert.match(
+    report.contentPack.issues.map((issue) => `${issue.documentId}:${issue.path}`).join(","),
+    /world:heroes\[0\]\.armyTemplateId/
+  );
 });
 
 test("config center snapshots support diff and rollback", async () => {
@@ -464,10 +497,75 @@ test("config center snapshots support diff and rollback", async () => {
   );
 
   const diff = await store.diffWithSnapshot("world", snapshot.id);
-  assert.equal(diff.entries.some((entry) => entry.path === "width"), true);
+  const widthEntry = diff.entries.find((entry) => entry.path === "width");
+  assert.ok(widthEntry);
+  assert.equal(widthEntry?.kind, "value");
+  assert.equal(widthEntry?.fieldType.includes("integer"), true);
+  assert.equal(widthEntry?.blastRadius.includes("配置台编辑器"), true);
 
   const rolledBack = await store.rollbackToSnapshot("world", snapshot.id);
   assert.equal(JSON.parse(rolledBack.content).width, WORLD_CONFIG.width);
+});
+
+test("config center exposes built-in layout presets for the additional map variants", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const worldPresets = await store.listPresets("world");
+  const mapObjectPresets = await store.listPresets("mapObjects");
+
+  assert.ok(worldPresets.some((preset) => preset.id === "layout_contested_basin"));
+  assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_contested_basin"));
+
+  const worldDocument = await store.applyPreset("world", "layout_contested_basin");
+  const mapObjectsDocument = await store.applyPreset("mapObjects", "layout_contested_basin");
+
+  assert.match(worldDocument.content, /"width": 10/);
+  assert.match(mapObjectsDocument.content, /"kind": "watchtower"/);
+});
+
+test("config center diff classifies added, removed, and type changes", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  const baseline = await store.loadDocument("battleBalance");
+  const snapshot = await store.createSnapshot("battleBalance", baseline.content, "baseline");
+
+  const mutated = JSON.parse(baseline.content) as Record<string, any>;
+  mutated.environment = {
+    ...mutated.environment,
+    experimentalTrapMode: true
+  };
+  delete mutated.environment.trapGrantedStatusId;
+  await store.saveDocument("battleBalance", JSON.stringify(mutated));
+
+  const libraryPath = join(rootDir, ".config-center-library.json");
+  const state = JSON.parse(await readFile(libraryPath, "utf8")) as {
+    snapshots: Record<string, Array<{ id: string; content: string }>>;
+  };
+  const snapshotRecord = state.snapshots.battleBalance?.find((item) => item.id === snapshot.id);
+  assert.ok(snapshotRecord);
+  const snapshotPayload = JSON.parse(snapshotRecord.content) as Record<string, any>;
+  snapshotPayload.environment.trapDamage = "9";
+  snapshotRecord.content = JSON.stringify(snapshotPayload, null, 2);
+  await writeFile(libraryPath, JSON.stringify(state), "utf8");
+
+  const diff = await store.diffWithSnapshot("battleBalance", snapshot.id);
+  const byPath = Object.fromEntries(diff.entries.map((entry) => [entry.path, entry]));
+
+  assert.equal(byPath["environment.experimentalTrapMode"]?.kind, "field_added");
+  assert.equal(byPath["environment.trapGrantedStatusId"]?.kind, "field_removed");
+  assert.equal(byPath["environment.trapDamage"]?.kind, "type_changed");
+  assert.equal(byPath["environment.trapDamage"]?.required, true);
+  assert.equal(byPath["environment.trapGrantedStatusId"]?.required, false);
+  assert.ok(
+    (byPath["environment.trapDamage"]?.blastRadius ?? []).some(
+      (label) => label.includes("战斗平衡") || label.includes("PVP")
+    )
+  );
 });
 
 test("config center save creates automatic version snapshots and skips no-op saves", async () => {
@@ -544,4 +642,87 @@ test("config center presets and workbook import/export roundtrip", async () => {
 
   const restored = await store.applyPreset("battleSkills", preset.id);
   assert.equal(restored.content, original.content);
+});
+
+test("config center staged publish applies bundled drafts and records publish history", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  const staged = await store.saveStagedDraft([
+    {
+      id: "world",
+      content: JSON.stringify({ ...WORLD_CONFIG, width: WORLD_CONFIG.width + 2 })
+    },
+    {
+      id: "mapObjects",
+      content: JSON.stringify({
+        ...MAP_OBJECTS_CONFIG,
+        guaranteedResources: [
+          ...MAP_OBJECTS_CONFIG.guaranteedResources,
+          {
+            position: { x: 0, y: 0 },
+            resource: { kind: "ore", amount: 20 }
+          }
+        ]
+      })
+    }
+  ]);
+  assert.equal(staged?.documents.length, 2);
+  assert.equal(staged?.valid, true);
+
+  const published = await store.publishStagedDraft({ author: "ConfigOps", summary: "调大地图并补齐资源" });
+  assert.equal(published.stage, null);
+  assert.equal(published.publish.changes.length, 2);
+  assert.equal(published.publish.author, "ConfigOps");
+
+  const worldDocument = await store.loadDocument("world");
+  assert.match(worldDocument.content, new RegExp(`\"width\": ${WORLD_CONFIG.width + 2}`));
+
+  const worldHistory = await store.listPublishHistory("world");
+  assert.equal(worldHistory[0]?.author, "ConfigOps");
+  assert.equal(worldHistory[0]?.summary, "调大地图并补齐资源");
+  assert.equal((worldHistory[0]?.changeCount ?? 0) > 0, true);
+
+  const mapHistory = await store.listPublishHistory("mapObjects");
+  assert.equal(mapHistory[0]?.documentId, "mapObjects");
+  assert.equal((mapHistory[0]?.structuralChangeCount ?? 0) >= 0, true);
+
+  const auditHistory = await store.listPublishAuditHistory();
+  assert.equal(auditHistory[0]?.author, "ConfigOps");
+  assert.equal(auditHistory[0]?.resultStatus, "applied");
+  assert.equal(auditHistory[0]?.changes.length, 2);
+  assert.equal(auditHistory[0]?.changes[0]?.runtimeStatus, "applied");
+  assert.equal(typeof auditHistory[0]?.changes[0]?.snapshotId, "string");
+  assert.equal((auditHistory[0]?.changes[0]?.diffSummary.length ?? 0) > 0, true);
+  assert.equal(auditHistory[0]?.changes[0]?.impactSummary?.documentId, auditHistory[0]?.changes[0]?.documentId);
+  assert.equal((auditHistory[0]?.changes[0]?.impactSummary?.changedFields.length ?? 0) > 0, true);
+  assert.equal((auditHistory[0]?.changes[0]?.impactSummary?.impactedModules.length ?? 0) > 0, true);
+  assert.equal((auditHistory[0]?.changes[0]?.impactSummary?.riskHints.length ?? 0) > 0, true);
+
+  const stageAfter = await store.getStagedDraft();
+  assert.equal(stageAfter, null);
+});
+
+test("config center staged publish blocks invalid drafts", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const staged = await store.saveStagedDraft([
+    {
+      id: "world",
+      content: JSON.stringify({
+        ...WORLD_CONFIG,
+        width: 0
+      })
+    }
+  ]);
+  assert.equal(staged?.valid, false);
+
+  await assert.rejects(
+    () => store.publishStagedDraft({ author: "Ops", summary: "bad publish" }),
+    /未通过校验|修复/
+  );
 });

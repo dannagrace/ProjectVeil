@@ -113,6 +113,8 @@ npm run dev:client:h5
 - `apps/client`
   - H5 调试 / 回归壳。
   - 当前保留给浏览器内快速验证、配置联调和回归测试使用，不再作为主客户端运行时。
+  - `apps/client/test/main-boot.test.ts` 额外承担一层轻量 boot/session 回归：固定 `main.ts` 启动阶段的缓存会话回放、远端会话不可用时的本地回退或失败信号、以及 automation/debug hooks 注册结果。
+  - 这层回归不覆盖真实浏览器导航、Colyseus 长链路重连、或 Cocos 主客户端集成；这些仍由 Playwright、`local-session.ts`/server 测试和 `apps/cocos-client` 自动化承担。
 - `apps/cocos-client`
   - Cocos Creator 3.x 主客户端运行时。
   - 当前已覆盖 Lobby、地图探索、战斗、账号会话恢复和配置中心跳转的主流程。
@@ -142,15 +144,28 @@ npm run dev:client:h5
 - 微信小游戏模板刷新：`npm run prepare:wechat-build`
 - 微信小游戏 CI 同款校验：`npm run check:wechat-build`
 - 发布就绪快照：`npm run release:readiness:snapshot`
+- 统一发布门禁汇总：`npm run release:gate:summary`
+- 发布健康度聚合摘要：`npm run release:health:summary`
+- 打包 H5 客户端 RC 冒烟：`npm run smoke:client:release-candidate`
 - 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
+- 微信小游戏 RC artifact 聚合验收：`npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>]`
+- 微信小游戏发布彩排：`npm run release:wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir>`（顺序执行 prepare / package / verify / validate，并在 `artifacts/wechat-release/` 输出 JSON + Markdown 摘要）
 - Issue #33 开源素材 staging 校验：`npm run check:issue33-assets -- --require-pack`
 - GitHub Actions `wechat-build-validation` 会把发布归档与 sidecar 元数据作为 artifact `wechat-release-<sha>` 上传，便于提审前下载与回溯
+- 统一发布门禁汇总默认输出到 `artifacts/release-readiness/release-gate-summary-<short-sha>.json` 和 `.md`，用于 CI artifact、PR 评论或人工巡检；详情见 `docs/release-gate-summary.md`
 - H5 调试壳开发服务：`npm run dev:client:h5`
 - H5 调试壳构建验证：`npm run build:client:h5`
 - H5 调试壳类型检查：`npm run typecheck:client:h5`
-- H5 / Lobby Playwright 冒烟：`npm run test:e2e:smoke`
+- H5 开发态诊断导出：
+  `window.export_diagnostic_snapshot()` 返回稳定 JSON；
+  `window.render_diagnostic_snapshot_to_text()` 返回与面板一致的紧凑文本摘要，便于自动化留档
+- H5 连接性 CI 冒烟：`npm run test:e2e:h5:connectivity`
+- H5 Playwright 冒烟：`npm run test:e2e:smoke`
+  当前覆盖 Lobby 入口与 reconnect predicted-state -> authoritative convergence canonical smoke
+- 打包 H5 客户端 RC 冒烟会把结构化结果写入 `artifacts/release-readiness/`
 - 多人联机 Playwright 冒烟：`npm run test:e2e:multiplayer:smoke`
+- 多人同步治理矩阵：`npm run test:sync-governance:matrix`（输出 `artifacts/release-readiness/sync-governance-matrix-<short-sha>.json`）
 - GitHub Actions `playwright-smoke` 会执行上述两条冒烟回归，并在失败时上传 Playwright trace / screenshot / video 诊断材料
 - MySQL 首次初始化 / 升级：`npm run db:migrate`
 - MySQL 回滚上一版 schema：`npm run db:migrate:rollback`
@@ -158,11 +173,18 @@ npm run dev:client:h5
 - 并发房间压测：`npm run stress:rooms -- --rooms=120 --connect-concurrency=24 --action-concurrency=24`
 - 并发房间压测启动后，也可直接查看同进程观测面：`/api/runtime/health`、`/api/runtime/auth-readiness` 与 `/api/runtime/metrics`
 - 战斗平衡验证：`npm run validate:battle -- --count=1000 --scenario=all --skill-config=configs/battle-skills-v1.1.json`
+- 内容包一致性验证：`npm run validate:content-pack -- --report-path artifacts/content-pack-validation-report.json`
+- 覆盖率 CI 同款校验：`npm run test:coverage:ci`
+- 覆盖率摘要：`.coverage/summary.md`
+- 共享客户端载荷 contract 快照：`npm run test:contracts`
 - 并发房间压测会按 `world_progression / battle_settlement / reconnect` 三种场景分开跑数，并输出 CPU、内存、房间吞吐、动作吞吐等指标；可通过 `--scenarios=world_progression,reconnect` 等参数缩小范围
 - 当前客户端边界：`apps/cocos-client` 负责主玩法运行时；`apps/client` 只保留浏览器调试、配置联调和回归验证。
 - 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
 - 核心玩法发布门禁清单：`docs/core-gameplay-release-readiness.md`
 - 发布就绪快照说明：`docs/release-readiness-snapshot.md`
+- 发布健康度聚合说明：`docs/release-health-summary.md`
+- 多人同步治理矩阵说明：`docs/sync-governance-matrix.md`
+- 共享 contract 快照说明：`docs/shared-contract-snapshots.md`
 - 当前 H5 调试壳仍支持：地图点击移动、可达格高亮、悬停路径预览、资源/明雷信息提示、轻量路径播放反馈、可视化战斗单位面板、目标选中、伤害飘字与战后结果弹窗。
 - 当前 H5 联机体验已支持：客户端预测、断线自动重连、刷新后本地快照首帧回放，再由权威房间状态收敛。
 - 当前 Cocos Creator 主客户端已补齐：
@@ -187,7 +209,8 @@ npm run dev:client:h5
   - 未配置 MySQL 时走文件系统存储；配置 `VEIL_MYSQL_*` 后切换到 MySQL 主存储
   - 保存后会同时导出到 `configs/*.json`，并同步刷新服务端运行时配置，新建房间和战斗逻辑会直接读取新值
   - 当前已补上版本快照、快照差异对比、历史回滚，以及 Easy / Normal / Hard 三档内置预设和自定义预设保存
-  - 实时校验现已带出对应配置 schema 摘要、必填根字段和逐项修复建议；非法值会阻止保存
+  - 实时校验现已带出对应配置 schema 摘要、必填根字段、逐项修复建议，以及跨 `world / mapObjects / units / battleSkills / battleBalance` 的 content-pack 一致性结果；非法值会阻止保存
+  - 保存 `world / mapObjects / units / battle-skills / battle-balance` 后，右侧会同步展示一份 impact summary，带出变更字段、影响模块、潜在风险提示和建议验证动作；发布审计历史也会保留同样的摘要，便于做配置变更评审
   - 导出除 JSON 注释版外，还支持带 `Meta / Schema / Fields` 工作表的 Excel，以及更轻量的字段清单 CSV
   - 当前编辑 `phase1-world.json` 时，右侧会即时生成一份地图样本预览；可切换预览 seed，对照查看地形、随机资源、保底资源、英雄与中立怪分布
   - 当前编辑 `battle-skills.json` 时，右侧会显示技能编辑器，可直接调整冷却、伤害倍率、目标类型、附加状态和状态持续参数，并同步回写 JSON 草稿
@@ -205,6 +228,19 @@ npm run dev:client:h5
 - 这轮又补了一层独立的玩家事件历史读模型：`savePlayerAccountProgress()` 会把账号 `recentEventLog` 里新增的结构化事件增量追加到 MySQL `player_event_history`，并开放 `GET /api/player-accounts/:playerId/event-history` / `/me/event-history`（支持 `limit`、`offset` 和现有事件筛选条件），让前端可以先做分页历史回顾而不用等完整战斗回放或完整成就 UI。
 - 玩家事件历史接口现已支持可选 `since` / `until` 时间范围筛选，且本地模式与 MySQL 持久化模式保持一致，方便后续只拉取某个时间窗内的世界事件或成就回顾。
 - 事件日志的共享基础当前收敛在 `packages/shared/src/event-log.ts`：除了事件/成就 schema、归一化和查询助手外，这里也统一提供世界事件日志工厂与成就日志工厂，服务端只负责把共享 `WorldEvent[]` 喂给这些 helper；完整战斗回放、完整成就 UI 和更长历史存储仍留给后续 issue 继续扩展。
+
+## Coverage Policy
+
+`npm run test:coverage:ci` 是 coverage CI 的本地复现命令。它会按 `shared`、`server`、`client`、`cocos-client` 四个 scope 分开运行 `node:test`，并同时执行 line、branch、function 三类 floor 校验。
+
+当前 policy 是：
+
+- `shared`: lines `90%`, branches `70%`, functions `90%`
+- `server`: lines `75%`, branches `65%`, functions `75%`
+- `client`: lines `78%`, branches `65%`, functions `70%`
+- `cocos-client`: lines `55%`, branches `70%`, functions `60%`
+
+运行后会生成 `.coverage/summary.md` 和 `.coverage/summary.json`。如果任一 scope 的任一 metric 低于 floor，摘要顶部会明确列出失败的 scope 和具体阈值差距，方便直接对照 CI 失败原因。
 - 战斗回放读模型当前已补上两块更适合前端直接消费的能力：`GET /api/player-accounts/:playerId/battle-replays` 现支持 `limit` + `offset` 分页，shared 侧也新增了可从 `initialState + steps` 推导每步回合与伤害/减员结算的 replay timeline helper，H5 战报面板会直接显示这些逐步结算摘要。
 - Cocos Lobby 现已复用这套 timeline helper：账号资料回顾的“战报”卡片可直接点击进入战报时间线面板，会按行动阵营/单位、动作类型和主要结算概览显示最近 6 条步骤，并在没有战斗或回放缺失时回退提示。
 - H5 账号资料卡现在会额外拉取 `/api/player-accounts/:playerId/progression` 覆盖成就/事件摘要，因此即使基础账号接口只返回轻量档案，前端也能稳定展示最新的成就推进、最近解锁和世界事件日志，而不会继续依赖旧的内嵌快照。
@@ -240,6 +276,7 @@ npm run dev:client:h5
 - `units.json` 现已补上 `faction / rarity` 元数据，前端会自动挂载阵营与品质 badge，占位资源层已经具备继续细化正式 UI 的结构。
 - `battle-skills.json` 现已承载战斗技能与持续状态目录，shared 战斗结算会在创建战斗和执行技能时直接读取运行时配置，不再依赖硬编码技能表。
 - `battle-balance.json` 现已接入配置中心：支持可视化编辑伤害公式、遭遇战环境和 PVP ELO 参数，保存后会联动导出 JSON 并直接刷新 shared/runtime 读取链路；实时校验还会检查阈值范围以及陷阱状态是否与 `battle-skills.json` 对齐。
+- `docs/release-evidence/content-pack-validation-report.example.json` 提供了一份 bundle-level 内容包校验样例，可直接对照 CI 产出的同结构 report 做 release review。
 - 当前示例技能已包含 `投矛射击 / 护甲术 / 战意激发 / 破甲投枪 / 毒牙 / 裂伤嚎叫`，并补充了 `守誓姿态` 模板；守军自动回合也会根据技能目标和效果优先选择施法，而不是固定平砍。
 - 英雄长期成长现已补上技能树：`hero.progressed` 在升级时会发放技能点，H5 英雄卡会直接显示分支、当前阶数和“学习 / 强化”按钮；已学技能会写入英雄长期档，并在下一场战斗里额外挂到英雄部队技能栏。
 - 地图对象也已拆出独立视觉元数据配置，悬停地图时会通过统一对象卡片展示 `interactionType / faction / rarity` 等信息。

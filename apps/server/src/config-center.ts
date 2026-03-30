@@ -3,9 +3,14 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { createPool, type Pool, type RowDataPacket } from "mysql2/promise";
 import * as XLSX from "xlsx";
+import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
+import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
+import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
 import {
   getBattleBalanceConfig,
   createWorldStateFromConfigs,
+  validateContentPackConsistency,
   getDefaultBattleBalanceConfig,
   getDefaultBattleSkillCatalog,
   getDefaultMapObjectsConfig,
@@ -17,6 +22,7 @@ import {
   validateMapObjectsConfig,
   validateUnitCatalog,
   validateWorldConfig,
+  type ContentPackValidationReport,
   type BattleBalanceConfig,
   type BattleSkillCatalogConfig,
   type MapObjectsConfig,
@@ -80,6 +86,7 @@ export interface ConfigDocument extends ConfigDocumentSummary {
 }
 
 export interface ValidationIssue {
+  documentId?: ConfigDocumentId;
   path: string;
   severity: "error" | "warning";
   message: string;
@@ -92,6 +99,7 @@ export interface ValidationReport {
   summary: string;
   issues: ValidationIssue[];
   schema: ConfigSchemaSummary;
+  contentPack: ContentPackValidationReport;
 }
 
 export interface ConfigSchemaSummary {
@@ -109,15 +117,35 @@ export interface ConfigSnapshotSummary {
   version: number;
 }
 
+export type ConfigDiffChangeKind = "value" | "field_added" | "field_removed" | "type_changed" | "enum_changed";
+
 export interface ConfigDiffEntry {
   path: string;
   change: "added" | "removed" | "updated";
   previousValue: string;
   nextValue: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
 }
 
 export interface ConfigDiff {
   entries: ConfigDiffEntry[];
+}
+
+export type ConfigImpactRiskLevel = "low" | "medium" | "high";
+
+export interface ConfigImpactSummary {
+  documentId: ConfigDocumentId;
+  title: string;
+  summary: string;
+  riskLevel: ConfigImpactRiskLevel;
+  changedFields: string[];
+  impactedModules: string[];
+  riskHints: string[];
+  suggestedValidationActions: string[];
 }
 
 export interface ConfigPresetSummary {
@@ -126,6 +154,84 @@ export interface ConfigPresetSummary {
   kind: "builtin" | "custom";
   updatedAt: string;
   description: string;
+}
+
+export interface ConfigPublishHistoryEntry {
+  id: string;
+  documentId: ConfigDocumentId;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+}
+
+export type ConfigPublishResultStatus = "applied" | "failed";
+export type ConfigPublishChangeRuntimeStatus = "applied" | "failed" | "pending";
+
+export interface ConfigPublishAuditChange {
+  documentId: ConfigDocumentId;
+  title: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+  snapshotId: string | null;
+  runtimeStatus: ConfigPublishChangeRuntimeStatus;
+  runtimeMessage: string;
+  diffSummary: ConfigDiffEntry[];
+  impactSummary: ConfigImpactSummary | null;
+}
+
+export interface ConfigPublishAuditEvent {
+  id: string;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  resultStatus: ConfigPublishResultStatus;
+  resultMessage: string;
+  changes: ConfigPublishAuditChange[];
+}
+
+export interface ConfigPublishChangeSummary {
+  documentId: ConfigDocumentId;
+  title: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+}
+
+export interface ConfigPublishEventSummary {
+  id: string;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  changes: ConfigPublishChangeSummary[];
+}
+
+export interface ConfigStageDocumentInput {
+  id: ConfigDocumentId;
+  content: string;
+}
+
+export interface ConfigStageDocumentSummary {
+  id: ConfigDocumentId;
+  title: string;
+  fileName: string;
+  content: string;
+  updatedAt: string;
+  validation: ValidationReport;
+}
+
+export interface ConfigStageState {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  documents: ConfigStageDocumentSummary[];
+  valid: boolean;
 }
 
 export interface WorldConfigPreviewTile {
@@ -178,6 +284,13 @@ export interface WorldConfigPreviewTile {
         income: number;
         lastHarvestDay?: number;
       }
+    | {
+        kind: "watchtower";
+        refId: string;
+        label: string;
+        visionBonus: number;
+        lastUsedDay?: number;
+      }
     | undefined;
 }
 
@@ -211,6 +324,8 @@ export interface ConfigCenterStore {
   createSnapshot(id: ConfigDocumentId, content: string, label?: string): Promise<ConfigSnapshotSummary>;
   rollbackToSnapshot(id: ConfigDocumentId, snapshotId: string): Promise<ConfigDocument>;
   diffWithSnapshot(id: ConfigDocumentId, snapshotId: string): Promise<ConfigDiff>;
+  listPublishHistory(id: ConfigDocumentId): Promise<ConfigPublishHistoryEntry[]>;
+  listPublishAuditHistory(): Promise<ConfigPublishAuditEvent[]>;
   listPresets(id: ConfigDocumentId): Promise<ConfigPresetSummary[]>;
   savePreset(id: ConfigDocumentId, name: string, content: string): Promise<ConfigPresetSummary>;
   applyPreset(id: ConfigDocumentId, presetId: string): Promise<ConfigDocument>;
@@ -221,6 +336,12 @@ export interface ConfigCenterStore {
     exportedAt: string;
   }>;
   importDocumentFromWorkbook(id: ConfigDocumentId, workbook: Buffer): Promise<ConfigDocument>;
+  getStagedDraft(): Promise<ConfigStageState | null>;
+  saveStagedDraft(documents: ConfigStageDocumentInput[]): Promise<ConfigStageState | null>;
+  publishStagedDraft(metadata: { author: string; summary: string }): Promise<{
+    stage: ConfigStageState | null;
+    publish: ConfigPublishEventSummary;
+  }>;
   close(): Promise<void>;
   readonly mode: "filesystem" | "mysql";
 }
@@ -274,11 +395,28 @@ interface ConfigPresetRecord {
   content: string;
 }
 
+interface ConfigStageDocumentRecord {
+  id: ConfigDocumentId;
+  content: string;
+  validation: ValidationReport;
+  updatedAt: string;
+}
+
+interface ConfigStageRecord {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  documents: ConfigStageDocumentRecord[];
+}
+
 interface ConfigCenterLibraryState {
   filesystemVersions: Partial<Record<ConfigDocumentId, number>>;
   filesystemExports: Partial<Record<ConfigDocumentId, string>>;
   snapshots: Partial<Record<ConfigDocumentId, ConfigSnapshotRecord[]>>;
   presets: Partial<Record<ConfigDocumentId, ConfigPresetRecord[]>>;
+  stagedDraft: ConfigStageRecord | null;
+  publishHistory: Partial<Record<ConfigDocumentId, ConfigPublishHistoryEntry[]>>;
+  publishAuditHistory: ConfigPublishAuditEvent[];
 }
 
 interface FlattenedConfigEntry {
@@ -302,8 +440,55 @@ interface JsonSchemaNode {
 }
 
 const CONFIG_CENTER_LIBRARY_FILE = ".config-center-library.json";
-const BUILTIN_PRESET_IDS = ["easy", "normal", "hard"] as const;
+const MAX_STAGE_DOCUMENTS = 5;
+const MAX_PUBLISH_HISTORY_ENTRIES = 20;
+const BUILTIN_DIFFICULTY_PRESET_IDS = ["easy", "normal", "hard"] as const;
+const BUILTIN_WORLD_LAYOUT_PRESETS = ["layout_phase1", "layout_frontier_basin", "layout_contested_basin"] as const;
+const BUILTIN_MAP_OBJECT_LAYOUT_PRESETS = ["layout_phase1", "layout_frontier_basin", "layout_contested_basin"] as const;
 const CONFIG_SCHEMA_VERSION = "2026-03-26";
+const BASE_VALUE_IMPACT = ["配置台编辑器"];
+const BASE_SCHEMA_IMPACT = ["配置台编辑器", "Schema 校验器"];
+const CONFIG_RUNTIME_IMPACT: Record<ConfigDocumentId, string[]> = {
+  world: ["世界预览", "地图生成器", "房间校验器"],
+  mapObjects: ["地图对象编辑器", "世界预览"],
+  units: ["战斗模拟器", "招募面板"],
+  battleSkills: ["技能编辑器", "战斗模拟器"],
+  battleBalance: ["战斗平衡计算", "PVP 匹配"]
+};
+const CONFIG_IMPACT_RULES: Record<
+  ConfigDocumentId,
+  {
+    defaultRisk: ConfigImpactRiskLevel;
+    impactedModules: string[];
+    suggestedValidationActions: string[];
+  }
+> = {
+  world: {
+    defaultRisk: "high",
+    impactedModules: ["地图生成", "英雄出生点", "资源分布"],
+    suggestedValidationActions: ["config-center 地图预览", "房间建图 smoke"]
+  },
+  mapObjects: {
+    defaultRisk: "medium",
+    impactedModules: ["地图 POI", "招募库存", "资源矿收益"],
+    suggestedValidationActions: ["config-center 地图预览", "建筑/守军布局检查"]
+  },
+  units: {
+    defaultRisk: "medium",
+    impactedModules: ["单位数值", "招募库存", "战斗节奏"],
+    suggestedValidationActions: ["content-pack 一致性校验", "战斗公式回归"]
+  },
+  battleSkills: {
+    defaultRisk: "high",
+    impactedModules: ["战斗技能", "状态效果", "伤害结算"],
+    suggestedValidationActions: ["content-pack 一致性校验", "技能链路回归"]
+  },
+  battleBalance: {
+    defaultRisk: "high",
+    impactedModules: ["战斗公式", "环境机关", "PVP ELO"],
+    suggestedValidationActions: ["战斗公式回归", "PVP 结算检查"]
+  }
+};
 
 const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
   world: {
@@ -454,7 +639,7 @@ const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
           required: ["id", "kind", "position", "label"],
           properties: {
             id: { type: "string", description: "建筑 id。" },
-            kind: { type: "string", description: "建筑种类。" },
+            kind: { type: "string", enum: ["recruitment_post", "attribute_shrine", "resource_mine", "watchtower"], description: "建筑种类。" },
             label: { type: "string", description: "建筑显示名。" },
             position: {
               type: "object",
@@ -463,7 +648,14 @@ const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
                 x: { type: "integer", minimum: 0, description: "X 坐标。" },
                 y: { type: "integer", minimum: 0, description: "Y 坐标。" }
               }
-            }
+            },
+            unitTemplateId: { type: "string", description: "招募建筑使用的兵种模板 id。" },
+            recruitCount: { type: "integer", minimum: 1, description: "招募建筑每次提供的兵力数量。" },
+            cost: { type: "object", description: "招募建筑的资源消耗。" },
+            bonus: { type: "object", description: "属性神殿提供的永久属性加成。" },
+            resourceKind: { type: "string", enum: ["gold", "wood", "ore"], description: "资源矿场的产出类型。" },
+            income: { type: "integer", minimum: 1, description: "资源矿场的每日产出。" },
+            visionBonus: { type: "integer", minimum: 1, description: "瞭望塔提供的永久视野加成。" }
           }
         }
       }
@@ -614,7 +806,10 @@ function createEmptyLibraryState(): ConfigCenterLibraryState {
     filesystemVersions: {},
     filesystemExports: {},
     snapshots: {},
-    presets: {}
+    presets: {},
+    stagedDraft: null,
+    publishHistory: {},
+    publishAuditHistory: []
   };
 }
 
@@ -755,37 +950,193 @@ function flattenConfigValue(value: unknown, path = ""): FlattenedConfigEntry[] {
   ];
 }
 
-function buildConfigDiffEntries(previousContent: string, nextContent: string): ConfigDiffEntry[] {
+function isSchemaPathRequired(schema: JsonSchemaNode, path: string): boolean {
+  if (!path) {
+    return false;
+  }
+
+  const segments = parseJsonPath(path);
+  let current: JsonSchemaNode | undefined = schema;
+  let required = false;
+
+  for (const segment of segments) {
+    if (!current) {
+      return false;
+    }
+
+    if (typeof segment === "number") {
+      current = current.items;
+      required = false;
+      continue;
+    }
+
+    required = Boolean(current.required?.includes(segment));
+    current = current.properties?.[segment];
+  }
+
+  return required;
+}
+
+function classifyDiffKind(
+  previousEntry: FlattenedConfigEntry | undefined,
+  nextEntry: FlattenedConfigEntry | undefined,
+  schemaNode: JsonSchemaNode | undefined
+): ConfigDiffChangeKind {
+  if (!previousEntry && nextEntry) {
+    return "field_added";
+  }
+  if (previousEntry && !nextEntry) {
+    return "field_removed";
+  }
+  if (previousEntry && nextEntry && previousEntry.type !== nextEntry.type) {
+    return "type_changed";
+  }
+  if (
+    schemaNode?.enum &&
+    previousEntry &&
+    nextEntry &&
+    previousEntry.jsonValue !== nextEntry.jsonValue
+  ) {
+    return "enum_changed";
+  }
+  return "value";
+}
+
+function buildBlastRadius(id: ConfigDocumentId, kind: ConfigDiffChangeKind): string[] {
+  const base = kind === "value" ? BASE_VALUE_IMPACT : BASE_SCHEMA_IMPACT;
+  const scoped = kind === "value" ? [] : CONFIG_RUNTIME_IMPACT[id] ?? [];
+  return Array.from(new Set([...base, ...scoped]));
+}
+
+function uniqueStrings(items: Iterable<string>): string[] {
+  return Array.from(
+    new Set(
+      [...items]
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+    )
+  );
+}
+
+function buildConfigImpactSummary(
+  id: ConfigDocumentId,
+  title: string,
+  diffEntries: ConfigDiffEntry[]
+): ConfigImpactSummary | null {
+  if (diffEntries.length === 0) {
+    return null;
+  }
+
+  const rule = CONFIG_IMPACT_RULES[id];
+  const changedFields = uniqueStrings(diffEntries.map((entry) => entry.path)).slice(0, 4);
+  const impactedModules = uniqueStrings([
+    ...rule.impactedModules,
+    ...diffEntries.flatMap((entry) => entry.blastRadius),
+    ...(CONFIG_RUNTIME_IMPACT[id] ?? [])
+  ]);
+  const structuralCount = diffEntries.filter((entry) => entry.kind !== "value").length;
+  let riskLevel = rule.defaultRisk;
+
+  if (id === "mapObjects") {
+    const highSignal = changedFields.some((entry) =>
+      /(buildings|neutralArmies|guaranteedResources|reward|recruitCount|income|unitTemplateId)/.test(entry)
+    );
+    if (highSignal || structuralCount > 0 || diffEntries.length >= 8) {
+      riskLevel = "high";
+    }
+  } else if (id === "units") {
+    const highSignal = changedFields.some((entry) =>
+      /(attack|defense|minDamage|maxDamage|maxHp|initiative|skills|templateId)/.test(entry)
+    );
+    if (highSignal || structuralCount > 0 || diffEntries.length >= 10) {
+      riskLevel = "high";
+    }
+  }
+
+  const riskHints = uniqueStrings([
+    structuralCount > 0 ? `包含 ${structuralCount} 项结构变更，需留意 Schema/运行时兼容性。` : "",
+    riskLevel === "high" ? "命中高敏感配置域，建议在发布前补一次联动回归。" : "",
+    changedFields.some((entry) => /(width|height|heroes|resourceSpawn)/.test(entry))
+      ? "世界生成参数已变更，地图尺寸、出生点或资源刷率可能一起波动。"
+      : "",
+    changedFields.some((entry) => /(neutralArmies|buildings|guaranteedResources)/.test(entry))
+      ? "地图对象已调整，守军、建筑或资源点分布可能改变探索与招募节奏。"
+      : "",
+    changedFields.some((entry) => /(attack|defense|minDamage|maxDamage|maxHp|initiative)/.test(entry))
+      ? "单位面板已调整，战斗节奏和招募价值可能出现连锁变化。"
+      : "",
+    changedFields.some((entry) => /(cooldown|damageMultiplier|grantedStatusId|onHitStatusId|statuses)/.test(entry))
+      ? "技能或状态参数已调整，技能链和状态覆盖率需要重点复核。"
+      : "",
+    changedFields.some((entry) => /(damage|environment|eloK|trap|blocker)/.test(entry))
+      ? "战斗公式或环境机关已调整，伤害结算与 PVP 评分可能漂移。"
+      : ""
+  ]);
+
+  return {
+    documentId: id,
+    title,
+    summary:
+      structuralCount > 0
+        ? `${diffEntries.length} 项字段变更，其中 ${structuralCount} 项为结构风险。`
+        : `${diffEntries.length} 项字段变更，主要关注 ${changedFields.join(", ")}。`,
+    riskLevel,
+    changedFields,
+    impactedModules,
+    riskHints,
+    suggestedValidationActions: [...rule.suggestedValidationActions]
+  };
+}
+
+function buildConfigDiffEntries(
+  id: ConfigDocumentId,
+  previousContent: string,
+  nextContent: string
+): ConfigDiffEntry[] {
   const previousMap = new Map(
     flattenConfigValue(JSON.parse(previousContent))
       .filter((entry) => entry.path)
-      .map((entry) => [entry.path, entry.jsonValue])
+      .map((entry) => [entry.path, entry])
   );
   const nextMap = new Map(
     flattenConfigValue(JSON.parse(nextContent))
       .filter((entry) => entry.path)
-      .map((entry) => [entry.path, entry.jsonValue])
+      .map((entry) => [entry.path, entry])
   );
+  const schema = CONFIG_DOCUMENT_SCHEMAS[id];
   const allPaths = new Set([...previousMap.keys(), ...nextMap.keys()]);
 
   return [...allPaths]
     .sort((left, right) => left.localeCompare(right))
     .flatMap((path) => {
-      const previousValue = previousMap.get(path);
-      const nextValue = nextMap.get(path);
+      const previousEntry = previousMap.get(path);
+      const nextEntry = nextMap.get(path);
 
-      if (previousValue === nextValue) {
+      if (previousEntry?.jsonValue === nextEntry?.jsonValue) {
         return [];
       }
+
+      const node = schemaNodeForPath(schema, path);
+      const description = node
+        ? describeSchemaPath(schema, path)
+        : "自定义字段，Schema 未定义。";
+      const fieldType = node
+        ? typeLabelForSchema(node)
+        : nextEntry?.type ?? previousEntry?.type ?? "unknown";
+      const kind = classifyDiffKind(previousEntry, nextEntry, node);
 
       return [
         {
           path,
-          change:
-            previousValue == null ? "added" : nextValue == null ? "removed" : "updated",
-          previousValue: previousValue ?? "",
-          nextValue: nextValue ?? ""
-        } satisfies ConfigDiffEntry
+          change: previousEntry == null ? "added" : nextEntry == null ? "removed" : "updated",
+          previousValue: previousEntry?.jsonValue ?? "",
+          nextValue: nextEntry?.jsonValue ?? "",
+          kind,
+          required: isSchemaPathRequired(schema, path),
+          fieldType,
+          description,
+          blastRadius: buildBlastRadius(id, kind)
+        }
       ];
     });
 }
@@ -1122,7 +1473,7 @@ function parseWorkbookToContent(workbookBuffer: Buffer): string {
   return `${JSON.stringify(root, null, 2)}\n`;
 }
 
-function buildBuiltinPresetSummary(id: typeof BUILTIN_PRESET_IDS[number]): ConfigPresetSummary {
+function buildBuiltinPresetSummary(id: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]): ConfigPresetSummary {
   const title = id === "easy" ? "Easy" : id === "normal" ? "Normal" : "Hard";
   const description =
     id === "easy"
@@ -1204,7 +1555,7 @@ function normalizeJsonContent(
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
-function applyWorldPreset(config: WorldGenerationConfig, presetId: typeof BUILTIN_PRESET_IDS[number]): WorldGenerationConfig {
+function applyWorldPreset(config: WorldGenerationConfig, presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]): WorldGenerationConfig {
   if (presetId === "normal") {
     return structuredClone(config);
   }
@@ -1241,7 +1592,7 @@ function applyWorldPreset(config: WorldGenerationConfig, presetId: typeof BUILTI
   };
 }
 
-function applyMapObjectsPreset(config: MapObjectsConfig, presetId: typeof BUILTIN_PRESET_IDS[number]): MapObjectsConfig {
+function applyMapObjectsPreset(config: MapObjectsConfig, presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]): MapObjectsConfig {
   if (presetId === "normal") {
     return structuredClone(config);
   }
@@ -1286,6 +1637,13 @@ function applyMapObjectsPreset(config: MapObjectsConfig, presetId: typeof BUILTI
         };
       }
 
+      if (building.kind === "watchtower") {
+        return {
+          ...building,
+          visionBonus: Math.max(1, Math.round(building.visionBonus * rewardScale))
+        };
+      }
+
       return {
         ...building,
         income: Math.max(1, Math.round(building.income * rewardScale))
@@ -1294,7 +1652,7 @@ function applyMapObjectsPreset(config: MapObjectsConfig, presetId: typeof BUILTI
   };
 }
 
-function applyUnitPreset(config: UnitCatalogConfig, presetId: typeof BUILTIN_PRESET_IDS[number]): UnitCatalogConfig {
+function applyUnitPreset(config: UnitCatalogConfig, presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]): UnitCatalogConfig {
   if (presetId === "normal") {
     return structuredClone(config);
   }
@@ -1317,7 +1675,7 @@ function applyUnitPreset(config: UnitCatalogConfig, presetId: typeof BUILTIN_PRE
 
 function applyBattleSkillPreset(
   config: BattleSkillCatalogConfig,
-  presetId: typeof BUILTIN_PRESET_IDS[number]
+  presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]
 ): BattleSkillCatalogConfig {
   if (presetId === "normal") {
     return structuredClone(config);
@@ -1360,7 +1718,7 @@ function clampThreshold(value: number): number {
 
 function applyBattleBalancePreset(
   config: BattleBalanceConfig,
-  presetId: typeof BUILTIN_PRESET_IDS[number]
+  presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]
 ): BattleBalanceConfig {
   if (presetId === "normal") {
     return structuredClone(config);
@@ -1401,7 +1759,7 @@ function applyBattleBalancePreset(
 function applyBuiltinPresetToContent(
   id: ConfigDocumentId,
   content: string,
-  presetId: typeof BUILTIN_PRESET_IDS[number]
+  presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]
 ): string {
   const parsed = parseConfigDocument(id, content);
   const next =
@@ -1416,6 +1774,76 @@ function applyBuiltinPresetToContent(
             : applyBattleBalancePreset(parsed as BattleBalanceConfig, presetId);
 
   return normalizeJsonContent(next);
+}
+
+function buildLayoutPresetSummary(id: typeof BUILTIN_WORLD_LAYOUT_PRESETS[number]): ConfigPresetSummary {
+  const name =
+    id === "layout_frontier_basin"
+      ? "Frontier Basin"
+      : id === "layout_contested_basin"
+        ? "Contested Basin"
+        : "Phase 1";
+  const description =
+    id === "layout_frontier_basin"
+      ? "切换为首个峡谷盆地布局，适合验证水域与矿点分布。"
+      : id === "layout_contested_basin"
+        ? "切换为争夺盆地布局，包含新巡逻守军与瞭望塔。"
+        : "恢复默认 Phase 1 地图布局。";
+
+  return {
+    id,
+    name,
+    kind: "builtin",
+    updatedAt: new Date(0).toISOString(),
+    description
+  };
+}
+
+function getBuiltinPresetSummaries(id: ConfigDocumentId): ConfigPresetSummary[] {
+  const summaries = BUILTIN_DIFFICULTY_PRESET_IDS.map((presetId) => buildBuiltinPresetSummary(presetId));
+  if (id === "world") {
+    summaries.push(...BUILTIN_WORLD_LAYOUT_PRESETS.map((presetId) => buildLayoutPresetSummary(presetId)));
+  }
+  if (id === "mapObjects") {
+    summaries.push(...BUILTIN_MAP_OBJECT_LAYOUT_PRESETS.map((presetId) => buildLayoutPresetSummary(presetId)));
+  }
+  return summaries;
+}
+
+function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: string, presetId: string): string | null {
+  if (BUILTIN_DIFFICULTY_PRESET_IDS.includes(presetId as typeof BUILTIN_DIFFICULTY_PRESET_IDS[number])) {
+    return applyBuiltinPresetToContent(
+      id,
+      currentContent,
+      presetId as typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]
+    );
+  }
+
+  if (id === "world") {
+    if (presetId === "layout_phase1") {
+      return normalizeJsonContent(getDefaultWorldConfig());
+    }
+    if (presetId === "layout_frontier_basin") {
+      return normalizeJsonContent(frontierBasinWorldConfig as WorldGenerationConfig);
+    }
+    if (presetId === "layout_contested_basin") {
+      return normalizeJsonContent(contestedBasinWorldConfig as WorldGenerationConfig);
+    }
+  }
+
+  if (id === "mapObjects") {
+    if (presetId === "layout_phase1") {
+      return normalizeJsonContent(getDefaultMapObjectsConfig());
+    }
+    if (presetId === "layout_frontier_basin") {
+      return normalizeJsonContent(frontierBasinMapObjectsConfig as MapObjectsConfig);
+    }
+    if (presetId === "layout_contested_basin") {
+      return normalizeJsonContent(contestedBasinMapObjectsConfig as MapObjectsConfig);
+    }
+  }
+
+  return null;
 }
 
 function positionKey(position: { x: number; y: number }): string {
@@ -1597,7 +2025,8 @@ export function createWorldConfigPreview(
               },
               ...(typeof tile.building.lastUsedDay === "number" ? { lastUsedDay: tile.building.lastUsedDay } : {})
             }
-          : {
+          : tile.building.kind === "resource_mine"
+            ? {
               kind: tile.building.kind,
               refId: tile.building.id,
               label: tile.building.label,
@@ -1606,6 +2035,13 @@ export function createWorldConfigPreview(
               ...(typeof tile.building.lastHarvestDay === "number"
                 ? { lastHarvestDay: tile.building.lastHarvestDay }
                 : {})
+            }
+            : {
+              kind: tile.building.kind,
+              refId: tile.building.id,
+              label: tile.building.label,
+              visionBonus: tile.building.visionBonus,
+              ...(typeof tile.building.lastUsedDay === "number" ? { lastUsedDay: tile.building.lastUsedDay } : {})
             };
 
     return {
@@ -1698,7 +2134,8 @@ function formatTimestamp(value: Date | string | null | undefined): string | null
 
 async function loadValidationDependencies(
   store: Pick<ConfigCenterStore, "loadDocument">,
-  id: ConfigDocumentId
+  id: ConfigDocumentId,
+  overrides: Partial<Record<ConfigDocumentId, string>> = {}
 ): Promise<{
   world: WorldGenerationConfig;
   mapObjects: MapObjectsConfig;
@@ -1706,43 +2143,59 @@ async function loadValidationDependencies(
   battleSkills: BattleSkillCatalogConfig;
   battleBalance: BattleBalanceConfig;
 }> {
-  const [worldDocument, mapObjectsDocument, unitsDocument, battleSkillsDocument, battleBalanceDocument] = await Promise.all([
-    id === "world" ? Promise.resolve(null) : store.loadDocument("world"),
-    id === "mapObjects" ? Promise.resolve(null) : store.loadDocument("mapObjects"),
-    id === "units" ? Promise.resolve(null) : store.loadDocument("units"),
-    id === "battleSkills" ? Promise.resolve(null) : store.loadDocument("battleSkills"),
-    id === "battleBalance" ? Promise.resolve(null) : store.loadDocument("battleBalance")
+  const loadContent = async (docId: ConfigDocumentId): Promise<string | null> => {
+    if (docId === id) {
+      return null;
+    }
+
+    if (overrides[docId]) {
+      return overrides[docId] ?? null;
+    }
+
+    const document = await store.loadDocument(docId);
+    return document.content;
+  };
+
+  const [worldContent, mapObjectsContent, unitsContent, battleSkillsContent, battleBalanceContent] = await Promise.all([
+    id === "world" ? Promise.resolve(null) : loadContent("world"),
+    id === "mapObjects" ? Promise.resolve(null) : loadContent("mapObjects"),
+    id === "units" ? Promise.resolve(null) : loadContent("units"),
+    id === "battleSkills" ? Promise.resolve(null) : loadContent("battleSkills"),
+    id === "battleBalance" ? Promise.resolve(null) : loadContent("battleBalance")
   ]);
 
   return {
     world:
       id === "world"
         ? getDefaultWorldConfig()
-        : (parseConfigDocument("world", worldDocument?.content ?? normalizeJsonContent(getDefaultWorldConfig())) as WorldGenerationConfig),
+        : (parseConfigDocument(
+            "world",
+            worldContent ?? overrides.world ?? normalizeJsonContent(getDefaultWorldConfig())
+          ) as WorldGenerationConfig),
     mapObjects:
       id === "mapObjects"
         ? getDefaultMapObjectsConfig()
         : (parseConfigDocument(
             "mapObjects",
-            mapObjectsDocument?.content ?? normalizeJsonContent(getDefaultMapObjectsConfig())
+            mapObjectsContent ?? overrides.mapObjects ?? normalizeJsonContent(getDefaultMapObjectsConfig())
           ) as MapObjectsConfig),
     units:
       id === "units"
         ? getDefaultUnitCatalog()
-        : (parseConfigDocument("units", unitsDocument?.content ?? normalizeJsonContent(getDefaultUnitCatalog())) as UnitCatalogConfig),
+        : (parseConfigDocument("units", unitsContent ?? overrides.units ?? normalizeJsonContent(getDefaultUnitCatalog())) as UnitCatalogConfig),
     battleSkills:
       id === "battleSkills"
         ? getDefaultBattleSkillCatalog()
         : (parseConfigDocument(
             "battleSkills",
-            battleSkillsDocument?.content ?? normalizeJsonContent(getDefaultBattleSkillCatalog())
+            battleSkillsContent ?? overrides.battleSkills ?? normalizeJsonContent(getDefaultBattleSkillCatalog())
           ) as BattleSkillCatalogConfig),
     battleBalance:
       id === "battleBalance"
         ? getDefaultBattleBalanceConfig()
         : (parseConfigDocument(
             "battleBalance",
-            battleBalanceDocument?.content ?? normalizeJsonContent(getDefaultBattleBalanceConfig())
+            battleBalanceContent ?? overrides.battleBalance ?? normalizeJsonContent(getDefaultBattleBalanceConfig())
           ) as BattleBalanceConfig)
   };
 }
@@ -1762,16 +2215,31 @@ function buildValidationReportFromError(id: ConfigDocumentId, error: Error, cont
         ...(line != null ? { line } : {})
       }
     ],
-    schema
+    schema,
+    contentPack: {
+      schemaVersion: 1,
+      valid: false,
+      summary: "Content-pack consistency was not evaluated because the current document could not be parsed.",
+      issueCount: 0,
+      checkedDocuments: ["world", "mapObjects", "units", "battleSkills", "battleBalance"],
+      issues: []
+    }
   };
 }
 
-function summarizeIssues(issues: ValidationIssue[]): string {
-  if (issues.length === 0) {
-    return "Schema 校验通过，可以保存并立即生效。";
+function summarizeIssues(issues: ValidationIssue[], contentPack: ContentPackValidationReport): string {
+  if (issues.length === 0 && contentPack.issueCount === 0) {
+    return "Schema 与内容包一致性校验通过，可以保存并立即生效。";
   }
 
-  return `发现 ${issues.length} 个配置问题，需要先修复再保存。`;
+  const parts: string[] = [];
+  if (issues.length > 0) {
+    parts.push(`${issues.length} 个当前文档问题`);
+  }
+  if (contentPack.issueCount > 0) {
+    parts.push(`${contentPack.issueCount} 个内容包一致性问题`);
+  }
+  return `发现 ${parts.join("，")}，需要先修复再保存。`;
 }
 
 function validateWorldConfigDetailed(config: WorldGenerationConfig): ValidationIssue[] {
@@ -2064,17 +2532,56 @@ function validateBattleBalanceDetailed(
   return issues;
 }
 
+function buildCandidateRuntimeBundle(
+  id: ConfigDocumentId,
+  parsed: ParsedConfigDocument,
+  dependencies: {
+    world: WorldGenerationConfig;
+    mapObjects: MapObjectsConfig;
+    units: UnitCatalogConfig;
+    battleSkills: BattleSkillCatalogConfig;
+    battleBalance: BattleBalanceConfig;
+  }
+): RuntimeConfigBundle {
+  return {
+    world: id === "world" ? (parsed as WorldGenerationConfig) : dependencies.world,
+    mapObjects: id === "mapObjects" ? (parsed as MapObjectsConfig) : dependencies.mapObjects,
+    units: id === "units" ? (parsed as UnitCatalogConfig) : dependencies.units,
+    battleSkills: id === "battleSkills" ? (parsed as BattleSkillCatalogConfig) : dependencies.battleSkills,
+    battleBalance: id === "battleBalance" ? (parsed as BattleBalanceConfig) : dependencies.battleBalance
+  };
+}
+
+function mapContentPackIssuesToValidationIssues(report: ContentPackValidationReport): ValidationIssue[] {
+  return report.issues.map((issue) => ({
+    documentId: issue.documentId,
+    path: issue.path,
+    severity: issue.severity,
+    message: issue.message,
+    suggestion: issue.suggestion
+  }));
+}
+
 async function validateDocumentDetailed(
   store: Pick<ConfigCenterStore, "loadDocument">,
   id: ConfigDocumentId,
-  content: string
+  content: string,
+  options: { overrides?: Partial<Record<ConfigDocumentId, string>> } = {}
 ): Promise<ValidationReport> {
   try {
     const parsed = JSON.parse(content) as ParsedConfigDocument;
     const issues: ValidationIssue[] = [];
+    let contentPack: ContentPackValidationReport = {
+      schemaVersion: 1,
+      valid: true,
+      summary: "Content-pack consistency checks are pending.",
+      issueCount: 0,
+      checkedDocuments: ["world", "mapObjects", "units", "battleSkills", "battleBalance"],
+      issues: []
+    };
     validateSchemaNode(parsed, CONFIG_DOCUMENT_SCHEMAS[id], "", issues);
     try {
-      const dependencies = await loadValidationDependencies(store, id);
+      const dependencies = await loadValidationDependencies(store, id, options.overrides);
       const semanticIssues =
         id === "world"
           ? validateWorldConfigDetailed(parsed as WorldGenerationConfig)
@@ -2091,11 +2598,12 @@ async function validateDocumentDetailed(
                 )
               : id === "battleSkills"
                 ? validateBattleSkillsDetailed(parsed as BattleSkillCatalogConfig)
-                : validateBattleBalanceDetailed(
-                    parsed as BattleBalanceConfig,
-                    dependencies.battleSkills
-                  );
+              : validateBattleBalanceDetailed(
+                  parsed as BattleBalanceConfig,
+                  dependencies.battleSkills
+                );
       issues.push(...semanticIssues);
+      contentPack = validateContentPackConsistency(buildCandidateRuntimeBundle(id, parsed, dependencies));
     } catch {
       // Schema issues above already explain malformed structures; skip dependent semantic checks.
     }
@@ -2113,10 +2621,11 @@ async function validateDocumentDetailed(
     }
 
     return {
-      valid: issues.length === 0,
-      summary: summarizeIssues(issues),
+      valid: issues.length === 0 && contentPack.valid,
+      summary: summarizeIssues(issues, contentPack),
       issues,
-      schema: buildSchemaSummary(id)
+      schema: buildSchemaSummary(id),
+      contentPack
     };
   } catch (error) {
     return buildValidationReportFromError(id, error as Error, content);
@@ -2160,7 +2669,10 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
         filesystemVersions: parsed.filesystemVersions ?? {},
         filesystemExports: parsed.filesystemExports ?? {},
         snapshots: parsed.snapshots ?? {},
-        presets: parsed.presets ?? {}
+        presets: parsed.presets ?? {},
+        stagedDraft: parsed.stagedDraft ?? null,
+        publishHistory: parsed.publishHistory ?? {},
+        publishAuditHistory: parsed.publishAuditHistory ?? []
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -2307,8 +2819,256 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
 
     const current = await this.loadDocument(id);
     return {
-      entries: buildConfigDiffEntries(snapshot.content, current.content)
+      entries: buildConfigDiffEntries(id, snapshot.content, current.content)
     };
+  }
+
+  async listPublishHistory(id: ConfigDocumentId): Promise<ConfigPublishHistoryEntry[]> {
+    const state = await this.readLibraryState();
+    return [...(state.publishHistory[id] ?? [])];
+  }
+
+  async listPublishAuditHistory(): Promise<ConfigPublishAuditEvent[]> {
+    const state = await this.readLibraryState();
+    return [...(state.publishAuditHistory ?? [])].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+  }
+
+  async getStagedDraft(): Promise<ConfigStageState | null> {
+    const state = await this.readLibraryState();
+    return this.mapStageRecordToState(state.stagedDraft);
+  }
+
+  async saveStagedDraft(documents: ConfigStageDocumentInput[]): Promise<ConfigStageState | null> {
+    const state = await this.readLibraryState();
+    if (documents.length === 0) {
+      state.stagedDraft = null;
+      await this.writeLibraryState(state);
+      return null;
+    }
+
+    const stageRecord = await this.buildStageRecord(documents, state.stagedDraft);
+    state.stagedDraft = stageRecord;
+    await this.writeLibraryState(state);
+    return this.mapStageRecordToState(stageRecord);
+  }
+
+  async publishStagedDraft(metadata: { author: string; summary: string }): Promise<{
+    stage: ConfigStageState | null;
+    publish: ConfigPublishEventSummary;
+  }> {
+    const state = await this.readLibraryState();
+    const staged = state.stagedDraft;
+    if (!staged || staged.documents.length === 0) {
+      throw new Error("当前没有待发布的草稿。");
+    }
+
+    if (staged.documents.some((entry) => !entry.validation.valid)) {
+      throw new Error("存在未通过校验的草稿，发布前请先修复。");
+    }
+
+    const publishId = createId("publish");
+    const publishedAt = new Date().toISOString();
+    const publishChanges: ConfigPublishChangeSummary[] = [];
+    const historyEntries: ConfigPublishHistoryEntry[] = [];
+    const auditChanges: ConfigPublishAuditChange[] = [];
+    const stagedContent = new Map(staged.documents.map((document) => [document.id, document.content] as const));
+
+    for (const stagedDocument of staged.documents) {
+      const current = await this.loadDocument(stagedDocument.id);
+      const diffEntries = buildConfigDiffEntries(stagedDocument.id, current.content, stagedDocument.content);
+      const structuralCount = diffEntries.filter((entry) => entry.kind !== "value").length;
+      const definition = configDefinitionFor(stagedDocument.id);
+      const fromVersion = current.version ?? 1;
+      auditChanges.push({
+        documentId: stagedDocument.id,
+        title: definition?.title ?? stagedDocument.id,
+        fromVersion,
+        toVersion: fromVersion,
+        changeCount: diffEntries.length,
+        structuralChangeCount: structuralCount,
+        snapshotId: null,
+        runtimeStatus: "pending",
+        runtimeMessage: "等待运行时应用",
+        diffSummary: diffEntries.slice(0, 4),
+        impactSummary: buildConfigImpactSummary(
+          stagedDocument.id,
+          definition?.title ?? stagedDocument.id,
+          diffEntries
+        )
+      });
+    }
+
+    try {
+      for (const auditChange of auditChanges) {
+        const nextContent = stagedContent.get(auditChange.documentId);
+        if (typeof nextContent !== "string") {
+          throw new Error(`Missing staged document content: ${auditChange.documentId}`);
+        }
+
+        const saved = await this.saveDocument(auditChange.documentId, nextContent);
+        const toVersion = saved.version ?? auditChange.fromVersion;
+        const snapshot = await this.findSnapshotByVersion(auditChange.documentId, toVersion);
+
+        auditChange.toVersion = toVersion;
+        auditChange.snapshotId = snapshot?.id ?? null;
+        auditChange.runtimeStatus = "applied";
+        auditChange.runtimeMessage = "运行时已刷新";
+        publishChanges.push({
+          documentId: auditChange.documentId,
+          title: auditChange.title,
+          fromVersion: auditChange.fromVersion,
+          toVersion,
+          changeCount: auditChange.changeCount,
+          structuralChangeCount: auditChange.structuralChangeCount
+        });
+        historyEntries.push({
+          id: publishId,
+          documentId: auditChange.documentId,
+          author: metadata.author,
+          summary: metadata.summary,
+          publishedAt,
+          fromVersion: auditChange.fromVersion,
+          toVersion,
+          changeCount: auditChange.changeCount,
+          structuralChangeCount: auditChange.structuralChangeCount
+        });
+      }
+
+      state.stagedDraft = null;
+      state.publishHistory = state.publishHistory ?? {};
+      for (const entry of historyEntries) {
+        const existing = state.publishHistory[entry.documentId] ?? [];
+        state.publishHistory[entry.documentId] = [entry, ...existing].slice(0, MAX_PUBLISH_HISTORY_ENTRIES);
+      }
+      const appliedAuditEvent: ConfigPublishAuditEvent = {
+        id: publishId,
+        author: metadata.author,
+        summary: metadata.summary,
+        publishedAt,
+        resultStatus: "applied",
+        resultMessage: "运行时配置已刷新",
+        changes: auditChanges
+      };
+      state.publishAuditHistory = [appliedAuditEvent, ...(state.publishAuditHistory ?? [])].slice(
+        0,
+        MAX_PUBLISH_HISTORY_ENTRIES
+      );
+      await this.writeLibraryState(state);
+
+      return {
+        stage: null,
+        publish: {
+          id: publishId,
+          author: metadata.author,
+          summary: metadata.summary,
+          publishedAt,
+          changes: publishChanges
+        }
+      };
+    } catch (error) {
+      const failedMessage = error instanceof Error ? error.message : "发布配置失败";
+      const failedChange = auditChanges.find((entry) => entry.runtimeStatus === "pending");
+      if (failedChange) {
+        failedChange.runtimeStatus = "failed";
+        failedChange.runtimeMessage = failedMessage;
+      }
+
+      const failedAuditEvent: ConfigPublishAuditEvent = {
+        id: publishId,
+        author: metadata.author,
+        summary: metadata.summary,
+        publishedAt,
+        resultStatus: "failed",
+        resultMessage: failedMessage,
+        changes: auditChanges
+      };
+      state.publishAuditHistory = [failedAuditEvent, ...(state.publishAuditHistory ?? [])].slice(
+        0,
+        MAX_PUBLISH_HISTORY_ENTRIES
+      );
+      await this.writeLibraryState(state);
+      throw error;
+    }
+  }
+
+  protected async findSnapshotByVersion(
+    id: ConfigDocumentId,
+    version: number
+  ): Promise<ConfigSnapshotSummary | null> {
+    const snapshots = await this.listSnapshots(id);
+    return snapshots.find((snapshot) => snapshot.version === version) ?? null;
+  }
+
+  protected mapStageRecordToState(stage: ConfigStageRecord | null): ConfigStageState | null {
+    if (!stage) {
+      return null;
+    }
+
+    return {
+      id: stage.id,
+      createdAt: stage.createdAt,
+      updatedAt: stage.updatedAt,
+      documents: stage.documents.map((document) => {
+        const definition = configDefinitionFor(document.id);
+        return {
+          id: document.id,
+          title: definition?.title ?? document.id,
+          fileName: definition?.fileName ?? document.id,
+          content: document.content,
+          updatedAt: document.updatedAt,
+          validation: document.validation
+        };
+      }),
+      valid: stage.documents.every((document) => document.validation.valid)
+    };
+  }
+
+  private async buildStageRecord(
+    documents: ConfigStageDocumentInput[],
+    existing: ConfigStageRecord | null
+  ): Promise<ConfigStageRecord> {
+    if (documents.length > MAX_STAGE_DOCUMENTS) {
+      throw new Error(`一次最多只能准备 ${MAX_STAGE_DOCUMENTS} 个草稿。`);
+    }
+
+    const seen = new Set<ConfigDocumentId>();
+    for (const document of documents) {
+      if (!configDefinitionFor(document.id)) {
+        throw new Error(`Unsupported config id: ${document.id}`);
+      }
+      if (seen.has(document.id)) {
+        throw new Error("同一配置文档只能加入一次草稿捆绑。");
+      }
+      seen.add(document.id);
+    }
+
+    const normalizedDocuments = documents.map((document) => ({
+      id: document.id,
+      content: normalizeJsonContent(JSON.parse(document.content) as ParsedConfigDocument)
+    }));
+    const overrides: Partial<Record<ConfigDocumentId, string>> = {};
+    for (const normalized of normalizedDocuments) {
+      overrides[normalized.id] = normalized.content;
+    }
+
+    const timestamp = new Date().toISOString();
+    const stageRecord: ConfigStageRecord = {
+      id: existing?.id ?? createId("stage"),
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+      documents: []
+    };
+
+    for (const normalized of normalizedDocuments) {
+      stageRecord.documents.push({
+        id: normalized.id,
+        content: normalized.content,
+        validation: await validateDocumentDetailed(this, normalized.id, normalized.content, { overrides }),
+        updatedAt: timestamp
+      });
+    }
+
+    return stageRecord;
   }
 
   async listPresets(id: ConfigDocumentId): Promise<ConfigPresetSummary[]> {
@@ -2318,7 +3078,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
       kind: "custom" as const
     }));
 
-    return [...BUILTIN_PRESET_IDS.map((presetId) => buildBuiltinPresetSummary(presetId)), ...customPresets].sort((left, right) =>
+    return [...getBuiltinPresetSummaries(id), ...customPresets].sort((left, right) =>
       left.kind === right.kind ? right.updatedAt.localeCompare(left.updatedAt) : left.kind === "builtin" ? -1 : 1
     );
   }
@@ -2355,9 +3115,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
     const customPreset = (state.presets[id] ?? []).find((item) => item.id === presetId);
     const presetContent = customPreset
       ? customPreset.content
-      : BUILTIN_PRESET_IDS.includes(presetId as typeof BUILTIN_PRESET_IDS[number])
-        ? applyBuiltinPresetToContent(id, current.content, presetId as typeof BUILTIN_PRESET_IDS[number])
-        : null;
+      : resolveBuiltinPresetContent(id, current.content, presetId);
 
     if (!presetContent) {
       throw new Error(`Preset not found: ${presetId}`);
@@ -2733,12 +3491,104 @@ export function registerConfigCenterRoutes(
     }
 
     try {
+      const [snapshots, publishHistory] = await Promise.all([
+        store.listSnapshots(definition.id),
+        store.listPublishHistory(definition.id)
+      ]);
       sendJson(response, 200, {
         storage: store.mode,
-        snapshots: await store.listSnapshots(definition.id)
+        snapshots,
+        publishHistory
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/config-center/publish-stage", async (_request, response) => {
+    try {
+      sendJson(response, 200, {
+        storage: store.mode,
+        stage: await store.getStagedDraft()
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/config-center/publish-history", async (_request, response) => {
+    try {
+      sendJson(response, 200, {
+        storage: store.mode,
+        history: await store.listPublishAuditHistory()
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.put("/api/config-center/publish-stage", async (request, response) => {
+    try {
+      const body = (await readJsonBody(request)) as {
+        documents?: Array<{ id?: string; content?: string }>;
+      };
+      if (!Array.isArray(body.documents)) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected array field: documents"
+          }
+        });
+        return;
+      }
+
+      const documents: ConfigStageDocumentInput[] = body.documents.map((entry) => {
+        if (typeof entry.id !== "string" || typeof entry.content !== "string") {
+          throw new Error("Expected staged draft entries with string id and content");
+        }
+        const definition = configDefinitionFor(entry.id);
+        if (!definition) {
+          throw new Error(`Unsupported config id: ${entry.id}`);
+        }
+        return {
+          id: definition.id,
+          content: entry.content
+        };
+      });
+
+      sendJson(response, 200, {
+        storage: store.mode,
+        stage: await store.saveStagedDraft(documents)
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/config-center/publish-stage/publish", async (request, response) => {
+    try {
+      const body = (await readJsonBody(request)) as { author?: string; summary?: string };
+      if (typeof body.author !== "string" || !body.author.trim() || typeof body.summary !== "string" || !body.summary.trim()) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected non-empty strings: author, summary"
+          }
+        });
+        return;
+      }
+
+      const result = await store.publishStagedDraft({
+        author: body.author.trim(),
+        summary: body.summary.trim()
+      });
+      sendJson(response, 200, {
+        storage: store.mode,
+        stage: result.stage,
+        publish: result.publish
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
     }
   });
 
@@ -2972,9 +3822,13 @@ export function registerConfigCenterRoutes(
         return;
       }
 
+      const current = await store.loadDocument(definition.id);
+      const diffEntries = buildConfigDiffEntries(definition.id, current.content, body.content);
+
       sendJson(response, 200, {
         storage: store.mode,
-        document: await store.saveDocument(definition.id, body.content)
+        document: await store.saveDocument(definition.id, body.content),
+        impactSummary: buildConfigImpactSummary(definition.id, definition.title, diffEntries)
       });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });

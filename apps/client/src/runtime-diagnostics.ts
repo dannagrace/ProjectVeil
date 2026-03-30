@@ -54,6 +54,7 @@ export interface H5RuntimeDiagnosticsSnapshotInput {
     eventTypes: string[];
     timelineTail: TimelineEntrySnapshot[];
     logTail: string[];
+    recoverySummary: string | null;
     predictionStatus: string;
     pendingUiTasks: number;
     replay: ReplaySnapshotInput | null;
@@ -142,6 +143,7 @@ export function buildH5RuntimeDiagnosticsSnapshot(
       recentEventCount: input.account.recentEventLog.length,
       recentReplayCount: input.account.recentBattleReplays.length
     },
+    overview: null,
     diagnostics: {
       eventTypes: [...input.diagnostics.eventTypes],
       timelineTail: input.diagnostics.timelineTail.map((entry) => ({
@@ -151,6 +153,7 @@ export function buildH5RuntimeDiagnosticsSnapshot(
         text: entry.text
       })),
       logTail: [...input.diagnostics.logTail],
+      recoverySummary: input.diagnostics.recoverySummary || null,
       predictionStatus: input.diagnostics.predictionStatus || null,
       pendingUiTasks: input.diagnostics.pendingUiTasks,
       replay: input.diagnostics.replay ? { ...input.diagnostics.replay } : null

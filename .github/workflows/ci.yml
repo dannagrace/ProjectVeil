@@ -1,5 +1,10 @@
 name: CI
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 on:
   push:
     branches:
@@ -50,8 +55,61 @@ jobs:
       - name: Typecheck
         run: npm run typecheck:ci
 
-      - name: Test
-        run: npm test
+      - name: Validate content-pack consistency
+        run: npm run validate:content-pack -- --report-path "${RUNNER_TEMP}/content-pack-validation-report.json"
+
+      - name: Test With V8 Coverage
+        run: npm run test:coverage:ci
+
+      - name: Capture runtime regression artifact
+        if: always()
+        run: |
+          node --import tsx ./scripts/stress-concurrent-rooms.ts \
+            --rooms=48 \
+            --connect-concurrency=12 \
+            --action-concurrency=12 \
+            --sample-interval-ms=100 \
+            --reconnect-pause-ms=150 \
+            --artifact-path "${RUNNER_TEMP}/release-readiness/stress-rooms-runtime-metrics-${GITHUB_SHA}.json"
+
+      - name: Compare runtime regression against baseline
+        if: always()
+        run: |
+          node --import tsx ./scripts/compare-runtime-regression.ts \
+            --baseline ./configs/runtime-regression-baseline.json \
+            --artifact "${RUNNER_TEMP}/release-readiness/stress-rooms-runtime-metrics-${GITHUB_SHA}.json" \
+            --output "${RUNNER_TEMP}/release-readiness/runtime-regression-report-${GITHUB_SHA}.json"
+
+      - name: Publish coverage summary
+        if: always()
+        run: |
+          if [[ -f .coverage/summary.md ]]; then
+            cat .coverage/summary.md >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload V8 coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-coverage-${{ github.sha }}
+          path: .coverage
+          if-no-files-found: error
+
+      - name: Upload content-pack validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-pack-validation-${{ github.sha }}
+          path: ${{ runner.temp }}/content-pack-validation-report.json
+          if-no-files-found: error
+
+      - name: Upload runtime regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-regression-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness
+          if-no-files-found: error
 
   wechat-build-validation:
     runs-on: ubuntu-latest
@@ -78,11 +136,29 @@ jobs:
       - name: Package WeChat exported fixture
         run: npm run package:wechat-release -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir "${WECHAT_RELEASE_ARTIFACTS_DIR}" --expect-exported-runtime --source-revision "${GITHUB_SHA}"
 
+      - name: Audit primary Cocos client delivery readiness
+        run: |
+          npm run audit:cocos-primary-delivery -- \
+            --output-dir apps/cocos-client/test/fixtures/wechatgame-export \
+            --artifacts-dir "${WECHAT_RELEASE_ARTIFACTS_DIR}" \
+            --expect-exported-runtime \
+            --expected-revision "${GITHUB_SHA}" \
+            --output "${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.json" \
+            --markdown-output "${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.md" \
+            --github-step-summary "${GITHUB_STEP_SUMMARY}"
+
       - name: Upload WeChat release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: wechat-release-${{ github.sha }}
           path: ${{ env.WECHAT_RELEASE_ARTIFACTS_DIR }}
+          if-no-files-found: error
+
+      - name: Upload primary Cocos delivery audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: cocos-primary-delivery-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness/cocos-primary-delivery-audit-${{ github.sha }}.*
           if-no-files-found: error
 
   wechat-release-artifact-smoke:
@@ -113,12 +189,239 @@ jobs:
       - name: Verify downloaded WeChat release artifact
         run: npm run verify:wechat-release -- --artifacts-dir "${RUNNER_TEMP}/wechat-release-downloaded" --expected-revision "${GITHUB_SHA}"
 
+  client-release-candidate-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run packaged client RC smoke
+        run: npm run smoke:client:release-candidate -- --output "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json"
+
+      - name: Upload packaged client RC smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-release-candidate-smoke-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness
+          if-no-files-found: error
+
+  h5-connectivity-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run H5 connectivity smoke
+        run: npm run test:e2e:h5:connectivity
+
+      - name: Upload H5 connectivity smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h5-connectivity-smoke-${{ github.sha }}
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish-release-signal-trend:
+    name: Release health gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - validate
+      - wechat-build-validation
+      - client-release-candidate-smoke
+    if: always()
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Download V8 coverage artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: v8-coverage-${{ github.sha }}
+          path: .coverage
+
+      - name: Download runtime regression artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-regression-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-regression
+
+      - name: Download packaged client RC smoke artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: client-release-candidate-smoke-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness
+
+      - name: Download WeChat release artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: wechat-release-${{ github.sha }}
+          path: ${{ runner.temp }}/wechat-release
+
+      - name: Build release gate summary artifact
+        continue-on-error: true
+        run: |
+          node --import tsx ./scripts/ci-release-readiness-snapshot.ts \
+            --validate-status "${{ needs.validate.result }}" \
+            --wechat-build-status "${{ needs.wechat-build-validation.result }}" \
+            --client-rc-smoke-status "${{ needs.client-release-candidate-smoke.result }}" \
+            --output "${RUNNER_TEMP}/release-readiness/release-readiness-${GITHUB_SHA}.json"
+
+          args=(
+            --snapshot "${RUNNER_TEMP}/release-readiness/release-readiness-${GITHUB_SHA}.json"
+            --output "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json"
+            --markdown-output "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.md"
+          )
+          if [[ -f "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json" ]]; then
+            args+=(--h5-smoke "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json")
+          fi
+          if [[ -d "${RUNNER_TEMP}/wechat-release" ]]; then
+            args+=(--wechat-artifacts-dir "${RUNNER_TEMP}/wechat-release")
+          fi
+          npm run release:gate:summary -- "${args[@]}"
+
+      - name: Publish trend summary
+        run: |
+          args=(
+            --output "${RUNNER_TEMP}/release-readiness/ci-trend-summary-${GITHUB_SHA}.json"
+            --markdown-output "${RUNNER_TEMP}/release-readiness/ci-trend-summary-${GITHUB_SHA}.md"
+            --github-step-summary "${GITHUB_STEP_SUMMARY}"
+          )
+          if [[ -f "${RUNNER_TEMP}/runtime-regression/runtime-regression-report-${GITHUB_SHA}.json" ]]; then
+            args+=(--runtime-report "${RUNNER_TEMP}/runtime-regression/runtime-regression-report-${GITHUB_SHA}.json")
+          fi
+          if [[ -f "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json" ]]; then
+            args+=(--release-gate-report "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json")
+          fi
+          if [[ ${#args[@]} -le 3 ]]; then
+            echo "No current runtime or release-gate report was available to summarize." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          npm run ci:trend-summary -- "${args[@]}"
+
+      - name: Build release health summary artifact
+        run: |
+          args=(
+            --release-readiness "${RUNNER_TEMP}/release-readiness/release-readiness-${GITHUB_SHA}.json"
+            --release-gate-summary "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json"
+            --ci-trend-summary "${RUNNER_TEMP}/release-readiness/ci-trend-summary-${GITHUB_SHA}.json"
+            --output "${RUNNER_TEMP}/release-readiness/release-health-summary-${GITHUB_SHA}.json"
+            --markdown-output "${RUNNER_TEMP}/release-readiness/release-health-summary-${GITHUB_SHA}.md"
+          )
+          if [[ -f ".coverage/summary.json" ]]; then
+            args+=(--coverage-summary ".coverage/summary.json")
+          fi
+          # release-health-summary exits non-zero only for blocking conditions; warnings still publish artifacts/comments.
+          npm run release:health:summary -- "${args[@]}"
+
+      - name: Build PR release summary comment
+        if: |
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          node --import tsx ./scripts/release-pr-comment.ts \
+            --release-gate-summary "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json" \
+            --release-health-summary "${RUNNER_TEMP}/release-readiness/release-health-summary-${GITHUB_SHA}.json" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output "${RUNNER_TEMP}/release-readiness/release-pr-comment-${GITHUB_SHA}.md"
+
+      - name: Comment PR with release summary
+        if: |
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        env:
+          COMMENT_PATH: ${{ runner.temp }}/release-readiness/release-pr-comment-${{ github.sha }}.md
+        with:
+          script: |
+            const fs = require("node:fs");
+            const marker = "<!-- project-veil-release-summary -->";
+            const body = fs.readFileSync(process.env.COMMENT_PATH, "utf8");
+            const issue_number = context.payload.pull_request.number;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              per_page: 100
+            });
+            const existing = comments.find((comment) => comment.user?.type === "Bot" && comment.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body
+              });
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              body
+            });
+
+      - name: Upload release signal trend artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-trend-summary-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness
+          if-no-files-found: error
+
   wechat-release-upload:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs:
       - wechat-build-validation
       - wechat-release-artifact-smoke
+      - client-release-candidate-smoke
     if: |
       (github.event_name == 'workflow_dispatch' && github.event.inputs.upload == 'true') ||
       startsWith(github.ref, 'refs/tags/wechat-release-')

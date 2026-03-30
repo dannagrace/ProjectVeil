@@ -95,6 +95,30 @@ let loadStatus: PixelSpriteLoadStatus = {
   totalResourceCount: pixelSpriteResourcePaths.length
 };
 
+export function resetPixelSpriteRuntimeForTests(): void {
+  loadedFrames.clear();
+  inflightFrameLoads.clear();
+  inflightGroupLoads.clear();
+  requestedGroups.clear();
+  loadedGroups.clear();
+  pendingGroups.clear();
+  loadStatus = {
+    phase: "idle",
+    startedAtMs: null,
+    completedAtMs: null,
+    loadDurationMs: null,
+    targetMs: cocosPresentationConfig.loadingBudget.targetMs,
+    hardLimitMs: cocosPresentationConfig.loadingBudget.hardLimitMs,
+    exceededTarget: false,
+    exceededHardLimit: false,
+    requestedGroups: [],
+    loadedGroups: [],
+    pendingGroups: [],
+    loadedResourceCount: 0,
+    totalResourceCount: pixelSpriteResourcePaths.length
+  };
+}
+
 export function getPixelSpriteAssets(): PixelSpriteAssets | null {
   if (loadedFrames.size === 0) {
     return null;

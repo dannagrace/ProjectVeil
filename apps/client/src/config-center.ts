@@ -1,4 +1,5 @@
 import "./config-center.css";
+import { createConfigCenterController, MAX_STAGE_DOCUMENTS } from "./config-center-controller";
 
 type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 type TerrainType = "grass" | "dirt" | "sand" | "water";
@@ -76,6 +77,7 @@ interface ConfigDocument extends ConfigDocumentSummary {
 }
 
 interface ValidationIssue {
+  documentId?: ConfigDocumentId;
   path: string;
   severity: "error" | "warning";
   message: string;
@@ -88,6 +90,14 @@ interface ValidationReport {
   summary: string;
   issues: ValidationIssue[];
   schema: ConfigSchemaSummary;
+  contentPack: {
+    schemaVersion: 1;
+    valid: boolean;
+    summary: string;
+    issueCount: number;
+    checkedDocuments: ConfigDocumentId[];
+    issues: ValidationIssue[];
+  };
 }
 
 interface ConfigSchemaSummary {
@@ -105,15 +115,35 @@ interface ConfigSnapshotSummary {
   version: number;
 }
 
+type ConfigDiffChangeKind = "value" | "field_added" | "field_removed" | "type_changed" | "enum_changed";
+
 interface ConfigDiffEntry {
   path: string;
   change: "added" | "removed" | "updated";
   previousValue: string;
   nextValue: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
 }
 
 interface ConfigDiff {
   entries: ConfigDiffEntry[];
+}
+
+type ConfigImpactRiskLevel = "low" | "medium" | "high";
+
+interface ConfigImpactSummary {
+  documentId: ConfigDocumentId;
+  title: string;
+  summary: string;
+  riskLevel: ConfigImpactRiskLevel;
+  changedFields: string[];
+  impactedModules: string[];
+  riskHints: string[];
+  suggestedValidationActions: string[];
 }
 
 interface ConfigPresetSummary {
@@ -122,6 +152,62 @@ interface ConfigPresetSummary {
   kind: "builtin" | "custom";
   updatedAt: string;
   description: string;
+}
+
+interface ConfigPublishHistoryEntry {
+  id: string;
+  documentId: ConfigDocumentId;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+}
+
+type ConfigPublishResultStatus = "applied" | "failed";
+type ConfigPublishChangeRuntimeStatus = "applied" | "failed" | "pending";
+
+interface ConfigPublishAuditChange {
+  documentId: ConfigDocumentId;
+  title: string;
+  fromVersion: number;
+  toVersion: number;
+  changeCount: number;
+  structuralChangeCount: number;
+  snapshotId: string | null;
+  runtimeStatus: ConfigPublishChangeRuntimeStatus;
+  runtimeMessage: string;
+  diffSummary: ConfigDiffEntry[];
+  impactSummary: ConfigImpactSummary | null;
+}
+
+interface ConfigPublishAuditEvent {
+  id: string;
+  author: string;
+  summary: string;
+  publishedAt: string;
+  resultStatus: ConfigPublishResultStatus;
+  resultMessage: string;
+  changes: ConfigPublishAuditChange[];
+}
+
+interface ConfigStageDocumentSummary {
+  id: ConfigDocumentId;
+  title: string;
+  fileName: string;
+  content: string;
+  updatedAt: string;
+  validation: ValidationReport;
+}
+
+interface ConfigStageState {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  documents: ConfigStageDocumentSummary[];
+  valid: boolean;
 }
 
 interface WorldConfigPreviewTile {
@@ -164,7 +250,7 @@ interface WorldConfigPreviewTile {
           power: number;
           knowledge: number;
         };
-        visitedCount: number;
+        lastUsedDay?: number;
       }
     | {
         kind: "resource_mine";
@@ -172,7 +258,14 @@ interface WorldConfigPreviewTile {
         label: string;
         resourceKind: ResourceKind;
         income: number;
-        ownerPlayerId?: string;
+        lastHarvestDay?: number;
+      }
+    | {
+        kind: "watchtower";
+        refId: string;
+        label: string;
+        visionBonus: number;
+        lastUsedDay?: number;
       }
     | undefined;
 }
@@ -218,6 +311,7 @@ interface AppState {
   saving: boolean;
   statusTone: "neutral" | "success" | "error";
   statusMessage: string;
+  lastSavedImpactSummary: ConfigImpactSummary | null;
   draft: string;
   previewSeed: number;
   worldPreview: WorldConfigPreview | null;
@@ -231,6 +325,12 @@ interface AppState {
   historyLoading: boolean;
   presets: ConfigPresetSummary[];
   presetsLoading: boolean;
+  publishHistory: ConfigPublishHistoryEntry[];
+  publishAuditHistory: ConfigPublishAuditEvent[];
+  publishAuditFilterId: ConfigDocumentId | "all";
+  publishAuditFilterStatus: ConfigPublishResultStatus | "all";
+  publishStage: ConfigStageState | null;
+  publishStageLoading: boolean;
 }
 
 const WORLD_PREVIEW_DEBOUNCE_MS = 260;
@@ -241,6 +341,46 @@ const RESOURCE_SHORT_LABEL: Record<ResourceKind, string> = {
   ore: "O"
 };
 
+const DIFF_KIND_LABELS: Record<ConfigDiffChangeKind, string> = {
+  value: "字段值变更",
+  field_added: "新增字段",
+  field_removed: "删除字段",
+  type_changed: "字段类型变更",
+  enum_changed: "枚举约束变更"
+};
+
+function diffKindLabel(kind: ConfigDiffChangeKind): string {
+  return DIFF_KIND_LABELS[kind] ?? "字段值变更";
+}
+
+function isStructuralDiff(entry: ConfigDiffEntry): boolean {
+  return entry.kind !== "value";
+}
+
+function sortDiffEntries(entries: ConfigDiffEntry[]): ConfigDiffEntry[] {
+  return [...entries].sort((left, right) => {
+    const riskDelta = Number(isStructuralDiff(right)) - Number(isStructuralDiff(left));
+    if (riskDelta !== 0) {
+      return riskDelta;
+    }
+    return left.path.localeCompare(right.path);
+  });
+}
+
+function countStructuralEntries(diff: ConfigDiff): number {
+  return diff.entries.filter(isStructuralDiff).length;
+}
+
+function impactRiskLabel(riskLevel: ConfigImpactRiskLevel): string {
+  if (riskLevel === "high") {
+    return "高风险";
+  }
+  if (riskLevel === "medium") {
+    return "中风险";
+  }
+  return "低风险";
+}
+
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 
 if (!appRoot) {
@@ -249,42 +389,52 @@ if (!appRoot) {
 
 const root = appRoot;
 
-const state: AppState = {
-  items: [],
-  current: null,
-  selectedId: null,
-  storageMode: null,
-  loading: true,
-  saving: false,
-  statusTone: "neutral",
-  statusMessage: "正在加载配置中心...",
-  draft: "",
-  previewSeed: 1001,
-  worldPreview: null,
-  previewLoading: false,
-  previewError: "",
-  validation: null,
-  validationLoading: false,
-  snapshots: [],
-  selectedSnapshotId: null,
-  snapshotDiff: null,
-  historyLoading: false,
-  presets: [],
-  presetsLoading: false
-};
+const controller = createConfigCenterController({
+  onStateChange: () => {
+    render();
+  },
+  prompt: (message, defaultValue) => window.prompt(message, defaultValue),
+  confirm: (message) => window.confirm(message),
+  download: ({ blob, fileName, fallbackFileName }) => {
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = fileName ?? fallbackFileName;
+    anchor.click();
+    URL.revokeObjectURL(href);
+  }
+});
 
-const EMPTY_SCHEMA_SUMMARY: ConfigSchemaSummary = {
-  id: "project-veil.config-center.unknown",
-  title: "Unknown Schema",
-  version: "0",
-  description: "Schema 信息暂不可用。",
-  required: []
-};
-
-let previewRequestVersion = 0;
-let previewDebounceTimer: number | null = null;
-let validationRequestVersion = 0;
-let validationDebounceTimer: number | null = null;
+const {
+  state,
+  getDraftParseState,
+  normalizePreviewSeed,
+  loadList,
+  loadSnapshots,
+  loadPresets,
+  loadSnapshotDiff,
+  loadPublishStage,
+  loadPublishAuditHistory,
+  loadWorldPreview,
+  loadValidation,
+  scheduleWorldPreview,
+  loadDocument,
+  saveCurrentDocument,
+  restoreCurrentDocument,
+  createSnapshot,
+  rollbackSnapshot,
+  applyPreset,
+  saveCurrentAsPreset,
+  exportCurrentDocument,
+  importWorkbook,
+  stageCurrentDraft,
+  removeDocumentFromStage,
+  clearPublishStage,
+  publishStageDrafts,
+  setPublishAuditFilters,
+  inspectPublishedSnapshot,
+  rollbackPublishedSnapshot
+} = controller;
 
 function formatTime(value: string): string {
   const date = new Date(value);
@@ -301,20 +451,7 @@ function escapeHtml(value: string): string {
 }
 
 function currentParseState(): { valid: boolean; detail: string; rootKeys: number } {
-  try {
-    const parsed = JSON.parse(state.draft || "{}") as Record<string, unknown>;
-    return {
-      valid: true,
-      detail: "JSON 语法有效",
-      rootKeys: Object.keys(parsed).length
-    };
-  } catch (error) {
-    return {
-      valid: false,
-      detail: error instanceof Error ? error.message : "JSON 语法无效",
-      rootKeys: 0
-    };
-  }
+  return getDraftParseState();
 }
 
 function currentBattleSkillCatalogState(): {
@@ -370,16 +507,8 @@ function isBattleBalanceDocumentSelected(): boolean {
   return state.current?.id === "battleBalance";
 }
 
-function normalizePreviewSeed(value: number, fallback = state.previewSeed): number {
-  if (!Number.isFinite(value)) {
-    return fallback;
-  }
-
-  return Math.max(0, Math.floor(value));
-}
-
 function setDraftContent(nextDraft: string): void {
-  state.draft = nextDraft;
+  controller.setDraft(nextDraft);
   const textarea = document.querySelector<HTMLTextAreaElement>("[data-role='editor']");
   if (textarea && textarea.value !== nextDraft) {
     textarea.value = nextDraft;
@@ -532,577 +661,6 @@ function serializeDisplayValue(value: string): string {
   return value.length > 48 ? `${value.slice(0, 48)}...` : value || "空";
 }
 
-function clearWorldPreview(cancelPending = true): void {
-  if (cancelPending && previewDebounceTimer != null) {
-    window.clearTimeout(previewDebounceTimer);
-    previewDebounceTimer = null;
-  }
-
-  previewRequestVersion += 1;
-  state.worldPreview = null;
-  state.previewLoading = false;
-  state.previewError = "";
-}
-
-async function loadList(): Promise<void> {
-  const response = await requestJson<{
-    storage: "filesystem" | "mysql";
-    items: ConfigDocumentSummary[];
-  }>("/api/config-center/configs");
-  state.storageMode = response.storage;
-  state.items = response.items;
-}
-
-async function loadSnapshots(id: ConfigDocumentId): Promise<void> {
-  state.historyLoading = true;
-  refreshPreviewPane();
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      snapshots: ConfigSnapshotSummary[];
-    }>(`/api/config-center/configs/${id}/snapshots`);
-    state.storageMode = response.storage;
-    state.snapshots = response.snapshots;
-    if (!state.snapshots.some((item) => item.id === state.selectedSnapshotId)) {
-      state.selectedSnapshotId = state.snapshots[0]?.id ?? null;
-      state.snapshotDiff = null;
-    }
-  } finally {
-    state.historyLoading = false;
-    refreshPreviewPane();
-  }
-
-  if (state.selectedSnapshotId) {
-    await loadSnapshotDiff();
-  }
-}
-
-async function loadPresets(id: ConfigDocumentId): Promise<void> {
-  state.presetsLoading = true;
-  refreshPreviewPane();
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      presets: ConfigPresetSummary[];
-    }>(`/api/config-center/configs/${id}/presets`);
-    state.storageMode = response.storage;
-    state.presets = response.presets;
-  } finally {
-    state.presetsLoading = false;
-    refreshPreviewPane();
-  }
-}
-
-async function loadSnapshotDiff(): Promise<void> {
-  if (!state.current || !state.selectedSnapshotId) {
-    state.snapshotDiff = null;
-    refreshPreviewPane();
-    return;
-  }
-
-  const response = await requestJson<{
-    storage: "filesystem" | "mysql";
-    diff: ConfigDiff;
-  }>(`/api/config-center/configs/${state.current.id}/diff`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      snapshotId: state.selectedSnapshotId
-    })
-  });
-  state.storageMode = response.storage;
-  state.snapshotDiff = response.diff;
-  refreshPreviewPane();
-}
-
-async function loadWorldPreview(): Promise<void> {
-  if (!isWorldDocumentSelected()) {
-    clearWorldPreview();
-    refreshPreviewPane();
-    return;
-  }
-
-  const parseState = currentParseState();
-  if (!parseState.valid) {
-    state.previewLoading = false;
-    state.worldPreview = null;
-    state.previewError = `JSON 语法无效：${parseState.detail}`;
-    refreshPreviewPane();
-    return;
-  }
-
-  const requestVersion = ++previewRequestVersion;
-
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      preview: WorldConfigPreview;
-    }>("/api/config-center/configs/world/preview", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        content: state.draft,
-        seed: state.previewSeed
-      })
-    });
-
-    if (requestVersion !== previewRequestVersion || !isWorldDocumentSelected()) {
-      return;
-    }
-
-    state.storageMode = response.storage;
-    state.worldPreview = response.preview;
-    state.previewError = "";
-  } catch (error) {
-    if (requestVersion !== previewRequestVersion) {
-      return;
-    }
-
-    state.worldPreview = null;
-    state.previewError = error instanceof Error ? error.message : "地图预览生成失败";
-  } finally {
-    if (requestVersion === previewRequestVersion) {
-      state.previewLoading = false;
-      refreshPreviewPane();
-    }
-  }
-}
-
-async function loadValidation(delayMs = 0): Promise<void> {
-  if (!state.current) {
-    state.validation = null;
-    refreshPreviewPane();
-    return;
-  }
-
-  if (validationDebounceTimer != null) {
-    window.clearTimeout(validationDebounceTimer);
-    validationDebounceTimer = null;
-  }
-
-  const run = async () => {
-    const requestVersion = ++validationRequestVersion;
-    state.validationLoading = true;
-    refreshPreviewPane();
-
-    try {
-      const response = await requestJson<{
-        storage: "filesystem" | "mysql";
-        validation: ValidationReport;
-      }>(`/api/config-center/configs/${state.current?.id}/validate`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          content: state.draft
-        })
-      });
-
-      if (requestVersion !== validationRequestVersion) {
-        return;
-      }
-
-      state.storageMode = response.storage;
-      state.validation = response.validation;
-    } catch (error) {
-      if (requestVersion !== validationRequestVersion) {
-        return;
-      }
-
-      state.validation = {
-        valid: false,
-        summary: error instanceof Error ? error.message : "校验失败",
-        issues: [
-          {
-            path: "$",
-            severity: "error",
-            message: error instanceof Error ? error.message : "校验失败",
-            suggestion: "检查 JSON 语法和字段格式后重试。"
-          }
-        ],
-        schema: state.validation?.schema ?? EMPTY_SCHEMA_SUMMARY
-      };
-    } finally {
-      if (requestVersion === validationRequestVersion) {
-        state.validationLoading = false;
-        refreshPreviewPane();
-      }
-    }
-  };
-
-  if (delayMs <= 0) {
-    await run();
-    return;
-  }
-
-  validationDebounceTimer = window.setTimeout(() => {
-    validationDebounceTimer = null;
-    void run();
-  }, delayMs);
-}
-
-function scheduleWorldPreview(delayMs = WORLD_PREVIEW_DEBOUNCE_MS): void {
-  if (!isWorldDocumentSelected()) {
-    clearWorldPreview();
-    refreshPreviewPane();
-    return;
-  }
-
-  if (previewDebounceTimer != null) {
-    window.clearTimeout(previewDebounceTimer);
-    previewDebounceTimer = null;
-  }
-
-  const parseState = currentParseState();
-  if (!parseState.valid) {
-    state.previewLoading = false;
-    state.worldPreview = null;
-    state.previewError = `JSON 语法无效：${parseState.detail}`;
-    refreshPreviewPane();
-    return;
-  }
-
-  state.previewLoading = true;
-  state.previewError = "";
-  refreshPreviewPane();
-
-  previewDebounceTimer = window.setTimeout(() => {
-    previewDebounceTimer = null;
-    void loadWorldPreview();
-  }, delayMs);
-}
-
-async function loadDocument(id: ConfigDocumentId): Promise<void> {
-  state.loading = true;
-  state.statusTone = "neutral";
-  state.statusMessage = `正在加载 ${id} 配置...`;
-  render();
-
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      document: ConfigDocument;
-    }>(`/api/config-center/configs/${id}`);
-    state.storageMode = response.storage;
-    state.current = response.document;
-    state.selectedId = response.document.id;
-    state.draft = response.document.content;
-    state.validation = null;
-    state.snapshots = [];
-    state.presets = [];
-    state.snapshotDiff = null;
-    state.selectedSnapshotId = null;
-    state.statusMessage = `${response.document.title} 已加载`;
-
-    if (response.document.id === "world") {
-      state.worldPreview = null;
-      state.previewLoading = true;
-      state.previewError = "";
-    } else {
-      clearWorldPreview();
-    }
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "加载配置失败";
-  } finally {
-    state.loading = false;
-    render();
-
-    if (isWorldDocumentSelected()) {
-      void loadWorldPreview();
-    }
-    void loadValidation();
-    void loadSnapshots(id);
-    void loadPresets(id);
-  }
-}
-
-async function saveCurrentDocument(): Promise<void> {
-  if (!state.current || state.saving) {
-    return;
-  }
-
-  if (state.validation && !state.validation.valid) {
-    state.statusTone = "error";
-    state.statusMessage = "当前配置存在校验问题，已阻止保存";
-    render();
-    return;
-  }
-
-  state.saving = true;
-  state.statusTone = "neutral";
-  state.statusMessage = `正在保存 ${state.current.title}...`;
-  render();
-
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      document: ConfigDocument;
-    }>(`/api/config-center/configs/${state.current.id}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        content: state.draft
-      })
-    });
-
-    state.storageMode = response.storage;
-    state.current = response.document;
-    state.draft = response.document.content;
-    state.statusTone = "success";
-    state.statusMessage = `${response.document.title} 已保存，并同步刷新服务端运行时配置`;
-    await loadList();
-    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
-
-    if (response.document.id === "world") {
-      state.previewLoading = true;
-      state.previewError = "";
-    }
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "保存配置失败";
-  } finally {
-    state.saving = false;
-    render();
-
-    if (isWorldDocumentSelected()) {
-      void loadWorldPreview();
-    }
-  }
-}
-
-function restoreCurrentDocument(): void {
-  if (!state.current) {
-    return;
-  }
-
-  state.draft = state.current.content;
-  state.statusTone = "neutral";
-  state.statusMessage = `${state.current.title} 已恢复到上次加载内容`;
-
-  if (isWorldDocumentSelected()) {
-    state.previewLoading = true;
-    state.previewError = "";
-  }
-
-  render();
-
-  if (isWorldDocumentSelected()) {
-    void loadWorldPreview();
-  }
-  void loadValidation();
-}
-
-async function createSnapshot(): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  const label = window.prompt("快照名称（可选）", `${state.current.title} v${state.current.version ?? 1}`) ?? "";
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      snapshot: ConfigSnapshotSummary;
-    }>(`/api/config-center/configs/${state.current.id}/snapshots`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        content: state.draft,
-        label
-      })
-    });
-    state.storageMode = response.storage;
-    state.statusTone = "success";
-    state.statusMessage = `已保存快照 ${response.snapshot.label}`;
-    await loadSnapshots(state.current.id);
-    render();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "保存快照失败";
-    render();
-  }
-}
-
-async function rollbackSnapshot(snapshotId: string): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      document: ConfigDocument;
-    }>(`/api/config-center/configs/${state.current.id}/rollback`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ snapshotId })
-    });
-    state.storageMode = response.storage;
-    state.current = response.document;
-    state.draft = response.document.content;
-    state.statusTone = "success";
-    state.statusMessage = `已回滚到快照 ${snapshotId}`;
-    await loadList();
-    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
-    render();
-    if (isWorldDocumentSelected()) {
-      void loadWorldPreview();
-    }
-    void loadValidation();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "回滚快照失败";
-    render();
-  }
-}
-
-async function applyPreset(presetId: string): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  try {
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      document: ConfigDocument;
-    }>(`/api/config-center/configs/${state.current.id}/presets/${presetId}/apply`, {
-      method: "POST"
-    });
-    state.storageMode = response.storage;
-    state.current = response.document;
-    state.draft = response.document.content;
-    state.statusTone = "success";
-    state.statusMessage = `已应用预设 ${presetId}，运行时配置已刷新`;
-    await loadList();
-    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
-    render();
-    if (isWorldDocumentSelected()) {
-      void loadWorldPreview();
-    }
-    void loadValidation();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "应用预设失败";
-    render();
-  }
-}
-
-async function saveCurrentAsPreset(): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  const name = window.prompt("自定义预设名称", `${state.current.title} 自定义预设`);
-  if (!name) {
-    return;
-  }
-
-  try {
-    await requestJson<{
-      storage: "filesystem" | "mysql";
-      preset: ConfigPresetSummary;
-    }>(`/api/config-center/configs/${state.current.id}/presets`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        name,
-        content: state.draft
-      })
-    });
-    state.statusTone = "success";
-    state.statusMessage = `已保存自定义预设 ${name}`;
-    await loadPresets(state.current.id);
-    render();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "保存预设失败";
-    render();
-  }
-}
-
-async function exportCurrentDocument(format: "xlsx" | "jsonc" | "csv"): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  try {
-    const download = await requestDownload(`/api/config-center/configs/${state.current.id}/export?format=${format}`);
-    const href = URL.createObjectURL(download.blob);
-    const anchor = document.createElement("a");
-    anchor.href = href;
-    anchor.download = download.fileName ?? `${state.current.id}.${format}`;
-    anchor.click();
-    URL.revokeObjectURL(href);
-    if (state.current) {
-      state.current.exportedAt = download.exportedAt ?? new Date().toISOString();
-      const item = state.items.find((entry) => entry.id === state.current?.id);
-      if (item) {
-        item.exportedAt = state.current.exportedAt;
-      }
-    }
-    state.statusTone = "success";
-    state.statusMessage =
-      format === "xlsx" ? "已导出 Excel 工作簿" : format === "csv" ? "已导出字段清单 CSV" : "已导出 JSON 注释版";
-    render();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "导出失败";
-    render();
-  }
-}
-
-async function importWorkbook(file: File): Promise<void> {
-  if (!state.current) {
-    return;
-  }
-
-  try {
-    const buffer = await file.arrayBuffer();
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
-    const response = await requestJson<{
-      storage: "filesystem" | "mysql";
-      document: ConfigDocument;
-    }>(`/api/config-center/configs/${state.current.id}/import`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        workbookBase64: base64
-      })
-    });
-    state.storageMode = response.storage;
-    state.current = response.document;
-    state.draft = response.document.content;
-    state.statusTone = "success";
-    state.statusMessage = `已从 ${file.name} 导入并覆盖当前配置`;
-    await loadList();
-    await Promise.all([loadSnapshots(response.document.id), loadPresets(response.document.id)]);
-    render();
-    if (isWorldDocumentSelected()) {
-      void loadWorldPreview();
-    }
-    void loadValidation();
-  } catch (error) {
-    state.statusTone = "error";
-    state.statusMessage = error instanceof Error ? error.message : "Excel 导入失败";
-    render();
-  }
-}
-
 function jumpToValidationIssue(line?: number): void {
   const textarea = document.querySelector<HTMLTextAreaElement>("[data-role='editor']");
   if (!textarea) {
@@ -1147,9 +705,11 @@ function buildWorldPreviewTileTitle(tile: WorldConfigPreviewTile): string {
         tile.building.bonus.power > 0 ? `力量 +${tile.building.bonus.power}` : "",
         tile.building.bonus.knowledge > 0 ? `知识 +${tile.building.bonus.knowledge}` : ""
       ].filter(Boolean);
-      parts.push(`建筑: ${tile.building.label} / ${bonus.join("、") || "属性加成"} / 访问 ${tile.building.visitedCount}`);
+      parts.push(`建筑: ${tile.building.label} / ${bonus.join("、") || "属性加成"}${typeof tile.building.lastUsedDay === "number" ? ` / 第 ${tile.building.lastUsedDay} 天已访问` : ""}`);
+    } else if (tile.building.kind === "resource_mine") {
+      parts.push(`建筑: ${tile.building.label} / ${tile.building.resourceKind} +${tile.building.income}/day${typeof tile.building.lastHarvestDay === "number" ? ` / 第 ${tile.building.lastHarvestDay} 天已采集` : ""}`);
     } else {
-      parts.push(`建筑: ${tile.building.label} / ${tile.building.resourceKind} +${tile.building.income}/day${tile.building.ownerPlayerId ? ` / ${tile.building.ownerPlayerId}` : ""}`);
+      parts.push(`建筑: ${tile.building.label} / 视野 +${tile.building.visionBonus}${typeof tile.building.lastUsedDay === "number" ? ` / 第 ${tile.building.lastUsedDay} 天已登塔` : ""}`);
     }
   }
 
@@ -1572,6 +1132,42 @@ function renderValidationSection(): string {
   }
 
   const validation = state.validation;
+  const renderSchemaIssues = (issues: ValidationIssue[]) =>
+    issues.length > 0
+      ? `
+        <div class="validation-list">
+          ${issues
+            .map(
+              (issue, index) => `
+                <button class="validation-item" data-action="validation-jump" data-index="${index}">
+                  <strong>${escapeHtml(issue.path)}</strong>
+                  <span>${escapeHtml(issue.message)}</span>
+                  <small>${escapeHtml(issue.suggestion)}${issue.line ? ` · 第 ${issue.line} 行` : ""}</small>
+                </button>
+              `
+            )
+            .join("")}
+        </div>
+      `
+      : `<p class="config-hint">当前草稿满足 Schema / 运行时校验。</p>`;
+  const renderContentPackIssues = (issues: ValidationIssue[]) =>
+    issues.length > 0
+      ? `
+        <div class="validation-list">
+          ${issues
+            .map(
+              (issue) => `
+                <div class="validation-item">
+                  <strong>${escapeHtml(`${issue.documentId ?? state.current?.id ?? "config"}:${issue.path}`)}</strong>
+                  <span>${escapeHtml(issue.message)}</span>
+                  <small>${escapeHtml(issue.suggestion)}</small>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+      `
+      : `<p class="config-hint">当前草稿对应的内容包引用关系保持一致。</p>`;
   const content =
     state.validationLoading && !validation
       ? `<div class="world-preview-empty">正在进行 Schema 校验...</div>`
@@ -1588,34 +1184,111 @@ function renderValidationSection(): string {
             <small>${escapeHtml(validation.schema.id)} · v${escapeHtml(validation.schema.version)}</small>
             <small>必填根字段: ${escapeHtml(validation.schema.required.join(", ") || "无")}</small>
           </div>
-          ${
-            validation.issues.length > 0
-              ? `
-                <div class="validation-list">
-                  ${validation.issues
-                    .map(
-                      (issue, index) => `
-                        <button class="validation-item" data-action="validation-jump" data-index="${index}">
-                          <strong>${escapeHtml(issue.path)}</strong>
-                          <span>${escapeHtml(issue.message)}</span>
-                          <small>${escapeHtml(issue.suggestion)}${issue.line ? ` · 第 ${issue.line} 行` : ""}</small>
-                        </button>
-                      `
-                    )
-                    .join("")}
-                </div>
-              `
-              : `<p class="config-hint">当前草稿满足实时校验，保存时会继续经过服务端运行时校验。</p>`
-          }
+          <div class="schema-card">
+            <strong>内容包一致性</strong>
+            <span>${escapeHtml(validation.contentPack.summary)}</span>
+            <small>schema v${validation.contentPack.schemaVersion} · ${validation.contentPack.checkedDocuments.length} 个配置面</small>
+            <small>${escapeHtml(validation.contentPack.checkedDocuments.join(" / "))}</small>
+          </div>
+          ${renderSchemaIssues(validation.issues)}
+          ${renderContentPackIssues(validation.contentPack.issues)}
         `;
 
   return `
     <section class="validation-section">
       <div class="config-preview-subhead">
-        <h4>Schema 校验</h4>
+        <h4>配置校验</h4>
         <span class="config-meta">${validation?.valid ? "可提交" : "保存前需修复"}</span>
       </div>
       ${content}
+    </section>
+  `;
+}
+
+function renderImpactSummarySection(): string {
+  if (!state.current || !state.lastSavedImpactSummary) {
+    return "";
+  }
+
+  const summary = state.lastSavedImpactSummary;
+  return `
+    <section class="history-section">
+      <div class="config-preview-subhead">
+        <h4>变更影响摘要</h4>
+        <span class="config-meta">${impactRiskLabel(summary.riskLevel)}</span>
+      </div>
+      <p class="config-hint">${escapeHtml(summary.summary)}</p>
+      <div class="config-badge-row">
+        ${summary.impactedModules.map((label) => `<span class="config-badge">${escapeHtml(label)}</span>`).join("")}
+      </div>
+      <div class="impact-summary-grid">
+        <article class="impact-summary-card">
+          <strong>变更字段</strong>
+          <span>${escapeHtml(summary.changedFields.join(" / ") || "无")}</span>
+        </article>
+        <article class="impact-summary-card">
+          <strong>潜在风险</strong>
+          <span>${escapeHtml(summary.riskHints.join(" / ") || "未检测到额外风险提示")}</span>
+        </article>
+        <article class="impact-summary-card">
+          <strong>建议验证</strong>
+          <span>${escapeHtml(summary.suggestedValidationActions.join(" / ") || "无")}</span>
+        </article>
+      </div>
+    </section>
+  `;
+}
+
+function renderPublishStageSection(): string {
+  if (!state.current) {
+    return "";
+  }
+
+  const stage = state.publishStage;
+  const documents = stage?.documents ?? [];
+  const stagedCount = documents.length;
+  const activeDocumentId = state.current?.id ?? null;
+  const isCurrentInStage = documents.some((document) => document.id === activeDocumentId);
+  const limitReached = !isCurrentInStage && stagedCount >= MAX_STAGE_DOCUMENTS;
+  const stageMeta = stage
+    ? `${stagedCount}/${MAX_STAGE_DOCUMENTS} 个草稿 · ${stage.valid ? "全部通过校验" : "存在阻塞"}`
+    : `0/${MAX_STAGE_DOCUMENTS} 个草稿`;
+
+  return `
+    <section class="history-section">
+      <div class="config-preview-subhead">
+        <h4>发布草稿队列</h4>
+        <span class="config-meta">${stageMeta}</span>
+      </div>
+      <p class="config-hint">可将多个配置草稿绑定在同一次发布中并统一校验，全部通过后再一键发布。发布记录会同步到版本历史，便于代码审计和追溯。</p>
+      <div class="history-actions">
+        <button class="config-button is-secondary config-button-compact" data-action="stage-current" ${state.current && !limitReached && !state.publishStageLoading ? "" : "disabled"}>${state.publishStageLoading ? "同步中..." : "将当前草稿加入队列"}</button>
+        <button class="config-button is-secondary config-button-compact" data-action="clear-stage" ${stage && stagedCount > 0 && !state.publishStageLoading ? "" : "disabled"}>清空草稿</button>
+        <button class="config-button config-button-compact" data-action="publish-stage" ${stage && stage.valid && stagedCount > 0 && !state.publishStageLoading ? "" : "disabled"}>${state.publishStageLoading ? "处理中..." : "发布草稿"}</button>
+      </div>
+      ${
+        state.publishStageLoading && stagedCount === 0
+          ? `<div class="world-preview-empty">正在加载发布草稿...</div>`
+          : stagedCount === 0
+            ? `<div class="world-preview-empty">暂无待发布草稿，可在左侧编辑器完成修改后加入队列。</div>`
+            : `
+        <div class="stage-list">
+          ${documents
+            .map(
+              (document) => `
+                <article class="stage-card ${document.validation.valid ? "" : "is-invalid"}">
+                  <div>
+                    <strong>${escapeHtml(document.title)}</strong>
+                    <span>${document.validation.valid ? "校验通过" : document.validation.summary}</span>
+                    <small>最近同步：${formatTime(document.updatedAt)}</small>
+                  </div>
+                  <button class="config-button is-secondary config-button-compact" data-action="remove-stage-doc" data-doc-id="${document.id}">移除</button>
+                </article>
+              `
+            )
+            .join("")}
+        </div>`
+      }
     </section>
   `;
 }
@@ -1691,31 +1364,213 @@ function renderSnapshotSection(): string {
                 )
                 .join("")}
       </div>
-      ${
-        state.selectedSnapshotId && state.snapshotDiff
-          ? `
-            <div class="config-hint">当前展示 ${Math.min(state.snapshotDiff.entries.length, 12)} / ${state.snapshotDiff.entries.length} 条差异。</div>
-            <div class="diff-list">
+      ${renderSnapshotDiffPanel()}
+      ${renderPublishHistoryList()}
+    </section>
+  `;
+}
+
+function renderSnapshotDiffPanel(): string {
+  if (!state.selectedSnapshotId || !state.snapshotDiff) {
+    return "";
+  }
+
+  const total = state.snapshotDiff.entries.length;
+  const visibleEntries = sortDiffEntries(state.snapshotDiff.entries).slice(0, 12);
+  const structuralCount = countStructuralEntries(state.snapshotDiff);
+  const summary =
+    total === 0
+      ? "当前版本与该快照没有差异。"
+      : structuralCount > 0
+          ? `警告：检测到 ${structuralCount}/${total} 条结构变更，优先展示高风险字段（最多 ${visibleEntries.length} 条）。`
+          : `当前展示 ${visibleEntries.length} / ${total} 条差异。`;
+
+  if (total === 0) {
+    return `
+      <div class="config-hint">${summary}</div>
+      <div class="world-preview-empty">当前版本与该快照没有差异。</div>
+    `;
+  }
+
+  return `
+    <div class="config-hint">${summary}</div>
+    <div class="diff-list">
+      ${visibleEntries
+        .map(
+          (entry) => `
+            <article class="diff-item ${isStructuralDiff(entry) ? "is-structural" : ""}">
+              <div class="diff-item-body">
+                <strong>${escapeHtml(entry.path)}</strong>
+                <span>${escapeHtml(entry.description || "该字段在 Schema 中暂无描述。")}</span>
+              </div>
+              <div class="diff-item-tags">
+                <span class="diff-chip ${isStructuralDiff(entry) ? "is-alert" : ""}">${diffKindLabel(entry.kind)}</span>
+                <span class="diff-chip is-muted">${escapeHtml(entry.fieldType)}</span>
+                ${entry.required ? `<span class="diff-chip is-required">必填</span>` : ""}
+              </div>
+              <small>${escapeHtml(serializeDisplayValue(entry.previousValue))} → ${escapeHtml(serializeDisplayValue(entry.nextValue))}</small>
               ${
-                state.snapshotDiff.entries.length === 0
-                  ? `<div class="world-preview-empty">当前版本与该快照没有差异。</div>`
-                  : state.snapshotDiff.entries
-                      .slice(0, 12)
-                      .map(
-                        (entry) => `
-                          <article class="diff-item">
-                            <strong>${escapeHtml(entry.path)}</strong>
-                            <span>${entry.change}</span>
-                            <small>${escapeHtml(serializeDisplayValue(entry.previousValue))} → ${escapeHtml(serializeDisplayValue(entry.nextValue))}</small>
-                          </article>
-                        `
-                      )
-                      .join("")
+                entry.blastRadius.length
+                  ? `<small class="diff-blast">影响：${entry.blastRadius.map((label) => `<span>${escapeHtml(label)}</span>`).join(" / ")}</small>`
+                  : ""
               }
-            </div>
+            </article>
           `
-          : ""
-      }
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderPublishHistoryList(): string {
+  const entries = state.publishAuditHistory.filter((entry) => {
+    const matchesDocument =
+      state.publishAuditFilterId === "all" ||
+      entry.changes.some((change) => change.documentId === state.publishAuditFilterId);
+    const matchesResult =
+      state.publishAuditFilterStatus === "all" || entry.resultStatus === state.publishAuditFilterStatus;
+    return matchesDocument && matchesResult;
+  });
+  if (state.historyLoading && entries.length === 0 && state.publishAuditHistory.length === 0) {
+    return `<div class="world-preview-empty">正在加载发布记录...</div>`;
+  }
+
+  if (entries.length === 0) {
+    return `
+      <section class="history-section">
+        <div class="config-preview-subhead">
+          <h4>发布审计历史</h4>
+          <span class="config-meta">0 条匹配记录</span>
+        </div>
+        <div class="history-filters">
+          <label>
+            <span>配置类型</span>
+            <select data-role="publish-filter-doc">
+              <option value="all">全部</option>
+              <option value="world" ${state.publishAuditFilterId === "world" ? "selected" : ""}>世界配置</option>
+              <option value="mapObjects" ${state.publishAuditFilterId === "mapObjects" ? "selected" : ""}>地图物件</option>
+              <option value="units" ${state.publishAuditFilterId === "units" ? "selected" : ""}>兵种配置</option>
+              <option value="battleSkills" ${state.publishAuditFilterId === "battleSkills" ? "selected" : ""}>技能配置</option>
+              <option value="battleBalance" ${state.publishAuditFilterId === "battleBalance" ? "selected" : ""}>战斗平衡</option>
+            </select>
+          </label>
+          <label>
+            <span>结果状态</span>
+            <select data-role="publish-filter-status">
+              <option value="all">全部</option>
+              <option value="applied" ${state.publishAuditFilterStatus === "applied" ? "selected" : ""}>已应用</option>
+              <option value="failed" ${state.publishAuditFilterStatus === "failed" ? "selected" : ""}>失败</option>
+            </select>
+          </label>
+        </div>
+        <div class="world-preview-empty">暂无匹配的发布记录，先使用“发布草稿”功能再回来查看。</div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="history-section publish-history">
+      <div class="config-preview-subhead">
+        <h4>发布审计历史</h4>
+        <span class="config-meta">${entries.length} 条记录</span>
+      </div>
+      <div class="history-filters">
+        <label>
+          <span>配置类型</span>
+          <select data-role="publish-filter-doc">
+            <option value="all">全部</option>
+            <option value="world" ${state.publishAuditFilterId === "world" ? "selected" : ""}>世界配置</option>
+            <option value="mapObjects" ${state.publishAuditFilterId === "mapObjects" ? "selected" : ""}>地图物件</option>
+            <option value="units" ${state.publishAuditFilterId === "units" ? "selected" : ""}>兵种配置</option>
+            <option value="battleSkills" ${state.publishAuditFilterId === "battleSkills" ? "selected" : ""}>技能配置</option>
+            <option value="battleBalance" ${state.publishAuditFilterId === "battleBalance" ? "selected" : ""}>战斗平衡</option>
+          </select>
+        </label>
+        <label>
+          <span>结果状态</span>
+          <select data-role="publish-filter-status">
+            <option value="all">全部</option>
+            <option value="applied" ${state.publishAuditFilterStatus === "applied" ? "selected" : ""}>已应用</option>
+            <option value="failed" ${state.publishAuditFilterStatus === "failed" ? "selected" : ""}>失败</option>
+          </select>
+        </label>
+      </div>
+      <div class="publish-history-list">
+        ${entries
+          .slice(0, 10)
+          .map(
+            (entry) => `
+              <article class="publish-history-card">
+                <div class="publish-history-head">
+                  <div>
+                    <strong>${escapeHtml(entry.summary)}</strong>
+                    <span>${escapeHtml(entry.author)} · ${formatTime(entry.publishedAt)}</span>
+                  </div>
+                  <span class="publish-result-pill is-${entry.resultStatus}">${entry.resultStatus === "applied" ? "已应用" : "失败"}</span>
+                </div>
+                <small>${escapeHtml(entry.resultMessage)}</small>
+                <div class="config-badge-row">
+                  ${entry.changes.map((change) => `<span class="config-badge">${escapeHtml(change.title)} · v${change.fromVersion}→v${change.toVersion}</span>`).join("")}
+                </div>
+                <div class="publish-change-list">
+                  ${entry.changes
+                    .map(
+                      (change) => `
+                        <section class="publish-change-card">
+                          <div class="publish-change-head">
+                            <strong>${escapeHtml(change.title)}</strong>
+                            <span>${change.changeCount} 项变更${change.structuralChangeCount ? ` · ${change.structuralChangeCount} 项结构风险` : ""}</span>
+                          </div>
+                          <small>${escapeHtml(change.runtimeMessage)}</small>
+                          ${
+                            change.impactSummary
+                              ? `
+                                <div class="impact-summary-grid is-compact">
+                                  <article class="impact-summary-card">
+                                    <strong>${impactRiskLabel(change.impactSummary.riskLevel)}</strong>
+                                    <span>${escapeHtml(change.impactSummary.summary)}</span>
+                                  </article>
+                                  <article class="impact-summary-card">
+                                    <strong>影响模块</strong>
+                                    <span>${escapeHtml(change.impactSummary.impactedModules.join(" / "))}</span>
+                                  </article>
+                                  <article class="impact-summary-card">
+                                    <strong>风险提示</strong>
+                                    <span>${escapeHtml(change.impactSummary.riskHints.join(" / ") || "无")}</span>
+                                  </article>
+                                </div>
+                              `
+                              : ""
+                          }
+                          <div class="publish-diff-summary">
+                            ${
+                              change.diffSummary.length > 0
+                                ? change.diffSummary
+                                    .map(
+                                      (diff) => `
+                                        <span class="publish-diff-chip">
+                                          ${escapeHtml(diff.path)} · ${escapeHtml(diffKindLabel(diff.kind))}
+                                        </span>
+                                      `
+                                    )
+                                    .join("")
+                                : `<span class="publish-diff-chip">无字段差异</span>`
+                            }
+                          </div>
+                          <div class="history-actions">
+                            <button class="config-button is-secondary config-button-compact" data-action="inspect-publish-change" data-doc-id="${change.documentId}" data-snapshot-id="${change.snapshotId ?? ""}" ${change.snapshotId ? "" : "disabled"}>查看快照</button>
+                            <button class="config-button is-secondary config-button-compact" data-action="rollback-publish-change" data-doc-id="${change.documentId}" data-snapshot-id="${change.snapshotId ?? ""}" ${change.snapshotId ? "" : "disabled"}>快速回滚</button>
+                          </div>
+                        </section>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
     </section>
   `;
 }
@@ -1817,6 +1672,8 @@ function renderPreviewContent(): string {
     <div class="config-badge-row">${badges}</div>
     <p class="config-hint">保存后会先写主存储，再导出到 <code>configs/*.json</code>，并同步刷新服务端运行时配置。新建房间、战斗公式和世界生成会直接读取最新版本。</p>
     ${renderValidationSection()}
+    ${renderImpactSummarySection()}
+    ${renderPublishStageSection()}
     ${renderPresetSection()}
     ${renderSnapshotSection()}
     ${renderExportSection()}
@@ -1884,6 +1741,8 @@ function bindPreviewControls(): void {
       scheduleWorldPreview(0);
     };
   }
+
+  bindPublishStageControls();
 }
 
 function bindSkillEditorControls(): void {
@@ -2058,6 +1917,63 @@ function bindBattleBalanceEditorControls(): void {
         return config;
       });
     };
+  });
+}
+
+function bindPublishStageControls(): void {
+  document.querySelector<HTMLButtonElement>("[data-action='stage-current']")?.addEventListener("click", () => {
+    void stageCurrentDraft();
+  });
+
+  document.querySelector<HTMLButtonElement>("[data-action='clear-stage']")?.addEventListener("click", () => {
+    void clearPublishStage();
+  });
+
+  document.querySelector<HTMLButtonElement>("[data-action='publish-stage']")?.addEventListener("click", () => {
+    void publishStageDrafts();
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-action='remove-stage-doc']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const docId = button.dataset.docId as ConfigDocumentId | undefined;
+      if (docId) {
+        void removeDocumentFromStage(docId);
+      }
+    });
+  });
+
+  const documentFilter = document.querySelector<HTMLSelectElement>("[data-role='publish-filter-doc']");
+  documentFilter?.addEventListener("change", () => {
+    setPublishAuditFilters({
+      documentId: (documentFilter.value || "all") as ConfigDocumentId | "all"
+    });
+  });
+
+  const statusFilter = document.querySelector<HTMLSelectElement>("[data-role='publish-filter-status']");
+  statusFilter?.addEventListener("change", () => {
+    setPublishAuditFilters({
+      resultStatus: (statusFilter.value || "all") as ConfigPublishResultStatus | "all"
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-action='inspect-publish-change']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const docId = button.dataset.docId as ConfigDocumentId | undefined;
+      const snapshotId = button.dataset.snapshotId;
+      if (docId && snapshotId) {
+        void inspectPublishedSnapshot(docId, snapshotId);
+      }
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-action='rollback-publish-change']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const docId = button.dataset.docId as ConfigDocumentId | undefined;
+      const snapshotId = button.dataset.snapshotId;
+      if (docId && snapshotId) {
+        void rollbackPublishedSnapshot(docId, snapshotId);
+      }
+    });
   });
 }
 
@@ -2259,6 +2175,8 @@ async function bootstrap(): Promise<void> {
   render();
   try {
     await loadList();
+    await loadPublishStage();
+    await loadPublishAuditHistory();
     const requestedId = new URLSearchParams(window.location.search).get("config") as ConfigDocumentId | null;
     const initialId = requestedId && state.items.some((item) => item.id === requestedId) ? requestedId : state.items[0]?.id ?? null;
 

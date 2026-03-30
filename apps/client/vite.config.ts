@@ -3,6 +3,16 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   root: resolve(__dirname),
+  preview: {
+    host: "127.0.0.1",
+    port: 4173,
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:2567",
+        changeOrigin: true
+      }
+    }
+  },
   server: {
     host: "0.0.0.0",
     port: 4173,

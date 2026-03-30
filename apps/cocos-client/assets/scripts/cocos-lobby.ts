@@ -16,6 +16,7 @@ import {
   type EventLogQuery,
   type PlayerAccountReadModel,
   type PlayerProgressionSnapshot,
+  type PlayerBattleReplayQuery,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress
 } from "./project-shared/index.ts";
@@ -24,6 +25,7 @@ const LOBBY_PREFERENCES_STORAGE_KEY = "project-veil:lobby-preferences";
 const PLAYER_ACCOUNT_PREFIX = "project-veil:player-account";
 const DEFAULT_LOBBY_ROOM_ID = "room-alpha";
 const COCOS_REQUEST_TIMEOUT_MS = 1200;
+const DEFAULT_HISTORY_PAGE_SIZE = 3;
 
 export interface CocosLobbyPreferences {
   playerId: string;
@@ -100,8 +102,21 @@ interface PlayerBattleReplayListApiPayload {
   items?: Partial<PlayerBattleReplaySummary>[];
 }
 
+interface PlayerBattleReplayHistoryApiPayload extends PlayerBattleReplayListApiPayload {
+  offset?: number;
+  limit?: number;
+  hasMore?: boolean;
+}
+
 interface PlayerEventLogListApiPayload {
   items?: Partial<EventLogEntry>[];
+}
+
+interface PlayerEventHistoryApiPayload extends PlayerEventLogListApiPayload {
+  total?: number;
+  offset?: number;
+  limit?: number;
+  hasMore?: boolean;
 }
 
 interface PlayerAchievementListApiPayload {
@@ -118,6 +133,21 @@ export interface CocosPasswordRecoveryRequestResult {
   status: string;
   expiresAt?: string;
   recoveryToken?: string;
+}
+
+export interface CocosBattleReplayHistoryPage {
+  items: PlayerBattleReplaySummary[];
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+export interface CocosEventHistoryPage {
+  items: EventLogEntry[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
 }
 
 type PlayerProgressionApiPayload = Partial<PlayerProgressionSnapshot>;
@@ -201,6 +231,9 @@ function toEventLogQueryString(query?: EventLogQuery): string {
   if (query.limit != null) {
     searchParams.set("limit", String(query.limit));
   }
+  if (query.offset != null) {
+    searchParams.set("offset", String(query.offset));
+  }
   if (query.category) {
     searchParams.set("category", query.category);
   }
@@ -212,6 +245,47 @@ function toEventLogQueryString(query?: EventLogQuery): string {
   }
   if (query.worldEventType) {
     searchParams.set("worldEventType", query.worldEventType);
+  }
+
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
+}
+
+function toBattleReplayQueryString(query?: PlayerBattleReplayQuery): string {
+  if (!query) {
+    return "";
+  }
+
+  const searchParams = new URLSearchParams();
+  if (query.limit != null) {
+    searchParams.set("limit", String(query.limit));
+  }
+  if (query.offset != null) {
+    searchParams.set("offset", String(query.offset));
+  }
+  if (query.roomId) {
+    searchParams.set("roomId", query.roomId);
+  }
+  if (query.battleId) {
+    searchParams.set("battleId", query.battleId);
+  }
+  if (query.battleKind) {
+    searchParams.set("battleKind", query.battleKind);
+  }
+  if (query.playerCamp) {
+    searchParams.set("playerCamp", query.playerCamp);
+  }
+  if (query.heroId) {
+    searchParams.set("heroId", query.heroId);
+  }
+  if (query.opponentHeroId) {
+    searchParams.set("opponentHeroId", query.opponentHeroId);
+  }
+  if (query.neutralArmyId) {
+    searchParams.set("neutralArmyId", query.neutralArmyId);
+  }
+  if (query.result) {
+    searchParams.set("result", query.result);
   }
 
   const serialized = searchParams.toString();
@@ -314,19 +388,22 @@ function asCocosPlayerAccountProfile(
   };
 }
 
-async function loadCocosBattleReplaySummaries(
+export async function loadCocosBattleReplaySummaries(
   remoteUrl: string,
   playerId: string,
+  query?: PlayerBattleReplayQuery,
   options?: {
     fetchImpl?: FetchLike;
     authSession?: CocosStoredAuthSession | null;
     storage?: Pick<Storage, "removeItem"> | null;
+    throwOnError?: boolean;
   }
 ): Promise<PlayerBattleReplaySummary[]> {
   const authSession = options?.authSession ?? null;
+  const queryString = toBattleReplayQueryString(query);
   const endpoint = authSession?.token
-    ? `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/battle-replays`
-    : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays`;
+    ? `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/battle-replays${queryString}`
+    : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays${queryString}`;
 
   try {
     const payload = (await fetchCocosAuthJson(
@@ -346,8 +423,43 @@ async function loadCocosBattleReplaySummaries(
     if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && options?.storage) {
       clearStoredCocosAuthSession(options.storage);
     }
+    if (options?.throwOnError) {
+      throw error;
+    }
     return normalizePlayerBattleReplaySummaries();
   }
+}
+
+export async function loadCocosBattleReplayHistoryPage(
+  remoteUrl: string,
+  playerId: string,
+  query: PlayerBattleReplayQuery,
+  options?: {
+    fetchImpl?: FetchLike;
+    authSession?: CocosStoredAuthSession | null;
+    storage?: Pick<Storage, "removeItem"> | null;
+    throwOnError?: boolean;
+  }
+): Promise<CocosBattleReplayHistoryPage> {
+  const safeLimit = Math.max(1, Math.floor(query.limit ?? DEFAULT_HISTORY_PAGE_SIZE));
+  const safeOffset = Math.max(0, Math.floor(query.offset ?? 0));
+  const items = await loadCocosBattleReplaySummaries(
+    remoteUrl,
+    playerId,
+    {
+      ...query,
+      limit: safeLimit + 1,
+      offset: safeOffset
+    },
+    options
+  );
+
+  return {
+    items: items.slice(0, safeLimit),
+    offset: safeOffset,
+    limit: safeLimit,
+    hasMore: items.length > safeLimit
+  };
 }
 
 async function fetchJson(
@@ -998,7 +1110,7 @@ export async function loginCocosWechatAuthSession(
     ...(options?.timeoutMs != null ? { timeoutMs: options.timeoutMs } : {}),
     ...(options?.mockCode ? { mockCode: options.mockCode } : {})
   });
-  const exchangePath = options?.exchangePath?.trim() || "/api/auth/wechat-mini-game-login";
+  const exchangePath = options?.exchangePath?.trim() || "/api/auth/wechat-login";
 
   const payload = (await fetchJson(
     `${resolveCocosApiBaseUrl(remoteUrl)}${exchangePath.startsWith("/") ? exchangePath : `/${exchangePath}`}`,
@@ -1114,7 +1226,7 @@ export async function loadCocosPlayerAccountProfile(
       payload.account,
       storedDisplayName
     );
-    const recentBattleReplays = await loadCocosBattleReplaySummaries(remoteUrl, resolvedPlayerId, {
+    const recentBattleReplays = await loadCocosBattleReplaySummaries(remoteUrl, resolvedPlayerId, undefined, {
       ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
       authSession: authSession ?? null,
       storage
@@ -1180,6 +1292,67 @@ export async function loadCocosPlayerEventLog(
   }
 }
 
+export async function loadCocosPlayerEventHistory(
+  remoteUrl: string,
+  playerId: string,
+  query?: EventLogQuery,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+    throwOnError?: boolean;
+  }
+): Promise<CocosEventHistoryPage> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+  const queryString = toEventLogQueryString(query);
+  const endpoint = authSession?.token
+    ? `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/event-history${queryString}`
+    : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/event-history${queryString}`;
+
+  try {
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
+      endpoint,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
+      }
+    )) as PlayerEventHistoryApiPayload;
+    const safeLimit = Math.max(1, Math.floor(payload.limit ?? query?.limit ?? DEFAULT_HISTORY_PAGE_SIZE));
+    const safeOffset = Math.max(0, Math.floor(payload.offset ?? query?.offset ?? 0));
+    const items = normalizeEventLogEntries(payload.items);
+    return {
+      items,
+      total: Math.max(items.length, Math.floor(payload.total ?? items.length)),
+      offset: safeOffset,
+      limit: safeLimit,
+      hasMore: Boolean(payload.hasMore)
+    };
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
+      clearStoredCocosAuthSession(storage);
+    }
+    if (options?.throwOnError) {
+      throw error;
+    }
+    const safeLimit = Math.max(1, Math.floor(query?.limit ?? DEFAULT_HISTORY_PAGE_SIZE));
+    const safeOffset = Math.max(0, Math.floor(query?.offset ?? 0));
+    return {
+      items: normalizeEventLogEntries(),
+      total: 0,
+      offset: safeOffset,
+      limit: safeLimit,
+      hasMore: false
+    };
+  }
+}
+
 export async function loadCocosPlayerAchievementProgress(
   remoteUrl: string,
   playerId: string,
@@ -1188,6 +1361,7 @@ export async function loadCocosPlayerAchievementProgress(
     fetchImpl?: FetchLike;
     storage?: Pick<Storage, "getItem" | "removeItem"> | null;
     authSession?: CocosStoredAuthSession | null;
+    throwOnError?: boolean;
   }
 ): Promise<PlayerAchievementProgress[]> {
   const storage = options?.storage ?? getCocosStorage();
@@ -1216,6 +1390,9 @@ export async function loadCocosPlayerAchievementProgress(
     if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
       clearStoredCocosAuthSession(storage);
     }
+    if (options?.throwOnError) {
+      throw error;
+    }
     return queryAchievementProgress(undefined, query);
   }
 }
@@ -1228,6 +1405,7 @@ export async function loadCocosPlayerProgressionSnapshot(
     fetchImpl?: FetchLike;
     storage?: Pick<Storage, "getItem" | "removeItem"> | null;
     authSession?: CocosStoredAuthSession | null;
+    throwOnError?: boolean;
   }
 ): Promise<PlayerProgressionSnapshot> {
   const storage = options?.storage ?? getCocosStorage();
@@ -1255,6 +1433,9 @@ export async function loadCocosPlayerProgressionSnapshot(
   } catch (error) {
     if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
       clearStoredCocosAuthSession(storage);
+    }
+    if (options?.throwOnError) {
+      throw error;
     }
     return normalizePlayerProgressionSnapshot();
   }

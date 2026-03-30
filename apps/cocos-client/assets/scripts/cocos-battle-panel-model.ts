@@ -1,5 +1,6 @@
 import type { BattleAction, BattleState, SessionUpdate, TerrainType, Vec2 } from "./VeilCocosSession.ts";
 import type { CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
+import type { CocosBattlePresentationState } from "./cocos-battle-presentation-controller.ts";
 
 export type BattleCamp = "attacker" | "defender";
 
@@ -10,6 +11,7 @@ export interface BattlePanelInput {
   selectedTargetId: string | null;
   actionPending: boolean;
   feedback: CocosBattleFeedbackView | null;
+  presentationState: CocosBattlePresentationState | null;
 }
 
 export interface BattlePanelUnitView {
@@ -66,14 +68,26 @@ export interface BattlePanelViewModel {
   idle: boolean;
 }
 
+export interface BattlePanelSections {
+  stage: BattlePanelStageView | null;
+  orderItems: BattlePanelOrderItem[];
+  friendlyItems: BattlePanelFriendlyItem[];
+  enemyTargets: BattlePanelUnitView[];
+  actions: BattlePanelActionView[];
+  idle: boolean;
+}
+
 export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelViewModel {
   const battle = state.update?.battle;
   if (!battle) {
+    const presentationSummary = state.presentationState
+      ? [state.presentationState.label, ...state.presentationState.summaryLines]
+      : ["当前没有战斗。"];
     return {
-      title: "战斗面板",
+      title: state.presentationState?.result ? "战斗结算" : "战斗面板",
       stage: null,
       feedback: state.feedback,
-      summaryLines: ["当前没有战斗。"],
+      summaryLines: presentationSummary,
       orderLines: [],
       friendlyLines: [],
       orderItems: [],
@@ -154,11 +168,13 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
   const statusSummary = activeUnit ? buildStatusSummary(activeUnit) : "无异常";
 
   return {
-    title: "战斗面板",
+    title: state.presentationState?.phase === "enter" ? "战斗展开" : "战斗面板",
     stage: buildBattleStageView(state.update, battle),
     feedback: state.feedback,
     summaryLines: [
       `${battle.id} · 第 ${battle.round} 回合`,
+      `流程：${state.presentationState?.label ?? "战斗进行中"}`,
+      ...(state.presentationState?.summaryLines ?? []),
       `阵营：${controlLabel}`,
       `阶段：${turnLabel}`,
       `行动单位：${activeUnit ? formatActiveUnitLine(activeUnit) : "等待中"}`,
@@ -173,6 +189,18 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     enemyTargets,
     actions,
     idle: false
+  };
+}
+
+export function buildBattlePanelSections(state: BattlePanelInput): BattlePanelSections {
+  const model = buildBattlePanelViewModel(state);
+  return {
+    stage: model.stage,
+    orderItems: model.orderItems,
+    friendlyItems: model.friendlyItems,
+    enemyTargets: model.enemyTargets,
+    actions: model.actions,
+    idle: model.idle
   };
 }
 

@@ -2,15 +2,29 @@
 
 `npm run release:readiness:snapshot` generates a machine-readable snapshot for the current revision and records the release gate results in one place.
 
+If you want a single human-readable Phase 1 dashboard on top of the snapshot plus runtime/WeChat/Cocos evidence, use `npm run release:readiness:dashboard` and see `docs/release-readiness-dashboard.md`.
+
+If you want a CI-oriented pass/fail summary that also folds in packaged H5 smoke and WeChat release evidence, use `npm run release:gate:summary` and see `docs/release-gate-summary.md`.
+
 The default automated checks are:
 
 - `npm test`
 - `npm run typecheck:ci`
 - `npm run test:e2e:smoke`
 - `npm run test:e2e:multiplayer:smoke`
-- `npm run check:wechat-build`
+- `npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json`
+- `npm run test:multiplayer-protocol-compatibility -- --output artifacts/release-readiness/multiplayer-protocol-compatibility.json`
+- `npm run check:cocos-release-readiness`
 
-The snapshot also supports manual gates, so the same file can carry pending or completed human checks such as runtime endpoint review, reconnect evidence, or device smoke acceptance.
+For packaged H5 release-candidate validation, run:
+
+```bash
+npm run smoke:client:release-candidate
+```
+
+That flow rebuilds `apps/client/dist`, serves the packaged artifact instead of the dev shell, exercises guest login plus cached-session room boot, and writes machine-readable evidence under `artifacts/release-readiness/`. Pass `--output <path>` when CI or a reviewer needs a stable artifact filename.
+
+The snapshot also supports manual gates, so the same file can carry pending or completed human checks such as runtime endpoint review, reconnect evidence, device smoke acceptance, or RC blocker review.
 
 ## Usage
 
@@ -80,6 +94,17 @@ Example:
     "notes": "Complete npm run smoke:wechat-release against the packaged RC build.",
     "evidence": [
       "docs/wechat-minigame-release.md"
+    ]
+  },
+  {
+    "id": "cocos-rc-blocker-review",
+    "title": "Cocos/WeChat RC blocker register reviewed",
+    "status": "pending",
+    "required": true,
+    "notes": "Attach the completed RC checklist and blocker template for the candidate before marking release-ready.",
+    "evidence": [
+      "docs/release-evidence/cocos-wechat-rc-checklist.template.md",
+      "docs/release-evidence/cocos-wechat-rc-blockers.template.md"
     ]
   }
 ]

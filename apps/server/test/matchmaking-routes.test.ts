@@ -12,7 +12,26 @@ import {
 import { issueGuestAuthSession, resetGuestAuthSessions } from "../src/auth";
 import { MatchmakingService, registerMatchmakingRoutes, resetMatchmakingService } from "../src/matchmaking";
 import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
+import { resetRuntimeObservability } from "../src/observability";
 import type { RoomSnapshotStore } from "../src/persistence";
+
+function withEnvOverrides(overrides: Record<string, string | undefined>, cleanup: Array<() => void>): void {
+  for (const [key, value] of Object.entries(overrides)) {
+    const previousValue = process.env[key];
+    if (value == null) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+    cleanup.push(() => {
+      if (previousValue == null) {
+        delete process.env[key];
+        return;
+      }
+      process.env[key] = previousValue;
+    });
+  }
+}
 
 function createHero(playerId: string, heroId: string): HeroState {
   return {
@@ -74,6 +93,7 @@ async function startMatchmakingServer(
 ): Promise<Server> {
   resetGuestAuthSessions();
   resetMatchmakingService();
+  resetRuntimeObservability();
   const transport = new WebSocketTransport();
   registerMatchmakingRoutes(transport.getExpressApp() as never, {
     store,
@@ -182,7 +202,7 @@ test("matchmaking routes enqueue, match, report status, and dequeue cleanly", as
   assert.equal(statusTwoPayload.status, "matched");
   assert.equal(statusTwoPayload.roomId, statusOnePayload.roomId);
 
-  const dequeueTwo = await fetch(`http://127.0.0.1:${port}/api/matchmaking/dequeue`, {
+  const dequeueTwo = await fetch(`http://127.0.0.1:${port}/api/matchmaking/cancel`, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${sessionTwo.token}`
@@ -191,7 +211,7 @@ test("matchmaking routes enqueue, match, report status, and dequeue cleanly", as
   const dequeueTwoPayload = (await dequeueTwo.json()) as { status: string };
   assert.equal(dequeueTwoPayload.status, "idle");
 
-  const dequeueOne = await fetch(`http://127.0.0.1:${port}/api/matchmaking/dequeue`, {
+  const dequeueOne = await fetch(`http://127.0.0.1:${port}/api/matchmaking/cancel`, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${sessionOne.token}`
@@ -237,6 +257,131 @@ test("matchmaking enqueue prunes stale queue entries before adding new players",
   });
   assert.equal(enqueueResponse.status, 200);
   assert.equal(service.getStatus("player-stale").status, "idle");
+});
+
+test("matchmaking routes return 429 with Retry-After after the per-IP rate limit is exceeded", { concurrency: false }, async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_RATE_LIMIT_MATCHMAKING_WINDOW_MS: "60000",
+      VEIL_RATE_LIMIT_MATCHMAKING_MAX: "2"
+    },
+    cleanup
+  );
+
+  const store = createMemoryRoomSnapshotStore();
+  await store.save(
+    "room-rate-limit",
+    createSnapshot("room-rate-limit", [createHero("player-1", "hero-1"), createHero("player-2", "hero-2")])
+  );
+  await store.ensurePlayerAccount({ playerId: "player-1", displayName: "One", lastRoomId: "room-rate-limit" });
+  await store.ensurePlayerAccount({ playerId: "player-2", displayName: "Two", lastRoomId: "room-rate-limit" });
+
+  const port = 43000 + Math.floor(Math.random() * 1000);
+  const server = await startMatchmakingServer(store, port);
+  const sessionOne = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
+  const sessionTwo = issueGuestAuthSession({ playerId: "player-2", displayName: "Two" });
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    resetMatchmakingService();
+    resetRuntimeObservability();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  for (const session of [sessionOne, sessionTwo]) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/matchmaking/status`, {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    });
+    assert.equal(response.status, 200);
+  }
+
+  const limitedStatusResponse = await fetch(`http://127.0.0.1:${port}/api/matchmaking/status`, {
+    headers: {
+      Authorization: `Bearer ${sessionOne.token}`
+    }
+  });
+  const limitedStatusPayload = (await limitedStatusResponse.json()) as { error: { code: string } };
+
+  assert.equal(limitedStatusResponse.status, 429);
+  assert.equal(limitedStatusPayload.error.code, "rate_limited");
+  assert.equal(limitedStatusResponse.headers.get("Retry-After"), "60");
+
+  for (const session of [sessionOne, sessionTwo]) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/matchmaking/cancel`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    });
+    assert.equal(response.status, 200);
+  }
+
+  const limitedCancelResponse = await fetch(`http://127.0.0.1:${port}/api/matchmaking/cancel`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${sessionOne.token}`
+    }
+  });
+  const limitedCancelPayload = (await limitedCancelResponse.json()) as { error: { code: string } };
+
+  assert.equal(limitedCancelResponse.status, 429);
+  assert.equal(limitedCancelPayload.error.code, "rate_limited");
+  assert.equal(limitedCancelResponse.headers.get("Retry-After"), "60");
+});
+
+test("matchmaking enqueue returns 429 with Retry-After after the per-IP rate limit is exceeded", { concurrency: false }, async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_RATE_LIMIT_MATCHMAKING_WINDOW_MS: "60000",
+      VEIL_RATE_LIMIT_MATCHMAKING_MAX: "2"
+    },
+    cleanup
+  );
+
+  const store = createMemoryRoomSnapshotStore();
+  await store.save("room-enqueue-limit", createSnapshot("room-enqueue-limit", [createHero("player-1", "hero-1")]));
+  await store.ensurePlayerAccount({ playerId: "player-1", displayName: "One", lastRoomId: "room-enqueue-limit" });
+
+  const port = 43000 + Math.floor(Math.random() * 1000);
+  const server = await startMatchmakingServer(store, port);
+  const session = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    resetMatchmakingService();
+    resetRuntimeObservability();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    });
+    assert.equal(response.status, 200);
+  }
+
+  const limitedResponse = await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const limitedPayload = (await limitedResponse.json()) as { error: { code: string } };
+
+  assert.equal(limitedResponse.status, 429);
+  assert.equal(limitedPayload.error.code, "rate_limited");
+  assert.equal(limitedResponse.headers.get("Retry-After"), "60");
 });
 
 test("pruneStaleEntries retains entries newer than TTL", () => {

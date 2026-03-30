@@ -123,7 +123,7 @@ test("smoke:wechat-release validates a completed acceptance report", () => {
 
   const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as {
     execution: { tester: string; device: string; clientVersion: string; executedAt: string; result: string; summary: string };
-    cases: Array<{ status: string; notes: string; evidence: string[] }>;
+    cases: Array<{ id: string; status: string; notes: string; evidence: string[]; requiredEvidence?: Record<string, string> }>;
   };
   report.execution.tester = "codex";
   report.execution.device = "iPhone 15 / WeChat 8.0.x";
@@ -135,6 +135,18 @@ test("smoke:wechat-release validates a completed acceptance report", () => {
     entry.status = "passed";
     entry.notes = "ok";
     entry.evidence = ["manual"];
+  }
+  const reconnectCase = report.cases.find((entry) => entry.id === "reconnect-recovery");
+  if (reconnectCase?.requiredEvidence) {
+    reconnectCase.requiredEvidence.roomId = "room-alpha";
+    reconnectCase.requiredEvidence.reconnectPrompt = "连接已恢复";
+    reconnectCase.requiredEvidence.restoredState = "Returned to room-alpha with Move 4/6 and Wood 5.";
+  }
+  const shareCase = report.cases.find((entry) => entry.id === "share-roundtrip");
+  if (shareCase?.requiredEvidence) {
+    shareCase.requiredEvidence.shareScene = "lobby";
+    shareCase.requiredEvidence.shareQuery = "roomId=room-alpha&inviterId=player-7&shareScene=lobby";
+    shareCase.requiredEvidence.roundtripState = "Roundtrip reopened room-alpha and restored inviterId player-7.";
   }
   fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
@@ -176,7 +188,7 @@ test("smoke:wechat-release rejects incomplete acceptance reports", () => {
 
   const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as {
     execution: { tester: string; device: string; executedAt: string; result: string };
-    cases: Array<{ id: string; status: string }>;
+    cases: Array<{ id: string; status: string; requiredEvidence?: Record<string, string> }>;
   };
   report.execution.tester = "codex";
   report.execution.device = "Android / WeChat";
@@ -185,9 +197,16 @@ test("smoke:wechat-release rejects incomplete acceptance reports", () => {
   for (const entry of report.cases) {
     entry.status = "passed";
   }
+  const reconnectCase = report.cases.find((entry) => entry.id === "reconnect-recovery");
+  if (reconnectCase?.requiredEvidence) {
+    reconnectCase.requiredEvidence.roomId = "room-alpha";
+    reconnectCase.requiredEvidence.reconnectPrompt = "连接已恢复";
+    reconnectCase.requiredEvidence.restoredState = "Recovered into the same room without rollback.";
+  }
   const shareCase = report.cases.find((entry) => entry.id === "share-roundtrip");
-  if (shareCase) {
-    shareCase.status = "pending";
+  if (shareCase?.requiredEvidence) {
+    shareCase.requiredEvidence.shareScene = "battle";
+    shareCase.requiredEvidence.roundtripState = "Returned to battle room room-alpha after share.";
   }
   fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
@@ -202,6 +221,62 @@ test("smoke:wechat-release rejects incomplete acceptance reports", () => {
           stdio: "pipe"
         }
       ),
-    /Smoke report case login-lobby is still pending.|Smoke report case share-roundtrip is still pending./
+    /"path":"cases\[\d+\]#share-roundtrip\.requiredEvidence\.shareQuery","message":"Share-roundtrip case must record the emitted share query or equivalent payload summary\."/
+  );
+});
+
+test("smoke:wechat-release rejects missing reconnect evidence fields", () => {
+  const { artifactsDir, reportPath } = createPackagedWechatReleaseArtifact();
+
+  execFileSync(
+    "node",
+    ["--import", "tsx", "./scripts/smoke-wechat-minigame-release.ts", "--artifacts-dir", artifactsDir],
+    {
+      cwd: path.resolve(__dirname, "../../.."),
+      stdio: "pipe"
+    }
+  );
+
+  const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as {
+    execution: { tester: string; device: string; clientVersion: string; executedAt: string; result: string; summary: string };
+    cases: Array<{ id: string; status: string; notes: string; evidence: string[]; requiredEvidence?: Record<string, string> }>;
+  };
+  report.execution.tester = "codex";
+  report.execution.device = "iPhone 15 / WeChat 8.0.x";
+  report.execution.clientVersion = "1.0.155";
+  report.execution.executedAt = "2026-03-28T23:50:00+08:00";
+  report.execution.result = "passed";
+  report.execution.summary = "Reconnect evidence should fail fast when a required field is missing.";
+
+  for (const entry of report.cases) {
+    entry.status = "passed";
+    entry.notes = "ok";
+    entry.evidence = ["manual"];
+  }
+  const reconnectCase = report.cases.find((entry) => entry.id === "reconnect-recovery");
+  if (reconnectCase?.requiredEvidence) {
+    reconnectCase.requiredEvidence.roomId = "room-alpha";
+    reconnectCase.requiredEvidence.restoredState = "Recovered into the same room without rollback.";
+  }
+  const shareCase = report.cases.find((entry) => entry.id === "share-roundtrip");
+  if (shareCase?.requiredEvidence) {
+    shareCase.requiredEvidence.shareScene = "lobby";
+    shareCase.requiredEvidence.shareQuery = "roomId=room-alpha&inviterId=player-7&shareScene=lobby";
+    shareCase.requiredEvidence.roundtripState = "Roundtrip reopened room-alpha and restored inviterId player-7.";
+  }
+  fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+
+  assert.throws(
+    () =>
+      execFileSync(
+        "node",
+        ["--import", "tsx", "./scripts/smoke-wechat-minigame-release.ts", "--artifacts-dir", artifactsDir, "--check"],
+        {
+          cwd: path.resolve(__dirname, "../../.."),
+          encoding: "utf8",
+          stdio: "pipe"
+        }
+      ),
+    /"path":"cases\[\d+\]#reconnect-recovery\.requiredEvidence\.reconnectPrompt","message":"Reconnect case must record the reconnect prompt or equivalent recovery signal\."/
   );
 });

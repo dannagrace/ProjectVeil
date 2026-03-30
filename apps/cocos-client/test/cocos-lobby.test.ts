@@ -7,9 +7,11 @@ import {
   createCocosLobbyPreferences,
   getCocosLobbyPreferencesStorageKey,
   getCocosPlayerAccountStorageKey,
+  loadCocosBattleReplayHistoryPage,
   loadCocosPlayerAchievementProgress,
   loadCocosLobbyRooms,
   loadCocosPlayerAccountProfile,
+  loadCocosPlayerEventHistory,
   loadCocosPlayerEventLog,
   loadCocosPlayerProgressionSnapshot,
   loginCocosPasswordAuthSession,
@@ -120,6 +122,131 @@ test("loadCocosLobbyRooms queries the lobby api from the resolved remote host", 
 
   assert.equal(requestedUrls[0], "http://127.0.0.1:2567/api/lobby/rooms?limit=3");
   assert.equal(rooms[0]?.roomId, "room-alpha");
+});
+
+test("loadCocosPlayerEventHistory returns normalized paging metadata from the event-history route", async () => {
+  const requestedUrls: string[] = [];
+  const history = await loadCocosPlayerEventHistory("http://127.0.0.1:2567", "player-1", {
+    limit: 2,
+    offset: 2
+  }, {
+    fetchImpl: async (input) => {
+      requestedUrls.push(String(input));
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "event-3",
+              timestamp: "2026-03-29T12:04:00.000Z",
+              roomId: "room-alpha",
+              playerId: "player-1",
+              category: "combat",
+              description: "击退守军",
+              worldEventType: "battle.resolved",
+              rewards: []
+            }
+          ],
+          total: 5,
+          offset: 2,
+          limit: 2,
+          hasMore: true
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.equal(requestedUrls[0], "http://127.0.0.1:2567/api/player-accounts/player-1/event-history?limit=2&offset=2");
+  assert.equal(history.total, 5);
+  assert.equal(history.offset, 2);
+  assert.equal(history.limit, 2);
+  assert.equal(history.hasMore, true);
+  assert.equal(history.items[0]?.id, "event-3");
+});
+
+test("loadCocosBattleReplayHistoryPage overfetches one replay to expose hasMore", async () => {
+  const requestedUrls: string[] = [];
+  const page = await loadCocosBattleReplayHistoryPage("http://127.0.0.1:2567", "player-1", {
+    limit: 1,
+    offset: 1
+  }, {
+    fetchImpl: async (input) => {
+      requestedUrls.push(String(input));
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "replay-2",
+              roomId: "room-alpha",
+              playerId: "player-1",
+              battleId: "battle-2",
+              battleKind: "hero",
+              playerCamp: "defender",
+              heroId: "hero-1",
+              opponentHeroId: "hero-2",
+              startedAt: "2026-03-29T12:03:00.000Z",
+              completedAt: "2026-03-29T12:04:00.000Z",
+              initialState: {
+                id: "battle-2",
+                round: 1,
+                lanes: 1,
+                activeUnitId: "stack-1",
+                turnOrder: ["stack-1"],
+                units: {},
+                environment: [],
+                log: [],
+                rng: { seed: 4, cursor: 0 }
+              },
+              steps: [],
+              result: "defender_victory"
+            },
+            {
+              id: "replay-3",
+              roomId: "room-alpha",
+              playerId: "player-1",
+              battleId: "battle-3",
+              battleKind: "neutral",
+              playerCamp: "attacker",
+              heroId: "hero-1",
+              neutralArmyId: "neutral-2",
+              startedAt: "2026-03-29T12:05:00.000Z",
+              completedAt: "2026-03-29T12:06:00.000Z",
+              initialState: {
+                id: "battle-3",
+                round: 1,
+                lanes: 1,
+                activeUnitId: "stack-1",
+                turnOrder: ["stack-1"],
+                units: {},
+                environment: [],
+                log: [],
+                rng: { seed: 5, cursor: 0 }
+              },
+              steps: [],
+              result: "attacker_victory"
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.equal(requestedUrls[0], "http://127.0.0.1:2567/api/player-accounts/player-1/battle-replays?limit=2&offset=1");
+  assert.equal(page.limit, 1);
+  assert.equal(page.offset, 1);
+  assert.equal(page.hasMore, true);
+  assert.deepEqual(page.items.map((item) => item.id), ["replay-3"]);
 });
 
 test("loginCocosGuestAuthSession stores remote sessions and clearCurrentCocosAuthSession removes them", async () => {

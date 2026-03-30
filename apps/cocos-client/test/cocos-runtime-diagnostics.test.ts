@@ -1,0 +1,69 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { buildCocosRuntimeDiagnosticsSnapshot, buildCocosRuntimeTriageSummaryLines } from "../assets/scripts/cocos-runtime-diagnostics.ts";
+import { createFallbackCocosPlayerAccountProfile } from "../assets/scripts/cocos-lobby.ts";
+import { createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
+
+test("Cocos runtime diagnostics reuse the shared snapshot shape for HUD triage", () => {
+  const account = createFallbackCocosPlayerAccountProfile("player-1", "room-alpha", "暮潮守望");
+  const update = createSessionUpdate(5, "room-alpha", "player-1");
+  update.world.visibleHeroes = [
+    {
+      id: "hero-2",
+      playerId: "player-2",
+      name: "敌方先锋",
+      position: { x: 1, y: 0 }
+    }
+  ];
+
+  const snapshot = buildCocosRuntimeDiagnosticsSnapshot({
+    exportedAt: "2026-03-29T09:00:00.000Z",
+    devOnly: true,
+    mode: "world",
+    roomId: "room-alpha",
+    playerId: "player-1",
+    connectionStatus: "reconnecting",
+    lastUpdateSource: "replay",
+    lastUpdateReason: "cached_snapshot",
+    lastUpdateAt: Date.parse("2026-03-29T08:59:40.000Z"),
+    update,
+    account,
+    timelineEntries: ["房间 room-alpha 已恢复同步。"],
+    logLines: ["连接已中断，正在尝试重连...", "已回放缓存状态，等待房间同步..."],
+    predictionStatus: "已回放缓存状态，等待房间同步...",
+    recoverySummary: "已回放缓存状态，等待房间同步..."
+  });
+
+  assert.equal(snapshot.source.surface, "cocos-runtime-overlay");
+  assert.equal(snapshot.room?.connectionStatus, "reconnecting");
+  assert.equal(snapshot.world?.hero?.id, "hero-1");
+  assert.equal(snapshot.world?.visibleHeroes[0]?.playerId, "player-2");
+  assert.equal(snapshot.diagnostics.recoverySummary, "已回放缓存状态，等待房间同步...");
+
+  const lines = buildCocosRuntimeTriageSummaryLines(
+    {
+      devOnly: true,
+      mode: "world",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      connectionStatus: "reconnecting",
+      lastUpdateSource: "replay",
+      lastUpdateReason: "cached_snapshot",
+      lastUpdateAt: Date.parse("2026-03-29T08:59:40.000Z"),
+      update,
+      account,
+      timelineEntries: ["房间 room-alpha 已恢复同步。"],
+      logLines: ["连接已中断，正在尝试重连...", "已回放缓存状态，等待房间同步..."],
+      predictionStatus: "已回放缓存状态，等待房间同步...",
+      recoverySummary: "已回放缓存状态，等待房间同步..."
+    },
+    "2026-03-29T09:00:20.000Z"
+  );
+
+  assert.deepEqual(lines, [
+    "同步中断 · 客户端正在尝试重连房间。",
+    "同步滞后 · 最后权威更新距今 40s。",
+    "最后同步年龄 40s",
+    "主控英雄 暮潮守望 @ 0,0"
+  ]);
+});

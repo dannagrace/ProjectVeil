@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectHeroMoveSpent } from "./smoke-helpers";
 
 async function pressTile(page: Page, x: number, y: number): Promise<void> {
   await page.locator(`[data-x="${x}"][data-y="${y}"]`).dispatchEvent("pointerdown", {
@@ -23,11 +24,11 @@ test("two players can enter a hero-vs-hero battle and resolve it with correct tu
     playerTwoPage.goto(`http://127.0.0.1:4173/?roomId=${roomId}&playerId=player-2`)
   ]);
 
-  await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
-  await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
+  await expectHeroMoveSpent(playerOnePage, 0, "player-1");
+  await expectHeroMoveSpent(playerTwoPage, 0, "player-2");
 
   await pressTile(playerOnePage, 3, 4);
-  await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
+  await expectHeroMoveSpent(playerOnePage, 5, "player-1");
 
   await pressTile(playerTwoPage, 3, 4);
 
@@ -85,7 +86,7 @@ test("two players can enter a hero-vs-hero battle and resolve it with correct tu
   await expect(playerTwoPage.getByTestId("battle-settlement-aftermath")).toContainText("移动力清零");
   await expect(playerTwoPage.getByTestId("battle-settlement-room-state")).toContainText("对手仍保留在房间地图上");
   await expect(playerTwoPage.getByTestId("hero-hp")).toHaveText(/HP 15\/30/);
-  await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
+  await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
 
   await playerOneContext.close();
   await playerTwoContext.close();

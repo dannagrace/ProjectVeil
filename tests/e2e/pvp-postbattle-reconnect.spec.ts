@@ -1,71 +1,92 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import {
+  attackOnce,
+  buildRoomId,
+  expectRecoveredBattleSettlement,
+  expectHeroMoveSpent,
+  fullMoveTextPattern,
+  openRoom,
+  pressTile,
+  reloadAndExpectRecoveredSession,
+  withSmokeDiagnostics
+} from "./smoke-helpers";
 
-async function pressTile(page: Page, x: number, y: number): Promise<void> {
-  await page.locator(`[data-x="${x}"][data-y="${y}"]`).dispatchEvent("pointerdown", {
-    button: 0
-  });
-}
-
-async function attackOnce(page: Page): Promise<void> {
-  await expect(page.getByTestId("battle-attack")).toBeVisible({ timeout: 10_000 });
-  await page.getByTestId("battle-attack").click();
-}
-
-test("players can reload after a PvP battle resolves and keep the settled world state", async ({ browser }) => {
-  const roomId = `e2e-pvp-postbattle-${Date.now()}`;
+test("players can reload during PvP settlement and recover the settled world state", async ({ browser }, testInfo) => {
+  const roomId = buildRoomId("e2e-pvp-postbattle");
   const playerOneContext = await browser.newContext();
   const playerTwoContext = await browser.newContext();
   const playerOnePage = await playerOneContext.newPage();
   const playerTwoPage = await playerTwoContext.newPage();
 
-  await Promise.all([
-    playerOnePage.goto(`http://127.0.0.1:4173/?roomId=${roomId}&playerId=player-1`),
-    playerTwoPage.goto(`http://127.0.0.1:4173/?roomId=${roomId}&playerId=player-2`)
-  ]);
+  try {
+    await withSmokeDiagnostics(testInfo, [playerOnePage, playerTwoPage], async () => {
+      await test.step("setup: both players join the room", async () => {
+        await Promise.all([
+          openRoom(playerOnePage, {
+            roomId,
+            playerId: "player-1",
+            expectedMoveText: fullMoveTextPattern("player-1")
+          }),
+          openRoom(playerTwoPage, {
+            roomId,
+            playerId: "player-2",
+            expectedMoveText: fullMoveTextPattern("player-2")
+          })
+        ]);
+      });
 
-  await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
-  await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 6\/6/, { timeout: 10_000 });
+      await test.step("gameplay: resolve the PvP battle to settlement", async () => {
+        await pressTile(playerOnePage, 3, 4);
+        await expectHeroMoveSpent(playerOnePage, 5, "player-1");
 
-  await pressTile(playerOnePage, 3, 4);
-  await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
+        await pressTile(playerTwoPage, 3, 4);
 
-  await pressTile(playerTwoPage, 3, 4);
+        await attackOnce(playerTwoPage);
+        await attackOnce(playerOnePage);
+        await attackOnce(playerTwoPage);
+        await attackOnce(playerOnePage);
+        await attackOnce(playerTwoPage);
 
-  await attackOnce(playerTwoPage);
-  await attackOnce(playerOnePage);
-  await attackOnce(playerTwoPage);
-  await attackOnce(playerOnePage);
-  await attackOnce(playerTwoPage);
+        await expect(playerOnePage.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
+        await expect(playerTwoPage.getByTestId("battle-modal-title")).toHaveText("战斗失败");
+      });
 
-  await expect(playerOnePage.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
-  await expect(playerTwoPage.getByTestId("battle-modal-title")).toHaveText("战斗失败");
+      await test.step("reconnect: both clients reload while settlement modal is still open", async () => {
+        await Promise.all([
+          reloadAndExpectRecoveredSession(playerOnePage, {
+            roomId,
+            playerId: "player-1"
+          }),
+          reloadAndExpectRecoveredSession(playerTwoPage, {
+            roomId,
+            playerId: "player-2"
+          })
+        ]);
+      });
 
-  await playerOnePage.reload();
-  await playerTwoPage.reload();
-
-  await expect(playerOnePage.getByTestId("session-meta")).toContainText(`Room: ${roomId}`);
-  await expect(playerTwoPage.getByTestId("session-meta")).toContainText(`Room: ${roomId}`);
-  await expect(playerOnePage.getByTestId("event-log")).toContainText("连接已恢复", { timeout: 10_000 });
-  await expect(playerTwoPage.getByTestId("event-log")).toContainText("连接已恢复", { timeout: 10_000 });
-  await expect(playerOnePage.getByTestId("room-phase")).toHaveText("已结算");
-  await expect(playerTwoPage.getByTestId("room-phase")).toHaveText("已结算");
-  await expect(playerOnePage.getByTestId("battle-settlement-summary")).toContainText("已击败");
-  await expect(playerOnePage.getByTestId("battle-settlement-room-state")).toContainText("房间已回到地图探索阶段");
-  await expect(playerOnePage.getByTestId("battle-settlement-next-action")).toContainText("仍可继续移动");
-  await expect(playerTwoPage.getByTestId("battle-settlement-summary")).toContainText("遭遇战失利");
-  await expect(playerTwoPage.getByTestId("battle-settlement-room-state")).toContainText("对手仍保留在房间地图上");
-  await expect(playerTwoPage.getByTestId("battle-settlement-next-action")).toContainText("已无法继续移动");
-  await expect(playerOnePage.getByTestId("opponent-summary")).toContainText("最近对手");
-  await expect(playerOnePage.getByTestId("opponent-summary")).toContainText(`遭遇会话：${roomId}/battle-`);
-  await expect(playerTwoPage.getByTestId("room-result-summary")).toContainText("当前结算已同步回写");
-
-  await expect(playerOnePage.getByTestId("battle-empty")).toHaveText(/No active battle/);
-  await expect(playerTwoPage.getByTestId("battle-empty")).toHaveText(/No active battle/);
-  await expect(playerOnePage.getByTestId("hero-hp")).toHaveText(/HP 30\/30/);
-  await expect(playerOnePage.getByTestId("hero-move")).toHaveText(/Move 1\/6/);
-  await expect(playerTwoPage.getByTestId("hero-hp")).toHaveText(/HP 15\/30/);
-  await expect(playerTwoPage.getByTestId("hero-move")).toHaveText(/Move 0\/6/);
-
-  await playerOneContext.close();
-  await playerTwoContext.close();
+      await expectRecoveredBattleSettlement(playerOnePage, {
+        phase: "已结算",
+        recoverySummaryIncludes: ["权威房间状态已恢复", "战后结果与地图状态已经重新对齐"],
+        settlementSummary: "已击败",
+        settlementRoomState: "房间已回到地图探索阶段",
+        settlementNextAction: "仍可继续移动",
+        hpPattern: /HP 30\/30/,
+        opponentSummaryIncludes: ["\u6700\u8fd1\u5bf9\u624b", `遭遇会话：${roomId}/battle-`]
+      });
+      await expectRecoveredBattleSettlement(playerTwoPage, {
+        phase: "已结算",
+        recoverySummaryIncludes: ["权威房间状态已恢复"],
+        settlementSummary: "遭遇战失利",
+        settlementRoomState: "对手仍保留在房间地图上",
+        settlementNextAction: "已无法继续移动",
+        hpPattern: /HP 15\/30/,
+        resultSummaryIncludes: ["权威房间状态已恢复", "当前结算已同步回写"]
+      });
+      await expectHeroMoveSpent(playerOnePage, 5, "player-1");
+      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
+    });
+  } finally {
+    await playerOneContext.close();
+    await playerTwoContext.close();
+  }
 });

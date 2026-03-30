@@ -16,10 +16,14 @@
 - 多人同步冒烟：`npm run test:e2e:multiplayer:smoke`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 多人放量基线：`docs/multiplayer-loadtest-gate.md`
-- 微信小游戏构建校验：`npm run check:wechat-build`
+- 长时 reconnect soak：`docs/reconnect-soak-gate.md`
+- Cocos 资源 + 微信小游戏构建门禁：`npm run check:cocos-release-readiness`
 - 发布就绪快照：`npm run release:readiness:snapshot`
+- Phase 1 发布就绪看板：`npm run release:readiness:dashboard`
 - Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
 - Cocos 发布证据模板：`docs/cocos-release-evidence-template.md`
+- Cocos / WeChat RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
+- Cocos / WeChat RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - 微信小游戏提审前冒烟：`docs/wechat-minigame-release.md`
 
 ## 发布判断规则
@@ -28,9 +32,11 @@
 - `P1 follow-up`：可以进入受控范围测试，但必须有明确 owner 和修复窗口。
 - `P2 polish`：不阻断测试扩大，但需要继续收口体验。
 
-建议在每次 release candidate 上记录状态：`pass / partial / fail / n/a`，并附上证据链接、执行人和日期。
+建议在每次 release candidate 上记录状态：`pass / partial / fail / n/a`，并附上证据链接、执行人和日期。对于 Cocos / WeChat RC，再额外固定两份人类可读附件：一份 checklist，一份 blocker register。
 
-如果希望把自动化门禁和人工门禁统一收口成一个结构化记录，可执行 `npm run release:readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json`，生成当前 revision 的快照并保留 pending manual check。Cocos 主链路证据则统一用 `npm run release:cocos-rc:snapshot` 生成单独的 RC 快照，并在同一份 JSON 中回填 Creator 预览或微信 RC 证据。
+如果希望把自动化门禁和人工门禁统一收口成一个结构化记录，可执行 `npm run release:readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json`，生成当前 revision 的快照并保留 pending manual check。Cocos 主链路证据则统一用 `npm run release:cocos-rc:snapshot` 生成单独的 RC 快照，并在同一份 JSON 中回填 Creator 预览或微信 RC 证据；人工 reviewer 则复用 `docs/release-evidence/cocos-wechat-rc-checklist.template.md` 和 `docs/release-evidence/cocos-wechat-rc-blockers.template.md`，不要在 issue 或 PR 中重新发明字段。
+
+如果希望把这些已有证据再压成单份本地总览，可执行 `npm run release:readiness:dashboard`。它会复用最新的 release snapshot、WeChat package / smoke evidence、Cocos RC snapshot，并可选探测 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics`，输出一份 `pass / warn / fail` 的 Phase 1 看板。
 
 ## 必过用户旅程
 
@@ -57,6 +63,7 @@
 - [ ] 双客户端或多客户端进入同一房间后，同步不会出现长期分叉；断线重连后能收敛到权威状态。
 - [ ] reconnect 验收必须复用 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 的唯一场景和最小成功信号，而不是只写“重连成功”。
 - [ ] wider playtest 前必须复用 [`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md) 中固定的 smoke + `stress:rooms` 命令组合、阈值、回退动作和重跑触发条件。
+- [ ] shipping / release candidate 前，任何涉及房间状态、reconnect、战斗或快照恢复的改动都必须额外通过 [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md) 中的长时 reconnect soak。
 - [ ] 失败路径可读：非法 action、超时、会话失效时，客户端能收到明确错误而不是静默卡死。
 
 `P1 follow-up`
@@ -69,6 +76,7 @@
 - `npm test`
 - `npm run test:e2e:multiplayer:smoke`
 - wider playtest 前必跑：[`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md)
+- shipping / RC 前必跑：[`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md)
 
 ### 2. H5 调试壳与回归验证面
 
@@ -110,8 +118,10 @@
 建议证据：
 
 - `npm test`
-- `npm run check:wechat-build`
+- `npm run check:cocos-release-readiness`
 - `npm run release:cocos-rc:snapshot -- --output <snapshot-path>`
+- `docs/release-evidence/cocos-wechat-rc-checklist.template.md`
+- `docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 中定义的 reconnect 证据
 - 按 [`docs/wechat-minigame-release.md`](/home/gpt/project/ProjectVeil/docs/wechat-minigame-release.md) 完成 `verify` 与 `smoke`
 
@@ -161,6 +171,7 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
 - `Cocos 主链路发布证据`
   - 固定一条 Lobby -> 进房 -> 战斗 -> 重连 -> 返回世界的验收脚本
   - 使用 `npm run release:cocos-rc:snapshot` 产出统一 evidence，并参考 `docs/release-evidence/cocos-rc-snapshot.example.json` 回填
+  - 同步复制 RC checklist 与 blocker 模板，避免 PR 中只看到截图没有结论
 - `多人放量门禁`
   - 复用 `docs/multiplayer-loadtest-gate.md`
   - 固定压测参数、阈值、回退条件与样例记录
@@ -172,7 +183,7 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
 
 1. 先跑 `npm run typecheck:ci` 和 `npm test`，确认 shared/server/client 基线未坏。
 2. 再跑 `npm run test:e2e:smoke` 与 `npm run test:e2e:multiplayer:smoke`，确认 H5 回归面和多人主链路。
-3. 若候选包涉及微信小游戏，再跑 `npm run check:wechat-build`，并按微信发布文档回填真实 smoke 报告。
+3. 若候选包涉及微信小游戏，再跑 `npm run check:cocos-release-readiness`，并按微信发布文档回填真实 smoke 报告。
 4. 用本清单逐项标记 `pass / partial / fail`，只要存在 `P0 blocker = fail`，该候选版本就不应进入更广范围测试。
 
 ## 多人遭遇反馈本地验收流
