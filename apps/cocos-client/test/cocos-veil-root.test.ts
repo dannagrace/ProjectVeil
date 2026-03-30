@@ -158,6 +158,37 @@ test("VeilRoot warm boot reuses the stored account session and cached replay dur
   assert.equal(root.lastUpdate?.world.meta.day, 3);
 });
 
+test("VeilRoot warm boot keeps direct room resume in auto-connect mode", () => {
+  const storage = createMemoryStorage();
+  storage.setItem(
+    "project-veil:auth-session",
+    JSON.stringify({
+      token: "resume.token",
+      playerId: "account-player",
+      displayName: "雾林司灯",
+      authMode: "account",
+      provider: "account-password",
+      loginId: "veil-ranger",
+      source: "remote"
+    })
+  );
+  (sys as unknown as { localStorage: Storage }).localStorage = storage;
+
+  const root = createVeilRootHarness();
+  root.autoConnect = true;
+  root.readLaunchSearch = () => "?roomId=room-resume";
+
+  root.hydrateLaunchIdentity();
+
+  assert.equal(root.showLobby, false);
+  assert.equal(root.autoConnect, true);
+  assert.equal(root.roomId, "room-resume");
+  assert.equal(root.playerId, "account-player");
+  assert.equal(root.displayName, "雾林司灯");
+  assert.equal(root.authToken, "resume.token");
+  assert.equal(root.sessionSource, "remote");
+});
+
 test("VeilRoot memory warnings request GC and surface the warning in HUD state", () => {
   const root = createVeilRootHarness();
   let memoryWarningHandler: ((payload?: { level?: number } | null) => void) | null = null;

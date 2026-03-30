@@ -8,6 +8,10 @@ type FakeRoomReply =
       delivery?: "reply" | "push";
     }
   | {
+      kind: "reachable";
+      reachableTiles: Array<{ x: number; y: number }>;
+    }
+  | {
       kind: "error";
       reason: string;
     };
@@ -173,21 +177,36 @@ export function createErrorReply(reason: string): FakeRoomReply {
   };
 }
 
+export function createReachableReply(reachableTiles: Array<{ x: number; y: number }>): FakeRoomReply {
+  return {
+    kind: "reachable",
+    reachableTiles
+  };
+}
+
 type MessageHandler = (type: string, payload: unknown) => void;
 
 export class FakeColyseusRoom {
   reconnectionToken?: string;
   readonly sentMessages: Array<{ type: string; payload: unknown }> = [];
   readonly connectReplies: FakeRoomReply[];
+  readonly requestReplies: Partial<Record<string, FakeRoomReply[]>>;
   leaveCalls = 0;
   private messageHandler: MessageHandler | null = null;
   private dropHandler: (() => void) | null = null;
   private reconnectHandler: (() => void) | null = null;
   private leaveHandler: ((code: number) => void) | null = null;
 
-  constructor(connectReplies: FakeRoomReply[], reconnectionToken?: string) {
+  constructor(
+    connectReplies: FakeRoomReply[],
+    reconnectionToken?: string,
+    requestReplies: Partial<Record<string, FakeRoomReply[]>> = {}
+  ) {
     this.connectReplies = [...connectReplies];
     this.reconnectionToken = reconnectionToken;
+    this.requestReplies = Object.fromEntries(
+      Object.entries(requestReplies).map(([type, replies]) => [type, [...replies]])
+    );
   }
 
   onMessage(_type: string, callback: MessageHandler): void {
@@ -213,24 +232,28 @@ export class FakeColyseusRoom {
 
   send(type: string, payload: { requestId: string }): void {
     this.sentMessages.push({ type, payload });
-    if (type === "connect") {
-      const reply = this.connectReplies.shift();
-      if (!reply) {
-        throw new Error("missing_connect_reply");
-      }
+    const replies = type === "connect" ? this.connectReplies : this.requestReplies[type];
+    const reply = replies?.shift();
+    if (!reply) {
+      return;
+    }
 
-      if ("kind" in reply) {
-        if (reply.kind === "error") {
-          this.emitError(payload.requestId, reply.reason);
-          return;
-        }
-
-        this.emitState(reply.payload, reply.delivery ?? "reply", payload.requestId);
+    if ("kind" in reply) {
+      if (reply.kind === "error") {
+        this.emitError(payload.requestId, reply.reason);
         return;
       }
 
-      this.emitState(toSessionStatePayload(reply), "reply", payload.requestId);
+      if (reply.kind === "reachable") {
+        this.emitReachable(payload.requestId, reply.reachableTiles);
+        return;
+      }
+
+      this.emitState(reply.payload, reply.delivery ?? "reply", payload.requestId);
+      return;
     }
+
+    this.emitState(toSessionStatePayload(reply), "reply", payload.requestId);
   }
 
   emitPush(update: SessionUpdate): void {
@@ -251,6 +274,14 @@ export class FakeColyseusRoom {
       type: "error",
       requestId,
       reason
+    });
+  }
+
+  emitReachable(requestId: string, reachableTiles: Array<{ x: number; y: number }>): void {
+    this.messageHandler?.("world.reachable", {
+      type: "world.reachable",
+      requestId,
+      reachableTiles
     });
   }
 

@@ -6,6 +6,7 @@ import {
   VeilCocosSession
 } from "../assets/scripts/VeilCocosSession.ts";
 import {
+  createReachableReply,
   createRawStateReply,
   createMemoryStorage,
   createSdkLoader,
@@ -49,6 +50,12 @@ function createEncodedStatePayload(options?: {
     movementPlan: null,
     reachableTiles: [{ x: 0, y: 0 }]
   };
+}
+
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
 }
 
 test("VeilCocosSession reuses a stored reconnection token and announces recovery", async () => {
@@ -186,6 +193,53 @@ test("VeilCocosSession hands off to a fresh room after reconnect failure and rep
     { logicalRoomId: "room-alpha", playerId: "player-1", seed: 1001 }
   ]);
   assert.equal(storage.getItem("project-veil:cocos:reconnection:room-alpha:player-1"), "recovered-token");
+
+  await session.dispose();
+});
+
+test("VeilCocosSession retries a recoverable reachable query after reconnect handoff", async () => {
+  const storage = createMemoryStorage();
+  const initialRoom = new FakeColyseusRoom([createSessionUpdate(2)], "initial-token");
+  const recoveredRoom = new FakeColyseusRoom(
+    [createSessionUpdate(6)],
+    "recovered-token",
+    {
+      "world.reachable": [createReachableReply([{ x: 1, y: 0 }, { x: 1, y: 1 }])]
+    }
+  );
+  const events: string[] = [];
+  const pushedDays: number[] = [];
+
+  setVeilCocosSessionRuntimeForTests({
+    storage,
+    wait: async () => undefined,
+    loadSdk: createSdkLoader({
+      joinRooms: [initialRoom, recoveredRoom]
+    })
+  });
+
+  const session = await VeilCocosSession.create("room-alpha", "player-1", 1001, {
+    onConnectionEvent: (event) => {
+      events.push(event);
+    },
+    onPushUpdate: (update) => {
+      pushedDays.push(update.world.meta.day);
+    }
+  });
+
+  await session.snapshot();
+
+  const reachablePromise = session.listReachable("hero-1");
+  await flushMicrotasks();
+  initialRoom.emitLeave(4002);
+
+  const reachableTiles = await reachablePromise;
+
+  assert.deepEqual(reachableTiles, [{ x: 1, y: 0 }, { x: 1, y: 1 }]);
+  assert.deepEqual(events, ["reconnect_failed", "reconnected"]);
+  assert.deepEqual(pushedDays, [6]);
+  assert.equal(storage.getItem("project-veil:cocos:reconnection:room-alpha:player-1"), "recovered-token");
+  assert.deepEqual(recoveredRoom.sentMessages.map((entry) => entry.type), ["connect", "world.reachable"]);
 
   await session.dispose();
 });
