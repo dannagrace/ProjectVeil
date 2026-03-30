@@ -25,6 +25,7 @@ import {
   createBattleEnvironmentState,
   createBattleReplayPlaybackState,
   createDemoBattleState,
+  nextDeterministicRandom,
   createEmptyBattleState,
   executeBattleSkill,
   createHeroBattleState,
@@ -4250,6 +4251,45 @@ test("applyBattleAction uses deterministic damage and retaliation flow", () => {
     "枪兵 反击 恶狼，造成 18 伤害",
     "枪兵 受到中毒影响，损失 2 生命"
   ]);
+});
+
+test("nextDeterministicRandom is repeatable for the same seed", () => {
+  const firstRun = [
+    nextDeterministicRandom(4242),
+    nextDeterministicRandom(3779851977),
+    nextDeterministicRandom(188715412)
+  ];
+  const secondStep = nextDeterministicRandom(4242);
+  const thirdStep = nextDeterministicRandom(secondStep.nextSeed);
+  const fourthStep = nextDeterministicRandom(thirdStep.nextSeed);
+  const secondRun = [secondStep, thirdStep, fourthStep];
+
+  assert.deepEqual(secondRun, firstRun);
+  assert.deepEqual(
+    firstRun.map((step) => step.value),
+    [0.8800653687212616, 0.04393873084336519, 0.35202502529136837]
+  );
+});
+
+test("applyBattleAction repeats battle damage variance for the same seed", () => {
+  const firstState = createDemoBattleState();
+  const secondState = createDemoBattleState();
+
+  const firstResult = applyBattleAction(firstState, {
+    type: "battle.attack",
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  });
+  const secondResult = applyBattleAction(secondState, {
+    type: "battle.attack",
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  });
+
+  assert.equal(firstResult.log.at(-4), "恶狼 对 枪兵 造成 27 伤害");
+  assert.deepEqual(secondResult.log, firstResult.log);
+  assert.deepEqual(secondResult.units, firstResult.units);
+  assert.deepEqual(secondResult.rng, firstResult.rng);
 });
 
 test("applyBattleAction supports active ranged skills without retaliation", () => {
