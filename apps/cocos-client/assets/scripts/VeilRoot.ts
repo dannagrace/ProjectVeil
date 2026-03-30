@@ -93,7 +93,12 @@ import {
   syncCocosWechatShareBridge,
   type CocosWechatShareRuntimeLike
 } from "./cocos-wechat-share.ts";
-import { readStoredCocosAuthSession, resolveCocosLaunchIdentity, type CocosAuthProvider } from "./cocos-session-launch.ts";
+import {
+  clearStoredCocosAuthSession,
+  readStoredCocosAuthSession,
+  resolveCocosLaunchIdentity,
+  type CocosAuthProvider
+} from "./cocos-session-launch.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { VeilProgressionPanel } from "./VeilProgressionPanel.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
@@ -1995,9 +2000,14 @@ export class VeilRoot extends Component {
     } catch (error) {
       this.showLobby = true;
       if (error instanceof Error && error.message === "cocos_request_failed:401") {
+        const storage = this.readWebStorage();
+        if (storage) {
+          clearStoredCocosAuthSession(storage);
+        }
         this.authToken = null;
         this.authMode = "guest";
         this.authProvider = "guest";
+        this.loginId = "";
         this.sessionSource = "none";
       }
       this.lobbyStatus =

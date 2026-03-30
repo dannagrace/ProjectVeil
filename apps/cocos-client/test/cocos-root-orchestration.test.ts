@@ -542,8 +542,10 @@ test("VeilRoot keeps the lobby visible and explains when an account session has 
   assert.equal(root.authToken, null);
   assert.equal(root.authMode, "guest");
   assert.equal(root.authProvider, "guest");
+  assert.equal(root.loginId, "");
   assert.equal(root.sessionSource, "none");
   assert.equal(root.lobbyStatus, "账号会话已失效，请重新登录后再进入房间。");
+  assert.equal(storage.getItem("project-veil:auth-session"), null);
 });
 
 test("VeilRoot forwards session connection events into runtime diagnostics and logs", async () => {
