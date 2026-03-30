@@ -262,7 +262,73 @@ test("config center save flow calls the config API with the edited draft body", 
   assert.equal(controller.state.current?.content, "{\n  \"neutralArmies\": []\n}\n");
   assert.equal(controller.state.statusTone, "success");
   assert.equal(controller.state.lastSavedImpactSummary?.documentId, "mapObjects");
+  assert.equal(controller.state.lastSavedImpactSummary?.summary, "1 项字段变更，主要关注 neutralArmies。");
+  assert.deepEqual(controller.state.lastSavedImpactSummary?.changedFields, ["neutralArmies"]);
   assert.equal(controller.state.lastSavedImpactSummary?.impactedModules.includes("招募库存"), true);
+});
+
+test("config center save is blocked when validation has already failed", async () => {
+  const { fetch, requests } = createFetchStub((request) => {
+    throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+  });
+
+  const controller = createConfigCenterController({ fetch });
+  controller.state.current = createDocument("world", "{\n  \"width\": 8,\n  \"height\": 8\n}\n", { version: 2 });
+  controller.state.validation = createValidationReport(false);
+  controller.setDraft("{\n  \"width\": 0,\n  \"height\": 8\n}\n");
+
+  await controller.saveCurrentDocument();
+
+  assert.equal(requests.length, 0);
+  assert.equal(controller.state.current?.content, "{\n  \"width\": 8,\n  \"height\": 8\n}\n");
+  assert.equal(controller.state.draft, "{\n  \"width\": 0,\n  \"height\": 8\n}\n");
+  assert.equal(controller.state.statusTone, "error");
+  assert.equal(controller.state.statusMessage, "当前配置存在校验问题，已阻止保存");
+});
+
+test("config center save surfaces API rejection without overwriting the edited draft", async () => {
+  const originalDocument = createDocument("battleBalance", "{\n  \"damage\": {\n    \"varianceRange\": 0.1\n  }\n}\n", {
+    version: 4
+  });
+  const { fetch, requests } = createFetchStub((request) => {
+    if (request.url === "/api/config-center/configs/battleBalance" && request.method === "PUT") {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: "保存失败：battleBalance 配置版本已过期，请先重新加载。"
+          }
+        }),
+        {
+          status: 409,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+  });
+
+  const controller = createConfigCenterController({ fetch });
+  controller.state.current = originalDocument;
+  controller.state.validation = createValidationReport(true);
+  controller.setDraft("{\n  \"damage\": {\n    \"varianceRange\": 0.2\n  }\n}\n");
+
+  await controller.saveCurrentDocument();
+
+  const saveRequest = requests.find(
+    (request) => request.url === "/api/config-center/configs/battleBalance" && request.method === "PUT"
+  );
+  assert.ok(saveRequest);
+  assert.deepEqual(JSON.parse(saveRequest.body ?? "{}"), {
+    content: "{\n  \"damage\": {\n    \"varianceRange\": 0.2\n  }\n}\n"
+  });
+  assert.equal(controller.state.current?.content, originalDocument.content);
+  assert.equal(controller.state.draft, "{\n  \"damage\": {\n    \"varianceRange\": 0.2\n  }\n}\n");
+  assert.equal(controller.state.lastSavedImpactSummary, null);
+  assert.equal(controller.state.statusTone, "error");
+  assert.equal(controller.state.statusMessage, "保存失败：battleBalance 配置版本已过期，请先重新加载。");
 });
 
 test("config center snapshot diff exposes non-empty changes for an edited field", async () => {
