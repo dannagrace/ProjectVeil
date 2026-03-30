@@ -420,6 +420,39 @@ test("client that misses the reconnect window is cleaned up from the player slot
   assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 0);
 });
 
+test("failed reconnect cleanup removes only the expired session and preserves other connected players", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-reconnect-timeout-multi-${Date.now()}`);
+  const timeoutClient = createFakeClient("session-timeout-multi");
+  const steadyClient = createFakeClient("session-steady-multi");
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+    allowReconnection(client: Client, seconds: number): Promise<Client>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, timeoutClient, "player-timeout", "connect-timeout-multi");
+  await connectPlayer(room, steadyClient, "player-steady", "connect-steady-multi");
+
+  internalRoom.allowReconnection = async () => {
+    throw new Error("reconnect window expired");
+  };
+  await room.onDrop(timeoutClient);
+  room.onLeave(timeoutClient);
+
+  assert.equal(internalRoom.playerIdBySessionId.has("session-timeout-multi"), false);
+  assert.equal(internalRoom.playerIdBySessionId.get("session-steady-multi"), "player-steady");
+  assert.deepEqual(Array.from(internalRoom.playerIdBySessionId.values()), ["player-steady"]);
+  assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 1);
+  assert.equal(lastSessionState(steadyClient, "reply").payload.world.ownHeroes[0]?.playerId, "player-steady");
+});
+
 test("room disposal after the last client leaves removes it from the active room list", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
