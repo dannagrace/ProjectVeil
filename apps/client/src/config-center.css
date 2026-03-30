@@ -674,6 +674,34 @@ body {
   margin-top: 10px;
 }
 
+.impact-summary-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.impact-summary-grid.is-compact {
+  margin-top: 10px;
+}
+
+.impact-summary-card {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 249, 241, 0.92);
+  border: 1px solid rgba(138, 90, 43, 0.12);
+}
+
+.impact-summary-card strong,
+.impact-summary-card span {
+  display: block;
+}
+
+.impact-summary-card span {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .publish-diff-chip {
   display: inline-flex;
   padding: 6px 10px;

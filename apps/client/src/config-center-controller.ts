@@ -73,6 +73,19 @@ interface ConfigDiff {
   entries: ConfigDiffEntry[];
 }
 
+type ConfigImpactRiskLevel = "low" | "medium" | "high";
+
+interface ConfigImpactSummary {
+  documentId: ConfigDocumentId;
+  title: string;
+  summary: string;
+  riskLevel: ConfigImpactRiskLevel;
+  changedFields: string[];
+  impactedModules: string[];
+  riskHints: string[];
+  suggestedValidationActions: string[];
+}
+
 interface ConfigPresetSummary {
   id: string;
   name: string;
@@ -107,6 +120,7 @@ interface ConfigPublishAuditChange {
   runtimeStatus: ConfigPublishChangeRuntimeStatus;
   runtimeMessage: string;
   diffSummary: ConfigDiffEntry[];
+  impactSummary: ConfigImpactSummary | null;
 }
 
 interface ConfigPublishAuditEvent {
@@ -240,6 +254,7 @@ interface AppState {
   saving: boolean;
   statusTone: "neutral" | "success" | "error";
   statusMessage: string;
+  lastSavedImpactSummary: ConfigImpactSummary | null;
   draft: string;
   previewSeed: number;
   worldPreview: WorldConfigPreview | null;
@@ -367,6 +382,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     saving: false,
     statusTone: "neutral",
     statusMessage: "正在加载配置中心...",
+    lastSavedImpactSummary: null,
     draft: "",
     previewSeed: 1001,
     worldPreview: null,
@@ -1003,6 +1019,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       state.selectedId = response.document.id;
       state.draft = response.document.content;
       state.validation = null;
+      state.lastSavedImpactSummary = null;
       state.snapshots = [];
       state.publishHistory = [];
       state.presets = [];
@@ -1054,6 +1071,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       const response = await requestJson<{
         storage: "filesystem" | "mysql";
         document: ConfigDocument;
+        impactSummary?: ConfigImpactSummary | null;
       }>(`/api/config-center/configs/${state.current.id}`, {
         method: "PUT",
         headers: {
@@ -1066,6 +1084,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
 
       state.storageMode = response.storage;
       state.current = response.document;
+      state.lastSavedImpactSummary = response.impactSummary ?? null;
       state.draft = response.document.content;
       state.statusTone = "success";
       state.statusMessage = `${response.document.title} 已保存，并同步刷新服务端运行时配置`;

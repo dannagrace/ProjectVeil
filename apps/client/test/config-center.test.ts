@@ -196,7 +196,17 @@ test("config center save flow calls the config API with the edited draft body", 
       return new Response(
         JSON.stringify({
           storage: "filesystem",
-          document: savedDocument
+          document: savedDocument,
+          impactSummary: {
+            documentId: "mapObjects",
+            title: "地图物件",
+            summary: "1 项字段变更，主要关注 neutralArmies。",
+            riskLevel: "medium",
+            changedFields: ["neutralArmies"],
+            impactedModules: ["地图 POI", "招募库存"],
+            riskHints: ["地图对象已调整，守军、建筑或资源点分布可能改变探索与招募节奏。"],
+            suggestedValidationActions: ["config-center 地图预览"]
+          }
         }),
         {
           status: 200,
@@ -251,6 +261,8 @@ test("config center save flow calls the config API with the edited draft body", 
   });
   assert.equal(controller.state.current?.content, "{\n  \"neutralArmies\": []\n}\n");
   assert.equal(controller.state.statusTone, "success");
+  assert.equal(controller.state.lastSavedImpactSummary?.documentId, "mapObjects");
+  assert.equal(controller.state.lastSavedImpactSummary?.impactedModules.includes("招募库存"), true);
 });
 
 test("config center snapshot diff exposes non-empty changes for an edited field", async () => {

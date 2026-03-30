@@ -135,6 +135,19 @@ export interface ConfigDiff {
   entries: ConfigDiffEntry[];
 }
 
+export type ConfigImpactRiskLevel = "low" | "medium" | "high";
+
+export interface ConfigImpactSummary {
+  documentId: ConfigDocumentId;
+  title: string;
+  summary: string;
+  riskLevel: ConfigImpactRiskLevel;
+  changedFields: string[];
+  impactedModules: string[];
+  riskHints: string[];
+  suggestedValidationActions: string[];
+}
+
 export interface ConfigPresetSummary {
   id: string;
   name: string;
@@ -169,6 +182,7 @@ export interface ConfigPublishAuditChange {
   runtimeStatus: ConfigPublishChangeRuntimeStatus;
   runtimeMessage: string;
   diffSummary: ConfigDiffEntry[];
+  impactSummary: ConfigImpactSummary | null;
 }
 
 export interface ConfigPublishAuditEvent {
@@ -440,6 +454,40 @@ const CONFIG_RUNTIME_IMPACT: Record<ConfigDocumentId, string[]> = {
   units: ["战斗模拟器", "招募面板"],
   battleSkills: ["技能编辑器", "战斗模拟器"],
   battleBalance: ["战斗平衡计算", "PVP 匹配"]
+};
+const CONFIG_IMPACT_RULES: Record<
+  ConfigDocumentId,
+  {
+    defaultRisk: ConfigImpactRiskLevel;
+    impactedModules: string[];
+    suggestedValidationActions: string[];
+  }
+> = {
+  world: {
+    defaultRisk: "high",
+    impactedModules: ["地图生成", "英雄出生点", "资源分布"],
+    suggestedValidationActions: ["config-center 地图预览", "房间建图 smoke"]
+  },
+  mapObjects: {
+    defaultRisk: "medium",
+    impactedModules: ["地图 POI", "招募库存", "资源矿收益"],
+    suggestedValidationActions: ["config-center 地图预览", "建筑/守军布局检查"]
+  },
+  units: {
+    defaultRisk: "medium",
+    impactedModules: ["单位数值", "招募库存", "战斗节奏"],
+    suggestedValidationActions: ["content-pack 一致性校验", "战斗公式回归"]
+  },
+  battleSkills: {
+    defaultRisk: "high",
+    impactedModules: ["战斗技能", "状态效果", "伤害结算"],
+    suggestedValidationActions: ["content-pack 一致性校验", "技能链路回归"]
+  },
+  battleBalance: {
+    defaultRisk: "high",
+    impactedModules: ["战斗公式", "环境机关", "PVP ELO"],
+    suggestedValidationActions: ["战斗公式回归", "PVP 结算检查"]
+  }
 };
 
 const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
@@ -958,6 +1006,86 @@ function buildBlastRadius(id: ConfigDocumentId, kind: ConfigDiffChangeKind): str
   const base = kind === "value" ? BASE_VALUE_IMPACT : BASE_SCHEMA_IMPACT;
   const scoped = kind === "value" ? [] : CONFIG_RUNTIME_IMPACT[id] ?? [];
   return Array.from(new Set([...base, ...scoped]));
+}
+
+function uniqueStrings(items: Iterable<string>): string[] {
+  return Array.from(
+    new Set(
+      [...items]
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+    )
+  );
+}
+
+function buildConfigImpactSummary(
+  id: ConfigDocumentId,
+  title: string,
+  diffEntries: ConfigDiffEntry[]
+): ConfigImpactSummary | null {
+  if (diffEntries.length === 0) {
+    return null;
+  }
+
+  const rule = CONFIG_IMPACT_RULES[id];
+  const changedFields = uniqueStrings(diffEntries.map((entry) => entry.path)).slice(0, 4);
+  const impactedModules = uniqueStrings([
+    ...rule.impactedModules,
+    ...diffEntries.flatMap((entry) => entry.blastRadius),
+    ...(CONFIG_RUNTIME_IMPACT[id] ?? [])
+  ]);
+  const structuralCount = diffEntries.filter((entry) => entry.kind !== "value").length;
+  let riskLevel = rule.defaultRisk;
+
+  if (id === "mapObjects") {
+    const highSignal = changedFields.some((entry) =>
+      /(buildings|neutralArmies|guaranteedResources|reward|recruitCount|income|unitTemplateId)/.test(entry)
+    );
+    if (highSignal || structuralCount > 0 || diffEntries.length >= 8) {
+      riskLevel = "high";
+    }
+  } else if (id === "units") {
+    const highSignal = changedFields.some((entry) =>
+      /(attack|defense|minDamage|maxDamage|maxHp|initiative|skills|templateId)/.test(entry)
+    );
+    if (highSignal || structuralCount > 0 || diffEntries.length >= 10) {
+      riskLevel = "high";
+    }
+  }
+
+  const riskHints = uniqueStrings([
+    structuralCount > 0 ? `包含 ${structuralCount} 项结构变更，需留意 Schema/运行时兼容性。` : "",
+    riskLevel === "high" ? "命中高敏感配置域，建议在发布前补一次联动回归。" : "",
+    changedFields.some((entry) => /(width|height|heroes|resourceSpawn)/.test(entry))
+      ? "世界生成参数已变更，地图尺寸、出生点或资源刷率可能一起波动。"
+      : "",
+    changedFields.some((entry) => /(neutralArmies|buildings|guaranteedResources)/.test(entry))
+      ? "地图对象已调整，守军、建筑或资源点分布可能改变探索与招募节奏。"
+      : "",
+    changedFields.some((entry) => /(attack|defense|minDamage|maxDamage|maxHp|initiative)/.test(entry))
+      ? "单位面板已调整，战斗节奏和招募价值可能出现连锁变化。"
+      : "",
+    changedFields.some((entry) => /(cooldown|damageMultiplier|grantedStatusId|onHitStatusId|statuses)/.test(entry))
+      ? "技能或状态参数已调整，技能链和状态覆盖率需要重点复核。"
+      : "",
+    changedFields.some((entry) => /(damage|environment|eloK|trap|blocker)/.test(entry))
+      ? "战斗公式或环境机关已调整，伤害结算与 PVP 评分可能漂移。"
+      : ""
+  ]);
+
+  return {
+    documentId: id,
+    title,
+    summary:
+      structuralCount > 0
+        ? `${diffEntries.length} 项字段变更，其中 ${structuralCount} 项为结构风险。`
+        : `${diffEntries.length} 项字段变更，主要关注 ${changedFields.join(", ")}。`,
+    riskLevel,
+    changedFields,
+    impactedModules,
+    riskHints,
+    suggestedValidationActions: [...rule.suggestedValidationActions]
+  };
 }
 
 function buildConfigDiffEntries(
@@ -2761,7 +2889,12 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
         snapshotId: null,
         runtimeStatus: "pending",
         runtimeMessage: "等待运行时应用",
-        diffSummary: diffEntries.slice(0, 4)
+        diffSummary: diffEntries.slice(0, 4),
+        impactSummary: buildConfigImpactSummary(
+          stagedDocument.id,
+          definition?.title ?? stagedDocument.id,
+          diffEntries
+        )
       });
     }
 
@@ -3689,9 +3822,13 @@ export function registerConfigCenterRoutes(
         return;
       }
 
+      const current = await store.loadDocument(definition.id);
+      const diffEntries = buildConfigDiffEntries(definition.id, current.content, body.content);
+
       sendJson(response, 200, {
         storage: store.mode,
-        document: await store.saveDocument(definition.id, body.content)
+        document: await store.saveDocument(definition.id, body.content),
+        impactSummary: buildConfigImpactSummary(definition.id, definition.title, diffEntries)
       });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });

@@ -696,6 +696,10 @@ test("config center staged publish applies bundled drafts and records publish hi
   assert.equal(auditHistory[0]?.changes[0]?.runtimeStatus, "applied");
   assert.equal(typeof auditHistory[0]?.changes[0]?.snapshotId, "string");
   assert.equal((auditHistory[0]?.changes[0]?.diffSummary.length ?? 0) > 0, true);
+  assert.equal(auditHistory[0]?.changes[0]?.impactSummary?.documentId, auditHistory[0]?.changes[0]?.documentId);
+  assert.equal((auditHistory[0]?.changes[0]?.impactSummary?.changedFields.length ?? 0) > 0, true);
+  assert.equal((auditHistory[0]?.changes[0]?.impactSummary?.impactedModules.length ?? 0) > 0, true);
+  assert.equal((auditHistory[0]?.changes[0]?.impactSummary?.riskHints.length ?? 0) > 0, true);
 
   const stageAfter = await store.getStagedDraft();
   assert.equal(stageAfter, null);

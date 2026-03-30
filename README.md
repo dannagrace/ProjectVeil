@@ -208,6 +208,7 @@ npm run dev:client:h5
   - 保存后会同时导出到 `configs/*.json`，并同步刷新服务端运行时配置，新建房间和战斗逻辑会直接读取新值
   - 当前已补上版本快照、快照差异对比、历史回滚，以及 Easy / Normal / Hard 三档内置预设和自定义预设保存
   - 实时校验现已带出对应配置 schema 摘要、必填根字段、逐项修复建议，以及跨 `world / mapObjects / units / battleSkills / battleBalance` 的 content-pack 一致性结果；非法值会阻止保存
+  - 保存 `world / mapObjects / units / battle-skills / battle-balance` 后，右侧会同步展示一份 impact summary，带出变更字段、影响模块、潜在风险提示和建议验证动作；发布审计历史也会保留同样的摘要，便于做配置变更评审
   - 导出除 JSON 注释版外，还支持带 `Meta / Schema / Fields` 工作表的 Excel，以及更轻量的字段清单 CSV
   - 当前编辑 `phase1-world.json` 时，右侧会即时生成一份地图样本预览；可切换预览 seed，对照查看地形、随机资源、保底资源、英雄与中立怪分布
   - 当前编辑 `battle-skills.json` 时，右侧会显示技能编辑器，可直接调整冷却、伤害倍率、目标类型、附加状态和状态持续参数，并同步回写 JSON 草稿

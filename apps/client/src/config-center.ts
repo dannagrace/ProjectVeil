@@ -133,6 +133,19 @@ interface ConfigDiff {
   entries: ConfigDiffEntry[];
 }
 
+type ConfigImpactRiskLevel = "low" | "medium" | "high";
+
+interface ConfigImpactSummary {
+  documentId: ConfigDocumentId;
+  title: string;
+  summary: string;
+  riskLevel: ConfigImpactRiskLevel;
+  changedFields: string[];
+  impactedModules: string[];
+  riskHints: string[];
+  suggestedValidationActions: string[];
+}
+
 interface ConfigPresetSummary {
   id: string;
   name: string;
@@ -167,6 +180,7 @@ interface ConfigPublishAuditChange {
   runtimeStatus: ConfigPublishChangeRuntimeStatus;
   runtimeMessage: string;
   diffSummary: ConfigDiffEntry[];
+  impactSummary: ConfigImpactSummary | null;
 }
 
 interface ConfigPublishAuditEvent {
@@ -297,6 +311,7 @@ interface AppState {
   saving: boolean;
   statusTone: "neutral" | "success" | "error";
   statusMessage: string;
+  lastSavedImpactSummary: ConfigImpactSummary | null;
   draft: string;
   previewSeed: number;
   worldPreview: WorldConfigPreview | null;
@@ -354,6 +369,16 @@ function sortDiffEntries(entries: ConfigDiffEntry[]): ConfigDiffEntry[] {
 
 function countStructuralEntries(diff: ConfigDiff): number {
   return diff.entries.filter(isStructuralDiff).length;
+}
+
+function impactRiskLabel(riskLevel: ConfigImpactRiskLevel): string {
+  if (riskLevel === "high") {
+    return "高风险";
+  }
+  if (riskLevel === "medium") {
+    return "中风险";
+  }
+  return "低风险";
 }
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
@@ -1180,6 +1205,40 @@ function renderValidationSection(): string {
   `;
 }
 
+function renderImpactSummarySection(): string {
+  if (!state.current || !state.lastSavedImpactSummary) {
+    return "";
+  }
+
+  const summary = state.lastSavedImpactSummary;
+  return `
+    <section class="history-section">
+      <div class="config-preview-subhead">
+        <h4>变更影响摘要</h4>
+        <span class="config-meta">${impactRiskLabel(summary.riskLevel)}</span>
+      </div>
+      <p class="config-hint">${escapeHtml(summary.summary)}</p>
+      <div class="config-badge-row">
+        ${summary.impactedModules.map((label) => `<span class="config-badge">${escapeHtml(label)}</span>`).join("")}
+      </div>
+      <div class="impact-summary-grid">
+        <article class="impact-summary-card">
+          <strong>变更字段</strong>
+          <span>${escapeHtml(summary.changedFields.join(" / ") || "无")}</span>
+        </article>
+        <article class="impact-summary-card">
+          <strong>潜在风险</strong>
+          <span>${escapeHtml(summary.riskHints.join(" / ") || "未检测到额外风险提示")}</span>
+        </article>
+        <article class="impact-summary-card">
+          <strong>建议验证</strong>
+          <span>${escapeHtml(summary.suggestedValidationActions.join(" / ") || "无")}</span>
+        </article>
+      </div>
+    </section>
+  `;
+}
+
 function renderPublishStageSection(): string {
   if (!state.current) {
     return "";
@@ -1463,6 +1522,26 @@ function renderPublishHistoryList(): string {
                             <span>${change.changeCount} 项变更${change.structuralChangeCount ? ` · ${change.structuralChangeCount} 项结构风险` : ""}</span>
                           </div>
                           <small>${escapeHtml(change.runtimeMessage)}</small>
+                          ${
+                            change.impactSummary
+                              ? `
+                                <div class="impact-summary-grid is-compact">
+                                  <article class="impact-summary-card">
+                                    <strong>${impactRiskLabel(change.impactSummary.riskLevel)}</strong>
+                                    <span>${escapeHtml(change.impactSummary.summary)}</span>
+                                  </article>
+                                  <article class="impact-summary-card">
+                                    <strong>影响模块</strong>
+                                    <span>${escapeHtml(change.impactSummary.impactedModules.join(" / "))}</span>
+                                  </article>
+                                  <article class="impact-summary-card">
+                                    <strong>风险提示</strong>
+                                    <span>${escapeHtml(change.impactSummary.riskHints.join(" / ") || "无")}</span>
+                                  </article>
+                                </div>
+                              `
+                              : ""
+                          }
                           <div class="publish-diff-summary">
                             ${
                               change.diffSummary.length > 0
@@ -1593,6 +1672,7 @@ function renderPreviewContent(): string {
     <div class="config-badge-row">${badges}</div>
     <p class="config-hint">保存后会先写主存储，再导出到 <code>configs/*.json</code>，并同步刷新服务端运行时配置。新建房间、战斗公式和世界生成会直接读取最新版本。</p>
     ${renderValidationSection()}
+    ${renderImpactSummarySection()}
     ${renderPublishStageSection()}
     ${renderPresetSection()}
     ${renderSnapshotSection()}
