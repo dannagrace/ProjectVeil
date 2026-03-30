@@ -1,4 +1,5 @@
 export * from "./achievement-ui.ts";
+export * from "./action-precheck.ts";
 export * from "./assets-config.ts";
 export * from "./battle.ts";
 export * from "./battle-replay.ts";

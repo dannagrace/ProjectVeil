@@ -8,6 +8,7 @@ import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-
 import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
 import {
   applyBattleAction,
+  applyWorldAction,
   appendEventLogEntries,
   appendPlayerBattleReplaySummaries,
   applyBattleOutcomeToWorld,
@@ -4691,6 +4692,32 @@ test("applyBattleAction logs rejected actions without mutating battle flow", () 
   assert.equal(next.activeUnitId, initial.activeUnitId);
   assert.deepEqual(next.turnOrder, initial.turnOrder);
   assert.equal(next.log.at(-1), "Action rejected: attacker_not_active");
+});
+
+test("applyWorldAction rejects invalid movement before mutating world state", () => {
+  const hero = createHero({
+    id: "hero-blocked",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 0 },
+    move: { total: 6, remaining: 1 }
+  });
+  const initial = createWorldState({
+    width: 3,
+    height: 1,
+    heroes: [hero],
+    tiles: [createTile(0, 0), createTile(1, 0), createTile(2, 0)]
+  });
+
+  const next = applyWorldAction(initial, {
+    type: "hero.move",
+    heroId: "hero-blocked",
+    destination: { x: 2, y: 0 }
+  });
+
+  assert.equal(next, initial);
+  assert.deepEqual(next.heroes[0]?.position, { x: 0, y: 0 });
+  assert.equal(next.heroes[0]?.move.remaining, 1);
 });
 
 test("applyBattleAction resolves wait plus turn-start poison death and cooldown ticking", () => {

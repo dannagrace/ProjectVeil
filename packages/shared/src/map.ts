@@ -28,6 +28,7 @@ import type {
   WorldResourceLedger,
   WorldState
 } from "./models.ts";
+import { validateAction } from "./action-precheck.ts";
 import { applyHeroSkillSelection, validateHeroSkillSelection } from "./hero-skills.ts";
 import { applyHeroEquipmentChange, rollEquipmentDrop, validateHeroEquipmentChange } from "./equipment.ts";
 import {
@@ -2487,6 +2488,11 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
 }
 
 export function applyWorldAction(state: WorldState, action: WorldAction): WorldState {
+  const { validation } = validateAction(state, action, validateWorldAction);
+  if (!validation.valid) {
+    return state;
+  }
+
   return resolveWorldAction(state, action).state;
 }
 
