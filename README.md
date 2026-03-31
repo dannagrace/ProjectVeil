@@ -178,6 +178,7 @@ npm run dev:client:h5
 - 并发房间压测启动后，也可直接查看同进程观测面：`/api/runtime/health`、`/api/runtime/auth-readiness` 与 `/api/runtime/metrics`
 - 战斗平衡验证：`npm run validate:battle -- --count=1000 --scenario=all --skill-config=configs/battle-skills-v1.1.json`
 - 内容包一致性验证：`npm run validate:content-pack -- --report-path artifacts/content-pack-validation-report.json`
+- Phase 1 持久化 + shipped content 回归：`npm run test:phase1-release-persistence`
 - 覆盖率 CI 同款校验：`npm run test:coverage:ci`
 - 覆盖率摘要：`.coverage/summary.md`
 - `npm test` 会通过 `git ls-files` 自动发现所有已检入仓库的 `*.test.ts` Node 测试文件并统一执行；新增此类测试时不需要手动维护根脚本列表。
