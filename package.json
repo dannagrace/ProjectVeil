@@ -58,7 +58,7 @@
     "sync:assets:h5-pixel": "npm run sync:assets:pixel",
     "validate:assets": "node --import tsx ./scripts/validate-assets.ts",
     "check:issue33-assets": "node ./scripts/check-issue-33-art-staging.mjs",
-    "test": "node --import tsx --test \"packages/shared/test/**/*.test.ts\" \"apps/server/test/**/*.test.ts\" \"apps/client/test/**/*.test.ts\" \"apps/cocos-client/test/**/*.test.ts\"",
+    "test": "node --import tsx ./scripts/run-root-tests.ts",
     "test:coverage:ci": "node --import tsx ./scripts/ci-v8-coverage.ts",
     "test:cocos:runtime-smoke": "node --import tsx --test ./apps/cocos-client/test/cocos-primary-runtime-smoke.test.ts",
     "test:cocos:primary-journey": "node --import tsx --test ./apps/cocos-client/test/cocos-primary-client-journey.test.ts",
