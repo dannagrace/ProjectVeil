@@ -4,6 +4,7 @@ import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
 import type { BattleState, ServerMessage } from "../../../packages/shared/src/index";
 import { VeilColyseusRoom, configureRoomSnapshotStore, listLobbyRooms, resetLobbyRoomRegistry } from "../src/colyseus-room";
+import { createRoom, type RoomPersistenceSnapshot } from "../src/index";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import type { PlayerAccountProgressPatch, PlayerAccountSnapshot } from "../src/persistence";
 
@@ -23,6 +24,12 @@ class InstrumentedRoomSnapshotStore extends MemoryRoomSnapshotStore {
       patch: structuredClone(patch)
     });
     return super.savePlayerAccountProgress(playerId, patch);
+  }
+}
+
+class FailingBootstrapSaveStore extends MemoryRoomSnapshotStore {
+  override async save(_roomId: string, _snapshot: RoomPersistenceSnapshot): Promise<void> {
+    throw new Error("bootstrap save failed");
   }
 }
 
@@ -265,6 +272,52 @@ test("room creation and connect reflect one connected player in room state", asy
 
   assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 1);
   assert.equal(lastSessionState(client, "reply").payload.world.ownHeroes[0]?.playerId, "player-1");
+});
+
+test("persisted room bootstrap rebinds the default slot to the joining player and hydrates the saved state", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  const roomId = `lifecycle-bootstrap-${Date.now()}`;
+  const seededRoom = createRoom(roomId, 1777);
+  seededRoom.dispatch("player-1", {
+    type: "hero.move",
+    heroId: "hero-1",
+    destination: { x: 2, y: 1 }
+  });
+  await store.save(roomId, seededRoom.serializePersistenceSnapshot());
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(roomId, 2444);
+  const client = createFakeClient("session-bootstrap");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, client, "guest-bootstrap", "connect-bootstrap");
+
+  const connectedState = lastSessionState(client, "reply");
+  const persistedSnapshot = await store.load(roomId);
+  const roomSummary = listLobbyRooms().find((entry) => entry.roomId === roomId);
+
+  assert.deepEqual(connectedState.payload.world.ownHeroes[0]?.position, { x: 2, y: 1 });
+  assert.equal(connectedState.payload.world.ownHeroes[0]?.playerId, "guest-bootstrap");
+  assert.equal(persistedSnapshot?.state.heroes.find((hero) => hero.id === "hero-1")?.playerId, "guest-bootstrap");
+  assert.equal(roomSummary?.seed, 1777);
+  assert.equal(roomSummary?.connectedPlayers, 1);
+});
+
+test("room bootstrap save failures reject creation without publishing a lobby summary", async () => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(new FailingBootstrapSaveStore());
+  const roomId = `lifecycle-bootstrap-failure-${Date.now()}`;
+
+  await assert.rejects(createTestRoom(roomId), /bootstrap save failed/);
+
+  assert.equal(listLobbyRooms().some((entry) => entry.roomId === roomId), false);
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
 });
 
 test("client reconnect within the window restores room state and records reconnectedAt", async (t) => {
