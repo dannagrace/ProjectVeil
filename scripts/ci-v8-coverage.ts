@@ -36,11 +36,12 @@ export const suites: CoverageSuite[] = [
   {
     name: "release-scripts",
     include:
-      "{scripts/validate-wechat-release-candidate.ts,scripts/verify-wechat-minigame-artifact.ts}",
+      "{scripts/root-test-discovery.ts,scripts/validate-wechat-release-candidate.ts,scripts/verify-wechat-minigame-artifact.ts}",
     lineThreshold: 80,
     branchThreshold: 55,
     functionThreshold: 85,
     tests: [
+      "scripts/test/root-test-discovery.test.ts",
       "scripts/test/wechat-release-artifacts.test.ts",
       "apps/cocos-client/test/cocos-wechat-build.test.ts",
       "apps/cocos-client/test/cocos-wechat-rc-validation.test.ts",
