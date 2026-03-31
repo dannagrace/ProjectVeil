@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-type EvidenceStatus = "pending" | "passed" | "failed" | "not_applicable";
-type SnapshotResult = "pending" | "passed" | "failed" | "partial";
+type EvidenceStatus = "pending" | "blocked" | "passed" | "failed" | "not_applicable";
+type SnapshotResult = "pending" | "blocked" | "passed" | "failed" | "partial";
 type BuildSurface = "creator_preview" | "wechat_preview" | "wechat_upload_candidate" | "other";
 type JourneyStepId = "lobby-entry" | "room-join" | "map-explore" | "first-battle" | "reconnect-restore" | "return-to-world";
 type CanonicalEvidenceId = "roomId" | "reconnectPrompt" | "restoredState" | "firstBattleResult";
@@ -40,6 +40,29 @@ interface ReleaseReadinessSnapshotCheck {
 
 interface ReleaseReadinessSnapshot {
   checks?: ReleaseReadinessSnapshotCheck[];
+}
+
+interface WechatSmokeReportCase {
+  id?: string;
+  status?: "pending" | "blocked" | "passed" | "failed" | "not_applicable";
+  notes?: string;
+  evidence?: string[];
+  requiredEvidence?: Partial<Record<CanonicalEvidenceId | "shareScene" | "shareQuery" | "roundtripState", string>>;
+}
+
+interface WechatSmokeReport {
+  execution?: {
+    tester?: string;
+    device?: string;
+    clientVersion?: string;
+    executedAt?: string;
+    result?: "pending" | "blocked" | "passed" | "failed";
+    summary?: string;
+  };
+  artifact?: {
+    sourceRevision?: string;
+  };
+  cases?: WechatSmokeReportCase[];
 }
 
 interface CanonicalEvidenceField {
@@ -439,7 +462,7 @@ function buildTemplate(args: Args): CocosReleaseCandidateSnapshot {
   const shortCommit = getGitValue(["rev-parse", "--short", "HEAD"]);
   const branch = getGitValue(["rev-parse", "--abbrev-ref", "HEAD"]);
 
-  return {
+  const snapshot: CocosReleaseCandidateSnapshot = {
     schemaVersion: 1,
     candidate: {
       name: args.candidate || `cocos-rc-${shortCommit}`,
@@ -472,6 +495,12 @@ function buildTemplate(args: Args): CocosReleaseCandidateSnapshot {
     requiredEvidence: buildRequiredEvidence(),
     journey: buildJourney()
   };
+
+  if (args.wechatSmokeReportPath) {
+    applyWechatSmokeReport(snapshot, readJsonFile<WechatSmokeReport>(path.resolve(args.wechatSmokeReportPath)));
+  }
+
+  return snapshot;
 }
 
 function assertNonEmptyString(value: unknown, label: string): string {
@@ -489,17 +518,125 @@ function assertStringArray(value: unknown, label: string): string[] {
 }
 
 function assertEvidenceStatus(value: unknown, label: string): EvidenceStatus {
-  if (value === "pending" || value === "passed" || value === "failed" || value === "not_applicable") {
+  if (value === "pending" || value === "blocked" || value === "passed" || value === "failed" || value === "not_applicable") {
     return value;
   }
   fail(`${label} has unsupported status: ${String(value)}`);
 }
 
 function assertSnapshotResult(value: unknown): SnapshotResult {
-  if (value === "pending" || value === "passed" || value === "failed" || value === "partial") {
+  if (value === "pending" || value === "blocked" || value === "passed" || value === "failed" || value === "partial") {
     return value;
   }
   fail(`execution.overallStatus has unsupported value: ${String(value)}`);
+}
+
+function mapSmokeStatusToJourneyStatus(value: WechatSmokeReportCase["status"]): EvidenceStatus {
+  if (value === "failed") {
+    return "failed";
+  }
+  if (value === "blocked") {
+    return "blocked";
+  }
+  if (value === "passed") {
+    return "passed";
+  }
+  if (value === "not_applicable") {
+    return "not_applicable";
+  }
+  return "pending";
+}
+
+function applyCaseToJourneyStep(
+  snapshot: CocosReleaseCandidateSnapshot,
+  stepId: JourneyStepId,
+  entry: WechatSmokeReportCase | undefined
+): void {
+  if (!entry) {
+    return;
+  }
+  const step = snapshot.journey.find((candidate) => candidate.id === stepId);
+  if (!step) {
+    return;
+  }
+  step.status = mapSmokeStatusToJourneyStatus(entry.status);
+  step.notes = entry.notes?.trim() || step.notes;
+  step.evidence = Array.isArray(entry.evidence) ? entry.evidence.filter((item): item is string => typeof item === "string") : [];
+  step.sourceRefs = ["wechat-smoke-report"];
+}
+
+function applyRequiredEvidenceValue(
+  snapshot: CocosReleaseCandidateSnapshot,
+  fieldId: CanonicalEvidenceId,
+  value: string | undefined,
+  evidence: string[]
+): void {
+  if (!value?.trim()) {
+    return;
+  }
+  const field = snapshot.requiredEvidence.find((entry) => entry.id === fieldId);
+  if (!field) {
+    return;
+  }
+  field.value = value.trim();
+  field.evidence = evidence;
+}
+
+function applyWechatSmokeReport(snapshot: CocosReleaseCandidateSnapshot, report: WechatSmokeReport): void {
+  const caseById = new Map((report.cases ?? []).map((entry) => [entry.id, entry]));
+  const loginLobby = caseById.get("login-lobby");
+  const roomEntry = caseById.get("room-entry");
+  const reconnect = caseById.get("reconnect-recovery");
+
+  applyCaseToJourneyStep(snapshot, "lobby-entry", loginLobby);
+  applyCaseToJourneyStep(snapshot, "room-join", roomEntry);
+  applyCaseToJourneyStep(snapshot, "reconnect-restore", reconnect);
+
+  const reconnectEvidence = reconnect?.requiredEvidence;
+  const reconnectArtifacts = Array.isArray(reconnect?.evidence)
+    ? reconnect.evidence.filter((item): item is string => typeof item === "string")
+    : [];
+  applyRequiredEvidenceValue(snapshot, "roomId", reconnectEvidence?.roomId, reconnectArtifacts);
+  applyRequiredEvidenceValue(snapshot, "reconnectPrompt", reconnectEvidence?.reconnectPrompt, reconnectArtifacts);
+  applyRequiredEvidenceValue(snapshot, "restoredState", reconnectEvidence?.restoredState, reconnectArtifacts);
+
+  if (!snapshot.execution.owner && report.execution?.tester?.trim()) {
+    snapshot.execution.owner = report.execution.tester.trim();
+  }
+  if (!snapshot.execution.executedAt && report.execution?.executedAt?.trim()) {
+    snapshot.execution.executedAt = report.execution.executedAt.trim();
+  }
+  if (!snapshot.environment.device && report.execution?.device?.trim()) {
+    snapshot.environment.device = report.execution.device.trim();
+  }
+  if (!snapshot.environment.wechatClient && report.execution?.clientVersion?.trim()) {
+    snapshot.environment.wechatClient = report.execution.clientVersion.trim();
+  }
+
+  const mappedSteps = snapshot.journey.filter((step) => ["lobby-entry", "room-join", "reconnect-restore"].includes(step.id));
+  const hasFailedMappedStep = mappedSteps.some((step) => step.status === "failed");
+  const hasBlockedMappedStep = mappedSteps.some((step) => step.status === "blocked");
+  const hasPendingUnmappedStep = snapshot.journey.some((step) => step.required && step.status === "pending");
+  if (hasFailedMappedStep) {
+    snapshot.execution.overallStatus = "failed";
+  } else if (hasBlockedMappedStep) {
+    snapshot.execution.overallStatus = "blocked";
+  } else if (hasPendingUnmappedStep) {
+    snapshot.execution.overallStatus = "partial";
+  } else {
+    snapshot.execution.overallStatus = report.execution?.result === "passed" ? "passed" : "partial";
+  }
+
+  const importedSummary = report.execution?.summary?.trim();
+  if (importedSummary) {
+    snapshot.execution.summary = importedSummary;
+  } else if (report.execution?.result === "blocked") {
+    snapshot.execution.summary =
+      "Imported WeChat smoke evidence is blocked; complete the missing device/runtime steps before treating this RC snapshot as passed.";
+  } else if (hasPendingUnmappedStep) {
+    snapshot.execution.summary =
+      "Imported WeChat smoke evidence populated lobby, room, and reconnect steps; creator-preview evidence is still required for explore, first battle, and return-to-world.";
+  }
 }
 
 function validateLinkedReleaseReadinessSnapshot(snapshotRef: LinkedEvidenceRef | undefined): void {
@@ -535,6 +672,9 @@ function validateSnapshot(snapshot: CocosReleaseCandidateSnapshot): void {
   if (snapshot.execution.overallStatus === "pending") {
     fail("execution.overallStatus must not be pending when using --check.");
   }
+  if (snapshot.execution.overallStatus === "blocked") {
+    fail("execution.overallStatus is blocked; required device/runtime evidence is still missing.");
+  }
   assertNonEmptyString(snapshot.execution.summary, "execution.summary");
   assertNonEmptyString(snapshot.environment.server, "environment.server");
 
@@ -547,6 +687,9 @@ function validateSnapshot(snapshot: CocosReleaseCandidateSnapshot): void {
     assertNonEmptyString(step.title, `journey[${step.id}].title`);
     assertStringArray(step.evidence, `journey[${step.id}].evidence`);
     assertStringArray(step.sourceRefs, `journey[${step.id}].sourceRefs`);
+    if (step.required && step.status === "blocked") {
+      fail(`Required journey step ${step.id} is blocked.`);
+    }
     if (step.required && step.status === "pending") {
       fail(`Required journey step ${step.id} is still pending.`);
     }

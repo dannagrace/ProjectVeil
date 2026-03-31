@@ -5,6 +5,7 @@ interface Args {
   artifactsDir?: string;
   metadataPath?: string;
   reportPath?: string;
+  runtimeEvidencePath?: string;
   expectedRevision?: string;
   check: boolean;
   force: boolean;
@@ -27,7 +28,8 @@ interface WechatMinigameReleasePackageMetadata {
   remoteAssetRoot?: string;
 }
 
-type SmokeStatus = "pending" | "passed" | "failed" | "not_applicable";
+type SmokeStatus = "pending" | "blocked" | "passed" | "failed" | "not_applicable";
+type SmokeExecutionResult = "pending" | "blocked" | "passed" | "failed";
 
 type ReconnectEvidenceFieldId = "roomId" | "reconnectPrompt" | "restoredState";
 type ShareRoundtripEvidenceFieldId = "shareScene" | "shareQuery" | "roundtripState";
@@ -74,10 +76,47 @@ interface WechatMinigameSmokeReport {
     device: string;
     clientVersion: string;
     executedAt: string;
-    result: "pending" | "passed" | "failed";
+    result: SmokeExecutionResult;
     summary: string;
   };
   cases: WechatMinigameSmokeCase[];
+}
+
+type RuntimeEvidenceCaseId =
+  | "startup"
+  | "lobby-entry"
+  | "room-entry"
+  | "reconnect-recovery"
+  | "share-roundtrip"
+  | "key-assets";
+
+type RuntimeEvidenceStatus = "blocked" | "passed" | "failed" | "not_applicable";
+
+interface RuntimeEvidenceCase {
+  id: RuntimeEvidenceCaseId;
+  status: RuntimeEvidenceStatus;
+  notes?: string;
+  evidence?: string[];
+  requiredEvidence?: Partial<Record<ReconnectEvidenceFieldId | ShareRoundtripEvidenceFieldId, string>>;
+}
+
+interface RuntimeSmokeEvidenceReport {
+  schemaVersion: 1;
+  buildTemplatePlatform: "wechatgame";
+  artifact?: {
+    archiveFileName?: string;
+    archiveSha256?: string;
+    sourceRevision?: string;
+  };
+  execution: {
+    tester: string;
+    device: string;
+    clientVersion: string;
+    executedAt: string;
+    result?: Exclude<RuntimeEvidenceStatus, "not_applicable">;
+    summary?: string;
+  };
+  cases: RuntimeEvidenceCase[];
 }
 
 const REQUIRED_CASE_IDS: WechatMinigameSmokeCase["id"][] = [
@@ -96,6 +135,7 @@ function parseArgs(argv: string[]): Args {
   let artifactsDir: string | undefined;
   let metadataPath: string | undefined;
   let reportPath: string | undefined;
+  let runtimeEvidencePath: string | undefined;
   let expectedRevision: string | undefined;
   let check = false;
   let force = false;
@@ -118,6 +158,11 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--runtime-evidence" && next) {
+      runtimeEvidencePath = next;
+      index += 1;
+      continue;
+    }
     if (arg === "--expected-revision" && next) {
       expectedRevision = next.trim() || undefined;
       index += 1;
@@ -136,6 +181,7 @@ function parseArgs(argv: string[]): Args {
     ...(artifactsDir ? { artifactsDir } : {}),
     ...(metadataPath ? { metadataPath } : {}),
     ...(reportPath ? { reportPath } : {}),
+    ...(runtimeEvidencePath ? { runtimeEvidencePath } : {}),
     ...(expectedRevision ? { expectedRevision } : {}),
     check,
     force
@@ -268,6 +314,185 @@ function buildSmokeCases(): WechatMinigameSmokeCase[] {
       ]
     }
   ];
+}
+
+function findRuntimeCase(
+  report: RuntimeSmokeEvidenceReport,
+  caseId: RuntimeEvidenceCaseId
+): RuntimeEvidenceCase | undefined {
+  return report.cases.find((entry) => entry.id === caseId);
+}
+
+function assertStringArray(value: unknown, label: string): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    fail(`${label} must be a string array.`);
+  }
+  return value.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+}
+
+function combineRuntimeStatuses(statuses: RuntimeEvidenceStatus[]): SmokeStatus {
+  if (statuses.some((status) => status === "failed")) {
+    return "failed";
+  }
+  if (statuses.some((status) => status === "blocked")) {
+    return "blocked";
+  }
+  if (statuses.every((status) => status === "not_applicable")) {
+    return "not_applicable";
+  }
+  if (statuses.every((status) => status === "passed")) {
+    return "passed";
+  }
+  return "pending";
+}
+
+function mergeText(parts: Array<string | undefined>): string {
+  return parts.map((part) => part?.trim() ?? "").filter((part) => part.length > 0).join("\n");
+}
+
+function requireRuntimeString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    fail(`Runtime evidence ${label} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function applyRuntimeEvidence(
+  template: WechatMinigameSmokeReport,
+  runtimeEvidence: RuntimeSmokeEvidenceReport,
+  metadata: WechatMinigameReleasePackageMetadata
+): WechatMinigameSmokeReport {
+  if (runtimeEvidence.schemaVersion !== 1) {
+    fail(`Runtime evidence schemaVersion must be 1, received ${JSON.stringify(runtimeEvidence.schemaVersion)}.`);
+  }
+  if (runtimeEvidence.buildTemplatePlatform !== "wechatgame") {
+    fail(
+      `Runtime evidence buildTemplatePlatform must be "wechatgame", received ${JSON.stringify(runtimeEvidence.buildTemplatePlatform)}.`
+    );
+  }
+  if (!Array.isArray(runtimeEvidence.cases)) {
+    fail("Runtime evidence cases must be an array.");
+  }
+  if (runtimeEvidence.artifact?.archiveFileName && runtimeEvidence.artifact.archiveFileName !== metadata.archiveFileName) {
+    fail(
+      `Runtime evidence archiveFileName mismatch: expected ${metadata.archiveFileName}, received ${runtimeEvidence.artifact.archiveFileName}.`
+    );
+  }
+  if (runtimeEvidence.artifact?.archiveSha256 && runtimeEvidence.artifact.archiveSha256 !== metadata.archiveSha256) {
+    fail("Runtime evidence archiveSha256 does not match the release sidecar.");
+  }
+  if (runtimeEvidence.artifact?.sourceRevision && runtimeEvidence.artifact.sourceRevision !== metadata.sourceRevision) {
+    fail(
+      `Runtime evidence sourceRevision mismatch: expected ${metadata.sourceRevision ?? "<empty>"}, received ${runtimeEvidence.artifact.sourceRevision}.`
+    );
+  }
+
+  const startup = findRuntimeCase(runtimeEvidence, "startup");
+  const lobbyEntry = findRuntimeCase(runtimeEvidence, "lobby-entry");
+  const roomEntry = findRuntimeCase(runtimeEvidence, "room-entry");
+  const reconnect = findRuntimeCase(runtimeEvidence, "reconnect-recovery");
+  const shareRoundtrip = findRuntimeCase(runtimeEvidence, "share-roundtrip");
+  const keyAssets = findRuntimeCase(runtimeEvidence, "key-assets");
+
+  const caseUpdates: Record<WechatMinigameSmokeCase["id"], Partial<WechatMinigameSmokeCase>> = {
+    "login-lobby": startup && lobbyEntry
+      ? {
+          status: combineRuntimeStatuses([startup.status, lobbyEntry.status]),
+          notes: mergeText([
+            "Automated runtime evidence imported for startup + lobby entry.",
+            startup.notes ? `startup: ${startup.notes}` : undefined,
+            lobbyEntry.notes ? `lobby-entry: ${lobbyEntry.notes}` : undefined
+          ]),
+          evidence: [...assertStringArray(startup.evidence, "runtimeEvidence.startup.evidence"), ...assertStringArray(lobbyEntry.evidence, "runtimeEvidence.lobby-entry.evidence")]
+        }
+      : startup
+        ? {
+            status: startup.status,
+            notes: mergeText(["Automated runtime evidence imported for startup.", startup.notes]),
+            evidence: assertStringArray(startup.evidence, "runtimeEvidence.startup.evidence")
+          }
+        : lobbyEntry
+          ? {
+              status: lobbyEntry.status,
+              notes: mergeText(["Automated runtime evidence imported for lobby entry.", lobbyEntry.notes]),
+              evidence: assertStringArray(lobbyEntry.evidence, "runtimeEvidence.lobby-entry.evidence")
+            }
+          : {},
+    "room-entry": roomEntry
+      ? {
+          status: roomEntry.status,
+          notes: mergeText(["Automated runtime evidence imported.", roomEntry.notes]),
+          evidence: assertStringArray(roomEntry.evidence, "runtimeEvidence.room-entry.evidence")
+        }
+      : {},
+    "reconnect-recovery": reconnect
+      ? {
+          status: reconnect.status,
+          notes: mergeText(["Automated runtime evidence imported.", reconnect.notes]),
+          evidence: assertStringArray(reconnect.evidence, "runtimeEvidence.reconnect-recovery.evidence"),
+          requiredEvidence: {
+            roomId: reconnect.requiredEvidence?.roomId ?? "",
+            reconnectPrompt: reconnect.requiredEvidence?.reconnectPrompt ?? "",
+            restoredState: reconnect.requiredEvidence?.restoredState ?? ""
+          }
+        }
+      : {},
+    "share-roundtrip": shareRoundtrip
+      ? {
+          status: shareRoundtrip.status,
+          notes: mergeText(["Automated runtime evidence imported.", shareRoundtrip.notes]),
+          evidence: assertStringArray(shareRoundtrip.evidence, "runtimeEvidence.share-roundtrip.evidence"),
+          requiredEvidence: {
+            shareScene: shareRoundtrip.requiredEvidence?.shareScene ?? "",
+            shareQuery: shareRoundtrip.requiredEvidence?.shareQuery ?? "",
+            roundtripState: shareRoundtrip.requiredEvidence?.roundtripState ?? ""
+          }
+        }
+      : {},
+    "key-assets": keyAssets
+      ? {
+          status: keyAssets.status,
+          notes: mergeText(["Automated runtime evidence imported.", keyAssets.notes]),
+          evidence: assertStringArray(keyAssets.evidence, "runtimeEvidence.key-assets.evidence")
+        }
+      : {}
+  };
+
+  const cases = template.cases.map((entry) => ({
+    ...entry,
+    ...caseUpdates[entry.id]
+  }));
+
+  const requiredStatuses = cases.filter((entry) => entry.required !== false).map((entry) => entry.status);
+  const executionResult = runtimeEvidence.execution.result
+    ? runtimeEvidence.execution.result
+    : requiredStatuses.some((status) => status === "failed")
+      ? "failed"
+      : requiredStatuses.some((status) => status === "blocked")
+        ? "blocked"
+        : requiredStatuses.every((status) => status === "not_applicable")
+          ? "blocked"
+          : requiredStatuses.every((status) => status === "passed" || status === "not_applicable")
+            ? "passed"
+            : "blocked";
+
+  return {
+    ...template,
+    execution: {
+      tester: requireRuntimeString(runtimeEvidence.execution.tester, "execution.tester"),
+      device: requireRuntimeString(runtimeEvidence.execution.device, "execution.device"),
+      clientVersion: requireRuntimeString(runtimeEvidence.execution.clientVersion, "execution.clientVersion"),
+      executedAt: requireRuntimeString(runtimeEvidence.execution.executedAt, "execution.executedAt"),
+      result: executionResult,
+      summary:
+        runtimeEvidence.execution.summary?.trim() ||
+        "Smoke report populated from automated runtime/device evidence."
+    },
+    cases
+  };
 }
 
 function buildReportTemplate(metadata: WechatMinigameReleasePackageMetadata, metadataPath: string, reportPath: string): WechatMinigameSmokeReport {
@@ -467,6 +692,9 @@ function validateReportAgainstMetadata(
     if (!entry.required) {
       fail(`Smoke report case ${caseId} must remain required.`);
     }
+    if (entry.status === "blocked") {
+      fail(`Smoke report case ${caseId} is blocked pending device/runtime evidence.`);
+    }
     if (entry.status === "pending") {
       fail(`Smoke report case ${caseId} is still pending.`);
     }
@@ -480,6 +708,9 @@ function validateReportAgainstMetadata(
   }
   if (!report.execution.executedAt.trim()) {
     fail("Smoke report executedAt must be filled before validation.");
+  }
+  if (report.execution.result === "blocked") {
+    fail("Smoke report execution.result is blocked pending device/runtime evidence.");
   }
   if (report.execution.result === "pending") {
     fail("Smoke report execution.result must be passed or failed before validation.");
@@ -517,7 +748,11 @@ function main(): void {
     fail(`Smoke report already exists: ${reportPath}. Pass --force to overwrite it.`);
   }
 
-  const report = buildReportTemplate(metadata, metadataPath, reportPath);
+  let report = buildReportTemplate(metadata, metadataPath, reportPath);
+  if (args.runtimeEvidencePath) {
+    const runtimeEvidence = readJsonFile<RuntimeSmokeEvidenceReport>(path.resolve(args.runtimeEvidencePath));
+    report = applyRuntimeEvidence(report, runtimeEvidence, metadata);
+  }
   writeJsonFile(reportPath, report);
   console.log(`Wrote WeChat smoke report template: ${reportPath}`);
   console.log(`Artifact: ${metadata.archiveFileName}`);
