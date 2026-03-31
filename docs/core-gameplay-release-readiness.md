@@ -10,6 +10,7 @@
 
 相关命令与补充文档：
 
+- Phase 1 成熟度记分卡：`docs/phase1-maturity-scorecard.md`
 - 基础测试回归：`npm test`
 - 类型检查：`npm run typecheck:ci`
 - H5 / Lobby 冒烟：`npm run test:e2e:smoke`
