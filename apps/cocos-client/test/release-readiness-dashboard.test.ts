@@ -48,6 +48,7 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
       { id: "typecheck-ci", status: "passed", required: true },
       { id: "e2e-smoke", status: "passed", required: true },
       { id: "e2e-multiplayer-smoke", status: "passed", required: true },
+      { id: "cocos-primary-journey", status: "passed", required: true },
       { id: "wechat-build-check", status: "passed", required: true }
     ]
   });
@@ -232,6 +233,7 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
       { id: "typecheck-ci", status: "passed", required: true },
       { id: "e2e-smoke", status: "passed", required: true },
       { id: "e2e-multiplayer-smoke", status: "passed", required: true },
+      { id: "cocos-primary-journey", status: "passed", required: true },
       { id: "wechat-build-check", status: "passed", required: true }
     ]
   });

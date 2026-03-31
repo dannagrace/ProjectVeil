@@ -119,6 +119,7 @@
 建议证据：
 
 - `npm test`
+- `npm run test:cocos:primary-journey`
 - `npm run check:cocos-release-readiness`
 - `npm run release:cocos-rc:snapshot -- --output <snapshot-path>`
 - `docs/release-evidence/cocos-wechat-rc-checklist.template.md`

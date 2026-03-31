@@ -125,8 +125,8 @@ Sample output:
     "dirty": false
   },
   "summary": {
-    "total": 7,
-    "passed": 5,
+    "total": 8,
+    "passed": 6,
     "failed": 0,
     "pending": 2,
     "notApplicable": 0,
@@ -140,6 +140,12 @@ Sample output:
       "kind": "automated",
       "status": "passed",
       "command": "npm test"
+    },
+    {
+      "id": "cocos-primary-journey",
+      "kind": "automated",
+      "status": "passed",
+      "command": "npm run test:cocos:primary-journey"
     },
     {
       "id": "wechat-device-smoke",

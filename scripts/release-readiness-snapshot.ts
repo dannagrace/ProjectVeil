@@ -99,6 +99,12 @@ const AUTOMATED_CHECKS: Array<Pick<ReleaseReadinessCheck, "id" | "title" | "comm
     required: true
   },
   {
+    id: "cocos-primary-journey",
+    title: "Cocos primary journey regression",
+    command: "npm run test:cocos:primary-journey",
+    required: true
+  },
+  {
     id: "sync-governance-matrix",
     title: "Deterministic sync-governance matrix",
     command: "npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json",

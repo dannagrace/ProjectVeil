@@ -139,7 +139,7 @@ interface DashboardReport {
 
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
 const DEFAULT_RELEASE_EVIDENCE_DIR = path.resolve("artifacts", "release-evidence");
-const REQUIRED_SNAPSHOT_CHECK_IDS = ["npm-test", "typecheck-ci", "e2e-smoke", "e2e-multiplayer-smoke", "wechat-build-check"] as const;
+const REQUIRED_SNAPSHOT_CHECK_IDS = ["npm-test", "typecheck-ci", "e2e-smoke", "e2e-multiplayer-smoke", "cocos-primary-journey", "wechat-build-check"] as const;
 const REQUIRED_METRICS = [
   "veil_active_room_count",
   "veil_connection_count",
