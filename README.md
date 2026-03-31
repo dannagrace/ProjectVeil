@@ -136,6 +136,7 @@ npm run dev:client:h5
 - 快速校验首条贡献路径：`npm run validate:quickstart`
 - 本地 WebSocket 服务：`npm run dev:server`
 - 仓库级 Node 单测入口：`npm test`
+- 配置中心编辑器回归：`npm run test:client:config-center`
 - 运行时健康检查：`GET http://127.0.0.1:2567/api/runtime/health`
 - 鉴权就绪摘要：`GET http://127.0.0.1:2567/api/runtime/auth-readiness`
 - 运行时指标抓取：`GET http://127.0.0.1:2567/api/runtime/metrics`
@@ -219,6 +220,7 @@ npm run dev:client:h5
   - 保存 `world / mapObjects / units / battle-skills / battle-balance` 后，右侧会同步展示一份 impact summary，带出变更字段、影响模块、潜在风险提示和建议验证动作；发布审计历史也会保留同样的摘要，便于做配置变更评审
   - 导出除 JSON 注释版外，还支持带 `Meta / Schema / Fields` 工作表的 Excel，以及更轻量的字段清单 CSV
   - 当前编辑 `phase1-world.json` 时，右侧会即时生成一份地图样本预览；可切换预览 seed，对照查看地形、随机资源、保底资源、英雄与中立怪分布
+  - 配置中心编辑器回归入口见 `npm run test:client:config-center`，覆盖保存、校验、快照/差异与地图预览等高风险工作流
   - 当前编辑 `battle-skills.json` 时，右侧会显示技能编辑器，可直接调整冷却、伤害倍率、目标类型、附加状态和状态持续参数，并同步回写 JSON 草稿
   - 当前编辑 `battle-balance.json` 时，右侧会显示战斗平衡编辑器，可直接调整伤害公式、路障/陷阱阈值、附加状态和 ELO K；非法值会在 Schema/语义校验里给出修复建议并阻止保存
 - H5 战斗面板现已补上“战术情报”区，会并排展示当前行动单位和已锁定目标的技能、状态、冷却与效果说明，便于直接核对配置是否符合预期。
