@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -98,4 +102,51 @@ test("buildReleaseReadinessSnapshot keeps optional failures partial when require
   assert.equal(snapshot.summary.failed, 1);
   assert.equal(snapshot.summary.requiredFailed, 0);
   assert.equal(snapshot.summary.passed, 1);
+});
+
+test("release-readiness snapshot CLI includes the Cocos primary journey as a required automated check", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-release-snapshot-"));
+  const outputPath = path.join(tempDir, "release-readiness.json");
+
+  execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/release-readiness-snapshot.ts",
+      "--no-run",
+      "--output",
+      outputPath
+    ],
+    {
+      cwd: path.resolve(__dirname, "../../.."),
+      encoding: "utf8",
+      stdio: "pipe"
+    }
+  );
+
+  const snapshot = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
+    checks: Array<{
+      id: string;
+      title: string;
+      required: boolean;
+      kind: string;
+      status: string;
+      command?: string;
+      notes: string;
+      evidence: string[];
+      source: string;
+    }>;
+  };
+
+  const primaryJourneyCheck = snapshot.checks.find((check) => check.id === "cocos-primary-journey");
+  assert.ok(primaryJourneyCheck);
+  assert.equal(primaryJourneyCheck.title, "Cocos primary journey regression");
+  assert.equal(primaryJourneyCheck.required, true);
+  assert.equal(primaryJourneyCheck.kind, "automated");
+  assert.equal(primaryJourneyCheck.status, "pending");
+  assert.equal(primaryJourneyCheck.command, "npm run test:cocos:primary-journey");
+  assert.equal(primaryJourneyCheck.notes, "Skipped command execution via --no-run.");
+  assert.deepEqual(primaryJourneyCheck.evidence, []);
+  assert.equal(primaryJourneyCheck.source, "default");
 });

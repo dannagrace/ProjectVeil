@@ -20,6 +20,7 @@ test("summarizeSnapshot fails when a required release-readiness check is missing
       { id: "npm-test", status: "passed", required: true },
       { id: "typecheck-ci", status: "passed", required: true },
       { id: "e2e-smoke", status: "passed", required: true },
+      { id: "cocos-primary-journey", status: "passed", required: true },
       { id: "wechat-build-check", status: "passed", required: true }
     ]
   });
@@ -42,6 +43,7 @@ test("buildBuildPackageGate aggregates snapshot, package, and smoke evidence int
       { id: "typecheck-ci", status: "passed", required: true },
       { id: "e2e-smoke", status: "passed", required: true },
       { id: "e2e-multiplayer-smoke", status: "pending", required: true },
+      { id: "cocos-primary-journey", status: "passed", required: true },
       { id: "wechat-build-check", status: "passed", required: true }
     ]
   });
@@ -78,6 +80,7 @@ test("buildCriticalEvidenceGate downgrades stale evidence to warn and preserves 
       { id: "typecheck-ci", status: "passed", required: true },
       { id: "e2e-smoke", status: "passed", required: true },
       { id: "e2e-multiplayer-smoke", status: "passed", required: true },
+      { id: "cocos-primary-journey", status: "passed", required: true },
       { id: "wechat-build-check", status: "passed", required: true }
     ]
   });
