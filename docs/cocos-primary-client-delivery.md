@@ -1,6 +1,20 @@
 # Primary Cocos Client Delivery Checklist
 
-This checklist is the maintained delivery baseline for the primary client at [`apps/cocos-client`](/home/gpt/project/ProjectVeil/apps/cocos-client). It keeps the release path small and stable by splitting release readiness into two automated artifact audits plus a short manual sign-off list.
+This checklist is the maintained delivery baseline for the primary client at [`apps/cocos-client`](/home/gpt/project/ProjectVeil/apps/cocos-client). It keeps the release path small and stable by splitting regression validation into one runtime-journey guard, two automated artifact audits, and a short manual sign-off list.
+
+## Primary Client Regression Gate
+
+Run the account -> lobby -> room-entry automation slice before packaging or signing off the primary client:
+
+```bash
+npm run test:cocos:primary-journey
+```
+
+The command exercises the Cocos `VeilRoot` launch path in CI-friendly node-based automation, reuses the existing runtime/session harness, and records artifact-rich assertion payloads when it fails so contributors can tell apart:
+
+- lobby/bootstrap environment issues
+- stale or unavailable auth session bootstrap
+- room join or gameplay-state regressions after lobby entry
 
 ## Automated Delivery Audit
 
@@ -37,6 +51,7 @@ Keep these manual items short and attach evidence through the existing release e
 ## Related Commands
 
 - Export template refresh: `npm run prepare:wechat-build`
+- Primary client journey regression: `npm run test:cocos:primary-journey`
 - Export validation: `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - Package artifact: `npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime --source-revision <git-sha>`
 - RC artifact validation: `npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> --expected-revision <git-sha>`

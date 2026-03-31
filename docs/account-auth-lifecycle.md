@@ -221,4 +221,4 @@
 当前仍未完成：
 
 - 真实邮件 / 短信 / 验证码通道
-- 更细的前端自动化回归，例如直接覆盖 Lobby DOM / Cocos 交互入口的端到端脚本
+- 更完整的前端自动化回归矩阵；当前已补上 `npm run test:cocos:primary-journey` 这条 primary Cocos client 的账号会话 -> Lobby -> 首次进房自动化切片，但更广的交互矩阵仍待继续扩充
