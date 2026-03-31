@@ -7,7 +7,8 @@ import test from "node:test";
 import {
   buildWechatMinigameTemplateArtifacts,
   normalizeWechatMinigameBuildConfig
-} from "../assets/scripts/cocos-wechat-build.ts";
+  // Keep release-validation helpers sourced from tooling/ so root test discovery works in git worktrees.
+} from "../tooling/cocos-wechat-build.ts";
 
 function createPackagedWechatReleaseArtifact(): {
   tempDir: string;

@@ -7,7 +7,9 @@ import test from "node:test";
 import {
   buildWechatMinigameTemplateArtifacts,
   normalizeWechatMinigameBuildConfig
-} from "../assets/scripts/cocos-wechat-build.ts";
+  // Release validation tests run under the repo root runner from both the main checkout and git worktrees.
+  // Import the shared Node-only helper from tooling/, not the Cocos asset tree.
+} from "../tooling/cocos-wechat-build.ts";
 
 interface PackagedArtifact {
   artifactsDir: string;
