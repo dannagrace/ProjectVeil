@@ -24,6 +24,20 @@ function flushMicrotasks(): Promise<void> {
   });
 }
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function createFirstBattleState(): BattleState {
   return {
     id: "battle-1",
@@ -283,6 +297,60 @@ test("VeilRoot connect replays cached session state before applying the live sna
   assert.equal(root.lastUpdate?.world.meta.day, 3);
 });
 
+test("VeilRoot reconnects cleanly after tearing down the previous session", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-alpha";
+  root.playerId = "player-1";
+  const lifecycle: string[] = [];
+
+  const firstUpdate = createSessionUpdate(2, "room-alpha", "player-1");
+  const secondUpdate = createSessionUpdate(5, "room-alpha", "player-1");
+  const firstSession = {
+    async snapshot() {
+      lifecycle.push("snapshot:first");
+      return firstUpdate;
+    },
+    async dispose() {
+      lifecycle.push("dispose:first");
+    }
+  };
+  const secondSession = {
+    async snapshot() {
+      lifecycle.push("snapshot:second");
+      return secondUpdate;
+    },
+    async dispose() {
+      lifecycle.push("dispose:second");
+    }
+  };
+
+  root.applySessionUpdate = async (update) => {
+    lifecycle.push(`apply:${update.world.meta.day}`);
+    root.lastUpdate = update;
+  };
+
+  installVeilRootRuntime({
+    createSession: async () => firstSession as never
+  });
+
+  await root.connect();
+  assert.equal(root.session, firstSession);
+  assert.equal(root.lastUpdate?.world.meta.day, 2);
+
+  await root.disposeCurrentSession();
+  assert.equal(root.session, null);
+
+  installVeilRootRuntime({
+    createSession: async () => secondSession as never
+  });
+
+  await root.connect();
+
+  assert.equal(root.session, secondSession);
+  assert.equal(root.lastUpdate?.world.meta.day, 5);
+  assert.deepEqual(lifecycle, ["snapshot:first", "apply:2", "dispose:first", "snapshot:second", "apply:5"]);
+});
+
 test("VeilRoot replays cached state before reconnect recovery converges on the authoritative snapshot", async () => {
   const root = createVeilRootHarness();
   root.roomId = "room-alpha";
@@ -374,6 +442,58 @@ test("VeilRoot replays cached state before reconnect recovery converges on the a
   assert.equal(root.diagnosticsConnectionStatus, "connected");
   assert.equal(root.logLines[0], "连接已恢复。");
   assert.match(String(root.logLines[1]), /已收到房间推送更新。/);
+});
+
+test("VeilRoot ignores stale reconnect callbacks after session teardown", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-alpha";
+  root.playerId = "player-1";
+  root.lastUpdate = createSessionUpdate(1, "room-alpha", "player-1");
+
+  const deferredSnapshot = createDeferred<SessionUpdate>();
+  let capturedOptions:
+    | {
+        onPushUpdate?: ((update: SessionUpdate) => void) | undefined;
+        onConnectionEvent?: ((event: "reconnecting" | "reconnected" | "reconnect_failed") => void) | undefined;
+      }
+    | undefined;
+  let disposeCalls = 0;
+
+  installVeilRootRuntime({
+    createSession: async (_roomId, _playerId, _seed, options) => {
+      capturedOptions = options;
+      return {
+        async snapshot() {
+          return deferredSnapshot.promise;
+        },
+        async dispose() {
+          disposeCalls += 1;
+        }
+      } as never;
+    }
+  });
+
+  const connectPromise = root.connect();
+  await flushMicrotasks();
+
+  await root.disposeCurrentSession();
+  const updateAfterTeardown = root.lastUpdate;
+  const statusAfterTeardown = root.diagnosticsConnectionStatus;
+  const logsAfterTeardown = [...root.logLines];
+
+  capturedOptions?.onConnectionEvent?.("reconnect_failed");
+  capturedOptions?.onPushUpdate?.(createSessionUpdate(9, "room-alpha", "player-1"));
+
+  assert.equal(root.lastUpdate, updateAfterTeardown);
+  assert.equal(root.diagnosticsConnectionStatus, statusAfterTeardown);
+  assert.deepEqual(root.logLines, logsAfterTeardown);
+
+  deferredSnapshot.resolve(createSessionUpdate(10, "room-alpha", "player-1"));
+  await connectPromise;
+
+  assert.equal(root.session, null);
+  assert.ok(disposeCalls >= 1);
+  assert.deepEqual(root.logLines, logsAfterTeardown);
 });
 
 test("VeilRoot surfaces broken room snapshots with a stable runtime error message", async () => {
