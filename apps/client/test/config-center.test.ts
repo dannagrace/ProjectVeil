@@ -331,6 +331,101 @@ test("config center save surfaces API rejection without overwriting the edited d
   assert.equal(controller.state.statusMessage, "保存失败：battleBalance 配置版本已过期，请先重新加载。");
 });
 
+test("config center snapshot flow saves the current draft and refreshes the snapshot list", async () => {
+  const snapshot = {
+    id: "snapshot-world-4",
+    label: "世界配置 v4",
+    createdAt: "2026-03-31T02:00:00.000Z",
+    version: 4
+  };
+  const { fetch, requests } = createFetchStub((request) => {
+    if (request.url === "/api/config-center/configs/world/snapshots" && request.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          storage: "filesystem",
+          snapshot
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (request.url === "/api/config-center/configs/world/snapshots" && request.method === "GET") {
+      return new Response(
+        JSON.stringify({
+          storage: "filesystem",
+          snapshots: [snapshot],
+          publishHistory: []
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (request.url === "/api/config-center/configs/world/diff" && request.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          storage: "filesystem",
+          diff: {
+            entries: [
+              {
+                path: "width",
+                change: "updated",
+                previousValue: "8",
+                nextValue: "10",
+                kind: "value",
+                required: true,
+                fieldType: "integer",
+                description: "地图宽度",
+                blastRadius: ["配置台编辑器", "世界预览"]
+              }
+            ]
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+  });
+
+  const controller = createConfigCenterController({
+    fetch,
+    prompt: () => "世界配置 v4"
+  });
+  controller.state.current = createDocument("world", "{\n  \"width\": 8,\n  \"height\": 8\n}\n", { version: 4 });
+  controller.setDraft("{\n  \"width\": 10,\n  \"height\": 8\n}\n");
+
+  await controller.createSnapshot();
+
+  const snapshotRequest = requests.find(
+    (request) => request.url === "/api/config-center/configs/world/snapshots" && request.method === "POST"
+  );
+  assert.ok(snapshotRequest);
+  assert.deepEqual(JSON.parse(snapshotRequest.body ?? "{}"), {
+    content: "{\n  \"width\": 10,\n  \"height\": 8\n}\n",
+    label: "世界配置 v4"
+  });
+  assert.equal(controller.state.statusTone, "success");
+  assert.equal(controller.state.statusMessage, "已保存快照 世界配置 v4");
+  assert.deepEqual(controller.state.snapshots, [snapshot]);
+  assert.equal(controller.state.selectedSnapshotId, "snapshot-world-4");
+  assert.equal(controller.state.snapshotDiff?.entries[0]?.path, "width");
+});
+
 test("config center snapshot diff exposes non-empty changes for an edited field", async () => {
   const { fetch } = createFetchStub((request) => {
   if (request.url === "/api/config-center/configs/world/diff" && request.method === "POST") {
@@ -882,6 +977,23 @@ test("config center builtin presets apply the expected field changes", async () 
   const hardConfig = JSON.parse(controller.state.current?.content ?? "{}");
   assert.equal(hardConfig.pvp.eloK, 40);
   assert.equal(hardConfig.environment.trapDamage, 2);
+});
+
+test("config center world preview blocks invalid draft JSON before making a request", async () => {
+  const { fetch, requests } = createFetchStub((request) => {
+    throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+  });
+
+  const controller = createConfigCenterController({ fetch });
+  controller.state.current = createDocument("world", "{\n  \"width\": 8,\n  \"height\": 8\n}\n");
+  controller.setDraft("{\n  \"width\": 8,\n");
+
+  await controller.loadWorldPreview();
+
+  assert.equal(requests.length, 0);
+  assert.equal(controller.state.worldPreview, null);
+  assert.match(controller.state.previewError, /^JSON 语法无效：/);
+  assert.equal(controller.state.previewLoading, false);
 });
 
 test("config center world preview posts the current phase1-world draft and stores the generated sample", async () => {
