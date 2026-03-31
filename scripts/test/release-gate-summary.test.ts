@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   buildConfigChangeRiskSummary,
   buildReleaseGateSummaryReport,
+  evaluatePhase1EvidenceConsistencyGate,
   evaluateWechatGate,
   renderMarkdown
 } from "../release-gate-summary.ts";
@@ -29,6 +30,13 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   const configCenterLibraryPath = path.join(workspace, "configs", ".config-center-library.json");
 
   writeJson(snapshotPath, {
+    generatedAt: "2026-03-29T08:30:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
     summary: {
       status: "passed",
       requiredFailed: 0,
@@ -43,6 +51,13 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
     ]
   });
   writeJson(h5SmokePath, {
+    generatedAt: "2026-03-29T08:32:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
     execution: {
       status: "passed",
       exitCode: 0
@@ -54,6 +69,8 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
     }
   });
   writeJson(wechatRcValidationPath, {
+    generatedAt: "2026-03-29T08:35:00.000Z",
+    commit: "abc123",
     summary: {
       status: "passed",
       failedChecks: 0,
@@ -117,7 +134,9 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
 
   assert.equal(report.summary.status, "passed");
   assert.deepEqual(report.summary.failedGateIds, []);
+  assert.equal(report.summary.totalGates, 4);
   assert.equal(report.gates.every((gate) => gate.status === "passed"), true);
+  assert.equal(report.gates[3]?.id, "phase1-evidence-consistency");
   assert.equal(report.configChangeRisk.status, "available");
   assert.equal(report.configChangeRisk.overallRisk, "high");
   assert.equal(report.configChangeRisk.recommendRehearsal, true);
@@ -134,6 +153,13 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
   const wechatSmokeReportPath = path.join(workspace, "artifacts", "wechat-release", "codex.wechat.smoke-report.json");
 
   writeJson(snapshotPath, {
+    generatedAt: "2026-03-29T08:30:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
     summary: {
       status: "pending",
       requiredFailed: 0,
@@ -148,6 +174,13 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
     ]
   });
   writeJson(h5SmokePath, {
+    generatedAt: "2026-03-29T08:32:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
     execution: {
       status: "passed",
       exitCode: 0
@@ -159,7 +192,11 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
     }
   });
   writeJson(wechatSmokeReportPath, {
+    artifact: {
+      sourceRevision: "abc123"
+    },
     execution: {
+      executedAt: "2026-03-29T08:40:00.000Z",
       result: "blocked"
     },
     cases: [
@@ -217,6 +254,143 @@ test("evaluateWechatGate prefers RC validation and falls back to smoke report", 
   const smokeGate = evaluateWechatGate(undefined, wechatSmokeReportPath);
   assert.equal(smokeGate.status, "passed");
   assert.equal(smokeGate.source?.kind, "wechat-smoke-report");
+});
+
+test("evaluatePhase1EvidenceConsistencyGate fails stale or mismatched candidate evidence", () => {
+  const workspace = createTempWorkspace();
+  const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
+  const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const wechatRcValidationPath = path.join(workspace, "artifacts", "wechat-release", "codex.wechat.rc-validation-report.json");
+
+  writeJson(snapshotPath, {
+    generatedAt: "2026-03-29T08:30:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    summary: {
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
+    }
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: "2026-03-29T08:32:00.000Z",
+    revision: {
+      commit: "deadbeef",
+      shortCommit: "deadbee",
+      branch: "test-branch",
+      dirty: false
+    },
+    execution: {
+      status: "passed",
+      finishedAt: "2026-03-29T08:32:00.000Z",
+      exitCode: 0
+    },
+    summary: {
+      total: 2,
+      passed: 2,
+      failed: 0
+    }
+  });
+  writeJson(wechatRcValidationPath, {
+    generatedAt: "2026-03-29T08:35:00.000Z",
+    commit: "abc123",
+    summary: {
+      status: "passed",
+      failedChecks: 0,
+      failureSummary: []
+    }
+  });
+
+  const gate = evaluatePhase1EvidenceConsistencyGate(
+    {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    snapshotPath,
+    h5SmokePath,
+    wechatRcValidationPath,
+    undefined
+  );
+
+  assert.equal(gate.status, "failed");
+  assert.match(gate.summary, /Phase 1 evidence drift detected/);
+  assert.match(gate.failures.join("\n"), /stale for H5 packaged RC smoke/);
+  assert.match(gate.failures.join("\n"), /commit mismatch/);
+});
+
+test("buildReleaseGateSummaryReport fails when all artifacts are stale for the current candidate", () => {
+  const workspace = createTempWorkspace();
+  const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
+  const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const wechatRcValidationPath = path.join(workspace, "artifacts", "wechat-release", "codex.wechat.rc-validation-report.json");
+
+  writeJson(snapshotPath, {
+    generatedAt: "2026-03-29T08:30:00.000Z",
+    revision: {
+      commit: "deadbeef",
+      shortCommit: "deadbee",
+      branch: "test-branch",
+      dirty: false
+    },
+    summary: {
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
+    }
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: "2026-03-29T08:32:00.000Z",
+    revision: {
+      commit: "deadbeef",
+      shortCommit: "deadbee",
+      branch: "test-branch",
+      dirty: false
+    },
+    execution: {
+      status: "passed",
+      finishedAt: "2026-03-29T08:32:00.000Z",
+      exitCode: 0
+    },
+    summary: {
+      total: 2,
+      passed: 2,
+      failed: 0
+    }
+  });
+  writeJson(wechatRcValidationPath, {
+    generatedAt: "2026-03-29T08:35:00.000Z",
+    commit: "deadbeef",
+    summary: {
+      status: "passed",
+      failedChecks: 0,
+      failureSummary: []
+    }
+  });
+
+  const report = buildReleaseGateSummaryReport(
+    {
+      snapshotPath,
+      h5SmokePath,
+      wechatRcValidationPath
+    },
+    {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    }
+  );
+
+  assert.equal(report.summary.status, "failed");
+  assert.deepEqual(report.summary.failedGateIds, ["phase1-evidence-consistency"]);
+  assert.match(report.gates[3]?.summary ?? "", /artifact commit deadbeef does not match candidate abc123/);
+  assert.match(renderMarkdown(report), /Phase 1 evidence consistency/);
 });
 
 test("buildConfigChangeRiskSummary uses the latest applied publish audit and maps validation actions", () => {

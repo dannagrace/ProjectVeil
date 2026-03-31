@@ -44,7 +44,7 @@ If you do not pass output flags, the script writes:
 
 ## Gate Rules
 
-The summary contains exactly three release dimensions:
+The summary contains four release dimensions:
 
 - `release-readiness`
   - Fails when the snapshot is missing, when the snapshot summary is not `passed`, or when any required snapshot check is `failed` or `pending`.
@@ -55,6 +55,10 @@ The summary contains exactly three release dimensions:
   - Falls back to `codex.wechat.smoke-report.json` when the RC validation report is absent.
   - Fails closed when required WeChat evidence is missing, failed, blocked, or still pending.
   - Markdown/JSON summary text distinguishes `blocked` device/runtime evidence from true execution failures so CI reviewers can see whether a gate is red because proof is absent or because the runtime actually regressed.
+- `phase1-evidence-consistency`
+  - Cross-checks the release-readiness snapshot, packaged H5 smoke report, and selected WeChat evidence as one Phase 1 candidate set.
+  - Fails when any artifact is missing revision metadata, missing/invalid generated timestamps, points at a different commit than the current release candidate, or disagrees with another artifact’s commit.
+  - This catches stale local artifacts and mismatched CI evidence before release signals drift silently.
 
 Any failed dimension makes the script exit non-zero so the result can act as a CI release gate.
 

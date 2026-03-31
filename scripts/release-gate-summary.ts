@@ -52,6 +52,8 @@ interface ReleaseCandidateClientArtifactSmokeReport {
 }
 
 interface WechatRcValidationReport {
+  generatedAt?: string;
+  commit?: string | null;
   summary?: {
     status?: "passed" | "failed";
     failedChecks?: number;
@@ -66,7 +68,11 @@ interface WechatRcValidationReport {
 }
 
 interface WechatSmokeReport {
+  artifact?: {
+    sourceRevision?: string;
+  };
   execution?: {
+    executedAt?: string;
     result?: "pending" | "blocked" | "passed" | "failed";
     summary?: string;
   };
@@ -83,12 +89,20 @@ interface GateSource {
 }
 
 interface GateResult {
-  id: "release-readiness" | "h5-release-candidate-smoke" | "wechat-release";
+  id: "release-readiness" | "h5-release-candidate-smoke" | "wechat-release" | "phase1-evidence-consistency";
   label: string;
   status: GateStatus;
   summary: string;
   failures: string[];
   source?: GateSource;
+}
+
+interface Phase1EvidenceReference {
+  gateId: "release-readiness" | "h5-release-candidate-smoke" | "wechat-release";
+  label: string;
+  source: GateSource;
+  commit?: string;
+  generatedAt?: string;
 }
 
 type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
@@ -179,6 +193,7 @@ interface ReleaseGateSummaryReport {
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
 const DEFAULT_WECHAT_ARTIFACTS_DIR = path.resolve("artifacts", "wechat-release");
 const DEFAULT_CONFIG_CENTER_LIBRARY_PATH = path.resolve("configs", ".config-center-library.json");
+const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
 const RISK_PRIORITY: Record<ConfigRiskLevel, number> = {
   low: 1,
   medium: 2,
@@ -630,6 +645,165 @@ export function evaluateWechatGate(
   };
 }
 
+function normalizeCommit(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized || !HEX_REVISION_PATTERN.test(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function commitsMatch(left: string | undefined, right: string | undefined): boolean {
+  const normalizedLeft = normalizeCommit(left);
+  const normalizedRight = normalizeCommit(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+  return normalizedLeft === normalizedRight || normalizedLeft.startsWith(normalizedRight) || normalizedRight.startsWith(normalizedLeft);
+}
+
+function collectPhase1EvidenceReferences(
+  snapshotPath: string | undefined,
+  h5SmokePath: string | undefined,
+  wechatRcValidationPath: string | undefined,
+  wechatSmokeReportPath: string | undefined
+): Phase1EvidenceReference[] {
+  const evidence: Phase1EvidenceReference[] = [];
+
+  if (snapshotPath && fs.existsSync(snapshotPath)) {
+    const snapshot = readJsonFile<ReleaseReadinessSnapshot & { generatedAt?: string; revision?: { commit?: string; shortCommit?: string } }>(
+      snapshotPath
+    );
+    evidence.push({
+      gateId: "release-readiness",
+      label: "Release readiness snapshot",
+      source: {
+        kind: "release-readiness-snapshot",
+        path: snapshotPath
+      },
+      commit: snapshot.revision?.commit ?? snapshot.revision?.shortCommit,
+      generatedAt: snapshot.generatedAt
+    });
+  }
+
+  if (h5SmokePath && fs.existsSync(h5SmokePath)) {
+    const report = readJsonFile<ReleaseCandidateClientArtifactSmokeReport>(h5SmokePath);
+    evidence.push({
+      gateId: "h5-release-candidate-smoke",
+      label: "H5 packaged RC smoke",
+      source: {
+        kind: "h5-release-candidate-smoke",
+        path: h5SmokePath
+      },
+      commit: report.revision?.commit ?? report.revision?.shortCommit,
+      generatedAt: report.execution?.finishedAt ?? report.generatedAt
+    });
+  }
+
+  if (wechatRcValidationPath && fs.existsSync(wechatRcValidationPath)) {
+    const report = readJsonFile<WechatRcValidationReport & { generatedAt?: string; commit?: string | null }>(wechatRcValidationPath);
+    evidence.push({
+      gateId: "wechat-release",
+      label: "WeChat release validation",
+      source: {
+        kind: "wechat-rc-validation",
+        path: wechatRcValidationPath
+      },
+      commit: report.commit ?? undefined,
+      generatedAt: report.generatedAt
+    });
+  } else if (wechatSmokeReportPath && fs.existsSync(wechatSmokeReportPath)) {
+    const report = readJsonFile<WechatSmokeReport & { artifact?: { sourceRevision?: string } }>(wechatSmokeReportPath);
+    evidence.push({
+      gateId: "wechat-release",
+      label: "WeChat release validation",
+      source: {
+        kind: "wechat-smoke-report",
+        path: wechatSmokeReportPath
+      },
+      commit: report.artifact?.sourceRevision,
+      generatedAt: report.execution?.executedAt
+    });
+  }
+
+  return evidence;
+}
+
+export function evaluatePhase1EvidenceConsistencyGate(
+  revision: GitRevision,
+  snapshotPath: string | undefined,
+  h5SmokePath: string | undefined,
+  wechatRcValidationPath: string | undefined,
+  wechatSmokeReportPath: string | undefined
+): GateResult {
+  const failures: string[] = [];
+  const expectedArtifacts: Array<Pick<Phase1EvidenceReference, "gateId" | "label">> = [
+    { gateId: "release-readiness", label: "Release readiness snapshot" },
+    { gateId: "h5-release-candidate-smoke", label: "H5 packaged RC smoke" },
+    { gateId: "wechat-release", label: "WeChat release validation" }
+  ];
+  const evidence = collectPhase1EvidenceReferences(snapshotPath, h5SmokePath, wechatRcValidationPath, wechatSmokeReportPath);
+  const expectedCommit = revision.commit;
+
+  for (const expected of expectedArtifacts) {
+    if (!evidence.some((entry) => entry.gateId === expected.gateId)) {
+      failures.push(`Phase 1 evidence is missing for ${expected.label}.`);
+    }
+  }
+
+  for (const entry of evidence) {
+    if (!normalizeCommit(entry.commit)) {
+      failures.push(`Phase 1 evidence is missing revision metadata for ${entry.label}.`);
+      continue;
+    }
+    if (!commitsMatch(entry.commit, expectedCommit)) {
+      failures.push(
+        `Phase 1 evidence is stale for ${entry.label}: artifact commit ${entry.commit} does not match candidate ${revision.shortCommit}.`
+      );
+    }
+    if (!entry.generatedAt?.trim()) {
+      failures.push(`Phase 1 evidence is missing a generated timestamp for ${entry.label}.`);
+      continue;
+    }
+    if (Number.isNaN(Date.parse(entry.generatedAt))) {
+      failures.push(`Phase 1 evidence has an invalid generated timestamp for ${entry.label}: ${entry.generatedAt}.`);
+    }
+  }
+
+  for (let index = 0; index < evidence.length; index += 1) {
+    const left = evidence[index];
+    if (!left) {
+      continue;
+    }
+    for (let innerIndex = index + 1; innerIndex < evidence.length; innerIndex += 1) {
+      const right = evidence[innerIndex];
+      if (!right) {
+        continue;
+      }
+      if (!commitsMatch(left.commit, right.commit)) {
+        failures.push(
+          `Phase 1 evidence commit mismatch: ${left.label}=${left.commit ?? "<missing>"} vs ${right.label}=${right.commit ?? "<missing>"}.`
+        );
+      }
+    }
+  }
+
+  const uniqueCommitCount = new Set(evidence.map((entry) => normalizeCommit(entry.commit)).filter((entry): entry is string => Boolean(entry))).size;
+  const summary =
+    failures.length === 0
+      ? `Phase 1 evidence matches candidate ${revision.shortCommit} across ${evidence.length} artifacts.`
+      : `Phase 1 evidence drift detected: ${failures[0]}`;
+
+  return {
+    id: "phase1-evidence-consistency",
+    label: "Phase 1 evidence consistency",
+    status: failures.length === 0 ? "passed" : "failed",
+    summary,
+    failures: failures.length === 0 && uniqueCommitCount === 1 ? [] : failures,
+    source: evidence[0]?.source
+  };
+}
+
 function uniqueStrings(items: Iterable<string>): string[] {
   return Array.from(new Set([...items].filter((value) => value.length > 0)));
 }
@@ -768,7 +942,8 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
   const gates = [
     evaluateReleaseReadinessGate(snapshotPath),
     evaluateH5SmokeGate(h5SmokePath),
-    evaluateWechatGate(wechatRcValidationPath, wechatSmokeReportPath)
+    evaluateWechatGate(wechatRcValidationPath, wechatSmokeReportPath),
+    evaluatePhase1EvidenceConsistencyGate(revision, snapshotPath, h5SmokePath, wechatRcValidationPath, wechatSmokeReportPath)
   ];
   const failedGates = gates.filter((gate) => gate.status === "failed");
 
