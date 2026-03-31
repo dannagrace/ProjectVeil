@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { VeilCocosSession } from "../assets/scripts/VeilCocosSession.ts";
 import { writeStoredCocosAuthSession } from "../assets/scripts/cocos-session-launch.ts";
-import { createMemoryStorage, createSessionUpdate, FakeColyseusRoom } from "./helpers/cocos-session-fixtures.ts";
+import {
+  createMemoryStorage,
+  createRawStateReply,
+  createSessionUpdate,
+  FakeColyseusRoom
+} from "./helpers/cocos-session-fixtures.ts";
 import {
   createVeilCocosSessionRuntimeHarness,
   createVeilRootRuntimeHarness,
@@ -29,6 +34,34 @@ function seedStoredReplay(storage: Storage, update: ReturnType<typeof createSess
       update
     })
   );
+}
+
+function encodeBytes(values: number[]): string {
+  return Buffer.from(Uint8Array.from(values)).toString("base64");
+}
+
+function createEncodedStatePayload(day: number, roomId: string, playerId: string) {
+  const update = createSessionUpdate(day, roomId, playerId);
+  return {
+    world: {
+      ...update.world,
+      map: {
+        width: update.world.map.width,
+        height: update.world.map.height,
+        encodedTiles: {
+          format: "typed-array-v1",
+          terrain: encodeBytes([0, 1, 2, 0]),
+          fog: encodeBytes([2, 1, 0, 2]),
+          walkable: encodeBytes([1, 1, 1, 1]),
+          overlays: []
+        }
+      }
+    },
+    battle: null,
+    events: update.events,
+    movementPlan: update.movementPlan,
+    reachableTiles: update.reachableTiles
+  };
 }
 
 test("Cocos runtime harness boots VeilRoot from lobby handoff into the first live snapshot", async () => {
@@ -141,6 +174,67 @@ test("Cocos runtime harness lets VeilCocosSession persist replay data across rec
   assert.equal(
     VeilCocosSession.readStoredReplay("room-issue-338", "player-338")?.world.meta.day,
     5
+  );
+
+  await session.dispose();
+});
+
+test("Cocos runtime harness replaces cached replay with the decoded recovery snapshot after reconnect handoff", async () => {
+  const replayedUpdate = createSessionUpdate(2, "room-issue-474", "player-474");
+  replayedUpdate.world.map.tiles[0] = {
+    ...replayedUpdate.world.map.tiles[0],
+    terrain: "lava",
+    fog: "hidden",
+    walkable: false
+  };
+
+  const initialRoom = new FakeColyseusRoom([createSessionUpdate(3, "room-issue-474", "player-474")], "initial-token");
+  const recoveredRoom = new FakeColyseusRoom(
+    [
+      createRawStateReply(createEncodedStatePayload(7, "room-issue-474", "player-474")),
+      createRawStateReply(createEncodedStatePayload(7, "room-issue-474", "player-474"))
+    ],
+    "recovered-token"
+  );
+  const events: string[] = [];
+  const pushedDays: number[] = [];
+  const storage = createMemoryStorage();
+  seedStoredReplay(storage, replayedUpdate);
+
+  const harness = createVeilCocosSessionRuntimeHarness({
+    storage,
+    joinRooms: [initialRoom, recoveredRoom],
+    wait: async () => undefined
+  });
+
+  assert.equal(VeilCocosSession.readStoredReplay("room-issue-474", "player-474")?.world.meta.day, 2);
+
+  const session = await harness.create("room-issue-474", "player-474", 1001, {
+    onConnectionEvent: (event) => {
+      events.push(event);
+    },
+    onPushUpdate: (update) => {
+      pushedDays.push(update.world.meta.day);
+    }
+  });
+
+  await session.snapshot();
+  initialRoom.emitLeave(4002);
+  await flushMicrotasks();
+  const recoveredSnapshot = await session.snapshot("post-recovery");
+  const storedReplay = VeilCocosSession.readStoredReplay("room-issue-474", "player-474");
+
+  assert.equal(recoveredSnapshot.reason, "post-recovery");
+  assert.equal(recoveredSnapshot.world.meta.day, 7);
+  assert.deepEqual(events, ["reconnect_failed", "reconnected"]);
+  assert.deepEqual(pushedDays, [7]);
+  assert.equal(storedReplay?.world.meta.day, 7);
+  assert.deepEqual(storedReplay?.world.map.tiles.map((tile) => tile.terrain), ["grass", "dirt", "sand", "grass"]);
+  assert.deepEqual(storedReplay?.world.map.tiles.map((tile) => tile.fog), ["visible", "explored", "hidden", "visible"]);
+  assert.deepEqual(storedReplay?.world.map.tiles.map((tile) => tile.walkable), [true, true, true, true]);
+  assert.equal(
+    harness.storage.getItem("project-veil:cocos:reconnection:room-issue-474:player-474"),
+    "recovered-token"
   );
 
   await session.dispose();
