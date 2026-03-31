@@ -18,7 +18,7 @@ test("rc-artifact: guest login reaches lobby and room boot", async ({ page }, te
     await page.goto("/");
 
     await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
-    await expect(page.getByText("活跃房间")).toBeVisible();
+    await expect(page.getByText("活跃房间").first()).toBeVisible();
 
     await page.locator("[data-lobby-room-id]").fill(roomId);
     await page.locator("[data-lobby-player-id]").fill(playerId);

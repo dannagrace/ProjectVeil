@@ -21,6 +21,7 @@ import {
   type SnapshotRetentionPolicy
 } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
+import { registerAdminRoutes } from "./admin-console";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
 
 loadEnv();
@@ -89,6 +90,7 @@ export interface DevServerBootstrapDependencies {
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
   registerRuntimeObservabilityRoutes(app: unknown): void;
+  registerAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore, gameServer: DevServerGameServer): void;
   createGameServer(transport: DevServerTransport): DevServerGameServer;
   logger: DevServerLogger;
   process: DevServerProcess;
@@ -116,6 +118,8 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
     registerRuntimeObservabilityRoutes: (app) => registerRuntimeObservabilityRoutes(app as never),
+    registerAdminRoutes: (app, store, gameServer) =>
+      registerAdminRoutes(app as never, store as RoomSnapshotStore, gameServer),
     createGameServer: (transport) =>
       new Server({
         transport: transport as WebSocketTransport
@@ -130,7 +134,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
 
 export async function startDevServer(
   port = Number(process.env.PORT ?? 2567),
-  host = process.env.HOST ?? "127.0.0.1",
+  host = process.env.HOST ?? "0.0.0.0",
   dependencies: Partial<DevServerBootstrapDependencies> = {}
 ): Promise<void> {
   const deps = {
@@ -167,6 +171,7 @@ export async function startDevServer(
   deps.registerRuntimeObservabilityRoutes(expressApp);
 
   const gameServer = deps.createGameServer(transport);
+  deps.registerAdminRoutes(expressApp, effectiveSnapshotStore, gameServer);
   gameServer.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await gameServer.listen(port, host);
 
@@ -241,3 +246,8 @@ export async function startDevServer(
 if (import.meta.main) {
   void startDevServer();
 }
+
+// Keep the process alive when imported as a module (e.g. via -e flag).
+// The Colyseus WebSocket server should hold the event loop open, but in some
+// environments (tsx loader, inline eval) the HTTP/WS handles may be unref'd.
+const _keepAlive = setInterval(() => {}, 30_000);

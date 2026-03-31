@@ -98,6 +98,18 @@ import {
 } from "./room-feedback";
 import { createMainSessionRuntime } from "./main-session-runtime";
 
+// 注入全局调试条
+const debugBar = document.createElement("div");
+debugBar.style.cssText = "position:fixed;top:0;left:0;right:0;background:rgba(0,0,0,0.8);color:#0f0;padding:4px 10px;z-index:9999;font-size:12px;pointer-events:none;font-family:monospace;";
+debugBar.id = "veil-debug-bar";
+debugBar.textContent = `Target API: http://127.0.0.1:2567 | Status: Initializing...`;
+document.body.appendChild(debugBar);
+
+function updateDebugStatus(msg: string, color = "#0f0") {
+    debugBar.textContent = `Target API: http://127.0.0.1:2567 | ${msg}`;
+    debugBar.style.color = color;
+}
+
 const params = new URLSearchParams(window.location.search);
 const queryRoomId = params.get("roomId")?.trim() ?? "";
 const queryPlayerId = params.get("playerId")?.trim() ?? "";
@@ -375,7 +387,17 @@ let sessionPromise: ReturnType<typeof createGameSession> | null = shouldBootGame
   ? createGameSession(roomId, playerId, 1001, {
       getDisplayName: mainSessionRuntime.getDisplayName,
       getAuthToken: mainSessionRuntime.getAuthToken,
-      onPushUpdate: mainSessionRuntime.onPushUpdate,
+      onPushUpdate: (update) => {
+      // 强制同步账号资源到 UI 左侧面板
+      if (update.world && update.world.resources) {
+          state.account.globalResources = { ...update.world.resources };
+          console.log("[UI] Global resources synced from world state:", update.world.resources);
+      }
+      mainSessionRuntime.onPushUpdate(update);
+    },
+      onConfigUpdate: (bundle) => {
+        console.log("[Config] 服务端配置已更新，客户端运行时已同步");
+      },
       onConnectionEvent: mainSessionRuntime.onConnectionEvent
     })
   : null;

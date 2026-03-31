@@ -2106,8 +2106,26 @@ function buildRuntimeConfigBundle(
   };
 }
 
+const configUpdateListeners = new Set<(bundle: RuntimeConfigBundle) => void>();
+
+export function registerConfigUpdateListener(
+  callback: (bundle: RuntimeConfigBundle) => void
+): () => void {
+  configUpdateListeners.add(callback);
+  return () => {
+    configUpdateListeners.delete(callback);
+  };
+}
+
 function applyRuntimeBundle(bundle: RuntimeConfigBundle): void {
   replaceRuntimeConfigs(bundle);
+  for (const listener of configUpdateListeners) {
+    try {
+      listener(bundle);
+    } catch (error) {
+      console.error("[config-center] Error notifying config update listener", error);
+    }
+  }
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {

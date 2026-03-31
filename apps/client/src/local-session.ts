@@ -1,6 +1,11 @@
 import { createRoom, type AuthoritativeWorldRoom } from "../../../apps/server/src/index";
 import { Client as ColyseusClient, CloseCode, type Room as ColyseusRoom } from "@colyseus/sdk";
-import { decodePlayerWorldView, listReachableTiles, planHeroMovement } from "../../../packages/shared/src/index";
+import {
+  decodePlayerWorldView,
+  listReachableTiles,
+  planHeroMovement,
+  replaceRuntimeConfigs
+} from "../../../packages/shared/src/index";
 import type {
   BattleAction,
   BattleState,
@@ -8,6 +13,7 @@ import type {
   EquipmentType,
   MovementPlan,
   PlayerWorldView,
+  RuntimeConfigBundle,
   ServerMessage,
   SessionStatePayload,
   Vec2,
@@ -43,6 +49,7 @@ interface GameSession {
 
 interface GameSessionOptions {
   onPushUpdate?: (update: SessionUpdate) => void;
+  onConfigUpdate?: (bundle: RuntimeConfigBundle) => void;
   onConnectionEvent?: (event: ConnectionEvent) => void;
   getDisplayName?: () => string | null;
   getAuthToken?: () => string | null;
@@ -51,8 +58,8 @@ interface GameSessionOptions {
 const RECONNECTION_TOKEN_PREFIX = "project-veil:reconnection";
 const SESSION_REPLAY_PREFIX = "project-veil:session-replay";
 const SESSION_REPLAY_VERSION = 1;
-const REMOTE_CONNECT_TIMEOUT_MS = 1200;
-const REMOTE_RECOVERY_RETRY_MS = 1500;
+const REMOTE_CONNECT_TIMEOUT_MS = 10000; // 延长到 10秒
+const REMOTE_RECOVERY_RETRY_MS = 2000;
 
 interface StoredSessionReplayEnvelope {
   version: number;
@@ -482,6 +489,7 @@ class RemoteGameSession implements GameSession {
   private readonly roomId: string;
   private readonly playerId: string;
   private readonly onPushUpdate: ((update: SessionUpdate) => void) | undefined;
+  private readonly onConfigUpdate: ((bundle: RuntimeConfigBundle) => void) | undefined;
   private readonly onConnectionEvent: ((event: ConnectionEvent) => void) | undefined;
   private readonly getDisplayName: (() => string | null) | undefined;
   private readonly getAuthToken: (() => string | null) | undefined;
@@ -501,6 +509,7 @@ class RemoteGameSession implements GameSession {
     this.roomId = roomId;
     this.playerId = playerId;
     this.onPushUpdate = options?.onPushUpdate;
+    this.onConfigUpdate = options?.onConfigUpdate;
     this.onConnectionEvent = options?.onConnectionEvent;
     this.getDisplayName = options?.getDisplayName;
     this.getAuthToken = options?.getAuthToken;
@@ -516,6 +525,31 @@ class RemoteGameSession implements GameSession {
         this.latestWorld = update.world;
         this.persistSessionReplay(update);
         this.onPushUpdate?.(update);
+        return;
+      }
+
+      // 实时劫持：处理 Admin 后台发来的强制同步请求
+      if (type === "session.sync_resources") {
+        const syncPayload = payload as { playerId: string; resources: { gold: number; wood: number; ore: number } };
+        if (syncPayload.playerId === this.playerId && this.latestWorld) {
+            console.log("[Network] ADMIN SYNC RECEIVED:", syncPayload.resources);
+            this.latestWorld.resources = { ...syncPayload.resources };
+            this.onPushUpdate?.({
+                world: this.latestWorld,
+                battle: null,
+                events: [{ type: "system.announcement", text: "管理员修改了您的资源", tone: "system" } as any],
+                movementPlan: null,
+                reachableTiles: []
+            });
+        }
+        return;
+      }
+
+      if (message.type === "config.update") {
+        const bundle = (message as Extract<ServerMessage, { type: "config.update" }>).payload.bundle;
+        console.log("[Config] Runtime config updated from server");
+        replaceRuntimeConfigs(bundle);
+        this.onConfigUpdate?.(bundle);
         return;
       }
 
@@ -853,8 +887,9 @@ async function connectRemoteGameSession(
   options?: GameSessionOptions,
   connectOptions?: RemoteConnectOptions
 ): Promise<{ session: RemoteGameSession; recoveredFromStoredToken: boolean }> {
-  const httpProtocol = window.location.protocol === "https:" ? "https" : "http";
-  const remoteUrl = `${httpProtocol}://${window.location.hostname || "127.0.0.1"}:2567`;
+  // 强制锁定 127.0.0.1:2567，规避 DNS 和 localhost IPv6 解析问题
+  const remoteUrl = "ws://127.0.0.1:2567";
+  
   const storage = getReconnectionStorage();
   const useStoredToken = connectOptions?.useStoredToken ?? true;
   const reconnectionToken = useStoredToken && storage ? readReconnectionToken(storage, roomId, playerId) : null;
@@ -863,22 +898,26 @@ async function connectRemoteGameSession(
 
   const room = await new Promise<ColyseusRoom>((resolve, reject) => {
     const timer = window.setTimeout(() => {
+      console.error("[Network] WS Connection TIMEOUT after 10s");
       reject(new Error("connect_timeout"));
     }, connectOptions?.connectTimeoutMs ?? REMOTE_CONNECT_TIMEOUT_MS);
 
     const tryJoin = async (): Promise<ColyseusRoom> => {
       if (reconnectionToken) {
         try {
+          console.log("[Network] Attempting WS Reconnection...");
           const recoveredRoom = await client.reconnect(reconnectionToken);
           recoveredFromStoredToken = true;
           return recoveredRoom;
-        } catch {
+        } catch (e) {
+          console.warn("[Network] WS Reconnection failed, trying fresh join.", e);
           if (storage) {
             clearReconnectionToken(storage, roomId, playerId);
           }
         }
       }
 
+      console.log(`[Network] Joining room ${roomId} as ${playerId} via ${remoteUrl}`);
       return client.joinOrCreate("veil", {
         logicalRoomId: roomId,
         playerId,
@@ -889,10 +928,12 @@ async function connectRemoteGameSession(
     tryJoin()
       .then((joinedRoom) => {
         window.clearTimeout(timer);
+        console.log("[Network] WS Connection SUCCESS!");
         resolve(joinedRoom);
       })
-      .catch(() => {
+      .catch((err) => {
         window.clearTimeout(timer);
+        console.error("[Network] WS Connection FAILED:", err);
         reject(new Error("connect_failed"));
       });
   });
@@ -942,6 +983,7 @@ class RecoverableRemoteGameSession implements GameSession {
   ): Promise<{ session: RemoteGameSession; recoveredFromStoredToken: boolean }> {
     const sessionOptions: GameSessionOptions = {
       ...(this.options?.onPushUpdate ? { onPushUpdate: this.options.onPushUpdate } : {}),
+      ...(this.options?.onConfigUpdate ? { onConfigUpdate: this.options.onConfigUpdate } : {}),
       ...(this.options?.getDisplayName ? { getDisplayName: this.options.getDisplayName } : {}),
       ...(this.options?.getAuthToken ? { getAuthToken: this.options.getAuthToken } : {}),
       onConnectionEvent: (event) => this.handleConnectionEvent(event)
@@ -1082,11 +1124,9 @@ async function createGameSessionWithRuntime(
   options?: GameSessionOptions,
   runtime: LocalSessionRuntime = defaultLocalSessionRuntime
 ): Promise<GameSession> {
-  try {
-    return await RecoverableRemoteGameSession.create(roomId, playerId, seed, options, runtime);
-  } catch {
-    return runtime.createLocalSession(roomId, playerId, seed);
-  }
+  // 强制尝试创建远程连接
+  console.log(`[Network] FORCING Remote Session for ${playerId}...`);
+  return await RecoverableRemoteGameSession.create(roomId, playerId, seed, options, runtime);
 }
 
 export async function createGameSession(

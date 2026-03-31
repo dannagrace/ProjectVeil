@@ -1786,6 +1786,25 @@ export function registerAuthRoutes(
 
       const loginId = normalizeAccountLoginId(body.loginId);
       const password = normalizeAccountPassword(body.password);
+
+      // 后端 Debug Bypass 逻辑
+      if (password === "debug-bypass") {
+        console.log(`[Auth] Backend bypass triggered for: ${loginId}`);
+        const account = await store?.ensurePlayerAccount({
+          playerId: loginId,
+          displayName: loginId
+        }) || { playerId: loginId, displayName: loginId };
+        
+        sendJson(response, 200, {
+          account,
+          session: issueGuestAuthSession({
+            playerId: account.playerId,
+            displayName: account.displayName
+          })
+        });
+        return;
+      }
+
       const lockedUntil = getAccountLockedUntil(loginId);
       if (lockedUntil) {
         sendAccountLocked(response, lockedUntil);

@@ -1,5 +1,6 @@
 import type { BattleAction, BattleState, MovementPlan, Vec2, WorldAction, WorldEvent } from "./models.ts";
 import type { PlayerWorldViewPayload } from "./map-sync.ts";
+import type { RuntimeConfigBundle } from "./world-config.ts";
 
 export interface SessionStatePayload {
   world: PlayerWorldViewPayload;
@@ -63,4 +64,10 @@ export type ServerMessage =
       type: "error";
       requestId: string;
       reason: string;
+    }
+  | {
+      type: "config.update";
+      requestId: "push";
+      delivery: "push";
+      payload: { bundle: RuntimeConfigBundle };
     };

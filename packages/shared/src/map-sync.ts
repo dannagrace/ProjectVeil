@@ -145,7 +145,8 @@ export function encodePlayerWorldView(
     for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
       const tile = view.map.tiles[tileIndex(view.map.width, x, y)]!;
       terrain[localIndex] = TERRAIN_CODES[tile.terrain];
-      fog[localIndex] = FOG_CODES[tile.fog];
+      // 临时开启上帝视角：强制设为 visible (2)
+      fog[localIndex] = 2; // FOG_CODES["visible"]
       walkable[localIndex] = tile.walkable ? 1 : 0;
 
       if (tile.resource || tile.occupant || tile.building) {

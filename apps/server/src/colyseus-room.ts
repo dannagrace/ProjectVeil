@@ -25,6 +25,7 @@ import {
   type PlayerAccountSnapshot,
   type RoomSnapshotStore
 } from "./persistence";
+import { registerConfigUpdateListener } from "./config-center";
 import { applyPlayerEventLogAndAchievements } from "./player-achievements";
 import { resolveGuestAuthSession } from "./auth";
 import {
@@ -58,6 +59,7 @@ const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
 const lobbyRoomOwnerTokens = new Map<string, number>();
+const activeRoomInstances = new Map<string, VeilColyseusRoom>();
 let nextLobbyRoomOwnerToken = 1;
 
 export interface LobbyRoomSummary {
@@ -83,6 +85,10 @@ export function listLobbyRooms(): LobbyRoomSummary[] {
 export function resetLobbyRoomRegistry(): void {
   lobbyRoomSummaries.clear();
   lobbyRoomOwnerTokens.clear();
+}
+
+export function getActiveRoomInstances(): Map<string, VeilColyseusRoom> {
+  return activeRoomInstances;
 }
 
 function sendMessage<T extends ServerMessage["type"]>(
@@ -187,15 +193,17 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   maxClients = 8;
   patchRate = null;
 
-  private worldRoom!: AuthoritativeWorldRoom;
+  public worldRoom!: AuthoritativeWorldRoom;
   private readonly lobbyRoomOwnerToken = nextLobbyRoomOwnerToken++;
   private readonly playerIdBySessionId = new Map<string, string>();
   private readonly reconnectedAtByPlayerId = new Map<string, string>();
+  private unsubscribeConfigUpdate: (() => void) | null = null;
 
   async onCreate(options: JoinOptions): Promise<void> {
     const logicalRoomId = options.logicalRoomId ?? "room-alpha";
     this.metadata = { logicalRoomId };
     lobbyRoomOwnerTokens.set(logicalRoomId, this.lobbyRoomOwnerToken);
+    activeRoomInstances.set(logicalRoomId, this);
     this.setState({});
     const persistedSnapshot = configuredRoomSnapshotStore
       ? await configuredRoomSnapshotStore.load(logicalRoomId)
@@ -225,6 +233,16 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
     await this.persistRoomState();
     this.publishLobbyRoomSummary();
+
+    this.unsubscribeConfigUpdate = registerConfigUpdateListener((bundle) => {
+      for (const client of this.clients) {
+        sendMessage(client, "config.update", {
+          requestId: "push",
+          delivery: "push",
+          payload: { bundle }
+        });
+      }
+    });
 
     this.onMessage("connect", async (client, message: Extract<ClientMessage, { type: "connect" }>) => {
       recordConnectMessage();
@@ -398,12 +416,16 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   }
 
   onDispose(): void {
+    this.unsubscribeConfigUpdate?.();
+    this.unsubscribeConfigUpdate = null;
+
     if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) !== this.lobbyRoomOwnerToken) {
       return;
     }
 
     lobbyRoomOwnerTokens.delete(this.metadata.logicalRoomId);
     lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
+    activeRoomInstances.delete(this.metadata.logicalRoomId);
     removeRuntimeRoom(this.metadata.logicalRoomId);
   }
 

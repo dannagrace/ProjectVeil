@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project Veil Admin Console</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f3efe7;
+            --panel: rgba(255, 252, 246, 0.94);
+            --border: #d6c8b4;
+            --text: #261d15;
+            --muted: #6d5b4b;
+            --accent: #8f3b2e;
+            --accent-soft: #f5ddd4;
+            --success: #2e7d32;
+            --shadow: 0 8px 30px rgba(58, 38, 16, 0.12);
+        }
+
+        body { margin: 0; font-family: system-ui, -apple-system, sans-serif; color: var(--text); background: var(--bg); padding: 20px; }
+        main { max-width: 900px; margin: 0 auto; }
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: var(--shadow); }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+        .stat-box { background: var(--accent-soft); padding: 16px; border-radius: 12px; text-align: center; }
+        .stat-value { font-size: 24px; font-weight: bold; color: var(--accent); }
+        .stat-label { font-size: 14px; color: var(--muted); }
+        input, button, select { padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); font-size: 14px; }
+        button { background: var(--accent); color: white; border: none; cursor: pointer; font-weight: bold; }
+        .form-group { margin-bottom: 16px; display: flex; flex-direction: column; gap: 8px; }
+        #status { padding: 10px; border-radius: 8px; margin-bottom: 16px; display: none; white-space: pre-wrap; word-break: break-all; }
+        .status-error { background: #fee2e2; color: #991b1b; display: block !important; }
+        .status-success { background: #dcfce7; color: var(--success); display: block !important; }
+    </style>
+</head>
+<body>
+    <main>
+        <div class="card">
+            <h1>Veil Admin Console (v2.0)</h1>
+            <div class="form-group">
+                <label>Admin Secret</label>
+                <input type="password" id="adminSecret" value="veil-admin-2026" />
+            </div>
+            <div id="status"></div>
+        </div>
+
+        <div class="grid">
+            <div class="stat-box">
+                <div class="stat-value" id="stat-rooms">-</div>
+                <div class="stat-label">活跃房间</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="stat-players">-</div>
+                <div class="stat-label">在线玩家</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>玩家资源修改</h2>
+            <div class="form-group">
+                <label>Player ID (输入 player-1)</label>
+                <input type="text" id="targetPlayerId" value="player-1" />
+            </div>
+            <div class="grid">
+                <div class="form-group"><label>Gold</label><input type="number" id="modGold" value="1000" /></div>
+                <div class="form-group"><label>Wood</label><input type="number" id="modWood" value="0" /></div>
+            </div>
+            <button onclick="modifyResources()">确认修改并强制同步</button>
+        </div>
+    </main>
+
+    <script>
+        const secretInput = document.getElementById('adminSecret');
+        const statusDiv = document.getElementById('status');
+
+        function showStatus(msg, type) {
+            statusDiv.textContent = msg;
+            statusDiv.className = type === 'error' ? 'status-error' : 'status-success';
+            statusDiv.style.display = 'block';
+        }
+
+        async function fetchOverview() {
+            try {
+                const res = await fetch('/api/admin/overview', {
+                    headers: { 'x-veil-admin-secret': secretInput.value }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById('stat-rooms').textContent = data.activeRooms;
+                    document.getElementById('stat-players').textContent = data.activePlayers;
+                }
+            } catch (e) {}
+        }
+
+        async function modifyResources() {
+            const pid = document.getElementById('targetPlayerId').value;
+            showStatus('正在发送请求...', 'success');
+            
+            try {
+                const res = await fetch(`/api/admin/players/${pid}/resources`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'x-veil-admin-secret': secretInput.value 
+                    },
+                    body: JSON.stringify({
+                        gold: parseInt(document.getElementById('modGold').value),
+                        wood: parseInt(document.getElementById('modWood').value),
+                        ore: 0
+                    })
+                });
+
+                const data = await res.json();
+                if (res.ok) {
+                    showStatus(`修改成功！\n当前 Gold: ${data.resources.gold}\n同步到房间: ${data.syncedToRoom ? '✅ 是' : '❌ 否 (无活跃房间)'}`, 'success');
+                } else {
+                    showStatus(`修改失败！\n状态码: ${res.status}\n原因: ${JSON.stringify(data.error || data)}`, 'error');
+                }
+            } catch (e) {
+                showStatus(`网络错误: ${e.message}`, 'error');
+            }
+        }
+
+        setInterval(fetchOverview, 5000);
+        fetchOverview();
+    </script>
+</body>
+</html>
