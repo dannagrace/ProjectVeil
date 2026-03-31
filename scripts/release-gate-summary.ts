@@ -67,12 +67,12 @@ interface WechatRcValidationReport {
 
 interface WechatSmokeReport {
   execution?: {
-    result?: "pending" | "passed" | "failed";
+    result?: "pending" | "blocked" | "passed" | "failed";
     summary?: string;
   };
   cases?: Array<{
     id?: string;
-    status?: "pending" | "passed" | "failed" | "not_applicable";
+    status?: "pending" | "blocked" | "passed" | "failed" | "not_applicable";
     required?: boolean;
   }>;
 }
@@ -591,18 +591,27 @@ export function evaluateWechatGate(
   const failures: string[] = [];
   const requiredCases = (report.cases ?? []).filter((entry) => entry.required !== false);
   const failedCases = requiredCases.filter((entry) => entry.status === "failed");
+  const blockedCases = requiredCases.filter((entry) => entry.status === "blocked");
   const pendingCases = requiredCases.filter((entry) => entry.status === "pending");
 
   if (report.execution?.result !== "passed") {
-    failures.push(`WeChat smoke execution result is ${JSON.stringify(report.execution?.result ?? "missing")}.`);
+    if (report.execution?.result === "blocked" || report.execution?.result === "pending" || report.execution?.result === undefined) {
+      failures.push(`WeChat smoke evidence is blocked: execution result is ${JSON.stringify(report.execution?.result ?? "missing")}.`);
+    } else {
+      failures.push(`WeChat smoke execution result is ${JSON.stringify(report.execution?.result)}.`);
+    }
   }
   for (const entry of failedCases) {
     failures.push(`WeChat smoke case failed: ${entry.id ?? "unknown-case"}.`);
   }
+  for (const entry of blockedCases) {
+    failures.push(`WeChat smoke case is blocked: ${entry.id ?? "unknown-case"}.`);
+  }
   for (const entry of pendingCases) {
-    failures.push(`WeChat smoke case is still pending: ${entry.id ?? "unknown-case"}.`);
+    failures.push(`WeChat smoke case is blocked pending device evidence: ${entry.id ?? "unknown-case"}.`);
   }
 
+  const blocked = failures.some((entry) => entry.includes("blocked"));
   return {
     id: "wechat-release",
     label: "WeChat release validation",
@@ -610,7 +619,9 @@ export function evaluateWechatGate(
     summary:
       failures.length === 0
         ? `WeChat smoke report passed ${requiredCases.length} required cases.`
-        : `WeChat smoke report failed: ${failures[0]}`,
+        : blocked
+          ? `WeChat smoke report blocked: ${failures[0]}`
+          : `WeChat smoke report failed: ${failures[0]}`,
     failures,
     source: {
       kind: "wechat-smoke-report",

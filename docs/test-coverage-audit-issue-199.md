@@ -102,7 +102,7 @@ The current tooling makes coverage expansion slower than it needs to be:
 2. The repo now publishes scoped Node/V8 coverage through `npm run test:coverage:ci`, including `.coverage/summary.md`, raw V8 JSON artifacts, and minimum line/branch/function floors for `shared`, `server`, `client`, and `cocos-client`. The summary now calls out threshold failures explicitly so CI logs and `GITHUB_STEP_SUMMARY` show which scope and metric fell below its floor.
 3. H5 Playwright coverage is useful, but it only validates the DOM debug shell; it does not exercise the Cocos runtime that now serves as the primary client.
 4. Cocos scene components depend on `cc` runtime behavior, which makes them harder to test in plain `node:test` without maintaining more test doubles or extracting more pure logic seams.
-5. WeChat readiness still depends on artifact validation and manual smoke-report workflows rather than automated device/runtime execution.
+5. WeChat readiness now has a structured device/runtime evidence ingest path, but its confidence still depends on maintaining those automated evidence producers and expanding scene-level Cocos runtime coverage.
 
 ## Suggested Next Slice
 

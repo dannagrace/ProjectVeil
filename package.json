@@ -43,6 +43,7 @@
     "verify:wechat-release": "node --import tsx ./scripts/verify-wechat-minigame-artifact.ts",
     "validate:wechat-rc": "node --import tsx ./scripts/validate-wechat-release-candidate.ts",
     "smoke:wechat-release": "node --import tsx ./scripts/smoke-wechat-minigame-release.ts",
+    "ingest:wechat-smoke-evidence": "node --import tsx ./scripts/smoke-wechat-minigame-release.ts",
     "release:readiness:snapshot": "node --import tsx ./scripts/release-readiness-snapshot.ts",
     "release:readiness:dashboard": "node --import tsx ./scripts/release-readiness-dashboard.ts",
     "release:gate:summary": "node --import tsx ./scripts/release-gate-summary.ts",

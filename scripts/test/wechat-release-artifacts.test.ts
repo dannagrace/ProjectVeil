@@ -27,6 +27,14 @@ interface ReleasePackageMetadata {
   sourceRevision?: string;
 }
 
+interface RuntimeEvidenceCasePayload {
+  id: string;
+  status: "blocked" | "passed" | "failed" | "not_applicable";
+  notes?: string;
+  evidence?: string[];
+  requiredEvidence?: Record<string, string>;
+}
+
 function hashFileSha256(filePath: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
@@ -152,6 +160,30 @@ function writePassingSmokeReport(metadataPath: string, reportPath: string): void
   };
 
   fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+}
+
+function writeRuntimeEvidence(metadataPath: string, runtimeEvidencePath: string, cases: RuntimeEvidenceCasePayload[], result?: "blocked" | "passed" | "failed"): void {
+  const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8")) as ReleasePackageMetadata;
+  const payload = {
+    schemaVersion: 1,
+    buildTemplatePlatform: "wechatgame",
+    artifact: {
+      archiveFileName: metadata.archiveFileName,
+      archiveSha256: metadata.archiveSha256,
+      sourceRevision: metadata.sourceRevision
+    },
+    execution: {
+      tester: "codex-bot",
+      device: "iPhone 15 Pro / WeChat 8.0.50",
+      clientVersion: "8.0.50",
+      executedAt: "2026-03-31T10:00:00+08:00",
+      ...(result ? { result } : {}),
+      summary: "Automated device evidence imported from CI runtime adapter."
+    },
+    cases
+  };
+
+  fs.writeFileSync(runtimeEvidencePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 function updateArchiveMetadata(metadataPath: string, archivePath: string): void {
@@ -342,5 +374,190 @@ test("validate:wechat-rc requires an upload receipt when version validation is r
       "smoke-report:passed",
       "upload-receipt:failed"
     ]
+  );
+});
+
+test("smoke:wechat-release ingests automated runtime evidence into the existing smoke schema", () => {
+  const artifact = packageFixtureArtifact();
+  const runtimeEvidencePath = path.join(artifact.artifactsDir, "codex.wechat.runtime-evidence.json");
+  const smokeReportPath = path.join(artifact.artifactsDir, "codex.wechat.smoke-report.json");
+
+  writeRuntimeEvidence(artifact.metadataPath, runtimeEvidencePath, [
+    {
+      id: "startup",
+      status: "passed",
+      notes: "Cold start reached the login bridge in 2.1s.",
+      evidence: ["artifacts/wechat-release/startup.mp4"]
+    },
+    {
+      id: "lobby-entry",
+      status: "passed",
+      notes: "Lobby rendered with guest identity and no fatal modal.",
+      evidence: ["artifacts/wechat-release/lobby.png"]
+    },
+    {
+      id: "room-entry",
+      status: "passed",
+      notes: "Joined room-alpha from the lobby.",
+      evidence: ["artifacts/wechat-release/room-entry.png"]
+    },
+    {
+      id: "reconnect-recovery",
+      status: "passed",
+      notes: "Recovered the same authority room after a network toggle.",
+      evidence: ["artifacts/wechat-release/reconnect.mp4"],
+      requiredEvidence: {
+        roomId: "room-alpha",
+        reconnectPrompt: "连接已恢复",
+        restoredState: "Restored room-alpha with the same hero state and lobby context."
+      }
+    },
+    {
+      id: "share-roundtrip",
+      status: "not_applicable",
+      notes: "Share roundtrip automation is excluded from this RC lane; artifact still records the intended payload.",
+      evidence: ["artifacts/wechat-release/share-not-applicable.txt"],
+      requiredEvidence: {
+        shareScene: "lobby",
+        shareQuery: "roomId=room-alpha&inviterId=player-7",
+        roundtripState: "Not executed in this automated lane."
+      }
+    },
+    {
+      id: "key-assets",
+      status: "passed",
+      notes: "Startup, lobby, and room critical assets loaded without 404s.",
+      evidence: ["artifacts/wechat-release/assets.log"]
+    }
+  ]);
+
+  execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/smoke-wechat-minigame-release.ts",
+      "--metadata",
+      artifact.metadataPath,
+      "--report",
+      smokeReportPath,
+      "--runtime-evidence",
+      runtimeEvidencePath
+    ],
+    {
+      cwd: repoRoot,
+      stdio: "pipe"
+    }
+  );
+
+  const report = JSON.parse(fs.readFileSync(smokeReportPath, "utf8")) as {
+    execution: { tester: string; result: string };
+    cases: Array<{ id: string; status: string; notes: string; requiredEvidence?: Record<string, string> }>;
+  };
+
+  assert.equal(report.execution.tester, "codex-bot");
+  assert.equal(report.execution.result, "passed");
+  assert.equal(report.cases.find((entry) => entry.id === "login-lobby")?.status, "passed");
+  assert.match(report.cases.find((entry) => entry.id === "login-lobby")?.notes ?? "", /startup \+ lobby entry/i);
+  assert.equal(report.cases.find((entry) => entry.id === "reconnect-recovery")?.requiredEvidence?.roomId, "room-alpha");
+  assert.equal(report.cases.find((entry) => entry.id === "share-roundtrip")?.status, "not_applicable");
+
+  const validationOutput = execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/smoke-wechat-minigame-release.ts",
+      "--metadata",
+      artifact.metadataPath,
+      "--report",
+      smokeReportPath,
+      "--check",
+      "--expected-revision",
+      sourceRevision
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: "pipe"
+    }
+  );
+
+  assert.match(validationOutput, /Validated WeChat smoke report:/);
+});
+
+test("smoke:wechat-release reports blocked automated evidence distinctly from failed evidence", () => {
+  const artifact = packageFixtureArtifact();
+  const runtimeEvidencePath = path.join(artifact.artifactsDir, "codex.wechat.runtime-evidence.blocked.json");
+  const smokeReportPath = path.join(artifact.artifactsDir, "codex.wechat.smoke-report.blocked.json");
+
+  writeRuntimeEvidence(
+    artifact.metadataPath,
+    runtimeEvidencePath,
+    [
+      {
+        id: "startup",
+        status: "passed",
+        evidence: ["startup.log"]
+      },
+      {
+        id: "lobby-entry",
+        status: "blocked",
+        notes: "Device farm did not attach to the lobby interaction phase.",
+        evidence: ["device-farm-summary.txt"]
+      },
+      {
+        id: "share-roundtrip",
+        status: "not_applicable",
+        requiredEvidence: {
+          shareScene: "lobby",
+          shareQuery: "roomId=room-alpha",
+          roundtripState: "Not executed in this automated lane."
+        }
+      }
+    ],
+    "blocked"
+  );
+
+  execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/smoke-wechat-minigame-release.ts",
+      "--metadata",
+      artifact.metadataPath,
+      "--report",
+      smokeReportPath,
+      "--runtime-evidence",
+      runtimeEvidencePath
+    ],
+    {
+      cwd: repoRoot,
+      stdio: "pipe"
+    }
+  );
+
+  assert.throws(
+    () =>
+      execFileSync(
+        "node",
+        [
+          "--import",
+          "tsx",
+          "./scripts/smoke-wechat-minigame-release.ts",
+          "--metadata",
+          artifact.metadataPath,
+          "--report",
+          smokeReportPath,
+          "--check"
+        ],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          stdio: "pipe"
+        }
+      ),
+    /blocked pending device\/runtime evidence/
   );
 });

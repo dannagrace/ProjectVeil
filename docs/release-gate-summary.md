@@ -53,7 +53,8 @@ The summary contains exactly three release dimensions:
 - `wechat-release`
   - Prefers `codex.wechat.rc-validation-report.json` when present.
   - Falls back to `codex.wechat.smoke-report.json` when the RC validation report is absent.
-  - Fails when required WeChat evidence is missing, failed, or still pending.
+  - Fails closed when required WeChat evidence is missing, failed, blocked, or still pending.
+  - Markdown/JSON summary text distinguishes `blocked` device/runtime evidence from true execution failures so CI reviewers can see whether a gate is red because proof is absent or because the runtime actually regressed.
 
 Any failed dimension makes the script exit non-zero so the result can act as a CI release gate.
 

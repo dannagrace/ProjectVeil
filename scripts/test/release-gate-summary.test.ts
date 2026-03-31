@@ -127,7 +127,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(renderMarkdown(report), /Recommend rehearsal: yes/);
 });
 
-test("buildReleaseGateSummaryReport fails when required evidence is pending or missing", () => {
+test("buildReleaseGateSummaryReport reports blocked WeChat device evidence distinctly from failures", () => {
   const workspace = createTempWorkspace();
   const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-fail.json");
   const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
@@ -160,7 +160,7 @@ test("buildReleaseGateSummaryReport fails when required evidence is pending or m
   });
   writeJson(wechatSmokeReportPath, {
     execution: {
-      result: "passed"
+      result: "blocked"
     },
     cases: [
       {
@@ -171,7 +171,7 @@ test("buildReleaseGateSummaryReport fails when required evidence is pending or m
       {
         id: "reconnect-recovery",
         required: true,
-        status: "pending"
+        status: "blocked"
       }
     ]
   });
@@ -193,7 +193,8 @@ test("buildReleaseGateSummaryReport fails when required evidence is pending or m
   assert.equal(report.summary.status, "failed");
   assert.deepEqual(report.summary.failedGateIds, ["release-readiness", "wechat-release"]);
   assert.match(report.gates[0]?.summary ?? "", /not release-ready/);
-  assert.match(report.gates[2]?.summary ?? "", /failed/i);
+  assert.match(report.gates[2]?.summary ?? "", /blocked/i);
+  assert.match(report.gates[2]?.failures.join("\n") ?? "", /blocked pending device evidence|WeChat smoke case is blocked/);
 });
 
 test("evaluateWechatGate prefers RC validation and falls back to smoke report", () => {
