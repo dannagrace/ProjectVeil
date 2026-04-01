@@ -2,6 +2,7 @@ export * from "./achievement-ui.ts";
 export * from "./action-precheck.ts";
 export * from "./assets-config.ts";
 export * from "./battle.ts";
+export * from "./battle-report.ts";
 export * from "./battle-replay.ts";
 export * from "./deterministic-rng.ts";
 export * from "./equipment.ts";

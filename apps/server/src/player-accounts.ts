@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   applyBattleReplayPlaybackCommand,
+  buildPlayerBattleReportCenter,
   buildPlayerProgressionSnapshot,
   findPlayerBattleReplaySummary,
   getAchievementDefinitions,
@@ -182,6 +183,48 @@ function toReplayResponseFromRequest(
       ...(neutralArmyId ? { neutralArmyId } : {}),
       ...(result ? { result } : {})
     })
+  };
+}
+
+function toBattleReportResponseFromRequest(account: PlayerAccountSnapshot, request: IncomingMessage) {
+  const limit = parseLimit(request);
+  const offset = parseOffset(request);
+  const roomId = parseOptionalQueryParam(request, "roomId");
+  const battleId = parseOptionalQueryParam(request, "battleId");
+  const battleKind = parseOptionalQueryParam(request, "battleKind") as
+    | PlayerBattleReplaySummary["battleKind"]
+    | undefined;
+  const playerCamp = parseOptionalQueryParam(request, "playerCamp") as
+    | PlayerBattleReplaySummary["playerCamp"]
+    | undefined;
+  const heroId = parseOptionalQueryParam(request, "heroId");
+  const opponentHeroId = parseOptionalQueryParam(request, "opponentHeroId");
+  const neutralArmyId = parseOptionalQueryParam(request, "neutralArmyId");
+  const result = parseOptionalQueryParam(request, "result") as
+    | PlayerBattleReplaySummary["result"]
+    | undefined;
+
+  return buildPlayerBattleReportCenter(
+    queryPlayerBattleReplaySummaries(account.recentBattleReplays, {
+      ...(limit != null ? { limit } : {}),
+      ...(offset != null ? { offset } : {}),
+      ...(roomId ? { roomId } : {}),
+      ...(battleId ? { battleId } : {}),
+      ...(battleKind ? { battleKind } : {}),
+      ...(playerCamp ? { playerCamp } : {}),
+      ...(heroId ? { heroId } : {}),
+      ...(opponentHeroId ? { opponentHeroId } : {}),
+      ...(neutralArmyId ? { neutralArmyId } : {}),
+      ...(result ? { result } : {})
+    }),
+    account.recentEventLog
+  );
+}
+
+function withBattleReportCenter(account: PlayerAccountSnapshot): PlayerAccountSnapshot {
+  return {
+    ...account,
+    battleReportCenter: buildPlayerBattleReportCenter(account.recentBattleReplays, account.recentEventLog)
   };
 }
 
@@ -478,7 +521,7 @@ export function registerPlayerAccountRoutes(
         ...(authSession.loginId ? { loginId: authSession.loginId } : {})
       });
       sendJson(response, 200, {
-        account,
+        account: withBattleReportCenter(account),
         session: issueNextAuthSession(account, authSession)
       });
       return;
@@ -492,7 +535,7 @@ export function registerPlayerAccountRoutes(
           displayName: authSession.displayName
         }));
       sendJson(response, 200, {
-        account,
+        account: withBattleReportCenter(account),
         session: issueNextAuthSession(account, authSession)
       });
     } catch (error) {
@@ -633,6 +676,33 @@ export function registerPlayerAccountRoutes(
           displayName: authSession.displayName
         }));
       sendJson(response, 200, toReplayResponseFromRequest(account, request));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/me/battle-reports", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, {
+        latestReportId: null,
+        items: []
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      sendJson(response, 200, toBattleReportResponseFromRequest(account, request));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
@@ -887,9 +957,11 @@ export function registerPlayerAccountRoutes(
     if (!store) {
       sendJson(response, 200, {
         account: toPublicPlayerAccount(
-          createLocalModeAccount({
-            playerId
-          })
+          withBattleReportCenter(
+            createLocalModeAccount({
+              playerId
+            })
+          )
         )
       });
       return;
@@ -901,9 +973,11 @@ export function registerPlayerAccountRoutes(
         if (isEphemeralGuestPlayerId(playerId)) {
           sendJson(response, 200, {
             account: toPublicPlayerAccount(
-              createLocalModeAccount({
-                playerId
-              })
+              withBattleReportCenter(
+                createLocalModeAccount({
+                  playerId
+                })
+              )
             )
           });
           return;
@@ -917,7 +991,7 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
-      sendJson(response, 200, { account: toPublicPlayerAccount(account) });
+      sendJson(response, 200, { account: toPublicPlayerAccount(withBattleReportCenter(account)) });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
@@ -956,6 +1030,46 @@ export function registerPlayerAccountRoutes(
       }
 
       sendJson(response, 200, toReplayResponseFromRequest(account, request));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/:playerId/battle-reports", async (request, response) => {
+    const playerId = request.params.playerId?.trim();
+    if (!playerId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, {
+        latestReportId: null,
+        items: []
+      });
+      return;
+    }
+
+    try {
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        if (isEphemeralGuestPlayerId(playerId)) {
+          sendJson(response, 200, {
+            latestReportId: null,
+            items: []
+          });
+          return;
+        }
+        sendJson(response, 404, {
+          error: {
+            code: "player_account_not_found",
+            message: `Player account not found: ${playerId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, toBattleReportResponseFromRequest(account, request));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
@@ -1349,7 +1463,7 @@ export function registerPlayerAccountRoutes(
           ...(authSession.loginId ? { loginId: authSession.loginId } : {})
         });
         sendJson(response, 200, {
-          account,
+          account: withBattleReportCenter(account),
           session: issueNextAuthSession(account, authSession)
         });
         return;
@@ -1418,13 +1532,13 @@ export function registerPlayerAccountRoutes(
           } as typeof account);
 
         sendJson(response, 200, {
-          account
+          account: withBattleReportCenter(account)
         });
         return;
       }
 
       sendJson(response, 200, {
-        account,
+        account: withBattleReportCenter(account),
         session: issueNextAuthSession(account, authSession)
       });
     } catch (error) {
@@ -1506,7 +1620,7 @@ export function registerPlayerAccountRoutes(
           ...(authSession?.playerId === playerId && authSession.loginId ? { loginId: authSession.loginId } : {})
         });
         sendJson(response, 200, {
-          account,
+          account: withBattleReportCenter(account),
           ...(authSession?.playerId === playerId ? { session: issueNextAuthSession(account, authSession) } : {})
         });
         return;
@@ -1526,7 +1640,7 @@ export function registerPlayerAccountRoutes(
           : await store.savePlayerAccountProfile(playerId, patch);
 
       sendJson(response, 200, {
-        account,
+        account: withBattleReportCenter(account),
         session: issueNextAuthSession(account, authSession)
       });
     } catch (error) {

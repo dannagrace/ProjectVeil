@@ -1,4 +1,5 @@
 import {
+  buildPlayerBattleReportCenter,
   buildPlayerProgressionSnapshot,
   createDefaultHeroLoadout,
   createDefaultHeroProgression,
@@ -246,6 +247,59 @@ export function createPlayerProgressionSnapshotFixture(): PlayerProgressionSnaps
       }
     ],
     3
+  );
+}
+
+export function createBattleReportCenterFixture() {
+  return buildPlayerBattleReportCenter(
+    [
+      {
+        id: "room-contract:battle-demo:player-1",
+        roomId: "room-contract",
+        playerId: "player-1",
+        battleId: "battle-demo",
+        battleKind: "neutral",
+        playerCamp: "attacker",
+        heroId: "hero-1",
+        neutralArmyId: "neutral-1",
+        startedAt: "2026-03-29T06:26:00.000Z",
+        completedAt: "2026-03-29T06:30:00.000Z",
+        initialState: createDemoBattleState(),
+        steps: [
+          {
+            index: 1,
+            source: "player",
+            action: {
+              type: "battle.attack",
+              attackerId: "hero-1-stack",
+              defenderId: "neutral-1-stack"
+            }
+          },
+          {
+            index: 2,
+            source: "automated",
+            action: {
+              type: "battle.defend",
+              unitId: "neutral-1-stack"
+            }
+          }
+        ],
+        result: "attacker_victory"
+      }
+    ],
+    [
+      {
+        id: "player-1:2026-03-29T06:30:00.000Z:battle.resolved:2",
+        timestamp: "2026-03-29T06:30:00.000Z",
+        roomId: "room-contract",
+        playerId: "player-1",
+        category: "combat",
+        description: "暮火侦骑 击退了中立守军。",
+        heroId: "hero-1",
+        worldEventType: "battle.resolved",
+        rewards: [{ type: "experience", label: "hero_xp", amount: 120 }]
+      }
+    ]
   );
 }
 

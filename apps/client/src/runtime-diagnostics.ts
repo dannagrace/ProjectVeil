@@ -156,7 +156,8 @@ export function buildH5RuntimeDiagnosticsSnapshot(
       recoverySummary: input.diagnostics.recoverySummary || null,
       predictionStatus: input.diagnostics.predictionStatus || null,
       pendingUiTasks: input.diagnostics.pendingUiTasks,
-      replay: input.diagnostics.replay ? { ...input.diagnostics.replay } : null
+      replay: input.diagnostics.replay ? { ...input.diagnostics.replay } : null,
+      primaryClientTelemetry: []
     }
   };
 }
