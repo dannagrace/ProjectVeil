@@ -89,7 +89,7 @@ export interface DevServerBootstrapDependencies {
   registerPlayerAccountRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
-  registerRuntimeObservabilityRoutes(app: unknown): void;
+  registerRuntimeObservabilityRoutes(app: unknown, options?: { store?: DevServerRoomSnapshotStore }): void;
   registerAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore, gameServer: DevServerGameServer): void;
   createGameServer(transport: DevServerTransport): DevServerGameServer;
   logger: DevServerLogger;
@@ -117,7 +117,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
-    registerRuntimeObservabilityRoutes: (app) => registerRuntimeObservabilityRoutes(app as never),
+    registerRuntimeObservabilityRoutes: (app, options) => registerRuntimeObservabilityRoutes(app as never, options),
     registerAdminRoutes: (app, store, gameServer) =>
       registerAdminRoutes(app as never, store as RoomSnapshotStore, gameServer),
     createGameServer: (transport) =>
@@ -168,7 +168,7 @@ export async function startDevServer(
   deps.registerPlayerAccountRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
-  deps.registerRuntimeObservabilityRoutes(expressApp);
+  deps.registerRuntimeObservabilityRoutes(expressApp, { store: effectiveSnapshotStore });
 
   const gameServer = deps.createGameServer(transport);
   deps.registerAdminRoutes(expressApp, effectiveSnapshotStore, gameServer);
@@ -247,7 +247,6 @@ if (import.meta.main) {
   void startDevServer();
 }
 
-// Keep the process alive when imported as a module (e.g. via -e flag).
-// The Colyseus WebSocket server should hold the event loop open, but in some
-// environments (tsx loader, inline eval) the HTTP/WS handles may be unref'd.
-const _keepAlive = setInterval(() => {}, 30_000);
+// Keep the process alive — the Colyseus WebSocket transport may unref its
+// handles under tsx, causing Node to exit once the event loop drains.
+setInterval(() => {}, 30_000);

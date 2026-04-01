@@ -518,6 +518,16 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   }
 
   async close(): Promise<void> {}
+
+  /** For testing: Clear all in-memory state */
+  clearAll(): void {
+    this.snapshots.clear();
+    this.accounts.clear();
+    this.authByLoginId.clear();
+    this.authSessionsByPlayerId.clear();
+    this.playerIdByWechatOpenId.clear();
+    this.heroArchives.clear();
+  }
 }
 
 export function createMemoryRoomSnapshotStore(): RoomSnapshotStore {

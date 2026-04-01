@@ -23,7 +23,7 @@ interface AuthReadinessPayload {
 }
 
 interface LobbyRoomsPayload {
-  rooms?: unknown[];
+  items?: unknown[];
 }
 
 function encodeRoomQuery(roomId: string, playerId: string): string {
@@ -63,9 +63,18 @@ async function fetchJsonFromBrowser<T>(page: Page, path: string): Promise<T> {
 
 export async function waitForLobbyReady(page: Page): Promise<void> {
   await test.step("setup: wait for lobby smoke readiness", async () => {
+    // Reset the server's in-memory store to ensure test isolation
+    await page.evaluate(async () => {
+      try {
+        await fetch("/api/test/reset-store", { method: "POST" });
+      } catch {
+        // Ignore errors if endpoint not available
+      }
+    });
+
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
-    await expect(page.getByText("活跃房间")).toBeVisible();
+    await expect(page.getByText("活跃房间").first()).toBeVisible();
     await expect
       .poll(
         async () => (await fetchJsonFromBrowser<RuntimeHealthPayload>(page, "/api/runtime/health")).status ?? null,
@@ -86,7 +95,7 @@ export async function waitForLobbyReady(page: Page): Promise<void> {
       .toBe("ok");
     await expect
       .poll(
-        async () => Array.isArray((await fetchJsonFromBrowser<LobbyRoomsPayload>(page, "/api/lobby/rooms")).rooms),
+        async () => Array.isArray((await fetchJsonFromBrowser<LobbyRoomsPayload>(page, "/api/lobby/rooms")).items),
         {
           message: "waiting for lobby room listing",
           timeout: 15_000

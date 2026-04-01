@@ -778,12 +778,15 @@ export function registerRuntimeObservabilityRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
     get: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
+    post: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
   },
   options?: {
     serviceName?: string;
+    store?: { clearAll?: () => void };
   }
 ): void {
   const serviceName = options?.serviceName ?? "project-veil-server";
+  const store = options?.store;
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -846,6 +849,20 @@ export function registerRuntimeObservabilityRoutes(
   app.get("/api/runtime/account-token-delivery", async (_request, response) => {
     try {
       sendJson(response, 200, buildAuthTokenDeliveryPayload(serviceName));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  // Test-only endpoint to reset in-memory state
+  app.post("/api/test/reset-store", async (_request, response) => {
+    try {
+      if (store?.clearAll) {
+        store.clearAll();
+        sendJson(response, 200, { status: "ok", message: "Store cleared" });
+      } else {
+        sendJson(response, 400, { error: { message: "Store does not support clearing" } });
+      }
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
