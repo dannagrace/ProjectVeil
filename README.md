@@ -148,6 +148,7 @@ npm run dev:client:h5
 - 发布就绪快照：`npm run release:readiness:snapshot`
 - 统一发布门禁汇总：`npm run release:gate:summary`
 - 发布健康度聚合摘要：`npm run release:health:summary`
+- Phase 1 candidate dossier：`npm run release:phase1:candidate-dossier -- --candidate <candidate-name> --candidate-revision <git-sha> [--server-url http://127.0.0.1:2567]`
 - 打包 H5 客户端 RC 冒烟：`npm run smoke:client:release-candidate`
 - 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
@@ -192,6 +193,7 @@ npm run dev:client:h5
 - Phase 1 成熟度记分卡与退出标准：`docs/phase1-maturity-scorecard.md`
 - 核心玩法发布门禁清单：`docs/core-gameplay-release-readiness.md`
 - 发布就绪快照说明：`docs/release-readiness-snapshot.md`
+- Phase 1 candidate dossier：`docs/phase1-candidate-dossier.md`
 - 发布健康度聚合说明：`docs/release-health-summary.md`
 - 仓库变更风险分级验证矩阵：`docs/verification-matrix.md`
 - 多人同步治理矩阵说明：`docs/sync-governance-matrix.md`
