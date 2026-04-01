@@ -246,14 +246,24 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
         requiredMetadataFailures: 0,
         checks: [
           {
-            id: "wechat-runtime-review",
-            title: "Runtime health/auth-readiness/metrics reviewed for this candidate",
+            id: "wechat-devtools-export-review",
+            title: "Real WeChat export imported and launched in Developer Tools",
             required: true,
             status: "passed",
             owner: "release-oncall",
             recordedAt: "2026-04-02T08:39:00.000Z",
             revision,
-            artifactPath: path.join(wechatDir, "runtime-review.json")
+            artifactPath: path.join(wechatDir, "devtools-export-review.json")
+          },
+          {
+            id: "wechat-device-runtime-review",
+            title: "Physical-device WeChat runtime validated for this candidate",
+            required: true,
+            status: "passed",
+            owner: "release-oncall",
+            recordedAt: "2026-04-02T08:40:00.000Z",
+            revision,
+            artifactPath: path.join(wechatDir, "device-runtime-review.json")
           }
         ]
       }
@@ -457,13 +467,22 @@ test("phase1 candidate dossier fails the single exit evidence gate when the rele
         requiredMetadataFailures: 0,
         checks: [
           {
-            id: "wechat-runtime-review",
+            id: "wechat-devtools-export-review",
             required: true,
             status: "passed",
             owner: "release-oncall",
             recordedAt: "2026-04-02T08:39:00.000Z",
             revision,
-            artifactPath: path.join(wechatDir, "runtime-review.json")
+            artifactPath: path.join(wechatDir, "devtools-export-review.json")
+          },
+          {
+            id: "wechat-device-runtime-review",
+            required: true,
+            status: "passed",
+            owner: "release-oncall",
+            recordedAt: "2026-04-02T08:40:00.000Z",
+            revision,
+            artifactPath: path.join(wechatDir, "device-runtime-review.json")
           }
         ]
       }

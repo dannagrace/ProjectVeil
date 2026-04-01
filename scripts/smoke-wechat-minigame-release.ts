@@ -517,7 +517,7 @@ function buildReportTemplate(metadata: WechatMinigameReleasePackageMetadata, met
       clientVersion: "",
       executedAt: "",
       result: "pending",
-      summary: `Fill this report after running the real-device or quasi-device smoke pass for ${path.basename(reportPath)}.`
+      summary: `Fill this report after running the physical-device or WeChat real-device-debugging smoke pass for ${path.basename(reportPath)}.`
     },
     cases: buildSmokeCases()
   };

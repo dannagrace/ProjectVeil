@@ -1,18 +1,33 @@
 [
   {
-    "id": "wechat-runtime-review",
-    "title": "Runtime health/auth-readiness/metrics reviewed for this candidate",
+    "id": "wechat-devtools-export-review",
+    "title": "Real WeChat export imported and launched in Developer Tools",
     "status": "pending",
     "required": true,
-    "notes": "Capture runtime evidence against the same candidate revision before marking the WeChat target release-ready.",
+    "notes": "Import the packaged candidate's real wechatgame export into WeChat Developer Tools and capture startup/runtime evidence for the same revision.",
     "owner": "<release-owner>",
     "recordedAt": "<2026-04-02T08:10:00.000Z>",
     "revision": "<git-sha>",
-    "artifactPath": "artifacts/wechat-release/runtime-review.json",
+    "artifactPath": "artifacts/wechat-release/devtools-export-review.json",
     "evidence": [
-      "GET /api/runtime/health",
-      "GET /api/runtime/auth-readiness",
-      "GET /api/runtime/metrics"
+      "WeChat Developer Tools startup screenshot",
+      "WeChat Developer Tools console log",
+      "Imported wechatgame project path or package manifest reference"
+    ]
+  },
+  {
+    "id": "wechat-device-runtime-review",
+    "title": "Physical-device WeChat runtime validated for this candidate",
+    "status": "pending",
+    "required": true,
+    "notes": "Attach the smoke report and supporting captures from a physical-device or WeChat real-device-debugging runtime pass against the same candidate revision.",
+    "owner": "<release-owner>",
+    "recordedAt": "<2026-04-02T08:12:00.000Z>",
+    "revision": "<git-sha>",
+    "artifactPath": "artifacts/wechat-release/device-runtime-review.json",
+    "evidence": [
+      "artifacts/wechat-release/codex.wechat.smoke-report.json",
+      "startup / reconnect / share recordings"
     ]
   },
   {

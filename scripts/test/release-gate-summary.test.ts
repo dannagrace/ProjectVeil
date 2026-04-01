@@ -126,14 +126,24 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
         requiredMetadataFailures: 0,
         checks: [
           {
-            id: "wechat-runtime-review",
-            title: "Runtime health/auth-readiness/metrics reviewed for this candidate",
+            id: "wechat-devtools-export-review",
+            title: "Real WeChat export imported and launched in Developer Tools",
             required: true,
             status: "passed",
             owner: "release-oncall",
             recordedAt: "2026-04-02T08:10:00.000Z",
             revision: "abc123",
-            artifactPath: "artifacts/wechat-release/runtime-review.json"
+            artifactPath: "artifacts/wechat-release/devtools-export-review.json"
+          },
+          {
+            id: "wechat-device-runtime-review",
+            title: "Physical-device WeChat runtime validated for this candidate",
+            required: true,
+            status: "passed",
+            owner: "release-oncall",
+            recordedAt: "2026-04-02T08:12:00.000Z",
+            revision: "abc123",
+            artifactPath: "artifacts/wechat-release/device-runtime-review.json"
           },
           {
             id: "wechat-release-checklist",
