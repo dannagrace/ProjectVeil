@@ -19,10 +19,16 @@ The default automated checks are:
 
 The Phase 1 persistence regression intentionally keeps config/content validation tied to the same release-hardening story:
 
-- it validates the shipped `phase1`, `frontier-basin`, `ridgeway-crossing`, and `phase2` content packs
+- it validates the shipped `phase1`, `frontier-basin`, `stonewatch-fork`, `ridgeway-crossing`, and `phase2` content packs
 - it exercises persistence-backed player/account/world carryover with representative resources, hero growth, replay history, and event history
 
-For candidate review of the second Phase 1 pack:
+For candidate review of the additional Phase 1 packs:
+
+- in Config Center, apply `layout_stonewatch_fork` to both `world` and `mapObjects`
+- for runtime/manual room checks, join a room whose id includes `[map:stonewatch_fork]`
+- for scripted verification, run `npm run validate:content-pack:all` and `npm run test:phase1-release-persistence:stonewatch`
+
+For candidate review of the ridgeway Phase 1 pack:
 
 - in Config Center, apply `layout_ridgeway_crossing` to both `world` and `mapObjects`
 - for runtime/manual room checks, join a room whose id includes `[map:ridgeway_crossing]`

@@ -3,11 +3,13 @@ import defaultBattleBalanceConfig from "../../../configs/battle-balance.json";
 import defaultHeroSkillTreesConfig from "../../../configs/hero-skill-trees-full.json";
 import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
+import stonewatchForkMapObjectsConfig from "../../../configs/phase1-map-objects-stonewatch-fork.json";
 import ridgewayCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-ridgeway-crossing.json";
 import defaultMapObjectsConfig from "../../../configs/phase1-map-objects.json";
 import defaultUnitsConfig from "../../../configs/units.json";
 import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import stonewatchForkWorldConfig from "../../../configs/phase1-world-stonewatch-fork.json";
 import ridgewayCrossingWorldConfig from "../../../configs/phase1-world-ridgeway-crossing.json";
 import defaultWorldConfig from "../../../configs/phase1-world.json";
 import type {
@@ -34,6 +36,7 @@ let runtimeHeroSkillTree: HeroSkillTreeConfig = structuredClone(defaultHeroSkill
 
 export const DEFAULT_MAP_VARIANT_ID = "phase1";
 export const FRONTIER_BASIN_MAP_VARIANT_ID = "frontier_basin";
+export const STONEWATCH_FORK_MAP_VARIANT_ID = "stonewatch_fork";
 export const RIDGEWAY_CROSSING_MAP_VARIANT_ID = "ridgeway_crossing";
 export const CONTESTED_BASIN_MAP_VARIANT_ID = "contested_basin";
 
@@ -732,6 +735,7 @@ function getAvailableMapVariantIds(): string[] {
   return [
     DEFAULT_MAP_VARIANT_ID,
     FRONTIER_BASIN_MAP_VARIANT_ID,
+    STONEWATCH_FORK_MAP_VARIANT_ID,
     RIDGEWAY_CROSSING_MAP_VARIANT_ID,
     CONTESTED_BASIN_MAP_VARIANT_ID
   ];
@@ -749,6 +753,7 @@ export function resolveMapVariantIdForRoom(roomId: string, seed = 1001): string 
   if (
     requested === DEFAULT_MAP_VARIANT_ID ||
     requested === FRONTIER_BASIN_MAP_VARIANT_ID ||
+    requested === STONEWATCH_FORK_MAP_VARIANT_ID ||
     requested === RIDGEWAY_CROSSING_MAP_VARIANT_ID ||
     requested === CONTESTED_BASIN_MAP_VARIANT_ID
   ) {
@@ -766,6 +771,8 @@ export function getRuntimeConfigBundleForRoom(roomId: string, seed = 1001): Room
   const world =
     mapVariantId === FRONTIER_BASIN_MAP_VARIANT_ID
       ? cloneWorldConfig(frontierBasinWorldConfig as WorldGenerationConfig)
+      : mapVariantId === STONEWATCH_FORK_MAP_VARIANT_ID
+        ? cloneWorldConfig(stonewatchForkWorldConfig as WorldGenerationConfig)
       : mapVariantId === RIDGEWAY_CROSSING_MAP_VARIANT_ID
         ? cloneWorldConfig(ridgewayCrossingWorldConfig as WorldGenerationConfig)
       : mapVariantId === CONTESTED_BASIN_MAP_VARIANT_ID
@@ -774,6 +781,8 @@ export function getRuntimeConfigBundleForRoom(roomId: string, seed = 1001): Room
   const mapObjects =
     mapVariantId === FRONTIER_BASIN_MAP_VARIANT_ID
       ? cloneMapObjectsConfig(frontierBasinMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === STONEWATCH_FORK_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(stonewatchForkMapObjectsConfig as MapObjectsConfig)
       : mapVariantId === RIDGEWAY_CROSSING_MAP_VARIANT_ID
         ? cloneMapObjectsConfig(ridgewayCrossingMapObjectsConfig as MapObjectsConfig)
       : mapVariantId === CONTESTED_BASIN_MAP_VARIANT_ID

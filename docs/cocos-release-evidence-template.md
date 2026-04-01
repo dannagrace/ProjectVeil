@@ -39,6 +39,15 @@ npm run release:readiness:snapshot -- \
   --manual-checks docs/release-readiness-manual-checks.example.json
 ```
 
+如需把额外的 Phase 1 布局一并纳入候选包证据，先补跑对应内容包与持久化验证：
+
+```bash
+npm run validate:content-pack:all
+npm run test:phase1-release-persistence:stonewatch
+```
+
+若 reviewer 关注岭桥布局，则改为 `npm run test:phase1-release-persistence:ridgeway`；两者产出的 JSON 都应与同一份 candidate evidence bundle 一起归档。
+
 2. 生成 candidate-level Cocos RC evidence bundle：
 
 ```bash

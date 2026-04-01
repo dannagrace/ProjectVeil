@@ -23,6 +23,13 @@ export const EXTRA_CONTENT_PACK_MAP_PACKS: ContentPackMapPackDefinition[] = [
     aliases: ["frontier_basin"]
   },
   {
+    id: "stonewatch-fork",
+    worldFileName: "phase1-world-stonewatch-fork.json",
+    mapObjectsFileName: "phase1-map-objects-stonewatch-fork.json",
+    phase: "phase1",
+    aliases: ["stonewatch_fork", "stonewatch"]
+  },
+  {
     id: "ridgeway-crossing",
     worldFileName: "phase1-world-ridgeway-crossing.json",
     mapObjectsFileName: "phase1-map-objects-ridgeway-crossing.json",
