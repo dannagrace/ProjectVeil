@@ -87,6 +87,9 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   const manifestFile = files.find((entry) => entry.startsWith("cocos-rc-evidence-bundle-") && entry.endsWith(".json"));
   const summaryFile = files.find((entry) => entry.startsWith("cocos-rc-evidence-bundle-") && entry.endsWith(".md"));
   const snapshotFile = files.find((entry) => entry.startsWith("cocos-rc-snapshot-") && entry.endsWith(".json"));
+  const presentationSignoffSummaryFile = files.find(
+    (entry) => entry.startsWith("cocos-presentation-signoff-summary-") && entry.endsWith(".md")
+  );
   const checklistFile = files.find((entry) => entry.startsWith("cocos-rc-checklist-") && entry.endsWith(".md"));
   const blockersFile = files.find((entry) => entry.startsWith("cocos-rc-blockers-") && entry.endsWith(".md"));
 
@@ -95,6 +98,7 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.ok(manifestFile);
   assert.ok(summaryFile);
   assert.ok(snapshotFile);
+  assert.ok(presentationSignoffSummaryFile);
   assert.ok(checklistFile);
   assert.ok(blockersFile);
   assert.match(manifestFile ?? "", /rc-issue-507-/);
@@ -106,6 +110,7 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
       primaryJourneyEvidenceMarkdown: string;
       snapshot: string;
       summaryMarkdown: string;
+      presentationSignoffSummaryMarkdown: string;
       checklistMarkdown: string;
       blockersMarkdown: string;
     };
@@ -128,6 +133,7 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.equal(manifest.requiredEvidence.find((entry) => entry.id === "roomId")?.filled, true);
   assert.equal(path.basename(manifest.artifacts.snapshot), snapshotFile);
   assert.equal(path.basename(manifest.artifacts.summaryMarkdown), summaryFile);
+  assert.equal(path.basename(manifest.artifacts.presentationSignoffSummaryMarkdown), presentationSignoffSummaryFile);
   assert.equal(path.basename(manifest.artifacts.checklistMarkdown), checklistFile);
   assert.equal(path.basename(manifest.artifacts.blockersMarkdown), blockersFile);
 
@@ -135,9 +141,17 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.match(summaryMarkdown, /# Cocos RC Evidence Bundle/);
   assert.match(summaryMarkdown, /Overall status: `passed`/);
   assert.match(summaryMarkdown, /Primary journey evidence:/);
+  assert.match(summaryMarkdown, /Presentation sign-off summary:/);
   assert.match(summaryMarkdown, /Lobby entry \| `passed` \| 2 item\(s\)/);
   assert.match(summaryMarkdown, /## Checkpoint Ledger/);
   assert.match(summaryMarkdown, /Battle settlement/);
+
+  const presentationSignoffSummaryMarkdown = fs.readFileSync(path.join(outputDir, presentationSignoffSummaryFile!), "utf8");
+  assert.match(presentationSignoffSummaryMarkdown, /# Cocos Presentation Sign-Off Summary/);
+  assert.match(presentationSignoffSummaryMarkdown, /Candidate: `rc-issue-507`/);
+  assert.match(presentationSignoffSummaryMarkdown, /Commit: `/);
+  assert.match(presentationSignoffSummaryMarkdown, /Automated sign-off status: `hold`/);
+  assert.match(presentationSignoffSummaryMarkdown, /Canonical checklist: `docs\/cocos-phase1-presentation-signoff\.md`/);
 
   const checklistMarkdown = fs.readFileSync(path.join(outputDir, checklistFile!), "utf8");
   assert.match(checklistMarkdown, /Candidate: `rc-issue-507`/);

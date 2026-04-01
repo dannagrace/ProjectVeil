@@ -2,9 +2,15 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import {
+  cocosPresentationReadiness,
+  getCocosPresentationReleaseGate
+} from "../apps/cocos-client/assets/scripts/cocos-presentation-readiness.ts";
+
 type BuildSurface = "creator_preview" | "wechat_preview" | "wechat_upload_candidate" | "other";
 type EvidenceStatus = "pending" | "blocked" | "passed" | "failed" | "not_applicable";
 type SnapshotResult = "pending" | "blocked" | "passed" | "failed" | "partial";
+type PresentationSignoffStatus = "approved" | "hold";
 
 interface Args {
   candidate: string;
@@ -118,6 +124,7 @@ interface BundleManifest {
     primaryJourneyEvidenceMarkdown: string;
     snapshot: string;
     summaryMarkdown: string;
+    presentationSignoffSummaryMarkdown: string;
     checklistMarkdown: string;
     blockersMarkdown: string;
   };
@@ -149,6 +156,10 @@ interface BundleManifest {
   review: {
     phase1Gate: string;
     attachHint: string;
+    presentationSignoff: {
+      status: PresentationSignoffStatus;
+      summary: string;
+    };
   };
 }
 
@@ -404,6 +415,7 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
   lines.push(`- Primary journey evidence: \`${toRepoRelative(artifacts.primaryJourneyEvidence)}\``);
   lines.push(`- Primary journey markdown: \`${toRepoRelative(artifacts.primaryJourneyEvidenceMarkdown)}\``);
   lines.push(`- Snapshot: \`${toRepoRelative(artifacts.snapshot)}\``);
+  lines.push(`- Presentation sign-off summary: \`${toRepoRelative(artifacts.presentationSignoffSummaryMarkdown)}\``);
   lines.push(`- Checklist: \`${toRepoRelative(artifacts.checklistMarkdown)}\``);
   lines.push(`- Blockers: \`${toRepoRelative(artifacts.blockersMarkdown)}\``);
   lines.push(`- Bundle manifest: \`${toRepoRelative(artifacts.summaryMarkdown.replace(/\.md$/, ".json"))}\``);
@@ -458,6 +470,73 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
   lines.push("");
   lines.push(snapshot.execution.summary);
   lines.push("");
+  return `${lines.join("\n")}\n`;
+}
+
+function buildPresentationSignoffReview(snapshot: CocosReleaseCandidateSnapshot): BundleManifest["review"]["presentationSignoff"] {
+  const releaseGate = getCocosPresentationReleaseGate(cocosPresentationReadiness);
+  return {
+    status: releaseGate.ready ? "approved" : "hold",
+    summary: releaseGate.ready
+      ? `Automated presentation readiness reports production-intent pixel, audio, and animation coverage for candidate ${snapshot.candidate.name}.`
+      : `Automated presentation readiness for candidate ${snapshot.candidate.name} still reports blocking presentation debt: ${releaseGate.blockers.join(", ")}.`
+  };
+}
+
+function renderPresentationSignoffSummary(
+  snapshot: CocosReleaseCandidateSnapshot,
+  artifacts: BundleManifest["artifacts"]
+): string {
+  const releaseGate = getCocosPresentationReleaseGate(cocosPresentationReadiness);
+  const review = buildPresentationSignoffReview(snapshot);
+  const lines: string[] = [];
+
+  lines.push("# Cocos Presentation Sign-Off Summary");
+  lines.push("");
+  lines.push(
+    "This generated summary narrows the current candidate-level presentation review into one attachable artifact. It does not replace the canonical checklist in `docs/cocos-phase1-presentation-signoff.md`."
+  );
+  lines.push("");
+  lines.push("## Candidate Header");
+  lines.push("");
+  lines.push(`- Candidate: \`${snapshot.candidate.name}\``);
+  lines.push(`- Commit: \`${snapshot.candidate.commit}\``);
+  lines.push(`- Surface: \`${snapshot.candidate.buildSurface}\``);
+  lines.push(`- Owner: ${snapshot.execution.owner || "_unassigned_"}`);
+  lines.push(`- Review date: \`${(snapshot.execution.executedAt || new Date().toISOString()).slice(0, 10)}\``);
+  lines.push(`- Linked RC snapshot: \`${toRepoRelative(artifacts.snapshot)}\``);
+  lines.push(`- Linked blocker log: \`${toRepoRelative(artifacts.blockersMarkdown)}\``);
+  lines.push(`- Canonical checklist: \`docs/cocos-phase1-presentation-signoff.md\``);
+  lines.push("");
+  lines.push("## Automated Readiness");
+  lines.push("");
+  lines.push(`- Summary: ${cocosPresentationReadiness.summary}`);
+  lines.push(`- Next step: ${cocosPresentationReadiness.nextStep}`);
+  lines.push(`- Automated sign-off status: \`${review.status}\``);
+  lines.push(`- Automated sign-off summary: ${review.summary}`);
+  lines.push("");
+  lines.push("| Area | Stage | Detail |");
+  lines.push("| --- | --- | --- |");
+  lines.push(`| Pixel art / scene visuals | \`${cocosPresentationReadiness.pixel.stage}\` | ${cocosPresentationReadiness.pixel.headline}; ${cocosPresentationReadiness.pixel.detail} |`);
+  lines.push(`| Audio | \`${cocosPresentationReadiness.audio.stage}\` | ${cocosPresentationReadiness.audio.headline}; ${cocosPresentationReadiness.audio.detail} |`);
+  lines.push(`| Animation / transitions | \`${cocosPresentationReadiness.animation.stage}\` | ${cocosPresentationReadiness.animation.headline}; ${cocosPresentationReadiness.animation.detail} |`);
+  lines.push("");
+  lines.push("## Reviewer Decision");
+  lines.push("");
+  lines.push(`- Phase 1 presentation sign-off: \`${review.status}\``);
+  lines.push(`- Summary: ${review.summary}`);
+  lines.push(
+    `- Blocking items, if any: ${releaseGate.blockers.length > 0 ? releaseGate.blockers.join(", ") : "_none reported by automated readiness_"}.`
+  );
+  lines.push("- Accepted non-blocking items, if any: Record any manual acceptance in `docs/cocos-phase1-presentation-signoff.md` before Phase 1 exit.");
+  lines.push("");
+  lines.push("## Reviewer Follow-Through");
+  lines.push("");
+  lines.push("- Reconcile any remaining placeholder, fallback, or substituted items in the canonical checklist.");
+  lines.push(`- Attach this summary with \`${toRepoRelative(artifacts.summaryMarkdown)}\`, \`${toRepoRelative(artifacts.snapshot)}\`, and \`${toRepoRelative(artifacts.blockersMarkdown)}\` in the release review packet.`);
+  lines.push("- If a blocker is accepted as non-blocking, record owner, rationale, and follow-up issue explicitly.");
+  lines.push("");
+
   return `${lines.join("\n")}\n`;
 }
 
@@ -537,7 +616,9 @@ function buildManifest(snapshot: CocosReleaseCandidateSnapshot, artifacts: Bundl
     })),
     review: {
       phase1Gate: "Phase 1 exit criterion 4: candidate-specific Cocos primary-client evidence must be current.",
-      attachHint: "Attach the markdown summary to CI artifacts or PR comments, and keep the JSON manifest alongside the snapshot."
+      attachHint:
+        "Attach the markdown bundle summary and presentation sign-off summary to CI artifacts or PR comments, and keep the JSON manifest alongside the snapshot.",
+      presentationSignoff: buildPresentationSignoffReview(snapshot)
     }
   };
 }
@@ -554,6 +635,7 @@ function main(): void {
   const snapshotPath = path.join(outputDir, `cocos-rc-snapshot-${baseName}.json`);
   const summaryMarkdownPath = path.join(outputDir, `cocos-rc-evidence-bundle-${baseName}.md`);
   const manifestPath = path.join(outputDir, `cocos-rc-evidence-bundle-${baseName}.json`);
+  const presentationSignoffSummaryPath = path.join(outputDir, `cocos-presentation-signoff-summary-${baseName}.md`);
   const checklistPath = path.join(outputDir, `cocos-rc-checklist-${baseName}.md`);
   const blockersPath = path.join(outputDir, `cocos-rc-blockers-${baseName}.md`);
 
@@ -570,11 +652,13 @@ function main(): void {
     primaryJourneyEvidenceMarkdown: path.resolve(primaryJourneyEvidenceMarkdownPath),
     snapshot: path.resolve(snapshotPath),
     summaryMarkdown: path.resolve(summaryMarkdownPath),
+    presentationSignoffSummaryMarkdown: path.resolve(presentationSignoffSummaryPath),
     checklistMarkdown: path.resolve(checklistPath),
     blockersMarkdown: path.resolve(blockersPath)
   };
 
   writeTextFile(summaryMarkdownPath, renderBundleMarkdown(snapshot, artifacts), args.force);
+  writeTextFile(presentationSignoffSummaryPath, renderPresentationSignoffSummary(snapshot, artifacts), args.force);
   writeTextFile(checklistPath, renderChecklist(snapshot, artifacts), args.force);
   writeTextFile(blockersPath, renderBlockers(snapshot, artifacts), args.force);
   writeJsonFile(manifestPath, buildManifest(snapshot, artifacts, outputDir), args.force);
