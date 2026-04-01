@@ -39,14 +39,44 @@ The audit currently enforces two stable checks:
 
 The command emits a concise JSON plus Markdown summary under `artifacts/release-readiness/` by default, and CI appends the Markdown summary to the GitHub step summary.
 
+## Primary-Client Diagnostic Snapshots
+
+Generate the structured diagnostic evidence packet before final release review:
+
+```bash
+npm run release:cocos:primary-diagnostics
+```
+
+By default this writes versioned JSON + Markdown artifacts under `artifacts/release-readiness/`:
+
+- `artifacts/release-readiness/cocos-primary-client-diagnostic-snapshots-<short-sha>-<timestamp>.json`
+- `artifacts/release-readiness/cocos-primary-client-diagnostic-snapshots-<short-sha>-<timestamp>.md`
+
+The exporter reuses the existing Cocos `VeilRoot` harness and records checkpointed runtime-diagnostics evidence for:
+
+- progression review loading
+- inventory overflow / blocked equipment evidence
+- combat-loop resolution
+- reconnect cached-replay fallback
+- reconnect recovery back to authoritative state
+
+Inspect the Markdown file for a reviewer-friendly summary and open the JSON file when you need the raw runtime snapshot payloads, telemetry checkpoints, and connection-state details. If you want explicit output paths:
+
+```bash
+npm run release:cocos:primary-diagnostics -- \
+  --output artifacts/release-readiness/cocos-primary-client-diagnostics.json \
+  --markdown-output artifacts/release-readiness/cocos-primary-client-diagnostics.md
+```
+
 ## Manual Release Sign-Off
 
 Keep these manual items short and attach evidence through the existing release evidence flow instead of inventing a new format:
 
 1. Complete the current candidate snapshot with `npm run release:cocos-rc:snapshot`.
-2. Copy and fill the RC checklist/template files in [`docs/release-evidence`](/home/gpt/project/ProjectVeil/docs/release-evidence).
-3. Record any open risk in the blocker template before sign-off.
-4. Confirm the release candidate still matches the intended commit/revision.
+2. Refresh the primary-client diagnostic artifact with `npm run release:cocos:primary-diagnostics`.
+3. Copy and fill the RC checklist/template files in [`docs/release-evidence`](/home/gpt/project/ProjectVeil/docs/release-evidence).
+4. Record any open risk in the blocker template before sign-off.
+5. Confirm the release candidate still matches the intended commit/revision.
 
 ## Related Commands
 
@@ -56,3 +86,4 @@ Keep these manual items short and attach evidence through the existing release e
 - Package artifact: `npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime --source-revision <git-sha>`
 - RC artifact validation: `npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> --expected-revision <git-sha>`
 - Unified Cocos evidence snapshot: `npm run release:cocos-rc:snapshot`
+- Primary-client diagnostic evidence: `npm run release:cocos:primary-diagnostics`

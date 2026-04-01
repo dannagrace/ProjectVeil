@@ -7,6 +7,7 @@
 - `npm run package:wechat-release` sidecar metadata for package validation
 - `npm run smoke:wechat-release` for device/quasi-device smoke evidence
 - `npm run release:cocos-rc:snapshot` for recent Cocos RC journey evidence
+- `npm run release:cocos:primary-diagnostics` for checkpointed primary-client runtime diagnostics evidence
 
 The dashboard writes both JSON and Markdown so it works as a quick terminal summary and as a review artifact.
 
@@ -25,6 +26,7 @@ npm run release:readiness:dashboard -- \
   --server-url http://127.0.0.1:2567 \
   --snapshot artifacts/release-readiness/rc-2026-03-29.json \
   --cocos-rc artifacts/release-evidence/phase1-wechat-rc.json \
+  --primary-client-diagnostics artifacts/release-readiness/cocos-primary-client-diagnostic-snapshots-abc1234-2026-03-29T08-18-00.000Z.json \
   --wechat-artifacts-dir artifacts/wechat-release \
   --candidate-revision abc1234
 ```
@@ -76,7 +78,8 @@ After that, the report summarizes the same four bounded gates:
   - Reads `codex.wechat.smoke-report.json` and flags `pending` as `warn`, `failed` as `fail`.
 - `Critical readiness evidence`
   - Lists the latest linked evidence with exact timestamps, paths, and any revision identifiers discovered in the source artifacts.
-  - Warns when evidence is missing or older than the configured freshness window.
+  - Fails closed when primary-client diagnostic snapshots are missing or incomplete.
+  - Warns when present evidence is older than the configured freshness window.
 
 ## Recommended Local Flow
 
@@ -100,13 +103,19 @@ npm run smoke:wechat-release -- --artifacts-dir artifacts/wechat-release
 npm run release:cocos-rc:snapshot -- --candidate <candidate-name> --build-surface wechat_preview --output artifacts/release-evidence/<candidate-name>.json
 ```
 
-4. Start the local server if you want live runtime/auth evidence in the same report:
+4. Refresh the primary-client diagnostic evidence artifact:
+
+```bash
+npm run release:cocos:primary-diagnostics
+```
+
+5. Start the local server if you want live runtime/auth evidence in the same report:
 
 ```bash
 npm run dev:server
 ```
 
-5. Generate the dashboard:
+6. Generate the dashboard:
 
 ```bash
 npm run release:readiness:dashboard -- \

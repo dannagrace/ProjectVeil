@@ -10,6 +10,7 @@ interface Args {
   serverUrl?: string;
   snapshotPath?: string;
   cocosRcPath?: string;
+  primaryClientDiagnosticsPath?: string;
   wechatArtifactsDir?: string;
   wechatSmokeReportPath?: string;
   wechatPackageMetadataPath?: string;
@@ -109,6 +110,25 @@ interface CocosReleaseCandidateSnapshot {
   };
 }
 
+interface PrimaryClientDiagnosticSnapshotsArtifact {
+  generatedAt?: string;
+  revision?: {
+    commit?: string;
+    shortCommit?: string;
+  };
+  summary?: {
+    status?: "passed";
+    checkpointCount?: number;
+    categoryIds?: string[];
+    checkpointIds?: string[];
+  };
+  checkpoints?: Array<{
+    id?: string;
+    category?: "progression" | "inventory" | "combat" | "reconnect";
+    capturedAt?: string;
+  }>;
+}
+
 interface EvidenceItem {
   label: string;
   path: string;
@@ -142,6 +162,7 @@ interface DashboardReport {
     serverUrl?: string;
     snapshotPath?: string;
     cocosRcPath?: string;
+    primaryClientDiagnosticsPath?: string;
     wechatArtifactsDir?: string;
     wechatSmokeReportPath?: string;
     wechatPackageMetadataPath?: string;
@@ -179,6 +200,14 @@ interface GoNoGoReport {
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
 const DEFAULT_RELEASE_EVIDENCE_DIR = path.resolve("artifacts", "release-evidence");
 const REQUIRED_SNAPSHOT_CHECK_IDS = ["npm-test", "typecheck-ci", "e2e-smoke", "e2e-multiplayer-smoke", "cocos-primary-journey", "wechat-build-check"] as const;
+const REQUIRED_PRIMARY_DIAGNOSTIC_CATEGORY_IDS = ["progression", "inventory", "combat", "reconnect"] as const;
+const REQUIRED_PRIMARY_DIAGNOSTIC_CHECKPOINT_IDS = [
+  "progression-review",
+  "inventory-overflow",
+  "combat-loop",
+  "reconnect-cached-replay",
+  "reconnect-recovery"
+] as const;
 const REQUIRED_METRICS = [
   "veil_active_room_count",
   "veil_connection_count",
@@ -195,6 +224,7 @@ function parseArgs(argv: string[]): Args {
   let serverUrl: string | undefined;
   let snapshotPath: string | undefined;
   let cocosRcPath: string | undefined;
+  let primaryClientDiagnosticsPath: string | undefined;
   let wechatArtifactsDir: string | undefined;
   let wechatSmokeReportPath: string | undefined;
   let wechatPackageMetadataPath: string | undefined;
@@ -219,6 +249,11 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--cocos-rc" && next) {
       cocosRcPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--primary-client-diagnostics" && next) {
+      primaryClientDiagnosticsPath = next;
       index += 1;
       continue;
     }
@@ -269,6 +304,7 @@ function parseArgs(argv: string[]): Args {
     ...(serverUrl ? { serverUrl } : {}),
     ...(snapshotPath ? { snapshotPath } : {}),
     ...(cocosRcPath ? { cocosRcPath } : {}),
+    ...(primaryClientDiagnosticsPath ? { primaryClientDiagnosticsPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
     ...(wechatPackageMetadataPath ? { wechatPackageMetadataPath } : {}),
@@ -279,13 +315,13 @@ function parseArgs(argv: string[]): Args {
   };
 }
 
-function resolveLatestJsonFile(dirPath: string): string | undefined {
+function resolveLatestMatchingJsonFile(dirPath: string, matcher: (entry: string) => boolean): string | undefined {
   if (!fs.existsSync(dirPath)) {
     return undefined;
   }
   const candidates = fs
     .readdirSync(dirPath)
-    .filter((entry) => entry.endsWith(".json"))
+    .filter((entry) => entry.endsWith(".json") && matcher(entry))
     .map((entry) => path.join(dirPath, entry))
     .filter((entry) => fs.statSync(entry).isFile())
     .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
@@ -892,6 +928,68 @@ export function summarizeCocosRc(snapshotPath: string | undefined, snapshot: Coc
   };
 }
 
+export function summarizePrimaryClientDiagnostics(
+  artifactPath: string | undefined,
+  artifact: PrimaryClientDiagnosticSnapshotsArtifact | undefined
+): {
+  status: GateStatus;
+  detail: string;
+  evidence: EvidenceItem;
+  failReasons: string[];
+  warnReasons: string[];
+} {
+  if (!artifactPath || !artifact) {
+    return {
+      status: "fail",
+      detail: "Primary-client diagnostic snapshots missing.",
+      evidence: createEvidenceItem({
+        label: "Primary-client diagnostic snapshots",
+        path: artifactPath ?? "<missing-primary-client-diagnostic-snapshots>",
+        status: "fail",
+        availability: "missing",
+        summary: "Primary-client diagnostic snapshots missing.",
+        reasonCodes: ["primary_client_diagnostic_snapshots_missing"]
+      }),
+      failReasons: ["primary_client_diagnostic_snapshots_missing"],
+      warnReasons: []
+    };
+  }
+
+  const checkpointIds = new Set(
+    (artifact.summary?.checkpointIds ?? artifact.checkpoints?.map((checkpoint) => checkpoint.id).filter(Boolean) ?? []) as string[]
+  );
+  const categoryIds = new Set(
+    (artifact.summary?.categoryIds ?? artifact.checkpoints?.map((checkpoint) => checkpoint.category).filter(Boolean) ?? []) as string[]
+  );
+  const missingCheckpointIds = REQUIRED_PRIMARY_DIAGNOSTIC_CHECKPOINT_IDS.filter((id) => !checkpointIds.has(id));
+  const missingCategoryIds = REQUIRED_PRIMARY_DIAGNOSTIC_CATEGORY_IDS.filter((id) => !categoryIds.has(id));
+  const status: GateStatus = missingCheckpointIds.length === 0 && missingCategoryIds.length === 0 ? "pass" : "fail";
+  const failReasons = status === "fail" ? ["primary_client_diagnostic_snapshots_incomplete"] : [];
+  const details = [`checkpoints=${artifact.summary?.checkpointCount ?? artifact.checkpoints?.length ?? 0}`];
+  if (missingCheckpointIds.length > 0) {
+    details.push(`missingCheckpointIds=${missingCheckpointIds.join(",")}`);
+  }
+  if (missingCategoryIds.length > 0) {
+    details.push(`missingCategoryIds=${missingCategoryIds.join(",")}`);
+  }
+
+  return {
+    status,
+    detail: details.join(" | "),
+    evidence: createEvidenceItem({
+      label: "Primary-client diagnostic snapshots",
+      path: artifactPath,
+      status,
+      observedAt: artifact.generatedAt,
+      sourceRevision: artifact.revision?.shortCommit ?? artifact.revision?.commit,
+      summary: details.join(" | "),
+      reasonCodes: failReasons
+    }),
+    failReasons,
+    warnReasons: []
+  };
+}
+
 export function buildBuildPackageGate(
   snapshotSummary: ReturnType<typeof summarizeSnapshot>,
   packageSummary: ReturnType<typeof summarizeWechatPackage>,
@@ -1170,12 +1268,20 @@ async function main(): Promise<void> {
   const outputDefaults = defaultOutputPaths();
   const resolvedSnapshotPath = args.snapshotPath
     ? path.resolve(args.snapshotPath)
-    : resolveLatestJsonFile(DEFAULT_RELEASE_READINESS_DIR);
-  const resolvedCocosRcPath = args.cocosRcPath ? path.resolve(args.cocosRcPath) : resolveLatestJsonFile(DEFAULT_RELEASE_EVIDENCE_DIR);
+    : resolveLatestMatchingJsonFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("release-readiness-"));
+  const resolvedCocosRcPath = args.cocosRcPath
+    ? path.resolve(args.cocosRcPath)
+    : resolveLatestMatchingJsonFile(DEFAULT_RELEASE_EVIDENCE_DIR, (entry) => entry.endsWith(".json"));
+  const resolvedPrimaryClientDiagnosticsPath = args.primaryClientDiagnosticsPath
+    ? path.resolve(args.primaryClientDiagnosticsPath)
+    : resolveLatestMatchingJsonFile(DEFAULT_RELEASE_READINESS_DIR, (entry) =>
+        entry.startsWith("cocos-primary-client-diagnostic-snapshots-")
+      );
   const wechatArtifacts = resolveWechatArtifacts(args);
 
   const snapshot = readJsonFile<ReleaseReadinessSnapshot>(resolvedSnapshotPath);
   const cocosRcSnapshot = readJsonFile<CocosReleaseCandidateSnapshot>(resolvedCocosRcPath);
+  const primaryClientDiagnostics = readJsonFile<PrimaryClientDiagnosticSnapshotsArtifact>(resolvedPrimaryClientDiagnosticsPath);
   const wechatSmokeReport = readJsonFile<WechatSmokeReport>(wechatArtifacts.smokeReportPath);
   const wechatPackageMetadata = readJsonFile<WechatPackageMetadata>(wechatArtifacts.packageMetadataPath);
 
@@ -1209,6 +1315,10 @@ async function main(): Promise<void> {
   const packageSummary = summarizeWechatPackage(wechatArtifacts.packageMetadataPath, wechatPackageMetadata);
   const smokeSummary = summarizeWechatSmoke(wechatArtifacts.smokeReportPath, wechatSmokeReport);
   const cocosRcSummary = summarizeCocosRc(resolvedCocosRcPath, cocosRcSnapshot);
+  const primaryClientDiagnosticsSummary = summarizePrimaryClientDiagnostics(
+    resolvedPrimaryClientDiagnosticsPath,
+    primaryClientDiagnostics
+  );
 
   const gates = [
     buildHealthGate(args.serverUrl, healthPayload, metricsText, healthError ?? metricsError),
@@ -1218,7 +1328,8 @@ async function main(): Promise<void> {
       snapshotSummary.evidence,
       packageSummary.evidence,
       smokeSummary.evidence,
-      cocosRcSummary.evidence
+      cocosRcSummary.evidence,
+      primaryClientDiagnosticsSummary.evidence
     ])
   ];
 
@@ -1231,12 +1342,19 @@ async function main(): Promise<void> {
       candidateRevision: args.candidateRevision,
       snapshot,
       gates,
-      evidence: [snapshotSummary.evidence, packageSummary.evidence, smokeSummary.evidence, cocosRcSummary.evidence]
+      evidence: [
+        snapshotSummary.evidence,
+        packageSummary.evidence,
+        smokeSummary.evidence,
+        cocosRcSummary.evidence,
+        primaryClientDiagnosticsSummary.evidence
+      ]
     }),
     inputs: {
       ...(args.serverUrl ? { serverUrl: args.serverUrl } : {}),
       ...(resolvedSnapshotPath ? { snapshotPath: resolvedSnapshotPath } : {}),
       ...(resolvedCocosRcPath ? { cocosRcPath: resolvedCocosRcPath } : {}),
+      ...(resolvedPrimaryClientDiagnosticsPath ? { primaryClientDiagnosticsPath: resolvedPrimaryClientDiagnosticsPath } : {}),
       ...(args.wechatArtifactsDir ? { wechatArtifactsDir: path.resolve(args.wechatArtifactsDir) } : {}),
       ...(wechatArtifacts.smokeReportPath ? { wechatSmokeReportPath: wechatArtifacts.smokeReportPath } : {}),
       ...(wechatArtifacts.packageMetadataPath ? { wechatPackageMetadataPath: wechatArtifacts.packageMetadataPath } : {}),

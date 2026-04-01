@@ -6,6 +6,7 @@ import {
   buildCriticalEvidenceGate,
   buildGoNoGoReport,
   summarizeCocosRc,
+  summarizePrimaryClientDiagnostics,
   summarizeSnapshot,
   summarizeWechatPackage,
   summarizeWechatSmoke
@@ -129,18 +130,41 @@ test("buildCriticalEvidenceGate fails when a critical artifact is missing and ex
   const gate = buildCriticalEvidenceGate(14, [
     summarizeSnapshot(undefined, undefined).evidence,
     summarizeWechatPackage(undefined, undefined).evidence,
-    summarizeWechatSmoke(undefined, undefined).evidence
+    summarizeWechatSmoke(undefined, undefined).evidence,
+    summarizePrimaryClientDiagnostics(undefined, undefined).evidence
   ]);
 
   assert.equal(gate.status, "fail");
   assert.deepEqual(gate.failReasons, [
     "release_readiness_snapshot_missing",
     "wechat_package_metadata_missing",
-    "wechat_smoke_report_missing"
+    "wechat_smoke_report_missing",
+    "primary_client_diagnostic_snapshots_missing"
   ]);
   assert.deepEqual(gate.warnReasons, []);
   assert.equal(gate.evidence.every((entry) => entry.availability === "missing"), true);
   assert.equal(gate.details.every((detail) => detail.endsWith("missing artifact")), true);
+});
+
+test("summarizePrimaryClientDiagnostics fails incomplete checkpoint coverage", () => {
+  const summary = summarizePrimaryClientDiagnostics("/tmp/cocos-primary-diagnostics.json", {
+    generatedAt: "2026-03-30T00:00:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
+    summary: {
+      status: "passed",
+      checkpointCount: 2,
+      categoryIds: ["progression", "combat"],
+      checkpointIds: ["progression-review", "combat-loop"]
+    },
+    checkpoints: []
+  });
+
+  assert.equal(summary.status, "fail");
+  assert.match(summary.detail, /missingCheckpointIds=inventory-overflow,reconnect-cached-replay,reconnect-recovery/);
+  assert.match(summary.detail, /missingCategoryIds=inventory,reconnect/);
+  assert.deepEqual(summary.failReasons, ["primary_client_diagnostic_snapshots_incomplete"]);
 });
 
 test("buildGoNoGoReport marks a candidate blocked when linked evidence revisions disagree", () => {
