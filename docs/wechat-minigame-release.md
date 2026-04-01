@@ -79,6 +79,7 @@
    - JSON 至少包含 `version`、`commit`、artifact 路径、逐项检查结果和 `failureSummary`
    - `--version` 会要求并校验 `*.upload.json`；`--require-smoke-report` 会把 `codex.wechat.smoke-report.json` 设为必需门禁
    - 若未显式传 `--manual-checks`，脚本仍会内置两条必需 manual review：runtime endpoint review 与 RC checklist/blocker review
+   - required manual review 现在必须带 `owner`、`recordedAt`、`revision`；当 review 时间超过 24h、revision 不匹配或元数据缺失时，candidate summary 会继续保持 `blocked`
 8. 若已有设备农场、真机调试或准真机脚本产出的结构化 runtime 证据，执行 `npm run ingest:wechat-smoke-evidence -- --metadata <release-sidecar.package.json> --report <release-artifacts-dir>/codex.wechat.smoke-report.json --runtime-evidence <runtime-evidence.json>`，把证据直接写入既有 `codex.wechat.smoke-report.json` schema。
 9. 若本次 RC 没有自动化 runtime 证据，再运行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成模板，并在真机或准真机上逐项补录结果。
 10. 完成自动导入或人工补录后，执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`，确认登录、进房、重连、分享回流、关键资源加载都已有结果记录。
@@ -133,6 +134,15 @@
 - `--manual-checks <json>`：读取显式 manual review 状态；推荐直接从 `docs/release-evidence/wechat-release-manual-review.example.json` 复制当次 candidate 文件
 - `--manual-check <id>:<title>`：临时追加一条 pending manual review
 - `npm run release:wechat:rehearsal` 的 `## Artifacts` 区块会自动列出 `codex.wechat.release-candidate-summary.json` / `.md`，方便 reviewer 或 PR 作者直接复制 `.md` 文件内容到评论区，并将 `.json` 作为结构化证据随 artifact 一起上传
+
+推荐的 manual review JSON 现在至少包含：
+
+- `owner`
+- `recordedAt`
+- `revision`
+- `artifactPath`
+- 对 checklist/blocker review 可额外补 `blockerIds`
+- 若为带条件放行，可补 `waiver.approvedBy` / `waiver.approvedAt` / `waiver.reason`
 
 ## 提审前 Smoke Check
 

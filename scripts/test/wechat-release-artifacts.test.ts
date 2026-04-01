@@ -42,6 +42,10 @@ interface ManualReviewCheckPayload {
   required?: boolean;
   notes?: string;
   evidence?: string[];
+  owner?: string;
+  recordedAt?: string;
+  revision?: string;
+  artifactPath?: string;
 }
 
 function hashFileSha256(filePath: string): string {
@@ -436,7 +440,11 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
       status: "passed",
       required: true,
       notes: "Captured candidate runtime endpoints for the same revision.",
-      evidence: ["GET /api/runtime/health", "GET /api/runtime/auth-readiness", "GET /api/runtime/metrics"]
+      evidence: ["GET /api/runtime/health", "GET /api/runtime/auth-readiness", "GET /api/runtime/metrics"],
+      owner: "release-oncall",
+      recordedAt: "2026-04-02T08:10:00.000Z",
+      revision: sourceRevision,
+      artifactPath: "artifacts/wechat-release/runtime-review.json"
     },
     {
       id: "wechat-release-checklist",
@@ -447,7 +455,11 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
       evidence: [
         "docs/release-evidence/cocos-wechat-rc-checklist.template.md",
         "docs/release-evidence/cocos-wechat-rc-blockers.template.md"
-      ]
+      ],
+      owner: "release-oncall",
+      recordedAt: "2026-04-02T08:15:00.000Z",
+      revision: sourceRevision,
+      artifactPath: "artifacts/wechat-release/checklist-review.json"
     }
   ]);
 

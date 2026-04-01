@@ -5,6 +5,10 @@
     "status": "pending",
     "required": true,
     "notes": "Capture runtime evidence against the same candidate revision before marking the WeChat target release-ready.",
+    "owner": "<release-owner>",
+    "recordedAt": "<2026-04-02T08:10:00.000Z>",
+    "revision": "<git-sha>",
+    "artifactPath": "artifacts/wechat-release/runtime-review.json",
     "evidence": [
       "GET /api/runtime/health",
       "GET /api/runtime/auth-readiness",
@@ -17,6 +21,13 @@
     "status": "pending",
     "required": true,
     "notes": "Attach the completed RC checklist and blocker register for the same packaged candidate.",
+    "owner": "<release-owner>",
+    "recordedAt": "<2026-04-02T08:15:00.000Z>",
+    "revision": "<git-sha>",
+    "artifactPath": "artifacts/wechat-release/checklist-review.json",
+    "blockerIds": [
+      "none"
+    ],
     "evidence": [
       "docs/release-evidence/cocos-wechat-rc-checklist.template.md",
       "docs/release-evidence/cocos-wechat-rc-blockers.template.md"

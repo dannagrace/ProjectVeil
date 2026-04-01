@@ -27,6 +27,17 @@ interface ReleaseReadinessCheck {
   notes: string;
   evidence: string[];
   source: "default" | "file" | "cli";
+  owner?: string;
+  recordedAt?: string;
+  revision?: string;
+  artifactPath?: string;
+  blockerIds?: string[];
+  waiver?: {
+    approvedBy?: string;
+    approvedAt?: string;
+    reason?: string;
+    expiresAt?: string;
+  };
   startedAt?: string;
   finishedAt?: string;
   stdoutTail?: string;
@@ -40,6 +51,17 @@ interface ManualCheckInput {
   required?: boolean;
   notes?: string;
   evidence?: string[];
+  owner?: string;
+  recordedAt?: string;
+  revision?: string;
+  artifactPath?: string;
+  blockerIds?: string[];
+  waiver?: {
+    approvedBy?: string;
+    approvedAt?: string;
+    reason?: string;
+    expiresAt?: string;
+  };
 }
 
 interface ReleaseReadinessSnapshot {
@@ -205,7 +227,30 @@ export function normalizeManualCheck(entry: ManualCheckInput, source: "file" | "
     evidence: Array.isArray(entry.evidence)
       ? entry.evidence.map((value) => String(value).trim()).filter((value) => value.length > 0)
       : [],
-    source
+    source,
+    ...(entry.owner?.trim() ? { owner: entry.owner.trim() } : {}),
+    ...(entry.recordedAt?.trim() ? { recordedAt: entry.recordedAt.trim() } : {}),
+    ...(entry.revision?.trim() ? { revision: entry.revision.trim() } : {}),
+    ...(entry.artifactPath?.trim() ? { artifactPath: entry.artifactPath.trim() } : {}),
+    ...(Array.isArray(entry.blockerIds)
+      ? {
+          blockerIds: entry.blockerIds.map((value) => String(value).trim()).filter((value) => value.length > 0)
+        }
+      : {}),
+    ...(entry.waiver &&
+    (entry.waiver.approvedBy?.trim() ||
+      entry.waiver.approvedAt?.trim() ||
+      entry.waiver.reason?.trim() ||
+      entry.waiver.expiresAt?.trim())
+      ? {
+          waiver: {
+            ...(entry.waiver.approvedBy?.trim() ? { approvedBy: entry.waiver.approvedBy.trim() } : {}),
+            ...(entry.waiver.approvedAt?.trim() ? { approvedAt: entry.waiver.approvedAt.trim() } : {}),
+            ...(entry.waiver.reason?.trim() ? { reason: entry.waiver.reason.trim() } : {}),
+            ...(entry.waiver.expiresAt?.trim() ? { expiresAt: entry.waiver.expiresAt.trim() } : {})
+          }
+        }
+      : {})
   };
 }
 
