@@ -1,6 +1,7 @@
 import {
   createDefaultEquipmentStatBonuses,
   type EquipmentCatalogConfig,
+  type EquipmentId,
   type EquipmentDefinition,
   type EquipmentRarity,
   type EquipmentStatBonuses,
@@ -8,6 +9,8 @@ import {
   type HeroState,
   type ValidationResult
 } from "./models.ts";
+
+export const HERO_EQUIPMENT_INVENTORY_CAPACITY = 6;
 
 const DEFAULT_EQUIPMENT_CATALOG: EquipmentCatalogConfig = {
   entries: [
@@ -383,6 +386,27 @@ export function rollEquipmentDrop(
   };
 }
 
+export function isHeroEquipmentInventoryFull(inventory: EquipmentId[]): boolean {
+  return inventory.length >= HERO_EQUIPMENT_INVENTORY_CAPACITY;
+}
+
+export function tryAddEquipmentToInventory(
+  inventory: EquipmentId[],
+  equipmentId: EquipmentId
+): { inventory: EquipmentId[]; stored: boolean } {
+  if (isHeroEquipmentInventoryFull(inventory)) {
+    return {
+      inventory: [...inventory],
+      stored: false
+    };
+  }
+
+  return {
+    inventory: [...inventory, equipmentId],
+    stored: true
+  };
+}
+
 export function validateHeroEquipmentChange(
   hero: Pick<HeroState, "loadout">,
   slot: EquipmentType,
@@ -393,7 +417,15 @@ export function validateHeroEquipmentChange(
   const normalizedEquipmentId = equipmentId?.trim();
 
   if (!normalizedEquipmentId) {
-    return currentItemId ? { valid: true } : { valid: false, reason: "equipment_slot_empty" };
+    if (!currentItemId) {
+      return { valid: false, reason: "equipment_slot_empty" };
+    }
+
+    if (isHeroEquipmentInventoryFull(hero.loadout.inventory)) {
+      return { valid: false, reason: "equipment_inventory_full" };
+    }
+
+    return { valid: true };
   }
 
   const definition = resolveEquipmentDefinition(normalizedEquipmentId);

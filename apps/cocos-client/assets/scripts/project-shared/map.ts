@@ -30,7 +30,12 @@ import type {
 } from "./models.ts";
 import { validateAction } from "./action-precheck.ts";
 import { applyHeroSkillSelection, validateHeroSkillSelection } from "./hero-skills.ts";
-import { applyHeroEquipmentChange, rollEquipmentDrop, validateHeroEquipmentChange } from "./equipment.ts";
+import {
+  applyHeroEquipmentChange,
+  rollEquipmentDrop,
+  tryAddEquipmentToInventory,
+  validateHeroEquipmentChange
+} from "./equipment.ts";
 import {
   normalizeHeroState,
   totalExperienceRequiredForLevel
@@ -93,12 +98,14 @@ function maybeAwardBattleEquipmentDrop(
     return null;
   }
 
+  const inventoryUpdate = tryAddEquipmentToInventory(hero.loadout.inventory, drop.itemId);
+
   return {
     hero: {
       ...hero,
       loadout: {
         ...hero.loadout,
-        inventory: [...hero.loadout.inventory, drop.itemId]
+        inventory: inventoryUpdate.inventory
       }
     },
     event: {
@@ -108,7 +115,8 @@ function maybeAwardBattleEquipmentDrop(
       battleKind,
       equipmentId: drop.itemId,
       equipmentName: drop.item.name,
-      rarity: drop.item.rarity
+      rarity: drop.item.rarity,
+      ...(inventoryUpdate.stored ? {} : { overflowed: true })
     }
   };
 }

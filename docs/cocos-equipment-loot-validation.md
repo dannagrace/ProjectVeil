@@ -15,8 +15,14 @@
   - per-slot rarity and bonus summary
   - equipment-derived stat gains aggregated from shared logic
   - carried inventory grouped by item type with rarity and bonus metadata
+  - current backpack occupancy against the fixed 6-slot equipment inventory cap
+  - a full-bag warning before the next equipment pickup would overflow
   - recent loot lines from the Cocos-visible account event log
 - Existing equip/unequip buttons remain the interaction surface and continue to drive prediction plus server reconciliation.
+- Equipment loot now respects a fixed 6-slot backpack cap:
+  - battle drops are only added when space remains
+  - when full, the drop is surfaced as overflowed/not picked up instead of being silently appended
+  - unequip is rejected while the backpack is full so equipped items are not pushed past capacity
 - Remote gameplay refresh now stays on the injectable/root runtime loader and is skipped for local/manual sessions, so recent loot/event HUD data follows authoritative account updates without forcing unintended remote fetches.
 - No unrelated gameplay systems were changed; this is a presentation-first slice on top of the existing authoritative flow.
 
@@ -28,9 +34,12 @@
 4. Win a battle that grants equipment.
 5. Confirm the HUD `装备配置` card shows a `战利品` section with the new drop.
 6. Confirm the same card shows the item in the `背包` list with rarity and stat summary.
-7. Click an equipment action button in the same card.
-8. Confirm the hero stat lines in the HUD update immediately after prediction/reconciliation.
-9. Click the matching unequip action and confirm the item returns to inventory and the stat gain line rolls back.
+7. Fill the inventory to 6 items and trigger another equipment drop.
+8. Confirm the HUD and event log clearly state the backpack was full and the overflowed drop was not picked up.
+9. While the backpack is full, try to unequip an item and confirm the action is rejected with a full-inventory message.
+10. Free one slot, then click an equipment action button in the same card.
+11. Confirm the hero stat lines in the HUD update immediately after prediction/reconciliation.
+12. Click the matching unequip action and confirm the item returns to inventory and the stat gain line rolls back.
 
 ## Temporary Assumptions
 
