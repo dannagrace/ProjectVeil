@@ -33,6 +33,7 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
   const markdownOutputPath = path.join(workspaceDir, "dashboard.md");
   const snapshotPath = path.join(workspaceDir, "release-readiness.json");
   const cocosRcPath = path.join(workspaceDir, "cocos-rc.json");
+  const primaryClientDiagnosticsPath = path.join(workspaceDir, "cocos-primary-diagnostics.json");
   const wechatArtifactsDir = path.join(workspaceDir, "wechat-artifacts");
   const packageMetadataPath = path.join(wechatArtifactsDir, "project-veil.package.json");
   const archivePath = path.join(wechatArtifactsDir, "project-veil.tar.gz");
@@ -66,6 +67,25 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
       executedAt: "2026-03-29T08:20:00.000Z",
       summary: "Canonical gameplay journey passed."
     }
+  });
+  writeJson(primaryClientDiagnosticsPath, {
+    generatedAt: "2026-03-29T08:18:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
+    summary: {
+      status: "passed",
+      checkpointCount: 5,
+      categoryIds: ["progression", "inventory", "combat", "reconnect"],
+      checkpointIds: [
+        "progression-review",
+        "inventory-overflow",
+        "combat-loop",
+        "reconnect-cached-replay",
+        "reconnect-recovery"
+      ]
+    },
+    checkpoints: []
   });
   fs.mkdirSync(wechatArtifactsDir, { recursive: true });
   fs.writeFileSync(archivePath, "archive-binary", "utf8");
@@ -175,6 +195,8 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
         snapshotPath,
         "--cocos-rc",
         cocosRcPath,
+        "--primary-client-diagnostics",
+        primaryClientDiagnosticsPath,
         "--wechat-artifacts-dir",
         wechatArtifactsDir,
         "--candidate-revision",
@@ -223,6 +245,7 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
     );
     assert.deepEqual(report.gates.every((gate) => gate.failReasons.length === 0), true);
     assert.equal(report.gates[3]?.evidence.every((entry) => entry.availability === "present"), true);
+    assert.equal(report.gates[3]?.evidence.length, 5);
     assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Phase 1 Go\/No-Go/);
   } finally {
     await new Promise<void>((resolve, reject) => {
