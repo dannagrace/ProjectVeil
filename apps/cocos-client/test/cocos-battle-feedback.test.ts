@@ -200,14 +200,16 @@ test("battle feedback summarizes action, progress, and outcome", () => {
   assert.equal(skillImpactFeedback?.badge, "SKILL");
   assert.match(skillImpactFeedback?.title ?? "", /投矛射击 命中，Orc 受到打击/);
 
-  const victoryFeedback = buildBattleTransitionFeedback(createResolvedUpdate("attacker_victory"), "hero-1");
+  const victoryFeedback = buildBattleTransitionFeedback(createResolvedUpdate("attacker_victory"), "hero-1", battle);
   assert.equal(victoryFeedback?.tone, "victory");
   assert.equal(victoryFeedback?.badge, "WIN");
+  assert.match(victoryFeedback?.detail ?? "", /战线：我方剩余 1 队 \/ 对方剩余 0 队/);
   assert.match(victoryFeedback?.detail ?? "", /准备返回世界地图/);
 
-  const defeatFeedback = buildBattleTransitionFeedback(createResolvedUpdate("defender_victory"), "hero-1");
+  const defeatFeedback = buildBattleTransitionFeedback(createResolvedUpdate("defender_victory"), "hero-1", battle);
   assert.equal(defeatFeedback?.tone, "defeat");
   assert.equal(defeatFeedback?.badge, "LOSE");
+  assert.match(defeatFeedback?.detail ?? "", /战线：我方剩余 0 队 \/ 对方剩余 1 队/);
 
   const unsettledFeedback = buildBattleTransitionFeedback(
     {
@@ -337,7 +339,7 @@ test("battle presentation plan formalizes enter, impact, and resolution phases",
   assert.equal(resolutionPlan.transition?.copy.badge, "VICTORY");
   assert.deepEqual(resolutionPlan.state.summaryLines.slice(0, 2), [
     "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
-    "播报：PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图"
+    "播报：PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 0 队 · 准备返回世界地图"
   ]);
 
   const unsettledResolutionPlan = buildBattlePresentationPlan(
@@ -389,7 +391,7 @@ test("battle transition feedback summarizes settlement rewards and field state",
 
   const feedback = buildBattleTransitionFeedback(update, "hero-1", battle);
   assert.equal(feedback?.badge, "WIN");
-  assert.match(feedback?.detail ?? "", /战线：我方剩余 1 队 \/ 对方剩余 1 队/);
+  assert.match(feedback?.detail ?? "", /战线：我方剩余 1 队 \/ 对方剩余 0 队/);
   assert.match(feedback?.detail ?? "", /战利品：金币 \+12 \/ 矿石 \+3/);
   assert.match(feedback?.detail ?? "", /成长：XP \+25 \/ 技能点 \+1/);
   assert.match(feedback?.detail ?? "", /掉落：铁枪/);

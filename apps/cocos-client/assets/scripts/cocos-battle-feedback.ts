@@ -21,6 +21,12 @@ interface BattleSettlementSummary {
   lines: string[];
 }
 
+interface BattleResolvedView {
+  result: "attacker_victory" | "defender_victory";
+  heroId: string;
+  defenderHeroId: string | null;
+}
+
 export function buildBattleActionFeedback(
   action: BattleAction,
   battle: BattleState | null
@@ -248,9 +254,10 @@ function buildBattleSettlementSummary(
   update: SessionUpdate,
   heroId: string | null
 ): BattleSettlementSummary {
+  const resolved = readBattleResolvedView(update);
   const rewards = collectSettlementRewardParts(update);
-  const fieldStatus = describeSettlementFieldState(previousBattle, heroId);
-  const encounterStatus = describeSettlementEncounterState(previousBattle, heroId);
+  const fieldStatus = describeSettlementFieldState(previousBattle, heroId, resolved);
+  const encounterStatus = describeSettlementEncounterState(previousBattle, heroId, resolved);
   const lines = [fieldStatus, ...rewards];
   const detailParts = [
     encounterStatus,
@@ -263,27 +270,6 @@ function buildBattleSettlementSummary(
     detail: detailParts.join(" · "),
     lines
   };
-}
-
-function describeSettlementEncounterState(previousBattle: BattleState | null, heroId: string | null): string {
-  if (!previousBattle) {
-    return "遭遇已关闭";
-  }
-
-  if (!previousBattle.defenderHeroId) {
-    return "PVE 遭遇已关闭";
-  }
-
-  const heroCamp = resolveHeroCamp(previousBattle, heroId);
-  const didHoldField =
-    heroCamp === "attacker"
-      ? countAliveUnits(previousBattle, "attacker") >= countAliveUnits(previousBattle, "defender")
-      : heroCamp === "defender"
-        ? countAliveUnits(previousBattle, "defender") >= countAliveUnits(previousBattle, "attacker")
-        : true;
-  return didHoldField
-    ? `PVP 结算：对手 ${previousBattle.defenderHeroId} 已退出当前遭遇`
-    : `PVP 结算：对手 ${previousBattle.defenderHeroId} 仍保留在房间地图上`;
 }
 
 function collectSettlementRewardParts(update: SessionUpdate): string[] {
@@ -351,7 +337,11 @@ function collectSettlementRewardParts(update: SessionUpdate): string[] {
   return parts;
 }
 
-function describeSettlementFieldState(previousBattle: BattleState | null, heroId: string | null): string {
+function describeSettlementFieldState(
+  previousBattle: BattleState | null,
+  heroId: string | null,
+  resolved: BattleResolvedView | null
+): string {
   if (!previousBattle) {
     return "战线已完成收口";
   }
@@ -361,8 +351,17 @@ function describeSettlementFieldState(previousBattle: BattleState | null, heroId
     return "战线已完成收口";
   }
 
-  const friendlyAlive = countAliveUnits(previousBattle, heroCamp);
-  const enemyAlive = countAliveUnits(previousBattle, heroCamp === "attacker" ? "defender" : "attacker");
+  const opposing = heroCamp === "attacker" ? "defender" : "attacker";
+  let friendlyAlive = countAliveUnits(previousBattle, heroCamp);
+  let enemyAlive = countAliveUnits(previousBattle, opposing);
+  const didWin = didHeroWinResolution(resolved, heroId);
+  if (didWin === true) {
+    friendlyAlive = Math.max(1, friendlyAlive);
+    enemyAlive = 0;
+  } else if (didWin === false) {
+    friendlyAlive = 0;
+    enemyAlive = Math.max(1, enemyAlive);
+  }
   return `战线：我方剩余 ${friendlyAlive} 队 / 对方剩余 ${enemyAlive} 队`;
 }
 
@@ -377,6 +376,68 @@ function resolveHeroCamp(previousBattle: BattleState, heroId: string | null): "a
     return "defender";
   }
   return null;
+}
+
+function describeSettlementEncounterState(
+  previousBattle: BattleState | null,
+  heroId: string | null,
+  resolved: BattleResolvedView | null
+): string {
+  if (!previousBattle) {
+    return "遭遇已关闭";
+  }
+
+  if (!previousBattle.defenderHeroId) {
+    return "PVE 遭遇已关闭";
+  }
+
+  const didWin = didHeroWinResolution(resolved, heroId);
+  if (didWin === true) {
+    return `PVP 结算：对手 ${previousBattle.defenderHeroId} 已退出当前遭遇`;
+  }
+  if (didWin === false) {
+    return `PVP 结算：对手 ${previousBattle.defenderHeroId} 仍保留在房间地图上`;
+  }
+
+  const heroCamp = resolveHeroCamp(previousBattle, heroId);
+  const didHoldField =
+    heroCamp === "attacker"
+      ? countAliveUnits(previousBattle, "attacker") >= countAliveUnits(previousBattle, "defender")
+      : heroCamp === "defender"
+        ? countAliveUnits(previousBattle, "defender") >= countAliveUnits(previousBattle, "attacker")
+        : true;
+  return didHoldField
+    ? `PVP 结算：对手 ${previousBattle.defenderHeroId} 已退出当前遭遇`
+    : `PVP 结算：对手 ${previousBattle.defenderHeroId} 仍保留在房间地图上`;
+}
+
+function didHeroWinResolution(resolved: BattleResolvedView | null, heroId: string | null): boolean | null {
+  if (!resolved) {
+    return null;
+  }
+
+  if (!heroId) {
+    return resolved.result === "attacker_victory";
+  }
+
+  if (resolved.result === "attacker_victory") {
+    return resolved.heroId === heroId;
+  }
+
+  return resolved.defenderHeroId === heroId;
+}
+
+function readBattleResolvedView(update: SessionUpdate): BattleResolvedView | null {
+  const resolved = update.events.find((event) => event.type === "battle.resolved");
+  if (!resolved) {
+    return null;
+  }
+
+  return {
+    result: resolved.result,
+    heroId: resolved.heroId,
+    defenderHeroId: resolved.defenderHeroId ?? null
+  };
 }
 
 function countAliveUnits(previousBattle: BattleState, camp: "attacker" | "defender"): number {
