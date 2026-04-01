@@ -1,0 +1,22 @@
+{
+  "result": {
+    "ok": true,
+    "battleId": "battle-neutral-1",
+    "activeUnitId": "hero-1-stack",
+    "updateReason": "friendly_fire_blocked",
+    "predictionStatus": "战斗指令被拒绝：不能攻击友军",
+    "logLines": [
+      "战斗指令被拒绝：不能攻击友军",
+      "战斗指令：攻击",
+      "移动已结算。",
+      "正在移动 凯琳 -> (5, 4)",
+      "已进入新房间 run-bl9g56。"
+    ],
+    "timelineEntries": [
+      "系统：操作被拒绝，原因是 friendly_fire_blocked",
+      "事件：计划移动 6 格，前往 (5,4)。",
+      "事件：遭遇中立守军 neutral-1。"
+    ]
+  },
+  "consoleErrors": []
+}

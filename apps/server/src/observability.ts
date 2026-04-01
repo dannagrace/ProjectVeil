@@ -3,6 +3,7 @@ import {
   renderRuntimeDiagnosticsSnapshotText,
   type RuntimeDiagnosticsSnapshot
 } from "../../../packages/shared/src/index";
+import { resetGuestAuthSessions } from "./auth";
 
 export interface RuntimeRoomSnapshot {
   roomId: string;
@@ -859,7 +860,10 @@ export function registerRuntimeObservabilityRoutes(
     try {
       if (store?.clearAll) {
         store.clearAll();
-        sendJson(response, 200, { status: "ok", message: "Store cleared" });
+        // Also reset guest auth sessions to clear cached tokens/sessions
+        // that were persisted in module-level maps in auth.ts
+        resetGuestAuthSessions();
+        sendJson(response, 200, { status: "ok", message: "Store and auth sessions cleared" });
       } else {
         sendJson(response, 400, { error: { message: "Store does not support clearing" } });
       }

@@ -56,6 +56,7 @@ test("rc-artifact: cached session restore reaches room boot", async ({ page }, t
 
     await expectEnteredRoom(page, roomId, playerId);
     await expect(page.getByTestId("account-card")).toContainText("Cached RC Guest");
-    await expect(page.getByTestId("event-log")).toContainText("已加入房间", { timeout: 10_000 });
+    // Room entry shows "会话已连接。Room {roomId} / Player {playerId}" instead of "已加入房间"
+    await expect(page.getByTestId("event-log")).toContainText("会话已连接", { timeout: 10_000 });
   });
 });

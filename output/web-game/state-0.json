@@ -1,0 +1,291 @@
+{
+  "mode": "world",
+  "coordinateSystem": "origin=(0,0) at top-left; x increases right; y increases down",
+  "automationControls": {
+    "world": {
+      "moveCursor": "Arrow keys",
+      "interact": "Enter / Space",
+      "endDay": "B"
+    },
+    "battle": {
+      "cycleTarget": "Arrow keys",
+      "attack": "Enter / Space",
+      "skill": "A",
+      "defendOrWait": "B"
+    },
+    "modal": {
+      "close": "Enter / Space / Escape"
+    }
+  },
+  "room": {
+    "roomId": "issue-33-transition-h5-check",
+    "playerId": "player-1",
+    "day": 1
+  },
+  "resources": {
+    "gold": 0,
+    "wood": 0,
+    "ore": 0
+  },
+  "hero": {
+    "id": "hero-1",
+    "name": "凯琳",
+    "x": 0,
+    "y": 1,
+    "move": {
+      "total": 6,
+      "remaining": 5
+    },
+    "stats": {
+      "attack": 2,
+      "defense": 2,
+      "power": 1,
+      "knowledge": 1,
+      "hp": 30,
+      "maxHp": 30
+    },
+    "armyTemplateId": "hero_guard_basic",
+    "armyCount": 12,
+    "skillPoints": 0
+  },
+  "ownHeroes": [
+    {
+      "id": "hero-1",
+      "playerId": "player-1",
+      "name": "凯琳",
+      "x": 0,
+      "y": 1,
+      "move": {
+        "total": 6,
+        "remaining": 5
+      },
+      "stats": {
+        "attack": 2,
+        "defense": 2,
+        "power": 1,
+        "knowledge": 1,
+        "hp": 30,
+        "maxHp": 30
+      },
+      "progression": {
+        "level": 1,
+        "experience": 0,
+        "skillPoints": 0,
+        "battlesWon": 0,
+        "neutralBattlesWon": 0,
+        "pvpBattlesWon": 0
+      },
+      "armyTemplateId": "hero_guard_basic",
+      "armyCount": 12
+    }
+  ],
+  "visibleHeroes": [],
+  "visibleInteractiveTiles": [
+    {
+      "x": 0,
+      "y": 0,
+      "fog": "visible",
+      "terrain": "dirt",
+      "walkable": true,
+      "resource": {
+        "kind": "wood",
+        "amount": 5
+      }
+    },
+    {
+      "x": 0,
+      "y": 1,
+      "fog": "visible",
+      "terrain": "grass",
+      "walkable": true,
+      "occupant": {
+        "kind": "hero",
+        "refId": "hero-1"
+      }
+    },
+    {
+      "x": 2,
+      "y": 1,
+      "fog": "visible",
+      "terrain": "grass",
+      "walkable": true,
+      "resource": {
+        "kind": "wood",
+        "amount": 5
+      }
+    },
+    {
+      "x": 3,
+      "y": 1,
+      "fog": "explored",
+      "terrain": "dirt",
+      "walkable": true,
+      "building": {
+        "id": "mine-wood-1",
+        "kind": "resource_mine",
+        "label": "前线伐木场",
+        "resourceKind": "wood",
+        "income": 5
+      }
+    },
+    {
+      "x": 1,
+      "y": 3,
+      "fog": "explored",
+      "terrain": "grass",
+      "walkable": true,
+      "building": {
+        "id": "recruit-post-1",
+        "kind": "recruitment_post",
+        "label": "前线招募所",
+        "availableCount": 4,
+        "recruitCount": 4,
+        "cost": {
+          "gold": 240,
+          "wood": 0,
+          "ore": 0
+        }
+      }
+    }
+  ],
+  "reachableTiles": [
+    {
+      "x": 0,
+      "y": 0
+    },
+    {
+      "x": 1,
+      "y": 0
+    },
+    {
+      "x": 2,
+      "y": 0
+    },
+    {
+      "x": 3,
+      "y": 0
+    },
+    {
+      "x": 4,
+      "y": 0
+    },
+    {
+      "x": 0,
+      "y": 1
+    },
+    {
+      "x": 1,
+      "y": 1
+    },
+    {
+      "x": 2,
+      "y": 1
+    },
+    {
+      "x": 3,
+      "y": 1
+    },
+    {
+      "x": 4,
+      "y": 1
+    },
+    {
+      "x": 5,
+      "y": 1
+    },
+    {
+      "x": 1,
+      "y": 2
+    },
+    {
+      "x": 2,
+      "y": 2
+    },
+    {
+      "x": 3,
+      "y": 2
+    },
+    {
+      "x": 4,
+      "y": 2
+    },
+    {
+      "x": 0,
+      "y": 3
+    },
+    {
+      "x": 1,
+      "y": 3
+    },
+    {
+      "x": 2,
+      "y": 3
+    },
+    {
+      "x": 3,
+      "y": 3
+    },
+    {
+      "x": 0,
+      "y": 4
+    },
+    {
+      "x": 1,
+      "y": 4
+    },
+    {
+      "x": 2,
+      "y": 4
+    },
+    {
+      "x": 1,
+      "y": 5
+    }
+  ],
+  "previewPlan": null,
+  "selectedTile": {
+    "x": 0,
+    "y": 1
+  },
+  "hoveredTile": {
+    "x": 0,
+    "y": 1
+  },
+  "keyboardCursor": {
+    "x": 0,
+    "y": 1
+  },
+  "feedbackTone": "move",
+  "predictionStatus": "",
+  "modal": null,
+  "replayDetail": null,
+  "animation": {
+    "animatedPath": [
+      {
+        "x": 1,
+        "y": 1
+      },
+      {
+        "x": 0,
+        "y": 1
+      }
+    ],
+    "animatedPathIndex": 0,
+    "battleFx": {
+      "flashUnitId": null,
+      "floatingText": null
+    },
+    "pendingUiTasks": 2
+  },
+  "battle": null,
+  "timelineTail": [
+    "英雄完成移动，消耗 1 步",
+    "沿路径移动 1 格"
+  ],
+  "logTail": [
+    "Moved 1 steps",
+    "Path: (1,1) -> (0,1)",
+    "会话已连接。Room issue-33-transition-h5-check / Player player-1"
+  ],
+  "lobby": null
+}

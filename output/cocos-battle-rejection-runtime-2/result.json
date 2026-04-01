@@ -1,0 +1,37 @@
+{
+  "result": {
+    "ok": true,
+    "activeUnitId": "hero-1-stack",
+    "enemyUnitId": "neutral-1-stack-1",
+    "rejectedStatus": "战斗指令被拒绝：不能攻击友军",
+    "acceptedStatus": "",
+    "rejectedTimeline": [
+      "系统：操作被拒绝，原因是 friendly_fire_blocked",
+      "事件：计划移动 6 格，前往 (5,4)。",
+      "事件：遭遇中立守军 neutral-1。"
+    ],
+    "finalTimeline": [
+      "系统：操作被拒绝，原因是 friendly_fire_blocked",
+      "事件：计划移动 6 格，前往 (5,4)。",
+      "事件：遭遇中立守军 neutral-1。"
+    ],
+    "logLines": [
+      "战斗指令：攻击",
+      "战斗指令被拒绝：不能攻击友军",
+      "战斗指令：攻击",
+      "移动已结算。",
+      "正在移动 凯琳 -> (5, 4)",
+      "已进入新房间 run-blc5yz。",
+      "正在创建新房间 run-blc5yz ..."
+    ],
+    "updateReason": null,
+    "battleFeedback": {
+      "title": "凯琳卫队 受到打击",
+      "detail": "凯琳卫队 受到中毒影响，损失 2 生命",
+      "badge": "HIT",
+      "tone": "hit",
+      "expiresAt": 1774778574730
+    }
+  },
+  "consoleErrors": []
+}

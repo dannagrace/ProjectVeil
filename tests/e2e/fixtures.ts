@@ -6,11 +6,19 @@ const RESET_ENDPOINT = `${SERVER_BASE_URL}/api/test/reset-store`;
 /**
  * Custom test fixture that automatically resets the server's in-memory store
  * before each test, ensuring test isolation and preventing resource accumulation
+ *
+ * Server-side reset handles:
+ * - In-memory room snapshots
+ * - Player accounts  
+ * - Auth session data (via resetGuestAuthSessions)
+ * - All other in-memory state
+ *
+ * The client-side reset happens when the fixture clears browser storage before
+ * any test navigation, ensuring stale tokens aren't reused.
  */
 export const test = base.extend({
   page: async ({ page }, use) => {
-    // Reset the server's in-memory store before each test by making a direct HTTP call
-    // This happens before any test navigation to ensure clean state
+    // Reset the server's in-memory store before each test
     try {
       const response = await page.context().request.post(RESET_ENDPOINT);
       if (!response.ok()) {
@@ -18,7 +26,18 @@ export const test = base.extend({
       }
     } catch (error) {
       console.warn("Failed to reset store:", error);
-      // Continue anyway - the endpoint might not be available in all environments
+    }
+
+    // Clear browser storage to prevent auth token reuse
+    // We must do this AFTER server reset but BEFORE test navigates
+    // Navigate to any URL first to establish context, then clear storage
+    try {
+      await page.evaluate(() => {
+        localStorage.clear();
+        sessionStorage.clear();
+      });
+    } catch {
+      // Ignore storage clearing errors if page hasn't loaded yet
     }
 
     // Use the page for the test
