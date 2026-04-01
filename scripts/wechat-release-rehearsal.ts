@@ -68,6 +68,8 @@ interface DetectedArtifacts {
   validationReportPath?: string;
   smokeReportPath?: string;
   uploadReceiptPath?: string;
+  candidateSummaryJsonPath?: string;
+  candidateSummaryMarkdownPath?: string;
 }
 
 const OUTPUT_LIMIT = 4000;
@@ -283,12 +285,18 @@ function detectArtifacts(artifactsDir: string): DetectedArtifacts {
   const report = entries.find((entry) => entry === "codex.wechat.rc-validation-report.json");
   const smoke = entries.find((entry) => entry === "codex.wechat.smoke-report.json");
   const receipt = entries.find((entry) => entry.endsWith(".upload.json"));
+  const candidateSummaryJson = entries.find((entry) => entry === "codex.wechat.release-candidate-summary.json");
+  const candidateSummaryMarkdown = entries.find((entry) => entry === "codex.wechat.release-candidate-summary.md");
   return {
     ...(archive ? { archivePath: path.join(artifactsDir, archive) } : {}),
     ...(metadata ? { metadataPath: path.join(artifactsDir, metadata) } : {}),
     ...(report ? { validationReportPath: path.join(artifactsDir, report) } : {}),
     ...(smoke ? { smokeReportPath: path.join(artifactsDir, smoke) } : {}),
-    ...(receipt ? { uploadReceiptPath: path.join(artifactsDir, receipt) } : {})
+    ...(receipt ? { uploadReceiptPath: path.join(artifactsDir, receipt) } : {}),
+    ...(candidateSummaryJson ? { candidateSummaryJsonPath: path.join(artifactsDir, candidateSummaryJson) } : {}),
+    ...(candidateSummaryMarkdown
+      ? { candidateSummaryMarkdownPath: path.join(artifactsDir, candidateSummaryMarkdown) }
+      : {})
   };
 }
 
@@ -332,6 +340,12 @@ function renderMarkdown(summary: RehearsalSummary): string {
   }
   if (artifacts.uploadReceiptPath) {
     artifactLines.push(`- Upload Receipt: \`${artifacts.uploadReceiptPath}\``);
+  }
+  if (artifacts.candidateSummaryJsonPath) {
+    artifactLines.push(`- Candidate Summary (JSON): \`${artifacts.candidateSummaryJsonPath}\``);
+  }
+  if (artifacts.candidateSummaryMarkdownPath) {
+    artifactLines.push(`- Candidate Summary (Markdown): \`${artifacts.candidateSummaryMarkdownPath}\``);
   }
   if (artifactLines.length > 0) {
     lines.push("\n## Artifacts\n\n");

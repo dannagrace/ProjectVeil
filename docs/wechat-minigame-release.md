@@ -132,6 +132,7 @@
 - `blockers`：显式列出缺失 smoke report、失败校验、待完成 manual review，以及对应 artifact / next command
 - `--manual-checks <json>`：读取显式 manual review 状态；推荐直接从 `docs/release-evidence/wechat-release-manual-review.example.json` 复制当次 candidate 文件
 - `--manual-check <id>:<title>`：临时追加一条 pending manual review
+- `npm run release:wechat:rehearsal` 的 `## Artifacts` 区块会自动列出 `codex.wechat.release-candidate-summary.json` / `.md`，方便 reviewer 或 PR 作者直接复制 `.md` 文件内容到评论区，并将 `.json` 作为结构化证据随 artifact 一起上传
 
 ## 提审前 Smoke Check
 
