@@ -23,6 +23,7 @@
 - Phase 1 发布就绪看板：`npm run release:readiness:dashboard`
 - Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
 - Cocos 发布证据模板：`docs/cocos-release-evidence-template.md`
+- Cocos Phase 1 占位 / fallback 表现签核：`docs/cocos-phase1-presentation-signoff.md`
 - Cocos / WeChat RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
 - Cocos / WeChat RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - 微信小游戏提审前冒烟：`docs/wechat-minigame-release.md`
@@ -108,14 +109,14 @@
 `P0 blocker`
 
 - [ ] Lobby、进房、地图探索、遭遇战、战报/结果反馈、账号会话恢复能在 Cocos 主运行时串成完整链路。
-- [ ] Cocos / 微信 release candidate 的断线恢复记录必须复用 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 中同一条场景与同一组成功信号。
+- [ ] Cocos / 微信 release candidate 的断线恢复记录必须复用 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 中同一条场景与同一组成功信号。
 - [ ] 关键 HUD / 面板文案足够可理解，玩家能知道当前房间、玩家身份、资源、移动力和战斗状态。
 - [ ] 首场战斗中的反馈最少完整：选中态、受击 / 伤害反馈、胜败结果、返回世界。
 - [ ] 发布目标若是微信小游戏，必须完成真实导出目录校验、发布包校验和真机 / 准真机 smoke 记录。
 
 `P1 follow-up`
 
-- [ ] Cocos 脚本层的展示配置、图集、动画 fallback 与资源清单在每次 release candidate 上重新核对一次。
+- [ ] Cocos 脚本层的展示配置、图集、动画 fallback 与资源清单在每次 release candidate 上重新核对一次，并通过 [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) 明确记录为已关闭、可接受非阻断，或仍然阻断。
 - [ ] H5 与 Cocos 对同一 shared 规则的表现差异有记录，避免“规则一致但表现不一致”。
 
 建议证据：
@@ -124,10 +125,11 @@
 - `npm run test:cocos:primary-journey`
 - `npm run check:cocos-release-readiness`
 - `npm run release:cocos-rc:snapshot -- --output <snapshot-path>`
+- `docs/cocos-phase1-presentation-signoff.md`
 - `docs/release-evidence/cocos-wechat-rc-checklist.template.md`
 - `docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 中定义的 reconnect 证据
-- 按 [`docs/wechat-minigame-release.md`](/home/gpt/project/ProjectVeil/docs/wechat-minigame-release.md) 完成 `verify` 与 `smoke`
+- 按 [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md) 完成 `verify` 与 `smoke`
 
 ### 4. 观测、诊断与运维门禁
 

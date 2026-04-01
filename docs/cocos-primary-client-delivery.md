@@ -1,6 +1,6 @@
 # Primary Cocos Client Delivery Checklist
 
-This checklist is the maintained delivery baseline for the primary client at [`apps/cocos-client`](/home/gpt/project/ProjectVeil/apps/cocos-client). It keeps the release path small and stable by splitting regression validation into one runtime-journey guard, two automated artifact audits, and a short manual sign-off list.
+This checklist is the maintained delivery baseline for the primary client at [`apps/cocos-client`](/home/gpt/project/ProjectVeil/apps/cocos-client). It keeps the release path small and stable by splitting regression validation into one runtime-journey guard, two automated artifact audits, and a short manual sign-off list. For remaining placeholder or fallback presentation debt, use the canonical reviewer checklist in [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) rather than tracking those items ad hoc in PR comments.
 
 ## Primary Client Regression Gate
 
@@ -81,7 +81,7 @@ Keep these manual items short and attach evidence through the existing release e
 
 1. Complete the current candidate snapshot with `npm run release:cocos-rc:snapshot`.
 2. Refresh the primary-client diagnostic artifact with `npm run release:cocos:primary-diagnostics`.
-3. Copy and fill the RC checklist/template files in [`docs/release-evidence`](/home/gpt/project/ProjectVeil/docs/release-evidence).
+3. Copy and fill the RC checklist/template files in [`docs/release-evidence`](./release-evidence/), and attach the current [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) review for any remaining placeholder/fallback presentation items.
 4. Record any open risk in the blocker template before sign-off.
 5. Confirm the release candidate still matches the intended commit/revision.
 

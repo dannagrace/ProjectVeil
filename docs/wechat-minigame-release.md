@@ -38,6 +38,7 @@
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 统一 Cocos RC candidate bundle：`npm run release:cocos-rc:bundle`
 - Primary client delivery checklist：`docs/cocos-primary-client-delivery.md`
+- Cocos Phase 1 占位 / fallback 表现签核：`docs/cocos-phase1-presentation-signoff.md`
 - Primary client delivery audit：`npm run audit:cocos-primary-delivery -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--expected-revision <git-sha>]`
 - PR 包装改动门禁：匹配上述路径时，查看 CI artifact `cocos-release-packaging-evidence-<git-sha>`
 - RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
@@ -81,7 +82,7 @@
 8. 若已有设备农场、真机调试或准真机脚本产出的结构化 runtime 证据，执行 `npm run ingest:wechat-smoke-evidence -- --metadata <release-sidecar.package.json> --report <release-artifacts-dir>/codex.wechat.smoke-report.json --runtime-evidence <runtime-evidence.json>`，把证据直接写入既有 `codex.wechat.smoke-report.json` schema。
 9. 若本次 RC 没有自动化 runtime 证据，再运行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成模板，并在真机或准真机上逐项补录结果。
 10. 完成自动导入或人工补录后，执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`，确认登录、进房、重连、分享回流、关键资源加载都已有结果记录。
-   - `reconnect-recovery` 必须复用 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md) 的 canonical scenario、最小成功信号和失败诊断口径。
+   - `reconnect-recovery` 必须复用 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 的 canonical scenario、最小成功信号和失败诊断口径。
 11. 运行 `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json [--release-readiness-snapshot artifacts/release-readiness/<candidate>.json]`，脚本会在 `artifacts/release-readiness/` 一次性生成 candidate+revision 命名的 bundle manifest、Markdown 摘要、RC snapshot、checklist 与 blockers，并自动把微信 smoke 的 Lobby / 进房 / 重连证据映射到统一的 Cocos RC 快照；若仍缺 Creator 预览链路，会在快照和摘要里显式标成 `partial` 或 `blocked`，而不是默认为通过。
 12. 直接回填同一 bundle 里的 checklist / blockers 文件，仅补充自动化未覆盖的设备、结论和 blocker；不要再额外复制模板或在 PR 里发明另一套字段。
 13. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
@@ -159,11 +160,11 @@
 2. 若已有自动化设备/runtime 证据，执行 `npm run ingest:wechat-smoke-evidence -- --metadata <release-sidecar.package.json> --report <release-artifacts-dir>/codex.wechat.smoke-report.json --runtime-evidence <runtime-evidence.json>`
 3. 若没有自动化证据，再跑 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成模板
 4. 在真机或微信开发者工具真机调试模式中逐项填写 `tester`、`device`、`executedAt`、`summary` 以及每个 case 的 `status` / `notes` / `evidence`
-   - `reconnect-recovery.requiredEvidence` 下的 `roomId`、`reconnectPrompt`、`restoredState` 都必须填非空字符串；细则见 [`docs/reconnect-smoke-gate.md`](/home/gpt/project/ProjectVeil/.worktrees/issue-203/docs/reconnect-smoke-gate.md)
+   - `reconnect-recovery.requiredEvidence` 下的 `roomId`、`reconnectPrompt`、`restoredState` 都必须填非空字符串；细则见 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md)
    - `share-roundtrip.requiredEvidence` 下的 `shareScene`、`shareQuery`、`roundtripState` 也都必须填非空字符串，用来说明分享入口、参数和回流结果
 5. 回填完成后执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`
 6. 再执行 `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json`，把 `login-lobby`、`room-entry`、`reconnect-recovery` 自动映射到统一 RC 快照，并在 `artifacts/release-readiness/` 生成可直接附到 CI artifact / PR 评论的 bundle 摘要；若设备 evidence 缺失，快照会标成 `blocked`，避免在 RC 汇总里被误判为通过。
-7. 回填同一 bundle 里的 checklist / blockers 文件，确保 reviewer 能直接看到当前 RC 的设备、结论与未关闭风险。
+7. 回填同一 bundle 里的 checklist / blockers 文件，并同步附上 [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) 的当前结论，确保 reviewer 能直接看到当前 RC 的设备、结论与未关闭风险。
 
 ### 自动化 Runtime Evidence Schema
 
