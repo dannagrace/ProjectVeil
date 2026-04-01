@@ -71,6 +71,7 @@ interface CocosReleaseCandidateSnapshot {
     device: string;
   };
   linkedEvidence: {
+    primaryJourneyEvidence?: LinkedEvidenceRef;
     releaseReadinessSnapshot?: LinkedEvidenceRef;
     wechatSmokeReport?: LinkedEvidenceRef;
   };
@@ -93,6 +94,8 @@ interface BundleManifest {
     summary: string;
   };
   artifacts: {
+    primaryJourneyEvidence: string;
+    primaryJourneyEvidenceMarkdown: string;
     snapshot: string;
     summaryMarkdown: string;
     checklistMarkdown: string;
@@ -303,6 +306,7 @@ function runSnapshotCommand(args: Args, snapshotPath: string): void {
   if (args.wechatSmokeReportPath) {
     commandArgs.push("--wechat-smoke-report", args.wechatSmokeReportPath);
   }
+  commandArgs.push("--primary-journey-evidence", path.join(path.dirname(snapshotPath), `cocos-primary-journey-evidence-${slugifyCandidate(args.candidate)}-${getGitValue(["rev-parse", "--short", "HEAD"])}.json`));
   if (args.releaseReadinessSnapshotPath) {
     commandArgs.push("--release-readiness-snapshot", args.releaseReadinessSnapshotPath);
   }
@@ -316,6 +320,35 @@ function runSnapshotCommand(args: Args, snapshotPath: string): void {
   });
   if (result.status !== 0) {
     fail(result.stderr.trim() || result.stdout.trim() || "Failed to generate Cocos RC snapshot.");
+  }
+}
+
+function runPrimaryJourneyEvidenceCommand(args: Args, outputPath: string, markdownOutputPath: string): void {
+  const commandArgs = [
+    "--import",
+    "tsx",
+    "./scripts/cocos-primary-client-journey-evidence.ts",
+    "--candidate",
+    args.candidate,
+    "--output",
+    outputPath,
+    "--markdown-output",
+    markdownOutputPath
+  ];
+
+  if (args.owner) {
+    commandArgs.push("--owner", args.owner);
+  }
+  if (args.server) {
+    commandArgs.push("--server", args.server);
+  }
+
+  const result = spawnSync(process.execPath, commandArgs, {
+    cwd: process.cwd(),
+    encoding: "utf8"
+  });
+  if (result.status !== 0) {
+    fail(result.stderr.trim() || result.stdout.trim() || "Failed to generate primary-client journey evidence.");
   }
 }
 
@@ -336,6 +369,8 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
   lines.push("");
   lines.push("## Artifacts");
   lines.push("");
+  lines.push(`- Primary journey evidence: \`${toRepoRelative(artifacts.primaryJourneyEvidence)}\``);
+  lines.push(`- Primary journey markdown: \`${toRepoRelative(artifacts.primaryJourneyEvidenceMarkdown)}\``);
   lines.push(`- Snapshot: \`${toRepoRelative(artifacts.snapshot)}\``);
   lines.push(`- Checklist: \`${toRepoRelative(artifacts.checklistMarkdown)}\``);
   lines.push(`- Blockers: \`${toRepoRelative(artifacts.blockersMarkdown)}\``);
@@ -357,9 +392,16 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
     lines.push(`| \`${field.id}\` | ${field.value ? `\`${field.value}\`` : "_missing_"} | ${field.evidence.length} item(s) |`);
   }
   lines.push("");
-  if (snapshot.linkedEvidence.releaseReadinessSnapshot || snapshot.linkedEvidence.wechatSmokeReport) {
+  if (
+    snapshot.linkedEvidence.primaryJourneyEvidence ||
+    snapshot.linkedEvidence.releaseReadinessSnapshot ||
+    snapshot.linkedEvidence.wechatSmokeReport
+  ) {
     lines.push("## Linked Evidence");
     lines.push("");
+    if (snapshot.linkedEvidence.primaryJourneyEvidence) {
+      lines.push(`- Primary journey evidence: \`${toRepoRelative(snapshot.linkedEvidence.primaryJourneyEvidence.path)}\``);
+    }
     if (snapshot.linkedEvidence.releaseReadinessSnapshot) {
       lines.push(`- Release readiness snapshot: \`${toRepoRelative(snapshot.linkedEvidence.releaseReadinessSnapshot.path)}\``);
     }
@@ -447,12 +489,15 @@ function main(): void {
   const slug = slugifyCandidate(args.candidate);
   const outputDir = path.resolve(args.outputDir);
   const baseName = `${slug}-${shortCommit}`;
+  const primaryJourneyEvidencePath = path.join(outputDir, `cocos-primary-journey-evidence-${baseName}.json`);
+  const primaryJourneyEvidenceMarkdownPath = path.join(outputDir, `cocos-primary-journey-evidence-${baseName}.md`);
   const snapshotPath = path.join(outputDir, `cocos-rc-snapshot-${baseName}.json`);
   const summaryMarkdownPath = path.join(outputDir, `cocos-rc-evidence-bundle-${baseName}.md`);
   const manifestPath = path.join(outputDir, `cocos-rc-evidence-bundle-${baseName}.json`);
   const checklistPath = path.join(outputDir, `cocos-rc-checklist-${baseName}.md`);
   const blockersPath = path.join(outputDir, `cocos-rc-blockers-${baseName}.md`);
 
+  runPrimaryJourneyEvidenceCommand(args, primaryJourneyEvidencePath, primaryJourneyEvidenceMarkdownPath);
   runSnapshotCommand(args, snapshotPath);
 
   const snapshot = readJsonFile<CocosReleaseCandidateSnapshot>(snapshotPath);
@@ -461,6 +506,8 @@ function main(): void {
   }
 
   const artifacts: BundleManifest["artifacts"] = {
+    primaryJourneyEvidence: path.resolve(primaryJourneyEvidencePath),
+    primaryJourneyEvidenceMarkdown: path.resolve(primaryJourneyEvidenceMarkdownPath),
     snapshot: path.resolve(snapshotPath),
     summaryMarkdown: path.resolve(summaryMarkdownPath),
     checklistMarkdown: path.resolve(checklistPath),

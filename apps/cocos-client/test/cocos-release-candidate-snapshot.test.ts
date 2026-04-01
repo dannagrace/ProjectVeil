@@ -103,7 +103,7 @@ test("release:cocos-rc:snapshot writes a reusable template", () => {
   );
   assert.deepEqual(
     snapshot.journey.map((entry) => entry.id),
-    ["lobby-entry", "room-join", "map-explore", "first-battle", "pvp-encounter", "reconnect-restore", "return-to-world"]
+    ["lobby-entry", "room-join", "map-explore", "first-battle", "battle-settlement", "reconnect-restore", "return-to-world"]
   );
   assert.ok(snapshot.journey.every((entry) => entry.status === "pending"));
 });

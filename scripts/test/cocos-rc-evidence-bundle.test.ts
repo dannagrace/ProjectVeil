@@ -82,12 +82,16 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   );
 
   const files = fs.readdirSync(outputDir).sort();
+  const primaryJourneyFile = files.find((entry) => entry.startsWith("cocos-primary-journey-evidence-") && entry.endsWith(".json"));
+  const primaryJourneyMarkdownFile = files.find((entry) => entry.startsWith("cocos-primary-journey-evidence-") && entry.endsWith(".md"));
   const manifestFile = files.find((entry) => entry.startsWith("cocos-rc-evidence-bundle-") && entry.endsWith(".json"));
   const summaryFile = files.find((entry) => entry.startsWith("cocos-rc-evidence-bundle-") && entry.endsWith(".md"));
   const snapshotFile = files.find((entry) => entry.startsWith("cocos-rc-snapshot-") && entry.endsWith(".json"));
   const checklistFile = files.find((entry) => entry.startsWith("cocos-rc-checklist-") && entry.endsWith(".md"));
   const blockersFile = files.find((entry) => entry.startsWith("cocos-rc-blockers-") && entry.endsWith(".md"));
 
+  assert.ok(primaryJourneyFile);
+  assert.ok(primaryJourneyMarkdownFile);
   assert.ok(manifestFile);
   assert.ok(summaryFile);
   assert.ok(snapshotFile);
@@ -97,13 +101,22 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
 
   const manifest = JSON.parse(fs.readFileSync(path.join(outputDir, manifestFile!), "utf8")) as {
     bundle: { candidate: string; buildSurface: string; overallStatus: string };
-    artifacts: { snapshot: string; summaryMarkdown: string; checklistMarkdown: string; blockersMarkdown: string };
+    artifacts: {
+      primaryJourneyEvidence: string;
+      primaryJourneyEvidenceMarkdown: string;
+      snapshot: string;
+      summaryMarkdown: string;
+      checklistMarkdown: string;
+      blockersMarkdown: string;
+    };
     journey: Array<{ id: string; status: string }>;
     requiredEvidence: Array<{ id: string; filled: boolean }>;
   };
   assert.equal(manifest.bundle.candidate, "rc-issue-507");
   assert.equal(manifest.bundle.buildSurface, "wechat_preview");
-  assert.equal(manifest.bundle.overallStatus, "partial");
+  assert.equal(manifest.bundle.overallStatus, "passed");
+  assert.equal(path.basename(manifest.artifacts.primaryJourneyEvidence), primaryJourneyFile);
+  assert.equal(path.basename(manifest.artifacts.primaryJourneyEvidenceMarkdown), primaryJourneyMarkdownFile);
   assert.equal(manifest.journey.find((entry) => entry.id === "lobby-entry")?.status, "passed");
   assert.equal(manifest.requiredEvidence.find((entry) => entry.id === "roomId")?.filled, true);
   assert.equal(path.basename(manifest.artifacts.snapshot), snapshotFile);
@@ -113,8 +126,9 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
 
   const summaryMarkdown = fs.readFileSync(path.join(outputDir, summaryFile!), "utf8");
   assert.match(summaryMarkdown, /# Cocos RC Evidence Bundle/);
-  assert.match(summaryMarkdown, /Overall status: `partial`/);
-  assert.match(summaryMarkdown, /Lobby entry \| `passed` \| 1 item\(s\)/);
+  assert.match(summaryMarkdown, /Overall status: `passed`/);
+  assert.match(summaryMarkdown, /Primary journey evidence:/);
+  assert.match(summaryMarkdown, /Lobby entry \| `passed` \| 2 item\(s\)/);
 
   const checklistMarkdown = fs.readFileSync(path.join(outputDir, checklistFile!), "utf8");
   assert.match(checklistMarkdown, /Candidate: `rc-issue-507`/);
