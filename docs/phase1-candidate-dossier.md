@@ -4,6 +4,8 @@
 
 It now also emits one explicit candidate-level `Phase 1 exit evidence gate` so reviewers can make the final pass/pending/fail call from one object instead of re-interpreting each evidence section by hand.
 
+The Markdown artifact is the canonical reviewer-facing attachment for one candidate revision: it records the candidate metadata, selected evidence inputs, the single Phase 1 exit gate decision, and the per-section drill-down in one place.
+
 The command stays intentionally thin and reuses the existing evidence producers:
 
 - `npm run release:readiness:snapshot`
@@ -52,11 +54,20 @@ npm run release:phase1:candidate-dossier -- \
   --markdown-output artifacts/release-readiness/phase1-candidate-dossier.md
 ```
 
+## Default Outputs
+
+If you do not pass output flags, the script writes:
+
+- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>.json`
+- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>.md`
+
 ## Output Contract
 
 The dossier surfaces:
 
+- generated timestamp plus candidate branch/dirty metadata
 - one candidate revision and target surface
+- one `Selected Inputs` block so reviewers can see the exact artifact paths and runtime URL that were used
 - one `phase1ExitEvidenceGate` result with blocking/pending/accepted-risk section lists
 - `requiredFailed`
 - `requiredPending`

@@ -754,6 +754,10 @@ function summarizeRiskList(risks: DossierAcceptedRisk[]): string[] {
   return risks.map((risk) => `${risk.label}: ${risk.reason}`);
 }
 
+function relativeArtifactPath(filePath: string): string {
+  return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -1618,8 +1622,11 @@ function buildPhase1ExitEvidenceGateSection(sections: DossierSection[], generate
 export function renderMarkdown(dossier: Phase1CandidateDossier): string {
   const lines: string[] = [];
   lines.push("# Phase 1 Candidate Dossier", "");
+  lines.push(`- Generated at: \`${dossier.generatedAt}\``);
   lines.push(`- Candidate: \`${dossier.candidate.name}\``);
   lines.push(`- Revision: \`${dossier.candidate.revision}\``);
+  lines.push(`- Branch: \`${dossier.candidate.branch}\``);
+  lines.push(`- Git tree: \`${dossier.candidate.dirty ? "dirty" : "clean"}\``);
   lines.push(`- Target surface: \`${dossier.candidate.targetSurface}\``);
   lines.push(`- Overall status: **${dossier.summary.status.toUpperCase()}**`);
   lines.push(`- Required failed: ${dossier.summary.requiredFailed.length}`);
@@ -1627,6 +1634,24 @@ export function renderMarkdown(dossier: Phase1CandidateDossier): string {
   lines.push(`- Phase 1 exit evidence gate: \`${dossier.phase1ExitEvidenceGate.result}\``);
   lines.push(`- Phase 1 exit summary: ${dossier.phase1ExitEvidenceGate.summary}`);
   lines.push(`- Accepted risks: ${dossier.summary.acceptedRiskCount}`, "");
+
+  lines.push("## Selected Inputs", "");
+  lines.push(`- Runtime server: \`${dossier.inputs.serverUrl ?? "<missing>"}\``);
+  lines.push(`- Release readiness snapshot: \`${dossier.inputs.snapshotPath ? relativeArtifactPath(dossier.inputs.snapshotPath) : "<missing>"}\``);
+  lines.push(`- H5 smoke: \`${dossier.inputs.h5SmokePath ? relativeArtifactPath(dossier.inputs.h5SmokePath) : "<missing>"}\``);
+  lines.push(`- Cocos RC bundle: \`${dossier.inputs.cocosBundlePath ? relativeArtifactPath(dossier.inputs.cocosBundlePath) : "<missing>"}\``);
+  lines.push(`- WeChat artifacts dir: \`${dossier.inputs.wechatArtifactsDir ? relativeArtifactPath(dossier.inputs.wechatArtifactsDir) : "<missing>"}\``);
+  lines.push(
+    `- WeChat candidate summary: \`${dossier.inputs.wechatCandidateSummaryPath ? relativeArtifactPath(dossier.inputs.wechatCandidateSummaryPath) : "<missing>"}\``
+  );
+  lines.push(`- WeChat RC validation: \`${dossier.inputs.wechatRcValidationPath ? relativeArtifactPath(dossier.inputs.wechatRcValidationPath) : "<missing>"}\``);
+  lines.push(`- WeChat smoke fallback: \`${dossier.inputs.wechatSmokeReportPath ? relativeArtifactPath(dossier.inputs.wechatSmokeReportPath) : "<missing>"}\``);
+  lines.push(`- Reconnect soak: \`${dossier.inputs.reconnectSoakPath ? relativeArtifactPath(dossier.inputs.reconnectSoakPath) : "<missing>"}\``);
+  lines.push(`- Phase 1 persistence: \`${dossier.inputs.persistencePath ? relativeArtifactPath(dossier.inputs.persistencePath) : "<missing>"}\``);
+  lines.push(`- Sync governance: \`${dossier.inputs.syncGovernancePath ? relativeArtifactPath(dossier.inputs.syncGovernancePath) : "<missing>"}\``);
+  lines.push(`- CI trend summary: \`${dossier.inputs.ciTrendSummaryPath ? relativeArtifactPath(dossier.inputs.ciTrendSummaryPath) : "<missing>"}\``);
+  lines.push(`- Coverage summary: \`${dossier.inputs.coverageSummaryPath ? relativeArtifactPath(dossier.inputs.coverageSummaryPath) : "<missing>"}\``);
+  lines.push(`- Config audit: \`${dossier.inputs.configCenterLibraryPath ? relativeArtifactPath(dossier.inputs.configCenterLibraryPath) : "<missing>"}\``, "");
 
   lines.push("## Phase 1 Exit Evidence Gate", "");
   lines.push(`- Result: \`${dossier.phase1ExitEvidenceGate.result}\``);
@@ -1649,7 +1674,7 @@ export function renderMarkdown(dossier: Phase1CandidateDossier): string {
     );
     lines.push(`  Summary: ${section.summary}`);
     if (section.artifactPath) {
-      lines.push(`  Artifact: \`${path.relative(process.cwd(), section.artifactPath).replace(/\\/g, "/")}\``);
+      lines.push(`  Artifact: \`${relativeArtifactPath(section.artifactPath)}\``);
     }
   }
   lines.push("");
@@ -1693,7 +1718,7 @@ export function renderMarkdown(dossier: Phase1CandidateDossier): string {
       lines.push(`- Revision: \`${section.revision}\``);
     }
     if (section.artifactPath) {
-      lines.push(`- Artifact: \`${path.relative(process.cwd(), section.artifactPath).replace(/\\/g, "/")}\``);
+      lines.push(`- Artifact: \`${relativeArtifactPath(section.artifactPath)}\``);
     }
     lines.push(`- Summary: ${section.summary}`);
     if (section.details.length > 0) {
