@@ -2949,9 +2949,13 @@ export class VeilRoot extends Component {
       return;
     }
 
+    if (this.sessionSource !== "remote") {
+      return;
+    }
+
     this.gameplayAccountRefreshInFlight = true;
     try {
-      const profile = await loadCocosPlayerAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
+      const profile = await resolveVeilRootRuntime().loadAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
         storage: this.readWebStorage(),
         authSession: this.authToken
           ? {

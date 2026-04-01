@@ -8,7 +8,7 @@
 - Cocos session layer: `apps/cocos-client/assets/scripts/VeilCocosSession.ts` already sends `hero.equip` / `hero.unequip` requests and caches the returned `SessionUpdate`.
 - Cocos prediction/HUD layer: `apps/cocos-client/assets/scripts/cocos-prediction.ts`, `apps/cocos-client/assets/scripts/cocos-hero-equipment.ts`, and `apps/cocos-client/assets/scripts/VeilHudPanel.ts` present hero loadout state, grouped inventory choices, recent loot, and visible stat changes inside the primary runtime.
 
-## Implemented Slice For #206
+## Implemented Slice For #503
 
 - HUD `装备配置` card now shows:
   - current slot occupancy for weapon / armor / accessory
@@ -17,6 +17,7 @@
   - carried inventory grouped by item type with rarity and bonus metadata
   - recent loot lines from the Cocos-visible account event log
 - Existing equip/unequip buttons remain the interaction surface and continue to drive prediction plus server reconciliation.
+- Remote gameplay refresh now stays on the injectable/root runtime loader and is skipped for local/manual sessions, so recent loot/event HUD data follows authoritative account updates without forcing unintended remote fetches.
 - No unrelated gameplay systems were changed; this is a presentation-first slice on top of the existing authoritative flow.
 
 ## Local Verification

@@ -224,6 +224,99 @@ test("VeilRoot wires the equipment loot loop through equip and unequip session u
   ]);
 });
 
+test("VeilRoot gameplay account refresh uses the injected loader for remote equipment and loot updates", async () => {
+  const storage = createMemoryStorage();
+  (sys as unknown as { localStorage: Storage }).localStorage = storage;
+
+  const root = createVeilRootHarness();
+  root.remoteUrl = "http://127.0.0.1:2567";
+  root.roomId = "room-equipment";
+  root.playerId = "player-1";
+  root.displayName = "暮潮守望";
+  root.authMode = "account";
+  root.authToken = "account.token";
+  root.loginId = "veil-ranger";
+  root.sessionSource = "remote";
+
+  const calls: Array<{
+    remoteUrl: string;
+    playerId: string;
+    roomId: string;
+    authSession: { token: string; playerId: string; displayName: string; authMode: string; loginId?: string; source: string } | null;
+  }> = [];
+  installVeilRootRuntime({
+    loadAccountProfile: async (remoteUrl, playerId, roomId, options) => {
+      calls.push({
+        remoteUrl,
+        playerId,
+        roomId,
+        authSession: options?.authSession ?? null
+      });
+      return {
+        ...root.lobbyAccountProfile,
+        playerId,
+        roomId,
+        displayName: "暮潮守望",
+        source: "remote",
+        authMode: "account",
+        loginId: "veil-ranger",
+        recentEventLog: [
+          {
+            id: "loot-1",
+            timestamp: "2026-04-01T12:00:00.000Z",
+            roomId,
+            playerId,
+            category: "combat",
+            description: "暮潮守望在战斗后获得了稀有装备 先锋战刃。",
+            heroId: "hero-1",
+            worldEventType: "hero.equipmentFound",
+            rewards: []
+          }
+        ]
+      };
+    }
+  });
+
+  await root.refreshGameplayAccountProfile();
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], {
+    remoteUrl: "http://127.0.0.1:2567",
+    playerId: "player-1",
+    roomId: "room-equipment",
+    authSession: {
+      token: "account.token",
+      playerId: "player-1",
+      displayName: "暮潮守望",
+      authMode: "account",
+      loginId: "veil-ranger",
+      source: "remote"
+    }
+  });
+  assert.equal(root.lobbyAccountProfile.recentEventLog[0]?.worldEventType, "hero.equipmentFound");
+  assert.match(String(root.lobbyAccountProfile.recentEventLog[0]?.description), /先锋战刃/);
+});
+
+test("VeilRoot gameplay account refresh skips remote profile loads for local sessions", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-local";
+  root.playerId = "player-local";
+  root.displayName = "本地旅人";
+  root.sessionSource = "local";
+
+  let calls = 0;
+  installVeilRootRuntime({
+    loadAccountProfile: async () => {
+      calls += 1;
+      return root.lobbyAccountProfile;
+    }
+  });
+
+  await root.refreshGameplayAccountProfile();
+
+  assert.equal(calls, 0);
+});
+
 test("VeilRoot account lifecycle flow switches panels and surfaces validation feedback", async () => {
   const root = createVeilRootHarness();
 
