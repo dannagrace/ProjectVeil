@@ -40,8 +40,13 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
 
   writeJson(snapshotPath, {
     generatedAt: "2026-03-29T08:00:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
     summary: {
-      status: "passed"
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
     },
     checks: [
       { id: "npm-test", status: "passed", required: true },
@@ -53,6 +58,9 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
     ]
   });
   writeJson(cocosRcPath, {
+    candidate: {
+      shortCommit: "abc1234"
+    },
     execution: {
       overallStatus: "passed",
       executedAt: "2026-03-29T08:20:00.000Z",
@@ -169,6 +177,8 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
         cocosRcPath,
         "--wechat-artifacts-dir",
         wechatArtifactsDir,
+        "--candidate-revision",
+        "abc1234",
         "--output",
         outputPath,
         "--markdown-output",
@@ -178,8 +188,16 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
     );
 
     assert.match(output, /Overall status: pass/);
+    assert.match(output, /Go\/No-Go decision: ready/);
     const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
       overallStatus: string;
+      goNoGo: {
+        decision: string;
+        candidateRevision?: string;
+        requiredFailed: number;
+        requiredPending: number;
+        revisionStatus: string;
+      };
       gates: Array<{
         id: string;
         status: string;
@@ -189,6 +207,11 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
       }>;
     };
     assert.equal(report.overallStatus, "pass");
+    assert.equal(report.goNoGo.decision, "ready");
+    assert.equal(report.goNoGo.candidateRevision, "abc1234");
+    assert.equal(report.goNoGo.requiredFailed, 0);
+    assert.equal(report.goNoGo.requiredPending, 0);
+    assert.equal(report.goNoGo.revisionStatus, "aligned");
     assert.deepEqual(
       report.gates.map((gate) => [gate.id, gate.status]),
       [
@@ -200,7 +223,7 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
     );
     assert.deepEqual(report.gates.every((gate) => gate.failReasons.length === 0), true);
     assert.equal(report.gates[3]?.evidence.every((entry) => entry.availability === "present"), true);
-    assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Phase 1 Release Readiness Dashboard/);
+    assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Phase 1 Go\/No-Go/);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
@@ -225,8 +248,13 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
 
   writeJson(snapshotPath, {
     generatedAt: "2026-03-29T08:00:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
     summary: {
-      status: "failed"
+      status: "failed",
+      requiredFailed: 1,
+      requiredPending: 0
     },
     checks: [
       { id: "npm-test", status: "failed", required: true },
@@ -244,6 +272,9 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
     archiveSha256: "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abcd"
   });
   writeJson(smokeReportPath, {
+    artifact: {
+      sourceRevision: "abc1234"
+    },
     execution: {
       result: "pending",
       executedAt: "2026-03-29T08:15:00.000Z"
@@ -263,6 +294,8 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
       snapshotPath,
       "--wechat-artifacts-dir",
       wechatArtifactsDir,
+      "--candidate-revision",
+      "abc1234",
       "--output",
       outputPath,
       "--markdown-output",
@@ -276,8 +309,16 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
   );
 
   assert.match(output, /Overall status: fail/);
+  assert.match(output, /Go\/No-Go decision: blocked/);
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
     overallStatus: string;
+    goNoGo: {
+      decision: string;
+      requiredFailed: number;
+      requiredPending: number;
+      revisionStatus: string;
+      blockers: string[];
+    };
     gates: Array<{
       id: string;
       status: string;
@@ -287,6 +328,11 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
     }>;
   };
   assert.equal(report.overallStatus, "fail");
+  assert.equal(report.goNoGo.decision, "blocked");
+  assert.equal(report.goNoGo.requiredFailed, 1);
+  assert.equal(report.goNoGo.requiredPending, 0);
+  assert.equal(report.goNoGo.revisionStatus, "aligned");
+  assert.equal(report.goNoGo.blockers.includes("requiredFailed=1"), true);
   assert.deepEqual(
     report.gates.map((gate) => [gate.id, gate.status]),
     [

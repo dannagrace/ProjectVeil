@@ -1,6 +1,6 @@
 # Phase 1 Release Readiness Dashboard
 
-`npm run release:readiness:dashboard` generates a single local report for the current Phase 1 gameplay release gates. It reuses existing evidence instead of redefining the workflow:
+`npm run release:readiness:dashboard` generates a single local report for the current Phase 1 gameplay release gates. It now promotes one Phase 1 `go/no-go` decision for a candidate revision, including first-class `requiredFailed` / `requiredPending` counts plus linked artifact paths for quick audit. The report reuses existing evidence instead of redefining the workflow:
 
 - `npm run release:readiness:snapshot` for automated regression/build gates
 - `GET /api/runtime/health`, `GET /api/runtime/auth-readiness`, `GET /api/runtime/metrics` for live server/auth posture
@@ -25,7 +25,8 @@ npm run release:readiness:dashboard -- \
   --server-url http://127.0.0.1:2567 \
   --snapshot artifacts/release-readiness/rc-2026-03-29.json \
   --cocos-rc artifacts/release-evidence/phase1-wechat-rc.json \
-  --wechat-artifacts-dir artifacts/wechat-release
+  --wechat-artifacts-dir artifacts/wechat-release \
+  --candidate-revision abc1234
 ```
 
 Write to explicit output files:
@@ -42,9 +43,24 @@ If your evidence freshness window should be stricter or looser than the default 
 npm run release:readiness:dashboard -- --max-evidence-age-days 7
 ```
 
+If you want the report to pin all automated and manual evidence to one explicit candidate revision, pass:
+
+```bash
+npm run release:readiness:dashboard -- --candidate-revision <git-sha>
+```
+
 ## Gate Mapping
 
-The report summarizes four bounded gates:
+The report starts with one `go/no-go` section:
+
+- `ready`
+  - `requiredFailed=0`, `requiredPending=0`, no gate is failing or warning, and the linked evidence revisions align with the candidate revision when one can be verified.
+- `pending`
+  - no blocking failures exist, but required checks are still pending, some evidence is stale / missing a timestamp, live/manual checks were not run, or the candidate revision cannot yet be verified across the linked evidence.
+- `blocked`
+  - one or more required checks failed, a gate failed, or linked artifact revisions disagree on which candidate is under review.
+
+After that, the report summarizes the same four bounded gates:
 
 - `Server health`
   - `pass` when `/api/runtime/health` is reachable and `/api/runtime/metrics` exposes the expected gameplay/auth counters.
@@ -59,7 +75,7 @@ The report summarizes four bounded gates:
   - Confirms a `*.package.json` WeChat sidecar exists alongside its archive.
   - Reads `codex.wechat.smoke-report.json` and flags `pending` as `warn`, `failed` as `fail`.
 - `Critical readiness evidence`
-  - Lists the latest linked evidence with exact timestamps.
+  - Lists the latest linked evidence with exact timestamps, paths, and any revision identifiers discovered in the source artifacts.
   - Warns when evidence is missing or older than the configured freshness window.
 
 ## Recommended Local Flow
@@ -98,4 +114,4 @@ npm run release:readiness:dashboard -- \
   --wechat-artifacts-dir artifacts/wechat-release
 ```
 
-The Markdown output is intended to be attachable to issue/PR discussion, while the JSON output is intended for automation or later aggregation.
+The Markdown output is intended to be attachable to issue/PR discussion, while the JSON output is intended for automation or later aggregation. Both formats now expose the same candidate-level `goNoGo` block so reviewers do not need to stitch the final Phase 1 release call together by hand.
