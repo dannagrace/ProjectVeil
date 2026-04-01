@@ -17,7 +17,12 @@ import {
   type SessionStatePayload,
   type Vec2
 } from "../packages/shared/src/index";
-import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../apps/server/src/colyseus-room";
+import {
+  configureRoomSnapshotStore,
+  getActiveRoomInstances,
+  resetLobbyRoomRegistry,
+  VeilColyseusRoom
+} from "../apps/server/src/colyseus-room";
 import { createMemoryRoomSnapshotStore } from "../apps/server/src/memory-room-snapshot-store";
 import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../apps/server/src/observability";
 import type { RoomSnapshotStore } from "../apps/server/src/persistence";
@@ -76,6 +81,7 @@ interface ScenarioResult {
   peakActiveHandles: number;
   runtimeHealthAfterConnect?: RuntimeHealthSummary;
   runtimeHealthAfterScenario?: RuntimeHealthSummary;
+  runtimeHealthAfterCleanup?: RuntimeHealthSummary;
   soakSummary?: ReconnectSoakSummary;
   errorMessage?: string;
 }
@@ -182,12 +188,16 @@ function toMegabytes(bytes: number): number {
 }
 
 function parseIntegerFlag(name: string, fallback: number): number {
-  const argument = process.argv.findLast((item) => item.startsWith(`--${name}=`));
-  if (!argument) {
+  const inlineArgument = process.argv.findLast((item) => item.startsWith(`--${name}=`));
+  const argumentIndex = process.argv.lastIndexOf(`--${name}`);
+  if (!inlineArgument && argumentIndex === -1) {
     return fallback;
   }
 
-  const value = Number(argument.slice(name.length + 3));
+  const rawValue = inlineArgument
+    ? inlineArgument.slice(name.length + 3)
+    : process.argv[argumentIndex + 1];
+  const value = Number(rawValue);
   if (!Number.isInteger(value) || value <= 0) {
     throw new Error(`--${name} must be a positive integer`);
   }
@@ -196,12 +206,15 @@ function parseIntegerFlag(name: string, fallback: number): number {
 }
 
 function parseStringFlag(name: string, fallback: string): string {
-  const argument = process.argv.findLast((item) => item.startsWith(`--${name}=`));
-  if (!argument) {
+  const inlineArgument = process.argv.findLast((item) => item.startsWith(`--${name}=`));
+  const argumentIndex = process.argv.lastIndexOf(`--${name}`);
+  if (!inlineArgument && argumentIndex === -1) {
     return fallback;
   }
 
-  const value = argument.slice(name.length + 3).trim();
+  const value = (inlineArgument
+    ? inlineArgument.slice(name.length + 3)
+    : process.argv[argumentIndex + 1] ?? "").trim();
   if (!value) {
     throw new Error(`--${name} must not be empty`);
   }
@@ -1072,6 +1085,32 @@ async function runReconnectSoakScenario(
 
 async function cleanupRooms(contexts: RoomContext[]): Promise<void> {
   await Promise.all(contexts.map((context) => closeRoom(context.room).catch(() => undefined)));
+  for (const context of contexts) {
+    const room = getActiveRoomInstances().get(context.roomId) as { disconnect?: () => Promise<unknown> | unknown } | undefined;
+    try {
+      await room?.disconnect?.();
+    } catch {
+      // Best-effort cleanup for soak artifact counters.
+    }
+  }
+}
+
+async function waitForCleanupHealth(host: string, port: number, timeoutMs = 5_000): Promise<RuntimeHealthSummary | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  let latest = await fetchRuntimeHealthSummary(host, port);
+  while (latest && Date.now() < deadline) {
+    if (
+      latest.activeRoomCount === 0 &&
+      latest.connectionCount === 0 &&
+      latest.activeBattleCount === 0 &&
+      latest.heroCount === 0
+    ) {
+      return latest;
+    }
+    await wait(50);
+    latest = await fetchRuntimeHealthSummary(host, port);
+  }
+  return latest;
 }
 
 async function runScenario(scenario: ScenarioName, options: StressOptions, store: RoomSnapshotStore | null): Promise<ScenarioResult> {
@@ -1079,6 +1118,7 @@ async function runScenario(scenario: ScenarioName, options: StressOptions, store
   let contexts: RoomContext[] = [];
   let runtimeHealthAfterConnect: RuntimeHealthSummary | undefined;
   let runtimeHealthAfterScenario: RuntimeHealthSummary | undefined;
+  let result: ScenarioResult | undefined;
 
   try {
     const connected = await connectRooms(options, scenario);
@@ -1097,7 +1137,7 @@ async function runScenario(scenario: ScenarioName, options: StressOptions, store
       completedActions += soak.completedActions;
       runtimeHealthAfterScenario = await fetchRuntimeHealthSummary(options.host, options.port);
       const resources = monitor.stop();
-      return {
+      result = {
         scenario,
         rooms: options.rooms,
         successfulRooms: options.rooms,
@@ -1121,11 +1161,12 @@ async function runScenario(scenario: ScenarioName, options: StressOptions, store
         ...(runtimeHealthAfterConnect ? { runtimeHealthAfterConnect } : {}),
         ...(runtimeHealthAfterScenario ? { runtimeHealthAfterScenario } : {})
       };
+      return result;
     }
     runtimeHealthAfterScenario = await fetchRuntimeHealthSummary(options.host, options.port);
 
     const resources = monitor.stop();
-    return {
+    result = {
       scenario,
       rooms: options.rooms,
       successfulRooms: options.rooms,
@@ -1148,10 +1189,11 @@ async function runScenario(scenario: ScenarioName, options: StressOptions, store
       ...(runtimeHealthAfterConnect ? { runtimeHealthAfterConnect } : {}),
       ...(runtimeHealthAfterScenario ? { runtimeHealthAfterScenario } : {})
     };
+    return result;
   } catch (error) {
     runtimeHealthAfterScenario = await fetchRuntimeHealthSummary(options.host, options.port);
     const resources = monitor.stop();
-    return {
+    result = {
       scenario,
       rooms: options.rooms,
       successfulRooms: 0,
@@ -1175,8 +1217,13 @@ async function runScenario(scenario: ScenarioName, options: StressOptions, store
       ...(runtimeHealthAfterScenario ? { runtimeHealthAfterScenario } : {}),
       errorMessage: error instanceof Error ? error.message : String(error)
     };
+    return result;
   } finally {
     await cleanupRooms(contexts);
+    const runtimeHealthAfterCleanup = await waitForCleanupHealth(options.host, options.port);
+    if (result && runtimeHealthAfterCleanup) {
+      result.runtimeHealthAfterCleanup = runtimeHealthAfterCleanup;
+    }
   }
 }
 
@@ -1193,6 +1240,8 @@ function printSummary(results: ScenarioResult[], options: StressOptions): void {
       failed: result.failedRooms,
       activeRooms: result.runtimeHealthAfterConnect?.activeRoomCount ?? "",
       connections: result.runtimeHealthAfterConnect?.connectionCount ?? "",
+      cleanupRooms: result.runtimeHealthAfterCleanup?.activeRoomCount ?? "",
+      cleanupConnections: result.runtimeHealthAfterCleanup?.connectionCount ?? "",
       actionMsgs: result.runtimeHealthAfterScenario?.actionMessagesTotal ?? "",
       durationMs: result.durationMs,
       roomsPerSec: result.roomsPerSecond,
@@ -1258,7 +1307,15 @@ function emitArtifact(results: ScenarioResult[], options: StressOptions): void {
           worldReconnectCycles: artifact.soakSummary.worldReconnectCycles,
           battleReconnectCycles: artifact.soakSummary.battleReconnectCycles,
           finalBattleRooms: artifact.soakSummary.finalBattleRooms,
-          finalDayRange: artifact.soakSummary.finalDayRange
+          finalDayRange: artifact.soakSummary.finalDayRange,
+          cleanup: soakResult?.runtimeHealthAfterCleanup
+            ? {
+                activeRoomCount: soakResult.runtimeHealthAfterCleanup.activeRoomCount,
+                connectionCount: soakResult.runtimeHealthAfterCleanup.connectionCount,
+                activeBattleCount: soakResult.runtimeHealthAfterCleanup.activeBattleCount,
+                heroCount: soakResult.runtimeHealthAfterCleanup.heroCount
+              }
+            : null
         },
         null,
         2

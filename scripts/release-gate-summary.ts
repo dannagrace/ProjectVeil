@@ -8,6 +8,7 @@ type GateStatus = "passed" | "failed";
 interface Args {
   snapshotPath?: string;
   h5SmokePath?: string;
+  reconnectSoakPath?: string;
   wechatRcValidationPath?: string;
   wechatSmokeReportPath?: string;
   wechatArtifactsDir?: string;
@@ -95,12 +96,12 @@ interface WechatSmokeReport {
 }
 
 interface GateSource {
-  kind: "release-readiness-snapshot" | "h5-release-candidate-smoke" | "wechat-rc-validation" | "wechat-smoke-report";
+  kind: "release-readiness-snapshot" | "h5-release-candidate-smoke" | "reconnect-soak" | "wechat-rc-validation" | "wechat-smoke-report";
   path: string;
 }
 
 interface GateResult {
-  id: "release-readiness" | "h5-release-candidate-smoke" | "wechat-release" | "phase1-evidence-consistency";
+  id: "release-readiness" | "h5-release-candidate-smoke" | "multiplayer-reconnect-soak" | "wechat-release" | "phase1-evidence-consistency";
   label: string;
   status: GateStatus;
   summary: string;
@@ -109,12 +110,39 @@ interface GateResult {
 }
 
 interface Phase1EvidenceReference {
-  gateId: "release-readiness" | "h5-release-candidate-smoke" | "wechat-release";
+  gateId: "release-readiness" | "h5-release-candidate-smoke" | "multiplayer-reconnect-soak" | "wechat-release";
   label: string;
   source: GateSource;
   commit?: string;
   generatedAt?: string;
   candidateHint?: string;
+}
+
+interface ReconnectSoakArtifact {
+  generatedAt?: string;
+  revision?: {
+    commit?: string;
+    shortCommit?: string;
+  };
+  status?: "passed" | "failed";
+  summary?: {
+    failedScenarios?: number;
+    scenarioNames?: string[];
+  };
+  soakSummary?: {
+    reconnectAttempts?: number;
+    invariantChecks?: number;
+  } | null;
+  results?: Array<{
+    scenario?: string;
+    failedRooms?: number;
+    runtimeHealthAfterCleanup?: {
+      activeRoomCount?: number;
+      connectionCount?: number;
+      activeBattleCount?: number;
+      heroCount?: number;
+    };
+  }>;
 }
 
 type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
@@ -193,6 +221,7 @@ interface ReleaseGateSummaryReport {
   inputs: {
     snapshotPath?: string;
     h5SmokePath?: string;
+    reconnectSoakPath?: string;
     wechatRcValidationPath?: string;
     wechatSmokeReportPath?: string;
     wechatArtifactsDir?: string;
@@ -299,6 +328,7 @@ function fail(message: string): never {
 function parseArgs(argv: string[]): Args {
   let snapshotPath: string | undefined;
   let h5SmokePath: string | undefined;
+  let reconnectSoakPath: string | undefined;
   let wechatRcValidationPath: string | undefined;
   let wechatSmokeReportPath: string | undefined;
   let wechatArtifactsDir: string | undefined;
@@ -317,6 +347,11 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--h5-smoke" && next) {
       h5SmokePath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--reconnect-soak" && next) {
+      reconnectSoakPath = next;
       index += 1;
       continue;
     }
@@ -357,6 +392,7 @@ function parseArgs(argv: string[]): Args {
   return {
     ...(snapshotPath ? { snapshotPath } : {}),
     ...(h5SmokePath ? { h5SmokePath } : {}),
+    ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
     ...(wechatRcValidationPath ? { wechatRcValidationPath } : {}),
     ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
@@ -409,6 +445,19 @@ function resolveH5SmokePath(args: Args): string | undefined {
   }
   return resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) =>
     entry.startsWith("client-release-candidate-smoke-") && entry.endsWith(".json")
+  );
+}
+
+function resolveReconnectSoakPath(args: Args): string | undefined {
+  if (args.reconnectSoakPath) {
+    return path.resolve(args.reconnectSoakPath);
+  }
+  const fixedCandidate = path.join(DEFAULT_RELEASE_READINESS_DIR, "colyseus-reconnect-soak-summary.json");
+  if (fs.existsSync(fixedCandidate)) {
+    return fixedCandidate;
+  }
+  return resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) =>
+    entry.startsWith("colyseus-reconnect-soak-summary") && entry.endsWith(".json")
   );
 }
 
@@ -572,6 +621,79 @@ export function evaluateH5SmokeGate(h5SmokePath: string | undefined): GateResult
   };
 }
 
+export function evaluateReconnectSoakGate(reconnectSoakPath: string | undefined): GateResult {
+  if (!reconnectSoakPath || !fs.existsSync(reconnectSoakPath)) {
+    return missingGate(
+      "multiplayer-reconnect-soak",
+      "Multiplayer reconnect soak",
+      "Missing multiplayer reconnect soak artifact.",
+      ["Reconnect soak artifact was not found."]
+    );
+  }
+
+  const report = readJsonFile<ReconnectSoakArtifact>(reconnectSoakPath);
+  const failures: string[] = [];
+  const reconnectSoakResult = report.results?.find((entry) => entry.scenario === "reconnect_soak");
+  const cleanup = reconnectSoakResult?.runtimeHealthAfterCleanup;
+
+  if (report.status !== "passed") {
+    failures.push(`Reconnect soak artifact status is ${JSON.stringify(report.status ?? "missing")}.`);
+  }
+  if ((report.summary?.failedScenarios ?? 0) > 0) {
+    failures.push(`Reconnect soak artifact reports ${report.summary?.failedScenarios} failed scenario(s).`);
+  }
+  if (!report.summary?.scenarioNames?.includes("reconnect_soak")) {
+    failures.push("Reconnect soak artifact does not include the reconnect_soak scenario.");
+  }
+  if (!reconnectSoakResult) {
+    failures.push("Reconnect soak result is missing from the artifact.");
+  }
+  if ((reconnectSoakResult?.failedRooms ?? 0) > 0) {
+    failures.push(`Reconnect soak reports ${reconnectSoakResult?.failedRooms} failed room(s).`);
+  }
+  if ((report.soakSummary?.reconnectAttempts ?? 0) <= 0) {
+    failures.push("Reconnect soak artifact did not record any reconnect attempts.");
+  }
+  if ((report.soakSummary?.invariantChecks ?? 0) <= 0) {
+    failures.push("Reconnect soak artifact did not record any invariant checks.");
+  }
+  if (!cleanup) {
+    failures.push("Reconnect soak cleanup counters are missing.");
+  } else {
+    if (cleanup.activeRoomCount !== 0) {
+      failures.push(`Reconnect soak cleanup left ${cleanup.activeRoomCount} active room(s).`);
+    }
+    if (cleanup.connectionCount !== 0) {
+      failures.push(`Reconnect soak cleanup left ${cleanup.connectionCount} live connection(s).`);
+    }
+    if (cleanup.activeBattleCount !== 0) {
+      failures.push(`Reconnect soak cleanup left ${cleanup.activeBattleCount} active battle(s).`);
+    }
+    if (cleanup.heroCount !== 0) {
+      failures.push(`Reconnect soak cleanup left ${cleanup.heroCount} hero snapshot(s) in active rooms.`);
+    }
+  }
+
+  const cleanupSummary = cleanup
+    ? `cleanup rooms=${cleanup.activeRoomCount} connections=${cleanup.connectionCount} battles=${cleanup.activeBattleCount}`
+    : "cleanup counters missing";
+
+  return {
+    id: "multiplayer-reconnect-soak",
+    label: "Multiplayer reconnect soak",
+    status: failures.length === 0 ? "passed" : "failed",
+    summary:
+      failures.length === 0
+        ? `Reconnect soak passed ${report.soakSummary?.reconnectAttempts ?? 0} reconnects and ${report.soakSummary?.invariantChecks ?? 0} invariant checks; ${cleanupSummary}.`
+        : `Reconnect soak gate failed: ${failures[0]}`,
+    failures,
+    source: {
+      kind: "reconnect-soak",
+      path: reconnectSoakPath
+    }
+  };
+}
+
 export function evaluateWechatGate(
   wechatRcValidationPath: string | undefined,
   wechatSmokeReportPath: string | undefined
@@ -710,6 +832,7 @@ function formatEvidenceDescriptor(entry: Phase1EvidenceReference): string {
 function collectPhase1EvidenceReferences(
   snapshotPath: string | undefined,
   h5SmokePath: string | undefined,
+  reconnectSoakPath: string | undefined,
   wechatRcValidationPath: string | undefined,
   wechatSmokeReportPath: string | undefined
 ): Phase1EvidenceReference[] {
@@ -744,6 +867,22 @@ function collectPhase1EvidenceReferences(
       commit,
       generatedAt: report.execution?.finishedAt ?? report.generatedAt,
       candidateHint: deriveCandidateHint(h5SmokePath, commit)
+    });
+  }
+
+  if (reconnectSoakPath && fs.existsSync(reconnectSoakPath)) {
+    const report = readJsonFile<ReconnectSoakArtifact>(reconnectSoakPath);
+    const commit = report.revision?.commit ?? report.revision?.shortCommit;
+    evidence.push({
+      gateId: "multiplayer-reconnect-soak",
+      label: "Multiplayer reconnect soak",
+      source: {
+        kind: "reconnect-soak",
+        path: reconnectSoakPath
+      },
+      commit,
+      generatedAt: report.generatedAt,
+      candidateHint: deriveCandidateHint(reconnectSoakPath, commit)
     });
   }
 
@@ -784,6 +923,7 @@ export function evaluatePhase1EvidenceConsistencyGate(
   revision: GitRevision,
   snapshotPath: string | undefined,
   h5SmokePath: string | undefined,
+  reconnectSoakPath: string | undefined,
   wechatRcValidationPath: string | undefined,
   wechatSmokeReportPath: string | undefined
 ): GateResult {
@@ -791,9 +931,16 @@ export function evaluatePhase1EvidenceConsistencyGate(
   const expectedArtifacts: Array<Pick<Phase1EvidenceReference, "gateId" | "label">> = [
     { gateId: "release-readiness", label: "Release readiness snapshot" },
     { gateId: "h5-release-candidate-smoke", label: "H5 packaged RC smoke" },
+    { gateId: "multiplayer-reconnect-soak", label: "Multiplayer reconnect soak" },
     { gateId: "wechat-release", label: "WeChat release validation" }
   ];
-  const evidence = collectPhase1EvidenceReferences(snapshotPath, h5SmokePath, wechatRcValidationPath, wechatSmokeReportPath);
+  const evidence = collectPhase1EvidenceReferences(
+    snapshotPath,
+    h5SmokePath,
+    reconnectSoakPath,
+    wechatRcValidationPath,
+    wechatSmokeReportPath
+  );
   const expectedCommit = revision.commit;
   const expectedCandidateHint = normalizeCommit(revision.commit)?.slice(0, 12) ?? revision.shortCommit.toLowerCase();
 
@@ -1015,6 +1162,7 @@ export function buildConfigChangeRiskSummary(configCenterLibraryPath: string | u
 export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision): ReleaseGateSummaryReport {
   const snapshotPath = resolveSnapshotPath(args);
   const h5SmokePath = resolveH5SmokePath(args);
+  const reconnectSoakPath = resolveReconnectSoakPath(args);
   const wechatArtifactsDir = resolveWechatArtifactsDir(args);
   const wechatRcValidationPath = resolveWechatRcValidationPath(args, wechatArtifactsDir);
   const wechatSmokeReportPath = resolveWechatSmokeReportPath(args, wechatArtifactsDir);
@@ -1023,8 +1171,16 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
   const gates = [
     evaluateReleaseReadinessGate(snapshotPath),
     evaluateH5SmokeGate(h5SmokePath),
+    evaluateReconnectSoakGate(reconnectSoakPath),
     evaluateWechatGate(wechatRcValidationPath, wechatSmokeReportPath),
-    evaluatePhase1EvidenceConsistencyGate(revision, snapshotPath, h5SmokePath, wechatRcValidationPath, wechatSmokeReportPath)
+    evaluatePhase1EvidenceConsistencyGate(
+      revision,
+      snapshotPath,
+      h5SmokePath,
+      reconnectSoakPath,
+      wechatRcValidationPath,
+      wechatSmokeReportPath
+    )
   ];
   const failedGates = gates.filter((gate) => gate.status === "failed");
 
@@ -1042,6 +1198,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     inputs: {
       ...(snapshotPath ? { snapshotPath } : {}),
       ...(h5SmokePath ? { h5SmokePath } : {}),
+      ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
       ...(wechatRcValidationPath ? { wechatRcValidationPath } : {}),
       ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
       ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
@@ -1066,6 +1223,7 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
   lines.push("");
   lines.push(`- Snapshot: \`${report.inputs.snapshotPath ? relativeReportPath(report.inputs.snapshotPath) : "<missing>"}\``);
   lines.push(`- H5 smoke: \`${report.inputs.h5SmokePath ? relativeReportPath(report.inputs.h5SmokePath) : "<missing>"}\``);
+  lines.push(`- Reconnect soak: \`${report.inputs.reconnectSoakPath ? relativeReportPath(report.inputs.reconnectSoakPath) : "<missing>"}\``);
   lines.push(`- WeChat validation: \`${report.inputs.wechatRcValidationPath ? relativeReportPath(report.inputs.wechatRcValidationPath) : "<missing>"}\``);
   lines.push(`- WeChat smoke fallback: \`${report.inputs.wechatSmokeReportPath ? relativeReportPath(report.inputs.wechatSmokeReportPath) : "<missing>"}\``);
   lines.push(`- WeChat artifacts dir: \`${report.inputs.wechatArtifactsDir ? relativeReportPath(report.inputs.wechatArtifactsDir) : "<missing>"}\``);

@@ -6,6 +6,7 @@ It intentionally reuses the current evidence instead of introducing a parallel g
 
 - `npm run release:readiness:snapshot` for the baseline regression/build gate state
 - `npm run smoke:client:release-candidate` for packaged H5 smoke evidence
+- `npm run stress:rooms:reconnect-soak` for bounded reconnect soak plus room cleanup evidence
 - `npm run validate:wechat-rc` or `npm run smoke:wechat-release -- --check` for WeChat release evidence
 - `configs/.config-center-library.json` for the latest applied config-center publish audit and config change risk summary
 
@@ -23,6 +24,7 @@ Point at explicit artifact paths when CI already produced stable filenames:
 npm run release:gate:summary -- \
   --snapshot artifacts/release-readiness/release-readiness-2026-03-29T08-12-04.512Z.json \
   --h5-smoke artifacts/release-readiness/client-release-candidate-smoke-abc1234-2026-03-29T08-15-10.000Z.json \
+  --reconnect-soak artifacts/release-readiness/colyseus-reconnect-soak-summary.json \
   --config-center-library configs/.config-center-library.json \
   --wechat-artifacts-dir artifacts/wechat-release
 ```
@@ -44,12 +46,16 @@ If you do not pass output flags, the script writes:
 
 ## Gate Rules
 
-The summary contains four release dimensions:
+The summary contains five release dimensions:
 
 - `release-readiness`
   - Fails when the snapshot is missing, when the snapshot summary is not `passed`, or when any required snapshot check is `failed` or `pending`.
 - `h5-release-candidate-smoke`
   - Fails when the packaged H5 smoke report is missing, the smoke execution status is not `passed`, or any smoke case failed.
+- `multiplayer-reconnect-soak`
+  - Fails when the reconnect soak artifact is missing, when the soak run itself failed, or when it did not record reconnect attempts plus invariant checks.
+  - Fails closed when the post-soak cleanup counters show lingering active rooms, live connections, active battles, or hero snapshots.
+  - Use this gate for release candidates and reconnect / room-recovery changes; keep `test:e2e:multiplayer:smoke` as the faster PR-level signal for canonical multiplayer link health.
 - `wechat-release`
   - Prefers `codex.wechat.rc-validation-report.json` when present.
   - Falls back to `codex.wechat.smoke-report.json` when the RC validation report is absent.
@@ -65,7 +71,7 @@ Any failed dimension makes the script exit non-zero so the result can act as a C
 
 ## Config Change Risk Summary
 
-Besides the three hard release gates, the report now appends a structured `Config Change Risk Summary` section sourced from the latest `resultStatus=applied` config-center publish audit.
+Besides the four hard release gates, the report now appends a structured `Config Change Risk Summary` section sourced from the latest `resultStatus=applied` config-center publish audit.
 
 Current baseline coverage includes:
 

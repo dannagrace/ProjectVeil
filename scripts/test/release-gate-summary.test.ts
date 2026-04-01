@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   buildConfigChangeRiskSummary,
   buildReleaseGateSummaryReport,
+  evaluateReconnectSoakGate,
   evaluatePhase1EvidenceConsistencyGate,
   evaluateWechatGate,
   renderMarkdown
@@ -25,6 +26,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   const workspace = createTempWorkspace();
   const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
   const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
   const wechatArtifactsDir = path.join(workspace, "artifacts", "wechat-release");
   const wechatRcValidationPath = path.join(wechatArtifactsDir, "codex.wechat.rc-validation-report.json");
   const configCenterLibraryPath = path.join(workspace, "configs", ".config-center-library.json");
@@ -67,6 +69,34 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
       passed: 2,
       failed: 0
     }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-03-29T08:33:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 384,
+      invariantChecks: 2304
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
   });
   writeJson(wechatRcValidationPath, {
     generatedAt: "2026-03-29T08:35:00.000Z",
@@ -121,6 +151,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
     {
       snapshotPath,
       h5SmokePath,
+      reconnectSoakPath,
       wechatArtifactsDir,
       configCenterLibraryPath
     },
@@ -134,9 +165,10 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
 
   assert.equal(report.summary.status, "passed");
   assert.deepEqual(report.summary.failedGateIds, []);
-  assert.equal(report.summary.totalGates, 4);
+  assert.equal(report.summary.totalGates, 5);
   assert.equal(report.gates.every((gate) => gate.status === "passed"), true);
-  assert.equal(report.gates[3]?.id, "phase1-evidence-consistency");
+  assert.equal(report.gates[2]?.id, "multiplayer-reconnect-soak");
+  assert.equal(report.gates[4]?.id, "phase1-evidence-consistency");
   assert.equal(report.configChangeRisk.status, "available");
   assert.equal(report.configChangeRisk.overallRisk, "high");
   assert.equal(report.configChangeRisk.recommendRehearsal, true);
@@ -144,6 +176,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(renderMarkdown(report), /Overall status: \*\*PASSED\*\*/);
   assert.match(renderMarkdown(report), /## Selected Inputs/);
   assert.match(renderMarkdown(report), /release-readiness-pass\.json/);
+  assert.match(renderMarkdown(report), /colyseus-reconnect-soak-summary-pass\.json/);
   assert.match(renderMarkdown(report), /codex\.wechat\.rc-validation-report\.json/);
   assert.match(renderMarkdown(report), /Config Change Risk Summary/);
   assert.match(renderMarkdown(report), /Recommend rehearsal: yes/);
@@ -153,6 +186,7 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
   const workspace = createTempWorkspace();
   const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-fail.json");
   const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
   const wechatSmokeReportPath = path.join(workspace, "artifacts", "wechat-release", "codex.wechat.smoke-report.json");
 
   writeJson(snapshotPath, {
@@ -194,6 +228,34 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
       failed: 0
     }
   });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-03-29T08:33:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 384,
+      invariantChecks: 2304
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
   writeJson(wechatSmokeReportPath, {
     artifact: {
       sourceRevision: "abc123"
@@ -220,6 +282,7 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
     {
       snapshotPath,
       h5SmokePath,
+      reconnectSoakPath,
       wechatSmokeReportPath
     },
     {
@@ -233,8 +296,8 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
   assert.equal(report.summary.status, "failed");
   assert.deepEqual(report.summary.failedGateIds, ["release-readiness", "wechat-release"]);
   assert.match(report.gates[0]?.summary ?? "", /not release-ready/);
-  assert.match(report.gates[2]?.summary ?? "", /blocked/i);
-  assert.match(report.gates[2]?.failures.join("\n") ?? "", /blocked pending device evidence|WeChat smoke case is blocked/);
+  assert.match(report.gates[3]?.summary ?? "", /blocked/i);
+  assert.match(report.gates[3]?.failures.join("\n") ?? "", /blocked pending device evidence|WeChat smoke case is blocked/);
 });
 
 test("evaluateWechatGate prefers RC validation and falls back to smoke report", () => {
@@ -259,10 +322,51 @@ test("evaluateWechatGate prefers RC validation and falls back to smoke report", 
   assert.equal(smokeGate.source?.kind, "wechat-smoke-report");
 });
 
+test("evaluateReconnectSoakGate fails when cleanup leaves active runtime state behind", () => {
+  const workspace = createTempWorkspace();
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-fail.json");
+
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-03-29T08:33:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 384,
+      invariantChecks: 2304
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 1,
+          connectionCount: 2,
+          activeBattleCount: 0,
+          heroCount: 1
+        }
+      }
+    ]
+  });
+
+  const gate = evaluateReconnectSoakGate(reconnectSoakPath);
+  assert.equal(gate.status, "failed");
+  assert.match(gate.summary, /Reconnect soak gate failed/);
+  assert.match(gate.failures.join("\n"), /left 1 active room/);
+  assert.match(gate.failures.join("\n"), /left 2 live connection/);
+});
+
 test("evaluatePhase1EvidenceConsistencyGate fails stale or mismatched candidate evidence", () => {
   const workspace = createTempWorkspace();
   const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
   const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
   const wechatRcValidationPath = path.join(workspace, "artifacts", "wechat-release", "codex.wechat.rc-validation-report.json");
 
   writeJson(snapshotPath, {
@@ -298,6 +402,34 @@ test("evaluatePhase1EvidenceConsistencyGate fails stale or mismatched candidate 
       failed: 0
     }
   });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-03-29T08:33:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 384,
+      invariantChecks: 2304
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
   writeJson(wechatRcValidationPath, {
     generatedAt: "2026-03-29T08:35:00.000Z",
     commit: "abc123",
@@ -317,6 +449,7 @@ test("evaluatePhase1EvidenceConsistencyGate fails stale or mismatched candidate 
     },
     snapshotPath,
     h5SmokePath,
+    reconnectSoakPath,
     wechatRcValidationPath,
     undefined
   );
@@ -331,6 +464,7 @@ test("evaluatePhase1EvidenceConsistencyGate fails when Phase 1 evidence timestam
   const workspace = createTempWorkspace();
   const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
   const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
   const wechatRcValidationPath = path.join(workspace, "artifacts", "wechat-release", "codex.wechat.rc-validation-report.json");
 
   writeJson(snapshotPath, {
@@ -366,6 +500,34 @@ test("evaluatePhase1EvidenceConsistencyGate fails when Phase 1 evidence timestam
       failed: 0
     }
   });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-03-24T08:31:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 384,
+      invariantChecks: 2304
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
   writeJson(wechatRcValidationPath, {
     generatedAt: "2026-03-24T09:00:00.000Z",
     commit: "abc123",
@@ -385,6 +547,7 @@ test("evaluatePhase1EvidenceConsistencyGate fails when Phase 1 evidence timestam
     },
     snapshotPath,
     h5SmokePath,
+    reconnectSoakPath,
     wechatRcValidationPath,
     undefined
   );
@@ -399,6 +562,7 @@ test("buildReleaseGateSummaryReport fails when all artifacts are stale for the c
   const workspace = createTempWorkspace();
   const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
   const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
   const wechatRcValidationPath = path.join(workspace, "artifacts", "wechat-release", "codex.wechat.rc-validation-report.json");
 
   writeJson(snapshotPath, {
@@ -434,6 +598,34 @@ test("buildReleaseGateSummaryReport fails when all artifacts are stale for the c
       failed: 0
     }
   });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-03-29T08:33:00.000Z",
+    revision: {
+      commit: "deadbeef",
+      shortCommit: "deadbee"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 384,
+      invariantChecks: 2304
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
   writeJson(wechatRcValidationPath, {
     generatedAt: "2026-03-29T08:35:00.000Z",
     commit: "deadbeef",
@@ -448,6 +640,7 @@ test("buildReleaseGateSummaryReport fails when all artifacts are stale for the c
     {
       snapshotPath,
       h5SmokePath,
+      reconnectSoakPath,
       wechatRcValidationPath
     },
     {
@@ -460,7 +653,7 @@ test("buildReleaseGateSummaryReport fails when all artifacts are stale for the c
 
   assert.equal(report.summary.status, "failed");
   assert.deepEqual(report.summary.failedGateIds, ["phase1-evidence-consistency"]);
-  assert.match(report.gates[3]?.summary ?? "", /artifact commit deadbeef.*does not match candidate abc123/);
+  assert.match(report.gates[4]?.summary ?? "", /artifact commit deadbeef.*does not match candidate abc123/);
   assert.match(renderMarkdown(report), /Phase 1 evidence consistency/);
 });
 
