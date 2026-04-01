@@ -1,6 +1,6 @@
 # Cocos Release Evidence Template
 
-本模板现在以 `npm run release:cocos-rc:snapshot` 生成的 machine-readable JSON 为主，Markdown 只保留使用说明、字段规则和样例路径。目标是把 Cocos Creator 预览与微信小游戏 RC 的证据收口到同一份可归档、可校验、可对比的快照里，并配套一份可直接复制的检查清单与 blocker 记录。
+本模板现在以 `npm run release:cocos-rc:bundle` 生成的 candidate-level evidence bundle 为主，内部仍复用 `npm run release:cocos-rc:snapshot` 作为 machine-readable JSON。目标是把 Cocos Creator 预览与微信小游戏 RC 的证据收口到同一份可归档、可校验、可对比的快照里，并自动补齐可直接附到 CI artifact / PR 评论的 Markdown 摘要、检查清单与 blocker 记录。
 
 相关文档：
 
@@ -15,18 +15,20 @@
 
 ## RC Evidence Packet
 
-每个 Cocos / WeChat release candidate 都固定产出同一组证据：
+每个 Cocos / WeChat release candidate 都固定产出同一组证据，并统一落在 `artifacts/release-readiness/`：
 
-1. `artifacts/release-readiness/<candidate>.json`
-   - 自动化 + manual gate 的统一发布快照
-2. `artifacts/release-evidence/<candidate>.<surface>.json`
+1. `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.json`
+   - candidate-scoped bundle manifest，适合挂 CI artifact 或 PR 机器人
+2. `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.md`
+   - 同一 bundle 的人类可读摘要，直接列出主链路 pass/fail/pending 状态
+3. `artifacts/release-readiness/cocos-rc-snapshot-<candidate>-<short-sha>.json`
    - `npm run release:cocos-rc:snapshot` 生成并回填的结构化 RC 证据
-3. `docs/release-evidence/cocos-wechat-rc-checklist.template.md`
-   - 执行人复制后填写的人工检查清单，明确每一步是否已完成
-4. `docs/release-evidence/cocos-wechat-rc-blockers.template.md`
-   - 记录 `P0/P1/P2` blocker、owner、退出条件和放行决定
+4. `artifacts/release-readiness/cocos-rc-checklist-<candidate>-<short-sha>.md`
+   - 从模板复制并预填 candidate / revision 的人工检查清单
+5. `artifacts/release-readiness/cocos-rc-blockers-<candidate>-<short-sha>.md`
+   - 从模板复制并预填 candidate / revision 的 blocker 记录
 
-其中 2 是权威 machine-readable 记录，3 和 4 是 reviewer / release owner 快速扫读的补充视图。不要为同一个 RC 另外发明独立格式。
+其中 3 是权威 machine-readable 记录，1/2/4/5 是 reviewer / release owner 快速扫读和留档的补充视图。不要为同一个 RC 另外发明独立格式。
 
 ## 标准流程
 
@@ -37,42 +39,33 @@ npm run release:readiness:snapshot -- \
   --manual-checks docs/release-readiness-manual-checks.example.json
 ```
 
-2. 生成一份 Cocos RC 快照模板：
+2. 生成 candidate-level Cocos RC evidence bundle：
 
 ```bash
-npm run release:cocos-rc:snapshot -- \
+npm run release:cocos-rc:bundle -- \
   --candidate rc-2026-03-29 \
-  --build-surface creator_preview \
-  --output artifacts/release-evidence/rc-2026-03-29.creator.json
+  --build-surface creator_preview
 ```
 
-3. 若目标面是微信小游戏，先完成 `verify` 与 `smoke`，再把 smoke 报告挂到同一份 RC 快照：
+3. 若目标面是微信小游戏，先完成 `verify` 与 `smoke`，再把 smoke 报告挂到同一份 bundle：
 
 ```bash
-npm run release:cocos-rc:snapshot -- \
+npm run release:cocos-rc:bundle -- \
   --candidate rc-2026-03-29 \
   --build-surface wechat_preview \
   --wechat-smoke-report artifacts/wechat-rc/codex.wechat.smoke-report.json \
-  --release-readiness-snapshot artifacts/release-readiness/rc-2026-03-29.json \
-  --output artifacts/release-evidence/rc-2026-03-29.wechat.json
+  --release-readiness-snapshot artifacts/release-readiness/rc-2026-03-29.json
 ```
 
-4. 回填后执行校验：
+4. 回填 bundle 内的 snapshot 后执行校验：
 
 ```bash
 npm run release:cocos-rc:snapshot -- \
-  --output artifacts/release-evidence/rc-2026-03-29.creator.json \
+  --output artifacts/release-readiness/cocos-rc-snapshot-rc-2026-03-29-<short-sha>.json \
   --check
 ```
 
-5. 复制 RC 检查清单与 blocker 模板，作为 PR 或 release issue 的人类可读附件：
-
-```bash
-cp docs/release-evidence/cocos-wechat-rc-checklist.template.md \
-  artifacts/release-evidence/rc-2026-03-29.checklist.md
-cp docs/release-evidence/cocos-wechat-rc-blockers.template.md \
-  artifacts/release-evidence/rc-2026-03-29.blockers.md
-```
+5. 将 bundle 的 Markdown 摘要、checklist 与 blockers 文件附到 PR、release issue 或 CI artifact；它们已经由同一条命令生成，不需要额外复制模板。
 
 ## 快照结构
 
