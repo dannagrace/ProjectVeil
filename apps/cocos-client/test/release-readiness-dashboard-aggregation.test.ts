@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildBuildPackageGate,
   buildCriticalEvidenceGate,
+  buildGoNoGoReport,
   summarizeCocosRc,
   summarizeSnapshot,
   summarizeWechatPackage,
@@ -13,6 +14,9 @@ import {
 test("summarizeSnapshot fails when a required release-readiness check is missing from an otherwise passed snapshot", () => {
   const summary = summarizeSnapshot("/tmp/release-readiness.json", {
     generatedAt: "2026-03-30T00:00:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
     summary: {
       status: "passed"
     },
@@ -35,6 +39,9 @@ test("summarizeSnapshot fails when a required release-readiness check is missing
 test("buildBuildPackageGate aggregates snapshot, package, and smoke evidence into a failing gate", () => {
   const snapshotSummary = summarizeSnapshot("/tmp/release-readiness.json", {
     generatedAt: "2026-03-30T00:00:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
     summary: {
       status: "partial"
     },
@@ -72,6 +79,9 @@ test("buildBuildPackageGate aggregates snapshot, package, and smoke evidence int
 test("buildCriticalEvidenceGate downgrades stale evidence to warn and preserves fresh failures", () => {
   const snapshotSummary = summarizeSnapshot("/tmp/release-readiness.json", {
     generatedAt: "2026-03-01T00:00:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
     summary: {
       status: "passed"
     },
@@ -131,4 +141,53 @@ test("buildCriticalEvidenceGate fails when a critical artifact is missing and ex
   assert.deepEqual(gate.warnReasons, []);
   assert.equal(gate.evidence.every((entry) => entry.availability === "missing"), true);
   assert.equal(gate.details.every((detail) => detail.endsWith("missing artifact")), true);
+});
+
+test("buildGoNoGoReport marks a candidate blocked when linked evidence revisions disagree", () => {
+  const snapshotSummary = summarizeSnapshot("/tmp/release-readiness.json", {
+    generatedAt: "2026-03-30T00:00:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
+    summary: {
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
+    },
+    checks: [
+      { id: "npm-test", status: "passed", required: true },
+      { id: "typecheck-ci", status: "passed", required: true },
+      { id: "e2e-smoke", status: "passed", required: true },
+      { id: "e2e-multiplayer-smoke", status: "passed", required: true },
+      { id: "cocos-primary-journey", status: "passed", required: true },
+      { id: "wechat-build-check", status: "passed", required: true }
+    ]
+  });
+  const smokeSummary = summarizeWechatSmoke("/tmp/codex.wechat.smoke-report.json", {
+    artifact: {
+      sourceRevision: "def5678"
+    },
+    execution: {
+      result: "passed",
+      executedAt: "2026-03-30T00:05:00.000Z"
+    },
+    cases: [{ id: "login-lobby", status: "passed" }]
+  });
+  const goNoGo = buildGoNoGoReport({
+    candidateRevision: "abc1234",
+    snapshot: {
+      summary: {
+        requiredFailed: 0,
+        requiredPending: 0
+      }
+    },
+    gates: [],
+    evidence: [snapshotSummary.evidence, smokeSummary.evidence]
+  });
+
+  assert.equal(goNoGo.decision, "blocked");
+  assert.equal(goNoGo.revisionStatus, "mismatch");
+  assert.deepEqual(goNoGo.blockers, ["candidate_revision_mismatch"]);
+  assert.equal(goNoGo.evidence[0]?.matchesCandidate, true);
+  assert.equal(goNoGo.evidence[1]?.matchesCandidate, false);
 });

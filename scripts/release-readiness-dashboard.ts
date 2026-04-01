@@ -13,6 +13,7 @@ interface Args {
   wechatArtifactsDir?: string;
   wechatSmokeReportPath?: string;
   wechatPackageMetadataPath?: string;
+  candidateRevision?: string;
   outputPath?: string;
   markdownOutputPath?: string;
   maxEvidenceAgeDays: number;
@@ -26,6 +27,11 @@ interface ReleaseReadinessSnapshotCheck {
 
 interface ReleaseReadinessSnapshot {
   generatedAt?: string;
+  revision?: {
+    commit?: string;
+    shortCommit?: string;
+    branch?: string;
+  };
   summary?: {
     status?: "passed" | "failed" | "pending" | "partial";
     requiredFailed?: number;
@@ -92,6 +98,10 @@ interface WechatSmokeReport {
 }
 
 interface CocosReleaseCandidateSnapshot {
+  candidate?: {
+    commit?: string;
+    shortCommit?: string;
+  };
   execution?: {
     overallStatus?: "pending" | "passed" | "failed" | "partial";
     executedAt?: string;
@@ -106,6 +116,7 @@ interface EvidenceItem {
   availability: EvidenceAvailability;
   freshness: EvidenceFreshness;
   observedAt?: string;
+  sourceRevision?: string;
   summary: string;
   reasonCodes: string[];
 }
@@ -126,6 +137,7 @@ interface DashboardReport {
   generatedAt: string;
   overallStatus: GateStatus;
   summary: string;
+  goNoGo: GoNoGoReport;
   inputs: {
     serverUrl?: string;
     snapshotPath?: string;
@@ -133,8 +145,35 @@ interface DashboardReport {
     wechatArtifactsDir?: string;
     wechatSmokeReportPath?: string;
     wechatPackageMetadataPath?: string;
+    candidateRevision?: string;
   };
   gates: GateReport[];
+}
+
+type GoNoGoDecision = "ready" | "pending" | "blocked";
+type RevisionStatus = "aligned" | "mismatch" | "unknown";
+
+interface GoNoGoEvidenceRef {
+  label: string;
+  path: string;
+  sourceRevision?: string;
+  observedAt?: string;
+  status: GateStatus;
+  availability: EvidenceAvailability;
+  freshness: EvidenceFreshness;
+  matchesCandidate?: boolean;
+}
+
+interface GoNoGoReport {
+  decision: GoNoGoDecision;
+  summary: string;
+  candidateRevision?: string;
+  revisionStatus: RevisionStatus;
+  requiredFailed: number;
+  requiredPending: number;
+  blockers: string[];
+  pending: string[];
+  evidence: GoNoGoEvidenceRef[];
 }
 
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
@@ -159,6 +198,7 @@ function parseArgs(argv: string[]): Args {
   let wechatArtifactsDir: string | undefined;
   let wechatSmokeReportPath: string | undefined;
   let wechatPackageMetadataPath: string | undefined;
+  let candidateRevision: string | undefined;
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
   let maxEvidenceAgeDays = 14;
@@ -197,6 +237,11 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--candidate-revision" && next) {
+      candidateRevision = next.trim();
+      index += 1;
+      continue;
+    }
     if (arg === "--output" && next) {
       outputPath = next;
       index += 1;
@@ -227,6 +272,7 @@ function parseArgs(argv: string[]): Args {
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
     ...(wechatPackageMetadataPath ? { wechatPackageMetadataPath } : {}),
+    ...(candidateRevision ? { candidateRevision } : {}),
     ...(outputPath ? { outputPath } : {}),
     ...(markdownOutputPath ? { markdownOutputPath } : {}),
     maxEvidenceAgeDays
@@ -325,6 +371,56 @@ function parseIsoDate(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function normalizeRevision(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? normalized : undefined;
+}
+
+function revisionsMatch(left: string | undefined, right: string | undefined): boolean {
+  const normalizedLeft = normalizeRevision(left);
+  const normalizedRight = normalizeRevision(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+  return normalizedLeft === normalizedRight || normalizedLeft.startsWith(normalizedRight) || normalizedRight.startsWith(normalizedLeft);
+}
+
+function countSnapshotOutcomes(snapshot: ReleaseReadinessSnapshot | undefined): { requiredFailed: number; requiredPending: number } {
+  if (!snapshot) {
+    return { requiredFailed: 0, requiredPending: 0 };
+  }
+
+  if (
+    typeof snapshot.summary?.requiredFailed === "number" &&
+    Number.isFinite(snapshot.summary.requiredFailed) &&
+    typeof snapshot.summary?.requiredPending === "number" &&
+    Number.isFinite(snapshot.summary.requiredPending)
+  ) {
+    return {
+      requiredFailed: snapshot.summary.requiredFailed,
+      requiredPending: snapshot.summary.requiredPending
+    };
+  }
+
+  const requiredChecks = (snapshot.checks ?? []).filter((check) => check.required);
+  return {
+    requiredFailed: requiredChecks.filter((check) => check.status === "failed").length,
+    requiredPending: requiredChecks.filter((check) => check.status === "pending").length
+  };
+}
+
+function resolveCandidateRevision(inputRevision: string | undefined, revisions: string[]): string | undefined {
+  if (inputRevision?.trim()) {
+    return inputRevision.trim();
+  }
+
+  const [firstRevision] = revisions;
+  if (!firstRevision) {
+    return undefined;
+  }
+  return revisions.every((revision) => revisionsMatch(firstRevision, revision)) ? firstRevision : undefined;
+}
+
 function describeAge(observedAt: string | undefined, maxAgeDays: number): { status: GateStatus; detail: string } {
   if (!observedAt) {
     return {
@@ -361,6 +457,7 @@ function createEvidenceItem(input: {
   summary: string;
   availability?: EvidenceAvailability;
   freshness?: EvidenceFreshness;
+  sourceRevision?: string;
   reasonCodes?: string[];
 }): EvidenceItem {
   return {
@@ -370,6 +467,7 @@ function createEvidenceItem(input: {
     availability: input.availability ?? "present",
     freshness: input.freshness ?? "unknown",
     observedAt: input.observedAt,
+    sourceRevision: input.sourceRevision,
     summary: input.summary,
     reasonCodes: input.reasonCodes ?? []
   };
@@ -615,6 +713,7 @@ export function summarizeSnapshot(snapshotPath: string | undefined, snapshot: Re
       path: snapshotPath,
       status,
       observedAt: snapshot.generatedAt,
+      sourceRevision: snapshot.revision?.shortCommit ?? snapshot.revision?.commit,
       summary: parts.join(" | "),
       reasonCodes: status === "fail" ? failReasons : warnReasons
     }),
@@ -664,6 +763,7 @@ export function summarizeWechatPackage(metadataPath: string | undefined, metadat
       path: metadataPath,
       status,
       observedAt: new Date(fs.statSync(metadataPath).mtimeMs).toISOString(),
+      sourceRevision: metadata.sourceRevision,
       summary: valid
         ? `archive=${archiveFileName} sha=${archiveSha256?.slice(0, 12)}…`
         : "Package metadata is incomplete or the archive is missing.",
@@ -736,6 +836,7 @@ export function summarizeWechatSmoke(reportPath: string | undefined, report: Wec
       path: reportPath,
       status,
       observedAt: report.execution?.executedAt,
+      sourceRevision: report.artifact?.sourceRevision,
       summary: parts.join(" | "),
       reasonCodes: status === "fail" ? failReasons : warnReasons
     }),
@@ -782,6 +883,7 @@ export function summarizeCocosRc(snapshotPath: string | undefined, snapshot: Coc
       path: snapshotPath,
       status,
       observedAt: snapshot.execution?.executedAt,
+      sourceRevision: snapshot.candidate?.shortCommit ?? snapshot.candidate?.commit,
       summary: `overallStatus=${overallStatus ?? "<missing>"}`,
       reasonCodes: status === "fail" ? failReasons : warnReasons
     }),
@@ -910,6 +1012,70 @@ function buildOverallSummary(gates: GateReport[]): string {
   return "Pass: key Phase 1 release-readiness gates are green.";
 }
 
+export function buildGoNoGoReport(input: {
+  candidateRevision?: string;
+  snapshot: ReleaseReadinessSnapshot | undefined;
+  gates: GateReport[];
+  evidence: Array<EvidenceItem | undefined>;
+}): GoNoGoReport {
+  const snapshotCounts = countSnapshotOutcomes(input.snapshot);
+  const goNoGoEvidence = input.evidence
+    .filter((entry): entry is EvidenceItem => Boolean(entry))
+    .map((entry) => ({
+      label: entry.label,
+      path: entry.path,
+      sourceRevision: entry.sourceRevision,
+      observedAt: entry.observedAt,
+      status: entry.status,
+      availability: entry.availability,
+      freshness: entry.freshness
+    }));
+  const knownRevisions = goNoGoEvidence
+    .map((entry) => entry.sourceRevision?.trim())
+    .filter((entry): entry is string => Boolean(entry));
+  const candidateRevision = resolveCandidateRevision(input.candidateRevision, knownRevisions);
+  const mismatchedEvidence = candidateRevision
+    ? goNoGoEvidence.filter((entry) => entry.sourceRevision && !revisionsMatch(candidateRevision, entry.sourceRevision))
+    : [];
+  const revisionStatus: RevisionStatus =
+    mismatchedEvidence.length > 0 ? "mismatch" : candidateRevision ? "aligned" : "unknown";
+
+  const blockingGates = input.gates.filter((gate) => gate.status === "fail").map((gate) => gate.label);
+  const pendingGates = input.gates.filter((gate) => gate.status === "warn").map((gate) => gate.label);
+  const blockers = [
+    ...(snapshotCounts.requiredFailed > 0 ? [`requiredFailed=${snapshotCounts.requiredFailed}`] : []),
+    ...(revisionStatus === "mismatch" ? ["candidate_revision_mismatch"] : []),
+    ...blockingGates
+  ];
+  const pending = [
+    ...(snapshotCounts.requiredPending > 0 ? [`requiredPending=${snapshotCounts.requiredPending}`] : []),
+    ...(revisionStatus === "unknown" ? ["candidate_revision_unverified"] : []),
+    ...pendingGates
+  ];
+  const decision: GoNoGoDecision =
+    blockers.length > 0 ? "blocked" : pending.length > 0 ? "pending" : "ready";
+
+  return {
+    decision,
+    summary:
+      decision === "ready"
+        ? `Ready: requiredFailed=0, requiredPending=0, and the Phase 1 evidence set is current for ${candidateRevision ?? "the candidate revision"}.`
+        : decision === "blocked"
+          ? `Blocked: ${blockers.join(", ")}.`
+          : `Pending: ${pending.join(", ")}.`,
+    ...(candidateRevision ? { candidateRevision } : {}),
+    revisionStatus,
+    requiredFailed: snapshotCounts.requiredFailed,
+    requiredPending: snapshotCounts.requiredPending,
+    blockers,
+    pending,
+    evidence: goNoGoEvidence.map((entry) => ({
+      ...entry,
+      ...(candidateRevision && entry.sourceRevision ? { matchesCandidate: revisionsMatch(candidateRevision, entry.sourceRevision) } : {})
+    }))
+  };
+}
+
 function renderMarkdown(report: DashboardReport): string {
   const lines: string[] = [];
   lines.push("# Phase 1 Release Readiness Dashboard");
@@ -917,7 +1083,39 @@ function renderMarkdown(report: DashboardReport): string {
   lines.push(`- Generated at: ${report.generatedAt}`);
   lines.push(`- Overall status: ${report.overallStatus.toUpperCase()}`);
   lines.push(`- Summary: ${report.summary}`);
+  lines.push(`- Go/No-Go decision: ${report.goNoGo.decision.toUpperCase()}`);
+  lines.push(`- Go/No-Go summary: ${report.goNoGo.summary}`);
+  lines.push(`- Required failed: ${report.goNoGo.requiredFailed}`);
+  lines.push(`- Required pending: ${report.goNoGo.requiredPending}`);
+  lines.push(`- Candidate revision: ${report.goNoGo.candidateRevision ?? "<unverified>"}`);
+  lines.push(`- Revision status: ${report.goNoGo.revisionStatus.toUpperCase()}`);
   lines.push("");
+  lines.push("## Phase 1 Go/No-Go");
+  lines.push("");
+  lines.push(`- Decision: ${report.goNoGo.decision.toUpperCase()}`);
+  lines.push(`- Summary: ${report.goNoGo.summary}`);
+  lines.push(`- Required failed: ${report.goNoGo.requiredFailed}`);
+  lines.push(`- Required pending: ${report.goNoGo.requiredPending}`);
+  lines.push(`- Candidate revision: ${report.goNoGo.candidateRevision ?? "<unverified>"}`);
+  lines.push(`- Revision status: ${report.goNoGo.revisionStatus.toUpperCase()}`);
+  if (report.goNoGo.blockers.length > 0) {
+    lines.push(`- Blockers: ${report.goNoGo.blockers.join(", ")}`);
+  }
+  if (report.goNoGo.pending.length > 0) {
+    lines.push(`- Pending: ${report.goNoGo.pending.join(", ")}`);
+  }
+  if (report.goNoGo.evidence.length > 0) {
+    lines.push("- Evidence:");
+    for (const item of report.goNoGo.evidence) {
+      const observedAt = item.observedAt ? ` @ ${item.observedAt}` : "";
+      const revision = item.sourceRevision ? ` revision=${item.sourceRevision}` : "";
+      const candidateMatch = typeof item.matchesCandidate === "boolean" ? ` matchesCandidate=${item.matchesCandidate}` : "";
+      lines.push(
+        `  - ${item.label}: ${item.status.toUpperCase()}${observedAt} (${item.path}) [availability=${item.availability} freshness=${item.freshness}${revision}${candidateMatch}]`
+      );
+    }
+    lines.push("");
+  }
   lines.push("| Gate | Status | Summary |");
   lines.push("| --- | --- | --- |");
   for (const gate of report.gates) {
@@ -1029,13 +1227,20 @@ async function main(): Promise<void> {
     generatedAt: new Date().toISOString(),
     overallStatus: mergeStatuses(gates.map((gate) => gate.status)),
     summary: buildOverallSummary(gates),
+    goNoGo: buildGoNoGoReport({
+      candidateRevision: args.candidateRevision,
+      snapshot,
+      gates,
+      evidence: [snapshotSummary.evidence, packageSummary.evidence, smokeSummary.evidence, cocosRcSummary.evidence]
+    }),
     inputs: {
       ...(args.serverUrl ? { serverUrl: args.serverUrl } : {}),
       ...(resolvedSnapshotPath ? { snapshotPath: resolvedSnapshotPath } : {}),
       ...(resolvedCocosRcPath ? { cocosRcPath: resolvedCocosRcPath } : {}),
       ...(args.wechatArtifactsDir ? { wechatArtifactsDir: path.resolve(args.wechatArtifactsDir) } : {}),
       ...(wechatArtifacts.smokeReportPath ? { wechatSmokeReportPath: wechatArtifacts.smokeReportPath } : {}),
-      ...(wechatArtifacts.packageMetadataPath ? { wechatPackageMetadataPath: wechatArtifacts.packageMetadataPath } : {})
+      ...(wechatArtifacts.packageMetadataPath ? { wechatPackageMetadataPath: wechatArtifacts.packageMetadataPath } : {}),
+      ...(args.candidateRevision ? { candidateRevision: args.candidateRevision } : {})
     },
     gates
   };
@@ -1049,6 +1254,10 @@ async function main(): Promise<void> {
   console.log(`Wrote release-readiness dashboard JSON: ${toRelativePath(jsonOutputPath)}`);
   console.log(`Wrote release-readiness dashboard Markdown: ${toRelativePath(markdownOutputPath)}`);
   console.log(`Overall status: ${report.overallStatus}`);
+  console.log(`Go/No-Go decision: ${report.goNoGo.decision}`);
+  console.log(`Required failed: ${report.goNoGo.requiredFailed}`);
+  console.log(`Required pending: ${report.goNoGo.requiredPending}`);
+  console.log(`Candidate revision: ${report.goNoGo.candidateRevision ?? "<unverified>"}`);
   for (const gate of report.gates) {
     console.log(`- ${gate.label}: ${gate.status} (${gate.summary})`);
   }
