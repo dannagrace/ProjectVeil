@@ -355,7 +355,10 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     assert.deepEqual(dossier.summary.requiredFailed, []);
     assert.deepEqual(dossier.summary.requiredPending, []);
     assert.equal(dossier.summary.acceptedRiskCount, 1);
+    assert.equal(dossier.phase1ExitEvidenceGate.result, "accepted_risk");
+    assert.equal(dossier.phase1ExitEvidenceGate.acceptedRiskSections[0], "Release readiness snapshot");
     assert.equal(dossier.sections.find((section) => section.id === "release-gate")?.result, "passed");
+    assert.equal(dossier.sections.find((section) => section.id === "phase1-exit-evidence-gate")?.result, "accepted_risk");
     assert.equal(dossier.sections.find((section) => section.id === "runtime-health")?.result, "passed");
     assert.equal(dossier.acceptedRisks[0]?.label, "Unit and integration regression");
     assert.match(dossier.acceptedRisks[0]?.reason ?? "", /accepted for this RC only/i);
@@ -363,9 +366,115 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     const markdown = renderMarkdown(dossier);
     assert.match(markdown, /# Phase 1 Candidate Dossier/);
     assert.match(markdown, /Overall status: \*\*ACCEPTED_RISK\*\*/);
+    assert.match(markdown, /## Phase 1 Exit Evidence Gate/);
+    assert.match(markdown, /Phase 1 exit evidence gate: `accepted_risk`/);
     assert.match(markdown, /Release readiness snapshot/);
     assert.match(markdown, /Runtime health\/auth-readiness\/metrics/);
     assert.match(markdown, /Accepted Risks/);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      runtime.server.closeAllConnections?.();
+      runtime.server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
+test("phase1 candidate dossier fails the single exit evidence gate when the release gate summary is blocking", async () => {
+  const workspace = createTempWorkspace();
+  const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
+  const wechatDir = path.join(workspace, "artifacts", "wechat-release");
+  const revision = "abc1234";
+
+  const snapshotPath = path.join(artifactsDir, "release-readiness-pass.json");
+  const h5SmokePath = path.join(artifactsDir, "client-release-candidate-smoke-pass.json");
+  const cocosBundlePath = path.join(artifactsDir, "cocos-rc-evidence-bundle-pass.json");
+  const persistencePath = path.join(artifactsDir, `phase1-release-persistence-regression-${revision}.json`);
+  const wechatCandidateSummaryPath = path.join(wechatDir, "codex.wechat.release-candidate-summary.json");
+
+  writeJson(snapshotPath, {
+    generatedAt: "2026-04-02T08:30:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
+    checks: [{ id: "npm-test", required: true, status: "passed" }]
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: "2026-04-02T08:32:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    execution: { status: "passed", exitCode: 0 },
+    summary: { total: 2, passed: 2, failed: 0 }
+  });
+  writeJson(cocosBundlePath, {
+    bundle: {
+      generatedAt: "2026-04-02T08:34:00.000Z",
+      candidate: "phase1-rc",
+      commit: revision,
+      shortCommit: revision,
+      overallStatus: "passed",
+      summary: "Cocos RC evidence is complete."
+    },
+    review: { phase1Gate: "passed" },
+    journey: [{ id: "lobby-entry", status: "passed" }],
+    requiredEvidence: [{ id: "roomId", label: "Room id recorded", filled: true }]
+  });
+  writeJson(wechatCandidateSummaryPath, {
+    generatedAt: "2026-04-02T08:40:00.000Z",
+    candidate: { revision, status: "ready" },
+    evidence: {
+      smoke: { status: "passed", artifactPath: path.join(wechatDir, "codex.wechat.smoke-report.json") },
+      manualReview: {
+        status: "ready",
+        requiredPendingChecks: 0,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: [
+          {
+            id: "wechat-runtime-review",
+            required: true,
+            status: "passed",
+            owner: "release-oncall",
+            recordedAt: "2026-04-02T08:39:00.000Z",
+            revision,
+            artifactPath: path.join(wechatDir, "runtime-review.json")
+          }
+        ]
+      }
+    },
+    blockers: []
+  });
+  writeJson(persistencePath, {
+    generatedAt: "2026-04-02T08:41:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    summary: { status: "passed", assertionCount: 6 },
+    contentValidation: { valid: true, bundleCount: 5, summary: "All shipped content packs validated.", issueCount: 0 },
+    persistenceRegression: { mapPackId: "phase1", assertions: ["room hydration reapplied resources"] }
+  });
+
+  const runtime = await startRuntimeServer();
+  try {
+    const dossier = await buildPhase1CandidateDossier({
+      candidate: "phase1-rc",
+      candidateRevision: revision,
+      serverUrl: runtime.url,
+      snapshotPath,
+      h5SmokePath,
+      cocosBundlePath,
+      wechatCandidateSummaryPath,
+      persistencePath,
+      targetSurface: "wechat",
+      maxEvidenceAgeHours: 72
+    });
+
+    assert.equal(dossier.sections.find((section) => section.id === "release-gate")?.result, "failed");
+    assert.equal(dossier.phase1ExitEvidenceGate.result, "failed");
+    assert.equal(dossier.summary.status, "failed");
+    assert.match(dossier.phase1ExitEvidenceGate.summary, /blocked/i);
+    assert.equal(dossier.phase1ExitEvidenceGate.blockingSections.includes("Release gate summary"), true);
   } finally {
     await new Promise<void>((resolve, reject) => {
       runtime.server.closeAllConnections?.();

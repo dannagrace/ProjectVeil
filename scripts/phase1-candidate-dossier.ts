@@ -271,6 +271,7 @@ interface DossierSection {
     | "wechat-release"
     | "runtime-health"
     | "phase1-persistence"
+    | "phase1-exit-evidence-gate"
     | "release-gate"
     | "release-health";
   label: string;
@@ -284,6 +285,14 @@ interface DossierSection {
   details: string[];
   evidence: DossierEvidenceRef[];
   acceptedRisks: DossierAcceptedRisk[];
+}
+
+interface Phase1ExitEvidenceGate {
+  result: DossierResult;
+  summary: string;
+  blockingSections: string[];
+  pendingSections: string[];
+  acceptedRiskSections: string[];
 }
 
 interface Phase1CandidateDossier {
@@ -305,6 +314,7 @@ interface Phase1CandidateDossier {
     acceptedRiskCount: number;
     freshness: Record<EvidenceFreshness, number>;
   };
+  phase1ExitEvidenceGate: Phase1ExitEvidenceGate;
   inputs: {
     serverUrl?: string;
     snapshotPath?: string;
@@ -1417,17 +1427,74 @@ function buildDerivedSection(
   };
 }
 
-function buildOverallStatus(requiredFailed: string[], requiredPending: string[], acceptedRiskCount: number, releaseGate: DossierSection): DossierResult {
-  if (requiredFailed.length > 0 || releaseGate.result === "failed") {
+function buildOverallStatus(requiredFailed: string[], requiredPending: string[], acceptedRiskCount: number, exitGate: Phase1ExitEvidenceGate): DossierResult {
+  if (requiredFailed.length > 0 || exitGate.result === "failed") {
     return "failed";
   }
-  if (requiredPending.length > 0 || releaseGate.result === "pending") {
+  if (requiredPending.length > 0 || exitGate.result === "pending") {
     return "pending";
   }
   if (acceptedRiskCount > 0) {
     return "accepted_risk";
   }
   return "passed";
+}
+
+function buildPhase1ExitEvidenceGateSection(sections: DossierSection[], generatedAt: string | undefined): {
+  section: DossierSection;
+  gate: Phase1ExitEvidenceGate;
+} {
+  const scopedSections = sections.filter((section) => section.id !== "release-health");
+  const blockingSections = scopedSections.filter((section) => section.result === "failed").map((section) => section.label);
+  const pendingSections = scopedSections.filter((section) => section.result === "pending").map((section) => section.label);
+  const acceptedRiskSections = scopedSections.filter((section) => section.result === "accepted_risk").map((section) => section.label);
+  const details = [
+    ...blockingSections.map((label) => `blocking: ${label}`),
+    ...pendingSections.map((label) => `pending: ${label}`),
+    ...acceptedRiskSections.map((label) => `accepted risk: ${label}`)
+  ];
+  const freshness = evaluateFreshness(generatedAt, 1000 * 60 * 60 * 72);
+  let result: DossierResult = "passed";
+  if (blockingSections.length > 0) {
+    result = "failed";
+  } else if (pendingSections.length > 0 || freshness !== "fresh") {
+    result = "pending";
+  } else if (acceptedRiskSections.length > 0) {
+    result = "accepted_risk";
+  }
+
+  const summary =
+    result === "failed"
+      ? `Candidate-level Phase 1 exit evidence is blocked by ${blockingSections.join(", ")}.`
+      : result === "pending"
+        ? pendingSections.length > 0
+          ? `Candidate-level Phase 1 exit evidence is still pending for ${pendingSections.join(", ")}.`
+          : "Candidate-level Phase 1 exit evidence needs a fresh gate sample."
+        : result === "accepted_risk"
+          ? `Candidate-level Phase 1 exit evidence passed with accepted risks in ${acceptedRiskSections.join(", ")}.`
+          : "Candidate-level Phase 1 exit evidence is current for this revision.";
+
+  return {
+    section: {
+      id: "phase1-exit-evidence-gate",
+      label: "Phase 1 exit evidence gate",
+      required: true,
+      result,
+      summary,
+      observedAt: generatedAt,
+      freshness,
+      details,
+      evidence: [],
+      acceptedRisks: []
+    },
+    gate: {
+      result,
+      summary,
+      blockingSections,
+      pendingSections,
+      acceptedRiskSections
+    }
+  };
 }
 
 export function renderMarkdown(dossier: Phase1CandidateDossier): string {
@@ -1439,7 +1506,23 @@ export function renderMarkdown(dossier: Phase1CandidateDossier): string {
   lines.push(`- Overall status: **${dossier.summary.status.toUpperCase()}**`);
   lines.push(`- Required failed: ${dossier.summary.requiredFailed.length}`);
   lines.push(`- Required pending: ${dossier.summary.requiredPending.length}`);
+  lines.push(`- Phase 1 exit evidence gate: \`${dossier.phase1ExitEvidenceGate.result}\``);
+  lines.push(`- Phase 1 exit summary: ${dossier.phase1ExitEvidenceGate.summary}`);
   lines.push(`- Accepted risks: ${dossier.summary.acceptedRiskCount}`, "");
+
+  lines.push("## Phase 1 Exit Evidence Gate", "");
+  lines.push(`- Result: \`${dossier.phase1ExitEvidenceGate.result}\``);
+  lines.push(`- Summary: ${dossier.phase1ExitEvidenceGate.summary}`);
+  if (dossier.phase1ExitEvidenceGate.blockingSections.length > 0) {
+    lines.push(`- Blocking sections: ${dossier.phase1ExitEvidenceGate.blockingSections.join(", ")}`);
+  }
+  if (dossier.phase1ExitEvidenceGate.pendingSections.length > 0) {
+    lines.push(`- Pending sections: ${dossier.phase1ExitEvidenceGate.pendingSections.join(", ")}`);
+  }
+  if (dossier.phase1ExitEvidenceGate.acceptedRiskSections.length > 0) {
+    lines.push(`- Accepted-risk sections: ${dossier.phase1ExitEvidenceGate.acceptedRiskSections.join(", ")}`);
+  }
+  lines.push("");
 
   lines.push("## Section Summary", "");
   for (const section of dossier.sections) {
@@ -1599,8 +1682,13 @@ export async function buildPhase1CandidateDossier(args: Args): Promise<Phase1Can
     "Release health summary raised warnings.",
     "Release health summary is blocking."
   );
+  const { section: phase1ExitEvidenceGateSection, gate: phase1ExitEvidenceGate } = buildPhase1ExitEvidenceGateSection(
+    [snapshotSection, cocosSection, wechatSection, runtimeSection, persistenceSection, releaseGateSection],
+    gateReport.generatedAt
+  );
 
   const sections: DossierSection[] = [
+    phase1ExitEvidenceGateSection,
     snapshotSection,
     cocosSection,
     wechatSection,
@@ -1642,13 +1730,14 @@ export async function buildPhase1CandidateDossier(args: Args): Promise<Phase1Can
       targetSurface: args.targetSurface
     },
     summary: {
-      status: buildOverallStatus(requiredFailed, requiredPending, acceptedRisks.length, releaseGateSection),
+      status: buildOverallStatus(requiredFailed, requiredPending, acceptedRisks.length, phase1ExitEvidenceGate),
       totalSections: sections.length,
       requiredFailed,
       requiredPending,
       acceptedRiskCount: acceptedRisks.length,
       freshness: freshnessSummary
     },
+    phase1ExitEvidenceGate,
     inputs,
     sections,
     acceptedRisks

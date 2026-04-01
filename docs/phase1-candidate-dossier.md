@@ -2,6 +2,8 @@
 
 `npm run release:phase1:candidate-dossier` folds the current Phase 1 exit evidence for one candidate revision into a single JSON dossier plus a Markdown attachment.
 
+It now also emits one explicit candidate-level `Phase 1 exit evidence gate` so reviewers can make the final pass/pending/fail call from one object instead of re-interpreting each evidence section by hand.
+
 The command stays intentionally thin and reuses the existing evidence producers:
 
 - `npm run release:readiness:snapshot`
@@ -53,6 +55,7 @@ npm run release:phase1:candidate-dossier -- \
 The dossier surfaces:
 
 - one candidate revision and target surface
+- one `phase1ExitEvidenceGate` result with blocking/pending/accepted-risk section lists
 - `requiredFailed`
 - `requiredPending`
 - `acceptedRisks`

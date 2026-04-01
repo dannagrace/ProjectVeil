@@ -148,7 +148,7 @@ npm run dev:client:h5
 - 发布就绪快照：`npm run release:readiness:snapshot`
 - 统一发布门禁汇总：`npm run release:gate:summary`
 - 发布健康度聚合摘要：`npm run release:health:summary`
-- Phase 1 candidate dossier：`npm run release:phase1:candidate-dossier -- --candidate <candidate-name> --candidate-revision <git-sha> [--server-url http://127.0.0.1:2567]`
+- Phase 1 candidate dossier + single exit evidence gate：`npm run release:phase1:candidate-dossier -- --candidate <candidate-name> --candidate-revision <git-sha> [--server-url http://127.0.0.1:2567]`
 - 打包 H5 客户端 RC 冒烟：`npm run smoke:client:release-candidate`
 - 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
