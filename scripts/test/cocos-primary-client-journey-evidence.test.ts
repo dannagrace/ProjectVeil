@@ -1,0 +1,85 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+function createTempDir(prefix: string): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, markdown, and milestone artifacts", () => {
+  const workspace = createTempDir("veil-primary-journey-");
+  const outputPath = path.join(workspace, "primary-journey.json");
+  const markdownOutputPath = path.join(workspace, "primary-journey.md");
+
+  const stdout = execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/cocos-primary-client-journey-evidence.ts",
+      "--candidate",
+      "rc-primary-journey",
+      "--output",
+      outputPath,
+      "--markdown-output",
+      markdownOutputPath,
+      "--owner",
+      "codex"
+    ],
+    {
+      cwd: path.resolve(__dirname, "../.."),
+      encoding: "utf8"
+    }
+  );
+
+  assert.match(stdout, /Wrote primary-client journey evidence JSON:/);
+  assert.match(stdout, /Milestones: 7/);
+  assert.equal(fs.existsSync(outputPath), true);
+  assert.equal(fs.existsSync(markdownOutputPath), true);
+
+  const artifact = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
+    candidate: { name: string };
+    execution: { owner: string; overallStatus: string; summary: string };
+    environment: { evidenceMode: string };
+    artifacts: { milestoneDir: string };
+    journey: Array<{ id: string; status: string; evidence: string[] }>;
+    requiredEvidence: Array<{ id: string; value: string; evidence: string[] }>;
+  };
+
+  assert.equal(artifact.candidate.name, "rc-primary-journey");
+  assert.equal(artifact.execution.owner, "codex");
+  assert.equal(artifact.execution.overallStatus, "passed");
+  assert.match(artifact.execution.summary, /Headless primary-client journey evidence passed/);
+  assert.equal(artifact.environment.evidenceMode, "headless-runtime-diagnostics");
+  assert.deepEqual(
+    artifact.journey.map((step) => step.id),
+    ["lobby-entry", "room-join", "map-explore", "first-battle", "battle-settlement", "reconnect-restore", "return-to-world"]
+  );
+  assert.ok(artifact.journey.every((step) => step.status === "passed"));
+  assert.equal(artifact.requiredEvidence.find((field) => field.id === "roomId")?.value, "room-primary-journey");
+  assert.match(artifact.requiredEvidence.find((field) => field.id === "reconnectPrompt")?.value ?? "", /连接已恢复/);
+  assert.equal(
+    artifact.requiredEvidence.find((field) => field.id === "firstBattleResult")?.value,
+    "attacker_victory; gold +12; experience +25"
+  );
+
+  const milestoneDir = path.resolve(path.resolve(__dirname, "../.."), artifact.artifacts.milestoneDir);
+  const milestoneFiles = fs.readdirSync(milestoneDir).sort();
+  assert.deepEqual(milestoneFiles, [
+    "01-lobby-entry.json",
+    "02-room-join.json",
+    "03-map-explore.json",
+    "04-first-battle.json",
+    "05-battle-settlement.json",
+    "06-reconnect-restore.json",
+    "07-return-to-world.json"
+  ]);
+
+  const markdown = fs.readFileSync(markdownOutputPath, "utf8");
+  assert.match(markdown, /# Cocos Primary-Client Journey Evidence/);
+  assert.match(markdown, /Battle settlement/);
+  assert.match(markdown, /headless-runtime-diagnostics/);
+});
