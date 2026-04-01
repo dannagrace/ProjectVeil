@@ -1,0 +1,181 @@
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+const repoRoot = path.resolve(__dirname, "../..");
+const fixtureBuildDir = path.join(repoRoot, "apps", "cocos-client", "test", "fixtures", "wechatgame-export");
+const defaultConfigPath = path.join(repoRoot, "apps", "cocos-client", "wechat-minigame.build.json");
+
+function writeJson(filePath: string, payload: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+function readGit(command: string[]): string {
+  const result = spawnSync("git", command, {
+    cwd: repoRoot,
+    encoding: "utf8"
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr.trim() || `git ${command.join(" ")} failed`);
+  }
+  return result.stdout.trim();
+}
+
+test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehearsal outputs", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-phase1-rehearsal-"));
+  const buildDir = path.join(workspace, "build");
+  const sourceArtifactsDir = path.join(workspace, "source-artifacts");
+  const outputDir = path.join(workspace, "rehearsal");
+  const revision = readGit(["rev-parse", "HEAD"]);
+  const shortRevision = readGit(["rev-parse", "--short", "HEAD"]);
+
+  fs.cpSync(fixtureBuildDir, buildDir, { recursive: true });
+
+  execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/wechat-release-rehearsal.ts",
+      "--config",
+      defaultConfigPath,
+      "--build-dir",
+      buildDir,
+      "--artifacts-dir",
+      sourceArtifactsDir,
+      "--source-revision",
+      revision,
+      "--expected-revision",
+      revision
+    ],
+    {
+      cwd: repoRoot,
+      stdio: "pipe"
+    }
+  );
+
+  const h5SmokePath = path.join(workspace, "client-release-candidate-smoke.json");
+  writeJson(h5SmokePath, {
+    generatedAt: "2026-04-02T08:32:00.000Z",
+    revision: {
+      commit: revision,
+      shortCommit: shortRevision
+    },
+    execution: {
+      status: "passed",
+      exitCode: 0,
+      finishedAt: "2026-04-02T08:33:00.000Z"
+    },
+    summary: {
+      total: 2,
+      passed: 2,
+      failed: 0
+    }
+  });
+
+  const reconnectSoakPath = path.join(workspace, "colyseus-reconnect-soak-summary.json");
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-04-02T08:33:00.000Z",
+    revision: {
+      commit: revision,
+      shortCommit: shortRevision
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 256,
+      invariantChecks: 1024
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+
+  const output = execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/phase1-candidate-rehearsal.ts",
+      "--candidate",
+      "phase1-mainline",
+      "--output-dir",
+      outputDir,
+      "--h5-smoke",
+      h5SmokePath,
+      "--reconnect-soak",
+      reconnectSoakPath,
+      "--wechat-artifacts-dir",
+      sourceArtifactsDir,
+      "--validate-status",
+      "success",
+      "--wechat-build-status",
+      "success",
+      "--client-rc-smoke-status",
+      "success",
+      "--target-surface",
+      "h5"
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: "pipe"
+    }
+  );
+
+  assert.match(output, /Phase 1 candidate rehearsal PASSED/);
+
+  const summaryPath = path.join(outputDir, `phase1-candidate-rehearsal-phase1-mainline-${shortRevision}.json`);
+  const markdownPath = path.join(outputDir, "SUMMARY.md");
+  assert.ok(fs.existsSync(summaryPath));
+  assert.ok(fs.existsSync(markdownPath));
+
+  const report = JSON.parse(fs.readFileSync(summaryPath, "utf8")) as {
+    summary: {
+      status: string;
+      releaseGateStatus: string;
+      releaseHealthStatus: string;
+      phase1CandidateStatus: string;
+      stageFailures: string[];
+      missingArtifacts: string[];
+    };
+    artifacts: Record<string, string | undefined>;
+    stages: Array<{ id: string; status: string }>;
+  };
+
+  assert.equal(report.summary.status, "passed");
+  assert.equal(report.summary.releaseGateStatus, "passed");
+  assert.ok(["healthy", "warning"].includes(report.summary.releaseHealthStatus));
+  assert.equal(report.summary.phase1CandidateStatus, "pending");
+  assert.deepEqual(report.summary.stageFailures, []);
+  assert.deepEqual(report.summary.missingArtifacts, []);
+  assert.equal(report.stages.find((stage) => stage.id === "release-readiness-snapshot")?.status, "passed");
+  assert.equal(report.stages.find((stage) => stage.id === "wechat-candidate-summary")?.status, "passed");
+  assert.equal(report.stages.find((stage) => stage.id === "cocos-rc-bundle")?.status, "passed");
+  assert.equal(report.stages.find((stage) => stage.id === "phase1-candidate-dossier")?.status, "passed");
+  assert.match(report.artifacts.releaseReadinessSnapshotPath ?? "", /release-readiness-phase1-mainline-/);
+  assert.match(report.artifacts.releaseGateSummaryPath ?? "", /release-gate-summary-phase1-mainline-/);
+  assert.match(report.artifacts.phase1CandidateDossierPath ?? "", /phase1-candidate-dossier-phase1-mainline-/);
+  assert.match(report.artifacts.stableWechatArtifactsDir ?? "", /wechat-release-phase1-mainline-/);
+
+  const markdown = fs.readFileSync(markdownPath, "utf8");
+  assert.match(markdown, /# Phase 1 Candidate Rehearsal/);
+  assert.match(markdown, /Release gate summary: `passed`/);
+  assert.match(markdown, /Phase 1 dossier summary: `pending`/);
+});

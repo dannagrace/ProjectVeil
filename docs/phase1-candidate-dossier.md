@@ -76,3 +76,5 @@ The dossier surfaces:
 - Phase 1 sections for readiness, Cocos RC, WeChat release, runtime sampling, reconnect soak, persistence/content-pack validation, release gate summary, and release health summary
 
 The JSON artifact is intended for CI/automation, and the Markdown artifact is intended for PR/release review so reviewers do not need to stitch Phase 1 exit evidence together by hand.
+
+For the scheduled and `main`-branch automation that refreshes this dossier together with its prerequisite artifact set, see [`docs/phase1-candidate-rehearsal.md`](./phase1-candidate-rehearsal.md).

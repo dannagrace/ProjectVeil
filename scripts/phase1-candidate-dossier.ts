@@ -1907,6 +1907,7 @@ async function main(): Promise<void> {
   console.log(`Overall status: ${dossier.summary.status}`);
   console.log(`Required failed: ${dossier.summary.requiredFailed.length}`);
   console.log(`Required pending: ${dossier.summary.requiredPending.length}`);
+  const acceptedRisks = dossier.acceptedRisks;
   if (acceptedRisks.length > 0) {
     for (const line of summarizeRiskList(acceptedRisks)) {
       console.log(`Accepted risk: ${line}`);
