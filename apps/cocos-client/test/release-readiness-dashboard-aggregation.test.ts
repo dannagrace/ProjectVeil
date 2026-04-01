@@ -197,8 +197,10 @@ test("buildGoNoGoReport marks a candidate blocked when linked evidence revisions
     },
     cases: [{ id: "login-lobby", status: "passed" }]
   });
+  const criticalEvidenceGate = buildCriticalEvidenceGate(14, [snapshotSummary.evidence, smokeSummary.evidence]);
   const goNoGo = buildGoNoGoReport({
     candidateRevision: "abc1234",
+    maxEvidenceAgeDays: 14,
     snapshot: {
       summary: {
         requiredFailed: 0,
@@ -206,12 +208,69 @@ test("buildGoNoGoReport marks a candidate blocked when linked evidence revisions
       }
     },
     gates: [],
-    evidence: [snapshotSummary.evidence, smokeSummary.evidence]
+    evidence: criticalEvidenceGate.evidence
   });
 
   assert.equal(goNoGo.decision, "blocked");
   assert.equal(goNoGo.revisionStatus, "mismatch");
   assert.deepEqual(goNoGo.blockers, ["candidate_revision_mismatch"]);
+  assert.equal(goNoGo.candidateConsistencyFindings[0]?.path, "/tmp/codex.wechat.smoke-report.json");
+  assert.match(goNoGo.candidateConsistencyFindings[0]?.summary ?? "", /Expected candidate revision abc1234/);
   assert.equal(goNoGo.evidence[0]?.matchesCandidate, true);
   assert.equal(goNoGo.evidence[1]?.matchesCandidate, false);
+});
+
+test("buildGoNoGoReport blocks explicit candidate pinning when evidence metadata is missing or stale", () => {
+  const snapshotSummary = summarizeSnapshot("/tmp/release-readiness.json", {
+    generatedAt: "2026-03-01T00:00:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
+    summary: {
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
+    },
+    checks: [
+      { id: "npm-test", status: "passed", required: true },
+      { id: "typecheck-ci", status: "passed", required: true },
+      { id: "e2e-smoke", status: "passed", required: true },
+      { id: "e2e-multiplayer-smoke", status: "passed", required: true },
+      { id: "cocos-primary-journey", status: "passed", required: true },
+      { id: "wechat-build-check", status: "passed", required: true }
+    ]
+  });
+  const smokeSummary = summarizeWechatSmoke("/tmp/codex.wechat.smoke-report.json", {
+    execution: {
+      result: "passed",
+      executedAt: "2026-03-30T00:05:00.000Z"
+    },
+    cases: [{ id: "login-lobby", status: "passed" }]
+  });
+  const criticalEvidenceGate = buildCriticalEvidenceGate(14, [snapshotSummary.evidence, smokeSummary.evidence]);
+
+  const goNoGo = buildGoNoGoReport({
+    candidateRevision: "abc1234",
+    maxEvidenceAgeDays: 14,
+    snapshot: {
+      summary: {
+        requiredFailed: 0,
+        requiredPending: 0
+      }
+    },
+    gates: [],
+    evidence: criticalEvidenceGate.evidence
+  });
+
+  assert.equal(goNoGo.decision, "blocked");
+  assert.deepEqual(goNoGo.blockers, [
+    "candidate_revision_metadata_missing",
+    "candidate_evidence_stale"
+  ]);
+  assert.deepEqual(
+    goNoGo.candidateConsistencyFindings.map((finding) => finding.code),
+    ["candidate_revision_metadata_missing", "candidate_evidence_stale"]
+  );
+  assert.match(goNoGo.candidateConsistencyFindings[0]?.summary ?? "", /missing revision metadata/);
+  assert.match(goNoGo.candidateConsistencyFindings[1]?.summary ?? "", /older than the 14-day freshness window/);
 });

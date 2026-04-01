@@ -194,7 +194,24 @@ interface GoNoGoReport {
   requiredPending: number;
   blockers: string[];
   pending: string[];
+  candidateConsistencyFindings: CandidateConsistencyFinding[];
   evidence: GoNoGoEvidenceRef[];
+}
+
+type CandidateConsistencyFindingCode =
+  | "candidate_revision_mismatch"
+  | "candidate_revision_metadata_missing"
+  | "candidate_evidence_stale";
+
+interface CandidateConsistencyFinding {
+  code: CandidateConsistencyFindingCode;
+  label: string;
+  path: string;
+  summary: string;
+  expectedRevision?: string;
+  observedRevision?: string;
+  observedAt?: string;
+  freshness?: EvidenceFreshness;
 }
 
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
@@ -1112,6 +1129,7 @@ function buildOverallSummary(gates: GateReport[]): string {
 
 export function buildGoNoGoReport(input: {
   candidateRevision?: string;
+  maxEvidenceAgeDays: number;
   snapshot: ReleaseReadinessSnapshot | undefined;
   gates: GateReport[];
   evidence: Array<EvidenceItem | undefined>;
@@ -1131,10 +1149,58 @@ export function buildGoNoGoReport(input: {
   const knownRevisions = goNoGoEvidence
     .map((entry) => entry.sourceRevision?.trim())
     .filter((entry): entry is string => Boolean(entry));
-  const candidateRevision = resolveCandidateRevision(input.candidateRevision, knownRevisions);
+  const expectedCandidateRevision = input.candidateRevision?.trim();
+  const candidateRevision = resolveCandidateRevision(expectedCandidateRevision, knownRevisions);
   const mismatchedEvidence = candidateRevision
     ? goNoGoEvidence.filter((entry) => entry.sourceRevision && !revisionsMatch(candidateRevision, entry.sourceRevision))
     : [];
+  const candidateConsistencyFindings: CandidateConsistencyFinding[] = [
+    ...mismatchedEvidence.map((entry) => ({
+      code: "candidate_revision_mismatch" as const,
+      label: entry.label,
+      path: entry.path,
+      summary: `Expected candidate revision ${candidateRevision}, but ${entry.label} reports ${entry.sourceRevision ?? "<missing>"}.`,
+      expectedRevision: candidateRevision,
+      observedRevision: entry.sourceRevision,
+      observedAt: entry.observedAt,
+      freshness: entry.freshness
+    })),
+    ...(expectedCandidateRevision
+      ? goNoGoEvidence
+          .filter((entry) => entry.availability === "present" && !entry.sourceRevision?.trim())
+          .map((entry) => ({
+            code: "candidate_revision_metadata_missing" as const,
+            label: entry.label,
+            path: entry.path,
+            summary: `Expected candidate revision ${expectedCandidateRevision}, but ${entry.label} is missing revision metadata.`,
+            expectedRevision: expectedCandidateRevision,
+            observedAt: entry.observedAt,
+            freshness: entry.freshness
+          }))
+      : []),
+    ...(expectedCandidateRevision
+      ? goNoGoEvidence
+          .filter((entry) =>
+            entry.availability === "present" &&
+            (entry.freshness === "stale" || entry.freshness === "missing_timestamp" || entry.freshness === "invalid_timestamp")
+          )
+          .map((entry) => ({
+            code: "candidate_evidence_stale" as const,
+            label: entry.label,
+            path: entry.path,
+            summary:
+              entry.freshness === "stale"
+                ? `${entry.label} is older than the ${input.maxEvidenceAgeDays}-day freshness window for candidate ${expectedCandidateRevision}.`
+                : entry.freshness === "missing_timestamp"
+                  ? `${entry.label} is missing a timestamp, so candidate ${expectedCandidateRevision} freshness cannot be verified.`
+                  : `${entry.label} has an invalid timestamp (${entry.observedAt ?? "<missing>"}), so candidate ${expectedCandidateRevision} freshness cannot be verified.`,
+            expectedRevision: expectedCandidateRevision,
+            observedRevision: entry.sourceRevision,
+            observedAt: entry.observedAt,
+            freshness: entry.freshness
+          }))
+      : [])
+  ];
   const revisionStatus: RevisionStatus =
     mismatchedEvidence.length > 0 ? "mismatch" : candidateRevision ? "aligned" : "unknown";
 
@@ -1142,7 +1208,7 @@ export function buildGoNoGoReport(input: {
   const pendingGates = input.gates.filter((gate) => gate.status === "warn").map((gate) => gate.label);
   const blockers = [
     ...(snapshotCounts.requiredFailed > 0 ? [`requiredFailed=${snapshotCounts.requiredFailed}`] : []),
-    ...(revisionStatus === "mismatch" ? ["candidate_revision_mismatch"] : []),
+    ...[...new Set(candidateConsistencyFindings.map((finding) => finding.code))],
     ...blockingGates
   ];
   const pending = [
@@ -1167,6 +1233,7 @@ export function buildGoNoGoReport(input: {
     requiredPending: snapshotCounts.requiredPending,
     blockers,
     pending,
+    candidateConsistencyFindings,
     evidence: goNoGoEvidence.map((entry) => ({
       ...entry,
       ...(candidateRevision && entry.sourceRevision ? { matchesCandidate: revisionsMatch(candidateRevision, entry.sourceRevision) } : {})
@@ -1201,6 +1268,12 @@ function renderMarkdown(report: DashboardReport): string {
   }
   if (report.goNoGo.pending.length > 0) {
     lines.push(`- Pending: ${report.goNoGo.pending.join(", ")}`);
+  }
+  if (report.goNoGo.candidateConsistencyFindings.length > 0) {
+    lines.push("- Candidate consistency findings:");
+    for (const finding of report.goNoGo.candidateConsistencyFindings) {
+      lines.push(`  - ${finding.summary} (${finding.path})`);
+    }
   }
   if (report.goNoGo.evidence.length > 0) {
     lines.push("- Evidence:");
@@ -1320,17 +1393,19 @@ async function main(): Promise<void> {
     primaryClientDiagnostics
   );
 
+  const criticalEvidenceGate = buildCriticalEvidenceGate(args.maxEvidenceAgeDays, [
+    snapshotSummary.evidence,
+    packageSummary.evidence,
+    smokeSummary.evidence,
+    cocosRcSummary.evidence,
+    primaryClientDiagnosticsSummary.evidence
+  ]);
+
   const gates = [
     buildHealthGate(args.serverUrl, healthPayload, metricsText, healthError ?? metricsError),
     buildAuthGate(args.serverUrl, authPayload, authError),
     buildBuildPackageGate(snapshotSummary, packageSummary, smokeSummary),
-    buildCriticalEvidenceGate(args.maxEvidenceAgeDays, [
-      snapshotSummary.evidence,
-      packageSummary.evidence,
-      smokeSummary.evidence,
-      cocosRcSummary.evidence,
-      primaryClientDiagnosticsSummary.evidence
-    ])
+    criticalEvidenceGate
   ];
 
   const report: DashboardReport = {
@@ -1340,15 +1415,10 @@ async function main(): Promise<void> {
     summary: buildOverallSummary(gates),
     goNoGo: buildGoNoGoReport({
       candidateRevision: args.candidateRevision,
+      maxEvidenceAgeDays: args.maxEvidenceAgeDays,
       snapshot,
       gates,
-      evidence: [
-        snapshotSummary.evidence,
-        packageSummary.evidence,
-        smokeSummary.evidence,
-        cocosRcSummary.evidence,
-        primaryClientDiagnosticsSummary.evidence
-      ]
+      evidence: criticalEvidenceGate.evidence
     }),
     inputs: {
       ...(args.serverUrl ? { serverUrl: args.serverUrl } : {}),
@@ -1376,8 +1446,14 @@ async function main(): Promise<void> {
   console.log(`Required failed: ${report.goNoGo.requiredFailed}`);
   console.log(`Required pending: ${report.goNoGo.requiredPending}`);
   console.log(`Candidate revision: ${report.goNoGo.candidateRevision ?? "<unverified>"}`);
+  for (const finding of report.goNoGo.candidateConsistencyFindings) {
+    console.log(`! Candidate consistency: ${finding.summary} (${toRelativePath(path.resolve(finding.path))})`);
+  }
   for (const gate of report.gates) {
     console.log(`- ${gate.label}: ${gate.status} (${gate.summary})`);
+  }
+  if (report.goNoGo.candidateConsistencyFindings.length > 0) {
+    process.exitCode = 1;
   }
 }
 
