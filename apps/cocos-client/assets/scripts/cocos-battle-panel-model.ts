@@ -84,7 +84,7 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
       ? [state.presentationState.label, ...state.presentationState.summaryLines]
       : ["当前没有战斗。"];
     return {
-      title: state.presentationState?.result ? "战斗结算" : "战斗面板",
+      title: state.presentationState?.phase === "resolution" ? "战斗结算" : "战斗面板",
       stage: null,
       feedback: state.feedback,
       summaryLines: presentationSummary,

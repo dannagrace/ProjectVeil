@@ -208,6 +208,18 @@ test("battle feedback summarizes action, progress, and outcome", () => {
   const defeatFeedback = buildBattleTransitionFeedback(createResolvedUpdate("defender_victory"), "hero-1");
   assert.equal(defeatFeedback?.tone, "defeat");
   assert.equal(defeatFeedback?.badge, "LOSE");
+
+  const unsettledFeedback = buildBattleTransitionFeedback(
+    {
+      ...createResolvedUpdate("attacker_victory"),
+      events: []
+    },
+    "hero-1",
+    battle
+  );
+  assert.equal(unsettledFeedback?.tone, "neutral");
+  assert.equal(unsettledFeedback?.badge, "SETTLE");
+  assert.match(unsettledFeedback?.detail ?? "", /准备返回世界地图/);
 });
 
 test("battle presentation plan formalizes enter, impact, and resolution phases", () => {
@@ -284,6 +296,21 @@ test("battle presentation plan formalizes enter, impact, and resolution phases",
     "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
     "播报：战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图"
   ]);
+
+  const unsettledResolutionPlan = buildBattlePresentationPlan(
+    battle,
+    {
+      ...createResolvedUpdate("attacker_victory"),
+      events: []
+    },
+    "hero-1"
+  );
+  assert.equal(unsettledResolutionPlan.phase, "resolution");
+  assert.equal(unsettledResolutionPlan.moment, "result_settlement");
+  assert.equal(unsettledResolutionPlan.cue, null);
+  assert.equal(unsettledResolutionPlan.animation, "idle");
+  assert.equal(unsettledResolutionPlan.transition, null);
+  assert.equal(unsettledResolutionPlan.feedback?.badge, "SETTLE");
 });
 
 test("battle transition feedback summarizes settlement rewards and field state", () => {

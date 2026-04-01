@@ -251,4 +251,15 @@ test("battle presentation controller formalizes command, casualty, and result fl
   });
   assert.equal(controller.getState().feedbackLayer.transition, "exit");
   assert.match(controller.getState().summaryLines[1] ?? "", /战线：我方剩余 1 队 \/ 对方剩余 1 队/);
+
+  controller.applyUpdate(battle, createUpdate(null, []), "hero-1");
+  assertState(controller.getState(), {
+    phase: "resolution",
+    moment: "result_settlement",
+    label: "战斗收束",
+    tone: "neutral",
+    result: null
+  });
+  assert.equal(controller.getState().badge, "SETTLE");
+  assert.equal(controller.getState().feedbackLayer.transition, null);
 });

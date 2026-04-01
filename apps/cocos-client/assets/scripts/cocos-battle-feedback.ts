@@ -89,7 +89,17 @@ export function buildBattleTransitionFeedback(
 
   const resolved = update.events.find((event) => event.type === "battle.resolved");
   if (!resolved) {
-    return null;
+    if (!previousBattle) {
+      return null;
+    }
+
+    const settlement = buildBattleSettlementSummary(previousBattle, update, heroId);
+    return {
+      title: "战斗收束",
+      detail: settlement.detail,
+      badge: "SETTLE",
+      tone: "neutral"
+    };
   }
 
   const didWin =
