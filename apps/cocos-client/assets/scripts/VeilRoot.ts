@@ -2961,12 +2961,19 @@ export class VeilRoot extends Component {
   private handleConnectionEvent(event: ConnectionEvent): void {
     this.diagnosticsConnectionStatus =
       event === "reconnecting" ? "reconnecting" : event === "reconnected" ? "connected" : "reconnect_failed";
+    const activePvpBattle = Boolean(this.lastUpdate?.battle?.defenderHeroId);
     const label =
       event === "reconnecting"
-        ? "连接已中断，正在尝试重连..."
+        ? activePvpBattle
+          ? "PVP 遭遇连接已中断，正在尝试重连..."
+          : "连接已中断，正在尝试重连..."
         : event === "reconnected"
-          ? "连接已恢复。"
-          : "重连失败，正在尝试恢复房间快照...";
+          ? activePvpBattle
+            ? "PVP 遭遇连接已恢复。"
+            : "连接已恢复。"
+          : activePvpBattle
+            ? "PVP 遭遇重连失败，正在尝试恢复房间快照..."
+            : "重连失败，正在尝试恢复房间快照...";
     if (this.showLobby) {
       this.lobbyStatus = label;
     }
@@ -3192,12 +3199,19 @@ export class VeilRoot extends Component {
     const indicators: VeilHudRenderState["sessionIndicators"] = [];
     const replayingCachedSnapshot =
       this.lastRoomUpdateSource === "replay" && this.lastRoomUpdateReason === "cached_snapshot";
+    const activePvpBattle = this.lastUpdate?.battle?.defenderHeroId
+      ? {
+          sessionId: `${this.lastUpdate.world.meta.roomId}/${this.lastUpdate.battle.id}`
+        }
+      : null;
 
     if (this.diagnosticsConnectionStatus === "reconnecting") {
       indicators.push({
         kind: "reconnecting",
-        label: "重连中",
-        detail: "正在尝试恢复与权威房间的连接。"
+        label: activePvpBattle ? "PVP 重连中" : "重连中",
+        detail: activePvpBattle
+          ? `正在恢复 ${activePvpBattle.sessionId} 的对手归属、当前回合与权威房间状态。`
+          : "正在尝试恢复与权威房间的连接。"
       });
     }
 
@@ -3217,8 +3231,10 @@ export class VeilRoot extends Component {
     if (this.diagnosticsConnectionStatus === "reconnect_failed") {
       indicators.push({
         kind: "degraded_offline_fallback",
-        label: "降级/离线回退",
-        detail: "最近一次重连失败，客户端正依赖回退路径维持会话。"
+        label: activePvpBattle ? "PVP 快照回补" : "降级/离线回退",
+        detail: activePvpBattle
+          ? `最近一次 ${activePvpBattle.sessionId} 重连失败，客户端正依赖回退路径恢复当前对抗结果。`
+          : "最近一次重连失败，客户端正依赖回退路径维持会话。"
       });
     }
 

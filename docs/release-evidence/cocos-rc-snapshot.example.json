@@ -83,6 +83,12 @@
       "sourceField": "execution.summary",
       "target": "execution.summary",
       "notes": "WeChat RC 结果可以复用 smoke 总结，但仍需补齐首战与返回世界证据。"
+    },
+    {
+      "source": "creator-preview",
+      "sourceField": "PvP encounter HUD / settlement path",
+      "target": "journey[pvp-encounter]",
+      "notes": "同一 candidate revision 至少记录一条完整 PvP 遭遇证据，包含入场、结算与回到房间态。"
     }
   ],
   "requiredEvidence": [
@@ -175,6 +181,19 @@
       "notes": "Completed the first encounter and settlement flow.",
       "evidence": [
         "artifacts/cocos-rc/first-battle.png"
+      ],
+      "sourceRefs": [
+        "creator-preview"
+      ]
+    },
+    {
+      "id": "pvp-encounter",
+      "title": "PvP encounter",
+      "required": true,
+      "status": "passed",
+      "notes": "Recorded a hero-vs-hero encounter with opponent identity, settlement feedback, and return-to-world continuity on the same candidate revision.",
+      "evidence": [
+        "artifacts/cocos-rc/pvp-encounter.mp4"
       ],
       "sourceRefs": [
         "creator-preview"

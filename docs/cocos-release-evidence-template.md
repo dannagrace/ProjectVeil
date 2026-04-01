@@ -82,7 +82,7 @@ npm run release:cocos-rc:snapshot -- \
 - `requiredEvidence`
   - 四个强制证据字段：`roomId`、`reconnectPrompt`、`restoredState`、`firstBattleResult`
 - `journey`
-  - 六个固定主链路节点：`lobby-entry`、`room-join`、`map-explore`、`first-battle`、`reconnect-restore`、`return-to-world`
+  - 七个固定主链路节点：`lobby-entry`、`room-join`、`map-explore`、`first-battle`、`pvp-encounter`、`reconnect-restore`、`return-to-world`
 - `mappings`
   - Creator 预览观察项与 WeChat smoke 报告字段如何映射回同一份 RC 快照
 

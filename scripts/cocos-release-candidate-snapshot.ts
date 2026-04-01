@@ -5,7 +5,14 @@ import path from "node:path";
 type EvidenceStatus = "pending" | "blocked" | "passed" | "failed" | "not_applicable";
 type SnapshotResult = "pending" | "blocked" | "passed" | "failed" | "partial";
 type BuildSurface = "creator_preview" | "wechat_preview" | "wechat_upload_candidate" | "other";
-type JourneyStepId = "lobby-entry" | "room-join" | "map-explore" | "first-battle" | "reconnect-restore" | "return-to-world";
+type JourneyStepId =
+  | "lobby-entry"
+  | "room-join"
+  | "map-explore"
+  | "first-battle"
+  | "pvp-encounter"
+  | "reconnect-restore"
+  | "return-to-world";
 type CanonicalEvidenceId = "roomId" | "reconnectPrompt" | "restoredState" | "firstBattleResult";
 
 interface Args {
@@ -129,6 +136,7 @@ const REQUIRED_JOURNEY_STEP_IDS: JourneyStepId[] = [
   "room-join",
   "map-explore",
   "first-battle",
+  "pvp-encounter",
   "reconnect-restore",
   "return-to-world"
 ];
@@ -329,6 +337,12 @@ function buildMappings(): EvidenceMapping[] {
       sourceField: "execution.summary",
       target: "execution.summary",
       notes: "WeChat RC 结果可以复用 smoke 总结，但仍需补齐首战与返回世界证据。"
+    },
+    {
+      source: "creator-preview",
+      sourceField: "PvP encounter HUD / settlement path",
+      target: "journey[pvp-encounter]",
+      notes: "同一 candidate revision 至少记录一条完整 PvP 遭遇证据，包含入场、结算与回到房间态。"
     }
   ];
 }
@@ -405,6 +419,15 @@ function buildJourney(): JourneyStep[] {
       required: true,
       status: "pending",
       notes: "进入首场遭遇战并完成一次完整结算。",
+      evidence: [],
+      sourceRefs: []
+    },
+    {
+      id: "pvp-encounter",
+      title: "PvP encounter",
+      required: true,
+      status: "pending",
+      notes: "记录同一 candidate revision 下的一条完整 PvP 遭遇链路，至少覆盖对手身份、结算反馈与返回房间态。",
       evidence: [],
       sourceRefs: []
     },
@@ -635,7 +658,7 @@ function applyWechatSmokeReport(snapshot: CocosReleaseCandidateSnapshot, report:
       "Imported WeChat smoke evidence is blocked; complete the missing device/runtime steps before treating this RC snapshot as passed.";
   } else if (hasPendingUnmappedStep) {
     snapshot.execution.summary =
-      "Imported WeChat smoke evidence populated lobby, room, and reconnect steps; creator-preview evidence is still required for explore, first battle, and return-to-world.";
+      "Imported WeChat smoke evidence populated lobby, room, and reconnect steps; creator-preview evidence is still required for explore, first battle, PvP encounter, and return-to-world.";
   }
 }
 

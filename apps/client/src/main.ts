@@ -157,6 +157,7 @@ interface BattleFxState {
 
 interface BattleSettlementSummary {
   title: string;
+  kind: "pvp" | "pve" | "generic";
   summary: string;
   aftermath: string;
   roomState: string;
@@ -2358,6 +2359,7 @@ function buildBattleSettlementSummary(
       : null;
   const summaryParts = [rewardText, equipmentText ? `装备 ${equipmentText}` : null, progressText].filter(Boolean);
   const hero = activeHeroSnapshot(world);
+  const battleKind = event.defenderHeroId ? "pvp" : "pve";
   const winnerNextAction =
     hero && hero.move.remaining > 0
       ? "当前英雄仍可继续移动、交互，或直接推进到下一天。"
@@ -2370,12 +2372,13 @@ function buildBattleSettlementSummary(
   if (didWin) {
     return {
       title: "战斗胜利",
+      kind: battleKind,
       summary: event.defenderHeroId
-        ? `已击败 ${formatHeroIdentity(opponent, event.defenderHeroId)}。`
+        ? `PVP 胜利：已击败 ${formatHeroIdentity(opponent, event.defenderHeroId)}。`
         : "已击败本次守军。",
       aftermath: summaryParts.length > 0 ? `结算收益：${summaryParts.join(" · ")}。` : "结算完成，可继续处理房间内后续操作。",
       roomState: event.defenderHeroId
-        ? "英雄遭遇已关闭，房间已回到地图探索阶段，本次结果已对双方同步生效。"
+        ? "PVP 结算已回写到房间地图，房间已回到地图探索阶段，本次结果已对双方同步生效。"
         : "守军已清除，房间已回到地图探索阶段，可继续接管地图交互。",
       nextAction: winnerNextAction,
       tone: "victory"
@@ -2384,12 +2387,13 @@ function buildBattleSettlementSummary(
 
   return {
     title: "战斗失败",
+    kind: battleKind,
     summary: event.defenderHeroId
-      ? `遭遇战失利，对手 ${formatHeroIdentity(opponent, event.defenderHeroId ?? event.heroId)} 仍留在房间内。`
+      ? `PVP 失利：对手 ${formatHeroIdentity(opponent, event.defenderHeroId ?? event.heroId)} 仍留在房间内。`
       : "本次遭遇战失利。",
     aftermath: "英雄被击退，生命值下降且本日移动力清零。",
     roomState: event.defenderHeroId
-      ? "英雄遭遇已关闭，对手仍保留在房间地图上，当前结算已同步回写。"
+      ? "PVP 结算已回写到房间地图，对手仍保留在房间地图上，当前结算已同步回写。"
       : "守军仍保留在房间地图上，当前结算已同步回写。",
     nextAction: loserNextAction,
     tone: "defeat"
@@ -2916,6 +2920,7 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
   } else if (hadBattle && !update.battle && update.events.length === 0) {
     state.lastBattleSettlement = {
       title: "战斗结束",
+      kind: "generic",
       summary: "本场遭遇已结束。",
       aftermath: "房间状态已回到地图探索，可继续验证后续流程。",
       roomState: "本场遭遇链路已经关闭，房间已回到地图探索阶段。",
