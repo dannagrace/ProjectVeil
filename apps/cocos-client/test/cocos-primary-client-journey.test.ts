@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { Node, sys } from "cc";
-import { resetVeilCocosSessionRuntimeForTests, setVeilCocosSessionRuntimeForTests, VeilCocosSession } from "../assets/scripts/VeilCocosSession.ts";
+import {
+  type BattleState,
+  type SessionUpdate,
+  resetVeilCocosSessionRuntimeForTests,
+  setVeilCocosSessionRuntimeForTests,
+  VeilCocosSession
+} from "../assets/scripts/VeilCocosSession.ts";
 import { createFallbackCocosPlayerAccountProfile } from "../assets/scripts/cocos-lobby.ts";
 import { resetPixelSpriteRuntimeForTests } from "../assets/scripts/cocos-pixel-sprites.ts";
 import { buildCocosRuntimeDiagnosticsSnapshot } from "../assets/scripts/cocos-runtime-diagnostics.ts";
@@ -48,6 +54,187 @@ function createRootHarness() {
     message: "disabled"
   });
   return { root, rootNode };
+}
+
+function createNeutralEncounterBattle(): BattleState {
+  return {
+    id: "battle-neutral-journey",
+    round: 1,
+    lanes: 1,
+    activeUnitId: "hero-1-stack",
+    turnOrder: ["hero-1-stack", "neutral-1-stack"],
+    units: {
+      "hero-1-stack": {
+        id: "hero-1-stack",
+        templateId: "hero_guard_basic",
+        camp: "attacker",
+        lane: 0,
+        stackName: "Guard",
+        initiative: 7,
+        attack: 4,
+        defense: 4,
+        minDamage: 1,
+        maxDamage: 2,
+        count: 12,
+        currentHp: 10,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false,
+        skills: [],
+        statusEffects: []
+      },
+      "neutral-1-stack": {
+        id: "neutral-1-stack",
+        templateId: "orc_warrior",
+        camp: "defender",
+        lane: 0,
+        stackName: "Orc",
+        initiative: 5,
+        attack: 3,
+        defense: 3,
+        minDamage: 1,
+        maxDamage: 3,
+        count: 8,
+        currentHp: 9,
+        maxHp: 9,
+        hasRetaliated: false,
+        defending: false,
+        skills: [],
+        statusEffects: []
+      }
+    },
+    environment: [],
+    log: ["战斗开始"],
+    rng: {
+      seed: 1001,
+      cursor: 0
+    },
+    worldHeroId: "hero-1",
+    neutralArmyId: "neutral-1",
+    encounterPosition: { x: 1, y: 1 }
+  };
+}
+
+function createJourneyBootstrapUpdate(roomId: string, playerId: string): SessionUpdate {
+  const update = createSessionUpdate(4, roomId, playerId);
+  update.world.map.tiles[1] = {
+    ...update.world.map.tiles[1],
+    fog: "visible",
+    resource: {
+      kind: "wood",
+      amount: 5
+    }
+  };
+  update.world.map.tiles[2] = {
+    ...update.world.map.tiles[2],
+    fog: "visible"
+  };
+  update.world.map.tiles[3] = {
+    ...update.world.map.tiles[3],
+    fog: "visible",
+    occupant: {
+      kind: "neutral",
+      refId: "neutral-1"
+    }
+  };
+  update.reachableTiles = [{ x: 0, y: 0 }, { x: 1, y: 0 }];
+  return update;
+}
+
+function createJourneyExploreUpdate(roomId: string, playerId: string): SessionUpdate {
+  const update = createJourneyBootstrapUpdate(roomId, playerId);
+  update.world.ownHeroes[0]!.position = { x: 1, y: 0 };
+  update.world.ownHeroes[0]!.move.remaining = 5;
+  update.world.resources.wood = 15;
+  update.world.map.tiles[1] = {
+    ...update.world.map.tiles[1],
+    resource: undefined
+  };
+  update.events = [
+    {
+      type: "hero.moved",
+      heroId: "hero-1",
+      path: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+      moveCost: 1
+    },
+    {
+      type: "hero.collected",
+      heroId: "hero-1",
+      resource: {
+        kind: "wood",
+        amount: 5
+      }
+    }
+  ];
+  update.reachableTiles = [{ x: 1, y: 0 }, { x: 1, y: 1 }];
+  update.reason = "journey.world.explore";
+  return update;
+}
+
+function createJourneyBattleUpdate(roomId: string, playerId: string): SessionUpdate {
+  const update = createJourneyExploreUpdate(roomId, playerId);
+  update.world.ownHeroes[0]!.position = { x: 1, y: 1 };
+  update.world.ownHeroes[0]!.move.remaining = 4;
+  update.battle = createNeutralEncounterBattle();
+  update.events = [
+    {
+      type: "battle.started",
+      heroId: "hero-1",
+      encounterKind: "neutral",
+      neutralArmyId: "neutral-1",
+      initiator: "hero",
+      battleId: "battle-neutral-journey",
+      path: [{ x: 1, y: 0 }, { x: 1, y: 1 }],
+      moveCost: 1
+    }
+  ];
+  update.reachableTiles = [];
+  update.reason = "journey.battle.started";
+  return update;
+}
+
+function createJourneySettlementUpdate(roomId: string, playerId: string): SessionUpdate {
+  const update = createJourneyExploreUpdate(roomId, playerId);
+  update.world.ownHeroes[0]!.position = { x: 1, y: 1 };
+  update.world.ownHeroes[0]!.move.remaining = 4;
+  update.world.ownHeroes[0]!.progression = {
+    ...update.world.ownHeroes[0]!.progression,
+    experience: 25,
+    battlesWon: 1,
+    neutralBattlesWon: 1
+  };
+  update.world.resources.gold = 1012;
+  update.world.map.tiles[3] = {
+    ...update.world.map.tiles[3],
+    occupant: undefined
+  };
+  update.events = [
+    {
+      type: "battle.resolved",
+      battleId: "battle-neutral-journey",
+      battleKind: "neutral",
+      heroId: "hero-1",
+      result: "attacker_victory",
+      resourcesGained: {
+        gold: 12,
+        wood: 0,
+        ore: 0
+      },
+      experienceGained: 25,
+      skillPointsAwarded: 0
+    }
+  ];
+  update.reason = "journey.battle.settlement";
+  return update;
+}
+
+function createJourneyReconnectRecoveryUpdate(roomId: string, playerId: string): SessionUpdate {
+  const update = createJourneySettlementUpdate(roomId, playerId);
+  update.world.meta.day = 5;
+  update.world.ownHeroes[0]!.move.remaining = 8;
+  update.events = [];
+  update.reason = "journey.reconnect.restore";
+  return update;
 }
 
 function captureJourneyArtifact(options: {
@@ -220,6 +407,213 @@ test("primary cocos client journey reuses an account session from lobby bootstra
       }
     }
   ]);
+
+  root.onDestroy();
+  await flushMicrotasks();
+});
+
+test("primary cocos client journey gates lobby entry, world exploration, battle settlement, and reconnect recovery", async () => {
+  const storage = createMemoryStorage();
+  const roomId = "room-primary-journey";
+  const playerId = "player-account";
+  const joinedOptions: Array<{ logicalRoomId: string; playerId: string; seed: number }> = [];
+  const syncedAuthSession = {
+    token: "account.session.token",
+    playerId,
+    displayName: "暮潮守望",
+    authMode: "account" as const,
+    provider: "account-password" as const,
+    loginId: "veil-ranger",
+    source: "remote" as const
+  };
+  const initialRoom = new FakeColyseusRoom(
+    [createJourneyBootstrapUpdate(roomId, playerId)],
+    "journey-initial-token",
+    {
+      "world.action": [createJourneyExploreUpdate(roomId, playerId), createJourneyBattleUpdate(roomId, playerId)],
+      "battle.action": [createJourneySettlementUpdate(roomId, playerId)]
+    }
+  );
+  const recoveredRoom = new FakeColyseusRoom([createJourneyReconnectRecoveryUpdate(roomId, playerId)], "journey-recovered-token");
+
+  writeStoredCocosAuthSession(storage, syncedAuthSession);
+  (sys as unknown as { localStorage: Storage }).localStorage = storage;
+  (globalThis as { location?: Pick<Location, "search" | "href"> }).location = {
+    search: "",
+    href: "http://127.0.0.1:4173/"
+  };
+  (globalThis as { history?: Pick<History, "replaceState"> }).history = {
+    replaceState() {}
+  };
+
+  setVeilCocosSessionRuntimeForTests({
+    storage,
+    wait: async () => undefined,
+    loadSdk: createSdkLoader({
+      joinRooms: [initialRoom, recoveredRoom],
+      joinedOptions
+    })
+  });
+  setVeilRootRuntimeForTests({
+    createSession: (...args) => VeilCocosSession.create(...args),
+    readStoredReplay: (...args) => VeilCocosSession.readStoredReplay(...args),
+    syncAuthSession: async () => syncedAuthSession,
+    loadLobbyRooms: async () => [
+      {
+        roomId,
+        seed: 1001,
+        day: 4,
+        connectedPlayers: 1,
+        heroCount: 1,
+        activeBattles: 0,
+        updatedAt: "2026-04-02T09:00:00.000Z"
+      }
+    ],
+    loadAccountProfile: async () =>
+      createFallbackCocosPlayerAccountProfile(playerId, roomId, "暮潮守望", {
+        source: "remote",
+        authMode: "account",
+        loginId: "veil-ranger"
+      })
+  });
+
+  const { root } = createRootHarness();
+  root.onLoad();
+  root.start();
+
+  await waitFor(
+    () => root.showLobby === true && root.lobbyRooms.length === 1 && root.sessionSource === "remote",
+    () => captureJourneyArtifact({ root, phase: "lobby-bootstrap", joinedOptions, room: initialRoom })
+  );
+
+  await root.enterLobbyRoom(roomId);
+
+  await waitFor(
+    () => root.showLobby === false && root.lastUpdate?.world.meta.roomId === roomId,
+    () => captureJourneyArtifact({ root, phase: "room-join", joinedOptions, room: initialRoom })
+  );
+
+  await root.moveHeroToTile(root.lastUpdate.world.map.tiles[1]);
+
+  await waitFor(
+    () => root.lastUpdate?.reason === "journey.world.explore" && root.lastUpdate.world.ownHeroes[0]?.position.x === 1,
+    () => captureJourneyArtifact({ root, phase: "world-explore", joinedOptions, room: initialRoom })
+  );
+
+  await root.moveHeroToTile(root.lastUpdate.world.map.tiles[3]);
+
+  await waitFor(
+    () => root.lastUpdate?.battle?.id === "battle-neutral-journey",
+    () => captureJourneyArtifact({ root, phase: "battle-start", joinedOptions, room: initialRoom })
+  );
+
+  await root.actInBattle({
+    type: "battle.attack",
+    attackerId: "hero-1-stack",
+    defenderId: "neutral-1-stack"
+  });
+
+  await waitFor(
+    () => root.lastUpdate?.reason === "journey.battle.settlement" && root.lastUpdate.battle === null,
+    () => captureJourneyArtifact({ root, phase: "battle-settlement", joinedOptions, room: initialRoom })
+  );
+
+  initialRoom.emitLeave(4002);
+
+  await waitFor(
+    () => root.lastUpdate?.reason === "journey.reconnect.restore" && root.lastUpdate.world.meta.day === 5,
+    () => captureJourneyArtifact({ root, phase: "reconnect-restore", joinedOptions, room: recoveredRoom })
+  );
+
+  assert.equal(root.authMode, "account");
+  assert.equal(root.loginId, "veil-ranger");
+  assert.equal(root.sessionSource, "remote");
+  assert.equal(root.lastUpdate?.world.resources.wood, 15);
+  assert.equal(root.lastUpdate?.world.resources.gold, 1012);
+  assert.equal(root.lastUpdate?.world.ownHeroes[0]?.progression.neutralBattlesWon, 1);
+  assert.equal(root.lastUpdate?.world.ownHeroes[0]?.position.x, 1);
+  assert.equal(root.lastUpdate?.world.ownHeroes[0]?.position.y, 1);
+  assert.equal(root.diagnosticsConnectionStatus, "connected");
+  assert.ok(root.logLines.some((line: string) => line.includes("重连失败")));
+  assert.ok(root.logLines.some((line: string) => line.includes("连接已恢复")));
+  assert.deepEqual(joinedOptions, [
+    {
+      logicalRoomId: roomId,
+      playerId,
+      seed: 1001
+    },
+    {
+      logicalRoomId: roomId,
+      playerId,
+      seed: 1001
+    }
+  ]);
+  assert.deepEqual(initialRoom.sentMessages, [
+    {
+      type: "connect",
+      payload: {
+        type: "connect",
+        requestId: "cocos-req-1",
+        roomId,
+        playerId,
+        displayName: "暮潮守望",
+        authToken: "account.session.token"
+      }
+    },
+    {
+      type: "world.action",
+      payload: {
+        type: "world.action",
+        requestId: "cocos-req-2",
+        action: {
+          type: "hero.move",
+          heroId: "hero-1",
+          destination: { x: 1, y: 0 }
+        }
+      }
+    },
+    {
+      type: "world.action",
+      payload: {
+        type: "world.action",
+        requestId: "cocos-req-3",
+        action: {
+          type: "hero.move",
+          heroId: "hero-1",
+          destination: { x: 1, y: 1 }
+        }
+      }
+    },
+    {
+      type: "battle.action",
+      payload: {
+        type: "battle.action",
+        requestId: "cocos-req-4",
+        action: {
+          type: "battle.attack",
+          attackerId: "hero-1-stack",
+          defenderId: "neutral-1-stack"
+        }
+      }
+    }
+  ]);
+  assert.deepEqual(recoveredRoom.sentMessages, [
+    {
+      type: "connect",
+      payload: {
+        type: "connect",
+        requestId: "cocos-req-1",
+        roomId,
+        playerId,
+        displayName: "暮潮守望",
+        authToken: "account.session.token"
+      }
+    }
+  ]);
+  assert.equal(
+    storage.getItem(`project-veil:cocos:reconnection:${roomId}:${playerId}`),
+    "journey-recovered-token"
+  );
 
   root.onDestroy();
   await flushMicrotasks();
