@@ -1,10 +1,11 @@
 import {
   createHeroEquipmentBonusSummary,
   createHeroEquipmentLoadoutView,
-  formatEquipmentBonusSummary,
   formatEquipmentRarityLabel,
+  formatEquipmentBonusSummary,
   HERO_EQUIPMENT_INVENTORY_CAPACITY,
   type EventLogEntry,
+  type EquipmentRarity,
   getEquipmentDefinition,
   type EquipmentType,
   type HeroState
@@ -34,6 +35,14 @@ export interface CocosEquipmentActionRow {
 export interface CocosEquipmentStatSummaryLine {
   label: string;
   value: number;
+}
+
+interface CocosRecentLootEvent {
+  type: "hero.equipmentFound";
+  heroId: string;
+  equipmentName: string;
+  rarity: EquipmentRarity;
+  overflowed?: boolean;
 }
 
 function toHeroState(hero: HeroView): HeroState {
@@ -213,25 +222,51 @@ export function formatEquipmentOverviewLines(hero: HeroView | null): string[] {
   return [`装备 ${equipped.join("  ·  ")}`, ...detail, summaryLine, ...effects, ...descriptions];
 }
 
+function formatSessionLootDescription(
+  event: CocosRecentLootEvent,
+  heroName?: string
+): string {
+  const actorName = heroName?.trim() || event.heroId;
+  return event.overflowed
+    ? `${actorName} 在战斗后发现了${formatEquipmentRarityLabel(event.rarity)}装备 ${event.equipmentName}，但背包已满，未能拾取。`
+    : `${actorName} 在战斗后获得了${formatEquipmentRarityLabel(event.rarity)}装备 ${event.equipmentName}。`;
+}
+
 export function formatRecentLootLines(
   recentEventLog: EventLogEntry[],
   heroId?: string | null,
-  limit = 2
+  limit = 2,
+  recentSessionEvents: CocosRecentLootEvent[] = [],
+  heroName?: string
 ): string[] {
   const normalizedHeroId = heroId?.trim();
+  const recentSessionLoot = recentSessionEvents
+    .filter(
+      (event): event is CocosRecentLootEvent =>
+        event.type === "hero.equipmentFound" && (!normalizedHeroId || event.heroId === normalizedHeroId)
+    )
+    .map((event) => formatSessionLootDescription(event, heroName));
   const heroLoot = recentEventLog.filter(
     (entry) => entry.worldEventType === "hero.equipmentFound" && (!normalizedHeroId || entry.heroId === normalizedHeroId)
   );
-  const source = heroLoot.length > 0
-    ? heroLoot
-    : recentEventLog.filter((entry) => entry.worldEventType === "hero.equipmentFound");
-  const visibleEntries = source.slice(0, Math.max(1, Math.floor(limit)));
+  const fallbackLoot = recentEventLog.filter((entry) => entry.worldEventType === "hero.equipmentFound");
+  const persistedDescriptions = (heroLoot.length > 0 ? heroLoot : fallbackLoot).map((entry) => entry.description);
+  const seenDescriptions = new Set<string>();
+  const mergedDescriptions = [...recentSessionLoot, ...persistedDescriptions].filter((description) => {
+    if (seenDescriptions.has(description)) {
+      return false;
+    }
+
+    seenDescriptions.add(description);
+    return true;
+  });
+  const visibleEntries = mergedDescriptions.slice(0, Math.max(1, Math.floor(limit)));
 
   if (visibleEntries.length === 0) {
     return ["战利品 最近暂无装备掉落"];
   }
 
-  return [`战利品 最近 ${source.length} 条`, ...visibleEntries.map((entry) => entry.description)];
+  return [`战利品 最近 ${mergedDescriptions.length} 条`, ...visibleEntries];
 }
 
 export function buildHeroEquipmentActionRows(hero: HeroView | null): CocosEquipmentActionRow[] {

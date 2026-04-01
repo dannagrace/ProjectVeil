@@ -272,3 +272,45 @@ test("formatRecentLootLines keeps the latest hero loot entries visible in Cocos 
   ]);
   assert.deepEqual(formatRecentLootLines([], "hero-1"), ["战利品 最近暂无装备掉落"]);
 });
+
+test("formatRecentLootLines prioritizes authoritative session loot before account refresh catches up", () => {
+  const entries: EventLogEntry[] = [
+    {
+      id: "loot-1",
+      timestamp: "2026-03-28T10:00:00.000Z",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      category: "combat",
+      description: "凯琳在战斗后获得了普通装备 塔盾链甲。",
+      heroId: "hero-1",
+      worldEventType: "hero.equipmentFound",
+      rewards: []
+    }
+  ];
+
+  assert.deepEqual(
+    formatRecentLootLines(
+      entries,
+      "hero-1",
+      2,
+      [
+        {
+          type: "hero.equipmentFound",
+          heroId: "hero-1",
+          battleId: "battle-1",
+          battleKind: "neutral",
+          equipmentId: "warden_aegis",
+          equipmentName: "守誓圣铠",
+          rarity: "epic",
+          overflowed: true
+        }
+      ],
+      "凯琳"
+    ),
+    [
+      "战利品 最近 2 条",
+      "凯琳 在战斗后发现了史诗装备 守誓圣铠，但背包已满，未能拾取。",
+      "凯琳在战斗后获得了普通装备 塔盾链甲。"
+    ]
+  );
+});

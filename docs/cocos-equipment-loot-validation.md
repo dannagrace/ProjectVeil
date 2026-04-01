@@ -19,6 +19,8 @@
   - a full-bag warning before the next equipment pickup would overflow
   - recent loot lines from the Cocos-visible account event log
 - Existing equip/unequip buttons remain the interaction surface and continue to drive prediction plus server reconciliation.
+- The hero summary card now renders equipment-adjusted totals from shared progression math, so stat changes are visible during prediction and after reconciliation instead of only after a secondary refresh path.
+- Recent loot rows now merge the latest authoritative session loot events with the persisted account event log, so battle drops and overflowed pickups stay visible immediately after combat even before account-history refresh finishes.
 - Equipment loot now respects a fixed 6-slot backpack cap:
   - battle drops are only added when space remains
   - when full, the drop is surfaced as overflowed/not picked up instead of being silently appended
