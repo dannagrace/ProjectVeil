@@ -3,6 +3,7 @@ import {
   createHeroEquipmentLoadoutView,
   formatEquipmentBonusSummary,
   formatEquipmentRarityLabel,
+  HERO_EQUIPMENT_INVENTORY_CAPACITY,
   type EventLogEntry,
   getEquipmentDefinition,
   type EquipmentType,
@@ -60,6 +61,10 @@ function toHeroState(hero: HeroView): HeroState {
 }
 
 export function formatEquipmentActionReason(reason: string): string {
+  if (reason === "equipment_inventory_full") {
+    return "背包已满，请先腾出空位";
+  }
+
   if (reason === "equipment_not_in_inventory") {
     return "背包里没有这件装备";
   }
@@ -145,17 +150,27 @@ export function formatInventorySummaryLines(hero: HeroView | null): string[] {
   }
 
   const items = inventoryItemsForHero(hero);
+  const totalCount = hero.loadout.inventory.length;
   if (items.length === 0) {
-    return ["背包 暂无可装备物品"];
+    return totalCount >= HERO_EQUIPMENT_INVENTORY_CAPACITY
+      ? [
+          `背包 ${totalCount}/${HERO_EQUIPMENT_INVENTORY_CAPACITY} 件`,
+          "背包已满，新的战利品会溢出",
+          "暂无可装备物品"
+        ]
+      : ["背包 暂无可装备物品"];
   }
 
-  const totalCount = items.reduce((sum, item) => sum + item.count, 0);
   const detailLines = items.map((item) => {
     const countLabel = item.count > 1 ? ` x${item.count}` : "";
     return `${formatEquipmentSlotLabel(item.slot)} ${item.rarityLabel} ${item.name}${countLabel} · ${item.bonusSummary}`;
   });
 
-  return [`背包 ${totalCount} 件（${items.length} 类）`, ...detailLines];
+  return [
+    `背包 ${totalCount}/${HERO_EQUIPMENT_INVENTORY_CAPACITY} 件（${items.length} 类）`,
+    ...(totalCount >= HERO_EQUIPMENT_INVENTORY_CAPACITY ? ["背包已满，新的战利品会溢出"] : []),
+    ...detailLines
+  ];
 }
 
 export function formatEquipmentStatSummary(hero: HeroView | null): CocosEquipmentStatSummaryLine[] {

@@ -54,6 +54,7 @@ import {
   getDefaultEquipmentCatalog,
   getLatestProgressedAchievement,
   getLatestUnlockedAchievement,
+  HERO_EQUIPMENT_INVENTORY_CAPACITY,
   hasFullyExploredMap,
   normalizeAchievementProgressQuery,
   normalizeEventLogQuery,
@@ -1988,6 +1989,98 @@ test("equipment drops respect rarity pools and battle victories add loot to hero
       rarity: "common"
     }
   ]);
+});
+
+test("equipment drops overflow cleanly when the backpack is already full", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳"
+  });
+  hero.loadout.inventory = [
+    "militia_pike",
+    "oak_longbow",
+    "padded_gambeson",
+    "tower_shield_mail",
+    "scout_compass",
+    "sun_medallion"
+  ];
+  assert.equal(hero.loadout.inventory.length, HERO_EQUIPMENT_INVENTORY_CAPACITY);
+
+  const neutralArmy: NeutralArmyState = {
+    id: "neutral-1",
+    position: { x: 1, y: 0 },
+    reward: { kind: "gold", amount: 100 },
+    stacks: [{ templateId: "wolf_pack", count: 4 }]
+  };
+  const state = createWorldState({
+    heroes: [hero],
+    neutralArmies: { "neutral-1": neutralArmy },
+    resources: {
+      "player-1": {
+        gold: 0,
+        wood: 0,
+        ore: 0
+      }
+    }
+  });
+  state.meta.seed = 3;
+
+  const outcome = applyBattleOutcomeToWorld(state, "battle-neutral-1", "hero-1", {
+    status: "attacker_victory",
+    survivingAttackers: ["hero-1-stack"],
+    survivingDefenders: []
+  });
+
+  assert.deepEqual(outcome.state.heroes[0]?.loadout.inventory, hero.loadout.inventory);
+  assert.deepEqual(outcome.events.slice(-1), [
+    {
+      type: "hero.equipmentFound",
+      heroId: "hero-1",
+      battleId: "battle-neutral-1",
+      battleKind: "neutral",
+      equipmentId: "tower_shield_mail",
+      equipmentName: "塔盾链甲",
+      rarity: "common",
+      overflowed: true
+    }
+  ]);
+});
+
+test("validateWorldAction rejects unequip when the backpack is already full", () => {
+  const hero = createHero({
+    id: "hero-equip-action",
+    playerId: "player-1",
+    name: "凯琳",
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        weaponId: "vanguard_blade",
+        trinketIds: []
+      },
+      inventory: [
+        "militia_pike",
+        "oak_longbow",
+        "padded_gambeson",
+        "tower_shield_mail",
+        "scout_compass",
+        "sun_medallion"
+      ]
+    }
+  });
+  const state = createWorldState({ heroes: [hero] });
+
+  assert.deepEqual(
+    validateWorldAction(state, {
+      type: "hero.unequip",
+      heroId: "hero-equip-action",
+      slot: "weapon"
+    }),
+    {
+      valid: false,
+      reason: "equipment_inventory_full"
+    }
+  );
 });
 
 test("resolveWorldAction starts a battle when a hero reaches a neutral army tile", () => {

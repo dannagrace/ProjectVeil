@@ -392,7 +392,9 @@ export function createWorldEventLogEntry(
         roomId: state.meta.roomId,
         playerId,
         category: "combat",
-        description: `${hero?.name ?? event.heroId} 在战斗后获得了${formatEquipmentRarityLabel(event.rarity)}装备 ${event.equipmentName}。`,
+        description: event.overflowed
+          ? `${hero?.name ?? event.heroId} 在战斗后发现了${formatEquipmentRarityLabel(event.rarity)}装备 ${event.equipmentName}，但背包已满，未能拾取。`
+          : `${hero?.name ?? event.heroId} 在战斗后获得了${formatEquipmentRarityLabel(event.rarity)}装备 ${event.equipmentName}。`,
         heroId: event.heroId,
         worldEventType: event.type,
         rewards: []

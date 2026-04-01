@@ -227,6 +227,36 @@ test("room equips hero items from carried inventory and emits the equipment chan
   ]);
 });
 
+test("room rejects unequip when the backpack is already full", () => {
+  const room = createRoom("room-unequip-full", 1001);
+  const state = room.getInternalState();
+  const hero = state.heroes.find((entry) => entry.id === "hero-1");
+
+  if (!hero) {
+    throw new Error("Expected hero-1 to exist");
+  }
+
+  hero.loadout.equipment.weaponId = "vanguard_blade";
+  hero.loadout.inventory = [
+    "militia_pike",
+    "oak_longbow",
+    "padded_gambeson",
+    "tower_shield_mail",
+    "scout_compass",
+    "sun_medallion"
+  ];
+
+  const result = room.dispatch("player-1", {
+    type: "hero.unequip",
+    heroId: "hero-1",
+    slot: "weapon"
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "equipment_inventory_full");
+  assert.equal(result.snapshot.state.ownHeroes[0]?.loadout.equipment.weaponId, "vanguard_blade");
+});
+
 test("room allows recruiting from a recruitment post when the hero stands on it", () => {
   const room = createRoom("room-recruit", 1001);
   const state = room.getInternalState();

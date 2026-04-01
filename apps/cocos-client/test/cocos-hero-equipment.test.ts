@@ -120,6 +120,7 @@ test("buildHeroEquipmentActionRows exposes equipped items and remaining inventor
 });
 
 test("formatEquipmentActionReason keeps user-facing copy stable", () => {
+  assert.equal(formatEquipmentActionReason("equipment_inventory_full"), "背包已满，请先腾出空位");
   assert.equal(formatEquipmentActionReason("equipment_slot_empty"), "当前槽位没有可卸下的装备");
   assert.equal(formatEquipmentActionReason("equipment_not_in_inventory"), "背包里没有这件装备");
   assert.equal(formatEquipmentActionReason("unknown_reason"), "unknown_reason");
@@ -139,10 +140,43 @@ test("formatInventorySummaryLines exposes the current backpack as grouped readab
       })
     ),
     [
-      "背包 4 件（3 类）",
+      "背包 4/6 件（3 类）",
       "武器 普通 民兵长枪 x2 · 攻击 +6%",
       "护甲 普通 厚绗布甲 · 防御 +6% / 生命上限 +2",
       "饰品 普通 斥候罗盘 · 攻击 +3% / 知识 +1"
+    ]
+  );
+});
+
+test("formatInventorySummaryLines warns when the backpack has reached capacity", () => {
+  assert.deepEqual(
+    formatInventorySummaryLines(
+      createHero({
+        loadout: {
+          learnedSkills: [],
+          equipment: {
+            trinketIds: []
+          },
+          inventory: [
+            "militia_pike",
+            "oak_longbow",
+            "padded_gambeson",
+            "tower_shield_mail",
+            "scout_compass",
+            "sun_medallion"
+          ]
+        }
+      })
+    ),
+    [
+      "背包 6/6 件（6 类）",
+      "背包已满，新的战利品会溢出",
+      "武器 普通 民兵长枪 · 攻击 +6%",
+      "武器 普通 橡木长弓 · 攻击 +4% / 知识 +1",
+      "护甲 普通 厚绗布甲 · 防御 +6% / 生命上限 +2",
+      "护甲 普通 塔盾链甲 · 防御 +8%",
+      "饰品 普通 斥候罗盘 · 攻击 +3% / 知识 +1",
+      "饰品 史诗 曜日勋章 · 攻击 +8% / 防御 +8% / 力量 +1"
     ]
   );
 });
@@ -208,6 +242,17 @@ test("formatRecentLootLines keeps the latest hero loot entries visible in Cocos 
       rewards: []
     },
     {
+      id: "loot-3",
+      timestamp: "2026-03-28T08:30:00.000Z",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      category: "combat",
+      description: "凯琳在战斗后发现了史诗装备 守誓圣铠，但背包已满，未能拾取。",
+      heroId: "hero-1",
+      worldEventType: "hero.equipmentFound",
+      rewards: []
+    },
+    {
       id: "other-1",
       timestamp: "2026-03-28T08:00:00.000Z",
       roomId: "room-alpha",
@@ -221,7 +266,7 @@ test("formatRecentLootLines keeps the latest hero loot entries visible in Cocos 
   ];
 
   assert.deepEqual(formatRecentLootLines(entries, "hero-1"), [
-    "战利品 最近 2 条",
+    "战利品 最近 3 条",
     "凯琳在战斗后获得了普通装备 塔盾链甲。",
     "凯琳在战斗后获得了稀有装备 斥候罗盘。"
   ]);

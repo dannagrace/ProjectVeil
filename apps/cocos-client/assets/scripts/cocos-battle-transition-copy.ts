@@ -155,7 +155,9 @@ function buildBattleExitDetailChips(events: WorldEvent[]): BattleTransitionChip[
   const equipmentChip = featuredEquipment
     ? {
         icon: "battle" as const,
-        label: `${formatEquipmentRarityLabel(featuredEquipment.rarity)} ${trimChipLabel(featuredEquipment.equipmentName, 10)}`
+        label: featuredEquipment.overflowed
+          ? `未拾取 ${trimChipLabel(featuredEquipment.equipmentName, 8)}`
+          : `${formatEquipmentRarityLabel(featuredEquipment.rarity)} ${trimChipLabel(featuredEquipment.equipmentName, 10)}`
       }
     : null;
   const progressionChip = progressionSummary

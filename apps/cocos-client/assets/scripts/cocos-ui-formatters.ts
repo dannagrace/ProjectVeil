@@ -215,7 +215,9 @@ function formatWorldEvent(event: WorldEvent): string | null {
   }
 
   if (event.type === "hero.equipmentFound") {
-    return `战斗缴获 ${event.equipmentName}。`;
+    return event.overflowed
+      ? `战斗发现 ${event.equipmentName}，但背包已满，未能拾取。`
+      : `战斗缴获 ${event.equipmentName}。`;
   }
 
   if (event.type === "resource.produced" && isObjectRecord(event.resource)) {

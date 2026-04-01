@@ -688,6 +688,7 @@ export type WorldEvent =
       equipmentId: EquipmentId;
       equipmentName: string;
       rarity: EquipmentRarity;
+      overflowed?: boolean;
     }
   | {
       type: "battle.started";

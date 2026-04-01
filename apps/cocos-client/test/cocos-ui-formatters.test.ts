@@ -117,7 +117,8 @@ test("buildTimelineEntriesFromUpdate formats world events and system rejection",
         battleKind: "neutral",
         equipmentId: "tower_shield_mail",
         equipmentName: "塔盾链甲",
-        rarity: "common"
+        rarity: "common",
+        overflowed: true
       }
     ],
     movementPlan: {
@@ -144,7 +145,7 @@ test("buildTimelineEntriesFromUpdate formats world events and system rejection",
     "事件：中立守军 neutral-1 主动追击，移动到 (2,2)。",
     "事件：中立守军 neutral-1 主动发起战斗。",
     "事件：武器槽位已装备 先锋战刃，卸下 民兵长枪。",
-    "事件：战斗缴获 塔盾链甲。"
+    "事件：战斗发现 塔盾链甲，但背包已满，未能拾取。"
   ]);
 });
 
@@ -248,6 +249,7 @@ test("formatSystemTimelineEntry and pickRecentBattleTimeline keep timeline prese
 test("formatSessionActionReason translates shared rejection reasons into player-facing copy", () => {
   assert.equal(formatSessionActionReason("building_on_cooldown"), "这个建筑今天已经结算过了");
   assert.equal(formatSessionActionReason("not_enough_skill_points"), "技能点不足");
+  assert.equal(formatSessionActionReason("equipment_inventory_full"), "背包已满，请先腾出空位");
   assert.equal(formatSessionActionReason("equipment_not_in_inventory"), "背包里没有这件装备");
   assert.equal(formatSessionActionReason("friendly_fire_blocked"), "不能攻击友军");
   assert.equal(formatSessionActionReason("skill_on_cooldown"), "这个技能还在冷却中");

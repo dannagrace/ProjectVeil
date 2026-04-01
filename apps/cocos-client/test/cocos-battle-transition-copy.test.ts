@@ -286,3 +286,43 @@ test("buildBattleExitCopy prioritizes level and equipment chips when rewards ove
     ]
   });
 });
+
+test("buildBattleExitCopy marks overflowed equipment so failed pickups stay visible", () => {
+  const update = createBattleEnterUpdate(
+    {
+      type: "battle.started",
+      heroId: "hero-1",
+      encounterKind: "neutral",
+      neutralArmyId: "neutral-9",
+      initiator: "hero",
+      battleId: "battle-3",
+      path: [{ x: 4, y: 3 }, { x: 5, y: 3 }],
+      moveCost: 1
+    },
+    "sand",
+    { x: 5, y: 3 }
+  );
+  update.events = [
+    {
+      type: "hero.equipmentFound",
+      heroId: "hero-1",
+      battleId: "battle-3",
+      battleKind: "neutral",
+      equipmentId: "ember-crown",
+      equipmentName: "余烬王冠",
+      rarity: "epic",
+      overflowed: true
+    }
+  ];
+
+  assert.deepEqual(buildBattleExitCopy(update.battle, update, true), {
+    badge: "VICTORY",
+    title: "战斗胜利",
+    subtitle: "沙原战场 · 坐标 (5,3) · 返回世界地图，继续推进前线",
+    tone: "victory",
+    terrain: "sand",
+    detailChips: [
+      { icon: "battle", label: "未拾取 余烬王冠" }
+    ]
+  });
+});

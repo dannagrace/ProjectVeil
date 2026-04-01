@@ -128,6 +128,29 @@ test("shared event log factory builds world event entries with shared descriptio
   assert.match(loot?.description ?? "", /史诗装备 守誓圣铠/);
 });
 
+test("shared event log factory keeps overflowed equipment pickups explicit", () => {
+  const state = createEventTrackingWorldState();
+  const overflowedLoot = createWorldEventLogEntry(
+    state,
+    "player-1",
+    {
+      type: "hero.equipmentFound",
+      heroId: "hero-1",
+      battleId: "battle-1",
+      battleKind: "neutral",
+      equipmentId: "warden_aegis",
+      equipmentName: "守誓圣铠",
+      rarity: "epic",
+      overflowed: true
+    },
+    "2026-03-27T10:01:00.000Z",
+    3
+  );
+
+  assert.match(overflowedLoot?.description ?? "", /背包已满/);
+  assert.match(overflowedLoot?.description ?? "", /未能拾取/);
+});
+
 test("shared event log factory builds achievement progress and unlock entries", () => {
   const achievement: PlayerAchievementProgress = {
     id: "skill_scholar",
