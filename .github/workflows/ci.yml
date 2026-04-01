@@ -149,6 +149,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -158,6 +160,30 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
+
+      - name: Detect PRs that touch Cocos release packaging surfaces
+        id: cocos-release-packaging
+        if: github.event_name == 'pull_request'
+        run: |
+          changed_paths="${RUNNER_TEMP}/release-readiness/cocos-release-packaging-changed-paths-${GITHUB_SHA}.txt"
+          mkdir -p "$(dirname "${changed_paths}")"
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" | tee "${changed_paths}"
+
+          touched=false
+          if rg -n \
+            '^(apps/cocos-client/|scripts/cocos-[^/]+|scripts/.*release.*|docs/cocos-[^/]+|apps/cocos-client/build-templates/wechatgame/|apps/cocos-client/test/fixtures/wechatgame-export/|apps/cocos-client/wechat-minigame\.build\.json$)' \
+            "${changed_paths}" >/dev/null; then
+            touched=true
+          fi
+
+          echo "touched=${touched}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## Cocos Release Packaging PR Detection"
+            echo
+            echo "- Base ref: \`${{ github.base_ref }}\`"
+            echo "- Qualifying paths touched: \`${touched}\`"
+            echo "- Changed-path report: \`${changed_paths}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Check WeChat mini game templates and exported fixture
         run: npm run check:wechat-build
@@ -176,7 +202,19 @@ jobs:
             --markdown-output "${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.md" \
             --github-step-summary "${GITHUB_STEP_SUMMARY}"
 
+      - name: Run primary Cocos client journey regression gate
+        if: always() && github.event_name == 'pull_request' && steps.cocos-release-packaging.outputs.touched == 'true'
+        run: npm run test:cocos:primary-journey
+
+      - name: Capture primary Cocos diagnostics evidence
+        if: always() && github.event_name == 'pull_request' && steps.cocos-release-packaging.outputs.touched == 'true'
+        run: |
+          npm run release:cocos:primary-diagnostics -- \
+            --output "${RUNNER_TEMP}/release-readiness/cocos-primary-client-diagnostics-${GITHUB_SHA}.json" \
+            --markdown-output "${RUNNER_TEMP}/release-readiness/cocos-primary-client-diagnostics-${GITHUB_SHA}.md"
+
       - name: Upload WeChat release artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: wechat-release-${{ github.sha }}
@@ -184,10 +222,65 @@ jobs:
           if-no-files-found: error
 
       - name: Upload primary Cocos delivery audit
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cocos-primary-delivery-audit-${{ github.sha }}
           path: ${{ runner.temp }}/release-readiness/cocos-primary-delivery-audit-${{ github.sha }}.*
+          if-no-files-found: error
+
+      - name: Assemble PR Cocos diagnostics evidence bundle
+        if: always() && github.event_name == 'pull_request' && steps.cocos-release-packaging.outputs.touched == 'true'
+        env:
+          BUNDLE_DIR: ${{ runner.temp }}/release-readiness/cocos-release-packaging-evidence-${{ github.sha }}
+        run: |
+          mkdir -p "${BUNDLE_DIR}"
+
+          changed_paths="${RUNNER_TEMP}/release-readiness/cocos-release-packaging-changed-paths-${GITHUB_SHA}.txt"
+          audit_json="${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.json"
+          audit_md="${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.md"
+          diagnostics_json="${RUNNER_TEMP}/release-readiness/cocos-primary-client-diagnostics-${GITHUB_SHA}.json"
+          diagnostics_md="${RUNNER_TEMP}/release-readiness/cocos-primary-client-diagnostics-${GITHUB_SHA}.md"
+          summary_path="${BUNDLE_DIR}/SUMMARY.md"
+
+          cp "${changed_paths}" "${BUNDLE_DIR}/changed-paths.txt"
+          for candidate in "${audit_json}" "${audit_md}" "${diagnostics_json}" "${diagnostics_md}"; do
+            if [[ -f "${candidate}" ]]; then
+              cp "${candidate}" "${BUNDLE_DIR}/"
+            fi
+          done
+
+          {
+            echo "# Cocos Release Packaging Diagnostics Evidence"
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- PR: #${{ github.event.pull_request.number }}"
+            echo "- Trigger: qualifying Cocos release packaging paths changed"
+            echo "- Changed paths: \`changed-paths.txt\`"
+            echo
+            echo "## Expected evidence"
+            if [[ -f "${audit_json}" && -f "${audit_md}" ]]; then
+              echo "- Delivery audit: present"
+            else
+              echo "- Delivery audit: missing. Regressed command: \`npm run audit:cocos-primary-delivery -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir \\\"\${WECHAT_RELEASE_ARTIFACTS_DIR}\\\" --expect-exported-runtime --expected-revision \\\"\${GITHUB_SHA}\\\"\`"
+            fi
+            if [[ -f "${diagnostics_json}" && -f "${diagnostics_md}" ]]; then
+              echo "- Primary-client diagnostics: present"
+            else
+              echo "- Primary-client diagnostics: missing. Regressed command: \`npm run release:cocos:primary-diagnostics -- --output <json> --markdown-output <md>\`"
+            fi
+            echo
+            echo "Review this bundle before merge when a PR changes release packaging surfaces."
+          } > "${summary_path}"
+
+          cat "${summary_path}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload PR Cocos diagnostics evidence bundle
+        if: always() && github.event_name == 'pull_request' && steps.cocos-release-packaging.outputs.touched == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cocos-release-packaging-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness/cocos-release-packaging-evidence-${{ github.sha }}
           if-no-files-found: error
 
   wechat-release-artifact-smoke:

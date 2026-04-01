@@ -13,6 +13,9 @@
 - 当前自动化可把已校验导出目录打成确定性的 `tar.gz` 发布包，并输出 sidecar 元数据 `codex.wechat.package.json`
   - sidecar 会记录归档文件名、SHA-256、字节数、导出目录来源，以及归档内文件清单摘要
 - 当前自动化还会运行 `npm run audit:cocos-primary-delivery`，把 primary client 的导出校验与 artifact 校验收口成一份简明 JSON / Markdown 摘要
+- 当 PR 改动 `apps/cocos-client/**`、`scripts/cocos-*`、`scripts/*release*`、`docs/cocos-*` 或微信小游戏打包路径时，CI 会额外运行 `npm run test:cocos:primary-journey` 与 `npm run release:cocos:primary-diagnostics`
+  - 结果会统一上传为 GitHub Actions artifact `cocos-release-packaging-evidence-<sha>`，其中固定包含 `SUMMARY.md`，并在成功时附带 primary delivery audit 与 primary-client diagnostics 的 JSON / Markdown 证据
+  - 若任一证据缺失，`SUMMARY.md` 会明确指出缺失的是 delivery audit 还是 diagnostics artifact，并给出对应回归命令
 - CI 会把上述归档与 sidecar 元数据作为 GitHub Actions artifact `wechat-release-<sha>` 上传，供提审前下载、留档与回滚追溯
 - CI 额外会把刚上传的 artifact 再下载一次，并运行 `npm run verify:wechat-release` 做 artifact 级 smoke 验收
 - GitHub Actions 现支持在 `workflow_dispatch` 时显式开启 `upload`，或推送 `wechat-release-<version>` tag 后自动执行 `miniprogram-ci` 上传
@@ -36,6 +39,7 @@
 - 统一 Cocos RC candidate bundle：`npm run release:cocos-rc:bundle`
 - Primary client delivery checklist：`docs/cocos-primary-client-delivery.md`
 - Primary client delivery audit：`npm run audit:cocos-primary-delivery -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--expected-revision <git-sha>]`
+- PR 包装改动门禁：匹配上述路径时，查看 CI artifact `cocos-release-packaging-evidence-<git-sha>`
 - RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
 - RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - WeChat 手工复核 contract 示例：`docs/release-evidence/wechat-release-manual-review.example.json`

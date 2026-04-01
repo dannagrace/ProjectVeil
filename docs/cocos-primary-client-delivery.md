@@ -39,6 +39,13 @@ The audit currently enforces two stable checks:
 
 The command emits a concise JSON plus Markdown summary under `artifacts/release-readiness/` by default, and CI appends the Markdown summary to the GitHub step summary.
 
+For PRs that touch Cocos release-packaging surfaces, GitHub Actions now treats this audit as part of the merge gate. The same run also executes:
+
+- `npm run test:cocos:primary-journey`
+- `npm run release:cocos:primary-diagnostics`
+
+CI then uploads a single reviewer-facing artifact named `cocos-release-packaging-evidence-<sha>`. Its `SUMMARY.md` calls out whether the delivery audit or primary-client diagnostics evidence was missing so regressions are actionable without digging through raw logs first.
+
 ## Primary-Client Diagnostic Snapshots
 
 Generate the structured diagnostic evidence packet before final release review:
