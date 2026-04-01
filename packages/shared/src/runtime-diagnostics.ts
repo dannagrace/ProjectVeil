@@ -125,6 +125,33 @@ export interface RuntimeDiagnosticsReplaySnapshot {
   totalSteps: number;
 }
 
+export type PrimaryClientTelemetryCategory = "progression" | "inventory" | "combat";
+
+export type PrimaryClientTelemetryStatus = "info" | "success" | "failure" | "blocked";
+
+export interface PrimaryClientTelemetryEvent {
+  at: string;
+  category: PrimaryClientTelemetryCategory;
+  checkpoint: string;
+  status: PrimaryClientTelemetryStatus;
+  detail: string;
+  roomId: string;
+  playerId: string;
+  heroId?: string;
+  battleId?: string;
+  battleKind?: "neutral" | "hero";
+  result?: "attacker_victory" | "defender_victory";
+  reason?: string;
+  slot?: string;
+  equipmentId?: string;
+  equipmentName?: string;
+  itemCount?: number;
+  level?: number;
+  experienceGained?: number;
+  levelsGained?: number;
+  skillPointsAwarded?: number;
+}
+
 export interface RuntimeDiagnosticsSnapshot {
   schemaVersion: number;
   exportedAt: string;
@@ -147,6 +174,7 @@ export interface RuntimeDiagnosticsSnapshot {
     predictionStatus: string | null;
     pendingUiTasks: number;
     replay: RuntimeDiagnosticsReplaySnapshot | null;
+    primaryClientTelemetry: PrimaryClientTelemetryEvent[];
   };
 }
 
@@ -511,6 +539,10 @@ export function buildRuntimeDiagnosticsSummaryLines(snapshot: RuntimeDiagnostics
 
   if (snapshot.diagnostics.recoverySummary) {
     lines.push(`Recovery ${snapshot.diagnostics.recoverySummary}`);
+  }
+
+  for (const entry of snapshot.diagnostics.primaryClientTelemetry.slice(0, 2)) {
+    lines.push(`Telemetry ${entry.category}/${entry.checkpoint} (${entry.status}) ${entry.detail}`);
   }
 
   lines.push(`Pending UI tasks ${snapshot.diagnostics.pendingUiTasks}`);

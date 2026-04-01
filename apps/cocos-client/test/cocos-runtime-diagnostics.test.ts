@@ -31,7 +31,21 @@ test("Cocos runtime diagnostics reuse the shared snapshot shape for HUD triage",
     timelineEntries: ["房间 room-alpha 已恢复同步。"],
     logLines: ["连接已中断，正在尝试重连...", "已回放缓存状态，等待房间同步..."],
     predictionStatus: "已回放缓存状态，等待房间同步...",
-    recoverySummary: "已回放缓存状态，等待房间同步..."
+    recoverySummary: "已回放缓存状态，等待房间同步...",
+    primaryClientTelemetry: [
+      {
+        at: "2026-03-29T08:59:42.000Z",
+        category: "combat",
+        checkpoint: "encounter.started",
+        status: "info",
+        detail: "Battle battle-1 started against neutral.",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        heroId: "hero-1",
+        battleId: "battle-1",
+        battleKind: "neutral"
+      }
+    ]
   });
 
   assert.equal(snapshot.source.surface, "cocos-runtime-overlay");
@@ -55,7 +69,8 @@ test("Cocos runtime diagnostics reuse the shared snapshot shape for HUD triage",
       timelineEntries: ["房间 room-alpha 已恢复同步。"],
       logLines: ["连接已中断，正在尝试重连...", "已回放缓存状态，等待房间同步..."],
       predictionStatus: "已回放缓存状态，等待房间同步...",
-      recoverySummary: "已回放缓存状态，等待房间同步..."
+      recoverySummary: "已回放缓存状态，等待房间同步...",
+      primaryClientTelemetry: []
     },
     "2026-03-29T09:00:20.000Z"
   );

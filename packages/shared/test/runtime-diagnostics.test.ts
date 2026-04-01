@@ -90,6 +90,20 @@ function createRuntimeDiagnosticsSnapshot(): RuntimeDiagnosticsSnapshot {
       logTail: ["Room room-alpha connected", "Battle resolved"],
       recoverySummary: "连接已恢复，当前地图与战斗状态来自最新权威快照。",
       predictionStatus: "server-authoritative",
+      primaryClientTelemetry: [
+        {
+          at: "2026-03-29T07:09:05.000Z",
+          category: "combat",
+          checkpoint: "encounter.resolved",
+          status: "success",
+          detail: "Battle battle-1 resolved as attacker_victory.",
+          roomId: "room-alpha",
+          playerId: "player-1",
+          heroId: "hero-1",
+          battleId: "battle-1",
+          result: "attacker_victory"
+        }
+      ],
       pendingUiTasks: 2,
       replay: {
         replayId: "room-alpha:battle-1:player-1",
@@ -118,6 +132,7 @@ test("runtime diagnostics summary text stays stable for panel and automation con
   assert.match(rendered, /Hero 凯琳 @ 0,0 \/ MOV 4\/6 \/ HP 30\/30/);
   assert.match(rendered, /Account 暮火侦骑 \(remote\) \/ events 3 \/ replays 1/);
   assert.match(rendered, /Recovery 连接已恢复，当前地图与战斗状态来自最新权威快照。/);
+  assert.match(rendered, /Telemetry combat\/encounter\.resolved \(success\) Battle battle-1 resolved as attacker_victory\./);
   assert.match(rendered, /Replay room-alpha:battle-1:player-1 \/ paused \/ step 1\/3/);
   assert.match(rendered, /Timeline \[push\/battle\] Room room-alpha finished battle battle-1/);
 });
@@ -172,6 +187,7 @@ test("runtime diagnostics summary text supports aggregate server snapshots", () 
       logTail: ["project-veil-server rooms=2 connections=3"],
       recoverySummary: null,
       predictionStatus: "server-observability",
+      primaryClientTelemetry: [],
       pendingUiTasks: 0,
       replay: null
     }
