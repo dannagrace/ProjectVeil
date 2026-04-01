@@ -95,3 +95,11 @@ The JSON report contains:
   - each entry includes a concise summary, next step, and artifact references
 
 Use this as the top-level release health entry point when a person, bot, or PR comment needs one answer for the current branch state.
+
+## Maintainer History Check
+
+For branch-level readiness history in GitHub Actions, use the `Release Readiness History` workflow instead of stitching together raw CI artifacts by hand.
+
+- Open the latest successful workflow run for the branch.
+- Download the `release-readiness-history` artifact.
+- Start with `release-health-summary.md` for the top-level call, then inspect `ci-trend-summary.md` for deltas versus the previous successful history baseline and `release-readiness-dashboard.md` for the latest go/no-go view.

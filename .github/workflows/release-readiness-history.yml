@@ -1,0 +1,471 @@
+name: Release Readiness History
+
+permissions:
+  actions: read
+  contents: read
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Optional CI workflow run id to snapshot instead of the latest completed CI run on this branch
+        required: false
+        type: string
+
+concurrency:
+  group: release-readiness-history-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish-release-readiness-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HISTORY_DIR: ${{ runner.temp }}/release-readiness-history
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Pin npm runtime
+        run: npm install --global npm@10.9.3
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Resolve source CI run
+        id: source
+        uses: actions/github-script@v7
+        env:
+          DISPATCH_CI_RUN_ID: ${{ github.event.inputs.ci_run_id }}
+        with:
+          script: |
+            const branch = context.ref.replace(/^refs\/heads\//, "");
+            const workflowId = "ci.yml";
+            let run;
+
+            if (process.env.DISPATCH_CI_RUN_ID) {
+              const runId = Number.parseInt(process.env.DISPATCH_CI_RUN_ID, 10);
+              if (!Number.isFinite(runId)) {
+                core.setFailed(`Invalid ci_run_id: ${process.env.DISPATCH_CI_RUN_ID}`);
+                return;
+              }
+              const response = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId
+              });
+              run = response.data;
+            } else {
+              const response = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: workflowId,
+                branch,
+                status: "completed",
+                per_page: 20
+              });
+              run = response.data.workflow_runs[0];
+            }
+
+            if (!run) {
+              core.setFailed(`No completed CI workflow run found for branch ${branch}.`);
+              return;
+            }
+
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: run.id,
+              per_page: 100
+            });
+
+            const findConclusion = (jobName) => jobs.find((job) => job.name === jobName)?.conclusion ?? "";
+
+            core.setOutput("run-id", String(run.id));
+            core.setOutput("run-url", run.html_url);
+            core.setOutput("head-sha", run.head_sha);
+            core.setOutput("head-branch", run.head_branch);
+            core.setOutput("validate-result", findConclusion("validate"));
+            core.setOutput("wechat-build-result", findConclusion("wechat-build-validation"));
+            core.setOutput("client-smoke-result", findConclusion("client-release-candidate-smoke"));
+
+      - name: Resolve previous successful history baseline
+        id: baseline
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.ref.replace(/^refs\/heads\//, "");
+            const response = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "release-readiness-history.yml",
+              branch,
+              status: "completed",
+              per_page: 20
+            });
+
+            const baseline = response.data.workflow_runs.find((run) => run.id !== context.runId && run.conclusion === "success");
+            core.setOutput("run-id", baseline ? String(baseline.id) : "");
+            core.setOutput("run-url", baseline?.html_url ?? "");
+
+      - name: Download runtime regression artifacts from source CI run
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.run-id }}
+          pattern: runtime-regression-*
+          path: ${{ runner.temp }}/source/runtime
+          merge-multiple: true
+
+      - name: Download packaged client RC smoke artifacts from source CI run
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.run-id }}
+          pattern: client-release-candidate-smoke-*
+          path: ${{ runner.temp }}/source/client-smoke
+          merge-multiple: true
+
+      - name: Download WeChat release artifacts from source CI run
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.run-id }}
+          pattern: wechat-release-*
+          path: ${{ runner.temp }}/source/wechat-release
+          merge-multiple: true
+
+      - name: Download V8 coverage artifacts from source CI run
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.run-id }}
+          pattern: v8-coverage-*
+          path: ${{ runner.temp }}/source/coverage
+          merge-multiple: true
+
+      - name: Download previous release-readiness history artifact
+        if: steps.baseline.outputs.run-id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.baseline.outputs.run-id }}
+          name: release-readiness-history
+          path: ${{ runner.temp }}/baseline
+
+      - name: Assemble stable source artifacts
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.head-sha }}
+          SOURCE_BRANCH: ${{ steps.source.outputs.head-branch }}
+          SOURCE_RUN_URL: ${{ steps.source.outputs.run-url }}
+          BASELINE_RUN_URL: ${{ steps.baseline.outputs.run-url }}
+        run: |
+          mkdir -p "${HISTORY_DIR}"
+          mkdir -p "${HISTORY_DIR}/wechat-release"
+
+          copy_first() {
+            local target="$1"
+            shift
+            local candidate
+            for candidate in "$@"; do
+              if [[ -f "${candidate}" ]]; then
+                cp "${candidate}" "${target}"
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          copy_first "${HISTORY_DIR}/runtime-regression-report.json" \
+            "${RUNNER_TEMP}/source/runtime/runtime-regression-report-${SOURCE_SHA}.json" \
+            "${RUNNER_TEMP}/source/runtime/runtime-regression-report.json" || true
+
+          copy_first "${HISTORY_DIR}/stress-rooms-runtime-metrics.json" \
+            "${RUNNER_TEMP}/source/runtime/stress-rooms-runtime-metrics-${SOURCE_SHA}.json" \
+            "${RUNNER_TEMP}/source/runtime/stress-rooms-runtime-metrics.json" || true
+
+          copy_first "${HISTORY_DIR}/colyseus-reconnect-soak-summary.json" \
+            "${RUNNER_TEMP}/source/runtime/colyseus-reconnect-soak-summary-${SOURCE_SHA}.json" \
+            "${RUNNER_TEMP}/source/runtime/colyseus-reconnect-soak-summary.json" || true
+
+          copy_first "${HISTORY_DIR}/client-release-candidate-smoke.json" \
+            "${RUNNER_TEMP}/source/client-smoke/client-release-candidate-smoke-${SOURCE_SHA}.json" \
+            "${RUNNER_TEMP}/source/client-smoke/client-release-candidate-smoke.json" || true
+
+          if [[ -f "${RUNNER_TEMP}/source/coverage/summary.json" ]]; then
+            mkdir -p "${HISTORY_DIR}/coverage"
+            cp "${RUNNER_TEMP}/source/coverage/summary.json" "${HISTORY_DIR}/coverage/summary.json"
+          fi
+
+          if [[ -f "${RUNNER_TEMP}/source/wechat-release/codex.wechat.smoke-report.json" ]]; then
+            cp "${RUNNER_TEMP}/source/wechat-release/codex.wechat.smoke-report.json" "${HISTORY_DIR}/wechat-release/"
+          fi
+
+          latest_package=""
+          if compgen -G "${RUNNER_TEMP}/source/wechat-release/*.package.json" > /dev/null; then
+            latest_package="$(ls -t "${RUNNER_TEMP}/source/wechat-release/"*.package.json | head -n 1)"
+          fi
+          if [[ -n "${latest_package}" ]]; then
+            cp "${latest_package}" "${HISTORY_DIR}/wechat-release/"
+          fi
+
+          cat > "${HISTORY_DIR}/source-run.json" <<EOF
+          {
+            "workflow": "CI",
+            "runId": "${{ steps.source.outputs.run-id }}",
+            "runUrl": "${SOURCE_RUN_URL}",
+            "headSha": "${SOURCE_SHA}",
+            "headBranch": "${SOURCE_BRANCH}",
+            "jobs": {
+              "validate": "${{ steps.source.outputs.validate-result }}",
+              "wechatBuildValidation": "${{ steps.source.outputs.wechat-build-result }}",
+              "clientReleaseCandidateSmoke": "${{ steps.source.outputs.client-smoke-result }}"
+            }
+          }
+          EOF
+
+          cat > "${HISTORY_DIR}/baseline-run.json" <<EOF
+          {
+            "runId": "${{ steps.baseline.outputs.run-id }}",
+            "runUrl": "${BASELINE_RUN_URL}"
+          }
+          EOF
+
+      - name: Build release readiness snapshot
+        run: |
+          node --import tsx ./scripts/ci-release-readiness-snapshot.ts \
+            --validate-status "${{ steps.source.outputs.validate-result }}" \
+            --wechat-build-status "${{ steps.source.outputs.wechat-build-result }}" \
+            --client-rc-smoke-status "${{ steps.source.outputs.client-smoke-result }}" \
+            --output "${HISTORY_DIR}/release-readiness-snapshot.json"
+
+      - name: Build release gate summary
+        continue-on-error: true
+        run: |
+          args=(
+            --snapshot "${HISTORY_DIR}/release-readiness-snapshot.json"
+            --output "${HISTORY_DIR}/release-gate-summary.json"
+            --markdown-output "${HISTORY_DIR}/release-gate-summary.md"
+          )
+          if [[ -f "${HISTORY_DIR}/client-release-candidate-smoke.json" ]]; then
+            args+=(--h5-smoke "${HISTORY_DIR}/client-release-candidate-smoke.json")
+          fi
+          if [[ -f "${HISTORY_DIR}/colyseus-reconnect-soak-summary.json" ]]; then
+            args+=(--reconnect-soak "${HISTORY_DIR}/colyseus-reconnect-soak-summary.json")
+          fi
+          if [[ -d "${HISTORY_DIR}/wechat-release" ]]; then
+            args+=(--wechat-artifacts-dir "${HISTORY_DIR}/wechat-release")
+          fi
+          npm run release:gate:summary -- "${args[@]}"
+
+      - name: Build release readiness dashboard
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.head-sha }}
+        run: |
+          args=(
+            --snapshot "${HISTORY_DIR}/release-readiness-snapshot.json"
+            --candidate-revision "${SOURCE_SHA}"
+            --output "${HISTORY_DIR}/release-readiness-dashboard.json"
+            --markdown-output "${HISTORY_DIR}/release-readiness-dashboard.md"
+          )
+          if [[ -d "${HISTORY_DIR}/wechat-release" ]]; then
+            args+=(--wechat-artifacts-dir "${HISTORY_DIR}/wechat-release")
+          fi
+          npm run release:readiness:dashboard -- "${args[@]}"
+
+      - name: Build CI trend summary
+        run: |
+          args=(
+            --output "${HISTORY_DIR}/ci-trend-summary.json"
+            --markdown-output "${HISTORY_DIR}/ci-trend-summary.md"
+          )
+          if [[ -f "${HISTORY_DIR}/runtime-regression-report.json" ]]; then
+            args+=(--runtime-report "${HISTORY_DIR}/runtime-regression-report.json")
+          fi
+          if [[ -f "${HISTORY_DIR}/release-gate-summary.json" ]]; then
+            args+=(--release-gate-report "${HISTORY_DIR}/release-gate-summary.json")
+          fi
+          if [[ -f "${RUNNER_TEMP}/baseline/runtime-regression-report.json" ]]; then
+            args+=(--previous-runtime-report "${RUNNER_TEMP}/baseline/runtime-regression-report.json")
+          fi
+          if [[ -f "${RUNNER_TEMP}/baseline/release-gate-summary.json" ]]; then
+            args+=(--previous-release-gate-report "${RUNNER_TEMP}/baseline/release-gate-summary.json")
+          fi
+          if [[ ${#args[@]} -le 4 ]]; then
+            {
+              echo "# CI Trend Summary"
+              echo
+              echo "- Overall status: **PASSED**"
+              echo "- Findings: 0 total (0 new, 0 ongoing, 0 recovered)"
+              echo
+              echo "## Signals"
+              echo
+              echo "- Runtime regression: not included"
+              echo "- Release gate: not included"
+            } > "${HISTORY_DIR}/ci-trend-summary.md"
+            cat > "${HISTORY_DIR}/ci-trend-summary.json" <<EOF
+            {
+              "schemaVersion": 1,
+              "generatedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+              "summary": {
+                "overallStatus": "passed",
+                "totalFindings": 0,
+                "newFindings": 0,
+                "ongoingFindings": 0,
+                "recoveredFindings": 0,
+                "findingIds": []
+              }
+            }
+            EOF
+            exit 0
+          fi
+          npm run ci:trend-summary -- "${args[@]}"
+
+      - name: Build release health summary
+        continue-on-error: true
+        run: |
+          args=(
+            --release-readiness "${HISTORY_DIR}/release-readiness-snapshot.json"
+            --release-gate-summary "${HISTORY_DIR}/release-gate-summary.json"
+            --ci-trend-summary "${HISTORY_DIR}/ci-trend-summary.json"
+            --output "${HISTORY_DIR}/release-health-summary.json"
+            --markdown-output "${HISTORY_DIR}/release-health-summary.md"
+          )
+          if [[ -f "${HISTORY_DIR}/coverage/summary.json" ]]; then
+            args+=(--coverage-summary "${HISTORY_DIR}/coverage/summary.json")
+          fi
+          npm run release:health:summary -- "${args[@]}"
+
+      - name: Publish concise step summary
+        if: always()
+        env:
+          SOURCE_RUN_URL: ${{ steps.source.outputs.run-url }}
+          SOURCE_SHA: ${{ steps.source.outputs.head-sha }}
+          BASELINE_RUN_URL: ${{ steps.baseline.outputs.run-url }}
+        run: |
+          node --input-type=module <<'EOF'
+          import fs from "node:fs";
+          import path from "node:path";
+
+          const historyDir = process.env.HISTORY_DIR;
+          const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+
+          function readJson(name) {
+            const filePath = path.join(historyDir, name);
+            if (!fs.existsSync(filePath)) {
+              return undefined;
+            }
+            return JSON.parse(fs.readFileSync(filePath, "utf8"));
+          }
+
+          const trend = readJson("ci-trend-summary.json");
+          const health = readJson("release-health-summary.json");
+          const dashboard = readJson("release-readiness-dashboard.json");
+
+          const lines = [
+            "## Release Readiness History",
+            "",
+            `- Source CI run: ${process.env.SOURCE_RUN_URL}`,
+            `- Source commit: \`${process.env.SOURCE_SHA}\``,
+            `- Previous successful history baseline: ${process.env.BASELINE_RUN_URL || "_not available_"}`,
+            `- Release health: **${String(health?.summary?.status ?? "unknown").toUpperCase()}**`,
+            `- CI trend findings: ${trend?.summary?.totalFindings ?? 0} total (${trend?.summary?.newFindings ?? 0} new, ${trend?.summary?.ongoingFindings ?? 0} ongoing, ${trend?.summary?.recoveredFindings ?? 0} recovered)`,
+            `- Dashboard decision: \`${dashboard?.goNoGo?.decision ?? "unknown"}\``,
+            ""
+          ];
+
+          const blockers = health?.triage?.blockers ?? [];
+          if (blockers.length > 0) {
+            lines.push("### Blocking Signals", "");
+            for (const blocker of blockers.slice(0, 3)) {
+              lines.push(`- ${blocker.title}: ${blocker.summary}`);
+            }
+            lines.push("");
+          }
+
+          const activeFindings = [
+            ...(trend?.runtime?.findings ?? []),
+            ...(trend?.releaseGate?.findings ?? [])
+          ].filter((finding) => finding.status === "new" || finding.status === "ongoing");
+
+          if (activeFindings.length > 0) {
+            lines.push("### Active Deltas", "");
+            for (const finding of activeFindings.slice(0, 5)) {
+              lines.push(`- ${finding.id}: ${finding.summary}`);
+            }
+            lines.push("");
+          }
+
+          fs.appendFileSync(summaryPath, `${lines.join("\n").trim()}\n`, "utf8");
+          EOF
+
+      - name: Emit release health annotations
+        if: always()
+        run: |
+          node --input-type=module <<'EOF'
+          import fs from "node:fs";
+          import path from "node:path";
+
+          const reportPath = path.join(process.env.HISTORY_DIR, "release-health-summary.json");
+          if (!fs.existsSync(reportPath)) {
+            console.log("::error::release-health-summary.json was not generated.");
+            process.exit(0);
+          }
+
+          const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+          for (const blocker of report?.triage?.blockers ?? []) {
+            console.log(`::error title=${blocker.title}::${blocker.summary}`);
+          }
+          for (const warning of report?.triage?.warnings ?? []) {
+            console.log(`::warning title=${warning.title}::${warning.summary}`);
+          }
+          EOF
+
+      - name: Upload release-readiness history artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-readiness-history
+          path: ${{ env.HISTORY_DIR }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce blocking release health
+        if: always()
+        run: |
+          node --input-type=module <<'EOF'
+          import fs from "node:fs";
+          import path from "node:path";
+
+          const reportPath = path.join(process.env.HISTORY_DIR, "release-health-summary.json");
+          if (!fs.existsSync(reportPath)) {
+            console.error("release-health-summary.json was not generated.");
+            process.exit(1);
+          }
+
+          const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+          if (report?.summary?.status === "blocking") {
+            console.error("Blocking release health conditions detected.");
+            process.exit(1);
+          }
+          EOF
