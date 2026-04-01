@@ -1019,6 +1019,7 @@ export class VeilRoot extends Component {
       update: this.lastUpdate,
       moveInFlight: this.moveInFlight,
       predictionStatus: this.predictionStatus,
+      sessionIndicators: this.buildHudSessionIndicators(),
       inputDebug: this.inputDebug,
       runtimeHealth: this.describeRuntimeMemoryHealth(),
       triageSummaryLines: buildCocosRuntimeTriageSummaryLines({
@@ -3173,6 +3174,43 @@ export class VeilRoot extends Component {
     };
     this.battlePresentation.reset();
     this.renderView();
+  }
+
+  private buildHudSessionIndicators(): VeilHudRenderState["sessionIndicators"] {
+    const indicators: VeilHudRenderState["sessionIndicators"] = [];
+    const replayingCachedSnapshot =
+      this.lastRoomUpdateSource === "replay" && this.lastRoomUpdateReason === "cached_snapshot";
+
+    if (this.diagnosticsConnectionStatus === "reconnecting") {
+      indicators.push({
+        kind: "reconnecting",
+        label: "重连中",
+        detail: "正在尝试恢复与权威房间的连接。"
+      });
+    }
+
+    if (replayingCachedSnapshot) {
+      indicators.push({
+        kind: "replaying_cached_snapshot",
+        label: "缓存快照回放",
+        detail: "当前 HUD 正在展示本地缓存的上一份会话快照。"
+      });
+      indicators.push({
+        kind: "awaiting_authoritative_resync",
+        label: "等待权威重同步",
+        detail: "请等待服务端权威快照覆盖当前回放状态。"
+      });
+    }
+
+    if (this.diagnosticsConnectionStatus === "reconnect_failed") {
+      indicators.push({
+        kind: "degraded_offline_fallback",
+        label: "降级/离线回退",
+        detail: "最近一次重连失败，客户端正依赖回退路径维持会话。"
+      });
+    }
+
+    return indicators;
   }
 
   private applyPrediction(action: CocosWorldAction, status: string): void {

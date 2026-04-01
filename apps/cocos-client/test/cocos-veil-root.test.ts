@@ -225,6 +225,34 @@ test("VeilRoot reconnect failure updates the lobby-facing error status", () => {
   assert.equal(root.logLines[0], "重连失败，正在尝试恢复房间快照...");
 });
 
+test("VeilRoot builds HUD session indicators from replay and connection lifecycle state", () => {
+  const root = createVeilRootHarness();
+
+  root.diagnosticsConnectionStatus = "reconnecting";
+  root.lastRoomUpdateSource = "replay";
+  root.lastRoomUpdateReason = "cached_snapshot";
+  let indicators = root.buildHudSessionIndicators();
+
+  assert.deepEqual(
+    indicators.map((indicator: { kind: string }) => indicator.kind),
+    ["reconnecting", "replaying_cached_snapshot", "awaiting_authoritative_resync"]
+  );
+
+  root.diagnosticsConnectionStatus = "reconnect_failed";
+  indicators = root.buildHudSessionIndicators();
+
+  assert.deepEqual(
+    indicators.map((indicator: { kind: string }) => indicator.kind),
+    ["replaying_cached_snapshot", "awaiting_authoritative_resync", "degraded_offline_fallback"]
+  );
+
+  root.lastRoomUpdateSource = "session";
+  root.lastRoomUpdateReason = "snapshot";
+  root.diagnosticsConnectionStatus = "connected";
+
+  assert.deepEqual(root.buildHudSessionIndicators(), []);
+});
+
 test("VeilRoot refreshes WeChat share metadata after a battle resolves back to world state", async () => {
   const root = createVeilRootHarness();
   delete root.applySessionUpdate;
