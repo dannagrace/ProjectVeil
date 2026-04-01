@@ -63,7 +63,9 @@ async function fetchJsonFromBrowser<T>(page: Page, path: string): Promise<T> {
 
 export async function waitForLobbyReady(page: Page): Promise<void> {
   await test.step("setup: wait for lobby smoke readiness", async () => {
-    // Reset the server's in-memory store to ensure test isolation
+    // Reset the server's in-memory store before entering lobby
+    // The fixture also resets server-side, but this ensures the browser
+    // context is fresh after being reused across tests
     await page.evaluate(async () => {
       try {
         await fetch("/api/test/reset-store", { method: "POST" });

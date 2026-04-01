@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { buildRoomId, expectRoomReady, fullMoveTextPattern, withSmokeDiagnostics } from "./smoke-helpers";
 
 async function expectEnteredRoom(page: Page, roomId: string, playerId: string): Promise<void> {
