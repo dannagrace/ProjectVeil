@@ -49,3 +49,17 @@ npm run ci:trend-summary -- \
   --release-gate-report artifacts/release-readiness/release-gate-summary.json \
   --github-step-summary "${GITHUB_STEP_SUMMARY}"
 ```
+
+## GitHub Actions History
+
+Maintain the long-running branch history from GitHub Actions `Release Readiness History`.
+
+- The workflow runs on a daily schedule and also supports `workflow_dispatch`.
+- Maintainers should open the latest successful run on the branch they care about and download the `release-readiness-history` artifact.
+- The stable entry points inside that artifact are:
+  - `release-health-summary.md`
+  - `ci-trend-summary.md`
+  - `release-readiness-dashboard.md`
+  - `release-readiness-snapshot.json`
+
+When a previous successful history artifact exists on the same branch, the workflow compares the current runtime-regression report and release-gate summary against that baseline before publishing `ci-trend-summary.json` / `.md`.
