@@ -59,12 +59,15 @@
 
 ## WeChat-Specific Checks
 
+- [ ] 已用真实导出目录在微信开发者工具中完成导入与启动验证
+  Evidence:
+  Notes:
 - [ ] 登录进入 Lobby 或游客降级结果已记录
 - [ ] 进房成功并记录 `roomId`
 - [ ] `reconnect-recovery` 已复用 `docs/reconnect-smoke-gate.md` 的 canonical scenario
 - [ ] 分享回流已验证，或明确标记 `not_applicable`
 - [ ] 关键资源加载无 404 / 白名单 / 缺图阻断
-- [ ] 真机或准真机设备、客户端版本、执行时间已记录
+- [ ] 真机或微信开发者工具真机调试的 runtime smoke 已记录设备、客户端版本、执行时间
 
 ## Release Decision
 
@@ -72,4 +75,3 @@
 - Summary:
 - Remaining blockers doc:
 - Follow-ups / owners:
-

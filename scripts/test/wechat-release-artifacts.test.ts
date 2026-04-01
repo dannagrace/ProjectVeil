@@ -361,13 +361,18 @@ test("validate:wechat-rc marks smoke and upload receipt checks as skipped when o
   assert.equal(summary.artifacts.markdownPath, markdownPath);
   assert.equal(summary.evidence.smoke.status, "skipped");
   assert.equal(summary.evidence.manualReview.status, "blocked");
-  assert.equal(summary.evidence.manualReview.requiredPendingChecks, 2);
+  assert.equal(summary.evidence.manualReview.requiredPendingChecks, 3);
   assert.deepEqual(
     summary.evidence.manualReview.checks.map((check) => `${check.id}:${check.status}`),
-    ["wechat-runtime-review:pending", "wechat-release-checklist:pending"]
+    [
+      "wechat-devtools-export-review:pending",
+      "wechat-device-runtime-review:pending",
+      "wechat-release-checklist:pending"
+    ]
   );
   assert.match(summary.blockers.map((blocker) => `${blocker.id}:${blocker.summary}`).join("\n"), /smoke-report-missing/);
-  assert.match(summary.blockers.map((blocker) => `${blocker.id}:${blocker.summary}`).join("\n"), /manual:wechat-runtime-review/);
+  assert.match(summary.blockers.map((blocker) => `${blocker.id}:${blocker.summary}`).join("\n"), /manual:wechat-devtools-export-review/);
+  assert.match(summary.blockers.map((blocker) => `${blocker.id}:${blocker.summary}`).join("\n"), /manual:wechat-device-runtime-review/);
   assert.match(fs.readFileSync(markdownPath, "utf8"), /WeChat Release Candidate Summary/);
 });
 
@@ -435,16 +440,28 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
   writePassingSmokeReport(artifact.metadataPath, smokeReportPath);
   writeManualChecks(manualChecksPath, [
     {
-      id: "wechat-runtime-review",
-      title: "Runtime health/auth-readiness/metrics reviewed for this candidate",
+      id: "wechat-devtools-export-review",
+      title: "Real WeChat export imported and launched in Developer Tools",
       status: "passed",
       required: true,
-      notes: "Captured candidate runtime endpoints for the same revision.",
-      evidence: ["GET /api/runtime/health", "GET /api/runtime/auth-readiness", "GET /api/runtime/metrics"],
+      notes: "Imported the packaged export into WeChat Developer Tools and captured startup evidence for the same revision.",
+      evidence: ["devtools-startup.png", "devtools-console.log"],
       owner: "release-oncall",
       recordedAt: "2026-04-02T08:10:00.000Z",
       revision: sourceRevision,
-      artifactPath: "artifacts/wechat-release/runtime-review.json"
+      artifactPath: "artifacts/wechat-release/devtools-export-review.json"
+    },
+    {
+      id: "wechat-device-runtime-review",
+      title: "Physical-device WeChat runtime validated for this candidate",
+      status: "passed",
+      required: true,
+      notes: "Attached the smoke report and capture set from the device validation pass for the same revision.",
+      evidence: ["artifacts/wechat-release/codex.wechat.smoke-report.json", "device-runtime.mp4"],
+      owner: "release-oncall",
+      recordedAt: "2026-04-02T08:12:00.000Z",
+      revision: sourceRevision,
+      artifactPath: "artifacts/wechat-release/device-runtime-review.json"
     },
     {
       id: "wechat-release-checklist",

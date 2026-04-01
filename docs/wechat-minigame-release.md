@@ -78,7 +78,7 @@
    - summary 中缺失 smoke 证据或待完成 manual review 会直接列为 `blockers`，而不是分散在多个文件里
    - JSON 至少包含 `version`、`commit`、artifact 路径、逐项检查结果和 `failureSummary`
    - `--version` 会要求并校验 `*.upload.json`；`--require-smoke-report` 会把 `codex.wechat.smoke-report.json` 设为必需门禁
-   - 若未显式传 `--manual-checks`，脚本仍会内置两条必需 manual review：runtime endpoint review 与 RC checklist/blocker review
+  - 若未显式传 `--manual-checks`，脚本仍会内置三条必需 manual review：微信开发者工具真实导出复核、真机 runtime 复核，以及 RC checklist/blocker review
    - required manual review 现在必须带 `owner`、`recordedAt`、`revision`；当 review 时间超过 24h、revision 不匹配或元数据缺失时，candidate summary 会继续保持 `blocked`
 8. 若已有设备农场、真机调试或准真机脚本产出的结构化 runtime 证据，执行 `npm run ingest:wechat-smoke-evidence -- --metadata <release-sidecar.package.json> --report <release-artifacts-dir>/codex.wechat.smoke-report.json --runtime-evidence <runtime-evidence.json>`，把证据直接写入既有 `codex.wechat.smoke-report.json` schema。
 9. 若本次 RC 没有自动化 runtime 证据，再运行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成模板，并在真机或准真机上逐项补录结果。
@@ -144,6 +144,12 @@
 - 对 checklist/blocker review 可额外补 `blockerIds`
 - 若为带条件放行，可补 `waiver.approvedBy` / `waiver.approvedAt` / `waiver.reason`
 
+默认 required checks 分别对应三类 release evidence：
+
+- `wechat-devtools-export-review`：真实导出目录已在微信开发者工具中导入并成功启动
+- `wechat-device-runtime-review`：同一 revision 已完成真机或微信开发者工具真机调试 runtime smoke，并附上 `codex.wechat.smoke-report.json`
+- `wechat-release-checklist`：RC checklist / blocker register 已对齐同一 candidate
+
 ## 提审前 Smoke Check
 
 `npm run smoke:wechat-release` 会生成 `codex.wechat.smoke-report.json`，也可以通过 `--runtime-evidence <runtime-evidence.json>` 直接把自动化设备/runtime 结果导入同一 schema。该文件是提审前必须保留的最小验收记录，建议直接随 artifact 归档保存。
@@ -170,7 +176,7 @@
 1. 先跑 `npm run verify:wechat-release -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>]`
 2. 若已有自动化设备/runtime 证据，执行 `npm run ingest:wechat-smoke-evidence -- --metadata <release-sidecar.package.json> --report <release-artifacts-dir>/codex.wechat.smoke-report.json --runtime-evidence <runtime-evidence.json>`
 3. 若没有自动化证据，再跑 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成模板
-4. 在真机或微信开发者工具真机调试模式中逐项填写 `tester`、`device`、`executedAt`、`summary` 以及每个 case 的 `status` / `notes` / `evidence`
+4. 先在微信开发者工具中导入同一 revision 的真实 `wechatgame` 导出目录并记录启动结果，再在真机或微信开发者工具真机调试模式中逐项填写 `tester`、`device`、`executedAt`、`summary` 以及每个 case 的 `status` / `notes` / `evidence`
    - `reconnect-recovery.requiredEvidence` 下的 `roomId`、`reconnectPrompt`、`restoredState` 都必须填非空字符串；细则见 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md)
    - `share-roundtrip.requiredEvidence` 下的 `shareScene`、`shareQuery`、`roundtripState` 也都必须填非空字符串，用来说明分享入口、参数和回流结果
 5. 回填完成后执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`

@@ -176,12 +176,21 @@ const OUTPUT_TAIL_BYTES = 4000;
 const MANUAL_REVIEW_MAX_AGE_MS = 1000 * 60 * 60 * 24;
 const DEFAULT_MANUAL_CHECKS: ManualReviewCheck[] = [
   {
-    id: "wechat-runtime-review",
-    title: "Runtime health/auth-readiness/metrics reviewed for this candidate",
+    id: "wechat-devtools-export-review",
+    title: "Real WeChat export imported and launched in Developer Tools",
     required: true,
     status: "pending",
-    notes: "Capture runtime health evidence against the same candidate revision before marking the WeChat target release-ready.",
-    evidence: ["GET /api/runtime/health", "GET /api/runtime/auth-readiness", "GET /api/runtime/metrics"],
+    notes: "Import the packaged candidate's real wechatgame export into WeChat Developer Tools and capture startup/runtime evidence for the same revision.",
+    evidence: ["artifacts/wechat-release/devtools-export-review.json", "WeChat Developer Tools startup screenshot or console log"],
+    source: "default"
+  },
+  {
+    id: "wechat-device-runtime-review",
+    title: "Physical-device WeChat runtime validated for this candidate",
+    required: true,
+    status: "pending",
+    notes: "Attach the smoke report and supporting captures from a physical-device or WeChat real-device-debugging runtime pass against the same candidate revision.",
+    evidence: ["artifacts/wechat-release/codex.wechat.smoke-report.json", "startup/reconnect/share capture"],
     source: "default"
   },
   {
