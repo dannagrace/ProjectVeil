@@ -1,0 +1,259 @@
+name: Phase 1 Candidate Rehearsal
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "29 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: phase1-candidate-rehearsal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck:ci
+
+      - name: Validate content-pack consistency
+        run: npm run validate:content-pack -- --report-path "${RUNNER_TEMP}/content-pack-validation-report.json"
+
+      - name: Test With V8 Coverage
+        run: npm run test:coverage:ci
+
+      - name: Capture runtime regression artifact
+        if: always()
+        run: |
+          node --import tsx ./scripts/stress-concurrent-rooms.ts \
+            --rooms=48 \
+            --connect-concurrency=12 \
+            --action-concurrency=12 \
+            --sample-interval-ms=100 \
+            --reconnect-pause-ms=150 \
+            --artifact-path "${RUNNER_TEMP}/release-readiness/stress-rooms-runtime-metrics-${GITHUB_SHA}.json"
+
+      - name: Compare runtime regression against baseline
+        if: always()
+        run: |
+          node --import tsx ./scripts/compare-runtime-regression.ts \
+            --baseline ./configs/runtime-regression-baseline.json \
+            --artifact "${RUNNER_TEMP}/release-readiness/stress-rooms-runtime-metrics-${GITHUB_SHA}.json" \
+            --output "${RUNNER_TEMP}/release-readiness/runtime-regression-report-${GITHUB_SHA}.json"
+
+      - name: Capture reconnect soak release-gate artifact
+        if: always()
+        run: |
+          npm run stress:rooms:reconnect-soak -- \
+            --artifact-path "${RUNNER_TEMP}/release-readiness/colyseus-reconnect-soak-summary-${GITHUB_SHA}.json"
+
+      - name: Upload V8 coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-coverage-${{ github.sha }}
+          path: .coverage
+          if-no-files-found: error
+
+      - name: Upload runtime regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-regression-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness
+          if-no-files-found: error
+
+  wechat-build-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      WECHAT_RELEASE_ARTIFACTS_DIR: ${{ runner.temp }}/wechat-release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Check WeChat mini game templates and exported fixture
+        run: npm run check:wechat-build
+
+      - name: Package WeChat exported fixture
+        run: npm run package:wechat-release -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir "${WECHAT_RELEASE_ARTIFACTS_DIR}" --expect-exported-runtime --source-revision "${GITHUB_SHA}"
+
+      - name: Audit primary Cocos client delivery readiness
+        run: |
+          npm run audit:cocos-primary-delivery -- \
+            --output-dir apps/cocos-client/test/fixtures/wechatgame-export \
+            --artifacts-dir "${WECHAT_RELEASE_ARTIFACTS_DIR}" \
+            --expect-exported-runtime \
+            --expected-revision "${GITHUB_SHA}" \
+            --output "${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.json" \
+            --markdown-output "${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.md"
+
+      - name: Refresh WeChat candidate summary for rehearsal
+        run: |
+          npm run validate:wechat-rc -- \
+            --artifacts-dir "${WECHAT_RELEASE_ARTIFACTS_DIR}" \
+            --expected-revision "${GITHUB_SHA}"
+
+      - name: Upload WeChat release artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wechat-release-${{ github.sha }}
+          path: ${{ env.WECHAT_RELEASE_ARTIFACTS_DIR }}
+          if-no-files-found: error
+
+      - name: Upload primary Cocos delivery audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cocos-primary-delivery-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness/cocos-primary-delivery-audit-${{ github.sha }}.*
+          if-no-files-found: error
+
+  client-release-candidate-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run packaged client RC smoke
+        run: npm run smoke:client:release-candidate -- --output "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json"
+
+      - name: Upload packaged client RC smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-release-candidate-smoke-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness
+          if-no-files-found: error
+
+  phase1-candidate-rehearsal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - validate
+      - wechat-build-validation
+      - client-release-candidate-smoke
+    if: always()
+    env:
+      CANDIDATE_LABEL: phase1-mainline
+      REHEARSAL_DIR: ${{ runner.temp }}/phase1-candidate-rehearsal
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Download runtime regression artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-regression-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-regression
+
+      - name: Download packaged client RC smoke artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: client-release-candidate-smoke-${{ github.sha }}
+          path: ${{ runner.temp }}/client-release-candidate-smoke
+
+      - name: Download WeChat release artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: wechat-release-${{ github.sha }}
+          path: ${{ runner.temp }}/wechat-release
+
+      - name: Run candidate rehearsal bundle
+        run: |
+          args=(
+            --candidate "${CANDIDATE_LABEL}"
+            --output-dir "${REHEARSAL_DIR}"
+            --validate-status "${{ needs.validate.result }}"
+            --wechat-build-status "${{ needs.wechat-build-validation.result }}"
+            --client-rc-smoke-status "${{ needs.client-release-candidate-smoke.result }}"
+            --target-surface h5
+            --run-url "${RUN_URL}"
+          )
+
+          if [[ -f "${RUNNER_TEMP}/client-release-candidate-smoke/client-release-candidate-smoke-${GITHUB_SHA}.json" ]]; then
+            args+=(--h5-smoke "${RUNNER_TEMP}/client-release-candidate-smoke/client-release-candidate-smoke-${GITHUB_SHA}.json")
+          fi
+          if [[ -f "${RUNNER_TEMP}/runtime-regression/colyseus-reconnect-soak-summary-${GITHUB_SHA}.json" ]]; then
+            args+=(--reconnect-soak "${RUNNER_TEMP}/runtime-regression/colyseus-reconnect-soak-summary-${GITHUB_SHA}.json")
+          fi
+          if [[ -f "${RUNNER_TEMP}/runtime-regression/runtime-regression-report-${GITHUB_SHA}.json" ]]; then
+            args+=(--runtime-report "${RUNNER_TEMP}/runtime-regression/runtime-regression-report-${GITHUB_SHA}.json")
+          fi
+          if [[ -d "${RUNNER_TEMP}/wechat-release" ]]; then
+            args+=(--wechat-artifacts-dir "${RUNNER_TEMP}/wechat-release")
+          fi
+
+          npm run release:phase1:candidate-rehearsal -- "${args[@]}"
+
+      - name: Publish concise step summary
+        if: always()
+        run: |
+          if [[ -f "${REHEARSAL_DIR}/SUMMARY.md" ]]; then
+            cat "${REHEARSAL_DIR}/SUMMARY.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload Phase 1 candidate rehearsal artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1-candidate-rehearsal-${{ env.CANDIDATE_LABEL }}-${{ github.sha }}
+          path: ${{ env.REHEARSAL_DIR }}
+          if-no-files-found: error
+          retention-days: 30
