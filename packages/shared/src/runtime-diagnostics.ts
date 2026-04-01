@@ -83,6 +83,12 @@ export interface RuntimeDiagnosticsAccountSnapshot {
   loginId: string | null;
   recentEventCount: number;
   recentReplayCount: number;
+  accountReadiness?: {
+    status: "ready" | "missing" | "blocked";
+    summary: string;
+    detail: string | null;
+    source: "session" | "registration" | "recovery";
+  };
 }
 
 export interface RuntimeDiagnosticsOverviewRoomSnapshot {
@@ -358,6 +364,12 @@ export function buildRuntimeDiagnosticsTriageView(
         {
           label: "最近回放数",
           value: snapshot.account ? `${snapshot.account.recentReplayCount}` : "0"
+        },
+        {
+          label: "账号就绪",
+          value: snapshot.account?.accountReadiness
+            ? `${snapshot.account.accountReadiness.status} · ${snapshot.account.accountReadiness.summary}`
+            : "未建模"
         }
       ]
     },
@@ -509,6 +521,13 @@ export function buildRuntimeDiagnosticsSummaryLines(snapshot: RuntimeDiagnostics
     lines.push(
       `Account ${snapshot.account.displayName} (${snapshot.account.source}) / events ${snapshot.account.recentEventCount} / replays ${snapshot.account.recentReplayCount}`
     );
+    if (snapshot.account.accountReadiness) {
+      lines.push(
+        `Account readiness ${snapshot.account.accountReadiness.status} / ${snapshot.account.accountReadiness.summary}${
+          snapshot.account.accountReadiness.detail ? ` / ${snapshot.account.accountReadiness.detail}` : ""
+        }`
+      );
+    }
   }
 
   if (snapshot.overview?.gameplayTraffic) {

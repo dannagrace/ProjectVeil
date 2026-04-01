@@ -74,7 +74,13 @@ function createRuntimeDiagnosticsSnapshot(): RuntimeDiagnosticsSnapshot {
       source: "remote",
       loginId: "player-1@example.com",
       recentEventCount: 3,
-      recentReplayCount: 1
+      recentReplayCount: 1,
+      accountReadiness: {
+        status: "ready",
+        summary: "正式账号会话已绑定",
+        detail: "当前主客户端已具备正式账号登录态，可用于 RC 登录链路验收。",
+        source: "session"
+      }
     },
     overview: null,
     diagnostics: {
@@ -131,6 +137,7 @@ test("runtime diagnostics summary text stays stable for panel and automation con
   assert.match(rendered, /World 4x3 \/ visible 7 \/ reachable 4/);
   assert.match(rendered, /Hero 凯琳 @ 0,0 \/ MOV 4\/6 \/ HP 30\/30/);
   assert.match(rendered, /Account 暮火侦骑 \(remote\) \/ events 3 \/ replays 1/);
+  assert.match(rendered, /Account readiness ready \/ 正式账号会话已绑定/);
   assert.match(rendered, /Recovery 连接已恢复，当前地图与战斗状态来自最新权威快照。/);
   assert.match(rendered, /Telemetry combat\/encounter\.resolved \(success\) Battle battle-1 resolved as attacker_victory\./);
   assert.match(rendered, /Replay room-alpha:battle-1:player-1 \/ paused \/ step 1\/3/);

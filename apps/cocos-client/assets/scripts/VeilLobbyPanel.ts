@@ -29,7 +29,11 @@ import {
   type LobbyShowcasePhase
 } from "./cocos-showcase-gallery.ts";
 import type { CocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
-import type { CocosAccountLifecycleFieldView, CocosAccountLifecyclePanelView } from "./cocos-account-lifecycle.ts";
+import type {
+  CocosAccountLifecycleFieldView,
+  CocosAccountLifecyclePanelView,
+  CocosAccountReadinessStatus
+} from "./cocos-account-lifecycle.ts";
 import {
   createBattleReplayPlaybackState,
   findPlayerBattleReplaySummary,
@@ -74,6 +78,16 @@ const REVIEW_HIGHLIGHT_STROKE = new Color(234, 246, 255, 120);
 const REVIEW_HIGHLIGHT_ACCENT = new Color(146, 198, 246, 214);
 const REPLAY_CONTROL_FILL = new Color(64, 92, 128, 220);
 const REPLAY_CONTROL_ACTIVE_FILL = new Color(84, 122, 94, 220);
+
+function formatAccountReadinessStatus(status: CocosAccountReadinessStatus): string {
+  if (status === "ready") {
+    return "READY";
+  }
+  if (status === "blocked") {
+    return "BLOCKED";
+  }
+  return "MISSING";
+}
 
 export interface VeilLobbyRenderState {
   playerId: string;
@@ -1264,8 +1278,13 @@ export class VeilLobbyPanel extends Component {
       centerX,
       topY,
       width,
-      96,
-      [flow.title, flow.intro, flow.deliveryHint],
+      118,
+      [
+        flow.title,
+        flow.intro,
+        `就绪状态 ${formatAccountReadinessStatus(flow.readiness.status)} · ${flow.readiness.summary}`,
+        `${flow.readiness.detail} ${flow.deliveryHint}`.trim()
+      ],
       {
         fill: TITLE_FILL,
         stroke: new Color(236, 228, 198, 62),
@@ -1282,8 +1301,12 @@ export class VeilLobbyPanel extends Component {
         centerX,
         cursorY,
         width,
-        62,
-        [field.label, field.value || field.placeholder, field.hint],
+        70,
+        [
+          field.label,
+          `${field.value || field.placeholder} · ${formatAccountReadinessStatus(field.readiness.status)}`,
+          `${field.readiness.summary}；${field.hint}`
+        ],
         {
           fill: FIELD_FILL,
           stroke: new Color(224, 235, 246, 52),

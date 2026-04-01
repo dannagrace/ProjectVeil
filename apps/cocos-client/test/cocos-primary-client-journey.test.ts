@@ -282,6 +282,8 @@ function captureJourneyArtifact(options: {
       mode: update?.battle ? "battle" : "world",
       roomId: root.roomId,
       playerId: root.playerId,
+      authMode: root.authMode,
+      loginId: root.loginId,
       connectionStatus: root.diagnosticsConnectionStatus,
       lastUpdateSource: root.lastRoomUpdateSource,
       lastUpdateReason: root.lastRoomUpdateReason,
