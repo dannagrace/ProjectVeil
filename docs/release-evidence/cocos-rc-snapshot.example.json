@@ -226,5 +226,44 @@
         "creator-preview"
       ]
     }
+  ],
+  "checkpointLedger": {
+    "source": "primary-journey-evidence",
+    "milestoneDir": "artifacts/release-readiness/cocos-primary-journey-rc-2026-03-29-example-abc1234",
+    "entryCount": 2,
+    "entries": [
+      {
+        "id": "battle-settlement",
+        "title": "Battle settlement",
+        "status": "passed",
+        "summary": "Recorded the first battle settlement with rewards applied before returning to world continuity on the same candidate revision.",
+        "artifactPath": "artifacts/release-readiness/cocos-primary-journey-rc-2026-03-29-example-abc1234/05-battle-settlement.json",
+        "phase": "battle-settlement",
+        "roomId": "room-7d3f1",
+        "playerId": "player-account",
+        "connectionStatus": "connected",
+        "lastUpdateReason": "journey.battle.settlement",
+        "telemetryCheckpoints": [
+          "encounter.resolved",
+          "encounter.started"
+        ]
+      },
+      {
+        "id": "reconnect-restore",
+        "title": "Reconnect / restore",
+        "status": "passed",
+        "summary": "Reconnect canonical scenario preserved roomId and post-battle state.",
+        "artifactPath": "artifacts/release-readiness/cocos-primary-journey-rc-2026-03-29-example-abc1234/06-reconnect-restore.json",
+        "phase": "reconnect-restore",
+        "roomId": "room-7d3f1",
+        "playerId": "player-account",
+        "connectionStatus": "connected",
+        "lastUpdateReason": "journey.reconnect.restore",
+        "telemetryCheckpoints": [
+          "encounter.resolved",
+          "encounter.started"
+        ]
+      }
+    ]
   ]
 }

@@ -49,6 +49,9 @@ interface PrimaryJourneyEvidenceArtifact {
   environment?: {
     server?: string;
   };
+  artifacts?: {
+    milestoneDir?: string;
+  };
   requiredEvidence?: Array<{
     id?: CanonicalEvidenceId;
     value?: string;
@@ -60,6 +63,23 @@ interface PrimaryJourneyEvidenceArtifact {
     summary?: string;
     evidence?: string[];
   }>;
+}
+
+interface PrimaryJourneyMilestoneArtifact {
+  phase?: string;
+  identity?: {
+    roomId?: string;
+    playerId?: string;
+  };
+  room?: {
+    diagnosticsConnectionStatus?: string;
+    lastUpdateReason?: string | null;
+  };
+  diagnostics?: {
+    primaryClientTelemetry?: Array<{
+      checkpoint?: string;
+    }>;
+  };
 }
 
 interface ReleaseReadinessSnapshotCheck {
@@ -122,6 +142,20 @@ interface EvidenceMapping {
   notes: string;
 }
 
+interface CheckpointLedgerEntry {
+  id: JourneyStepId;
+  title: string;
+  status: EvidenceStatus;
+  summary: string;
+  artifactPath: string;
+  phase: string;
+  roomId: string;
+  playerId: string;
+  connectionStatus: string;
+  lastUpdateReason: string;
+  telemetryCheckpoints: string[];
+}
+
 interface CocosReleaseCandidateSnapshot {
   schemaVersion: 1;
   candidate: {
@@ -153,6 +187,12 @@ interface CocosReleaseCandidateSnapshot {
   mappings: EvidenceMapping[];
   requiredEvidence: CanonicalEvidenceField[];
   journey: JourneyStep[];
+  checkpointLedger?: {
+    source: "primary-journey-evidence";
+    milestoneDir: string;
+    entryCount: number;
+    entries: CheckpointLedgerEntry[];
+  };
 }
 
 const DEFAULT_OUTPUT_DIR = path.join("artifacts", "release-evidence");
@@ -305,6 +345,17 @@ function getGitValue(args: string[]): string {
 
 function readJsonFile<T>(filePath: string): T {
   return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
+}
+
+function resolveArtifactPath(baseDir: string, filePath: string): string {
+  if (path.isAbsolute(filePath)) {
+    return filePath;
+  }
+  const repoPath = path.resolve(process.cwd(), filePath);
+  if (fs.existsSync(repoPath)) {
+    return repoPath;
+  }
+  return path.resolve(baseDir, filePath);
 }
 
 function writeJsonFile(filePath: string, payload: unknown, force: boolean): void {
@@ -631,6 +682,64 @@ function appendUnique(target: string[], additions: string[]): string[] {
   return target;
 }
 
+function normalizeString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+
+function loadCheckpointLedgerEntry(
+  baseDir: string,
+  step: JourneyStep,
+  evidencePath: string
+): CheckpointLedgerEntry {
+  const resolvedPath = resolveArtifactPath(baseDir, evidencePath);
+  const artifact = readJsonFile<PrimaryJourneyMilestoneArtifact>(resolvedPath);
+  const telemetry = Array.isArray(artifact.diagnostics?.primaryClientTelemetry)
+    ? artifact.diagnostics.primaryClientTelemetry
+        .map((entry) => normalizeString(entry?.checkpoint))
+        .filter((entry) => entry.length > 0)
+    : [];
+
+  return {
+    id: step.id,
+    title: step.title,
+    status: step.status,
+    summary: step.notes,
+    artifactPath: evidencePath,
+    phase: normalizeString(artifact.phase, step.id),
+    roomId: normalizeString(artifact.identity?.roomId),
+    playerId: normalizeString(artifact.identity?.playerId),
+    connectionStatus: normalizeString(artifact.room?.diagnosticsConnectionStatus),
+    lastUpdateReason: normalizeString(artifact.room?.lastUpdateReason),
+    telemetryCheckpoints: [...new Set(telemetry)]
+  };
+}
+
+function buildCheckpointLedger(
+  baseDir: string,
+  milestoneDir: string | undefined,
+  journey: JourneyStep[]
+): CocosReleaseCandidateSnapshot["checkpointLedger"] {
+  const entries: CheckpointLedgerEntry[] = [];
+  for (const step of journey) {
+    const artifactPath = step.evidence.find((entry) => entry.endsWith(".json"));
+    if (!artifactPath) {
+      continue;
+    }
+    entries.push(loadCheckpointLedgerEntry(baseDir, step, artifactPath));
+  }
+
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  return {
+    source: "primary-journey-evidence",
+    milestoneDir: milestoneDir ?? "",
+    entryCount: entries.length,
+    entries
+  };
+}
+
 function resolveMergedStatus(current: EvidenceStatus, incoming: EvidenceStatus): EvidenceStatus {
   const rank: Record<EvidenceStatus, number> = {
     failed: 5,
@@ -726,6 +835,12 @@ function applyPrimaryJourneyEvidence(snapshot: CocosReleaseCandidateSnapshot, ar
   if (artifact.execution?.summary?.trim()) {
     snapshot.execution.summary = artifact.execution.summary.trim();
   }
+
+  snapshot.checkpointLedger = buildCheckpointLedger(
+    path.dirname(snapshot.linkedEvidence.primaryJourneyEvidence?.path ?? process.cwd()),
+    artifact.artifacts?.milestoneDir,
+    snapshot.journey
+  );
 }
 
 function applyWechatSmokeReport(snapshot: CocosReleaseCandidateSnapshot, report: WechatSmokeReport): void {
@@ -877,6 +992,35 @@ function validateSnapshot(snapshot: CocosReleaseCandidateSnapshot): void {
   for (const requiredId of REQUIRED_EVIDENCE_IDS) {
     if (!evidenceById.has(requiredId)) {
       fail(`Missing required evidence field: ${requiredId}`);
+    }
+  }
+
+  if (snapshot.checkpointLedger) {
+    if (snapshot.checkpointLedger.source !== "primary-journey-evidence") {
+      fail(`checkpointLedger.source has unsupported value: ${snapshot.checkpointLedger.source}`);
+    }
+    if (snapshot.checkpointLedger.entryCount !== snapshot.checkpointLedger.entries.length) {
+      fail("checkpointLedger.entryCount must match checkpointLedger.entries.length.");
+    }
+
+    const ledgerById = new Map<JourneyStepId, CheckpointLedgerEntry>();
+    for (const entry of snapshot.checkpointLedger.entries) {
+      if (ledgerById.has(entry.id)) {
+        fail(`Duplicate checkpoint ledger entry: ${entry.id}`);
+      }
+      assertNonEmptyString(entry.title, `checkpointLedger.entries[${entry.id}].title`);
+      assertEvidenceStatus(entry.status, `checkpointLedger.entries[${entry.id}].status`);
+      assertNonEmptyString(entry.artifactPath, `checkpointLedger.entries[${entry.id}].artifactPath`);
+      assertStringArray(entry.telemetryCheckpoints, `checkpointLedger.entries[${entry.id}].telemetryCheckpoints`);
+      ledgerById.set(entry.id, entry);
+    }
+
+    if (snapshot.linkedEvidence.primaryJourneyEvidence) {
+      for (const requiredId of REQUIRED_JOURNEY_STEP_IDS) {
+        if (!ledgerById.has(requiredId)) {
+          fail(`Missing checkpoint ledger entry: ${requiredId}`);
+        }
+      }
     }
   }
 

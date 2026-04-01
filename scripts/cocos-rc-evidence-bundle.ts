@@ -47,6 +47,20 @@ interface JourneyStep {
   sourceRefs: string[];
 }
 
+interface CheckpointLedgerEntry {
+  id: string;
+  title: string;
+  status: EvidenceStatus;
+  summary: string;
+  artifactPath: string;
+  phase: string;
+  roomId: string;
+  playerId: string;
+  connectionStatus: string;
+  lastUpdateReason: string;
+  telemetryCheckpoints: string[];
+}
+
 interface CocosReleaseCandidateSnapshot {
   schemaVersion: 1;
   candidate: {
@@ -77,6 +91,12 @@ interface CocosReleaseCandidateSnapshot {
   };
   requiredEvidence: CanonicalEvidenceField[];
   journey: JourneyStep[];
+  checkpointLedger?: {
+    source: "primary-journey-evidence";
+    milestoneDir: string;
+    entryCount: number;
+    entries: CheckpointLedgerEntry[];
+  };
 }
 
 interface BundleManifest {
@@ -108,6 +128,18 @@ interface BundleManifest {
     status: EvidenceStatus;
     evidenceCount: number;
   }>;
+  checkpointLedger?: {
+    source: "primary-journey-evidence";
+    entryCount: number;
+    milestoneDir: string;
+    entries: Array<{
+      id: string;
+      title: string;
+      status: EvidenceStatus;
+      artifactPath: string;
+      telemetryCheckpointCount: number;
+    }>;
+  };
   requiredEvidence: Array<{
     id: string;
     label: string;
@@ -384,6 +416,18 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
     lines.push(`| ${step.title} | \`${step.status}\` | ${step.evidence.length} item(s) |`);
   }
   lines.push("");
+  if (snapshot.checkpointLedger?.entries.length) {
+    lines.push("## Checkpoint Ledger");
+    lines.push("");
+    lines.push("| Step | Phase | Telemetry checkpoints | Artifact |");
+    lines.push("| --- | --- | --- | --- |");
+    for (const entry of snapshot.checkpointLedger.entries) {
+      lines.push(
+        `| ${entry.title} | \`${entry.phase || "<none>"}\` | ${entry.telemetryCheckpoints.length > 0 ? `\`${entry.telemetryCheckpoints.join(", ")}\`` : "_none_"} | \`${entry.artifactPath}\` |`
+      );
+    }
+    lines.push("");
+  }
   lines.push("## Required Evidence");
   lines.push("");
   lines.push("| Field | Value | Evidence |");
@@ -469,6 +513,22 @@ function buildManifest(snapshot: CocosReleaseCandidateSnapshot, artifacts: Bundl
       status: step.status,
       evidenceCount: step.evidence.length
     })),
+    ...(snapshot.checkpointLedger
+      ? {
+          checkpointLedger: {
+            source: snapshot.checkpointLedger.source,
+            entryCount: snapshot.checkpointLedger.entryCount,
+            milestoneDir: snapshot.checkpointLedger.milestoneDir,
+            entries: snapshot.checkpointLedger.entries.map((entry) => ({
+              id: entry.id,
+              title: entry.title,
+              status: entry.status,
+              artifactPath: entry.artifactPath,
+              telemetryCheckpointCount: entry.telemetryCheckpoints.length
+            }))
+          }
+        }
+      : {}),
     requiredEvidence: snapshot.requiredEvidence.map((field) => ({
       id: field.id,
       label: field.label,
