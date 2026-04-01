@@ -34,6 +34,8 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
   const snapshotPath = path.join(workspaceDir, "release-readiness.json");
   const cocosRcPath = path.join(workspaceDir, "cocos-rc.json");
   const primaryClientDiagnosticsPath = path.join(workspaceDir, "cocos-primary-diagnostics.json");
+  const reconnectSoakPath = path.join(workspaceDir, "colyseus-reconnect-soak-summary.json");
+  const persistencePath = path.join(workspaceDir, "phase1-release-persistence-regression-abc1234.json");
   const wechatArtifactsDir = path.join(workspaceDir, "wechat-artifacts");
   const packageMetadataPath = path.join(wechatArtifactsDir, "project-veil.package.json");
   const archivePath = path.join(wechatArtifactsDir, "project-veil.tar.gz");
@@ -86,6 +88,54 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
       ]
     },
     checkpoints: []
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-03-29T08:22:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 192,
+      invariantChecks: 768
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+  writeJson(persistencePath, {
+    generatedAt: "2026-03-29T08:24:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
+    effectiveStorageMode: "memory",
+    summary: {
+      status: "passed",
+      assertionCount: 6
+    },
+    contentValidation: {
+      valid: true,
+      bundleCount: 5,
+      summary: "All shipped content packs validated.",
+      issueCount: 0
+    },
+    persistenceRegression: {
+      mapPackId: "phase1",
+      assertions: ["room hydration reapplied resources"]
+    }
   });
   fs.mkdirSync(wechatArtifactsDir, { recursive: true });
   fs.writeFileSync(archivePath, "archive-binary", "utf8");
@@ -197,6 +247,10 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
         cocosRcPath,
         "--primary-client-diagnostics",
         primaryClientDiagnosticsPath,
+        "--reconnect-soak",
+        reconnectSoakPath,
+        "--phase1-persistence",
+        persistencePath,
         "--wechat-artifacts-dir",
         wechatArtifactsDir,
         "--candidate-revision",
@@ -240,12 +294,14 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
         ["server-health", "pass"],
         ["auth-readiness", "pass"],
         ["build-package-validation", "pass"],
+        ["reconnect-soak", "pass"],
+        ["phase1-persistence", "pass"],
         ["critical-evidence", "pass"]
       ]
     );
     assert.deepEqual(report.gates.every((gate) => gate.failReasons.length === 0), true);
-    assert.equal(report.gates[3]?.evidence.every((entry) => entry.availability === "present"), true);
-    assert.equal(report.gates[3]?.evidence.length, 5);
+    assert.equal(report.gates[5]?.evidence.every((entry) => entry.availability === "present"), true);
+    assert.equal(report.gates[5]?.evidence.length, 7);
     assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Phase 1 Go\/No-Go/);
   } finally {
     await new Promise<void>((resolve, reject) => {
@@ -265,6 +321,8 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
   const outputPath = path.join(workspaceDir, "dashboard.json");
   const markdownOutputPath = path.join(workspaceDir, "dashboard.md");
   const snapshotPath = path.join(workspaceDir, "release-readiness.json");
+  const reconnectSoakPath = path.join(workspaceDir, "colyseus-reconnect-soak-summary.json");
+  const persistencePath = path.join(workspaceDir, "phase1-release-persistence-regression-abc1234.json");
   const wechatArtifactsDir = path.join(workspaceDir, "wechat-artifacts");
   const packageMetadataPath = path.join(wechatArtifactsDir, "project-veil.package.json");
   const smokeReportPath = path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json");
@@ -306,6 +364,54 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
       { id: "login-lobby", status: "pending" }
     ]
   });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-03-29T08:22:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
+    status: "failed",
+    summary: {
+      failedScenarios: 1,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 32,
+      invariantChecks: 128
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 1,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 2,
+          connectionCount: 1,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+  writeJson(persistencePath, {
+    generatedAt: "2026-03-29T08:24:00.000Z",
+    revision: {
+      shortCommit: "abc1234"
+    },
+    effectiveStorageMode: "memory",
+    summary: {
+      status: "passed",
+      assertionCount: 0
+    },
+    contentValidation: {
+      valid: false,
+      bundleCount: 5,
+      summary: "Content validation failed.",
+      issueCount: 2
+    },
+    persistenceRegression: {
+      mapPackId: "phase1",
+      assertions: []
+    }
+  });
 
   let output = "";
   try {
@@ -317,6 +423,10 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
         "./scripts/release-readiness-dashboard.ts",
         "--snapshot",
         snapshotPath,
+        "--reconnect-soak",
+        reconnectSoakPath,
+        "--phase1-persistence",
+        persistencePath,
         "--wechat-artifacts-dir",
         wechatArtifactsDir,
         "--candidate-revision",
@@ -374,6 +484,8 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
       ["server-health", "warn"],
       ["auth-readiness", "warn"],
       ["build-package-validation", "fail"],
+      ["reconnect-soak", "fail"],
+      ["phase1-persistence", "fail"],
       ["critical-evidence", "fail"]
     ]
   );
@@ -383,6 +495,15 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
     "wechat_package_metadata_incomplete"
   ]);
   assert.deepEqual(report.gates[2]?.warnReasons, ["wechat_smoke_pending", "wechat_smoke_cases_pending"]);
-  assert.equal(report.gates[3]?.evidence.some((entry) => entry.freshness === "fresh"), true);
+  assert.deepEqual(report.gates[3]?.failReasons, [
+    "reconnect_soak_failed",
+    "reconnect_soak_rooms_failed",
+    "reconnect_soak_cleanup_incomplete"
+  ]);
+  assert.deepEqual(report.gates[4]?.failReasons, [
+    "phase1_content_validation_failed",
+    "phase1_persistence_assertions_missing"
+  ]);
+  assert.equal(report.gates[5]?.evidence.some((entry) => entry.freshness === "fresh"), true);
   assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Release validation evidence is incomplete or still pending|One or more release validation surfaces failed/);
 });

@@ -360,6 +360,8 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     assert.equal(dossier.sections.find((section) => section.id === "release-gate")?.result, "passed");
     assert.equal(dossier.sections.find((section) => section.id === "phase1-exit-evidence-gate")?.result, "accepted_risk");
     assert.equal(dossier.sections.find((section) => section.id === "runtime-health")?.result, "passed");
+    assert.equal(dossier.sections.find((section) => section.id === "reconnect-soak")?.result, "passed");
+    assert.equal(dossier.sections.find((section) => section.id === "phase1-persistence")?.result, "passed");
     assert.equal(dossier.acceptedRisks[0]?.label, "Unit and integration regression");
     assert.match(dossier.acceptedRisks[0]?.reason ?? "", /accepted for this RC only/i);
 
@@ -370,6 +372,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     assert.match(markdown, /Phase 1 exit evidence gate: `accepted_risk`/);
     assert.match(markdown, /Release readiness snapshot/);
     assert.match(markdown, /Runtime health\/auth-readiness\/metrics/);
+    assert.match(markdown, /Reconnect soak evidence/);
     assert.match(markdown, /Accepted Risks/);
   } finally {
     await new Promise<void>((resolve, reject) => {
@@ -394,6 +397,7 @@ test("phase1 candidate dossier fails the single exit evidence gate when the rele
   const snapshotPath = path.join(artifactsDir, "release-readiness-pass.json");
   const h5SmokePath = path.join(artifactsDir, "client-release-candidate-smoke-pass.json");
   const cocosBundlePath = path.join(artifactsDir, "cocos-rc-evidence-bundle-pass.json");
+  const reconnectSoakPath = path.join(artifactsDir, "colyseus-reconnect-soak-summary-pass.json");
   const persistencePath = path.join(artifactsDir, `phase1-release-persistence-regression-${revision}.json`);
   const wechatCandidateSummaryPath = path.join(wechatDir, "codex.wechat.release-candidate-summary.json");
 
@@ -421,6 +425,25 @@ test("phase1 candidate dossier fails the single exit evidence gate when the rele
     review: { phase1Gate: "passed" },
     journey: [{ id: "lobby-entry", status: "passed" }],
     requiredEvidence: [{ id: "roomId", label: "Room id recorded", filled: true }]
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-04-02T08:33:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    status: "failed",
+    summary: { failedScenarios: 1, scenarioNames: ["reconnect_soak"] },
+    soakSummary: { reconnectAttempts: 12, invariantChecks: 48 },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 1,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 1,
+          connectionCount: 1,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
   });
   writeJson(wechatCandidateSummaryPath, {
     generatedAt: "2026-04-02T08:40:00.000Z",
@@ -463,6 +486,7 @@ test("phase1 candidate dossier fails the single exit evidence gate when the rele
       serverUrl: runtime.url,
       snapshotPath,
       h5SmokePath,
+      reconnectSoakPath,
       cocosBundlePath,
       wechatCandidateSummaryPath,
       persistencePath,
@@ -471,6 +495,7 @@ test("phase1 candidate dossier fails the single exit evidence gate when the rele
     });
 
     assert.equal(dossier.sections.find((section) => section.id === "release-gate")?.result, "failed");
+    assert.equal(dossier.sections.find((section) => section.id === "reconnect-soak")?.result, "failed");
     assert.equal(dossier.phase1ExitEvidenceGate.result, "failed");
     assert.equal(dossier.summary.status, "failed");
     assert.match(dossier.phase1ExitEvidenceGate.summary, /blocked/i);

@@ -11,6 +11,8 @@ interface Args {
   snapshotPath?: string;
   cocosRcPath?: string;
   primaryClientDiagnosticsPath?: string;
+  reconnectSoakPath?: string;
+  persistencePath?: string;
   wechatArtifactsDir?: string;
   wechatSmokeReportPath?: string;
   wechatPackageMetadataPath?: string;
@@ -129,6 +131,59 @@ interface PrimaryClientDiagnosticSnapshotsArtifact {
   }>;
 }
 
+interface ReconnectSoakArtifact {
+  generatedAt?: string;
+  revision?: {
+    commit?: string;
+    shortCommit?: string;
+  };
+  status?: "passed" | "failed";
+  summary?: {
+    failedScenarios?: number;
+    scenarioNames?: string[];
+  };
+  soakSummary?: {
+    reconnectAttempts?: number;
+    invariantChecks?: number;
+    worldReconnectCycles?: number;
+    battleReconnectCycles?: number;
+  } | null;
+  results?: Array<{
+    scenario?: string;
+    failedRooms?: number;
+    runtimeHealthAfterCleanup?: {
+      activeRoomCount?: number;
+      connectionCount?: number;
+      activeBattleCount?: number;
+      heroCount?: number;
+    };
+  }>;
+}
+
+interface Phase1PersistenceReleaseReport {
+  generatedAt?: string;
+  revision?: {
+    commit?: string;
+    shortCommit?: string;
+  };
+  effectiveStorageMode?: string;
+  storageDescription?: string;
+  summary?: {
+    status?: "passed";
+    assertionCount?: number;
+  };
+  contentValidation?: {
+    valid?: boolean;
+    bundleCount?: number;
+    summary?: string;
+    issueCount?: number;
+  };
+  persistenceRegression?: {
+    mapPackId?: string;
+    assertions?: string[];
+  };
+}
+
 interface EvidenceItem {
   label: string;
   path: string;
@@ -163,6 +218,8 @@ interface DashboardReport {
     snapshotPath?: string;
     cocosRcPath?: string;
     primaryClientDiagnosticsPath?: string;
+    reconnectSoakPath?: string;
+    persistencePath?: string;
     wechatArtifactsDir?: string;
     wechatSmokeReportPath?: string;
     wechatPackageMetadataPath?: string;
@@ -242,6 +299,8 @@ function parseArgs(argv: string[]): Args {
   let snapshotPath: string | undefined;
   let cocosRcPath: string | undefined;
   let primaryClientDiagnosticsPath: string | undefined;
+  let reconnectSoakPath: string | undefined;
+  let persistencePath: string | undefined;
   let wechatArtifactsDir: string | undefined;
   let wechatSmokeReportPath: string | undefined;
   let wechatPackageMetadataPath: string | undefined;
@@ -271,6 +330,16 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--primary-client-diagnostics" && next) {
       primaryClientDiagnosticsPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--reconnect-soak" && next) {
+      reconnectSoakPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--phase1-persistence" && next) {
+      persistencePath = next;
       index += 1;
       continue;
     }
@@ -322,6 +391,8 @@ function parseArgs(argv: string[]): Args {
     ...(snapshotPath ? { snapshotPath } : {}),
     ...(cocosRcPath ? { cocosRcPath } : {}),
     ...(primaryClientDiagnosticsPath ? { primaryClientDiagnosticsPath } : {}),
+    ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
+    ...(persistencePath ? { persistencePath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
     ...(wechatPackageMetadataPath ? { wechatPackageMetadataPath } : {}),
@@ -1115,6 +1186,173 @@ export function buildCriticalEvidenceGate(
   };
 }
 
+export function summarizeReconnectSoak(
+  artifactPath: string | undefined,
+  artifact: ReconnectSoakArtifact | undefined,
+  maxEvidenceAgeDays: number
+): EvidenceSummary {
+  if (!artifactPath || !artifact) {
+    return {
+      status: "fail",
+      detail: "Reconnect soak artifact missing.",
+      evidence: createEvidenceItem({
+        label: "Reconnect soak summary",
+        path: artifactPath ?? "<missing-reconnect-soak-artifact>",
+        status: "fail",
+        availability: "missing",
+        summary: "Reconnect soak artifact missing.",
+        reasonCodes: ["reconnect_soak_artifact_missing"]
+      }),
+      failReasons: ["reconnect_soak_artifact_missing"],
+      warnReasons: []
+    };
+  }
+
+  const reconnectResult = artifact.results?.find((entry) => entry.scenario === "reconnect_soak");
+  const cleanup = reconnectResult?.runtimeHealthAfterCleanup;
+  const lingeringCleanupMetrics = [
+    ["activeRoomCount", cleanup?.activeRoomCount ?? 0],
+    ["connectionCount", cleanup?.connectionCount ?? 0],
+    ["activeBattleCount", cleanup?.activeBattleCount ?? 0],
+    ["heroCount", cleanup?.heroCount ?? 0]
+  ].filter(([, value]) => value > 0);
+
+  const failReasons: string[] = [];
+  if (artifact.status !== "passed") {
+    failReasons.push("reconnect_soak_failed");
+  }
+  if ((artifact.summary?.failedScenarios ?? 0) > 0 || (reconnectResult?.failedRooms ?? 0) > 0) {
+    failReasons.push("reconnect_soak_rooms_failed");
+  }
+  if ((artifact.soakSummary?.reconnectAttempts ?? 0) <= 0 || (artifact.soakSummary?.invariantChecks ?? 0) <= 0) {
+    failReasons.push("reconnect_soak_counters_missing");
+  }
+  if (lingeringCleanupMetrics.length > 0) {
+    failReasons.push("reconnect_soak_cleanup_incomplete");
+  }
+
+  const age = describeAge(artifact.generatedAt, maxEvidenceAgeDays);
+  const warnReasons = failReasons.length === 0 && age.status === "warn" ? ["reconnect_soak_stale"] : [];
+  const status: GateStatus = failReasons.length > 0 ? "fail" : age.status === "warn" ? "warn" : "pass";
+
+  const parts = [
+    `status=${artifact.status ?? "<missing>"}`,
+    `reconnectAttempts=${artifact.soakSummary?.reconnectAttempts ?? 0}`,
+    `invariantChecks=${artifact.soakSummary?.invariantChecks ?? 0}`,
+    `cleanup=${lingeringCleanupMetrics.length === 0 ? "clean" : lingeringCleanupMetrics.map(([label, value]) => `${label}=${value}`).join(",")}`
+  ];
+  if (artifact.summary?.scenarioNames?.length) {
+    parts.push(`scenarios=${artifact.summary.scenarioNames.join(",")}`);
+  }
+  if (warnReasons.length > 0) {
+    parts.push(age.detail);
+  }
+
+  return {
+    status,
+    detail: parts.join(" | "),
+    evidence: createEvidenceItem({
+      label: "Reconnect soak summary",
+      path: artifactPath,
+      status,
+      observedAt: artifact.generatedAt,
+      sourceRevision: artifact.revision?.shortCommit ?? artifact.revision?.commit,
+      summary: parts.join(" | "),
+      reasonCodes: status === "fail" ? failReasons : warnReasons
+    }),
+    failReasons,
+    warnReasons
+  };
+}
+
+export function summarizePhase1Persistence(
+  artifactPath: string | undefined,
+  artifact: Phase1PersistenceReleaseReport | undefined,
+  maxEvidenceAgeDays: number
+): EvidenceSummary {
+  if (!artifactPath || !artifact) {
+    return {
+      status: "fail",
+      detail: "Phase 1 persistence regression artifact missing.",
+      evidence: createEvidenceItem({
+        label: "Phase 1 persistence regression",
+        path: artifactPath ?? "<missing-phase1-persistence-artifact>",
+        status: "fail",
+        availability: "missing",
+        summary: "Phase 1 persistence regression artifact missing.",
+        reasonCodes: ["phase1_persistence_artifact_missing"]
+      }),
+      failReasons: ["phase1_persistence_artifact_missing"],
+      warnReasons: []
+    };
+  }
+
+  const failReasons: string[] = [];
+  if (artifact.summary?.status !== "passed") {
+    failReasons.push("phase1_persistence_failed");
+  }
+  if (artifact.contentValidation?.valid !== true) {
+    failReasons.push("phase1_content_validation_failed");
+  }
+  if ((artifact.summary?.assertionCount ?? 0) <= 0 || (artifact.persistenceRegression?.assertions?.length ?? 0) <= 0) {
+    failReasons.push("phase1_persistence_assertions_missing");
+  }
+
+  const age = describeAge(artifact.generatedAt, maxEvidenceAgeDays);
+  const warnReasons = failReasons.length === 0 && age.status === "warn" ? ["phase1_persistence_stale"] : [];
+  const status: GateStatus = failReasons.length > 0 ? "fail" : age.status === "warn" ? "warn" : "pass";
+
+  const parts = [
+    `status=${artifact.summary?.status ?? "<missing>"}`,
+    `contentValid=${artifact.contentValidation?.valid === true}`,
+    `assertions=${artifact.summary?.assertionCount ?? artifact.persistenceRegression?.assertions?.length ?? 0}`,
+    `storage=${artifact.effectiveStorageMode ?? "<missing>"}`,
+    `mapPack=${artifact.persistenceRegression?.mapPackId ?? "<missing>"}`
+  ];
+  if (artifact.contentValidation?.summary?.trim()) {
+    parts.push(artifact.contentValidation.summary.trim());
+  }
+  if (warnReasons.length > 0) {
+    parts.push(age.detail);
+  }
+
+  return {
+    status,
+    detail: parts.join(" | "),
+    evidence: createEvidenceItem({
+      label: "Phase 1 persistence regression",
+      path: artifactPath,
+      status,
+      observedAt: artifact.generatedAt,
+      sourceRevision: artifact.revision?.shortCommit ?? artifact.revision?.commit,
+      summary: parts.join(" | "),
+      reasonCodes: status === "fail" ? failReasons : warnReasons
+    }),
+    failReasons,
+    warnReasons
+  };
+}
+
+export function buildArtifactGate(
+  id: string,
+  label: string,
+  summary: EvidenceSummary,
+  passedSummary: string,
+  warnSummary: string,
+  failedSummary: string
+): GateReport {
+  return {
+    id,
+    label,
+    status: summary.status,
+    failReasons: summary.failReasons,
+    warnReasons: summary.warnReasons,
+    summary: summary.status === "pass" ? passedSummary : summary.status === "warn" ? warnSummary : failedSummary,
+    details: [summary.detail],
+    evidence: [summary.evidence]
+  };
+}
+
 function buildOverallSummary(gates: GateReport[]): string {
   const failed = gates.filter((gate) => gate.status === "fail").map((gate) => gate.label);
   const warned = gates.filter((gate) => gate.status === "warn").map((gate) => gate.label);
@@ -1350,11 +1588,19 @@ async function main(): Promise<void> {
     : resolveLatestMatchingJsonFile(DEFAULT_RELEASE_READINESS_DIR, (entry) =>
         entry.startsWith("cocos-primary-client-diagnostic-snapshots-")
       );
+  const resolvedReconnectSoakPath = args.reconnectSoakPath
+    ? path.resolve(args.reconnectSoakPath)
+    : resolveLatestMatchingJsonFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("colyseus-reconnect-soak-summary"));
+  const resolvedPersistencePath = args.persistencePath
+    ? path.resolve(args.persistencePath)
+    : resolveLatestMatchingJsonFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("phase1-release-persistence-regression-"));
   const wechatArtifacts = resolveWechatArtifacts(args);
 
   const snapshot = readJsonFile<ReleaseReadinessSnapshot>(resolvedSnapshotPath);
   const cocosRcSnapshot = readJsonFile<CocosReleaseCandidateSnapshot>(resolvedCocosRcPath);
   const primaryClientDiagnostics = readJsonFile<PrimaryClientDiagnosticSnapshotsArtifact>(resolvedPrimaryClientDiagnosticsPath);
+  const reconnectSoakArtifact = readJsonFile<ReconnectSoakArtifact>(resolvedReconnectSoakPath);
+  const persistenceArtifact = readJsonFile<Phase1PersistenceReleaseReport>(resolvedPersistencePath);
   const wechatSmokeReport = readJsonFile<WechatSmokeReport>(wechatArtifacts.smokeReportPath);
   const wechatPackageMetadata = readJsonFile<WechatPackageMetadata>(wechatArtifacts.packageMetadataPath);
 
@@ -1392,19 +1638,39 @@ async function main(): Promise<void> {
     resolvedPrimaryClientDiagnosticsPath,
     primaryClientDiagnostics
   );
+  const reconnectSoakSummary = summarizeReconnectSoak(resolvedReconnectSoakPath, reconnectSoakArtifact, args.maxEvidenceAgeDays);
+  const persistenceSummary = summarizePhase1Persistence(resolvedPersistencePath, persistenceArtifact, args.maxEvidenceAgeDays);
 
   const criticalEvidenceGate = buildCriticalEvidenceGate(args.maxEvidenceAgeDays, [
     snapshotSummary.evidence,
     packageSummary.evidence,
     smokeSummary.evidence,
     cocosRcSummary.evidence,
-    primaryClientDiagnosticsSummary.evidence
+    primaryClientDiagnosticsSummary.evidence,
+    reconnectSoakSummary.evidence,
+    persistenceSummary.evidence
   ]);
 
   const gates = [
     buildHealthGate(args.serverUrl, healthPayload, metricsText, healthError ?? metricsError),
     buildAuthGate(args.serverUrl, authPayload, authError),
     buildBuildPackageGate(snapshotSummary, packageSummary, smokeSummary),
+    buildArtifactGate(
+      "reconnect-soak",
+      "Reconnect soak evidence",
+      reconnectSoakSummary,
+      "Reconnect soak evidence passed with clean room teardown.",
+      "Reconnect soak evidence exists, but freshness needs review.",
+      "Reconnect soak evidence is missing or failing."
+    ),
+    buildArtifactGate(
+      "phase1-persistence",
+      "Phase 1 persistence evidence",
+      persistenceSummary,
+      "Phase 1 persistence regression and shipped content validation passed.",
+      "Phase 1 persistence evidence exists, but freshness needs review.",
+      "Phase 1 persistence evidence is missing or failing."
+    ),
     criticalEvidenceGate
   ];
 
@@ -1425,6 +1691,8 @@ async function main(): Promise<void> {
       ...(resolvedSnapshotPath ? { snapshotPath: resolvedSnapshotPath } : {}),
       ...(resolvedCocosRcPath ? { cocosRcPath: resolvedCocosRcPath } : {}),
       ...(resolvedPrimaryClientDiagnosticsPath ? { primaryClientDiagnosticsPath: resolvedPrimaryClientDiagnosticsPath } : {}),
+      ...(resolvedReconnectSoakPath ? { reconnectSoakPath: resolvedReconnectSoakPath } : {}),
+      ...(resolvedPersistencePath ? { persistencePath: resolvedPersistencePath } : {}),
       ...(args.wechatArtifactsDir ? { wechatArtifactsDir: path.resolve(args.wechatArtifactsDir) } : {}),
       ...(wechatArtifacts.smokeReportPath ? { wechatSmokeReportPath: wechatArtifacts.smokeReportPath } : {}),
       ...(wechatArtifacts.packageMetadataPath ? { wechatPackageMetadataPath: wechatArtifacts.packageMetadataPath } : {}),
