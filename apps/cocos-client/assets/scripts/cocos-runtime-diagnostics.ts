@@ -1,4 +1,8 @@
 import {
+  buildCocosAccountLifecycleReadinessView,
+  type CocosAccountLifecycleDraft
+} from "./cocos-account-lifecycle.ts";
+import {
   type PrimaryClientTelemetryEvent,
   buildRuntimeDiagnosticsTriageView,
   type RuntimeDiagnosticsConnectionStatus,
@@ -21,6 +25,8 @@ export interface CocosRuntimeDiagnosticsSnapshotInput {
   mode: RuntimeDiagnosticsMode;
   roomId: string;
   playerId: string;
+  authMode?: "guest" | "account";
+  loginId?: string | null;
   connectionStatus: RuntimeDiagnosticsConnectionStatus;
   lastUpdateSource: string | null;
   lastUpdateReason: string | null;
@@ -32,6 +38,36 @@ export interface CocosRuntimeDiagnosticsSnapshotInput {
   predictionStatus: string;
   recoverySummary: string | null;
   primaryClientTelemetry: PrimaryClientTelemetryEvent[];
+  accountLifecycleDraft?: CocosAccountLifecycleDraft | null;
+}
+
+function buildAccountReadinessSnapshot(input: CocosRuntimeDiagnosticsSnapshotInput) {
+  if (input.accountLifecycleDraft) {
+    const readiness = buildCocosAccountLifecycleReadinessView(input.accountLifecycleDraft);
+    return {
+      status: readiness.status,
+      summary: readiness.summary,
+      detail: readiness.detail,
+      source: input.accountLifecycleDraft.kind
+    } as const;
+  }
+
+  const loginId = input.loginId?.trim() || input.account.loginId?.trim() || "";
+  if ((input.authMode === "account" || input.account.source === "remote") && loginId) {
+    return {
+      status: "ready" as const,
+      summary: "正式账号会话已绑定",
+      detail: "当前主客户端已具备正式账号登录态，可用于 RC 登录链路验收。",
+      source: "session" as const
+    };
+  }
+
+  return {
+    status: "missing" as const,
+    summary: "仍在游客或本地账号态",
+    detail: "当前快照缺少正式账号登录态，无法证明主客户端正式账号链路已就绪。",
+    source: "session" as const
+  };
 }
 
 function buildTimelineTail(entries: string[]): CocosTimelineEntrySnapshot[] {
@@ -114,7 +150,8 @@ export function buildCocosRuntimeDiagnosticsSnapshot(
       source: input.account.source,
       loginId: input.account.loginId ?? null,
       recentEventCount: input.account.recentEventLog.length,
-      recentReplayCount: input.account.recentBattleReplays.length
+      recentReplayCount: input.account.recentBattleReplays.length,
+      accountReadiness: buildAccountReadinessSnapshot(input)
     },
     overview: null,
     diagnostics: {

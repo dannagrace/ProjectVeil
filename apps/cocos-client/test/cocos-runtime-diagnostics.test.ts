@@ -22,6 +22,8 @@ test("Cocos runtime diagnostics reuse the shared snapshot shape for HUD triage",
     mode: "world",
     roomId: "room-alpha",
     playerId: "player-1",
+    authMode: "guest",
+    loginId: null,
     connectionStatus: "reconnecting",
     lastUpdateSource: "replay",
     lastUpdateReason: "cached_snapshot",
@@ -53,6 +55,8 @@ test("Cocos runtime diagnostics reuse the shared snapshot shape for HUD triage",
   assert.equal(snapshot.world?.hero?.id, "hero-1");
   assert.equal(snapshot.world?.visibleHeroes[0]?.playerId, "player-2");
   assert.equal(snapshot.diagnostics.recoverySummary, "已回放缓存状态，等待房间同步...");
+  assert.equal(snapshot.account?.accountReadiness?.status, "missing");
+  assert.match(snapshot.account?.accountReadiness?.detail ?? "", /缺少正式账号登录态/);
 
   const lines = buildCocosRuntimeTriageSummaryLines(
     {
@@ -60,6 +64,8 @@ test("Cocos runtime diagnostics reuse the shared snapshot shape for HUD triage",
       mode: "world",
       roomId: "room-alpha",
       playerId: "player-1",
+      authMode: "guest",
+      loginId: null,
       connectionStatus: "reconnecting",
       lastUpdateSource: "replay",
       lastUpdateReason: "cached_snapshot",

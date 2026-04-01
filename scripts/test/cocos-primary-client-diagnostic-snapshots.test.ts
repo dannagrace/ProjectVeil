@@ -50,6 +50,12 @@ test("release:cocos:primary-diagnostics exports versioned JSON and Markdown arti
         source: {
           mode: string;
         };
+        account?: {
+          accountReadiness?: {
+            status: string;
+            summary: string;
+          };
+        };
       };
     }>;
   };
@@ -70,6 +76,7 @@ test("release:cocos:primary-diagnostics exports versioned JSON and Markdown arti
     artifact.summary.checkpointIds
   );
   assert.equal(artifact.checkpoints.find((checkpoint) => checkpoint.id === "combat-loop")?.diagnostics.source.mode, "battle");
+  assert.equal(artifact.checkpoints[0]?.diagnostics.account?.accountReadiness?.status, "ready");
   assert.deepEqual(
     artifact.checkpoints.find((checkpoint) => checkpoint.id === "inventory-overflow")?.telemetryCheckpoints,
     ["equipment.equip.rejected", "loot.overflowed"]
@@ -77,5 +84,6 @@ test("release:cocos:primary-diagnostics exports versioned JSON and Markdown arti
   assert.equal(fs.existsSync(markdownOutputPath), true);
   const markdown = fs.readFileSync(markdownOutputPath, "utf8");
   assert.match(markdown, /# Primary-Client Diagnostic Snapshots/);
+  assert.match(markdown, /Account readiness: ready · 正式账号会话已绑定/);
   assert.match(markdown, /reconnect-cached-replay/);
 });

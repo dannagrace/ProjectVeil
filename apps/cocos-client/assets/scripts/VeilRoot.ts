@@ -65,6 +65,7 @@ import { VeilLobbyPanel } from "./VeilLobbyPanel.ts";
 import {
   buildCocosAccountLifecyclePanelView,
   type CocosAccountLifecycleDeliveryMode,
+  type CocosAccountLifecycleDraft,
   type CocosAccountLifecycleKind
 } from "./cocos-account-lifecycle.ts";
 import { VeilMapBoard } from "./VeilMapBoard.ts";
@@ -2313,31 +2314,38 @@ export class VeilRoot extends Component {
   }
 
   private buildActiveAccountFlowPanelView() {
+    const draft = this.buildActiveAccountLifecycleDraft();
+    if (!draft) {
+      return null;
+    }
+
+    return buildCocosAccountLifecyclePanelView(draft);
+  }
+
+  private buildActiveAccountLifecycleDraft(): CocosAccountLifecycleDraft | null {
     if (!this.activeAccountFlow) {
       return null;
     }
 
-    return buildCocosAccountLifecyclePanelView(
-      this.activeAccountFlow === "registration"
-        ? {
-            kind: "registration",
-            loginId: this.loginId,
-            displayName: this.registrationDisplayName || this.displayName || this.loginId,
-            token: this.registrationToken,
-            password: this.registrationPassword,
-            deliveryMode: this.registrationDeliveryMode,
-            ...(this.registrationExpiresAt ? { expiresAt: this.registrationExpiresAt } : {})
-          }
-        : {
-            kind: "recovery",
-            loginId: this.loginId,
-            displayName: "",
-            token: this.recoveryToken,
-            password: this.recoveryPassword,
-            deliveryMode: this.recoveryDeliveryMode,
-            ...(this.recoveryExpiresAt ? { expiresAt: this.recoveryExpiresAt } : {})
-          }
-    );
+    return this.activeAccountFlow === "registration"
+      ? {
+          kind: "registration",
+          loginId: this.loginId,
+          displayName: this.registrationDisplayName || this.displayName || this.loginId,
+          token: this.registrationToken,
+          password: this.registrationPassword,
+          deliveryMode: this.registrationDeliveryMode,
+          ...(this.registrationExpiresAt ? { expiresAt: this.registrationExpiresAt } : {})
+        }
+      : {
+          kind: "recovery",
+          loginId: this.loginId,
+          displayName: "",
+          token: this.recoveryToken,
+          password: this.recoveryPassword,
+          deliveryMode: this.recoveryDeliveryMode,
+          ...(this.recoveryExpiresAt ? { expiresAt: this.recoveryExpiresAt } : {})
+        };
   }
 
   private openLobbyAccountFlow(kind: CocosAccountLifecycleKind): void {

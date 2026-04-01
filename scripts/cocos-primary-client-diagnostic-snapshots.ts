@@ -192,6 +192,8 @@ function buildDiagnosticsSnapshot(root: RootState, exportedAt: string): RuntimeD
     mode: root.showLobby ? "lobby" : update?.battle ? "battle" : "world",
     roomId: root.roomId,
     playerId: root.playerId,
+    authMode: root.authMode,
+    loginId: root.loginId,
     connectionStatus: root.diagnosticsConnectionStatus,
     lastUpdateSource: root.lastRoomUpdateSource ?? null,
     lastUpdateReason: root.lastRoomUpdateReason ?? null,
@@ -507,6 +509,9 @@ export function renderPrimaryClientDiagnosticSnapshotsMarkdown(
     lines.push(`- Summary: ${checkpoint.summary}`);
     lines.push(`- Connection status: ${checkpoint.connectionStatus}`);
     lines.push(`- Captured at: ${checkpoint.capturedAt}`);
+    lines.push(
+      `- Account readiness: ${checkpoint.diagnostics.account?.accountReadiness ? `${checkpoint.diagnostics.account.accountReadiness.status} · ${checkpoint.diagnostics.account.accountReadiness.summary}` : "<not-modeled>"}`
+    );
     lines.push(`- Telemetry checkpoints: ${checkpoint.telemetryCheckpoints.length > 0 ? checkpoint.telemetryCheckpoints.join(", ") : "<none>"}`);
     for (const highlight of checkpoint.highlights) {
       lines.push(`- ${highlight}`);
