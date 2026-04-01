@@ -377,6 +377,14 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
 
     const markdown = renderMarkdown(dossier);
     assert.match(markdown, /# Phase 1 Candidate Dossier/);
+    assert.match(markdown, /Generated at:/);
+    assert.match(markdown, /Branch: `[^`]+`/);
+    assert.match(markdown, /Git tree: `(clean|dirty)`/);
+    assert.match(markdown, /## Selected Inputs/);
+    assert.match(markdown, /Release readiness snapshot: `.*release-readiness-pass\.json`/);
+    assert.match(markdown, /Cocos RC bundle: `.*cocos-rc-evidence-bundle-pass\.json`/);
+    assert.match(markdown, /WeChat candidate summary: `.*codex\.wechat\.release-candidate-summary\.json`/);
+    assert.match(markdown, /Phase 1 persistence: `.*phase1-release-persistence-regression-abc1234\.json`/);
     assert.match(markdown, /Overall status: \*\*ACCEPTED_RISK\*\*/);
     assert.match(markdown, /## Phase 1 Exit Evidence Gate/);
     assert.match(markdown, /Phase 1 exit evidence gate: `accepted_risk`/);
