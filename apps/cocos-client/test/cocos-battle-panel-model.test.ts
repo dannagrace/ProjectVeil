@@ -104,7 +104,7 @@ test("buildBattlePanelViewModel surfaces settlement and presentation layer summa
     actionPending: false,
     feedback: {
       title: "战斗胜利",
-      detail: "战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+      detail: "PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
       badge: "WIN",
       tone: "victory"
     },
@@ -113,13 +113,13 @@ test("buildBattlePanelViewModel surfaces settlement and presentation layer summa
       phase: "resolution",
       moment: "result_victory",
       label: "战斗胜利",
-      detail: "战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+      detail: "PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
       badge: "WIN",
       tone: "victory",
       result: "victory",
       summaryLines: [
         "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
-        "播报：战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+        "播报：PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
         "战利品：金币 +12"
       ],
       feedbackLayer: {
@@ -136,7 +136,7 @@ test("buildBattlePanelViewModel surfaces settlement and presentation layer summa
   assert.deepEqual(view.summaryLines, [
     "战斗胜利",
     "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
-    "播报：战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
+    "播报：PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
     "战利品：金币 +12"
   ]);
 });
@@ -150,7 +150,7 @@ test("buildBattlePanelViewModel keeps neutral settlement in the battle result sh
     actionPending: false,
     feedback: {
       title: "战斗收束",
-      detail: "战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图",
+      detail: "PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图",
       badge: "SETTLE",
       tone: "neutral"
     },
@@ -159,13 +159,13 @@ test("buildBattlePanelViewModel keeps neutral settlement in the battle result sh
       phase: "resolution",
       moment: "result_settlement",
       label: "战斗收束",
-      detail: "战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图",
+      detail: "PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图",
       badge: "SETTLE",
       tone: "neutral",
       result: null,
       summaryLines: [
         "反馈层：动画 待机",
-        "播报：战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图"
+        "播报：PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图"
       ],
       feedbackLayer: {
         animation: "idle",

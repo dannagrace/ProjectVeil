@@ -38,15 +38,25 @@ export function buildBattleEnterCopy(update: SessionUpdate): BattleTransitionCop
   if (event.encounterKind === "hero") {
     return {
       badge: "PVP",
-      title: event.defenderHeroId ? `敌方英雄 ${event.defenderHeroId}` : "敌方英雄遭遇",
+      title: event.defenderHeroId ? `PVP 对手 ${event.defenderHeroId}` : "PVP 英雄遭遇",
       subtitle: joinParts([
         terrainLabel,
         encounterPosition ? formatEncounterPosition(encounterPosition) : null,
-        event.initiator === "neutral" ? "对手抢先切入，准备迎战" : "双方部队展开接战"
+        `${update.world.meta.roomId}/${event.battleId}`,
+        event.initiator === "neutral" ? "对手抢先切入，多人对抗即将展开" : "我方先手切入，多人对抗即将展开"
       ]),
       tone: "enter",
       terrain,
-      detailChips: []
+      detailChips: [
+        {
+          icon: "hero",
+          label: event.defenderHeroId ? `对手 ${event.defenderHeroId}` : "对手英雄"
+        },
+        {
+          icon: "battle",
+          label: `${update.world.meta.roomId}/${event.battleId}`
+        }
+      ]
     };
   }
 
@@ -69,12 +79,17 @@ export function buildBattleExitCopy(previousBattle: SessionUpdate["battle"], upd
   const encounterPosition = previousBattle?.encounterPosition ?? null;
   const terrainLabel = terrain ? formatBattleTerrainLabel(terrain) : null;
   const detailChips = buildBattleExitDetailChips(update.events);
+  const isPvp = Boolean(previousBattle?.defenderHeroId);
 
   if (!didWin) {
     return {
-      badge: "RETREAT",
-      title: "战斗失利",
-      subtitle: joinParts([terrainLabel, encounterPosition ? formatEncounterPosition(encounterPosition) : null, "部队需要整顿后再战"]),
+      badge: isPvp ? "PVP" : "RETREAT",
+      title: isPvp ? "英雄对决失利" : "战斗失利",
+      subtitle: joinParts([
+        terrainLabel,
+        encounterPosition ? formatEncounterPosition(encounterPosition) : null,
+        isPvp ? "对手仍保留在房间地图上，等待世界态回写" : "部队需要整顿后再战"
+      ]),
       tone: "defeat",
       terrain,
       detailChips: detailChips.slice(0, 3)
@@ -82,9 +97,13 @@ export function buildBattleExitCopy(previousBattle: SessionUpdate["battle"], upd
   }
 
   return {
-    badge: "VICTORY",
-    title: "战斗胜利",
-    subtitle: joinParts([terrainLabel, encounterPosition ? formatEncounterPosition(encounterPosition) : null, "返回世界地图，继续推进前线"]),
+    badge: isPvp ? "PVP" : "VICTORY",
+    title: isPvp ? "英雄对决胜利" : "战斗胜利",
+    subtitle: joinParts([
+      terrainLabel,
+      encounterPosition ? formatEncounterPosition(encounterPosition) : null,
+      isPvp ? "PVP 结算已回写，房间返回世界地图" : "返回世界地图，继续推进前线"
+    ]),
     tone: "victory",
     terrain,
     detailChips: detailChips.slice(0, 3)

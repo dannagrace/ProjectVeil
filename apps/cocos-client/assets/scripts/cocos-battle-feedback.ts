@@ -79,9 +79,12 @@ export function buildBattleTransitionFeedback(
   const battle = update.battle;
   const started = update.events.find((event) => event.type === "battle.started");
   if (battle && started) {
+    const isPvp = Boolean(battle.defenderHeroId);
     return {
-      title: battle.defenderHeroId ? "英雄遭遇已展开" : "中立遭遇已展开",
-      detail: battle.log[battle.log.length - 1] ?? "战斗开始",
+      title: isPvp ? "PVP 对抗已展开" : "PVE 遭遇已展开",
+      detail: isPvp
+        ? `对手 ${battle.defenderHeroId ?? "未知"} · 遭遇会话 ${update.world.meta.roomId}/${battle.id} 已建立`
+        : battle.log[battle.log.length - 1] ?? "战斗开始",
       badge: "ENGAGE",
       tone: "action"
     };
@@ -95,7 +98,7 @@ export function buildBattleTransitionFeedback(
 
     const settlement = buildBattleSettlementSummary(previousBattle, update, heroId);
     return {
-      title: "战斗收束",
+      title: previousBattle?.defenderHeroId ? "PVP 结算同步中" : "战斗收束",
       detail: settlement.detail,
       badge: "SETTLE",
       tone: "neutral"
@@ -111,7 +114,7 @@ export function buildBattleTransitionFeedback(
   const settlement = buildBattleSettlementSummary(previousBattle, update, heroId);
 
   return {
-    title: didWin ? "战斗胜利" : "战斗失利",
+    title: previousBattle?.defenderHeroId ? (didWin ? "PVP 胜利" : "PVP 失利") : didWin ? "战斗胜利" : "战斗失利",
     detail: settlement.detail,
     badge: didWin ? "WIN" : "LOSE",
     tone: didWin ? "victory" : "defeat"
@@ -247,17 +250,40 @@ function buildBattleSettlementSummary(
 ): BattleSettlementSummary {
   const rewards = collectSettlementRewardParts(update);
   const fieldStatus = describeSettlementFieldState(previousBattle, heroId);
+  const encounterStatus = describeSettlementEncounterState(previousBattle, heroId);
   const lines = [fieldStatus, ...rewards];
   const detailParts = [
+    encounterStatus,
     fieldStatus,
     rewards.length > 0 ? rewards.join(" / ") : null,
-    "准备返回世界地图"
+    previousBattle?.defenderHeroId ? "准备回写 PVP 世界态" : "准备返回世界地图"
   ].filter((part): part is string => Boolean(part));
 
   return {
     detail: detailParts.join(" · "),
     lines
   };
+}
+
+function describeSettlementEncounterState(previousBattle: BattleState | null, heroId: string | null): string {
+  if (!previousBattle) {
+    return "遭遇已关闭";
+  }
+
+  if (!previousBattle.defenderHeroId) {
+    return "PVE 遭遇已关闭";
+  }
+
+  const heroCamp = resolveHeroCamp(previousBattle, heroId);
+  const didHoldField =
+    heroCamp === "attacker"
+      ? countAliveUnits(previousBattle, "attacker") >= countAliveUnits(previousBattle, "defender")
+      : heroCamp === "defender"
+        ? countAliveUnits(previousBattle, "defender") >= countAliveUnits(previousBattle, "attacker")
+        : true;
+  return didHoldField
+    ? `PVP 结算：对手 ${previousBattle.defenderHeroId} 已退出当前遭遇`
+    : `PVP 结算：对手 ${previousBattle.defenderHeroId} 仍保留在房间地图上`;
 }
 
 function collectSettlementRewardParts(update: SessionUpdate): string[] {

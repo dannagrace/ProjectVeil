@@ -100,7 +100,8 @@ function createBattle(): BattleState {
     rng: {
       seed: 1,
       cursor: 0
-    }
+    },
+    defenderHeroId: "hero-2"
   };
 }
 
@@ -158,7 +159,7 @@ test("renderEncounterSourceDetail covers active hero encounter initiative branch
       battle: activeBattle,
       lastEncounterStarted: createEncounterStartedEvent()
     }),
-    "遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到多人遭遇战结算，战斗会话 battle-1 已建立。"
+    "遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到战斗会话 battle-1。"
   );
 
   assert.equal(
@@ -170,7 +171,7 @@ test("renderEncounterSourceDetail covers active hero encounter initiative branch
         defenderHeroId: "hero-1"
       })
     }),
-    "遭遇来源：敌方英雄先手接触我方，当前房间已切到多人遭遇战结算，战斗会话 battle-1 已建立。"
+    "遭遇来源：敌方英雄先手接触我方，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到战斗会话 battle-1。"
   );
 });
 
@@ -216,7 +217,7 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
         encounterRefId: "hero-2"
       })
     }),
-    "遭遇提示：确认移动后会立刻接敌，并锁定到英雄遭遇战。"
+    "遭遇提示：确认移动后会立刻接敌，并锁定到 PVP 英雄遭遇战；进入后会先展示对手摘要与战斗会话。"
   );
 
   assert.equal(
@@ -228,7 +229,7 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
         encounterRefId: "neutral-1"
       })
     }),
-    "遭遇提示：确认移动后会立刻接敌，并锁定到中立遭遇战。"
+    "遭遇提示：确认移动后会立刻接敌，并锁定到 PVE 中立遭遇战。"
   );
 
   assert.equal(
@@ -244,21 +245,23 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
   assert.equal(
     renderEncounterSourceDetail({
       ...createEncounterSourceInput(),
+      battle: createBattle(),
       diagnostics: {
         connectionStatus: "reconnecting"
       }
     }),
-    "连接反馈：房间连接中断，正在恢复多人房间与战斗归属；恢复前请以权威状态为准。"
+    "连接反馈：PVP 遭遇 room-alpha/battle-1 连接中断，正在恢复对手归属、当前回合与房间主状态；恢复前请以权威状态为准。"
   );
 
   assert.equal(
     renderEncounterSourceDetail({
       ...createEncounterSourceInput(),
+      battle: createBattle(),
       diagnostics: {
         connectionStatus: "reconnect_failed"
       }
     }),
-    "连接反馈：旧连接恢复失败，正在通过最近快照回补房间；短暂期间可能只显示缓存状态。"
+    "连接反馈：PVP 遭遇旧连接恢复失败，正在通过最近快照回补当前胜负、回合归属和房间状态；短暂期间可能只显示缓存状态。"
   );
 
   assert.equal(
@@ -273,7 +276,7 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
 test("renderRoomActionHint covers recovery, battle active, and missing hero states", () => {
   assert.equal(
     renderRoomActionHint({
-      battle: null,
+      battle: createBattle(),
       lastBattleSettlement: null,
       activeHero: {
         move: {
@@ -286,12 +289,12 @@ test("renderRoomActionHint covers recovery, battle active, and missing hero stat
       },
       predictionStatus: ""
     }),
-    "下一步：等待重连恢复完成；此时先不要依赖本地预览判断最终房间结果。"
+    "下一步：等待 PVP 遭遇恢复完成；此时先不要依赖本地预览判断胜负或当前回合归属。"
   );
 
   assert.equal(
     renderRoomActionHint({
-      battle: null,
+      battle: createBattle(),
       lastBattleSettlement: null,
       activeHero: {
         move: {
@@ -304,7 +307,7 @@ test("renderRoomActionHint covers recovery, battle active, and missing hero stat
       },
       predictionStatus: ""
     }),
-    "下一步：等待权威房间状态回补；恢复完成后再继续地图移动或确认战后结果。"
+    "下一步：等待权威房间状态回补；恢复完成后再确认胜负、当前回合与是否还能继续移动。"
   );
 
   assert.equal(
@@ -420,26 +423,26 @@ test("renderRoomActionHint covers settlement and exploration move branches", () 
 test("renderRecoverySummary covers reconnect, replay fallback, explicit recovery, and steady state branches", () => {
   assert.equal(
     renderRecoverySummary({
-      battle: null,
+      battle: createBattle(),
       lastBattleSettlement: null,
       diagnostics: {
         connectionStatus: "reconnecting"
       },
       predictionStatus: ""
     }),
-    "恢复状态：正在重新加入多人房间并校正战斗归属，结果请以恢复后的权威状态为准。"
+    "恢复状态：正在重新加入 PVP 遭遇并校正对手归属、当前回合与房间状态，结果请以恢复后的权威状态为准。"
   );
 
   assert.equal(
     renderRecoverySummary({
-      battle: null,
-      lastBattleSettlement: null,
+      battle: createBattle(),
+      lastBattleSettlement: { kind: "pvp", aftermath: "已结算" },
       diagnostics: {
-        connectionStatus: "connected"
+        connectionStatus: "reconnect_failed"
       },
-      predictionStatus: "已回放本地缓存状态，正在等待房间同步..."
+      predictionStatus: ""
     }),
-    "恢复状态：已回放本地缓存状态，正在等待房间同步..."
+    "恢复状态：PVP 遭遇旧连接恢复失败，已切换到快照回补链路；当前先展示最近缓存与回补进度。"
   );
 
   assert.equal(
@@ -459,6 +462,7 @@ test("renderRecoverySummary covers reconnect, replay fallback, explicit recovery
     renderRecoverySummary({
       battle: null,
       lastBattleSettlement: {
+        kind: "pvp",
         aftermath: "已结算"
       },
       diagnostics: {
@@ -466,7 +470,7 @@ test("renderRecoverySummary covers reconnect, replay fallback, explicit recovery
       },
       predictionStatus: ""
     }),
-    "恢复状态：最近一场遭遇的结算与地图房间态已经重新对齐。"
+    "恢复状态：最近一场 PVP 遭遇的结算与地图房间态已经重新对齐。"
   );
 
   assert.equal(
@@ -538,8 +542,9 @@ test("resolveRecoveryRoomStateLabel distinguishes pending, fallback, and restore
 test("renderRoomResultSummary prioritizes reconnect guidance over stale settlement copy and surfaces restored state", () => {
   assert.equal(
     renderRoomResultSummary({
-      battle: null,
+      battle: createBattle(),
       lastBattleSettlement: {
+        kind: "pvp",
         roomState: "房间已回到地图探索阶段。"
       },
       diagnostics: {
@@ -548,7 +553,7 @@ test("renderRoomResultSummary prioritizes reconnect guidance over stale settleme
       predictionStatus: "",
       roomId: "room-alpha"
     }),
-    "房间结果：正在恢复连接与房间主状态，期间请以恢复后的权威结果为准。"
+    "房间结果：PVP 遭遇 room-alpha/battle-1 正在恢复连接；期间请以恢复后的权威胜负、回合归属和房间阶段为准。"
   );
 
   assert.equal(
@@ -569,6 +574,7 @@ test("renderRoomResultSummary prioritizes reconnect guidance over stale settleme
     renderRoomResultSummary({
       battle: null,
       lastBattleSettlement: {
+        kind: "pvp",
         roomState: "房间已回到地图探索阶段。"
       },
       diagnostics: {
@@ -578,7 +584,7 @@ test("renderRoomResultSummary prioritizes reconnect guidance over stale settleme
       predictionStatus: "",
       roomId: "room-alpha"
     }),
-    "房间结果：权威房间状态已恢复，战后结果与地图状态已经重新对齐；当前结算已同步回写。"
+    "房间结果：权威房间状态已恢复，战后结果与地图状态已经重新对齐；当前 PVP结算已同步回写。"
   );
 });
 

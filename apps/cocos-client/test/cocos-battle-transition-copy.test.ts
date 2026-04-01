@@ -89,6 +89,12 @@ function createBattleEnterUpdate(event: WorldEvent, terrain: TerrainType, encoun
         cursor: 0
       },
       worldHeroId: "hero-1",
+      ...(event.type === "battle.started" && event.encounterKind === "hero" && event.defenderHeroId
+        ? { defenderHeroId: event.defenderHeroId }
+        : {}),
+      ...(event.type === "battle.started" && event.encounterKind === "neutral" && event.neutralArmyId
+        ? { neutralArmyId: event.neutralArmyId }
+        : {}),
       encounterPosition
     },
     events: [event],
@@ -137,9 +143,47 @@ test("buildBattleEnterCopy distinguishes pve and pvp encounters", () => {
   ));
   assert.deepEqual(heroEnter, {
     badge: "PVP",
-    title: "敌方英雄 hero-2",
-    subtitle: "草野战场 · 坐标 (3,5) · 双方部队展开接战",
+    title: "PVP 对手 hero-2",
+    subtitle: "草野战场 · 坐标 (3,5) · room-alpha/battle-2 · 我方先手切入，多人对抗即将展开",
     tone: "enter",
+    terrain: "grass",
+    detailChips: [
+      { icon: "hero", label: "对手 hero-2" },
+      { icon: "battle", label: "room-alpha/battle-2" }
+    ]
+  });
+});
+
+test("buildBattleExitCopy distinguishes pvp settlement from pve settlement", () => {
+  const update = createBattleEnterUpdate(
+    {
+      type: "battle.started",
+      heroId: "hero-1",
+      encounterKind: "hero",
+      defenderHeroId: "hero-2",
+      initiator: "hero",
+      battleId: "battle-pvp",
+      path: [{ x: 2, y: 2 }, { x: 3, y: 2 }],
+      moveCost: 1
+    },
+    "grass",
+    { x: 3, y: 2 }
+  );
+
+  assert.deepEqual(buildBattleExitCopy(update.battle, update, true), {
+    badge: "PVP",
+    title: "英雄对决胜利",
+    subtitle: "草野战场 · 坐标 (3,2) · PVP 结算已回写，房间返回世界地图",
+    tone: "victory",
+    terrain: "grass",
+    detailChips: []
+  });
+
+  assert.deepEqual(buildBattleExitCopy(update.battle, update, false), {
+    badge: "PVP",
+    title: "英雄对决失利",
+    subtitle: "草野战场 · 坐标 (3,2) · 对手仍保留在房间地图上，等待世界态回写",
+    tone: "defeat",
     terrain: "grass",
     detailChips: []
   });

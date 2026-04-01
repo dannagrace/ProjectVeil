@@ -222,6 +222,49 @@ test("battle feedback summarizes action, progress, and outcome", () => {
   assert.match(unsettledFeedback?.detail ?? "", /准备返回世界地图/);
 });
 
+test("battle feedback calls out pvp encounter identity and settlement state", () => {
+  const pvpBattle: BattleState = {
+    ...createBattleState(),
+    id: "battle-pvp",
+    defenderHeroId: "hero-9",
+    neutralArmyId: undefined
+  };
+
+  const pvpEnter = buildBattleTransitionFeedback(
+    {
+      ...createResolvedUpdate("attacker_victory"),
+      battle: pvpBattle,
+      events: [
+        {
+          type: "battle.started",
+          heroId: "hero-1",
+          encounterKind: "hero",
+          defenderHeroId: "hero-9",
+          initiator: "hero",
+          battleId: "battle-pvp",
+          path: [{ x: 0, y: 0 }],
+          moveCost: 1
+        }
+      ]
+    },
+    "hero-1"
+  );
+  assert.equal(pvpEnter?.title, "PVP 对抗已展开");
+  assert.match(pvpEnter?.detail ?? "", /room-alpha\/battle-pvp/);
+
+  const pvpSettlement = buildBattleTransitionFeedback(
+    {
+      ...createResolvedUpdate("attacker_victory"),
+      events: []
+    },
+    "hero-1",
+    pvpBattle
+  );
+  assert.equal(pvpSettlement?.title, "PVP 结算同步中");
+  assert.match(pvpSettlement?.detail ?? "", /PVP 结算：对手 hero-9/);
+  assert.match(pvpSettlement?.detail ?? "", /准备回写 PVP 世界态/);
+});
+
 test("battle presentation plan formalizes enter, impact, and resolution phases", () => {
   const battle = createBattleState();
   const actionPlan = buildBattleActionPresentation(
@@ -294,7 +337,7 @@ test("battle presentation plan formalizes enter, impact, and resolution phases",
   assert.equal(resolutionPlan.transition?.copy.badge, "VICTORY");
   assert.deepEqual(resolutionPlan.state.summaryLines.slice(0, 2), [
     "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
-    "播报：战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图"
+    "播报：PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图"
   ]);
 
   const unsettledResolutionPlan = buildBattlePresentationPlan(
