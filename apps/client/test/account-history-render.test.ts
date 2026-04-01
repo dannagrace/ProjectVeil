@@ -174,13 +174,12 @@ test("account history renderer shows recent battle replay summaries with step ch
     selectedReplayId: "room-alpha:battle-1:player-1"
   });
 
-  assert.match(html, /最近 2 场战斗的回放摘要/);
+  assert.match(html, /最近 2 场战斗的结算摘要/);
   assert.match(html, /PVE · 中立守军 neutral-1/);
   assert.match(html, /房间 room-alpha/);
-  assert.match(html, /回放 2 步/);
-  assert.match(html, /玩家 1/);
-  assert.match(html, /自动 1/);
-  assert.match(html, /技能 1/);
+  assert.match(html, /1 回合/);
+  assert.match(html, /2 步/);
+  assert.match(html, /经验 \+40/);
   assert.match(html, /data-select-replay="room-alpha:battle-1:player-1"/);
   assert.match(html, /account-replay-entry is-victory is-selected/);
 });
@@ -198,12 +197,12 @@ test("account history renderer groups battle list and replay detail into a repla
 
   assert.match(html, /data-testid="battle-report-center"/);
   assert.match(html, /战报与回放中心/);
-  assert.match(html, /最近累计 2 场战斗/);
+  assert.match(html, /最近累计 2 份战报/);
   assert.match(html, /支持从列表进入详情或基础回放/);
   assert.match(html, /战报 2/);
   assert.match(html, /查看最新战报/);
   assert.match(html, /进入回放中心/);
-  assert.match(html, /可直接打开最新结算，或进入逐步回放/);
+  assert.match(html, /可直接打开最新结算，查看收益证据，并进入逐步回放/);
   assert.match(html, /class="account-replay-entry-point is-primary"/);
   assert.match(html, /data-select-replay="room-alpha:battle-1:player-1"/);
   assert.match(html, /回放详情/);

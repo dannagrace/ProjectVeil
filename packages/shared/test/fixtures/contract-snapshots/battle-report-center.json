@@ -1,0 +1,32 @@
+{
+  "latestReportId": "room-contract:battle-demo:player-1",
+  "items": [
+    {
+      "id": "room-contract:battle-demo:player-1",
+      "replayId": "room-contract:battle-demo:player-1",
+      "roomId": "room-contract",
+      "playerId": "player-1",
+      "battleId": "battle-demo",
+      "battleKind": "neutral",
+      "playerCamp": "attacker",
+      "heroId": "hero-1",
+      "neutralArmyId": "neutral-1",
+      "startedAt": "2026-03-29T06:26:00.000Z",
+      "completedAt": "2026-03-29T06:30:00.000Z",
+      "result": "victory",
+      "turnCount": 1,
+      "actionCount": 2,
+      "rewards": [
+        {
+          "type": "experience",
+          "label": "hero_xp",
+          "amount": 120
+        }
+      ],
+      "evidence": {
+        "replay": "available",
+        "rewards": "available"
+      }
+    }
+  ]
+}

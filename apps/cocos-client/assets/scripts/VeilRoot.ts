@@ -699,7 +699,7 @@ export class VeilRoot extends Component {
         void this.refreshSnapshot();
       },
       onToggleAchievements: () => {
-        void this.toggleGameplayAccountReviewPanel();
+        void this.openGameplayBattleReportCenter();
       },
       onLearnSkill: (skillId) => {
         void this.learnHeroSkill(skillId);
@@ -1275,6 +1275,18 @@ export class VeilRoot extends Component {
     await this.refreshActiveAccountReviewSection();
   }
 
+  private async openGameplayBattleReportCenter(): Promise<void> {
+    this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+      type: "section.selected",
+      section: "battle-replays"
+    });
+    this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
+      type: "battle-replay.selected",
+      replayId: this.lobbyAccountProfile.battleReportCenter?.latestReportId ?? this.lobbyAccountReviewState.selectedBattleReplayId
+    });
+    await this.toggleGameplayAccountReviewPanel(true);
+  }
+
   private async refreshAccountReviewPage(
     section: "battle-replays" | "event-history",
     page: number
@@ -1456,7 +1468,7 @@ export class VeilRoot extends Component {
           void this.refreshSnapshot();
         },
         onToggleAchievements: () => {
-          void this.toggleGameplayAccountReviewPanel();
+          void this.openGameplayBattleReportCenter();
         },
         onLearnSkill: (skillId) => {
           void this.learnHeroSkill(skillId);

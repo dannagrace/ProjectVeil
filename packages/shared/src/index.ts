@@ -3,6 +3,7 @@ export * from "./action-precheck.ts";
 export * from "./auth-ui.ts";
 export * from "./assets-config.ts";
 export * from "./battle.ts";
+export * from "./battle-report.ts";
 export * from "./battle-replay.ts";
 export * from "./content-pack-validation.ts";
 export * from "./deterministic-rng.ts";

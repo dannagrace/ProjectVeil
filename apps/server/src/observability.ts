@@ -443,7 +443,8 @@ function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): Runtim
       recoverySummary: null,
       predictionStatus: "server-observability",
       pendingUiTasks: 0,
-      replay: null
+      replay: null,
+      primaryClientTelemetry: []
     }
   };
 }

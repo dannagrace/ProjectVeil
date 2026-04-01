@@ -1,4 +1,8 @@
 import {
+  normalizePlayerBattleReportCenter,
+  type PlayerBattleReportCenter
+} from "./battle-report.ts";
+import {
   normalizeEventLogEntries,
   normalizeAchievementProgress,
   type EventLogEntry,
@@ -22,6 +26,7 @@ export interface PlayerAccountReadModel {
   achievements: PlayerAchievementProgress[];
   recentEventLog: EventLogEntry[];
   recentBattleReplays?: PlayerBattleReplaySummary[];
+  battleReportCenter?: PlayerBattleReportCenter;
   loginId?: string;
   credentialBoundAt?: string;
   lastRoomId?: string;
@@ -37,6 +42,7 @@ export interface PlayerAccountReadModelInput {
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null | undefined;
+  battleReportCenter?: Partial<PlayerBattleReportCenter> | null | undefined;
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
   lastRoomId?: string | undefined;
@@ -53,6 +59,8 @@ export function normalizePlayerAccountReadModel(
   const credentialBoundAt = account?.credentialBoundAt?.trim();
   const lastRoomId = account?.lastRoomId?.trim();
   const lastSeenAt = account?.lastSeenAt?.trim();
+  const recentEventLog = normalizeEventLogEntries(account?.recentEventLog);
+  const recentBattleReplays = normalizePlayerBattleReplaySummaries(account?.recentBattleReplays);
 
   return {
     playerId,
@@ -65,8 +73,12 @@ export function normalizePlayerAccountReadModel(
       ore: Math.max(0, Math.floor(account?.globalResources?.ore ?? 0))
     },
     achievements: normalizeAchievementProgress(account?.achievements),
-    recentEventLog: normalizeEventLogEntries(account?.recentEventLog),
-    recentBattleReplays: normalizePlayerBattleReplaySummaries(account?.recentBattleReplays),
+    recentEventLog,
+    recentBattleReplays,
+    battleReportCenter: normalizePlayerBattleReportCenter(account?.battleReportCenter, {
+      replays: recentBattleReplays,
+      eventLog: recentEventLog
+    }),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
     ...(lastRoomId ? { lastRoomId } : {}),

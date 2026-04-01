@@ -3,6 +3,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  createBattleReportCenterFixture,
   createClientMessageFixtures,
   createPlayerProgressionSnapshotFixture,
   createRuntimeDiagnosticsSnapshotFixture,
@@ -19,6 +20,10 @@ test("shared contract snapshots stay stable for high-value client-facing payload
     {
       name: "session-state-payload",
       value: createSessionStatePayloadFixture()
+    },
+    {
+      name: "battle-report-center",
+      value: createBattleReportCenterFixture()
     },
     {
       name: "player-progression-snapshot",

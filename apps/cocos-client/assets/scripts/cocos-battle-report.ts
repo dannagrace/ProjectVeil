@@ -1,4 +1,4 @@
-import type { PlayerBattleReplaySummary } from "./project-shared/index.ts";
+import { buildPlayerBattleReportCenter, type EventLogEntry, type PlayerBattleReplaySummary } from "./project-shared/index.ts";
 
 export interface CocosBattleReportSummary {
   title: string;
@@ -52,22 +52,39 @@ function summarizeReplaySteps(replay: PlayerBattleReplaySummary): {
 }
 
 export function summarizeLatestBattleReplay(
-  replays: PlayerBattleReplaySummary[]
+  replays: PlayerBattleReplaySummary[],
+  recentEventLog: Partial<EventLogEntry>[] = []
 ): CocosBattleReportSummary {
-  const latest = replays[0];
-  if (!latest) {
+  const latestReport = buildPlayerBattleReportCenter(replays, recentEventLog).items[0];
+  if (!latestReport) {
     return {
       title: "战报 暂无记录",
-      detail: "完成一次战斗后，这里会同步最近回放摘要"
+      detail: "完成一次战斗后，这里会同步最近战报摘要"
     };
   }
 
-  const resultLabel = latest.result === "attacker_victory" ? "最近胜利" : "最近失利";
-  const campLabel = latest.playerCamp === "attacker" ? "攻方" : "守方";
+  const latest = replays.find((replay) => replay.id === latestReport.replayId) ?? replays[0] ?? null;
+  if (!latest) {
+    return {
+      title: "战报 暂无记录",
+      detail: "完成一次战斗后，这里会同步最近战报摘要"
+    };
+  }
+
+  const resultLabel = latestReport.result === "victory" ? "最近胜利" : "最近失利";
+  const campLabel = latestReport.playerCamp === "attacker" ? "攻方" : "守方";
+  const rewardSummary = latestReport.rewards[0]
+    ? latestReport.rewards
+        .slice(0, 2)
+        .map((reward) => (reward.amount != null ? `${reward.label}+${reward.amount}` : reward.label))
+        .join(" / ")
+    : latestReport.evidence.rewards === "available"
+      ? "收益同步中"
+      : "无额外奖励";
   const stepSummary = summarizeReplaySteps(latest);
 
   return {
     title: `战报 ${resultLabel} · ${formatBattleKindLabel(latest)} ${formatEncounterLabel(latest)}`,
-    detail: `${formatShortTimestamp(latest.completedAt)} · ${campLabel} · ${latest.steps.length} 步 · 玩${stepSummary.playerSteps}/自${stepSummary.automatedSteps}`
+    detail: `${formatShortTimestamp(latestReport.completedAt)} · ${campLabel} · ${latestReport.turnCount} 回合/${latestReport.actionCount} 步 · ${rewardSummary} · 玩${stepSummary.playerSteps}/自${stepSummary.automatedSteps}`
   };
 }

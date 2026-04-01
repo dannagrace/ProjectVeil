@@ -14,6 +14,7 @@ import {
   applyBattleOutcomeToWorld,
   applyAchievementMetricDelta,
   applyAchievementProgressValue,
+  buildPlayerBattleReportCenter,
   buildPlayerProgressionSnapshot,
   queryAchievementProgress,
   queryEventLogEntries,
@@ -1308,6 +1309,8 @@ test("player account read model helper normalizes progression, replays, and reso
   assert.deepEqual(account.recentBattleReplays.map((replay) => replay.id), ["replay-1"]);
   assert.equal(account.loginId, "captain");
   assert.equal(account.lastRoomId, "room-alpha");
+  assert.equal(account.battleReportCenter.latestReportId, "replay-1");
+  assert.equal(account.battleReportCenter.items[0]?.result, "victory");
 });
 
 test("player account read model helper falls back to empty progression collections", () => {
@@ -1317,6 +1320,10 @@ test("player account read model helper falls back to empty progression collectio
   assert.equal(account.achievements.length, getAchievementDefinitions().length);
   assert.deepEqual(account.recentEventLog, []);
   assert.deepEqual(account.recentBattleReplays, []);
+  assert.deepEqual(account.battleReportCenter, {
+    latestReportId: null,
+    items: []
+  });
   assert.deepEqual(account.globalResources, {
     gold: 0,
     wood: 0,
@@ -1382,6 +1389,57 @@ test("battle replay helpers normalize steps and keep newest unique replays first
   assert.deepEqual(merged.map((replay) => replay.id), ["replay-newer", "replay-older"]);
   assert.equal(merged[0]?.steps[0]?.index, 5);
   assert.equal(merged[1]?.steps[0]?.index, 9);
+});
+
+test("battle report helpers derive rewards, turn count, and evidence availability from replay plus event log", () => {
+  const battle = createEmptyBattleState({
+    id: "battle-1",
+    round: 1,
+    attackerHeroId: "hero-1",
+    defenderHeroId: "neutral-1"
+  });
+
+  const center = buildPlayerBattleReportCenter(
+    [
+      {
+        id: "replay-1",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        battleId: "battle-1",
+        battleKind: "neutral",
+        playerCamp: "attacker",
+        heroId: "hero-1",
+        neutralArmyId: "neutral-1",
+        startedAt: "2026-03-27T10:00:00.000Z",
+        completedAt: "2026-03-27T10:01:00.000Z",
+        initialState: battle,
+        steps: [{ index: 1, source: "player", action: { type: "battle.wait", unitId: "hero-1-stack" } }],
+        result: "attacker_victory"
+      }
+    ],
+    [
+      {
+        id: "event-1",
+        timestamp: "2026-03-27T10:01:00.000Z",
+        roomId: "room-alpha",
+        playerId: "player-1",
+        category: "combat",
+        description: "resolved",
+        heroId: "hero-1",
+        worldEventType: "battle.resolved",
+        rewards: [{ type: "experience", label: "经验", amount: 40 }]
+      }
+    ]
+  );
+
+  assert.equal(center.latestReportId, "replay-1");
+  assert.deepEqual(center.items[0]?.rewards, [{ type: "experience", label: "经验", amount: 40 }]);
+  assert.equal(center.items[0]?.turnCount, 1);
+  assert.equal(center.items[0]?.actionCount, 1);
+  assert.deepEqual(center.items[0]?.evidence, {
+    replay: "available",
+    rewards: "available"
+  });
 });
 
 test("battle replay query helper filters normalized summaries by replay metadata", () => {

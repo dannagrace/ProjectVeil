@@ -1,5 +1,6 @@
 import {
   buildAchievementUiItems,
+  buildPlayerBattleReportCenter,
   groupAchievementUiItems,
   buildBattleReplayTimeline,
   createBattleReplayPlaybackState,
@@ -202,26 +203,29 @@ function formatBattleRewardChip(
   return reward.amount != null ? `${reward.label} +${reward.amount}` : reward.label;
 }
 
-function collectBattleReportEventLogEntries(
+function resolveBattleReportCenter(account: PlayerAccountProfile) {
+  return account.battleReportCenter && account.battleReportCenter.items.length > 0
+    ? account.battleReportCenter
+    : buildPlayerBattleReportCenter(account.recentBattleReplays, account.recentEventLog);
+}
+
+function resolveBattleReportSummary(
   account: PlayerAccountProfile,
   replay: PlayerAccountProfile["recentBattleReplays"][number]
-): PlayerAccountProfile["recentEventLog"] {
-  const startedAtMs = toTimestampMs(replay.startedAt);
-  const completedAtMs = toTimestampMs(replay.completedAt);
-  const fallbackEntries = account.recentEventLog.filter(
-    (entry) => entry.category === "combat" && entry.roomId === replay.roomId && (!entry.heroId || entry.heroId === replay.heroId)
-  );
-  const boundedEntries = fallbackEntries.filter((entry) => {
-    const timestamp = toTimestampMs(entry.timestamp);
-    if (timestamp == null || startedAtMs == null || completedAtMs == null) {
-      return true;
-    }
+) {
+  return resolveBattleReportCenter(account).items.find((report) => report.id === replay.id) ?? null;
+}
 
-    return timestamp >= startedAtMs && timestamp <= completedAtMs + 2 * 60 * 1000;
-  });
+function formatBattleReportEncounter(input: {
+  battleKind: PlayerAccountProfile["recentBattleReplays"][number]["battleKind"];
+  opponentHeroId?: string;
+  neutralArmyId?: string;
+}): string {
+  if (input.battleKind === "hero") {
+    return input.opponentHeroId ? `敌方英雄 ${input.opponentHeroId}` : "敌方英雄";
+  }
 
-  const candidates = boundedEntries.length > 0 ? boundedEntries : fallbackEntries;
-  return candidates.sort((left, right) => String(right.timestamp).localeCompare(String(left.timestamp)));
+  return input.neutralArmyId ? `中立守军 ${input.neutralArmyId}` : "中立守军";
 }
 
 function summarizeBattleReplayCasualties(
@@ -268,23 +272,9 @@ function renderBattleReplayReportSummary(
   account: PlayerAccountProfile,
   replay: PlayerAccountProfile["recentBattleReplays"][number]
 ): string {
-  const eventEntries = collectBattleReportEventLogEntries(account, replay);
-  const rewards = eventEntries.flatMap((entry) => entry.rewards);
-  const uniqueRewards = rewards.filter(
-    (reward, index, list) =>
-      index ===
-      list.findIndex(
-        (candidate) =>
-          candidate.type === reward.type && candidate.label === reward.label && (candidate.amount ?? null) === (reward.amount ?? null)
-      )
-  );
-  const rewardNotes = eventEntries
-    .filter((entry) => entry.worldEventType === "hero.progressed" || entry.worldEventType === "hero.equipmentFound")
-    .map((entry) => entry.description);
+  const report = resolveBattleReportSummary(account, replay);
   const casualties = summarizeBattleReplayCasualties(replay);
-  const didPlayerWin =
-    (replay.playerCamp === "attacker" && replay.result === "attacker_victory") ||
-    (replay.playerCamp === "defender" && replay.result === "defender_victory");
+  const didPlayerWin = report ? report.result === "victory" : false;
   const playerLosses = replay.playerCamp === "attacker" ? casualties.attackerLosses : casualties.defenderLosses;
   const enemyLosses = replay.playerCamp === "attacker" ? casualties.defenderLosses : casualties.attackerLosses;
   const playerDefeatedStacks =
@@ -297,8 +287,9 @@ function renderBattleReplayReportSummary(
       <strong>结果概览</strong>
       <p>${escapeHtml(`${didPlayerWin ? "本场获胜" : "本场失利"} · ${formatBattleReplayCamp(replay)} · ${formatBattleReplayKind(replay)}`)}</p>
       <div class="account-replay-meta">
-        <span>对阵 ${escapeHtml(formatBattleReplayEncounter(replay))}</span>
-        <span>步数 ${replay.steps.length}</span>
+        <span>对阵 ${escapeHtml(report ? formatBattleReportEncounter(report) : formatBattleReplayEncounter(replay))}</span>
+        <span>${escapeHtml(`回合 ${report?.turnCount ?? Math.max(1, replay.initialState.round)}`)}</span>
+        <span>${escapeHtml(`步数 ${report?.actionCount ?? replay.steps.length}`)}</span>
       </div>
     </div>
     <div class="account-replay-summary-card">
@@ -312,20 +303,18 @@ function renderBattleReplayReportSummary(
     <div class="account-replay-summary-card">
       <strong>战后收益</strong>
       ${
-        uniqueRewards.length > 0
-          ? `<div class="account-event-rewards">${uniqueRewards
+        (report?.rewards.length ?? 0) > 0
+          ? `<div class="account-event-rewards">${(report?.rewards ?? [])
               .map((reward) => `<span class="account-reward-chip">${escapeHtml(formatBattleRewardChip(reward))}</span>`)
               .join("")}</div>`
-          : '<p class="account-meta">近期事件日志里未记录额外奖励。</p>'
+          : `<p class="account-meta">${
+              report?.evidence.rewards === "available" ? "收益证据同步中。" : "近期事件日志里未记录额外奖励。"
+            }</p>`
       }
-      ${
-        rewardNotes.length > 0
-          ? `<div class="account-replay-summary-notes">${rewardNotes
-              .slice(0, 2)
-              .map((note) => `<span class="account-meta">${escapeHtml(note)}</span>`)
-              .join("")}</div>`
-          : ""
-      }
+      <div class="account-replay-summary-notes">
+        <span class="account-meta">${escapeHtml(`回放证据 ${report?.evidence.replay === "available" ? "可用" : "缺失"}`)}</span>
+        <span class="account-meta">${escapeHtml(`收益证据 ${report?.evidence.rewards === "available" ? "可用" : "缺失"}`)}</span>
+      </div>
     </div>
   </div>`;
 }
@@ -448,36 +437,38 @@ export function renderRecentBattleReplays(
     selectedReplayId?: string | null;
   } = {}
 ): string {
-  if (account.recentBattleReplays.length === 0) {
+  const reportCenter = resolveBattleReportCenter(account);
+  if (reportCenter.items.length === 0) {
     return '<div class="account-subsection"><strong>最近战报</strong><p class="account-meta">尚未记录可回看的战斗摘要。</p></div>';
   }
 
-  const visibleReplays = account.recentBattleReplays.slice(0, 6);
+  const visibleReports = reportCenter.items.slice(0, 6);
   return `<div class="account-subsection">
     <strong>最近战报</strong>
-    <p class="account-meta">最近 ${visibleReplays.length} 场战斗的回放摘要</p>
+    <p class="account-meta">最近 ${visibleReports.length} 场战斗的结算摘要</p>
     <div class="account-replay-list">
-      ${visibleReplays
-        .map((replay) => {
-          const stepSummary = summarizeBattleReplaySteps(replay);
-          const isSelected = options.selectedReplayId === replay.id;
+      ${visibleReports
+        .map((report) => {
+          const isSelected = options.selectedReplayId === report.id;
           const summaryChips = [
-            `回放 ${replay.steps.length} 步`,
-            `玩家 ${stepSummary.player}`,
-            `自动 ${stepSummary.automated}`,
-            stepSummary.attack > 0 ? `攻击 ${stepSummary.attack}` : "",
-            stepSummary.skill > 0 ? `技能 ${stepSummary.skill}` : ""
+            `${report.turnCount} 回合`,
+            `${report.actionCount} 步`,
+            report.evidence.replay === "available" ? "可回放" : "无回放",
+            ...(report.rewards.slice(0, 2).map((reward) => formatBattleRewardChip(reward)) || []),
+            report.rewards.length === 0 ? "暂无额外奖励" : ""
           ].filter(Boolean);
-          return `<button type="button" class="account-replay-entry ${replay.result === "attacker_victory" ? "is-victory" : "is-defeat"} ${isSelected ? "is-selected" : ""}" data-select-replay="${escapeHtml(replay.id)}">
+          return `<button type="button" class="account-replay-entry ${report.result === "victory" ? "is-victory" : "is-defeat"} ${isSelected ? "is-selected" : ""}" data-select-replay="${escapeHtml(report.id)}">
             <div class="account-replay-head">
-              <span class="account-badge tone-${replay.result === "attacker_victory" ? "victory" : "defeat"}">${escapeHtml(formatBattleReplayResultLabel(replay))}</span>
-              <span>${escapeHtml(formatTimestamp(replay.completedAt))}</span>
+              <span class="account-badge tone-${report.result === "victory" ? "victory" : "defeat"}">${escapeHtml(
+                report.result === "victory" ? "胜利" : "失利"
+              )}</span>
+              <span>${escapeHtml(formatTimestamp(report.completedAt))}</span>
             </div>
-            <p>${escapeHtml(`${formatBattleReplayKind(replay)} · ${formatBattleReplayEncounter(replay)}`)}</p>
+            <p>${escapeHtml(`${report.battleKind === "hero" ? "PVP" : "PVE"} · ${formatBattleReportEncounter(report)}`)}</p>
             <div class="account-replay-meta">
-              <span>房间 ${escapeHtml(replay.roomId)}</span>
-              <span>阵营 ${escapeHtml(formatBattleReplayCamp(replay))}</span>
-              <span>英雄 ${escapeHtml(replay.heroId)}</span>
+              <span>房间 ${escapeHtml(report.roomId)}</span>
+              <span>阵营 ${escapeHtml(report.playerCamp === "attacker" ? "攻方" : "守方")}</span>
+              <span>英雄 ${escapeHtml(report.heroId)}</span>
             </div>
             <div class="account-event-rewards">${summaryChips
               .map((chip) => `<span class="account-reward-chip">${escapeHtml(chip)}</span>`)
@@ -497,12 +488,13 @@ export function renderBattleReportReplayCenter(input: {
   loading?: boolean;
   status?: string;
 }): string {
-  const replayCount = input.account.recentBattleReplays.length;
-  const latestReplay = input.account.recentBattleReplays[0] ?? null;
-  const focusReplayId = input.selectedReplayId?.trim() || latestReplay?.id || null;
+  const reportCenter = resolveBattleReportCenter(input.account);
+  const replayCount = reportCenter.items.length;
+  const latestReport = reportCenter.items[0] ?? null;
+  const focusReplayId = input.selectedReplayId?.trim() || latestReport?.id || null;
   const headline =
     replayCount > 0
-      ? `最近累计 ${replayCount} 场战斗，支持从列表进入详情或基础回放。`
+      ? `最近累计 ${replayCount} 份战报，支持从列表进入详情或基础回放。`
       : "暂无可回看的战斗记录，完成一场战斗后这里会自动出现首批战报。";
 
   return `<section class="account-subsection account-replay-center" data-testid="battle-report-center">
@@ -517,15 +509,15 @@ export function renderBattleReportReplayCenter(input: {
       <button
         type="button"
         class="account-replay-entry-point is-primary"
-        ${latestReplay ? `data-select-replay="${escapeHtml(latestReplay.id)}"` : "disabled"}
-      >${latestReplay ? "查看最新战报" : "等待首场战报"}</button>
+        ${latestReport ? `data-select-replay="${escapeHtml(latestReport.id)}"` : "disabled"}
+      >${latestReport ? "查看最新战报" : "等待首场战报"}</button>
       <button
         type="button"
         class="account-replay-entry-point"
         ${focusReplayId ? `data-select-replay="${escapeHtml(focusReplayId)}"` : "disabled"}
       >${focusReplayId ? "进入回放中心" : "回放中心待解锁"}</button>
     </div>
-    <p class="account-meta">可直接打开最新结算，或进入逐步回放。</p>
+    <p class="account-meta">可直接打开最新结算，查看收益证据，并进入逐步回放。</p>
     ${renderRecentBattleReplays(input.account, {
       ...(input.selectedReplayId !== undefined ? { selectedReplayId: input.selectedReplayId } : {})
     })}

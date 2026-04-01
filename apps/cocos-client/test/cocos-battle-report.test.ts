@@ -23,7 +23,7 @@ function createBattleState() {
 test("summarizeLatestBattleReplay falls back when no replays exist", () => {
   assert.deepEqual(summarizeLatestBattleReplay([]), {
     title: "战报 暂无记录",
-    detail: "完成一次战斗后，这里会同步最近回放摘要"
+    detail: "完成一次战斗后，这里会同步最近战报摘要"
   });
 });
 
@@ -65,7 +65,7 @@ test("summarizeLatestBattleReplay builds a concise latest replay summary", () =>
   ];
 
   assert.deepEqual(summarizeLatestBattleReplay(replays), {
-    title: "战报 最近失利 · PVP 英雄 hero-1",
-    detail: "03-27 12:03 · 守方 · 2 步 · 玩1/自1"
+    title: "战报 最近胜利 · PVP 英雄 hero-1",
+    detail: "03-27 12:03 · 守方 · 1 回合/2 步 · 无额外奖励 · 玩1/自1"
   });
 });
