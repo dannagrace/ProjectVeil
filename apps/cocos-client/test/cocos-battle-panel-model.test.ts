@@ -141,6 +141,46 @@ test("buildBattlePanelViewModel surfaces settlement and presentation layer summa
   ]);
 });
 
+test("buildBattlePanelViewModel keeps neutral settlement in the battle result shell", () => {
+  const view = buildBattlePanelViewModel({
+    update: createBaseUpdate(),
+    timelineEntries: [],
+    controlledCamp: null,
+    selectedTargetId: null,
+    actionPending: false,
+    feedback: {
+      title: "战斗收束",
+      detail: "战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图",
+      badge: "SETTLE",
+      tone: "neutral"
+    },
+    presentationState: {
+      battleId: "battle-1",
+      phase: "resolution",
+      moment: "result_settlement",
+      label: "战斗收束",
+      detail: "战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图",
+      badge: "SETTLE",
+      tone: "neutral",
+      result: null,
+      summaryLines: [
+        "反馈层：动画 待机",
+        "播报：战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图"
+      ],
+      feedbackLayer: {
+        animation: "idle",
+        cue: null,
+        transition: null,
+        durationMs: 4200
+      }
+    }
+  });
+
+  assert.equal(view.idle, true);
+  assert.equal(view.title, "战斗结算");
+  assert.equal(view.summaryLines[0], "战斗收束");
+});
+
 test("buildBattlePanelViewModel enables attack actions on the player's turn", () => {
   const update = createBaseUpdate();
   update.battle = {

@@ -24,6 +24,7 @@ export type CocosBattlePresentationMoment =
   | "impact_death"
   | "active_skill"
   | "active"
+  | "result_settlement"
   | "result_victory"
   | "result_defeat";
 
@@ -113,27 +114,28 @@ export function buildBattlePresentationPlan(
   }
 
   if (previousBattle && !nextBattle) {
-    const didWin = resolveBattleResolution(update, heroId);
+    const resolution = resolveBattleResolution(update, heroId);
     const feedback = buildBattleTransitionFeedback(update, heroId, previousBattle);
-    const result = didWin === null ? null : didWin ? "victory" : "defeat";
-    const moment = didWin ? "result_victory" : "result_defeat";
-    const cue = didWin === null ? null : didWin ? "victory" : "defeat";
-    const animation = didWin === null ? "idle" : didWin ? "victory" : "defeat";
+    const result = resolution;
+    const moment =
+      resolution === "victory" ? "result_victory" : resolution === "defeat" ? "result_defeat" : "result_settlement";
+    const cue = resolution === null ? null : resolution;
+    const animation = resolution === null ? "idle" : resolution === "victory" ? "victory" : "defeat";
     return {
       phase: "resolution",
       feedback,
       feedbackDurationMs: RESOLUTION_FEEDBACK_DURATION_MS,
       cue,
       animation,
-      transition: {
+      transition: resolution === null ? null : {
         kind: "exit",
-        copy: buildBattleExitCopy(previousBattle, update, didWin ?? false)
+        copy: buildBattleExitCopy(previousBattle, update, resolution === "victory")
       },
       moment,
       state: buildPresentationState("resolution", moment, previousBattle.id, feedback, result, {
         cue,
         animation,
-        transition: "exit",
+        transition: resolution === null ? null : "exit",
         durationMs: RESOLUTION_FEEDBACK_DURATION_MS,
         summaryLines: buildBattleSettlementLines(previousBattle, update, heroId)
       })
@@ -186,21 +188,21 @@ export function buildBattlePresentationPlan(
   };
 }
 
-function resolveBattleResolution(update: SessionUpdate, heroId: string | null): boolean | null {
+function resolveBattleResolution(update: SessionUpdate, heroId: string | null): "victory" | "defeat" | null {
   const resolved = update.events.find((event) => event.type === "battle.resolved");
   if (!resolved) {
     return null;
   }
 
   if (!heroId) {
-    return resolved.result === "attacker_victory";
+    return resolved.result === "attacker_victory" ? "victory" : "defeat";
   }
 
   if (resolved.result === "attacker_victory") {
-    return resolved.heroId === heroId;
+    return resolved.heroId === heroId ? "victory" : "defeat";
   }
 
-  return resolved.defenderHeroId === heroId;
+  return resolved.defenderHeroId === heroId ? "victory" : "defeat";
 }
 
 function detectBattleImpact(previousBattle: BattleState, nextBattle: BattleState): boolean {
@@ -324,6 +326,8 @@ function resolvePresentationLabel(moment: CocosBattlePresentationMoment, fallbac
       return "单位击倒";
     case "active_skill":
       return "技能结算";
+    case "result_settlement":
+      return "战斗收束";
     case "result_victory":
       return "战斗胜利";
     case "result_defeat":

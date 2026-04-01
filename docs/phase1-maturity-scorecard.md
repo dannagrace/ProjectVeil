@@ -24,7 +24,7 @@ The repository already contains the core gameplay loop, shared rules, authoritat
 | --- | --- | --- | --- | --- |
 | Phase 1 scope delivery | `Mostly complete` | [`README.md`](../README.md), [`docs/phase1-design.md`](./phase1-design.md) | Scope exists across multiple docs, but there was no single scorecard mapping shipped work to advancement criteria. | This scorecard stays current with repo reality, and scope drift remains bounded to the documented Phase 1 loop rather than Phase 2 expansion. |
 | Shared gameplay rules and authoritative server | `Established` | `packages/shared`, `apps/server`, [`docs/core-gameplay-release-readiness.md`](./core-gameplay-release-readiness.md) | Need continued proof that exploration, encounter, settlement, reconnect, and multiplayer sync stay authoritative under release-candidate pressure. | Latest candidate passes `npm test`, `npm run typecheck:ci`, `npm run test:e2e:smoke`, `npm run test:e2e:multiplayer:smoke`, and the release snapshot still records no required automated failures. |
-| Primary client runtime | `Mostly complete` | `apps/cocos-client`, [`docs/cocos-primary-client-delivery.md`](./cocos-primary-client-delivery.md), [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md) | Cocos is the primary client, but the repo still calls out placeholder/fallback presentation risk and relies on structured RC evidence to prove the main journey. | A current Cocos RC snapshot exists for the same candidate, the main journey `Lobby -> world -> battle -> settlement -> reconnect` is recorded, and any remaining placeholder/fallback presentation items are either closed or explicitly accepted as non-blocking. |
+| Primary client runtime | `Mostly complete` | `apps/cocos-client`, [`docs/cocos-primary-client-delivery.md`](./cocos-primary-client-delivery.md), [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md) | Cocos is the primary client, and the battle loop presentation is now formalized at the copy/state layer, but the repo still carries asset-level placeholder/fallback risk and relies on structured RC evidence to prove the main journey. | A current Cocos RC snapshot exists for the same candidate, the main journey `Lobby -> world -> battle -> settlement -> reconnect` is recorded, and any remaining placeholder/fallback presentation items are either closed or explicitly accepted as non-blocking. |
 | H5 debug and regression surface | `Established` | `apps/client`, Playwright smoke coverage, [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) | H5 is intentionally no longer the shipping client, so the risk is regression drift between the debug shell and the Cocos runtime. | H5 remains green as a regression surface, and no Phase 1 gate depends on an H5-only behavior that the Cocos runtime cannot reproduce. |
 | Persistence and config pipeline | `Mostly complete` | MySQL migrations, config-center flows, [`docs/mysql-persistence.md`](./mysql-persistence.md), content-pack/balance validators | Persistence/config foundations exist, but they still need disciplined release-time verification instead of assuming parity from implementation alone. | The latest candidate includes one successful persistence regression on the intended storage mode plus passing config/content validation for shipped Phase 1 data. |
 | Release and operational readiness | `Partial` | [`docs/release-readiness-snapshot.md`](./release-readiness-snapshot.md), [`docs/release-readiness-dashboard.md`](./release-readiness-dashboard.md), [`docs/release-gate-summary.md`](./release-gate-summary.md) | The repo has strong gate machinery, but Phase 1 exit still depends on keeping human evidence fresh: runtime review, Cocos RC checklist/blockers, and WeChat smoke/reporting. | For a single candidate revision, automated gates pass, required manual checks are no longer pending, evidence is fresh, and the candidate can be rebuilt/reviewed without ad hoc interpretation. |
@@ -76,6 +76,20 @@ The shipped config/content pack validates cleanly, and `npm run test:phase1-rele
 
 8. `Known Phase 1 blockers are closed or explicitly accepted.`
 Any remaining Cocos presentation fallback, reconnect risk, multiplayer divergence risk, or release-process blocker is either fixed or recorded as a conscious non-blocking acceptance with owner and rationale.
+
+## Battle Presentation Baseline
+
+For the primary Cocos client battle path, the following now count as `production-intent` presentation behavior rather than fallback:
+
+- battle entry uses encounter-specific transition copy with terrain/context
+- battle command, impact, and resolution phases expose explicit labels, badges, and summary lines in the battle panel
+- battle settlement no longer falls back to an accidental defeat state when the client is only waiting for world-state sync
+- victory / defeat settlement remains the only path that drives the dedicated exit transition overlay
+
+The following are still considered `non-blocking fallback` for Phase 1 hardening and should stay tracked through presentation-readiness / RC evidence rather than battle-loop copy logic:
+
+- placeholder pixel art, mixed audio packs, and animation fallback delivery modes
+- any remaining asset substitutions already reported by `cocos-presentation-readiness`
 
 ## What Advancing Beyond Phase 1 Means Here
 
