@@ -6,6 +6,7 @@ import { parseManualCheckArg, parseManualChecksFile } from "./release-readiness-
 type CheckStatus = "passed" | "failed" | "skipped";
 type GateStatus = "passed" | "failed";
 type CandidateStatus = "ready" | "blocked";
+type EvidenceFreshness = "fresh" | "stale" | "missing_timestamp" | "invalid_timestamp";
 
 interface Args {
   artifactsDir?: string;
@@ -99,6 +100,17 @@ interface ManualReviewCheck {
   notes: string;
   evidence: string[];
   source: "default" | "file" | "cli";
+  owner?: string;
+  recordedAt?: string;
+  revision?: string;
+  artifactPath?: string;
+  blockerIds?: string[];
+  waiver?: {
+    approvedBy?: string;
+    approvedAt?: string;
+    reason?: string;
+    expiresAt?: string;
+  };
 }
 
 interface CandidateSummary {
@@ -148,6 +160,7 @@ interface CandidateSummary {
       completedChecks: number;
       requiredPendingChecks: number;
       requiredFailedChecks: number;
+      requiredMetadataFailures: number;
       checks: ManualReviewCheck[];
     };
   };
@@ -160,6 +173,7 @@ interface CandidateSummary {
 }
 
 const OUTPUT_TAIL_BYTES = 4000;
+const MANUAL_REVIEW_MAX_AGE_MS = 1000 * 60 * 60 * 24;
 const DEFAULT_MANUAL_CHECKS: ManualReviewCheck[] = [
   {
     id: "wechat-runtime-review",
@@ -430,7 +444,13 @@ function readManualChecks(args: Args): ManualReviewCheck[] {
         status: check.status,
         notes: check.notes,
         evidence: [...check.evidence],
-        source: "file" as const
+        source: "file" as const,
+        ...(check.owner ? { owner: check.owner } : {}),
+        ...(check.recordedAt ? { recordedAt: check.recordedAt } : {}),
+        ...(check.revision ? { revision: check.revision } : {}),
+        ...(check.artifactPath ? { artifactPath: check.artifactPath } : {}),
+        ...(check.blockerIds ? { blockerIds: [...check.blockerIds] } : {}),
+        ...(check.waiver ? { waiver: { ...check.waiver } } : {})
       }))
     : [];
   const fromCli = args.manualChecks.map((value) => {
@@ -442,7 +462,13 @@ function readManualChecks(args: Args): ManualReviewCheck[] {
       status: check.status,
       notes: check.notes,
       evidence: [...check.evidence],
-      source: "cli" as const
+      source: "cli" as const,
+      ...(check.owner ? { owner: check.owner } : {}),
+      ...(check.recordedAt ? { recordedAt: check.recordedAt } : {}),
+      ...(check.revision ? { revision: check.revision } : {}),
+      ...(check.artifactPath ? { artifactPath: check.artifactPath } : {}),
+      ...(check.blockerIds ? { blockerIds: [...check.blockerIds] } : {}),
+      ...(check.waiver ? { waiver: { ...check.waiver } } : {})
     };
   });
 
@@ -455,6 +481,48 @@ function readManualChecks(args: Args): ManualReviewCheck[] {
     seen.add(check.id);
   }
   return checks;
+}
+
+function evaluateManualReviewFreshness(recordedAt: string | undefined, generatedAtMs: number): EvidenceFreshness {
+  if (!recordedAt?.trim()) {
+    return "missing_timestamp";
+  }
+  const recordedAtMs = Date.parse(recordedAt);
+  if (Number.isNaN(recordedAtMs)) {
+    return "invalid_timestamp";
+  }
+  return generatedAtMs - recordedAtMs > MANUAL_REVIEW_MAX_AGE_MS ? "stale" : "fresh";
+}
+
+function collectManualReviewMetadataFailures(
+  check: ManualReviewCheck,
+  commit: string | null,
+  generatedAtMs: number
+): string[] {
+  if (!check.required || check.status !== "passed") {
+    return [];
+  }
+
+  const failures: string[] = [];
+  if (!check.owner?.trim()) {
+    failures.push(`Manual review is missing owner: ${check.title}.`);
+  }
+  if (!check.revision?.trim()) {
+    failures.push(`Manual review is missing revision binding: ${check.title}.`);
+  } else if (commit && check.revision !== commit) {
+    failures.push(`Manual review revision mismatch for ${check.title}: expected ${commit}, got ${check.revision}.`);
+  }
+
+  const freshness = evaluateManualReviewFreshness(check.recordedAt, generatedAtMs);
+  if (freshness === "missing_timestamp") {
+    failures.push(`Manual review is missing recordedAt timestamp: ${check.title}.`);
+  } else if (freshness === "invalid_timestamp") {
+    failures.push(`Manual review has invalid recordedAt timestamp for ${check.title}: ${check.recordedAt}.`);
+  } else if (freshness === "stale") {
+    failures.push(`Manual review is stale for ${check.title}: ${check.recordedAt} is older than 24h.`);
+  }
+
+  return failures;
 }
 
 function requireCheck(checks: ValidationCheck[], id: string): ValidationCheck {
@@ -481,6 +549,9 @@ function buildCandidateSummary(
   const smokeCheck = requireCheck(checks, "smoke-report");
   const uploadCheck = requireCheck(checks, "upload-receipt");
   const blockers: CandidateSummary["blockers"] = [];
+  const generatedAt = new Date().toISOString();
+  const generatedAtMs = Date.parse(generatedAt);
+  const manualMetadataFailures = manualChecks.flatMap((check) => collectManualReviewMetadataFailures(check, commit, generatedAtMs));
 
   for (const check of checks) {
     if (check.status === "failed") {
@@ -513,15 +584,22 @@ function buildCandidateSummary(
           : `Manual review pending: ${check.title}. ${check.notes}`.trim()
     });
   }
+  for (const failure of manualMetadataFailures) {
+    blockers.push({
+      id: "manual-review-metadata",
+      summary: failure
+    });
+  }
 
   const requiredPendingChecks = manualChecks.filter((check) => check.required && check.status === "pending").length;
   const requiredFailedChecks = manualChecks.filter((check) => check.required && check.status === "failed").length;
   const completedChecks = manualChecks.filter((check) => check.status === "passed" || check.status === "not_applicable").length;
+  const requiredMetadataFailures = manualMetadataFailures.length;
   const status: CandidateStatus = blockers.length === 0 ? "ready" : "blocked";
 
   return {
     schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     candidate: {
       revision: commit,
       version,
@@ -575,11 +653,12 @@ function buildCandidateSummary(
           )
       },
       manualReview: {
-        status: requiredPendingChecks === 0 && requiredFailedChecks === 0 ? "ready" : "blocked",
+        status: requiredPendingChecks === 0 && requiredFailedChecks === 0 && requiredMetadataFailures === 0 ? "ready" : "blocked",
         totalChecks: manualChecks.length,
         completedChecks,
         requiredPendingChecks,
         requiredFailedChecks,
+        requiredMetadataFailures,
         checks: manualChecks
       }
     },
@@ -612,7 +691,17 @@ function renderCandidateMarkdown(summary: CandidateSummary): string {
   lines.push("## Manual Review", "");
   for (const check of summary.evidence.manualReview.checks) {
     const evidence = check.evidence.length > 0 ? ` Evidence: ${check.evidence.join(", ")}` : "";
-    lines.push(`- \`${check.status}\` ${check.title}${check.notes ? ` - ${check.notes}` : ""}${evidence}`);
+    const metadata = [
+      check.owner ? `owner=${check.owner}` : "",
+      check.recordedAt ? `recordedAt=${check.recordedAt}` : "",
+      check.revision ? `revision=${check.revision}` : "",
+      check.waiver?.reason ? `waiver=${check.waiver.reason}` : ""
+    ]
+      .filter((value) => value.length > 0)
+      .join(" ");
+    lines.push(
+      `- \`${check.status}\` ${check.title}${check.notes ? ` - ${check.notes}` : ""}${evidence}${metadata ? ` Metadata: ${metadata}` : ""}`
+    );
   }
   lines.push("", "## Blockers", "");
   if (summary.blockers.length === 0) {

@@ -56,10 +56,16 @@ interface ReleaseGateSummaryReport {
     id?: string;
     label?: string;
     status?: "passed" | "failed";
+    required?: boolean;
     summary?: string;
     failures?: string[];
     source?: {
-      kind?: "release-readiness-snapshot" | "h5-release-candidate-smoke" | "wechat-rc-validation" | "wechat-smoke-report";
+      kind?:
+        | "release-readiness-snapshot"
+        | "h5-release-candidate-smoke"
+        | "wechat-rc-validation"
+        | "wechat-release-candidate-summary"
+        | "wechat-smoke-report";
       path?: string;
     };
   }>;
@@ -529,7 +535,7 @@ function evaluateReleaseGateSignal(filePath: string | undefined): { signal: Rele
 
   const report = readJsonFile<ReleaseGateSummaryReport>(filePath);
   const source = createSource(filePath, report.generatedAt);
-  const failingGates = (report.gates ?? []).filter((gate) => gate.status === "failed");
+  const failingGates = (report.gates ?? []).filter((gate) => gate.required !== false && gate.status === "failed");
 
   if (report.summary?.status !== "passed" || failingGates.length > 0) {
     const details = failingGates.flatMap((gate) => {
@@ -789,7 +795,7 @@ function buildReleaseGateTriage(filePath: string | undefined): ReleaseHealthTria
   }
 
   const report = readJsonFile<ReleaseGateSummaryReport>(filePath);
-  const failingGates = (report.gates ?? []).filter((gate) => gate.status === "failed");
+  const failingGates = (report.gates ?? []).filter((gate) => gate.required !== false && gate.status === "failed");
   if (failingGates.length === 0 && report.summary?.status === "passed") {
     return [];
   }

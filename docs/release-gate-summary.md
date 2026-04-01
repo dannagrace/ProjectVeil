@@ -10,12 +10,24 @@ It intentionally reuses the current evidence instead of introducing a parallel g
 - `npm run validate:wechat-rc` or `npm run smoke:wechat-release -- --check` for WeChat release evidence
 - `configs/.config-center-library.json` for the latest applied config-center publish audit and config change risk summary
 
+The summary now also records one explicit `targetSurface` contract. That contract is what makes `H5 passed` different from `WeChat passed`: WeChat release decisions now require a current `codex.wechat.release-candidate-summary.json` plus fresh manual/runtime review metadata, while H5-only release decisions can mark the WeChat gate as advisory.
+
 ## Usage
 
 Use the latest local artifacts under `artifacts/release-readiness/` and `artifacts/wechat-release/`:
 
 ```bash
 npm run release:gate:summary
+```
+
+Pick the release target surface explicitly when needed:
+
+```bash
+npm run release:gate:summary -- --target-surface wechat
+```
+
+```bash
+npm run release:gate:summary -- --target-surface h5
 ```
 
 Point at explicit artifact paths when CI already produced stable filenames:
@@ -57,9 +69,11 @@ The summary contains five release dimensions:
   - Fails closed when the post-soak cleanup counters show lingering active rooms, live connections, active battles, or hero snapshots.
   - Use this gate for release candidates and reconnect / room-recovery changes; keep `test:e2e:multiplayer:smoke` as the faster PR-level signal for canonical multiplayer link health.
 - `wechat-release`
-  - Prefers `codex.wechat.rc-validation-report.json` when present.
+  - Prefers `codex.wechat.release-candidate-summary.json` when present.
+  - Falls back to `codex.wechat.rc-validation-report.json` when the candidate summary is absent.
   - Falls back to `codex.wechat.smoke-report.json` when the RC validation report is absent.
   - Fails closed when required WeChat evidence is missing, failed, blocked, or still pending.
+  - When the candidate summary is available, also fails on required manual-review metadata drift: missing `owner`, missing `recordedAt`, missing `revision`, revision mismatch, or review evidence older than 24h.
   - Markdown/JSON summary text distinguishes `blocked` device/runtime evidence from true execution failures so CI reviewers can see whether a gate is red because proof is absent or because the runtime actually regressed.
 - `phase1-evidence-consistency`
   - Cross-checks the release-readiness snapshot, packaged H5 smoke report, and selected WeChat evidence as one Phase 1 candidate set.
@@ -68,6 +82,25 @@ The summary contains five release dimensions:
   - The Markdown output now includes a `Selected Inputs` section so reviewers can see the exact artifact paths that were compared instead of inferring them from the default directory scan.
 
 Any failed dimension makes the script exit non-zero so the result can act as a CI release gate.
+
+## Target Surface Contract
+
+The report now includes a `Target Surface Contract` section with:
+
+- `targetSurface`
+  - `wechat` or `h5`
+- `releaseSurface.status`
+  - pass/fail call for the selected surface
+- `releaseSurface.evidence[*]`
+  - exact evidence item, freshness, owner, revision, waiver, and artifact path
+
+For `wechat`, the required surface evidence is:
+
+- release readiness snapshot
+- H5 packaged RC smoke
+- reconnect soak
+- WeChat candidate summary
+- required WeChat manual-review checks with current owner/timestamp/revision metadata
 
 ## Config Change Risk Summary
 
