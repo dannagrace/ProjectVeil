@@ -61,4 +61,10 @@ test("release:wechat:rehearsal produces structured + markdown summaries", () => 
   );
   assert.ok(report.summary.artifacts.archivePath?.includes(".tar.gz"));
   assert.ok(report.summary.artifacts.metadataPath?.endsWith(".package.json"));
+  assert.ok(
+    report.summary.artifacts.candidateSummaryJsonPath?.endsWith("codex.wechat.release-candidate-summary.json")
+  );
+  assert.ok(
+    report.summary.artifacts.candidateSummaryMarkdownPath?.endsWith("codex.wechat.release-candidate-summary.md")
+  );
 });
