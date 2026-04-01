@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import assetConfig from "../../../configs/assets.json";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
+import stonewatchForkMapObjectsConfig from "../../../configs/phase1-map-objects-stonewatch-fork.json";
 import ridgewayCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-ridgeway-crossing.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import stonewatchForkWorldConfig from "../../../configs/phase1-world-stonewatch-fork.json";
 import ridgewayCrossingWorldConfig from "../../../configs/phase1-world-ridgeway-crossing.json";
 import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
 import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
@@ -73,6 +75,7 @@ import {
   RIDGEWAY_CROSSING_MAP_VARIANT_ID,
   simulateAutomatedBattle,
   simulateAutomatedBattles,
+  STONEWATCH_FORK_MAP_VARIANT_ID,
   summarizeAssetMetadata,
   stepBattleReplayPlayback,
   tickBattleReplayPlayback,
@@ -2403,6 +2406,20 @@ test("createInitialWorldState selects the ridgeway crossing variant with the new
   assert.equal(state.neutralArmies["neutral-3"]?.behavior?.mode, "patrol");
 });
 
+test("createInitialWorldState selects the stonewatch fork variant with the additional Phase 1 content pack", () => {
+  const state = createInitialWorldState(1001, "preview-stonewatch[map:stonewatch_fork]");
+
+  assert.equal(state.meta.mapVariantId, "stonewatch_fork");
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 5);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 2 && tile.position.y === 1)?.terrain, "water");
+  assert.equal(state.buildings["recruit-post-2"]?.kind, "recruitment_post");
+  assert.equal(state.buildings["shrine-power-1"]?.kind, "attribute_shrine");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.neutralArmies["neutral-2"]?.reward?.kind, "wood");
+  assert.equal(state.neutralArmies["neutral-4"]?.behavior?.mode, "patrol");
+});
+
 test("frontier basin generates a distinct layout from the default phase1 variant", () => {
   const seed = 5124;
   const defaultRoomId = "preview-default";
@@ -2454,6 +2471,34 @@ test("ridgeway crossing generates a distinct layout from the default phase1 vari
   assert.ok(ridgewayState.buildings["shrine-defense-1"]);
 });
 
+test("stonewatch fork generates a distinct layout from the default phase1 variant", () => {
+  const seed = 5124;
+  const defaultRoomId = "preview-default";
+  const stonewatchRoomId = "preview-stonewatch[map:stonewatch_fork]";
+
+  const defaultBundle = getRuntimeConfigBundleForRoom(defaultRoomId, seed);
+  const stonewatchBundle = getRuntimeConfigBundleForRoom(stonewatchRoomId, seed);
+
+  const defaultState = createWorldStateFromConfigs(defaultBundle.world, defaultBundle.mapObjects, seed, defaultRoomId);
+  const stonewatchState = createWorldStateFromConfigs(
+    stonewatchBundle.world,
+    stonewatchBundle.mapObjects,
+    seed,
+    stonewatchRoomId
+  );
+
+  assert.equal(stonewatchBundle.mapVariantId, STONEWATCH_FORK_MAP_VARIANT_ID);
+  assert.notDeepEqual(
+    defaultState.map.tiles.map((tile) => tile.terrain),
+    stonewatchState.map.tiles.map((tile) => tile.terrain),
+    "stonewatch fork terrain layout should differ from the default variant"
+  );
+  assert.equal(defaultState.buildings["mine-ore-1"], undefined);
+  assert.ok(stonewatchState.buildings["mine-ore-1"]);
+  assert.ok(stonewatchState.buildings["shrine-power-1"]);
+  assert.ok(stonewatchState.buildings["recruit-post-2"]);
+});
+
 test("frontier basin configs validate alongside the default configs", () => {
   const units = getDefaultUnitCatalog();
   const frontierWorld = frontierBasinWorldConfig as WorldGenerationConfig;
@@ -2469,6 +2514,20 @@ test("frontier basin configs validate alongside the default configs", () => {
   assert.doesNotThrow(() => {
     validateMapObjectsConfig(defaultMapObjects, defaultWorld, units);
     validateMapObjectsConfig(frontierMapObjects, frontierWorld, units);
+  });
+});
+
+test("stonewatch fork configs validate alongside the existing Phase 1 variants", () => {
+  const units = getDefaultUnitCatalog();
+  const stonewatchWorld = stonewatchForkWorldConfig as WorldGenerationConfig;
+  const stonewatchMapObjects = stonewatchForkMapObjectsConfig as MapObjectsConfig;
+  const bundle = getRuntimeConfigBundleForRoom("preview-stonewatch[map:stonewatch_fork]", 5124);
+
+  assert.equal(bundle.mapVariantId, STONEWATCH_FORK_MAP_VARIANT_ID);
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(stonewatchWorld);
+    validateMapObjectsConfig(stonewatchMapObjects, stonewatchWorld, units);
   });
 });
 

@@ -24,6 +24,8 @@ async function seedContentPackRoot(tempDir: string): Promise<void> {
       "phase1-map-objects.json",
       "phase1-world-frontier-basin.json",
       "phase1-map-objects-frontier-basin.json",
+      "phase1-world-stonewatch-fork.json",
+      "phase1-map-objects-stonewatch-fork.json",
       "phase1-world-ridgeway-crossing.json",
       "phase1-map-objects-ridgeway-crossing.json",
       "phase2-contested-basin.json",
@@ -47,6 +49,8 @@ test("validate-content-pack validates all shipped map packs with CLI presets", a
       "--map-pack",
       "frontier-basin",
       "--map-pack",
+      "stonewatch-fork",
+      "--map-pack",
       "ridgeway-crossing",
       "--map-pack",
       "phase2"
@@ -54,8 +58,9 @@ test("validate-content-pack validates all shipped map packs with CLI presets", a
     { cwd: repoRoot }
   );
 
-  assert.match(stdout, /Bundles: 4/);
+  assert.match(stdout, /Bundles: 5/);
   assert.match(stdout, /Bundle: frontier-basin/);
+  assert.match(stdout, /Bundle: stonewatch-fork/);
   assert.match(stdout, /Bundle: ridgeway-crossing/);
   assert.match(stdout, /Bundle: phase2/);
   assert.match(stdout, /Result: PASS/);
@@ -97,4 +102,24 @@ test("validate-content-pack fails when a pack places an object onto blocked terr
       return true;
     }
   );
+});
+
+test("validate-content-pack supports the stonewatch fork preset on its own", async () => {
+  const { stdout } = await execFileAsync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      scriptPath,
+      "--root-dir",
+      configsDir,
+      "--map-pack",
+      "stonewatch-fork"
+    ],
+    { cwd: repoRoot }
+  );
+
+  assert.match(stdout, /Bundles: 2/);
+  assert.match(stdout, /Bundle: stonewatch-fork/);
+  assert.match(stdout, /Result: PASS/);
 });

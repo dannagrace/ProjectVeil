@@ -1,8 +1,9 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-03-29T12:48:16.045Z",
-  "rootDir": "configs",
+  "generatedAt": "2026-04-01T17:59:27.765Z",
+  "rootDir": "/home/gpt/project/ProjectVeil/configs",
   "valid": true,
+  "bundleCount": 5,
   "documentValidation": {
     "valid": true,
     "issueCount": 0,
@@ -11,7 +12,94 @@
   "contentPack": {
     "valid": true,
     "issueCount": 0,
-    "summary": "Content-pack consistency passed across world, map objects, units, battle skills, and battle balance.",
+    "summary": "Content-pack consistency passed across 5 validated bundle(s).",
     "issues": []
-  }
+  },
+  "bundles": [
+    {
+      "id": "default",
+      "worldFileName": "phase1-world.json",
+      "mapObjectsFileName": "phase1-map-objects.json",
+      "valid": true,
+      "documentValidation": {
+        "valid": true,
+        "issueCount": 0,
+        "issues": []
+      },
+      "contentPack": {
+        "valid": true,
+        "issueCount": 0,
+        "summary": "Content-pack consistency passed across world, map objects, units, battle skills, and battle balance.",
+        "issues": []
+      }
+    },
+    {
+      "id": "frontier-basin",
+      "worldFileName": "phase1-world-frontier-basin.json",
+      "mapObjectsFileName": "phase1-map-objects-frontier-basin.json",
+      "valid": true,
+      "documentValidation": {
+        "valid": true,
+        "issueCount": 0,
+        "issues": []
+      },
+      "contentPack": {
+        "valid": true,
+        "issueCount": 0,
+        "summary": "Content-pack consistency passed across world, map objects, units, battle skills, and battle balance.",
+        "issues": []
+      }
+    },
+    {
+      "id": "stonewatch-fork",
+      "worldFileName": "phase1-world-stonewatch-fork.json",
+      "mapObjectsFileName": "phase1-map-objects-stonewatch-fork.json",
+      "valid": true,
+      "documentValidation": {
+        "valid": true,
+        "issueCount": 0,
+        "issues": []
+      },
+      "contentPack": {
+        "valid": true,
+        "issueCount": 0,
+        "summary": "Content-pack consistency passed across world, map objects, units, battle skills, and battle balance.",
+        "issues": []
+      }
+    },
+    {
+      "id": "ridgeway-crossing",
+      "worldFileName": "phase1-world-ridgeway-crossing.json",
+      "mapObjectsFileName": "phase1-map-objects-ridgeway-crossing.json",
+      "valid": true,
+      "documentValidation": {
+        "valid": true,
+        "issueCount": 0,
+        "issues": []
+      },
+      "contentPack": {
+        "valid": true,
+        "issueCount": 0,
+        "summary": "Content-pack consistency passed across world, map objects, units, battle skills, and battle balance.",
+        "issues": []
+      }
+    },
+    {
+      "id": "phase2",
+      "worldFileName": "phase2-contested-basin.json",
+      "mapObjectsFileName": "phase2-map-objects-contested-basin.json",
+      "valid": true,
+      "documentValidation": {
+        "valid": true,
+        "issueCount": 0,
+        "issues": []
+      },
+      "contentPack": {
+        "valid": true,
+        "issueCount": 0,
+        "summary": "Content-pack consistency passed across world, map objects, units, battle skills, and battle balance.",
+        "issues": []
+      }
+    }
+  ]
 }

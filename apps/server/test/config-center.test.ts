@@ -515,20 +515,18 @@ test("config center exposes built-in layout presets for the additional map varia
   const worldPresets = await store.listPresets("world");
   const mapObjectPresets = await store.listPresets("mapObjects");
 
+  assert.ok(worldPresets.some((preset) => preset.id === "layout_stonewatch_fork"));
+  assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_stonewatch_fork"));
   assert.ok(worldPresets.some((preset) => preset.id === "layout_ridgeway_crossing"));
   assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_ridgeway_crossing"));
   assert.ok(worldPresets.some((preset) => preset.id === "layout_contested_basin"));
   assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_contested_basin"));
 
-  const ridgewayWorldDocument = await store.applyPreset("world", "layout_ridgeway_crossing");
-  const ridgewayMapObjectsDocument = await store.applyPreset("mapObjects", "layout_ridgeway_crossing");
-  const worldDocument = await store.applyPreset("world", "layout_contested_basin");
-  const mapObjectsDocument = await store.applyPreset("mapObjects", "layout_contested_basin");
+  const stonewatchWorldDocument = await store.applyPreset("world", "layout_stonewatch_fork");
+  const stonewatchMapObjectsDocument = await store.applyPreset("mapObjects", "layout_stonewatch_fork");
 
-  assert.match(ridgewayWorldDocument.content, /"terrainOverrides"/);
-  assert.match(ridgewayMapObjectsDocument.content, /"id": "shrine-defense-1"/);
-  assert.match(worldDocument.content, /"width": 10/);
-  assert.match(mapObjectsDocument.content, /"kind": "watchtower"/);
+  assert.match(stonewatchWorldDocument.content, /"position": \{\s+"x": 1,\s+"y": 5/s);
+  assert.match(stonewatchMapObjectsDocument.content, /"id": "shrine-power-1"/);
 });
 
 test("config center diff classifies added, removed, and type changes", async () => {

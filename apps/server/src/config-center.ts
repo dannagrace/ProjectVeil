@@ -5,6 +5,8 @@ import { createPool, type Pool, type RowDataPacket } from "mysql2/promise";
 import * as XLSX from "xlsx";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import stonewatchForkMapObjectsConfig from "../../../configs/phase1-map-objects-stonewatch-fork.json";
+import stonewatchForkWorldConfig from "../../../configs/phase1-world-stonewatch-fork.json";
 import ridgewayCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-ridgeway-crossing.json";
 import ridgewayCrossingWorldConfig from "../../../configs/phase1-world-ridgeway-crossing.json";
 import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
@@ -448,12 +450,14 @@ const BUILTIN_DIFFICULTY_PRESET_IDS = ["easy", "normal", "hard"] as const;
 const BUILTIN_WORLD_LAYOUT_PRESETS = [
   "layout_phase1",
   "layout_frontier_basin",
+  "layout_stonewatch_fork",
   "layout_ridgeway_crossing",
   "layout_contested_basin"
 ] as const;
 const BUILTIN_MAP_OBJECT_LAYOUT_PRESETS = [
   "layout_phase1",
   "layout_frontier_basin",
+  "layout_stonewatch_fork",
   "layout_ridgeway_crossing",
   "layout_contested_basin"
 ] as const;
@@ -1792,6 +1796,8 @@ function buildLayoutPresetSummary(id: typeof BUILTIN_WORLD_LAYOUT_PRESETS[number
   const name =
     id === "layout_frontier_basin"
       ? "Frontier Basin"
+      : id === "layout_stonewatch_fork"
+        ? "Stonewatch Fork"
       : id === "layout_ridgeway_crossing"
         ? "Ridgeway Crossing"
       : id === "layout_contested_basin"
@@ -1800,6 +1806,8 @@ function buildLayoutPresetSummary(id: typeof BUILTIN_WORLD_LAYOUT_PRESETS[number
   const description =
     id === "layout_frontier_basin"
       ? "切换为首个峡谷盆地布局，适合验证水域与矿点分布。"
+      : id === "layout_stonewatch_fork"
+        ? "切换为石望岔路布局，适合验证双招募点、分叉矿线与南北奖励节奏。"
       : id === "layout_ridgeway_crossing"
         ? "切换为第二个 Phase 1 岭桥布局，适合验证中央渡口争夺、双招募点和木矿/矿井分流。"
       : id === "layout_contested_basin"
@@ -1842,6 +1850,9 @@ function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: strin
     if (presetId === "layout_frontier_basin") {
       return normalizeJsonContent(frontierBasinWorldConfig as WorldGenerationConfig);
     }
+    if (presetId === "layout_stonewatch_fork") {
+      return normalizeJsonContent(stonewatchForkWorldConfig as WorldGenerationConfig);
+    }
     if (presetId === "layout_ridgeway_crossing") {
       return normalizeJsonContent(ridgewayCrossingWorldConfig as WorldGenerationConfig);
     }
@@ -1856,6 +1867,9 @@ function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: strin
     }
     if (presetId === "layout_frontier_basin") {
       return normalizeJsonContent(frontierBasinMapObjectsConfig as MapObjectsConfig);
+    }
+    if (presetId === "layout_stonewatch_fork") {
+      return normalizeJsonContent(stonewatchForkMapObjectsConfig as MapObjectsConfig);
     }
     if (presetId === "layout_ridgeway_crossing") {
       return normalizeJsonContent(ridgewayCrossingMapObjectsConfig as MapObjectsConfig);
