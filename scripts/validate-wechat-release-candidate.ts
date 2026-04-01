@@ -1,19 +1,25 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { parseManualCheckArg, parseManualChecksFile } from "./release-readiness-snapshot.ts";
 
 type CheckStatus = "passed" | "failed" | "skipped";
 type GateStatus = "passed" | "failed";
+type CandidateStatus = "ready" | "blocked";
 
 interface Args {
   artifactsDir?: string;
   archivePath?: string;
   metadataPath?: string;
   reportPath?: string;
+  summaryPath?: string;
+  markdownPath?: string;
   expectedRevision?: string;
   version?: string;
   smokeReportPath?: string;
   uploadReceiptPath?: string;
+  manualChecksPath?: string;
+  manualChecks: string[];
   requireSmokeReport: boolean;
 }
 
@@ -85,7 +91,98 @@ interface ValidationReport {
   checks: ValidationCheck[];
 }
 
+interface ManualReviewCheck {
+  id: string;
+  title: string;
+  required: boolean;
+  status: "passed" | "failed" | "pending" | "not_applicable";
+  notes: string;
+  evidence: string[];
+  source: "default" | "file" | "cli";
+}
+
+interface CandidateSummary {
+  schemaVersion: 1;
+  generatedAt: string;
+  candidate: {
+    revision: string | null;
+    version: string | null;
+    projectName: string;
+    appId: string;
+    status: CandidateStatus;
+  };
+  artifacts: {
+    artifactsDir?: string;
+    archivePath: string;
+    metadataPath: string;
+    validationReportPath: string;
+    summaryPath: string;
+    smokeReportPath: string;
+    uploadReceiptPath: string;
+    markdownPath: string;
+  };
+  evidence: {
+    package: {
+      status: CheckStatus;
+      summary: string;
+      artifactPath: string;
+    };
+    validation: {
+      status: CheckStatus;
+      summary: string;
+      artifactPath: string;
+    };
+    smoke: {
+      status: CheckStatus;
+      summary: string;
+      artifactPath: string;
+    };
+    upload: {
+      status: CheckStatus;
+      summary: string;
+      artifactPath: string;
+    };
+    manualReview: {
+      status: CandidateStatus;
+      totalChecks: number;
+      completedChecks: number;
+      requiredPendingChecks: number;
+      requiredFailedChecks: number;
+      checks: ManualReviewCheck[];
+    };
+  };
+  blockers: Array<{
+    id: string;
+    summary: string;
+    artifactPath?: string;
+    nextCommand?: string;
+  }>;
+}
+
 const OUTPUT_TAIL_BYTES = 4000;
+const DEFAULT_MANUAL_CHECKS: ManualReviewCheck[] = [
+  {
+    id: "wechat-runtime-review",
+    title: "Runtime health/auth-readiness/metrics reviewed for this candidate",
+    required: true,
+    status: "pending",
+    notes: "Capture runtime health evidence against the same candidate revision before marking the WeChat target release-ready.",
+    evidence: ["GET /api/runtime/health", "GET /api/runtime/auth-readiness", "GET /api/runtime/metrics"],
+    source: "default"
+  },
+  {
+    id: "wechat-release-checklist",
+    title: "WeChat RC checklist and blockers reviewed",
+    required: true,
+    status: "pending",
+    notes: "Attach the completed RC checklist and blocker register for the same packaged candidate.",
+    evidence: [
+      "docs/release-evidence/cocos-wechat-rc-checklist.template.md",
+      "docs/release-evidence/cocos-wechat-rc-blockers.template.md"
+    ],
+    source: "default"
+  }
+];
 
 function fail(message: string): never {
   throw new Error(message);
@@ -96,10 +193,14 @@ function parseArgs(argv: string[]): Args {
   let archivePath: string | undefined;
   let metadataPath: string | undefined;
   let reportPath: string | undefined;
+  let summaryPath: string | undefined;
+  let markdownPath: string | undefined;
   let expectedRevision: string | undefined;
   let version: string | undefined;
   let smokeReportPath: string | undefined;
   let uploadReceiptPath: string | undefined;
+  let manualChecksPath: string | undefined;
+  const manualChecks: string[] = [];
   let requireSmokeReport = false;
 
   for (let index = 2; index < argv.length; index += 1) {
@@ -126,6 +227,16 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--summary" && next) {
+      summaryPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--markdown" && next) {
+      markdownPath = next;
+      index += 1;
+      continue;
+    }
     if (arg === "--expected-revision" && next) {
       expectedRevision = next.trim() || undefined;
       index += 1;
@@ -146,6 +257,16 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--manual-checks" && next) {
+      manualChecksPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--manual-check" && next) {
+      manualChecks.push(next);
+      index += 1;
+      continue;
+    }
     if (arg === "--require-smoke-report") {
       requireSmokeReport = true;
       continue;
@@ -159,10 +280,14 @@ function parseArgs(argv: string[]): Args {
     ...(archivePath ? { archivePath } : {}),
     ...(metadataPath ? { metadataPath } : {}),
     ...(reportPath ? { reportPath } : {}),
+    ...(summaryPath ? { summaryPath } : {}),
+    ...(markdownPath ? { markdownPath } : {}),
     ...(expectedRevision ? { expectedRevision } : {}),
     ...(version ? { version } : {}),
     ...(smokeReportPath ? { smokeReportPath } : {}),
     ...(uploadReceiptPath ? { uploadReceiptPath } : {}),
+    ...(manualChecksPath ? { manualChecksPath } : {}),
+    manualChecks,
     requireSmokeReport
   };
 }
@@ -237,6 +362,16 @@ function defaultReportPath(artifactsDir: string | undefined, metadataPath: strin
   return path.join(path.dirname(metadataPath), "codex.wechat.rc-validation-report.json");
 }
 
+function defaultSummaryPath(artifactsDir: string | undefined, metadataPath: string): string {
+  const baseDir = artifactsDir ?? path.dirname(metadataPath);
+  return path.join(baseDir, "codex.wechat.release-candidate-summary.json");
+}
+
+function defaultMarkdownPath(artifactsDir: string | undefined, metadataPath: string): string {
+  const baseDir = artifactsDir ?? path.dirname(metadataPath);
+  return path.join(baseDir, "codex.wechat.release-candidate-summary.md");
+}
+
 function validatePackageMetadataShape(metadata: WechatMinigameReleasePackageMetadata, archivePath: string): void {
   if (metadata.schemaVersion !== 1) {
     fail(`Release sidecar schemaVersion must be 1, received ${JSON.stringify(metadata.schemaVersion)}.`);
@@ -280,6 +415,219 @@ function resolveOptionalArtifactPath(explicitPath: string | undefined, fallbackP
     return path.resolve(explicitPath);
   }
   return fs.existsSync(fallbackPath) ? fallbackPath : undefined;
+}
+
+function readManualChecks(args: Args): ManualReviewCheck[] {
+  if (!args.manualChecksPath && args.manualChecks.length === 0) {
+    return DEFAULT_MANUAL_CHECKS.map((check) => ({ ...check, evidence: [...check.evidence] }));
+  }
+
+  const fromFile = args.manualChecksPath
+    ? parseManualChecksFile(args.manualChecksPath).map((check) => ({
+        id: check.id,
+        title: check.title,
+        required: check.required,
+        status: check.status,
+        notes: check.notes,
+        evidence: [...check.evidence],
+        source: "file" as const
+      }))
+    : [];
+  const fromCli = args.manualChecks.map((value) => {
+    const check = parseManualCheckArg(value);
+    return {
+      id: check.id,
+      title: check.title,
+      required: check.required,
+      status: check.status,
+      notes: check.notes,
+      evidence: [...check.evidence],
+      source: "cli" as const
+    };
+  });
+
+  const checks = [...fromFile, ...fromCli];
+  const seen = new Set<string>();
+  for (const check of checks) {
+    if (seen.has(check.id)) {
+      fail(`Duplicate manual review check id detected: ${check.id}`);
+    }
+    seen.add(check.id);
+  }
+  return checks;
+}
+
+function requireCheck(checks: ValidationCheck[], id: string): ValidationCheck {
+  const match = checks.find((check) => check.id === id);
+  if (!match) {
+    fail(`Missing validation check: ${id}`);
+  }
+  return match;
+}
+
+function buildCandidateSummary(
+  checks: ValidationCheck[],
+  manualChecks: ManualReviewCheck[],
+  metadata: WechatMinigameReleasePackageMetadata,
+  artifacts: { artifactsDir?: string; archivePath: string; metadataPath: string },
+  reportPath: string,
+  summaryPath: string,
+  markdownPath: string,
+  commit: string | null,
+  version: string | null
+): CandidateSummary {
+  const packageCheck = requireCheck(checks, "package-sidecar");
+  const verifyCheck = requireCheck(checks, "artifact-verify");
+  const smokeCheck = requireCheck(checks, "smoke-report");
+  const uploadCheck = requireCheck(checks, "upload-receipt");
+  const blockers: CandidateSummary["blockers"] = [];
+
+  for (const check of checks) {
+    if (check.status === "failed") {
+      blockers.push({
+        id: check.id,
+        summary: check.summary,
+        ...(check.artifactPath ? { artifactPath: check.artifactPath } : {}),
+        ...(check.command ? { nextCommand: check.command } : {})
+      });
+    }
+  }
+  if (smokeCheck.status === "skipped") {
+    blockers.push({
+      id: "smoke-report-missing",
+      summary: "Candidate summary is blocked until codex.wechat.smoke-report.json is generated and validated for the same revision.",
+      artifactPath: smokeCheck.artifactPath,
+      nextCommand: "npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]"
+    });
+  }
+
+  for (const check of manualChecks) {
+    if (!check.required || check.status === "passed" || check.status === "not_applicable") {
+      continue;
+    }
+    blockers.push({
+      id: `manual:${check.id}`,
+      summary:
+        check.status === "failed"
+          ? `Manual review failed: ${check.title}. ${check.notes}`.trim()
+          : `Manual review pending: ${check.title}. ${check.notes}`.trim()
+    });
+  }
+
+  const requiredPendingChecks = manualChecks.filter((check) => check.required && check.status === "pending").length;
+  const requiredFailedChecks = manualChecks.filter((check) => check.required && check.status === "failed").length;
+  const completedChecks = manualChecks.filter((check) => check.status === "passed" || check.status === "not_applicable").length;
+  const status: CandidateStatus = blockers.length === 0 ? "ready" : "blocked";
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    candidate: {
+      revision: commit,
+      version,
+      projectName: metadata.projectName,
+      appId: metadata.appId,
+      status
+    },
+    artifacts: {
+      ...(artifacts.artifactsDir ? { artifactsDir: artifacts.artifactsDir } : {}),
+      archivePath: artifacts.archivePath,
+      metadataPath: artifacts.metadataPath,
+      validationReportPath: reportPath,
+      summaryPath,
+      smokeReportPath:
+        smokeCheck.artifactPath ??
+        path.join(artifacts.artifactsDir ?? path.dirname(artifacts.metadataPath), "codex.wechat.smoke-report.json"),
+      uploadReceiptPath:
+        uploadCheck.artifactPath ??
+        path.join(
+          artifacts.artifactsDir ?? path.dirname(artifacts.metadataPath),
+          `${path.basename(artifacts.metadataPath, ".package.json")}.upload.json`
+        ),
+      markdownPath
+    },
+    evidence: {
+      package: {
+        status: packageCheck.status,
+        summary: packageCheck.summary,
+        artifactPath: packageCheck.artifactPath ?? artifacts.metadataPath
+      },
+      validation: {
+        status: verifyCheck.status,
+        summary: verifyCheck.summary,
+        artifactPath: reportPath
+      },
+      smoke: {
+        status: smokeCheck.status,
+        summary: smokeCheck.summary,
+        artifactPath:
+          smokeCheck.artifactPath ??
+          path.join(artifacts.artifactsDir ?? path.dirname(artifacts.metadataPath), "codex.wechat.smoke-report.json")
+      },
+      upload: {
+        status: uploadCheck.status,
+        summary: uploadCheck.summary,
+        artifactPath:
+          uploadCheck.artifactPath ??
+          path.join(
+            artifacts.artifactsDir ?? path.dirname(artifacts.metadataPath),
+            `${path.basename(artifacts.metadataPath, ".package.json")}.upload.json`
+          )
+      },
+      manualReview: {
+        status: requiredPendingChecks === 0 && requiredFailedChecks === 0 ? "ready" : "blocked",
+        totalChecks: manualChecks.length,
+        completedChecks,
+        requiredPendingChecks,
+        requiredFailedChecks,
+        checks: manualChecks
+      }
+    },
+    blockers
+  };
+}
+
+function renderCandidateMarkdown(summary: CandidateSummary): string {
+  const lines: string[] = [];
+  lines.push("# WeChat Release Candidate Summary", "");
+  lines.push(`- Candidate status: \`${summary.candidate.status}\``);
+  lines.push(`- Revision: \`${summary.candidate.revision ?? "unknown"}\``);
+  lines.push(`- Version: \`${summary.candidate.version ?? "unknown"}\``);
+  lines.push(`- Project: \`${summary.candidate.projectName}\``);
+  lines.push(`- App ID: \`${summary.candidate.appId}\``, "");
+  lines.push("## Evidence", "");
+  lines.push(
+    `- Package metadata: \`${summary.evidence.package.status}\` (${summary.evidence.package.summary}) -> \`${path.relative(process.cwd(), summary.evidence.package.artifactPath).replace(/\\\\/g, "/")}\``
+  );
+  lines.push(
+    `- Artifact validation: \`${summary.evidence.validation.status}\` (${summary.evidence.validation.summary}) -> \`${path.relative(process.cwd(), summary.artifacts.validationReportPath).replace(/\\\\/g, "/")}\``
+  );
+  lines.push(
+    `- Smoke evidence: \`${summary.evidence.smoke.status}\` (${summary.evidence.smoke.summary}) -> \`${path.relative(process.cwd(), summary.evidence.smoke.artifactPath).replace(/\\\\/g, "/")}\``
+  );
+  lines.push(
+    `- Upload receipt: \`${summary.evidence.upload.status}\` (${summary.evidence.upload.summary}) -> \`${path.relative(process.cwd(), summary.evidence.upload.artifactPath).replace(/\\\\/g, "/")}\``,
+    ""
+  );
+  lines.push("## Manual Review", "");
+  for (const check of summary.evidence.manualReview.checks) {
+    const evidence = check.evidence.length > 0 ? ` Evidence: ${check.evidence.join(", ")}` : "";
+    lines.push(`- \`${check.status}\` ${check.title}${check.notes ? ` - ${check.notes}` : ""}${evidence}`);
+  }
+  lines.push("", "## Blockers", "");
+  if (summary.blockers.length === 0) {
+    lines.push("- None.");
+  } else {
+    for (const blocker of summary.blockers) {
+      lines.push(`- ${blocker.id}: ${blocker.summary}`);
+    }
+  }
+  lines.push(
+    "",
+    `Validation report: \`${path.relative(process.cwd(), summary.artifacts.validationReportPath).replace(/\\/g, "/")}\``,
+    `Summary JSON: \`${path.relative(process.cwd(), summary.artifacts.summaryPath).replace(/\\/g, "/")}\``
+  );
+  return `${lines.join("\n")}\n`;
 }
 
 function runCommandCheck(
@@ -423,6 +771,9 @@ function main(): void {
     )
   );
   const reportPath = path.resolve(args.reportPath ?? defaultReportPath(artifacts.artifactsDir, artifacts.metadataPath));
+  const summaryPath = path.resolve(args.summaryPath ?? defaultSummaryPath(artifacts.artifactsDir, artifacts.metadataPath));
+  const markdownPath = path.resolve(args.markdownPath ?? defaultMarkdownPath(artifacts.artifactsDir, artifacts.metadataPath));
+  const manualChecks = readManualChecks(args);
   const commit = metadata.sourceRevision ?? args.expectedRevision ?? null;
   let version = args.version ?? null;
   let exitCode = 0;
@@ -591,11 +942,27 @@ function main(): void {
   };
 
   writeJsonFile(reportPath, report);
+  const candidateSummary = buildCandidateSummary(
+    checks,
+    manualChecks,
+    metadata,
+    artifacts,
+    reportPath,
+    summaryPath,
+    markdownPath,
+    commit,
+    version
+  );
+  writeJsonFile(summaryPath, candidateSummary);
+  fs.writeFileSync(markdownPath, renderCandidateMarkdown(candidateSummary), "utf8");
   console.log(`Wrote release candidate validation report: ${path.relative(process.cwd(), reportPath).replace(/\\/g, "/")}`);
+  console.log(`Wrote release candidate summary: ${path.relative(process.cwd(), summaryPath).replace(/\\/g, "/")}`);
+  console.log(`Wrote release candidate markdown: ${path.relative(process.cwd(), markdownPath).replace(/\\/g, "/")}`);
   console.log(`Artifact: ${path.relative(process.cwd(), artifacts.archivePath).replace(/\\/g, "/")}`);
   console.log(`Commit: ${commit ?? "unknown"}`);
   console.log(`Version: ${version ?? "unknown"}`);
   console.log(`Result: ${report.summary.status}`);
+  console.log(`Candidate status: ${candidateSummary.candidate.status}`);
 
   if (failedChecks.length > 0) {
     console.error("Failures:");

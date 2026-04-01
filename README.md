@@ -151,7 +151,7 @@ npm run dev:client:h5
 - 打包 H5 客户端 RC 冒烟：`npm run smoke:client:release-candidate`
 - 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
-- 微信小游戏 RC artifact 聚合验收：`npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>]`
+- 微信小游戏 RC artifact 聚合验收：`npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>] [--manual-checks docs/release-evidence/wechat-release-manual-review.example.json]`（输出 `codex.wechat.rc-validation-report.json`、`codex.wechat.release-candidate-summary.json` 和 `.md`）
 - 微信小游戏发布彩排：`npm run release:wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir>`（顺序执行 prepare / package / verify / validate，并在 `artifacts/wechat-release/` 输出 JSON + Markdown 摘要）
 - Cocos RC candidate bundle：`npm run release:cocos-rc:bundle -- --candidate <candidate-name> [--build-surface creator_preview|wechat_preview|wechat_upload_candidate]`（在 `artifacts/release-readiness/` 输出 candidate+revision 命名的 snapshot / checklist / blockers / JSON+Markdown bundle）
 - Issue #33 开源素材 staging 校验：`npm run check:issue33-assets -- --require-pack`

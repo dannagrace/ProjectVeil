@@ -35,6 +35,15 @@ interface RuntimeEvidenceCasePayload {
   requiredEvidence?: Record<string, string>;
 }
 
+interface ManualReviewCheckPayload {
+  id: string;
+  title: string;
+  status?: "passed" | "failed" | "pending" | "not_applicable";
+  required?: boolean;
+  notes?: string;
+  evidence?: string[];
+}
+
 function hashFileSha256(filePath: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
@@ -193,6 +202,10 @@ function updateArchiveMetadata(metadataPath: string, archivePath: string): void 
   fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
 }
 
+function writeManualChecks(filePath: string, checks: ManualReviewCheckPayload[]): void {
+  fs.writeFileSync(filePath, `${JSON.stringify(checks, null, 2)}\n`, "utf8");
+}
+
 test("verify:wechat-release supports explicit artifact paths and keep-extracted output", () => {
   const artifact = packageFixtureArtifact();
 
@@ -274,6 +287,8 @@ test("verify:wechat-release fails when a required smoke file is missing from the
 test("validate:wechat-rc marks smoke and upload receipt checks as skipped when optional artifacts are absent", () => {
   const artifact = packageFixtureArtifact();
   const reportPath = path.join(artifact.artifactsDir, "explicit-report.json");
+  const summaryPath = path.join(artifact.artifactsDir, "explicit-summary.json");
+  const markdownPath = path.join(artifact.artifactsDir, "explicit-summary.md");
 
   const output = execFileSync(
     "node",
@@ -287,6 +302,10 @@ test("validate:wechat-rc marks smoke and upload receipt checks as skipped when o
       artifact.metadataPath,
       "--report",
       reportPath,
+      "--summary",
+      summaryPath,
+      "--markdown",
+      markdownPath,
       "--expected-revision",
       sourceRevision
     ],
@@ -320,6 +339,32 @@ test("validate:wechat-rc marks smoke and upload receipt checks as skipped when o
       "upload-receipt:skipped:Upload receipt not present."
     ]
   );
+
+  const summary = JSON.parse(fs.readFileSync(summaryPath, "utf8")) as {
+    candidate: { revision: string; status: string };
+    artifacts: { validationReportPath: string; smokeReportPath: string; markdownPath: string };
+    evidence: {
+      smoke: { status: string };
+      manualReview: { status: string; requiredPendingChecks: number; checks: Array<{ id: string; status: string }> };
+    };
+    blockers: Array<{ id: string; summary: string }>;
+  };
+
+  assert.match(output, /Candidate status: blocked/);
+  assert.equal(summary.candidate.revision, sourceRevision);
+  assert.equal(summary.candidate.status, "blocked");
+  assert.equal(summary.artifacts.validationReportPath, reportPath);
+  assert.equal(summary.artifacts.markdownPath, markdownPath);
+  assert.equal(summary.evidence.smoke.status, "skipped");
+  assert.equal(summary.evidence.manualReview.status, "blocked");
+  assert.equal(summary.evidence.manualReview.requiredPendingChecks, 2);
+  assert.deepEqual(
+    summary.evidence.manualReview.checks.map((check) => `${check.id}:${check.status}`),
+    ["wechat-runtime-review:pending", "wechat-release-checklist:pending"]
+  );
+  assert.match(summary.blockers.map((blocker) => `${blocker.id}:${blocker.summary}`).join("\n"), /smoke-report-missing/);
+  assert.match(summary.blockers.map((blocker) => `${blocker.id}:${blocker.summary}`).join("\n"), /manual:wechat-runtime-review/);
+  assert.match(fs.readFileSync(markdownPath, "utf8"), /WeChat Release Candidate Summary/);
 });
 
 test("validate:wechat-rc requires an upload receipt when version validation is requested", () => {
@@ -375,6 +420,87 @@ test("validate:wechat-rc requires an upload receipt when version validation is r
       "upload-receipt:failed"
     ]
   );
+});
+
+test("validate:wechat-rc marks the candidate ready when smoke evidence and manual review are complete", () => {
+  const artifact = packageFixtureArtifact();
+  const smokeReportPath = path.join(artifact.artifactsDir, "codex.wechat.smoke-report.json");
+  const manualChecksPath = path.join(artifact.artifactsDir, "wechat-manual-review.json");
+  const summaryPath = path.join(artifact.artifactsDir, "codex.wechat.release-candidate-summary.json");
+  const markdownPath = path.join(artifact.artifactsDir, "codex.wechat.release-candidate-summary.md");
+  writePassingSmokeReport(artifact.metadataPath, smokeReportPath);
+  writeManualChecks(manualChecksPath, [
+    {
+      id: "wechat-runtime-review",
+      title: "Runtime health/auth-readiness/metrics reviewed for this candidate",
+      status: "passed",
+      required: true,
+      notes: "Captured candidate runtime endpoints for the same revision.",
+      evidence: ["GET /api/runtime/health", "GET /api/runtime/auth-readiness", "GET /api/runtime/metrics"]
+    },
+    {
+      id: "wechat-release-checklist",
+      title: "WeChat RC checklist and blockers reviewed",
+      status: "passed",
+      required: true,
+      notes: "Checklist and blockers resolved for the packaged candidate.",
+      evidence: [
+        "docs/release-evidence/cocos-wechat-rc-checklist.template.md",
+        "docs/release-evidence/cocos-wechat-rc-blockers.template.md"
+      ]
+    }
+  ]);
+
+  const output = execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/validate-wechat-release-candidate.ts",
+      "--archive",
+      artifact.archivePath,
+      "--metadata",
+      artifact.metadataPath,
+      "--smoke-report",
+      smokeReportPath,
+      "--manual-checks",
+      manualChecksPath,
+      "--summary",
+      summaryPath,
+      "--markdown",
+      markdownPath,
+      "--expected-revision",
+      sourceRevision
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: "pipe"
+    }
+  );
+
+  const summary = JSON.parse(fs.readFileSync(summaryPath, "utf8")) as {
+    candidate: { status: string; revision: string };
+    evidence: {
+      package: { status: string };
+      validation: { status: string };
+      smoke: { status: string };
+      manualReview: { status: string; requiredPendingChecks: number; requiredFailedChecks: number };
+    };
+    blockers: Array<{ id: string }>;
+  };
+
+  assert.match(output, /Candidate status: ready/);
+  assert.equal(summary.candidate.status, "ready");
+  assert.equal(summary.candidate.revision, sourceRevision);
+  assert.equal(summary.evidence.package.status, "passed");
+  assert.equal(summary.evidence.validation.status, "passed");
+  assert.equal(summary.evidence.smoke.status, "passed");
+  assert.equal(summary.evidence.manualReview.status, "ready");
+  assert.equal(summary.evidence.manualReview.requiredPendingChecks, 0);
+  assert.equal(summary.evidence.manualReview.requiredFailedChecks, 0);
+  assert.equal(summary.blockers.length, 0);
+  assert.match(fs.readFileSync(markdownPath, "utf8"), /Candidate status: `ready`/);
 });
 
 test("smoke:wechat-release ingests automated runtime evidence into the existing smoke schema", () => {
