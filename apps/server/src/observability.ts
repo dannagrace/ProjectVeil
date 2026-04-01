@@ -43,14 +43,23 @@ interface MatchmakingObservabilityCounters {
 }
 
 type AuthSessionFailureReason = "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked";
-type AuthTokenDeliveryFailureReason = "misconfigured" | "timeout" | "network" | "webhook_4xx" | "webhook_429" | "webhook_5xx";
+type AuthTokenDeliveryFailureReason =
+  | "misconfigured"
+  | "timeout"
+  | "network"
+  | "smtp_4xx"
+  | "smtp_5xx"
+  | "smtp_protocol"
+  | "webhook_4xx"
+  | "webhook_429"
+  | "webhook_5xx";
 type AuthTokenDeliveryAttemptStatus = "disabled" | "dev-token" | "delivered" | "retry_scheduled" | "dead-lettered";
 
 interface AuthTokenDeliveryAttemptLogEntry {
   timestamp: string;
   kind: "account-registration" | "password-recovery";
   loginId: string;
-  deliveryMode: "disabled" | "dev-token" | "webhook";
+  deliveryMode: "disabled" | "dev-token" | "smtp" | "webhook";
   status: AuthTokenDeliveryAttemptStatus;
   attemptCount: number;
   maxAttempts: number;
@@ -201,6 +210,9 @@ const runtimeObservability: RuntimeObservabilityState = {
       misconfigured: 0,
       timeout: 0,
       network: 0,
+      smtp_4xx: 0,
+      smtp_5xx: 0,
+      smtp_protocol: 0,
       webhook_4xx: 0,
       webhook_429: 0,
       webhook_5xx: 0
@@ -542,6 +554,15 @@ function buildMetricsDocument(): string {
     "# HELP veil_auth_token_delivery_failures_network_total Total token delivery failures caused by network errors.",
     "# TYPE veil_auth_token_delivery_failures_network_total counter",
     `veil_auth_token_delivery_failures_network_total ${health.runtime.auth.tokenDelivery.failureReasons.network}`,
+    "# HELP veil_auth_token_delivery_failures_smtp_4xx_total Total token delivery failures caused by retryable 4xx SMTP responses.",
+    "# TYPE veil_auth_token_delivery_failures_smtp_4xx_total counter",
+    `veil_auth_token_delivery_failures_smtp_4xx_total ${health.runtime.auth.tokenDelivery.failureReasons.smtp_4xx}`,
+    "# HELP veil_auth_token_delivery_failures_smtp_5xx_total Total token delivery failures caused by non-retryable 5xx SMTP responses.",
+    "# TYPE veil_auth_token_delivery_failures_smtp_5xx_total counter",
+    `veil_auth_token_delivery_failures_smtp_5xx_total ${health.runtime.auth.tokenDelivery.failureReasons.smtp_5xx}`,
+    "# HELP veil_auth_token_delivery_failures_smtp_protocol_total Total token delivery failures caused by invalid SMTP protocol responses.",
+    "# TYPE veil_auth_token_delivery_failures_smtp_protocol_total counter",
+    `veil_auth_token_delivery_failures_smtp_protocol_total ${health.runtime.auth.tokenDelivery.failureReasons.smtp_protocol}`,
     "# HELP veil_auth_token_delivery_failures_webhook_4xx_total Total token delivery failures caused by non-retryable 4xx webhook responses.",
     "# TYPE veil_auth_token_delivery_failures_webhook_4xx_total counter",
     `veil_auth_token_delivery_failures_webhook_4xx_total ${health.runtime.auth.tokenDelivery.failureReasons.webhook_4xx}`,
@@ -714,7 +735,7 @@ export function recordAuthTokenDeliveryDeadLetter(): void {
 export function recordAuthTokenDeliveryAttempt(entry: {
   kind: "account-registration" | "password-recovery";
   loginId: string;
-  deliveryMode: "disabled" | "dev-token" | "webhook";
+  deliveryMode: "disabled" | "dev-token" | "smtp" | "webhook";
   status: AuthTokenDeliveryAttemptStatus;
   attemptCount: number;
   maxAttempts: number;
@@ -768,6 +789,9 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.tokenDeliveryFailureReasons.misconfigured = 0;
   runtimeObservability.auth.tokenDeliveryFailureReasons.timeout = 0;
   runtimeObservability.auth.tokenDeliveryFailureReasons.network = 0;
+  runtimeObservability.auth.tokenDeliveryFailureReasons.smtp_4xx = 0;
+  runtimeObservability.auth.tokenDeliveryFailureReasons.smtp_5xx = 0;
+  runtimeObservability.auth.tokenDeliveryFailureReasons.smtp_protocol = 0;
   runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_4xx = 0;
   runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_429 = 0;
   runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_5xx = 0;
