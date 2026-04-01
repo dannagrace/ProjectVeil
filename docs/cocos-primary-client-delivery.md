@@ -63,7 +63,7 @@ The exporter reuses the existing Cocos `VeilRoot` harness and records checkpoint
 
 - progression review loading
 - inventory overflow / blocked equipment evidence
-- combat-loop resolution
+- battle entry -> command/impact feedback -> resolution/settlement handoff
 - reconnect cached-replay fallback
 - reconnect recovery back to authoritative state
 
@@ -82,6 +82,7 @@ Keep these manual items short and attach evidence through the existing release e
 1. Complete the current candidate snapshot with `npm run release:cocos-rc:snapshot`.
 2. Refresh the primary-client diagnostic artifact with `npm run release:cocos:primary-diagnostics`.
 3. Copy and fill the RC checklist/template files in [`docs/release-evidence`](./release-evidence/), and attach the current [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) review for any remaining placeholder/fallback presentation items.
+   The same candidate evidence should explicitly show one polished battle journey covering encounter entry, at least one command/impact beat, and a stable victory or defeat settlement state before reconnect review.
 4. Record any open risk in the blocker template before sign-off.
 5. Confirm the release candidate still matches the intended commit/revision.
 

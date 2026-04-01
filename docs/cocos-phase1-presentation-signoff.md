@@ -6,6 +6,8 @@ It does not replace the broader RC snapshot, checklist, or blocker log. It narro
 
 `Which placeholder, fallback, or substituted presentation items still exist, and has each one been explicitly closed or accepted before Phase 1 exit?`
 
+For the primary-client battle path, reviewers should treat `encounter entry -> command/impact feedback -> result settlement` as one continuous presentation surface. Evidence is incomplete if it only shows the map shell or only the final settlement shell.
+
 ## When To Use This
 
 Use this checklist whenever a candidate is being reviewed for:
@@ -48,7 +50,7 @@ Copy this section into the active candidate record and fill it before review:
 | Pixel art / scene visuals | Placeholder tiles, sprites, portraits, icons, temporary VFX, mismatched atlas content | `cocos-presentation-readiness`, RC screenshots/video, Creator preview, WeChat smoke | `closed | accepted-non-blocking | blocking` | `<name>` | What was fixed, or why Phase 1 can ship with this exact gap | Issue / blocker / artifact |
 | Audio | Mixed packs, missing cues, temporary BGM/SFX, abrupt silence or fallback clips | RC video, device smoke notes, audio audit notes | `closed | accepted-non-blocking | blocking` | `<name>` | What remains, player impact, and why it is or is not acceptable | Issue / blocker / artifact |
 | Animation / transitions | Fallback transition modes, missing hit reactions, temporary motion states, abrupt battle entry/exit | RC video, diagnostics markdown, reviewer notes | `closed | accepted-non-blocking | blocking` | `<name>` | What behavior is still fallback and whether it affects the production-intent journey | Issue / blocker / artifact |
-| HUD / copy / readability | Temporary labels, unclear badges, weak state messaging, unresolved placeholder strings | RC screenshots, Cocos journey evidence, manual review notes | `closed | accepted-non-blocking | blocking` | `<name>` | Why the current wording is acceptable or what must change before sign-off | Issue / blocker / artifact |
+| HUD / copy / readability | Temporary labels, unclear badges, weak state messaging, unresolved placeholder strings, ambiguous battle win/loss settlement copy | RC screenshots, Cocos journey evidence, manual review notes | `closed | accepted-non-blocking | blocking` | `<name>` | Why the current wording is acceptable or what must change before sign-off | Issue / blocker / artifact |
 | Asset substitutions from automation | Any remaining substitution already reported by validation or presentation-readiness output | Validation artifact, release bundle summary, CI artifact | `closed | accepted-non-blocking | blocking` | `<name>` | Explicitly acknowledge each reported substitution instead of assuming it is understood | Issue / blocker / artifact |
 
 ## Reviewer Decision
