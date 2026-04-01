@@ -110,6 +110,10 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
       blockersMarkdown: string;
     };
     journey: Array<{ id: string; status: string }>;
+    checkpointLedger?: {
+      entryCount: number;
+      entries: Array<{ id: string; artifactPath: string; telemetryCheckpointCount: number }>;
+    };
     requiredEvidence: Array<{ id: string; filled: boolean }>;
   };
   assert.equal(manifest.bundle.candidate, "rc-issue-507");
@@ -118,6 +122,9 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.equal(path.basename(manifest.artifacts.primaryJourneyEvidence), primaryJourneyFile);
   assert.equal(path.basename(manifest.artifacts.primaryJourneyEvidenceMarkdown), primaryJourneyMarkdownFile);
   assert.equal(manifest.journey.find((entry) => entry.id === "lobby-entry")?.status, "passed");
+  assert.equal(manifest.checkpointLedger?.entryCount, 7);
+  assert.ok((manifest.checkpointLedger?.entries.find((entry) => entry.id === "battle-settlement")?.telemetryCheckpointCount ?? -1) >= 0);
+  assert.match(manifest.checkpointLedger?.entries.find((entry) => entry.id === "battle-settlement")?.artifactPath ?? "", /05-battle-settlement\.json$/);
   assert.equal(manifest.requiredEvidence.find((entry) => entry.id === "roomId")?.filled, true);
   assert.equal(path.basename(manifest.artifacts.snapshot), snapshotFile);
   assert.equal(path.basename(manifest.artifacts.summaryMarkdown), summaryFile);
@@ -129,6 +136,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.match(summaryMarkdown, /Overall status: `passed`/);
   assert.match(summaryMarkdown, /Primary journey evidence:/);
   assert.match(summaryMarkdown, /Lobby entry \| `passed` \| 2 item\(s\)/);
+  assert.match(summaryMarkdown, /## Checkpoint Ledger/);
+  assert.match(summaryMarkdown, /Battle settlement/);
 
   const checklistMarkdown = fs.readFileSync(path.join(outputDir, checklistFile!), "utf8");
   assert.match(checklistMarkdown, /Candidate: `rc-issue-507`/);

@@ -12,6 +12,47 @@ function writeJson(filePath: string, payload: unknown): void {
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+function writeJourneyMilestones(workspace: string): Record<string, string> {
+  const milestoneDir = path.join(workspace, "milestones");
+  const files: Record<string, string> = {
+    "lobby-entry": path.join(milestoneDir, "01-lobby-entry.json"),
+    "room-join": path.join(milestoneDir, "02-room-join.json"),
+    "map-explore": path.join(milestoneDir, "03-map-explore.json"),
+    "first-battle": path.join(milestoneDir, "04-first-battle.json"),
+    "battle-settlement": path.join(milestoneDir, "05-battle-settlement.json"),
+    "reconnect-restore": path.join(milestoneDir, "06-reconnect-restore.json"),
+    "return-to-world": path.join(milestoneDir, "07-return-to-world.json")
+  };
+
+  for (const [stepId, filePath] of Object.entries(files)) {
+    writeJson(filePath, {
+      phase: stepId,
+      identity: {
+        roomId: "room-primary-journey",
+        playerId: "player-account"
+      },
+      room: {
+        diagnosticsConnectionStatus: stepId === "reconnect-restore" ? "reconnecting" : "connected",
+        lastUpdateReason: `journey.${stepId}`
+      },
+      diagnostics: {
+        primaryClientTelemetry:
+          stepId === "battle-settlement"
+            ? [
+                { checkpoint: "encounter.started" },
+                { checkpoint: "hero.progressed" },
+                { checkpoint: "encounter.resolved" }
+              ]
+            : stepId === "first-battle"
+              ? [{ checkpoint: "encounter.started" }]
+              : []
+      }
+    });
+  }
+
+  return files;
+}
+
 test("release:cocos-rc:snapshot imports WeChat smoke evidence into linked journey fields", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-cocos-rc-snapshot-"));
   const smokeReportPath = path.join(workspace, "codex.wechat.smoke-report.json");
@@ -102,6 +143,7 @@ test("release:cocos-rc:snapshot imports primary journey evidence into the canoni
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-cocos-primary-journey-snapshot-"));
   const primaryJourneyPath = path.join(workspace, "cocos-primary-journey.json");
   const outputPath = path.join(workspace, "rc.snapshot.json");
+  const milestoneFiles = writeJourneyMilestones(workspace);
 
   writeJson(primaryJourneyPath, {
     candidate: {
@@ -116,36 +158,39 @@ test("release:cocos-rc:snapshot imports primary journey evidence into the canoni
     environment: {
       server: "ws://127.0.0.1:2567"
     },
+    artifacts: {
+      milestoneDir: path.join(workspace, "milestones")
+    },
     requiredEvidence: [
       {
         id: "roomId",
         value: "room-primary-journey",
-        evidence: ["artifacts/release-readiness/02-room-join.json"]
+        evidence: [milestoneFiles["room-join"]]
       },
       {
         id: "reconnectPrompt",
         value: "连接已恢复",
-        evidence: ["artifacts/release-readiness/06-reconnect-restore.json"]
+        evidence: [milestoneFiles["reconnect-restore"]]
       },
       {
         id: "restoredState",
         value: "Restored room-primary-journey on day 5 with preserved world state.",
-        evidence: ["artifacts/release-readiness/06-reconnect-restore.json"]
+        evidence: [milestoneFiles["reconnect-restore"]]
       },
       {
         id: "firstBattleResult",
         value: "attacker_victory; gold +12; experience +25",
-        evidence: ["artifacts/release-readiness/05-battle-settlement.json"]
+        evidence: [milestoneFiles["battle-settlement"]]
       }
     ],
     journey: [
-      { id: "lobby-entry", status: "passed", summary: "Lobby ok", evidence: ["01-lobby-entry.json"] },
-      { id: "room-join", status: "passed", summary: "Room ok", evidence: ["02-room-join.json"] },
-      { id: "map-explore", status: "passed", summary: "Explore ok", evidence: ["03-map-explore.json"] },
-      { id: "first-battle", status: "passed", summary: "Battle ok", evidence: ["04-first-battle.json"] },
-      { id: "battle-settlement", status: "passed", summary: "Settlement ok", evidence: ["05-battle-settlement.json"] },
-      { id: "reconnect-restore", status: "passed", summary: "Reconnect ok", evidence: ["06-reconnect-restore.json"] },
-      { id: "return-to-world", status: "passed", summary: "Return ok", evidence: ["07-return-to-world.json"] }
+      { id: "lobby-entry", status: "passed", summary: "Lobby ok", evidence: [milestoneFiles["lobby-entry"]] },
+      { id: "room-join", status: "passed", summary: "Room ok", evidence: [milestoneFiles["room-join"]] },
+      { id: "map-explore", status: "passed", summary: "Explore ok", evidence: [milestoneFiles["map-explore"]] },
+      { id: "first-battle", status: "passed", summary: "Battle ok", evidence: [milestoneFiles["first-battle"]] },
+      { id: "battle-settlement", status: "passed", summary: "Settlement ok", evidence: [milestoneFiles["battle-settlement"]] },
+      { id: "reconnect-restore", status: "passed", summary: "Reconnect ok", evidence: [milestoneFiles["reconnect-restore"]] },
+      { id: "return-to-world", status: "passed", summary: "Return ok", evidence: [milestoneFiles["return-to-world"]] }
     ]
   });
 
@@ -172,6 +217,10 @@ test("release:cocos-rc:snapshot imports primary journey evidence into the canoni
     execution: { owner: string; executedAt: string; overallStatus: string; summary: string };
     environment: { server: string };
     linkedEvidence: { primaryJourneyEvidence?: { path: string } };
+    checkpointLedger?: {
+      entryCount: number;
+      entries: Array<{ id: string; artifactPath: string; telemetryCheckpoints: string[]; roomId: string }>;
+    };
     requiredEvidence: Array<{ id: string; value: string }>;
     journey: Array<{ id: string; status: string; notes: string }>;
   };
@@ -184,4 +233,12 @@ test("release:cocos-rc:snapshot imports primary journey evidence into the canoni
   assert.equal(snapshot.requiredEvidence.find((entry) => entry.id === "firstBattleResult")?.value, "attacker_victory; gold +12; experience +25");
   assert.equal(snapshot.journey.find((entry) => entry.id === "battle-settlement")?.status, "passed");
   assert.match(snapshot.journey.find((entry) => entry.id === "reconnect-restore")?.notes ?? "", /Reconnect ok/);
+  assert.equal(snapshot.checkpointLedger?.entryCount, 7);
+  assert.equal(snapshot.checkpointLedger?.entries.find((entry) => entry.id === "battle-settlement")?.artifactPath, milestoneFiles["battle-settlement"]);
+  assert.deepEqual(snapshot.checkpointLedger?.entries.find((entry) => entry.id === "battle-settlement")?.telemetryCheckpoints, [
+    "encounter.started",
+    "hero.progressed",
+    "encounter.resolved"
+  ]);
+  assert.equal(snapshot.checkpointLedger?.entries.find((entry) => entry.id === "room-join")?.roomId, "room-primary-journey");
 });
