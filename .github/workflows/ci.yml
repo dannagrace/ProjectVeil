@@ -103,6 +103,12 @@ jobs:
             --artifact "${RUNNER_TEMP}/release-readiness/stress-rooms-runtime-metrics-${GITHUB_SHA}.json" \
             --output "${RUNNER_TEMP}/release-readiness/runtime-regression-report-${GITHUB_SHA}.json"
 
+      - name: Capture reconnect soak release-gate artifact
+        if: always()
+        run: |
+          npm run stress:rooms:reconnect-soak -- \
+            --artifact-path "${RUNNER_TEMP}/release-readiness/colyseus-reconnect-soak-summary-${GITHUB_SHA}.json"
+
       - name: Publish coverage summary
         if: always()
         run: |
@@ -355,6 +361,9 @@ jobs:
           )
           if [[ -f "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json" ]]; then
             args+=(--h5-smoke "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json")
+          fi
+          if [[ -f "${RUNNER_TEMP}/runtime-regression/colyseus-reconnect-soak-summary-${GITHUB_SHA}.json" ]]; then
+            args+=(--reconnect-soak "${RUNNER_TEMP}/runtime-regression/colyseus-reconnect-soak-summary-${GITHUB_SHA}.json")
           fi
           if [[ -d "${RUNNER_TEMP}/wechat-release" ]]; then
             args+=(--wechat-artifacts-dir "${RUNNER_TEMP}/wechat-release")

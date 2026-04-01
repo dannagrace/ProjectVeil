@@ -60,6 +60,12 @@ npm run stress:rooms:reconnect-soak -- --artifact-path=artifacts/release-readine
 
 建议 CI 至少把该 JSON artifact 保留到构建产物中，供 release-readiness 记录引用。
 
+`npm run release:gate:summary` 现在会把这份 artifact 作为正式 release gate 输入之一:
+
+- PR / 日常多人回归先看 `npm run test:e2e:multiplayer:smoke`
+- release candidate、shipping 候选包、或 reconnect / 房间恢复语义改动，再额外要求 reconnect soak gate 通过
+- gate 除了检查 reconnect invariant，还会检查 soak 清理后 `activeRoomCount / connectionCount / activeBattleCount / heroCount` 是否回到 `0`
+
 ## When This Must Pass
 
 出现下面任一条件，发版或扩大 playtest 范围前必须重新执行，并且结果必须为 `passed`：
