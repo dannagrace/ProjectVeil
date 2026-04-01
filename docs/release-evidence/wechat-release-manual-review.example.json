@@ -31,13 +31,30 @@
     ]
   },
   {
+    "id": "wechat-runtime-observability-signoff",
+    "title": "WeChat runtime observability reviewed for this candidate",
+    "status": "pending",
+    "required": true,
+    "notes": "Review the same-revision runtime observability evidence for the release environment and record any accepted follow-ups before sign-off.",
+    "owner": "<release-owner>",
+    "recordedAt": "<2026-04-02T08:14:00.000Z>",
+    "revision": "<git-sha>",
+    "artifactPath": "artifacts/wechat-release/runtime-observability-signoff.json",
+    "evidence": [
+      "/api/runtime/health payload",
+      "/api/runtime/diagnostic-snapshot capture",
+      "/api/runtime/metrics scrape or export",
+      "summary of any non-blocking alerts or follow-ups"
+    ]
+  },
+  {
     "id": "wechat-release-checklist",
     "title": "WeChat RC checklist and blockers reviewed",
     "status": "pending",
     "required": true,
     "notes": "Attach the completed RC checklist and blocker register for the same packaged candidate.",
     "owner": "<release-owner>",
-    "recordedAt": "<2026-04-02T08:15:00.000Z>",
+    "recordedAt": "<2026-04-02T08:16:00.000Z>",
     "revision": "<git-sha>",
     "artifactPath": "artifacts/wechat-release/checklist-review.json",
     "blockerIds": [

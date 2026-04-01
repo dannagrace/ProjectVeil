@@ -194,6 +194,21 @@ const DEFAULT_MANUAL_CHECKS: ManualReviewCheck[] = [
     source: "default"
   },
   {
+    id: "wechat-runtime-observability-signoff",
+    title: "WeChat runtime observability reviewed for this candidate",
+    required: true,
+    status: "pending",
+    notes:
+      "Attach the same-revision runtime observability review for the release environment, including /api/runtime/health, /api/runtime/diagnostic-snapshot, and /api/runtime/metrics evidence plus any approved follow-ups.",
+    evidence: [
+      "artifacts/wechat-release/runtime-observability-signoff.json",
+      "/api/runtime/health payload",
+      "/api/runtime/diagnostic-snapshot capture",
+      "/api/runtime/metrics scrape or export"
+    ],
+    source: "default"
+  },
+  {
     id: "wechat-release-checklist",
     title: "WeChat RC checklist and blockers reviewed",
     required: true,

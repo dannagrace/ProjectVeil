@@ -361,18 +361,20 @@ test("validate:wechat-rc marks smoke and upload receipt checks as skipped when o
   assert.equal(summary.artifacts.markdownPath, markdownPath);
   assert.equal(summary.evidence.smoke.status, "skipped");
   assert.equal(summary.evidence.manualReview.status, "blocked");
-  assert.equal(summary.evidence.manualReview.requiredPendingChecks, 3);
+  assert.equal(summary.evidence.manualReview.requiredPendingChecks, 4);
   assert.deepEqual(
     summary.evidence.manualReview.checks.map((check) => `${check.id}:${check.status}`),
     [
       "wechat-devtools-export-review:pending",
       "wechat-device-runtime-review:pending",
+      "wechat-runtime-observability-signoff:pending",
       "wechat-release-checklist:pending"
     ]
   );
   assert.match(summary.blockers.map((blocker) => `${blocker.id}:${blocker.summary}`).join("\n"), /smoke-report-missing/);
   assert.match(summary.blockers.map((blocker) => `${blocker.id}:${blocker.summary}`).join("\n"), /manual:wechat-devtools-export-review/);
   assert.match(summary.blockers.map((blocker) => `${blocker.id}:${blocker.summary}`).join("\n"), /manual:wechat-device-runtime-review/);
+  assert.match(summary.blockers.map((blocker) => `${blocker.id}:${blocker.summary}`).join("\n"), /manual:wechat-runtime-observability-signoff/);
   assert.match(fs.readFileSync(markdownPath, "utf8"), /WeChat Release Candidate Summary/);
 });
 
@@ -462,6 +464,22 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
       recordedAt: "2026-04-02T08:12:00.000Z",
       revision: sourceRevision,
       artifactPath: "artifacts/wechat-release/device-runtime-review.json"
+    },
+    {
+      id: "wechat-runtime-observability-signoff",
+      title: "WeChat runtime observability reviewed for this candidate",
+      status: "passed",
+      required: true,
+      notes: "Captured health, diagnostic snapshot, and metrics evidence for the release environment.",
+      evidence: [
+        "/api/runtime/health payload",
+        "/api/runtime/diagnostic-snapshot?format=text",
+        "/api/runtime/metrics scrape"
+      ],
+      owner: "release-oncall",
+      recordedAt: "2026-04-02T08:14:00.000Z",
+      revision: sourceRevision,
+      artifactPath: "artifacts/wechat-release/runtime-observability-signoff.json"
     },
     {
       id: "wechat-release-checklist",

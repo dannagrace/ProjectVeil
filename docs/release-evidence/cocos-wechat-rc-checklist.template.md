@@ -19,6 +19,8 @@
 - [ ] Cocos RC snapshot 已生成并通过 `--check`：
   `artifacts/release-evidence/<candidate>.<surface>.json`
 - [ ] 若为 WeChat RC，已附上 `codex.wechat.smoke-report.json`
+- [ ] 若为 WeChat RC，已附上 runtime observability sign-off：
+  `artifacts/wechat-release/runtime-observability-signoff.json`
 - [ ] 若为上传候选包，已附上 `*.package.json` / `*.upload.json`
 
 ## Canonical Journey
@@ -68,6 +70,22 @@
 - [ ] 分享回流已验证，或明确标记 `not_applicable`
 - [ ] 关键资源加载无 404 / 白名单 / 缺图阻断
 - [ ] 真机或微信开发者工具真机调试的 runtime smoke 已记录设备、客户端版本、执行时间
+- [ ] Runtime observability sign-off 已附上同一 revision 的 `/api/runtime/health`、`/api/runtime/diagnostic-snapshot`、`/api/runtime/metrics` 证据
+
+## Runtime Observability Sign-Off
+
+- [ ] `/api/runtime/health` 已复核 activeRoomCount / connectionCount / gameplayTraffic / auth 摘要
+  Evidence:
+  Notes:
+- [ ] `/api/runtime/diagnostic-snapshot` 已复核 room summary、predictionStatus、log tail
+  Evidence:
+  Notes:
+- [ ] `/api/runtime/metrics` 已抓取关键指标样本并确认无未知缺口
+  Evidence:
+  Notes:
+- [ ] 任何告警、缺口或接受风险都已写入 blocker register 或 sign-off artifact
+  Evidence:
+  Notes:
 
 ## Release Decision
 
