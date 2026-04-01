@@ -79,6 +79,18 @@ interface HudEquipmentButtonState {
   callback: (() => void) | null;
 }
 
+export type VeilHudSessionIndicatorKind =
+  | "reconnecting"
+  | "replaying_cached_snapshot"
+  | "awaiting_authoritative_resync"
+  | "degraded_offline_fallback";
+
+export interface VeilHudSessionIndicator {
+  kind: VeilHudSessionIndicatorKind;
+  label: string;
+  detail: string;
+}
+
 type HudResolvedAction =
   | {
       debugLabel: string;
@@ -126,6 +138,7 @@ export interface VeilHudRenderState {
   update: SessionUpdate | null;
   moveInFlight: boolean;
   predictionStatus: string;
+  sessionIndicators: VeilHudSessionIndicator[];
   inputDebug: string;
   runtimeHealth: string;
   triageSummaryLines: string[];
@@ -142,6 +155,26 @@ export interface VeilHudRenderState {
     pixelAssets: PixelSpriteLoadStatus;
     readiness: CocosPresentationReadiness;
   };
+}
+
+function getSessionIndicatorBadge(indicators: VeilHudSessionIndicator[]): string | null {
+  const [highestPriority] = indicators;
+  if (!highestPriority) {
+    return null;
+  }
+
+  switch (highestPriority.kind) {
+    case "reconnecting":
+      return "重连中";
+    case "replaying_cached_snapshot":
+      return "缓存回放";
+    case "awaiting_authoritative_resync":
+      return "待权威同步";
+    case "degraded_offline_fallback":
+      return "降级";
+    default:
+      return null;
+  }
 }
 
 export interface VeilHudPanelOptions {
@@ -302,15 +335,20 @@ export class VeilHudPanel extends Component {
     const latestBattleReport = summarizeLatestBattleReplay(state.account.recentBattleReplays);
     const reachableAhead =
       state.update?.reachableTiles.filter((tile) => !hero || tile.x !== hero.position.x || tile.y !== hero.position.y).length ?? 0;
+    const sessionStatusBadge = getSessionIndicatorBadge(state.sessionIndicators);
+    const sessionIndicatorLines = state.sessionIndicators.map((indicator) => `会话 ${indicator.label} · ${indicator.detail}`);
     const statusTitle = state.levelUpNotice?.title ?? "状态";
     const statusBadge = state.levelUpNotice
       ? "升级!"
+      : sessionStatusBadge
+        ? sessionStatusBadge
       : battle
-      ? "战斗中"
-      : hero && hero.move.remaining <= 0
-        ? "体力耗尽"
-        : "待命";
+        ? "战斗中"
+        : hero && hero.move.remaining <= 0
+          ? "体力耗尽"
+          : "待命";
     const statusDetail = state.levelUpNotice?.detail
+      || state.sessionIndicators[0]?.detail
       || state.predictionStatus
       || (state.moveInFlight
         ? "正在结算移动..."
@@ -320,6 +358,7 @@ export class VeilHudPanel extends Component {
     const statusLines = [
       statusTitle,
       statusDetail,
+      ...sessionIndicatorLines,
       state.runtimeHealth,
       ...state.triageSummaryLines,
       formatAchievementSummary(state.account),

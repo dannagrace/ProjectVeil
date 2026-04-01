@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { VeilHudPanel, type VeilHudRenderState } from "../assets/scripts/VeilHudPanel.ts";
 import { createLobbyPanelTestAccount } from "../assets/scripts/cocos-lobby-panel-model.ts";
-import { createComponentHarness, findNode } from "./helpers/cocos-panel-harness.ts";
+import { createComponentHarness, findNode, readLabelString } from "./helpers/cocos-panel-harness.ts";
 import { createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 
 function toHudLocalPosition(root: { name: string }, node: { position: { x: number; y: number }; parent: unknown | null }): { x: number; y: number } {
@@ -30,6 +30,7 @@ function createHudState(): VeilHudRenderState {
     update: createSessionUpdate(),
     moveInFlight: false,
     predictionStatus: "",
+    sessionIndicators: [],
     inputDebug: "",
     runtimeHealth: "运行稳定",
     triageSummaryLines: [],
@@ -115,4 +116,42 @@ test("VeilHudPanel dispatchPointerUp routes equipment button presses through the
     slot: "weapon",
     equipmentId: "militia_pike"
   });
+});
+
+test("VeilHudPanel surfaces reconnect, replay, resync, and degraded session indicators in the status card", () => {
+  const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
+  const state = createHudState();
+  state.sessionIndicators = [
+    {
+      kind: "reconnecting",
+      label: "重连中",
+      detail: "正在尝试恢复与权威房间的连接。"
+    },
+    {
+      kind: "replaying_cached_snapshot",
+      label: "缓存快照回放",
+      detail: "当前 HUD 正在展示本地缓存的上一份会话快照。"
+    },
+    {
+      kind: "awaiting_authoritative_resync",
+      label: "等待权威重同步",
+      detail: "请等待服务端权威快照覆盖当前回放状态。"
+    },
+    {
+      kind: "degraded_offline_fallback",
+      label: "降级/离线回退",
+      detail: "最近一次重连失败，客户端正依赖回退路径维持会话。"
+    }
+  ];
+
+  component.render(state);
+
+  const statusText = readLabelString(findNode(node, "HudStatus"));
+  const badgeText = readLabelString(findNode(node, "HudBadge-status"));
+
+  assert.match(statusText, /会话 重连中 · 正在尝试恢复与权威房间的连接。/);
+  assert.match(statusText, /会话 缓存快照回放 · 当前 HUD 正在展示本地缓存的上一份会话快照。/);
+  assert.match(statusText, /会话 等待权威重同步 · 请等待服务端权威快照覆盖当前回放状态。/);
+  assert.match(statusText, /会话 降级\/离线回退 · 最近一次重连失败，客户端正依赖回退路径维持会话。/);
+  assert.equal(badgeText, "重连中");
 });
