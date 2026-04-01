@@ -216,6 +216,33 @@ interface Phase1PersistenceReleaseReport {
   };
 }
 
+interface ReconnectSoakArtifact {
+  generatedAt?: string;
+  revision?: {
+    commit?: string;
+    shortCommit?: string;
+  };
+  status?: "passed" | "failed";
+  summary?: {
+    failedScenarios?: number;
+    scenarioNames?: string[];
+  };
+  soakSummary?: {
+    reconnectAttempts?: number;
+    invariantChecks?: number;
+  } | null;
+  results?: Array<{
+    scenario?: string;
+    failedRooms?: number;
+    runtimeHealthAfterCleanup?: {
+      activeRoomCount?: number;
+      connectionCount?: number;
+      activeBattleCount?: number;
+      heroCount?: number;
+    };
+  }>;
+}
+
 interface RuntimeHealthPayload {
   status?: "ok";
   checkedAt?: string;
@@ -270,6 +297,7 @@ interface DossierSection {
     | "cocos-rc-bundle"
     | "wechat-release"
     | "runtime-health"
+    | "reconnect-soak"
     | "phase1-persistence"
     | "phase1-exit-evidence-gate"
     | "release-gate"
@@ -1383,6 +1411,96 @@ function buildPersistenceSection(persistencePath: string | undefined, candidateR
   };
 }
 
+function buildReconnectSoakSection(reconnectSoakPath: string | undefined, candidateRevision: string, maxAgeMs: number): DossierSection {
+  if (!reconnectSoakPath || !fs.existsSync(reconnectSoakPath)) {
+    return {
+      id: "reconnect-soak",
+      label: "Reconnect soak evidence",
+      required: true,
+      result: "pending",
+      summary: "Reconnect soak artifact is missing.",
+      artifactPath: reconnectSoakPath,
+      freshness: "unknown",
+      details: ["Run npm run stress:rooms:reconnect-soak for the candidate revision."],
+      evidence: [],
+      acceptedRisks: []
+    };
+  }
+
+  const report = readJsonFile<ReconnectSoakArtifact>(reconnectSoakPath);
+  const freshness = evaluateFreshness(report.generatedAt, maxAgeMs);
+  const revision = report.revision?.commit ?? report.revision?.shortCommit;
+  const reconnectResult = report.results?.find((entry) => entry.scenario === "reconnect_soak");
+  const cleanup = reconnectResult?.runtimeHealthAfterCleanup;
+  const lingeringCleanupMetrics = [
+    ["activeRoomCount", cleanup?.activeRoomCount ?? 0],
+    ["connectionCount", cleanup?.connectionCount ?? 0],
+    ["activeBattleCount", cleanup?.activeBattleCount ?? 0],
+    ["heroCount", cleanup?.heroCount ?? 0]
+  ].filter(([, value]) => value > 0);
+
+  const details: string[] = [
+    `reconnectAttempts=${report.soakSummary?.reconnectAttempts ?? 0}`,
+    `invariantChecks=${report.soakSummary?.invariantChecks ?? 0}`
+  ];
+  if (report.summary?.scenarioNames?.length) {
+    details.push(`scenarios=${report.summary.scenarioNames.join(",")}`);
+  }
+  if (lingeringCleanupMetrics.length > 0) {
+    details.push(`cleanup=${lingeringCleanupMetrics.map(([label, value]) => `${label}=${value}`).join(",")}`);
+  }
+  if (!commitsMatch(revision, candidateRevision)) {
+    details.push(`revision mismatch: expected ${candidateRevision}, observed ${revision ?? "missing"}`);
+  }
+  if (freshness !== "fresh") {
+    details.push(`reconnect soak freshness=${freshness}`);
+  }
+
+  let result: DossierResult = "passed";
+  if (
+    report.status !== "passed" ||
+    (report.summary?.failedScenarios ?? 0) > 0 ||
+    (reconnectResult?.failedRooms ?? 0) > 0 ||
+    (report.soakSummary?.reconnectAttempts ?? 0) <= 0 ||
+    (report.soakSummary?.invariantChecks ?? 0) <= 0 ||
+    lingeringCleanupMetrics.length > 0 ||
+    !commitsMatch(revision, candidateRevision)
+  ) {
+    result = "failed";
+  } else if (freshness !== "fresh") {
+    result = "pending";
+  }
+
+  return {
+    id: "reconnect-soak",
+    label: "Reconnect soak evidence",
+    required: true,
+    result,
+    summary:
+      result === "failed"
+        ? "Reconnect soak evidence is not aligned with this candidate."
+        : result === "pending"
+          ? "Reconnect soak evidence passed, but freshness still needs review."
+          : "Reconnect soak evidence passed with clean room teardown.",
+    artifactPath: reconnectSoakPath,
+    observedAt: report.generatedAt,
+    freshness,
+    revision,
+    details,
+    evidence: [
+      {
+        label: "Reconnect soak summary",
+        path: reconnectSoakPath,
+        summary: `reconnectAttempts=${report.soakSummary?.reconnectAttempts ?? 0} invariantChecks=${report.soakSummary?.invariantChecks ?? 0}`,
+        observedAt: report.generatedAt,
+        freshness,
+        revision
+      }
+    ],
+    acceptedRisks: []
+  };
+}
+
 function buildDerivedSection(
   id: DossierSection["id"],
   label: string,
@@ -1621,6 +1739,7 @@ export async function buildPhase1CandidateDossier(args: Args): Promise<Phase1Can
     maxAgeMs
   );
   const runtimeSection = await buildRuntimeSection(inputs.serverUrl, maxAgeMs);
+  const reconnectSoakSection = buildReconnectSoakSection(inputs.reconnectSoakPath, revision.commit, maxAgeMs);
   const persistenceSection = buildPersistenceSection(inputs.persistencePath, revision.commit, maxAgeMs);
 
   const gateReport = buildReleaseGateSummaryReport(
@@ -1683,7 +1802,7 @@ export async function buildPhase1CandidateDossier(args: Args): Promise<Phase1Can
     "Release health summary is blocking."
   );
   const { section: phase1ExitEvidenceGateSection, gate: phase1ExitEvidenceGate } = buildPhase1ExitEvidenceGateSection(
-    [snapshotSection, cocosSection, wechatSection, runtimeSection, persistenceSection, releaseGateSection],
+    [snapshotSection, cocosSection, wechatSection, runtimeSection, reconnectSoakSection, persistenceSection, releaseGateSection],
     gateReport.generatedAt
   );
 
@@ -1693,6 +1812,7 @@ export async function buildPhase1CandidateDossier(args: Args): Promise<Phase1Can
     cocosSection,
     wechatSection,
     runtimeSection,
+    reconnectSoakSection,
     persistenceSection,
     releaseGateSection,
     releaseHealthSection

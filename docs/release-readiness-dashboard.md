@@ -8,6 +8,8 @@
 - `npm run smoke:wechat-release` for device/quasi-device smoke evidence
 - `npm run release:cocos-rc:snapshot` for recent Cocos RC journey evidence
 - `npm run release:cocos:primary-diagnostics` for checkpointed primary-client runtime diagnostics evidence
+- `npm run stress:rooms:reconnect-soak` for reconnect soak + teardown evidence
+- `npm run test:phase1-release-persistence` for persistence + shipped content evidence
 
 The dashboard writes both JSON and Markdown so it works as a quick terminal summary and as a review artifact.
 
@@ -27,6 +29,8 @@ npm run release:readiness:dashboard -- \
   --snapshot artifacts/release-readiness/rc-2026-03-29.json \
   --cocos-rc artifacts/release-evidence/phase1-wechat-rc.json \
   --primary-client-diagnostics artifacts/release-readiness/cocos-primary-client-diagnostic-snapshots-abc1234-2026-03-29T08-18-00.000Z.json \
+  --reconnect-soak artifacts/release-readiness/colyseus-reconnect-soak-summary.json \
+  --phase1-persistence artifacts/release-readiness/phase1-release-persistence-regression-abc1234.json \
   --wechat-artifacts-dir artifacts/wechat-release \
   --candidate-revision abc1234
 ```
@@ -69,7 +73,7 @@ The report starts with one `go/no-go` section:
   - one or more required checks failed, a gate failed, or linked artifact revisions disagree on which candidate is under review.
   - when `--candidate-revision` is supplied, `blocked` also covers required evidence with missing revision metadata or freshness that cannot be verified inside the configured window.
 
-After that, the report summarizes the same four bounded gates:
+After that, the report summarizes the same six bounded gates:
 
 - `Server health`
   - `pass` when `/api/runtime/health` is reachable and `/api/runtime/metrics` exposes the expected gameplay/auth counters.
@@ -87,6 +91,12 @@ After that, the report summarizes the same four bounded gates:
   - Lists the latest linked evidence with exact timestamps, paths, and any revision identifiers discovered in the source artifacts.
   - Fails closed when primary-client diagnostic snapshots are missing or incomplete.
   - Warns when present evidence is older than the configured freshness window.
+- `Reconnect soak evidence`
+  - Fails when the reconnect soak artifact is missing, reports failed scenarios / rooms, omits reconnect or invariant counters, or leaves cleanup counters above zero.
+  - Warns when the artifact passes but is older than the configured freshness window.
+- `Phase 1 persistence evidence`
+  - Fails when the persistence regression artifact is missing, the regression did not pass, shipped content validation failed, or no persistence assertions were recorded.
+  - Warns when the artifact passes but is older than the configured freshness window.
 
 ## Recommended Local Flow
 
@@ -116,13 +126,20 @@ npm run release:cocos-rc:snapshot -- --candidate <candidate-name> --build-surfac
 npm run release:cocos:primary-diagnostics
 ```
 
-5. Start the local server if you want live runtime/auth evidence in the same report:
+5. Refresh reconnect soak and persistence evidence when the RC scope touches room recovery or shipped content/persistence paths:
+
+```bash
+npm run stress:rooms:reconnect-soak
+npm run test:phase1-release-persistence
+```
+
+6. Start the local server if you want live runtime/auth evidence in the same report:
 
 ```bash
 npm run dev:server
 ```
 
-6. Generate the dashboard:
+7. Generate the dashboard:
 
 ```bash
 npm run release:readiness:dashboard -- \
