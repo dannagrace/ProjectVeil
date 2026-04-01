@@ -196,6 +196,7 @@ These commands are useful when you want to inspect retained per-player room prog
 Use the Phase 1 release regression when you need one bounded proof that MySQL persistence and shipped config/content data are healthy together:
 
 - Local/default mode: `npm run test:phase1-release-persistence`
+- Second Phase 1 pack (`ridgeway-crossing`): `npm run test:phase1-release-persistence:ridgeway`
 - Release-target MySQL mode: `npm run test:phase1-release-persistence -- --storage mysql`
 
-The command writes a JSON artifact under `artifacts/release-readiness/`, validates the shipped Phase 1 content packs, saves representative player/account/world progression through the persistence store, and verifies fresh-room hydration still restores long-term account + hero data while resetting room-local position/readiness.
+The command writes a JSON artifact under `artifacts/release-readiness/`, validates the shipped Phase 1 content packs, saves representative player/account/world progression through the persistence store, and verifies fresh-room hydration still restores long-term account + hero data while resetting room-local position/readiness. Pass `--map-pack ridgeway-crossing` when you need the persistence proof on the second Phase 1 layout without changing the validation bundle.

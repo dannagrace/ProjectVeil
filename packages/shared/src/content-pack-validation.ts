@@ -41,6 +41,14 @@ function positionKey(position: { x: number; y: number }): string {
   return `${position.x},${position.y}`;
 }
 
+function buildBlockedTerrainLookup(world: WorldGenerationConfig): Map<string, string> {
+  return new Map(
+    (world.terrainOverrides ?? [])
+      .filter((override) => override.terrain === "water")
+      .map((override) => [positionKey(override.position), override.terrain] as const)
+  );
+}
+
 function validateWorldReferences(
   world: WorldGenerationConfig,
   units: UnitCatalogConfig,
@@ -99,8 +107,34 @@ function validateMapObjectReferences(
   const occupiedPositions = new Map<string, string>(
     world.heroes.map((hero) => [positionKey(hero.position), `hero ${hero.id}`] as const)
   );
+  const neutralIds = new Set<string>();
+  const blockedTerrain = buildBlockedTerrainLookup(world);
+
+  world.heroes.forEach((hero, index) => {
+    const terrain = blockedTerrain.get(positionKey(hero.position));
+    if (terrain) {
+      pushIssue(issues, {
+        documentId: "world",
+        path: `heroes[${index}].position`,
+        code: "hero_on_blocked_terrain",
+        message: `Hero ${hero.id} is placed on ${terrain} terrain.`,
+        suggestion: "Move the hero or adjust the terrain override so the start tile remains walkable."
+      });
+    }
+  });
 
   mapObjects.neutralArmies.forEach((army, armyIndex) => {
+    if (neutralIds.has(army.id)) {
+      pushIssue(issues, {
+        documentId: "mapObjects",
+        path: `neutralArmies[${armyIndex}].id`,
+        code: "duplicate_neutral_id",
+        message: `Neutral army id ${army.id} is duplicated inside the content pack.`,
+        suggestion: "Assign a unique neutral army id before exporting the pack."
+      });
+    }
+    neutralIds.add(army.id);
+
     army.stacks.forEach((stack, stackIndex) => {
       if (!unitIds.has(stack.templateId)) {
         pushIssue(issues, {
@@ -111,6 +145,31 @@ function validateMapObjectReferences(
           suggestion: "Use a template from units.json or add the missing template."
         });
       }
+    });
+
+    const terrain = blockedTerrain.get(positionKey(army.position));
+    if (terrain) {
+      pushIssue(issues, {
+        documentId: "mapObjects",
+        path: `neutralArmies[${armyIndex}].position`,
+        code: "neutral_on_blocked_terrain",
+        message: `Neutral army ${army.id} is placed on ${terrain} terrain.`,
+        suggestion: "Move the neutral army or adjust the terrain override so the encounter tile remains walkable."
+      });
+    }
+
+    army.behavior?.patrolPath?.forEach((waypoint, waypointIndex) => {
+      const patrolTerrain = blockedTerrain.get(positionKey(waypoint));
+      if (!patrolTerrain) {
+        return;
+      }
+      pushIssue(issues, {
+        documentId: "mapObjects",
+        path: `neutralArmies[${armyIndex}].behavior.patrolPath[${waypointIndex}]`,
+        code: "patrol_waypoint_on_blocked_terrain",
+        message: `Neutral army ${army.id} patrol waypoint ${waypointIndex + 1} is placed on ${patrolTerrain} terrain.`,
+        suggestion: "Move the patrol waypoint or adjust the terrain override so the patrol path stays walkable."
+      });
     });
 
     const key = positionKey(army.position);
@@ -129,6 +188,17 @@ function validateMapObjectReferences(
   });
 
   mapObjects.guaranteedResources.forEach((resource, index) => {
+    const terrain = blockedTerrain.get(positionKey(resource.position));
+    if (terrain) {
+      pushIssue(issues, {
+        documentId: "mapObjects",
+        path: `guaranteedResources[${index}].position`,
+        code: "resource_on_blocked_terrain",
+        message: `Guaranteed resource ${resource.resource.kind} is placed on ${terrain} terrain.`,
+        suggestion: "Move the resource node or adjust the terrain override so the pickup tile remains walkable."
+      });
+    }
+
     const key = positionKey(resource.position);
     const existing = occupiedPositions.get(key);
     if (existing) {
@@ -152,6 +222,17 @@ function validateMapObjectReferences(
         code: "unknown_recruitment_unit_template",
         message: `Building ${building.id} references missing unit template ${building.unitTemplateId}.`,
         suggestion: "Use a template from units.json or add the missing template."
+      });
+    }
+
+    const terrain = blockedTerrain.get(positionKey(building.position));
+    if (terrain) {
+      pushIssue(issues, {
+        documentId: "mapObjects",
+        path: `buildings[${index}].position`,
+        code: "building_on_blocked_terrain",
+        message: `Building ${building.id} is placed on ${terrain} terrain.`,
+        suggestion: "Move the building or adjust the terrain override so the interaction tile remains walkable."
       });
     }
 

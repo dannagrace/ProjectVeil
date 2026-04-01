@@ -19,7 +19,11 @@ import {
   type RoomSnapshotStore
 } from "../apps/server/src/persistence.ts";
 import { buildContentPackCliReport } from "./validate-content-pack.ts";
-import { resolveExtraContentPackMapPack } from "./content-pack-map-packs.ts";
+import {
+  DEFAULT_CONTENT_PACK_MAP_PACK,
+  EXTRA_CONTENT_PACK_MAP_PACKS,
+  resolveContentPackMapPack
+} from "./content-pack-map-packs.ts";
 
 type RequestedStorageMode = "auto" | "memory" | "mysql";
 type EffectiveStorageMode = "memory" | "mysql";
@@ -28,6 +32,7 @@ interface Args {
   outputPath?: string;
   storageMode: RequestedStorageMode;
   configsRoot: string;
+  mapPackId: string;
 }
 
 interface GitRevision {
@@ -56,6 +61,7 @@ interface Phase1PersistenceReleaseReport {
     issueCount: number;
   };
   persistenceRegression: {
+    mapPackId: string;
     sourceRoomId: string;
     targetRoomId: string;
     playerId: string;
@@ -82,6 +88,7 @@ function parseArgs(argv: string[]): Args {
   let outputPath: string | undefined;
   let storageMode: RequestedStorageMode = "auto";
   let configsRoot = path.resolve("configs");
+  let mapPackId = DEFAULT_CONTENT_PACK_MAP_PACK.id;
 
   for (let index = 2; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -105,13 +112,19 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--map-pack" && next) {
+      mapPackId = next;
+      index += 1;
+      continue;
+    }
     fail(`Unknown argument: ${arg}`);
   }
 
   return {
     ...(outputPath ? { outputPath } : {}),
     storageMode,
-    configsRoot
+    configsRoot,
+    mapPackId
   };
 }
 
@@ -266,17 +279,18 @@ async function createSnapshotStore(storageMode: RequestedStorageMode): Promise<{
 
 export async function runPhase1ReleasePersistenceRegression(args: Args): Promise<Phase1PersistenceReleaseReport> {
   const revision = getRevision();
-  const worldConfig = buildWorldConfigForRegression(readJsonFile<WorldGenerationConfig>(path.join(args.configsRoot, "phase1-world.json")));
-  const mapObjectsConfig = readJsonFile<MapObjectsConfig>(path.join(args.configsRoot, "phase1-map-objects.json"));
-  const frontierBasin = resolveExtraContentPackMapPack("frontier-basin");
-  const phase2 = resolveExtraContentPackMapPack("phase2");
-  if (!frontierBasin || !phase2) {
-    fail("Expected shipped extra content-pack definitions for frontier-basin and phase2.");
+  const selectedPack = resolveContentPackMapPack(args.mapPackId);
+  if (!selectedPack) {
+    fail(`Unknown map pack: ${args.mapPackId}`);
   }
+  const worldConfig = buildWorldConfigForRegression(
+    readJsonFile<WorldGenerationConfig>(path.join(args.configsRoot, selectedPack.worldFileName))
+  );
+  const mapObjectsConfig = readJsonFile<MapObjectsConfig>(path.join(args.configsRoot, selectedPack.mapObjectsFileName));
 
   const contentReport = await buildContentPackCliReport({
     rootDir: args.configsRoot,
-    extraMapPacks: [frontierBasin, phase2]
+    extraMapPacks: EXTRA_CONTENT_PACK_MAP_PACKS
   });
   if (!contentReport.valid) {
     fail(contentReport.contentPack.summary);
@@ -401,6 +415,7 @@ export async function runPhase1ReleasePersistenceRegression(args: Args): Promise
         issueCount: contentReport.documentValidation.issueCount + contentReport.contentPack.issueCount
       },
       persistenceRegression: {
+        mapPackId: selectedPack.id,
         sourceRoomId: SOURCE_ROOM_ID,
         targetRoomId: TARGET_ROOM_ID,
         playerId: PLAYER_ONE_ID,
@@ -422,6 +437,7 @@ async function main(): Promise<void> {
 
   console.log("Phase 1 release persistence regression");
   console.log(`Storage: ${report.effectiveStorageMode}`);
+  console.log(`Map pack: ${report.persistenceRegression.mapPackId}`);
   console.log(`Content validation: PASS (${report.contentValidation.bundleCount} bundles)`);
   console.log(`Assertions: ${report.summary.assertionCount}`);
   console.log(`Report written to ${path.relative(process.cwd(), outputPath).replace(/\\/g, "/")}`);

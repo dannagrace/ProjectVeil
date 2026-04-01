@@ -24,6 +24,8 @@ async function seedContentPackRoot(tempDir: string): Promise<void> {
       "phase1-map-objects.json",
       "phase1-world-frontier-basin.json",
       "phase1-map-objects-frontier-basin.json",
+      "phase1-world-ridgeway-crossing.json",
+      "phase1-map-objects-ridgeway-crossing.json",
       "phase2-contested-basin.json",
       "phase2-map-objects-contested-basin.json",
       "units.json",
@@ -45,30 +47,33 @@ test("validate-content-pack validates all shipped map packs with CLI presets", a
       "--map-pack",
       "frontier-basin",
       "--map-pack",
+      "ridgeway-crossing",
+      "--map-pack",
       "phase2"
     ],
     { cwd: repoRoot }
   );
 
-  assert.match(stdout, /Bundles: 3/);
+  assert.match(stdout, /Bundles: 4/);
   assert.match(stdout, /Bundle: frontier-basin/);
+  assert.match(stdout, /Bundle: ridgeway-crossing/);
   assert.match(stdout, /Bundle: phase2/);
   assert.match(stdout, /Result: PASS/);
 });
 
-test("validate-content-pack fails when an extra map pack has cross-file consistency errors", async () => {
+test("validate-content-pack fails when a pack places an object onto blocked terrain", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "veil-content-pack-"));
   await seedContentPackRoot(tempDir);
 
-  const frontierWorldPath = join(tempDir, "phase1-world-frontier-basin.json");
-  const frontierWorld = JSON.parse(await readFile(frontierWorldPath, "utf8")) as {
-    heroes: Array<{ armyTemplateId: string }>;
+  const ridgewayWorldPath = join(tempDir, "phase1-world-ridgeway-crossing.json");
+  const ridgewayWorld = JSON.parse(await readFile(ridgewayWorldPath, "utf8")) as {
+    terrainOverrides: Array<{ position: { x: number; y: number }; terrain: string }>;
   };
-  frontierWorld.heroes[0] = {
-    ...frontierWorld.heroes[0],
-    armyTemplateId: "missing_template"
-  };
-  await writeFile(frontierWorldPath, `${JSON.stringify(frontierWorld, null, 2)}\n`, "utf8");
+  ridgewayWorld.terrainOverrides.push({
+    position: { x: 6, y: 4 },
+    terrain: "water"
+  });
+  await writeFile(ridgewayWorldPath, `${JSON.stringify(ridgewayWorld, null, 2)}\n`, "utf8");
 
   await assert.rejects(
     execFileAsync(
@@ -80,14 +85,15 @@ test("validate-content-pack fails when an extra map pack has cross-file consiste
         "--root-dir",
         tempDir,
         "--map-pack",
-        "frontier-basin"
+        "ridgeway-crossing"
       ],
       { cwd: repoRoot }
     ),
     (error: NodeJS.ErrnoException & { stdout?: string }) => {
       assert.equal(error.code, 1);
-      assert.match(error.stdout ?? "", /Bundle: frontier-basin/);
-      assert.match(error.stdout ?? "", /\[world\] heroes\[0\]\.armyTemplateId/);
+      assert.match(error.stdout ?? "", /Bundle: ridgeway-crossing/);
+      assert.match(error.stdout ?? "", /\[mapObjects\] buildings\[3\]\.position/);
+      assert.match(error.stdout ?? "", /placed on water terrain/);
       return true;
     }
   );
