@@ -24,6 +24,11 @@ interface GitRevision {
 }
 
 interface ReleaseReadinessSnapshot {
+  generatedAt?: string;
+  revision?: {
+    commit?: string;
+    shortCommit?: string;
+  };
   summary?: {
     status?: "passed" | "failed" | "pending" | "partial";
     requiredFailed?: number;
@@ -38,9 +43,15 @@ interface ReleaseReadinessSnapshot {
 }
 
 interface ReleaseCandidateClientArtifactSmokeReport {
+  generatedAt?: string;
+  revision?: {
+    commit?: string;
+    shortCommit?: string;
+  };
   execution?: {
     status?: "passed" | "failed";
     exitCode?: number;
+    finishedAt?: string;
   };
   summary?: {
     total?: number;
@@ -103,6 +114,7 @@ interface Phase1EvidenceReference {
   source: GateSource;
   commit?: string;
   generatedAt?: string;
+  candidateHint?: string;
 }
 
 type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
@@ -194,6 +206,7 @@ const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readine
 const DEFAULT_WECHAT_ARTIFACTS_DIR = path.resolve("artifacts", "wechat-release");
 const DEFAULT_CONFIG_CENTER_LIBRARY_PATH = path.resolve("configs", ".config-center-library.json");
 const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
+const MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS = 1000 * 60 * 60 * 72;
 const RISK_PRIORITY: Record<ConfigRiskLevel, number> = {
   low: 1,
   medium: 2,
@@ -662,6 +675,38 @@ function commitsMatch(left: string | undefined, right: string | undefined): bool
   return normalizedLeft === normalizedRight || normalizedLeft.startsWith(normalizedRight) || normalizedRight.startsWith(normalizedLeft);
 }
 
+function relativeReportPath(filePath: string): string {
+  return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
+}
+
+function deriveCandidateHint(filePath: string, commit: string | undefined): string | undefined {
+  const normalizedCommit = normalizeCommit(commit);
+  if (normalizedCommit) {
+    return normalizedCommit.slice(0, 12);
+  }
+
+  const baseName = path.basename(filePath, path.extname(filePath)).toLowerCase();
+  const revisionMatch = baseName.match(/[a-f0-9]{7,40}/);
+  if (revisionMatch) {
+    return revisionMatch[0];
+  }
+
+  const candidateMatch = baseName.match(/(?:^|[-_.])(rc-[a-z0-9-]+|candidate-[a-z0-9-]+)(?:$|[-_.])/);
+  return candidateMatch?.[1];
+}
+
+function formatEvidenceDescriptor(entry: Phase1EvidenceReference): string {
+  const details = [
+    entry.commit ? `commit ${entry.commit}` : "commit <missing>",
+    entry.generatedAt ? `generatedAt ${entry.generatedAt}` : "generatedAt <missing>",
+    `path ${relativeReportPath(entry.source.path)}`
+  ];
+  if (entry.candidateHint) {
+    details.unshift(`candidate ${entry.candidateHint}`);
+  }
+  return `${entry.label} (${details.join(", ")})`;
+}
+
 function collectPhase1EvidenceReferences(
   snapshotPath: string | undefined,
   h5SmokePath: string | undefined,
@@ -671,9 +716,8 @@ function collectPhase1EvidenceReferences(
   const evidence: Phase1EvidenceReference[] = [];
 
   if (snapshotPath && fs.existsSync(snapshotPath)) {
-    const snapshot = readJsonFile<ReleaseReadinessSnapshot & { generatedAt?: string; revision?: { commit?: string; shortCommit?: string } }>(
-      snapshotPath
-    );
+    const snapshot = readJsonFile<ReleaseReadinessSnapshot>(snapshotPath);
+    const commit = snapshot.revision?.commit ?? snapshot.revision?.shortCommit;
     evidence.push({
       gateId: "release-readiness",
       label: "Release readiness snapshot",
@@ -681,13 +725,15 @@ function collectPhase1EvidenceReferences(
         kind: "release-readiness-snapshot",
         path: snapshotPath
       },
-      commit: snapshot.revision?.commit ?? snapshot.revision?.shortCommit,
-      generatedAt: snapshot.generatedAt
+      commit,
+      generatedAt: snapshot.generatedAt,
+      candidateHint: deriveCandidateHint(snapshotPath, commit)
     });
   }
 
   if (h5SmokePath && fs.existsSync(h5SmokePath)) {
     const report = readJsonFile<ReleaseCandidateClientArtifactSmokeReport>(h5SmokePath);
+    const commit = report.revision?.commit ?? report.revision?.shortCommit;
     evidence.push({
       gateId: "h5-release-candidate-smoke",
       label: "H5 packaged RC smoke",
@@ -695,13 +741,15 @@ function collectPhase1EvidenceReferences(
         kind: "h5-release-candidate-smoke",
         path: h5SmokePath
       },
-      commit: report.revision?.commit ?? report.revision?.shortCommit,
-      generatedAt: report.execution?.finishedAt ?? report.generatedAt
+      commit,
+      generatedAt: report.execution?.finishedAt ?? report.generatedAt,
+      candidateHint: deriveCandidateHint(h5SmokePath, commit)
     });
   }
 
   if (wechatRcValidationPath && fs.existsSync(wechatRcValidationPath)) {
-    const report = readJsonFile<WechatRcValidationReport & { generatedAt?: string; commit?: string | null }>(wechatRcValidationPath);
+    const report = readJsonFile<WechatRcValidationReport>(wechatRcValidationPath);
+    const commit = report.commit ?? undefined;
     evidence.push({
       gateId: "wechat-release",
       label: "WeChat release validation",
@@ -709,11 +757,13 @@ function collectPhase1EvidenceReferences(
         kind: "wechat-rc-validation",
         path: wechatRcValidationPath
       },
-      commit: report.commit ?? undefined,
-      generatedAt: report.generatedAt
+      commit,
+      generatedAt: report.generatedAt,
+      candidateHint: deriveCandidateHint(wechatRcValidationPath, commit)
     });
   } else if (wechatSmokeReportPath && fs.existsSync(wechatSmokeReportPath)) {
-    const report = readJsonFile<WechatSmokeReport & { artifact?: { sourceRevision?: string } }>(wechatSmokeReportPath);
+    const report = readJsonFile<WechatSmokeReport>(wechatSmokeReportPath);
+    const commit = report.artifact?.sourceRevision;
     evidence.push({
       gateId: "wechat-release",
       label: "WeChat release validation",
@@ -721,8 +771,9 @@ function collectPhase1EvidenceReferences(
         kind: "wechat-smoke-report",
         path: wechatSmokeReportPath
       },
-      commit: report.artifact?.sourceRevision,
-      generatedAt: report.execution?.executedAt
+      commit,
+      generatedAt: report.execution?.executedAt,
+      candidateHint: deriveCandidateHint(wechatSmokeReportPath, commit)
     });
   }
 
@@ -744,6 +795,7 @@ export function evaluatePhase1EvidenceConsistencyGate(
   ];
   const evidence = collectPhase1EvidenceReferences(snapshotPath, h5SmokePath, wechatRcValidationPath, wechatSmokeReportPath);
   const expectedCommit = revision.commit;
+  const expectedCandidateHint = normalizeCommit(revision.commit)?.slice(0, 12) ?? revision.shortCommit.toLowerCase();
 
   for (const expected of expectedArtifacts) {
     if (!evidence.some((entry) => entry.gateId === expected.gateId)) {
@@ -753,20 +805,27 @@ export function evaluatePhase1EvidenceConsistencyGate(
 
   for (const entry of evidence) {
     if (!normalizeCommit(entry.commit)) {
-      failures.push(`Phase 1 evidence is missing revision metadata for ${entry.label}.`);
+      failures.push(`Phase 1 evidence is missing revision metadata for ${entry.label} at ${relativeReportPath(entry.source.path)}.`);
       continue;
     }
     if (!commitsMatch(entry.commit, expectedCommit)) {
       failures.push(
-        `Phase 1 evidence is stale for ${entry.label}: artifact commit ${entry.commit} does not match candidate ${revision.shortCommit}.`
+        `Phase 1 evidence is stale for ${entry.label}: artifact commit ${entry.commit} at ${relativeReportPath(entry.source.path)} does not match candidate ${revision.shortCommit}.`
+      );
+    }
+    if (entry.candidateHint && entry.candidateHint !== expectedCandidateHint && !commitsMatch(entry.candidateHint, expectedCommit)) {
+      failures.push(
+        `Phase 1 evidence candidate mismatch for ${entry.label}: candidate ${entry.candidateHint} from ${relativeReportPath(entry.source.path)} does not align with ${revision.shortCommit}.`
       );
     }
     if (!entry.generatedAt?.trim()) {
-      failures.push(`Phase 1 evidence is missing a generated timestamp for ${entry.label}.`);
+      failures.push(`Phase 1 evidence is missing a generated timestamp for ${entry.label} at ${relativeReportPath(entry.source.path)}.`);
       continue;
     }
     if (Number.isNaN(Date.parse(entry.generatedAt))) {
-      failures.push(`Phase 1 evidence has an invalid generated timestamp for ${entry.label}: ${entry.generatedAt}.`);
+      failures.push(
+        `Phase 1 evidence has an invalid generated timestamp for ${entry.label} at ${relativeReportPath(entry.source.path)}: ${entry.generatedAt}.`
+      );
     }
   }
 
@@ -781,10 +840,32 @@ export function evaluatePhase1EvidenceConsistencyGate(
         continue;
       }
       if (!commitsMatch(left.commit, right.commit)) {
+        failures.push(`Phase 1 evidence commit mismatch: ${formatEvidenceDescriptor(left)} vs ${formatEvidenceDescriptor(right)}.`);
+      }
+      if (left.candidateHint && right.candidateHint && left.candidateHint !== right.candidateHint && !commitsMatch(left.candidateHint, right.candidateHint)) {
         failures.push(
-          `Phase 1 evidence commit mismatch: ${left.label}=${left.commit ?? "<missing>"} vs ${right.label}=${right.commit ?? "<missing>"}.`
+          `Phase 1 evidence candidate mismatch: ${left.label} uses ${left.candidateHint} at ${relativeReportPath(left.source.path)} vs ${right.label} uses ${right.candidateHint} at ${relativeReportPath(right.source.path)}.`
         );
       }
+    }
+  }
+
+  const datedEvidence = evidence
+    .map((entry) => {
+      const generatedAtMs = entry.generatedAt ? Date.parse(entry.generatedAt) : Number.NaN;
+      return Number.isNaN(generatedAtMs) ? undefined : { entry, generatedAtMs };
+    })
+    .filter((entry): entry is { entry: Phase1EvidenceReference; generatedAtMs: number } => Boolean(entry))
+    .sort((left, right) => left.generatedAtMs - right.generatedAtMs);
+
+  if (datedEvidence.length >= 2) {
+    const oldest = datedEvidence[0];
+    const newest = datedEvidence[datedEvidence.length - 1];
+    const driftMs = newest.generatedAtMs - oldest.generatedAtMs;
+    if (driftMs > MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS) {
+      failures.push(
+        `Phase 1 evidence timestamps drift by ${Math.round(driftMs / (1000 * 60 * 60))}h between ${relativeReportPath(oldest.entry.source.path)} (${oldest.entry.generatedAt}) and ${relativeReportPath(newest.entry.source.path)} (${newest.entry.generatedAt}); refresh evidence for one candidate revision.`
+      );
     }
   }
 
@@ -981,13 +1062,23 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
     ""
   ];
 
+  lines.push("## Selected Inputs");
+  lines.push("");
+  lines.push(`- Snapshot: \`${report.inputs.snapshotPath ? relativeReportPath(report.inputs.snapshotPath) : "<missing>"}\``);
+  lines.push(`- H5 smoke: \`${report.inputs.h5SmokePath ? relativeReportPath(report.inputs.h5SmokePath) : "<missing>"}\``);
+  lines.push(`- WeChat validation: \`${report.inputs.wechatRcValidationPath ? relativeReportPath(report.inputs.wechatRcValidationPath) : "<missing>"}\``);
+  lines.push(`- WeChat smoke fallback: \`${report.inputs.wechatSmokeReportPath ? relativeReportPath(report.inputs.wechatSmokeReportPath) : "<missing>"}\``);
+  lines.push(`- WeChat artifacts dir: \`${report.inputs.wechatArtifactsDir ? relativeReportPath(report.inputs.wechatArtifactsDir) : "<missing>"}\``);
+  lines.push(`- Config audit: \`${report.inputs.configCenterLibraryPath ? relativeReportPath(report.inputs.configCenterLibraryPath) : "<missing>"}\``);
+  lines.push("");
+
   for (const gate of report.gates) {
     lines.push(`## ${gate.label}`);
     lines.push("");
     lines.push(`- Status: **${gate.status.toUpperCase()}**`);
     lines.push(`- Summary: ${gate.summary}`);
     if (gate.source) {
-      lines.push(`- Source: \`${path.relative(process.cwd(), gate.source.path).replace(/\\/g, "/")}\``);
+      lines.push(`- Source: \`${relativeReportPath(gate.source.path)}\``);
     }
     if (gate.failures.length > 0) {
       lines.push("- Failures:");
@@ -1002,9 +1093,7 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
   lines.push("");
   lines.push(`- Status: ${report.configChangeRisk.summary}`);
   if (report.configChangeRisk.source) {
-    lines.push(
-      `- Source: \`${path.relative(process.cwd(), report.configChangeRisk.source.path).replace(/\\/g, "/")}\``
-    );
+    lines.push(`- Source: \`${relativeReportPath(report.configChangeRisk.source.path)}\``);
     lines.push(`- Config publish: \`${report.configChangeRisk.source.publishId}\` by \`${report.configChangeRisk.source.author}\``);
     lines.push(`- Published at: \`${report.configChangeRisk.source.publishedAt}\``);
     if (report.configChangeRisk.source.releaseSummary) {
@@ -1013,18 +1102,14 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
   }
   if (report.configChangeRisk.status === "available") {
     lines.push(`- Overall risk: **${report.configChangeRisk.overallRisk?.toUpperCase()}**`);
-    lines.push(
-      `- Recommend gray release / canary: ${report.configChangeRisk.recommendCanary ? "yes" : "no"}`
-    );
+    lines.push(`- Recommend gray release / canary: ${report.configChangeRisk.recommendCanary ? "yes" : "no"}`);
     lines.push(`- Recommend rehearsal: ${report.configChangeRisk.recommendRehearsal ? "yes" : "no"}`);
     lines.push(`- Impacted modules: ${(report.configChangeRisk.impactedModules ?? []).join(", ")}`);
     lines.push(`- Suggested validation: ${(report.configChangeRisk.suggestedValidationActions ?? []).join(" | ")}`);
     lines.push("- Changes:");
     for (const change of report.configChangeRisk.changes ?? []) {
       const pathSummary = change.highlightedPaths.length > 0 ? ` | 字段: ${change.highlightedPaths.join(", ")}` : "";
-      lines.push(
-        `  - ${change.documentId} [${change.riskLevel.toUpperCase()}]: ${change.reason}${pathSummary}`
-      );
+      lines.push(`  - ${change.documentId} [${change.riskLevel.toUpperCase()}]: ${change.reason}${pathSummary}`);
     }
   }
   lines.push("");
