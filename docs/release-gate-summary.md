@@ -57,8 +57,9 @@ The summary contains four release dimensions:
   - Markdown/JSON summary text distinguishes `blocked` device/runtime evidence from true execution failures so CI reviewers can see whether a gate is red because proof is absent or because the runtime actually regressed.
 - `phase1-evidence-consistency`
   - Cross-checks the release-readiness snapshot, packaged H5 smoke report, and selected WeChat evidence as one Phase 1 candidate set.
-  - Fails when any artifact is missing revision metadata, missing/invalid generated timestamps, points at a different commit than the current release candidate, or disagrees with another artifact’s commit.
-  - This catches stale local artifacts and mismatched CI evidence before release signals drift silently.
+  - Fails when any artifact is missing revision metadata, missing/invalid generated timestamps, points at a different commit than the current release candidate, carries a conflicting candidate hint from its artifact path, or disagrees with another artifact’s commit/candidate hint.
+  - Fails when the selected evidence timestamps drift by more than 72 hours, which is the cutoff for “same candidate evidence set” in this report.
+  - The Markdown output now includes a `Selected Inputs` section so reviewers can see the exact artifact paths that were compared instead of inferring them from the default directory scan.
 
 Any failed dimension makes the script exit non-zero so the result can act as a CI release gate.
 
@@ -98,3 +99,15 @@ Recommended pre-release flow for planners and developers:
 4. If the summary recommends gray release / canary or rehearsal, include that decision and supporting evidence in the release PR.
 
 Use this as the handoff bridge between config-center history and the release gate report: the config publish audit explains what changed, and the release summary explains what evidence should exist before the change ships.
+
+## Refreshing Stale Evidence For One Candidate Revision
+
+When `phase1-evidence-consistency` fails, refresh the evidence for one candidate revision instead of mixing old and new artifacts in place:
+
+1. Pick the target Git revision and keep it fixed for the whole refresh pass.
+2. Re-run `npm run release:readiness:snapshot` for that revision and keep the resulting JSON path.
+3. Re-run `npm run smoke:client:release-candidate` for the same revision and keep the resulting H5 smoke path.
+4. Re-run `npm run validate:wechat-rc` or `npm run smoke:wechat-release -- --check` against the WeChat artifacts built from that same revision.
+5. Re-run `npm run release:gate:summary -- --snapshot <snapshot-json> --h5-smoke <h5-smoke-json> --wechat-artifacts-dir <wechat-artifacts-dir>` so the summary compares the exact refreshed paths instead of whichever files happen to be newest.
+
+If the report still shows timestamp drift or a candidate/path mismatch, delete or archive the stale artifact set before regenerating the summary. The goal is one candidate revision, one coherent evidence packet.
