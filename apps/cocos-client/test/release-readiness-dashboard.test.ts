@@ -307,32 +307,41 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
     ]
   });
 
-  const output = execFileSync(
-    "node",
-    [
-      "--import",
-      "tsx",
-      "./scripts/release-readiness-dashboard.ts",
-      "--snapshot",
-      snapshotPath,
-      "--wechat-artifacts-dir",
-      wechatArtifactsDir,
-      "--candidate-revision",
-      "abc1234",
-      "--output",
-      outputPath,
-      "--markdown-output",
-      markdownOutputPath
-    ],
-    {
-      cwd: path.resolve(__dirname, "../../.."),
-      encoding: "utf8",
-      stdio: "pipe"
-    }
-  );
+  let output = "";
+  try {
+    output = execFileSync(
+      "node",
+      [
+        "--import",
+        "tsx",
+        "./scripts/release-readiness-dashboard.ts",
+        "--snapshot",
+        snapshotPath,
+        "--wechat-artifacts-dir",
+        wechatArtifactsDir,
+        "--candidate-revision",
+        "abc1234",
+        "--output",
+        outputPath,
+        "--markdown-output",
+        markdownOutputPath
+      ],
+      {
+        cwd: path.resolve(__dirname, "../../.."),
+        encoding: "utf8",
+        stdio: "pipe"
+      }
+    );
+    assert.fail("expected the dashboard command to exit non-zero");
+  } catch (error) {
+    const execError = error as NodeJS.ErrnoException & { stdout?: string; status?: number };
+    assert.equal(execError.status, 1);
+    output = execError.stdout ?? "";
+  }
 
   assert.match(output, /Overall status: fail/);
   assert.match(output, /Go\/No-Go decision: blocked/);
+  assert.match(output, /Candidate consistency: Expected candidate revision abc1234, but WeChat package metadata is missing revision metadata/);
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
     overallStatus: string;
     goNoGo: {
@@ -341,6 +350,7 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
       requiredPending: number;
       revisionStatus: string;
       blockers: string[];
+      candidateConsistencyFindings: Array<{ code: string; path: string; summary: string }>;
     };
     gates: Array<{
       id: string;
@@ -356,6 +366,8 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
   assert.equal(report.goNoGo.requiredPending, 0);
   assert.equal(report.goNoGo.revisionStatus, "aligned");
   assert.equal(report.goNoGo.blockers.includes("requiredFailed=1"), true);
+  assert.equal(report.goNoGo.blockers.includes("candidate_revision_metadata_missing"), true);
+  assert.equal(report.goNoGo.candidateConsistencyFindings.some((finding) => finding.path === packageMetadataPath), true);
   assert.deepEqual(
     report.gates.map((gate) => [gate.id, gate.status]),
     [

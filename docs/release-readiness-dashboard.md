@@ -51,6 +51,12 @@ If you want the report to pin all automated and manual evidence to one explicit 
 npm run release:readiness:dashboard -- --candidate-revision <git-sha>
 ```
 
+When `--candidate-revision` is set, the command becomes an enforcing candidate-consistency check for the required local evidence set. It still writes the JSON + Markdown dashboard, but exits non-zero if any linked artifact:
+
+- reports a different revision than the pinned candidate
+- omits revision metadata, so the candidate cannot be verified end to end
+- is older than `--max-evidence-age-days`, missing a timestamp, or carries an invalid timestamp
+
 ## Gate Mapping
 
 The report starts with one `go/no-go` section:
@@ -61,6 +67,7 @@ The report starts with one `go/no-go` section:
   - no blocking failures exist, but required checks are still pending, some evidence is stale / missing a timestamp, live/manual checks were not run, or the candidate revision cannot yet be verified across the linked evidence.
 - `blocked`
   - one or more required checks failed, a gate failed, or linked artifact revisions disagree on which candidate is under review.
+  - when `--candidate-revision` is supplied, `blocked` also covers required evidence with missing revision metadata or freshness that cannot be verified inside the configured window.
 
 After that, the report summarizes the same four bounded gates:
 
@@ -120,7 +127,10 @@ npm run dev:server
 ```bash
 npm run release:readiness:dashboard -- \
   --server-url http://127.0.0.1:2567 \
-  --wechat-artifacts-dir artifacts/wechat-release
+  --wechat-artifacts-dir artifacts/wechat-release \
+  --candidate-revision <git-sha>
 ```
+
+Use the same `<git-sha>` across the snapshot, WeChat package/smoke artifacts, Cocos RC snapshot, and primary-client diagnostics generation flow. If one artifact drifts to another revision or goes stale, the dashboard now prints the exact artifact path plus the observed/expected revision mismatch before exiting non-zero.
 
 The Markdown output is intended to be attachable to issue/PR discussion, while the JSON output is intended for automation or later aggregation. Both formats now expose the same candidate-level `goNoGo` block so reviewers do not need to stitch the final Phase 1 release call together by hand.

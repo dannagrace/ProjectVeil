@@ -278,7 +278,6 @@ jobs:
           npm run release:gate:summary -- "${args[@]}"
 
       - name: Build release readiness dashboard
-        continue-on-error: true
         env:
           SOURCE_SHA: ${{ steps.source.outputs.head-sha }}
         run: |
