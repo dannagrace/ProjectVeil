@@ -111,7 +111,13 @@ import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
 import { cocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import {
+  appendPrimaryClientTelemetry,
+  buildPrimaryClientTelemetryFromUpdate,
+  createPrimaryClientTelemetryEvent
+} from "./cocos-primary-client-telemetry.ts";
+import {
   describeAccountAuthFailure,
+  type PrimaryClientTelemetryEvent,
   type RuntimeDiagnosticsConnectionStatus,
   validateAccountLifecycleConfirm,
   validateAccountLifecycleRequest,
@@ -272,6 +278,7 @@ export class VeilRoot extends Component {
   private lastRoomUpdateSource: string | null = null;
   private lastRoomUpdateReason: string | null = null;
   private lastRoomUpdateAtMs: number | null = null;
+  private primaryClientTelemetry: PrimaryClientTelemetryEvent[] = [];
   private stopRuntimeMemoryWarnings: (() => void) | null = null;
   private battlePresentation = createCocosBattlePresentationController();
 
@@ -497,6 +504,15 @@ export class VeilRoot extends Component {
     const hero = this.activeHero();
     if (!hero) {
       this.pushLog("当前快照里没有可控制的英雄。");
+      this.emitPrimaryClientTelemetry(
+        createPrimaryClientTelemetryEvent(this.createTelemetryContext(), {
+          category: "inventory",
+          checkpoint: "equipment.equip.rejected",
+          status: "blocked",
+          detail: "Equip request ignored because no controlled hero is present.",
+          reason: "no_controlled_hero"
+        })
+      );
       this.renderView();
       return;
     }
@@ -504,6 +520,15 @@ export class VeilRoot extends Component {
     if (this.lastUpdate?.battle) {
       this.pushLog("战斗中无法调整装备。");
       this.predictionStatus = "战斗中无法调整装备。";
+      this.emitPrimaryClientTelemetry(
+        createPrimaryClientTelemetryEvent(this.createTelemetryContext(hero.id), {
+          category: "inventory",
+          checkpoint: "equipment.equip.rejected",
+          status: "blocked",
+          detail: "Equip request rejected because the client is currently in battle.",
+          reason: "in_battle"
+        })
+      );
       this.renderView();
       return;
     }
@@ -531,6 +556,19 @@ export class VeilRoot extends Component {
         rejectedLabel: "装备调整"
       });
     } catch (error) {
+      const reason = error instanceof Error ? error.message : "equip_failed";
+      const detail = error instanceof Error ? formatEquipmentActionReason(error.message) : "装备失败。";
+      this.emitPrimaryClientTelemetry(
+        createPrimaryClientTelemetryEvent(this.createTelemetryContext(hero.id), {
+          category: "inventory",
+          checkpoint: "equipment.equip.rejected",
+          status: "failure",
+          detail,
+          reason,
+          slot,
+          ...(equipmentId ? { equipmentId } : {})
+        })
+      );
       this.rollbackPrediction(error instanceof Error ? formatEquipmentActionReason(error.message) : "装备失败。");
     } finally {
       this.moveInFlight = false;
@@ -552,6 +590,15 @@ export class VeilRoot extends Component {
     const hero = this.activeHero();
     if (!hero) {
       this.pushLog("当前快照里没有可控制的英雄。");
+      this.emitPrimaryClientTelemetry(
+        createPrimaryClientTelemetryEvent(this.createTelemetryContext(), {
+          category: "inventory",
+          checkpoint: "equipment.unequip.rejected",
+          status: "blocked",
+          detail: "Unequip request ignored because no controlled hero is present.",
+          reason: "no_controlled_hero"
+        })
+      );
       this.renderView();
       return;
     }
@@ -559,6 +606,15 @@ export class VeilRoot extends Component {
     if (this.lastUpdate?.battle) {
       this.pushLog("战斗中无法调整装备。");
       this.predictionStatus = "战斗中无法调整装备。";
+      this.emitPrimaryClientTelemetry(
+        createPrimaryClientTelemetryEvent(this.createTelemetryContext(hero.id), {
+          category: "inventory",
+          checkpoint: "equipment.unequip.rejected",
+          status: "blocked",
+          detail: "Unequip request rejected because the client is currently in battle.",
+          reason: "in_battle"
+        })
+      );
       this.renderView();
       return;
     }
@@ -591,6 +647,19 @@ export class VeilRoot extends Component {
         rejectedLabel: "卸装"
       });
     } catch (error) {
+      const reason = error instanceof Error ? error.message : "unequip_failed";
+      const detail = error instanceof Error ? formatEquipmentActionReason(error.message) : "卸装失败。";
+      this.emitPrimaryClientTelemetry(
+        createPrimaryClientTelemetryEvent(this.createTelemetryContext(hero.id), {
+          category: "inventory",
+          checkpoint: "equipment.unequip.rejected",
+          status: "failure",
+          detail,
+          reason,
+          slot,
+          ...(currentItemId ? { equipmentId: currentItemId } : {})
+        })
+      );
       this.rollbackPrediction(error instanceof Error ? formatEquipmentActionReason(error.message) : "卸装失败。");
     } finally {
       this.moveInFlight = false;
@@ -966,7 +1035,8 @@ export class VeilRoot extends Component {
         timelineEntries: this.timelineEntries,
         logLines: this.logLines,
         predictionStatus: this.predictionStatus,
-        recoverySummary: this.predictionStatus.includes("回放缓存状态") ? this.predictionStatus : null
+        recoverySummary: this.predictionStatus.includes("回放缓存状态") ? this.predictionStatus : null,
+        primaryClientTelemetry: this.primaryClientTelemetry
       }),
       levelUpNotice: this.levelUpNotice ? { title: this.levelUpNotice.title, detail: this.levelUpNotice.detail } : null,
       achievementNotice: this.achievementNotice
@@ -1134,12 +1204,31 @@ export class VeilRoot extends Component {
         type: "progression.loaded",
         snapshot
       });
+      this.emitPrimaryClientTelemetry(
+        createPrimaryClientTelemetryEvent(this.createTelemetryContext(), {
+          category: "progression",
+          checkpoint: "review.loaded",
+          status: "success",
+          detail: `Progression review loaded with ${snapshot.recentEventLog.length} recent events.`,
+          itemCount: snapshot.recentEventLog.length
+        })
+      );
     } catch (error) {
+      const message = this.describeAccountReviewLoadError(error);
       this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
         type: "section.failed",
         section: "progression",
-        message: this.describeAccountReviewLoadError(error)
+        message
       });
+      this.emitPrimaryClientTelemetry(
+        createPrimaryClientTelemetryEvent(this.createTelemetryContext(), {
+          category: "progression",
+          checkpoint: "review.failed",
+          status: "failure",
+          detail: message,
+          reason: message
+        })
+      );
     }
 
     this.renderView();
@@ -1486,6 +1575,18 @@ export class VeilRoot extends Component {
     this.logLines = this.logLines.slice(0, 8);
   }
 
+  private emitPrimaryClientTelemetry(event: PrimaryClientTelemetryEvent | PrimaryClientTelemetryEvent[] | null): void {
+    this.primaryClientTelemetry = appendPrimaryClientTelemetry(this.primaryClientTelemetry, event);
+  }
+
+  private createTelemetryContext(heroId?: string | null): { roomId: string; playerId: string; heroId?: string } {
+    return {
+      roomId: this.roomId,
+      playerId: this.playerId,
+      ...(heroId ? { heroId } : {})
+    };
+  }
+
   private setBattleFeedback(feedback: CocosBattleFeedbackView | null, durationMs = BATTLE_FEEDBACK_DURATION_MS): void {
     if (!feedback) {
       return;
@@ -1800,6 +1901,7 @@ export class VeilRoot extends Component {
     this.predictionStatus = "正在开启新一局...";
     this.inputDebug = "input waiting";
     this.timelineEntries = [];
+    this.primaryClientTelemetry = [];
     this.logLines = [`正在创建新房间 ${nextRoomId} ...`];
     this.renderView();
 
@@ -2566,6 +2668,7 @@ export class VeilRoot extends Component {
     this.predictionStatus = "";
     this.inputDebug = "input waiting";
     this.timelineEntries = [];
+    this.primaryClientTelemetry = [];
     this.logLines = [logLine];
   }
 
@@ -2878,6 +2981,15 @@ export class VeilRoot extends Component {
             ? "防御"
             : skillName ?? "技能";
     this.pushLog(`战斗指令：${actionLabel}`);
+    this.emitPrimaryClientTelemetry(
+      createPrimaryClientTelemetryEvent(this.createTelemetryContext(this.activeHero()?.id ?? null), {
+        category: "combat",
+        checkpoint: "command.submitted",
+        status: "info",
+        detail: `Battle command submitted: ${actionLabel}.`,
+        ...(this.lastUpdate?.battle?.id ? { battleId: this.lastUpdate.battle.id } : {})
+      })
+    );
     this.setBattleFeedback(actionPresentation.feedback);
     if (actionPresentation.cue) {
       this.audioRuntime.playCue(actionPresentation.cue);
@@ -2898,7 +3010,19 @@ export class VeilRoot extends Component {
         });
       }
     } catch (error) {
-      this.pushLog(error instanceof Error ? error.message : "战斗操作失败。");
+      const reason = error instanceof Error ? error.message : "battle_action_failed";
+      const detail = error instanceof Error ? error.message : "战斗操作失败。";
+      this.pushLog(detail);
+      this.emitPrimaryClientTelemetry(
+        createPrimaryClientTelemetryEvent(this.createTelemetryContext(this.activeHero()?.id ?? null), {
+          category: "combat",
+          checkpoint: "command.rejected",
+          status: "failure",
+          detail,
+          reason,
+          ...(this.lastUpdate?.battle?.id ? { battleId: this.lastUpdate.battle.id } : {})
+        })
+      );
       this.mapBoard?.playHeroAnimation("hit");
     } finally {
       this.battleActionInFlight = false;
@@ -2922,6 +3046,9 @@ export class VeilRoot extends Component {
     if (eventEntries.length > 0) {
       this.timelineEntries = collapseAdjacentEntries([...eventEntries, ...this.timelineEntries]).slice(0, 12);
     }
+    this.emitPrimaryClientTelemetry(
+      buildPrimaryClientTelemetryFromUpdate(update, this.createTelemetryContext(heroId))
+    );
     if (shouldRefreshGameplayAccountProfileForEvents(update.events.map((event) => event.type))) {
       void this.refreshGameplayAccountProfile();
     }

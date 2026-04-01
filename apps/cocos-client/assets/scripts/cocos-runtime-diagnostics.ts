@@ -1,4 +1,5 @@
 import {
+  type PrimaryClientTelemetryEvent,
   buildRuntimeDiagnosticsTriageView,
   type RuntimeDiagnosticsConnectionStatus,
   type RuntimeDiagnosticsMode,
@@ -30,6 +31,7 @@ export interface CocosRuntimeDiagnosticsSnapshotInput {
   logLines: string[];
   predictionStatus: string;
   recoverySummary: string | null;
+  primaryClientTelemetry: PrimaryClientTelemetryEvent[];
 }
 
 function buildTimelineTail(entries: string[]): CocosTimelineEntrySnapshot[] {
@@ -122,7 +124,8 @@ export function buildCocosRuntimeDiagnosticsSnapshot(
       recoverySummary: input.recoverySummary,
       predictionStatus: input.predictionStatus || null,
       pendingUiTasks: 0,
-      replay: null
+      replay: null,
+      primaryClientTelemetry: input.primaryClientTelemetry.slice(0, 8)
     }
   };
 }

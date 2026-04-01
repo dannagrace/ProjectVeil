@@ -224,6 +224,113 @@ test("VeilRoot wires the equipment loot loop through equip and unequip session u
   ]);
 });
 
+test("VeilRoot emits primary-client telemetry for progression, inventory, and combat checkpoints", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-telemetry";
+  root.playerId = "player-1";
+  root.displayName = "暮潮守望";
+  delete root.applySessionUpdate;
+
+  const baseUpdate = createSessionUpdate(2, "room-telemetry", "player-1");
+  root.lastUpdate = {
+    ...baseUpdate,
+    battle: createFirstBattleState()
+  };
+  root.session = {} as never;
+
+  await root.equipHeroItem("weapon", "militia_pike");
+
+  installVeilRootRuntime({
+    loadProgressionSnapshot: async () => ({
+      summary: {
+        totalAchievements: 3,
+        unlockedAchievements: 1,
+        inProgressAchievements: 2,
+        recentEventCount: 1,
+        latestEventAt: "2026-04-01T08:00:00.000Z"
+      },
+      achievements: [],
+      recentEventLog: [
+        {
+          id: "event-1",
+          timestamp: "2026-04-01T08:00:00.000Z",
+          roomId: "room-telemetry",
+          playerId: "player-1",
+          category: "combat",
+          description: "战斗开始。",
+          rewards: []
+        }
+      ]
+    })
+  });
+
+  await root.refreshProgressionReview();
+
+  const update = createSessionUpdate(2, "room-telemetry", "player-1");
+  update.events = [
+    {
+      type: "battle.started",
+      heroId: "hero-1",
+      attackerPlayerId: "player-1",
+      encounterKind: "neutral",
+      neutralArmyId: "neutral-1",
+      battleId: "battle-telemetry",
+      path: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+      moveCost: 1
+    },
+    {
+      type: "hero.progressed",
+      heroId: "hero-1",
+      battleId: "battle-telemetry",
+      battleKind: "neutral",
+      experienceGained: 25,
+      totalExperience: 125,
+      level: 2,
+      levelsGained: 1,
+      skillPointsAwarded: 1,
+      availableSkillPoints: 1
+    },
+    {
+      type: "hero.equipmentFound",
+      heroId: "hero-1",
+      battleId: "battle-telemetry",
+      battleKind: "neutral",
+      equipmentId: "militia_pike",
+      equipmentName: "Militia Pike",
+      rarity: "common",
+      overflowed: true
+    },
+    {
+      type: "battle.resolved",
+      heroId: "hero-1",
+      attackerPlayerId: "player-1",
+      battleId: "battle-telemetry",
+      result: "attacker_victory"
+    }
+  ];
+  update.world.ownHeroes[0]!.loadout.inventory = ["travel_boots", "militia_pike"];
+
+  await root.applySessionUpdate(update);
+
+  assert.deepEqual(
+    root.primaryClientTelemetry.map((entry: Record<string, unknown>) => entry.checkpoint).slice(0, 6),
+    [
+      "encounter.resolved",
+      "loot.overflowed",
+      "hero.progressed",
+      "encounter.started",
+      "review.loaded",
+      "equipment.equip.rejected"
+    ]
+  );
+  assert.equal(root.primaryClientTelemetry[0]?.result, "attacker_victory");
+  assert.equal(root.primaryClientTelemetry[1]?.reason, undefined);
+  assert.equal(root.primaryClientTelemetry[1]?.status, "blocked");
+  assert.equal(root.primaryClientTelemetry[1]?.itemCount, 2);
+  assert.equal(root.primaryClientTelemetry[4]?.status, "success");
+  assert.equal(root.primaryClientTelemetry[5]?.reason, "in_battle");
+});
+
 test("VeilRoot gameplay account refresh uses the injected loader for remote equipment and loot updates", async () => {
   const storage = createMemoryStorage();
   (sys as unknown as { localStorage: Storage }).localStorage = storage;

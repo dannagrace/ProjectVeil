@@ -107,7 +107,8 @@ function captureJourneyArtifact(options: {
       recoverySummary:
         typeof root.predictionStatus === "string" && root.predictionStatus.includes("回放缓存状态")
           ? root.predictionStatus
-          : null
+          : null,
+      primaryClientTelemetry: root.primaryClientTelemetry ?? []
     })
   };
 }

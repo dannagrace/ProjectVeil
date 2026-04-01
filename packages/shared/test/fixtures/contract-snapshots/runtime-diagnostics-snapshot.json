@@ -126,6 +126,35 @@
     ],
     "recoverySummary": "权威房间已接管预测结果，战斗态一致。",
     "predictionStatus": "server-authoritative",
+    "primaryClientTelemetry": [
+      {
+        "at": "2026-03-29T07:09:31.000Z",
+        "category": "combat",
+        "checkpoint": "encounter.started",
+        "status": "info",
+        "detail": "Battle battle-demo started against neutral.",
+        "roomId": "room-contract",
+        "playerId": "player-1",
+        "heroId": "hero-1",
+        "battleId": "battle-demo",
+        "battleKind": "neutral"
+      },
+      {
+        "at": "2026-03-29T07:09:50.000Z",
+        "category": "inventory",
+        "checkpoint": "loot.collected",
+        "status": "success",
+        "detail": "Loot Scout Pike added to inventory.",
+        "roomId": "room-contract",
+        "playerId": "player-1",
+        "heroId": "hero-1",
+        "battleId": "battle-demo",
+        "battleKind": "neutral",
+        "equipmentId": "scout_pike",
+        "equipmentName": "Scout Pike",
+        "itemCount": 2
+      }
+    ],
     "pendingUiTasks": 1,
     "replay": {
       "replayId": "room-contract:battle-demo:player-1",
