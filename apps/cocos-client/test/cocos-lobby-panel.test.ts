@@ -16,7 +16,8 @@ import {
   createComponentHarness,
   createErroredBattleReplayReviewState,
   createLobbyState,
-  createReplayReadyLobbyState
+  createReplayReadyLobbyState,
+  readCardLabel
 } from "./helpers/cocos-panel-harness.ts";
 
 test("lobby panel room cards render active room summaries from the server response", () => {
@@ -153,6 +154,28 @@ test("VeilLobbyPanel advances replay playback when the replay control state tran
   (statefulComponent.applyReplayControl as (action: "step-forward") => void)("step-forward");
 
   assert.equal((statefulComponent.replayPlayback as { currentStepIndex?: number } | null)?.currentStepIndex, 1);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel renders a playback-aware replay timeline card alongside the replay center", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const state = createReplayReadyLobbyState();
+
+  component.configure({});
+  component.scheduleOnce = () => undefined;
+  const statefulComponent = component as VeilLobbyPanel & Record<string, unknown>;
+  statefulComponent.showAccountReview = true;
+  component.render(state);
+
+  assert.match(readCardLabel(node, "LobbyBattleReplayCenter"), /战报回放中心/);
+  assert.match(readCardLabel(node, "LobbyBattleReplayTimeline"), /播放游标 0\/2/);
+  assert.match(readCardLabel(node, "LobbyBattleReplayTimeline"), /当前 · 第 1 步/);
+
+  (statefulComponent.applyReplayControl as (action: "step-forward") => void)("step-forward");
+
+  assert.match(readCardLabel(node, "LobbyBattleReplayTimeline"), /播放游标 1\/2/);
+  assert.match(readCardLabel(node, "LobbyBattleReplayTimeline"), /已执行 · 第 1 步/);
+  assert.match(readCardLabel(node, "LobbyBattleReplayTimeline"), /当前 · 第 2 步/);
   component.onDestroy();
 });
 

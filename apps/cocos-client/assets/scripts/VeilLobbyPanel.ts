@@ -563,6 +563,7 @@ export class VeilLobbyPanel extends Component {
       let reviewCardsTop = rightCursorY - 108;
       if (review.section === "battle-replays" && hasBattleReplays && state.selectedBattleReplayId) {
         reviewCardsTop = this.renderBattleReplayCenter(rightX, reviewCardsTop, rightWidth, state);
+        reviewCardsTop = this.renderBattleReplayTimelineDetail(rightX, reviewCardsTop, rightWidth, state.account);
         this.renderAccountReviewCards(rightX, reviewCardsTop, rightWidth, review.items, {
           highlightReplayId: state.selectedBattleReplayId,
           banner: review.banner,
@@ -891,14 +892,26 @@ export class VeilLobbyPanel extends Component {
   ): number {
     const replay = findPlayerBattleReplaySummary(account.recentBattleReplays, this.currentState?.selectedBattleReplayId);
     const view = buildCocosBattleReplayTimelineView(replay);
+    const playback = replay && this.replayPlayback?.replay.id === replay.id ? this.replayPlayback : null;
+    const currentStepIndex = playback?.currentStepIndex ?? 0;
+    const timelineWindowStart =
+      view.entries.length <= 4 ? 0 : Math.max(0, Math.min(view.entries.length - 4, Math.max(0, currentStepIndex - 1)));
     const timelineLines =
       view.entries.length > 0
-        ? view.entries.map(
-            (entry) =>
-              `${entry.stepLabel} ${entry.actorLabel} · ${entry.actionLabel} · ${entry.outcomeLabel} · ${entry.roundLabel} · ${entry.sourceLabel}`
-          )
+        ? view.entries.slice(timelineWindowStart, timelineWindowStart + 4).map((entry) => {
+            const marker =
+              playback && entry.index <= currentStepIndex
+                ? "已执行"
+                : playback && entry.index === currentStepIndex + 1
+                  ? "当前"
+                  : "待播放";
+            return `${marker} · ${entry.stepLabel} ${entry.actorLabel} · ${entry.actionLabel} · ${entry.outcomeLabel} · ${entry.roundLabel} · ${entry.sourceLabel}`;
+          })
         : [view.emptyMessage ?? "暂无可展示的战报时间线。"];
-    const lines = [view.title, `${view.subtitle} · ${view.badge}`, view.summary, "", ...timelineLines];
+    const playbackSummary = playback
+      ? `播放游标 ${playback.currentStepIndex}/${playback.totalSteps} · 当前 ${playback.currentStep?.index ?? 0} · 下一步 ${playback.nextStep?.index ?? "无"}`
+      : "播放游标待同步";
+    const lines = [view.title, `${view.subtitle} · ${view.badge}`, view.summary, playbackSummary, ...timelineLines];
     const height = Math.max(132, 52 + lines.length * 18);
 
     return this.renderCard(
@@ -930,7 +943,7 @@ export class VeilLobbyPanel extends Component {
     const lines = [view.title, `${view.subtitle} · ${view.badge}`, ...view.detailLines];
     const height = Math.max(148, 52 + lines.length * 18);
     const nextTopY = this.renderCard(
-      "LobbyBattleReplayTimeline",
+      "LobbyBattleReplayCenter",
       centerX,
       topY,
       width,
@@ -969,6 +982,10 @@ export class VeilLobbyPanel extends Component {
   }
 
   private hideBattleReplayTimelineCard(): void {
+    const centerNode = this.node.getChildByName("LobbyBattleReplayCenter");
+    if (centerNode) {
+      centerNode.active = false;
+    }
     const node = this.node.getChildByName("LobbyBattleReplayTimeline");
     if (node) {
       node.active = false;
