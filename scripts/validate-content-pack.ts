@@ -20,7 +20,7 @@ import {
 } from "../packages/shared/src/index.ts";
 import {
   DEFAULT_CONTENT_PACK_MAP_PACK,
-  resolveExtraContentPackMapPack,
+  resolveContentPackMapPack,
   type ContentPackMapPackDefinition
 } from "./content-pack-map-packs.ts";
 
@@ -92,11 +92,15 @@ function parseArgs(argv: string[]): {
       index += 1;
     } else if (arg === "--map-pack") {
       const presetId = argv[index + 1] ?? "";
-      const definition = resolveExtraContentPackMapPack(presetId);
+      const definition = resolveContentPackMapPack(presetId);
       if (!definition) {
-        throw new Error(`Unknown map pack "${presetId}". Supported values: frontier-basin, phase2.`);
+        throw new Error(
+          `Unknown map pack "${presetId}". Supported values: default, frontier-basin, ridgeway-crossing, phase2.`
+        );
       }
-      extraMapPacks.push(definition);
+      if (definition.id !== DEFAULT_CONTENT_PACK_MAP_PACK.id) {
+        extraMapPacks.push(definition);
+      }
       index += 1;
     }
   }

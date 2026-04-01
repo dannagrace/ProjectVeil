@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import assetConfig from "../../../configs/assets.json";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
+import ridgewayCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-ridgeway-crossing.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import ridgewayCrossingWorldConfig from "../../../configs/phase1-world-ridgeway-crossing.json";
 import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
 import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
 import {
@@ -67,6 +69,7 @@ import {
   predictPlayerWorldAction,
   resetBattleReplayPlayback,
   resetRuntimeConfigs,
+  RIDGEWAY_CROSSING_MAP_VARIANT_ID,
   simulateAutomatedBattle,
   simulateAutomatedBattles,
   summarizeAssetMetadata,
@@ -2328,6 +2331,20 @@ test("createInitialWorldState selects the contested basin variant with the new c
   assert.equal(state.neutralArmies["neutral-reed-patrol"]?.stacks[0]?.templateId, "moss_stalker");
 });
 
+test("createInitialWorldState selects the ridgeway crossing variant with the new Phase 1 content pack", () => {
+  const state = createInitialWorldState(1001, "preview-ridgeway[map:ridgeway_crossing]");
+
+  assert.equal(state.meta.mapVariantId, "ridgeway_crossing");
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 2);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 0)?.terrain, "water");
+  assert.equal(state.buildings["recruit-post-2"]?.kind, "recruitment_post");
+  assert.equal(state.buildings["shrine-defense-1"]?.kind, "attribute_shrine");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.neutralArmies["neutral-2"]?.reward?.kind, "ore");
+  assert.equal(state.neutralArmies["neutral-3"]?.behavior?.mode, "patrol");
+});
+
 test("frontier basin generates a distinct layout from the default phase1 variant", () => {
   const seed = 5124;
   const defaultRoomId = "preview-default";
@@ -2357,6 +2374,28 @@ test("frontier basin generates a distinct layout from the default phase1 variant
   );
 });
 
+test("ridgeway crossing generates a distinct layout from the default phase1 variant", () => {
+  const seed = 5124;
+  const defaultRoomId = "preview-default";
+  const ridgewayRoomId = "preview-ridgeway[map:ridgeway_crossing]";
+
+  const defaultBundle = getRuntimeConfigBundleForRoom(defaultRoomId, seed);
+  const ridgewayBundle = getRuntimeConfigBundleForRoom(ridgewayRoomId, seed);
+
+  const defaultState = createWorldStateFromConfigs(defaultBundle.world, defaultBundle.mapObjects, seed, defaultRoomId);
+  const ridgewayState = createWorldStateFromConfigs(ridgewayBundle.world, ridgewayBundle.mapObjects, seed, ridgewayRoomId);
+
+  assert.equal(ridgewayBundle.mapVariantId, RIDGEWAY_CROSSING_MAP_VARIANT_ID);
+  assert.notDeepEqual(
+    defaultState.map.tiles.map((tile) => tile.terrain),
+    ridgewayState.map.tiles.map((tile) => tile.terrain),
+    "ridgeway crossing terrain layout should differ from the default variant"
+  );
+  assert.equal(defaultState.buildings["mine-ore-1"], undefined);
+  assert.ok(ridgewayState.buildings["mine-ore-1"]);
+  assert.ok(ridgewayState.buildings["shrine-defense-1"]);
+});
+
 test("frontier basin configs validate alongside the default configs", () => {
   const units = getDefaultUnitCatalog();
   const frontierWorld = frontierBasinWorldConfig as WorldGenerationConfig;
@@ -2372,6 +2411,20 @@ test("frontier basin configs validate alongside the default configs", () => {
   assert.doesNotThrow(() => {
     validateMapObjectsConfig(defaultMapObjects, defaultWorld, units);
     validateMapObjectsConfig(frontierMapObjects, frontierWorld, units);
+  });
+});
+
+test("ridgeway crossing configs validate alongside the existing Phase 1 variants", () => {
+  const units = getDefaultUnitCatalog();
+  const ridgewayWorld = ridgewayCrossingWorldConfig as WorldGenerationConfig;
+  const ridgewayMapObjects = ridgewayCrossingMapObjectsConfig as MapObjectsConfig;
+  const bundle = getRuntimeConfigBundleForRoom("preview-ridgeway[map:ridgeway_crossing]", 5124);
+
+  assert.equal(bundle.mapVariantId, RIDGEWAY_CROSSING_MAP_VARIANT_ID);
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(ridgewayWorld);
+    validateMapObjectsConfig(ridgewayMapObjects, ridgewayWorld, units);
   });
 });
 

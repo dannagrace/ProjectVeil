@@ -5,6 +5,8 @@ import { createPool, type Pool, type RowDataPacket } from "mysql2/promise";
 import * as XLSX from "xlsx";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import ridgewayCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-ridgeway-crossing.json";
+import ridgewayCrossingWorldConfig from "../../../configs/phase1-world-ridgeway-crossing.json";
 import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
 import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
 import {
@@ -443,8 +445,18 @@ const CONFIG_CENTER_LIBRARY_FILE = ".config-center-library.json";
 const MAX_STAGE_DOCUMENTS = 5;
 const MAX_PUBLISH_HISTORY_ENTRIES = 20;
 const BUILTIN_DIFFICULTY_PRESET_IDS = ["easy", "normal", "hard"] as const;
-const BUILTIN_WORLD_LAYOUT_PRESETS = ["layout_phase1", "layout_frontier_basin", "layout_contested_basin"] as const;
-const BUILTIN_MAP_OBJECT_LAYOUT_PRESETS = ["layout_phase1", "layout_frontier_basin", "layout_contested_basin"] as const;
+const BUILTIN_WORLD_LAYOUT_PRESETS = [
+  "layout_phase1",
+  "layout_frontier_basin",
+  "layout_ridgeway_crossing",
+  "layout_contested_basin"
+] as const;
+const BUILTIN_MAP_OBJECT_LAYOUT_PRESETS = [
+  "layout_phase1",
+  "layout_frontier_basin",
+  "layout_ridgeway_crossing",
+  "layout_contested_basin"
+] as const;
 const CONFIG_SCHEMA_VERSION = "2026-03-26";
 const BASE_VALUE_IMPACT = ["配置台编辑器"];
 const BASE_SCHEMA_IMPACT = ["配置台编辑器", "Schema 校验器"];
@@ -1780,12 +1792,16 @@ function buildLayoutPresetSummary(id: typeof BUILTIN_WORLD_LAYOUT_PRESETS[number
   const name =
     id === "layout_frontier_basin"
       ? "Frontier Basin"
+      : id === "layout_ridgeway_crossing"
+        ? "Ridgeway Crossing"
       : id === "layout_contested_basin"
         ? "Contested Basin"
         : "Phase 1";
   const description =
     id === "layout_frontier_basin"
       ? "切换为首个峡谷盆地布局，适合验证水域与矿点分布。"
+      : id === "layout_ridgeway_crossing"
+        ? "切换为第二个 Phase 1 岭桥布局，适合验证中央渡口争夺、双招募点和木矿/矿井分流。"
       : id === "layout_contested_basin"
         ? "切换为争夺盆地布局，包含新巡逻守军与瞭望塔。"
         : "恢复默认 Phase 1 地图布局。";
@@ -1826,6 +1842,9 @@ function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: strin
     if (presetId === "layout_frontier_basin") {
       return normalizeJsonContent(frontierBasinWorldConfig as WorldGenerationConfig);
     }
+    if (presetId === "layout_ridgeway_crossing") {
+      return normalizeJsonContent(ridgewayCrossingWorldConfig as WorldGenerationConfig);
+    }
     if (presetId === "layout_contested_basin") {
       return normalizeJsonContent(contestedBasinWorldConfig as WorldGenerationConfig);
     }
@@ -1837,6 +1856,9 @@ function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: strin
     }
     if (presetId === "layout_frontier_basin") {
       return normalizeJsonContent(frontierBasinMapObjectsConfig as MapObjectsConfig);
+    }
+    if (presetId === "layout_ridgeway_crossing") {
+      return normalizeJsonContent(ridgewayCrossingMapObjectsConfig as MapObjectsConfig);
     }
     if (presetId === "layout_contested_basin") {
       return normalizeJsonContent(contestedBasinMapObjectsConfig as MapObjectsConfig);
