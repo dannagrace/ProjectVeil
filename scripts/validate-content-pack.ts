@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   getDefaultBattleBalanceConfig,
   validateBattleBalanceConfig,
@@ -34,7 +35,7 @@ interface BundleContentPackValidationIssue extends ContentPackValidationIssue {
   bundleId: string;
 }
 
-interface BundleValidationReport {
+export interface BundleValidationReport {
   id: string;
   worldFileName: string;
   mapObjectsFileName: string;
@@ -52,7 +53,7 @@ interface BundleValidationReport {
   };
 }
 
-interface ContentPackCliReport {
+export interface ContentPackCliReport {
   schemaVersion: 1;
   generatedAt: string;
   rootDir: string;
@@ -164,9 +165,12 @@ async function loadBundle(rootDir: string, definition: ContentPackMapPackDefinit
   };
 }
 
-async function main(): Promise<void> {
-  const { rootDir, reportPath, extraMapPacks } = parseArgs(process.argv.slice(2));
-  const bundleDefinitions = [DEFAULT_CONTENT_PACK_MAP_PACK, ...extraMapPacks];
+export async function buildContentPackCliReport(options: {
+  rootDir?: string;
+  extraMapPacks?: ContentPackMapPackDefinition[];
+} = {}): Promise<ContentPackCliReport> {
+  const rootDir = options.rootDir ?? resolve(process.cwd(), "configs");
+  const bundleDefinitions = [DEFAULT_CONTENT_PACK_MAP_PACK, ...(options.extraMapPacks ?? [])];
   const bundles = await Promise.all(
     bundleDefinitions.map(async (definition): Promise<BundleValidationReport> => {
       const bundle = await loadBundle(rootDir, definition);
@@ -198,7 +202,7 @@ async function main(): Promise<void> {
 
   const documentIssues = bundles.flatMap((bundle) => bundle.documentValidation.issues);
   const contentPackIssues = bundles.flatMap((bundle) => bundle.contentPack.issues);
-  const report: ContentPackCliReport = {
+  return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     rootDir,
@@ -220,6 +224,14 @@ async function main(): Promise<void> {
     },
     bundles
   };
+}
+
+async function main(): Promise<void> {
+  const { rootDir, reportPath, extraMapPacks } = parseArgs(process.argv.slice(2));
+  const report = await buildContentPackCliReport({
+    rootDir,
+    extraMapPacks
+  });
 
   console.log("Project Veil content-pack validation");
   console.log(`Root: ${rootDir}`);
@@ -243,7 +255,9 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch((error) => {
-  console.error(`Content-pack validation failed: ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main().catch((error) => {
+    console.error(`Content-pack validation failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
+}

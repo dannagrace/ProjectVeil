@@ -105,6 +105,13 @@ const AUTOMATED_CHECKS: Array<Pick<ReleaseReadinessCheck, "id" | "title" | "comm
     required: true
   },
   {
+    id: "phase1-release-persistence",
+    title: "Phase 1 persistence and shipped content regression",
+    command:
+      "npm run test:phase1-release-persistence -- --output artifacts/release-readiness/phase1-release-persistence-regression.json",
+    required: true
+  },
+  {
     id: "sync-governance-matrix",
     title: "Deterministic sync-governance matrix",
     command: "npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json",

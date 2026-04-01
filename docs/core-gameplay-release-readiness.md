@@ -65,6 +65,7 @@
 - [ ] reconnect 验收必须复用 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 的唯一场景和最小成功信号，而不是只写“重连成功”。
 - [ ] wider playtest 前必须复用 [`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md) 中固定的 smoke + `stress:rooms` 命令组合、阈值、回退动作和重跑触发条件。
 - [ ] shipping / release candidate 前，任何涉及房间状态、reconnect、战斗或快照恢复的改动都必须额外通过 [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md) 中的长时 reconnect soak。
+- [ ] shipping / release candidate 前，至少要有一条当前 `npm run test:phase1-release-persistence` 记录，同时证明目标持久化路径与 shipped config/content 校验一起通过。
 - [ ] 失败路径可读：非法 action、超时、会话失效时，客户端能收到明确错误而不是静默卡死。
 
 `P1 follow-up`
@@ -76,6 +77,7 @@
 
 - `npm test`
 - `npm run test:e2e:multiplayer:smoke`
+- `npm run test:phase1-release-persistence`
 - wider playtest 前必跑：[`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md)
 - shipping / RC 前必跑：[`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md)
 

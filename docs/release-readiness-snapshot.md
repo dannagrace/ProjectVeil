@@ -12,9 +12,17 @@ The default automated checks are:
 - `npm run typecheck:ci`
 - `npm run test:e2e:smoke`
 - `npm run test:e2e:multiplayer:smoke`
+- `npm run test:phase1-release-persistence -- --output artifacts/release-readiness/phase1-release-persistence-regression.json`
 - `npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json`
 - `npm run test:multiplayer-protocol-compatibility -- --output artifacts/release-readiness/multiplayer-protocol-compatibility.json`
 - `npm run check:cocos-release-readiness`
+
+The Phase 1 persistence regression intentionally keeps config/content validation tied to the same release-hardening story:
+
+- it validates the shipped `phase1`, `frontier-basin`, and `phase2` content packs
+- it exercises persistence-backed player/account/world carryover with representative resources, hero growth, replay history, and event history
+
+When `VEIL_MYSQL_*` is configured, the regression automatically targets MySQL. Without MySQL env it falls back to the in-memory store so contributors can still run the same flow locally, but release verification should expect the generated report to show `Storage: mysql`.
 
 For packaged H5 release-candidate validation, run:
 

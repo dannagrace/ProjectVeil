@@ -72,7 +72,7 @@ The candidate has current package/verify/smoke evidence, and the required report
 `/api/runtime/health`, `/api/runtime/auth-readiness`, and `/api/runtime/metrics` are reachable for the candidate environment and reviewed as part of release evidence.
 
 7. `Phase 1 data and persistence are verified on the intended storage path.`
-The shipped config/content pack validates cleanly, and the intended persistence mode has completed at least one current regression proving player/account/world data flows still hold.
+The shipped config/content pack validates cleanly, and `npm run test:phase1-release-persistence` has completed at least one current regression on the intended storage mode. For release candidates with `VEIL_MYSQL_*` enabled, that means the generated report should show `Storage: mysql` while still proving player/account/world data flows hold.
 
 8. `Known Phase 1 blockers are closed or explicitly accepted.`
 Any remaining Cocos presentation fallback, reconnect risk, multiplayer divergence risk, or release-process blocker is either fixed or recorded as a conscious non-blocking acceptance with owner and rationale.
