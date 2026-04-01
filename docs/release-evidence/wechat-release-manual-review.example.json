@@ -1,0 +1,25 @@
+[
+  {
+    "id": "wechat-runtime-review",
+    "title": "Runtime health/auth-readiness/metrics reviewed for this candidate",
+    "status": "pending",
+    "required": true,
+    "notes": "Capture runtime evidence against the same candidate revision before marking the WeChat target release-ready.",
+    "evidence": [
+      "GET /api/runtime/health",
+      "GET /api/runtime/auth-readiness",
+      "GET /api/runtime/metrics"
+    ]
+  },
+  {
+    "id": "wechat-release-checklist",
+    "title": "WeChat RC checklist and blockers reviewed",
+    "status": "pending",
+    "required": true,
+    "notes": "Attach the completed RC checklist and blocker register for the same packaged candidate.",
+    "evidence": [
+      "docs/release-evidence/cocos-wechat-rc-checklist.template.md",
+      "docs/release-evidence/cocos-wechat-rc-blockers.template.md"
+    ]
+  }
+]
