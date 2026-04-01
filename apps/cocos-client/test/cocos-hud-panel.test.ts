@@ -155,3 +155,34 @@ test("VeilHudPanel surfaces reconnect, replay, resync, and degraded session indi
   assert.match(statusText, /会话 降级\/离线回退 · 最近一次重连失败，客户端正依赖回退路径维持会话。/);
   assert.equal(badgeText, "重连中");
 });
+
+test("VeilHudPanel renders equipment-adjusted hero totals and immediate session loot", () => {
+  const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
+  const state = createHudState();
+  state.account.recentEventLog = [];
+  state.update!.world.ownHeroes[0]!.name = "凯琳";
+  state.update!.world.ownHeroes[0]!.loadout.equipment.armorId = "padded_gambeson";
+  state.update!.world.ownHeroes[0]!.loadout.equipment.accessoryId = "scout_compass";
+  state.update!.events = [
+    {
+      type: "hero.equipmentFound",
+      heroId: "hero-1",
+      battleId: "battle-1",
+      battleKind: "neutral",
+      equipmentId: "warden_aegis",
+      equipmentName: "守誓圣铠",
+      rarity: "epic",
+      overflowed: true
+    }
+  ];
+
+  component.render(state);
+
+  const heroText = readLabelString(findNode(node, "HudHero"));
+  const equipmentText = readLabelString(findNode(node, "HudEquipment"));
+
+  assert.match(heroText, /攻 2  防 2  力 1  知 2/);
+  assert.match(heroText, /生命上限 14 = 基础 12 装备 \+2/);
+  assert.match(equipmentText, /战利品 最近 1 条/);
+  assert.match(equipmentText, /凯琳 在战斗后发现了史诗装备 守誓圣铠，但背包已满，未能拾取。/);
+});

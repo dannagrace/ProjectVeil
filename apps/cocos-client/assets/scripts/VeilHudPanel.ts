@@ -79,6 +79,14 @@ interface HudEquipmentButtonState {
   callback: (() => void) | null;
 }
 
+interface HudRecentLootEvent {
+  type: "hero.equipmentFound";
+  heroId: string;
+  equipmentName: string;
+  rarity: "common" | "rare" | "epic";
+  overflowed?: boolean;
+}
+
 export type VeilHudSessionIndicatorKind =
   | "reconnecting"
   | "replaying_cached_snapshot"
@@ -109,7 +117,8 @@ function formatHeroLearnedSkills(hero: NonNullable<VeilHudRenderState["update"]>
 
 function formatHeroEquipmentLines(
   hero: NonNullable<VeilHudRenderState["update"]>["world"]["ownHeroes"][number] | null,
-  recentEventLog: VeilHudRenderState["account"]["recentEventLog"]
+  recentEventLog: VeilHudRenderState["account"]["recentEventLog"],
+  recentSessionEvents: HudRecentLootEvent[] = []
 ): string[] {
   if (!hero) {
     return ["装备 等待房间状态...", ""];
@@ -117,13 +126,34 @@ function formatHeroEquipmentLines(
 
   const equipmentLines = formatEquipmentOverviewLines(hero);
   const inventoryLines = formatInventorySummaryLines(hero);
-  const lootLines = formatRecentLootLines(recentEventLog, hero.id);
+  const lootLines = formatRecentLootLines(recentEventLog, hero.id, 2, recentSessionEvents, hero.name);
 
   return [
     ...equipmentLines,
     ...inventoryLines,
     ...lootLines
   ];
+}
+
+function toHudRecentLootEvents(
+  events: NonNullable<VeilHudRenderState["update"]>["events"]
+): HudRecentLootEvent[] {
+  const recentLoot: HudRecentLootEvent[] = [];
+  for (const event of events) {
+    if (event.type !== "hero.equipmentFound") {
+      continue;
+    }
+
+    recentLoot.push({
+      type: event.type,
+      heroId: event.heroId,
+      equipmentName: event.equipmentName,
+      rarity: event.rarity,
+      ...(event.overflowed ? { overflowed: true } : {})
+    });
+  }
+
+  return recentLoot;
 }
 
 export interface VeilHudRenderState {
@@ -324,7 +354,12 @@ export class VeilHudPanel extends Component {
     const skillPanelView = buildCocosHudSkillPanelView(state.update, this.onLearnSkill);
     const progressMeter = hero ? createHeroProgressMeterView({ progression: { ...hero.progression } }) : null;
     const attributeRows = hero ? createHeroAttributeBreakdown(toHudHeroSkillState(hero), world ?? undefined) : [];
-    const equipmentLines = formatHeroEquipmentLines(hero, state.account.recentEventLog);
+    const attackTotal = attributeRows.find((row) => row.key === "attack")?.total ?? hero?.stats.attack ?? 0;
+    const defenseTotal = attributeRows.find((row) => row.key === "defense")?.total ?? hero?.stats.defense ?? 0;
+    const powerTotal = attributeRows.find((row) => row.key === "power")?.total ?? hero?.stats.power ?? 0;
+    const knowledgeTotal = attributeRows.find((row) => row.key === "knowledge")?.total ?? hero?.stats.knowledge ?? 0;
+    const maxHpTotal = attributeRows.find((row) => row.key === "maxHp")?.total ?? hero?.stats.maxHp ?? 0;
+    const equipmentLines = formatHeroEquipmentLines(hero, state.account.recentEventLog, toHudRecentLootEvents(state.update?.events ?? []));
     const equipmentRows = buildHeroEquipmentActionRows(hero);
     const equipmentButtons = this.buildEquipmentButtonStates(equipmentRows);
     const equipmentLineCount = (hero ? 1 + equipmentLines.length : 3);
@@ -414,7 +449,7 @@ export class VeilHudPanel extends Component {
             `英雄  ${hero.name}`,
             `坐标 (${hero.position.x},${hero.position.y})`,
             `等级 ${hero.progression.level}  经验 ${progressMeter?.currentLevelExperience ?? 0}/${progressMeter?.nextLevelExperience ?? 100}  技能点 ${hero.progression.skillPoints ?? 0}`,
-            `攻 ${hero.stats.attack}  防 ${hero.stats.defense}  力 ${hero.stats.power}  知 ${hero.stats.knowledge}`,
+            `攻 ${attackTotal}  防 ${defenseTotal}  力 ${powerTotal}  知 ${knowledgeTotal}`,
             attributeRows[0] ? `攻防公式 ${attributeRows[0].formula} / ${attributeRows[1]?.formula ?? ""}` : "",
             attributeRows[2] ? `法术公式 ${attributeRows[2].formula} / ${attributeRows[3]?.formula ?? ""}` : "",
             attributeRows[4] ? attributeRows[4].formula : "",
@@ -488,7 +523,7 @@ export class VeilHudPanel extends Component {
           Boolean(state.levelUpNotice)
         );
       }
-      this.renderHeroMeters(`${CARD_PREFIX}-hero`, hero.move.remaining, hero.move.total, hero.stats.hp, hero.stats.maxHp, hero.armyCount);
+      this.renderHeroMeters(`${CARD_PREFIX}-hero`, hero.move.remaining, hero.move.total, hero.stats.hp, maxHpTotal, hero.armyCount);
       this.tightenHeroLabelLayout(leftX, cardWidth);
       this.renderEquipmentActionButtons(`${CARD_PREFIX}-equipment`, equipmentButtons);
       this.renderLearnableSkillButtons(`${CARD_PREFIX}-skills`, skillPanelView.actions);
