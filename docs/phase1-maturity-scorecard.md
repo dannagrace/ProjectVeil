@@ -62,8 +62,9 @@ The candidate passes:
 `npm run release:readiness:snapshot` for the candidate shows no `requiredFailed` checks and no `requiredPending` checks.
 
 4. `Cocos primary-client evidence is current.`
-A candidate-specific Cocos RC snapshot/checklist exists and demonstrates the complete main journey:
+A candidate-specific Cocos RC evidence bundle exists under `artifacts/release-readiness/` and demonstrates the complete main journey:
 `Lobby/login -> room join -> map exploration -> encounter battle -> settlement -> reconnect/session recovery`.
+The canonical generation path is `npm run release:cocos-rc:bundle -- --candidate <candidate-name> ...`, which must emit the candidate+revision bundle manifest, Markdown summary, RC snapshot, checklist, and blocker log for the same revision.
 
 5. `WeChat release evidence is current when WeChat is the target surface.`
 The candidate has current package/verify/smoke evidence, and the required report is attached rather than implied from a successful build alone.
