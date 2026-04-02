@@ -8,6 +8,12 @@ For deterministic path-to-plan routing, use `npm run plan:validation:minimal -- 
 
 Start here when you already know the shape of your change and want the minimum expected verification before opening a PR. Treat `Minimum required` as the floor, use `Optional diagnostics` only when risk broadens or a required check fails, and attach the listed artifacts only when that row says reviewers depend on them.
 
+Quick routing rules:
+
+- `Minimum required` is the smallest expected proof for that change type before opening a PR.
+- `Optional diagnostics` stay optional unless the change crosses surfaces, a required check fails, or the PR changes release-facing evidence reviewers need to trust.
+- If your diff matches more than one row, combine the `Minimum required` commands from each row and keep the higher-risk artifact expectations.
+
 | Change type | Typical examples | Minimum required | Optional diagnostics | Attach to PR when relevant | Deeper docs |
 | --- | --- | --- | --- | --- | --- |
 | Docs-only or process-only | `README.md`, `docs/**`, Markdown templates, contributor guidance, contributor workflow notes | Review rendered Markdown plus every edited path and command. Run `npm run validate:quickstart` only if setup or quickstart guidance changed. | Re-run any edited setup command exactly as documented when the wording changed and the command is practical in your environment. | Usually none. If the doc changes release or verification procedure, summarize which command or path you re-checked in the PR body. | [`README.md`](../README.md), [`docs/operational-entry-point-repo-map.md`](./operational-entry-point-repo-map.md) |
@@ -21,6 +27,52 @@ Start here when you already know the shape of your change and want the minimum e
 | Multiplayer or reconnect behavior | Shared sync, reconnect recovery, prediction correction, multiplayer Playwright coverage | `npm run test:e2e:multiplayer:smoke && npm run test:sync-governance:matrix` | `npm run test:e2e:multiplayer` for broader multiplayer regression coverage, or `npm run stress:rooms:reconnect-soak` when reconnect semantics or room recovery rules changed. | Attach the generated sync or reconnect artifact when the PR changes reviewer-visible governance evidence, for example `artifacts/release-readiness/sync-governance-matrix-<short-sha>.json`. | [`docs/sync-governance-matrix.md`](./sync-governance-matrix.md), [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md), [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md) |
 
 If a change fits more than one row, combine the minimum required commands from each matching row and prefer the higher-risk path when they conflict.
+
+### Example Flows
+
+Use these when you want a concrete `changed X -> run Y` translation before opening the PR.
+
+#### Cocos-facing change example
+
+Change:
+
+- You updated `apps/cocos-client/assets/scripts/VeilHudPanel.ts` and a WeChat export template to adjust the primary client HUD presentation.
+
+Required:
+
+- `npm run typecheck:cocos`
+- `npm run check:wechat-build`
+
+Optional only when needed:
+
+- `npm run audit:cocos-primary-delivery -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir artifacts/wechat-release --expect-exported-runtime`
+  Run this when the change affects delivery metadata, exported runtime assumptions, or reviewer-facing release evidence instead of local presentation only.
+
+What to mention in the PR:
+
+- For a runtime/presentation-only change, note that `typecheck:cocos` and `check:wechat-build` passed.
+- If the change altered exported runtime or delivery evidence, attach the resulting `artifacts/wechat-release/` path called out by the audit command.
+
+#### Ops/readiness change example
+
+Change:
+
+- You updated `scripts/release-gate-summary.ts` and the matching readiness doc so the reviewer-facing gate summary shows a new field.
+
+Required:
+
+- `npm run typecheck:ci`
+- The nearest script test for the touched readiness surface, for example `npm run test:release-gate-summary`
+
+Optional only when needed:
+
+- `npm run release:gate:summary`
+  Run this when output semantics, generated fields, or reviewer-facing readiness evidence changed and reviewers need to inspect the refreshed artifact.
+
+What to mention in the PR:
+
+- Name the script-level test you ran.
+- If the generated gate output changed, attach the refreshed artifact path such as `artifacts/release-readiness/release-gate-summary.json`.
 
 ## Changed Surface Helper
 
