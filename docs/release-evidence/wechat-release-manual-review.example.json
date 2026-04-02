@@ -27,7 +27,11 @@
     "artifactPath": "artifacts/wechat-release/device-runtime-review.json",
     "evidence": [
       "artifacts/wechat-release/codex.wechat.smoke-report.json",
-      "startup / reconnect / share recordings"
+      "login-lobby capture",
+      "room-entry capture",
+      "reconnect-recovery capture",
+      "share-roundtrip capture",
+      "key-assets capture"
     ]
   },
   {
