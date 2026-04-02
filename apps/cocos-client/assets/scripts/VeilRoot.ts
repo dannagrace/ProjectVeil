@@ -105,7 +105,10 @@ import { VeilProgressionPanel } from "./VeilProgressionPanel.ts";
 import { VeilEquipmentPanel } from "./VeilEquipmentPanel.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
 import { type CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
-import { createCocosBattlePresentationController } from "./cocos-battle-presentation-controller.ts";
+import {
+  createCocosBattlePresentationController,
+  type CocosBattlePresentationState
+} from "./cocos-battle-presentation-controller.ts";
 import { createCocosAudioRuntime } from "./cocos-audio-runtime.ts";
 import { createCocosAudioAssetBridge } from "./cocos-audio-resources.ts";
 import { buildCocosRuntimeTriageSummaryLines } from "./cocos-runtime-diagnostics.ts";
@@ -139,6 +142,14 @@ const DEFAULT_MAP_WIDTH_TILES = 8;
 const DEFAULT_MAP_HEIGHT_TILES = 8;
 const BATTLE_FEEDBACK_DURATION_MS = 2600;
 const ACCOUNT_REVIEW_PAGE_SIZE = 3;
+
+interface BattleSettlementSnapshot {
+  label: string;
+  detail: string;
+  badge: string;
+  tone: CocosBattleFeedbackView["tone"];
+  summaryLines: string[];
+}
 
 interface VeilRootRuntime {
   createSession: typeof VeilCocosSession.create;
@@ -286,6 +297,7 @@ export class VeilRoot extends Component {
   private primaryClientTelemetry: PrimaryClientTelemetryEvent[] = [];
   private stopRuntimeMemoryWarnings: (() => void) | null = null;
   private battlePresentation = createCocosBattlePresentationController();
+  private lastBattleSettlementSnapshot: BattleSettlementSnapshot | null = null;
 
   onLoad(): void {
     this.audioRuntime.dispose();
@@ -1087,7 +1099,8 @@ export class VeilRoot extends Component {
       selectedTargetId: this.selectedBattleTargetId,
       actionPending: this.battleActionInFlight,
       feedback: this.battleFeedback,
-      presentationState: this.battlePresentation.getState()
+      presentationState: this.battlePresentation.getState(),
+      recovery: this.buildBattleSettlementRecoveryState()
     });
     this.timelinePanel?.render({
       entries: this.timelineEntries
@@ -3135,6 +3148,7 @@ export class VeilRoot extends Component {
     const previousBattle = this.lastUpdate?.battle ?? null;
     const heroId = this.activeHero()?.id ?? null;
     const presentation = this.battlePresentation.applyUpdate(previousBattle, update, heroId);
+    this.captureBattleSettlementSnapshot(update, presentation.state);
 
     this.pendingPrediction = null;
     this.predictionStatus = "";
@@ -3272,8 +3286,86 @@ export class VeilRoot extends Component {
       events: [],
       movementPlan: null
     };
-    this.battlePresentation.reset();
     this.renderView();
+  }
+
+  private buildBattleSettlementRecoveryState(): {
+    title: string;
+    detail: string;
+    badge: string;
+    tone: CocosBattleFeedbackView["tone"];
+    summaryLines: string[];
+  } | null {
+    if (!this.lastBattleSettlementSnapshot || this.lastUpdate?.battle) {
+      return null;
+    }
+
+    const recoverySummaryLines = [
+      `最近结算：${this.lastBattleSettlementSnapshot.label}`,
+      ...this.lastBattleSettlementSnapshot.summaryLines
+    ];
+
+    if (this.diagnosticsConnectionStatus === "reconnecting") {
+      return {
+        title: "结算恢复中",
+        detail: "已保留最近一次结算摘要，正在等待权威房间确认奖励、战利品与英雄同步；不会重复发放奖励。",
+        badge: "RECOVER",
+        tone: "neutral",
+        summaryLines: recoverySummaryLines
+      };
+    }
+
+    if (this.lastRoomUpdateSource === "replay" && this.lastRoomUpdateReason === "cached_snapshot") {
+      return {
+        title: "结算快照回放中",
+        detail: "当前面板正在展示本地缓存的结算快照，等待服务端权威状态完成覆盖。",
+        badge: "REPLAY",
+        tone: "neutral",
+        summaryLines: recoverySummaryLines
+      };
+    }
+
+    if (this.diagnosticsConnectionStatus === "reconnect_failed") {
+      return {
+        title: "结算快照回补中",
+        detail: "重连失败后已转入快照回补；当前结算摘要仅作恢复提示，最终奖励与装备状态仍以服务端快照为准。",
+        badge: "FALLBACK",
+        tone: "neutral",
+        summaryLines: recoverySummaryLines
+      };
+    }
+
+    if (this.lastUpdate?.reason?.includes("reconnect.restore")) {
+      return {
+        title: "结算已恢复",
+        detail: "权威房间已恢复，以下结算摘要与战后状态已重新对齐到服务端快照。",
+        badge: "RESUMED",
+        tone: "victory",
+        summaryLines: recoverySummaryLines
+      };
+    }
+
+    return null;
+  }
+
+  private captureBattleSettlementSnapshot(
+    update: SessionUpdate,
+    presentationState: CocosBattlePresentationState
+  ): void {
+    if (update.battle) {
+      this.lastBattleSettlementSnapshot = null;
+      return;
+    }
+
+    if (presentationState.phase === "resolution") {
+      this.lastBattleSettlementSnapshot = {
+        label: presentationState.label,
+        detail: presentationState.detail,
+        badge: presentationState.badge,
+        tone: presentationState.tone,
+        summaryLines: presentationState.summaryLines
+      };
+    }
   }
 
   private buildHudSessionIndicators(): VeilHudRenderState["sessionIndicators"] {

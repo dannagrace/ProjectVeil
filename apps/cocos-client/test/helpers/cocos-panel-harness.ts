@@ -245,6 +245,7 @@ export function createBattlePanelState(overrides: Partial<BattlePanelInput> = {}
     actionPending: false,
     feedback: null,
     presentationState: null,
+    recovery: null,
     ...overrides
   };
 }

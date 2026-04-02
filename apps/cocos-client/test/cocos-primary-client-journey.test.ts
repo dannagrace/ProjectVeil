@@ -315,6 +315,32 @@ function createJourneyReconnectRecoveryUpdate(roomId: string, playerId: string):
   return update;
 }
 
+function createJourneyReconnectLootRecoveryUpdate(roomId: string, playerId: string): SessionUpdate {
+  const update = createJourneyLootSettlementUpdate(roomId, playerId);
+  update.world.meta.day = 5;
+  update.world.ownHeroes[0]!.move.remaining = 8;
+  update.events = [];
+  update.reason = "journey.reconnect.restore";
+  return update;
+}
+
+function createJourneyRecoveredEquipUpdate(roomId: string, playerId: string): SessionUpdate {
+  const update = createJourneyReconnectLootRecoveryUpdate(roomId, playerId);
+  update.world.ownHeroes[0]!.loadout.equipment.accessoryId = "scout_compass";
+  update.world.ownHeroes[0]!.loadout.inventory = [];
+  update.events = [
+    {
+      type: "hero.equipmentChanged",
+      heroId: "hero-1",
+      slot: "accessory",
+      equippedItemId: "scout_compass",
+      unequippedItemId: undefined
+    }
+  ];
+  update.reason = "journey.equipment.equipped";
+  return update;
+}
+
 function captureJourneyArtifact(options: {
   root: RootState;
   phase: string;
@@ -986,6 +1012,183 @@ test("primary cocos client journey closes the loot, inventory, and equip loop af
   assert.match(String(heroTextAfterEquip), /知 2/);
   assert.equal(room.sentMessages.at(-1)?.type, "world.action");
   assert.equal((room.sentMessages.at(-1)?.payload as { action?: { type?: string } }).action?.type, "hero.equip");
+
+  root.onDestroy();
+  await flushMicrotasks();
+});
+
+test("primary cocos client journey resumes interrupted loot settlement and converges equipment state after reconnect", async () => {
+  const storage = createMemoryStorage();
+  const roomId = "room-loot-recovery";
+  const playerId = "player-loot-recovery";
+  let root!: RootState;
+  let rootNode!: Node;
+  const syncedAuthSession = {
+    token: "account.session.token",
+    playerId,
+    displayName: "暮潮守望",
+    authMode: "account" as const,
+    provider: "account-password" as const,
+    loginId: "veil-ranger",
+    source: "remote" as const
+  };
+  const initialRoom = new FakeColyseusRoom(
+    [createJourneyBootstrapUpdate(roomId, playerId)],
+    "loot-recovery-initial-token",
+    {
+      "world.action": [createJourneyExploreUpdate(roomId, playerId), createJourneyBattleUpdate(roomId, playerId)],
+      "battle.action": [createJourneySettlementUpdate(roomId, playerId)]
+    }
+  );
+  const recoveredRoom = new FakeColyseusRoom(
+    [createJourneyReconnectLootRecoveryUpdate(roomId, playerId)],
+    "loot-recovery-final-token",
+    {
+      "world.action": [createJourneyRecoveredEquipUpdate(roomId, playerId)]
+    }
+  );
+
+  writeStoredCocosAuthSession(storage, syncedAuthSession);
+  (sys as unknown as { localStorage: Storage }).localStorage = storage;
+  (globalThis as { location?: Pick<Location, "search" | "href"> }).location = {
+    search: "",
+    href: "http://127.0.0.1:4173/"
+  };
+  (globalThis as { history?: Pick<History, "replaceState"> }).history = {
+    replaceState() {}
+  };
+
+  setVeilCocosSessionRuntimeForTests({
+    storage,
+    wait: async () => undefined,
+    loadSdk: createSdkLoader({
+      joinRooms: [initialRoom, recoveredRoom]
+    })
+  });
+  setVeilRootRuntimeForTests({
+    createSession: (...args) => VeilCocosSession.create(...args),
+    readStoredReplay: (...args) => VeilCocosSession.readStoredReplay(...args),
+    syncAuthSession: async () => syncedAuthSession,
+    loadLobbyRooms: async () => [
+      {
+        roomId,
+        seed: 1001,
+        day: 4,
+        connectedPlayers: 1,
+        heroCount: 1,
+        activeBattles: 0,
+        updatedAt: "2026-04-03T08:30:00.000Z"
+      }
+    ],
+    loadAccountProfile: async () => root.lobbyAccountProfile
+  });
+
+  ({ root, rootNode } = createRootHarness());
+  root.onLoad();
+  root.start();
+
+  await waitFor(
+    () => root.showLobby === true && root.lobbyRooms.length === 1,
+    () => ({
+      phase: "lobby-bootstrap",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  await root.enterLobbyRoom(roomId);
+
+  await waitFor(
+    () => root.showLobby === false && root.lastUpdate?.world.meta.roomId === roomId,
+    () => ({
+      phase: "room-join",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  root.ensureUiCameraVisibility = VeilRoot.prototype.ensureUiCameraVisibility.bind(root);
+  root.ensureViewNodes = VeilRoot.prototype.ensureViewNodes.bind(root);
+  root.renderView = VeilRoot.prototype.renderView.bind(root);
+  root.ensureUiCameraVisibility();
+  root.ensureViewNodes();
+  root.renderView();
+
+  await root.moveHeroToTile(root.lastUpdate.world.map.tiles[1]);
+  await waitFor(
+    () => root.lastUpdate?.reason === "journey.world.explore",
+    () => ({
+      phase: "world-explore",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  await root.moveHeroToTile(root.lastUpdate.world.map.tiles[3]);
+  await waitFor(
+    () => root.lastUpdate?.battle?.id === "battle-neutral-journey",
+    () => ({
+      phase: "battle-start",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  await root.actInBattle({
+    type: "battle.attack",
+    attackerId: "hero-1-stack",
+    defenderId: "neutral-1-stack"
+  });
+  await waitFor(
+    () => root.lastUpdate?.reason === "journey.battle.settlement" && root.lastUpdate?.battle === null,
+    () => ({
+      phase: "battle-settlement",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  initialRoom.emitPush(createJourneyLootSettlementUpdate(roomId, playerId));
+  await waitFor(
+    () => root.lastUpdate?.world.ownHeroes[0]?.loadout.inventory.includes("scout_compass") === true,
+    () => ({
+      phase: "loot-settlement",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  initialRoom.emitLeave(4002);
+  await waitFor(
+    () => root.lastUpdate?.reason === "journey.reconnect.restore" && root.lastUpdate?.world.meta.day === 5,
+    () => ({
+      phase: "reconnect-restore",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  const battleNode = rootNode.getChildByName("ProjectVeilBattlePanel");
+  assert.match(String(readNodeLabel(battleNode?.getChildByName("BattleTitle")) ?? ""), /结算恢复/);
+  assert.match(String(readNodeLabel(battleNode?.getChildByName("BattleFeedback")) ?? ""), /结算已恢复/);
+  assert.equal(root.lastUpdate?.world.resources.gold, 1012);
+  assert.deepEqual(root.lastUpdate?.world.ownHeroes[0]?.loadout.inventory, ["scout_compass"]);
+  assert.equal(root.lastUpdate?.world.ownHeroes[0]?.loadout.equipment.accessoryId, undefined);
+
+  (root as RootState).toggleGameplayEquipmentPanel();
+  root.renderView();
+  pressNode(findNode(rootNode, "EquipmentPanelAction-accessory-scout_compass"));
+
+  await waitFor(
+    () => root.lastUpdate?.world.ownHeroes[0]?.loadout.equipment.accessoryId === "scout_compass",
+    () => ({
+      phase: "equip-after-reconnect",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  assert.equal(root.lastUpdate?.world.resources.gold, 1012);
+  assert.deepEqual(root.lastUpdate?.world.ownHeroes[0]?.loadout.inventory, []);
+  assert.equal(root.lastUpdate?.world.ownHeroes[0]?.loadout.equipment.accessoryId, "scout_compass");
+  assert.equal(recoveredRoom.sentMessages.at(-1)?.type, "world.action");
+  assert.equal((recoveredRoom.sentMessages.at(-1)?.payload as { action?: { type?: string } }).action?.type, "hero.equip");
+  assert.equal(
+    storage.getItem(`project-veil:cocos:reconnection:${roomId}:${playerId}`),
+    "loot-recovery-final-token"
+  );
 
   root.onDestroy();
   await flushMicrotasks();
