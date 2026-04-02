@@ -42,6 +42,9 @@ test("players can reload during a PvP battle and resume from the same turn state
 
         await expect(playerTwoPage.getByTestId("battle-attack")).toBeVisible();
         await expect(playerOnePage.getByTestId("battle-actions")).toContainText("等待对手操作");
+        await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText("player-1");
+        await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText(`遭遇会话：${roomId}/battle-`);
+        await expect(playerTwoPage.getByTestId("room-result-summary")).toContainText(`遭遇会话：${roomId}/battle-`);
       });
 
       await reloadAndExpectRecoveredSession(playerTwoPage, {
@@ -50,6 +53,9 @@ test("players can reload during a PvP battle and resume from the same turn state
       });
       await expect(playerTwoPage.getByTestId("battle-panel")).not.toContainText("No active battle");
       await expect(playerTwoPage.getByTestId("battle-attack")).toBeVisible();
+      await expect(playerTwoPage.getByTestId("room-recovery-summary")).toContainText("权威房间状态已恢复");
+      await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText(`遭遇会话：${roomId}/battle-`);
+      await expect(playerTwoPage.getByTestId("room-next-action")).toContainText("等待本场对抗结算");
 
       await attackOnce(playerTwoPage);
       await expect(playerOnePage.getByTestId("battle-attack")).toBeVisible();
@@ -60,6 +66,9 @@ test("players can reload during a PvP battle and resume from the same turn state
       });
       await expect(playerOnePage.getByTestId("battle-panel")).not.toContainText("No active battle");
       await expect(playerOnePage.getByTestId("battle-attack")).toBeVisible();
+      await expect(playerOnePage.getByTestId("room-recovery-summary")).toContainText("权威战斗状态已恢复");
+      await expect(playerOnePage.getByTestId("opponent-summary")).toContainText(`遭遇会话：${roomId}/battle-`);
+      await expect(playerOnePage.getByTestId("room-result-summary")).toContainText(`仍由 ${roomId}/battle-`);
 
       await attackOnce(playerOnePage);
       await expect(playerTwoPage.getByTestId("battle-attack")).toBeVisible();

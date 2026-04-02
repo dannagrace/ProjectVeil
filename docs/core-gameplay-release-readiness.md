@@ -16,6 +16,7 @@
 - H5 / Lobby 冒烟：`npm run test:e2e:smoke`
 - 多人同步冒烟：`npm run test:e2e:multiplayer:smoke`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
+- Cocos PvP 遭遇生命周期：`docs/cocos-pvp-encounter-lifecycle.md`
 - 多人放量基线：`docs/multiplayer-loadtest-gate.md`
 - 长时 reconnect soak：`docs/reconnect-soak-gate.md`
 - Cocos 资源 + 微信小游戏构建门禁：`npm run check:cocos-release-readiness`
@@ -206,3 +207,4 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
 - 战斗进入后，`room-phase` 显示 `战斗中`，并且 `encounter-source` / `opponent-summary` 能看到遭遇会话与当前房间态。
 - PvP 轮转期间，`opponent-summary` 能看出当前回合归属和我方席位，避免靠日志猜是谁在操作。
 - 战斗结算后，`battle-settlement-summary`、`battle-settlement-room-state`、`battle-settlement-next-action` 与 `最近对手/最近遭遇` 同时保留，能够说明“这场遭遇是谁、结果是什么、房间现在回到了哪里”。
+- 若进入 `reconnecting` / `reconnect_failed`，UI 必须明确区分“遭遇恢复中”与“失败恢复/快照回补中”，并保留遭遇会话与对手摘要，参照 [`docs/cocos-pvp-encounter-lifecycle.md`](./cocos-pvp-encounter-lifecycle.md)。

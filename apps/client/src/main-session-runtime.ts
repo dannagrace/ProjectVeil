@@ -40,7 +40,7 @@ function summarizeRecoveryEvent(
     return {
       connectionStatus: "reconnecting",
       recoverySummary: inPvpEncounter
-        ? "PVP 遭遇连接暂时中断，正在尝试重新加入当前对抗房间。"
+        ? "PVP 遭遇已中断，正在尝试重新加入当前对抗房间。"
         : "连接暂时中断，正在尝试重新加入房间。",
       logLine: inPvpEncounter ? "PVP 遭遇连接中断，正在尝试重连..." : "连接中断，正在尝试重连..."
     };
@@ -60,7 +60,7 @@ function summarizeRecoveryEvent(
     connectionStatus: "reconnect_failed",
     recoverySummary:
       inPvpEncounter || recoveringPvpSettlement
-        ? "PVP 遭遇旧连接未恢复，正在改用持久化快照补救当前房间状态。"
+        ? "PVP 遭遇恢复失败，正在改用持久化快照补救当前房间状态。"
         : "旧连接未恢复，正在改用持久化快照补救当前房间状态。",
     logLine:
       inPvpEncounter || recoveringPvpSettlement
