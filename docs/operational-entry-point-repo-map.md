@@ -59,7 +59,7 @@ For detailed release sequencing, keep [`docs/same-revision-release-evidence-runb
 
 | Need | Primary command or entry point | Canonical docs |
 | --- | --- | --- |
-| Validate shipped content packs | `npm run validate:content-pack`, `npm run validate:content-pack:all` | [`docs/core-gameplay-release-readiness.md`](./core-gameplay-release-readiness.md). Use this when config-pack or map-pack changes need release-facing validation before they are bundled into persistence or candidate evidence. |
+| Validate shipped content packs | `npm run validate:content-pack`, `npm run validate:content-pack:all` | [`docs/content-pack-validation.md`](./content-pack-validation.md), [`docs/core-gameplay-release-readiness.md`](./core-gameplay-release-readiness.md). Use this when config-pack or map-pack changes need release-facing validation before they are bundled into persistence or candidate evidence. |
 | Validate battle balance assumptions | `npm run validate:battle` | [`docs/core-gameplay-release-readiness.md`](./core-gameplay-release-readiness.md) |
 | Review shared client/server contract coverage | `npm run test:contracts`, `npm run test:shared` | [`docs/shared-contract-snapshots.md`](./shared-contract-snapshots.md), [`docs/test-coverage-audit-issue-199.md`](./test-coverage-audit-issue-199.md) |
 

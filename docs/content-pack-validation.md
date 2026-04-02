@@ -1,0 +1,117 @@
+# Content Pack Validation
+
+`npm run validate:content-pack` validates the shipped default content pack, and `npm run validate:content-pack:all` extends the same checks across the additional shipped map-pack presets.
+
+The validator is intended to fail before runtime when authored config would otherwise be silently normalized or only break after archive hydration, equipment reconciliation, or reward application.
+
+## Local Workflow
+
+Run the default shipped bundle:
+
+```bash
+npm run validate:content-pack
+```
+
+Run every shipped bundle:
+
+```bash
+npm run validate:content-pack:all
+```
+
+Write a machine-readable report artifact:
+
+```bash
+npm run validate:content-pack -- --report-path artifacts/release-readiness/content-pack-validation.json
+```
+
+Target an alternate preset while editing one pack:
+
+```bash
+npm run validate:content-pack -- --map-pack ridgeway-crossing
+```
+
+The CLI prints the document path, issue code, human-readable failure, and a suggested fix for each failing entry.
+
+## CI Workflow
+
+CI already runs the validator as a standalone step in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) with:
+
+```bash
+npm run validate:content-pack -- --report-path "${RUNNER_TEMP}/content-pack-validation-report.json"
+```
+
+That step uploads the generated report artifact so reviewers can inspect the exact diagnostics from the candidate revision.
+
+## Typed Checks Covered
+
+- Hero progression fields must stay compatible with runtime progression math.
+- Learned hero skills must match the shipped hero skill tree, including max rank, required level, and prerequisites.
+- Authored skill-point totals must fit the hero's current level.
+- Equipped and inventory items must resolve through the built-in equipment catalog, respect slot typing, and stay within the six-slot backpack limit.
+- Legacy `loadout.equipment.trinketIds` entries are rejected so authors migrate to `accessoryId` plus `inventory` before archive/persistence use.
+- Neutral-army rewards and guaranteed resource payloads must use positive integer amounts.
+
+## Common Invalid States
+
+Invalid progression level for authored XP:
+
+```json
+{
+  "progression": {
+    "level": 1,
+    "experience": 175
+  }
+}
+```
+
+Fix: raise `level` to the minimum produced by that XP total, or lower `experience`.
+
+Invalid equipment slot + overflowed inventory:
+
+```json
+{
+  "loadout": {
+    "equipment": {
+      "weaponId": "padded_gambeson"
+    },
+    "inventory": [
+      "militia_pike",
+      "vanguard_blade",
+      "padded_gambeson",
+      "scout_compass",
+      "oak_longbow",
+      "tower_shield_mail",
+      "scribe_charm"
+    ]
+  }
+}
+```
+
+Fix: move each item into a compatible slot and keep `inventory` at six items or fewer.
+
+Invalid legacy accessory migration:
+
+```json
+{
+  "loadout": {
+    "equipment": {
+      "trinketIds": ["scout_compass"]
+    }
+  }
+}
+```
+
+Fix: move one accessory into `loadout.equipment.accessoryId` and place any extras into `loadout.inventory`.
+
+Invalid reward payload:
+
+```json
+{
+  "reward": {
+    "kind": "gold",
+    "amount": 0
+  }
+}
+```
+
+Fix: use a positive integer reward amount so resource grants, event logs, and persisted account state stay aligned.
