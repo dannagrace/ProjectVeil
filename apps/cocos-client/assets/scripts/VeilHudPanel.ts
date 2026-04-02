@@ -210,6 +210,7 @@ function getSessionIndicatorBadge(indicators: VeilHudSessionIndicator[]): string
 export interface VeilHudPanelOptions {
   onNewRun?: () => void;
   onRefresh?: () => void;
+  onToggleInventory?: () => void;
   onToggleAchievements?: () => void;
   onLearnSkill?: (skillId: string) => void;
   onEquipItem?: (slot: EquipmentType, equipmentId: string) => void;
@@ -311,6 +312,7 @@ export class VeilHudPanel extends Component {
   private requestedIcons = false;
   private onNewRun: (() => void) | undefined;
   private onRefresh: (() => void) | undefined;
+  private onToggleInventory: (() => void) | undefined;
   private onToggleAchievements: (() => void) | undefined;
   private onLearnSkill: ((skillId: string) => void) | undefined;
   private onEquipItem: ((slot: EquipmentType, equipmentId: string) => void) | undefined;
@@ -322,6 +324,7 @@ export class VeilHudPanel extends Component {
   configure(options: VeilHudPanelOptions): void {
     this.onNewRun = options.onNewRun;
     this.onRefresh = options.onRefresh;
+    this.onToggleInventory = options.onToggleInventory;
     this.onToggleAchievements = options.onToggleAchievements;
     this.onLearnSkill = options.onLearnSkill;
     this.onEquipItem = options.onEquipItem;
@@ -602,6 +605,7 @@ export class VeilHudPanel extends Component {
     const chromeActions: Array<{ nodeName: string; debugLabel: string; callback: (() => void) | null }> = [
       { nodeName: "HudNewRun", debugLabel: "new-run", callback: this.onNewRun ?? null },
       { nodeName: "HudRefresh", debugLabel: "refresh", callback: this.onRefresh ?? null },
+      { nodeName: "HudInventory", debugLabel: "inventory", callback: this.onToggleInventory ?? null },
       { nodeName: "HudAchievements", debugLabel: "achievements", callback: this.onToggleAchievements ?? null },
       { nodeName: "HudEndDay", debugLabel: "end-day", callback: this.onEndDay ?? null },
       { nodeName: "HudReturnLobby", debugLabel: "return-lobby", callback: this.onReturnLobby ?? null }
@@ -1460,6 +1464,7 @@ export class VeilHudPanel extends Component {
 
     this.ensureActionButton(actionsNode, "HudNewRun", "新开一局");
     this.ensureActionButton(actionsNode, "HudRefresh", "刷新状态");
+    this.ensureActionButton(actionsNode, "HudInventory", "装备背包");
     this.ensureActionButton(actionsNode, "HudAchievements", "战报中心");
     this.ensureActionButton(actionsNode, "HudEndDay", "推进一天");
     this.ensureActionButton(actionsNode, "HudReturnLobby", "返回大厅");
@@ -1474,12 +1479,13 @@ export class VeilHudPanel extends Component {
     }
 
     const actionsTransform = actionsNode.getComponent(UITransform) ?? actionsNode.addComponent(UITransform);
-    actionsTransform.setContentSize(Math.max(164, transform.width - 28), 176);
+    actionsTransform.setContentSize(Math.max(164, transform.width - 28), 206);
     actionsNode.setPosition(0, transform.height / 2 - 118, 1);
 
     const buttons: HudActionButtonState[] = [
       { name: "HudNewRun", label: "新开一局", callback: this.onNewRun ?? null },
       { name: "HudRefresh", label: "刷新状态", callback: this.onRefresh ?? null },
+      { name: "HudInventory", label: "装备背包", callback: this.onToggleInventory ?? null },
       { name: "HudAchievements", label: "战报中心", callback: this.onToggleAchievements ?? null },
       { name: "HudEndDay", label: "推进一天", callback: this.onEndDay ?? null },
       { name: "HudReturnLobby", label: "返回大厅", callback: this.onReturnLobby ?? null }
@@ -1506,8 +1512,10 @@ export class VeilHudPanel extends Component {
           : index === 1
             ? new Color(51, 70, 99, 228)
             : index === 2
-              ? new Color(73, 88, 62, 230)
+              ? new Color(76, 98, 72, 232)
               : index === 3
+              ? new Color(73, 88, 62, 230)
+              : index === 4
               ? new Color(92, 86, 54, 232)
               : new Color(121, 84, 70, 234);
       graphics.strokeColor =
@@ -1516,15 +1524,22 @@ export class VeilHudPanel extends Component {
           : index === 1
             ? new Color(218, 229, 242, 112)
             : index === 2
-              ? new Color(224, 240, 199, 108)
+              ? new Color(224, 240, 214, 108)
               : index === 3
+              ? new Color(224, 240, 199, 108)
+              : index === 4
               ? new Color(242, 224, 171, 120)
               : new Color(244, 225, 213, 116);
       graphics.lineWidth = 2;
       graphics.roundRect(-buttonWidth / 2, -buttonHeight / 2, buttonWidth, buttonHeight, 10);
       graphics.fill();
       graphics.stroke();
-      graphics.fillColor = new Color(255, 255, 255, index === 0 ? 22 : index === 1 ? 14 : index === 2 ? 16 : index === 3 ? 18 : 16);
+      graphics.fillColor = new Color(
+        255,
+        255,
+        255,
+        index === 0 ? 22 : index === 1 ? 14 : index === 2 ? 16 : index === 3 ? 16 : index === 4 ? 18 : 16
+      );
       graphics.roundRect(-buttonWidth / 2 + 12, buttonHeight / 2 - 9, buttonWidth - 24, 3, 2);
       graphics.fill();
 

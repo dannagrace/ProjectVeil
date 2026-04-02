@@ -118,6 +118,27 @@ test("VeilHudPanel dispatchPointerUp routes equipment button presses through the
   });
 });
 
+test("VeilHudPanel dispatchPointerUp routes the inventory chrome button", () => {
+  const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
+  const state = createHudState();
+  let opened = 0;
+
+  component.configure({
+    onToggleInventory: () => {
+      opened += 1;
+    }
+  });
+  component.render(state);
+
+  const button = findNode(node, "HudInventory");
+  assert.ok(button);
+  const buttonCenter = toHudLocalPosition(node, button);
+  const action = component.dispatchPointerUp(buttonCenter.x, buttonCenter.y);
+
+  assert.equal(action, "inventory");
+  assert.equal(opened, 1);
+});
+
 test("VeilHudPanel surfaces reconnect, replay, resync, and degraded session indicators in the status card", () => {
   const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
   const state = createHudState();
