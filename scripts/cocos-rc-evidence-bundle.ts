@@ -105,6 +105,40 @@ interface CocosReleaseCandidateSnapshot {
   };
 }
 
+interface MainJourneyManifestStep {
+  id: string;
+  title: string;
+  status: EvidenceStatus;
+  notes: string;
+  evidence: string[];
+  flags: {
+    placeholder: boolean;
+    manualOnly: boolean;
+    reason: string;
+  };
+}
+
+interface MainJourneyManifest {
+  schemaVersion: 1;
+  candidate: {
+    name: string;
+    revision: {
+      branch: string;
+      commit: string;
+      shortCommit: string;
+    };
+    buildSurface: BuildSurface;
+  };
+  generatedAt: string;
+  summary: string;
+  linkedEvidence: {
+    snapshot: string;
+    primaryJourneyEvidence: string;
+    primaryJourneyEvidenceMarkdown: string;
+  };
+  canonicalSteps: MainJourneyManifestStep[];
+}
+
 interface BundleManifest {
   schemaVersion: 1;
   bundle: {
@@ -122,6 +156,8 @@ interface BundleManifest {
   artifacts: {
     primaryJourneyEvidence: string;
     primaryJourneyEvidenceMarkdown: string;
+    mainJourneyManifest: string;
+    mainJourneyManifestMarkdown: string;
     snapshot: string;
     summaryMarkdown: string;
     presentationSignoffSummaryMarkdown: string;
@@ -399,6 +435,100 @@ function readJsonFile<T>(filePath: string): T {
   return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
 }
 
+function isManualOnlyEvidence(evidence: string[]): boolean {
+  return !evidence.some((entry) => !entry.endsWith(".json"));
+}
+
+function buildMainJourneyManifest(snapshot: CocosReleaseCandidateSnapshot, artifacts: BundleManifest["artifacts"]): MainJourneyManifest {
+  const canonicalStepIds = new Map<string, string>([
+    ["lobby-entry", "Lobby / login"],
+    ["room-join", "Room join"],
+    ["map-explore", "Map exploration"],
+    ["first-battle", "Encounter battle"],
+    ["battle-settlement", "Settlement"],
+    ["reconnect-restore", "Reconnect / session recovery"]
+  ]);
+
+  const canonicalSteps = snapshot.journey
+    .filter((step) => canonicalStepIds.has(step.id))
+    .map((step) => {
+      const manualOnly = isManualOnlyEvidence(step.evidence);
+      return {
+        id: step.id,
+        title: canonicalStepIds.get(step.id) ?? step.title,
+        status: step.status,
+        notes: step.notes,
+        evidence: step.evidence,
+        flags: {
+          placeholder: manualOnly,
+          manualOnly,
+          reason: manualOnly
+            ? "Only runtime-diagnostics JSON evidence is attached for this step; add manual Creator/WeChat captures if the candidate review requires surface proof."
+            : "Surface-visible evidence is attached for this step."
+        }
+      };
+    });
+
+  return {
+    schemaVersion: 1,
+    candidate: {
+      name: snapshot.candidate.name,
+      revision: {
+        branch: snapshot.candidate.branch,
+        commit: snapshot.candidate.commit,
+        shortCommit: snapshot.candidate.shortCommit
+      },
+      buildSurface: snapshot.candidate.buildSurface
+    },
+    generatedAt: new Date().toISOString(),
+    summary:
+      "Candidate-scoped canonical Cocos main-journey manifest for lobby/login, room join, map exploration, encounter battle, settlement, and reconnect/session recovery.",
+    linkedEvidence: {
+      snapshot: toRepoRelative(artifacts.snapshot),
+      primaryJourneyEvidence: toRepoRelative(artifacts.primaryJourneyEvidence),
+      primaryJourneyEvidenceMarkdown: toRepoRelative(artifacts.primaryJourneyEvidenceMarkdown)
+    },
+    canonicalSteps
+  };
+}
+
+function renderMainJourneyManifestMarkdown(manifest: MainJourneyManifest): string {
+  const lines: string[] = [];
+  lines.push("# Cocos Main-Journey Evidence Manifest");
+  lines.push("");
+  lines.push(`- Candidate: \`${manifest.candidate.name}\``);
+  lines.push(`- Revision: \`${manifest.candidate.revision.shortCommit}\` (${manifest.candidate.revision.branch})`);
+  lines.push(`- Commit: \`${manifest.candidate.revision.commit}\``);
+  lines.push(`- Surface: \`${manifest.candidate.buildSurface}\``);
+  lines.push(`- Generated at: \`${manifest.generatedAt}\``);
+  lines.push("");
+  lines.push(manifest.summary);
+  lines.push("");
+  lines.push("## Linked Evidence");
+  lines.push("");
+  lines.push(`- RC snapshot: \`${manifest.linkedEvidence.snapshot}\``);
+  lines.push(`- Primary journey evidence JSON: \`${manifest.linkedEvidence.primaryJourneyEvidence}\``);
+  lines.push(`- Primary journey evidence Markdown: \`${manifest.linkedEvidence.primaryJourneyEvidenceMarkdown}\``);
+  lines.push("");
+  lines.push("## Canonical Main Journey");
+  lines.push("");
+  lines.push("| Step | Status | Evidence locations | Flags |");
+  lines.push("| --- | --- | --- | --- |");
+  for (const step of manifest.canonicalSteps) {
+    const evidence = step.evidence.length > 0 ? step.evidence.map((entry) => `\`${entry}\``).join("<br>") : "_none_";
+    const flags = [`placeholder=${step.flags.placeholder ? "yes" : "no"}`, `manual-only=${step.flags.manualOnly ? "yes" : "no"}`].join(", ");
+    lines.push(`| ${step.title} | \`${step.status}\` | ${evidence} | ${flags} |`);
+  }
+  lines.push("");
+  lines.push("## Flag Notes");
+  lines.push("");
+  for (const step of manifest.canonicalSteps) {
+    lines.push(`- ${step.title}: ${step.flags.reason}`);
+  }
+  lines.push("");
+  return `${lines.join("\n")}\n`;
+}
+
 function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts: BundleManifest["artifacts"]): string {
   const lines: string[] = [];
   lines.push("# Cocos RC Evidence Bundle");
@@ -414,6 +544,8 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
   lines.push("");
   lines.push(`- Primary journey evidence: \`${toRepoRelative(artifacts.primaryJourneyEvidence)}\``);
   lines.push(`- Primary journey markdown: \`${toRepoRelative(artifacts.primaryJourneyEvidenceMarkdown)}\``);
+  lines.push(`- Main-journey manifest: \`${toRepoRelative(artifacts.mainJourneyManifest)}\``);
+  lines.push(`- Main-journey manifest markdown: \`${toRepoRelative(artifacts.mainJourneyManifestMarkdown)}\``);
   lines.push(`- Snapshot: \`${toRepoRelative(artifacts.snapshot)}\``);
   lines.push(`- Presentation sign-off summary: \`${toRepoRelative(artifacts.presentationSignoffSummaryMarkdown)}\``);
   lines.push(`- Checklist: \`${toRepoRelative(artifacts.checklistMarkdown)}\``);
@@ -635,6 +767,8 @@ function main(): void {
   const snapshotPath = path.join(outputDir, `cocos-rc-snapshot-${baseName}.json`);
   const summaryMarkdownPath = path.join(outputDir, `cocos-rc-evidence-bundle-${baseName}.md`);
   const manifestPath = path.join(outputDir, `cocos-rc-evidence-bundle-${baseName}.json`);
+  const mainJourneyManifestPath = path.join(outputDir, `cocos-main-journey-manifest-${baseName}.json`);
+  const mainJourneyManifestMarkdownPath = path.join(outputDir, `cocos-main-journey-manifest-${baseName}.md`);
   const presentationSignoffSummaryPath = path.join(outputDir, `cocos-presentation-signoff-summary-${baseName}.md`);
   const checklistPath = path.join(outputDir, `cocos-rc-checklist-${baseName}.md`);
   const blockersPath = path.join(outputDir, `cocos-rc-blockers-${baseName}.md`);
@@ -650,13 +784,18 @@ function main(): void {
   const artifacts: BundleManifest["artifacts"] = {
     primaryJourneyEvidence: path.resolve(primaryJourneyEvidencePath),
     primaryJourneyEvidenceMarkdown: path.resolve(primaryJourneyEvidenceMarkdownPath),
+    mainJourneyManifest: path.resolve(mainJourneyManifestPath),
+    mainJourneyManifestMarkdown: path.resolve(mainJourneyManifestMarkdownPath),
     snapshot: path.resolve(snapshotPath),
     summaryMarkdown: path.resolve(summaryMarkdownPath),
     presentationSignoffSummaryMarkdown: path.resolve(presentationSignoffSummaryPath),
     checklistMarkdown: path.resolve(checklistPath),
     blockersMarkdown: path.resolve(blockersPath)
   };
+  const mainJourneyManifest = buildMainJourneyManifest(snapshot, artifacts);
 
+  writeJsonFile(mainJourneyManifestPath, mainJourneyManifest, args.force);
+  writeTextFile(mainJourneyManifestMarkdownPath, renderMainJourneyManifestMarkdown(mainJourneyManifest), args.force);
   writeTextFile(summaryMarkdownPath, renderBundleMarkdown(snapshot, artifacts), args.force);
   writeTextFile(presentationSignoffSummaryPath, renderPresentationSignoffSummary(snapshot, artifacts), args.force);
   writeTextFile(checklistPath, renderChecklist(snapshot, artifacts), args.force);
