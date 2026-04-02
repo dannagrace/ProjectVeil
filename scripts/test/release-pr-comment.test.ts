@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 
 import { renderPrComment } from "../release-pr-comment.ts";
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function createReleaseGateReport() {
   return {
     generatedAt: "2026-03-30T00:00:00.000Z",
@@ -94,7 +98,28 @@ function createReleaseHealthReport(
         summary: "thresholds passed",
         details: []
       }
-    ]
+    ],
+    triage: {
+      blockers: [],
+      warnings: [
+        {
+          signalId: "ci-trend",
+          summary: "release-gate:wechat-release remained failing",
+          nextStep:
+            "Open `artifacts/release-readiness/ci-trend-summary.json` and compare the new or ongoing regressions against the current runtime and release-gate artifacts before retrying the affected job."
+        },
+        ...(readinessTrendSignal
+          ? [
+              {
+                signalId: "readiness-trend",
+                summary: readinessTrendSignal.summary,
+                nextStep:
+                  "Open `artifacts/release-readiness/release-readiness-dashboard.json` and `artifacts/release-readiness/release-readiness-dashboard-prev.json` to compare the candidate blockers or pending checks before advancing the next revision."
+              }
+            ]
+          : [])
+      ]
+    }
   };
 }
 
@@ -120,9 +145,16 @@ test("renderPrComment combines readiness and non-duplicative health sections", (
   assert.match(markdown, /\*\*CI trend summary\*\*: `WARN` release-gate:wechat-release remained failing/);
   assert.match(
     markdown,
+    /Next step: Open `artifacts\/release-readiness\/ci-trend-summary\.json` and compare the new or ongoing regressions against the current runtime and release-gate artifacts before retrying the affected job\./
+  );
+  assert.match(
+    markdown,
     /\*\*Candidate readiness trend\*\*: `WARN` Candidate readiness regressed from ready at prev9876 to blocked at abc1234\./
   );
-  assert.doesNotMatch(markdown, /\*\*Candidate readiness trend\*\*: `WARN` current=abc1234:blocked/);
+  assert.match(
+    markdown,
+    /Next step: Open `artifacts\/release-readiness\/release-readiness-dashboard\.json` and `artifacts\/release-readiness\/release-readiness-dashboard-prev\.json` to compare the candidate blockers or pending checks before advancing the next revision\./
+  );
   assert.match(markdown, /\*\*Coverage summary\*\*: `PASS` thresholds passed/);
   assert.doesNotMatch(markdown, /\*\*Release gate summary\*\*: `FAIL`/);
 });
@@ -180,4 +212,19 @@ test("renderPrComment keeps readiness-trend markdown stable for edge-case summar
       assert.doesNotMatch(markdown, omittedLine, scenario.name);
     }
   }
+});
+
+test("renderPrComment and release-health triage share the same readiness-trend reviewer contract", () => {
+  const report = createReleaseHealthReport({
+    status: "warn",
+    summary: "Candidate readiness regressed from ready at prev9876 to blocked at abc1234.",
+    details: ["current=abc1234:blocked", "previous=prev9876:ready"]
+  });
+
+  const markdown = renderPrComment(createReleaseGateReport(), report);
+  const readinessTriage = report.triage.warnings.find((entry) => entry.signalId === "readiness-trend");
+
+  assert.ok(readinessTriage);
+  assert.match(markdown, new RegExp(escapeRegExp(readinessTriage.summary)));
+  assert.match(markdown, new RegExp(escapeRegExp(readinessTriage.nextStep)));
 });

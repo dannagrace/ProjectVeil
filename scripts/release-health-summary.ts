@@ -3,6 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  formatReadinessTrendHealthySummary,
+  formatReadinessTrendNoBaselineSummary,
+  formatReadinessTrendRegressionSummary,
+  formatReadinessTrendUnchangedUnreadySummary,
+  type ReadinessDecision
+} from "./release-reporting-contract.ts";
+
 type HealthStatus = "healthy" | "warning" | "blocking";
 type FindingSeverity = "blocker" | "warning" | "info";
 type SignalStatus = "pass" | "warn" | "fail";
@@ -618,6 +626,12 @@ function getReadinessDecisionRank(decision: ReleaseReadinessDashboardReport["goN
   return 0;
 }
 
+function normalizeReadinessDecision(
+  decision: ReleaseReadinessDashboardReport["goNoGo"] extends { decision?: infer T } ? T : never
+): ReadinessDecision {
+  return decision === "ready" || decision === "pending" ? decision : "blocked";
+}
+
 function getDashboardCandidateRevision(report: ReleaseReadinessDashboardReport | undefined): string {
   return report?.goNoGo?.candidateRevision ?? "<unverified>";
 }
@@ -652,13 +666,13 @@ function evaluateReadinessTrendSignal(
 
   const currentReport = readJsonFile<ReleaseReadinessDashboardReport>(currentPath);
   const currentSource = createSource(currentPath, currentReport.generatedAt);
-  const currentDecision = currentReport.goNoGo?.decision ?? "blocked";
+  const currentDecision = normalizeReadinessDecision(currentReport.goNoGo?.decision);
   const currentCandidate = getDashboardCandidateRevision(currentReport);
   const currentSummary = currentReport.goNoGo?.summary?.trim() || `Current candidate is ${currentDecision}.`;
 
   if (!previousPath || !fs.existsSync(previousPath)) {
     const status: SignalStatus = currentDecision === "ready" ? "pass" : "warn";
-    const summary = `No previous candidate dashboard was available; current candidate ${currentCandidate} is ${currentDecision}.`;
+    const summary = formatReadinessTrendNoBaselineSummary(currentCandidate, currentDecision);
     return {
       signal: buildSignal("readiness-trend", "Candidate readiness trend", status, summary, [currentSummary], currentSource),
       findings: [
@@ -674,7 +688,7 @@ function evaluateReadinessTrendSignal(
   }
 
   const previousReport = readJsonFile<ReleaseReadinessDashboardReport>(previousPath);
-  const previousDecision = previousReport.goNoGo?.decision ?? "blocked";
+  const previousDecision = normalizeReadinessDecision(previousReport.goNoGo?.decision);
   const previousCandidate = getDashboardCandidateRevision(previousReport);
   const previousSummary = previousReport.goNoGo?.summary?.trim() || `Previous candidate was ${previousDecision}.`;
   const currentRank = getReadinessDecisionRank(currentDecision);
@@ -687,7 +701,7 @@ function evaluateReadinessTrendSignal(
   ];
 
   if (currentRank < previousRank) {
-    const summary = `Candidate readiness regressed from ${previousDecision} at ${previousCandidate} to ${currentDecision} at ${currentCandidate}.`;
+    const summary = formatReadinessTrendRegressionSummary(previousDecision, previousCandidate, currentDecision, currentCandidate);
     return {
       signal: buildSignal("readiness-trend", "Candidate readiness trend", "warn", summary, details, currentSource),
       findings: [buildFinding("readiness-trend:regressed", "readiness-trend", "warning", summary, currentSource)]
@@ -695,17 +709,14 @@ function evaluateReadinessTrendSignal(
   }
 
   if (currentRank === previousRank && currentDecision !== "ready") {
-    const summary = `Candidate readiness remains ${currentDecision} across ${previousCandidate} and ${currentCandidate}.`;
+    const summary = formatReadinessTrendUnchangedUnreadySummary(currentDecision, previousCandidate, currentCandidate);
     return {
       signal: buildSignal("readiness-trend", "Candidate readiness trend", "warn", summary, details, currentSource),
       findings: [buildFinding("readiness-trend:unchanged-unready", "readiness-trend", "warning", summary, currentSource)]
     };
   }
 
-  const summary =
-    currentRank > previousRank
-      ? `Candidate readiness improved from ${previousDecision} at ${previousCandidate} to ${currentDecision} at ${currentCandidate}.`
-      : `Candidate readiness remains ready across ${previousCandidate} and ${currentCandidate}.`;
+  const summary = formatReadinessTrendHealthySummary(previousDecision, previousCandidate, currentDecision, currentCandidate);
   return {
     signal: buildSignal("readiness-trend", "Candidate readiness trend", "pass", summary, details, currentSource),
     findings: [buildFinding("readiness-trend:passed", "readiness-trend", "info", summary, currentSource)]
@@ -1040,7 +1051,7 @@ function buildReadinessTrendTriage(
   }
 
   const currentReport = readJsonFile<ReleaseReadinessDashboardReport>(currentPath);
-  const currentDecision = currentReport.goNoGo?.decision ?? "blocked";
+  const currentDecision = normalizeReadinessDecision(currentReport.goNoGo?.decision);
   const currentCandidate = getDashboardCandidateRevision(currentReport);
 
   if (!previousPath || !fs.existsSync(previousPath)) {
@@ -1053,7 +1064,7 @@ function buildReadinessTrendTriage(
         "readiness-trend",
         "warning",
         "Candidate readiness trend",
-        `No previous candidate dashboard is available; current candidate ${currentCandidate} is ${currentDecision}.`,
+        formatReadinessTrendNoBaselineSummary(currentCandidate, currentDecision),
         "Keep publishing the history artifact for each candidate revision so future readiness deltas can be compared.",
         [currentReport.goNoGo?.summary?.trim() || `Current candidate is ${currentDecision}.`],
         createArtifactReference("Current release readiness dashboard", currentPath, currentReport.generatedAt)
@@ -1062,7 +1073,7 @@ function buildReadinessTrendTriage(
   }
 
   const previousReport = readJsonFile<ReleaseReadinessDashboardReport>(previousPath);
-  const previousDecision = previousReport.goNoGo?.decision ?? "blocked";
+  const previousDecision = normalizeReadinessDecision(previousReport.goNoGo?.decision);
   const previousCandidate = getDashboardCandidateRevision(previousReport);
   const currentRank = getReadinessDecisionRank(currentDecision);
   const previousRank = getReadinessDecisionRank(previousDecision);
@@ -1073,8 +1084,8 @@ function buildReadinessTrendTriage(
 
   const summary =
     currentRank < previousRank
-      ? `Candidate readiness regressed from ${previousDecision} at ${previousCandidate} to ${currentDecision} at ${currentCandidate}.`
-      : `Candidate readiness remains ${currentDecision} across ${previousCandidate} and ${currentCandidate}.`;
+      ? formatReadinessTrendRegressionSummary(previousDecision, previousCandidate, currentDecision, currentCandidate)
+      : formatReadinessTrendUnchangedUnreadySummary(currentDecision, previousCandidate, currentCandidate);
 
   return [
     buildTriageEntry(
