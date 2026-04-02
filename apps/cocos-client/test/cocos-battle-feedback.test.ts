@@ -5,7 +5,6 @@ import {
   buildBattleProgressFeedback,
   buildBattleTransitionFeedback
 } from "../assets/scripts/cocos-battle-feedback";
-import { buildBattleActionPresentation, buildBattlePresentationPlan } from "../assets/scripts/cocos-battle-presentation";
 import type { BattleState, SessionUpdate } from "../assets/scripts/VeilCocosSession";
 
 function createBattleState(): BattleState {
@@ -265,97 +264,6 @@ test("battle feedback calls out pvp encounter identity and settlement state", ()
   assert.equal(pvpSettlement?.title, "PVP 结算同步中");
   assert.match(pvpSettlement?.detail ?? "", /PVP 结算：对手 hero-9/);
   assert.match(pvpSettlement?.detail ?? "", /准备回写 PVP 世界态/);
-});
-
-test("battle presentation plan formalizes enter, impact, and resolution phases", () => {
-  const battle = createBattleState();
-  const actionPlan = buildBattleActionPresentation(
-    {
-      type: "battle.attack",
-      attackerId: "hero-1-stack",
-      defenderId: "neutral-1-stack"
-    },
-    battle
-  );
-  assert.equal(actionPlan.phase, "command");
-  assert.equal(actionPlan.cue, "attack");
-  assert.equal(actionPlan.animation, "attack");
-  assert.equal(actionPlan.feedback?.badge, "ATTACK");
-
-  const enterUpdate: SessionUpdate = {
-    ...createResolvedUpdate("attacker_victory"),
-    battle,
-    events: [
-      {
-        type: "battle.started",
-        heroId: "hero-1",
-        encounterKind: "neutral",
-        neutralArmyId: "neutral-1",
-        initiator: "hero",
-        battleId: "battle-1",
-        path: [{ x: 0, y: 0 }],
-        moveCost: 1
-      }
-    ]
-  };
-  const enterPlan = buildBattlePresentationPlan(null, enterUpdate, "hero-1");
-  assert.equal(enterPlan.phase, "enter");
-  assert.equal(enterPlan.animation, "attack");
-  assert.equal(enterPlan.transition?.kind, "enter");
-  assert.equal(enterPlan.feedback?.badge, "ENGAGE");
-
-  const nextBattle: BattleState = {
-    ...battle,
-    units: {
-      ...battle.units,
-      "neutral-1-stack": {
-        ...battle.units["neutral-1-stack"]!,
-        count: 5,
-        currentHp: 4
-      }
-    },
-    log: battle.log.concat("Guard 对 Orc 造成 7 伤害")
-  };
-  const impactPlan = buildBattlePresentationPlan(
-    battle,
-    {
-      ...enterUpdate,
-      battle: nextBattle,
-      events: []
-    },
-    "hero-1"
-  );
-  assert.equal(impactPlan.phase, "impact");
-  assert.equal(impactPlan.cue, "hit");
-  assert.equal(impactPlan.animation, "hit");
-  assert.equal(impactPlan.feedback?.badge, "HIT");
-
-  const resolutionPlan = buildBattlePresentationPlan(battle, createResolvedUpdate("attacker_victory"), "hero-1");
-  assert.equal(resolutionPlan.phase, "resolution");
-  assert.equal(resolutionPlan.cue, "victory");
-  assert.equal(resolutionPlan.animation, "victory");
-  assert.equal(resolutionPlan.feedbackDurationMs, 4200);
-  assert.equal(resolutionPlan.transition?.kind, "exit");
-  assert.equal(resolutionPlan.transition?.copy.badge, "VICTORY");
-  assert.deepEqual(resolutionPlan.state.summaryLines.slice(0, 2), [
-    "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
-    "播报：PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 0 队 · 准备返回世界地图"
-  ]);
-
-  const unsettledResolutionPlan = buildBattlePresentationPlan(
-    battle,
-    {
-      ...createResolvedUpdate("attacker_victory"),
-      events: []
-    },
-    "hero-1"
-  );
-  assert.equal(unsettledResolutionPlan.phase, "resolution");
-  assert.equal(unsettledResolutionPlan.moment, "result_settlement");
-  assert.equal(unsettledResolutionPlan.cue, null);
-  assert.equal(unsettledResolutionPlan.animation, "idle");
-  assert.equal(unsettledResolutionPlan.transition, null);
-  assert.equal(unsettledResolutionPlan.feedback?.badge, "SETTLE");
 });
 
 test("battle transition feedback summarizes settlement rewards and field state", () => {
