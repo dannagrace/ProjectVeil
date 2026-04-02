@@ -11,7 +11,12 @@ interface TestLogger {
 }
 
 interface TestProcess {
-  handlers: Partial<Record<"SIGINT" | "SIGTERM", () => void>>;
+  handlers: Partial<
+    Record<
+      "SIGINT" | "SIGTERM" | "unhandledRejection" | "uncaughtException",
+      (() => void) | ((reason: unknown) => void) | ((error: Error) => void)
+    >
+  >;
   exitCodes: number[];
 }
 
@@ -51,6 +56,9 @@ function createProcessStub(): DevServerBootstrapDependencies["process"] & TestPr
     handlers,
     exitCodes,
     once(event, listener) {
+      handlers[event] = listener;
+    },
+    on(event, listener) {
       handlers[event] = listener;
     },
     exit(code) {
@@ -201,6 +209,12 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       assert.equal(app, base.expressApp);
       base.routeCalls.push("runtime-observability");
     },
+    registerAdminRoutes: (app, store, gameServer) => {
+      assert.equal(app, base.expressApp);
+      assert.equal(store, memoryStore);
+      assert.equal(gameServer, base.gameServer);
+      base.routeCalls.push("admin");
+    },
     createGameServer: () => base.gameServer,
     logger: base.logger,
     process: base.process,
@@ -225,7 +239,8 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     "player-accounts",
     "lobby",
     "matchmaking",
-    "runtime-observability"
+    "runtime-observability",
+    "admin"
   ]);
   assert.deepEqual(base.gameServer.defineCalls.map((call) => call.name), ["veil"]);
   assert.deepEqual(base.gameServer.filterByCalls, [["logicalRoomId"]]);
@@ -244,6 +259,8 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   ]);
   assert.ok(base.process.handlers.SIGINT);
   assert.ok(base.process.handlers.SIGTERM);
+  assert.ok(base.process.handlers.unhandledRejection);
+  assert.ok(base.process.handlers.uncaughtException);
 
   base.process.handlers.SIGINT?.();
   await flushAsyncWork();
@@ -251,6 +268,98 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.equal(memoryStore.closeCalls, 1);
   assert.equal(configCenterStore.closeCalls, 1);
   assert.deepEqual(base.process.exitCodes, [0]);
+});
+
+test("dev server logs process-level failures, closes stores, and exits non-zero", async () => {
+  const base = createBaseDependencies();
+  const configCenterStore = createConfigCenterStore("filesystem");
+  const memoryStore = createMemoryStore();
+  const rejection = new Error("boom");
+
+  await startDevServer(3404, "127.0.0.1", {
+    readMySqlPersistenceConfig: () => null,
+    createFileSystemConfigCenterStore: () => configCenterStore,
+    createMemoryRoomSnapshotStore: () => memoryStore,
+    configureRoomSnapshotStore: () => undefined,
+    createTransport: () => base.transport,
+    registerAuthRoutes: () => undefined,
+    registerConfigCenterRoutes: () => undefined,
+    registerConfigViewerRoutes: () => undefined,
+    registerPlayerAccountRoutes: () => undefined,
+    registerLobbyRoutes: () => undefined,
+    registerMatchmakingRoutes: () => undefined,
+    registerRuntimeObservabilityRoutes: () => undefined,
+    registerAdminRoutes: () => undefined,
+    createGameServer: () => base.gameServer,
+    logger: base.logger,
+    process: base.process,
+    setInterval: () => {
+      throw new Error("setInterval should not be used for in-memory startup");
+    },
+    clearInterval: () => undefined,
+    isMySqlSnapshotStore: () => false
+  });
+
+  const unhandledRejection = base.process.handlers.unhandledRejection as ((reason: unknown) => void) | undefined;
+  assert.ok(unhandledRejection);
+  unhandledRejection?.(rejection);
+  await flushAsyncWork();
+
+  assert.equal(memoryStore.closeCalls, 1);
+  assert.equal(configCenterStore.closeCalls, 1);
+  assert.deepEqual(base.logger.errors, [
+    {
+      message: "Unhandled promise rejection in dev server",
+      error: rejection
+    }
+  ]);
+  assert.deepEqual(base.process.exitCodes, [1]);
+});
+
+test("dev server logs uncaught exceptions, closes stores, and exits non-zero", async () => {
+  const base = createBaseDependencies();
+  const configCenterStore = createConfigCenterStore("filesystem");
+  const memoryStore = createMemoryStore();
+  const exception = new Error("crash");
+
+  await startDevServer(3505, "127.0.0.1", {
+    readMySqlPersistenceConfig: () => null,
+    createFileSystemConfigCenterStore: () => configCenterStore,
+    createMemoryRoomSnapshotStore: () => memoryStore,
+    configureRoomSnapshotStore: () => undefined,
+    createTransport: () => base.transport,
+    registerAuthRoutes: () => undefined,
+    registerConfigCenterRoutes: () => undefined,
+    registerConfigViewerRoutes: () => undefined,
+    registerPlayerAccountRoutes: () => undefined,
+    registerLobbyRoutes: () => undefined,
+    registerMatchmakingRoutes: () => undefined,
+    registerRuntimeObservabilityRoutes: () => undefined,
+    registerAdminRoutes: () => undefined,
+    createGameServer: () => base.gameServer,
+    logger: base.logger,
+    process: base.process,
+    setInterval: () => {
+      throw new Error("setInterval should not be used for in-memory startup");
+    },
+    clearInterval: () => undefined,
+    isMySqlSnapshotStore: () => false
+  });
+
+  const uncaughtException = base.process.handlers.uncaughtException as ((error: Error) => void) | undefined;
+  assert.ok(uncaughtException);
+  uncaughtException?.(exception);
+  await flushAsyncWork();
+
+  assert.equal(memoryStore.closeCalls, 1);
+  assert.equal(configCenterStore.closeCalls, 1);
+  assert.deepEqual(base.logger.errors, [
+    {
+      message: "Uncaught exception in dev server",
+      error: exception
+    }
+  ]);
+  assert.deepEqual(base.process.exitCodes, [1]);
 });
 
 test("dev server falls back to in-memory persistence and warns when schema migrations are pending", async () => {
@@ -294,6 +403,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
+    registerAdminRoutes: () => undefined,
     createGameServer: () => base.gameServer,
     logger: base.logger,
     process: base.process,
@@ -369,6 +479,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
+    registerAdminRoutes: () => undefined,
     createGameServer: () => base.gameServer,
     logger: base.logger,
     process: base.process,

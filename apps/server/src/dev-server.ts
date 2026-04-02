@@ -47,6 +47,8 @@ interface DevServerLogger {
 
 interface DevServerProcess {
   once(event: "SIGINT" | "SIGTERM", listener: () => void): void;
+  on(event: "unhandledRejection", listener: (reason: unknown) => void): void;
+  on(event: "uncaughtException", listener: (error: Error) => void): void;
   exit(code: number): never | void;
 }
 
@@ -62,6 +64,7 @@ interface DevServerConfigCenterStore {
 
 interface DevServerRoomSnapshotStore {
   close(): Promise<void>;
+  clearAll?(): void;
 }
 
 interface DevServerMySqlSnapshotStore extends DevServerRoomSnapshotStore {
@@ -235,18 +238,37 @@ export async function startDevServer(
     await Promise.all([effectiveSnapshotStore.close(), configCenterStore.close()]);
   };
 
+  let shutdownStarted = false;
+  const shutdown = (exitCode: number, message?: string, error?: unknown): void => {
+    if (shutdownStarted) {
+      return;
+    }
+    shutdownStarted = true;
+
+    if (message) {
+      deps.logger.error(message, error);
+    }
+
+    void closeStore().finally(() => deps.process.exit(exitCode));
+  };
+
   deps.process.once("SIGINT", () => {
-    void closeStore().finally(() => deps.process.exit(0));
+    shutdown(0);
   });
   deps.process.once("SIGTERM", () => {
-    void closeStore().finally(() => deps.process.exit(0));
+    shutdown(0);
+  });
+  deps.process.on("unhandledRejection", (reason) => {
+    shutdown(1, "Unhandled promise rejection in dev server", reason);
+  });
+  deps.process.on("uncaughtException", (error) => {
+    shutdown(1, "Uncaught exception in dev server", error);
   });
 }
 
 if (import.meta.main) {
   void startDevServer();
+  // Keep the process alive — the Colyseus WebSocket transport may unref its
+  // handles under tsx, causing Node to exit once the event loop drains.
+  setInterval(() => {}, 30_000);
 }
-
-// Keep the process alive — the Colyseus WebSocket transport may unref its
-// handles under tsx, causing Node to exit once the event loop drains.
-setInterval(() => {}, 30_000);
