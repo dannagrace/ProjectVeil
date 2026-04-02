@@ -278,6 +278,21 @@ const SURFACE_RULES: SurfaceRule[] = [
     prefixes: ["apps/cocos-client/"]
   },
   {
+    id: "cocos-release-evidence",
+    label: "Cocos release evidence",
+    rationale: "Canonical main-client journey evidence and RC bundle scripts should keep the release-facing artifact path executable.",
+    requiredStepIds: ["release-cocos-rc-bundle"],
+    optionalStepIds: ["validate-wechat-rc"],
+    humanOverride:
+      "If the change only affects one evidence stage, keep the bundle rebuild as the default end-to-end check and widen to WeChat RC validation only when the touched path changes imported device evidence semantics.",
+    exact: [
+      "scripts/cocos-primary-client-journey-evidence.ts",
+      "scripts/cocos-rc-evidence-bundle.ts",
+      "scripts/cocos-release-candidate-snapshot.ts",
+      "docs/cocos-release-evidence-template.md"
+    ]
+  },
+  {
     id: "release-packaging",
     label: "Release packaging or candidate evidence",
     rationale: "Packaging and reviewer-facing candidate assembly should point back to the existing WeChat and release bundle commands.",
