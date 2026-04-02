@@ -14,6 +14,7 @@ interface Args {
   limit: number;
   outputPath?: string;
   markdownOutputPath?: string;
+  compareCurrent?: boolean;
 }
 
 interface SourceRunMetadata {
@@ -84,6 +85,7 @@ interface CandidateSignalSnapshot {
   label: string;
   status: ReviewerSignalStatus;
   summary: string;
+  present: boolean;
 }
 
 interface CandidateTrendEntry {
@@ -117,6 +119,63 @@ interface SignalTrendReport {
   direction: TrendDirection;
   summary: string;
   history: string[];
+}
+
+interface BaselineSignalExpectation {
+  id: string;
+  label: string;
+  expectedStatus: ReviewerSignalStatus;
+  presentCount: number;
+  candidateCount: number;
+  candidateRevisions: string[];
+  statuses: Array<{
+    candidateRevision: string;
+    status: ReviewerSignalStatus;
+    present: boolean;
+  }>;
+}
+
+type ComparisonFindingCategory = "blocker-count" | "warning-count" | "missing-evidence" | "signal-regression";
+type ComparisonFindingSeverity = "warning" | "blocking";
+
+interface ReleaseHealthTrendComparisonFinding {
+  id: string;
+  category: ComparisonFindingCategory;
+  severity: ComparisonFindingSeverity;
+  signalId?: string;
+  summary: string;
+  currentCandidate: string;
+  baselineCandidates: string[];
+  currentValue?: number | string;
+  baselineValue?: number | string;
+}
+
+export interface ReleaseHealthTrendBaselineComparisonReport {
+  schemaVersion: 1;
+  generatedAt: string;
+  summary: {
+    status: "pass" | "warn" | "fail";
+    currentCandidate: string;
+    baselineCandidateCount: number;
+    baselineCandidates: string[];
+    baselineSelection: "non-blocking-history" | "all-history-fallback";
+    totalFindings: number;
+    blockingFindings: number;
+    warningFindings: number;
+  };
+  inputs: {
+    artifactDirs: string[];
+    cacheDir?: string;
+    limit: number;
+  };
+  current: CandidateTrendEntry;
+  baseline: {
+    candidates: CandidateTrendEntry[];
+    blockerCountMedian: number;
+    warningCountMedian: number;
+    signalExpectations: BaselineSignalExpectation[];
+  };
+  findings: ReleaseHealthTrendComparisonFinding[];
 }
 
 export interface ReleaseHealthTrendBaselineReport {
@@ -160,6 +219,8 @@ const RELEASE_HEALTH_FILENAME = "release-health-summary.json";
 const RELEASE_GATE_FILENAME = "release-gate-summary.json";
 const DASHBOARD_FILENAME = "release-readiness-dashboard.json";
 const SOURCE_RUN_FILENAME = "source-run.json";
+const COMPARE_OUTPUT_FILENAME = "release-health-trend-compare.json";
+const COMPARE_MARKDOWN_OUTPUT_FILENAME = "release-health-trend-compare.md";
 
 const SIGNAL_SPECS = [
   {
@@ -170,7 +231,8 @@ const SIGNAL_SPECS = [
         id: "release-health",
         label: "Release health",
         status: candidate.releaseHealth.status === "healthy" ? "pass" : candidate.releaseHealth.status === "warning" ? "warn" : "fail",
-        summary: `Release health is ${candidate.releaseHealth.status}.`
+        summary: `Release health is ${candidate.releaseHealth.status}.`,
+        present: true
       };
     }
   },
@@ -183,7 +245,8 @@ const SIGNAL_SPECS = [
         label: "Candidate readiness",
         status:
           candidate.dashboard.decision === "ready" ? "pass" : candidate.dashboard.decision === "pending" ? "warn" : "fail",
-        summary: candidate.dashboard.summary
+        summary: candidate.dashboard.summary,
+        present: true
       };
     }
   },
@@ -234,6 +297,7 @@ function parseArgs(argv: string[]): Args {
   let limit = 5;
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
+  let compareCurrent = false;
 
   for (let index = 2; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -268,6 +332,10 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--compare-current") {
+      compareCurrent = true;
+      continue;
+    }
 
     fail(`Unknown argument: ${arg}`);
   }
@@ -277,7 +345,8 @@ function parseArgs(argv: string[]): Args {
     ...(cacheDir ? { cacheDir } : {}),
     limit,
     ...(outputPath ? { outputPath } : {}),
-    ...(markdownOutputPath ? { markdownOutputPath } : {})
+    ...(markdownOutputPath ? { markdownOutputPath } : {}),
+    compareCurrent
   };
 }
 
@@ -311,7 +380,8 @@ function findSignal(
       id,
       label,
       status: fallbackStatus,
-      summary: fallbackSummary
+      summary: fallbackSummary,
+      present: false
     }
   );
 }
@@ -397,7 +467,8 @@ function collectSignals(
       id: gate.id,
       label: gate.label,
       status: normalizeGateStatus(gate.status),
-      summary: gate.summary?.trim() || `${gate.label} is ${gate.status ?? "unknown"}.`
+      summary: gate.summary?.trim() || `${gate.label} is ${gate.status ?? "unknown"}.`,
+      present: true
     });
   }
 
@@ -409,7 +480,8 @@ function collectSignals(
       id: gate.id,
       label: gate.label,
       status: gate.status === "pass" || gate.status === "warn" ? gate.status : "fail",
-      summary: gate.summary?.trim() || `${gate.label} is ${gate.status ?? "unknown"}.`
+      summary: gate.summary?.trim() || `${gate.label} is ${gate.status ?? "unknown"}.`,
+      present: true
     });
   }
 
@@ -522,7 +594,7 @@ function collectArtifactDirs(args: Args): string[] {
   return [...new Set(candidates)];
 }
 
-export function buildReleaseHealthTrendBaselineReport(args: Args): ReleaseHealthTrendBaselineReport {
+function collectSortedCandidates(args: Args): CandidateTrendEntry[] {
   const artifactDirs = collectArtifactDirs(args);
   const candidates = artifactDirs.map((artifactDir) => loadCandidateArtifactDir(artifactDir));
   const sortedCandidates = candidates
@@ -533,6 +605,64 @@ export function buildReleaseHealthTrendBaselineReport(args: Args): ReleaseHealth
     fail("No candidate artifacts were available after sorting.");
   }
 
+  return sortedCandidates;
+}
+
+function calculateMedian(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+  const sorted = [...values].sort((left, right) => left - right);
+  const middleIndex = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) {
+    return sorted[middleIndex] ?? 0;
+  }
+  return Math.round(((sorted[middleIndex - 1] ?? 0) + (sorted[middleIndex] ?? 0)) / 2);
+}
+
+function chooseBaselineCandidates(sortedCandidates: CandidateTrendEntry[]): {
+  selection: "non-blocking-history" | "all-history-fallback";
+  candidates: CandidateTrendEntry[];
+} {
+  const history = sortedCandidates.slice(1);
+  const nonBlocking = history.filter((candidate) => candidate.releaseHealth.status !== "blocking");
+  if (nonBlocking.length > 0) {
+    return {
+      selection: "non-blocking-history",
+      candidates: nonBlocking
+    };
+  }
+  return {
+    selection: "all-history-fallback",
+    candidates: history
+  };
+}
+
+function buildBaselineSignalExpectation(spec: (typeof SIGNAL_SPECS)[number], baselineCandidates: CandidateTrendEntry[]): BaselineSignalExpectation {
+  const statuses = baselineCandidates.map((candidate) => spec.select(candidate));
+  const passCount = statuses.filter((signal) => signal.status === "pass").length;
+  const warnOrBetterCount = statuses.filter((signal) => getSignalRank(signal.status) >= getSignalRank("warn")).length;
+  const required = Math.ceil(baselineCandidates.length / 2);
+  const expectedStatus =
+    passCount >= required ? "pass" : warnOrBetterCount >= required ? "warn" : "fail";
+
+  return {
+    id: spec.id,
+    label: spec.label,
+    expectedStatus,
+    presentCount: statuses.filter((signal) => signal.present).length,
+    candidateCount: baselineCandidates.length,
+    candidateRevisions: baselineCandidates.map((candidate) => candidate.candidateRevision),
+    statuses: baselineCandidates.map((candidate, index) => ({
+      candidateRevision: candidate.candidateRevision,
+      status: statuses[index]?.status ?? "fail",
+      present: statuses[index]?.present ?? false
+    }))
+  };
+}
+
+export function buildReleaseHealthTrendBaselineReport(args: Args): ReleaseHealthTrendBaselineReport {
+  const sortedCandidates = collectSortedCandidates(args);
   const [current, previous] = sortedCandidates;
   const currentBlockersById = new Map(current.blockers.map((blocker) => [blocker.id, blocker]));
   const previousBlockersById = new Map((previous?.blockers ?? []).map((blocker) => [blocker.id, blocker]));
@@ -590,6 +720,112 @@ export function buildReleaseHealthTrendBaselineReport(args: Args): ReleaseHealth
     },
     signalTrends,
     candidates: sortedCandidates
+  };
+}
+
+export function buildReleaseHealthTrendBaselineComparisonReport(args: Args): ReleaseHealthTrendBaselineComparisonReport {
+  const sortedCandidates = collectSortedCandidates(args);
+  const [current] = sortedCandidates;
+  const baselineSelection = chooseBaselineCandidates(sortedCandidates);
+
+  if (baselineSelection.candidates.length === 0) {
+    fail("Comparison mode requires at least one baseline candidate in addition to the current candidate.");
+  }
+
+  const blockerCountMedian = calculateMedian(baselineSelection.candidates.map((candidate) => candidate.releaseHealth.blockerCount));
+  const warningCountMedian = calculateMedian(baselineSelection.candidates.map((candidate) => candidate.releaseHealth.warningCount));
+  const signalExpectations = SIGNAL_SPECS.map((spec) => buildBaselineSignalExpectation(spec, baselineSelection.candidates));
+  const findings: ReleaseHealthTrendComparisonFinding[] = [];
+  const baselineCandidates = baselineSelection.candidates.map((candidate) => candidate.candidateRevision);
+
+  if (current.releaseHealth.blockerCount > blockerCountMedian) {
+    findings.push({
+      id: "blocker-count-regressed",
+      category: "blocker-count",
+      severity: "blocking",
+      summary: `Current candidate ${current.candidateRevision} has ${current.releaseHealth.blockerCount} blockers versus a baseline median of ${blockerCountMedian}.`,
+      currentCandidate: current.candidateRevision,
+      baselineCandidates,
+      currentValue: current.releaseHealth.blockerCount,
+      baselineValue: blockerCountMedian
+    });
+  }
+
+  if (current.releaseHealth.warningCount > warningCountMedian) {
+    findings.push({
+      id: "warning-count-regressed",
+      category: "warning-count",
+      severity: "warning",
+      summary: `Current candidate ${current.candidateRevision} has ${current.releaseHealth.warningCount} warnings versus a baseline median of ${warningCountMedian}.`,
+      currentCandidate: current.candidateRevision,
+      baselineCandidates,
+      currentValue: current.releaseHealth.warningCount,
+      baselineValue: warningCountMedian
+    });
+  }
+
+  for (const expectation of signalExpectations) {
+    const currentSignal = SIGNAL_SPECS.find((spec) => spec.id === expectation.id)?.select(current);
+    if (!currentSignal) {
+      continue;
+    }
+    if (!currentSignal.present && expectation.presentCount >= Math.ceil(expectation.candidateCount / 2)) {
+      findings.push({
+        id: `missing-evidence:${expectation.id}`,
+        category: "missing-evidence",
+        severity: "warning",
+        signalId: expectation.id,
+        summary: `${expectation.label} is missing for ${current.candidateRevision}; it was present in ${expectation.presentCount}/${expectation.candidateCount} baseline candidates.`,
+        currentCandidate: current.candidateRevision,
+        baselineCandidates
+      });
+      continue;
+    }
+    if (getSignalRank(currentSignal.status) < getSignalRank(expectation.expectedStatus)) {
+      findings.push({
+        id: `signal-regression:${expectation.id}`,
+        category: "signal-regression",
+        severity: expectation.id === "release-health" || expectation.id === "candidate-readiness" ? "blocking" : "warning",
+        signalId: expectation.id,
+        summary: `${expectation.label} is ${currentSignal.status.toUpperCase()} for ${current.candidateRevision}; baseline expectation from ${baselineCandidates.join(", ")} is ${expectation.expectedStatus.toUpperCase()}.`,
+        currentCandidate: current.candidateRevision,
+        baselineCandidates,
+        currentValue: currentSignal.status,
+        baselineValue: expectation.expectedStatus
+      });
+    }
+  }
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    summary: {
+      status: findings.some((finding) => finding.severity === "blocking")
+        ? "fail"
+        : findings.length > 0
+          ? "warn"
+          : "pass",
+      currentCandidate: current.candidateRevision,
+      baselineCandidateCount: baselineSelection.candidates.length,
+      baselineCandidates,
+      baselineSelection: baselineSelection.selection,
+      totalFindings: findings.length,
+      blockingFindings: findings.filter((finding) => finding.severity === "blocking").length,
+      warningFindings: findings.filter((finding) => finding.severity === "warning").length
+    },
+    inputs: {
+      artifactDirs: sortedCandidates.map((candidate) => candidate.artifactDir),
+      ...(args.cacheDir ? { cacheDir: path.resolve(args.cacheDir) } : {}),
+      limit: args.limit
+    },
+    current,
+    baseline: {
+      candidates: baselineSelection.candidates,
+      blockerCountMedian,
+      warningCountMedian,
+      signalExpectations
+    },
+    findings
   };
 }
 
@@ -674,9 +910,65 @@ export function renderMarkdown(report: ReleaseHealthTrendBaselineReport): string
   return `${lines.join("\n").trim()}\n`;
 }
 
+export function renderComparisonMarkdown(report: ReleaseHealthTrendBaselineComparisonReport): string {
+  const lines = [
+    "# Release Health Trend Compare",
+    "",
+    `- Generated at: \`${report.generatedAt}\``,
+    `- Current candidate: \`${report.summary.currentCandidate}\``,
+    `- Baseline candidates: ${report.summary.baselineCandidates.map((candidate) => `\`${candidate}\``).join(", ")}`,
+    `- Baseline selection: \`${report.summary.baselineSelection}\``,
+    `- Compare status: **${report.summary.status.toUpperCase()}**`,
+    ""
+  ];
+
+  lines.push("## Findings", "");
+  if (report.findings.length === 0) {
+    lines.push("- No regressions detected against the selected trend baseline.");
+  } else {
+    for (const finding of report.findings) {
+      lines.push(
+        ...renderReviewerFacingMarkdownEntry(
+          finding.signalId ? `${finding.category}:${finding.signalId}` : finding.category,
+          finding.summary,
+          {
+            status: finding.severity === "blocking" ? "fail" : "warn",
+            artifacts: [{ path: report.current.artifactDir }, ...report.baseline.candidates.map((candidate) => ({ path: candidate.artifactDir }))],
+            toDisplayPath
+          }
+        )
+      );
+    }
+  }
+  lines.push("");
+
+  lines.push("## Baseline Heuristics", "");
+  lines.push("- The baseline pool uses earlier non-blocking candidates within the selected history window; if none exist, it falls back to all earlier candidates.");
+  lines.push(`- Blocker count regresses when the current candidate exceeds the baseline median of ${report.baseline.blockerCountMedian}.`);
+  lines.push(`- Warning count regresses when the current candidate exceeds the baseline median of ${report.baseline.warningCountMedian}.`);
+  lines.push("- Missing evidence is flagged when a tracked signal is absent for the current candidate after appearing in at least half of baseline candidates.");
+  lines.push("- A tracked signal regresses when the current status falls below the highest status reached by at least half of baseline candidates.");
+  lines.push("");
+
+  lines.push("## Baseline Signals", "");
+  for (const expectation of report.baseline.signalExpectations) {
+    lines.push(
+      `- \`${expectation.id}\`: expected=${expectation.expectedStatus}, present=${expectation.presentCount}/${expectation.candidateCount}, history=${expectation.statuses
+        .map((entry) => `${entry.candidateRevision}:${entry.present ? entry.status : "missing"}`)
+        .join(" -> ")}`
+    );
+  }
+  lines.push("");
+
+  return `${lines.join("\n").trim()}\n`;
+}
+
 function defaultOutputPath(args: Args): string {
   if (args.outputPath) {
     return path.resolve(args.outputPath);
+  }
+  if (args.compareCurrent) {
+    return path.join(DEFAULT_OUTPUT_DIR, COMPARE_OUTPUT_FILENAME);
   }
   return path.join(DEFAULT_OUTPUT_DIR, "release-health-trend-baseline.json");
 }
@@ -685,15 +977,26 @@ function defaultMarkdownOutputPath(args: Args): string {
   if (args.markdownOutputPath) {
     return path.resolve(args.markdownOutputPath);
   }
+  if (args.compareCurrent) {
+    return path.join(DEFAULT_OUTPUT_DIR, COMPARE_MARKDOWN_OUTPUT_FILENAME);
+  }
   return path.join(DEFAULT_OUTPUT_DIR, "release-health-trend-baseline.md");
 }
 
 function main(): void {
   const args = parseArgs(process.argv);
-  const report = buildReleaseHealthTrendBaselineReport(args);
   const outputPath = defaultOutputPath(args);
   const markdownOutputPath = defaultMarkdownOutputPath(args);
+  if (args.compareCurrent) {
+    const report = buildReleaseHealthTrendBaselineComparisonReport(args);
+    writeJsonFile(outputPath, report);
+    writeFile(markdownOutputPath, renderComparisonMarkdown(report));
+    console.log(`Wrote release health trend compare JSON: ${toDisplayPath(outputPath)}`);
+    console.log(`Wrote release health trend compare Markdown: ${toDisplayPath(markdownOutputPath)}`);
+    return;
+  }
 
+  const report = buildReleaseHealthTrendBaselineReport(args);
   writeJsonFile(outputPath, report);
   writeFile(markdownOutputPath, renderMarkdown(report));
 

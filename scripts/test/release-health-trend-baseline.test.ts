@@ -5,7 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { buildReleaseHealthTrendBaselineReport, renderMarkdown } from "../release-health-trend-baseline.ts";
+import {
+  buildReleaseHealthTrendBaselineComparisonReport,
+  buildReleaseHealthTrendBaselineReport,
+  renderComparisonMarkdown,
+  renderMarkdown
+} from "../release-health-trend-baseline.ts";
 
 const repoRoot = path.resolve(__dirname, "../..");
 
@@ -25,10 +30,13 @@ function createCandidateDir(
     generatedAt: string;
     candidateRevision: string;
     releaseHealthStatus: "healthy" | "warning" | "blocking";
+    warningCount?: number;
     dashboardDecision: "ready" | "pending" | "blocked";
     blockers: Array<{ signalId: string; title: string; summary: string }>;
     releaseGateStatuses: Partial<Record<"h5-release-candidate-smoke" | "multiplayer-reconnect-soak" | "wechat-release", "passed" | "failed">>;
     dashboardStatuses: Partial<Record<"server-health" | "auth-readiness", "pass" | "warn" | "fail">>;
+    omittedReleaseGateIds?: Array<"h5-release-candidate-smoke" | "multiplayer-reconnect-soak" | "wechat-release">;
+    omittedDashboardGateIds?: Array<"server-health" | "auth-readiness">;
   }
 ): string {
   const dir = path.join(workspace, name);
@@ -42,7 +50,7 @@ function createCandidateDir(
     summary: {
       status: options.releaseHealthStatus,
       blockerCount: options.blockers.length,
-      warningCount: options.releaseHealthStatus === "warning" ? 1 : 0,
+      warningCount: options.warningCount ?? (options.releaseHealthStatus === "warning" ? 1 : 0),
       infoCount: 3
     },
     triage: {
@@ -73,7 +81,7 @@ function createCandidateDir(
         status: options.releaseGateStatuses["wechat-release"] ?? "passed",
         summary: "WeChat gate"
       }
-    ]
+    ].filter((gate) => !options.omittedReleaseGateIds?.includes(gate.id as "h5-release-candidate-smoke" | "multiplayer-reconnect-soak" | "wechat-release"))
   });
   writeJson(path.join(dir, "release-readiness-dashboard.json"), {
     generatedAt: options.generatedAt,
@@ -95,7 +103,7 @@ function createCandidateDir(
         status: options.dashboardStatuses["auth-readiness"] ?? "pass",
         summary: "Auth readiness gate"
       }
-    ]
+    ].filter((gate) => !options.omittedDashboardGateIds?.includes(gate.id as "server-health" | "auth-readiness"))
   });
   writeJson(path.join(dir, "source-run.json"), {
     runId: name,
@@ -270,4 +278,140 @@ test("release:health:trend-baseline CLI scans the cache dir and writes stable ou
   assert.equal(report.summary.candidateCount, 2);
   assert.equal(report.summary.currentCandidate, "cur1234");
   assert.equal(report.summary.previousCandidate, "prev9876");
+});
+
+test("compare mode flags blocker, warning, missing-evidence, and signal regressions against the baseline", () => {
+  const workspace = createTempWorkspace();
+  const currentDir = createCandidateDir(workspace, "current", {
+    generatedAt: "2026-04-03T09:00:00.000Z",
+    candidateRevision: "cur1234",
+    releaseHealthStatus: "blocking",
+    warningCount: 3,
+    dashboardDecision: "blocked",
+    blockers: [
+      {
+        signalId: "release-gate",
+        title: "Release gate summary",
+        summary: "Release gate summary failed: WeChat validation failed"
+      },
+      {
+        signalId: "sync-governance",
+        title: "Sync governance",
+        summary: "Sync governance matrix is failing."
+      }
+    ],
+    releaseGateStatuses: {
+      "h5-release-candidate-smoke": "passed",
+      "multiplayer-reconnect-soak": "passed"
+    },
+    omittedReleaseGateIds: ["wechat-release"],
+    dashboardStatuses: {
+      "server-health": "warn",
+      "auth-readiness": "fail"
+    }
+  });
+  const baselineA = createCandidateDir(workspace, "baseline-a", {
+    generatedAt: "2026-04-02T09:00:00.000Z",
+    candidateRevision: "base111",
+    releaseHealthStatus: "healthy",
+    dashboardDecision: "ready",
+    blockers: [],
+    releaseGateStatuses: {
+      "h5-release-candidate-smoke": "passed",
+      "multiplayer-reconnect-soak": "passed",
+      "wechat-release": "passed"
+    },
+    dashboardStatuses: {
+      "server-health": "pass",
+      "auth-readiness": "pass"
+    }
+  });
+  const baselineB = createCandidateDir(workspace, "baseline-b", {
+    generatedAt: "2026-04-01T09:00:00.000Z",
+    candidateRevision: "base222",
+    releaseHealthStatus: "warning",
+    dashboardDecision: "pending",
+    blockers: [],
+    releaseGateStatuses: {
+      "h5-release-candidate-smoke": "passed",
+      "multiplayer-reconnect-soak": "passed",
+      "wechat-release": "passed"
+    },
+    dashboardStatuses: {
+      "server-health": "pass",
+      "auth-readiness": "warn"
+    }
+  });
+
+  const report = buildReleaseHealthTrendBaselineComparisonReport({
+    artifactDirs: [currentDir, baselineA, baselineB],
+    limit: 3,
+    compareCurrent: true
+  });
+
+  assert.equal(report.summary.status, "fail");
+  assert.deepEqual(report.summary.baselineCandidates, ["base111", "base222"]);
+  assert.equal(report.summary.baselineSelection, "non-blocking-history");
+  assert.equal(report.baseline.blockerCountMedian, 0);
+  assert.equal(report.baseline.warningCountMedian, 1);
+  assert.equal(report.findings.find((finding) => finding.category === "blocker-count")?.severity, "blocking");
+  assert.equal(report.findings.find((finding) => finding.category === "warning-count")?.severity, "warning");
+  assert.equal(report.findings.find((finding) => finding.category === "missing-evidence")?.signalId, "wechat-release");
+  assert.equal(report.findings.find((finding) => finding.signalId === "candidate-readiness")?.severity, "blocking");
+  assert.equal(report.findings.find((finding) => finding.signalId === "server-health")?.severity, "warning");
+
+  const markdown = renderComparisonMarkdown(report);
+  assert.match(markdown, /## Findings/);
+  assert.match(markdown, /Current candidate: `cur1234`/);
+  assert.match(markdown, /baseline median of 0/);
+  assert.match(markdown, /WeChat release validation is missing for cur1234; it was present in 2\/2 baseline candidates\./);
+  assert.match(markdown, /## Baseline Heuristics/);
+});
+
+test("compare CLI writes compare artifacts with stable default filenames", () => {
+  const workspace = createTempWorkspace();
+  const cacheDir = path.join(workspace, "cache");
+  createCandidateDir(cacheDir, "run-101", {
+    generatedAt: "2026-04-03T09:00:00.000Z",
+    candidateRevision: "cur1234",
+    releaseHealthStatus: "warning",
+    dashboardDecision: "pending",
+    blockers: [],
+    releaseGateStatuses: {
+      "h5-release-candidate-smoke": "passed",
+      "multiplayer-reconnect-soak": "passed"
+    },
+    dashboardStatuses: {
+      "server-health": "pass",
+      "auth-readiness": "warn"
+    }
+  });
+  createCandidateDir(cacheDir, "run-100", {
+    generatedAt: "2026-04-02T09:00:00.000Z",
+    candidateRevision: "prev9876",
+    releaseHealthStatus: "healthy",
+    dashboardDecision: "ready",
+    blockers: [],
+    releaseGateStatuses: {
+      "h5-release-candidate-smoke": "passed",
+      "multiplayer-reconnect-soak": "passed",
+      "wechat-release": "passed"
+    },
+    dashboardStatuses: {
+      "server-health": "pass",
+      "auth-readiness": "pass"
+    }
+  });
+
+  const result = spawnSync("node", ["--import", "tsx", "./scripts/release-health-trend-baseline.ts", "--cache-dir", cacheDir, "--limit", "2", "--compare-current"], {
+    cwd: repoRoot,
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stdout, /Wrote release health trend compare JSON:/);
+  assert.equal(fs.existsSync(path.join(repoRoot, "artifacts", "release-readiness", "release-health-trend-compare.json")), true);
+  assert.equal(fs.existsSync(path.join(repoRoot, "artifacts", "release-readiness", "release-health-trend-compare.md")), true);
+  fs.rmSync(path.join(repoRoot, "artifacts", "release-readiness", "release-health-trend-compare.json"), { force: true });
+  fs.rmSync(path.join(repoRoot, "artifacts", "release-readiness", "release-health-trend-compare.md"), { force: true });
 });

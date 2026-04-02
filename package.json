@@ -55,6 +55,7 @@
     "release:same-candidate:evidence-audit": "node --import tsx ./scripts/same-candidate-evidence-audit.ts",
     "release:health:summary": "node --import tsx ./scripts/release-health-summary.ts",
     "release:health:trend-baseline": "node --import tsx ./scripts/release-health-trend-baseline.ts",
+    "release:health:trend-compare": "node --import tsx ./scripts/release-health-trend-baseline.ts --compare-current",
     "release:phase1:candidate-dossier": "node --import tsx ./scripts/phase1-candidate-dossier.ts",
     "release:phase1:candidate-rehearsal": "node --import tsx ./scripts/phase1-candidate-rehearsal.ts",
     "release:wechat:rehearsal": "node --import tsx ./scripts/wechat-release-rehearsal.ts",
