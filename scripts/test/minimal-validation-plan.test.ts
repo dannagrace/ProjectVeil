@@ -60,6 +60,18 @@ test("flags release packaging and observability diagnostics without inventing ne
   assert.ok(plan.optionalSteps.every((step) => step.command?.startsWith("npm run") ?? true));
 });
 
+test("maps canonical cocos journey evidence scripts to the RC bundle validation path", () => {
+  const plan = inferValidationPlan([
+    "scripts/cocos-primary-client-journey-evidence.ts",
+    "scripts/cocos-rc-evidence-bundle.ts"
+  ]);
+
+  assert.deepEqual(plan.matchedSurfaces.map((surface) => surface.id), ["cocos-release-evidence"]);
+  assert.deepEqual(plan.requiredSteps.map((step) => step.command), ["npm run release:cocos-rc:bundle"]);
+  assert.ok(plan.optionalSteps.some((step) => step.command === "npm run validate:wechat-rc"));
+  assert.deepEqual(plan.unmatchedPaths, []);
+});
+
 test("keeps unmatched paths visible so humans can widen the plan", () => {
   const plan = inferValidationPlan(["unknown/path.txt"]);
 
