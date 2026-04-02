@@ -109,6 +109,13 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
 
   const manifest = JSON.parse(fs.readFileSync(path.join(outputDir, manifestFile!), "utf8")) as {
     bundle: { candidate: string; buildSurface: string; overallStatus: string };
+    failureSummary: {
+      summary: string;
+      regressedJourneySegments: Array<{ id: string }>;
+      blockedJourneySegments: Array<{ id: string }>;
+      lackingJourneyEvidence: Array<{ id: string }>;
+      lackingRequiredEvidence: Array<{ id: string }>;
+    };
     artifacts: {
       primaryJourneyEvidence: string;
       primaryJourneyEvidenceMarkdown: string;
@@ -144,6 +151,11 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.equal(path.basename(manifest.artifacts.presentationSignoffSummaryMarkdown), presentationSignoffSummaryFile);
   assert.equal(path.basename(manifest.artifacts.checklistMarkdown), checklistFile);
   assert.equal(path.basename(manifest.artifacts.blockersMarkdown), blockersFile);
+  assert.equal(manifest.failureSummary.summary, "No regressions or evidence gaps recorded.");
+  assert.equal(manifest.failureSummary.regressedJourneySegments.length, 0);
+  assert.equal(manifest.failureSummary.blockedJourneySegments.length, 0);
+  assert.equal(manifest.failureSummary.lackingJourneyEvidence.length, 0);
+  assert.equal(manifest.failureSummary.lackingRequiredEvidence.length, 0);
 
   const summaryMarkdown = fs.readFileSync(path.join(outputDir, summaryFile!), "utf8");
   assert.match(summaryMarkdown, /# Cocos RC Evidence Bundle/);

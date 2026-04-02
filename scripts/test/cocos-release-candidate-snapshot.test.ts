@@ -125,6 +125,13 @@ test("release:cocos-rc:snapshot imports WeChat smoke evidence into linked journe
   const snapshot = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
     execution: { overallStatus: string; summary: string; executedAt: string };
     environment: { device: string; wechatClient: string };
+    failureSummary: {
+      summary: string;
+      regressedJourneySegments: Array<{ id: string }>;
+      blockedJourneySegments: Array<{ id: string }>;
+      lackingJourneyEvidence: Array<{ id: string }>;
+      lackingRequiredEvidence: Array<{ id: string }>;
+    };
     requiredEvidence: Array<{ id: string; value: string }>;
     journey: Array<{ id: string; status: string; notes: string }>;
   };
@@ -137,6 +144,14 @@ test("release:cocos-rc:snapshot imports WeChat smoke evidence into linked journe
   assert.equal(snapshot.journey.find((entry) => entry.id === "lobby-entry")?.status, "passed");
   assert.match(snapshot.journey.find((entry) => entry.id === "reconnect-restore")?.notes ?? "", /Recovered room-alpha/);
   assert.match(snapshot.execution.summary, /Automated WeChat smoke evidence passed/);
+  assert.equal(snapshot.failureSummary.regressedJourneySegments.length, 0);
+  assert.equal(snapshot.failureSummary.blockedJourneySegments.length, 0);
+  assert.deepEqual(
+    snapshot.failureSummary.lackingJourneyEvidence.map((entry) => entry.id),
+    ["map-explore", "first-battle", "battle-settlement", "return-to-world"]
+  );
+  assert.deepEqual(snapshot.failureSummary.lackingRequiredEvidence.map((entry) => entry.id), ["firstBattleResult"]);
+  assert.match(snapshot.failureSummary.summary, /Journey segments lacking evidence: map-explore, first-battle, battle-settlement, return-to-world/);
 });
 
 test("release:cocos-rc:snapshot imports primary journey evidence into the canonical RC path", () => {
@@ -217,6 +232,13 @@ test("release:cocos-rc:snapshot imports primary journey evidence into the canoni
     execution: { owner: string; executedAt: string; overallStatus: string; summary: string };
     environment: { server: string };
     linkedEvidence: { primaryJourneyEvidence?: { path: string } };
+    failureSummary: {
+      summary: string;
+      regressedJourneySegments: Array<{ id: string }>;
+      blockedJourneySegments: Array<{ id: string }>;
+      lackingJourneyEvidence: Array<{ id: string }>;
+      lackingRequiredEvidence: Array<{ id: string }>;
+    };
     checkpointLedger?: {
       entryCount: number;
       entries: Array<{ id: string; artifactPath: string; telemetryCheckpoints: string[]; roomId: string }>;
@@ -241,4 +263,9 @@ test("release:cocos-rc:snapshot imports primary journey evidence into the canoni
     "encounter.resolved"
   ]);
   assert.equal(snapshot.checkpointLedger?.entries.find((entry) => entry.id === "room-join")?.roomId, "room-primary-journey");
+  assert.equal(snapshot.failureSummary.summary, "No regressions or evidence gaps recorded.");
+  assert.equal(snapshot.failureSummary.regressedJourneySegments.length, 0);
+  assert.equal(snapshot.failureSummary.blockedJourneySegments.length, 0);
+  assert.equal(snapshot.failureSummary.lackingJourneyEvidence.length, 0);
+  assert.equal(snapshot.failureSummary.lackingRequiredEvidence.length, 0);
 });
