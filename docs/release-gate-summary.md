@@ -37,6 +37,7 @@ npm run release:gate:summary -- \
   --snapshot artifacts/release-readiness/release-readiness-2026-03-29T08-12-04.512Z.json \
   --h5-smoke artifacts/release-readiness/client-release-candidate-smoke-abc1234-2026-03-29T08-15-10.000Z.json \
   --reconnect-soak artifacts/release-readiness/colyseus-reconnect-soak-summary.json \
+  --manual-evidence-ledger artifacts/release-readiness/manual-release-evidence-owner-ledger-abc1234.md \
   --config-center-library configs/.config-center-library.json \
   --wechat-artifacts-dir artifacts/wechat-release
 ```
@@ -77,7 +78,9 @@ The summary contains five release dimensions:
   - Markdown/JSON summary text distinguishes `blocked` device/runtime evidence from true execution failures so CI reviewers can see whether a gate is red because proof is absent or because the runtime actually regressed.
 - `phase1-evidence-consistency`
   - Cross-checks the release-readiness snapshot, packaged H5 smoke report, and selected WeChat evidence as one Phase 1 candidate set.
+  - When a manual evidence owner ledger is provided, or when one exists under `artifacts/release-readiness/`, it also validates the ledger header against the current candidate revision.
   - Fails when any artifact is missing revision metadata, missing/invalid generated timestamps, points at a different commit than the current release candidate, carries a conflicting candidate hint from its artifact path, or disagrees with another artifact’s commit/candidate hint.
+  - For the ledger, the checked fields are `Target revision` and `Last updated`.
   - Fails when the selected evidence timestamps drift by more than 72 hours, which is the cutoff for “same candidate evidence set” in this report.
   - The Markdown output now includes a `Selected Inputs` section so reviewers can see the exact artifact paths that were compared instead of inferring them from the default directory scan.
 

@@ -15,6 +15,7 @@ interface Args {
   wechatCandidateSummaryPath?: string;
   wechatSmokeReportPath?: string;
   wechatArtifactsDir?: string;
+  manualEvidenceLedgerPath?: string;
   configCenterLibraryPath?: string;
   targetSurface: TargetSurface;
   outputPath?: string;
@@ -151,7 +152,8 @@ interface GateSource {
     | "reconnect-soak"
     | "wechat-rc-validation"
     | "wechat-release-candidate-summary"
-    | "wechat-smoke-report";
+    | "wechat-smoke-report"
+    | "manual-evidence-owner-ledger";
   path: string;
 }
 
@@ -253,6 +255,13 @@ interface ConfigCenterLibraryState {
   publishAuditHistory?: ConfigPublishAuditEvent[];
 }
 
+interface ManualEvidenceOwnerLedgerMetadata {
+  candidate?: string;
+  targetRevision?: string;
+  lastUpdated?: string;
+  linkedReadinessSnapshot?: string;
+}
+
 interface ConfigRiskChangeSummary {
   documentId: ConfigDocumentId;
   title: string;
@@ -305,6 +314,7 @@ interface ReleaseGateSummaryReport {
     wechatCandidateSummaryPath?: string;
     wechatSmokeReportPath?: string;
     wechatArtifactsDir?: string;
+    manualEvidenceLedgerPath?: string;
     configCenterLibraryPath?: string;
   };
   gates: GateResult[];
@@ -415,6 +425,7 @@ function parseArgs(argv: string[]): Args {
   let wechatCandidateSummaryPath: string | undefined;
   let wechatSmokeReportPath: string | undefined;
   let wechatArtifactsDir: string | undefined;
+  let manualEvidenceLedgerPath: string | undefined;
   let configCenterLibraryPath: string | undefined;
   let targetSurface: TargetSurface = "wechat";
   let outputPath: string | undefined;
@@ -459,6 +470,11 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--manual-evidence-ledger" && next) {
+      manualEvidenceLedgerPath = next;
+      index += 1;
+      continue;
+    }
     if (arg === "--config-center-library" && next) {
       configCenterLibraryPath = next;
       index += 1;
@@ -494,6 +510,7 @@ function parseArgs(argv: string[]): Args {
     ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
     ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
+    ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
     ...(configCenterLibraryPath ? { configCenterLibraryPath } : {}),
     targetSurface,
     ...(outputPath ? { outputPath } : {}),
@@ -608,6 +625,15 @@ function resolveConfigCenterLibraryPath(args: Args): string | undefined {
     ? path.resolve(args.configCenterLibraryPath)
     : DEFAULT_CONFIG_CENTER_LIBRARY_PATH;
   return fs.existsSync(candidate) ? candidate : undefined;
+}
+
+function resolveManualEvidenceLedgerPath(args: Args): string | undefined {
+  if (args.manualEvidenceLedgerPath) {
+    return path.resolve(args.manualEvidenceLedgerPath);
+  }
+  return resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) =>
+    entry.includes("manual-release-evidence-owner-ledger") && entry.endsWith(".md")
+  );
 }
 
 function readGitValue(args: string[]): string {
@@ -980,6 +1006,21 @@ function evaluateFreshness(timestamp: string | undefined, maxAgeMs: number): Evi
   return Date.now() - timestampMs > maxAgeMs ? "stale" : "fresh";
 }
 
+function parseManualEvidenceOwnerLedger(filePath: string): ManualEvidenceOwnerLedgerMetadata {
+  const content = fs.readFileSync(filePath, "utf8");
+  const capture = (label: string): string | undefined => {
+    const match = content.match(new RegExp(`^- ${label}:\\s+\`([^\\n\`]+)\``, "m"));
+    return match?.[1]?.trim();
+  };
+
+  return {
+    candidate: capture("Candidate"),
+    targetRevision: capture("Target revision"),
+    lastUpdated: capture("Last updated"),
+    linkedReadinessSnapshot: capture("Linked readiness snapshot")
+  };
+}
+
 function createSurfaceEvidenceItem(input: {
   id: string;
   label: string;
@@ -1187,7 +1228,8 @@ function collectPhase1EvidenceReferences(
   reconnectSoakPath: string | undefined,
   wechatRcValidationPath: string | undefined,
   wechatCandidateSummaryPath: string | undefined,
-  wechatSmokeReportPath: string | undefined
+  wechatSmokeReportPath: string | undefined,
+  manualEvidenceLedgerPath: string | undefined
 ): Phase1EvidenceReference[] {
   const evidence: Phase1EvidenceReference[] = [];
 
@@ -1283,6 +1325,21 @@ function collectPhase1EvidenceReferences(
     });
   }
 
+  if (manualEvidenceLedgerPath && fs.existsSync(manualEvidenceLedgerPath)) {
+    const ledger = parseManualEvidenceOwnerLedger(manualEvidenceLedgerPath);
+    evidence.push({
+      gateId: "wechat-release",
+      label: "Manual evidence owner ledger",
+      source: {
+        kind: "manual-evidence-owner-ledger",
+        path: manualEvidenceLedgerPath
+      },
+      commit: ledger.targetRevision,
+      generatedAt: ledger.lastUpdated,
+      candidateHint: deriveCandidateHint(manualEvidenceLedgerPath, ledger.targetRevision)
+    });
+  }
+
   return evidence;
 }
 
@@ -1294,7 +1351,8 @@ export function evaluatePhase1EvidenceConsistencyGate(
   reconnectSoakPath: string | undefined,
   wechatRcValidationPath: string | undefined,
   wechatCandidateSummaryPath: string | undefined,
-  wechatSmokeReportPath: string | undefined
+  wechatSmokeReportPath: string | undefined,
+  manualEvidenceLedgerPath: string | undefined
 ): GateResult {
   const failures: string[] = [];
   const expectedArtifacts: Array<Pick<Phase1EvidenceReference, "gateId" | "label">> = [
@@ -1310,7 +1368,8 @@ export function evaluatePhase1EvidenceConsistencyGate(
     reconnectSoakPath,
     wechatRcValidationPath,
     wechatCandidateSummaryPath,
-    wechatSmokeReportPath
+    wechatSmokeReportPath,
+    manualEvidenceLedgerPath
   );
   const expectedCommit = revision.commit;
   const expectedCandidateHint = normalizeCommit(revision.commit)?.slice(0, 12) ?? revision.shortCommit.toLowerCase();
@@ -1539,6 +1598,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
   const wechatRcValidationPath = resolveWechatRcValidationPath(args, wechatArtifactsDir);
   const wechatCandidateSummaryPath = resolveWechatCandidateSummaryPath(args, wechatArtifactsDir);
   const wechatSmokeReportPath = resolveWechatSmokeReportPath(args, wechatArtifactsDir);
+  const manualEvidenceLedgerPath = resolveManualEvidenceLedgerPath(args);
   const configCenterLibraryPath = resolveConfigCenterLibraryPath(args);
   const releaseSurface = buildReleaseSurfaceContract(
     args.targetSurface,
@@ -1561,7 +1621,8 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
       reconnectSoakPath,
       wechatRcValidationPath,
       wechatCandidateSummaryPath,
-      wechatSmokeReportPath
+      wechatSmokeReportPath,
+      manualEvidenceLedgerPath
     )
   ];
   const failedGates = gates.filter((gate) => gate.required && gate.status === "failed");
@@ -1586,6 +1647,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
       ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
       ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
       ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
+      ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
       ...(configCenterLibraryPath ? { configCenterLibraryPath } : {})
     },
     gates,
@@ -1617,6 +1679,7 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
   );
   lines.push(`- WeChat smoke fallback: \`${report.inputs.wechatSmokeReportPath ? relativeReportPath(report.inputs.wechatSmokeReportPath) : "<missing>"}\``);
   lines.push(`- WeChat artifacts dir: \`${report.inputs.wechatArtifactsDir ? relativeReportPath(report.inputs.wechatArtifactsDir) : "<missing>"}\``);
+  lines.push(`- Manual evidence ledger: \`${report.inputs.manualEvidenceLedgerPath ? relativeReportPath(report.inputs.manualEvidenceLedgerPath) : "<missing>"}\``);
   lines.push(`- Config audit: \`${report.inputs.configCenterLibraryPath ? relativeReportPath(report.inputs.configCenterLibraryPath) : "<missing>"}\``);
   lines.push("");
 

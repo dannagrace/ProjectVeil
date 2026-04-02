@@ -27,6 +27,12 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
   const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
   const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
+  const manualEvidenceLedgerPath = path.join(
+    workspace,
+    "artifacts",
+    "release-readiness",
+    "manual-release-evidence-owner-ledger-abc123.md"
+  );
   const wechatArtifactsDir = path.join(workspace, "artifacts", "wechat-release");
   const wechatRcValidationPath = path.join(wechatArtifactsDir, "codex.wechat.rc-validation-report.json");
   const wechatCandidateSummaryPath = path.join(wechatArtifactsDir, "codex.wechat.release-candidate-summary.json");
@@ -199,6 +205,21 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
       }
     ]
   });
+  fs.mkdirSync(path.dirname(manualEvidenceLedgerPath), { recursive: true });
+  fs.writeFileSync(
+    manualEvidenceLedgerPath,
+    `# Manual Release Evidence Owner Ledger
+
+## Candidate
+
+- Candidate: \`rc-2026-04-02\`
+- Target revision: \`abc123\`
+- Release owner: \`release-oncall\`
+- Last updated: \`2026-04-02T08:16:00.000Z\`
+- Linked readiness snapshot: \`artifacts/release-readiness/release-readiness-pass.json\`
+`,
+    "utf8"
+  );
 
   const report = buildReleaseGateSummaryReport(
     {
@@ -206,6 +227,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
       h5SmokePath,
       reconnectSoakPath,
       wechatArtifactsDir,
+      manualEvidenceLedgerPath,
       targetSurface: "wechat",
       configCenterLibraryPath
     },
@@ -232,6 +254,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(renderMarkdown(report), /release-readiness-pass\.json/);
   assert.match(renderMarkdown(report), /colyseus-reconnect-soak-summary-pass\.json/);
   assert.match(renderMarkdown(report), /codex\.wechat\.release-candidate-summary\.json/);
+  assert.match(renderMarkdown(report), /manual-release-evidence-owner-ledger-abc123\.md/);
   assert.match(renderMarkdown(report), /### Manual Evidence Ownership/);
   assert.match(renderMarkdown(report), /owner=release-oncall/);
   assert.match(renderMarkdown(report), /artifact=artifacts\/wechat-release\/device-runtime-review\.json/);
@@ -513,6 +536,7 @@ test("evaluatePhase1EvidenceConsistencyGate fails stale or mismatched candidate 
     reconnectSoakPath,
     wechatRcValidationPath,
     undefined,
+    undefined,
     undefined
   );
 
@@ -613,6 +637,7 @@ test("evaluatePhase1EvidenceConsistencyGate fails when Phase 1 evidence timestam
     reconnectSoakPath,
     wechatRcValidationPath,
     undefined,
+    undefined,
     undefined
   );
 
@@ -620,6 +645,138 @@ test("evaluatePhase1EvidenceConsistencyGate fails when Phase 1 evidence timestam
   assert.match(gate.failures.join("\n"), /timestamps drift by 9[67]h/);
   assert.match(gate.failures.join("\n"), /release-readiness-pass\.json/);
   assert.match(gate.failures.join("\n"), /codex\.wechat\.rc-validation-report\.json/);
+});
+
+test("evaluatePhase1EvidenceConsistencyGate fails when manual evidence owner ledger drifts from the candidate revision", () => {
+  const workspace = createTempWorkspace();
+  const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
+  const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
+  const wechatCandidateSummaryPath = path.join(workspace, "artifacts", "wechat-release", "codex.wechat.release-candidate-summary.json");
+  const manualEvidenceLedgerPath = path.join(
+    workspace,
+    "artifacts",
+    "release-readiness",
+    "manual-release-evidence-owner-ledger-deadbee.md"
+  );
+
+  writeJson(snapshotPath, {
+    generatedAt: "2026-04-02T08:30:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    summary: {
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
+    }
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: "2026-04-02T08:32:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    execution: {
+      status: "passed",
+      finishedAt: "2026-04-02T08:32:00.000Z",
+      exitCode: 0
+    },
+    summary: {
+      total: 2,
+      passed: 2,
+      failed: 0
+    }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-04-02T08:33:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 384,
+      invariantChecks: 2304
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+  writeJson(wechatCandidateSummaryPath, {
+    generatedAt: "2026-04-02T08:35:00.000Z",
+    candidate: {
+      revision: "abc123",
+      status: "ready"
+    },
+    evidence: {
+      smoke: {
+        status: "passed"
+      },
+      manualReview: {
+        status: "ready",
+        requiredPendingChecks: 0,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: []
+      }
+    },
+    blockers: []
+  });
+  fs.mkdirSync(path.dirname(manualEvidenceLedgerPath), { recursive: true });
+  fs.writeFileSync(
+    manualEvidenceLedgerPath,
+    `# Manual Release Evidence Owner Ledger
+
+## Candidate
+
+- Candidate: \`rc-2026-04-02\`
+- Target revision: \`deadbeef\`
+- Release owner: \`release-oncall\`
+- Last updated: \`2026-04-02T08:40:00.000Z\`
+- Linked readiness snapshot: \`artifacts/release-readiness/release-readiness-pass.json\`
+`,
+    "utf8"
+  );
+
+  const gate = evaluatePhase1EvidenceConsistencyGate(
+    "wechat",
+    {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    snapshotPath,
+    h5SmokePath,
+    reconnectSoakPath,
+    undefined,
+    wechatCandidateSummaryPath,
+    undefined,
+    manualEvidenceLedgerPath
+  );
+
+  assert.equal(gate.status, "failed");
+  assert.match(gate.failures.join("\n"), /Manual evidence owner ledger/);
+  assert.match(gate.failures.join("\n"), /does not match candidate abc123/);
 });
 
 test("buildReleaseGateSummaryReport fails when all artifacts are stale for the current candidate", () => {
