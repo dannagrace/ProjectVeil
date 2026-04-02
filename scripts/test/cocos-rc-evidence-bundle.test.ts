@@ -87,6 +87,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   const manifestFile = files.find((entry) => entry.startsWith("cocos-rc-evidence-bundle-") && entry.endsWith(".json"));
   const summaryFile = files.find((entry) => entry.startsWith("cocos-rc-evidence-bundle-") && entry.endsWith(".md"));
   const snapshotFile = files.find((entry) => entry.startsWith("cocos-rc-snapshot-") && entry.endsWith(".json"));
+  const mainJourneyManifestFile = files.find((entry) => entry.startsWith("cocos-main-journey-manifest-") && entry.endsWith(".json"));
+  const mainJourneyManifestMarkdownFile = files.find((entry) => entry.startsWith("cocos-main-journey-manifest-") && entry.endsWith(".md"));
   const presentationSignoffSummaryFile = files.find(
     (entry) => entry.startsWith("cocos-presentation-signoff-summary-") && entry.endsWith(".md")
   );
@@ -98,6 +100,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.ok(manifestFile);
   assert.ok(summaryFile);
   assert.ok(snapshotFile);
+  assert.ok(mainJourneyManifestFile);
+  assert.ok(mainJourneyManifestMarkdownFile);
   assert.ok(presentationSignoffSummaryFile);
   assert.ok(checklistFile);
   assert.ok(blockersFile);
@@ -108,6 +112,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
     artifacts: {
       primaryJourneyEvidence: string;
       primaryJourneyEvidenceMarkdown: string;
+      mainJourneyManifest: string;
+      mainJourneyManifestMarkdown: string;
       snapshot: string;
       summaryMarkdown: string;
       presentationSignoffSummaryMarkdown: string;
@@ -126,6 +132,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.equal(manifest.bundle.overallStatus, "passed");
   assert.equal(path.basename(manifest.artifacts.primaryJourneyEvidence), primaryJourneyFile);
   assert.equal(path.basename(manifest.artifacts.primaryJourneyEvidenceMarkdown), primaryJourneyMarkdownFile);
+  assert.equal(path.basename(manifest.artifacts.mainJourneyManifest), mainJourneyManifestFile);
+  assert.equal(path.basename(manifest.artifacts.mainJourneyManifestMarkdown), mainJourneyManifestMarkdownFile);
   assert.equal(manifest.journey.find((entry) => entry.id === "lobby-entry")?.status, "passed");
   assert.equal(manifest.checkpointLedger?.entryCount, 7);
   assert.ok((manifest.checkpointLedger?.entries.find((entry) => entry.id === "battle-settlement")?.telemetryCheckpointCount ?? -1) >= 0);
@@ -141,10 +149,30 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.match(summaryMarkdown, /# Cocos RC Evidence Bundle/);
   assert.match(summaryMarkdown, /Overall status: `passed`/);
   assert.match(summaryMarkdown, /Primary journey evidence:/);
+  assert.match(summaryMarkdown, /Main-journey manifest:/);
   assert.match(summaryMarkdown, /Presentation sign-off summary:/);
   assert.match(summaryMarkdown, /Lobby entry \| `passed` \| 2 item\(s\)/);
   assert.match(summaryMarkdown, /## Checkpoint Ledger/);
   assert.match(summaryMarkdown, /Battle settlement/);
+
+  const mainJourneyManifest = JSON.parse(fs.readFileSync(path.join(outputDir, mainJourneyManifestFile!), "utf8")) as {
+    candidate: { name: string; revision: { shortCommit: string } };
+    canonicalSteps: Array<{ id: string; title: string; flags: { placeholder: boolean; manualOnly: boolean } }>;
+  };
+  assert.equal(mainJourneyManifest.candidate.name, "rc-issue-507");
+  assert.match(mainJourneyManifest.candidate.revision.shortCommit, /^[0-9a-f]+$/);
+  assert.deepEqual(
+    mainJourneyManifest.canonicalSteps.map((step) => step.id),
+    ["lobby-entry", "room-join", "map-explore", "first-battle", "battle-settlement", "reconnect-restore"]
+  );
+  assert.equal(mainJourneyManifest.canonicalSteps.find((step) => step.id === "map-explore")?.flags.placeholder, true);
+  assert.equal(mainJourneyManifest.canonicalSteps.find((step) => step.id === "room-join")?.flags.manualOnly, false);
+
+  const mainJourneyManifestMarkdown = fs.readFileSync(path.join(outputDir, mainJourneyManifestMarkdownFile!), "utf8");
+  assert.match(mainJourneyManifestMarkdown, /# Cocos Main-Journey Evidence Manifest/);
+  assert.match(mainJourneyManifestMarkdown, /Lobby \/ login/);
+  assert.match(mainJourneyManifestMarkdown, /placeholder=yes, manual-only=yes/);
+  assert.match(mainJourneyManifestMarkdown, /Room join/);
 
   const presentationSignoffSummaryMarkdown = fs.readFileSync(path.join(outputDir, presentationSignoffSummaryFile!), "utf8");
   assert.match(presentationSignoffSummaryMarkdown, /# Cocos Presentation Sign-Off Summary/);
