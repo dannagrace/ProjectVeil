@@ -145,6 +145,7 @@
    - 先完成一场会掉落装备的战斗，确认 HUD 的“战利品”区块出现最近掉落记录
    - 查看 HUD “装备配置”卡中的“背包”分组清单，确认新掉落已进入当前英雄背包
    - 点击同一卡片下方的装备/卸下按钮，确认英雄关键属性、装备摘要与背包内容立即刷新
+   - 如只跑自动化 smoke，可执行：`node --import tsx --test apps/cocos-client/test/cocos-primary-client-journey.test.ts`
    - 更完整的共享/服务端/Cocos 链路审计与验证步骤见 `docs/cocos-equipment-loot-validation.md`
 
 ## 回归入口

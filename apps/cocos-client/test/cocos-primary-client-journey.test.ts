@@ -14,6 +14,7 @@ import { buildCocosRuntimeDiagnosticsSnapshot } from "../assets/scripts/cocos-ru
 import { writeStoredCocosAuthSession } from "../assets/scripts/cocos-session-launch.ts";
 import { resetVeilRootRuntimeForTests, setVeilRootRuntimeForTests, VeilRoot } from "../assets/scripts/VeilRoot.ts";
 import { createMemoryStorage, createSessionUpdate, createSdkLoader, FakeColyseusRoom } from "./helpers/cocos-session-fixtures.ts";
+import { findNode, pressNode } from "./helpers/cocos-panel-harness.ts";
 
 type RootState = VeilRoot & Record<string, any>;
 
@@ -266,6 +267,42 @@ function createJourneySettlementUpdate(roomId: string, playerId: string): Sessio
     }
   ];
   update.reason = "journey.battle.settlement";
+  return update;
+}
+
+function createJourneyLootSettlementUpdate(roomId: string, playerId: string): SessionUpdate {
+  const update = createJourneySettlementUpdate(roomId, playerId);
+  update.world.ownHeroes[0]!.loadout.inventory = ["scout_compass"];
+  update.events = [
+    ...update.events,
+    {
+      type: "hero.equipmentFound",
+      heroId: "hero-1",
+      battleId: "battle-neutral-journey",
+      battleKind: "neutral",
+      equipmentId: "scout_compass",
+      equipmentName: "斥候罗盘",
+      rarity: "common"
+    }
+  ];
+  update.reason = "journey.battle.loot-settlement";
+  return update;
+}
+
+function createJourneyEquipUpdate(roomId: string, playerId: string): SessionUpdate {
+  const update = createJourneySettlementUpdate(roomId, playerId);
+  update.world.ownHeroes[0]!.loadout.equipment.accessoryId = "scout_compass";
+  update.world.ownHeroes[0]!.loadout.inventory = [];
+  update.events = [
+    {
+      type: "hero.equipmentChanged",
+      heroId: "hero-1",
+      slot: "accessory",
+      equippedItemId: "scout_compass",
+      unequippedItemId: undefined
+    }
+  ];
+  update.reason = "journey.equipment.equipped";
   return update;
 }
 
@@ -823,6 +860,132 @@ test("primary cocos client journey renders actionable HUD and battle-panel contr
     readNodeLabel(battleNode?.getChildByName("BattleAction-wait")?.getChildByName("BattleAction-wait-title")),
     "等待"
   );
+
+  root.onDestroy();
+  await flushMicrotasks();
+});
+
+test("primary cocos client journey closes the loot, inventory, and equip loop after battle settlement", async () => {
+  const storage = createMemoryStorage();
+  const roomId = "room-loot-loop";
+  const playerId = "player-loot";
+  let root!: RootState;
+  let rootNode!: Node;
+  const syncedAuthSession = {
+    token: "account.session.token",
+    playerId,
+    displayName: "暮潮守望",
+    authMode: "account" as const,
+    provider: "account-password" as const,
+    loginId: "veil-ranger",
+    source: "remote" as const
+  };
+  const room = new FakeColyseusRoom([createJourneyBootstrapUpdate(roomId, playerId)], "loot-reconnect-token", {
+    "world.action": [createJourneyEquipUpdate(roomId, playerId)]
+  });
+
+  writeStoredCocosAuthSession(storage, syncedAuthSession);
+  (sys as unknown as { localStorage: Storage }).localStorage = storage;
+  (globalThis as { location?: Pick<Location, "search" | "href"> }).location = {
+    search: "",
+    href: "http://127.0.0.1:4173/"
+  };
+  (globalThis as { history?: Pick<History, "replaceState"> }).history = {
+    replaceState() {}
+  };
+
+  setVeilCocosSessionRuntimeForTests({
+    storage,
+    loadSdk: createSdkLoader({
+      joinRooms: [room]
+    })
+  });
+  setVeilRootRuntimeForTests({
+    createSession: (...args) => VeilCocosSession.create(...args),
+    readStoredReplay: (...args) => VeilCocosSession.readStoredReplay(...args),
+    syncAuthSession: async () => syncedAuthSession,
+    loadLobbyRooms: async () => [
+      {
+        roomId,
+        seed: 1001,
+        day: 4,
+        connectedPlayers: 1,
+        heroCount: 1,
+        activeBattles: 0,
+        updatedAt: "2026-04-03T08:30:00.000Z"
+      }
+    ],
+    loadAccountProfile: async () => root.lobbyAccountProfile
+  });
+
+  ({ root, rootNode } = createRootHarness());
+  root.onLoad();
+  root.start();
+
+  await waitFor(
+    () => root.showLobby === true && root.lobbyRooms.length === 1,
+    () => ({
+      phase: "lobby-bootstrap",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  await root.enterLobbyRoom(roomId);
+
+  await waitFor(
+    () => root.showLobby === false && root.lastUpdate?.world.meta.roomId === roomId,
+    () => ({
+      phase: "room-join",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  root.ensureUiCameraVisibility = VeilRoot.prototype.ensureUiCameraVisibility.bind(root);
+  root.ensureViewNodes = VeilRoot.prototype.ensureViewNodes.bind(root);
+  root.renderView = VeilRoot.prototype.renderView.bind(root);
+  root.ensureUiCameraVisibility();
+  root.ensureViewNodes();
+  root.renderView();
+
+  room.emitPush(createJourneyLootSettlementUpdate(roomId, playerId));
+
+  await waitFor(
+    () => root.lastUpdate?.events.some((event) => event.type === "hero.equipmentFound") === true,
+    () => ({
+      phase: "loot-settlement",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  (root as RootState).toggleGameplayEquipmentPanel();
+  root.renderView();
+
+  const inventoryTextBeforeEquip = readNodeLabel(findNode(rootNode, "EquipmentPanelInventory")?.getChildByName("Label"));
+  const lootTextBeforeEquip = readNodeLabel(findNode(rootNode, "EquipmentPanelLoot")?.getChildByName("Label"));
+  assert.match(String(inventoryTextBeforeEquip), /斥候罗盘/);
+  assert.match(String(lootTextBeforeEquip), /斥候罗盘/);
+
+  pressNode(findNode(rootNode, "EquipmentPanelAction-accessory-scout_compass"));
+
+  await waitFor(
+    () =>
+      root.lastUpdate?.world.ownHeroes[0]?.loadout.equipment.accessoryId === "scout_compass" &&
+      root.gameplayAccountRefreshInFlight === false,
+    () => ({
+      phase: "equip-reconcile",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  const inventoryTextAfterEquip = readNodeLabel(findNode(rootNode, "EquipmentPanelInventory")?.getChildByName("Label"));
+  const loadoutTextAfterEquip = readNodeLabel(findNode(rootNode, "EquipmentPanelLoadout")?.getChildByName("Label"));
+  const heroTextAfterEquip = readNodeLabel(findNode(rootNode, "HudHero"));
+
+  assert.match(String(inventoryTextAfterEquip), /暂无可装备物品/);
+  assert.match(String(loadoutTextAfterEquip), /饰品 斥候罗盘/);
+  assert.match(String(heroTextAfterEquip), /知 2/);
+  assert.equal(room.sentMessages.at(-1)?.type, "world.action");
+  assert.equal((room.sentMessages.at(-1)?.payload as { action?: { type?: string } }).action?.type, "hero.equip");
 
   root.onDestroy();
   await flushMicrotasks();
