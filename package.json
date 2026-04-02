@@ -80,6 +80,7 @@
     "test:sync-governance:matrix": "node --import tsx ./scripts/sync-governance-matrix.ts",
     "smoke:client:release-candidate": "node --import tsx ./scripts/release-candidate-client-artifact-smoke.ts",
     "test:runtime-regression": "node --import tsx --test ./scripts/test/compare-runtime-regression.test.ts",
+    "test:release-readiness-dashboard": "node --import tsx --test ./scripts/test/release-readiness-dashboard.test.ts ./apps/cocos-client/test/release-readiness-dashboard.test.ts ./apps/cocos-client/test/release-readiness-dashboard-aggregation.test.ts",
     "test:multiplayer-protocol-compatibility": "node --import tsx ./scripts/multiplayer-protocol-compatibility.ts",
     "test:phase1-release-persistence": "node --import tsx ./scripts/phase1-release-persistence-regression.ts",
     "test:phase1-release-persistence:stonewatch": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack stonewatch-fork",
