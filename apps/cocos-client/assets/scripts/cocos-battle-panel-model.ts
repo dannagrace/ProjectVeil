@@ -1,3 +1,4 @@
+import type { CocosBattleFeedbackTone } from "./project-shared/index.ts";
 import type { BattleAction, BattleState, SessionUpdate, TerrainType, Vec2 } from "./VeilCocosSession.ts";
 import type { CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
 import type { CocosBattlePresentationState } from "./cocos-battle-presentation-controller.ts";
@@ -12,6 +13,15 @@ export interface BattlePanelInput {
   actionPending: boolean;
   feedback: CocosBattleFeedbackView | null;
   presentationState: CocosBattlePresentationState | null;
+  recovery?: BattlePanelRecoveryView | null;
+}
+
+export interface BattlePanelRecoveryView {
+  title: string;
+  detail: string;
+  badge: string;
+  tone: CocosBattleFeedbackTone;
+  summaryLines: string[];
 }
 
 export interface BattlePanelUnitView {
@@ -80,13 +90,22 @@ export interface BattlePanelSections {
 export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelViewModel {
   const battle = state.update?.battle;
   if (!battle) {
-    const presentationSummary = state.presentationState
-      ? [state.presentationState.label, ...state.presentationState.summaryLines]
-      : ["当前没有战斗。"];
+    const presentationSummary = state.recovery
+      ? state.recovery.summaryLines
+      : state.presentationState
+        ? [state.presentationState.label, ...state.presentationState.summaryLines]
+        : ["当前没有战斗。"];
     return {
-      title: state.presentationState?.phase === "resolution" ? "战斗结算" : "战斗面板",
+      title: state.recovery ? "结算恢复" : state.presentationState?.phase === "resolution" ? "战斗结算" : "战斗面板",
       stage: null,
-      feedback: state.feedback,
+      feedback: state.recovery
+        ? {
+            title: state.recovery.title,
+            detail: state.recovery.detail,
+            badge: state.recovery.badge,
+            tone: state.recovery.tone
+          }
+        : state.feedback,
       summaryLines: presentationSummary,
       orderLines: [],
       friendlyLines: [],

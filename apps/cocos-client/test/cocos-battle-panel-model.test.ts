@@ -181,6 +181,58 @@ test("buildBattlePanelViewModel keeps neutral settlement in the battle result sh
   assert.equal(view.summaryLines[0], "战斗收束");
 });
 
+test("buildBattlePanelViewModel shows an explicit settlement recovery path while reconnecting", () => {
+  const view = buildBattlePanelViewModel({
+    update: createBaseUpdate(),
+    timelineEntries: [],
+    controlledCamp: null,
+    selectedTargetId: null,
+    actionPending: false,
+    feedback: null,
+    presentationState: {
+      battleId: "battle-1",
+      phase: "resolution",
+      moment: "result_victory",
+      label: "战斗胜利",
+      detail: "PVE 遭遇已关闭 · 战利品已结算",
+      badge: "WIN",
+      tone: "victory",
+      result: "victory",
+      summaryLines: [
+        "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
+        "战利品：金币 +12"
+      ],
+      feedbackLayer: {
+        animation: "victory",
+        cue: "victory",
+        transition: "exit",
+        durationMs: 4200
+      }
+    },
+    recovery: {
+      title: "结算恢复中",
+      detail: "已保留最近一次结算摘要，正在等待权威房间确认奖励与英雄同步；不会重复发放奖励。",
+      badge: "RECOVER",
+      tone: "neutral",
+      summaryLines: [
+        "最近结算：战斗胜利",
+        "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
+        "战利品：金币 +12"
+      ]
+    }
+  });
+
+  assert.equal(view.idle, true);
+  assert.equal(view.title, "结算恢复");
+  assert.equal(view.feedback?.title, "结算恢复中");
+  assert.match(view.feedback?.detail ?? "", /不会重复发放奖励/);
+  assert.deepEqual(view.summaryLines, [
+    "最近结算：战斗胜利",
+    "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
+    "战利品：金币 +12"
+  ]);
+});
+
 test("buildBattlePanelViewModel enables attack actions on the player's turn", () => {
   const update = createBaseUpdate();
   update.battle = {

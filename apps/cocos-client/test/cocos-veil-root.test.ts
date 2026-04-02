@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { sys } from "cc";
+import { VeilRoot } from "../assets/scripts/VeilRoot.ts";
 import type { SessionUpdate } from "../assets/scripts/VeilCocosSession.ts";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
@@ -251,6 +252,51 @@ test("VeilRoot builds HUD session indicators from replay and connection lifecycl
   root.diagnosticsConnectionStatus = "connected";
 
   assert.deepEqual(root.buildHudSessionIndicators(), []);
+});
+
+test("VeilRoot keeps the latest settlement summary visible through reconnect recovery", async () => {
+  const root = createVeilRootHarness();
+  root.applySessionUpdate = VeilRoot.prototype.applySessionUpdate.bind(root);
+  root.syncWechatShareBridge = () => ({
+    available: false,
+    menuEnabled: false,
+    handlerRegistered: false,
+    canShareDirectly: false,
+    immediateShared: false,
+    payload: null,
+    message: "disabled"
+  });
+  root.refreshGameplayAccountProfile = async () => undefined;
+  root.lastUpdate = createBattleUpdate();
+
+  const resolvedUpdate = createSessionUpdate(4, "room-recover", "account-player");
+  resolvedUpdate.world.resources.gold = 1012;
+  resolvedUpdate.events = [
+    {
+      type: "battle.resolved",
+      battleId: "battle-1",
+      battleKind: "neutral",
+      heroId: "hero-1",
+      result: "attacker_victory",
+      resourcesGained: {
+        gold: 12,
+        wood: 0,
+        ore: 0
+      },
+      experienceGained: 10,
+      skillPointsAwarded: 0
+    }
+  ];
+
+  await root.applySessionUpdate(resolvedUpdate);
+  root.handleConnectionEvent("reconnecting");
+
+  const recovery = root.buildBattleSettlementRecoveryState();
+
+  assert.equal(recovery?.title, "结算恢复中");
+  assert.match(recovery?.detail ?? "", /不会重复发放奖励/);
+  assert.match(recovery?.summaryLines[0] ?? "", /最近结算：战斗胜利/);
+  assert.match(recovery?.summaryLines.join("\n") ?? "", /战利品：金币 \+12/);
 });
 
 test("VeilRoot refreshes WeChat share metadata after a battle resolves back to world state", async () => {
