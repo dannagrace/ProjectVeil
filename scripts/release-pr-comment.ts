@@ -2,6 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  renderPrCommentHealthSignal,
+  type ReviewerFacingSignal,
+  type ReviewerFacingTriageEntry
+} from "./release-reporting-contract.ts";
+
 interface Args {
   releaseGateSummaryPath?: string;
   releaseHealthSummaryPath?: string;
@@ -44,6 +50,18 @@ interface ReleaseHealthSummaryReport {
     summary: string;
     details: string[];
   }>;
+  triage: {
+    blockers: Array<{
+      signalId: string;
+      summary: string;
+      nextStep: string;
+    }>;
+    warnings: Array<{
+      signalId: string;
+      summary: string;
+      nextStep: string;
+    }>;
+  };
 }
 
 const COMMENT_MARKER = "<!-- project-veil-release-summary -->";
@@ -112,15 +130,6 @@ function summarizeGate(gate: ReleaseGateSummaryReport["gates"][number]): string 
   return `- **${gate.label}**: \`${statusLabel}\` ${firstFailure ?? gate.summary}`;
 }
 
-function summarizeHealthSignal(signal: ReleaseHealthSummaryReport["signals"][number]): string {
-  const statusLabel = signal.status.toUpperCase();
-  if (signal.id === "readiness-trend") {
-    return `- **${signal.label}**: \`${statusLabel}\` ${signal.summary}`;
-  }
-  const firstDetail = signal.details.find((detail) => detail.trim().length > 0);
-  return `- **${signal.label}**: \`${statusLabel}\` ${firstDetail ?? signal.summary}`;
-}
-
 export function renderPrComment(
   releaseGateReport: ReleaseGateSummaryReport,
   releaseHealthReport: ReleaseHealthSummaryReport,
@@ -146,11 +155,21 @@ export function renderPrComment(
     "### Release Health",
     ""
   ];
+  const healthTriageBySignalId = new Map<string, ReviewerFacingTriageEntry>(
+    [...releaseHealthReport.triage.blockers, ...releaseHealthReport.triage.warnings].map((entry) => [entry.signalId, entry])
+  );
 
   if (healthSignals.length === 0) {
     lines.push("- No additional release-health signals were available beyond release readiness.");
   } else {
-    lines.push(...healthSignals.map((signal) => summarizeHealthSignal(signal)));
+    for (const signal of healthSignals) {
+      lines.push(
+        ...renderPrCommentHealthSignal(
+          signal as ReviewerFacingSignal,
+          healthTriageBySignalId.get(signal.id)
+        )
+      );
+    }
   }
 
   lines.push("");
