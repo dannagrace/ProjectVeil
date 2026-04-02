@@ -2,6 +2,8 @@
 
 `npm run release:health:trend-baseline` summarizes the latest N `release-readiness-history` artifact directories into one concise baseline for maintainers.
 
+`npm run release:health:trend-compare` reuses the same history window, but turns that baseline into one explicit candidate-vs-baseline delta report for CI, PR review, or release triage.
+
 It is intended to answer three questions quickly:
 
 - Is the current candidate healthier or worse than the last few candidates?
@@ -41,12 +43,25 @@ npm run release:health:trend-baseline -- \
   --limit 5
 ```
 
+Generate the focused compare artifact instead of the broader trend baseline:
+
+```bash
+npm run release:health:trend-compare -- \
+  --cache-dir ./tmp/release-readiness-history-cache \
+  --limit 5
+```
+
 ## Default Outputs
 
 If you do not pass output flags, the script writes:
 
 - `artifacts/release-readiness/release-health-trend-baseline.json`
 - `artifacts/release-readiness/release-health-trend-baseline.md`
+
+Compare mode writes:
+
+- `artifacts/release-readiness/release-health-trend-compare.json`
+- `artifacts/release-readiness/release-health-trend-compare.md`
 
 ## Output Shape
 
@@ -72,6 +87,37 @@ The Markdown output is stable enough for PR comments or release notes because it
 - `Signal Trends`
 - `Recent Candidates`
 
+The compare JSON output contains:
+
+- `summary`
+  - compare status: `pass`, `warn`, or `fail`
+  - current candidate plus the explicit baseline candidate revisions
+  - which baseline-selection rule was used
+  - total blocking and warning findings
+- `baseline`
+  - baseline candidates, median blocker count, median warning count
+  - per-signal expected status and presence history across the baseline pool
+- `findings`
+  - structured `blocker-count`, `warning-count`, `missing-evidence`, and `signal-regression` findings
+
+The compare Markdown output keeps the reviewer-facing sections fixed:
+
+- `Findings`
+- `Baseline Heuristics`
+- `Baseline Signals`
+
+## Compare Heuristics
+
+The compare report intentionally keeps the regression rules small and reviewable:
+
+- Baseline pool: earlier candidates inside the selected history window, preferring non-blocking candidates. If no earlier non-blocking candidate exists, the tool falls back to all earlier candidates.
+- Blocker count regression: the current candidate exceeds the baseline median blocker count.
+- Warning count regression: the current candidate exceeds the baseline median warning count.
+- Missing evidence: a tracked signal is absent for the current candidate after appearing in at least half of baseline candidates.
+- Signal regression: the current signal falls below the highest status reached by at least half of baseline candidates.
+
+This keeps the compare artifact opinionated enough to be actionable without hiding the raw candidate history.
+
 ## Local Regeneration
 
 Populate the default cache path with recent workflow artifacts. One straightforward pattern is to download the `release-readiness-history` artifact from several workflow runs into separate directories:
@@ -96,6 +142,7 @@ In GitHub Actions, reuse the existing `release-readiness-history` artifact inste
 
 1. Download recent `release-readiness-history` artifacts into sibling directories under a workspace cache path.
 2. Run `npm run release:health:trend-baseline -- --cache-dir <that-path> --limit <n>`.
-3. Attach the generated JSON / Markdown to the workflow summary, PR comment, or release notes bundle.
+3. Run `npm run release:health:trend-compare -- --cache-dir <that-path> --limit <n>` when CI or a PR comment needs the explicit current-candidate delta.
+4. Attach the generated JSON / Markdown to the workflow summary, PR comment, or release notes bundle.
 
 This keeps the trend baseline aligned with the same normalized artifacts already used by `release:health:summary`, `release:gate:summary`, and `release:readiness:dashboard`.
