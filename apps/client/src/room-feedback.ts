@@ -105,13 +105,13 @@ export function renderEncounterSourceDetail(input: EncounterSourceDetailInput): 
     if (event.encounterKind === "hero") {
       const sessionId = formatBattleSession(input.world.meta.roomId, event.battleId);
       return ownedIds.has(event.heroId)
-        ? `遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到遭遇会话 ${sessionId}。`
-        : `遭遇来源：敌方英雄先手接触我方，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到遭遇会话 ${sessionId}。`;
+        ? `遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到 PVP 多人遭遇链路；对手身份、当前回合与房间归属现在统一挂到遭遇会话 ${sessionId}。`
+        : `遭遇来源：敌方英雄先手接触我方，当前房间已切到 PVP 多人遭遇链路；对手身份、当前回合与房间归属现在统一挂到遭遇会话 ${sessionId}。`;
     }
 
     return event.initiator === "neutral"
-      ? `遭遇来源：中立守军主动拦截，当前房间已切到遭遇战结算链路，战斗会话 ${event.battleId} 已建立。`
-      : `遭遇来源：我方接触了中立守军，当前房间已切到遭遇战结算链路，战斗会话 ${event.battleId} 已建立。`;
+      ? `遭遇来源：中立守军主动拦截，当前房间已切到遭遇战链路，战斗会话 ${event.battleId} 已建立。`
+      : `遭遇来源：我方接触了中立守军，当前房间已切到遭遇战链路，战斗会话 ${event.battleId} 已建立。`;
   }
 
   if (input.previewPlan?.endsInEncounter) {

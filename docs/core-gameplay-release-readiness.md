@@ -203,8 +203,8 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
 用于验证 issue #208 这类“多人遭遇进入 / 结算 / 回到地图”反馈是否仍然完整可读。
 
 1. 启动本地房间与 H5 调试壳：`npm run dev:server`、`npm run dev:client`
-2. 跑最小 PvP 反馈回归：`npx playwright test tests/e2e/pvp-hero-encounter.spec.ts --config=playwright.multiplayer.config.ts`
-3. 跑结算后重载回归：`npx playwright test tests/e2e/pvp-postbattle-reconnect.spec.ts --config=playwright.multiplayer.config.ts`
+2. 跑 PR 级 PvP 反馈回归：`npm run test:e2e:multiplayer:smoke`
+3. 若改动触及恢复 / 战后结算，再补跑：`npm run test:e2e:multiplayer -- pvp-postbattle-reconnect`
 4. 若只想快速校验文案分支，补跑单测：`node --import tsx --test ./apps/client/test/room-feedback.test.ts`
 
 成功信号：

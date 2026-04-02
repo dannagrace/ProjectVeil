@@ -159,7 +159,7 @@ test("renderEncounterSourceDetail covers active hero encounter initiative branch
       battle: activeBattle,
       lastEncounterStarted: createEncounterStartedEvent()
     }),
-    "遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到遭遇会话 room-alpha/battle-1。"
+    "遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到 PVP 多人遭遇链路；对手身份、当前回合与房间归属现在统一挂到遭遇会话 room-alpha/battle-1。"
   );
 
   assert.equal(
@@ -171,7 +171,7 @@ test("renderEncounterSourceDetail covers active hero encounter initiative branch
         defenderHeroId: "hero-1"
       })
     }),
-    "遭遇来源：敌方英雄先手接触我方，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到遭遇会话 room-alpha/battle-1。"
+    "遭遇来源：敌方英雄先手接触我方，当前房间已切到 PVP 多人遭遇链路；对手身份、当前回合与房间归属现在统一挂到遭遇会话 room-alpha/battle-1。"
   );
 });
 
@@ -189,7 +189,7 @@ test("renderEncounterSourceDetail covers active neutral encounter initiator bran
         initiator: "neutral"
       })
     }),
-    "遭遇来源：中立守军主动拦截，当前房间已切到遭遇战结算链路，战斗会话 battle-1 已建立。"
+    "遭遇来源：中立守军主动拦截，当前房间已切到遭遇战链路，战斗会话 battle-1 已建立。"
   );
 
   assert.equal(
@@ -203,7 +203,7 @@ test("renderEncounterSourceDetail covers active neutral encounter initiator bran
         initiator: "hero"
       })
     }),
-    "遭遇来源：我方接触了中立守军，当前房间已切到遭遇战结算链路，战斗会话 battle-1 已建立。"
+    "遭遇来源：我方接触了中立守军，当前房间已切到遭遇战链路，战斗会话 battle-1 已建立。"
   );
 });
 

@@ -25,15 +25,30 @@
 
 ## 自动化与人工验收
 
+- Canonical multiplayer smoke：
+  - `npm run test:e2e:multiplayer:smoke`
+  - 当前默认覆盖多人同步基线与 `tests/e2e/pvp-hero-encounter.spec.ts`，用于快速确认“能进遭遇、能看懂对手与房间态、能读出结算结果”。
 - Happy path：
   - `tests/e2e/pvp-hero-encounter.spec.ts`
   - 断言进入战斗时存在 `room-phase`、`encounter-source`、`opponent-summary`、`room-result-summary`
+  - 断言结算后仍保留 `battle-settlement-*`、`room-next-action` 与最近对手 / 遭遇会话
 - Lifecycle edge：
+  - `npm run test:e2e:multiplayer -- pvp-reconnect-recovery`
   - `tests/e2e/pvp-reconnect-recovery.spec.ts`
   - 断言遭遇中断后仍保留对手摘要、遭遇会话、恢复提示，并在恢复后回到可继续操作的权威战斗态
+- Post-settlement recovery：
+  - `npm run test:e2e:multiplayer -- pvp-postbattle-reconnect`
+  - `tests/e2e/pvp-postbattle-reconnect.spec.ts`
+  - 断言结算弹窗、战后房间态、最近对手与遭遇会话在恢复后仍保持一致
 - 文案 / 状态分支：
   - `apps/client/test/room-feedback.test.ts`
   - `apps/client/test/main-session-runtime.test.ts`
+
+## 已知边界
+
+- 本 slice 只收口已有双人遭遇 / 房间反馈链路，不扩展新的匹配系统、排位或复杂房间编排。
+- `npm run test:e2e:multiplayer:smoke` 仍是 PR 级快反馈，不覆盖 reconnect / 结算恢复的所有分支；这些分支继续用 `npm run test:e2e:multiplayer` 下的对应 PvP spec 复核。
+- H5 回归壳与 Cocos 主客户端应复用同一套“对手摘要 / 房间态 / 遭遇会话 / 结算结果”语义，但本地自动化当前仍以 H5 壳为最快反馈面。
 
 ## CI / 手工成功信号
 
