@@ -619,6 +619,43 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
         );
       }
 
+      if (url.endsWith("/api/player-accounts/me/battle-reports")) {
+        return new Response(
+          JSON.stringify({
+            latestReportId: "room-beta:battle-1:account-player",
+            items: [
+              {
+                id: "room-beta:battle-1:account-player",
+                replayId: "room-beta:battle-1:account-player",
+                roomId: "room-beta",
+                playerId: "account-player",
+                battleId: "battle-1",
+                battleKind: "neutral",
+                playerCamp: "attacker",
+                heroId: "hero-1",
+                neutralArmyId: "neutral-1",
+                startedAt: "2026-03-25T12:58:00.000Z",
+                completedAt: "2026-03-25T13:00:00.000Z",
+                result: "victory",
+                turnCount: 1,
+                actionCount: 0,
+                rewards: [],
+                evidence: {
+                  replay: "available",
+                  rewards: "missing"
+                }
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        );
+      }
+
       return new Response(
         JSON.stringify({
           items: [
@@ -679,7 +716,8 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
 
   assert.deepEqual(requestedUrls, [
     "http://127.0.0.1:2567/api/player-accounts/me",
-    "http://127.0.0.1:2567/api/player-accounts/me/battle-replays"
+    "http://127.0.0.1:2567/api/player-accounts/me/battle-replays",
+    "http://127.0.0.1:2567/api/player-accounts/me/battle-reports"
   ]);
   assert.deepEqual(profile, {
     playerId: "account-player",
@@ -798,6 +836,32 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
         result: "attacker_victory"
       }
     ],
+    battleReportCenter: {
+      latestReportId: "room-beta:battle-1:account-player",
+      items: [
+        {
+          id: "room-beta:battle-1:account-player",
+          replayId: "room-beta:battle-1:account-player",
+          roomId: "room-beta",
+          playerId: "account-player",
+          battleId: "battle-1",
+          battleKind: "neutral",
+          playerCamp: "attacker",
+          heroId: "hero-1",
+          neutralArmyId: "neutral-1",
+          startedAt: "2026-03-25T12:58:00.000Z",
+          completedAt: "2026-03-25T13:00:00.000Z",
+          result: "victory",
+          turnCount: 1,
+          actionCount: 0,
+          rewards: [],
+          evidence: {
+            replay: "available",
+            rewards: "missing"
+          }
+        }
+      ]
+    },
     source: "remote"
   });
   assert.ok(values.get("project-veil:auth-session")?.includes("\"loginId\":\"veil-ranger\""));

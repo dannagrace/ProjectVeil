@@ -270,6 +270,7 @@ npm run dev:client:h5
 
 运行后会生成 `.coverage/summary.md` 和 `.coverage/summary.json`。如果任一 scope 的任一 metric 低于 floor，摘要顶部会明确列出失败的 scope 和具体阈值差距，方便直接对照 CI 失败原因。
 - 战斗回放读模型当前已补上两块更适合前端直接消费的能力：`GET /api/player-accounts/:playerId/battle-replays` 现支持 `limit` + `offset` 分页，shared 侧也新增了可从 `initialState + steps` 推导每步回合与伤害/减员结算的 replay timeline helper，H5 战报面板会直接显示这些逐步结算摘要。
+- 战报中心现在也有独立读模型入口：`GET /api/player-accounts/:playerId/battle-reports` / `GET /api/player-accounts/me/battle-reports` 会按与 replay 相同的筛选条件返回 `latestReportId + items[]`，把结果、奖励摘要、关键参与者、时间与证据可用性收敛成前端可直接消费的 contract。
 - Cocos Lobby 现已复用这套 timeline helper：账号资料回顾的“战报”卡片可直接点击进入战报时间线面板，会按行动阵营/单位、动作类型和主要结算概览显示最近 6 条步骤，并在没有战斗或回放缺失时回退提示。
 - H5 账号资料卡现在会额外拉取 `/api/player-accounts/:playerId/progression` 覆盖成就/事件摘要，因此即使基础账号接口只返回轻量档案，前端也能稳定展示最新的成就推进、最近解锁和世界事件日志，而不会继续依赖旧的内嵌快照。
 - H5 账号资料卡的成就/事件展示本轮也补了一层可读性整理：成就卡会把“已解锁”和“最近推进”的项目排到前面，并显示最近推进时间；世界事件日志则会把 `battle.started`、`first_battle` 这类内部 ID 转成中文标签，同时在摘要里补充各事件类别计数，方便后续继续接提示面板或筛选器。

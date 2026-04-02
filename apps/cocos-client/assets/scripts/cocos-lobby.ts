@@ -6,6 +6,7 @@ import {
   writeStoredCocosAuthSession
 } from "./cocos-session-launch.ts";
 import {
+  normalizePlayerBattleReportCenter,
   normalizePlayerBattleReplaySummaries,
   normalizePlayerAccountReadModel,
   normalizeEventLogEntries,
@@ -15,6 +16,8 @@ import {
   type EventLogEntry,
   type EventLogQuery,
   type PlayerAccountReadModel,
+  type PlayerBattleReportCenter,
+  type PlayerBattleReportSummary,
   type PlayerProgressionSnapshot,
   type PlayerBattleReplayQuery,
   type PlayerBattleReplaySummary,
@@ -100,6 +103,10 @@ interface LobbyRoomsApiPayload {
 
 interface PlayerBattleReplayListApiPayload {
   items?: Partial<PlayerBattleReplaySummary>[];
+}
+
+interface PlayerBattleReportCenterApiPayload extends Partial<PlayerBattleReportCenter> {
+  items?: Partial<PlayerBattleReportSummary>[];
 }
 
 interface PlayerBattleReplayHistoryApiPayload extends PlayerBattleReplayListApiPayload {
@@ -365,7 +372,8 @@ function asCocosPlayerAccountProfile(
   roomId: string,
   source: CocosPlayerAccountProfile["source"],
   account?: PlayerAccountApiPayload["account"],
-  fallbackDisplayName?: string | null
+  fallbackDisplayName?: string | null,
+  battleReportCenter?: PlayerBattleReportCenter
 ): CocosPlayerAccountProfile {
   const accountProfile = normalizePlayerAccountReadModel({
     playerId,
@@ -375,6 +383,7 @@ function asCocosPlayerAccountProfile(
     achievements: account?.achievements,
     recentEventLog: account?.recentEventLog,
     recentBattleReplays: account?.recentBattleReplays,
+    ...(battleReportCenter ? { battleReportCenter } : {}),
     loginId: normalizeLoginId(account?.loginId),
     credentialBoundAt: account?.credentialBoundAt,
     lastRoomId: account?.lastRoomId ?? roomId,
@@ -427,6 +436,48 @@ export async function loadCocosBattleReplaySummaries(
       throw error;
     }
     return normalizePlayerBattleReplaySummaries();
+  }
+}
+
+async function loadCocosBattleReportCenter(
+  remoteUrl: string,
+  playerId: string,
+  query?: PlayerBattleReplayQuery,
+  options?: {
+    fetchImpl?: FetchLike;
+    authSession?: CocosStoredAuthSession | null;
+    storage?: Pick<Storage, "removeItem"> | null;
+    throwOnError?: boolean;
+  }
+): Promise<PlayerBattleReportCenter> {
+  const authSession = options?.authSession ?? null;
+  const queryString = toBattleReplayQueryString(query);
+  const endpoint = authSession?.token
+    ? `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/battle-reports${queryString}`
+    : `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/${encodeURIComponent(playerId)}/battle-reports${queryString}`;
+
+  try {
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
+      endpoint,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(options ? { storage: options.storage ?? null } : {})
+      }
+    )) as PlayerBattleReportCenterApiPayload;
+    return normalizePlayerBattleReportCenter(payload, query ? { query } : undefined);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && options?.storage) {
+      clearStoredCocosAuthSession(options.storage);
+    }
+    if (options?.throwOnError) {
+      throw error;
+    }
+    return normalizePlayerBattleReportCenter(undefined, query ? { query } : undefined);
   }
 }
 
@@ -1219,18 +1270,26 @@ export async function loadCocosPlayerAccountProfile(
       }
     )) as PlayerAccountApiPayload;
     const resolvedPlayerId = payload.account?.playerId?.trim() || authSession?.playerId || playerId;
+    const [recentBattleReplays, battleReportCenter] = await Promise.all([
+      loadCocosBattleReplaySummaries(remoteUrl, resolvedPlayerId, undefined, {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        authSession: authSession ?? null,
+        storage
+      }),
+      loadCocosBattleReportCenter(remoteUrl, resolvedPlayerId, undefined, {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        authSession: authSession ?? null,
+        storage
+      })
+    ]);
     const profile = asCocosPlayerAccountProfile(
       resolvedPlayerId,
       roomId,
       "remote",
       payload.account,
-      storedDisplayName
+      storedDisplayName,
+      battleReportCenter
     );
-    const recentBattleReplays = await loadCocosBattleReplaySummaries(remoteUrl, resolvedPlayerId, undefined, {
-      ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-      authSession: authSession ?? null,
-      storage
-    });
 
     if (storage?.setItem) {
       storage.setItem(getCocosPlayerAccountStorageKey(profile.playerId), profile.displayName);
