@@ -1558,6 +1558,8 @@ function renderMarkdown(report: DashboardReport): string {
           lines.push(`    - reasonCodes=${item.reasonCodes.join(",")}`);
         }
       }
+    } else {
+      lines.push("- Evidence: unavailable.");
     }
     lines.push("");
   }
