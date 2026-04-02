@@ -24,6 +24,7 @@ import {
   createDefaultHeroProgression,
   queryEventLogEntries,
   type PlayerAchievementProgress,
+  type PlayerBattleReportCenter,
   type PlayerProgressionSnapshot,
   type PlayerBattleReplaySummary,
   type WorldState
@@ -865,6 +866,87 @@ test("player account battle replay routes filter replay summaries by battle meta
   const mePayload = (await meResponse.json()) as { items: PlayerBattleReplaySummary[] };
   assert.equal(meResponse.status, 200);
   assert.deepEqual(mePayload.items.map((replay) => replay.id), ["replay-hero-loss"]);
+});
+
+test("player account battle report routes expose normalized report summaries with replay filters", async (t) => {
+  const port = 42045 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "player-report",
+    displayName: "回响书记",
+    globalResources: { gold: 75, wood: 4, ore: 2 },
+    achievements: [],
+    recentEventLog: [
+      {
+        id: "event-report-reward",
+        timestamp: "2026-03-27T12:06:30.000Z",
+        roomId: "room-neutral",
+        playerId: "player-report",
+        category: "combat",
+        description: "hero-1 击退中立守军。",
+        heroId: "hero-1",
+        worldEventType: "battle.resolved",
+        rewards: [{ type: "experience", label: "经验", amount: 40 }]
+      }
+    ],
+    recentBattleReplays: [
+      createReplaySummary("replay-hero-loss", "2026-03-27T12:05:00.000Z", {
+        playerId: "player-report",
+        roomId: "room-hero",
+        battleId: "battle-hero-loss",
+        battleKind: "hero",
+        playerCamp: "defender",
+        heroId: "hero-3",
+        opponentHeroId: "hero-9",
+        result: "defender_victory"
+      }),
+      createReplaySummary("replay-neutral-win", "2026-03-27T12:06:00.000Z", {
+        playerId: "player-report",
+        roomId: "room-neutral",
+        battleId: "battle-neutral-win",
+        battleKind: "neutral",
+        heroId: "hero-1",
+        neutralArmyId: "neutral-1",
+        opponentHeroId: undefined,
+        result: "attacker_victory"
+      })
+    ],
+    lastRoomId: "room-neutral",
+    lastSeenAt: new Date("2026-03-27T12:06:30.000Z").toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-report",
+    displayName: "回响书记"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const publicResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-report/battle-reports?battleKind=neutral&heroId=hero-1&neutralArmyId=neutral-1`
+  );
+  const publicPayload = (await publicResponse.json()) as PlayerBattleReportCenter;
+  assert.equal(publicResponse.status, 200);
+  assert.equal(publicPayload.latestReportId, "replay-neutral-win");
+  assert.equal(publicPayload.items[0]?.result, "victory");
+  assert.deepEqual(publicPayload.items[0]?.rewards, [{ type: "experience", label: "经验", amount: 40 }]);
+  assert.equal(publicPayload.items[0]?.evidence.replay, "available");
+  assert.equal(publicPayload.items[0]?.evidence.rewards, "available");
+
+  const meResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/battle-reports?roomId=room-hero&battleId=battle-hero-loss&playerCamp=defender&result=defender_victory&opponentHeroId=hero-9`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const mePayload = (await meResponse.json()) as PlayerBattleReportCenter;
+  assert.equal(meResponse.status, 200);
+  assert.deepEqual(mePayload.items.map((report) => report.id), ["replay-hero-loss"]);
+  assert.equal(mePayload.items[0]?.result, "victory");
 });
 
 test("player account me battle replay route resolves the current authenticated account", async (t) => {
