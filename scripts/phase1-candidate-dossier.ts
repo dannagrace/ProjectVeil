@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { buildReleaseGateSummaryReport } from "./release-gate-summary.ts";
-import { buildReleaseHealthSummaryReport } from "./release-health-summary.ts";
+import { buildReleaseGateSummaryReport, renderMarkdown as renderReleaseGateMarkdown } from "./release-gate-summary.ts";
+import { buildReleaseHealthSummaryReport, renderMarkdown as renderReleaseHealthMarkdown } from "./release-health-summary.ts";
 
 type TargetSurface = "h5" | "wechat";
 type EvidenceFreshness = "fresh" | "stale" | "missing_timestamp" | "invalid_timestamp" | "unknown";
@@ -29,6 +29,7 @@ interface Args {
   coverageSummaryPath?: string;
   configCenterLibraryPath?: string;
   targetSurface: TargetSurface;
+  outputDir?: string;
   outputPath?: string;
   markdownOutputPath?: string;
   maxEvidenceAgeHours: number;
@@ -368,6 +369,15 @@ interface Phase1CandidateDossier {
     coverageSummaryPath?: string;
     configCenterLibraryPath?: string;
   };
+  artifacts?: {
+    outputDir: string;
+    dossierJsonPath: string;
+    dossierMarkdownPath: string;
+    releaseGateSummaryPath: string;
+    releaseGateMarkdownPath: string;
+    releaseHealthSummaryPath: string;
+    releaseHealthMarkdownPath: string;
+  };
   sections: DossierSection[];
   acceptedRisks: DossierAcceptedRisk[];
 }
@@ -406,6 +416,7 @@ function parseArgs(argv: string[]): Args {
   let coverageSummaryPath: string | undefined;
   let configCenterLibraryPath: string | undefined;
   let targetSurface: TargetSurface = "wechat";
+  let outputDir: string | undefined;
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
   let maxEvidenceAgeHours = 72;
@@ -502,6 +513,11 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--output-dir" && next) {
+      outputDir = next;
+      index += 1;
+      continue;
+    }
     if (arg === "--output" && next) {
       outputPath = next;
       index += 1;
@@ -543,6 +559,7 @@ function parseArgs(argv: string[]): Args {
     ...(coverageSummaryPath ? { coverageSummaryPath } : {}),
     ...(configCenterLibraryPath ? { configCenterLibraryPath } : {}),
     targetSurface,
+    ...(outputDir ? { outputDir } : {}),
     ...(outputPath ? { outputPath } : {}),
     ...(markdownOutputPath ? { markdownOutputPath } : {}),
     maxEvidenceAgeHours
@@ -1572,6 +1589,82 @@ function buildOverallStatus(requiredFailed: string[], requiredPending: string[],
   return "passed";
 }
 
+function replaceSectionArtifactPath(sections: DossierSection[], id: DossierSection["id"], artifactPath: string): DossierSection[] {
+  return sections.map((section) => (section.id === id ? { ...section, artifactPath } : section));
+}
+
+function replaceSectionEvidence(
+  sections: DossierSection[],
+  id: DossierSection["id"],
+  evidence: DossierEvidenceRef[]
+): DossierSection[] {
+  return sections.map((section) => (section.id === id ? { ...section, evidence } : section));
+}
+
+function buildSupportingReports(
+  inputs: Phase1CandidateDossier["inputs"],
+  args: Args,
+  revision: GitRevision
+): {
+  gateReport: ReturnType<typeof buildReleaseGateSummaryReport>;
+  healthReport: ReturnType<typeof buildReleaseHealthSummaryReport>;
+} {
+  const gateReport = buildReleaseGateSummaryReport(
+    {
+      ...(inputs.snapshotPath ? { snapshotPath: inputs.snapshotPath } : {}),
+      ...(inputs.h5SmokePath ? { h5SmokePath: inputs.h5SmokePath } : {}),
+      ...(inputs.reconnectSoakPath ? { reconnectSoakPath: inputs.reconnectSoakPath } : {}),
+      ...(inputs.wechatArtifactsDir ? { wechatArtifactsDir: inputs.wechatArtifactsDir } : {}),
+      ...(inputs.wechatCandidateSummaryPath ? { wechatCandidateSummaryPath: inputs.wechatCandidateSummaryPath } : {}),
+      ...(inputs.wechatRcValidationPath ? { wechatRcValidationPath: inputs.wechatRcValidationPath } : {}),
+      ...(inputs.wechatSmokeReportPath ? { wechatSmokeReportPath: inputs.wechatSmokeReportPath } : {}),
+      ...(inputs.configCenterLibraryPath ? { configCenterLibraryPath: inputs.configCenterLibraryPath } : {}),
+      targetSurface: args.targetSurface
+    },
+    revision
+  );
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-phase1-dossier-"));
+  const tempGatePath = path.join(tempDir, "release-gate-summary.json");
+  writeJsonFile(tempGatePath, gateReport);
+
+  const healthReport = buildReleaseHealthSummaryReport(
+    {
+      ...(inputs.snapshotPath ? { releaseReadinessPath: inputs.snapshotPath } : {}),
+      releaseGateSummaryPath: tempGatePath,
+      ...(inputs.ciTrendSummaryPath ? { ciTrendSummaryPath: inputs.ciTrendSummaryPath } : {}),
+      ...(inputs.coverageSummaryPath ? { coverageSummaryPath: inputs.coverageSummaryPath } : {}),
+      ...(inputs.syncGovernancePath ? { syncGovernancePath: inputs.syncGovernancePath } : {})
+    },
+    revision
+  );
+
+  return {
+    gateReport,
+    healthReport
+  };
+}
+
+function resolveBundlePaths(args: Args, dossier: Phase1CandidateDossier): Phase1CandidateDossier["artifacts"] {
+  const defaultOutputDir = path.resolve(
+    DEFAULT_RELEASE_READINESS_DIR,
+    `phase1-candidate-dossier-${slugify(dossier.candidate.name)}-${dossier.candidate.shortRevision}`
+  );
+  const outputDir = path.resolve(args.outputDir ?? defaultOutputDir);
+  const dossierJsonPath = path.resolve(args.outputPath ?? path.join(outputDir, "phase1-candidate-dossier.json"));
+  const dossierMarkdownPath = path.resolve(args.markdownOutputPath ?? path.join(outputDir, "phase1-candidate-dossier.md"));
+  const bundleDir = path.dirname(dossierJsonPath);
+  return {
+    outputDir: bundleDir,
+    dossierJsonPath,
+    dossierMarkdownPath,
+    releaseGateSummaryPath: path.join(bundleDir, "release-gate-summary.json"),
+    releaseGateMarkdownPath: path.join(bundleDir, "release-gate-summary.md"),
+    releaseHealthSummaryPath: path.join(bundleDir, "release-health-summary.json"),
+    releaseHealthMarkdownPath: path.join(bundleDir, "release-health-summary.md")
+  };
+}
+
 function buildPhase1ExitEvidenceGateSection(sections: DossierSection[], generatedAt: string | undefined): {
   section: DossierSection;
   gate: Phase1ExitEvidenceGate;
@@ -1662,6 +1755,17 @@ export function renderMarkdown(dossier: Phase1CandidateDossier): string {
   lines.push(`- CI trend summary: \`${dossier.inputs.ciTrendSummaryPath ? relativeArtifactPath(dossier.inputs.ciTrendSummaryPath) : "<missing>"}\``);
   lines.push(`- Coverage summary: \`${dossier.inputs.coverageSummaryPath ? relativeArtifactPath(dossier.inputs.coverageSummaryPath) : "<missing>"}\``);
   lines.push(`- Config audit: \`${dossier.inputs.configCenterLibraryPath ? relativeArtifactPath(dossier.inputs.configCenterLibraryPath) : "<missing>"}\``, "");
+
+  if (dossier.artifacts) {
+    lines.push("## Generated Bundle", "");
+    lines.push(`- Output dir: \`${relativeArtifactPath(dossier.artifacts.outputDir)}\``);
+    lines.push(`- Dossier JSON: \`${relativeArtifactPath(dossier.artifacts.dossierJsonPath)}\``);
+    lines.push(`- Dossier Markdown: \`${relativeArtifactPath(dossier.artifacts.dossierMarkdownPath)}\``);
+    lines.push(`- Release gate summary JSON: \`${relativeArtifactPath(dossier.artifacts.releaseGateSummaryPath)}\``);
+    lines.push(`- Release gate summary Markdown: \`${relativeArtifactPath(dossier.artifacts.releaseGateMarkdownPath)}\``);
+    lines.push(`- Release health summary JSON: \`${relativeArtifactPath(dossier.artifacts.releaseHealthSummaryPath)}\``);
+    lines.push(`- Release health summary Markdown: \`${relativeArtifactPath(dossier.artifacts.releaseHealthMarkdownPath)}\``, "");
+  }
 
   lines.push("## Phase 1 Exit Evidence Gate", "");
   lines.push(`- Result: \`${dossier.phase1ExitEvidenceGate.result}\``);
@@ -1777,35 +1881,7 @@ export async function buildPhase1CandidateDossier(args: Args): Promise<Phase1Can
   const reconnectSoakSection = buildReconnectSoakSection(inputs.reconnectSoakPath, revision.commit, maxAgeMs);
   const persistenceSection = buildPersistenceSection(inputs.persistencePath, revision.commit, maxAgeMs);
 
-  const gateReport = buildReleaseGateSummaryReport(
-    {
-      ...(inputs.snapshotPath ? { snapshotPath: inputs.snapshotPath } : {}),
-      ...(inputs.h5SmokePath ? { h5SmokePath: inputs.h5SmokePath } : {}),
-      ...(inputs.reconnectSoakPath ? { reconnectSoakPath: inputs.reconnectSoakPath } : {}),
-      ...(inputs.wechatArtifactsDir ? { wechatArtifactsDir: inputs.wechatArtifactsDir } : {}),
-      ...(inputs.wechatCandidateSummaryPath ? { wechatCandidateSummaryPath: inputs.wechatCandidateSummaryPath } : {}),
-      ...(inputs.wechatRcValidationPath ? { wechatRcValidationPath: inputs.wechatRcValidationPath } : {}),
-      ...(inputs.wechatSmokeReportPath ? { wechatSmokeReportPath: inputs.wechatSmokeReportPath } : {}),
-      ...(inputs.configCenterLibraryPath ? { configCenterLibraryPath: inputs.configCenterLibraryPath } : {}),
-      targetSurface: args.targetSurface
-    },
-    revision
-  );
-
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-phase1-dossier-"));
-  const tempGatePath = path.join(tempDir, "release-gate-summary.json");
-  writeJsonFile(tempGatePath, gateReport);
-
-  const healthReport = buildReleaseHealthSummaryReport(
-    {
-      ...(inputs.snapshotPath ? { releaseReadinessPath: inputs.snapshotPath } : {}),
-      releaseGateSummaryPath: tempGatePath,
-      ...(inputs.ciTrendSummaryPath ? { ciTrendSummaryPath: inputs.ciTrendSummaryPath } : {}),
-      ...(inputs.coverageSummaryPath ? { coverageSummaryPath: inputs.coverageSummaryPath } : {}),
-      ...(inputs.syncGovernancePath ? { syncGovernancePath: inputs.syncGovernancePath } : {})
-    },
-    revision
-  );
+  const { gateReport, healthReport } = buildSupportingReports(inputs, args, revision);
 
   const releaseGateSection = buildDerivedSection(
     "release-gate",
@@ -1901,17 +1977,73 @@ export async function buildPhase1CandidateDossier(args: Args): Promise<Phase1Can
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv);
-  const dossier = await buildPhase1CandidateDossier(args);
+  const revision = getRevision(args.candidateRevision);
+  const inputs = resolveInputPaths(args);
+  const { gateReport, healthReport } = buildSupportingReports(inputs, args, revision);
+  let dossier = await buildPhase1CandidateDossier(args);
+  const artifacts = resolveBundlePaths(args, dossier);
 
-  const outputBaseName = `phase1-candidate-dossier-${slugify(dossier.candidate.name)}-${dossier.candidate.shortRevision}`;
-  const outputPath = path.resolve(args.outputPath ?? path.join(DEFAULT_RELEASE_READINESS_DIR, `${outputBaseName}.json`));
-  const markdownOutputPath = path.resolve(args.markdownOutputPath ?? path.join(DEFAULT_RELEASE_READINESS_DIR, `${outputBaseName}.md`));
+  writeJsonFile(artifacts.releaseGateSummaryPath, gateReport);
+  writeFile(artifacts.releaseGateMarkdownPath, renderReleaseGateMarkdown(gateReport));
+  writeJsonFile(artifacts.releaseHealthSummaryPath, healthReport);
+  writeFile(artifacts.releaseHealthMarkdownPath, renderReleaseHealthMarkdown(healthReport));
 
-  writeJsonFile(outputPath, dossier);
-  writeFile(markdownOutputPath, renderMarkdown(dossier));
+  dossier = {
+    ...dossier,
+    artifacts,
+    sections: replaceSectionEvidence(
+      replaceSectionEvidence(
+        replaceSectionArtifactPath(
+          replaceSectionArtifactPath(dossier.sections, "release-gate", artifacts.releaseGateSummaryPath),
+          "release-health",
+          artifacts.releaseHealthSummaryPath
+        ),
+        "release-gate",
+        [
+          {
+            label: "Release gate summary",
+            path: artifacts.releaseGateSummaryPath,
+            summary: `status=${gateReport.summary.status}`,
+            observedAt: gateReport.generatedAt,
+            freshness: evaluateFreshness(gateReport.generatedAt, 1000 * 60 * 60 * 72)
+          },
+          {
+            label: "Release gate summary markdown",
+            path: artifacts.releaseGateMarkdownPath,
+            summary: "Reviewer-facing release gate summary markdown.",
+            observedAt: gateReport.generatedAt,
+            freshness: evaluateFreshness(gateReport.generatedAt, 1000 * 60 * 60 * 72)
+          }
+        ]
+      ),
+      "release-health",
+      [
+        {
+          label: "Release health summary",
+          path: artifacts.releaseHealthSummaryPath,
+          summary: `status=${healthReport.summary.status}`,
+          observedAt: healthReport.generatedAt,
+          freshness: evaluateFreshness(healthReport.generatedAt, 1000 * 60 * 60 * 72)
+        },
+        {
+          label: "Release health summary markdown",
+          path: artifacts.releaseHealthMarkdownPath,
+          summary: "Reviewer-facing release health summary markdown.",
+          observedAt: healthReport.generatedAt,
+          freshness: evaluateFreshness(healthReport.generatedAt, 1000 * 60 * 60 * 72)
+        }
+      ]
+    )
+  };
 
-  console.log(`Wrote Phase 1 candidate dossier JSON: ${path.relative(process.cwd(), outputPath).replace(/\\/g, "/")}`);
-  console.log(`Wrote Phase 1 candidate dossier Markdown: ${path.relative(process.cwd(), markdownOutputPath).replace(/\\/g, "/")}`);
+  writeJsonFile(artifacts.dossierJsonPath, dossier);
+  writeFile(artifacts.dossierMarkdownPath, renderMarkdown(dossier));
+
+  console.log(`Wrote Phase 1 candidate dossier bundle: ${path.relative(process.cwd(), artifacts.outputDir).replace(/\\/g, "/")}`);
+  console.log(`Wrote Phase 1 candidate dossier JSON: ${path.relative(process.cwd(), artifacts.dossierJsonPath).replace(/\\/g, "/")}`);
+  console.log(`Wrote Phase 1 candidate dossier Markdown: ${path.relative(process.cwd(), artifacts.dossierMarkdownPath).replace(/\\/g, "/")}`);
+  console.log(`Wrote release gate summary JSON: ${path.relative(process.cwd(), artifacts.releaseGateSummaryPath).replace(/\\/g, "/")}`);
+  console.log(`Wrote release health summary JSON: ${path.relative(process.cwd(), artifacts.releaseHealthSummaryPath).replace(/\\/g, "/")}`);
   console.log(`Candidate: ${dossier.candidate.name}`);
   console.log(`Revision: ${dossier.candidate.revision}`);
   console.log(`Overall status: ${dossier.summary.status}`);
