@@ -102,6 +102,7 @@ import {
 } from "./cocos-session-launch.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { VeilProgressionPanel } from "./VeilProgressionPanel.ts";
+import { VeilEquipmentPanel } from "./VeilEquipmentPanel.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
 import { type CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
 import { createCocosBattlePresentationController } from "./cocos-battle-presentation-controller.ts";
@@ -133,6 +134,7 @@ const BATTLE_NODE_NAME = "ProjectVeilBattlePanel";
 const TIMELINE_NODE_NAME = "ProjectVeilTimelinePanel";
 const LOBBY_NODE_NAME = "ProjectVeilLobbyPanel";
 const ACCOUNT_REVIEW_PANEL_NODE_NAME = "ProjectVeilAccountReviewPanel";
+const EQUIPMENT_PANEL_NODE_NAME = "ProjectVeilEquipmentPanel";
 const DEFAULT_MAP_WIDTH_TILES = 8;
 const DEFAULT_MAP_HEIGHT_TILES = 8;
 const BATTLE_FEEDBACK_DURATION_MS = 2600;
@@ -255,6 +257,8 @@ export class VeilRoot extends Component {
   private gameplayAccountRefreshInFlight = false;
   private gameplayAccountReviewPanel: VeilProgressionPanel | null = null;
   private gameplayAccountReviewPanelOpen = false;
+  private gameplayEquipmentPanel: VeilEquipmentPanel | null = null;
+  private gameplayEquipmentPanelOpen = false;
   private activeAccountFlow: CocosAccountLifecycleKind | null = null;
   private registrationDisplayName = "";
   private registrationToken = "";
@@ -699,6 +703,9 @@ export class VeilRoot extends Component {
       onRefresh: () => {
         void this.refreshSnapshot();
       },
+      onToggleInventory: () => {
+        this.toggleGameplayEquipmentPanel();
+      },
       onToggleAchievements: () => {
         void this.openGameplayBattleReportCenter();
       },
@@ -899,6 +906,28 @@ export class VeilRoot extends Component {
       }
     });
 
+    let equipmentPanelNode = this.node.getChildByName(EQUIPMENT_PANEL_NODE_NAME);
+    if (!equipmentPanelNode) {
+      equipmentPanelNode = new Node(EQUIPMENT_PANEL_NODE_NAME);
+      equipmentPanelNode.parent = this.node;
+    }
+    assignUiLayer(equipmentPanelNode);
+    const equipmentPanelTransform = equipmentPanelNode.getComponent(UITransform) ?? equipmentPanelNode.addComponent(UITransform);
+    equipmentPanelTransform.setContentSize(Math.max(360, Math.min(460, visibleSize.width - 56)), Math.max(420, visibleSize.height - 96));
+    this.gameplayEquipmentPanel =
+      equipmentPanelNode.getComponent(VeilEquipmentPanel) ?? equipmentPanelNode.addComponent(VeilEquipmentPanel);
+    this.gameplayEquipmentPanel.configure({
+      onClose: () => {
+        this.toggleGameplayEquipmentPanel(false);
+      },
+      onEquipItem: (slot, equipmentId) => {
+        void this.equipHeroItem(slot, equipmentId);
+      },
+      onUnequipItem: (slot) => {
+        void this.unequipHeroItem(slot);
+      }
+    });
+
     this.battleTransition = this.node.getComponent(VeilBattleTransition) ?? this.node.addComponent(VeilBattleTransition);
     this.updateLayout();
   }
@@ -959,6 +988,7 @@ export class VeilRoot extends Component {
     const battleNode = this.node.getChildByName(BATTLE_NODE_NAME);
     const timelineNode = this.node.getChildByName(TIMELINE_NODE_NAME);
     const accountReviewPanelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
+    const equipmentPanelNode = this.node.getChildByName(EQUIPMENT_PANEL_NODE_NAME);
     const showingGame = !this.showLobby;
 
     if (lobbyNode) {
@@ -978,6 +1008,9 @@ export class VeilRoot extends Component {
     }
     if (accountReviewPanelNode) {
       accountReviewPanelNode.active = showingGame && this.gameplayAccountReviewPanelOpen;
+    }
+    if (equipmentPanelNode) {
+      equipmentPanelNode.active = showingGame && this.gameplayEquipmentPanelOpen;
     }
 
     if (this.showLobby) {
@@ -1059,7 +1092,30 @@ export class VeilRoot extends Component {
     this.timelinePanel?.render({
       entries: this.timelineEntries
     });
+    this.renderGameplayEquipmentPanel();
     this.renderGameplayAccountReviewPanel();
+  }
+
+  private renderGameplayEquipmentPanel(): void {
+    const panelNode = this.node.getChildByName(EQUIPMENT_PANEL_NODE_NAME);
+    if (!panelNode) {
+      return;
+    }
+
+    if (!this.gameplayEquipmentPanelOpen) {
+      panelNode.active = false;
+      return;
+    }
+
+    panelNode.active = true;
+    this.gameplayEquipmentPanel?.render({
+      hero: this.activeHero(),
+      recentEventLog: this.lobbyAccountProfile.recentEventLog,
+      recentSessionEvents: (this.lastUpdate?.events ?? []).filter(
+        (event): event is Extract<NonNullable<SessionUpdate["events"]>[number], { type: "hero.equipmentFound" }> =>
+          event.type === "hero.equipmentFound"
+      )
+    });
   }
 
   private renderGameplayAccountReviewPanel(): void {
@@ -1276,6 +1332,11 @@ export class VeilRoot extends Component {
     await this.refreshActiveAccountReviewSection();
   }
 
+  private toggleGameplayEquipmentPanel(forceOpen?: boolean): void {
+    this.gameplayEquipmentPanelOpen = forceOpen ?? !this.gameplayEquipmentPanelOpen;
+    this.renderView();
+  }
+
   private async openGameplayBattleReportCenter(): Promise<void> {
     this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
       type: "section.selected",
@@ -1445,6 +1506,7 @@ export class VeilRoot extends Component {
     const timelineNode = this.node.getChildByName(TIMELINE_NODE_NAME);
     const lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
     const accountReviewPanelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
+    const equipmentPanelNode = this.node.getChildByName(EQUIPMENT_PANEL_NODE_NAME);
 
     this.mapBoard?.configure({
       tileSize: effectiveTileSize,
@@ -1467,6 +1529,9 @@ export class VeilRoot extends Component {
         },
         onRefresh: () => {
           void this.refreshSnapshot();
+        },
+        onToggleInventory: () => {
+          this.toggleGameplayEquipmentPanel();
         },
         onToggleAchievements: () => {
           void this.openGameplayBattleReportCenter();
@@ -1527,6 +1592,13 @@ export class VeilRoot extends Component {
         accountReviewPanelNode.getComponent(UITransform) ?? accountReviewPanelNode.addComponent(UITransform);
       accountReviewTransform.setContentSize(Math.max(320, Math.min(420, visibleSize.width - 56)), Math.max(360, visibleSize.height - 96));
       accountReviewPanelNode.setPosition(0, 0, 4);
+    }
+
+    if (equipmentPanelNode) {
+      const equipmentPanelTransform =
+        equipmentPanelNode.getComponent(UITransform) ?? equipmentPanelNode.addComponent(UITransform);
+      equipmentPanelTransform.setContentSize(Math.max(360, Math.min(460, visibleSize.width - 56)), Math.max(420, visibleSize.height - 96));
+      equipmentPanelNode.setPosition(0, 0, 4);
     }
   }
 
@@ -2289,6 +2361,7 @@ export class VeilRoot extends Component {
     await this.disposeCurrentSession();
     this.resetSessionViewport("已返回 Cocos Lobby。");
     this.gameplayAccountReviewPanelOpen = false;
+    this.gameplayEquipmentPanelOpen = false;
     this.showLobby = true;
     this.syncWechatShareBridge();
     this.lobbyStatus = "已返回大厅，可继续选房或创建新实例。";

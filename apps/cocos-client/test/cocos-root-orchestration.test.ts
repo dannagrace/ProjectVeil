@@ -224,6 +224,16 @@ test("VeilRoot wires the equipment loot loop through equip and unequip session u
   ]);
 });
 
+test("VeilRoot toggles a dedicated gameplay equipment panel from the HUD flow", () => {
+  const root = createVeilRootHarness();
+
+  assert.equal(root.gameplayEquipmentPanelOpen, false);
+  root.toggleGameplayEquipmentPanel();
+  assert.equal(root.gameplayEquipmentPanelOpen, true);
+  root.toggleGameplayEquipmentPanel(false);
+  assert.equal(root.gameplayEquipmentPanelOpen, false);
+});
+
 test("VeilRoot emits primary-client telemetry for progression, inventory, and combat checkpoints", async () => {
   const root = createVeilRootHarness();
   root.roomId = "room-telemetry";
