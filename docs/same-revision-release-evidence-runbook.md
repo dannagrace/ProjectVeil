@@ -11,6 +11,7 @@ Related references:
 - [`docs/release-readiness-dashboard.md`](./release-readiness-dashboard.md)
 - [`docs/cocos-release-evidence-template.md`](./cocos-release-evidence-template.md)
 - [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md)
+- [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md)
 - [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md)
 - [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md)
 
@@ -31,7 +32,7 @@ These are the minimum artifacts for a same-revision release call:
 | Automated release baseline | `npm run release:readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json` | `artifacts/release-readiness/release-readiness-*.json` |
 | WeChat packaged RC smoke | `npm run smoke:wechat-release -- --artifacts-dir artifacts/wechat-release --check --expected-revision <git-sha>` | `artifacts/wechat-release/codex.wechat.smoke-report.json` |
 | Cocos / WeChat RC bundle | `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report artifacts/wechat-release/codex.wechat.smoke-report.json --release-readiness-snapshot <snapshot-json>` | `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.json` plus paired `.md`, snapshot, checklist, and blockers files |
-| Runtime observability sign-off | Manual review using `docs/wechat-runtime-observability-signoff.md` | `artifacts/wechat-release/runtime-observability-signoff.json` or equivalent reviewer artifact |
+| Runtime observability sign-off | Manual review using `docs/wechat-runtime-observability-signoff.md` plus `docs/release-evidence/wechat-runtime-observability-signoff.template.md` | `artifacts/wechat-release/runtime-observability-signoff-<candidate>-<short-sha>.md` or equivalent reviewer artifact |
 | Manual evidence owner ledger | Copy `docs/release-evidence/manual-release-evidence-owner-ledger.template.md` for the candidate and update it as manual evidence lands | `artifacts/release-readiness/manual-release-evidence-owner-ledger-<candidate>-<short-sha>.md` or release PR table |
 | Final same-revision assembly check | `npm run release:readiness:dashboard -- --server-url http://127.0.0.1:2567 --wechat-artifacts-dir artifacts/wechat-release --candidate-revision <git-sha>` | `artifacts/release-readiness/release-readiness-dashboard-*.json` plus `.md` |
 
@@ -97,7 +98,7 @@ Freshness check:
 
 5. Complete the runtime observability sign-off for the same candidate revision.
 
-Use [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md) and capture:
+Use [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md) and [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md), and capture:
 
 - `/api/runtime/health`
 - `/api/runtime/diagnostic-snapshot`

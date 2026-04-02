@@ -27,6 +27,7 @@
 - Cocos Phase 1 占位 / fallback 表现签核：`docs/cocos-phase1-presentation-signoff.md`
 - Cocos / WeChat RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
 - Cocos / WeChat RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
+- WeChat runtime observability 签核模板：`docs/release-evidence/wechat-runtime-observability-signoff.template.md`
 - 微信小游戏提审前冒烟：`docs/wechat-minigame-release.md`
 
 ## 发布判断规则
@@ -38,6 +39,8 @@
 建议在每次 release candidate 上记录状态：`pass / partial / fail / n/a`，并附上证据链接、执行人和日期。对于 Cocos / WeChat RC，再额外固定两份人类可读附件：一份 checklist，一份 blocker register。
 
 如果希望把自动化门禁和人工门禁统一收口成一个结构化记录，可执行 `npm run release:readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json`，生成当前 revision 的快照并保留 pending manual check。Cocos 主链路证据则统一用 `npm run release:cocos-rc:snapshot` 生成单独的 RC 快照，并在同一份 JSON 中回填 Creator 预览或微信 RC 证据；人工 reviewer 则复用 `docs/release-evidence/cocos-wechat-rc-checklist.template.md` 和 `docs/release-evidence/cocos-wechat-rc-blockers.template.md`，不要在 issue 或 PR 中重新发明字段。
+
+对于 WeChat release candidate / shipping candidate，再额外固定一份 `docs/release-evidence/wechat-runtime-observability-signoff.template.md` 的回填结果，用来记录同一 candidate revision 的 runtime health / diagnostics / metrics 签核；不要只在 PR 评论里写“ops 已看过”。
 
 如果希望把这些已有证据再压成单份本地总览，可执行 `npm run release:readiness:dashboard`。它会复用最新的 release snapshot、WeChat package / smoke evidence、Cocos RC snapshot，并可选探测 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics`，输出一份 `pass / warn / fail` 的 Phase 1 看板。
 
@@ -139,6 +142,7 @@
 - [ ] `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics` 在候选包对应环境可访问。
 - [ ] 至少能看到活跃房间数、连接数、世界 / 战斗 action 计数，以及鉴权会话摘要。
 - [ ] 日志或接口输出足以区分登录失败、进房失败、同步失败和资源 / 配置失败。
+- [ ] WeChat release candidate / shipping candidate 已回填 candidate-scoped runtime observability sign-off，并记录 reviewer、`recordedAt`、target revision 与结论。
 
 `P1 follow-up`
 
@@ -151,6 +155,7 @@
 - 手动抓取：`GET /api/runtime/health`
 - 手动抓取：`GET /api/runtime/auth-readiness`
 - 手动抓取：`GET /api/runtime/metrics`
+- `docs/release-evidence/wechat-runtime-observability-signoff.template.md`
 
 ## 当前顶级发布风险
 
