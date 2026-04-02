@@ -2,6 +2,8 @@
 
 Use this as the maintainer-facing map for the repository's existing operational surfaces. It does not redefine workflows; it points to the current commands and docs that already own each function.
 
+For detailed release sequencing, keep [`docs/same-revision-release-evidence-runbook.md`](./same-revision-release-evidence-runbook.md) as the assembly runbook. This page is the faster routing layer for answering "which command, doc, or artifact family should I open first for this operational task?"
+
 ## Daily Routing
 
 | Need | Primary command or entry point | Canonical docs |
@@ -10,6 +12,15 @@ Use this as the maintainer-facing map for the repository's existing operational 
 | Pick the smallest sufficient PR verification | [`docs/verification-matrix.md`](./verification-matrix.md) | [`docs/verification-matrix.md`](./verification-matrix.md) |
 | Confirm the current primary client surface | `npm run client:primary` | [`README.md`](../README.md), [`docs/cocos-primary-client-delivery.md`](./cocos-primary-client-delivery.md) |
 | Audit Codex automation branches | `npm run ops:codex-branches` | [`docs/codex-automation-branch-maintenance.md`](./codex-automation-branch-maintenance.md) |
+
+## Common Artifact Homes
+
+| Artifact family | Usually lands in | Typical producers |
+| --- | --- | --- |
+| Release readiness, dashboards, gate summaries, reconnect soak, persistence, Cocos RC bundles | `artifacts/release-readiness/` | `npm run release:readiness:snapshot`, `npm run release:readiness:dashboard`, `npm run release:gate:summary`, `npm run release:reconnect-soak`, `npm run release:cocos-rc:bundle`, `npm run test:phase1-release-persistence` |
+| WeChat package, smoke, RC validation, runtime observability sign-off | `artifacts/wechat-release/` | `npm run package:wechat-release`, `npm run smoke:wechat-release`, `npm run validate:wechat-rc` |
+| Downloaded or rollback WeChat candidate bundles | `artifacts/downloaded/`, `artifacts/rollback/` | `npm run download:wechat-release` |
+| Candidate-specific manual evidence ledger when kept on disk instead of in the PR | `artifacts/release-readiness/` | Copy [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) |
 
 ## Release Readiness And Health
 
@@ -29,24 +40,26 @@ Use this as the maintainer-facing map for the repository's existing operational 
 | --- | --- | --- |
 | Validate the export/build surface used by CI | `npm run check:wechat-build` | [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md) |
 | Prepare, package, upload, download, or verify a WeChat release artifact | `npm run prepare:wechat-release`, `npm run package:wechat-release`, `npm run upload:wechat-release`, `npm run download:wechat-release`, `npm run verify:wechat-release` | [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md) |
-| Validate or smoke-check WeChat release evidence | `npm run validate:wechat-rc`, `npm run smoke:wechat-release` | [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md), [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md) |
+| Validate or smoke-check WeChat release evidence | `npm run validate:wechat-rc`, `npm run smoke:wechat-release` | [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md), [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md). Generated artifacts usually land in `artifacts/wechat-release/` as `codex.wechat.release-candidate-summary.json`, `codex.wechat.rc-validation-report.json`, `codex.wechat.smoke-report.json`, and runtime sign-off notes. |
 | Build the Cocos release-candidate evidence packet | `npm run release:cocos-rc:snapshot`, `npm run release:cocos-rc:bundle` | [`docs/cocos-release-evidence-template.md`](./cocos-release-evidence-template.md), [`docs/cocos-primary-client-delivery.md`](./cocos-primary-client-delivery.md) |
 | Review primary-client runtime evidence and diagnostics | `npm run release:cocos:primary-journey-evidence`, `npm run release:cocos:primary-diagnostics`, `npm run audit:cocos-primary-delivery` | [`docs/cocos-primary-client-delivery.md`](./cocos-primary-client-delivery.md), [`docs/cocos-primary-client-telemetry.md`](./cocos-primary-client-telemetry.md) |
+| Review Cocos Phase 1 presentation placeholders before widening a candidate | `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface <surface>` | [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md), [`docs/cocos-release-evidence-template.md`](./cocos-release-evidence-template.md). The generated sign-off artifacts land in `artifacts/release-readiness/` as `cocos-presentation-signoff-<candidate>-<short-sha>.json` and `.md`. |
 
 ## Runtime, Multiplayer, And Persistence Operations
 
 | Need | Primary command or entry point | Canonical docs |
 | --- | --- | --- |
+| Probe live runtime health and auth readiness for a candidate environment | `GET /api/runtime/health`, `GET /api/runtime/auth-readiness`, `GET /api/runtime/metrics` | [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md), [`docs/release-readiness-dashboard.md`](./release-readiness-dashboard.md). Reviewer notes usually land in `artifacts/wechat-release/` or `artifacts/release-readiness/`. |
 | Run reconnect or multiplayer governance checks | `npm run test:e2e:multiplayer:smoke`, `npm run test:sync-governance:matrix`, `npm run stress:rooms:reconnect-soak` | [`docs/sync-governance-matrix.md`](./sync-governance-matrix.md), [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md), [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md) |
-| Run room stress or runtime regression comparisons | `npm run stress:rooms:baseline`, `npm run perf:runtime:compare` | [`docs/runtime-regression-baseline.md`](./runtime-regression-baseline.md) |
-| Review or validate MySQL persistence expectations | `npm run db:migrate`, `npm run db:migrate:rollback`, `npm run test:phase1-release-persistence` | [`docs/mysql-persistence.md`](./mysql-persistence.md) |
-| Inspect release-facing multiplayer load evidence | `npm run stress:rooms:baseline` | [`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md) |
+| Run room stress or runtime regression comparisons | `npm run stress:rooms:baseline`, `npm run perf:runtime:compare` | [`docs/runtime-regression-baseline.md`](./runtime-regression-baseline.md). Generated runtime metrics and comparison reports usually land in `artifacts/release-readiness/`. |
+| Review or validate MySQL persistence expectations | `npm run db:migrate`, `npm run db:migrate:rollback`, `npm run test:phase1-release-persistence` | [`docs/mysql-persistence.md`](./mysql-persistence.md). The release-facing regression artifact usually lands in `artifacts/release-readiness/phase1-release-persistence-regression-*.json`. |
+| Inspect release-facing multiplayer load evidence | `npm run stress:rooms:baseline`, `npm run release:reconnect-soak` | [`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md), [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md). Generated summaries usually land in `artifacts/release-readiness/`. |
 
 ## Content, Contracts, And Config Inputs
 
 | Need | Primary command or entry point | Canonical docs |
 | --- | --- | --- |
-| Validate shipped content packs | `npm run validate:content-pack`, `npm run validate:content-pack:all` | [`docs/core-gameplay-release-readiness.md`](./core-gameplay-release-readiness.md) |
+| Validate shipped content packs | `npm run validate:content-pack`, `npm run validate:content-pack:all` | [`docs/core-gameplay-release-readiness.md`](./core-gameplay-release-readiness.md). Use this when config-pack or map-pack changes need release-facing validation before they are bundled into persistence or candidate evidence. |
 | Validate battle balance assumptions | `npm run validate:battle` | [`docs/core-gameplay-release-readiness.md`](./core-gameplay-release-readiness.md) |
 | Review shared client/server contract coverage | `npm run test:contracts`, `npm run test:shared` | [`docs/shared-contract-snapshots.md`](./shared-contract-snapshots.md), [`docs/test-coverage-audit-issue-199.md`](./test-coverage-audit-issue-199.md) |
 

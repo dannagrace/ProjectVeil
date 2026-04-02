@@ -11,6 +11,8 @@
 - `npm run stress:rooms:reconnect-soak` for reconnect soak + teardown evidence
 - `npm run test:phase1-release-persistence` for persistence + shipped content evidence
 
+If you need the faster maintainer-facing index of which command or doc owns each operational task, open [`docs/operational-entry-point-repo-map.md`](./operational-entry-point-repo-map.md).
+
 The dashboard writes both JSON and Markdown so it works as a quick terminal summary and as a review artifact.
 
 ## Usage
