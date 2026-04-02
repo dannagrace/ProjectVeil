@@ -58,6 +58,18 @@ test("restoreBattleReplayPlaybackState rebuilds the replay cursor from a step in
   assert.equal(playback.nextStep?.index, 2);
 });
 
+test("restoreBattleReplayPlaybackState normalizes legacy replay states without rng metadata", () => {
+  const replay = createReplay();
+  delete (replay.initialState as { rng?: unknown }).rng;
+
+  const playback = restoreBattleReplayPlaybackState(replay, 0, "paused");
+
+  assert.deepEqual(playback.currentState.rng, {
+    seed: 1,
+    cursor: 0
+  });
+});
+
 test("applyBattleReplayPlaybackCommand advances stateless step and tick controls", () => {
   const replay = createReplay();
 
