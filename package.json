@@ -83,6 +83,7 @@
     "test:release-readiness-dashboard": "node --import tsx --test ./scripts/test/release-readiness-dashboard.test.ts ./apps/cocos-client/test/release-readiness-dashboard.test.ts ./apps/cocos-client/test/release-readiness-dashboard-aggregation.test.ts",
     "test:multiplayer-protocol-compatibility": "node --import tsx ./scripts/multiplayer-protocol-compatibility.ts",
     "test:phase1-release-persistence": "node --import tsx ./scripts/phase1-release-persistence-regression.ts",
+    "test:phase1-release-persistence:frontier": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack frontier-basin",
     "test:phase1-release-persistence:stonewatch": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack stonewatch-fork",
     "test:phase1-release-persistence:ridgeway": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack ridgeway-crossing",
     "test:release-gate-summary": "node --import tsx --test ./scripts/test/release-gate-summary.test.ts",

@@ -40,6 +40,19 @@ test("phase1 release persistence regression can exercise the stonewatch fork pac
   assert.equal(report.persistenceRegression.assertions.length >= 6, true);
 });
 
+test("phase1 release persistence regression can exercise the frontier basin pack in memory mode", async () => {
+  const report = await runPhase1ReleasePersistenceRegression({
+    storageMode: "memory",
+    configsRoot: path.join(repoRoot, "configs"),
+    mapPackId: "frontier-basin"
+  });
+
+  assert.equal(report.summary.status, "passed");
+  assert.equal(report.persistenceRegression.mapPackId, "frontier-basin");
+  assert.equal(report.contentValidation.bundleCount, 5);
+  assert.equal(report.persistenceRegression.assertions.length >= 6, true);
+});
+
 test("phase1 release persistence regression can exercise the ridgeway crossing pack in memory mode", async () => {
   const report = await runPhase1ReleasePersistenceRegression({
     storageMode: "memory",
