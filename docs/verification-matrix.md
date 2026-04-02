@@ -2,6 +2,8 @@
 
 Use this matrix before opening a PR to pick the smallest verification set that still matches the risk of your change. It is intentionally scoped to the repo's current scripts, workflows, and release-readiness surfaces instead of generic "run everything" advice.
 
+For deterministic path-to-plan routing, use `npm run plan:validation:minimal -- --base origin/main --head HEAD` or pass explicit changed paths. The helper mirrors this matrix for major surfaces such as Cocos client, H5 shell, server runtime, release packaging, observability, and content/config. Treat its output as the fast routing layer, then fall back to the matrix when behavior or risk is broader than the touched paths suggest.
+
 ## Contributor Quick Reference
 
 Start here when you already know the shape of your change and want the minimum expected verification before opening a PR. Treat `Minimum required` as the floor, use `Optional diagnostics` only when risk broadens or a required check fails, and attach the listed artifacts only when that row says reviewers depend on them.
@@ -19,6 +21,38 @@ Start here when you already know the shape of your change and want the minimum e
 | Multiplayer or reconnect behavior | Shared sync, reconnect recovery, prediction correction, multiplayer Playwright coverage | `npm run test:e2e:multiplayer:smoke && npm run test:sync-governance:matrix` | `npm run test:e2e:multiplayer` for broader multiplayer regression coverage, or `npm run stress:rooms:reconnect-soak` when reconnect semantics or room recovery rules changed. | Attach the generated sync or reconnect artifact when the PR changes reviewer-visible governance evidence, for example `artifacts/release-readiness/sync-governance-matrix-<short-sha>.json`. | [`docs/sync-governance-matrix.md`](./sync-governance-matrix.md), [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md), [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md) |
 
 If a change fits more than one row, combine the minimum required commands from each matching row and prefer the higher-risk path when they conflict.
+
+## Changed Surface Helper
+
+Use the helper when you want the repo to translate touched paths into a concise required-versus-optional validation plan:
+
+```bash
+npm run plan:validation:minimal -- --base origin/main --head HEAD
+```
+
+```bash
+npm run plan:validation:minimal -- \
+  --path apps/cocos-client/assets/scripts/VeilRoot.ts \
+  --path scripts/package-wechat-minigame-release.ts
+```
+
+What it does:
+
+- maps changed paths to the maintained repo surfaces in this matrix
+- emits deduped `Required` steps plus `Optional diagnostics`
+- points only at existing `npm run ...` commands or existing manual checks already described here
+
+What it does not do:
+
+- it does not replace subsystem judgement when behavior crosses surfaces more broadly than the path list implies
+- it does not pick the exact server `node:test` file for you; use the nearest touched suite
+- it does not waive release-facing evidence refresh just because a local smoke or typecheck passed
+
+Override the helper and use the higher-risk matrix row when:
+
+- one change affects more than one runtime surface
+- a documented command or CI entry point changed
+- reviewers depend on a stable artifact or same-revision release evidence set
 
 ## Verification Tiers
 
