@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { Node, sys } from "cc";
+import { Label, Node, sys } from "cc";
 import {
   type BattleState,
   type SessionUpdate,
@@ -54,6 +54,47 @@ function createRootHarness() {
     message: "disabled"
   });
   return { root, rootNode };
+}
+
+function readNodeLabel(node: Node | null | undefined): string | null {
+  return node?.getComponent(Label)?.string ?? null;
+}
+
+function captureJourneyUiState(rootNode: Node) {
+  const hudNode = rootNode.getChildByName("ProjectVeilHud");
+  const actionsNode = hudNode?.getChildByName("HudActions");
+  const battleNode = rootNode.getChildByName("ProjectVeilBattlePanel");
+  return {
+    hud: {
+      active: hudNode?.active ?? false,
+      actionButtons:
+        actionsNode?.children.map((child) => ({
+          name: child.name,
+          label: readNodeLabel(child.getChildByName("Label"))
+        })) ?? []
+    },
+    battle: {
+      active: battleNode?.active ?? false,
+      title: readNodeLabel(battleNode?.getChildByName("BattleTitle")),
+      actionHeader: readNodeLabel(battleNode?.getChildByName("BattleActionHeader")),
+      actions:
+        battleNode?.children
+          .filter((child) => child.name.startsWith("BattleAction-") && child.active)
+          .map((child) => ({
+            name: child.name,
+            title: readNodeLabel(child.getChildByName(`${child.name}-title`)),
+            meta: readNodeLabel(child.getChildByName(`${child.name}-meta`))
+          })) ?? [],
+      targets:
+        battleNode?.children
+          .filter((child) => child.name.startsWith("BattleTarget-") && child.active)
+          .map((child) => ({
+            name: child.name,
+            title: readNodeLabel(child.getChildByName(`${child.name}-title`)),
+            meta: readNodeLabel(child.getChildByName(`${child.name}-meta`))
+          })) ?? []
+    }
+  };
 }
 
 function createNeutralEncounterBattle(): BattleState {
@@ -659,6 +700,129 @@ test("primary cocos client journey surfaces stale stored account sessions before
   assert.equal(root.loginId, "");
   assert.equal(storedSession, null);
   assert.equal(root.lobbyStatus, "账号会话已失效，请重新登录后再进入房间。");
+
+  root.onDestroy();
+  await flushMicrotasks();
+});
+
+test("primary cocos client journey renders actionable HUD and battle-panel controls through the first encounter", async () => {
+  const storage = createMemoryStorage();
+  const roomId = "room-render-journey";
+  const playerId = "player-render";
+  const syncedAuthSession = {
+    token: "account.session.token",
+    playerId,
+    displayName: "暮潮守望",
+    authMode: "account" as const,
+    provider: "account-password" as const,
+    loginId: "veil-ranger",
+    source: "remote" as const
+  };
+  const room = new FakeColyseusRoom([createJourneyBootstrapUpdate(roomId, playerId)], "render-reconnect-token");
+
+  writeStoredCocosAuthSession(storage, syncedAuthSession);
+  (sys as unknown as { localStorage: Storage }).localStorage = storage;
+  (globalThis as { location?: Pick<Location, "search" | "href"> }).location = {
+    search: "",
+    href: "http://127.0.0.1:4173/"
+  };
+  (globalThis as { history?: Pick<History, "replaceState"> }).history = {
+    replaceState() {}
+  };
+
+  setVeilCocosSessionRuntimeForTests({
+    storage,
+    loadSdk: createSdkLoader({
+      joinRooms: [room]
+    })
+  });
+  setVeilRootRuntimeForTests({
+    createSession: (...args) => VeilCocosSession.create(...args),
+    readStoredReplay: (...args) => VeilCocosSession.readStoredReplay(...args),
+    syncAuthSession: async () => syncedAuthSession,
+    loadLobbyRooms: async () => [
+      {
+        roomId,
+        seed: 1001,
+        day: 4,
+        connectedPlayers: 1,
+        heroCount: 1,
+        activeBattles: 0,
+        updatedAt: "2026-04-02T09:30:00.000Z"
+      }
+    ],
+    loadAccountProfile: async () =>
+      createFallbackCocosPlayerAccountProfile(playerId, roomId, "暮潮守望", {
+        source: "remote",
+        authMode: "account",
+        loginId: "veil-ranger"
+      })
+  });
+
+  const { root, rootNode } = createRootHarness();
+  root.onLoad();
+  root.start();
+
+  await waitFor(
+    () => root.showLobby === true && root.lobbyRooms.length === 1,
+    () => ({
+      phase: "lobby-bootstrap",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  await root.enterLobbyRoom(roomId);
+
+  await waitFor(
+    () => root.showLobby === false && root.lastUpdate?.world.meta.roomId === roomId,
+    () => ({
+      phase: "room-join",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  root.ensureUiCameraVisibility = VeilRoot.prototype.ensureUiCameraVisibility.bind(root);
+  root.ensureViewNodes = VeilRoot.prototype.ensureViewNodes.bind(root);
+  root.renderView = VeilRoot.prototype.renderView.bind(root);
+  root.ensureUiCameraVisibility();
+  root.ensureViewNodes();
+  root.renderView();
+
+  const hudActionsNode = rootNode.getChildByName("ProjectVeilHud")?.getChildByName("HudActions");
+  assert.ok(hudActionsNode, JSON.stringify(captureJourneyUiState(rootNode), null, 2));
+  assert.equal(
+    readNodeLabel(hudActionsNode?.getChildByName("HudReturnLobby")?.getChildByName("Label")),
+    "返回大厅"
+  );
+  assert.equal(
+    readNodeLabel(hudActionsNode?.getChildByName("HudInventory")?.getChildByName("Label")),
+    "装备背包"
+  );
+
+  room.emitPush(createJourneyBattleUpdate(roomId, playerId));
+
+  await waitFor(
+    () => root.lastUpdate?.battle?.id === "battle-neutral-journey",
+    () => ({
+      phase: "battle-render",
+      ...captureJourneyUiState(rootNode)
+    })
+  );
+
+  const battleNode = rootNode.getChildByName("ProjectVeilBattlePanel");
+  assert.equal(readNodeLabel(battleNode?.getChildByName("BattleActionHeader")), "战斗指令");
+  assert.equal(
+    readNodeLabel(battleNode?.getChildByName("BattleTarget-neutral-1-stack")?.getChildByName("BattleTarget-neutral-1-stack-title")),
+    "Orc x8"
+  );
+  assert.equal(
+    readNodeLabel(battleNode?.getChildByName("BattleAction-attack")?.getChildByName("BattleAction-attack-title")),
+    "攻击 Orc"
+  );
+  assert.equal(
+    readNodeLabel(battleNode?.getChildByName("BattleAction-wait")?.getChildByName("BattleAction-wait-title")),
+    "等待"
+  );
 
   root.onDestroy();
   await flushMicrotasks();
