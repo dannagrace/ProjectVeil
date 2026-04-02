@@ -18,6 +18,8 @@
   `artifacts/release-readiness/release-gate-summary-<short-sha>.json`
 - WeChat candidate summary:
   `artifacts/wechat-release/codex.wechat.release-candidate-summary.json`
+- Related owner ledger:
+  `artifacts/release-readiness/manual-release-evidence-owner-ledger-<short-sha>.md`
 
 ## Release-Surface Contract
 
@@ -129,3 +131,14 @@
 - Summary:
 - Remaining blockers doc:
 - Follow-ups / owners:
+
+## Ledger Mirror
+
+Update the manual evidence owner ledger row for `cocos-rc-checklist-review` whenever this checklist changes state.
+
+- `Owner`: `<name>`
+- `Status`: `pending | in-review | done | waived`
+- `Revision`: `<git-sha>`
+- `Last updated`: `<recorded-at>`
+- `Artifact path / link`: `<this-file>`
+- `Notes / blocker context`: summarize what is still pending, waived, or accepted

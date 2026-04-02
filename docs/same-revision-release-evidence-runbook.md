@@ -82,6 +82,16 @@ Copy [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](
 
 Pre-fill one row per required manual evidence item before continuing. This is the handoff tracker for the rest of the run.
 
+At minimum, create rows for:
+
+- runtime observability review
+- Cocos / WeChat RC checklist review
+- Cocos / WeChat blocker-register review
+- Cocos presentation sign-off when presentation review applies
+- WeChat Developer Tools export review when WeChat is the target surface
+- WeChat device/runtime smoke when WeChat is the target surface
+- reconnect follow-up when reconnect evidence still needs a human call
+
 4. Refresh scope-specific evidence only when the candidate needs it.
 
 Reconnect / room recovery scope:
@@ -121,6 +131,8 @@ npm run release:cocos-rc:bundle -- \
 ```
 
 Confirm the generated bundle, checklist, and blockers files all point at the same candidate and revision.
+
+After reviewing or editing the checklist / blockers files, update the matching rows in the owner ledger before moving on. The ledger is the release-call index; the checklist and blocker files remain the underlying evidence.
 
 6. Refresh the WeChat artifact family when WeChat is the release surface.
 

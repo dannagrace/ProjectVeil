@@ -15,6 +15,7 @@
 - Release decision: `ship | hold | ship-with-followups`
 - Release summary: `artifacts/release-readiness/release-gate-summary-<short-sha>.json`
 - WeChat candidate summary: `artifacts/wechat-release/codex.wechat.release-candidate-summary.json`
+- Related owner ledger: `artifacts/release-readiness/manual-release-evidence-owner-ledger-<short-sha>.md`
 
 ## Blocker Rules
 
@@ -48,3 +49,14 @@
 - 放行理由：
 - 若带风险放行，限制范围：
 - 回退动作：
+
+## Ledger Mirror
+
+Update the manual evidence owner ledger row for `cocos-rc-blockers-review` whenever this blocker register changes state.
+
+- `Owner`: `<name>`
+- `Status`: `pending | in-review | done | waived`
+- `Revision`: `<git-sha>`
+- `Last updated`: `<last-updated>`
+- `Artifact path / link`: `<this-file>`
+- `Notes / blocker context`: note whether open blockers still keep the candidate on hold

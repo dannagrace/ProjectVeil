@@ -22,6 +22,7 @@ For the same candidate revision, keep this checklist next to the existing RC evi
 - [`docs/cocos-release-evidence-template.md`](./cocos-release-evidence-template.md)
 - [`docs/release-evidence/cocos-wechat-rc-checklist.template.md`](./release-evidence/cocos-wechat-rc-checklist.template.md)
 - [`docs/release-evidence/cocos-wechat-rc-blockers.template.md`](./release-evidence/cocos-wechat-rc-blockers.template.md)
+- [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md)
 
 Generate the candidate-scoped artifact with:
 
@@ -35,6 +36,8 @@ That command now emits:
 - `artifacts/release-readiness/cocos-presentation-signoff-<candidate>-<short-sha>.md`
 
 Those files are the attachable per-candidate sign-off record. This doc defines how to review and, if needed, edit the generated checklist before the candidate is widened beyond controlled internal testing.
+
+When the sign-off conclusion changes, mirror the same owner, revision, timestamp, artifact path, and follow-up summary into the manual evidence owner ledger. The ledger should show whether `cocos-presentation-signoff` is still pending or stale without reopening the full artifact.
 
 ## Sign-Off Rules
 
