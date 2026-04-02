@@ -11,7 +11,7 @@ The command stays intentionally thin and reuses the existing evidence producers:
 - `npm run release:readiness:snapshot`
 - `npm run release:cocos-rc:bundle`
 - `npm run validate:wechat-rc` / `codex.wechat.release-candidate-summary.json`
-- `npm run stress:rooms:reconnect-soak`
+- `npm run release:reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>`
 - `npm run test:phase1-release-persistence`
 - `npm run release:gate:summary`
 - `npm run release:health:summary`
@@ -38,7 +38,7 @@ npm run release:phase1:candidate-dossier -- \
   --candidate-revision abc1234 \
   --snapshot artifacts/release-readiness/release-readiness-abc1234.json \
   --cocos-bundle artifacts/release-readiness/cocos-rc-evidence-bundle-phase1-wechat-rc-abc1234.json \
-  --reconnect-soak artifacts/release-readiness/colyseus-reconnect-soak-summary.json \
+  --reconnect-soak artifacts/release-readiness/colyseus-reconnect-soak-summary-phase1-wechat-rc-abc1234.json \
   --wechat-candidate-summary artifacts/wechat-release/codex.wechat.release-candidate-summary.json \
   --phase1-persistence artifacts/release-readiness/phase1-release-persistence-regression-abc1234.json \
   --server-url http://127.0.0.1:2567

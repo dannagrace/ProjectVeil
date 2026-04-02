@@ -216,6 +216,11 @@ interface ReleaseGateTriageEntry {
 
 interface ReconnectSoakArtifact {
   generatedAt?: string;
+  candidate?: {
+    name?: string;
+    revision?: string;
+    shortRevision?: string;
+  };
   revision?: {
     commit?: string;
     shortCommit?: string;
@@ -239,6 +244,10 @@ interface ReconnectSoakArtifact {
       heroCount?: number;
     };
   }>;
+  verdict?: {
+    status?: "passed" | "failed";
+    summary?: string;
+  };
 }
 
 type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
@@ -829,6 +838,9 @@ export function evaluateReconnectSoakGate(reconnectSoakPath: string | undefined)
   if (report.status !== "passed") {
     failures.push(`Reconnect soak artifact status is ${JSON.stringify(report.status ?? "missing")}.`);
   }
+  if (report.verdict?.status && report.verdict.status !== "passed") {
+    failures.push(`Reconnect soak candidate verdict is ${JSON.stringify(report.verdict.status)}.`);
+  }
   if ((report.summary?.failedScenarios ?? 0) > 0) {
     failures.push(`Reconnect soak artifact reports ${report.summary?.failedScenarios} failed scenario(s).`);
   }
@@ -882,6 +894,57 @@ export function evaluateReconnectSoakGate(reconnectSoakPath: string | undefined)
       kind: "reconnect-soak",
       path: reconnectSoakPath
     }
+  };
+}
+
+function summarizeReconnectSoakEvidence(
+  reconnectSoakPath: string | undefined,
+  candidateRevision: string
+): {
+  status: GateStatus;
+  summary: string;
+  freshness: EvidenceFreshness;
+  observedAt?: string;
+  revision?: string;
+} {
+  if (!reconnectSoakPath || !fs.existsSync(reconnectSoakPath)) {
+    return {
+      status: "failed",
+      summary: "Reconnect soak evidence is missing.",
+      freshness: "unknown"
+    };
+  }
+
+  const report = readJsonFile<ReconnectSoakArtifact>(reconnectSoakPath);
+  const reconnectResult = report.results?.find((entry) => entry.scenario === "reconnect_soak");
+  const cleanup = reconnectResult?.runtimeHealthAfterCleanup;
+  const cleanupHealthy =
+    (cleanup?.activeRoomCount ?? 0) === 0 &&
+    (cleanup?.connectionCount ?? 0) === 0 &&
+    (cleanup?.activeBattleCount ?? 0) === 0 &&
+    (cleanup?.heroCount ?? 0) === 0;
+  const revision = report.candidate?.revision ?? report.revision?.commit ?? report.revision?.shortCommit;
+  const freshness = evaluateFreshness(report.generatedAt, MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS);
+  const failing =
+    report.status !== "passed" ||
+    report.verdict?.status === "failed" ||
+    (report.summary?.failedScenarios ?? 0) > 0 ||
+    (reconnectResult?.failedRooms ?? 0) > 0 ||
+    (report.soakSummary?.reconnectAttempts ?? 0) <= 0 ||
+    (report.soakSummary?.invariantChecks ?? 0) <= 0 ||
+    cleanupHealthy === false;
+  const stale = freshness !== "fresh" || !commitsMatch(revision, candidateRevision);
+
+  return {
+    status: failing ? "failed" : "passed",
+    summary: failing
+      ? "Reconnect soak evidence is failing for this candidate."
+      : stale
+        ? "Reconnect soak evidence is stale for this candidate."
+        : "Reconnect soak evidence is present and passing for this candidate.",
+    freshness,
+    ...(report.generatedAt ? { observedAt: report.generatedAt } : {}),
+    ...(revision ? { revision } : {})
   };
 }
 
@@ -1103,6 +1166,7 @@ function createSurfaceEvidenceItem(input: {
 
 function buildReleaseSurfaceContract(
   targetSurface: TargetSurface,
+  candidateRevision: string,
   snapshotPath: string | undefined,
   h5SmokePath: string | undefined,
   reconnectSoakPath: string | undefined,
@@ -1152,14 +1216,7 @@ function buildReleaseSurfaceContract(
       id: "multiplayer-reconnect-soak",
       label: "Multiplayer reconnect soak",
       required: true,
-      status: reconnectSoakPath && fs.existsSync(reconnectSoakPath) ? "passed" : "failed",
-      summary: reconnectSoakPath && fs.existsSync(reconnectSoakPath) ? "Found reconnect soak evidence." : "Reconnect soak evidence is missing.",
-      freshness: reconnectSoakPath && fs.existsSync(reconnectSoakPath)
-        ? evaluateFreshness(readJsonFile<ReconnectSoakArtifact>(reconnectSoakPath).generatedAt, MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS)
-        : "unknown",
-      observedAt: reconnectSoakPath && fs.existsSync(reconnectSoakPath)
-        ? readJsonFile<ReconnectSoakArtifact>(reconnectSoakPath).generatedAt
-        : undefined,
+      ...summarizeReconnectSoakEvidence(reconnectSoakPath, candidateRevision),
       artifactPath: reconnectSoakPath
     })
   );
@@ -1721,6 +1778,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
   const configCenterLibraryPath = resolveConfigCenterLibraryPath(args);
   const releaseSurface = buildReleaseSurfaceContract(
     args.targetSurface,
+    revision.commit,
     snapshotPath,
     h5SmokePath,
     reconnectSoakPath,

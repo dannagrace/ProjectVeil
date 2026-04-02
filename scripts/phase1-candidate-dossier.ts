@@ -218,6 +218,11 @@ interface Phase1PersistenceReleaseReport {
 
 interface ReconnectSoakArtifact {
   generatedAt?: string;
+  candidate?: {
+    name?: string;
+    revision?: string;
+    shortRevision?: string;
+  };
   revision?: {
     commit?: string;
     shortCommit?: string;
@@ -241,6 +246,10 @@ interface ReconnectSoakArtifact {
       heroCount?: number;
     };
   }>;
+  verdict?: {
+    status?: "passed" | "failed";
+    summary?: string;
+  };
 }
 
 interface RuntimeHealthPayload {
@@ -1425,7 +1434,7 @@ function buildReconnectSoakSection(reconnectSoakPath: string | undefined, candid
       summary: "Reconnect soak artifact is missing.",
       artifactPath: reconnectSoakPath,
       freshness: "unknown",
-      details: ["Run npm run stress:rooms:reconnect-soak for the candidate revision."],
+      details: ["Run npm run release:reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>."],
       evidence: [],
       acceptedRisks: []
     };
@@ -1433,7 +1442,7 @@ function buildReconnectSoakSection(reconnectSoakPath: string | undefined, candid
 
   const report = readJsonFile<ReconnectSoakArtifact>(reconnectSoakPath);
   const freshness = evaluateFreshness(report.generatedAt, maxAgeMs);
-  const revision = report.revision?.commit ?? report.revision?.shortCommit;
+  const revision = report.candidate?.revision ?? report.revision?.commit ?? report.revision?.shortCommit;
   const reconnectResult = report.results?.find((entry) => entry.scenario === "reconnect_soak");
   const cleanup = reconnectResult?.runtimeHealthAfterCleanup;
   const lingeringCleanupMetrics = [
@@ -1463,6 +1472,7 @@ function buildReconnectSoakSection(reconnectSoakPath: string | undefined, candid
   let result: DossierResult = "passed";
   if (
     report.status !== "passed" ||
+    report.verdict?.status === "failed" ||
     (report.summary?.failedScenarios ?? 0) > 0 ||
     (reconnectResult?.failedRooms ?? 0) > 0 ||
     (report.soakSummary?.reconnectAttempts ?? 0) <= 0 ||
@@ -1482,10 +1492,10 @@ function buildReconnectSoakSection(reconnectSoakPath: string | undefined, candid
     result,
     summary:
       result === "failed"
-        ? "Reconnect soak evidence is not aligned with this candidate."
+        ? "Reconnect soak evidence is failing for this candidate."
         : result === "pending"
-          ? "Reconnect soak evidence passed, but freshness still needs review."
-          : "Reconnect soak evidence passed with clean room teardown.",
+          ? "Reconnect soak evidence is stale for this candidate."
+          : "Reconnect soak evidence is present and passing for this candidate.",
     artifactPath: reconnectSoakPath,
     observedAt: report.generatedAt,
     freshness,
