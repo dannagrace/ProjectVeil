@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
@@ -64,6 +66,10 @@ const BRANCH_PREFIX = "codex/issue-";
 const DEFAULT_BASE_BRANCH = "main";
 const DEFAULT_MERGED_RETENTION_DAYS = 7;
 const DEFAULT_ABANDONED_REVIEW_DAYS = 30;
+const WORKTREE_LOCK_DIRNAME = "codex-automation-run.lock";
+const WORKTREE_LOCK_METADATA_FILE = "owner.json";
+const DEFAULT_LOCK_TIMEOUT_MS = 300_000;
+const DEFAULT_LOCK_POLL_INTERVAL_MS = 100;
 
 function fail(message: string): never {
   throw new Error(message);
@@ -175,8 +181,18 @@ function runCommand(command: string, args: string[], allowFailure = false): stri
   return result.stdout.trim();
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function readCurrentBranch(): string {
   return runCommand("git", ["branch", "--show-current"]);
+}
+
+function readCurrentWorktreeGitDir(): string {
+  return runCommand("git", ["rev-parse", "--absolute-git-dir"]);
 }
 
 function ensureBaseBranchExists(base: string): void {
@@ -402,54 +418,133 @@ function deleteBranch(entry: BranchAuditEntry): void {
   console.log(`Deleted remote branch origin/${entry.branch}`);
 }
 
+function buildLockMetadata(lockPath: string): Record<string, unknown> {
+  return {
+    pid: process.pid,
+    cwd: process.cwd(),
+    acquiredAt: new Date().toISOString(),
+    lockPath,
+    argv: process.argv.slice(2)
+  };
+}
+
+function readLockOwner(lockPath: string): string | null {
+  try {
+    const raw = fs.readFileSync(path.join(lockPath, WORKTREE_LOCK_METADATA_FILE), "utf8");
+    const parsed = JSON.parse(raw) as {
+      pid?: number;
+      acquiredAt?: string;
+      cwd?: string;
+      argv?: string[];
+    };
+    const details = [
+      typeof parsed.pid === "number" ? `pid ${parsed.pid}` : null,
+      parsed.acquiredAt ? `acquired ${parsed.acquiredAt}` : null,
+      parsed.cwd ? `cwd ${parsed.cwd}` : null,
+      Array.isArray(parsed.argv) && parsed.argv.length > 0 ? `args ${parsed.argv.join(" ")}` : null
+    ].filter(Boolean);
+    return details.length > 0 ? details.join(", ") : "metadata unavailable";
+  } catch {
+    return null;
+  }
+}
+
+export async function withSerializedWorktreeExecution<T>(
+  gitDir: string,
+  action: () => Promise<T> | T,
+  options: {
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+  } = {}
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
+  const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_LOCK_POLL_INTERVAL_MS;
+  const lockPath = path.join(gitDir, WORKTREE_LOCK_DIRNAME);
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    try {
+      fs.mkdirSync(lockPath);
+      fs.writeFileSync(
+        path.join(lockPath, WORKTREE_LOCK_METADATA_FILE),
+        `${JSON.stringify(buildLockMetadata(lockPath), null, 2)}\n`,
+        "utf8"
+      );
+      break;
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") {
+        throw error;
+      }
+
+      if (Date.now() >= deadline) {
+        const owner = readLockOwner(lockPath);
+        fail(
+          owner
+            ? `Another codex automation run is still active for this repository worktree (${owner}).`
+            : "Another codex automation run is still active for this repository worktree."
+        );
+      }
+
+      await sleep(pollIntervalMs);
+    }
+  }
+
+  try {
+    return await action();
+  } finally {
+    fs.rmSync(lockPath, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv);
   ensureBaseBranchExists(args.base);
-
-  const entries = buildBranchAuditReport({
-    branches: readBranchSnapshots(),
-    mergedRefs: readMergedRefs(args.base),
-    openPrsByBranch: readOpenPullRequests(),
-    base: args.base,
-    currentBranch: readCurrentBranch(),
-    nowMs: Date.now(),
-    mergedRetentionDays: args.mergedRetentionDays,
-    abandonedReviewDays: args.abandonedReviewDays
-  });
-  const pruneCandidates = selectPruneCandidates(entries, args.deleteRemote);
-
-  if (args.format === "json") {
-    renderJson({
-      entries: args.command === "prune" ? pruneCandidates : entries,
-      summary: buildSummary(entries, pruneCandidates)
+  await withSerializedWorktreeExecution(readCurrentWorktreeGitDir(), async () => {
+    const entries = buildBranchAuditReport({
+      branches: readBranchSnapshots(),
+      mergedRefs: readMergedRefs(args.base),
+      openPrsByBranch: readOpenPullRequests(),
+      base: args.base,
+      currentBranch: readCurrentBranch(),
+      nowMs: Date.now(),
+      mergedRetentionDays: args.mergedRetentionDays,
+      abandonedReviewDays: args.abandonedReviewDays
     });
-  } else if (args.command === "prune") {
-    renderTable(pruneCandidates);
-  } else {
-    renderTable(entries);
-  }
+    const pruneCandidates = selectPruneCandidates(entries, args.deleteRemote);
 
-  if (args.format !== "json") {
-    printSummary(entries, pruneCandidates);
-  }
-
-  if (args.command !== "prune") {
-    return;
-  }
-
-  if (!args.apply) {
-    console.log("Dry run only. Re-run with --apply to delete the listed safe candidates.");
-    if (!args.deleteRemote) {
-      console.log("Remote branches are audit-only unless --delete-remote is also set.");
+    if (args.format === "json") {
+      renderJson({
+        entries: args.command === "prune" ? pruneCandidates : entries,
+        summary: buildSummary(entries, pruneCandidates)
+      });
+    } else if (args.command === "prune") {
+      renderTable(pruneCandidates);
+    } else {
+      renderTable(entries);
     }
-    return;
-  }
 
-  for (const entry of pruneCandidates) {
-    deleteBranch(entry);
-  }
+    if (args.format !== "json") {
+      printSummary(entries, pruneCandidates);
+    }
 
-  console.log(`Pruned ${pruneCandidates.length} branch ref(s).`);
+    if (args.command !== "prune") {
+      return;
+    }
+
+    if (!args.apply) {
+      console.log("Dry run only. Re-run with --apply to delete the listed safe candidates.");
+      if (!args.deleteRemote) {
+        console.log("Remote branches are audit-only unless --delete-remote is also set.");
+      }
+      return;
+    }
+
+    for (const entry of pruneCandidates) {
+      deleteBranch(entry);
+    }
+
+    console.log(`Pruned ${pruneCandidates.length} branch ref(s).`);
+  });
 }
 
 const isDirectExecution =

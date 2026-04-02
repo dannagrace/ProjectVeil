@@ -2,7 +2,7 @@
 
 This runbook is for operators auditing and pruning stale `codex/issue-*` automation branches in `dannagrace/ProjectVeil`.
 
-`npm run ops:codex-branches` inspects local refs and `origin/codex/issue-*` refs in the current repository, then combines Git state with current open-PR data from `gh`. It does not touch unrelated files or worktrees, and `prune` is dry-run by default.
+`npm run ops:codex-branches` inspects local refs and `origin/codex/issue-*` refs in the current repository, then combines Git state with current open-PR data from `gh`. It does not touch unrelated files or worktrees, `prune` is dry-run by default, and runs are serialized per repository worktree so two Codex automation invocations cannot mutate the same worktree concurrently.
 
 ## When To Run It
 
@@ -28,6 +28,8 @@ git pull --ff-only origin main
 git fetch --prune origin
 gh auth status
 ```
+
+If another Codex automation run is already using the same worktree, the command waits for that worktree-local lock to clear before continuing. Independent Git worktrees keep separate locks and do not block each other.
 
 ## Audit Workflow
 
@@ -104,6 +106,7 @@ After any applied prune:
 
 - No deletion happens unless `--apply` is present.
 - Remote branch deletion is disabled unless `--delete-remote` is present.
+- Only one `ops:codex-branches` run can execute at a time per repository worktree.
 - Branches with open PRs are never pruned.
 - Unmerged stale branches stay in `manual-review`; the tool does not auto-delete them.
 - The currently checked-out branch is never pruned, even if it would otherwise qualify.

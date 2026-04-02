@@ -4,10 +4,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   buildBranchAuditReport,
   selectPruneCandidates,
+  withSerializedWorktreeExecution,
   type BranchAuditEntry
 } from "../audit-codex-automation-branches.ts";
 
@@ -296,6 +298,70 @@ test("selectPruneCandidates leaves remote refs alone unless remote deletion is e
   assert.deepEqual(
     selectPruneCandidates(entries, true).map((entry) => `${entry.scope}:${entry.branch}`),
     ["local:codex/issue-103-local", "remote:codex/issue-103-remote"]
+  );
+});
+
+test("withSerializedWorktreeExecution serializes concurrent runs within the same worktree git dir", async () => {
+  const gitDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-codex-lock-"));
+  const events: string[] = [];
+
+  const firstRun = withSerializedWorktreeExecution(gitDir, async () => {
+    events.push("first:start");
+    await delay(150);
+    events.push("first:end");
+  });
+
+  await delay(25);
+
+  const secondRun = withSerializedWorktreeExecution(
+    gitDir,
+    async () => {
+      events.push("second:start");
+      events.push("second:end");
+    },
+    {
+      pollIntervalMs: 10,
+      timeoutMs: 1_000
+    }
+  );
+
+  await Promise.all([firstRun, secondRun]);
+
+  assert.deepEqual(events, ["first:start", "first:end", "second:start", "second:end"]);
+});
+
+test("withSerializedWorktreeExecution times out with owner details when the worktree lock stays held", async () => {
+  const gitDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-codex-lock-timeout-"));
+  const lockDir = path.join(gitDir, "codex-automation-run.lock");
+  fs.mkdirSync(lockDir);
+  fs.writeFileSync(
+    path.join(lockDir, "owner.json"),
+    `${JSON.stringify(
+      {
+        pid: 4321,
+        acquiredAt: "2026-04-02T00:00:00.000Z",
+        cwd: "/tmp/example-worktree",
+        argv: ["prune", "--apply"]
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  await assert.rejects(
+    () =>
+      withSerializedWorktreeExecution(
+        gitDir,
+        async () => {
+          throw new Error("unreachable");
+        },
+        {
+          pollIntervalMs: 10,
+          timeoutMs: 40
+        }
+      ),
+    /Another codex automation run is still active for this repository worktree \(pid 4321, acquired 2026-04-02T00:00:00.000Z, cwd \/tmp\/example-worktree, args prune --apply\)\./
   );
 });
 
