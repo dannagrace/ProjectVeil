@@ -7,12 +7,14 @@ type EvidenceAvailability = "present" | "missing";
 type EvidenceFreshness = "unknown" | "fresh" | "stale" | "missing_timestamp" | "invalid_timestamp";
 
 interface Args {
+  candidate?: string;
   serverUrl?: string;
   snapshotPath?: string;
   cocosRcPath?: string;
   primaryClientDiagnosticsPath?: string;
   reconnectSoakPath?: string;
   persistencePath?: string;
+  sameCandidateAuditPath?: string;
   wechatArtifactsDir?: string;
   wechatSmokeReportPath?: string;
   wechatPackageMetadataPath?: string;
@@ -213,13 +215,16 @@ interface DashboardReport {
   overallStatus: GateStatus;
   summary: string;
   goNoGo: GoNoGoReport;
+  triage: DashboardTriageReport;
   inputs: {
+    candidate?: string;
     serverUrl?: string;
     snapshotPath?: string;
     cocosRcPath?: string;
     primaryClientDiagnosticsPath?: string;
     reconnectSoakPath?: string;
     persistencePath?: string;
+    sameCandidateAuditPath?: string;
     wechatArtifactsDir?: string;
     wechatSmokeReportPath?: string;
     wechatPackageMetadataPath?: string;
@@ -271,6 +276,32 @@ interface CandidateConsistencyFinding {
   freshness?: EvidenceFreshness;
 }
 
+interface SameCandidateEvidenceAuditReport {
+  candidate?: {
+    name?: string;
+    revision?: string;
+  };
+  summary?: {
+    status?: "passed" | "failed";
+    findingCount?: number;
+    summary?: string;
+  };
+}
+
+interface DashboardTriageEntry {
+  id: string;
+  severity: "blocker" | "warning";
+  title: string;
+  summary: string;
+  gateId?: string;
+  evidencePaths: string[];
+}
+
+interface DashboardTriageReport {
+  blockers: DashboardTriageEntry[];
+  warnings: DashboardTriageEntry[];
+}
+
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
 const DEFAULT_RELEASE_EVIDENCE_DIR = path.resolve("artifacts", "release-evidence");
 const REQUIRED_SNAPSHOT_CHECK_IDS = ["npm-test", "typecheck-ci", "e2e-smoke", "e2e-multiplayer-smoke", "cocos-primary-journey", "wechat-build-check"] as const;
@@ -295,12 +326,14 @@ function fail(message: string): never {
 }
 
 function parseArgs(argv: string[]): Args {
+  let candidate: string | undefined;
   let serverUrl: string | undefined;
   let snapshotPath: string | undefined;
   let cocosRcPath: string | undefined;
   let primaryClientDiagnosticsPath: string | undefined;
   let reconnectSoakPath: string | undefined;
   let persistencePath: string | undefined;
+  let sameCandidateAuditPath: string | undefined;
   let wechatArtifactsDir: string | undefined;
   let wechatSmokeReportPath: string | undefined;
   let wechatPackageMetadataPath: string | undefined;
@@ -313,6 +346,11 @@ function parseArgs(argv: string[]): Args {
     const arg = argv[index];
     const next = argv[index + 1];
 
+    if (arg === "--candidate" && next) {
+      candidate = next.trim();
+      index += 1;
+      continue;
+    }
     if (arg === "--server-url" && next) {
       serverUrl = next.trim();
       index += 1;
@@ -340,6 +378,11 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--phase1-persistence" && next) {
       persistencePath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--same-candidate-audit" && next) {
+      sameCandidateAuditPath = next;
       index += 1;
       continue;
     }
@@ -387,12 +430,14 @@ function parseArgs(argv: string[]): Args {
   }
 
   return {
+    ...(candidate ? { candidate } : {}),
     ...(serverUrl ? { serverUrl } : {}),
     ...(snapshotPath ? { snapshotPath } : {}),
     ...(cocosRcPath ? { cocosRcPath } : {}),
     ...(primaryClientDiagnosticsPath ? { primaryClientDiagnosticsPath } : {}),
     ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
     ...(persistencePath ? { persistencePath } : {}),
+    ...(sameCandidateAuditPath ? { sameCandidateAuditPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
     ...(wechatPackageMetadataPath ? { wechatPackageMetadataPath } : {}),
@@ -403,7 +448,11 @@ function parseArgs(argv: string[]): Args {
   };
 }
 
-function resolveLatestMatchingJsonFile(dirPath: string, matcher: (entry: string) => boolean): string | undefined {
+function resolveLatestMatchingJsonFile(
+  dirPath: string,
+  matcher: (entry: string) => boolean,
+  preferredMatcher?: (entry: string) => boolean
+): string | undefined {
   if (!fs.existsSync(dirPath)) {
     return undefined;
   }
@@ -413,6 +462,12 @@ function resolveLatestMatchingJsonFile(dirPath: string, matcher: (entry: string)
     .map((entry) => path.join(dirPath, entry))
     .filter((entry) => fs.statSync(entry).isFile())
     .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
+  if (preferredMatcher) {
+    const preferredCandidate = candidates.find((entry) => preferredMatcher(path.basename(entry)));
+    if (preferredCandidate) {
+      return preferredCandidate;
+    }
+  }
   return candidates[0];
 }
 
@@ -465,6 +520,15 @@ function writeTextFile(filePath: string, content: string): void {
 
 function toRelativePath(filePath: string): string {
   return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
+}
+
+function slugify(value: string | undefined): string | undefined {
+  const normalized = value
+    ?.trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || undefined;
 }
 
 function statusRank(status: GateStatus): number {
@@ -788,6 +852,9 @@ export function summarizeSnapshot(snapshotPath: string | undefined, snapshot: Re
   const missingRequiredChecks = REQUIRED_SNAPSHOT_CHECK_IDS.filter((id) => !checksById.has(id));
   const failedRequiredChecks = REQUIRED_SNAPSHOT_CHECK_IDS.filter((id) => checksById.get(id)?.status === "failed");
   const pendingRequiredChecks = REQUIRED_SNAPSHOT_CHECK_IDS.filter((id) => checksById.get(id)?.status === "pending");
+  const multiplayerSmokeStatus = checksById.get("e2e-multiplayer-smoke")?.status ?? "missing";
+  const cocosPrimaryJourneyStatus = checksById.get("cocos-primary-journey")?.status ?? "missing";
+  const wechatBuildStatus = checksById.get("wechat-build-check")?.status ?? "missing";
 
   let status: GateStatus = "pass";
   if (snapshot.summary?.status === "failed" || failedRequiredChecks.length > 0 || missingRequiredChecks.length > 0) {
@@ -818,7 +885,12 @@ export function summarizeSnapshot(snapshotPath: string | undefined, snapshot: Re
     warnReasons.push("release_readiness_required_checks_pending");
   }
 
-  const parts = [`snapshot=${snapshot.summary?.status ?? "<missing>"}`];
+  const parts = [
+    `snapshot=${snapshot.summary?.status ?? "<missing>"}`,
+    `multiplayerSmoke=${multiplayerSmokeStatus}`,
+    `cocosPrimaryJourney=${cocosPrimaryJourneyStatus}`,
+    `wechatBuild=${wechatBuildStatus}`
+  ];
   if (failedRequiredChecks.length > 0) {
     parts.push(`failed=${failedRequiredChecks.join(", ")}`);
   }
@@ -838,6 +910,74 @@ export function summarizeSnapshot(snapshotPath: string | undefined, snapshot: Re
       status,
       observedAt: snapshot.generatedAt,
       sourceRevision: snapshot.revision?.shortCommit ?? snapshot.revision?.commit,
+      summary: parts.join(" | "),
+      reasonCodes: status === "fail" ? failReasons : warnReasons
+    }),
+    failReasons,
+    warnReasons
+  };
+}
+
+export function summarizeSameCandidateAudit(
+  auditPath: string | undefined,
+  audit: SameCandidateEvidenceAuditReport | undefined,
+  input: { candidate?: string; candidateRevision?: string; maxEvidenceAgeDays: number }
+): EvidenceSummary {
+  const candidatePinned = Boolean(input.candidate?.trim() && input.candidateRevision?.trim());
+
+  if (!auditPath || !audit) {
+    const status: GateStatus = candidatePinned ? "fail" : "warn";
+    const reasonCode = candidatePinned ? "same_candidate_evidence_audit_missing" : "same_candidate_evidence_audit_not_checked";
+    return {
+      status,
+      detail: candidatePinned
+        ? "Same-candidate evidence audit missing."
+        : "Same-candidate evidence audit not selected; pass --candidate plus --candidate-revision to enforce candidate-level evidence stitching.",
+      evidence: createEvidenceItem({
+        label: "Same-candidate evidence audit",
+        path: auditPath ?? "<missing-same-candidate-evidence-audit>",
+        status,
+        availability: "missing",
+        summary: candidatePinned
+          ? "Same-candidate evidence audit missing."
+          : "Same-candidate evidence audit not selected.",
+        reasonCodes: [reasonCode]
+      }),
+      failReasons: candidatePinned ? [reasonCode] : [],
+      warnReasons: candidatePinned ? [] : [reasonCode]
+    };
+  }
+
+  const failReasons: string[] = [];
+  if (audit.summary?.status !== "passed") {
+    failReasons.push("same_candidate_evidence_audit_failed");
+  }
+
+  const age = describeAge(auditPath ? new Date(fs.statSync(auditPath).mtimeMs).toISOString() : undefined, input.maxEvidenceAgeDays);
+  const warnReasons = failReasons.length === 0 && age.status === "warn" ? ["same_candidate_evidence_audit_stale"] : [];
+  const status: GateStatus = failReasons.length > 0 ? "fail" : age.status === "warn" ? "warn" : "pass";
+  const parts = [
+    `status=${audit.summary?.status ?? "<missing>"}`,
+    `candidate=${audit.candidate?.name ?? "<missing>"}`,
+    `revision=${audit.candidate?.revision ?? "<missing>"}`,
+    `findings=${audit.summary?.findingCount ?? 0}`
+  ];
+  if (audit.summary?.summary?.trim()) {
+    parts.push(audit.summary.summary.trim());
+  }
+  if (warnReasons.length > 0) {
+    parts.push(age.detail);
+  }
+
+  return {
+    status,
+    detail: parts.join(" | "),
+    evidence: createEvidenceItem({
+      label: "Same-candidate evidence audit",
+      path: auditPath,
+      status,
+      observedAt: new Date(fs.statSync(auditPath).mtimeMs).toISOString(),
+      sourceRevision: audit.candidate?.revision,
       summary: parts.join(" | "),
       reasonCodes: status === "fail" ? failReasons : warnReasons
     }),
@@ -1479,6 +1619,41 @@ export function buildGoNoGoReport(input: {
   };
 }
 
+function buildDashboardTriage(report: Pick<DashboardReport, "gates" | "goNoGo">): DashboardTriageReport {
+  const blockers: DashboardTriageEntry[] = [
+    ...report.gates
+      .filter((gate) => gate.status === "fail")
+      .map((gate) => ({
+        id: `gate:${gate.id}`,
+        severity: "blocker" as const,
+        title: gate.label,
+        summary: gate.failReasons[0] ?? gate.summary,
+        gateId: gate.id,
+        evidencePaths: gate.evidence.map((entry) => entry.path)
+      })),
+    ...report.goNoGo.candidateConsistencyFindings.map((finding) => ({
+      id: `candidate-consistency:${finding.code}:${finding.label}`,
+      severity: "blocker" as const,
+      title: "Candidate consistency",
+      summary: finding.summary,
+      evidencePaths: [finding.path]
+    }))
+  ];
+
+  const warnings: DashboardTriageEntry[] = report.gates
+    .filter((gate) => gate.status === "warn")
+    .map((gate) => ({
+      id: `gate:${gate.id}`,
+      severity: "warning" as const,
+      title: gate.label,
+      summary: gate.warnReasons[0] ?? gate.summary,
+      gateId: gate.id,
+      evidencePaths: gate.evidence.map((entry) => entry.path)
+    }));
+
+  return { blockers, warnings };
+}
+
 function renderMarkdown(report: DashboardReport): string {
   const lines: string[] = [];
   lines.push("# Phase 1 Release Readiness Dashboard");
@@ -1492,6 +1667,19 @@ function renderMarkdown(report: DashboardReport): string {
   lines.push(`- Required pending: ${report.goNoGo.requiredPending}`);
   lines.push(`- Candidate revision: ${report.goNoGo.candidateRevision ?? "<unverified>"}`);
   lines.push(`- Revision status: ${report.goNoGo.revisionStatus.toUpperCase()}`);
+  lines.push("");
+  lines.push("## Selected Inputs");
+  lines.push("");
+  lines.push(`- Candidate: ${report.inputs.candidate ?? "<unverified>"}`);
+  lines.push(`- Snapshot: ${report.inputs.snapshotPath ?? "<missing>"}`);
+  lines.push(`- Cocos RC: ${report.inputs.cocosRcPath ?? "<missing>"}`);
+  lines.push(`- Primary-client diagnostics: ${report.inputs.primaryClientDiagnosticsPath ?? "<missing>"}`);
+  lines.push(`- Reconnect soak: ${report.inputs.reconnectSoakPath ?? "<missing>"}`);
+  lines.push(`- Phase 1 persistence: ${report.inputs.persistencePath ?? "<missing>"}`);
+  lines.push(`- Same-candidate audit: ${report.inputs.sameCandidateAuditPath ?? "<missing>"}`);
+  lines.push(`- WeChat artifacts dir: ${report.inputs.wechatArtifactsDir ?? "<missing>"}`);
+  lines.push(`- WeChat smoke report: ${report.inputs.wechatSmokeReportPath ?? "<missing>"}`);
+  lines.push(`- WeChat package metadata: ${report.inputs.wechatPackageMetadataPath ?? "<missing>"}`);
   lines.push("");
   lines.push("## Phase 1 Go/No-Go");
   lines.push("");
@@ -1525,6 +1713,34 @@ function renderMarkdown(report: DashboardReport): string {
     }
     lines.push("");
   }
+  lines.push("## Blocker Drill-Down");
+  lines.push("");
+  lines.push(`### Blockers (${report.triage.blockers.length})`);
+  lines.push("");
+  if (report.triage.blockers.length === 0) {
+    lines.push("- None.");
+  } else {
+    for (const entry of report.triage.blockers) {
+      lines.push(`- **${entry.title}**: ${entry.summary}`);
+      if (entry.evidencePaths.length > 0) {
+        lines.push(`  Evidence: ${entry.evidencePaths.join(", ")}`);
+      }
+    }
+  }
+  lines.push("");
+  lines.push(`### Warnings (${report.triage.warnings.length})`);
+  lines.push("");
+  if (report.triage.warnings.length === 0) {
+    lines.push("- None.");
+  } else {
+    for (const entry of report.triage.warnings) {
+      lines.push(`- **${entry.title}**: ${entry.summary}`);
+      if (entry.evidencePaths.length > 0) {
+        lines.push(`  Evidence: ${entry.evidencePaths.join(", ")}`);
+      }
+    }
+  }
+  lines.push("");
   lines.push("| Gate | Status | Summary |");
   lines.push("| --- | --- | --- |");
   for (const gate of report.gates) {
@@ -1567,9 +1783,15 @@ function renderMarkdown(report: DashboardReport): string {
   return `${lines.join("\n").trim()}\n`;
 }
 
-function defaultOutputPaths(): { jsonPath: string; markdownPath: string } {
+function defaultOutputPaths(args: Args): { jsonPath: string; markdownPath: string } {
+  const candidateSlug = slugify(args.candidate);
+  const revisionSuffix = args.candidateRevision?.slice(0, 12);
   const timestamp = new Date().toISOString().replace(/:/g, "-");
-  const baseName = `phase1-release-dashboard-${timestamp}`;
+  const baseName = candidateSlug && revisionSuffix
+    ? `release-readiness-dashboard-${candidateSlug}-${revisionSuffix}`
+    : revisionSuffix
+      ? `release-readiness-dashboard-${revisionSuffix}`
+      : `release-readiness-dashboard-${timestamp}`;
   return {
     jsonPath: path.resolve(DEFAULT_RELEASE_READINESS_DIR, `${baseName}.json`),
     markdownPath: path.resolve(DEFAULT_RELEASE_READINESS_DIR, `${baseName}.md`)
@@ -1578,24 +1800,55 @@ function defaultOutputPaths(): { jsonPath: string; markdownPath: string } {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv);
-  const outputDefaults = defaultOutputPaths();
+  const outputDefaults = defaultOutputPaths(args);
+  const candidateSlug = slugify(args.candidate);
+  const revisionSuffix = args.candidateRevision?.slice(0, 12);
   const resolvedSnapshotPath = args.snapshotPath
     ? path.resolve(args.snapshotPath)
-    : resolveLatestMatchingJsonFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("release-readiness-"));
+    : resolveLatestMatchingJsonFile(
+        DEFAULT_RELEASE_READINESS_DIR,
+        (entry) => entry.startsWith("release-readiness-"),
+        (entry) => Boolean(revisionSuffix && entry.includes(revisionSuffix))
+      );
   const resolvedCocosRcPath = args.cocosRcPath
     ? path.resolve(args.cocosRcPath)
-    : resolveLatestMatchingJsonFile(DEFAULT_RELEASE_EVIDENCE_DIR, (entry) => entry.endsWith(".json"));
+    : resolveLatestMatchingJsonFile(
+        DEFAULT_RELEASE_EVIDENCE_DIR,
+        (entry) => entry.endsWith(".json"),
+        (entry) => Boolean(candidateSlug && revisionSuffix && entry.includes(candidateSlug) && entry.includes(revisionSuffix))
+      );
   const resolvedPrimaryClientDiagnosticsPath = args.primaryClientDiagnosticsPath
     ? path.resolve(args.primaryClientDiagnosticsPath)
-    : resolveLatestMatchingJsonFile(DEFAULT_RELEASE_READINESS_DIR, (entry) =>
-        entry.startsWith("cocos-primary-client-diagnostic-snapshots-")
+    : resolveLatestMatchingJsonFile(
+        DEFAULT_RELEASE_READINESS_DIR,
+        (entry) => entry.startsWith("cocos-primary-client-diagnostic-snapshots-"),
+        (entry) => Boolean(revisionSuffix && entry.includes(revisionSuffix))
       );
   const resolvedReconnectSoakPath = args.reconnectSoakPath
     ? path.resolve(args.reconnectSoakPath)
-    : resolveLatestMatchingJsonFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("colyseus-reconnect-soak-summary"));
+    : resolveLatestMatchingJsonFile(
+        DEFAULT_RELEASE_READINESS_DIR,
+        (entry) => entry.startsWith("colyseus-reconnect-soak-summary"),
+        (entry) => Boolean(
+          revisionSuffix &&
+            entry.includes(revisionSuffix) &&
+            (!candidateSlug || entry.includes(candidateSlug))
+        )
+      );
   const resolvedPersistencePath = args.persistencePath
     ? path.resolve(args.persistencePath)
-    : resolveLatestMatchingJsonFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("phase1-release-persistence-regression-"));
+    : resolveLatestMatchingJsonFile(
+        DEFAULT_RELEASE_READINESS_DIR,
+        (entry) => entry.startsWith("phase1-release-persistence-regression-"),
+        (entry) => Boolean(revisionSuffix && entry.includes(revisionSuffix) && (!candidateSlug || entry.includes(candidateSlug)))
+      );
+  const resolvedSameCandidateAuditPath = args.sameCandidateAuditPath
+    ? path.resolve(args.sameCandidateAuditPath)
+    : resolveLatestMatchingJsonFile(
+        DEFAULT_RELEASE_READINESS_DIR,
+        (entry) => entry.startsWith("same-candidate-evidence-audit-") && entry.endsWith(".json"),
+        (entry) => Boolean(candidateSlug && revisionSuffix && entry.includes(candidateSlug) && entry.includes(revisionSuffix))
+      );
   const wechatArtifacts = resolveWechatArtifacts(args);
 
   const snapshot = readJsonFile<ReleaseReadinessSnapshot>(resolvedSnapshotPath);
@@ -1603,6 +1856,7 @@ async function main(): Promise<void> {
   const primaryClientDiagnostics = readJsonFile<PrimaryClientDiagnosticSnapshotsArtifact>(resolvedPrimaryClientDiagnosticsPath);
   const reconnectSoakArtifact = readJsonFile<ReconnectSoakArtifact>(resolvedReconnectSoakPath);
   const persistenceArtifact = readJsonFile<Phase1PersistenceReleaseReport>(resolvedPersistencePath);
+  const sameCandidateAudit = readJsonFile<SameCandidateEvidenceAuditReport>(resolvedSameCandidateAuditPath);
   const wechatSmokeReport = readJsonFile<WechatSmokeReport>(wechatArtifacts.smokeReportPath);
   const wechatPackageMetadata = readJsonFile<WechatPackageMetadata>(wechatArtifacts.packageMetadataPath);
 
@@ -1642,6 +1896,11 @@ async function main(): Promise<void> {
   );
   const reconnectSoakSummary = summarizeReconnectSoak(resolvedReconnectSoakPath, reconnectSoakArtifact, args.maxEvidenceAgeDays);
   const persistenceSummary = summarizePhase1Persistence(resolvedPersistencePath, persistenceArtifact, args.maxEvidenceAgeDays);
+  const sameCandidateAuditSummary = summarizeSameCandidateAudit(resolvedSameCandidateAuditPath, sameCandidateAudit, {
+    candidate: args.candidate,
+    candidateRevision: args.candidateRevision,
+    maxEvidenceAgeDays: args.maxEvidenceAgeDays
+  });
 
   const criticalEvidenceGate = buildCriticalEvidenceGate(args.maxEvidenceAgeDays, [
     snapshotSummary.evidence,
@@ -1650,7 +1909,8 @@ async function main(): Promise<void> {
     cocosRcSummary.evidence,
     primaryClientDiagnosticsSummary.evidence,
     reconnectSoakSummary.evidence,
-    persistenceSummary.evidence
+    persistenceSummary.evidence,
+    sameCandidateAuditSummary.evidence
   ]);
 
   const gates = [
@@ -1673,28 +1933,40 @@ async function main(): Promise<void> {
       "Phase 1 persistence evidence exists, but freshness needs review.",
       "Phase 1 persistence evidence is missing or failing."
     ),
+    buildArtifactGate(
+      "same-candidate-evidence",
+      "Same-candidate evidence",
+      sameCandidateAuditSummary,
+      "Same-candidate evidence audit is present and passing for this candidate.",
+      "Same-candidate evidence was not pinned or needs freshness review.",
+      "Same-candidate evidence is missing or failing."
+    ),
     criticalEvidenceGate
   ];
 
+  const goNoGo = buildGoNoGoReport({
+    candidateRevision: args.candidateRevision,
+    maxEvidenceAgeDays: args.maxEvidenceAgeDays,
+    snapshot,
+    gates,
+    evidence: criticalEvidenceGate.evidence
+  });
   const report: DashboardReport = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     overallStatus: mergeStatuses(gates.map((gate) => gate.status)),
     summary: buildOverallSummary(gates),
-    goNoGo: buildGoNoGoReport({
-      candidateRevision: args.candidateRevision,
-      maxEvidenceAgeDays: args.maxEvidenceAgeDays,
-      snapshot,
-      gates,
-      evidence: criticalEvidenceGate.evidence
-    }),
+    goNoGo,
+    triage: buildDashboardTriage({ gates, goNoGo }),
     inputs: {
+      ...(args.candidate ? { candidate: args.candidate } : {}),
       ...(args.serverUrl ? { serverUrl: args.serverUrl } : {}),
       ...(resolvedSnapshotPath ? { snapshotPath: resolvedSnapshotPath } : {}),
       ...(resolvedCocosRcPath ? { cocosRcPath: resolvedCocosRcPath } : {}),
       ...(resolvedPrimaryClientDiagnosticsPath ? { primaryClientDiagnosticsPath: resolvedPrimaryClientDiagnosticsPath } : {}),
       ...(resolvedReconnectSoakPath ? { reconnectSoakPath: resolvedReconnectSoakPath } : {}),
       ...(resolvedPersistencePath ? { persistencePath: resolvedPersistencePath } : {}),
+      ...(resolvedSameCandidateAuditPath ? { sameCandidateAuditPath: resolvedSameCandidateAuditPath } : {}),
       ...(args.wechatArtifactsDir ? { wechatArtifactsDir: path.resolve(args.wechatArtifactsDir) } : {}),
       ...(wechatArtifacts.smokeReportPath ? { wechatSmokeReportPath: wechatArtifacts.smokeReportPath } : {}),
       ...(wechatArtifacts.packageMetadataPath ? { wechatPackageMetadataPath: wechatArtifacts.packageMetadataPath } : {}),
@@ -1722,7 +1994,7 @@ async function main(): Promise<void> {
   for (const gate of report.gates) {
     console.log(`- ${gate.label}: ${gate.status} (${gate.summary})`);
   }
-  if (report.goNoGo.candidateConsistencyFindings.length > 0) {
+  if (report.goNoGo.decision === "blocked") {
     process.exitCode = 1;
   }
 }

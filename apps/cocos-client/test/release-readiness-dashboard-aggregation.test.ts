@@ -5,6 +5,7 @@ import {
   buildBuildPackageGate,
   buildCriticalEvidenceGate,
   buildGoNoGoReport,
+  summarizeSameCandidateAudit,
   summarizeCocosRc,
   summarizePrimaryClientDiagnostics,
   summarizeSnapshot,
@@ -71,7 +72,7 @@ test("buildBuildPackageGate aggregates snapshot, package, and smoke evidence int
   assert.deepEqual(gate.failReasons, ["wechat_package_metadata_missing", "wechat_smoke_failed"]);
   assert.deepEqual(gate.warnReasons, ["release_readiness_snapshot_pending", "release_readiness_required_checks_pending"]);
   assert.deepEqual(gate.details, [
-    "snapshot=partial | pending=e2e-multiplayer-smoke",
+    "snapshot=partial | multiplayerSmoke=pending | cocosPrimaryJourney=passed | wechatBuild=passed | pending=e2e-multiplayer-smoke",
     "WeChat package metadata missing.",
     "result=failed | failed=login-lobby"
   ]);
@@ -165,6 +166,17 @@ test("summarizePrimaryClientDiagnostics fails incomplete checkpoint coverage", (
   assert.match(summary.detail, /missingCheckpointIds=inventory-overflow,reconnect-cached-replay,reconnect-recovery/);
   assert.match(summary.detail, /missingCategoryIds=inventory,reconnect/);
   assert.deepEqual(summary.failReasons, ["primary_client_diagnostic_snapshots_incomplete"]);
+});
+
+test("summarizeSameCandidateAudit warns when the dashboard was not run as a candidate pair", () => {
+  const summary = summarizeSameCandidateAudit(undefined, undefined, {
+    candidateRevision: "abc1234",
+    maxEvidenceAgeDays: 14
+  });
+
+  assert.equal(summary.status, "warn");
+  assert.deepEqual(summary.warnReasons, ["same_candidate_evidence_audit_not_checked"]);
+  assert.equal(summary.evidence.availability, "missing");
 });
 
 test("buildGoNoGoReport marks a candidate blocked when linked evidence revisions disagree", () => {

@@ -153,7 +153,7 @@ test("release-readiness dashboard keeps stale and partial mixed-surface evidence
     path.resolve(__dirname, "../..")
   );
 
-  assert.equal(result.status, 0);
+  assert.equal(result.status, 1);
   assert.match(result.stdout, /Overall status: fail/);
   assert.match(result.stdout, /Go\/No-Go decision: blocked/);
 
@@ -187,6 +187,7 @@ test("release-readiness dashboard keeps stale and partial mixed-surface evidence
       ["build-package-validation", "fail"],
       ["reconnect-soak", "warn"],
       ["phase1-persistence", "pass"],
+      ["same-candidate-evidence", "warn"],
       ["critical-evidence", "fail"]
     ]
   );
@@ -194,12 +195,17 @@ test("release-readiness dashboard keeps stale and partial mixed-surface evidence
     "wechat_package_metadata_missing"
   ]);
   assert.deepEqual(report.gates.find((gate) => gate.id === "reconnect-soak")?.warnReasons, ["reconnect_soak_stale"]);
+  assert.deepEqual(report.gates.find((gate) => gate.id === "same-candidate-evidence")?.warnReasons, [
+    "same_candidate_evidence_audit_not_checked"
+  ]);
   assert.match(report.gates.find((gate) => gate.id === "critical-evidence")?.details.join("\n") ?? "", /older than 14 day\(s\)/);
   assert.match(report.gates.find((gate) => gate.id === "critical-evidence")?.details.join("\n") ?? "", /Primary-client diagnostic snapshots: missing artifact/);
 
   const markdown = fs.readFileSync(markdownOutputPath, "utf8");
+  assert.match(markdown, /## Blocker Drill-Down/);
   assert.match(markdown, /## Server health[\s\S]*- Evidence: unavailable\./);
   assert.match(markdown, /## Auth readiness[\s\S]*- Evidence: unavailable\./);
+  assert.match(markdown, /## Same-candidate evidence[\s\S]*Same-candidate evidence audit not selected/);
   assert.match(markdown, /WeChat package metadata missing\./);
   assert.match(markdown, /Primary-client diagnostic snapshots: FAIL \(/);
   assert.match(markdown, /Cocos RC snapshot: FAIL @ 2026-03-30T00:10:00.000Z/);
