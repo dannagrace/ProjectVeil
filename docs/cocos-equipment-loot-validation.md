@@ -8,7 +8,7 @@
 - Cocos session layer: `apps/cocos-client/assets/scripts/VeilCocosSession.ts` already sends `hero.equip` / `hero.unequip` requests and caches the returned `SessionUpdate`.
 - Cocos prediction/HUD layer: `apps/cocos-client/assets/scripts/cocos-prediction.ts`, `apps/cocos-client/assets/scripts/cocos-hero-equipment.ts`, and `apps/cocos-client/assets/scripts/VeilHudPanel.ts` present hero loadout state, grouped inventory choices, recent loot, and visible stat changes inside the primary runtime.
 
-## Implemented Slice For #602
+## Implemented Slice For #683
 
 - HUD `装备配置` card now shows:
   - current slot occupancy for weapon / armor / accessory
@@ -33,6 +33,8 @@
 - No unrelated gameplay systems were changed; this is a presentation-first slice on top of the existing authoritative flow.
 
 ## Local Verification
+
+- Scripted smoke: `node --import tsx --test apps/cocos-client/test/cocos-primary-client-journey.test.ts`
 
 1. Start the server with `npm run dev:server`.
 2. Open `apps/cocos-client` in Cocos Creator 3.8.x and preview a scene with `VeilRoot`.
