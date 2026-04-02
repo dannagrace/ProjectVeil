@@ -12,6 +12,7 @@ import {
 interface Args {
   releaseGateSummaryPath?: string;
   releaseHealthSummaryPath?: string;
+  goNoGoPacketPath?: string;
   outputPath?: string;
   runUrl?: string;
 }
@@ -81,6 +82,46 @@ interface ReleaseHealthSummaryReport {
   };
 }
 
+interface GoNoGoDecisionPacket {
+  generatedAt: string;
+  decision: {
+    status: "go" | "no_go";
+    summary: string;
+  };
+  candidate: {
+    name: string;
+    revision: string;
+    shortRevision: string;
+    branch: string;
+    targetSurface: "h5" | "wechat";
+  };
+  inputs: {
+    dossierPath: string;
+    releaseGateSummaryPath: string;
+    wechatCandidateSummaryPath?: string;
+  };
+  sections: {
+    blockerSummary: {
+      blockers: Array<{
+        title: string;
+        summary: string;
+        artifactPath?: string;
+        nextStep?: string;
+      }>;
+      warnings: Array<{
+        title: string;
+        summary: string;
+        artifactPath?: string;
+      }>;
+    };
+    unresolvedManualChecks: Array<{
+      title: string;
+      status: "passed" | "failed" | "pending" | "not_applicable";
+      artifactPath?: string;
+    }>;
+  };
+}
+
 const COMMENT_MARKER = "<!-- project-veil-release-summary -->";
 
 function fail(message: string): never {
@@ -90,6 +131,7 @@ function fail(message: string): never {
 function parseArgs(argv: string[]): Args {
   let releaseGateSummaryPath: string | undefined;
   let releaseHealthSummaryPath: string | undefined;
+  let goNoGoPacketPath: string | undefined;
   let outputPath: string | undefined;
   let runUrl: string | undefined;
 
@@ -104,6 +146,11 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--release-health-summary" && next) {
       releaseHealthSummaryPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--go-no-go-packet" && next) {
+      goNoGoPacketPath = next;
       index += 1;
       continue;
     }
@@ -124,6 +171,7 @@ function parseArgs(argv: string[]): Args {
   return {
     ...(releaseGateSummaryPath ? { releaseGateSummaryPath } : {}),
     ...(releaseHealthSummaryPath ? { releaseHealthSummaryPath } : {}),
+    ...(goNoGoPacketPath ? { goNoGoPacketPath } : {}),
     ...(outputPath ? { outputPath } : {}),
     ...(runUrl ? { runUrl } : {})
   };
@@ -141,16 +189,81 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
+function toDisplayPath(filePath: string): string {
+  const absolutePath = path.resolve(filePath);
+  const relativePath = path.relative(process.cwd(), absolutePath).replace(/\\/g, "/");
+  if (relativePath.length > 0 && !relativePath.startsWith("../")) {
+    return relativePath;
+  }
+
+  const normalizedAbsolutePath = absolutePath.replace(/\\/g, "/");
+  for (const marker of ["/release-readiness/", "/wechat-release/", "/runtime-regression/", "/baseline/", "/configs/"]) {
+    const markerIndex = normalizedAbsolutePath.lastIndexOf(marker);
+    if (markerIndex >= 0) {
+      return normalizedAbsolutePath.slice(markerIndex + 1);
+    }
+  }
+
+  return normalizedAbsolutePath;
+}
+
 function summarizeGate(gate: ReleaseGateSummaryReport["gates"][number]): string {
   const statusLabel = gate.status === "passed" ? "PASS" : "FAIL";
   const firstFailure = gate.failures?.find((failure) => failure.trim().length > 0);
   return `- **${gate.label}**: \`${statusLabel}\` ${firstFailure ?? gate.summary}`;
 }
 
+function renderGoNoGoPacketSection(packet: GoNoGoDecisionPacket, packetPath: string): string[] {
+  const packetMarkdownPath = packetPath.endsWith(".json") ? packetPath.replace(/\.json$/u, ".md") : undefined;
+  const keyArtifacts = [
+    packetPath,
+    ...(packetMarkdownPath ? [packetMarkdownPath] : []),
+    packet.inputs.dossierPath,
+    packet.inputs.releaseGateSummaryPath,
+    ...(packet.inputs.wechatCandidateSummaryPath ? [packet.inputs.wechatCandidateSummaryPath] : []),
+    ...packet.sections.blockerSummary.blockers.flatMap((item) => (item.artifactPath ? [item.artifactPath] : [])),
+    ...packet.sections.blockerSummary.warnings.flatMap((item) => (item.artifactPath ? [item.artifactPath] : [])),
+    ...packet.sections.unresolvedManualChecks.flatMap((item) => (item.artifactPath ? [item.artifactPath] : []))
+  ].filter((item, index, values) => values.indexOf(item) === index);
+
+  return [
+    "### Go/No-Go Packet",
+    "",
+    ...renderReviewerFacingMarkdownEntry(
+      "Go/No-Go verdict",
+      `${packet.candidate.name} @ ${packet.candidate.shortRevision}: \`${packet.decision.status.toUpperCase()}\` with ${packet.sections.blockerSummary.blockers.length} blocker(s) and ${packet.sections.blockerSummary.warnings.length} warning(s).`,
+      {
+        status: packet.decision.status === "go" ? "pass" : "fail",
+        nextStep: packet.sections.blockerSummary.blockers[0]?.nextStep,
+        artifacts: keyArtifacts.map((artifactPath) => ({ path: artifactPath })),
+        toDisplayPath
+      }
+    ),
+    `- Packet summary: ${packet.decision.summary}`,
+    `- Target surface: \`${packet.candidate.targetSurface}\` on branch \`${packet.candidate.branch}\``,
+    `- Unresolved manual checks: ${packet.sections.unresolvedManualChecks.length}`,
+    ...(packet.sections.blockerSummary.blockers.length === 0
+      ? []
+      : packet.sections.blockerSummary.blockers
+          .slice(0, 2)
+          .map((item) => `- Blocking signal: **${item.title}** ${item.summary}`)),
+    ...(packet.sections.blockerSummary.warnings.length === 0
+      ? []
+      : packet.sections.blockerSummary.warnings
+          .slice(0, 2)
+          .map((item) => `- Advisory signal: **${item.title}** ${item.summary}`)),
+    ""
+  ];
+}
+
 export function renderPrComment(
   releaseGateReport: ReleaseGateSummaryReport,
   releaseHealthReport: ReleaseHealthSummaryReport,
-  runUrl?: string
+  options?: {
+    runUrl?: string;
+    goNoGoPacket?: GoNoGoDecisionPacket;
+    goNoGoPacketPath?: string;
+  }
 ): string {
   const healthSignals = releaseHealthReport.signals.filter(
     (signal) => signal.id !== "release-readiness" && signal.id !== "release-gate"
@@ -163,8 +276,16 @@ export function renderPrComment(
     `- Revision: \`${releaseGateReport.revision.shortCommit}\` on \`${releaseGateReport.revision.branch}\``,
     `- Release readiness: **${releaseGateReport.summary.status.toUpperCase()}** (${releaseGateReport.summary.passedGates}/${releaseGateReport.summary.totalGates} gates passing)`,
     `- Release health: **${releaseHealthReport.summary.status.toUpperCase()}** (${releaseHealthReport.summary.blockerCount} blocker, ${releaseHealthReport.summary.warningCount} warning, ${releaseHealthReport.summary.infoCount} info)`,
-    ...(runUrl ? [`- CI run: ${runUrl}`] : []),
+    ...(options?.goNoGoPacket
+      ? [
+          `- Go/no-go packet: **${options.goNoGoPacket.decision.status.toUpperCase()}** (${options.goNoGoPacket.sections.blockerSummary.blockers.length} blocker, ${options.goNoGoPacket.sections.blockerSummary.warnings.length} warning)`
+        ]
+      : []),
+    ...(options?.runUrl ? [`- CI run: ${options.runUrl}`] : []),
     "",
+    ...(options?.goNoGoPacket && options.goNoGoPacketPath
+      ? renderGoNoGoPacketSection(options.goNoGoPacket, options.goNoGoPacketPath)
+      : []),
     "### Triage",
     "",
     ...renderReviewerFacingMarkdownEntry(
@@ -234,7 +355,15 @@ function main(): void {
   const args = parseArgs(process.argv);
   const releaseGateReport = readJsonFile<ReleaseGateSummaryReport>(args.releaseGateSummaryPath);
   const releaseHealthReport = readJsonFile<ReleaseHealthSummaryReport>(args.releaseHealthSummaryPath);
-  const content = renderPrComment(releaseGateReport, releaseHealthReport, args.runUrl);
+  const content = renderPrComment(releaseGateReport, releaseHealthReport, {
+    runUrl: args.runUrl,
+    ...(args.goNoGoPacketPath
+      ? {
+          goNoGoPacket: readJsonFile<GoNoGoDecisionPacket>(args.goNoGoPacketPath),
+          goNoGoPacketPath: args.goNoGoPacketPath
+        }
+      : {})
+  });
   const outputPath = path.resolve(args.outputPath ?? path.join("artifacts", "release-readiness", "release-pr-comment.md"));
   writeFile(outputPath, content);
   console.log(`Wrote release PR comment markdown: ${path.relative(process.cwd(), outputPath).replace(/\\/g, "/")}`);

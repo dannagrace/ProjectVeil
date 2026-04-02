@@ -146,6 +146,58 @@ function createReleaseHealthReport(
   };
 }
 
+function createGoNoGoPacket() {
+  return {
+    generatedAt: "2026-03-30T00:03:00.000Z",
+    decision: {
+      status: "no_go" as const,
+      summary: "Blocking release evidence remains for wechat: 2 blocker item(s) must be cleared before promotion."
+    },
+    candidate: {
+      name: "phase1-wechat-rc",
+      revision: "abc1234def5678",
+      shortRevision: "abc1234",
+      branch: "issue-419",
+      targetSurface: "wechat" as const
+    },
+    inputs: {
+      dossierPath: "/tmp/runner/release-readiness/phase1-candidate-dossier-phase1-wechat-rc-abc1234/phase1-candidate-dossier.json",
+      releaseGateSummaryPath: "/tmp/runner/release-readiness/release-gate-summary-abc1234.json",
+      wechatCandidateSummaryPath: "/tmp/runner/wechat-release/codex.wechat.release-candidate-summary.json"
+    },
+    sections: {
+      blockerSummary: {
+        blockers: [
+          {
+            title: "WeChat runtime observability reviewed for this candidate",
+            summary: "Need release-environment health/auth-readiness/metrics captures.",
+            artifactPath: "/tmp/runner/wechat-release/runtime-observability-signoff-phase1-wechat-rc-abc1234.md",
+            nextStep: "Complete the runtime observability sign-off and rerun validate:wechat-rc."
+          },
+          {
+            title: "Release gate summary",
+            summary: "Release surface evidence is still blocked for the selected wechat target."
+          }
+        ],
+        warnings: [
+          {
+            title: "Config change risk",
+            summary: "Config changes are HIGH risk for wechat and still need release-owner review.",
+            artifactPath: "/tmp/runner/configs/.config-center-library.json"
+          }
+        ]
+      },
+      unresolvedManualChecks: [
+        {
+          title: "WeChat runtime observability reviewed for this candidate",
+          status: "pending" as const,
+          artifactPath: "/tmp/runner/wechat-release/runtime-observability-signoff-phase1-wechat-rc-abc1234.md"
+        }
+      ]
+    }
+  };
+}
+
 test("renderPrComment combines readiness and non-duplicative health sections", () => {
   const markdown = renderPrComment(
     createReleaseGateReport(),
@@ -157,10 +209,26 @@ test("renderPrComment combines readiness and non-duplicative health sections", (
         "previous=prev9876:ready"
       ]
     }),
-    "https://github.com/example/repo/actions/runs/123"
+    {
+      runUrl: "https://github.com/example/repo/actions/runs/123",
+      goNoGoPacket: createGoNoGoPacket(),
+      goNoGoPacketPath: "/tmp/runner/release-readiness/go-no-go-decision-packet-phase1-wechat-rc-abc1234.json"
+    }
   );
 
   assert.match(markdown, /## Release Automation Summary/);
+  assert.match(markdown, /Go\/no-go packet: \*\*NO_GO\*\* \(2 blocker, 1 warning\)/);
+  assert.match(markdown, /### Go\/No-Go Packet/);
+  assert.match(
+    markdown,
+    /\*\*Go\/No-Go verdict\*\*: `FAIL` phase1-wechat-rc @ abc1234: `NO_GO` with 2 blocker\(s\) and 1 warning\(s\)\./
+  );
+  assert.match(markdown, /Packet summary: Blocking release evidence remains for wechat: 2 blocker item\(s\) must be cleared before promotion\./);
+  assert.match(markdown, /`release-readiness\/go-no-go-decision-packet-phase1-wechat-rc-abc1234\.md`/);
+  assert.match(markdown, /Artifacts: `release-readiness\/go-no-go-decision-packet-phase1-wechat-rc-abc1234\.json`/);
+  assert.match(markdown, /`release-readiness\/phase1-candidate-dossier-phase1-wechat-rc-abc1234\/phase1-candidate-dossier\.json`/);
+  assert.match(markdown, /`wechat-release\/codex\.wechat\.release-candidate-summary\.json`/);
+  assert.match(markdown, /Blocking signal: \*\*WeChat runtime observability reviewed for this candidate\*\* Need release-environment health\/auth-readiness\/metrics captures\./);
   assert.match(markdown, /### Triage/);
   assert.match(markdown, /\*\*Release blockers\*\*: `FAIL` 1 blocking release-gate item\(s\) need operator follow-up\./);
   assert.match(

@@ -13,6 +13,8 @@ Use it after the lower-level evidence has already been generated. This command d
 
 Use the packet when the release owner, QA owner, or operator needs one final decision attachment instead of reading those artifacts separately.
 
+Use the PR-visible summary when reviewers only need the verdict, counts, and artifact pointers in the pull request itself. Use the full packet artifact when release operators need the complete blocker, warning, and manual-review drill-down.
+
 ## What It Emits
 
 The command writes both of these under `artifacts/release-readiness/`:
@@ -75,6 +77,8 @@ Those errors are intentional. The packet is the last-mile reviewer artifact, so 
 2. Build the candidate dossier and release gate summary for that same revision.
 3. Refresh the WeChat candidate summary and manual-review metadata when the target surface is `wechat`.
 4. Run `npm run release:go-no-go-packet`.
-5. Attach the Markdown packet to the release PR, handoff note, or operator checklist.
+5. Run `npm run release:pr-summary -- --release-gate-summary <path> --release-health-summary <path> --go-no-go-packet <path>` to render the concise PR-visible summary markdown when you need to preview the exact reviewer digest locally.
+6. In CI pull-request runs, the `Build go/no-go decision packet artifact` plus `Comment PR with release summary` steps publish or update the single bot comment in place, so reruns refresh the same PR-visible summary instead of creating duplicates.
+7. Attach or inspect the Markdown packet itself when the release owner needs the full operator record.
 
 If the packet still shows blocker items, clear those upstream artifacts first and regenerate the packet instead of editing the packet by hand.
