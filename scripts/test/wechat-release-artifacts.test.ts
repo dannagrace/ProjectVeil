@@ -109,7 +109,7 @@ function writePassingSmokeReport(metadataPath: string, reportPath: string): void
       tester: "codex",
       device: "iPhone 15 / WeChat 8.0.x",
       clientVersion: "1.0.155",
-      executedAt: "2026-03-30T09:00:00+08:00",
+      executedAt: "2026-04-02T09:00:00+08:00",
       result: "passed",
       summary: "All required smoke cases passed."
     },
@@ -532,6 +532,12 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
       package: { status: string };
       validation: { status: string };
       smoke: { status: string };
+      deviceRuntime: {
+        status: string;
+        freshness: string;
+        execution: { tester: string; device: string };
+        cases: Array<{ id: string; status: string; requiredEvidence?: Record<string, string> }>;
+      } | null;
       manualReview: { status: string; requiredPendingChecks: number; requiredFailedChecks: number };
     };
     blockers: Array<{ id: string }>;
@@ -543,11 +549,119 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
   assert.equal(summary.evidence.package.status, "passed");
   assert.equal(summary.evidence.validation.status, "passed");
   assert.equal(summary.evidence.smoke.status, "passed");
+  assert.equal(summary.evidence.deviceRuntime?.status, "ready");
+  assert.equal(summary.evidence.deviceRuntime?.freshness, "fresh");
+  assert.equal(summary.evidence.deviceRuntime?.execution.tester, "codex");
+  assert.match(summary.evidence.deviceRuntime?.execution.device ?? "", /iPhone 15/);
+  assert.equal(summary.evidence.deviceRuntime?.cases.find((entry) => entry.id === "share-roundtrip")?.requiredEvidence?.shareScene, "lobby");
   assert.equal(summary.evidence.manualReview.status, "ready");
   assert.equal(summary.evidence.manualReview.requiredPendingChecks, 0);
   assert.equal(summary.evidence.manualReview.requiredFailedChecks, 0);
   assert.equal(summary.blockers.length, 0);
   assert.match(fs.readFileSync(markdownPath, "utf8"), /Candidate status: `ready`/);
+  assert.match(fs.readFileSync(markdownPath, "utf8"), /## Device Runtime Evidence/);
+  assert.match(fs.readFileSync(markdownPath, "utf8"), /reconnect details: roomId=room-alpha/);
+  assert.match(fs.readFileSync(markdownPath, "utf8"), /share details: shareScene=lobby/);
+});
+
+test("validate:wechat-rc blocks stale device runtime evidence in the candidate summary", () => {
+  const artifact = packageFixtureArtifact();
+  const smokeReportPath = path.join(artifact.artifactsDir, "codex.wechat.smoke-report.json");
+  const manualChecksPath = path.join(artifact.artifactsDir, "wechat-manual-review.json");
+  const summaryPath = path.join(artifact.artifactsDir, "codex.wechat.release-candidate-summary.json");
+
+  writePassingSmokeReport(artifact.metadataPath, smokeReportPath);
+  const staleReport = JSON.parse(fs.readFileSync(smokeReportPath, "utf8")) as {
+    execution: { executedAt: string };
+  };
+  staleReport.execution.executedAt = "2026-03-30T09:00:00+08:00";
+  fs.writeFileSync(smokeReportPath, `${JSON.stringify(staleReport, null, 2)}\n`, "utf8");
+
+  writeManualChecks(manualChecksPath, [
+    {
+      id: "wechat-devtools-export-review",
+      title: "Real WeChat export imported and launched in Developer Tools",
+      status: "passed",
+      required: true,
+      notes: "ok",
+      evidence: ["devtools-startup.png"],
+      owner: "release-oncall",
+      recordedAt: "2026-04-02T08:10:00.000Z",
+      revision: sourceRevision
+    },
+    {
+      id: "wechat-device-runtime-review",
+      title: "Physical-device WeChat runtime validated for this candidate",
+      status: "passed",
+      required: true,
+      notes: "ok",
+      evidence: ["artifacts/wechat-release/codex.wechat.smoke-report.json", "device-runtime.mp4"],
+      owner: "release-oncall",
+      recordedAt: "2026-04-02T08:12:00.000Z",
+      revision: sourceRevision
+    },
+    {
+      id: "wechat-runtime-observability-signoff",
+      title: "WeChat runtime observability reviewed for this candidate",
+      status: "passed",
+      required: true,
+      notes: "ok",
+      evidence: ["/api/runtime/health payload"],
+      owner: "release-oncall",
+      recordedAt: "2026-04-02T08:14:00.000Z",
+      revision: sourceRevision
+    },
+    {
+      id: "wechat-release-checklist",
+      title: "WeChat RC checklist and blockers reviewed",
+      status: "passed",
+      required: true,
+      notes: "ok",
+      evidence: ["docs/release-evidence/cocos-wechat-rc-checklist.template.md"],
+      owner: "release-oncall",
+      recordedAt: "2026-04-02T08:15:00.000Z",
+      revision: sourceRevision
+    }
+  ]);
+
+  const output = execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/validate-wechat-release-candidate.ts",
+      "--archive",
+      artifact.archivePath,
+      "--metadata",
+      artifact.metadataPath,
+      "--smoke-report",
+      smokeReportPath,
+      "--manual-checks",
+      manualChecksPath,
+      "--summary",
+      summaryPath,
+      "--expected-revision",
+      sourceRevision
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: "pipe"
+    }
+  );
+
+  const summary = JSON.parse(fs.readFileSync(summaryPath, "utf8")) as {
+    candidate: { status: string };
+    evidence: { deviceRuntime: { status: string; freshness: string } | null };
+    blockers: Array<{ id: string; summary: string }>;
+  };
+
+  assert.match(output, /Candidate status: blocked/);
+  assert.equal(summary.candidate.status, "blocked");
+  assert.equal(summary.evidence.deviceRuntime?.status, "blocked");
+  assert.equal(summary.evidence.deviceRuntime?.freshness, "stale");
+  assert.deepEqual(summary.blockers.map((entry) => entry.id), ["smoke-report-stale"]);
+  assert.match(summary.blockers[0]?.summary ?? "", /older than 24h/);
 });
 
 test("smoke:wechat-release ingests automated runtime evidence into the existing smoke schema", () => {

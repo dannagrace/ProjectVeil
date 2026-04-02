@@ -7,6 +7,20 @@ type CheckStatus = "passed" | "failed" | "skipped";
 type GateStatus = "passed" | "failed";
 type CandidateStatus = "ready" | "blocked";
 type EvidenceFreshness = "fresh" | "stale" | "missing_timestamp" | "invalid_timestamp";
+type SmokeExecutionResult = "pending" | "blocked" | "passed" | "failed";
+type SmokeStatus = "pending" | "blocked" | "passed" | "failed" | "not_applicable";
+
+interface ReconnectRecoveryEvidence {
+  roomId: string;
+  reconnectPrompt: string;
+  restoredState: string;
+}
+
+interface ShareRoundtripEvidence {
+  shareScene: string;
+  shareQuery: string;
+  roundtripState: string;
+}
 
 interface Args {
   artifactsDir?: string;
@@ -56,6 +70,42 @@ interface UploadReceipt {
   usedAppIdOverride: boolean;
   uploadRobot: number;
   uploadedAt: string;
+}
+
+interface WechatMinigameSmokeCase {
+  id: "login-lobby" | "room-entry" | "reconnect-recovery" | "share-roundtrip" | "key-assets";
+  title: string;
+  status: SmokeStatus;
+  required: boolean;
+  notes: string;
+  evidence: string[];
+  steps: string[];
+  requiredEvidence?: ReconnectRecoveryEvidence | ShareRoundtripEvidence;
+}
+
+interface WechatMinigameSmokeReport {
+  schemaVersion: 1;
+  buildTemplatePlatform: "wechatgame";
+  projectName: string;
+  appId: string;
+  artifact: {
+    archiveFileName: string;
+    archiveSha256: string;
+    artifactsDir?: string;
+    metadataPath: string;
+    sourceRevision?: string;
+    runtimeRemoteUrl?: string;
+    remoteAssetRoot?: string;
+  };
+  execution: {
+    tester: string;
+    device: string;
+    clientVersion: string;
+    executedAt: string;
+    result: SmokeExecutionResult;
+    summary: string;
+  };
+  cases: WechatMinigameSmokeCase[];
 }
 
 interface ValidationCheck {
@@ -149,6 +199,20 @@ interface CandidateSummary {
       summary: string;
       artifactPath: string;
     };
+    deviceRuntime: {
+      status: CandidateStatus;
+      freshness: EvidenceFreshness;
+      artifactPath: string;
+      execution: {
+        tester: string;
+        device: string;
+        clientVersion: string;
+        executedAt: string;
+        result: SmokeExecutionResult;
+        summary: string;
+      };
+      cases: WechatMinigameSmokeCase[];
+    } | null;
     upload: {
       status: CheckStatus;
       summary: string;
@@ -190,7 +254,14 @@ const DEFAULT_MANUAL_CHECKS: ManualReviewCheck[] = [
     required: true,
     status: "pending",
     notes: "Attach the smoke report and supporting captures from a physical-device or WeChat real-device-debugging runtime pass against the same candidate revision.",
-    evidence: ["artifacts/wechat-release/codex.wechat.smoke-report.json", "startup/reconnect/share capture"],
+    evidence: [
+      "artifacts/wechat-release/codex.wechat.smoke-report.json",
+      "login-lobby capture",
+      "room-entry capture",
+      "reconnect-recovery capture",
+      "share-roundtrip capture",
+      "key-assets capture"
+    ],
     source: "default"
   },
   {
@@ -562,6 +633,7 @@ function buildCandidateSummary(
   manualChecks: ManualReviewCheck[],
   metadata: WechatMinigameReleasePackageMetadata,
   artifacts: { artifactsDir?: string; archivePath: string; metadataPath: string },
+  smokeReport: WechatMinigameSmokeReport | null,
   reportPath: string,
   summaryPath: string,
   markdownPath: string,
@@ -576,6 +648,7 @@ function buildCandidateSummary(
   const generatedAt = new Date().toISOString();
   const generatedAtMs = Date.parse(generatedAt);
   const manualMetadataFailures = manualChecks.flatMap((check) => collectManualReviewMetadataFailures(check, commit, generatedAtMs));
+  const smokeFreshness = smokeReport ? evaluateManualReviewFreshness(smokeReport.execution.executedAt, generatedAtMs) : "missing_timestamp";
 
   for (const check of checks) {
     if (check.status === "failed") {
@@ -594,6 +667,27 @@ function buildCandidateSummary(
       artifactPath: smokeCheck.artifactPath,
       nextCommand: "npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]"
     });
+  } else if (smokeReport) {
+    if (smokeFreshness === "missing_timestamp") {
+      blockers.push({
+        id: "smoke-report-metadata",
+        summary: "Smoke report is missing execution.executedAt; WeChat device/runtime evidence must include a capture timestamp.",
+        artifactPath: smokeCheck.artifactPath
+      });
+    } else if (smokeFreshness === "invalid_timestamp") {
+      blockers.push({
+        id: "smoke-report-metadata",
+        summary: `Smoke report execution.executedAt is invalid: ${smokeReport.execution.executedAt}.`,
+        artifactPath: smokeCheck.artifactPath
+      });
+    } else if (smokeFreshness === "stale") {
+      blockers.push({
+        id: "smoke-report-stale",
+        summary: `Smoke report is stale: ${smokeReport.execution.executedAt} is older than 24h for this RC summary.`,
+        artifactPath: smokeCheck.artifactPath,
+        nextCommand: "npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]"
+      });
+    }
   }
 
   for (const check of manualChecks) {
@@ -666,6 +760,17 @@ function buildCandidateSummary(
           smokeCheck.artifactPath ??
           path.join(artifacts.artifactsDir ?? path.dirname(artifacts.metadataPath), "codex.wechat.smoke-report.json")
       },
+      deviceRuntime: smokeReport
+        ? {
+            status: smokeCheck.status === "passed" && smokeFreshness === "fresh" ? "ready" : "blocked",
+            freshness: smokeFreshness,
+            artifactPath:
+              smokeCheck.artifactPath ??
+              path.join(artifacts.artifactsDir ?? path.dirname(artifacts.metadataPath), "codex.wechat.smoke-report.json"),
+            execution: smokeReport.execution,
+            cases: smokeReport.cases
+          }
+        : null,
       upload: {
         status: uploadCheck.status,
         summary: uploadCheck.summary,
@@ -708,10 +813,42 @@ function renderCandidateMarkdown(summary: CandidateSummary): string {
   lines.push(
     `- Smoke evidence: \`${summary.evidence.smoke.status}\` (${summary.evidence.smoke.summary}) -> \`${path.relative(process.cwd(), summary.evidence.smoke.artifactPath).replace(/\\\\/g, "/")}\``
   );
+  if (summary.evidence.deviceRuntime) {
+    lines.push(
+      `- Device runtime evidence: \`${summary.evidence.deviceRuntime.status}\` (freshness: \`${summary.evidence.deviceRuntime.freshness}\`) -> \`${path.relative(process.cwd(), summary.evidence.deviceRuntime.artifactPath).replace(/\\\\/g, "/")}\``
+    );
+  }
   lines.push(
     `- Upload receipt: \`${summary.evidence.upload.status}\` (${summary.evidence.upload.summary}) -> \`${path.relative(process.cwd(), summary.evidence.upload.artifactPath).replace(/\\\\/g, "/")}\``,
     ""
   );
+  if (summary.evidence.deviceRuntime) {
+    lines.push("## Device Runtime Evidence", "");
+    lines.push(`- Result: \`${summary.evidence.deviceRuntime.execution.result}\``);
+    lines.push(`- Executed at: \`${summary.evidence.deviceRuntime.execution.executedAt}\``);
+    lines.push(`- Tester: \`${summary.evidence.deviceRuntime.execution.tester}\``);
+    lines.push(`- Device: \`${summary.evidence.deviceRuntime.execution.device}\``);
+    lines.push(`- Client version: \`${summary.evidence.deviceRuntime.execution.clientVersion}\``);
+    lines.push(`- Summary: ${summary.evidence.deviceRuntime.execution.summary}`, "");
+    for (const entry of summary.evidence.deviceRuntime.cases) {
+      lines.push(
+        `- \`${entry.status}\` ${entry.id}: ${entry.title}${entry.notes ? ` - ${entry.notes}` : ""}${entry.evidence.length > 0 ? ` Evidence: ${entry.evidence.join(", ")}` : ""}`
+      );
+      if (entry.id === "reconnect-recovery" && entry.requiredEvidence) {
+        const requiredEvidence = entry.requiredEvidence as ReconnectRecoveryEvidence;
+        lines.push(
+          `  reconnect details: roomId=${requiredEvidence.roomId}; reconnectPrompt=${requiredEvidence.reconnectPrompt}; restoredState=${requiredEvidence.restoredState}`
+        );
+      }
+      if (entry.id === "share-roundtrip" && entry.requiredEvidence) {
+        const requiredEvidence = entry.requiredEvidence as ShareRoundtripEvidence;
+        lines.push(
+          `  share details: shareScene=${requiredEvidence.shareScene}; shareQuery=${requiredEvidence.shareQuery}; roundtripState=${requiredEvidence.roundtripState}`
+        );
+      }
+    }
+    lines.push("");
+  }
   lines.push("## Manual Review", "");
   for (const check of summary.evidence.manualReview.checks) {
     const evidence = check.evidence.length > 0 ? ` Evidence: ${check.evidence.join(", ")}` : "";
@@ -890,6 +1027,7 @@ function main(): void {
   const commit = metadata.sourceRevision ?? args.expectedRevision ?? null;
   let version = args.version ?? null;
   let exitCode = 0;
+  let smokeReport: WechatMinigameSmokeReport | null = null;
 
   try {
     validatePackageMetadataShape(metadata, artifacts.archivePath);
@@ -952,6 +1090,9 @@ function main(): void {
     smokeCheck.id = "smoke-report";
     smokeCheck.title = "Smoke report validation";
     smokeCheck.required = args.requireSmokeReport;
+    if (smokeCheck.status === "passed" && fs.existsSync(smokeReportPath)) {
+      smokeReport = readJsonFile<WechatMinigameSmokeReport>(smokeReportPath);
+    }
     if (smokeCheck.status === "failed" || args.requireSmokeReport) {
       checks.push(smokeCheck);
       if (smokeCheck.status === "failed") {
@@ -1060,6 +1201,7 @@ function main(): void {
     manualChecks,
     metadata,
     artifacts,
+    smokeReport,
     reportPath,
     summaryPath,
     markdownPath,

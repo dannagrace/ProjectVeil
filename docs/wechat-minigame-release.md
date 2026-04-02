@@ -132,8 +132,8 @@
 同时 `validate:wechat-rc` 现在会为 reviewer 生成一份 candidate summary：
 
 - `codex.wechat.release-candidate-summary.json`：candidate-level contract，固定引用同一 revision 的 package、validation、smoke、upload、manual review 状态
-- `codex.wechat.release-candidate-summary.md`：可直接贴进 PR、CI summary 或提审记录的精简摘要
-- `blockers`：显式列出缺失 smoke report、失败校验、待完成 manual review，以及对应 artifact / next command
+- `codex.wechat.release-candidate-summary.md`：可直接贴进 PR、CI summary 或提审记录的精简摘要；会额外展开 WeChat 设备/runtime 执行人、设备、执行时间、五个 smoke case 状态，以及 reconnect/share 的结构化字段
+- `blockers`：显式列出缺失 smoke report、失败校验、待完成 manual review，以及对应 artifact / next command；若 smoke report 的 `execution.executedAt` 缺失、非法或早于 summary 生成时间 24h，也会直接阻塞 candidate
 - `--manual-checks <json>`：读取显式 manual review 状态；推荐直接从 `docs/release-evidence/wechat-release-manual-review.example.json` 复制当次 candidate 文件
 - `--manual-check <id>:<title>`：临时追加一条 pending manual review
 - `npm run release:wechat:rehearsal` 的 `## Artifacts` 区块会自动列出 `codex.wechat.release-candidate-summary.json` / `.md`，方便 reviewer 或 PR 作者直接复制 `.md` 文件内容到评论区，并将 `.json` 作为结构化证据随 artifact 一起上传
@@ -150,7 +150,7 @@
 默认 required checks 分别对应三类 release evidence：
 
 - `wechat-devtools-export-review`：真实导出目录已在微信开发者工具中导入并成功启动
-- `wechat-device-runtime-review`：同一 revision 已完成真机或微信开发者工具真机调试 runtime smoke，并附上 `codex.wechat.smoke-report.json`
+- `wechat-device-runtime-review`：同一 revision 已完成真机或微信开发者工具真机调试 runtime smoke，并附上 `codex.wechat.smoke-report.json`、`login-lobby`、`room-entry`、`reconnect-recovery`、`share-roundtrip`、`key-assets` 对应 capture
 - `wechat-runtime-observability-signoff`：同一 candidate revision 的 release 环境已复核 `/api/runtime/health`、`/api/runtime/diagnostic-snapshot`、`/api/runtime/metrics`，并记录 reviewer、`recordedAt`、任何告警或接受风险
 - `wechat-release-checklist`：RC checklist / blocker register 已对齐同一 candidate
 
