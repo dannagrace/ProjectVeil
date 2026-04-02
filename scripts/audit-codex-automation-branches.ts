@@ -208,6 +208,9 @@ function readBranchSnapshots(): BranchSnapshot[] {
     .filter(Boolean)
     .map((line) => {
       const [refName, shortName, sha, updatedAt, upstreamRaw, upstreamTrackRaw] = line.split("\t");
+      if (!refName || !shortName || !sha || !updatedAt) {
+        fail(`Unexpected git for-each-ref output row: ${line}`);
+      }
       const scope: Scope = refName.startsWith("refs/heads/") ? "local" : "remote";
       const branch = scope === "remote" ? shortName.replace(/^origin\//, "") : shortName;
       return {
