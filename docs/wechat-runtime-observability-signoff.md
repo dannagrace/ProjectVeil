@@ -7,6 +7,7 @@ Use it together with:
 - [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md)
 - [`docs/release-evidence/wechat-release-manual-review.example.json`](./release-evidence/wechat-release-manual-review.example.json)
 - [`docs/release-evidence/cocos-wechat-rc-checklist.template.md`](./release-evidence/cocos-wechat-rc-checklist.template.md)
+- [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md)
 
 ## Required Evidence
 
@@ -21,6 +22,7 @@ For the same candidate revision, capture and attach:
   - Capture at least one scrape/export showing the runtime metrics endpoint is reachable for the same environment.
 - Reviewer decision
   - Record owner, `recordedAt`, revision, artifact path, and any follow-up or accepted risk.
+  - Mirror the same owner, revision, artifact path, and follow-up status into the manual evidence owner ledger so the candidate handoff still has one pending-signoff view.
 
 ## Minimum Review Questions
 

@@ -49,6 +49,8 @@ That flow rebuilds `apps/client/dist`, serves the packaged artifact instead of t
 
 The snapshot also supports manual gates, so the same file can carry pending or completed human checks such as WeChat Developer Tools export review, reconnect evidence, device smoke acceptance, or RC blocker review.
 
+When a candidate has more than one manual sign-off in flight, track ownership in [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) so reviewers can see pending items without opening each artifact separately.
+
 ## Usage
 
 Run the full automated snapshot and write the result under `artifacts/release-readiness/`:
@@ -132,6 +134,8 @@ Example:
   }
 ]
 ```
+
+If you are carrying several manual checks for one candidate, keep the JSON file as the machine-readable source of truth for status and mirror the owner, revision, artifact path, and next follow-up in the manual evidence owner ledger. The snapshot answers "which manual checks exist"; the ledger answers "who still owes which sign-off."
 
 ## Snapshot Shape
 
