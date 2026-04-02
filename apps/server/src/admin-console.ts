@@ -4,10 +4,25 @@ import { join } from "node:path";
 import type { RoomSnapshotStore, PlayerAccountSnapshot } from "./persistence";
 import { LobbyRoomSummary, listLobbyRooms, getActiveRoomInstances } from "./colyseus-room";
 
-const ADMIN_SECRET = process.env.ADMIN_SECRET || "veil-admin-2026";
+class InvalidAdminJsonError extends Error {
+  constructor() {
+    super("Invalid JSON body");
+    this.name = "InvalidAdminJsonError";
+  }
+}
+
+function readAdminSecret(): string | null {
+  const secret = process.env.ADMIN_SECRET?.trim();
+  return secret ? secret : null;
+}
+
+function isAdminSecretConfigured(): boolean {
+  return readAdminSecret() !== null;
+}
 
 function isAuthorized(request: IncomingMessage): boolean {
-  return request.headers["x-veil-admin-secret"] === ADMIN_SECRET;
+  const adminSecret = readAdminSecret();
+  return adminSecret !== null && request.headers["x-veil-admin-secret"] === adminSecret;
 }
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -23,12 +38,24 @@ function sendUnauthorized(response: ServerResponse): void {
   sendJson(response, 401, { error: "Unauthorized: Invalid Admin Secret" });
 }
 
+function sendAdminSecretNotConfigured(response: ServerResponse): void {
+  sendJson(response, 503, { error: "ADMIN_SECRET is not configured" });
+}
+
+function sendInvalidJson(response: ServerResponse): void {
+  sendJson(response, 400, { error: "Invalid JSON body" });
+}
+
 async function readJsonBody(request: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch (error) {
+    throw new InvalidAdminJsonError();
+  }
 }
 
 export function registerAdminRoutes(
@@ -66,6 +93,7 @@ export function registerAdminRoutes(
   });
 
   app.get("/api/admin/overview", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
     if (!isAuthorized(request)) return sendUnauthorized(response);
     const lobbyRooms = listLobbyRooms();
     sendJson(response, 200, {
@@ -78,11 +106,11 @@ export function registerAdminRoutes(
   });
 
   app.post("/api/admin/players/:id/resources", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
     if (!isAuthorized(request)) return sendUnauthorized(response);
-    const playerId = request.params.id;
-    const { gold, wood, ore } = await readJsonBody(request);
-
     try {
+      const playerId = request.params.id;
+      const { gold, wood, ore } = await readJsonBody(request);
       let currentResources = { gold: 0, wood: 0, ore: 0 };
       if (store) {
           let account = await store.loadPlayerAccount(playerId);
@@ -137,18 +165,31 @@ export function registerAdminRoutes(
 
       sendJson(response, 200, { ok: true, resources: nextResources, syncedToRoom });
     } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
       console.error("[Admin] Sync error:", error);
       sendJson(response, 500, { error: String(error) });
     }
   });
 
   app.post("/api/admin/broadcast", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
     if (!isAuthorized(request)) return sendUnauthorized(response);
-    const { message, type = "info" } = await readJsonBody(request);
-    const activeRooms = getActiveRoomInstances();
-    for (const [_, room] of activeRooms) {
-        room.broadcast("system.announcement", { text: message, type, timestamp: new Date().toISOString() });
+    try {
+      const { message, type = "info" } = await readJsonBody(request);
+      const activeRooms = getActiveRoomInstances();
+      for (const [_, room] of activeRooms) {
+          room.broadcast("system.announcement", { text: message, type, timestamp: new Date().toISOString() });
+      }
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      sendJson(response, 500, { error: String(error) });
     }
-    sendJson(response, 200, { ok: true });
   });
 }
