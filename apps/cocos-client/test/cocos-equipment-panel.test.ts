@@ -69,3 +69,29 @@ test("VeilEquipmentPanel routes close and equip actions through rendered buttons
   });
   assert.equal(closed, 1);
 });
+
+test("VeilEquipmentPanel supports inspecting equipped and bag items in a dedicated detail card", () => {
+  const { component, node } = createComponentHarness(VeilEquipmentPanel, {
+    name: "EquipmentPanelRoot",
+    width: 420,
+    height: 520
+  });
+  const update = createSessionUpdate();
+  const hero = update.world.ownHeroes[0]!;
+  hero.loadout.equipment.weaponId = "vanguard_blade";
+  hero.loadout.inventory = ["scout_compass", "scout_compass"];
+
+  component.render({
+    hero,
+    recentEventLog: []
+  });
+
+  assert.match(readCardLabel(node, "EquipmentPanelInspect"), /武器 先锋战刃 · 稀有/);
+  assert.match(readCardLabel(node, "EquipmentPanelInspect"), /来源 当前已穿戴/);
+
+  pressNode(findNode(node, "EquipmentPanelInspect-inventory-accessory-scout_compass"));
+
+  assert.match(readCardLabel(node, "EquipmentPanelInspect"), /饰品 斥候罗盘 · 普通/);
+  assert.match(readCardLabel(node, "EquipmentPanelInspect"), /来源 背包中 2 件/);
+  assert.match(readCardLabel(node, "EquipmentPanelInspect"), /说明 帮助英雄更快判断战场破绽/);
+});

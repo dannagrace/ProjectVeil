@@ -10,6 +10,10 @@
 
 ## Implemented Slice For #683
 
+- Runtime entry points for this loop:
+  - `apps/cocos-client/assets/scripts/VeilRoot.ts`: opens/closes the gameplay equipment panel, routes equip/unequip actions, and feeds recent session loot plus account event log state into the panel.
+  - `apps/cocos-client/assets/scripts/VeilEquipmentPanel.ts`: renders the bounded equipment bag surface, item inspection card, recent loot card, and equip/unequip controls.
+  - `apps/cocos-client/assets/scripts/cocos-hero-equipment.ts`: adapts shared equipment contracts into grouped bag rows, inspectable item metadata, and readable stat/loot summaries for the Cocos runtime.
 - HUD `装备配置` card now shows:
   - current slot occupancy for weapon / armor / accessory
   - per-slot rarity and bonus summary
@@ -20,6 +24,7 @@
   - recent loot lines from the Cocos-visible account event log
 - Primary client `装备背包` panel now provides a dedicated runtime surface for the same loop:
   - open it from the left HUD chrome without leaving the main scene
+  - inspect one concrete equipped or backpack item at a time from a dedicated `物品详情` card
   - inspect equipped slots, grouped backpack contents, and recent loot in one place
   - execute equip / unequip actions from the panel and reuse the existing prediction plus authoritative reconciliation path
 - Existing equip/unequip buttons remain the interaction surface and continue to drive prediction plus server reconciliation.
@@ -42,12 +47,13 @@
 4. Win a battle that grants equipment.
 5. Click `装备背包` in the left HUD chrome and confirm the dedicated panel opens.
 6. Confirm the panel `最近战利品` section shows the new drop and the `背包清单` section shows the item with rarity and stat summary.
-7. Fill the inventory to 6 items and trigger another equipment drop.
-8. Confirm the panel, HUD, and event log clearly state the backpack was full and the overflowed drop was not picked up.
-9. While the backpack is full, try to unequip an item and confirm the action is rejected with a full-inventory message.
-10. Free one slot, then click an equip action button inside the `装备背包` panel.
-11. Confirm the hero stat lines in the HUD update immediately after prediction/reconciliation.
-12. Click the matching unequip action in the same panel and confirm the item returns to inventory and the stat gain line rolls back.
+7. Click a `查看 ...` button in the panel and confirm the `物品详情` card updates to show the selected item's rarity, source, stat bonuses, and description.
+8. Fill the inventory to 6 items and trigger another equipment drop.
+9. Confirm the panel, HUD, and event log clearly state the backpack was full and the overflowed drop was not picked up.
+10. While the backpack is full, try to unequip an item and confirm the action is rejected with a full-inventory message.
+11. Free one slot, then click an equip action button inside the `装备背包` panel.
+12. Confirm the hero stat lines in the HUD update immediately after prediction/reconciliation.
+13. Click the matching unequip action in the same panel and confirm the item returns to inventory and the stat gain line rolls back.
 
 ## Temporary Assumptions
 
