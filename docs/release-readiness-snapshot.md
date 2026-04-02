@@ -24,6 +24,9 @@ The Phase 1 persistence regression intentionally keeps config/content validation
 
 For candidate review of the additional Phase 1 packs:
 
+- in Config Center, apply `layout_frontier_basin` to both `world` and `mapObjects`
+- for runtime/manual room checks, join a room whose id includes `[map:frontier_basin]`
+- for scripted verification, run `npm run validate:content-pack:all` and `npm run test:phase1-release-persistence:frontier`
 - in Config Center, apply `layout_stonewatch_fork` to both `world` and `mapObjects`
 - for runtime/manual room checks, join a room whose id includes `[map:stonewatch_fork]`
 - for scripted verification, run `npm run validate:content-pack:all` and `npm run test:phase1-release-persistence:stonewatch`
