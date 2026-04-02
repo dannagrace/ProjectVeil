@@ -36,6 +36,7 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
   const primaryClientDiagnosticsPath = path.join(workspaceDir, "cocos-primary-diagnostics.json");
   const reconnectSoakPath = path.join(workspaceDir, "colyseus-reconnect-soak-summary.json");
   const persistencePath = path.join(workspaceDir, "phase1-release-persistence-regression-abc1234.json");
+  const sameCandidateAuditPath = path.join(workspaceDir, "same-candidate-evidence-audit-phase1-rc-abc1234.json");
   const wechatArtifactsDir = path.join(workspaceDir, "wechat-artifacts");
   const packageMetadataPath = path.join(wechatArtifactsDir, "project-veil.package.json");
   const archivePath = path.join(wechatArtifactsDir, "project-veil.tar.gz");
@@ -135,6 +136,17 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
     persistenceRegression: {
       mapPackId: "phase1",
       assertions: ["room hydration reapplied resources"]
+    }
+  });
+  writeJson(sameCandidateAuditPath, {
+    candidate: {
+      name: "phase1-rc",
+      revision: "abc1234"
+    },
+    summary: {
+      status: "passed",
+      findingCount: 0,
+      summary: "Same-candidate evidence is current for phase1-rc at abc1234."
     }
   });
   fs.mkdirSync(wechatArtifactsDir, { recursive: true });
@@ -251,6 +263,10 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
         reconnectSoakPath,
         "--phase1-persistence",
         persistencePath,
+        "--candidate",
+        "phase1-rc",
+        "--same-candidate-audit",
+        sameCandidateAuditPath,
         "--wechat-artifacts-dir",
         wechatArtifactsDir,
         "--candidate-revision",
@@ -281,6 +297,10 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
         warnReasons: string[];
         evidence: Array<{ availability: string; freshness: string }>;
       }>;
+      triage: {
+        blockers: Array<{ title: string }>;
+        warnings: Array<{ title: string }>;
+      };
     };
     assert.equal(report.overallStatus, "pass");
     assert.equal(report.goNoGo.decision, "ready");
@@ -296,13 +316,17 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
         ["build-package-validation", "pass"],
         ["reconnect-soak", "pass"],
         ["phase1-persistence", "pass"],
+        ["same-candidate-evidence", "pass"],
         ["critical-evidence", "pass"]
       ]
     );
     assert.deepEqual(report.gates.every((gate) => gate.failReasons.length === 0), true);
-    assert.equal(report.gates[5]?.evidence.every((entry) => entry.availability === "present"), true);
-    assert.equal(report.gates[5]?.evidence.length, 7);
+    assert.equal(report.gates[6]?.evidence.every((entry) => entry.availability === "present"), true);
+    assert.equal(report.gates[6]?.evidence.length, 8);
+    assert.deepEqual(report.triage.blockers, []);
+    assert.deepEqual(report.triage.warnings, []);
     assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Phase 1 Go\/No-Go/);
+    assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /## Blocker Drill-Down/);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
@@ -486,6 +510,7 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
       ["build-package-validation", "fail"],
       ["reconnect-soak", "fail"],
       ["phase1-persistence", "fail"],
+      ["same-candidate-evidence", "warn"],
       ["critical-evidence", "fail"]
     ]
   );
@@ -504,6 +529,7 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
     "phase1_content_validation_failed",
     "phase1_persistence_assertions_missing"
   ]);
-  assert.equal(report.gates[5]?.evidence.some((entry) => entry.freshness === "fresh"), true);
+  assert.deepEqual(report.gates[5]?.warnReasons, ["same_candidate_evidence_audit_not_checked"]);
+  assert.equal(report.gates[6]?.evidence.some((entry) => entry.freshness === "fresh"), true);
   assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Release validation evidence is incomplete or still pending|One or more release validation surfaces failed/);
 });
