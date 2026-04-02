@@ -50,4 +50,18 @@ Use these as defaults when you are unsure:
 - WeChat/Cocos delivery PR: `npm run typecheck:cocos && npm run check:wechat-build`
 - CI/release gate PR: `npm run typecheck:ci` plus the nearest script test and any changed gate command
 
+## Quick Reference By Change Type
+
+Use this table when you already know the kind of change you made and want the minimum expected verification without re-reading the full matrix.
+
+| Change type | Typical examples | Minimum verification quick reference |
+| --- | --- | --- |
+| Docs-only | `README.md`, `docs/**`, Markdown templates, contributor guidance | Review the rendered Markdown, verify referenced paths and commands still exist, and run `npm run validate:quickstart` only if setup or quickstart guidance changed. |
+| Shared runtime logic or contracts | `packages/shared/**`, shared payloads, contract snapshots | `npm run typecheck:shared && npm run test:shared`; add `npm run test:contracts` when payloads or snapshots changed. |
+| Server/runtime change | `apps/server/**`, runtime APIs, auth, persistence flows | `npm run typecheck:server`; add the nearest targeted test coverage through `npm test` or `npm run test:coverage:ci` if the change spans multiple server subsystems; run `npm run validate:quickstart` when local-dev boot or setup behavior moved. |
+| H5 client flow | `apps/client/**`, lobby/browser flows, Playwright-backed H5 behavior | `npm run typecheck:client:h5 && npm run test:e2e:smoke`; add `npm run test:e2e:h5:connectivity` when browser-to-server connectivity assumptions changed. |
+| Multiplayer or reconnect behavior | Shared sync, reconnect recovery, prediction correction, multiplayer Playwright coverage | `npm run test:e2e:multiplayer:smoke && npm run test:sync-governance:matrix`; add `npm run test:e2e:multiplayer` or `npm run stress:rooms:reconnect-soak` when the change broadens multiplayer or reconnect risk. |
+| Release tooling or CI aggregation | `.github/workflows/**`, `scripts/release-*.ts`, readiness or gate summaries | `npm run typecheck:ci` plus the nearest script-level test such as `npm run test:release-gate-summary`, `npm run test:release-health-summary`, or `npm run test:ci-trend-summary`; add `npm run release:gate:summary` when gate output semantics changed. |
+| Cocos or WeChat delivery | `apps/cocos-client/**`, WeChat export templates, release packaging scripts | `npm run typecheck:cocos && npm run check:wechat-build`. |
+
 When in doubt, choose the next higher tier rather than inventing a new local checklist.
