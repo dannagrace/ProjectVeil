@@ -58,6 +58,53 @@ jobs:
       - name: Validate contributor quickstart
         run: npm run validate:quickstart
 
+  ops-tooling-typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Detect PRs that touch ops tooling typecheck surfaces
+        id: ops-tooling
+        run: |
+          changed_paths="${RUNNER_TEMP}/ops-tooling/changed-paths-${GITHUB_SHA}.txt"
+          mkdir -p "$(dirname "${changed_paths}")"
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" | tee "${changed_paths}"
+
+          touched=false
+          if rg -n \
+            '^(scripts/audit-codex-automation-branches\.ts|scripts/test/codex-automation-branches\.test\.ts|tsconfig\.ops-tooling\.json|package(-lock)?\.json|\.github/workflows/ci\.yml)$' \
+            "${changed_paths}" >/dev/null; then
+            touched=true
+          fi
+
+          echo "touched=${touched}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## Ops Tooling Typecheck Detection"
+            echo
+            echo "- Base ref: \`${{ github.base_ref }}\`"
+            echo "- Qualifying paths touched: \`${touched}\`"
+            echo "- Changed-path report: \`${changed_paths}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Typecheck ops tooling surface
+        if: steps.ops-tooling.outputs.touched == 'true'
+        run: npm run typecheck:ops
+
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20

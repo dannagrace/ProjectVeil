@@ -97,6 +97,7 @@
     "test:shared": "node --import tsx --test \"packages/shared/test/**/*.test.ts\"",
     "test:contracts": "node --import tsx --test ./packages/shared/test/client-payload-contracts.test.ts",
     "typecheck:ci": "npm run typecheck:shared && npm run typecheck:server && npm run typecheck:client:h5 && npm run typecheck:cocos",
+    "typecheck:ops": "tsc -p tsconfig.ops-tooling.json --noEmit",
     "typecheck": "tsc -p tsconfig.base.json --noEmit",
     "typecheck:cocos": "tsc -p apps/cocos-client/tsconfig.json --noEmit",
     "typecheck:shared": "tsc -p packages/shared/tsconfig.json --noEmit",
