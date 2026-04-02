@@ -5,9 +5,20 @@ This sign-off is the manual release contract for proving that the WeChat candida
 Use it together with:
 
 - [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md)
+- [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md)
 - [`docs/release-evidence/wechat-release-manual-review.example.json`](./release-evidence/wechat-release-manual-review.example.json)
 - [`docs/release-evidence/cocos-wechat-rc-checklist.template.md`](./release-evidence/cocos-wechat-rc-checklist.template.md)
 - [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md)
+
+## When This Artifact Is Required
+
+Treat this sign-off as candidate-scoped release evidence, not a reusable ops note.
+
+- Required for every WeChat `release candidate` or `shipping candidate`.
+- Required when assembling the same-revision release evidence packet described in [`docs/same-revision-release-evidence-runbook.md`](./same-revision-release-evidence-runbook.md).
+- Re-record it whenever the candidate revision changes, or when the candidate touches runtime observability surfaces such as runtime endpoints, metrics dimensions, diagnostic payloads, or alerting assumptions.
+
+Use the dedicated template at [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md) so the output stays aligned with the repo's other release evidence artifacts.
 
 ## Required Evidence
 
@@ -32,7 +43,7 @@ For the same candidate revision, capture and attach:
 
 ## Suggested Artifact Shape
 
-Store one small JSON or Markdown artifact at `artifacts/wechat-release/runtime-observability-signoff.json` and reference it from the WeChat manual-review file.
+Store one small JSON or Markdown artifact under `artifacts/wechat-release/` or `artifacts/release-readiness/` and reference it from the WeChat manual-review file.
 
 Keep the artifact scoped to:
 
@@ -41,3 +52,5 @@ Keep the artifact scoped to:
 - reviewer / timestamp
 - conclusion: `passed | hold | ship-with-followups`
 - follow-ups or blocker IDs
+
+The preferred Markdown shape is the template at [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md). If you emit JSON instead, keep the same fields: candidate, target revision, environment, reviewer, recorded timestamp, per-endpoint status, conclusion, and follow-ups.

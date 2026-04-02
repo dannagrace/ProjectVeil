@@ -194,6 +194,7 @@ npm run dev:client:h5
 - 当前客户端边界：`apps/cocos-client` 负责主玩法运行时；`apps/client` 只保留浏览器调试、配置联调和回归验证。
 - 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
 - 微信小游戏 runtime observability 签核：`docs/wechat-runtime-observability-signoff.md`
+- 微信小游戏 runtime observability 签核模板：`docs/release-evidence/wechat-runtime-observability-signoff.template.md`
 - Phase 1 成熟度记分卡与退出标准：`docs/phase1-maturity-scorecard.md`
 - 仓库成熟度基线与独立 follow-up slices：`docs/repo-maturity-baseline.md`
 - 核心玩法发布门禁清单：`docs/core-gameplay-release-readiness.md`
