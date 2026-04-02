@@ -194,6 +194,7 @@ npm run dev:client:h5
 - 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
 - 微信小游戏 runtime observability 签核：`docs/wechat-runtime-observability-signoff.md`
 - Phase 1 成熟度记分卡与退出标准：`docs/phase1-maturity-scorecard.md`
+- 仓库成熟度基线与独立 follow-up slices：`docs/repo-maturity-baseline.md`
 - 核心玩法发布门禁清单：`docs/core-gameplay-release-readiness.md`
 - 发布就绪快照说明：`docs/release-readiness-snapshot.md`
 - Phase 1 candidate dossier：`docs/phase1-candidate-dossier.md`
