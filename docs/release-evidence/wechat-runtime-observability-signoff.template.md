@@ -28,24 +28,30 @@
 - [ ] `GET /api/runtime/health`
   Artifact / link:
   Captured at:
-- [ ] `GET /api/runtime/diagnostic-snapshot`
+- [ ] `GET /api/runtime/auth-readiness`
   Artifact / link:
   Captured at:
 - [ ] `GET /api/runtime/metrics`
   Artifact / link:
   Captured at:
+- [ ] Optional: `GET /api/runtime/diagnostic-snapshot`
+  Artifact / link:
+  Captured at:
 
 ## Review Questions
 
-- [ ] 三个 endpoint 都对应同一 candidate revision 的目标环境，而不是本地 dev server 或旧 staging
+- [ ] `health`、`auth-readiness`、`metrics` 三个 required endpoint 都对应同一 candidate revision 的目标环境，而不是本地 dev server 或旧 staging
   Notes:
 - [ ] `/api/runtime/health` 已确认 `activeRoomCount`、`connectionCount`、`gameplayTraffic` 与 auth 摘要形状合理
   Evidence:
   Notes:
-- [ ] `/api/runtime/diagnostic-snapshot` 已确认 room summary、diagnostics 状态与 log tail 没有明显陈旧或缺口
+- [ ] `/api/runtime/auth-readiness` 已确认 auth 状态、阻塞项与目标环境一致，没有明显陈旧或缺口
   Evidence:
   Notes:
 - [ ] `/api/runtime/metrics` 已确认关键 runtime metrics 可抓取，且没有未知缺维、空白导出或权限失败
+  Evidence:
+  Notes:
+- [ ] 若附上 `/api/runtime/diagnostic-snapshot`，其内容只作为补充排障上下文，不替代 required endpoint review
   Evidence:
   Notes:
 - [ ] 若存在告警、缺口或接受风险，已同步写入 blocker register 或 owner ledger
@@ -57,8 +63,9 @@
 | Endpoint | Status | Reviewer summary | Evidence path / link |
 | --- | --- | --- | --- |
 | `/api/runtime/health` | `pass | hold | fail` |  |  |
-| `/api/runtime/diagnostic-snapshot` | `pass | hold | fail` |  |  |
+| `/api/runtime/auth-readiness` | `pass | hold | fail` |  |  |
 | `/api/runtime/metrics` | `pass | hold | fail` |  |  |
+| Optional `/api/runtime/diagnostic-snapshot` | `pass | hold | fail | not-recorded` |  |  |
 
 ## Release Decision
 
