@@ -16,6 +16,7 @@ Related references:
 - [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md)
 - [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md)
 - [`docs/release-gate-summary.md`](./release-gate-summary.md)
+- [`docs/release-go-no-go-decision-packet.md`](./release-go-no-go-decision-packet.md)
 - [`docs/phase1-maturity-scorecard.md`](./phase1-maturity-scorecard.md)
 
 ## Same-Revision Rule
@@ -217,6 +218,16 @@ npm run release:readiness:dashboard -- \
   --wechat-artifacts-dir artifacts/wechat-release \
   --candidate-revision <git-sha>
 ```
+
+11. Assemble the operator-facing decision packet once the underlying evidence is coherent.
+
+```bash
+npm run release:go-no-go-packet -- \
+  --candidate <candidate-name> \
+  --candidate-revision <git-sha>
+```
+
+Use the resulting Markdown packet for the final human go/no-go review. If it still reports blocker items, refresh the upstream artifacts and rerun the packet instead of editing the packet directly.
 
 Freshness check:
 
