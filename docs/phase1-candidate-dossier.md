@@ -54,12 +54,27 @@ npm run release:phase1:candidate-dossier -- \
   --markdown-output artifacts/release-readiness/phase1-candidate-dossier.md
 ```
 
+Write the dossier bundle into one stable candidate directory:
+
+```bash
+npm run release:phase1:candidate-dossier -- \
+  --candidate phase1-wechat-rc \
+  --candidate-revision abc1234 \
+  --output-dir artifacts/release-dossiers/phase1-wechat-rc-abc1234
+```
+
 ## Default Outputs
 
-If you do not pass output flags, the script writes:
+If you do not pass output flags, the script writes one stable candidate bundle directory:
 
-- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>.json`
-- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>.md`
+- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/phase1-candidate-dossier.json`
+- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/phase1-candidate-dossier.md`
+- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/release-gate-summary.json`
+- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/release-gate-summary.md`
+- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/release-health-summary.json`
+- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/release-health-summary.md`
+
+If you pass `--output-dir`, the same file names are written into that directory instead.
 
 ## Output Contract
 
@@ -68,6 +83,7 @@ The dossier surfaces:
 - generated timestamp plus candidate branch/dirty metadata
 - one candidate revision and target surface
 - one `Selected Inputs` block so reviewers can see the exact artifact paths and runtime URL that were used
+- one `Generated Bundle` block so PR/release巡检 reviewers can stay inside the dossier directory
 - one `phase1ExitEvidenceGate` result with blocking/pending/accepted-risk section lists
 - `requiredFailed`
 - `requiredPending`

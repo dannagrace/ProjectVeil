@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -539,4 +540,188 @@ test("phase1 candidate dossier fails the single exit evidence gate when the rele
       });
     });
   }
+});
+
+test("phase1 candidate dossier CLI writes a stable candidate bundle directory with supporting summaries", () => {
+  const workspace = createTempWorkspace();
+  const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
+  const revision = "abc1234";
+  const outputDir = path.join(workspace, "artifacts", "release-dossiers", "phase1-rc-abc1234");
+  const repoRoot = path.resolve(process.cwd());
+
+  const snapshotPath = path.join(artifactsDir, "release-readiness-pass.json");
+  const h5SmokePath = path.join(artifactsDir, "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(artifactsDir, "colyseus-reconnect-soak-summary-pass.json");
+  const cocosBundlePath = path.join(artifactsDir, "cocos-rc-evidence-bundle-pass.json");
+  const persistencePath = path.join(artifactsDir, `phase1-release-persistence-regression-${revision}.json`);
+  const syncGovernancePath = path.join(artifactsDir, "sync-governance-matrix-pass.json");
+  const ciTrendSummaryPath = path.join(artifactsDir, "ci-trend-summary.json");
+  const coverageSummaryPath = path.join(workspace, ".coverage", "summary.json");
+  const configCenterLibraryPath = path.join(workspace, "configs", ".config-center-library.json");
+
+  writeJson(snapshotPath, {
+    generatedAt: "2026-04-02T08:30:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
+    checks: [{ id: "npm-test", required: true, status: "passed" }]
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: "2026-04-02T08:32:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    execution: { status: "passed", exitCode: 0 },
+    summary: { total: 2, passed: 2, failed: 0 }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-04-02T08:33:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    status: "passed",
+    summary: { failedScenarios: 0, scenarioNames: ["reconnect_soak"] },
+    soakSummary: { reconnectAttempts: 64, invariantChecks: 256 },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+  writeJson(cocosBundlePath, {
+    bundle: {
+      generatedAt: "2026-04-02T08:34:00.000Z",
+      candidate: "phase1-rc",
+      commit: revision,
+      shortCommit: revision,
+      overallStatus: "passed",
+      summary: "Cocos RC evidence is complete."
+    },
+    review: { phase1Gate: "passed" },
+    journey: [{ id: "lobby-entry", status: "passed" }],
+    requiredEvidence: [{ id: "roomId", label: "Room id recorded", filled: true }]
+  });
+  writeJson(persistencePath, {
+    generatedAt: "2026-04-02T08:41:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    summary: { status: "passed", assertionCount: 6 },
+    contentValidation: { valid: true, bundleCount: 5, summary: "All shipped content packs validated.", issueCount: 0 },
+    persistenceRegression: { mapPackId: "phase1", assertions: ["room hydration reapplied resources"] }
+  });
+  writeJson(syncGovernancePath, {
+    generatedAt: "2026-04-02T08:42:00.000Z",
+    execution: { status: "passed" },
+    summary: { passed: 2, failed: 0, skipped: 0 },
+    scenarios: [{ id: "room-push-redaction", status: "passed" }]
+  });
+  writeJson(ciTrendSummaryPath, {
+    generatedAt: "2026-04-02T08:43:00.000Z",
+    summary: {
+      overallStatus: "passed",
+      totalFindings: 0,
+      newFindings: 0,
+      ongoingFindings: 0,
+      recoveredFindings: 0
+    },
+    runtime: { findings: [] },
+    releaseGate: { findings: [] }
+  });
+  writeJson(coverageSummaryPath, [
+    {
+      scope: "shared",
+      lineThreshold: 90,
+      branchThreshold: 70,
+      functionThreshold: 90,
+      metrics: {
+        lines: 95,
+        branches: 80,
+        functions: 96
+      },
+      failures: []
+    }
+  ]);
+  writeJson(configCenterLibraryPath, {
+    publishAuditHistory: []
+  });
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "./scripts/phase1-candidate-dossier.ts",
+      "--candidate",
+      "phase1-rc",
+      "--candidate-revision",
+      revision,
+      "--target-surface",
+      "h5",
+      "--snapshot",
+      snapshotPath,
+      "--h5-smoke",
+      h5SmokePath,
+      "--reconnect-soak",
+      reconnectSoakPath,
+      "--cocos-bundle",
+      cocosBundlePath,
+      "--phase1-persistence",
+      persistencePath,
+      "--sync-governance",
+      syncGovernancePath,
+      "--ci-trend-summary",
+      ciTrendSummaryPath,
+      "--coverage-summary",
+      coverageSummaryPath,
+      "--config-center-library",
+      configCenterLibraryPath,
+      "--output-dir",
+      outputDir
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8"
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Wrote Phase 1 candidate dossier bundle:/);
+
+  const dossierJsonPath = path.join(outputDir, "phase1-candidate-dossier.json");
+  const dossierMarkdownPath = path.join(outputDir, "phase1-candidate-dossier.md");
+  const releaseGateSummaryPath = path.join(outputDir, "release-gate-summary.json");
+  const releaseGateMarkdownPath = path.join(outputDir, "release-gate-summary.md");
+  const releaseHealthSummaryPath = path.join(outputDir, "release-health-summary.json");
+  const releaseHealthMarkdownPath = path.join(outputDir, "release-health-summary.md");
+
+  for (const filePath of [
+    dossierJsonPath,
+    dossierMarkdownPath,
+    releaseGateSummaryPath,
+    releaseGateMarkdownPath,
+    releaseHealthSummaryPath,
+    releaseHealthMarkdownPath
+  ]) {
+    assert.equal(fs.existsSync(filePath), true, `${filePath} should exist`);
+  }
+
+  const dossier = JSON.parse(fs.readFileSync(dossierJsonPath, "utf8")) as {
+    artifacts?: {
+      outputDir: string;
+      releaseGateSummaryPath: string;
+      releaseHealthSummaryPath: string;
+    };
+    sections: Array<{ id: string; artifactPath?: string }>;
+  };
+  assert.equal(dossier.artifacts?.outputDir, outputDir);
+  assert.equal(dossier.artifacts?.releaseGateSummaryPath, releaseGateSummaryPath);
+  assert.equal(dossier.artifacts?.releaseHealthSummaryPath, releaseHealthSummaryPath);
+  assert.equal(dossier.sections.find((section) => section.id === "release-gate")?.artifactPath, releaseGateSummaryPath);
+  assert.equal(dossier.sections.find((section) => section.id === "release-health")?.artifactPath, releaseHealthSummaryPath);
+
+  const markdown = fs.readFileSync(dossierMarkdownPath, "utf8");
+  assert.match(markdown, /## Generated Bundle/);
+  assert.match(markdown, /release-gate-summary\.json/);
+  assert.match(markdown, /release-health-summary\.json/);
 });
