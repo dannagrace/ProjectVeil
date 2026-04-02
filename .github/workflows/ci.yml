@@ -598,16 +598,67 @@ jobs:
           # release-health-summary exits non-zero only for blocking conditions; warnings still publish artifacts/comments.
           npm run release:health:summary -- "${args[@]}"
 
+      - name: Build go/no-go decision packet artifact
+        if: |
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        run: |
+          candidate="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          candidate_slug="$(printf '%s' "${candidate}" | tr -cs '[:alnum:]._-' '-' | sed 's/^-*//; s/-*$//')"
+          short_sha="${GITHUB_SHA::7}"
+          dossier_dir="${RUNNER_TEMP}/release-readiness/phase1-candidate-dossier-${candidate_slug}-${short_sha}"
+
+          args=(
+            --candidate "${candidate}"
+            --candidate-revision "${GITHUB_SHA}"
+            --snapshot "${RUNNER_TEMP}/release-readiness/release-readiness-${GITHUB_SHA}.json"
+            --target-surface wechat
+            --output-dir "${dossier_dir}"
+          )
+          if [[ -f "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json" ]]; then
+            args+=(--h5-smoke "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json")
+          fi
+          if [[ -f "${RUNNER_TEMP}/runtime-regression/colyseus-reconnect-soak-summary-${GITHUB_SHA}.json" ]]; then
+            args+=(--reconnect-soak "${RUNNER_TEMP}/runtime-regression/colyseus-reconnect-soak-summary-${GITHUB_SHA}.json")
+          fi
+          if [[ -d "${RUNNER_TEMP}/wechat-release" ]]; then
+            args+=(--wechat-artifacts-dir "${RUNNER_TEMP}/wechat-release")
+          fi
+          if [[ -f "${RUNNER_TEMP}/release-readiness/ci-trend-summary-${GITHUB_SHA}.json" ]]; then
+            args+=(--ci-trend-summary "${RUNNER_TEMP}/release-readiness/ci-trend-summary-${GITHUB_SHA}.json")
+          fi
+          if [[ -f ".coverage/summary.json" ]]; then
+            args+=(--coverage-summary ".coverage/summary.json")
+          fi
+
+          npm run release:phase1:candidate-dossier -- "${args[@]}"
+          npm run release:go-no-go-packet -- \
+            --dossier "${dossier_dir}/phase1-candidate-dossier.json" \
+            --release-gate-summary "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json" \
+            --output "${RUNNER_TEMP}/release-readiness/go-no-go-decision-packet-${candidate_slug}-${short_sha}.json" \
+            --markdown-output "${RUNNER_TEMP}/release-readiness/go-no-go-decision-packet-${candidate_slug}-${short_sha}.md"
+
       - name: Build PR release summary comment
         if: |
           always() &&
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository
         run: |
+          candidate="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          candidate_slug="$(printf '%s' "${candidate}" | tr -cs '[:alnum:]._-' '-' | sed 's/^-*//; s/-*$//')"
+          short_sha="${GITHUB_SHA::7}"
+          packet_args=()
+          if [[ -f "${RUNNER_TEMP}/release-readiness/go-no-go-decision-packet-${candidate_slug}-${short_sha}.json" ]]; then
+            packet_args+=(--go-no-go-packet "${RUNNER_TEMP}/release-readiness/go-no-go-decision-packet-${candidate_slug}-${short_sha}.json")
+          fi
+
           node --import tsx ./scripts/release-pr-comment.ts \
             --release-gate-summary "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json" \
             --release-health-summary "${RUNNER_TEMP}/release-readiness/release-health-summary-${GITHUB_SHA}.json" \
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            "${packet_args[@]}" \
             --output "${RUNNER_TEMP}/release-readiness/release-pr-comment-${GITHUB_SHA}.md"
 
       - name: Comment PR with release summary

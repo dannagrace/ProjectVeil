@@ -41,6 +41,7 @@ In CI, the `Release health gate` check runs `npm run release:health:summary` aft
 
 - `blocking` summary status fails the PR check.
 - `warning` and `healthy` summary statuses keep the check green, while still publishing the JSON/Markdown summary and the PR comment.
+- When the go/no-go packet is available for the same revision, the PR comment also includes a concise verdict section with blocker/warning counts plus links or paths back to the full packet and its key evidence inputs.
 
 That keeps the existing summary/comment flow usable without turning warning-only noise into a merge blocker.
 

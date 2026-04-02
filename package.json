@@ -50,6 +50,7 @@
     "release:readiness:dashboard": "node --import tsx ./scripts/release-readiness-dashboard.ts",
     "release:gate:summary": "node --import tsx ./scripts/release-gate-summary.ts",
     "release:go-no-go-packet": "node --import tsx ./scripts/release-go-no-go-decision-packet.ts",
+    "release:pr-summary": "node --import tsx ./scripts/release-pr-comment.ts",
     "release:reconnect-soak": "node --import tsx ./scripts/release-candidate-reconnect-soak.ts",
     "release:same-candidate:evidence-audit": "node --import tsx ./scripts/same-candidate-evidence-audit.ts",
     "release:health:summary": "node --import tsx ./scripts/release-health-summary.ts",
