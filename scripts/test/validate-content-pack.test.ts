@@ -123,3 +123,89 @@ test("validate-content-pack supports the stonewatch fork preset on its own", asy
   assert.match(stdout, /Bundle: stonewatch-fork/);
   assert.match(stdout, /Result: PASS/);
 });
+
+test("validate-content-pack fails on typed hero progression and equipment authoring mismatches", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "veil-content-pack-"));
+  await seedContentPackRoot(tempDir);
+
+  const worldPath = join(tempDir, "phase1-world.json");
+  const world = JSON.parse(await readFile(worldPath, "utf8")) as {
+    heroes: Array<{
+      progression: {
+        level: number;
+        experience: number;
+        skillPoints?: number;
+      };
+      loadout: {
+        equipment?: {
+          weaponId?: string;
+          accessoryId?: string;
+          trinketIds?: string[];
+        };
+        inventory: string[];
+      };
+      learnedSkills?: Array<{ skillId: string; rank: number }>;
+    }>;
+  };
+
+  world.heroes[0]!.progression.level = 1;
+  world.heroes[0]!.progression.experience = 175;
+  world.heroes[0]!.progression.skillPoints = 2;
+  world.heroes[0]!.learnedSkills = [{ skillId: "war_banner", rank: 1 }];
+  world.heroes[0]!.loadout.equipment = {
+    weaponId: "padded_gambeson",
+    accessoryId: "missing_accessory",
+    trinketIds: ["militia_pike"]
+  };
+  world.heroes[0]!.loadout.inventory = [
+    "militia_pike",
+    "vanguard_blade",
+    "padded_gambeson",
+    "scout_compass",
+    "oak_longbow",
+    "tower_shield_mail",
+    "scribe_charm"
+  ];
+  await writeFile(worldPath, `${JSON.stringify(world, null, 2)}\n`, "utf8");
+
+  await assert.rejects(
+    execFileAsync("node", ["--import", "tsx", scriptPath, "--root-dir", tempDir], { cwd: repoRoot }),
+    (error: NodeJS.ErrnoException & { stdout?: string }) => {
+      assert.equal(error.code, 1);
+      assert.match(error.stdout ?? "", /hero_progression_level_experience_mismatch/);
+      assert.match(error.stdout ?? "", /hero_skill_points_exceed_progression/);
+      assert.match(error.stdout ?? "", /hero_equipment_slot_mismatch/);
+      assert.match(error.stdout ?? "", /hero_equipment_missing/);
+      assert.match(error.stdout ?? "", /hero_equipment_legacy_trinket_ids/);
+      assert.match(error.stdout ?? "", /hero_inventory_capacity_exceeded/);
+      assert.match(error.stdout ?? "", /Suggestion:/);
+      return true;
+    }
+  );
+});
+
+test("validate-content-pack fails on invalid reward payload amounts before runtime", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "veil-content-pack-"));
+  await seedContentPackRoot(tempDir);
+
+  const mapObjectsPath = join(tempDir, "phase1-map-objects.json");
+  const mapObjects = JSON.parse(await readFile(mapObjectsPath, "utf8")) as {
+    neutralArmies: Array<{ reward?: { kind: string; amount: number } }>;
+    guaranteedResources: Array<{ resource: { amount: number } }>;
+  };
+
+  mapObjects.neutralArmies[0]!.reward = { kind: "gold", amount: 0 };
+  mapObjects.guaranteedResources[0]!.resource.amount = -2;
+  await writeFile(mapObjectsPath, `${JSON.stringify(mapObjects, null, 2)}\n`, "utf8");
+
+  await assert.rejects(
+    execFileAsync("node", ["--import", "tsx", scriptPath, "--root-dir", tempDir], { cwd: repoRoot }),
+    (error: NodeJS.ErrnoException & { stdout?: string }) => {
+      assert.equal(error.code, 1);
+      assert.match(error.stdout ?? "", /neutral_reward_amount_invalid/);
+      assert.match(error.stdout ?? "", /guaranteed_resource_amount_invalid/);
+      assert.match(error.stdout ?? "", /must be a positive integer/);
+      return true;
+    }
+  );
+});

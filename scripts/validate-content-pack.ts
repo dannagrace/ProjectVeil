@@ -139,7 +139,10 @@ function validateDocuments(bundleId: string, bundle: RuntimeConfigBundle): Docum
   return issues;
 }
 
-function printIssues(title: string, issues: Array<{ documentId: string; path: string; message: string }>): void {
+function printIssues(
+  title: string,
+  issues: Array<{ documentId: string; path: string; message: string; suggestion?: string; code?: string }>
+): void {
   if (issues.length === 0) {
     console.log(`${title}: 0 issues`);
     return;
@@ -147,7 +150,9 @@ function printIssues(title: string, issues: Array<{ documentId: string; path: st
 
   console.log(`${title}: ${issues.length} issue(s)`);
   for (const issue of issues) {
-    console.log(`- [${issue.documentId}] ${issue.path}: ${issue.message}`);
+    const code = issue.code ? ` (${issue.code})` : "";
+    const suggestion = issue.suggestion ? ` Suggestion: ${issue.suggestion}` : "";
+    console.log(`- [${issue.documentId}] ${issue.path}${code}: ${issue.message}${suggestion}`);
   }
 }
 

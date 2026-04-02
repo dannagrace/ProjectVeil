@@ -1,6 +1,14 @@
-import type {
+import { getEquipmentDefinition, HERO_EQUIPMENT_INVENTORY_CAPACITY } from "./equipment.ts";
+import {
+  getDefaultHeroSkillTreeConfig
+} from "./world-config.ts";
+import {
+  levelForExperience,
   BattleBalanceConfig,
   BattleSkillCatalogConfig,
+  EquipmentType,
+  HeroConfig,
+  HeroLearnedSkillState,
   MapObjectsConfig,
   UnitCatalogConfig,
   WorldGenerationConfig
@@ -97,6 +105,311 @@ function validateWorldReferences(
   });
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && value >= 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return Number.isInteger(value) && value > 0;
+}
+
+function heroPath(heroIndex: number, suffix: string): string {
+  return `heroes[${heroIndex}]${suffix}`;
+}
+
+function buildHeroSkillIndex(): Map<string, { requiredLevel: number; maxRank: number; prerequisites: string[] }> {
+  const config = getDefaultHeroSkillTreeConfig();
+  return new Map(
+    config.skills.map((skill) => [
+      skill.id,
+      {
+        requiredLevel: skill.requiredLevel,
+        maxRank: skill.maxRank,
+        prerequisites: [...(skill.prerequisites ?? [])]
+      }
+    ] as const)
+  );
+}
+
+function validateHeroProgression(
+  hero: HeroConfig,
+  heroIndex: number,
+  issues: ContentPackValidationIssue[],
+  heroSkillIndex: Map<string, { requiredLevel: number; maxRank: number; prerequisites: string[] }>
+): void {
+  const progression = hero.progression;
+  if (!progression) {
+    return;
+  }
+
+  const level = progression.level ?? 1;
+  const experience = progression.experience ?? 0;
+  const skillPoints = progression.skillPoints ?? 0;
+  const battlesWon = progression.battlesWon ?? 0;
+  const neutralBattlesWon = progression.neutralBattlesWon ?? 0;
+  const pvpBattlesWon = progression.pvpBattlesWon ?? 0;
+
+  const integerChecks = [
+    { key: "level", value: level },
+    { key: "experience", value: experience },
+    { key: "skillPoints", value: skillPoints },
+    { key: "battlesWon", value: battlesWon },
+    { key: "neutralBattlesWon", value: neutralBattlesWon },
+    { key: "pvpBattlesWon", value: pvpBattlesWon }
+  ];
+
+  for (const check of integerChecks) {
+    if (!isNonNegativeInteger(check.value)) {
+      pushIssue(issues, {
+        documentId: "world",
+        path: heroPath(heroIndex, `.progression.${check.key}`),
+        code: "invalid_hero_progression_value",
+        message: `Hero ${hero.id} progression.${check.key} must be a non-negative integer.`,
+        suggestion: "Use whole numbers for authored progression fields so archive hydration stays deterministic."
+      });
+    }
+  }
+
+  if (isNonNegativeInteger(level) && isNonNegativeInteger(experience)) {
+    const minimumLevel = levelForExperience(experience);
+    if (level < minimumLevel) {
+      pushIssue(issues, {
+        documentId: "world",
+        path: heroPath(heroIndex, ".progression.level"),
+        code: "hero_progression_level_experience_mismatch",
+        message: `Hero ${hero.id} level ${level} is below the minimum level ${minimumLevel} for ${experience} experience.`,
+        suggestion: `Increase the hero level to at least ${minimumLevel} or lower the authored experience total.`
+      });
+    }
+  }
+
+  if (
+    isNonNegativeInteger(battlesWon) &&
+    isNonNegativeInteger(neutralBattlesWon) &&
+    isNonNegativeInteger(pvpBattlesWon) &&
+    neutralBattlesWon + pvpBattlesWon > battlesWon
+  ) {
+    pushIssue(issues, {
+      documentId: "world",
+      path: heroPath(heroIndex, ".progression"),
+      code: "hero_battle_counters_mismatch",
+      message: `Hero ${hero.id} has ${neutralBattlesWon} neutral wins and ${pvpBattlesWon} PvP wins but only ${battlesWon} total battles won.`,
+      suggestion: "Keep battlesWon greater than or equal to the sum of neutralBattlesWon and pvpBattlesWon."
+    });
+  }
+
+  const learnedSkills = hero.learnedSkills ?? [];
+  let spentSkillPoints = 0;
+  const learnedSkillRanks = new Map<string, number>();
+
+  for (const [skillIndex, learnedSkill] of learnedSkills.entries()) {
+    if (!validateLearnedHeroSkill(hero, heroIndex, skillIndex, learnedSkill, heroSkillIndex, issues)) {
+      continue;
+    }
+
+    spentSkillPoints += learnedSkill.rank;
+    learnedSkillRanks.set(learnedSkill.skillId, learnedSkill.rank);
+  }
+
+  if (isNonNegativeInteger(level) && isNonNegativeInteger(skillPoints)) {
+    const earnedSkillPoints = Math.max(0, level - 1);
+    if (spentSkillPoints + skillPoints > earnedSkillPoints) {
+      pushIssue(issues, {
+        documentId: "world",
+        path: heroPath(heroIndex, ".progression.skillPoints"),
+        code: "hero_skill_points_exceed_progression",
+        message: `Hero ${hero.id} spends ${spentSkillPoints} skill point(s) in learnedSkills and still has ${skillPoints} available, exceeding the ${earnedSkillPoints} point(s) granted by level ${level}.`,
+        suggestion: "Lower learned skill ranks, reduce remaining skillPoints, or raise the hero level so authored progression matches the archive state."
+      });
+    }
+  }
+
+  for (const [skillIndex, learnedSkill] of learnedSkills.entries()) {
+    const skill = heroSkillIndex.get(learnedSkill.skillId);
+    if (!skill) {
+      continue;
+    }
+
+    const missingPrerequisite = skill.prerequisites.find((prerequisite) => (learnedSkillRanks.get(prerequisite) ?? 0) <= 0);
+    if (missingPrerequisite) {
+      pushIssue(issues, {
+        documentId: "world",
+        path: heroPath(heroIndex, `.learnedSkills[${skillIndex}].skillId`),
+        code: "hero_skill_prerequisite_missing",
+        message: `Hero ${hero.id} learns ${learnedSkill.skillId} without prerequisite ${missingPrerequisite}.`,
+        suggestion: "Add the prerequisite skill to learnedSkills or remove the dependent skill from the authored hero archive."
+      });
+    }
+  }
+}
+
+function validateLearnedHeroSkill(
+  hero: HeroConfig,
+  heroIndex: number,
+  skillIndex: number,
+  learnedSkill: HeroLearnedSkillState,
+  heroSkillIndex: Map<string, { requiredLevel: number; maxRank: number; prerequisites: string[] }>,
+  issues: ContentPackValidationIssue[]
+): learnedSkill is HeroLearnedSkillState & { skillId: string; rank: number } {
+  const skillId = learnedSkill?.skillId?.trim();
+  if (!skillId) {
+    pushIssue(issues, {
+      documentId: "world",
+      path: heroPath(heroIndex, `.learnedSkills[${skillIndex}].skillId`),
+      code: "hero_skill_id_missing",
+      message: `Hero ${hero.id} learnedSkills[${skillIndex}] is missing a skill id.`,
+      suggestion: "Set the skillId to a valid hero skill or remove the empty entry."
+    });
+    return false;
+  }
+
+  if (!isPositiveInteger(learnedSkill.rank)) {
+    pushIssue(issues, {
+      documentId: "world",
+      path: heroPath(heroIndex, `.learnedSkills[${skillIndex}].rank`),
+      code: "hero_skill_rank_invalid",
+      message: `Hero ${hero.id} learned skill ${skillId} rank must be a positive integer.`,
+      suggestion: "Use a whole-number rank between 1 and the skill's maxRank."
+    });
+    return false;
+  }
+
+  const skill = heroSkillIndex.get(skillId);
+  if (!skill) {
+    pushIssue(issues, {
+      documentId: "world",
+      path: heroPath(heroIndex, `.learnedSkills[${skillIndex}].skillId`),
+      code: "hero_skill_missing",
+      message: `Hero ${hero.id} references unknown hero skill ${skillId}.`,
+      suggestion: "Use a skill from hero-skill-trees-full.json or remove the stale learnedSkills entry."
+    });
+    return false;
+  }
+
+  if (learnedSkill.rank > skill.maxRank) {
+    pushIssue(issues, {
+      documentId: "world",
+      path: heroPath(heroIndex, `.learnedSkills[${skillIndex}].rank`),
+      code: "hero_skill_rank_exceeds_max",
+      message: `Hero ${hero.id} sets ${skillId} to rank ${learnedSkill.rank}, but the skill only supports rank ${skill.maxRank}.`,
+      suggestion: "Lower the authored rank so it stays within the skill tree definition."
+    });
+  }
+
+  if ((hero.progression?.level ?? 1) < skill.requiredLevel) {
+    pushIssue(issues, {
+      documentId: "world",
+      path: heroPath(heroIndex, `.learnedSkills[${skillIndex}]`),
+      code: "hero_skill_level_too_low",
+      message: `Hero ${hero.id} is level ${hero.progression?.level ?? 1} but ${skillId} requires level ${skill.requiredLevel}.`,
+      suggestion: "Raise the hero level or remove the learned skill until the prerequisite level is reached."
+    });
+  }
+
+  return true;
+}
+
+function validateHeroEquipmentLoadout(hero: HeroConfig, heroIndex: number, issues: ContentPackValidationIssue[]): void {
+  const loadout = hero.loadout;
+  if (!loadout) {
+    return;
+  }
+
+  const inventory = loadout.inventory ?? [];
+  if (inventory.length > HERO_EQUIPMENT_INVENTORY_CAPACITY) {
+    pushIssue(issues, {
+      documentId: "world",
+      path: heroPath(heroIndex, ".loadout.inventory"),
+      code: "hero_inventory_capacity_exceeded",
+      message: `Hero ${hero.id} starts with ${inventory.length} equipment item(s), exceeding the ${HERO_EQUIPMENT_INVENTORY_CAPACITY}-slot backpack limit.`,
+      suggestion: "Trim the authored inventory or equip some items before exporting the content pack."
+    });
+  }
+
+  inventory.forEach((equipmentId, inventoryIndex) => {
+    const definition = typeof equipmentId === "string" ? getEquipmentDefinition(equipmentId) : undefined;
+    if (!definition) {
+      pushIssue(issues, {
+        documentId: "world",
+        path: heroPath(heroIndex, `.loadout.inventory[${inventoryIndex}]`),
+        code: "hero_inventory_equipment_missing",
+        message: `Hero ${hero.id} inventory references unknown equipment id ${String(equipmentId)}.`,
+        suggestion: "Use an item from the default equipment catalog or remove the stale inventory entry."
+      });
+    }
+  });
+
+  const slotEntries: Array<{ slot: EquipmentType; key: "weaponId" | "armorId" | "accessoryId" }> = [
+    { slot: "weapon", key: "weaponId" },
+    { slot: "armor", key: "armorId" },
+    { slot: "accessory", key: "accessoryId" }
+  ];
+
+  slotEntries.forEach(({ slot, key }) => {
+    const equipmentId = loadout.equipment?.[key];
+    if (!equipmentId) {
+      return;
+    }
+
+    const definition = getEquipmentDefinition(equipmentId);
+    if (!definition) {
+      pushIssue(issues, {
+        documentId: "world",
+        path: heroPath(heroIndex, `.loadout.equipment.${key}`),
+        code: "hero_equipment_missing",
+        message: `Hero ${hero.id} equips unknown equipment id ${equipmentId} in ${slot} slot.`,
+        suggestion: "Use an item from the default equipment catalog or clear the slot."
+      });
+      return;
+    }
+
+    if (definition.type !== slot) {
+      pushIssue(issues, {
+        documentId: "world",
+        path: heroPath(heroIndex, `.loadout.equipment.${key}`),
+        code: "hero_equipment_slot_mismatch",
+        message: `Hero ${hero.id} equips ${equipmentId} in the ${slot} slot, but that item is typed as ${definition.type}.`,
+        suggestion: `Move ${equipmentId} to the ${definition.type} slot or replace it with a ${slot} item.`
+      });
+    }
+  });
+
+  const trinketIds = loadout.equipment?.trinketIds ?? [];
+  if (trinketIds.length > 0) {
+    pushIssue(issues, {
+      documentId: "world",
+      path: heroPath(heroIndex, ".loadout.equipment.trinketIds"),
+      code: "hero_equipment_legacy_trinket_ids",
+      message: `Hero ${hero.id} still uses legacy loadout.equipment.trinketIds, which no longer maps to active slots or archive inventory rules.`,
+      suggestion: "Move one accessory into loadout.equipment.accessoryId and place any extras into loadout.inventory."
+    });
+  }
+
+  trinketIds.forEach((equipmentId, trinketIndex) => {
+    const definition = typeof equipmentId === "string" ? getEquipmentDefinition(equipmentId) : undefined;
+    if (!definition) {
+      pushIssue(issues, {
+        documentId: "world",
+        path: heroPath(heroIndex, `.loadout.equipment.trinketIds[${trinketIndex}]`),
+        code: "hero_legacy_trinket_missing",
+        message: `Hero ${hero.id} legacy trinket entry references unknown equipment id ${String(equipmentId)}.`,
+        suggestion: "Remove the stale trinket id or replace it with a valid accessory item."
+      });
+      return;
+    }
+
+    if (definition.type !== "accessory") {
+      pushIssue(issues, {
+        documentId: "world",
+        path: heroPath(heroIndex, `.loadout.equipment.trinketIds[${trinketIndex}]`),
+        code: "hero_legacy_trinket_slot_mismatch",
+        message: `Hero ${hero.id} legacy trinket entry ${equipmentId} is typed as ${definition.type}, not accessory.`,
+        suggestion: "Only accessory items belong in trinketIds during migration; move other item types into their matching slot or inventory."
+      });
+    }
+  });
+}
+
 function validateMapObjectReferences(
   world: WorldGenerationConfig,
   mapObjects: MapObjectsConfig,
@@ -147,6 +460,18 @@ function validateMapObjectReferences(
       }
     });
 
+    if (army.reward) {
+      if (!isPositiveInteger(army.reward.amount)) {
+        pushIssue(issues, {
+          documentId: "mapObjects",
+          path: `neutralArmies[${armyIndex}].reward.amount`,
+          code: "neutral_reward_amount_invalid",
+          message: `Neutral army ${army.id} reward amount must be a positive integer, received ${String(army.reward.amount)}.`,
+          suggestion: "Author reward.amount as a whole number greater than zero so persistence and event logs stay consistent."
+        });
+      }
+    }
+
     const terrain = blockedTerrain.get(positionKey(army.position));
     if (terrain) {
       pushIssue(issues, {
@@ -188,6 +513,16 @@ function validateMapObjectReferences(
   });
 
   mapObjects.guaranteedResources.forEach((resource, index) => {
+    if (!isPositiveInteger(resource.resource.amount)) {
+      pushIssue(issues, {
+        documentId: "mapObjects",
+        path: `guaranteedResources[${index}].resource.amount`,
+        code: "guaranteed_resource_amount_invalid",
+        message: `Guaranteed resource ${resource.resource.kind} amount must be a positive integer, received ${String(resource.resource.amount)}.`,
+        suggestion: "Author guaranteed resource amounts as whole numbers greater than zero."
+      });
+    }
+
     const terrain = blockedTerrain.get(positionKey(resource.position));
     if (terrain) {
       pushIssue(issues, {
@@ -305,8 +640,13 @@ function buildSummary(issueCount: number): string {
 
 export function validateContentPackConsistency(bundle: RuntimeConfigBundle): ContentPackValidationReport {
   const issues: ContentPackValidationIssue[] = [];
+  const heroSkillIndex = buildHeroSkillIndex();
 
   validateWorldReferences(bundle.world, bundle.units, issues);
+  bundle.world.heroes.forEach((hero, heroIndex) => {
+    validateHeroProgression(hero, heroIndex, issues, heroSkillIndex);
+    validateHeroEquipmentLoadout(hero, heroIndex, issues);
+  });
   validateMapObjectReferences(bundle.world, bundle.mapObjects, bundle.units, issues);
   validateUnitSkillReferences(bundle.units, bundle.battleSkills, issues);
   if (bundle.battleBalance) {
