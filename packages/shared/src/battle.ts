@@ -64,13 +64,22 @@ function hazardsOf(state: BattleState): BattleHazardState[] {
   return state.environment ?? [];
 }
 
-function normalizeBattleState(state: BattleState): BattleState {
+function normalizeBattleRngState(state: BattleState): BattleState["rng"] {
+  const rng = state.rng;
+  return {
+    seed: Number.isFinite(rng?.seed) ? Math.floor(rng.seed) >>> 0 : 1,
+    cursor: Number.isFinite(rng?.cursor) ? Math.max(0, Math.floor(rng.cursor)) : 0
+  };
+}
+
+export function normalizeBattleState(state: BattleState): BattleState {
   return {
     ...state,
     units: Object.fromEntries(
       Object.entries(state.units).map(([unitId, unit]) => [unitId, withNormalizedCollections(unit)])
     ),
-    environment: hazardsOf(state).map(cloneHazardState)
+    environment: hazardsOf(state).map(cloneHazardState),
+    rng: normalizeBattleRngState(state)
   };
 }
 

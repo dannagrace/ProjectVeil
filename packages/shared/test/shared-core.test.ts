@@ -4556,6 +4556,25 @@ test("applyBattleAction repeats battle damage variance for the same seed", () =>
   assert.deepEqual(secondResult.rng, firstResult.rng);
 });
 
+test("applyBattleAction normalizes missing rng state before resolving deterministic damage", () => {
+  const state = createDemoBattleState();
+  delete (state as Partial<typeof state>).rng;
+
+  const next = applyBattleAction(state, {
+    type: "battle.attack",
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  });
+
+  assert.equal(next.rng.cursor, 2);
+  assert.deepEqual(next.rng, {
+    seed: 1586005467,
+    cursor: 2
+  });
+  assert.equal(next.units["pikeman-a"]?.count, 10);
+  assert.equal(next.units["wolf-d"]?.count, 6);
+});
+
 test("applyBattleAction supports active ranged skills without retaliation", () => {
   const initial = createDemoBattleState();
   initial.activeUnitId = "pikeman-a";
