@@ -71,6 +71,16 @@ test("renderPrComment combines readiness and non-duplicative health sections", (
           details: ["release-gate:wechat-release remained failing"]
         },
         {
+          id: "readiness-trend",
+          label: "Candidate readiness trend",
+          status: "warn",
+          summary: "Candidate readiness regressed from ready at prev9876 to blocked at abc1234.",
+          details: [
+            "current=abc1234:blocked",
+            "previous=prev9876:ready"
+          ]
+        },
+        {
           id: "coverage",
           label: "Coverage summary",
           status: "pass",
@@ -88,6 +98,11 @@ test("renderPrComment combines readiness and non-duplicative health sections", (
   assert.match(markdown, /WeChat smoke case is still pending: login-flow\./);
   assert.match(markdown, /### Release Health/);
   assert.match(markdown, /\*\*CI trend summary\*\*: `WARN` release-gate:wechat-release remained failing/);
+  assert.match(
+    markdown,
+    /\*\*Candidate readiness trend\*\*: `WARN` Candidate readiness regressed from ready at prev9876 to blocked at abc1234\./
+  );
+  assert.doesNotMatch(markdown, /\*\*Candidate readiness trend\*\*: `WARN` current=abc1234:blocked/);
   assert.match(markdown, /\*\*Coverage summary\*\*: `PASS` thresholds passed/);
   assert.doesNotMatch(markdown, /\*\*Release gate summary\*\*: `FAIL`/);
 });
