@@ -15,6 +15,10 @@ export interface ReviewerFacingTriageEntry {
   nextStep: string;
 }
 
+export interface ReviewerFacingArtifact {
+  path: string;
+}
+
 export function formatReadinessTrendNoBaselineSummary(currentCandidate: string, currentDecision: ReadinessDecision): string {
   return `No previous candidate dashboard was available; current candidate ${currentCandidate} is ${currentDecision}.`;
 }
@@ -52,13 +56,34 @@ export function renderPrCommentHealthSignal(
   signal: ReviewerFacingSignal,
   triageEntry?: ReviewerFacingTriageEntry
 ): string[] {
-  const statusLabel = signal.status.toUpperCase();
   const firstDetail = signal.details.find((detail) => detail.trim().length > 0);
   const summary = triageEntry?.summary ?? firstDetail ?? signal.summary;
-  const lines = [`- **${signal.label}**: \`${statusLabel}\` ${summary}`];
+  return renderReviewerFacingMarkdownEntry(signal.label, summary, {
+    status: signal.status,
+    nextStep: triageEntry?.nextStep
+  });
+}
 
-  if (triageEntry) {
-    lines.push(`  Next step: ${triageEntry.nextStep}`);
+export function renderReviewerFacingMarkdownEntry(
+  label: string,
+  summary: string,
+  options?: {
+    status?: ReviewerSignalStatus;
+    nextStep?: string;
+    artifacts?: ReviewerFacingArtifact[];
+    toDisplayPath?: (filePath: string) => string;
+  }
+): string[] {
+  const statusLabel = options?.status ? `\`${options.status.toUpperCase()}\` ` : "";
+  const lines = [`- **${label}**: ${statusLabel}${summary}`];
+
+  if (options?.nextStep) {
+    lines.push(`  Next step: ${options.nextStep}`);
+  }
+
+  if (options?.artifacts && options.artifacts.length > 0) {
+    const toDisplayPath = options.toDisplayPath ?? ((filePath: string) => filePath);
+    lines.push(`  Artifacts: ${options.artifacts.map((artifact) => `\`${toDisplayPath(artifact.path)}\``).join(", ")}`);
   }
 
   return lines;
