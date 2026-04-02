@@ -93,6 +93,8 @@ The report now includes a `Target Surface Contract` section with:
   - pass/fail call for the selected surface
 - `releaseSurface.evidence[*]`
   - exact evidence item, freshness, owner, revision, waiver, and artifact path
+- Markdown `Manual Evidence Ownership`
+  - a reviewer-facing rollup of each required manual evidence item with owner, freshness, recorded timestamp, revision, blocker ids, and artifact path so pending sign-offs are visible without expanding the full evidence list
 
 For `wechat`, the required surface evidence is:
 
