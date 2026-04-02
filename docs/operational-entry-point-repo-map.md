@@ -55,6 +55,7 @@ Use this as the maintainer-facing map for the repository's existing operational 
 | Need | Primary command or entry point | Canonical docs |
 | --- | --- | --- |
 | Check current repository maturity and next ops slices | [`docs/repo-maturity-baseline.md`](./repo-maturity-baseline.md) | [`docs/repo-maturity-baseline.md`](./repo-maturity-baseline.md) |
+| Open an ops/readiness follow-up issue with the expected evidence fields | [`.github/ISSUE_TEMPLATE/projectveil-ops-readiness.md`](../.github/ISSUE_TEMPLATE/projectveil-ops-readiness.md) | [`.github/ISSUE_TEMPLATE/projectveil-ops-readiness.md`](../.github/ISSUE_TEMPLATE/projectveil-ops-readiness.md), [`docs/repo-maturity-baseline.md`](./repo-maturity-baseline.md) |
 | Check Phase 1 exit posture and remaining release gaps | [`docs/phase1-maturity-scorecard.md`](./phase1-maturity-scorecard.md) | [`docs/phase1-maturity-scorecard.md`](./phase1-maturity-scorecard.md) |
 | Fall back when GitHub issue intake automation is unavailable | [`docs/github-issue-intake-fallback.md`](./github-issue-intake-fallback.md) | [`docs/github-issue-intake-fallback.md`](./github-issue-intake-fallback.md), [`docs/github-issue-intake-fallback-smoke-checklist.md`](./github-issue-intake-fallback-smoke-checklist.md) |
 
