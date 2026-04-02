@@ -147,6 +147,7 @@ npm run dev:client:h5
 - 微信小游戏 CI 同款校验：`npm run check:wechat-build`
 - 发布就绪快照：`npm run release:readiness:snapshot`
 - Same-revision 发布证据组装 runbook：`docs/same-revision-release-evidence-runbook.md`
+- Same-candidate 发布证据一致性审计：`npm run release:same-candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha>`
 - 统一发布门禁汇总：`npm run release:gate:summary`
 - 发布健康度聚合摘要：`npm run release:health:summary`
 - Phase 1 candidate dossier + single exit evidence gate：`npm run release:phase1:candidate-dossier -- --candidate <candidate-name> --candidate-revision <git-sha> [--server-url http://127.0.0.1:2567]`
