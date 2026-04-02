@@ -468,7 +468,10 @@ test("buildReleaseHealthSummaryReport reports candidate readiness trend regressi
     report.findings.filter((finding) => finding.signalId === "readiness-trend").map((finding) => finding.summary),
     ["Candidate readiness regressed from ready at prev9876 to blocked at cur1234."]
   );
-  assert.match(renderMarkdown(report), /Candidate readiness regressed from ready at prev9876 to blocked at cur1234\./);
+  assert.match(
+    renderMarkdown(report),
+    /- \*\*Candidate readiness trend\*\*: Candidate readiness regressed from ready at prev9876 to blocked at cur1234\.\n  Next step: Open `.*release-readiness-dashboard\.json` and `.*release-readiness-dashboard\.json` to compare the candidate blockers or pending checks before advancing the next revision\.\n  Artifacts: `.*release-readiness-dashboard\.json`, `.*release-readiness-dashboard\.json`/
+  );
 });
 
 test("resolveInputPaths discovers the latest local artifacts", () => {

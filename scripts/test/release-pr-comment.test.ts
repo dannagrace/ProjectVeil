@@ -225,6 +225,12 @@ test("renderPrComment and release-health triage share the same readiness-trend r
   const readinessTriage = report.triage.warnings.find((entry) => entry.signalId === "readiness-trend");
 
   assert.ok(readinessTriage);
-  assert.match(markdown, new RegExp(escapeRegExp(readinessTriage.summary)));
-  assert.match(markdown, new RegExp(escapeRegExp(readinessTriage.nextStep)));
+  assert.match(
+    markdown,
+    new RegExp(
+      escapeRegExp(
+        `- **Candidate readiness trend**: \`WARN\` ${readinessTriage.summary}\n  Next step: ${readinessTriage.nextStep}`
+      )
+    )
+  );
 });

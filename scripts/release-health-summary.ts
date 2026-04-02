@@ -8,6 +8,7 @@ import {
   formatReadinessTrendNoBaselineSummary,
   formatReadinessTrendRegressionSummary,
   formatReadinessTrendUnchangedUnreadySummary,
+  renderReviewerFacingMarkdownEntry,
   type ReadinessDecision
 } from "./release-reporting-contract.ts";
 
@@ -1266,11 +1267,13 @@ export function renderMarkdown(report: ReleaseHealthSummaryReport): string {
     lines.push("- None.");
   } else {
     for (const entry of report.triage.blockers) {
-      lines.push(`- **${entry.title}**: ${entry.summary}`);
-      lines.push(`  Next step: ${entry.nextStep}`);
-      if (entry.artifacts.length > 0) {
-        lines.push(`  Artifacts: ${entry.artifacts.map((artifact) => `\`${toDisplayPath(artifact.path)}\``).join(", ")}`);
-      }
+      lines.push(
+        ...renderReviewerFacingMarkdownEntry(entry.title, entry.summary, {
+          nextStep: entry.nextStep,
+          artifacts: entry.artifacts,
+          toDisplayPath
+        })
+      );
     }
   }
   lines.push("");
@@ -1280,11 +1283,13 @@ export function renderMarkdown(report: ReleaseHealthSummaryReport): string {
     lines.push("- None.");
   } else {
     for (const entry of report.triage.warnings) {
-      lines.push(`- **${entry.title}**: ${entry.summary}`);
-      lines.push(`  Next step: ${entry.nextStep}`);
-      if (entry.artifacts.length > 0) {
-        lines.push(`  Artifacts: ${entry.artifacts.map((artifact) => `\`${toDisplayPath(artifact.path)}\``).join(", ")}`);
-      }
+      lines.push(
+        ...renderReviewerFacingMarkdownEntry(entry.title, entry.summary, {
+          nextStep: entry.nextStep,
+          artifacts: entry.artifacts,
+          toDisplayPath
+        })
+      );
     }
   }
   lines.push("");
