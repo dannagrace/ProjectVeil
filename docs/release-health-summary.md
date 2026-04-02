@@ -101,6 +101,8 @@ The JSON report contains:
 
 Use this as the top-level release health entry point when a person, bot, or PR comment needs one answer for the current branch state.
 
+For signal-specific triage once `readiness-trend` appears, use [`docs/release-readiness-trend-troubleshooting.md`](./release-readiness-trend-troubleshooting.md).
+
 ## Maintainer History Check
 
 For branch-level readiness history in GitHub Actions, use the `Release Readiness History` workflow instead of stitching together raw CI artifacts by hand.
@@ -109,3 +111,4 @@ For branch-level readiness history in GitHub Actions, use the `Release Readiness
 - Download the `release-readiness-history` artifact.
 - Start with `release-health-summary.md` for the top-level call. It now includes candidate readiness trend reporting when the workflow can compare the latest dashboard against the previous successful history baseline.
 - Then inspect `ci-trend-summary.md` for runtime/release-gate deltas and `release-readiness-dashboard.md` for the latest go/no-go view.
+- If `readiness-trend` is warning, open [`docs/release-readiness-trend-troubleshooting.md`](./release-readiness-trend-troubleshooting.md) before rerunning evidence producers so you can separate a true candidate regression from a missing/misaligned baseline artifact.

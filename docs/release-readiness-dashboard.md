@@ -151,3 +151,5 @@ npm run release:readiness:dashboard -- \
 Use the same `<git-sha>` across the snapshot, WeChat package/smoke artifacts, Cocos RC snapshot, and primary-client diagnostics generation flow. If one artifact drifts to another revision or goes stale, the dashboard now prints the exact artifact path plus the observed/expected revision mismatch before exiting non-zero.
 
 The Markdown output is intended to be attachable to issue/PR discussion, while the JSON output is intended for automation or later aggregation. Both formats now expose the same candidate-level `goNoGo` block so reviewers do not need to stitch the final Phase 1 release call together by hand.
+
+If `release:health:summary` later flags a `readiness-trend` warning for this dashboard, use [`docs/release-readiness-trend-troubleshooting.md`](./release-readiness-trend-troubleshooting.md) to compare this candidate call against the previous successful branch baseline.

@@ -63,3 +63,5 @@ Maintain the long-running branch history from GitHub Actions `Release Readiness 
   - `release-readiness-snapshot.json`
 
 When a previous successful history artifact exists on the same branch, the workflow compares the current runtime-regression report and release-gate summary against that baseline before publishing `ci-trend-summary.json` / `.md`.
+
+If the companion `release-health-summary` output reports a `readiness-trend` warning, follow [`docs/release-readiness-trend-troubleshooting.md`](./release-readiness-trend-troubleshooting.md) to compare the current and previous dashboards before deciding whether the branch regressed or only lacks a usable baseline.
