@@ -39,7 +39,7 @@ test("two players can enter a hero-vs-hero battle and resolve it with correct tu
   await expect(playerOnePage.getByTestId("room-status-detail")).toContainText("英雄遭遇战");
   await expect(playerOnePage.getByTestId("room-status-detail")).toContainText(`遭遇会话：${roomId}/battle-`);
   await expect(playerOnePage.getByTestId("encounter-source")).toContainText("我方英雄先手接触敌方英雄");
-  await expect(playerOnePage.getByTestId("encounter-source")).toContainText("战斗会话 battle-");
+  await expect(playerOnePage.getByTestId("encounter-source")).toContainText(`遭遇会话 ${roomId}/battle-`);
   await expect(playerOnePage.getByTestId("encounter-source")).toHaveAttribute("data-tone", "action");
   await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText("player-1");
   await expect(playerTwoPage.getByTestId("opponent-summary")).toContainText("房间态：战斗中");

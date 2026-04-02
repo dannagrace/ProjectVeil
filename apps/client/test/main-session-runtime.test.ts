@@ -153,7 +153,7 @@ test("createMainSessionRuntime specializes reconnect copy for active pvp encount
   });
 
   runtime.onConnectionEvent("reconnecting");
-  assert.equal(state.diagnostics.recoverySummary, "PVP 遭遇连接暂时中断，正在尝试重新加入当前对抗房间。");
+  assert.equal(state.diagnostics.recoverySummary, "PVP 遭遇已中断，正在尝试重新加入当前对抗房间。");
   assert.equal(state.log[0], "PVP 遭遇连接中断，正在尝试重连...");
 
   runtime.onConnectionEvent("reconnected");
@@ -161,6 +161,6 @@ test("createMainSessionRuntime specializes reconnect copy for active pvp encount
   assert.equal(state.log[0], "PVP 遭遇连接已恢复");
 
   runtime.onConnectionEvent("reconnect_failed");
-  assert.equal(state.diagnostics.recoverySummary, "PVP 遭遇旧连接未恢复，正在改用持久化快照补救当前房间状态。");
+  assert.equal(state.diagnostics.recoverySummary, "PVP 遭遇恢复失败，正在改用持久化快照补救当前房间状态。");
   assert.equal(state.log[0], "PVP 遭遇旧连接恢复失败，正在尝试从持久化快照恢复房间...");
 });

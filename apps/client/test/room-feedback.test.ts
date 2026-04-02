@@ -159,7 +159,7 @@ test("renderEncounterSourceDetail covers active hero encounter initiative branch
       battle: activeBattle,
       lastEncounterStarted: createEncounterStartedEvent()
     }),
-    "遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到战斗会话 battle-1。"
+    "遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到遭遇会话 room-alpha/battle-1。"
   );
 
   assert.equal(
@@ -171,7 +171,7 @@ test("renderEncounterSourceDetail covers active hero encounter initiative branch
         defenderHeroId: "hero-1"
       })
     }),
-    "遭遇来源：敌方英雄先手接触我方，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到战斗会话 battle-1。"
+    "遭遇来源：敌方英雄先手接触我方，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到遭遇会话 room-alpha/battle-1。"
   );
 });
 
@@ -250,7 +250,7 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
         connectionStatus: "reconnecting"
       }
     }),
-    "连接反馈：PVP 遭遇 room-alpha/battle-1 连接中断，正在恢复对手归属、当前回合与房间主状态；恢复前请以权威状态为准。"
+    "连接反馈：PVP 遭遇 room-alpha/battle-1 已中断，正在恢复对手归属、当前回合与房间主状态；恢复前请以权威状态为准。"
   );
 
   assert.equal(
@@ -261,7 +261,7 @@ test("renderEncounterSourceDetail covers preview, settlement, reconnect, and rep
         connectionStatus: "reconnect_failed"
       }
     }),
-    "连接反馈：PVP 遭遇旧连接恢复失败，正在通过最近快照回补当前胜负、回合归属和房间状态；短暂期间可能只显示缓存状态。"
+    "连接反馈：PVP 遭遇恢复失败，本场遭遇已转入快照回补；正在回补当前胜负、回合归属和房间状态，短暂期间可能只显示缓存状态。"
   );
 
   assert.equal(
@@ -430,7 +430,7 @@ test("renderRecoverySummary covers reconnect, replay fallback, explicit recovery
       },
       predictionStatus: ""
     }),
-    "恢复状态：正在重新加入 PVP 遭遇并校正对手归属、当前回合与房间状态，结果请以恢复后的权威状态为准。"
+    "恢复状态：正在重新加入已中断的 PVP 遭遇，并校正对手归属、当前回合与房间状态；结果请以恢复后的权威状态为准。"
   );
 
   assert.equal(
@@ -442,7 +442,7 @@ test("renderRecoverySummary covers reconnect, replay fallback, explicit recovery
       },
       predictionStatus: ""
     }),
-    "恢复状态：PVP 遭遇旧连接恢复失败，已切换到快照回补链路；当前先展示最近缓存与回补进度。"
+    "恢复状态：PVP 遭遇已切换到失败恢复链路；当前先展示最近缓存，并等待快照回补最终胜负与房间态。"
   );
 
   assert.equal(
@@ -553,7 +553,23 @@ test("renderRoomResultSummary prioritizes reconnect guidance over stale settleme
       predictionStatus: "",
       roomId: "room-alpha"
     }),
-    "房间结果：PVP 遭遇 room-alpha/battle-1 正在恢复连接；期间请以恢复后的权威胜负、回合归属和房间阶段为准。"
+    "房间结果：PVP 遭遇 room-alpha/battle-1 已中断，正在恢复连接；期间请以恢复后的权威胜负、回合归属和房间阶段为准。"
+  );
+
+  assert.equal(
+    renderRoomResultSummary({
+      battle: createBattle(),
+      lastBattleSettlement: {
+        kind: "pvp",
+        roomState: "房间已回到地图探索阶段。"
+      },
+      diagnostics: {
+        connectionStatus: "reconnect_failed"
+      },
+      predictionStatus: "",
+      roomId: "room-alpha"
+    }),
+    "房间结果：PVP 遭遇 room-alpha/battle-1 已转入失败恢复，正在通过最近快照回补当前胜负、回合归属和房间状态。"
   );
 
   assert.equal(

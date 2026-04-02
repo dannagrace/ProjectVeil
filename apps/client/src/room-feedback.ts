@@ -73,6 +73,10 @@ function ownedHeroIds(world: PlayerWorldView): Set<string> {
   return new Set(world.ownHeroes.map((hero) => hero.id));
 }
 
+function formatBattleSession(roomId: string, battleId: string): string {
+  return `${roomId}/${battleId}`;
+}
+
 export function resolveRoomFeedbackTone(state: AppState): CocosBattleFeedbackTone {
   if (state.lastBattleSettlement?.tone === "victory" || state.lastBattleSettlement?.tone === "defeat") {
     return state.lastBattleSettlement.tone;
@@ -99,9 +103,10 @@ export function renderEncounterSourceDetail(input: EncounterSourceDetailInput): 
     const event = input.lastEncounterStarted;
     const ownedIds = ownedHeroIds(input.world);
     if (event.encounterKind === "hero") {
+      const sessionId = formatBattleSession(input.world.meta.roomId, event.battleId);
       return ownedIds.has(event.heroId)
-        ? `遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到战斗会话 ${event.battleId}。`
-        : `遭遇来源：敌方英雄先手接触我方，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到战斗会话 ${event.battleId}。`;
+        ? `遭遇来源：我方英雄先手接触敌方英雄，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到遭遇会话 ${sessionId}。`
+        : `遭遇来源：敌方英雄先手接触我方，当前房间已切到 PVP 多人遭遇战结算；对手身份、当前回合与房间归属现在统一挂到遭遇会话 ${sessionId}。`;
     }
 
     return event.initiator === "neutral"
@@ -121,14 +126,14 @@ export function renderEncounterSourceDetail(input: EncounterSourceDetailInput): 
 
   if (input.diagnostics.connectionStatus === "reconnecting") {
     if (input.battle?.defenderHeroId) {
-      return `连接反馈：PVP 遭遇 ${input.world.meta.roomId}/${input.battle.id} 连接中断，正在恢复对手归属、当前回合与房间主状态；恢复前请以权威状态为准。`;
+      return `连接反馈：PVP 遭遇 ${input.world.meta.roomId}/${input.battle.id} 已中断，正在恢复对手归属、当前回合与房间主状态；恢复前请以权威状态为准。`;
     }
     return "连接反馈：房间连接中断，正在恢复多人房间与战斗归属；恢复前请以权威状态为准。";
   }
 
   if (input.diagnostics.connectionStatus === "reconnect_failed") {
     if (input.battle?.defenderHeroId || isPvpSettlement) {
-      return "连接反馈：PVP 遭遇旧连接恢复失败，正在通过最近快照回补当前胜负、回合归属和房间状态；短暂期间可能只显示缓存状态。";
+      return "连接反馈：PVP 遭遇恢复失败，本场遭遇已转入快照回补；正在回补当前胜负、回合归属和房间状态，短暂期间可能只显示缓存状态。";
     }
     return "连接反馈：旧连接恢复失败，正在通过最近快照回补房间；短暂期间可能只显示缓存状态。";
   }
@@ -188,7 +193,7 @@ export function renderRoomResultSummary(input: {
   const isPvpSettlement = input.lastBattleSettlement != null && input.lastBattleSettlement.kind === "pvp";
   if (input.diagnostics.connectionStatus === "reconnecting") {
     if (input.battle?.defenderHeroId) {
-      return `房间结果：PVP 遭遇 ${input.roomId}/${input.battle.id} 正在恢复连接；期间请以恢复后的权威胜负、回合归属和房间阶段为准。`;
+      return `房间结果：PVP 遭遇 ${input.roomId}/${input.battle.id} 已中断，正在恢复连接；期间请以恢复后的权威胜负、回合归属和房间阶段为准。`;
     }
     return "房间结果：正在恢复连接与房间主状态，期间请以恢复后的权威结果为准。";
   }
@@ -196,8 +201,8 @@ export function renderRoomResultSummary(input: {
   if (input.diagnostics.connectionStatus === "reconnect_failed") {
     if (input.battle?.defenderHeroId || isPvpSettlement) {
       return input.battle?.defenderHeroId
-        ? `房间结果：PVP 遭遇 ${input.roomId}/${input.battle.id} 的旧连接未恢复，正在通过最近快照回补当前胜负、回合归属和房间状态。`
-        : "房间结果：PVP 结算旧连接未恢复，正在通过最近快照回补当前胜负与房间状态。";
+        ? `房间结果：PVP 遭遇 ${input.roomId}/${input.battle.id} 已转入失败恢复，正在通过最近快照回补当前胜负、回合归属和房间状态。`
+        : "房间结果：PVP 结算已转入失败恢复，正在通过最近快照回补当前胜负与房间状态。";
     }
     return "房间结果：旧连接未恢复，正在通过最近快照回补房间，等待权威状态确认当前可行动信息。";
   }
@@ -240,14 +245,14 @@ export function renderRecoverySummary(input: {
   const isPvpSettlement = input.lastBattleSettlement != null && input.lastBattleSettlement.kind === "pvp";
   if (input.diagnostics.connectionStatus === "reconnecting") {
     if (input.battle?.defenderHeroId) {
-      return "恢复状态：正在重新加入 PVP 遭遇并校正对手归属、当前回合与房间状态，结果请以恢复后的权威状态为准。";
+      return "恢复状态：正在重新加入已中断的 PVP 遭遇，并校正对手归属、当前回合与房间状态；结果请以恢复后的权威状态为准。";
     }
     return "恢复状态：正在重新加入多人房间并校正战斗归属，结果请以恢复后的权威状态为准。";
   }
 
   if (input.diagnostics.connectionStatus === "reconnect_failed") {
     if (input.battle?.defenderHeroId || isPvpSettlement) {
-      return "恢复状态：PVP 遭遇旧连接恢复失败，已切换到快照回补链路；当前先展示最近缓存与回补进度。";
+      return "恢复状态：PVP 遭遇已切换到失败恢复链路；当前先展示最近缓存，并等待快照回补最终胜负与房间态。";
     }
     return "恢复状态：旧连接恢复失败，已切换到快照回补链路；当前先展示最近缓存与回补进度。";
   }

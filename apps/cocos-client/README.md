@@ -152,6 +152,7 @@
 - Cocos 主客户端的会话恢复专项回归位于 `apps/cocos-client/test/cocos-root-orchestration.test.ts`
 - 只跑这组快速回归可执行：`node --import tsx --test apps/cocos-client/test/cocos-root-orchestration.test.ts`
 - 其中“本地快照回放 + 断线恢复后权威状态收敛”的专项用例是 `VeilRoot replays cached state before reconnect recovery converges on the authoritative snapshot`
+- PvP 遭遇进入/恢复/结算的权威渲染约定见 `docs/cocos-pvp-encounter-lifecycle.md`
 
 ## 下一步建议
 
