@@ -26,11 +26,12 @@ For the same candidate revision, capture and attach:
 
 - `/api/runtime/health`
   - Confirm the payload is live for the release environment and note `activeRoomCount`, `connectionCount`, `gameplayTraffic`, and auth summary.
-- `/api/runtime/diagnostic-snapshot`
-  - Confirm the response renders the current room overview and diagnostics state.
-  - `?format=text` is acceptable when it is easier to attach to PR or artifact logs.
+- `/api/runtime/auth-readiness`
+  - Confirm the auth summary is reachable for the same release environment and records a coherent `status` for the candidate.
 - `/api/runtime/metrics`
   - Capture at least one scrape/export showing the runtime metrics endpoint is reachable for the same environment.
+- Optional supporting diagnostic: `/api/runtime/diagnostic-snapshot`
+  - Attach this when it helps explain a warning, blocker, or accepted follow-up, but do not use it as a substitute for `health`, `auth-readiness`, or `metrics`.
 - Reviewer decision
   - Record owner, `recordedAt`, revision, artifact path, and any follow-up or accepted risk.
   - Mirror the same owner, revision, artifact path, and follow-up status into the manual evidence owner ledger so the candidate handoff still has one pending-signoff view.
@@ -48,9 +49,9 @@ Store one small JSON or Markdown artifact under `artifacts/wechat-release/` or `
 Keep the artifact scoped to:
 
 - candidate revision and environment
-- endpoint captures or links
+- endpoint captures or links for `health`, `auth-readiness`, and `metrics`
 - reviewer / timestamp
 - conclusion: `passed | hold | ship-with-followups`
 - follow-ups or blocker IDs
 
-The preferred Markdown shape is the template at [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md). If you emit JSON instead, keep the same fields: candidate, target revision, environment, reviewer, recorded timestamp, per-endpoint status, conclusion, and follow-ups.
+The preferred Markdown shape is the template at [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md). If you emit JSON instead, keep the same fields: candidate, target revision, environment, reviewer, recorded timestamp, per-endpoint status, conclusion, and follow-ups. Add `/api/runtime/diagnostic-snapshot` only as supporting context when needed.
