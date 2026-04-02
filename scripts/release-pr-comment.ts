@@ -114,6 +114,9 @@ function summarizeGate(gate: ReleaseGateSummaryReport["gates"][number]): string 
 
 function summarizeHealthSignal(signal: ReleaseHealthSummaryReport["signals"][number]): string {
   const statusLabel = signal.status.toUpperCase();
+  if (signal.id === "readiness-trend") {
+    return `- **${signal.label}**: \`${statusLabel}\` ${signal.summary}`;
+  }
   const firstDetail = signal.details.find((detail) => detail.trim().length > 0);
   return `- **${signal.label}**: \`${statusLabel}\` ${firstDetail ?? signal.summary}`;
 }
