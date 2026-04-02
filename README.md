@@ -151,6 +151,7 @@ npm run dev:client:h5
 - 统一发布门禁汇总：`npm run release:gate:summary`
 - Candidate-level reconnect soak：`npm run release:reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>`（输出 candidate+revision 命名的 reconnect soak JSON / Markdown，并供 release gate / dossier 直接引用）
 - 发布健康度聚合摘要：`npm run release:health:summary`
+- 最近候选包发布健康趋势基线：`npm run release:health:trend-baseline`
 - Phase 1 candidate dossier + single exit evidence gate：`npm run release:phase1:candidate-dossier -- --candidate <candidate-name> --candidate-revision <git-sha> [--server-url http://127.0.0.1:2567] [--output-dir artifacts/release-dossiers/<candidate>-<git-sha>]`
 - 打包 H5 客户端 RC 冒烟：`npm run smoke:client:release-candidate`
 - 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
@@ -204,6 +205,7 @@ npm run dev:client:h5
 - 发布就绪快照说明：`docs/release-readiness-snapshot.md`
 - Phase 1 candidate dossier：`docs/phase1-candidate-dossier.md`
 - 发布健康度聚合说明：`docs/release-health-summary.md`
+- 最近候选包发布健康趋势基线：`docs/release-health-trend-baseline.md`
 - 运营/发布入口仓库地图：`docs/operational-entry-point-repo-map.md`
 - 仓库变更风险分级验证矩阵：`docs/verification-matrix.md`
 - PR 最小验证速查表（按常见改动类型选最小必跑验证 + 可选诊断）：`docs/verification-matrix.md#contributor-quick-reference`
