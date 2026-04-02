@@ -61,10 +61,28 @@ test("flags release packaging and observability diagnostics without inventing ne
 });
 
 test("keeps unmatched paths visible so humans can widen the plan", () => {
-  const plan = inferValidationPlan(["unknown/path.txt", "scripts/minimal-validation-plan.ts"]);
+  const plan = inferValidationPlan(["unknown/path.txt"]);
 
   assert.deepEqual(plan.matchedSurfaces.map((surface) => surface.id), []);
-  assert.deepEqual(plan.unmatchedPaths, ["scripts/minimal-validation-plan.ts", "unknown/path.txt"]);
+  assert.deepEqual(plan.unmatchedPaths, ["unknown/path.txt"]);
   assert.ok(plan.humanOverrides.some((entry) => entry.includes("did not match a maintained surface")));
-  assert.match(renderValidationPlan(plan), /Unmatched paths:/);
+  assert.match(renderValidationPlan(plan), /### Unmatched paths/);
+});
+
+test("renders markdown output that is ready for PR comments", () => {
+  const plan = inferValidationPlan([
+    "apps/server/src/index.ts",
+    "docs/verification-matrix.md"
+  ]);
+
+  const rendered = renderValidationPlan(plan, { comparisonLabel: "origin/main...HEAD" });
+
+  assert.match(rendered, /^## Recommended Minimal Validation Plan/m);
+  assert.match(rendered, /Comparison: `origin\/main\.\.\.HEAD`/);
+  assert.match(rendered, /### Changed surfaces/);
+  assert.match(rendered, /- \*\*Docs or process guidance\*\*:/);
+  assert.match(rendered, /### Required checks/);
+  assert.match(rendered, /- \[ \] `npm run typecheck:server`/);
+  assert.match(rendered, /Required because: Server runtime/);
+  assert.match(rendered, /### Reviewer notes/);
 });
