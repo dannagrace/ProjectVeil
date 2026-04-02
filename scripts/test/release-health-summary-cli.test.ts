@@ -185,6 +185,9 @@ test("release:health:summary accepts candidate readiness dashboard trend inputs"
   const releaseGateSummaryPath = path.join(workspace, "release-gate-summary-pass.json");
   const dashboardPath = path.join(workspace, "release-readiness-dashboard.json");
   const previousDashboardPath = path.join(workspace, "release-readiness-dashboard-prev.json");
+  const ciTrendSummaryPath = path.join(workspace, "ci-trend-summary-pass.json");
+  const coverageSummaryPath = path.join(workspace, "summary.json");
+  const syncGovernancePath = path.join(workspace, "sync-governance-pass.json");
   const outputPath = path.join(workspace, "release-health-summary.json");
   const markdownOutputPath = path.join(workspace, "release-health-summary.md");
 
@@ -205,12 +208,38 @@ test("release:health:summary accepts candidate readiness dashboard trend inputs"
     })
   );
   writeJson(previousDashboardPath, createDashboard({ decision: "ready", candidateRevision: "prev9876" }));
+  writeJson(ciTrendSummaryPath, {
+    summary: { overallStatus: "passed", totalFindings: 0, newFindings: 0, ongoingFindings: 0, recoveredFindings: 0 },
+    runtime: { findings: [] },
+    releaseGate: { findings: [] }
+  });
+  writeJson(coverageSummaryPath, [
+    {
+      scope: "shared",
+      lineThreshold: 90,
+      branchThreshold: 70,
+      functionThreshold: 90,
+      metrics: { lines: 95, branches: 80, functions: 96 },
+      failures: []
+    }
+  ]);
+  writeJson(syncGovernancePath, {
+    execution: { status: "passed" },
+    summary: { passed: 2, failed: 0, skipped: 0 },
+    scenarios: [{ id: "room-push-redaction", status: "passed" }]
+  });
 
   const result = runReleaseHealthSummary([
     "--release-readiness",
     releaseReadinessPath,
     "--release-gate-summary",
     releaseGateSummaryPath,
+    "--ci-trend-summary",
+    ciTrendSummaryPath,
+    "--coverage-summary",
+    coverageSummaryPath,
+    "--sync-governance",
+    syncGovernancePath,
     "--release-readiness-dashboard",
     dashboardPath,
     "--previous-release-readiness-dashboard",
@@ -226,7 +255,22 @@ test("release:health:summary accepts candidate readiness dashboard trend inputs"
     summary: { status: string; warningSignalIds: string[] };
     signals: Array<{ id: string; summary: string }>;
   };
+  const markdown = fs.readFileSync(markdownOutputPath, "utf8");
   assert.equal(report.summary.status, "warning");
   assert.equal(report.summary.warningSignalIds.includes("readiness-trend"), true);
   assert.match(report.signals.find((signal) => signal.id === "readiness-trend")?.summary ?? "", /regressed from ready/);
+  assert.match(markdown, /### Warnings \(1\)/);
+  assert.match(markdown, /\*\*Candidate readiness trend\*\*: Candidate readiness regressed from ready at prev9876 to blocked at cur1234\./);
+  assert.match(
+    markdown,
+    /Next step: Open `.*release-readiness-dashboard\.json` and `.*release-readiness-dashboard-prev\.json` to compare the candidate blockers or pending checks before advancing the next revision\./
+  );
+  assert.match(
+    markdown,
+    /Artifacts: `.*release-readiness-dashboard\.json`, `.*release-readiness-dashboard-prev\.json`/
+  );
+  assert.match(markdown, /### Candidate readiness trend/);
+  assert.match(markdown, /- Summary: Candidate readiness regressed from ready at prev9876 to blocked at cur1234\./);
+  assert.match(markdown, /current=cur1234:blocked/);
+  assert.match(markdown, /previous=prev9876:ready/);
 });
