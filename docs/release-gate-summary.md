@@ -57,6 +57,17 @@ If you do not pass output flags, the script writes:
 - `artifacts/release-readiness/release-gate-summary-<short-sha>.json`
 - `artifacts/release-readiness/release-gate-summary-<short-sha>.md`
 
+## Triage Summary
+
+The JSON and Markdown outputs now include a normalized `triage` section for operator handoff:
+
+- `triage.blockers`
+  - one entry per failing required release-gate dimension, with `impactedSurface`, `summary`, `nextStep`, and artifact paths
+- `triage.warnings`
+  - advisory items that should be reviewed before promotion, such as elevated config-change risk
+
+Use this first when CI is red or when a PR comment needs one concise release/ops answer.
+
 ## Gate Rules
 
 The summary contains five release dimensions:

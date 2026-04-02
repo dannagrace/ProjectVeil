@@ -198,6 +198,22 @@ interface ReleaseSurfaceContract {
   evidence: ReleaseSurfaceEvidenceItem[];
 }
 
+interface ReleaseGateArtifactReference {
+  label: string;
+  path: string;
+}
+
+interface ReleaseGateTriageEntry {
+  id: string;
+  severity: "blocker" | "warning";
+  gateId: GateResult["id"] | "config-change-risk";
+  title: string;
+  impactedSurface: TargetSurface;
+  summary: string;
+  nextStep: string;
+  artifacts: ReleaseGateArtifactReference[];
+}
+
 interface ReconnectSoakArtifact {
   generatedAt?: string;
   revision?: {
@@ -316,6 +332,10 @@ interface ReleaseGateSummaryReport {
     wechatArtifactsDir?: string;
     manualEvidenceLedgerPath?: string;
     configCenterLibraryPath?: string;
+  };
+  triage: {
+    blockers: ReleaseGateTriageEntry[];
+    warnings: ReleaseGateTriageEntry[];
   };
   gates: GateResult[];
   releaseSurface: ReleaseSurfaceContract;
@@ -671,6 +691,36 @@ function missingGate(
     summary,
     failures
   };
+}
+
+function createTriageArtifactReference(label: string, filePath: string | undefined): ReleaseGateArtifactReference[] {
+  if (!filePath) {
+    return [];
+  }
+  return [{ label, path: filePath }];
+}
+
+function buildGateTriageArtifacts(
+  gate: GateResult,
+  inputs: ReleaseGateSummaryReport["inputs"]
+): ReleaseGateArtifactReference[] {
+  const artifacts = [
+    ...createTriageArtifactReference(gate.label, gate.source?.path),
+    ...(gate.id === "phase1-evidence-consistency"
+      ? [
+          ...createTriageArtifactReference("Release readiness snapshot", inputs.snapshotPath),
+          ...createTriageArtifactReference("H5 packaged RC smoke", inputs.h5SmokePath),
+          ...createTriageArtifactReference("Multiplayer reconnect soak", inputs.reconnectSoakPath),
+          ...createTriageArtifactReference(
+            "WeChat release evidence",
+            inputs.wechatCandidateSummaryPath ?? inputs.wechatRcValidationPath ?? inputs.wechatSmokeReportPath
+          ),
+          ...createTriageArtifactReference("Manual evidence owner ledger", inputs.manualEvidenceLedgerPath)
+        ]
+      : [])
+  ];
+
+  return artifacts.filter((artifact, index, entries) => entries.findIndex((entry) => entry.path === artifact.path) === index);
 }
 
 export function evaluateReleaseReadinessGate(
@@ -1590,6 +1640,75 @@ export function buildConfigChangeRiskSummary(configCenterLibraryPath: string | u
   };
 }
 
+function buildReleaseGateNextStep(gate: GateResult, targetSurface: TargetSurface): string {
+  const sourceInstruction = gate.source?.path ? `Open \`${relativeReportPath(gate.source.path)}\`` : "Open the failing release evidence";
+
+  if (gate.id === "release-readiness") {
+    return `${sourceInstruction}, clear the failing or pending readiness checks, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+  }
+  if (gate.id === "h5-release-candidate-smoke") {
+    return `${sourceInstruction}, rerun \`npm run smoke:client:release-candidate\`, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+  }
+  if (gate.id === "multiplayer-reconnect-soak") {
+    return `${sourceInstruction}, rerun \`npm run stress:rooms:reconnect-soak\`, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+  }
+  if (gate.id === "wechat-release") {
+    const command =
+      gate.source?.kind === "wechat-smoke-report"
+        ? "npm run smoke:wechat-release -- --check"
+        : "npm run validate:wechat-rc";
+    return `${sourceInstruction}, rerun \`${command}\` to refresh the WeChat evidence, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+  }
+  return `${sourceInstruction}, refresh the release evidence for one candidate revision, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+}
+
+function buildReleaseGateTriage(
+  gates: GateResult[],
+  inputs: ReleaseGateSummaryReport["inputs"],
+  targetSurface: TargetSurface,
+  configChangeRisk: ConfigChangeRiskSummary
+): ReleaseGateSummaryReport["triage"] {
+  const blockers = gates
+    .filter((gate) => gate.required && gate.status === "failed")
+    .map((gate) => ({
+      id: `gate:${gate.id}`,
+      severity: "blocker" as const,
+      gateId: gate.id,
+      title: gate.label,
+      impactedSurface: targetSurface,
+      summary: `${gate.label} blocked ${targetSurface}: ${gate.failures[0] ?? gate.summary}`,
+      nextStep: buildReleaseGateNextStep(gate, targetSurface),
+      artifacts: buildGateTriageArtifacts(gate, inputs)
+    }));
+
+  const warnings: ReleaseGateTriageEntry[] =
+    configChangeRisk.status === "available" &&
+    (configChangeRisk.overallRisk === "medium" ||
+      configChangeRisk.overallRisk === "high" ||
+      configChangeRisk.recommendCanary === true ||
+      configChangeRisk.recommendRehearsal === true)
+      ? [
+          {
+            id: "config-change-risk:warning",
+            severity: "warning",
+            gateId: "config-change-risk",
+            title: "Config change risk summary",
+            impactedSurface: targetSurface,
+            summary: `Config changes are ${configChangeRisk.overallRisk?.toUpperCase() ?? "UNKNOWN"} risk for ${targetSurface} and stay advisory until the suggested validation is complete.`,
+            nextStep: `Open \`${relativeReportPath(configChangeRisk.source?.path ?? DEFAULT_CONFIG_CENTER_LIBRARY_PATH)}\` and run ${(
+              configChangeRisk.suggestedValidationActions ?? []
+            )
+              .slice(0, 3)
+              .map((command) => `\`${command}\``)
+              .join(", ")} before promotion.`,
+            artifacts: createTriageArtifactReference("Config publish audit", configChangeRisk.source?.path)
+          }
+        ]
+      : [];
+
+  return { blockers, warnings };
+}
+
 export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision): ReleaseGateSummaryReport {
   const snapshotPath = resolveSnapshotPath(args);
   const h5SmokePath = resolveH5SmokePath(args);
@@ -1626,6 +1745,18 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     )
   ];
   const failedGates = gates.filter((gate) => gate.required && gate.status === "failed");
+  const inputs = {
+    ...(snapshotPath ? { snapshotPath } : {}),
+    ...(h5SmokePath ? { h5SmokePath } : {}),
+    ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
+    ...(wechatRcValidationPath ? { wechatRcValidationPath } : {}),
+    ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
+    ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
+    ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
+    ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
+    ...(configCenterLibraryPath ? { configCenterLibraryPath } : {})
+  };
+  const configChangeRisk = buildConfigChangeRiskSummary(configCenterLibraryPath);
 
   return {
     schemaVersion: 1,
@@ -1639,20 +1770,11 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
       failedGates: failedGates.length,
       failedGateIds: failedGates.map((gate) => gate.id)
     },
-    inputs: {
-      ...(snapshotPath ? { snapshotPath } : {}),
-      ...(h5SmokePath ? { h5SmokePath } : {}),
-      ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
-      ...(wechatRcValidationPath ? { wechatRcValidationPath } : {}),
-      ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
-      ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
-      ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
-      ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
-      ...(configCenterLibraryPath ? { configCenterLibraryPath } : {})
-    },
+    inputs,
+    triage: buildReleaseGateTriage(gates, inputs, args.targetSurface, configChangeRisk),
     gates,
     releaseSurface,
-    configChangeRisk: buildConfigChangeRiskSummary(configCenterLibraryPath)
+    configChangeRisk
   };
 }
 
@@ -1681,6 +1803,37 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
   lines.push(`- WeChat artifacts dir: \`${report.inputs.wechatArtifactsDir ? relativeReportPath(report.inputs.wechatArtifactsDir) : "<missing>"}\``);
   lines.push(`- Manual evidence ledger: \`${report.inputs.manualEvidenceLedgerPath ? relativeReportPath(report.inputs.manualEvidenceLedgerPath) : "<missing>"}\``);
   lines.push(`- Config audit: \`${report.inputs.configCenterLibraryPath ? relativeReportPath(report.inputs.configCenterLibraryPath) : "<missing>"}\``);
+  lines.push("");
+
+  lines.push("## Triage Summary");
+  lines.push("");
+  lines.push(`### Blockers (${report.triage.blockers.length})`);
+  lines.push("");
+  if (report.triage.blockers.length === 0) {
+    lines.push("- None.");
+  } else {
+    for (const entry of report.triage.blockers) {
+      lines.push(`- **${entry.title}** (${entry.impactedSurface}): ${entry.summary}`);
+      lines.push(`  Next step: ${entry.nextStep}`);
+      if (entry.artifacts.length > 0) {
+        lines.push(`  Artifacts: ${entry.artifacts.map((artifact) => `\`${relativeReportPath(artifact.path)}\``).join(", ")}`);
+      }
+    }
+  }
+  lines.push("");
+  lines.push(`### Warnings (${report.triage.warnings.length})`);
+  lines.push("");
+  if (report.triage.warnings.length === 0) {
+    lines.push("- None.");
+  } else {
+    for (const entry of report.triage.warnings) {
+      lines.push(`- **${entry.title}** (${entry.impactedSurface}): ${entry.summary}`);
+      lines.push(`  Next step: ${entry.nextStep}`);
+      if (entry.artifacts.length > 0) {
+        lines.push(`  Artifacts: ${entry.artifacts.map((artifact) => `\`${relativeReportPath(artifact.path)}\``).join(", ")}`);
+      }
+    }
+  }
   lines.push("");
 
   lines.push("## Target Surface Contract");

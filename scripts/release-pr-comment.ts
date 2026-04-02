@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   renderPrCommentHealthSignal,
+  renderReviewerFacingMarkdownEntry,
   type ReviewerFacingSignal,
   type ReviewerFacingTriageEntry
 } from "./release-reporting-contract.ts";
@@ -33,6 +34,22 @@ interface ReleaseGateSummaryReport {
     summary: string;
     failures?: string[];
   }>;
+  triage: {
+    blockers: Array<{
+      title: string;
+      impactedSurface: "h5" | "wechat";
+      summary: string;
+      nextStep: string;
+      artifacts: Array<{ path: string }>;
+    }>;
+    warnings: Array<{
+      title: string;
+      impactedSurface: "h5" | "wechat";
+      summary: string;
+      nextStep: string;
+      artifacts: Array<{ path: string }>;
+    }>;
+  };
 }
 
 interface ReleaseHealthSummaryReport {
@@ -147,6 +164,41 @@ export function renderPrComment(
     `- Release readiness: **${releaseGateReport.summary.status.toUpperCase()}** (${releaseGateReport.summary.passedGates}/${releaseGateReport.summary.totalGates} gates passing)`,
     `- Release health: **${releaseHealthReport.summary.status.toUpperCase()}** (${releaseHealthReport.summary.blockerCount} blocker, ${releaseHealthReport.summary.warningCount} warning, ${releaseHealthReport.summary.infoCount} info)`,
     ...(runUrl ? [`- CI run: ${runUrl}`] : []),
+    "",
+    "### Triage",
+    "",
+    ...renderReviewerFacingMarkdownEntry(
+      "Release blockers",
+      releaseGateReport.triage.blockers.length === 0
+        ? "No blocking release-gate triage items."
+        : `${releaseGateReport.triage.blockers.length} blocking release-gate item(s) need operator follow-up.`,
+      {
+        status: releaseGateReport.triage.blockers.length === 0 ? "pass" : "fail",
+        nextStep: releaseGateReport.triage.blockers[0]?.nextStep,
+        artifacts: releaseGateReport.triage.blockers[0]?.artifacts
+      }
+    ),
+    ...(releaseGateReport.triage.blockers.length === 0
+      ? []
+      : releaseGateReport.triage.blockers.map(
+          (entry) => `  - **${entry.title}** (${entry.impactedSurface}): ${entry.summary}`
+        )),
+    ...renderReviewerFacingMarkdownEntry(
+      "Release warnings",
+      releaseGateReport.triage.warnings.length === 0
+        ? "No advisory release-gate warnings."
+        : `${releaseGateReport.triage.warnings.length} advisory release-gate warning(s) are worth checking before promotion.`,
+      {
+        status: releaseGateReport.triage.warnings.length === 0 ? "pass" : "warn",
+        nextStep: releaseGateReport.triage.warnings[0]?.nextStep,
+        artifacts: releaseGateReport.triage.warnings[0]?.artifacts
+      }
+    ),
+    ...(releaseGateReport.triage.warnings.length === 0
+      ? []
+      : releaseGateReport.triage.warnings.map(
+          (entry) => `  - **${entry.title}** (${entry.impactedSurface}): ${entry.summary}`
+        )),
     "",
     "### Release Readiness",
     "",

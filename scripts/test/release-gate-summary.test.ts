@@ -241,6 +241,9 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
 
   assert.equal(report.summary.status, "passed");
   assert.deepEqual(report.summary.failedGateIds, []);
+  assert.equal(report.triage.blockers.length, 0);
+  assert.equal(report.triage.warnings.length, 1);
+  assert.match(report.triage.warnings[0]?.summary ?? "", /HIGH risk/);
   assert.equal(report.summary.totalGates, 5);
   assert.equal(report.gates.every((gate) => gate.status === "passed"), true);
   assert.equal(report.gates[2]?.id, "multiplayer-reconnect-soak");
@@ -251,6 +254,9 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(report.configChangeRisk.summary, /最高风险 HIGH/);
   assert.match(renderMarkdown(report), /Overall status: \*\*PASSED\*\*/);
   assert.match(renderMarkdown(report), /## Selected Inputs/);
+  assert.match(renderMarkdown(report), /## Triage Summary/);
+  assert.match(renderMarkdown(report), /### Warnings \(1\)/);
+  assert.match(renderMarkdown(report), /Config changes are HIGH risk for wechat/);
   assert.match(renderMarkdown(report), /release-readiness-pass\.json/);
   assert.match(renderMarkdown(report), /colyseus-reconnect-soak-summary-pass\.json/);
   assert.match(renderMarkdown(report), /codex\.wechat\.release-candidate-summary\.json/);
@@ -376,9 +382,17 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
 
   assert.equal(report.summary.status, "failed");
   assert.deepEqual(report.summary.failedGateIds, ["release-readiness", "wechat-release"]);
+  assert.deepEqual(
+    report.triage.blockers.map((entry) => entry.gateId),
+    ["release-readiness", "wechat-release"]
+  );
+  assert.match(report.triage.blockers[0]?.nextStep ?? "", /release:gate:summary -- --target-surface wechat/);
+  assert.match(report.triage.blockers[1]?.summary ?? "", /blocked wechat/i);
   assert.match(report.gates[0]?.summary ?? "", /not release-ready/);
   assert.match(report.gates[3]?.summary ?? "", /blocked/i);
   assert.match(report.gates[3]?.failures.join("\n") ?? "", /blocked pending device evidence|WeChat smoke case is blocked/);
+  assert.match(renderMarkdown(report), /### Blockers \(2\)/);
+  assert.match(renderMarkdown(report), /Release readiness snapshot blocked wechat/);
   assert.match(renderMarkdown(report), /### Manual Evidence Ownership/);
   assert.match(renderMarkdown(report), /No required manual evidence items are attached to the target surface/);
 });

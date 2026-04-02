@@ -41,7 +41,30 @@ function createReleaseGateReport() {
         summary: "WeChat validation failed.",
         failures: ["WeChat smoke case is still pending: login-flow."]
       }
-    ]
+    ],
+    triage: {
+      blockers: [
+        {
+          title: "WeChat release validation",
+          impactedSurface: "wechat" as const,
+          summary: "WeChat release validation blocked wechat: WeChat smoke case is still pending: login-flow.",
+          nextStep:
+            "Open `artifacts/wechat-release/codex.wechat.smoke-report.json`, rerun `npm run smoke:wechat-release -- --check` to refresh the WeChat evidence, then rerun `npm run release:gate:summary -- --target-surface wechat`.",
+          artifacts: [{ path: "artifacts/wechat-release/codex.wechat.smoke-report.json" }]
+        }
+      ],
+      warnings: [
+        {
+          title: "Config change risk summary",
+          impactedSurface: "wechat" as const,
+          summary:
+            "Config changes are HIGH risk for wechat and stay advisory until the suggested validation is complete.",
+          nextStep:
+            "Open `configs/.config-center-library.json` and run `npm run release:readiness:snapshot`, `npm run smoke:client:release-candidate`, `npm run validate:battle` before promotion.",
+          artifacts: [{ path: "configs/.config-center-library.json" }]
+        }
+      ]
+    }
   };
 }
 
@@ -138,6 +161,15 @@ test("renderPrComment combines readiness and non-duplicative health sections", (
   );
 
   assert.match(markdown, /## Release Automation Summary/);
+  assert.match(markdown, /### Triage/);
+  assert.match(markdown, /\*\*Release blockers\*\*: `FAIL` 1 blocking release-gate item\(s\) need operator follow-up\./);
+  assert.match(
+    markdown,
+    /Next step: Open `artifacts\/wechat-release\/codex\.wechat\.smoke-report\.json`, rerun `npm run smoke:wechat-release -- --check` to refresh the WeChat evidence, then rerun `npm run release:gate:summary -- --target-surface wechat`\./
+  );
+  assert.match(markdown, /Artifacts: `artifacts\/wechat-release\/codex\.wechat\.smoke-report\.json`/);
+  assert.match(markdown, /\*\*WeChat release validation\*\* \(wechat\): WeChat release validation blocked wechat/);
+  assert.match(markdown, /\*\*Release warnings\*\*: `WARN` 1 advisory release-gate warning\(s\) are worth checking before promotion\./);
   assert.match(markdown, /Release readiness: \*\*FAILED\*\* \(2\/3 gates passing\)/);
   assert.match(markdown, /### Release Readiness/);
   assert.match(markdown, /WeChat smoke case is still pending: login-flow\./);
