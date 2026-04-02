@@ -20,6 +20,7 @@ Use this as the maintainer-facing map for the repository's existing operational 
 | Aggregate release gates for one candidate | `npm run release:gate:summary` | [`docs/release-gate-summary.md`](./release-gate-summary.md) |
 | Aggregate top-level release health and triage | `npm run release:health:summary` | [`docs/release-health-summary.md`](./release-health-summary.md), [`docs/release-readiness-trend-troubleshooting.md`](./release-readiness-trend-troubleshooting.md) |
 | Assemble same-revision release evidence | [`docs/same-revision-release-evidence-runbook.md`](./same-revision-release-evidence-runbook.md) | [`docs/same-revision-release-evidence-runbook.md`](./same-revision-release-evidence-runbook.md) |
+| Track manual release evidence ownership for one candidate | Copy [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) into `artifacts/release-readiness/` or the release PR | [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md), [`docs/same-revision-release-evidence-runbook.md`](./same-revision-release-evidence-runbook.md) |
 | Review the Phase 1 candidate dossier or rehearsal flow | `npm run release:phase1:candidate-dossier` / `npm run release:phase1:candidate-rehearsal` | [`docs/phase1-candidate-dossier.md`](./phase1-candidate-dossier.md), [`docs/phase1-candidate-rehearsal.md`](./phase1-candidate-rehearsal.md) |
 
 ## Cocos And WeChat Delivery

@@ -176,8 +176,8 @@ Copy [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](
 Freshness check:
 
 - confirm every required manual evidence item has one row
-- confirm `owner`, `status`, `target revision`, `recorded at`, and `artifact path` agree with the underlying artifact
-- confirm any row still marked `pending` or `hold` explains the next follow-up clearly enough for handoff
+- confirm `candidate`, `revision`, `owner`, `status`, `last updated`, and `artifact path` agree with the underlying artifact
+- confirm any row still marked `pending` or `in-review` explains the next follow-up clearly enough for handoff
 
 8. Run the release gate summary for the same release surface and artifact packet.
 
@@ -264,7 +264,7 @@ Release is `go` only when all of the following are true:
 - the WeChat smoke report has no required case in `failed`, `blocked`, or `pending`
 - the Cocos RC bundle is generated for the same candidate and revision and includes the latest checklist/blocker files
 - the runtime observability sign-off is recorded for the same revision and environment
-- the manual evidence owner ledger shows no required row still in `pending` or `hold` without an accepted release decision
+- the manual evidence owner ledger shows no required row still in `pending` or `in-review` without an accepted release decision
 - the final readiness dashboard does not report revision mismatch, missing revision metadata, or stale evidence
 
 Release is `no-go` when any of the following happens:
