@@ -259,6 +259,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(renderMarkdown(report), /Config changes are HIGH risk for wechat/);
   assert.match(renderMarkdown(report), /release-readiness-pass\.json/);
   assert.match(renderMarkdown(report), /colyseus-reconnect-soak-summary-pass\.json/);
+  assert.match(renderMarkdown(report), /Reconnect soak evidence is present and passing for this candidate/);
   assert.match(renderMarkdown(report), /codex\.wechat\.release-candidate-summary\.json/);
   assert.match(renderMarkdown(report), /manual-release-evidence-owner-ledger-abc123\.md/);
   assert.match(renderMarkdown(report), /### Manual Evidence Ownership/);
@@ -266,6 +267,122 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(renderMarkdown(report), /artifact=artifacts\/wechat-release\/device-runtime-review\.json/);
   assert.match(renderMarkdown(report), /Config Change Risk Summary/);
   assert.match(renderMarkdown(report), /Recommend rehearsal: yes/);
+});
+
+test("buildReleaseGateSummaryReport marks reconnect soak evidence stale when the artifact is old for the current candidate", () => {
+  const workspace = createTempWorkspace();
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-stale.json");
+
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-03-20T08:33:00.000Z",
+    candidate: {
+      name: "phase1-rc",
+      revision: "abc123"
+    },
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 384,
+      invariantChecks: 2304
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+
+  const report = buildReleaseGateSummaryReport(
+    {
+      reconnectSoakPath,
+      targetSurface: "h5"
+    },
+    {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    }
+  );
+
+  const reconnectEvidence = report.releaseSurface.evidence.find((entry) => entry.id === "multiplayer-reconnect-soak");
+  assert.equal(reconnectEvidence?.summary, "Reconnect soak evidence is stale for this candidate.");
+  assert.equal(reconnectEvidence?.freshness, "stale");
+});
+
+test("buildReleaseGateSummaryReport marks reconnect soak evidence failing when the candidate verdict failed", () => {
+  const workspace = createTempWorkspace();
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-fail.json");
+
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-04-02T08:33:00.000Z",
+    candidate: {
+      name: "phase1-rc",
+      revision: "abc123"
+    },
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "failed",
+    verdict: {
+      status: "failed",
+      summary: "Reconnect soak evidence is failing for this candidate revision."
+    },
+    summary: {
+      failedScenarios: 1,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 384,
+      invariantChecks: 2304
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 1,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+
+  const report = buildReleaseGateSummaryReport(
+    {
+      reconnectSoakPath,
+      targetSurface: "h5"
+    },
+    {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    }
+  );
+
+  const reconnectEvidence = report.releaseSurface.evidence.find((entry) => entry.id === "multiplayer-reconnect-soak");
+  const reconnectGate = report.gates.find((entry) => entry.id === "multiplayer-reconnect-soak");
+  assert.equal(reconnectEvidence?.summary, "Reconnect soak evidence is failing for this candidate.");
+  assert.equal(reconnectEvidence?.status, "failed");
+  assert.match(reconnectGate?.summary ?? "", /Reconnect soak gate failed/);
 });
 
 test("buildReleaseGateSummaryReport reports blocked WeChat device evidence distinctly from failures", () => {
