@@ -10,6 +10,7 @@ Related references:
 - [`docs/release-readiness-snapshot.md`](./release-readiness-snapshot.md)
 - [`docs/release-readiness-dashboard.md`](./release-readiness-dashboard.md)
 - [`docs/cocos-release-evidence-template.md`](./cocos-release-evidence-template.md)
+- [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md)
 - [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md)
 - [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md)
 
@@ -31,6 +32,7 @@ These are the minimum artifacts for a same-revision release call:
 | WeChat packaged RC smoke | `npm run smoke:wechat-release -- --artifacts-dir artifacts/wechat-release --check --expected-revision <git-sha>` | `artifacts/wechat-release/codex.wechat.smoke-report.json` |
 | Cocos / WeChat RC bundle | `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report artifacts/wechat-release/codex.wechat.smoke-report.json --release-readiness-snapshot <snapshot-json>` | `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.json` plus paired `.md`, snapshot, checklist, and blockers files |
 | Runtime observability sign-off | Manual review using `docs/wechat-runtime-observability-signoff.md` | `artifacts/wechat-release/runtime-observability-signoff.json` or equivalent reviewer artifact |
+| Manual evidence owner ledger | Copy `docs/release-evidence/manual-release-evidence-owner-ledger.template.md` for the candidate and update it as manual evidence lands | `artifacts/release-readiness/manual-release-evidence-owner-ledger-<candidate>-<short-sha>.md` or release PR table |
 | Final same-revision assembly check | `npm run release:readiness:dashboard -- --server-url http://127.0.0.1:2567 --wechat-artifacts-dir artifacts/wechat-release --candidate-revision <git-sha>` | `artifacts/release-readiness/release-readiness-dashboard-*.json` plus `.md` |
 
 If the candidate is missing any item above, the release call is still incomplete even if individual scripts passed earlier.
@@ -108,7 +110,17 @@ Freshness check:
 - confirm the captured environment is the release environment you are actually calling from
 - confirm any blockers or follow-ups are also reflected in the RC checklist or blocker register
 
-6. Run the final assembly check that enforces same-revision consistency.
+6. Update the manual evidence owner ledger for the same candidate revision.
+
+Copy [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) into the candidate artifact set or PR body and keep one row for each required manual sign-off.
+
+Freshness check:
+
+- confirm every required manual evidence item has one row
+- confirm `owner`, `status`, `target revision`, `recorded at`, and `artifact path` agree with the underlying artifact
+- confirm any row still marked `pending` or `hold` explains the next follow-up clearly enough for handoff
+
+7. Run the final assembly check that enforces same-revision consistency.
 
 ```bash
 npm run release:readiness:dashboard -- \
@@ -133,6 +145,7 @@ Before making the release call, verify this exact packet exists:
 - one RC checklist Markdown file for `<candidate-name>` and `<git-sha>`
 - one RC blocker Markdown file for `<candidate-name>` and `<git-sha>`
 - one runtime observability sign-off artifact for `<git-sha>`
+- one manual evidence owner ledger Markdown file or PR table for `<candidate-name>` and `<git-sha>`
 - one release readiness dashboard JSON or Markdown for `<git-sha>`
 
 If two files for the "same" evidence disagree on revision or timestamp window, treat the packet as invalid and refresh the stale file instead of choosing by hand.
@@ -146,6 +159,7 @@ Release is `go` only when all of the following are true:
 - the WeChat smoke report has no required case in `failed`, `blocked`, or `pending`
 - the Cocos RC bundle is generated for the same candidate and revision and includes the latest checklist/blocker files
 - the runtime observability sign-off is recorded for the same revision and environment
+- the manual evidence owner ledger shows no required row still in `pending` or `hold` without an accepted release decision
 - the final readiness dashboard does not report revision mismatch, missing revision metadata, or stale evidence
 
 Release is `no-go` when any of the following happens:

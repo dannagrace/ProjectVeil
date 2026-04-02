@@ -13,6 +13,7 @@ assignees: ""
 - Evidence reviewed:
 - Revision or artifact date:
 - Links:
+- Manual evidence owner ledger:
 
 ## Observed gap
 <!-- What operational, release, or readiness gap remains open after reviewing the current evidence? -->
