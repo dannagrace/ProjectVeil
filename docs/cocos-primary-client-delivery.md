@@ -15,6 +15,8 @@ The command exercises the Cocos `VeilRoot` launch path in CI-friendly node-based
 - lobby/bootstrap environment issues
 - stale or unavailable auth session bootstrap
 - room join or gameplay-state regressions after lobby entry
+- reconnect / cached-snapshot restore / authoritative convergence drift
+- HUD action shell or first-battle command-panel regressions that would leave the primary runtime non-actionable
 
 ## Automated Delivery Audit
 
