@@ -1,6 +1,6 @@
 ---
 name: ProjectVeil Ops Readiness
-about: Create an ops/readiness follow-up issue with current evidence, the observed gap, and the smallest next slice.
+about: Create an ops/readiness or maturity-gap follow-up issue with current evidence, the observed gap, why it matters, and the smallest next slice.
 title: "readiness: "
 labels: ""
 assignees: ""
@@ -18,6 +18,9 @@ assignees: ""
 ## Observed gap
 <!-- What operational, release, or readiness gap remains open after reviewing the current evidence? -->
 
+## Why this matters
+<!-- Explain the release-confidence risk, operator pain, or contributor-throughput cost if this gap stays open. -->
+
 ## Owner
 - Team or directly responsible person:
 - Supporting reviewers or operators:
@@ -32,4 +35,4 @@ assignees: ""
 - Affected area:
 - Environment or branch:
 - Related issues or docs:
-- Constraints or dependencies:
+- Dependencies or sequencing notes:
