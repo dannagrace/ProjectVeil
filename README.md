@@ -202,6 +202,7 @@ npm run dev:client:h5
 - 发布健康度聚合说明：`docs/release-health-summary.md`
 - 运营/发布入口仓库地图：`docs/operational-entry-point-repo-map.md`
 - 仓库变更风险分级验证矩阵：`docs/verification-matrix.md`
+- PR 最小验证速查表（按常见改动类型选最小必跑验证 + 可选诊断）：`docs/verification-matrix.md#contributor-quick-reference`
 - 多人同步治理矩阵说明：`docs/sync-governance-matrix.md`
 - 共享 contract 快照说明：`docs/shared-contract-snapshots.md`
 - Codex automation 分支审计与清理 runbook：`docs/codex-automation-branch-maintenance.md`

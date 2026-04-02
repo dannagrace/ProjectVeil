@@ -2,6 +2,22 @@
 
 Use this matrix before opening a PR to pick the smallest verification set that still matches the risk of your change. It is intentionally scoped to the repo's current scripts, workflows, and release-readiness surfaces instead of generic "run everything" advice.
 
+## Contributor Quick Reference
+
+Start here when you already know the shape of your change and want the minimum expected verification before opening a PR. Treat the `Minimum required` column as the floor, and use `Optional diagnostics` when the change broadens risk or when the required check fails and you need more signal.
+
+| Change type | Typical examples | Minimum required | Optional diagnostics |
+| --- | --- | --- | --- |
+| Docs-only or runbook-only | `README.md`, `docs/**`, Markdown templates, contributor guidance | Review the rendered Markdown and verify every referenced path and command still exists. Run `npm run validate:quickstart` only if setup or quickstart guidance changed. | Re-run any edited setup command exactly as documented when the wording changed and the command is practical in your environment. |
+| Server admin/auth endpoint change | `apps/server/**` routes, auth readiness, admin/runtime APIs | `npm run typecheck:server` | `npm run validate:quickstart` when local-dev boot, auth readiness, or server startup expectations changed. Add the nearest targeted `npm test` coverage when the change spans multiple server subsystems. |
+| Shared gameplay logic or contracts | `packages/shared/**`, shared payloads, contract snapshots | `npm run typecheck:shared && npm run test:shared` | `npm run test:contracts` when payloads, snapshots, or client/server contract shapes changed. Escalate to the multiplayer checks below if both clients and server consume the new behavior. |
+| H5 debug shell or browser regression | `apps/client/**`, lobby flows, Playwright-backed H5 behavior | `npm run typecheck:client:h5 && npm run test:e2e:smoke` | `npm run test:e2e:h5:connectivity` when browser-to-server connectivity assumptions changed. |
+| Cocos primary client flow change | `apps/cocos-client/**`, WeChat export templates, release packaging scripts | `npm run typecheck:cocos && npm run check:wechat-build` | `npm run audit:cocos-primary-delivery -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir artifacts/wechat-release --expect-exported-runtime` when delivery metadata or exported runtime assumptions changed. |
+| Release/readiness tooling or artifact schema change | `.github/workflows/**`, `scripts/release-*.ts`, readiness summaries, gate artifacts | `npm run typecheck:ci` plus the nearest script-level test such as `npm run test:release-gate-summary`, `npm run test:release-health-summary`, or `npm run test:ci-trend-summary` | `npm run release:gate:summary` when gate output semantics, release evidence, or reviewer-facing artifact fields changed. |
+| Multiplayer or reconnect behavior | Shared sync, reconnect recovery, prediction correction, multiplayer Playwright coverage | `npm run test:e2e:multiplayer:smoke && npm run test:sync-governance:matrix` | `npm run test:e2e:multiplayer` for broader multiplayer regression coverage, or `npm run stress:rooms:reconnect-soak` when reconnect semantics or room recovery rules changed. |
+
+If a change fits more than one row, combine the minimum required commands from each matching row and prefer the higher-risk path when they conflict.
+
 ## Verification Tiers
 
 | Tier | Use when | Default expectation |
@@ -49,19 +65,5 @@ Use these as defaults when you are unsure:
 - Multiplayer/reconnect PR: `npm run test:e2e:multiplayer:smoke && npm run test:sync-governance:matrix`
 - WeChat/Cocos delivery PR: `npm run typecheck:cocos && npm run check:wechat-build`
 - CI/release gate PR: `npm run typecheck:ci` plus the nearest script test and any changed gate command
-
-## Quick Reference By Change Type
-
-Use this table when you already know the kind of change you made and want the minimum expected verification without re-reading the full matrix.
-
-| Change type | Typical examples | Minimum verification quick reference |
-| --- | --- | --- |
-| Docs-only | `README.md`, `docs/**`, Markdown templates, contributor guidance | Review the rendered Markdown, verify referenced paths and commands still exist, and run `npm run validate:quickstart` only if setup or quickstart guidance changed. |
-| Shared runtime logic or contracts | `packages/shared/**`, shared payloads, contract snapshots | `npm run typecheck:shared && npm run test:shared`; add `npm run test:contracts` when payloads or snapshots changed. |
-| Server/runtime change | `apps/server/**`, runtime APIs, auth, persistence flows | `npm run typecheck:server`; add the nearest targeted test coverage through `npm test` or `npm run test:coverage:ci` if the change spans multiple server subsystems; run `npm run validate:quickstart` when local-dev boot or setup behavior moved. |
-| H5 client flow | `apps/client/**`, lobby/browser flows, Playwright-backed H5 behavior | `npm run typecheck:client:h5 && npm run test:e2e:smoke`; add `npm run test:e2e:h5:connectivity` when browser-to-server connectivity assumptions changed. |
-| Multiplayer or reconnect behavior | Shared sync, reconnect recovery, prediction correction, multiplayer Playwright coverage | `npm run test:e2e:multiplayer:smoke && npm run test:sync-governance:matrix`; add `npm run test:e2e:multiplayer` or `npm run stress:rooms:reconnect-soak` when the change broadens multiplayer or reconnect risk. |
-| Release tooling or CI aggregation | `.github/workflows/**`, `scripts/release-*.ts`, readiness or gate summaries | `npm run typecheck:ci` plus the nearest script-level test such as `npm run test:release-gate-summary`, `npm run test:release-health-summary`, or `npm run test:ci-trend-summary`; add `npm run release:gate:summary` when gate output semantics changed. |
-| Cocos or WeChat delivery | `apps/cocos-client/**`, WeChat export templates, release packaging scripts | `npm run typecheck:cocos && npm run check:wechat-build`. |
 
 When in doubt, choose the next higher tier rather than inventing a new local checklist.
