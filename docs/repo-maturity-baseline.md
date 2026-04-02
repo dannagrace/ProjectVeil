@@ -48,7 +48,7 @@ These slices are intentionally small and low-dependency so they can become follo
 | Add a single backlog ledger for manual-release evidence owners | Makes pending manual checks visible without opening several templates or JSON examples. | Markdown tracker or JSON schema that records owner, revision, timestamp, and follow-up for runtime, WeChat, and presentation sign-off evidence. |
 | Document the minimum verification sets for common issue types | Helps contributors choose the smallest sufficient validation path before opening PRs. | Expand `docs/verification-matrix.md` or add a companion quick-reference for docs-only, runtime, release-tooling, and Cocos delivery changes. |
 | Add a repo map for operational entry points | Makes it faster to discover which scripts/docs correspond to release, readiness, persistence, and client delivery concerns. | Lightweight doc that groups the existing `package.json` commands and key docs by operational function. |
-| Add one issue template or checklist for ops/readiness follow-ups | Keeps future maturity-gap issues consistent and immediately actionable. | `.github/ISSUE_TEMPLATE` entry or Markdown template that requires current evidence, observed gap, owner, and smallest next slice. |
+| Add one issue template or checklist for ops/readiness follow-ups | Keeps future maturity-gap issues consistent and immediately actionable. | Use [`.github/ISSUE_TEMPLATE/projectveil-ops-readiness.md`](../.github/ISSUE_TEMPLATE/projectveil-ops-readiness.md) so issues always capture current evidence, candidate or revision context, owner, and the smallest next slice. |
 
 ## Recommended Backlog Order
 
@@ -56,7 +56,7 @@ These slices are intentionally small and low-dependency so they can become follo
 2. Manual evidence owner ledger
 3. Verification quick-reference for common issue types
 4. Operational entry-point repo map
-5. Ops/readiness issue template
+5. Ops/readiness issue template: [`.github/ISSUE_TEMPLATE/projectveil-ops-readiness.md`](../.github/ISSUE_TEMPLATE/projectveil-ops-readiness.md)
 
 This order keeps the first slices focused on reducing release ambiguity, then improves discoverability and issue quality once the operational path is clearer.
 

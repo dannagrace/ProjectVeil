@@ -11,7 +11,8 @@ assignees: ""
 
 ## Current evidence
 - Evidence reviewed:
-- Revision or artifact date:
+- Candidate or release train:
+- Revision, artifact date, or report timestamp:
 - Links:
 - Manual evidence owner ledger:
 
@@ -24,6 +25,7 @@ assignees: ""
 ## Owner
 - Team or directly responsible person:
 - Supporting reviewers or operators:
+- Expected review surface:
 
 ## Smallest next slice
 - 
@@ -35,4 +37,4 @@ assignees: ""
 - Affected area:
 - Environment or branch:
 - Related issues or docs:
-- Dependencies or sequencing notes:
+- Blockers, dependencies, or sequencing notes:
