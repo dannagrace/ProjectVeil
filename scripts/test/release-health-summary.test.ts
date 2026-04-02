@@ -15,6 +15,26 @@ function createTempWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "veil-release-health-summary-"));
 }
 
+function createDashboard(overrides?: {
+  generatedAt?: string;
+  decision?: "ready" | "pending" | "blocked";
+  summary?: string;
+  candidateRevision?: string;
+}) {
+  return {
+    generatedAt: overrides?.generatedAt ?? "2026-03-30T12:00:00.000Z",
+    goNoGo: {
+      decision: overrides?.decision ?? "ready",
+      summary: overrides?.summary ?? "Candidate is release-ready.",
+      candidateRevision: overrides?.candidateRevision ?? "abc1234",
+      requiredFailed: 0,
+      requiredPending: 0,
+      blockers: [],
+      pending: []
+    }
+  };
+}
+
 const TEST_REVISION = {
   commit: "abc123",
   shortCommit: "abc123",
@@ -393,6 +413,64 @@ test("buildReleaseHealthSummaryReport aggregates degraded warning signals withou
   assert.match(renderMarkdown(report), /Coverage thresholds failed in 1 scope\(s\)\./);
 });
 
+test("buildReleaseHealthSummaryReport reports candidate readiness trend regressions across revisions", () => {
+  const workspace = createTempWorkspace();
+  const releaseReadinessPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
+  const releaseGateSummaryPath = path.join(workspace, "artifacts", "release-readiness", "release-gate-summary-pass.json");
+  const currentDashboardPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-dashboard.json");
+  const previousDashboardPath = path.join(workspace, "baseline", "release-readiness-dashboard.json");
+
+  writeJson(releaseReadinessPath, {
+    generatedAt: "2026-03-30T11:00:00.000Z",
+    summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
+    checks: [{ id: "npm-test", required: true, status: "passed" }]
+  });
+  writeJson(releaseGateSummaryPath, {
+    generatedAt: "2026-03-30T11:05:00.000Z",
+    summary: { status: "passed", failedGateIds: [] },
+    gates: [{ id: "wechat-release", status: "passed", summary: "ok" }]
+  });
+  writeJson(
+    currentDashboardPath,
+    createDashboard({
+      generatedAt: "2026-03-30T12:00:00.000Z",
+      decision: "blocked",
+      summary: "Candidate is blocked by stale WeChat smoke evidence.",
+      candidateRevision: "cur1234"
+    })
+  );
+  writeJson(
+    previousDashboardPath,
+    createDashboard({
+      generatedAt: "2026-03-29T12:00:00.000Z",
+      decision: "ready",
+      summary: "Candidate is release-ready.",
+      candidateRevision: "prev9876"
+    })
+  );
+
+  const report = buildReleaseHealthSummaryReport(
+    {
+      releaseReadinessPath,
+      releaseGateSummaryPath,
+      releaseReadinessDashboardPath: currentDashboardPath,
+      previousReleaseReadinessDashboardPath: previousDashboardPath
+    },
+    TEST_REVISION
+  );
+
+  assert.equal(report.summary.status, "warning");
+  assert.deepEqual(report.summary.blockingSignalIds, []);
+  assert.equal(report.summary.warningSignalIds.includes("readiness-trend"), true);
+  assert.equal(report.signals.some((signal) => signal.id === "readiness-trend"), true);
+  assert.equal(report.triage.warnings.some((entry) => entry.signalId === "readiness-trend"), true);
+  assert.deepEqual(
+    report.findings.filter((finding) => finding.signalId === "readiness-trend").map((finding) => finding.summary),
+    ["Candidate readiness regressed from ready at prev9876 to blocked at cur1234."]
+  );
+  assert.match(renderMarkdown(report), /Candidate readiness regressed from ready at prev9876 to blocked at cur1234\./);
+});
+
 test("resolveInputPaths discovers the latest local artifacts", () => {
   const workspace = createTempWorkspace();
   const previousCwd = process.cwd();
@@ -405,6 +483,7 @@ test("resolveInputPaths discovers the latest local artifacts", () => {
     writeJson(path.join(workspace, "artifacts", "release-readiness", "release-gate-summary.json"), {
       summary: { status: "passed" }
     });
+    writeJson(path.join(workspace, "artifacts", "release-readiness", "release-readiness-dashboard.json"), createDashboard());
     writeJson(path.join(workspace, "artifacts", "release-readiness", "ci-trend-summary.json"), {
       summary: { overallStatus: "passed" }
     });
@@ -416,6 +495,7 @@ test("resolveInputPaths discovers the latest local artifacts", () => {
     const resolved = resolveInputPaths({});
     assert.equal(resolved.releaseReadinessPath?.endsWith("release-readiness-2026-03-29T00-00-00.000Z.json"), true);
     assert.equal(resolved.releaseGateSummaryPath?.endsWith("artifacts/release-readiness/release-gate-summary.json"), true);
+    assert.equal(resolved.releaseReadinessDashboardPath?.endsWith("artifacts/release-readiness/release-readiness-dashboard.json"), true);
     assert.equal(resolved.ciTrendSummaryPath?.endsWith("artifacts/release-readiness/ci-trend-summary.json"), true);
     assert.equal(resolved.syncGovernancePath?.endsWith("artifacts/release-readiness/sync-governance-matrix-abc123.json"), true);
     assert.equal(resolved.coverageSummaryPath?.endsWith(".coverage/summary.json"), true);

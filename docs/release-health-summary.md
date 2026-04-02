@@ -7,11 +7,13 @@ The summary now includes a unified `triage` section so maintainers can see, in o
 - which signals are blocking vs warning-only
 - which underlying artifact(s) to open next
 - the next debugging command or inspection step for each failing signal
+- how the latest candidate readiness call changed versus the previous candidate revision when dashboard history is available
 
 It reuses the current artifact producers instead of redefining them:
 
 - `npm run release:readiness:snapshot`
 - `npm run release:gate:summary`
+- `npm run release:readiness:dashboard`
 - `npm run ci:trend-summary`
 - `npm run test:coverage:ci`
 - `npm run test:sync-governance:matrix`
@@ -56,6 +58,8 @@ Point at explicit artifact paths when CI already produced stable filenames:
 npm run release:health:summary -- \
   --release-readiness artifacts/release-readiness/release-readiness-2026-03-30T08-00-00.000Z.json \
   --release-gate-summary artifacts/release-readiness/release-gate-summary.json \
+  --release-readiness-dashboard artifacts/release-readiness/release-readiness-dashboard.json \
+  --previous-release-readiness-dashboard artifacts/release-readiness/release-readiness-dashboard-prev.json \
   --ci-trend-summary artifacts/release-readiness/ci-trend-summary.json \
   --coverage-summary .coverage/summary.json \
   --sync-governance artifacts/release-readiness/sync-governance-matrix-abc1234.json
@@ -88,6 +92,7 @@ The JSON report contains:
   - resolved artifact paths used for this run
 - `signals`
   - per-artifact status, summary, detail lines, and source path
+  - when a current readiness dashboard is provided, includes `readiness-trend` for regression/improvement across candidate revisions
 - `findings`
   - flattened machine-readable findings with `severity`, `signalId`, and source path
 - `triage`
@@ -102,4 +107,5 @@ For branch-level readiness history in GitHub Actions, use the `Release Readiness
 
 - Open the latest successful workflow run for the branch.
 - Download the `release-readiness-history` artifact.
-- Start with `release-health-summary.md` for the top-level call, then inspect `ci-trend-summary.md` for deltas versus the previous successful history baseline and `release-readiness-dashboard.md` for the latest go/no-go view.
+- Start with `release-health-summary.md` for the top-level call. It now includes candidate readiness trend reporting when the workflow can compare the latest dashboard against the previous successful history baseline.
+- Then inspect `ci-trend-summary.md` for runtime/release-gate deltas and `release-readiness-dashboard.md` for the latest go/no-go view.

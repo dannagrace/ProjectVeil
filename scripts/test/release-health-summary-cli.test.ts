@@ -23,6 +23,25 @@ function runReleaseHealthSummary(args: string[]) {
   });
 }
 
+function createDashboard(overrides?: {
+  decision?: "ready" | "pending" | "blocked";
+  summary?: string;
+  candidateRevision?: string;
+}) {
+  return {
+    generatedAt: "2026-03-30T12:00:00.000Z",
+    goNoGo: {
+      decision: overrides?.decision ?? "ready",
+      summary: overrides?.summary ?? "Candidate is release-ready.",
+      candidateRevision: overrides?.candidateRevision ?? "abc1234",
+      requiredFailed: 0,
+      requiredPending: 0,
+      blockers: [],
+      pending: []
+    }
+  };
+}
+
 test("release:health:summary exits 0 for a healthy report", () => {
   const workspace = createTempWorkspace();
   const releaseReadinessPath = path.join(workspace, "release-readiness-pass.json");
@@ -158,4 +177,56 @@ test("release:health:summary exits 1 when sync governance is blocking", () => {
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as { summary: { status: string; blockingSignalIds: string[] } };
   assert.equal(report.summary.status, "blocking");
   assert.deepEqual(report.summary.blockingSignalIds, ["sync-governance"]);
+});
+
+test("release:health:summary accepts candidate readiness dashboard trend inputs", () => {
+  const workspace = createTempWorkspace();
+  const releaseReadinessPath = path.join(workspace, "release-readiness-pass.json");
+  const releaseGateSummaryPath = path.join(workspace, "release-gate-summary-pass.json");
+  const dashboardPath = path.join(workspace, "release-readiness-dashboard.json");
+  const previousDashboardPath = path.join(workspace, "release-readiness-dashboard-prev.json");
+  const outputPath = path.join(workspace, "release-health-summary.json");
+  const markdownOutputPath = path.join(workspace, "release-health-summary.md");
+
+  writeJson(releaseReadinessPath, {
+    summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
+    checks: [{ id: "npm-test", required: true, status: "passed" }]
+  });
+  writeJson(releaseGateSummaryPath, {
+    summary: { status: "passed", failedGateIds: [] },
+    gates: [{ id: "release-readiness", status: "passed", summary: "ok" }]
+  });
+  writeJson(
+    dashboardPath,
+    createDashboard({
+      decision: "blocked",
+      summary: "Candidate is blocked by stale evidence.",
+      candidateRevision: "cur1234"
+    })
+  );
+  writeJson(previousDashboardPath, createDashboard({ decision: "ready", candidateRevision: "prev9876" }));
+
+  const result = runReleaseHealthSummary([
+    "--release-readiness",
+    releaseReadinessPath,
+    "--release-gate-summary",
+    releaseGateSummaryPath,
+    "--release-readiness-dashboard",
+    dashboardPath,
+    "--previous-release-readiness-dashboard",
+    previousDashboardPath,
+    "--output",
+    outputPath,
+    "--markdown-output",
+    markdownOutputPath
+  ]);
+
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
+    summary: { status: string; warningSignalIds: string[] };
+    signals: Array<{ id: string; summary: string }>;
+  };
+  assert.equal(report.summary.status, "warning");
+  assert.equal(report.summary.warningSignalIds.includes("readiness-trend"), true);
+  assert.match(report.signals.find((signal) => signal.id === "readiness-trend")?.summary ?? "", /regressed from ready/);
 });

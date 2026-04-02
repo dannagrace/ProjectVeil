@@ -9,6 +9,7 @@ type SignalStatus = "pass" | "warn" | "fail";
 type ReleaseHealthSignalId =
   | "release-readiness"
   | "release-gate"
+  | "readiness-trend"
   | "ci-trend"
   | "coverage"
   | "sync-governance";
@@ -16,6 +17,8 @@ type ReleaseHealthSignalId =
 interface Args {
   releaseReadinessPath?: string;
   releaseGateSummaryPath?: string;
+  releaseReadinessDashboardPath?: string;
+  previousReleaseReadinessDashboardPath?: string;
   ciTrendSummaryPath?: string;
   coverageSummaryPath?: string;
   syncGovernancePath?: string;
@@ -69,6 +72,19 @@ interface ReleaseGateSummaryReport {
       path?: string;
     };
   }>;
+}
+
+interface ReleaseReadinessDashboardReport {
+  generatedAt?: string;
+  goNoGo?: {
+    decision?: "ready" | "pending" | "blocked";
+    summary?: string;
+    candidateRevision?: string;
+    requiredFailed?: number;
+    requiredPending?: number;
+    blockers?: string[];
+    pending?: string[];
+  };
 }
 
 interface CiTrendSummaryReport {
@@ -183,6 +199,8 @@ export interface ReleaseHealthSummaryReport {
   inputs: {
     releaseReadinessPath?: string;
     releaseGateSummaryPath?: string;
+    releaseReadinessDashboardPath?: string;
+    previousReleaseReadinessDashboardPath?: string;
     ciTrendSummaryPath?: string;
     coverageSummaryPath?: string;
     syncGovernancePath?: string;
@@ -210,6 +228,8 @@ function fail(message: string): never {
 function parseArgs(argv: string[]): Args {
   let releaseReadinessPath: string | undefined;
   let releaseGateSummaryPath: string | undefined;
+  let releaseReadinessDashboardPath: string | undefined;
+  let previousReleaseReadinessDashboardPath: string | undefined;
   let ciTrendSummaryPath: string | undefined;
   let coverageSummaryPath: string | undefined;
   let syncGovernancePath: string | undefined;
@@ -227,6 +247,16 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--release-gate-summary" && next) {
       releaseGateSummaryPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--release-readiness-dashboard" && next) {
+      releaseReadinessDashboardPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--previous-release-readiness-dashboard" && next) {
+      previousReleaseReadinessDashboardPath = next;
       index += 1;
       continue;
     }
@@ -261,6 +291,8 @@ function parseArgs(argv: string[]): Args {
   return {
     ...(releaseReadinessPath ? { releaseReadinessPath } : {}),
     ...(releaseGateSummaryPath ? { releaseGateSummaryPath } : {}),
+    ...(releaseReadinessDashboardPath ? { releaseReadinessDashboardPath } : {}),
+    ...(previousReleaseReadinessDashboardPath ? { previousReleaseReadinessDashboardPath } : {}),
     ...(ciTrendSummaryPath ? { ciTrendSummaryPath } : {}),
     ...(coverageSummaryPath ? { coverageSummaryPath } : {}),
     ...(syncGovernancePath ? { syncGovernancePath } : {}),
@@ -320,6 +352,12 @@ function getRevision(): GitRevision {
 export function resolveInputPaths(args: Args): ReleaseHealthSummaryReport["inputs"] {
   const explicitReleaseReadinessPath = args.releaseReadinessPath ? path.resolve(args.releaseReadinessPath) : undefined;
   const explicitReleaseGateSummaryPath = args.releaseGateSummaryPath ? path.resolve(args.releaseGateSummaryPath) : undefined;
+  const explicitReleaseReadinessDashboardPath = args.releaseReadinessDashboardPath
+    ? path.resolve(args.releaseReadinessDashboardPath)
+    : undefined;
+  const explicitPreviousReleaseReadinessDashboardPath = args.previousReleaseReadinessDashboardPath
+    ? path.resolve(args.previousReleaseReadinessDashboardPath)
+    : undefined;
   const explicitCiTrendSummaryPath = args.ciTrendSummaryPath ? path.resolve(args.ciTrendSummaryPath) : undefined;
   const explicitCoverageSummaryPath = args.coverageSummaryPath ? path.resolve(args.coverageSummaryPath) : undefined;
   const explicitSyncGovernancePath = args.syncGovernancePath ? path.resolve(args.syncGovernancePath) : undefined;
@@ -340,6 +378,12 @@ export function resolveInputPaths(args: Args): ReleaseHealthSummaryReport["input
       ? path.resolve(getDefaultReleaseReadinessDir(), "release-gate-summary.json")
       : resolveLatestFile(getDefaultReleaseReadinessDir(), (entry) => entry.startsWith("release-gate-summary-") && entry.endsWith(".json")));
 
+  const releaseReadinessDashboardPath =
+    explicitReleaseReadinessDashboardPath ??
+    (fs.existsSync(path.resolve(getDefaultReleaseReadinessDir(), "release-readiness-dashboard.json"))
+      ? path.resolve(getDefaultReleaseReadinessDir(), "release-readiness-dashboard.json")
+      : undefined);
+
   const ciTrendSummaryPath =
     explicitCiTrendSummaryPath ??
     (fs.existsSync(path.resolve(getDefaultReleaseReadinessDir(), "ci-trend-summary.json"))
@@ -356,6 +400,10 @@ export function resolveInputPaths(args: Args): ReleaseHealthSummaryReport["input
   return {
     ...(releaseReadinessPath ? { releaseReadinessPath } : {}),
     ...(releaseGateSummaryPath ? { releaseGateSummaryPath } : {}),
+    ...(releaseReadinessDashboardPath ? { releaseReadinessDashboardPath } : {}),
+    ...(explicitPreviousReleaseReadinessDashboardPath
+      ? { previousReleaseReadinessDashboardPath: explicitPreviousReleaseReadinessDashboardPath }
+      : {}),
     ...(ciTrendSummaryPath ? { ciTrendSummaryPath } : {}),
     ...(coverageSummaryPath ? { coverageSummaryPath } : {}),
     ...(syncGovernancePath ? { syncGovernancePath } : {})
@@ -557,6 +605,110 @@ function evaluateReleaseGateSignal(filePath: string | undefined): { signal: Rele
   return {
     signal: buildSignal("release-gate", "Release gate summary", "pass", "All release gates are currently passing.", [], source),
     findings: [buildFinding("release-gate:passed", "release-gate", "info", "All release gates are currently passing.", source)]
+  };
+}
+
+function getReadinessDecisionRank(decision: ReleaseReadinessDashboardReport["goNoGo"] extends { decision?: infer T } ? T : never): number {
+  if (decision === "ready") {
+    return 2;
+  }
+  if (decision === "pending") {
+    return 1;
+  }
+  return 0;
+}
+
+function getDashboardCandidateRevision(report: ReleaseReadinessDashboardReport | undefined): string {
+  return report?.goNoGo?.candidateRevision ?? "<unverified>";
+}
+
+function evaluateReadinessTrendSignal(
+  currentPath: string | undefined,
+  previousPath: string | undefined
+): { signal?: ReleaseHealthSignal; findings: ReleaseHealthFinding[] } {
+  if (!currentPath) {
+    return { findings: [] };
+  }
+
+  if (!fs.existsSync(currentPath)) {
+    return {
+      signal: buildSignal(
+        "readiness-trend",
+        "Candidate readiness trend",
+        "warn",
+        "Current release readiness dashboard is missing, so candidate trend could not be computed.",
+        ["Generate the dashboard first so the candidate revision can be compared against prior history."]
+      ),
+      findings: [
+        buildFinding(
+          "readiness-trend:missing-current",
+          "readiness-trend",
+          "warning",
+          "Current release readiness dashboard is missing, so candidate trend could not be computed."
+        )
+      ]
+    };
+  }
+
+  const currentReport = readJsonFile<ReleaseReadinessDashboardReport>(currentPath);
+  const currentSource = createSource(currentPath, currentReport.generatedAt);
+  const currentDecision = currentReport.goNoGo?.decision ?? "blocked";
+  const currentCandidate = getDashboardCandidateRevision(currentReport);
+  const currentSummary = currentReport.goNoGo?.summary?.trim() || `Current candidate is ${currentDecision}.`;
+
+  if (!previousPath || !fs.existsSync(previousPath)) {
+    const status: SignalStatus = currentDecision === "ready" ? "pass" : "warn";
+    const summary = `No previous candidate dashboard was available; current candidate ${currentCandidate} is ${currentDecision}.`;
+    return {
+      signal: buildSignal("readiness-trend", "Candidate readiness trend", status, summary, [currentSummary], currentSource),
+      findings: [
+        buildFinding(
+          `readiness-trend:${status === "pass" ? "passed" : "warning"}-no-baseline`,
+          "readiness-trend",
+          status === "pass" ? "info" : "warning",
+          summary,
+          currentSource
+        )
+      ]
+    };
+  }
+
+  const previousReport = readJsonFile<ReleaseReadinessDashboardReport>(previousPath);
+  const previousDecision = previousReport.goNoGo?.decision ?? "blocked";
+  const previousCandidate = getDashboardCandidateRevision(previousReport);
+  const previousSummary = previousReport.goNoGo?.summary?.trim() || `Previous candidate was ${previousDecision}.`;
+  const currentRank = getReadinessDecisionRank(currentDecision);
+  const previousRank = getReadinessDecisionRank(previousDecision);
+  const details = [
+    `current=${currentCandidate}:${currentDecision}`,
+    `previous=${previousCandidate}:${previousDecision}`,
+    `current summary: ${currentSummary}`,
+    `previous summary: ${previousSummary}`
+  ];
+
+  if (currentRank < previousRank) {
+    const summary = `Candidate readiness regressed from ${previousDecision} at ${previousCandidate} to ${currentDecision} at ${currentCandidate}.`;
+    return {
+      signal: buildSignal("readiness-trend", "Candidate readiness trend", "warn", summary, details, currentSource),
+      findings: [buildFinding("readiness-trend:regressed", "readiness-trend", "warning", summary, currentSource)]
+    };
+  }
+
+  if (currentRank === previousRank && currentDecision !== "ready") {
+    const summary = `Candidate readiness remains ${currentDecision} across ${previousCandidate} and ${currentCandidate}.`;
+    return {
+      signal: buildSignal("readiness-trend", "Candidate readiness trend", "warn", summary, details, currentSource),
+      findings: [buildFinding("readiness-trend:unchanged-unready", "readiness-trend", "warning", summary, currentSource)]
+    };
+  }
+
+  const summary =
+    currentRank > previousRank
+      ? `Candidate readiness improved from ${previousDecision} at ${previousCandidate} to ${currentDecision} at ${currentCandidate}.`
+      : `Candidate readiness remains ready across ${previousCandidate} and ${currentCandidate}.`;
+  return {
+    signal: buildSignal("readiness-trend", "Candidate readiness trend", "pass", summary, details, currentSource),
+    findings: [buildFinding("readiness-trend:passed", "readiness-trend", "info", summary, currentSource)]
   };
 }
 
@@ -864,6 +1016,86 @@ function buildCiTrendTriage(filePath: string | undefined): ReleaseHealthTriageEn
   ];
 }
 
+function buildReadinessTrendTriage(
+  currentPath: string | undefined,
+  previousPath: string | undefined
+): ReleaseHealthTriageEntry[] {
+  if (!currentPath) {
+    return [];
+  }
+
+  if (!fs.existsSync(currentPath)) {
+    return [
+      buildTriageEntry(
+        "readiness-trend:missing-current",
+        "readiness-trend",
+        "warning",
+        "Candidate readiness trend",
+        "Current release readiness dashboard is missing, so candidate history cannot be compared.",
+        "Run `npm run release:readiness:dashboard` for the candidate revision before rebuilding the release health summary.",
+        [],
+        []
+      )
+    ];
+  }
+
+  const currentReport = readJsonFile<ReleaseReadinessDashboardReport>(currentPath);
+  const currentDecision = currentReport.goNoGo?.decision ?? "blocked";
+  const currentCandidate = getDashboardCandidateRevision(currentReport);
+
+  if (!previousPath || !fs.existsSync(previousPath)) {
+    if (currentDecision === "ready") {
+      return [];
+    }
+    return [
+      buildTriageEntry(
+        "readiness-trend:no-baseline",
+        "readiness-trend",
+        "warning",
+        "Candidate readiness trend",
+        `No previous candidate dashboard is available; current candidate ${currentCandidate} is ${currentDecision}.`,
+        "Keep publishing the history artifact for each candidate revision so future readiness deltas can be compared.",
+        [currentReport.goNoGo?.summary?.trim() || `Current candidate is ${currentDecision}.`],
+        createArtifactReference("Current release readiness dashboard", currentPath, currentReport.generatedAt)
+      )
+    ];
+  }
+
+  const previousReport = readJsonFile<ReleaseReadinessDashboardReport>(previousPath);
+  const previousDecision = previousReport.goNoGo?.decision ?? "blocked";
+  const previousCandidate = getDashboardCandidateRevision(previousReport);
+  const currentRank = getReadinessDecisionRank(currentDecision);
+  const previousRank = getReadinessDecisionRank(previousDecision);
+
+  if (currentRank > previousRank || (currentRank === previousRank && currentDecision === "ready")) {
+    return [];
+  }
+
+  const summary =
+    currentRank < previousRank
+      ? `Candidate readiness regressed from ${previousDecision} at ${previousCandidate} to ${currentDecision} at ${currentCandidate}.`
+      : `Candidate readiness remains ${currentDecision} across ${previousCandidate} and ${currentCandidate}.`;
+
+  return [
+    buildTriageEntry(
+      "readiness-trend:triage",
+      "readiness-trend",
+      "warning",
+      "Candidate readiness trend",
+      summary,
+      `Open \`${toDisplayPath(currentPath)}\` and \`${toDisplayPath(previousPath)}\` to compare the candidate blockers or pending checks before advancing the next revision.`,
+      [
+        `Current summary: ${currentReport.goNoGo?.summary?.trim() || `Current candidate is ${currentDecision}.`}`,
+        `Previous summary: ${previousReport.goNoGo?.summary?.trim() || `Previous candidate was ${previousDecision}.`}`
+      ],
+      [
+        ...createArtifactReference("Current release readiness dashboard", currentPath, currentReport.generatedAt),
+        ...createArtifactReference("Previous release readiness dashboard", previousPath, previousReport.generatedAt)
+      ]
+    )
+  ];
+}
+
 function buildCoverageTriage(filePath: string | undefined): ReleaseHealthTriageEntry[] {
   if (!filePath || !fs.existsSync(filePath)) {
     return [
@@ -951,6 +1183,7 @@ function buildTriageReport(inputs: ReleaseHealthSummaryReport["inputs"]): Releas
       ...syncGovernanceTriage.filter((entry) => entry.severity === "blocker")
     ],
     warnings: [
+      ...buildReadinessTrendTriage(inputs.releaseReadinessDashboardPath, inputs.previousReleaseReadinessDashboardPath),
       ...buildCiTrendTriage(inputs.ciTrendSummaryPath),
       ...buildCoverageTriage(inputs.coverageSummaryPath),
       ...syncGovernanceTriage.filter((entry) => entry.severity === "warning")
@@ -960,9 +1193,14 @@ function buildTriageReport(inputs: ReleaseHealthSummaryReport["inputs"]): Releas
 
 export function buildReleaseHealthSummaryReport(args: Args, revision: GitRevision): ReleaseHealthSummaryReport {
   const inputs = resolveInputPaths(args);
+  const readinessTrend = evaluateReadinessTrendSignal(
+    inputs.releaseReadinessDashboardPath,
+    inputs.previousReleaseReadinessDashboardPath
+  );
   const signalResults = [
     evaluateReleaseReadinessSignal(inputs.releaseReadinessPath),
     evaluateReleaseGateSignal(inputs.releaseGateSummaryPath),
+    ...(readinessTrend.signal ? [readinessTrend] : []),
     evaluateCiTrendSignal(inputs.ciTrendSummaryPath),
     evaluateCoverageSignal(inputs.coverageSummaryPath),
     evaluateSyncGovernanceSignal(inputs.syncGovernancePath)

@@ -346,10 +346,14 @@ jobs:
           args=(
             --release-readiness "${HISTORY_DIR}/release-readiness-snapshot.json"
             --release-gate-summary "${HISTORY_DIR}/release-gate-summary.json"
+            --release-readiness-dashboard "${HISTORY_DIR}/release-readiness-dashboard.json"
             --ci-trend-summary "${HISTORY_DIR}/ci-trend-summary.json"
             --output "${HISTORY_DIR}/release-health-summary.json"
             --markdown-output "${HISTORY_DIR}/release-health-summary.md"
           )
+          if [[ -f "${RUNNER_TEMP}/baseline/release-readiness-dashboard.json" ]]; then
+            args+=(--previous-release-readiness-dashboard "${RUNNER_TEMP}/baseline/release-readiness-dashboard.json")
+          fi
           if [[ -f "${HISTORY_DIR}/coverage/summary.json" ]]; then
             args+=(--coverage-summary "${HISTORY_DIR}/coverage/summary.json")
           fi
@@ -394,11 +398,18 @@ jobs:
           ];
 
           const blockers = health?.triage?.blockers ?? [];
+          const readinessTrend = health?.signals?.find((signal) => signal.id === "readiness-trend");
           if (blockers.length > 0) {
             lines.push("### Blocking Signals", "");
             for (const blocker of blockers.slice(0, 3)) {
               lines.push(`- ${blocker.title}: ${blocker.summary}`);
             }
+            lines.push("");
+          }
+
+          if (readinessTrend) {
+            lines.push("### Candidate Trend", "");
+            lines.push(`- ${readinessTrend.summary}`);
             lines.push("");
           }
 
