@@ -10,6 +10,7 @@ For detailed release sequencing, keep [`docs/same-revision-release-evidence-runb
 | --- | --- | --- |
 | Local contributor sanity check | `npm run validate:quickstart` | [`README.md`](../README.md), [`docs/verification-matrix.md`](./verification-matrix.md) |
 | Pick the smallest sufficient PR verification | [`docs/verification-matrix.md`](./verification-matrix.md) | [`docs/verification-matrix.md`](./verification-matrix.md) |
+| Turn changed paths into a minimal validation plan | `npm run plan:validation:minimal -- --base origin/main --head HEAD` | [`docs/verification-matrix.md`](./verification-matrix.md) |
 | Confirm the current primary client surface | `npm run client:primary` | [`README.md`](../README.md), [`docs/cocos-primary-client-delivery.md`](./cocos-primary-client-delivery.md) |
 | Audit Codex automation branches | `npm run ops:codex-branches` | [`docs/codex-automation-branch-maintenance.md`](./codex-automation-branch-maintenance.md) |
 
