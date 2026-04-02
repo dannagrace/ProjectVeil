@@ -1,97 +1,90 @@
 # Same-Revision Release Evidence Runbook
 
-This runbook is for maintainers assembling one release-candidate evidence packet without mixing artifacts from different commits.
+Use this maintainer runbook when one release decision must be backed by one candidate revision, not by the newest mix of artifacts in `artifacts/`.
 
-Use it when you need one explicit answer to: "Do we have the minimum same-revision evidence to make a release call for this candidate?"
+It does not redefine release gates. It sequences the existing commands and artifacts already described in:
 
-Related references:
-
-- [`docs/verification-matrix.md`](./verification-matrix.md)
-- [`docs/release-readiness-snapshot.md`](./release-readiness-snapshot.md)
-- [`docs/release-readiness-dashboard.md`](./release-readiness-dashboard.md)
-- [`docs/cocos-release-evidence-template.md`](./cocos-release-evidence-template.md)
-- [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md)
-- [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md)
-- [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md)
-- [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md)
-- [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md)
-- [`docs/release-gate-summary.md`](./release-gate-summary.md)
-- [`docs/release-go-no-go-decision-packet.md`](./release-go-no-go-decision-packet.md)
 - [`docs/phase1-maturity-scorecard.md`](./phase1-maturity-scorecard.md)
+- [`docs/release-readiness-snapshot.md`](./release-readiness-snapshot.md)
+- [`docs/release-gate-summary.md`](./release-gate-summary.md)
+- [`docs/release-readiness-dashboard.md`](./release-readiness-dashboard.md)
+- [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md)
+- [`docs/cocos-release-evidence-template.md`](./cocos-release-evidence-template.md)
+- [`docs/release-go-no-go-decision-packet.md`](./release-go-no-go-decision-packet.md)
 
 ## Same-Revision Rule
 
-Pick one candidate revision up front and keep it fixed across every artifact in this runbook.
+Pick these two values first and keep them fixed through the whole pass:
 
-- Use one `<git-sha>` for every command that accepts `--candidate-revision`, `--expected-revision`, or `--source-revision`.
-- Do not reuse an older snapshot, smoke report, or RC bundle after rebuilding another part of the candidate on a newer commit.
-- If one artifact drifts to a different revision, regenerate that artifact instead of waiving the mismatch.
+- `<candidate-name>`
+- `<git-sha>`
 
-## Minimum Evidence Set
+Use the same `<git-sha>` everywhere a command accepts `--candidate-revision`, `--expected-revision`, or `--source-revision`.
 
-These are the minimum artifacts for a same-revision release call:
+If one required artifact points at another commit, treat the packet as stale and regenerate that artifact. Do not waive revision drift by hand.
 
-| Evidence area | Command or source | Expected output |
+## Fresh Vs Reusable Evidence
+
+| Evidence | Fresh for this release call | Reusable only when all of this is still true |
 | --- | --- | --- |
-| Automated release baseline | `npm run release:readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json` | `artifacts/release-readiness/release-readiness-*.json` |
-| Candidate reconnect soak | `npm run release:reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>` | `artifacts/release-readiness/colyseus-reconnect-soak-summary-<candidate>-<short-sha>.json` plus paired `.md` |
-| Release gate summary | `npm run release:gate:summary -- --target-surface <wechat|h5>` | `artifacts/release-readiness/release-gate-summary-<short-sha>.json` plus paired `.md` |
-| Cocos / WeChat RC bundle | `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report artifacts/wechat-release/codex.wechat.smoke-report.json --release-readiness-snapshot <snapshot-json>` | `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.json` plus paired `.md`, snapshot, checklist, and blockers files |
-| WeChat validation or rehearsal when WeChat is the target surface | `npm run validate:wechat-rc -- --artifacts-dir artifacts/wechat-release --expected-revision <git-sha> --require-smoke-report --manual-checks docs/release-evidence/wechat-release-manual-review.example.json` or `npm run release:wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir artifacts/wechat-release --source-revision <git-sha> --expected-revision <git-sha> --require-smoke-report` | `artifacts/wechat-release/codex.wechat.release-candidate-summary.json`, `artifacts/wechat-release/codex.wechat.rc-validation-report.json`, `artifacts/wechat-release/codex.wechat.smoke-report.json`, or `artifacts/wechat-release/wechat-release-rehearsal-<short-sha>.json` plus paired `.md` |
-| Runtime observability sign-off | Manual review using `docs/wechat-runtime-observability-signoff.md` plus `docs/release-evidence/wechat-runtime-observability-signoff.template.md` | `artifacts/wechat-release/runtime-observability-signoff-<candidate>-<short-sha>.md` or equivalent reviewer artifact |
-| Manual evidence owner ledger | Copy `docs/release-evidence/manual-release-evidence-owner-ledger.template.md` for the candidate and update it as manual evidence lands | `artifacts/release-readiness/manual-release-evidence-owner-ledger-<candidate>-<short-sha>.md` or release PR table |
-| Same-candidate evidence audit | `npm run release:same-candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha>` | `artifacts/release-readiness/same-candidate-evidence-audit-<candidate>-<short-sha>.json` plus paired `.md` |
-| Final same-revision assembly check | `npm run release:readiness:dashboard -- --server-url http://127.0.0.1:2567 --wechat-artifacts-dir artifacts/wechat-release --candidate-revision <git-sha>` | `artifacts/release-readiness/release-readiness-dashboard-*.json` plus `.md` |
+| Release readiness snapshot | Yes | Never reuse across a new candidate revision. |
+| Release gate summary | Yes | Never reuse across a new candidate revision or surface change. |
+| Cocos RC bundle, checklist, blockers | Yes for the candidate under review | Reuse only within the same candidate/revision while no linked snapshot or WeChat evidence changed. |
+| Runtime observability sign-off | Yes for WeChat release calls | Reuse only for the same candidate/revision, same target environment, and only when no runtime/observability surface changed. |
+| WeChat candidate summary, RC validation report, smoke report | Yes when target surface is WeChat | Reuse only for the same candidate/revision while still inside the documented freshness window and with matching manual-review metadata. |
+| Manual evidence owner ledger | Yes | Update whenever any manual evidence row changes state. |
+| Reconnect soak artifact | Fresh when reconnect / room recovery is in scope or when the release packet requires it | Reuse only for the same candidate/revision while counters, verdict, and timestamps are still within the accepted window. |
+| Persistence/content validation artifact | Fresh when persistence, content packs, or map-pack release evidence is in scope | Reuse only for the same candidate/revision when the shipped content and storage mode did not change. |
 
-If the candidate is missing any item above, the release call is still incomplete even if individual scripts passed earlier.
+Rule of thumb: automated summaries may reuse lower-level artifacts from the same candidate revision; they may not mix inputs from different revisions or stale manual sign-offs.
 
-## Required Evidence Vs Optional Diagnostics
+## Required Steps By Release Surface
 
-Treat the following as `required evidence` for the candidate packet:
+| Step | H5 target surface | WeChat target surface |
+| --- | --- | --- |
+| Pin candidate name and revision | Required | Required |
+| `npm run release:readiness:snapshot` | Required | Required |
+| Manual evidence owner ledger | Required | Required |
+| `npm run release:gate:summary -- --target-surface <surface>` | Required | Required |
+| `npm run release:readiness:dashboard -- --candidate <candidate> --candidate-revision <git-sha>` | Required | Required |
+| `npm run release:cocos-rc:bundle` | Required for the primary Cocos client evidence packet | Required |
+| `npm run validate:wechat-rc` or `npm run release:wechat:rehearsal` | Optional | Required |
+| `npm run smoke:wechat-release -- --check` evidence | Optional | Required |
+| Runtime observability sign-off | Optional unless the release owner explicitly requires live runtime review | Required |
+| `npm run release:reconnect-soak` | Required when reconnect / room recovery is in scope, or when the release packet expects reconnect evidence | Same rule |
+| `npm run test:phase1-release-persistence` and map-pack variants | Required when persistence, storage mode, or shipped Phase 1 packs changed | Same rule |
 
-- release readiness snapshot
-- reconnect soak artifact for the same `<candidate-name>` and `<git-sha>`
-- release gate summary for the target surface
-- Cocos RC bundle for the same `<candidate-name>` and `<git-sha>`
-- WeChat candidate summary or rehearsal summary when WeChat is the release surface
-- runtime observability sign-off covering `/api/runtime/health`, `/api/runtime/auth-readiness`, and `/api/runtime/metrics`
-- manual evidence owner ledger
-- same-candidate evidence audit
-- final release-readiness dashboard output
+## Assembly Sequence
 
-Treat these as `optional diagnostics` unless another release doc explicitly upgrades them to required for your target surface:
-
-- rerunning `npm run release:wechat:rehearsal` when `validate:wechat-rc` already points at a fresh same-revision artifact set
-- keeping intermediate `verify:wechat-release`, `prepare:wechat-release`, or upload receipts in the packet when the release decision only needs candidate-readiness evidence
-- extra H5 packaged smoke details when the selected `--target-surface` is `wechat` and the gate summary already captures the current H5 signal
-- additional runtime diagnostic snapshot captures beyond the reviewer artifact and dashboard probe
-
-## Ordered Assembly Flow
-
-1. Record the candidate identity before generating evidence.
+1. Record the pinned revision.
 
 ```bash
 git rev-parse HEAD
 git rev-parse --short HEAD
 ```
 
-Keep the full SHA as `<git-sha>` and reuse it for the rest of the flow.
-
-2. Generate the automated baseline snapshot for that revision.
+2. Generate the baseline automated snapshot for that revision.
 
 ```bash
 npm run release:readiness:snapshot -- \
   --manual-checks docs/release-readiness-manual-checks.example.json
 ```
 
-Freshness check:
+Keep the emitted snapshot path. Confirm:
 
-- open the newest `artifacts/release-readiness/release-readiness-*.json`
-- confirm `revision.commit == <git-sha>`
-- confirm `summary.requiredFailed == 0`
-- confirm any remaining `requiredPending` items are the manual checks you still plan to finish in this same pass
+- `revision.commit == <git-sha>`
+- `summary.requiredFailed == 0`
+- any remaining `requiredPending` items are manual checks you will complete in this same packet
 
-3. Run the candidate-scoped reconnect soak for the pinned revision.
+3. Start or refresh the manual evidence owner ledger for the same candidate.
+
+Copy [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) into `artifacts/release-readiness/` or mirror the same table in the release PR.
+
+Pre-fill one row per required manual evidence item before continuing. This is the handoff tracker for the rest of the run.
+
+4. Refresh scope-specific evidence only when the candidate needs it.
+
+Reconnect / room recovery scope:
 
 ```bash
 npm run release:reconnect-soak -- \
@@ -99,16 +92,39 @@ npm run release:reconnect-soak -- \
   --candidate-revision <git-sha>
 ```
 
-Freshness check:
+Persistence / shipped Phase 1 content scope:
 
-- open `artifacts/release-readiness/colyseus-reconnect-soak-summary-<candidate>-<short-sha>.json`
-- confirm `candidate` and `candidateRevision` match `<candidate-name>` and `<git-sha>`
-- confirm the verdict is `passed`
-- confirm the cleanup counters returned to zero and the artifact records reconnect attempts plus invariant checks
+```bash
+npm run test:phase1-release-persistence -- \
+  --output artifacts/release-readiness/phase1-release-persistence-regression.json
+```
 
-4. Refresh the WeChat candidate evidence when WeChat is the target surface.
+When the candidate ships `frontier-basin`, `stonewatch-fork`, or `ridgeway-crossing`, also run the matching pack-specific persistence regression or equivalent `--map-pack` form described in [`docs/release-readiness-snapshot.md`](./release-readiness-snapshot.md).
 
-If `artifacts/wechat-release/` already contains a same-revision package, smoke report, and manual-review metadata, run the validation path:
+5. Generate the Cocos primary-client candidate bundle for the same revision.
+
+```bash
+npm run release:cocos-rc:bundle -- \
+  --candidate <candidate-name> \
+  --build-surface <creator_preview|wechat_preview> \
+  --release-readiness-snapshot <snapshot-json>
+```
+
+If the target surface is WeChat, pass the current smoke report path too:
+
+```bash
+npm run release:cocos-rc:bundle -- \
+  --candidate <candidate-name> \
+  --build-surface wechat_preview \
+  --wechat-smoke-report artifacts/wechat-release/codex.wechat.smoke-report.json \
+  --release-readiness-snapshot <snapshot-json>
+```
+
+Confirm the generated bundle, checklist, and blockers files all point at the same candidate and revision.
+
+6. Refresh the WeChat artifact family when WeChat is the release surface.
+
+If the package/smoke/manual-review artifacts already exist for the same revision, validate them:
 
 ```bash
 npm run validate:wechat-rc -- \
@@ -118,14 +134,7 @@ npm run validate:wechat-rc -- \
   --manual-checks docs/release-evidence/wechat-release-manual-review.example.json
 ```
 
-Freshness check:
-
-- open `artifacts/wechat-release/codex.wechat.release-candidate-summary.json`
-- confirm the summary revision matches `<git-sha>`
-- confirm required manual review rows have `owner`, `recordedAt`, `revision`, and artifact paths
-- confirm the linked `codex.wechat.smoke-report.json` has required cases completed and `reconnect-recovery.requiredEvidence` populated
-
-If you need to regenerate the WeChat artifact family from the same source revision instead of only checking it, run the rehearsal path:
+If you need one end-to-end regeneration pass for the same revision, use rehearsal instead:
 
 ```bash
 npm run release:wechat:rehearsal -- \
@@ -136,90 +145,58 @@ npm run release:wechat:rehearsal -- \
   --require-smoke-report
 ```
 
-Use the rehearsal output when you need one report that proves prepare/package/verify/validate still run in sequence for this exact revision. Keep the resulting `wechat-release-rehearsal-<short-sha>.json` and `.md` next to the WeChat candidate summary instead of replacing it.
+Keep these outputs together:
 
-5. Build the candidate-scoped Cocos RC bundle from the same snapshot and WeChat evidence.
+- `artifacts/wechat-release/codex.wechat.release-candidate-summary.json`
+- `artifacts/wechat-release/codex.wechat.rc-validation-report.json`
+- `artifacts/wechat-release/codex.wechat.smoke-report.json`
+- optional rehearsal summary `.json` and `.md`
 
-```bash
-npm run release:cocos-rc:bundle -- \
-  --candidate <candidate-name> \
-  --build-surface wechat_preview \
-  --wechat-smoke-report artifacts/wechat-release/codex.wechat.smoke-report.json \
-  --release-readiness-snapshot <snapshot-json>
-```
+7. Complete runtime observability sign-off when WeChat is the release surface.
 
-Freshness check:
+Use [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md) and [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md) to capture:
 
-- inspect the generated `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.json`
-- confirm the bundle commit/revision matches `<git-sha>`
-- confirm the paired snapshot, checklist, and blockers files were regenerated for the same candidate
-- confirm the bundle did not inherit an older smoke report or snapshot path
+- `GET /api/runtime/health`
+- `GET /api/runtime/auth-readiness`
+- `GET /api/runtime/metrics`
 
-6. Complete the runtime observability sign-off for the same candidate revision.
+Confirm the sign-off records the same revision, target environment, reviewer, and timestamp, then mirror that state into the owner ledger.
 
-Use [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md) and [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md), and capture:
+8. Build the release-surface gate summary from the pinned artifact set.
 
-- `/api/runtime/health`
-- `/api/runtime/auth-readiness`
-- `/api/runtime/metrics`
-- reviewer, timestamp, revision, conclusion, and any accepted follow-up
-
-Freshness check:
-
-- confirm the sign-off artifact records the same `<git-sha>`
-- confirm the captured environment is the release environment you are actually calling from
-- confirm any blockers or follow-ups are also reflected in the RC checklist or blocker register
-
-7. Update the manual evidence owner ledger for the same candidate revision.
-
-Copy [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) into the candidate artifact set or PR body and keep one row for each required manual sign-off.
-
-Freshness check:
-
-- confirm every required manual evidence item has one row
-- confirm `candidate`, `revision`, `owner`, `status`, `last updated`, and `artifact path` agree with the underlying artifact
-- confirm any row still marked `pending` or `in-review` explains the next follow-up clearly enough for handoff
-
-8. Run the release gate summary for the same release surface and artifact packet.
+H5 example:
 
 ```bash
 npm run release:gate:summary -- \
-  --target-surface <wechat|h5> \
+  --target-surface h5 \
   --snapshot <snapshot-json> \
-  --reconnect-soak artifacts/release-readiness/colyseus-reconnect-soak-summary-<candidate>-<short-sha>.json \
-  --manual-evidence-ledger artifacts/release-readiness/manual-release-evidence-owner-ledger-<candidate>-<short-sha>.md \
+  --manual-evidence-ledger <owner-ledger-md>
+```
+
+WeChat example:
+
+```bash
+npm run release:gate:summary -- \
+  --target-surface wechat \
+  --snapshot <snapshot-json> \
+  --manual-evidence-ledger <owner-ledger-md> \
   --wechat-artifacts-dir artifacts/wechat-release
 ```
 
-Freshness check:
+Add `--reconnect-soak <path>` when reconnect evidence is part of the packet and you want the summary pinned to the exact soak artifact instead of directory discovery.
 
-- open `artifacts/release-readiness/release-gate-summary-<short-sha>.json`
-- confirm the summary selected the same snapshot, reconnect soak artifact, ledger, and WeChat artifact directory you intended
-- confirm `targetSurface` matches the release decision you are making
-- confirm no required gate dimension is `failed`, `pending`, or stale for `<git-sha>`
-
-9. Run the artifact-family audit for the pinned candidate.
-
-Before the broad dashboard pass, run the artifact-family audit that explicitly compares the latest readiness snapshot, release-gate summary, Cocos RC bundle, and manual evidence ledger for the same candidate:
-
-```bash
-npm run release:same-candidate:evidence-audit -- \
-  --candidate <candidate-name> \
-  --candidate-revision <git-sha>
-```
-
-This audit emits one JSON + Markdown summary and exits non-zero when any required artifact family is missing, stale, points at a different revision, or still links to a different readiness snapshot.
-
-10. Run the final assembly check that enforces same-revision consistency.
+9. Run the candidate-level dashboard as the last consistency check.
 
 ```bash
 npm run release:readiness:dashboard -- \
-  --server-url http://127.0.0.1:2567 \
-  --wechat-artifacts-dir artifacts/wechat-release \
-  --candidate-revision <git-sha>
+  --candidate <candidate-name> \
+  --candidate-revision <git-sha> \
+  --wechat-artifacts-dir artifacts/wechat-release
 ```
 
-11. Assemble the operator-facing decision packet once the underlying evidence is coherent.
+Add `--server-url <url>` when you want the dashboard to probe the live candidate environment in the same pass.
+
+10. Build the maintainer-facing decision packet when the underlying evidence is coherent.
 
 ```bash
 npm run release:go-no-go-packet -- \
@@ -227,65 +204,34 @@ npm run release:go-no-go-packet -- \
   --candidate-revision <git-sha>
 ```
 
-Use the resulting Markdown packet for the final human go/no-go review. If it still reports blocker items, refresh the upstream artifacts and rerun the packet instead of editing the packet directly.
+Use the packet as the final reviewer attachment. If it still reports blockers, fix the upstream artifact set and rerun the packet instead of editing the packet by hand.
 
-Freshness check:
+## Minimum Artifact Packet
 
-- open the generated `artifacts/release-readiness/release-readiness-dashboard-*.json` or `.md`
-- confirm the report selected the artifact paths you intended to review
-- confirm no linked evidence is missing revision metadata, stale, or mismatched to `<git-sha>`
+Before calling release `go`, confirm the packet contains these same-revision artifacts:
 
-## Artifact Checklist
+- one release readiness snapshot
+- one manual evidence owner ledger
+- one release gate summary for the selected target surface
+- one Cocos RC bundle plus paired checklist and blockers files
+- for WeChat releases: one WeChat candidate summary, one RC validation report, one smoke report, and one runtime observability sign-off
+- when reconnect scope applies: one reconnect soak artifact
+- when persistence or shipped content scope applies: one current persistence/content artifact
+- one final release-readiness dashboard
+- one go/no-go decision packet
 
-Before making the release call, verify this exact packet exists:
+## Go / No-Go Summary
 
-- one release readiness snapshot JSON for `<git-sha>`
-- one reconnect soak JSON for `<candidate-name>` and `<git-sha>`
-- one release gate summary JSON or Markdown for `<git-sha>`
-- one Cocos RC evidence bundle JSON for `<candidate-name>` and `<git-sha>`
-- one WeChat candidate summary JSON for `<git-sha>` when WeChat is the target surface
-- one WeChat smoke report JSON for `<git-sha>` when WeChat is the target surface
-- one WeChat rehearsal summary JSON or Markdown when you used rehearsal instead of a prebuilt same-revision artifact family
-- one RC checklist Markdown file for `<candidate-name>` and `<git-sha>`
-- one RC blocker Markdown file for `<candidate-name>` and `<git-sha>`
-- one runtime observability sign-off artifact for `<git-sha>`
-- one manual evidence owner ledger Markdown file or PR table for `<candidate-name>` and `<git-sha>`
-- one same-candidate evidence audit JSON or Markdown for `<candidate-name>` and `<git-sha>`
-- one release readiness dashboard JSON or Markdown for `<git-sha>`
+Release is `go` only when all required evidence for the selected surface is true at the same `<git-sha>`:
 
-If two files for the "same" evidence disagree on revision or timestamp window, treat the packet as invalid and refresh the stale file instead of choosing by hand.
+- no required snapshot check is failed or still pending
+- no required gate-summary dimension is failed, blocked, or stale
+- the owner ledger has no required row left in `pending` or `in-review`
+- the Cocos RC bundle, checklist, and blockers files match the same candidate revision
+- WeChat release calls also have current smoke, manual-review, and runtime observability evidence
+- any reconnect or persistence evidence required by the release scope is present and current
+- the final dashboard and go/no-go packet agree that the candidate is ready
 
-For WeChat release calls, treat the RC checklist plus blocker register as required release-surface evidence, not as optional reviewer notes. They must mirror the same surface, revision, freshness, blocker, and waiver state shown by the WeChat candidate summary and release gate summary.
+Release is `no-go` when any required artifact is missing, stale, revision-mismatched, blocked by unresolved manual review, or still needs ad hoc explanation to justify why it belongs to the candidate under review.
 
-## Minimum Evidence To Call Phase 1 Ready
-
-This runbook does not redefine Phase 1 exit criteria. Use it to assemble the evidence packet that lets you answer the scorecard's existing question for one candidate revision.
-
-Before calling Phase 1 ready for `<candidate-name>` at `<git-sha>`, confirm the packet above is complete and then re-read:
-
-- [`docs/phase1-maturity-scorecard.md`](./phase1-maturity-scorecard.md#explicit-phase-1-exit-criteria)
-- [`docs/phase1-maturity-scorecard.md`](./phase1-maturity-scorecard.md#what-advancing-beyond-phase-1-means-here)
-
-If the packet cannot prove the scorecard's same-revision exit criteria without ad hoc explanation, the candidate is still in Phase 1 hardening.
-
-## Go / No-Go Checklist
-
-Release is `go` only when all of the following are true:
-
-- every required artifact above points to the same candidate revision
-- the readiness snapshot has no `requiredFailed` and no unresolved required manual checks
-- the WeChat smoke report has no required case in `failed`, `blocked`, or `pending`
-- the Cocos RC bundle is generated for the same candidate and revision and includes the latest checklist/blocker files
-- the runtime observability sign-off is recorded for the same revision and environment
-- the manual evidence owner ledger shows no required row still in `pending` or `in-review` without an accepted release decision
-- the final readiness dashboard does not report revision mismatch, missing revision metadata, or stale evidence
-
-Release is `no-go` when any of the following happens:
-
-- one artifact was generated from a different commit
-- a required manual review is still pending
-- smoke, runtime, or RC evidence is missing, blocked, or stale
-- the blocker register contains an unresolved release-blocking item
-- maintainers cannot prove which exact artifact set belongs to the candidate under review
-
-When in doubt, rerun the stale step for the pinned `<git-sha>` and rebuild the packet. Same-revision evidence is stricter than "latest successful command."
+This runbook exists to prove the scorecard's same-revision release question for one candidate. If the packet cannot answer that question cleanly, the candidate is still in release hardening.
