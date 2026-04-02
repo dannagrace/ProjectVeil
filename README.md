@@ -200,6 +200,7 @@ npm run dev:client:h5
 - 发布就绪快照说明：`docs/release-readiness-snapshot.md`
 - Phase 1 candidate dossier：`docs/phase1-candidate-dossier.md`
 - 发布健康度聚合说明：`docs/release-health-summary.md`
+- 运营/发布入口仓库地图：`docs/operational-entry-point-repo-map.md`
 - 仓库变更风险分级验证矩阵：`docs/verification-matrix.md`
 - 多人同步治理矩阵说明：`docs/sync-governance-matrix.md`
 - 共享 contract 快照说明：`docs/shared-contract-snapshots.md`
