@@ -2,6 +2,8 @@
 
 Use this runbook when the normal Claude-led issue creation or routing flow is unavailable or degraded, but issue intake still needs to continue in `dannagrace/ProjectVeil`.
 
+For outage drills or live verification, use the companion checklist in [GitHub Issue Intake Fallback Smoke Checklist](./github-issue-intake-fallback-smoke-checklist.md).
+
 The fallback path is intentionally simple:
 
 - GPT creates the GitHub issue directly with `gh issue create`
@@ -78,6 +80,14 @@ EOF
 ```
 
 4. Verify the posted issue still contains all required headings before treating intake as complete.
+
+## Smoke Verification Checklist
+
+When the team needs to prove the fallback path still works end to end, run [GitHub Issue Intake Fallback Smoke Checklist](./github-issue-intake-fallback-smoke-checklist.md). The checklist is intentionally small and focuses on three things:
+
+- issue creation succeeds without Claude
+- the resulting issue preserves the required metadata quality bar
+- follow-up routing is explicit for drills and real outages
 
 ## Quality Bar
 
