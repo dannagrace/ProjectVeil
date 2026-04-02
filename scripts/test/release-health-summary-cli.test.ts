@@ -274,3 +274,21 @@ test("release:health:summary accepts candidate readiness dashboard trend inputs"
   assert.match(markdown, /current=cur1234:blocked/);
   assert.match(markdown, /previous=prev9876:ready/);
 });
+
+test("CI workflow wires same-repo PR history artifacts into readiness trend deltas", () => {
+  const workflowPath = path.join(repoRoot, ".github", "workflows", "ci.yml");
+  const workflow = fs.readFileSync(workflowPath, "utf8");
+
+  assert.match(
+    workflow,
+    /- name: Resolve previous successful history baseline\s+if: \|\s+github\.event_name == 'pull_request' &&\s+github\.event\.pull_request\.head\.repo\.full_name == github\.repository\s+id: history-baseline\s+uses: actions\/github-script@v7/s
+  );
+  assert.match(
+    workflow,
+    /- name: Download previous release-readiness history artifact\s+if: steps\.history-baseline\.outputs\.run-id != ''\s+continue-on-error: true\s+uses: actions\/download-artifact@v4\s+with:\s+github-token: \$\{\{ github\.token \}\}\s+repository: \$\{\{ github\.repository \}\}\s+run-id: \$\{\{ steps\.history-baseline\.outputs\.run-id \}\}\s+name: release-readiness-history\s+path: \$\{\{ runner\.temp \}\}\/baseline/s
+  );
+  assert.match(
+    workflow,
+    /if \[\[ -f "\$\{RUNNER_TEMP\}\/baseline\/release-readiness-dashboard\.json" \]\]; then\s+args\+=\(--previous-release-readiness-dashboard "\$\{RUNNER_TEMP\}\/baseline\/release-readiness-dashboard\.json"\)\s+fi/s
+  );
+});
