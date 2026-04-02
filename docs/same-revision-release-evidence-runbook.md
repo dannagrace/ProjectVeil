@@ -34,6 +34,7 @@ These are the minimum artifacts for a same-revision release call:
 | Cocos / WeChat RC bundle | `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report artifacts/wechat-release/codex.wechat.smoke-report.json --release-readiness-snapshot <snapshot-json>` | `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.json` plus paired `.md`, snapshot, checklist, and blockers files |
 | Runtime observability sign-off | Manual review using `docs/wechat-runtime-observability-signoff.md` plus `docs/release-evidence/wechat-runtime-observability-signoff.template.md` | `artifacts/wechat-release/runtime-observability-signoff-<candidate>-<short-sha>.md` or equivalent reviewer artifact |
 | Manual evidence owner ledger | Copy `docs/release-evidence/manual-release-evidence-owner-ledger.template.md` for the candidate and update it as manual evidence lands | `artifacts/release-readiness/manual-release-evidence-owner-ledger-<candidate>-<short-sha>.md` or release PR table |
+| Same-candidate evidence audit | `npm run release:same-candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha>` | `artifacts/release-readiness/same-candidate-evidence-audit-<candidate>-<short-sha>.json` plus paired `.md` |
 | Final same-revision assembly check | `npm run release:readiness:dashboard -- --server-url http://127.0.0.1:2567 --wechat-artifacts-dir artifacts/wechat-release --candidate-revision <git-sha>` | `artifacts/release-readiness/release-readiness-dashboard-*.json` plus `.md` |
 
 If the candidate is missing any item above, the release call is still incomplete even if individual scripts passed earlier.
@@ -121,7 +122,19 @@ Freshness check:
 - confirm `owner`, `status`, `target revision`, `recorded at`, and `artifact path` agree with the underlying artifact
 - confirm any row still marked `pending` or `hold` explains the next follow-up clearly enough for handoff
 
-7. Run the final assembly check that enforces same-revision consistency.
+7. Run the artifact-family audit for the pinned candidate.
+
+Before the broad dashboard pass, run the artifact-family audit that explicitly compares the latest readiness snapshot, release-gate summary, Cocos RC bundle, and manual evidence ledger for the same candidate:
+
+```bash
+npm run release:same-candidate:evidence-audit -- \
+  --candidate <candidate-name> \
+  --candidate-revision <git-sha>
+```
+
+This audit emits one JSON + Markdown summary and exits non-zero when any required artifact family is missing, stale, points at a different revision, or still links to a different readiness snapshot.
+
+8. Run the final assembly check that enforces same-revision consistency.
 
 ```bash
 npm run release:readiness:dashboard -- \
@@ -147,6 +160,7 @@ Before making the release call, verify this exact packet exists:
 - one RC blocker Markdown file for `<candidate-name>` and `<git-sha>`
 - one runtime observability sign-off artifact for `<git-sha>`
 - one manual evidence owner ledger Markdown file or PR table for `<candidate-name>` and `<git-sha>`
+- one same-candidate evidence audit JSON or Markdown for `<candidate-name>` and `<git-sha>`
 - one release readiness dashboard JSON or Markdown for `<git-sha>`
 
 If two files for the "same" evidence disagree on revision or timestamp window, treat the packet as invalid and refresh the stale file instead of choosing by hand.
