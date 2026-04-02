@@ -1595,6 +1595,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
 }
 
 export function renderMarkdown(report: ReleaseGateSummaryReport): string {
+  const manualEvidence = report.releaseSurface.evidence.filter((entry) => entry.id.startsWith("manual:"));
   const lines = [
     "# Release Gate Summary",
     "",
@@ -1639,6 +1640,31 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
       .filter((value) => value.length > 0)
       .join(" ");
     lines.push(`  - ${entry.label}: ${entry.summary} [${details}]`);
+  }
+  lines.push("");
+
+  lines.push("### Manual Evidence Ownership");
+  lines.push("");
+  if (manualEvidence.length === 0) {
+    lines.push("- No required manual evidence items are attached to the target surface.");
+  } else {
+    for (const entry of manualEvidence) {
+      const details = [
+        `status=${entry.status}`,
+        `freshness=${entry.freshness}`,
+        `owner=${entry.owner ?? "<missing>"}`,
+        `revision=${entry.revision ?? "<missing>"}`,
+        `recordedAt=${entry.observedAt ?? "<missing>"}`,
+        `artifact=${entry.artifactPath ? relativeReportPath(entry.artifactPath) : "<missing>"}`
+      ];
+      if (entry.blockerIds.length > 0) {
+        details.push(`blockers=${entry.blockerIds.join(",")}`);
+      }
+      if (entry.waiverReason) {
+        details.push(`waiver=${entry.waiverReason}`);
+      }
+      lines.push(`- ${entry.label}: ${entry.summary} [${details.join(" ")}]`);
+    }
   }
   lines.push("");
 

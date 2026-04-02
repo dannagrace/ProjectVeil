@@ -232,6 +232,9 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(renderMarkdown(report), /release-readiness-pass\.json/);
   assert.match(renderMarkdown(report), /colyseus-reconnect-soak-summary-pass\.json/);
   assert.match(renderMarkdown(report), /codex\.wechat\.release-candidate-summary\.json/);
+  assert.match(renderMarkdown(report), /### Manual Evidence Ownership/);
+  assert.match(renderMarkdown(report), /owner=release-oncall/);
+  assert.match(renderMarkdown(report), /artifact=artifacts\/wechat-release\/device-runtime-review\.json/);
   assert.match(renderMarkdown(report), /Config Change Risk Summary/);
   assert.match(renderMarkdown(report), /Recommend rehearsal: yes/);
 });
@@ -353,6 +356,8 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
   assert.match(report.gates[0]?.summary ?? "", /not release-ready/);
   assert.match(report.gates[3]?.summary ?? "", /blocked/i);
   assert.match(report.gates[3]?.failures.join("\n") ?? "", /blocked pending device evidence|WeChat smoke case is blocked/);
+  assert.match(renderMarkdown(report), /### Manual Evidence Ownership/);
+  assert.match(renderMarkdown(report), /No required manual evidence items are attached to the target surface/);
 });
 
 test("evaluateWechatGate prefers RC validation and falls back to smoke report", () => {
