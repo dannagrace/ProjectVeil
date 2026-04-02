@@ -2,7 +2,7 @@
 
 Use this matrix before opening a PR to pick the smallest verification set that still matches the risk of your change. It is intentionally scoped to the repo's current scripts, workflows, and release-readiness surfaces instead of generic "run everything" advice.
 
-For deterministic path-to-plan routing, use `npm run plan:validation:minimal -- --base origin/main --head HEAD` or pass explicit changed paths. The helper mirrors this matrix for major surfaces such as Cocos client, H5 shell, server runtime, release packaging, observability, and content/config. Treat its output as the fast routing layer, then fall back to the matrix when behavior or risk is broader than the touched paths suggest.
+For deterministic path-to-plan routing, use `npm run plan:validation:minimal -- --branch origin/main`, `npm run plan:validation:minimal -- --pr <number>`, or pass explicit changed paths. The helper mirrors this matrix for major surfaces such as Cocos client, H5 shell, server runtime, release packaging, observability, and content/config. Treat its output as the fast routing layer, then fall back to the matrix when behavior or risk is broader than the touched paths suggest.
 
 ## Contributor Quick Reference
 
@@ -27,7 +27,11 @@ If a change fits more than one row, combine the minimum required commands from e
 Use the helper when you want the repo to translate touched paths into a concise required-versus-optional validation plan:
 
 ```bash
-npm run plan:validation:minimal -- --base origin/main --head HEAD
+npm run plan:validation:minimal -- --branch origin/main
+```
+
+```bash
+npm run plan:validation:minimal -- --pr 708
 ```
 
 ```bash
@@ -36,10 +40,18 @@ npm run plan:validation:minimal -- \
   --path scripts/package-wechat-minigame-release.ts
 ```
 
+Maintainer and contributor flow:
+
+1. Before opening a PR, run `npm run plan:validation:minimal -- --branch origin/main` from your topic branch. The helper uses the same three-dot diff GitHub review uses, so the path set comes from the merge-base against `origin/main`.
+2. Paste the Markdown output into your PR description or working notes, then run the `Required checks` list.
+3. If you are reviewing an open PR, run `npm run plan:validation:minimal -- --pr <number>` to regenerate the same style of plan directly from the PR diff.
+4. Use `Optional diagnostics` only when the changed surface rationale matches the broader risk, a required check fails, or reviewers need extra release evidence.
+
 What it does:
 
 - maps changed paths to the maintained repo surfaces in this matrix
-- emits deduped `Required` steps plus `Optional diagnostics`
+- emits deduped Markdown `Required checks` plus `Optional diagnostics`
+- includes short rationale per changed surface so reviewers can see why each command is in the plan
 - points only at existing `npm run ...` commands or existing manual checks already described here
 
 What it does not do:
@@ -53,6 +65,7 @@ Override the helper and use the higher-risk matrix row when:
 - one change affects more than one runtime surface
 - a documented command or CI entry point changed
 - reviewers depend on a stable artifact or same-revision release evidence set
+- the PR comes from a fork and `gh pr diff <number> --name-only` is unavailable in your environment
 
 ## Verification Tiers
 

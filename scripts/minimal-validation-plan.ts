@@ -52,9 +52,17 @@ export interface ValidationPlan {
 interface CliArgs {
   base?: string;
   head?: string;
+  branch?: string;
+  pr?: string;
   paths: string[];
   json: boolean;
+  markdown: boolean;
+  text: boolean;
   help: boolean;
+}
+
+interface RenderOptions {
+  comparisonLabel?: string;
 }
 
 const STEP_DEFINITIONS: StepDefinition[] = [
@@ -331,7 +339,13 @@ const SURFACE_RULES: SurfaceRule[] = [
     optionalStepIds: ["test-coverage-ci"],
     humanOverride: "If the tooling change only affects one surface, prefer that surface's targeted checks over broad coverage runs.",
     prefixes: ["scripts/test/"],
-    exact: ["package.json", "package-lock.json", "tsconfig.base.json", "tsconfig.ops-tooling.json"],
+    exact: [
+      "package.json",
+      "package-lock.json",
+      "scripts/minimal-validation-plan.ts",
+      "tsconfig.base.json",
+      "tsconfig.ops-tooling.json"
+    ],
     suffixes: [".config.ts"]
   }
 ];
@@ -490,14 +504,16 @@ function readGitPathList(args: string[]): string[] {
 }
 
 function detectPathsFromGit(base?: string, head = "HEAD"): string[] {
+  const includeHeadWorkspace = head === "HEAD";
+  const workspacePaths = includeHeadWorkspace
+    ? readGitPathList(["diff", "--name-only", "--diff-filter=ACMR"]).concat(
+        readGitPathList(["diff", "--cached", "--name-only", "--diff-filter=ACMR"])
+      )
+    : [];
   const diffPaths =
     typeof base === "string"
-      ? readGitPathList(["diff", "--name-only", "--diff-filter=ACMR", `${base}...${head}`])
-      : uniqueSorted(
-          readGitPathList(["diff", "--name-only", "--diff-filter=ACMR"])
-            .concat(readGitPathList(["diff", "--cached", "--name-only", "--diff-filter=ACMR"]))
-            .concat(readGitPathList(["diff", "--name-only", "--diff-filter=ACMR", "origin/main...HEAD"]))
-        );
+      ? workspacePaths.concat(readGitPathList(["diff", "--name-only", "--diff-filter=ACMR", `${base}...${head}`]))
+      : workspacePaths.concat(readGitPathList(["diff", "--name-only", "--diff-filter=ACMR", "origin/main...HEAD"]));
 
   return uniqueSorted(diffPaths);
 }
@@ -506,6 +522,8 @@ function parseArgs(argv: string[]): CliArgs {
   const parsed: CliArgs = {
     paths: [],
     json: false,
+    markdown: false,
+    text: false,
     help: false
   };
 
@@ -540,8 +558,36 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
 
+    if (arg === "--branch") {
+      if (!next) {
+        throw new Error("Missing value for --branch.");
+      }
+      parsed.branch = next;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--pr") {
+      if (!next) {
+        throw new Error("Missing value for --pr.");
+      }
+      parsed.pr = next;
+      index += 1;
+      continue;
+    }
+
     if (arg === "--json") {
       parsed.json = true;
+      continue;
+    }
+
+    if (arg === "--markdown") {
+      parsed.markdown = true;
+      continue;
+    }
+
+    if (arg === "--text") {
+      parsed.text = true;
       continue;
     }
 
@@ -557,11 +603,15 @@ function parseArgs(argv: string[]): CliArgs {
 }
 
 function printHelp(): void {
-  console.log("Usage: npm run plan:validation:minimal -- [--base <ref> --head <ref>] [--path <file> ...] [--json]");
+  console.log(
+    "Usage: npm run plan:validation:minimal -- [--base <ref> --head <ref> | --branch <ref> | --pr <number>] [--path <file> ...] [--markdown|--text|--json]"
+  );
   console.log("");
   console.log("Examples:");
   console.log("  npm run plan:validation:minimal -- apps/cocos-client/assets/scripts/VeilRoot.ts");
   console.log("  npm run plan:validation:minimal -- --base origin/main --head HEAD");
+  console.log("  npm run plan:validation:minimal -- --branch origin/main --markdown");
+  console.log("  npm run plan:validation:minimal -- --pr 708");
   console.log("  npm run plan:validation:minimal -- --path apps/server/src/observability.ts --path docs/wechat-runtime-observability-signoff.md");
 }
 
@@ -574,11 +624,92 @@ function formatStep(step: ValidationPlanStep): string {
   return `- ${step.summary}${sourceText}`;
 }
 
-export function renderValidationPlan(plan: ValidationPlan): string {
+function formatMarkdownList(values: string[]): string {
+  return values.map((value) => `\`${value}\``).join(", ");
+}
+
+function renderMarkdownValidationPlan(plan: ValidationPlan, options?: RenderOptions): string {
+  const lines: string[] = [];
+
+  lines.push("## Recommended Minimal Validation Plan");
+  lines.push("");
+  if (options?.comparisonLabel) {
+    lines.push(`Comparison: \`${options.comparisonLabel}\``);
+  }
+  lines.push(`Detected paths: ${plan.detectedPaths.length}`);
+
+  if (plan.matchedSurfaces.length > 0) {
+    lines.push("");
+    lines.push("### Changed surfaces");
+    for (const surface of plan.matchedSurfaces) {
+      lines.push(`- **${surface.label}**: ${surface.rationale}`);
+      lines.push(`  Paths: ${formatMarkdownList(surface.matchedPaths)}`);
+    }
+  }
+
+  lines.push("");
+  lines.push("### Required checks");
+  if (plan.requiredSteps.length === 0) {
+    lines.push("- [ ] No required steps inferred from the matched paths.");
+  } else {
+    for (const step of plan.requiredSteps) {
+      lines.push(
+        `- [ ] ${step.kind === "command" && step.command ? `\`${step.command}\`` : step.summary}`
+      );
+      if (step.kind !== "command" || !step.command) {
+        lines.push(`  Reason: ${step.summary}`);
+      } else {
+        lines.push(`  Reason: ${step.summary}`);
+      }
+      if (step.sources.length > 0) {
+        lines.push(`  Required because: ${step.sources.join(", ")}`);
+      }
+    }
+  }
+
+  lines.push("");
+  lines.push("### Optional diagnostics");
+  if (plan.optionalSteps.length === 0) {
+    lines.push("- None.");
+  } else {
+    for (const step of plan.optionalSteps) {
+      lines.push(
+        `- [ ] ${step.kind === "command" && step.command ? `\`${step.command}\`` : step.summary}`
+      );
+      lines.push(`  Reason: ${step.summary}`);
+      if (step.sources.length > 0) {
+        lines.push(`  Consider because: ${step.sources.join(", ")}`);
+      }
+    }
+  }
+
+  if (plan.unmatchedPaths.length > 0) {
+    lines.push("");
+    lines.push("### Unmatched paths");
+    for (const filePath of plan.unmatchedPaths) {
+      lines.push(`- \`${filePath}\``);
+    }
+  }
+
+  if (plan.humanOverrides.length > 0) {
+    lines.push("");
+    lines.push("### Reviewer notes");
+    for (const override of plan.humanOverrides) {
+      lines.push(`- ${override}`);
+    }
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function renderPlainTextValidationPlan(plan: ValidationPlan, options?: RenderOptions): string {
   const lines: string[] = [];
 
   lines.push("Recommended minimal validation plan");
   lines.push("");
+  if (options?.comparisonLabel) {
+    lines.push(`Comparison: ${options.comparisonLabel}`);
+  }
   lines.push(`Detected paths: ${plan.detectedPaths.length}`);
 
   if (plan.matchedSurfaces.length > 0) {
@@ -628,6 +759,23 @@ export function renderValidationPlan(plan: ValidationPlan): string {
   return `${lines.join("\n")}\n`;
 }
 
+export function renderValidationPlan(plan: ValidationPlan, options?: RenderOptions): string {
+  return renderMarkdownValidationPlan(plan, options);
+}
+
+function readPullRequestPathList(pr: string): string[] {
+  const output = execFileSync("gh", ["pr", "diff", pr, "--name-only"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"]
+  });
+
+  return output
+    .split("\n")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
 function main(): void {
   const args = parseArgs(process.argv);
   if (args.help) {
@@ -635,12 +783,34 @@ function main(): void {
     return;
   }
 
-  const detectedPaths =
-    args.paths.length > 0 ? args.paths : detectPathsFromGit(args.base, args.head ?? "HEAD");
+  if (args.json && (args.markdown || args.text)) {
+    throw new Error("Choose only one output format: --json, --markdown, or --text.");
+  }
+
+  if (args.pr && (args.base || args.head || args.branch || args.paths.length > 0)) {
+    throw new Error("--pr cannot be combined with --base, --head, --branch, or explicit paths.");
+  }
+
+  const head = args.head ?? "HEAD";
+  const comparisonLabel = args.pr
+    ? `PR #${args.pr}`
+    : args.branch
+      ? `${args.branch}...${head}`
+      : args.base
+        ? `${args.base}...${head}`
+        : args.paths.length > 0
+          ? "explicit paths"
+          : "working tree + index + origin/main...HEAD";
+
+  const detectedPaths = args.paths.length > 0
+    ? args.paths
+    : args.pr
+      ? uniqueSorted(readPullRequestPathList(args.pr))
+      : detectPathsFromGit(args.branch ?? args.base, head);
   const plan = inferValidationPlan(detectedPaths);
 
   if (plan.detectedPaths.length === 0) {
-    throw new Error("No changed paths detected. Pass explicit paths or use --base/--head.");
+    throw new Error("No changed paths detected. Pass explicit paths or use --branch, --base/--head, or --pr.");
   }
 
   if (args.json) {
@@ -648,7 +818,11 @@ function main(): void {
     return;
   }
 
-  process.stdout.write(renderValidationPlan(plan));
+  process.stdout.write(
+    args.text
+      ? renderPlainTextValidationPlan(plan, { comparisonLabel })
+      : renderValidationPlan(plan, { comparisonLabel })
+  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
