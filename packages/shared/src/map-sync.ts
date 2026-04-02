@@ -24,9 +24,9 @@ export interface EncodedPlayerMapBounds {
 export interface EncodedPlayerMapTiles {
   format: "typed-array-v1";
   bounds: EncodedPlayerMapBounds;
-  terrain: string;
-  fog: string;
-  walkable: string;
+  terrain: string | Uint8Array;
+  fog: string | Uint8Array;
+  walkable: string | Uint8Array;
   overlays: EncodedPlayerMapOverlay[];
 }
 
@@ -41,6 +41,7 @@ export interface PlayerWorldViewPayload extends Omit<PlayerWorldView, "map"> {
 
 export interface EncodePlayerWorldViewOptions {
   bounds?: Partial<EncodedPlayerMapBounds>;
+  binary?: boolean;
 }
 
 const TERRAIN_CODES: Record<PlayerTileView["terrain"], number> = {
@@ -82,6 +83,10 @@ function decodeBase64(encoded: string): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function resolveEncodedBytes(encoded: string | Uint8Array): Uint8Array {
+  return typeof encoded === "string" ? decodeBase64(encoded) : encoded;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -169,9 +174,9 @@ export function encodePlayerWorldView(
       encodedTiles: {
         format: "typed-array-v1",
         bounds,
-        terrain: encodeBase64(terrain),
-        fog: encodeBase64(fog),
-        walkable: encodeBase64(walkable),
+        terrain: options?.binary ? terrain : encodeBase64(terrain),
+        fog: options?.binary ? fog : encodeBase64(fog),
+        walkable: options?.binary ? walkable : encodeBase64(walkable),
         overlays
       }
     }
@@ -191,9 +196,9 @@ export function decodePlayerWorldView(
     throw new Error("unsupported_player_world_view_encoding");
   }
 
-  const terrain = decodeBase64(encoded.terrain);
-  const fog = decodeBase64(encoded.fog);
-  const walkable = decodeBase64(encoded.walkable);
+  const terrain = resolveEncodedBytes(encoded.terrain);
+  const fog = resolveEncodedBytes(encoded.fog);
+  const walkable = resolveEncodedBytes(encoded.walkable);
   const bounds = encoded.bounds ?? {
     x: 0,
     y: 0,

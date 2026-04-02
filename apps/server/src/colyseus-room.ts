@@ -588,7 +588,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
   ): SessionStatePayload {
     const snapshot = options?.snapshot ?? this.worldRoom.getSnapshot(playerId).state;
-    const world = encodePlayerWorldView(snapshot, options?.mapBounds ? { bounds: options.mapBounds } : undefined);
+    const world = encodePlayerWorldView(snapshot, {
+      ...(options?.mapBounds ? { bounds: options.mapBounds } : {}),
+      binary: true
+    });
     const battle = this.worldRoom.getBattleForPlayer(playerId);
     const heroId = world.ownHeroes[0]?.id;
     const events = extras?.events ? filterWorldEventsForPlayer(this.worldRoom.getInternalState(), playerId, extras.events) : [];

@@ -650,6 +650,9 @@ test("colyseus room broadcasts bounded typed-array map chunks to non-source clie
   const pushed = await pushPromise;
   assert.ok(!("tiles" in pushed.payload.world.map) || !Array.isArray(pushed.payload.world.map.tiles));
   assert.ok(pushed.payload.world.map.encodedTiles);
+  assert.ok(pushed.payload.world.map.encodedTiles?.terrain instanceof Uint8Array);
+  assert.ok(pushed.payload.world.map.encodedTiles?.fog instanceof Uint8Array);
+  assert.ok(pushed.payload.world.map.encodedTiles?.walkable instanceof Uint8Array);
   assert.deepEqual(pushed.payload.world.map.encodedTiles?.bounds, {
     x: 0,
     y: 0,
