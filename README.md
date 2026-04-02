@@ -202,6 +202,7 @@ npm run dev:client:h5
 - 多人同步治理矩阵说明：`docs/sync-governance-matrix.md`
 - 共享 contract 快照说明：`docs/shared-contract-snapshots.md`
 - Codex automation 分支审计与清理 runbook：`docs/codex-automation-branch-maintenance.md`
+- GitHub issue intake fallback runbook：`docs/github-issue-intake-fallback.md`
 - 当前 H5 调试壳仍支持：地图点击移动、可达格高亮、悬停路径预览、资源/明雷信息提示、轻量路径播放反馈、可视化战斗单位面板、目标选中、伤害飘字与战后结果弹窗。
 - 当前 H5 联机体验已支持：客户端预测、断线自动重连、刷新后本地快照首帧回放，再由权威房间状态收敛。
 - 当前 Cocos Creator 主客户端已补齐：

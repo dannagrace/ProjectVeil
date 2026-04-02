@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: ProjectVeil issue intake fallback runbook
+    url: https://github.com/dannagrace/ProjectVeil/blob/main/docs/github-issue-intake-fallback.md
+    about: Use this runbook when Claude is unavailable and GPT needs to create the issue directly with gh.
