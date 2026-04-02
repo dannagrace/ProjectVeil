@@ -67,6 +67,33 @@ interface CheckpointLedgerEntry {
   telemetryCheckpoints: string[];
 }
 
+interface FailureSummary {
+  summary: string;
+  regressedJourneySegments: Array<{
+    id: string;
+    title: string;
+    status: EvidenceStatus;
+    reason: string;
+  }>;
+  blockedJourneySegments: Array<{
+    id: string;
+    title: string;
+    status: EvidenceStatus;
+    reason: string;
+  }>;
+  lackingJourneyEvidence: Array<{
+    id: string;
+    title: string;
+    status: EvidenceStatus;
+    reason: string;
+  }>;
+  lackingRequiredEvidence: Array<{
+    id: string;
+    label: string;
+    reason: string;
+  }>;
+}
+
 interface CocosReleaseCandidateSnapshot {
   schemaVersion: 1;
   candidate: {
@@ -97,6 +124,7 @@ interface CocosReleaseCandidateSnapshot {
   };
   requiredEvidence: CanonicalEvidenceField[];
   journey: JourneyStep[];
+  failureSummary: FailureSummary;
   checkpointLedger?: {
     source: "primary-journey-evidence";
     milestoneDir: string;
@@ -197,6 +225,7 @@ interface BundleManifest {
       summary: string;
     };
   };
+  failureSummary: FailureSummary;
 }
 
 const DEFAULT_OUTPUT_DIR = path.join("artifacts", "release-readiness");
@@ -601,6 +630,30 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
   lines.push("## Summary");
   lines.push("");
   lines.push(snapshot.execution.summary);
+  if (
+    snapshot.failureSummary.regressedJourneySegments.length > 0 ||
+    snapshot.failureSummary.blockedJourneySegments.length > 0 ||
+    snapshot.failureSummary.lackingJourneyEvidence.length > 0 ||
+    snapshot.failureSummary.lackingRequiredEvidence.length > 0
+  ) {
+    lines.push("");
+    lines.push("## Failure Summary");
+    lines.push("");
+    lines.push(snapshot.failureSummary.summary);
+    lines.push("");
+    for (const step of snapshot.failureSummary.regressedJourneySegments) {
+      lines.push(`- Regressed: \`${step.id}\` (${step.title}) - ${step.reason}`);
+    }
+    for (const step of snapshot.failureSummary.blockedJourneySegments) {
+      lines.push(`- Blocked: \`${step.id}\` (${step.title}) - ${step.reason}`);
+    }
+    for (const step of snapshot.failureSummary.lackingJourneyEvidence) {
+      lines.push(`- Missing segment evidence: \`${step.id}\` (${step.title}) - ${step.reason}`);
+    }
+    for (const field of snapshot.failureSummary.lackingRequiredEvidence) {
+      lines.push(`- Missing required evidence: \`${field.id}\` (${field.label}) - ${field.reason}`);
+    }
+  }
   lines.push("");
   return `${lines.join("\n")}\n`;
 }
@@ -751,7 +804,8 @@ function buildManifest(snapshot: CocosReleaseCandidateSnapshot, artifacts: Bundl
       attachHint:
         "Attach the markdown bundle summary and presentation sign-off summary to CI artifacts or PR comments, and keep the JSON manifest alongside the snapshot.",
       presentationSignoff: buildPresentationSignoffReview(snapshot)
-    }
+    },
+    failureSummary: snapshot.failureSummary
   };
 }
 

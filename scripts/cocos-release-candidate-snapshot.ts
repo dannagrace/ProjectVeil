@@ -156,6 +156,27 @@ interface CheckpointLedgerEntry {
   telemetryCheckpoints: string[];
 }
 
+interface JourneySegmentFinding {
+  id: JourneyStepId;
+  title: string;
+  status: EvidenceStatus;
+  reason: string;
+}
+
+interface RequiredEvidenceGap {
+  id: CanonicalEvidenceId;
+  label: string;
+  reason: string;
+}
+
+interface FailureSummary {
+  summary: string;
+  regressedJourneySegments: JourneySegmentFinding[];
+  blockedJourneySegments: JourneySegmentFinding[];
+  lackingJourneyEvidence: JourneySegmentFinding[];
+  lackingRequiredEvidence: RequiredEvidenceGap[];
+}
+
 interface CocosReleaseCandidateSnapshot {
   schemaVersion: 1;
   candidate: {
@@ -187,6 +208,7 @@ interface CocosReleaseCandidateSnapshot {
   mappings: EvidenceMapping[];
   requiredEvidence: CanonicalEvidenceField[];
   journey: JourneyStep[];
+  failureSummary: FailureSummary;
   checkpointLedger?: {
     source: "primary-journey-evidence";
     milestoneDir: string;
@@ -612,7 +634,14 @@ function buildTemplate(args: Args): CocosReleaseCandidateSnapshot {
     },
     mappings: buildMappings(),
     requiredEvidence: buildRequiredEvidence(),
-    journey: buildJourney()
+    journey: buildJourney(),
+    failureSummary: {
+      summary: "No regressions or evidence gaps recorded.",
+      regressedJourneySegments: [],
+      blockedJourneySegments: [],
+      lackingJourneyEvidence: [],
+      lackingRequiredEvidence: []
+    }
   };
 
   if (args.primaryJourneyEvidencePath) {
@@ -623,6 +652,7 @@ function buildTemplate(args: Args): CocosReleaseCandidateSnapshot {
   }
 
   recomputeSnapshotExecution(snapshot);
+  snapshot.failureSummary = buildFailureSummary(snapshot);
 
   return snapshot;
 }
@@ -915,6 +945,62 @@ function recomputeSnapshotExecution(snapshot: CocosReleaseCandidateSnapshot): vo
   snapshot.execution.overallStatus = "passed";
 }
 
+function buildFailureSummary(snapshot: CocosReleaseCandidateSnapshot): FailureSummary {
+  const regressedJourneySegments = snapshot.journey
+    .filter((step) => step.required && step.status === "failed")
+    .map((step) => ({
+      id: step.id,
+      title: step.title,
+      status: step.status,
+      reason: step.notes || "Required journey segment regressed."
+    }));
+  const blockedJourneySegments = snapshot.journey
+    .filter((step) => step.required && step.status === "blocked")
+    .map((step) => ({
+      id: step.id,
+      title: step.title,
+      status: step.status,
+      reason: step.notes || "Required journey segment is blocked."
+    }));
+  const lackingJourneyEvidence = snapshot.journey
+    .filter((step) => step.required && step.status === "pending")
+    .map((step) => ({
+      id: step.id,
+      title: step.title,
+      status: step.status,
+      reason: step.notes || "Required journey segment lacks evidence."
+    }));
+  const lackingRequiredEvidence = snapshot.requiredEvidence
+    .filter((field) => field.required && field.value.trim().length === 0)
+    .map((field) => ({
+      id: field.id,
+      label: field.label,
+      reason: field.notes || "Required evidence field is still empty."
+    }));
+
+  const parts: string[] = [];
+  if (regressedJourneySegments.length > 0) {
+    parts.push(`Regressed journey segments: ${regressedJourneySegments.map((step) => step.id).join(", ")}`);
+  }
+  if (blockedJourneySegments.length > 0) {
+    parts.push(`Blocked journey segments: ${blockedJourneySegments.map((step) => step.id).join(", ")}`);
+  }
+  if (lackingJourneyEvidence.length > 0) {
+    parts.push(`Journey segments lacking evidence: ${lackingJourneyEvidence.map((step) => step.id).join(", ")}`);
+  }
+  if (lackingRequiredEvidence.length > 0) {
+    parts.push(`Required evidence still empty: ${lackingRequiredEvidence.map((field) => field.id).join(", ")}`);
+  }
+
+  return {
+    summary: parts.length > 0 ? parts.join(". ") : "No regressions or evidence gaps recorded.",
+    regressedJourneySegments,
+    blockedJourneySegments,
+    lackingJourneyEvidence,
+    lackingRequiredEvidence
+  };
+}
+
 function validateLinkedReleaseReadinessSnapshot(snapshotRef: LinkedEvidenceRef | undefined): void {
   if (!snapshotRef) {
     return;
@@ -953,6 +1039,30 @@ function validateSnapshot(snapshot: CocosReleaseCandidateSnapshot): void {
   }
   assertNonEmptyString(snapshot.execution.summary, "execution.summary");
   assertNonEmptyString(snapshot.environment.server, "environment.server");
+  assertNonEmptyString(snapshot.failureSummary.summary, "failureSummary.summary");
+  for (const entry of snapshot.failureSummary.regressedJourneySegments) {
+    assertNonEmptyString(entry.id, `failureSummary.regressedJourneySegments[${entry.id}].id`);
+    assertNonEmptyString(entry.title, `failureSummary.regressedJourneySegments[${entry.id}].title`);
+    assertEvidenceStatus(entry.status, `failureSummary.regressedJourneySegments[${entry.id}].status`);
+    assertNonEmptyString(entry.reason, `failureSummary.regressedJourneySegments[${entry.id}].reason`);
+  }
+  for (const entry of snapshot.failureSummary.blockedJourneySegments) {
+    assertNonEmptyString(entry.id, `failureSummary.blockedJourneySegments[${entry.id}].id`);
+    assertNonEmptyString(entry.title, `failureSummary.blockedJourneySegments[${entry.id}].title`);
+    assertEvidenceStatus(entry.status, `failureSummary.blockedJourneySegments[${entry.id}].status`);
+    assertNonEmptyString(entry.reason, `failureSummary.blockedJourneySegments[${entry.id}].reason`);
+  }
+  for (const entry of snapshot.failureSummary.lackingJourneyEvidence) {
+    assertNonEmptyString(entry.id, `failureSummary.lackingJourneyEvidence[${entry.id}].id`);
+    assertNonEmptyString(entry.title, `failureSummary.lackingJourneyEvidence[${entry.id}].title`);
+    assertEvidenceStatus(entry.status, `failureSummary.lackingJourneyEvidence[${entry.id}].status`);
+    assertNonEmptyString(entry.reason, `failureSummary.lackingJourneyEvidence[${entry.id}].reason`);
+  }
+  for (const field of snapshot.failureSummary.lackingRequiredEvidence) {
+    assertNonEmptyString(field.id, `failureSummary.lackingRequiredEvidence[${field.id}].id`);
+    assertNonEmptyString(field.label, `failureSummary.lackingRequiredEvidence[${field.id}].label`);
+    assertNonEmptyString(field.reason, `failureSummary.lackingRequiredEvidence[${field.id}].reason`);
+  }
 
   const journeyById = new Map<JourneyStepId, JourneyStep>();
   for (const step of snapshot.journey) {
