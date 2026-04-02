@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildEquipmentInspectItems,
   buildHeroEquipmentActionRows,
   formatEquipmentActionReason,
+  formatEquipmentInspectLines,
   formatEquipmentOverviewLines,
   formatInventorySummaryLines,
   formatRecentLootLines,
@@ -213,6 +215,69 @@ test("formatEquipmentOverviewLines exposes slot metadata and resolved equipment 
       "特效 抢攻",
       "武器 说明 鼓励先手突击的军团佩剑。",
       "护甲 说明 最基础的防护甲衣。"
+    ]
+  );
+});
+
+test("buildEquipmentInspectItems returns equipped and bag items with shared metadata for item inspection", () => {
+  assert.deepEqual(
+    buildEquipmentInspectItems(
+      createHero({
+        loadout: {
+          learnedSkills: [],
+          equipment: {
+            weaponId: "vanguard_blade",
+            trinketIds: []
+          },
+          inventory: ["scout_compass", "scout_compass"]
+        }
+      })
+    ).map((item) => ({
+      itemId: item.itemId,
+      source: item.source,
+      slot: item.slot,
+      count: item.count,
+      specialEffectSummary: item.specialEffectSummary
+    })),
+    [
+      {
+        itemId: "vanguard_blade",
+        source: "equipped",
+        slot: "weapon",
+        count: 1,
+        specialEffectSummary: "抢攻: 在开战后的第一轮拥有更强的压制力。"
+      },
+      {
+        itemId: "scout_compass",
+        source: "inventory",
+        slot: "accessory",
+        count: 2,
+        specialEffectSummary: undefined
+      }
+    ]
+  );
+});
+
+test("formatEquipmentInspectLines provides stable item detail copy for the panel inspect card", () => {
+  assert.deepEqual(
+    formatEquipmentInspectLines({
+      itemId: "vanguard_blade",
+      slot: "weapon",
+      slotLabel: "武器",
+      source: "equipped",
+      name: "先锋战刃",
+      rarityLabel: "稀有",
+      bonusSummary: "攻击 +10%",
+      description: "鼓励先手突击的军团佩剑。",
+      count: 1,
+      specialEffectSummary: "抢攻: 在开战后的第一轮拥有更强的压制力。"
+    }),
+    [
+      "武器 先锋战刃 · 稀有",
+      "来源 当前已穿戴",
+      "加成 攻击 +10%",
+      "特效 抢攻: 在开战后的第一轮拥有更强的压制力。",
+      "说明 鼓励先手突击的军团佩剑。"
     ]
   );
 });

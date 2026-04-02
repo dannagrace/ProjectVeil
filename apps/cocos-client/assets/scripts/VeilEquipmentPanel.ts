@@ -2,12 +2,15 @@ import { _decorator, Color, Component, Graphics, Label, Node, UITransform } from
 import type { EventLogEntry } from "./project-shared/index.ts";
 import type { HeroView } from "./VeilCocosSession.ts";
 import {
+  buildEquipmentInspectItems,
   buildHeroEquipmentActionRows,
+  formatEquipmentInspectLines,
   formatEquipmentOverviewLines,
   formatEquipmentStatSummary,
   formatInventorySummaryLines,
   formatRecentLootLines,
-  type CocosEquipmentActionRow
+  type CocosEquipmentActionRow,
+  type CocosEquipmentInspectItem
 } from "./cocos-hero-equipment.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 
@@ -35,7 +38,7 @@ interface EquipmentPanelButtonState {
   name: string;
   label: string;
   callback: (() => void) | null;
-  tone: "default" | "equip" | "unequip";
+  tone: "default" | "equip" | "unequip" | "inspect";
 }
 
 export interface VeilEquipmentPanelRenderState {
@@ -56,12 +59,23 @@ export interface VeilEquipmentPanelOptions {
   onUnequipItem?: (slot: "weapon" | "armor" | "accessory") => void;
 }
 
+function buildInspectButtonName(item: CocosEquipmentInspectItem): string {
+  return `EquipmentPanelInspect-${item.source}-${item.slot}-${item.itemId}`;
+}
+
 function buildActionButtons(
+  inspectItems: CocosEquipmentInspectItem[],
   rows: CocosEquipmentActionRow[],
+  onInspectItem: (item: CocosEquipmentInspectItem) => void,
   onEquipItem: VeilEquipmentPanelOptions["onEquipItem"],
   onUnequipItem: VeilEquipmentPanelOptions["onUnequipItem"]
 ): EquipmentPanelButtonState[] {
-  const buttons: EquipmentPanelButtonState[] = [];
+  const buttons: EquipmentPanelButtonState[] = inspectItems.map((item) => ({
+    name: buildInspectButtonName(item),
+    label: `查看 ${item.slotLabel} ${item.name}${item.source === "inventory" && item.count > 1 ? ` x${item.count}` : ""}`,
+    tone: "inspect",
+    callback: () => onInspectItem(item)
+  }));
 
   for (const row of rows) {
     for (const item of row.inventory) {
@@ -91,6 +105,9 @@ export class VeilEquipmentPanel extends Component {
   private onClose: (() => void) | undefined;
   private onEquipItem: VeilEquipmentPanelOptions["onEquipItem"];
   private onUnequipItem: VeilEquipmentPanelOptions["onUnequipItem"];
+  private currentState: VeilEquipmentPanelRenderState | null = null;
+  private inspectedItemId: string | null = null;
+  private inspectedItemSource: CocosEquipmentInspectItem["source"] | null = null;
 
   configure(options: VeilEquipmentPanelOptions): void {
     this.onClose = options.onClose;
@@ -99,16 +116,26 @@ export class VeilEquipmentPanel extends Component {
   }
 
   render(state: VeilEquipmentPanelRenderState): void {
+    this.currentState = state;
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const width = transform.width || 420;
     const height = transform.height || 520;
     const contentWidth = width - 30;
     const hero = state.hero;
     const rows = buildHeroEquipmentActionRows(hero);
-    const buttons = buildActionButtons(rows, this.onEquipItem, this.onUnequipItem);
+    const inspectItems = buildEquipmentInspectItems(hero);
+    const selectedInspectItem = this.resolveInspectedItem(inspectItems);
+    const buttons = buildActionButtons(
+      inspectItems,
+      rows,
+      (item) => this.inspectItem(item),
+      this.onEquipItem,
+      this.onUnequipItem
+    );
     const bonusSummary = formatEquipmentStatSummary(hero);
     const loadoutLines = formatEquipmentOverviewLines(hero);
     const inventoryLines = formatInventorySummaryLines(hero);
+    const inspectLines = formatEquipmentInspectLines(selectedInspectItem);
     const lootLines = formatRecentLootLines(
       state.recentEventLog,
       hero?.id,
@@ -189,6 +216,22 @@ export class VeilEquipmentPanel extends Component {
     );
 
     cursorY = this.renderCard(
+      "EquipmentPanelInspect",
+      0,
+      cursorY,
+      contentWidth,
+      Math.max(96, 34 + inspectLines.length * 16),
+      ["物品详情", ...inspectLines],
+      {
+        fill: CARD_HIGHLIGHT_FILL,
+        stroke: new Color(244, 236, 208, 82)
+      },
+      null,
+      13,
+      16
+    );
+
+    cursorY = this.renderCard(
       "EquipmentPanelLoot",
       0,
       cursorY,
@@ -205,6 +248,28 @@ export class VeilEquipmentPanel extends Component {
     );
 
     this.renderActionButtons(contentWidth, cursorY, buttons);
+  }
+
+  private inspectItem(item: CocosEquipmentInspectItem): void {
+    this.inspectedItemId = item.itemId;
+    this.inspectedItemSource = item.source;
+    if (this.currentState) {
+      this.render(this.currentState);
+    }
+  }
+
+  private resolveInspectedItem(items: CocosEquipmentInspectItem[]): CocosEquipmentInspectItem | null {
+    const matchedItem = items.find(
+      (item) => item.itemId === this.inspectedItemId && item.source === this.inspectedItemSource
+    );
+    if (matchedItem) {
+      return matchedItem;
+    }
+
+    const [nextItem] = items;
+    this.inspectedItemId = nextItem?.itemId ?? null;
+    this.inspectedItemSource = nextItem?.source ?? null;
+    return nextItem ?? null;
   }
 
   private syncChrome(width: number, height: number): void {
@@ -363,7 +428,13 @@ export class VeilEquipmentPanel extends Component {
       const centerX = column === 0 ? -buttonWidth / 2 - gap / 2 : buttonWidth / 2 + gap / 2;
       const centerY = startY - row * (buttonHeight + gap);
       const fill =
-        button.tone === "equip" ? EQUIP_FILL : button.tone === "unequip" ? UNEQUIP_FILL : BUTTON_FILL;
+        button.tone === "equip"
+          ? EQUIP_FILL
+          : button.tone === "unequip"
+            ? UNEQUIP_FILL
+            : button.tone === "inspect"
+              ? CARD_HIGHLIGHT_FILL
+              : BUTTON_FILL;
       this.renderButton(
         button.name,
         centerX,
@@ -380,7 +451,10 @@ export class VeilEquipmentPanel extends Component {
     });
 
     for (const child of this.node.children) {
-      if (child.name.startsWith("EquipmentPanelAction-") && !actionButtons.some((button) => button.name === child.name)) {
+      if (
+        (child.name.startsWith("EquipmentPanelAction-") || child.name.startsWith("EquipmentPanelInspect-")) &&
+        !actionButtons.some((button) => button.name === child.name)
+      ) {
         child.active = false;
       }
     }

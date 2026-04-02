@@ -37,6 +37,19 @@ export interface CocosEquipmentStatSummaryLine {
   value: number;
 }
 
+export interface CocosEquipmentInspectItem {
+  itemId: string;
+  slot: EquipmentType;
+  slotLabel: string;
+  source: "equipped" | "inventory";
+  name: string;
+  rarityLabel: string;
+  bonusSummary: string;
+  description: string;
+  count: number;
+  specialEffectSummary?: string;
+}
+
 interface CocosRecentLootEvent {
   type: "hero.equipmentFound";
   heroId: string;
@@ -151,6 +164,62 @@ export function inventoryItemsForSlot(hero: HeroView, slot: EquipmentType): Coco
 
 export function inventoryItemsForHero(hero: HeroView): CocosEquipmentInventoryItem[] {
   return buildInventoryItems(hero);
+}
+
+export function buildEquipmentInspectItems(hero: HeroView | null): CocosEquipmentInspectItem[] {
+  if (!hero) {
+    return [];
+  }
+
+  const loadout = createHeroEquipmentLoadoutView(toHeroState(hero));
+  const equippedItems = loadout.slots
+    .filter((slot) => slot.itemId && slot.item)
+    .map((slot) => ({
+      itemId: slot.itemId as string,
+      slot: slot.slot,
+      slotLabel: slot.label,
+      source: "equipped" as const,
+      name: slot.itemName,
+      rarityLabel: slot.rarityLabel ?? "未知",
+      bonusSummary: slot.bonusSummary,
+      description: slot.description ?? "装备目录缺失说明。",
+      count: 1,
+      ...(slot.specialEffectSummary ? { specialEffectSummary: slot.specialEffectSummary } : {})
+    }));
+
+  const inventoryItems = inventoryItemsForHero(hero).map((item) => {
+    const definition = getEquipmentDefinition(item.itemId);
+    return {
+      itemId: item.itemId,
+      slot: item.slot,
+      slotLabel: formatEquipmentSlotLabel(item.slot),
+      source: "inventory" as const,
+      name: item.name,
+      rarityLabel: item.rarityLabel,
+      bonusSummary: item.bonusSummary,
+      description: item.description,
+      count: item.count,
+      ...(definition?.specialEffect
+        ? { specialEffectSummary: `${definition.specialEffect.name}: ${definition.specialEffect.description}` }
+        : {})
+    };
+  });
+
+  return [...equippedItems, ...inventoryItems];
+}
+
+export function formatEquipmentInspectLines(item: CocosEquipmentInspectItem | null): string[] {
+  if (!item) {
+    return ["当前暂无可查看的装备物品。"];
+  }
+
+  return [
+    `${item.slotLabel} ${item.name} · ${item.rarityLabel}`,
+    `来源 ${item.source === "equipped" ? "当前已穿戴" : `背包中 ${item.count} 件`}`,
+    `加成 ${item.bonusSummary}`,
+    ...(item.specialEffectSummary ? [`特效 ${item.specialEffectSummary}`] : []),
+    `说明 ${item.description}`
+  ];
 }
 
 export function formatInventorySummaryLines(hero: HeroView | null): string[] {
