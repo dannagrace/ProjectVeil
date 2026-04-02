@@ -83,10 +83,12 @@ Keep these manual items short and attach evidence through the existing release e
 
 1. Complete the current candidate snapshot with `npm run release:cocos-rc:snapshot`.
 2. Refresh the primary-client diagnostic artifact with `npm run release:cocos:primary-diagnostics`.
-3. Copy and fill the RC checklist/template files in [`docs/release-evidence`](./release-evidence/), and attach the current [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) review for any remaining placeholder/fallback presentation items.
+3. Run `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface <surface>` and keep the generated `cocos-presentation-signoff-<candidate>-<short-sha>.json/.md` with the rest of the candidate bundle.
+   Review that artifact using [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md), and classify each presentation row as `pass`, `waived-controlled-test`, or `fail` so reviewers can distinguish functional RC pass from presentation risk.
    The same candidate evidence should explicitly show one polished battle journey covering encounter entry, at least one command/impact beat, and a stable victory or defeat settlement state before reconnect review.
-4. Record any open risk in the blocker template before sign-off.
-5. Confirm the release candidate still matches the intended commit/revision.
+4. Copy and fill the RC checklist/template files in [`docs/release-evidence`](./release-evidence/), reusing the generated presentation sign-off artifact instead of free-form PR notes.
+5. Record any open risk in the blocker template before sign-off.
+6. Confirm the release candidate still matches the intended commit/revision.
 
 ## Related Commands
 

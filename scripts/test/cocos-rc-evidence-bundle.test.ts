@@ -89,9 +89,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   const snapshotFile = files.find((entry) => entry.startsWith("cocos-rc-snapshot-") && entry.endsWith(".json"));
   const mainJourneyManifestFile = files.find((entry) => entry.startsWith("cocos-main-journey-manifest-") && entry.endsWith(".json"));
   const mainJourneyManifestMarkdownFile = files.find((entry) => entry.startsWith("cocos-main-journey-manifest-") && entry.endsWith(".md"));
-  const presentationSignoffSummaryFile = files.find(
-    (entry) => entry.startsWith("cocos-presentation-signoff-summary-") && entry.endsWith(".md")
-  );
+  const presentationSignoffFile = files.find((entry) => entry.startsWith("cocos-presentation-signoff-") && entry.endsWith(".json"));
+  const presentationSignoffMarkdownFile = files.find((entry) => entry.startsWith("cocos-presentation-signoff-") && entry.endsWith(".md"));
   const checklistFile = files.find((entry) => entry.startsWith("cocos-rc-checklist-") && entry.endsWith(".md"));
   const blockersFile = files.find((entry) => entry.startsWith("cocos-rc-blockers-") && entry.endsWith(".md"));
 
@@ -102,7 +101,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.ok(snapshotFile);
   assert.ok(mainJourneyManifestFile);
   assert.ok(mainJourneyManifestMarkdownFile);
-  assert.ok(presentationSignoffSummaryFile);
+  assert.ok(presentationSignoffFile);
+  assert.ok(presentationSignoffMarkdownFile);
   assert.ok(checklistFile);
   assert.ok(blockersFile);
   assert.match(manifestFile ?? "", /rc-issue-507-/);
@@ -123,9 +123,14 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
       mainJourneyManifestMarkdown: string;
       snapshot: string;
       summaryMarkdown: string;
-      presentationSignoffSummaryMarkdown: string;
+      presentationSignoff: string;
+      presentationSignoffMarkdown: string;
       checklistMarkdown: string;
       blockersMarkdown: string;
+    };
+    review: {
+      functionalEvidence: { status: string; summary: string };
+      presentationSignoff: { status: string; summary: string };
     };
     journey: Array<{ id: string; status: string }>;
     checkpointLedger?: {
@@ -148,9 +153,14 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.equal(manifest.requiredEvidence.find((entry) => entry.id === "roomId")?.filled, true);
   assert.equal(path.basename(manifest.artifacts.snapshot), snapshotFile);
   assert.equal(path.basename(manifest.artifacts.summaryMarkdown), summaryFile);
-  assert.equal(path.basename(manifest.artifacts.presentationSignoffSummaryMarkdown), presentationSignoffSummaryFile);
+  assert.equal(path.basename(manifest.artifacts.presentationSignoff), presentationSignoffFile);
+  assert.equal(path.basename(manifest.artifacts.presentationSignoffMarkdown), presentationSignoffMarkdownFile);
   assert.equal(path.basename(manifest.artifacts.checklistMarkdown), checklistFile);
   assert.equal(path.basename(manifest.artifacts.blockersMarkdown), blockersFile);
+  assert.equal(manifest.review.functionalEvidence.status, "passed");
+  assert.match(manifest.review.functionalEvidence.summary, /lobby, room, and reconnect/);
+  assert.equal(manifest.review.presentationSignoff.status, "hold");
+  assert.match(manifest.review.presentationSignoff.summary, /presentation sign-off remains on hold/);
   assert.equal(manifest.failureSummary.summary, "No regressions or evidence gaps recorded.");
   assert.equal(manifest.failureSummary.regressedJourneySegments.length, 0);
   assert.equal(manifest.failureSummary.blockedJourneySegments.length, 0);
@@ -162,7 +172,9 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.match(summaryMarkdown, /Overall status: `passed`/);
   assert.match(summaryMarkdown, /Primary journey evidence:/);
   assert.match(summaryMarkdown, /Main-journey manifest:/);
-  assert.match(summaryMarkdown, /Presentation sign-off summary:/);
+  assert.match(summaryMarkdown, /Presentation sign-off JSON:/);
+  assert.match(summaryMarkdown, /Presentation sign-off markdown:/);
+  assert.match(summaryMarkdown, /Functional evidence status: `passed`/);
   assert.match(summaryMarkdown, /Lobby entry \| `passed` \| 2 item\(s\)/);
   assert.match(summaryMarkdown, /## Checkpoint Ledger/);
   assert.match(summaryMarkdown, /Battle settlement/);
@@ -186,12 +198,25 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.match(mainJourneyManifestMarkdown, /placeholder=yes, manual-only=yes/);
   assert.match(mainJourneyManifestMarkdown, /Room join/);
 
-  const presentationSignoffSummaryMarkdown = fs.readFileSync(path.join(outputDir, presentationSignoffSummaryFile!), "utf8");
-  assert.match(presentationSignoffSummaryMarkdown, /# Cocos Presentation Sign-Off Summary/);
-  assert.match(presentationSignoffSummaryMarkdown, /Candidate: `rc-issue-507`/);
-  assert.match(presentationSignoffSummaryMarkdown, /Commit: `/);
-  assert.match(presentationSignoffSummaryMarkdown, /Automated sign-off status: `hold`/);
-  assert.match(presentationSignoffSummaryMarkdown, /Canonical checklist: `docs\/cocos-phase1-presentation-signoff\.md`/);
+  const presentationSignoff = JSON.parse(fs.readFileSync(path.join(outputDir, presentationSignoffFile!), "utf8")) as {
+    functionalEvidence: { status: string; summary: string };
+    checklist: Array<{ area: string; status: string; blockingPolicy: string }>;
+    signoff: { status: string; blockingItems: string[]; controlledTestGaps: string[]; summary: string };
+  };
+  assert.equal(presentationSignoff.functionalEvidence.status, "passed");
+  assert.equal(presentationSignoff.signoff.status, "hold");
+  assert.ok(presentationSignoff.checklist.some((entry) => entry.area === "Audio" && entry.status === "waived-controlled-test"));
+  assert.ok(presentationSignoff.checklist.some((entry) => entry.area === "Animation / transitions" && entry.blockingPolicy === "blocking"));
+  assert.ok(presentationSignoff.signoff.blockingItems.includes("Pixel art / scene visuals"));
+  assert.ok(presentationSignoff.signoff.controlledTestGaps.includes("Audio"));
+
+  const presentationSignoffMarkdown = fs.readFileSync(path.join(outputDir, presentationSignoffMarkdownFile!), "utf8");
+  assert.match(presentationSignoffMarkdown, /# Cocos Presentation Sign-Off/);
+  assert.match(presentationSignoffMarkdown, /Candidate: `rc-issue-507`/);
+  assert.match(presentationSignoffMarkdown, /Functional evidence status: `passed`/);
+  assert.match(presentationSignoffMarkdown, /Presentation sign-off status: `hold`/);
+  assert.match(presentationSignoffMarkdown, /waived-controlled-test/);
+  assert.match(presentationSignoffMarkdown, /acceptable-controlled-test-gap/);
 
   const checklistMarkdown = fs.readFileSync(path.join(outputDir, checklistFile!), "utf8");
   assert.match(checklistMarkdown, /Candidate: `rc-issue-507`/);

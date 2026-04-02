@@ -10,7 +10,8 @@ import {
 type BuildSurface = "creator_preview" | "wechat_preview" | "wechat_upload_candidate" | "other";
 type EvidenceStatus = "pending" | "blocked" | "passed" | "failed" | "not_applicable";
 type SnapshotResult = "pending" | "blocked" | "passed" | "failed" | "partial";
-type PresentationSignoffStatus = "approved" | "hold";
+type PresentationChecklistStatus = "pass" | "waived-controlled-test" | "fail";
+type PresentationSignoffStatus = "approved" | "approved-for-controlled-test" | "hold";
 
 interface Args {
   candidate: string;
@@ -188,7 +189,8 @@ interface BundleManifest {
     mainJourneyManifestMarkdown: string;
     snapshot: string;
     summaryMarkdown: string;
-    presentationSignoffSummaryMarkdown: string;
+    presentationSignoff: string;
+    presentationSignoffMarkdown: string;
     checklistMarkdown: string;
     blockersMarkdown: string;
   };
@@ -220,12 +222,68 @@ interface BundleManifest {
   review: {
     phase1Gate: string;
     attachHint: string;
+    functionalEvidence: {
+      status: SnapshotResult;
+      summary: string;
+    };
     presentationSignoff: {
       status: PresentationSignoffStatus;
       summary: string;
     };
   };
   failureSummary: FailureSummary;
+}
+
+interface PresentationChecklistItem {
+  id: string;
+  area: string;
+  status: PresentationChecklistStatus;
+  blockingPolicy: "blocking" | "acceptable-controlled-test-gap";
+  detail: string;
+  evidence: string[];
+  owner: string;
+  followUp: string;
+}
+
+interface PresentationSignoffArtifact {
+  schemaVersion: 1;
+  candidate: {
+    name: string;
+    buildSurface: BuildSurface;
+    branch: string;
+    commit: string;
+    shortCommit: string;
+  };
+  generatedAt: string;
+  reviewer: {
+    owner: string;
+    reviewDate: string;
+  };
+  linkedEvidence: {
+    snapshot: string;
+    bundleSummary: string;
+    blockers: string;
+    canonicalDoc: string;
+  };
+  functionalEvidence: {
+    status: SnapshotResult;
+    summary: string;
+  };
+  controlledTestPolicy: {
+    blocking: string[];
+    acceptable: string[];
+  };
+  automatedReadiness: {
+    summary: string;
+    nextStep: string;
+  };
+  checklist: PresentationChecklistItem[];
+  signoff: {
+    status: PresentationSignoffStatus;
+    summary: string;
+    blockingItems: string[];
+    controlledTestGaps: string[];
+  };
 }
 
 const DEFAULT_OUTPUT_DIR = path.join("artifacts", "release-readiness");
@@ -576,7 +634,8 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
   lines.push(`- Main-journey manifest: \`${toRepoRelative(artifacts.mainJourneyManifest)}\``);
   lines.push(`- Main-journey manifest markdown: \`${toRepoRelative(artifacts.mainJourneyManifestMarkdown)}\``);
   lines.push(`- Snapshot: \`${toRepoRelative(artifacts.snapshot)}\``);
-  lines.push(`- Presentation sign-off summary: \`${toRepoRelative(artifacts.presentationSignoffSummaryMarkdown)}\``);
+  lines.push(`- Presentation sign-off JSON: \`${toRepoRelative(artifacts.presentationSignoff)}\``);
+  lines.push(`- Presentation sign-off markdown: \`${toRepoRelative(artifacts.presentationSignoffMarkdown)}\``);
   lines.push(`- Checklist: \`${toRepoRelative(artifacts.checklistMarkdown)}\``);
   lines.push(`- Blockers: \`${toRepoRelative(artifacts.blockersMarkdown)}\``);
   lines.push(`- Bundle manifest: \`${toRepoRelative(artifacts.summaryMarkdown.replace(/\.md$/, ".json"))}\``);
@@ -629,6 +688,7 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
   }
   lines.push("## Summary");
   lines.push("");
+  lines.push(`- Functional evidence status: \`${snapshot.execution.overallStatus}\``);
   lines.push(snapshot.execution.summary);
   if (
     snapshot.failureSummary.regressedJourneySegments.length > 0 ||
@@ -658,13 +718,159 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
   return `${lines.join("\n")}\n`;
 }
 
-function buildPresentationSignoffReview(snapshot: CocosReleaseCandidateSnapshot): BundleManifest["review"]["presentationSignoff"] {
-  const releaseGate = getCocosPresentationReleaseGate(cocosPresentationReadiness);
+function buildFunctionalEvidenceReview(snapshot: CocosReleaseCandidateSnapshot): BundleManifest["review"]["functionalEvidence"] {
   return {
-    status: releaseGate.ready ? "approved" : "hold",
-    summary: releaseGate.ready
-      ? `Automated presentation readiness reports production-intent pixel, audio, and animation coverage for candidate ${snapshot.candidate.name}.`
-      : `Automated presentation readiness for candidate ${snapshot.candidate.name} still reports blocking presentation debt: ${releaseGate.blockers.join(", ")}.`
+    status: snapshot.execution.overallStatus,
+    summary: snapshot.execution.summary
+  };
+}
+
+function buildPresentationChecklist(snapshot: CocosReleaseCandidateSnapshot): PresentationChecklistItem[] {
+  const releaseGate = getCocosPresentationReleaseGate(cocosPresentationReadiness);
+  const owner = snapshot.execution.owner || "<name>";
+  const checklist: PresentationChecklistItem[] = [
+    {
+      id: "pixel-art-scene-visuals",
+      area: "Pixel art / scene visuals",
+      status: cocosPresentationReadiness.pixel.stage === "production" ? "pass" : "fail",
+      blockingPolicy: cocosPresentationReadiness.pixel.stage === "production" ? "acceptable-controlled-test-gap" : "blocking",
+      detail: `${cocosPresentationReadiness.pixel.headline}; ${cocosPresentationReadiness.pixel.detail}`,
+      evidence: ["cocos-presentation-readiness", "release bundle summary", "Creator/WeChat captures"],
+      owner,
+      followUp: cocosPresentationReadiness.pixel.stage === "production" ? "none" : "Replace placeholder or mixed visual assets before widening external evaluation."
+    },
+    {
+      id: "audio-fallback-cues",
+      area: "Audio",
+      status: cocosPresentationReadiness.audio.stage === "production" ? "pass" : "waived-controlled-test",
+      blockingPolicy: cocosPresentationReadiness.audio.stage === "production" ? "acceptable-controlled-test-gap" : "acceptable-controlled-test-gap",
+      detail: `${cocosPresentationReadiness.audio.headline}; ${cocosPresentationReadiness.audio.detail}`,
+      evidence: ["cocos-presentation-readiness", "device smoke notes", "battle capture"],
+      owner,
+      followUp: cocosPresentationReadiness.audio.stage === "production" ? "none" : "Allowed only for controlled internal testing while reviewer records player-impact notes and owner follow-up."
+    },
+    {
+      id: "animation-transitions",
+      area: "Animation / transitions",
+      status: releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("Spine Skeleton") ? "fail" : "pass",
+      blockingPolicy:
+        releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("Spine Skeleton")
+          ? "blocking"
+          : "acceptable-controlled-test-gap",
+      detail: `${cocosPresentationReadiness.animation.headline}; ${cocosPresentationReadiness.animation.detail}`,
+      evidence: ["cocos-presentation-readiness", "primary journey evidence", "battle diagnostics markdown"],
+      owner,
+      followUp:
+        releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("Spine Skeleton")
+          ? "Close fallback animation delivery before broader external review."
+          : "none"
+    },
+    {
+      id: "hud-copy-readability",
+      area: "HUD / copy / readability",
+      status: "waived-controlled-test",
+      blockingPolicy: "acceptable-controlled-test-gap",
+      detail:
+        "Manual reviewer must verify Lobby -> world -> battle -> settlement -> reconnect copy remains readable and does not hide required state, even when automation only proves the journey is functionally passed.",
+      evidence: ["primary journey evidence markdown", "manual Creator/WeChat screenshots", "RC checklist"],
+      owner,
+      followUp: "If any copy/state confusion affects first-session comprehension, upgrade this row to fail and link the blocker."
+    },
+    {
+      id: "automation-reported-substitutions",
+      area: "Asset substitutions from automation",
+      status: releaseGate.ready ? "pass" : "fail",
+      blockingPolicy: releaseGate.ready ? "acceptable-controlled-test-gap" : "blocking",
+      detail:
+        releaseGate.ready
+          ? "Automation reports production-intent presentation coverage for the tracked asset families."
+          : `Automation still reports unresolved presentation substitutions: ${releaseGate.blockers.join(", ")}.`,
+      evidence: ["cocos-presentation-readiness", "bundle manifest", "RC blocker log"],
+      owner,
+      followUp: releaseGate.ready ? "none" : "List each unresolved substitution in the candidate blocker log or a follow-up issue before sign-off."
+    }
+  ];
+
+  return checklist;
+}
+
+function summarizePresentationSignoff(
+  snapshot: CocosReleaseCandidateSnapshot,
+  checklist: PresentationChecklistItem[]
+): PresentationSignoffArtifact["signoff"] {
+  const blockingItems = checklist.filter((item) => item.status === "fail").map((item) => item.area);
+  const controlledTestGaps = checklist.filter((item) => item.status === "waived-controlled-test").map((item) => item.area);
+  const status: PresentationSignoffStatus =
+    blockingItems.length > 0 ? "hold" : controlledTestGaps.length > 0 ? "approved-for-controlled-test" : "approved";
+  const summary =
+    status === "hold"
+      ? `Candidate ${snapshot.candidate.name} is functionally ${snapshot.execution.overallStatus}, but presentation sign-off remains on hold: ${blockingItems.join(", ")}.`
+      : status === "approved-for-controlled-test"
+        ? `Candidate ${snapshot.candidate.name} functionally passes, but presentation still carries controlled-test-only gaps: ${controlledTestGaps.join(", ")}.`
+        : `Candidate ${snapshot.candidate.name} has both functional pass evidence and presentation sign-off coverage for the tracked fallback surfaces.`;
+
+  return {
+    status,
+    summary,
+    blockingItems,
+    controlledTestGaps
+  };
+}
+
+function buildPresentationSignoffArtifact(
+  snapshot: CocosReleaseCandidateSnapshot,
+  artifacts: BundleManifest["artifacts"]
+): PresentationSignoffArtifact {
+  const checklist = buildPresentationChecklist(snapshot);
+  const signoff = summarizePresentationSignoff(snapshot, checklist);
+
+  return {
+    schemaVersion: 1,
+    candidate: {
+      name: snapshot.candidate.name,
+      buildSurface: snapshot.candidate.buildSurface,
+      branch: snapshot.candidate.branch,
+      commit: snapshot.candidate.commit,
+      shortCommit: snapshot.candidate.shortCommit
+    },
+    generatedAt: new Date().toISOString(),
+    reviewer: {
+      owner: snapshot.execution.owner,
+      reviewDate: (snapshot.execution.executedAt || new Date().toISOString()).slice(0, 10)
+    },
+    linkedEvidence: {
+      snapshot: toRepoRelative(artifacts.snapshot),
+      bundleSummary: toRepoRelative(artifacts.summaryMarkdown),
+      blockers: toRepoRelative(artifacts.blockersMarkdown),
+      canonicalDoc: "docs/cocos-phase1-presentation-signoff.md"
+    },
+    functionalEvidence: buildFunctionalEvidenceReview(snapshot),
+    controlledTestPolicy: {
+      blocking: [
+        "Any placeholder or fallback issue that makes the first-session journey look materially incomplete for wider external evaluation.",
+        "Any missing or fallback animation/visual surface already reported as blocking by cocos-presentation-readiness.",
+        "Any presentation issue that hides room identity, reconnect state, battle result, or other release-required evidence."
+      ],
+      acceptable: [
+        "Audio polish gaps may be accepted only for controlled internal testing when the candidate remains functionally passed and the reviewer records owner plus follow-up.",
+        "HUD/copy/readability review may stay controlled-test-only when wording is understandable and no required state is obscured.",
+        "Controlled-test waivers must stay out of broad external review until the same candidate or a successor closes the gap."
+      ]
+    },
+    automatedReadiness: {
+      summary: cocosPresentationReadiness.summary,
+      nextStep: cocosPresentationReadiness.nextStep
+    },
+    checklist,
+    signoff
+  };
+}
+
+function buildPresentationSignoffReview(snapshot: CocosReleaseCandidateSnapshot): BundleManifest["review"]["presentationSignoff"] {
+  const artifact = summarizePresentationSignoff(snapshot, buildPresentationChecklist(snapshot));
+  return {
+    status: artifact.status,
+    summary: artifact.summary
   };
 }
 
@@ -672,54 +878,61 @@ function renderPresentationSignoffSummary(
   snapshot: CocosReleaseCandidateSnapshot,
   artifacts: BundleManifest["artifacts"]
 ): string {
-  const releaseGate = getCocosPresentationReleaseGate(cocosPresentationReadiness);
-  const review = buildPresentationSignoffReview(snapshot);
+  const signoff = buildPresentationSignoffArtifact(snapshot, artifacts);
   const lines: string[] = [];
 
-  lines.push("# Cocos Presentation Sign-Off Summary");
+  lines.push("# Cocos Presentation Sign-Off");
   lines.push("");
-  lines.push(
-    "This generated summary narrows the current candidate-level presentation review into one attachable artifact. It does not replace the canonical checklist in `docs/cocos-phase1-presentation-signoff.md`."
-  );
+  lines.push("This generated artifact is the candidate-scoped presentation fallback checklist and sign-off record that travels with the RC bundle.");
   lines.push("");
   lines.push("## Candidate Header");
   lines.push("");
-  lines.push(`- Candidate: \`${snapshot.candidate.name}\``);
-  lines.push(`- Commit: \`${snapshot.candidate.commit}\``);
-  lines.push(`- Surface: \`${snapshot.candidate.buildSurface}\``);
-  lines.push(`- Owner: ${snapshot.execution.owner || "_unassigned_"}`);
-  lines.push(`- Review date: \`${(snapshot.execution.executedAt || new Date().toISOString()).slice(0, 10)}\``);
-  lines.push(`- Linked RC snapshot: \`${toRepoRelative(artifacts.snapshot)}\``);
-  lines.push(`- Linked blocker log: \`${toRepoRelative(artifacts.blockersMarkdown)}\``);
-  lines.push(`- Canonical checklist: \`docs/cocos-phase1-presentation-signoff.md\``);
+  lines.push(`- Candidate: \`${signoff.candidate.name}\``);
+  lines.push(`- Commit: \`${signoff.candidate.commit}\``);
+  lines.push(`- Surface: \`${signoff.candidate.buildSurface}\``);
+  lines.push(`- Owner: ${signoff.reviewer.owner || "_unassigned_"}`);
+  lines.push(`- Review date: \`${signoff.reviewer.reviewDate}\``);
+  lines.push(`- Linked RC snapshot: \`${signoff.linkedEvidence.snapshot}\``);
+  lines.push(`- Linked blocker log: \`${signoff.linkedEvidence.blockers}\``);
+  lines.push(`- Canonical process doc: \`${signoff.linkedEvidence.canonicalDoc}\``);
   lines.push("");
-  lines.push("## Automated Readiness");
+  lines.push("## Evidence Split");
   lines.push("");
-  lines.push(`- Summary: ${cocosPresentationReadiness.summary}`);
-  lines.push(`- Next step: ${cocosPresentationReadiness.nextStep}`);
-  lines.push(`- Automated sign-off status: \`${review.status}\``);
-  lines.push(`- Automated sign-off summary: ${review.summary}`);
+  lines.push(`- Functional evidence status: \`${signoff.functionalEvidence.status}\``);
+  lines.push(`- Functional evidence summary: ${signoff.functionalEvidence.summary}`);
+  lines.push(`- Presentation sign-off status: \`${signoff.signoff.status}\``);
+  lines.push(`- Presentation sign-off summary: ${signoff.signoff.summary}`);
   lines.push("");
-  lines.push("| Area | Stage | Detail |");
-  lines.push("| --- | --- | --- |");
-  lines.push(`| Pixel art / scene visuals | \`${cocosPresentationReadiness.pixel.stage}\` | ${cocosPresentationReadiness.pixel.headline}; ${cocosPresentationReadiness.pixel.detail} |`);
-  lines.push(`| Audio | \`${cocosPresentationReadiness.audio.stage}\` | ${cocosPresentationReadiness.audio.headline}; ${cocosPresentationReadiness.audio.detail} |`);
-  lines.push(`| Animation / transitions | \`${cocosPresentationReadiness.animation.stage}\` | ${cocosPresentationReadiness.animation.headline}; ${cocosPresentationReadiness.animation.detail} |`);
+  lines.push("## Controlled-Test Policy");
+  lines.push("");
+  lines.push("- Blocking gaps:");
+  for (const rule of signoff.controlledTestPolicy.blocking) {
+    lines.push(`  - ${rule}`);
+  }
+  lines.push("- Acceptable only for controlled internal testing:");
+  for (const rule of signoff.controlledTestPolicy.acceptable) {
+    lines.push(`  - ${rule}`);
+  }
+  lines.push("");
+  lines.push("## Checklist");
+  lines.push("");
+  lines.push("| Area | Status | Policy | Detail | Evidence | Follow-up |");
+  lines.push("| --- | --- | --- | --- | --- | --- |");
+  for (const item of signoff.checklist) {
+    lines.push(
+      `| ${item.area} | \`${item.status}\` | \`${item.blockingPolicy}\` | ${item.detail} | ${item.evidence.map((entry) => `\`${entry}\``).join("<br>")} | ${item.followUp} |`
+    );
+  }
   lines.push("");
   lines.push("## Reviewer Decision");
   lines.push("");
-  lines.push(`- Phase 1 presentation sign-off: \`${review.status}\``);
-  lines.push(`- Summary: ${review.summary}`);
+  lines.push(`- Phase 1 presentation sign-off: \`${signoff.signoff.status}\``);
+  lines.push(`- Summary: ${signoff.signoff.summary}`);
+  lines.push(`- Blocking items, if any: ${signoff.signoff.blockingItems.length > 0 ? signoff.signoff.blockingItems.join(", ") : "_none_"}.`);
   lines.push(
-    `- Blocking items, if any: ${releaseGate.blockers.length > 0 ? releaseGate.blockers.join(", ") : "_none reported by automated readiness_"}.`
+    `- Controlled-test gaps, if any: ${signoff.signoff.controlledTestGaps.length > 0 ? signoff.signoff.controlledTestGaps.join(", ") : "_none_"}.`
   );
-  lines.push("- Accepted non-blocking items, if any: Record any manual acceptance in `docs/cocos-phase1-presentation-signoff.md` before Phase 1 exit.");
-  lines.push("");
-  lines.push("## Reviewer Follow-Through");
-  lines.push("");
-  lines.push("- Reconcile any remaining placeholder, fallback, or substituted items in the canonical checklist.");
-  lines.push(`- Attach this summary with \`${toRepoRelative(artifacts.summaryMarkdown)}\`, \`${toRepoRelative(artifacts.snapshot)}\`, and \`${toRepoRelative(artifacts.blockersMarkdown)}\` in the release review packet.`);
-  lines.push("- If a blocker is accepted as non-blocking, record owner, rationale, and follow-up issue explicitly.");
+  lines.push(`- Attach this markdown plus \`${toRepoRelative(artifacts.presentationSignoff)}\` with the RC snapshot and blocker log.`);
   lines.push("");
 
   return `${lines.join("\n")}\n`;
@@ -803,6 +1016,7 @@ function buildManifest(snapshot: CocosReleaseCandidateSnapshot, artifacts: Bundl
       phase1Gate: "Phase 1 exit criterion 4: candidate-specific Cocos primary-client evidence must be current.",
       attachHint:
         "Attach the markdown bundle summary and presentation sign-off summary to CI artifacts or PR comments, and keep the JSON manifest alongside the snapshot.",
+      functionalEvidence: buildFunctionalEvidenceReview(snapshot),
       presentationSignoff: buildPresentationSignoffReview(snapshot)
     },
     failureSummary: snapshot.failureSummary
@@ -823,7 +1037,8 @@ function main(): void {
   const manifestPath = path.join(outputDir, `cocos-rc-evidence-bundle-${baseName}.json`);
   const mainJourneyManifestPath = path.join(outputDir, `cocos-main-journey-manifest-${baseName}.json`);
   const mainJourneyManifestMarkdownPath = path.join(outputDir, `cocos-main-journey-manifest-${baseName}.md`);
-  const presentationSignoffSummaryPath = path.join(outputDir, `cocos-presentation-signoff-summary-${baseName}.md`);
+  const presentationSignoffPath = path.join(outputDir, `cocos-presentation-signoff-${baseName}.json`);
+  const presentationSignoffSummaryPath = path.join(outputDir, `cocos-presentation-signoff-${baseName}.md`);
   const checklistPath = path.join(outputDir, `cocos-rc-checklist-${baseName}.md`);
   const blockersPath = path.join(outputDir, `cocos-rc-blockers-${baseName}.md`);
 
@@ -842,15 +1057,18 @@ function main(): void {
     mainJourneyManifestMarkdown: path.resolve(mainJourneyManifestMarkdownPath),
     snapshot: path.resolve(snapshotPath),
     summaryMarkdown: path.resolve(summaryMarkdownPath),
-    presentationSignoffSummaryMarkdown: path.resolve(presentationSignoffSummaryPath),
+    presentationSignoff: path.resolve(presentationSignoffPath),
+    presentationSignoffMarkdown: path.resolve(presentationSignoffSummaryPath),
     checklistMarkdown: path.resolve(checklistPath),
     blockersMarkdown: path.resolve(blockersPath)
   };
   const mainJourneyManifest = buildMainJourneyManifest(snapshot, artifacts);
+  const presentationSignoff = buildPresentationSignoffArtifact(snapshot, artifacts);
 
   writeJsonFile(mainJourneyManifestPath, mainJourneyManifest, args.force);
   writeTextFile(mainJourneyManifestMarkdownPath, renderMainJourneyManifestMarkdown(mainJourneyManifest), args.force);
   writeTextFile(summaryMarkdownPath, renderBundleMarkdown(snapshot, artifacts), args.force);
+  writeJsonFile(presentationSignoffPath, presentationSignoff, args.force);
   writeTextFile(presentationSignoffSummaryPath, renderPresentationSignoffSummary(snapshot, artifacts), args.force);
   writeTextFile(checklistPath, renderChecklist(snapshot, artifacts), args.force);
   writeTextFile(blockersPath, renderBlockers(snapshot, artifacts), args.force);
