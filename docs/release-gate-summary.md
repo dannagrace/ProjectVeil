@@ -12,6 +12,8 @@ It intentionally reuses the current evidence instead of introducing a parallel g
 
 The summary now also records one explicit `targetSurface` contract. That contract is what makes `H5 passed` different from `WeChat passed`: WeChat release decisions now require a current `codex.wechat.release-candidate-summary.json` plus fresh manual/runtime review metadata, while H5-only release decisions can mark the WeChat gate as advisory.
 
+For reviewer handoff, treat the WeChat RC checklist and blocker register as the human-readable mirror of that same contract, not as optional notes. They should carry the same surface, revision, freshness, owner, blocker, and waiver story that the JSON report enforces.
+
 ## Usage
 
 Use the latest local artifacts under `artifacts/release-readiness/` and `artifacts/wechat-release/`:

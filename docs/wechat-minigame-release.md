@@ -49,6 +49,32 @@
 - 只做 CI 同款校验：`npm run check:cocos-release-readiness`
 - 校验真实导出目录：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 
+## Release-Surface Checklist Contract
+
+当目标发布面是 `wechat_preview` 或 `wechat_upload_candidate` 时，以下结论必须同时成立，才算 “WeChat passed”：
+
+- `npm run release:gate:summary -- --target-surface wechat` 对当前 revision 的 `releaseSurface.status` 为 `passed`
+- `artifacts/wechat-release/codex.wechat.release-candidate-summary.json` 对当前 revision 的 `candidate.status` 为 `ready`
+- required manual review 全部完成，且每条都带 `owner`、`recordedAt`、`revision`、`artifactPath`
+- WeChat device/runtime smoke 与 runtime observability evidence 都仍在 24h freshness window 内
+- 任一 blocker、waiver、accepted risk 都能回溯到 checklist、blocker register、manual review JSON 与 release summary
+
+这条 contract 的核心区别是：桌面 / H5 / Creator 调试面通过，只能证明对应 surface 的验证完成，不能替代 WeChat 目标面的放行证据。
+
+WeChat checklist / blockers 至少要覆盖以下证据面：
+
+- package / verify / RC validation 产物
+- `codex.wechat.smoke-report.json` 里的真机或真机调试 runtime 结果
+- 目标环境的 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics` 快照
+- 手工 blocker / waiver 的 owner、时间戳、revision、artifact path
+
+以下情况都应视为 `blocked`，而不是“待会补”：
+
+- smoke report、manual review 或 runtime observability evidence 缺失
+- `recordedAt` 缺失、非法，或超出 freshness window
+- manual review / sign-off 绑定到别的 revision
+- checklist 与 blocker register 没有把 blocker id、waiver reason、owner 关系串起来
+
 ## 上传凭据
 
 - GitHub Actions secrets：
@@ -86,7 +112,7 @@
 9. 若本次 RC 没有自动化 runtime 证据，再运行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir>` 生成模板，并在真机或准真机上逐项补录结果。
 10. 完成自动导入或人工补录后，执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`，确认登录、进房、重连、分享回流、关键资源加载都已有结果记录。
    - `reconnect-recovery` 必须复用 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 的 canonical scenario、最小成功信号和失败诊断口径。
-11. 按 [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md) 与 [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md) 为同一 candidate revision 回填 runtime observability sign-off，确认 release 环境的 `/api/runtime/health`、`/api/runtime/diagnostic-snapshot`、`/api/runtime/metrics` 都已有可追溯证据，并记录 reviewer 与 `recordedAt`。
+11. 按 [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md) 与 [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md) 为同一 candidate revision 回填 runtime observability sign-off，确认 release 环境的 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics` 都已有可追溯证据，并记录 reviewer 与 `recordedAt`。
 12. 运行 `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json [--release-readiness-snapshot artifacts/release-readiness/<candidate>.json]`，脚本会先自动生成 candidate+revision 命名的 `cocos-primary-journey-evidence` JSON / Markdown 与 milestone diagnostics，再一次性输出 bundle manifest、Markdown 摘要、RC snapshot、checklist 与 blockers，并把微信 smoke 的 Lobby / 进房 / 重连证据并入统一的 Cocos RC 快照；若设备 evidence 缺失，会在快照和摘要里显式标成 `partial` 或 `blocked`，而不是默认为通过。
 13. 直接回填同一 bundle 里的 checklist / blockers 文件，仅补充自动化未覆盖的设备、observability 结论和 blocker；不要再额外复制模板或在 PR 里发明另一套字段。
 14. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。

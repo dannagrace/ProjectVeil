@@ -244,6 +244,8 @@ Before making the release call, verify this exact packet exists:
 
 If two files for the "same" evidence disagree on revision or timestamp window, treat the packet as invalid and refresh the stale file instead of choosing by hand.
 
+For WeChat release calls, treat the RC checklist plus blocker register as required release-surface evidence, not as optional reviewer notes. They must mirror the same surface, revision, freshness, blocker, and waiver state shown by the WeChat candidate summary and release gate summary.
+
 ## Minimum Evidence To Call Phase 1 Ready
 
 This runbook does not redefine Phase 1 exit criteria. Use it to assemble the evidence packet that lets you answer the scorecard's existing question for one candidate revision.
