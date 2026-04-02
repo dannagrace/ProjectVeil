@@ -36,8 +36,8 @@ function seedStoredReplay(storage: Storage, update: ReturnType<typeof createSess
   );
 }
 
-function encodeBytes(values: number[]): string {
-  return Buffer.from(Uint8Array.from(values)).toString("base64");
+function encodeBytes(values: number[]): Uint8Array {
+  return Uint8Array.from(values);
 }
 
 function createEncodedStatePayload(day: number, roomId: string, playerId: string) {

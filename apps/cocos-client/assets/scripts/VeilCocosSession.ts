@@ -117,9 +117,9 @@ interface EncodedPlayerMapTiles {
     width: number;
     height: number;
   };
-  terrain: string;
-  fog: string;
-  walkable: string;
+  terrain: string | Uint8Array;
+  fog: string | Uint8Array;
+  walkable: string | Uint8Array;
   overlays: EncodedPlayerMapOverlay[];
 }
 
@@ -624,6 +624,10 @@ function decodeBase64Bytes(encoded: string): Uint8Array {
   return bytes;
 }
 
+function resolveEncodedBytes(encoded: string | Uint8Array): Uint8Array {
+  return typeof encoded === "string" ? decodeBase64Bytes(encoded) : encoded;
+}
+
 function tileIndex(width: number, x: number, y: number): number {
   return y * width + x;
 }
@@ -638,9 +642,9 @@ function decodePlayerWorldView(payload: PlayerWorldViewPayload, baseView?: Playe
     throw new Error("unsupported_player_world_view_encoding");
   }
 
-  const terrain = decodeBase64Bytes(encoded.terrain);
-  const fog = decodeBase64Bytes(encoded.fog);
-  const walkable = decodeBase64Bytes(encoded.walkable);
+  const terrain = resolveEncodedBytes(encoded.terrain);
+  const fog = resolveEncodedBytes(encoded.fog);
+  const walkable = resolveEncodedBytes(encoded.walkable);
   const bounds = encoded.bounds ?? {
     x: 0,
     y: 0,

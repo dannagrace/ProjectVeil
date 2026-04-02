@@ -250,6 +250,17 @@ test("typed-array world map payload decodes back to the original player world vi
   assert.deepEqual(decodePlayerWorldView(encodePlayerWorldView(view)), view);
 });
 
+test("typed-array world map payload can emit Uint8Array grids for Colyseus transport", () => {
+  const view = createLargePlayerWorldView();
+  const encoded = encodePlayerWorldView(view, { binary: true });
+
+  assert.ok(encoded.map.encodedTiles);
+  assert.ok(encoded.map.encodedTiles?.terrain instanceof Uint8Array);
+  assert.ok(encoded.map.encodedTiles?.fog instanceof Uint8Array);
+  assert.ok(encoded.map.encodedTiles?.walkable instanceof Uint8Array);
+  assert.deepEqual(decodePlayerWorldView(encoded), view);
+});
+
 test("asset config passes schema validation", () => {
   assert.deepEqual(getAssetConfigValidationErrors(assetConfig), []);
 });
