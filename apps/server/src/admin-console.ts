@@ -59,6 +59,17 @@ function sendAdminSecretNotConfigured(response: ServerResponse): void {
   sendJson(response, 503, { error: "ADMIN_SECRET is not configured" });
 }
 
+function sendStoreUnavailable(response: ServerResponse): void {
+  sendJson(response, 503, { error: "Player moderation requires configured room persistence storage" });
+}
+
+function hasBanModerationStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore &
+  Required<Pick<RoomSnapshotStore, "loadPlayerBan" | "listPlayerBanHistory" | "savePlayerBan" | "clearPlayerBan">> {
+  return Boolean(store?.loadPlayerBan && store.listPlayerBanHistory && store.savePlayerBan && store.clearPlayerBan);
+}
+
 function sendInvalidJson(response: ServerResponse): void {
   sendJson(response, 400, { error: "Invalid JSON body" });
 }
@@ -95,6 +106,70 @@ function readOptionalIntegerField(payload: Record<string, unknown>, key: keyof R
     throw new InvalidAdminPayloadError(`"${key}" must be a finite integer`);
   }
   return value;
+}
+
+function readOptionalTrimmedString(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new InvalidAdminPayloadError(`"${key}" must be a string`);
+  }
+  const normalized = value.trim();
+  return normalized ? normalized : undefined;
+}
+
+function parseIsoTimestamp(value: string, key: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new InvalidAdminPayloadError(`"${key}" must be a valid ISO timestamp`);
+  }
+  return parsed.toISOString();
+}
+
+function parseBanBody(value: unknown): { banStatus: "temporary" | "permanent"; banReason: string; banExpiry?: string } {
+  const payload = readRequiredObjectBody(value);
+  const banStatus = readOptionalTrimmedString(payload, "banStatus");
+  const banReason = readOptionalTrimmedString(payload, "banReason");
+  const banExpiry = readOptionalTrimmedString(payload, "banExpiry");
+
+  if (banStatus !== "temporary" && banStatus !== "permanent") {
+    throw new InvalidAdminPayloadError('"banStatus" must be "temporary" or "permanent"');
+  }
+  if (!banReason) {
+    throw new InvalidAdminPayloadError('"banReason" must be a non-empty string');
+  }
+  if (banStatus === "temporary") {
+    if (!banExpiry) {
+      throw new InvalidAdminPayloadError('"banExpiry" is required for temporary bans');
+    }
+    const normalizedExpiry = parseIsoTimestamp(banExpiry, "banExpiry");
+    if (new Date(normalizedExpiry).getTime() <= Date.now()) {
+      throw new InvalidAdminPayloadError('"banExpiry" must be in the future');
+    }
+    return { banStatus, banReason, banExpiry: normalizedExpiry };
+  }
+
+  return { banStatus, banReason };
+}
+
+function parseUnbanBody(value: unknown): { reason?: string } {
+  if (value === undefined || value === null || value === "") {
+    return {};
+  }
+  const payload = readRequiredObjectBody(value);
+  const reason = readOptionalTrimmedString(payload, "reason");
+  return reason ? { reason } : {};
+}
+
+function readLimit(request: IncomingMessage, fallback = 20): number {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const parsed = Number(url.searchParams.get("limit"));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(parsed));
 }
 
 function parseResourceDeltaBody(value: unknown): ResourceLedger {
@@ -277,6 +352,75 @@ export function registerAdminRoutes(
         return;
       }
       sendJson(response, 500, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/players/:id/ban", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!hasBanModerationStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request, "id");
+      const input = parseBanBody(await readJsonBody(request));
+      const account = await store.savePlayerBan(playerId, input);
+      let disconnectedClients = 0;
+      for (const room of getActiveRoomInstances().values()) {
+        disconnectedClients += room.disconnectPlayer(playerId, "account_banned");
+      }
+      sendJson(response, 200, { ok: true, account, disconnectedClients });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/players/:id/unban", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!hasBanModerationStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request, "id");
+      const input = parseUnbanBody(await readJsonBody(request));
+      const account = await store.clearPlayerBan(playerId, input);
+      sendJson(response, 200, { ok: true, account });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/players/:id/ban-history", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!hasBanModerationStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request as AdminRequest, "id");
+      const items = await store.listPlayerBanHistory(playerId, { limit: readLimit(request) });
+      const currentBan = await store.loadPlayerBan(playerId);
+      sendJson(response, 200, { items, currentBan });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
     }
   });
 }

@@ -28,7 +28,7 @@ import {
   setPendingAuthRegistrationCount,
   upsertAuthAccountSession
 } from "./observability";
-import type { RoomSnapshotStore } from "./persistence";
+import { isPlayerBanActive, type PlayerAccountBanSnapshot, type RoomSnapshotStore } from "./persistence";
 
 export type AuthMode = "guest" | "account";
 export type AuthProvider = "guest" | "account-password" | "wechat-mini-game";
@@ -75,7 +75,8 @@ interface AuthRuntimeConfig {
 
 interface ValidateAuthSessionResult {
   session: GuestAuthSession | null;
-  errorCode?: "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked";
+  errorCode?: "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked" | "account_banned";
+  ban?: PlayerAccountBanSnapshot;
 }
 
 interface RateLimitResult {
@@ -484,6 +485,22 @@ async function appendAccountAuditLog(
   });
 }
 
+async function resolveActiveBanForPlayer(
+  store: RoomSnapshotStore | null,
+  playerId: string
+): Promise<PlayerAccountBanSnapshot | null> {
+  if (!store) {
+    return null;
+  }
+
+  if (!store.loadPlayerBan) {
+    return null;
+  }
+
+  const ban = await store.loadPlayerBan(playerId);
+  return isPlayerBanActive(ban) ? ban : null;
+}
+
 function createPasswordRecoveryToken(): string {
   return randomBytes(24).toString("base64url");
 }
@@ -834,7 +851,7 @@ async function handleWechatLogin(
   if (authToken) {
     const validation = await validateAuthToken(authToken, store);
     if (!validation.session) {
-      sendAuthFailure(response, validation.errorCode);
+      sendAuthFailure(response, validation.errorCode, validation.ban);
       return;
     }
     authSession = validation.session;
@@ -974,6 +991,12 @@ async function handleWechatLogin(
   } else if (!authSession && body.playerId?.trim()) {
     playerId = normalizePlayerId(body.playerId);
     displayName = normalizeDisplayName(playerId, body.displayName);
+  }
+
+  const activeBan = await resolveActiveBanForPlayer(store, playerId);
+  if (activeBan) {
+    sendAuthFailure(response, "account_banned", activeBan);
+    return;
   }
 
   sendJson(response, 200, {
@@ -1188,6 +1211,11 @@ async function validateAuthToken(
     }
 
     if (session.authMode === "guest") {
+      const activeBan = await resolveActiveBanForPlayer(store, session.playerId);
+      if (activeBan) {
+        recordAuthSessionFailure("account_banned");
+        return { session: null, errorCode: "account_banned", ban: activeBan };
+      }
       if (session.sessionId) {
         const touchedSession = touchGuestSession(session.sessionId, normalizedToken);
         if (!touchedSession) {
@@ -1201,6 +1229,12 @@ async function validateAuthToken(
 
     if (!store) {
       return { session };
+    }
+
+    const activeBan = await resolveActiveBanForPlayer(store, session.playerId);
+    if (activeBan) {
+      recordAuthSessionFailure("account_banned");
+      return { session: null, errorCode: "account_banned", ban: activeBan };
     }
 
     const authAccount = await store.loadPlayerAccountAuthByPlayerId(session.playerId);
@@ -1404,9 +1438,22 @@ function sendAccountTokenDeliveryFailure(
 function sendAuthFailure(
   response: ServerResponse,
   errorCode: ValidateAuthSessionResult["errorCode"],
+  ban?: PlayerAccountBanSnapshot | null,
   fallbackMessage = "Guest auth session is missing or invalid"
 ): void {
   const code = errorCode ?? "unauthorized";
+  if (code === "account_banned") {
+    sendJson(response, 403, {
+      error: {
+        code,
+        message: "Account is banned",
+        reason: ban?.banReason ?? "No reason provided",
+        ...(ban?.banExpiry ? { expiry: ban.banExpiry } : {})
+      }
+    });
+    return;
+  }
+
   const message =
     code === "token_expired"
       ? "Auth token has expired"
@@ -1592,9 +1639,9 @@ export function registerAuthRoutes(
 
   app.get("/api/auth/session", async (request, response) => {
     try {
-      const { session: authSession, errorCode } = await validateAuthSessionFromRequest(request, store);
+      const { session: authSession, errorCode, ban } = await validateAuthSessionFromRequest(request, store);
       if (!authSession) {
-        sendAuthFailure(response, errorCode);
+        sendAuthFailure(response, errorCode, ban);
         return;
       }
 
@@ -1631,9 +1678,9 @@ export function registerAuthRoutes(
     }
 
     try {
-      const { session: refreshSession, errorCode } = await validateAuthSessionFromRequest(request, store, "refresh");
+      const { session: refreshSession, errorCode, ban } = await validateAuthSessionFromRequest(request, store, "refresh");
       if (!refreshSession || refreshSession.authMode !== "account" || !refreshSession.loginId) {
-        sendAuthFailure(response, errorCode, "Refresh token is missing or invalid");
+        sendAuthFailure(response, errorCode, ban, "Refresh token is missing or invalid");
         return;
       }
 
@@ -1658,9 +1705,9 @@ export function registerAuthRoutes(
 
   app.post("/api/auth/logout", async (request, response) => {
     try {
-      const { session: authSession, errorCode } = await validateAuthSessionFromRequest(request, store);
+      const { session: authSession, errorCode, ban } = await validateAuthSessionFromRequest(request, store);
       if (!authSession) {
-        sendAuthFailure(response, errorCode);
+        sendAuthFailure(response, errorCode, ban);
         return;
       }
 
@@ -1724,6 +1771,11 @@ export function registerAuthRoutes(
           playerId,
           displayName
         });
+        const activeBan = await resolveActiveBanForPlayer(store, account.playerId);
+        if (activeBan) {
+          sendAuthFailure(response, "account_banned", activeBan);
+          return;
+        }
         playerId = account.playerId;
         displayName = account.displayName;
       }
@@ -1796,6 +1848,11 @@ export function registerAuthRoutes(
           playerId: loginId,
           displayName: loginId
         }) || { playerId: loginId, displayName: loginId };
+        const activeBan = await resolveActiveBanForPlayer(store, account.playerId);
+        if (activeBan) {
+          sendAuthFailure(response, "account_banned", activeBan);
+          return;
+        }
         
         sendJson(response, 200, {
           account,
@@ -1835,6 +1892,11 @@ export function registerAuthRoutes(
         playerId: authAccount.playerId,
         displayName: authAccount.displayName
       });
+      const activeBan = await resolveActiveBanForPlayer(store, account.playerId);
+      if (activeBan) {
+        sendAuthFailure(response, "account_banned", activeBan);
+        return;
+      }
       sendJson(response, 200, {
         account,
         session: await createAccountSessionBundle(store, {
@@ -2236,9 +2298,9 @@ export function registerAuthRoutes(
     }
 
     try {
-      const { session: authSession, errorCode } = await validateAuthSessionFromRequest(request, store);
+      const { session: authSession, errorCode, ban } = await validateAuthSessionFromRequest(request, store);
       if (!authSession) {
-        sendAuthFailure(response, errorCode);
+        sendAuthFailure(response, errorCode, ban);
         return;
       }
 

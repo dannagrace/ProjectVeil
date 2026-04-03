@@ -5,6 +5,9 @@ import { issueAccountAuthSession, issueGuestAuthSession, issueWechatMiniGameAuth
 import { applyPlayerEventLogAndAchievements } from "../src/player-achievements";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import type {
+  PlayerAccountBanHistoryListOptions,
+  PlayerAccountBanInput,
+  PlayerAccountBanSnapshot,
   PlayerAccountProgressPatch,
   PlayerAccountAuthSnapshot,
   PlayerAccountDeviceSessionSnapshot,
@@ -13,6 +16,8 @@ import type {
   PlayerEventHistoryQuery,
   PlayerEventHistorySnapshot,
   PlayerAccountListOptions,
+  PlayerAccountUnbanInput,
+  PlayerBanHistoryRecord,
   PlayerAccountProfilePatch,
   PlayerAccountSnapshot,
   PlayerHeroArchiveSnapshot,
@@ -32,6 +37,7 @@ import {
 
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
+  private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
@@ -43,6 +49,19 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
     return this.accounts.get(playerId) ?? null;
+  }
+
+  async loadPlayerBan(playerId: string): Promise<PlayerAccountBanSnapshot | null> {
+    const account = this.accounts.get(playerId);
+    if (!account) {
+      return null;
+    }
+    return {
+      playerId: account.playerId,
+      banStatus: account.banStatus ?? "none",
+      ...(account.banExpiry ? { banExpiry: account.banExpiry } : {}),
+      ...(account.banReason ? { banReason: account.banReason } : {})
+    };
   }
 
   async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
@@ -131,6 +150,9 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.banStatus ? { banStatus: existing.banStatus } : {}),
+      ...(existing?.banExpiry ? { banExpiry: existing.banExpiry } : {}),
+      ...(existing?.banReason ? { banReason: existing.banReason } : {}),
       ...(existing?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: existing.wechatMiniGameOpenId } : {}),
       ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
@@ -139,6 +161,63 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(account.playerId, account);
+    return account;
+  }
+
+  async listPlayerBanHistory(
+    playerId: string,
+    options: PlayerAccountBanHistoryListOptions = {}
+  ): Promise<PlayerBanHistoryRecord[]> {
+    return (this.banHistoryByPlayerId.get(playerId.trim()) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
+  }
+
+  async savePlayerBan(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      banStatus: input.banStatus,
+      ...(input.banStatus === "temporary" && input.banExpiry ? { banExpiry: new Date(input.banExpiry).toISOString() } : {}),
+      banReason: input.banReason.trim(),
+      updatedAt: new Date().toISOString()
+    };
+    if (input.banStatus === "permanent") {
+      delete account.banExpiry;
+    }
+    this.accounts.set(account.playerId, account);
+    const history = this.banHistoryByPlayerId.get(account.playerId) ?? [];
+    history.unshift({
+      id: (history[0]?.id ?? 0) + 1,
+      playerId: account.playerId,
+      action: "ban",
+      banStatus: input.banStatus,
+      ...(account.banExpiry ? { banExpiry: account.banExpiry } : {}),
+      banReason: account.banReason,
+      createdAt: new Date().toISOString()
+    });
+    this.banHistoryByPlayerId.set(account.playerId, history);
+    return account;
+  }
+
+  async clearPlayerBan(playerId: string, input: PlayerAccountUnbanInput = {}): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      banStatus: "none",
+      updatedAt: new Date().toISOString()
+    };
+    delete account.banExpiry;
+    delete account.banReason;
+    this.accounts.set(account.playerId, account);
+    const history = this.banHistoryByPlayerId.get(account.playerId) ?? [];
+    history.unshift({
+      id: (history[0]?.id ?? 0) + 1,
+      playerId: account.playerId,
+      action: "unban",
+      banStatus: "none",
+      ...(input.reason?.trim() ? { banReason: input.reason.trim() } : {}),
+      createdAt: new Date().toISOString()
+    });
+    this.banHistoryByPlayerId.set(account.playerId, history);
     return account;
   }
 

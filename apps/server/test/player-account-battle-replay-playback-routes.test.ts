@@ -4,6 +4,9 @@ import { Server, WebSocketTransport } from "colyseus";
 import { issueGuestAuthSession } from "../src/auth";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import type {
+  PlayerAccountBanHistoryListOptions,
+  PlayerAccountBanInput,
+  PlayerAccountBanSnapshot,
   PlayerAccountAuthSnapshot,
   PlayerAccountCredentialInput,
   PlayerAccountEnsureInput,
@@ -14,6 +17,8 @@ import type {
   PlayerAccountProgressPatch,
   PlayerAccountSnapshot,
   PlayerHeroArchiveSnapshot,
+  PlayerAccountUnbanInput,
+  PlayerBanHistoryRecord,
   RoomSnapshotStore
 } from "../src/persistence";
 import type { RoomPersistenceSnapshot } from "../src/index";
@@ -26,6 +31,7 @@ import {
 
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
+  private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
 
   async load(_roomId: string): Promise<RoomPersistenceSnapshot | null> {
     return null;
@@ -33,6 +39,19 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
     return this.accounts.get(playerId) ?? null;
+  }
+
+  async loadPlayerBan(playerId: string): Promise<PlayerAccountBanSnapshot | null> {
+    const account = this.accounts.get(playerId);
+    if (!account) {
+      return null;
+    }
+    return {
+      playerId: account.playerId,
+      banStatus: account.banStatus ?? "none",
+      ...(account.banExpiry ? { banExpiry: account.banExpiry } : {}),
+      ...(account.banReason ? { banReason: account.banReason } : {})
+    };
   }
 
   async loadPlayerAccountByLoginId(_loginId: string): Promise<PlayerAccountSnapshot | null> {
@@ -92,6 +111,9 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       achievements: structuredClone(existing?.achievements ?? []),
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
       recentBattleReplays: structuredClone(existing?.recentBattleReplays ?? []),
+      ...(existing?.banStatus ? { banStatus: existing.banStatus } : {}),
+      ...(existing?.banExpiry ? { banExpiry: existing.banExpiry } : {}),
+      ...(existing?.banReason ? { banReason: existing.banReason } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -101,6 +123,42 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   async bindPlayerAccountCredentials(_playerId: string, _input: PlayerAccountCredentialInput): Promise<PlayerAccountSnapshot> {
     throw new Error("not implemented");
+  }
+
+  async listPlayerBanHistory(
+    playerId: string,
+    options: PlayerAccountBanHistoryListOptions = {}
+  ): Promise<PlayerBanHistoryRecord[]> {
+    return (this.banHistoryByPlayerId.get(playerId) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
+  }
+
+  async savePlayerBan(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      banStatus: input.banStatus,
+      ...(input.banStatus === "temporary" && input.banExpiry ? { banExpiry: new Date(input.banExpiry).toISOString() } : {}),
+      banReason: input.banReason.trim(),
+      updatedAt: new Date().toISOString()
+    };
+    if (input.banStatus === "permanent") {
+      delete account.banExpiry;
+    }
+    this.accounts.set(playerId, account);
+    return account;
+  }
+
+  async clearPlayerBan(playerId: string, _input: PlayerAccountUnbanInput = {}): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      banStatus: "none",
+      updatedAt: new Date().toISOString()
+    };
+    delete account.banExpiry;
+    delete account.banReason;
+    this.accounts.set(playerId, account);
+    return account;
   }
 
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {

@@ -145,6 +145,18 @@ async function requireAuthSession(
     return result.session;
   }
 
+  if (result.errorCode === "account_banned") {
+    sendJson(response, 403, {
+      error: {
+        code: "account_banned",
+        message: "Account is banned",
+        reason: result.ban?.banReason ?? "No reason provided",
+        ...(result.ban?.banExpiry ? { expiry: result.ban.banExpiry } : {})
+      }
+    });
+    return null;
+  }
+
   sendJson(response, 401, {
     error: {
       code: result.errorCode ?? "unauthorized",

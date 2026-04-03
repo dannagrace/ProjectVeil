@@ -3,7 +3,7 @@ import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { registerAdminRoutes } from "../src/admin-console";
 import { getActiveRoomInstances } from "../src/colyseus-room";
-import type { RoomSnapshotStore } from "../src/persistence";
+import type { PlayerBanHistoryRecord, RoomSnapshotStore } from "../src/persistence";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
 
@@ -105,12 +105,25 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
       }
     ])
   );
+  const banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   const saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }> = [];
 
   const store = {
     saveCalls,
     async loadPlayerAccount(playerId: string) {
       return accounts.get(playerId) ?? null;
+    },
+    async loadPlayerBan(playerId: string) {
+      const account = accounts.get(playerId);
+      if (!account) {
+        return null;
+      }
+      return {
+        playerId: account.playerId,
+        banStatus: account.banStatus ?? "none",
+        ...(account.banExpiry ? { banExpiry: account.banExpiry } : {}),
+        ...(account.banReason ? { banReason: account.banReason } : {})
+      };
     },
     async ensurePlayerAccount(input: { playerId: string; displayName?: string }) {
       const existing = accounts.get(input.playerId);
@@ -120,7 +133,8 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
       const created = {
         playerId: input.playerId,
         displayName: input.displayName ?? input.playerId,
-        globalResources: { gold: 0, wood: 0, ore: 0 }
+        globalResources: { gold: 0, wood: 0, ore: 0 },
+        banStatus: "none" as const
       };
       accounts.set(input.playerId, created);
       return created;
@@ -135,10 +149,61 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
       account.globalResources = { ...account.globalResources, ...patch.globalResources };
       saveCalls.push({ playerId, globalResources: { ...account.globalResources } });
       return account;
+    },
+    async savePlayerBan(playerId: string, input: { banStatus: "temporary" | "permanent"; banReason: string; banExpiry?: string }) {
+      const account =
+        (await this.loadPlayerAccount(playerId)) ??
+        (await this.ensurePlayerAccount({
+          playerId,
+          displayName: playerId
+        }));
+      account.banStatus = input.banStatus;
+      account.banReason = input.banReason;
+      account.banExpiry = input.banStatus === "temporary" ? input.banExpiry : undefined;
+      const history = banHistoryByPlayerId.get(playerId) ?? [];
+      history.unshift({
+        id: (history[0]?.id ?? 0) + 1,
+        playerId,
+        action: "ban",
+        banStatus: input.banStatus,
+        ...(input.banExpiry ? { banExpiry: input.banExpiry } : {}),
+        banReason: input.banReason,
+        createdAt: new Date().toISOString()
+      });
+      banHistoryByPlayerId.set(playerId, history);
+      return account;
+    },
+    async clearPlayerBan(playerId: string, input: { reason?: string } = {}) {
+      const account =
+        (await this.loadPlayerAccount(playerId)) ??
+        (await this.ensurePlayerAccount({
+          playerId,
+          displayName: playerId
+        }));
+      account.banStatus = "none";
+      delete account.banReason;
+      delete account.banExpiry;
+      const history = banHistoryByPlayerId.get(playerId) ?? [];
+      history.unshift({
+        id: (history[0]?.id ?? 0) + 1,
+        playerId,
+        action: "unban",
+        banStatus: "none",
+        ...(input.reason ? { banReason: input.reason } : {}),
+        createdAt: new Date().toISOString()
+      });
+      banHistoryByPlayerId.set(playerId, history);
+      return account;
+    },
+    async listPlayerBanHistory(playerId: string, options: { limit?: number } = {}) {
+      return (banHistoryByPlayerId.get(playerId) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
     }
   };
 
-  return store as Pick<RoomSnapshotStore, "loadPlayerAccount" | "ensurePlayerAccount" | "savePlayerAccountProgress"> & {
+  return store as Pick<
+    RoomSnapshotStore,
+    "loadPlayerAccount" | "loadPlayerBan" | "ensurePlayerAccount" | "savePlayerAccountProgress" | "savePlayerBan" | "clearPlayerBan" | "listPlayerBanHistory"
+  > & {
     saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }>;
   };
 }
@@ -490,4 +555,104 @@ test("POST /api/admin/broadcast returns 400 for invalid payload types", async (t
 
   assert.equal(invalidMessageResponse.statusCode, 400);
   assert.deepEqual(JSON.parse(invalidMessageResponse.body), { error: '"message" must be a non-empty string' });
+});
+
+test("POST /api/admin/players/:id/ban bans the player and POST /unban clears it", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore({
+    "player-7": { gold: 1, wood: 2, ore: 3 }
+  });
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const banHandler = posts.get("/api/admin/players/:id/ban");
+  const unbanHandler = posts.get("/api/admin/players/:id/unban");
+  assert.ok(banHandler);
+  assert.ok(unbanHandler);
+
+  const banResponse = createResponse();
+  await banHandler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-7" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({
+        banStatus: "temporary",
+        banExpiry: "2026-04-05T00:00:00.000Z",
+        banReason: "Chargeback abuse"
+      })
+    }),
+    banResponse
+  );
+
+  assert.equal(banResponse.statusCode, 200);
+  const banPayload = JSON.parse(banResponse.body) as {
+    ok: boolean;
+    account: { banStatus: string; banExpiry?: string; banReason?: string };
+    disconnectedClients: number;
+  };
+  assert.equal(banPayload.ok, true);
+  assert.equal(banPayload.account.banStatus, "temporary");
+  assert.equal(banPayload.account.banExpiry, "2026-04-05T00:00:00.000Z");
+  assert.equal(banPayload.account.banReason, "Chargeback abuse");
+  assert.equal(banPayload.disconnectedClients, 0);
+
+  const unbanResponse = createResponse();
+  await unbanHandler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-7" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({ reason: "Appeal approved" })
+    }),
+    unbanResponse
+  );
+
+  assert.equal(unbanResponse.statusCode, 200);
+  const unbanPayload = JSON.parse(unbanResponse.body) as {
+    ok: boolean;
+    account: { banStatus: string; banExpiry?: string; banReason?: string };
+  };
+  assert.equal(unbanPayload.ok, true);
+  assert.equal(unbanPayload.account.banStatus, "none");
+  assert.equal("banExpiry" in unbanPayload.account, false);
+  assert.equal("banReason" in unbanPayload.account, false);
+});
+
+test("GET /api/admin/players/:id/ban-history returns current ban state and history records", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore();
+  await store.savePlayerBan("player-history", {
+    banStatus: "permanent",
+    banReason: "Botting"
+  });
+  await store.clearPlayerBan("player-history", {
+    reason: "Manual review"
+  });
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/players/:id/ban-history");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      params: { id: "player-history" },
+      headers: {
+        "x-veil-admin-secret": secret
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    items: PlayerBanHistoryRecord[];
+    currentBan: { banStatus: string };
+  };
+  assert.equal(payload.currentBan.banStatus, "none");
+  assert.ok(payload.items.length >= 1);
+  assert.equal(payload.items[0]?.action, "unban");
+  assert.equal(payload.items[0]?.banReason, "Manual review");
 });

@@ -394,6 +394,17 @@ function sendUnauthorized(
   });
 }
 
+function sendAccountBanned(response: ServerResponse, ban?: { banReason?: string; banExpiry?: string } | null): void {
+  sendJson(response, 403, {
+    error: {
+      code: "account_banned",
+      message: "Account is banned",
+      reason: ban?.banReason ?? "No reason provided",
+      ...(ban?.banExpiry ? { expiry: ban.banExpiry } : {})
+    }
+  });
+}
+
 function sendForbidden(response: ServerResponse): void {
   sendJson(response, 403, {
     error: {
@@ -410,6 +421,10 @@ async function requireAuthSession(
 ) {
   const result = await validateAuthSessionFromRequest(request, store);
   if (!result.session) {
+    if (result.errorCode === "account_banned") {
+      sendAccountBanned(response, result.ban);
+      return null;
+    }
     sendUnauthorized(response, result.errorCode ?? "unauthorized");
     return null;
   }
@@ -445,13 +460,22 @@ function toPublicPlayerAccount(
   account: PlayerAccountSnapshot
 ): Omit<
   PlayerAccountSnapshot,
-  "loginId" | "credentialBoundAt" | "wechatMiniGameOpenId" | "wechatMiniGameUnionId"
+  | "loginId"
+  | "credentialBoundAt"
+  | "wechatMiniGameOpenId"
+  | "wechatMiniGameUnionId"
+  | "banStatus"
+  | "banExpiry"
+  | "banReason"
 > {
   const {
     loginId: _loginId,
     credentialBoundAt: _credentialBoundAt,
     wechatMiniGameOpenId: _wechatMiniGameOpenId,
     wechatMiniGameUnionId: _wechatMiniGameUnionId,
+    banStatus: _banStatus,
+    banExpiry: _banExpiry,
+    banReason: _banReason,
     ...publicAccount
   } = account;
   return publicAccount;
@@ -1560,6 +1584,10 @@ export function registerPlayerAccountRoutes(
     const authResult = await validateAuthSessionFromRequest(request, store);
     const authSession = authResult.session;
     if (!authSession && readGuestAuthTokenFromRequest(request)) {
+      if (authResult.errorCode === "account_banned") {
+        sendAccountBanned(response, authResult.ban);
+        return;
+      }
       sendUnauthorized(response, authResult.errorCode ?? "unauthorized");
       return;
     }
@@ -1627,6 +1655,10 @@ export function registerPlayerAccountRoutes(
       }
 
       if (!authSession) {
+        if (authResult.errorCode === "account_banned") {
+          sendAccountBanned(response, authResult.ban);
+          return;
+        }
         sendUnauthorized(response, authResult.errorCode ?? "unauthorized");
         return;
       }

@@ -9,6 +9,9 @@ import {
   MAX_PLAYER_AVATAR_URL_LENGTH,
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
   type RoomSnapshotStore,
+  type PlayerAccountBanHistoryListOptions,
+  type PlayerAccountBanInput,
+  type PlayerAccountBanSnapshot,
   type PlayerAccountAuthSnapshot,
   type PlayerAccountAuthRevokeInput,
   type PlayerAccountAuthSessionInput,
@@ -16,6 +19,8 @@ import {
   type PlayerAccountCredentialInput,
   type PlayerAccountEnsureInput,
   type PlayerAccountListOptions,
+  type PlayerAccountUnbanInput,
+  type PlayerBanHistoryRecord,
   type PlayerAccountWechatMiniGameIdentityInput,
   type PlayerAccountProfilePatch,
   type PlayerAccountProgressPatch,
@@ -74,6 +79,7 @@ function normalizeSessionId(sessionId: string): string {
 export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
+  private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
@@ -87,6 +93,20 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
     const account = this.accounts.get(normalizePlayerId(playerId));
     return account ? cloneAccount(account) : null;
+  }
+
+  async loadPlayerBan(playerId: string): Promise<PlayerAccountBanSnapshot | null> {
+    const account = await this.loadPlayerAccount(playerId);
+    if (!account) {
+      return null;
+    }
+
+    return {
+      playerId: account.playerId,
+      banStatus: account.banStatus ?? "none",
+      ...(account.banExpiry ? { banExpiry: account.banExpiry } : {}),
+      ...(account.banReason ? { banReason: account.banReason } : {})
+    };
   }
 
   async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
@@ -186,6 +206,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
           : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.banStatus ? { banStatus: existing.banStatus } : {}),
+      ...(existing?.banExpiry ? { banExpiry: existing.banExpiry } : {}),
+      ...(existing?.banReason ? { banReason: existing.banReason } : {}),
       ...(existing?.accountSessionVersion != null ? { accountSessionVersion: existing.accountSessionVersion } : {}),
       ...(existing?.refreshSessionId ? { refreshSessionId: existing.refreshSessionId } : {}),
       ...(existing?.refreshTokenExpiresAt ? { refreshTokenExpiresAt: existing.refreshTokenExpiresAt } : {}),
@@ -199,6 +222,80 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const stored = structuredClone(nextAccount);
     this.accounts.set(playerId, stored);
     return structuredClone(stored);
+  }
+
+  async listPlayerBanHistory(
+    playerId: string,
+    options: PlayerAccountBanHistoryListOptions = {}
+  ): Promise<PlayerBanHistoryRecord[]> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
+    return structuredClone((this.banHistoryByPlayerId.get(normalizedPlayerId) ?? []).slice(0, safeLimit));
+  }
+
+  async savePlayerBan(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const banReason = input.banReason.trim();
+    if (!banReason) {
+      throw new Error("banReason must not be empty");
+    }
+    if (input.banStatus === "temporary") {
+      if (!input.banExpiry) {
+        throw new Error("temporary bans require banExpiry");
+      }
+      if (new Date(input.banExpiry).getTime() <= Date.now()) {
+        throw new Error("banExpiry must be in the future");
+      }
+    }
+
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      banStatus: input.banStatus,
+      ...(input.banStatus === "temporary" && input.banExpiry ? { banExpiry: new Date(input.banExpiry).toISOString() } : {}),
+      banReason,
+      updatedAt: new Date().toISOString()
+    };
+    if (input.banStatus === "permanent") {
+      delete account.banExpiry;
+    }
+    this.accounts.set(normalizedPlayerId, cloneAccount(account));
+    const history = this.banHistoryByPlayerId.get(normalizedPlayerId) ?? [];
+    history.unshift({
+      id: (history[0]?.id ?? 0) + 1,
+      playerId: normalizedPlayerId,
+      action: "ban",
+      banStatus: input.banStatus,
+      ...(input.banStatus === "temporary" && input.banExpiry ? { banExpiry: new Date(input.banExpiry).toISOString() } : {}),
+      banReason,
+      createdAt: new Date().toISOString()
+    });
+    this.banHistoryByPlayerId.set(normalizedPlayerId, history);
+    return cloneAccount(account);
+  }
+
+  async clearPlayerBan(playerId: string, input: PlayerAccountUnbanInput = {}): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      banStatus: "none",
+      updatedAt: new Date().toISOString()
+    };
+    delete account.banExpiry;
+    delete account.banReason;
+    this.accounts.set(normalizedPlayerId, cloneAccount(account));
+    const history = this.banHistoryByPlayerId.get(normalizedPlayerId) ?? [];
+    history.unshift({
+      id: (history[0]?.id ?? 0) + 1,
+      playerId: normalizedPlayerId,
+      action: "unban",
+      banStatus: "none",
+      ...(input.reason?.trim() ? { banReason: input.reason.trim() } : {}),
+      createdAt: new Date().toISOString()
+    });
+    this.banHistoryByPlayerId.set(normalizedPlayerId, history);
+    return cloneAccount(account);
   }
 
   async bindPlayerAccountCredentials(
