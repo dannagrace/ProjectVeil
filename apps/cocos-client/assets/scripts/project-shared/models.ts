@@ -419,7 +419,7 @@ export interface MovementPlan {
 
 export type BattleSkillId = string;
 export type BattleSkillKind = "active" | "passive";
-export type BattleSkillTarget = "enemy" | "self";
+export type BattleSkillTarget = "enemy" | "self" | "ally";
 export type BattleSkillDelivery = "contact" | "ranged";
 export type BattleStatusEffectId = string;
 
@@ -444,6 +444,8 @@ export interface BattleStatusEffectState {
   damagePerTurn: number;
   initiativeModifier: number;
   blocksActiveSkills: boolean;
+  preventsAction?: boolean;
+  forcedAttackSource?: boolean;
   sourceUnitId?: string;
 }
 
@@ -461,6 +463,7 @@ export interface UnitStack {
   count: number;
   currentHp: number;
   maxHp: number;
+  power?: number;
   hasRetaliated: boolean;
   defending: boolean;
   skills?: BattleSkillState[];
@@ -514,6 +517,7 @@ export interface BattleState {
   neutralArmyId?: string;
   defenderHeroId?: string;
   encounterPosition?: Vec2;
+  battlefieldTerrain?: TerrainType;
 }
 
 export type WorldAction =
@@ -1013,6 +1017,8 @@ export interface BattleStatusEffectConfig {
   damagePerTurn: number;
   initiativeModifier?: number;
   blocksActiveSkills?: boolean;
+  preventsAction?: boolean;
+  forcedAttackSource?: boolean;
 }
 
 export interface BattleSkillCatalogConfig {

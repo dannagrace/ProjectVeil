@@ -12,8 +12,10 @@ import type {
   BattleStatusEffectState,
   HeroState,
   NeutralArmyState,
+  TerrainType,
   UnitStack,
-  ValidationResult
+  ValidationResult,
+  WorldState
 } from "./models.ts";
 import { validateAction } from "./action-precheck.ts";
 import { nextDeterministicRandom } from "./deterministic-rng.ts";
@@ -136,7 +138,7 @@ function normalizeBattleCooldowns(
   );
 }
 
-function normalizeBattleState(state: BattleState): BattleState {
+export function normalizeBattleState(state: BattleState): BattleState {
   const normalizedUnits = Object.fromEntries(
     Object.entries(state.units).map(([unitId, unit]) => [unitId, withNormalizedCollections(unit)])
   );
@@ -213,7 +215,9 @@ function createStatusEffectState(
     defenseModifier: definition.defenseModifier,
     damagePerTurn: definition.damagePerTurn,
     initiativeModifier: definition.initiativeModifier ?? 0,
-    blocksActiveSkills: definition.blocksActiveSkills ?? false
+    blocksActiveSkills: definition.blocksActiveSkills ?? false,
+    preventsAction: definition.preventsAction ?? false,
+    forcedAttackSource: definition.forcedAttackSource ?? false
   }, "sourceUnitId", sourceUnitId);
 }
 
@@ -250,6 +254,18 @@ function effectiveInitiative(unit: UnitStack): number {
 
 function canUseActiveSkills(unit: UnitStack): boolean {
   return statusEffectsOf(unit).every((status) => !status.blocksActiveSkills);
+}
+
+function preventsAction(unit: UnitStack): boolean {
+  return statusEffectsOf(unit).some((status) => status.preventsAction);
+}
+
+function hasBattleSkill(unit: UnitStack, skillId: BattleSkillId): boolean {
+  return skillsOf(unit).some((skill) => skill.id === skillId);
+}
+
+function battlefieldTerrainOf(state: BattleState): TerrainType {
+  return state.battlefieldTerrain ?? "grass";
 }
 
 function describeHazard(hazard: BattleHazardState, catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()): string {
@@ -363,11 +379,25 @@ function totalDefenseModifier(unit: UnitStack): number {
   return statusEffectsOf(unit).reduce((total, status) => total + status.defenseModifier, 0);
 }
 
-function estimateDamage(attacker: UnitStack, defender: UnitStack, randomValue: number, multiplier = 1): number {
+function terrainDefenseBonus(unit: UnitStack, state: BattleState): number {
+  return hasBattleSkill(unit, "terrain_mastery") && battlefieldTerrainOf(state) === "water" ? 2 : 0;
+}
+
+function terrainDamageMultiplier(unit: UnitStack, state: BattleState): number {
+  return hasBattleSkill(unit, "terrain_mastery") && battlefieldTerrainOf(state) === "grass" ? 1.1 : 1;
+}
+
+function estimateDamage(
+  attacker: UnitStack,
+  defender: UnitStack,
+  randomValue: number,
+  state: BattleState,
+  multiplier = 1
+): number {
   const balance = getBattleBalanceConfig().damage;
   const defenseBonus = defender.defending ? balance.defendingDefenseBonus : 0;
   const effectiveAttack = attacker.attack + totalAttackModifier(attacker);
-  const effectiveDefense = defender.defense + totalDefenseModifier(defender) + defenseBonus;
+  const effectiveDefense = defender.defense + totalDefenseModifier(defender) + defenseBonus + terrainDefenseBonus(defender, state);
   const offenseModifier = 1 + (effectiveAttack - effectiveDefense) * balance.offenseAdvantageStep;
   const variance = balance.varianceBase + randomValue * balance.varianceRange;
   return Math.max(
@@ -377,7 +407,8 @@ function estimateDamage(attacker: UnitStack, defender: UnitStack, randomValue: n
         averageDamage(attacker) *
         Math.max(balance.minimumOffenseMultiplier, offenseModifier) *
         variance *
-        multiplier
+        multiplier *
+        terrainDamageMultiplier(attacker, state)
     )
   );
 }
@@ -399,6 +430,22 @@ function applyDamage(target: UnitStack, damage: number): UnitStack {
     ...target,
     count: survivingCount,
     currentHp
+  };
+}
+
+function applyHealing(target: UnitStack, amount: number): UnitStack {
+  if (target.count <= 0 || amount <= 0) {
+    return target;
+  }
+
+  const hpPool = (target.count - 1) * target.maxHp + target.currentHp;
+  const maxHpPool = target.count * target.maxHp;
+  const healedHpPool = Math.min(maxHpPool, hpPool + amount);
+  const currentHp = healedHpPool - (target.count - 1) * target.maxHp;
+
+  return {
+    ...target,
+    currentHp: currentHp > 0 ? currentHp : target.maxHp
   };
 }
 
@@ -559,6 +606,50 @@ function hasStatusEffect(unit: UnitStack, statusId: BattleStatusEffectId): boole
   return statusEffectsOf(unit).some((status) => status.id === statusId);
 }
 
+function isNegativeStatusEffect(status: BattleStatusEffectState): boolean {
+  return !!(
+    status.attackModifier < 0 ||
+    status.defenseModifier < 0 ||
+    status.damagePerTurn > 0 ||
+    status.initiativeModifier < 0 ||
+    status.blocksActiveSkills ||
+    status.preventsAction ||
+    status.forcedAttackSource
+  );
+}
+
+function removeFirstNegativeStatus(unit: UnitStack): { unit: UnitStack; removedStatus?: BattleStatusEffectState } {
+  const statuses = statusEffectsOf(unit);
+  const removedStatus = statuses.find(isNegativeStatusEffect);
+  if (!removedStatus) {
+    return { unit };
+  }
+
+  return {
+    unit: {
+      ...unit,
+      statusEffects: statuses.filter((status) => status !== removedStatus)
+    },
+    removedStatus
+  };
+}
+
+function forcedAttackTargetId(unit: UnitStack, state: BattleState): string | null {
+  const forcedStatus = [...statusEffectsOf(unit)]
+    .reverse()
+    .find((status) => status.forcedAttackSource && status.sourceUnitId);
+  if (!forcedStatus?.sourceUnitId) {
+    return null;
+  }
+
+  const source = state.units[forcedStatus.sourceUnitId];
+  if (!source || source.count <= 0 || source.camp === unit.camp) {
+    return null;
+  }
+
+  return source.id;
+}
+
 function isActiveSkillReady(skill: BattleSkillState): boolean {
   return skill.kind === "active" && skill.remainingCooldown === 0;
 }
@@ -600,6 +691,15 @@ export function pickAutomatedBattleAction(state: BattleState): BattleAction | nu
   }
 
   const catalogIndex = getBattleCatalogIndex();
+  const forcedTargetId = forcedAttackTargetId(activeUnit, state);
+  if (forcedTargetId) {
+    return {
+      type: "battle.attack",
+      attackerId: activeUnit.id,
+      defenderId: forcedTargetId
+    };
+  }
+
   const readySkills = canUseActiveSkills(activeUnit)
     ? skillsOf(activeUnit).filter((skill) => {
         if (!isActiveSkillReady(skill)) {
@@ -609,6 +709,52 @@ export function pickAutomatedBattleAction(state: BattleState): BattleAction | nu
         return isSkillAvailableThisRound(skillDefinitionFor(skill.id, catalogIndex), state.round);
       })
     : [];
+  const alliedUnits = Object.values(state.units).filter((unit) => unit.camp === activeUnit.camp && unit.count > 0);
+
+  for (const skill of readySkills) {
+    if (skill.target !== "ally") {
+      continue;
+    }
+
+    if (skill.id === "field_mending") {
+      const woundedTarget = alliedUnits
+        .filter((unit) => unit.currentHp < unit.maxHp)
+        .sort((left, right) => left.currentHp - right.currentHp)[0];
+      if (woundedTarget) {
+        return {
+          type: "battle.skill",
+          unitId: activeUnit.id,
+          skillId: skill.id,
+          targetId: woundedTarget.id
+        };
+      }
+      continue;
+    }
+
+    if (skill.id === "rally_morale") {
+      const cleansableTarget = alliedUnits.find((unit) => statusEffectsOf(unit).some(isNegativeStatusEffect));
+      if (cleansableTarget) {
+        return {
+          type: "battle.skill",
+          unitId: activeUnit.id,
+          skillId: skill.id,
+          targetId: cleansableTarget.id
+        };
+      }
+
+      const woundedTarget = alliedUnits
+        .filter((unit) => unit.currentHp < unit.maxHp)
+        .sort((left, right) => left.currentHp - right.currentHp)[0];
+      if (woundedTarget) {
+        return {
+          type: "battle.skill",
+          unitId: activeUnit.id,
+          skillId: skill.id,
+          targetId: woundedTarget.id
+        };
+      }
+    }
+  }
 
   for (const skill of readySkills) {
     if (skill.target !== "self") {
@@ -849,6 +995,7 @@ function prepareStateForActiveUnit(state: BattleState): BattleState {
   while (nextState.activeUnitId && remainingIterations > 0) {
     remainingIterations -= 1;
     const activeUnit = nextState.units[nextState.activeUnitId]!;
+    const unitPreventsAction = preventsAction(activeUnit);
 
     const processed = processTurnStartForUnit(activeUnit);
     nextState = withUpdatedUnitCooldowns(
@@ -858,6 +1005,15 @@ function prepareStateForActiveUnit(state: BattleState): BattleState {
       },
       processed.unit
     );
+
+    if (processed.unit.count > 0 && unitPreventsAction) {
+      nextState = {
+        ...nextState,
+        log: nextState.log.concat(`${processed.unit.stackName} 因负面状态跳过行动`)
+      };
+      nextState = advanceTurnInternal(nextState, activeUnit.id, false);
+      continue;
+    }
 
     if (processed.unit.count > 0) {
       break;
@@ -1011,7 +1167,13 @@ function applyAttackSequence(
   const attacker = preparedState.state.units[attackerId]!;
   const defender = preparedState.state.units[defenderId]!;
   const attackRoll = nextDeterministicRandom(preparedState.state.rng.seed);
-  const attackDamage = estimateDamage(attacker, defender, attackRoll.value, options?.damageMultiplier ?? 1);
+  const attackDamage = estimateDamage(
+    attacker,
+    defender,
+    attackRoll.value,
+    preparedState.state,
+    options?.damageMultiplier ?? 1
+  );
   const nextUnits: Record<string, UnitStack> = {
     ...preparedState.state.units,
     [defender.id]: applyDamage(defender, attackDamage)
@@ -1055,7 +1217,7 @@ function applyAttackSequence(
 
   if ((options?.allowRetaliation ?? true) && damagedDefender.count > 0 && !damagedDefender.hasRetaliated) {
     const retaliationRoll = nextDeterministicRandom(nextRngState.seed);
-    const retaliationDamage = estimateDamage(damagedDefender, attacker, retaliationRoll.value);
+    const retaliationDamage = estimateDamage(damagedDefender, attacker, retaliationRoll.value, preparedState.state);
     let damagedAttacker = applyDamage(attacker, retaliationDamage);
     damagedAttacker = applyOnHitStatuses(damagedDefender, damagedAttacker, log, catalogIndex);
     nextUnits[attacker.id] = damagedAttacker;
@@ -1109,7 +1271,51 @@ export function executeBattleSkill(
   const casterWithCooldown = setSkillCooldown(caster, skillId);
   const stateWithCooldown = withUpdatedUnitCooldowns(normalizedState, casterWithCooldown);
 
+  if (skillDefinition.target === "ally" && targetId) {
+    const allyTarget = normalizedState.units[targetId]!;
+    let nextTarget = allyTarget;
+    const log = [...normalizedState.log];
+
+    if (skillId === "field_mending") {
+      const healingAmount = Math.max(2, 4 + (caster.power ?? 0) * 3);
+      nextTarget = applyHealing(nextTarget, healingAmount);
+      log.push(`${caster.stackName} 施放 ${skillDefinition.name}，为 ${allyTarget.stackName} 恢复 ${healingAmount} 生命`);
+    } else if (skillId === "rally_morale") {
+      const healingAmount = Math.max(1, 2 + (caster.power ?? 0) * 2);
+      nextTarget = applyHealing(nextTarget, healingAmount);
+      const moraleResult = removeFirstNegativeStatus(nextTarget);
+      nextTarget = moraleResult.unit;
+      log.push(
+        moraleResult.removedStatus
+          ? `${caster.stackName} 施放 ${skillDefinition.name}，为 ${allyTarget.stackName} 恢复 ${healingAmount} 生命并解除 ${moraleResult.removedStatus.name}`
+          : `${caster.stackName} 施放 ${skillDefinition.name}，为 ${allyTarget.stackName} 恢复 ${healingAmount} 生命`
+      );
+    } else {
+      log.push(`${caster.stackName} 施放 ${skillDefinition.name}`);
+    }
+
+    return advanceTurn(
+      {
+        ...withUpdatedUnitCooldowns(stateWithCooldown, casterWithCooldown),
+        units: {
+          ...stateWithCooldown.units,
+          [nextTarget.id]: nextTarget
+        },
+        log
+      },
+      caster.id,
+      false
+    );
+  }
+
   if (skillDefinition.target === "enemy" && targetId) {
+    if (skillId === "bog_ambush" && battlefieldTerrainOf(normalizedState) !== "water") {
+      return {
+        ...stateWithCooldown,
+        log: normalizedState.log.concat(`Action rejected: skill_requires_water_terrain`)
+      };
+    }
+
     return applyAttackSequence(
       {
         ...stateWithCooldown
@@ -1117,7 +1323,10 @@ export function executeBattleSkill(
       caster.id,
       targetId,
       {
-        damageMultiplier: skillDefinition.effects?.damageMultiplier ?? 1,
+        damageMultiplier:
+          skillId === "bog_ambush"
+            ? 2
+            : skillDefinition.effects?.damageMultiplier ?? 1,
         allowRetaliation: skillDefinition.effects?.allowRetaliation ?? true,
         delivery: isContactSkillDefinition(skillDefinition) ? "contact" : "ranged",
         logPrefix: `${caster.stackName} 施放 ${skillDefinition.name}，对 ${normalizedState.units[targetId]!.stackName}`,
@@ -1168,6 +1377,10 @@ export function validateBattleAction(state: BattleState, action: BattleAction): 
       return { valid: false, reason: "unit_not_available" };
     }
 
+    if (forcedAttackTargetId(unit, state)) {
+      return { valid: false, reason: "taunted_must_attack_source" };
+    }
+
     return { valid: true };
   }
 
@@ -1197,10 +1410,34 @@ export function validateBattleAction(state: BattleState, action: BattleAction): 
       return { valid: false, reason: "skill_round_expired" };
     }
 
+    const forcedTargetId = forcedAttackTargetId(unit, state);
+    if (forcedTargetId) {
+      if (skill.target !== "enemy" || action.targetId !== forcedTargetId) {
+        return { valid: false, reason: "taunted_must_attack_source" };
+      }
+    }
+
     if (skill.target === "self") {
       if (action.targetId && action.targetId !== unit.id) {
         return { valid: false, reason: "invalid_skill_target" };
       }
+      return { valid: true };
+    }
+
+    if (skill.target === "ally") {
+      if (!action.targetId) {
+        return { valid: false, reason: "skill_target_missing" };
+      }
+
+      const target = state.units[action.targetId];
+      if (!target || target.count <= 0) {
+        return { valid: false, reason: "ally_not_available" };
+      }
+
+      if (target.camp !== unit.camp) {
+        return { valid: false, reason: "invalid_skill_target" };
+      }
+
       return { valid: true };
     }
 
@@ -1232,6 +1469,11 @@ export function validateBattleAction(state: BattleState, action: BattleAction): 
 
   if (!defender || defender.count <= 0) {
     return { valid: false, reason: "defender_not_available" };
+  }
+
+  const forcedTargetId = attacker ? forcedAttackTargetId(attacker, state) : null;
+  if (forcedTargetId && forcedTargetId !== action.defenderId) {
+    return { valid: false, reason: "taunted_must_attack_source" };
   }
 
   if (attacker.camp === defender.camp) {
@@ -1327,11 +1569,23 @@ export function createDemoBattleState(): BattleState {
     rng: {
       seed: 4242,
       cursor: 0
-    }
+    },
+    battlefieldTerrain: "grass"
   };
 }
 
-export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralArmyState, seed: number): BattleState {
+function terrainAtPosition(world: WorldState | undefined, position: { x: number; y: number }): TerrainType {
+  return world?.map.tiles.find(
+    (tile) => tile.position.x === position.x && tile.position.y === position.y
+  )?.terrain ?? "grass";
+}
+
+export function createNeutralBattleState(
+  hero: HeroState,
+  neutralArmy: NeutralArmyState,
+  seed: number,
+  world?: WorldState
+): BattleState {
   const units: Record<string, UnitStack> = {};
   const catalog = getDefaultUnitCatalog();
   const battleCatalogIndex = getBattleCatalogIndex();
@@ -1361,6 +1615,7 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
       count: hero.armyCount,
       currentHp: heroTemplate.maxHp,
       maxHp: heroTemplate.maxHp,
+      power: hero.stats.power,
       hasRetaliated: false,
       defending: false
     },
@@ -1415,11 +1670,17 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
     },
     worldHeroId: hero.id,
     neutralArmyId: neutralArmy.id,
-    encounterPosition: neutralArmy.position
+    encounterPosition: neutralArmy.position,
+    battlefieldTerrain: terrainAtPosition(world, neutralArmy.position)
   };
 }
 
-export function createHeroBattleState(attackerHero: HeroState, defenderHero: HeroState, seed: number): BattleState {
+export function createHeroBattleState(
+  attackerHero: HeroState,
+  defenderHero: HeroState,
+  seed: number,
+  world?: WorldState
+): BattleState {
   const catalog = getDefaultUnitCatalog();
   const battleCatalogIndex = getBattleCatalogIndex();
   const templateById = new Map(catalog.templates.map((template) => [template.id, template]));
@@ -1456,6 +1717,7 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
         count: attackerHero.armyCount,
         currentHp: attackerTemplate.maxHp,
         maxHp: attackerTemplate.maxHp,
+        power: attackerHero.stats.power,
         hasRetaliated: false,
         defending: false
       },
@@ -1477,6 +1739,7 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
         count: defenderHero.armyCount,
         currentHp: defenderTemplate.maxHp,
         maxHp: defenderTemplate.maxHp,
+        power: defenderHero.stats.power,
         hasRetaliated: false,
         defending: false
       },
@@ -1506,7 +1769,8 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
     },
     worldHeroId: attackerHero.id,
     defenderHeroId: defenderHero.id,
-    encounterPosition: defenderHero.position
+    encounterPosition: defenderHero.position,
+    battlefieldTerrain: terrainAtPosition(world, defenderHero.position)
   };
 }
 
