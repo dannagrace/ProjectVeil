@@ -265,6 +265,7 @@ export function createLobbyState(overrides: Partial<VeilLobbyRenderState> = {}):
     roomId: "",
     authMode: "guest",
     loginId: "",
+    privacyConsentAccepted: false,
     loginHint: "游客模式",
     loginActionLabel: "账号登录并进入",
     shareHint: "共享存档未启用",

@@ -38,6 +38,10 @@ export interface RoomSnapshotStore {
     playerId: string,
     input: PlayerAccountCredentialInput
   ): Promise<PlayerAccountSnapshot>;
+  savePlayerAccountPrivacyConsent(
+    playerId: string,
+    input?: PlayerAccountPrivacyConsentInput
+  ): Promise<PlayerAccountSnapshot>;
   savePlayerAccountAuthSession(
     playerId: string,
     input: PlayerAccountAuthSessionInput
@@ -57,6 +61,10 @@ export interface RoomSnapshotStore {
     playerId: string,
     input: PlayerAccountWechatMiniGameIdentityInput
   ): Promise<PlayerAccountSnapshot>;
+  deletePlayerAccount(
+    playerId: string,
+    input?: PlayerAccountDeleteInput
+  ): Promise<PlayerAccountSnapshot | null>;
   savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot>;
   savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot>;
   listPlayerAccounts(options?: PlayerAccountListOptions): Promise<PlayerAccountSnapshot[]>;
@@ -142,6 +150,7 @@ interface PlayerAccountRow extends RowDataPacket {
   wechat_mini_game_union_id: string | null;
   wechat_mini_game_bound_at: Date | string | null;
   credential_bound_at: Date | string | null;
+  privacy_consent_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -299,6 +308,10 @@ export interface PlayerAccountCredentialInput {
   passwordHash: string;
 }
 
+export interface PlayerAccountPrivacyConsentInput {
+  privacyConsentAt?: string;
+}
+
 export interface PlayerAccountAuthSessionInput {
   refreshSessionId: string;
   refreshTokenHash: string;
@@ -320,6 +333,10 @@ export interface PlayerAccountWechatMiniGameIdentityInput {
   avatarUrl?: string | null;
   ageVerified?: boolean;
   isMinor?: boolean;
+}
+
+export interface PlayerAccountDeleteInput {
+  deletedAt?: string;
 }
 
 export interface PlayerAccountListOptions {
@@ -499,6 +516,19 @@ function normalizePlayerAvatarUrl(avatarUrl?: string | null): string | undefined
   return normalized ? normalized.slice(0, MAX_PLAYER_AVATAR_URL_LENGTH) : undefined;
 }
 
+function normalizePrivacyConsentAt(value?: string | Date | null): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("privacyConsentAt must be a valid ISO timestamp");
+  }
+
+  return parsed.toISOString();
+}
+
 function normalizePlayerAgeVerified(ageVerified?: boolean | number | null): boolean | undefined {
   if (ageVerified == null) {
     return undefined;
@@ -633,6 +663,7 @@ function normalizePlayerAccountSnapshot(account: {
   wechatMiniGameUnionId?: string | null | undefined;
   wechatMiniGameBoundAt?: string | undefined;
   credentialBoundAt?: string | undefined;
+  privacyConsentAt?: string | Date | null | undefined;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 }): PlayerAccountSnapshot {
@@ -658,6 +689,7 @@ function normalizePlayerAccountSnapshot(account: {
       lastSeenAt: account.lastSeenAt,
       loginId: account.loginId ? normalizePlayerLoginId(account.loginId) : undefined,
       credentialBoundAt: account.credentialBoundAt,
+      privacyConsentAt: normalizePrivacyConsentAt(account.privacyConsentAt),
       ageVerified: normalizePlayerAgeVerified(account.ageVerified),
       isMinor: normalizePlayerIsMinor(account.isMinor),
       dailyPlayMinutes: normalizeDailyPlayMinutes(account.dailyPlayMinutes),
@@ -957,6 +989,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   wechat_mini_game_bound_at DATETIME NULL DEFAULT NULL,
   password_hash VARCHAR(255) NULL,
   credential_bound_at DATETIME NULL DEFAULT NULL,
+  privacy_consent_at DATETIME NULL DEFAULT NULL,
   version BIGINT UNSIGNED NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1324,6 +1357,24 @@ SET @veil_player_accounts_password_hash_sql := IF(
 PREPARE veil_player_accounts_password_hash_stmt FROM @veil_player_accounts_password_hash_sql;
 EXECUTE veil_player_accounts_password_hash_stmt;
 DEALLOCATE PREPARE veil_player_accounts_password_hash_stmt;
+
+SET @veil_player_accounts_privacy_consent_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'privacy_consent_at'
+);
+
+SET @veil_player_accounts_privacy_consent_sql := IF(
+  @veil_player_accounts_privacy_consent_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`privacy_consent_at\` DATETIME NULL DEFAULT NULL AFTER \`credential_bound_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_privacy_consent_stmt FROM @veil_player_accounts_privacy_consent_sql;
+EXECUTE veil_player_accounts_privacy_consent_stmt;
+DEALLOCATE PREPARE veil_player_accounts_privacy_consent_stmt;
 
 SET @veil_player_accounts_wechat_idp_open_id_exists := (
   SELECT COUNT(*)
@@ -1718,6 +1769,7 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
   const refreshTokenExpiresAt = formatTimestamp(row.refresh_token_expires_at);
   const wechatMiniGameBoundAt = formatTimestamp(row.wechat_mini_game_bound_at);
   const credentialBoundAt = formatTimestamp(row.credential_bound_at);
+  const privacyConsentAt = formatTimestamp(row.privacy_consent_at);
   const createdAt = formatTimestamp(row.created_at);
   const updatedAt = formatTimestamp(row.updated_at);
   const wechatOpenId = row.wechat_open_id ?? row.wechat_mini_game_open_id;
@@ -1762,6 +1814,7 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(lastSeenAt ? { lastSeenAt } : {}),
     ...(wechatMiniGameBoundAt ? { wechatMiniGameBoundAt } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
+    ...(privacyConsentAt ? { privacyConsentAt } : {}),
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {})
   });
@@ -2158,6 +2211,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
          credential_bound_at,
+         privacy_consent_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -2202,6 +2256,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
          credential_bound_at,
+         privacy_consent_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -2330,6 +2385,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
          credential_bound_at,
+         privacy_consent_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -2667,6 +2723,31 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
   }
 
+  async savePlayerAccountPrivacyConsent(
+    playerId: string,
+    input: PlayerAccountPrivacyConsentInput = {}
+  ): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existingAccount = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const privacyConsentAt = normalizePrivacyConsentAt(input.privacyConsentAt) ?? new Date().toISOString();
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET privacy_consent_at = COALESCE(privacy_consent_at, ?),
+           version = version + 1
+       WHERE player_id = ?`,
+      [new Date(privacyConsentAt), normalizedPlayerId]
+    );
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        ...existingAccount,
+        privacyConsentAt
+      })
+    );
+  }
+
   async savePlayerAccountAuthSession(
     playerId: string,
     input: PlayerAccountAuthSessionInput
@@ -2837,6 +2918,76 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         wechatMiniGameBoundAt: boundAt
       })
     );
+  }
+
+  async deletePlayerAccount(
+    playerId: string,
+    input: PlayerAccountDeleteInput = {}
+  ): Promise<PlayerAccountSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existingAccount = await this.loadPlayerAccount(normalizedPlayerId);
+    if (!existingAccount) {
+      return null;
+    }
+
+    const deletedAt = normalizePrivacyConsentAt(input.deletedAt) ?? new Date().toISOString();
+    const anonymizedDisplayName = `deleted-${normalizedPlayerId}`;
+
+    await this.pool.query(
+      `DELETE FROM \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\`
+       WHERE player_id = ?`,
+      [normalizedPlayerId]
+    );
+    await this.pool.query(
+      `DELETE FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+       WHERE player_id = ?`,
+      [normalizedPlayerId]
+    );
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET display_name = ?,
+           avatar_url = NULL,
+           global_resources_json = ?,
+           achievements_json = ?,
+           last_room_id = NULL,
+           last_seen_at = NULL,
+           login_id = NULL,
+           password_hash = NULL,
+           credential_bound_at = NULL,
+           privacy_consent_at = NULL,
+           age_verified = 0,
+           is_minor = 0,
+           daily_play_minutes = 0,
+           last_play_date = NULL,
+           ban_status = 'none',
+           ban_expiry = NULL,
+           ban_reason = NULL,
+           account_session_version = account_session_version + 1,
+           refresh_session_id = NULL,
+           refresh_token_hash = NULL,
+           refresh_token_expires_at = NULL,
+           wechat_open_id = NULL,
+           wechat_union_id = NULL,
+           wechat_mini_game_open_id = NULL,
+           wechat_mini_game_union_id = NULL,
+           wechat_mini_game_bound_at = NULL,
+           version = version + 1
+       WHERE player_id = ?`,
+      [anonymizedDisplayName, JSON.stringify(normalizeResourceLedger()), JSON.stringify([]), normalizedPlayerId]
+    );
+    await appendPlayerEventHistoryEntries(this.pool, normalizedPlayerId, [
+      {
+        id: `${normalizedPlayerId}:${deletedAt}:account-deleted`,
+        timestamp: deletedAt,
+        roomId: "auth",
+        playerId: normalizedPlayerId,
+        category: "account",
+        description: "Account deleted and personal data anonymized.",
+        rewards: []
+      }
+    ]);
+
+    return this.loadPlayerAccount(normalizedPlayerId);
   }
 
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {
@@ -3048,6 +3199,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
          credential_bound_at,
+         privacy_consent_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`

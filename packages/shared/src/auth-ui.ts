@@ -4,12 +4,13 @@ export interface AccountAuthRequestFailure {
 }
 
 export type AccountLifecycleKind = "registration" | "recovery";
-export type AccountLifecycleValidationField = "loginId" | "token" | "password";
+export type AccountLifecycleValidationField = "loginId" | "token" | "password" | "privacyConsent";
 
 export interface AccountLifecycleDraft {
   loginId: string;
   token: string;
   password: string;
+  privacyConsentAccepted?: boolean;
 }
 
 export interface AccountLifecycleValidationError {
@@ -19,6 +20,20 @@ export interface AccountLifecycleValidationError {
 
 const LOGIN_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{2,39}$/;
 const MIN_PASSWORD_LENGTH = 6;
+
+export function validatePrivacyConsentAccepted(
+  accepted: boolean | undefined,
+  message = "请先勾选并同意隐私说明后再继续。"
+): AccountLifecycleValidationError | null {
+  if (accepted) {
+    return null;
+  }
+
+  return {
+    field: "privacyConsent",
+    message
+  };
+}
 
 export function normalizeAccountLoginIdDraft(loginId: string): string {
   return loginId.trim().toLowerCase();
@@ -89,6 +104,11 @@ export function validateAccountLifecycleConfirm(
     };
   }
 
+  const privacyConsentError = validatePrivacyConsentAccepted(draft.privacyConsentAccepted);
+  if (privacyConsentError) {
+    return privacyConsentError;
+  }
+
   return validateAccountPassword(
     draft.password,
     "password",
@@ -107,6 +127,9 @@ export function describeAccountAuthFailure(
   }
   if (failure.status === 403 && failure.code === "account_locked") {
     return "该账号因连续失败已被临时锁定，请稍后再试。";
+  }
+  if (failure.status === 403 && failure.code === "privacy_consent_required") {
+    return "需先同意隐私说明，才能登录、注册或继续绑定账号。";
   }
   if (failure.status === 401 && options.invalidTokenCode && failure.code === options.invalidTokenCode) {
     return "令牌无效或已过期，请重新申请后再确认。";

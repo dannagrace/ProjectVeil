@@ -31,7 +31,7 @@ export interface SessionUpdate {
 
 export type ConnectionEvent = "reconnecting" | "reconnected" | "reconnect_failed";
 
-interface GameSession {
+export interface GameSession {
   snapshot(reason?: string): Promise<SessionUpdate>;
   moveHero(heroId: string, destination: Vec2): Promise<SessionUpdate>;
   collect(heroId: string, position: Vec2): Promise<SessionUpdate>;

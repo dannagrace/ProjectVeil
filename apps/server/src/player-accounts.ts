@@ -16,6 +16,7 @@ import {
   cachePlayerAccountAuthState,
   hashAccountPassword,
   issueNextAuthSession,
+  revokeGuestAuthSession,
   readGuestAuthTokenFromRequest,
   validateAuthSessionFromRequest,
   verifyAccountPassword
@@ -462,6 +463,7 @@ function toPublicPlayerAccount(
   PlayerAccountSnapshot,
   | "loginId"
   | "credentialBoundAt"
+  | "privacyConsentAt"
   | "wechatMiniGameOpenId"
   | "wechatMiniGameUnionId"
   | "banStatus"
@@ -485,6 +487,7 @@ export function registerPlayerAccountRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
     get: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
+    post: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
     delete: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
     put: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
   },
@@ -492,7 +495,7 @@ export function registerPlayerAccountRoutes(
 ): void {
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
-    response.setHeader("Access-Control-Allow-Methods", "GET,PUT,DELETE,OPTIONS");
+    response.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
     response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Veil-Auth");
 
     if (request.method === "OPTIONS") {
@@ -600,6 +603,53 @@ export function registerPlayerAccountRoutes(
           refreshExpiresAt: session.refreshTokenExpiresAt,
           current: authSession.sessionId === session.sessionId
         }))
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/players/me/delete", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      if (authSession.sessionId) {
+        revokeGuestAuthSession(authSession.sessionId);
+      }
+      sendJson(response, 200, { ok: true, deleted: null });
+      return;
+    }
+
+    try {
+      const deleted = await store.deletePlayerAccount(authSession.playerId, {
+        deletedAt: new Date().toISOString()
+      });
+      if (!deleted) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_not_found",
+            message: `Player account not found: ${authSession.playerId}`
+          }
+        });
+        return;
+      }
+
+      if (authSession.authMode === "account") {
+        removeAuthAccountSessionsForPlayer(authSession.playerId);
+      } else if (authSession.sessionId) {
+        revokeGuestAuthSession(authSession.sessionId);
+      }
+
+      sendJson(response, 200, {
+        ok: true,
+        deleted: {
+          playerId: deleted.playerId,
+          displayName: deleted.displayName,
+          deletedAt: deleted.updatedAt ?? new Date().toISOString()
+        }
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });

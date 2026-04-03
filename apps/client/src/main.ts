@@ -34,7 +34,8 @@ import {
   type RuntimeDiagnosticsTriageSection,
   validateAccountLifecycleConfirm,
   validateAccountLifecycleRequest,
-  validateAccountPassword
+  validateAccountPassword,
+  validatePrivacyConsentAccepted
 } from "../../../packages/shared/src/index";
 import { createGameSession, readStoredSessionReplay, type SessionUpdate } from "./local-session";
 import { buildH5RuntimeDiagnosticsSnapshot } from "./runtime-diagnostics";
@@ -53,6 +54,7 @@ import { launchMainH5App } from "./main-bootstrap-launch";
 import {
   confirmAccountRegistration,
   confirmPasswordRecovery,
+  deleteCurrentPlayerAccount,
   loginGuestAuthSession,
   loginPasswordAuthSession,
   logoutCurrentAuthSession,
@@ -194,6 +196,7 @@ interface LobbyViewState {
   registrationPassword: string;
   recoveryToken: string;
   recoveryPassword: string;
+  privacyConsentAccepted: boolean;
   authSession: StoredAuthSession | null;
   rooms: LobbyRoomSummary[];
   loading: boolean;
@@ -317,6 +320,7 @@ const state: AppState = {
     registrationPassword: "",
     recoveryToken: "",
     recoveryPassword: "",
+    privacyConsentAccepted: false,
     authSession: storedAuthSession,
     rooms: [],
     loading: false,
@@ -3564,7 +3568,22 @@ function describeAccountFlowError(
   return error instanceof Error ? error.message : fallback;
 }
 
+function validateLobbyPrivacyConsent(): boolean {
+  const privacyConsentError = validatePrivacyConsentAccepted(state.lobby.privacyConsentAccepted);
+  if (!privacyConsentError) {
+    return true;
+  }
+
+  state.lobby.status = privacyConsentError.message;
+  render();
+  return false;
+}
+
 async function enterLobbyRoom(roomIdOverride?: string): Promise<void> {
+  if (!validateLobbyPrivacyConsent()) {
+    return;
+  }
+
   const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
   const displayName = rememberPreferredPlayerDisplayName(preferences.playerId, state.lobby.displayName);
   state.lobby.playerId = preferences.playerId;
@@ -3574,7 +3593,9 @@ async function enterLobbyRoom(roomIdOverride?: string): Promise<void> {
   state.lobby.status = `正在登录游客账号并进入房间 ${preferences.roomId}...`;
   render();
 
-  const authSession = await loginGuestAuthSession(preferences.playerId, displayName);
+  const authSession = await loginGuestAuthSession(preferences.playerId, displayName, {
+    privacyConsentAccepted: state.lobby.privacyConsentAccepted
+  });
   state.lobby.authSession = authSession;
   state.lobby.playerId = authSession.playerId;
   state.lobby.displayName = authSession.displayName;
@@ -3607,12 +3628,18 @@ async function loginLobbyAccount(roomIdOverride?: string): Promise<void> {
     return;
   }
 
+  if (!validateLobbyPrivacyConsent()) {
+    return;
+  }
+
   state.lobby.entering = true;
   state.lobby.status = `正在使用账号 ${loginId} 登录并进入房间 ${preferences.roomId}...`;
   render();
 
   try {
-    const authSession = await loginPasswordAuthSession(loginId, state.lobby.password);
+    const authSession = await loginPasswordAuthSession(loginId, state.lobby.password, {
+      privacyConsentAccepted: state.lobby.privacyConsentAccepted
+    });
     state.lobby.authSession = authSession;
     state.lobby.playerId = authSession.playerId;
     state.lobby.displayName = authSession.displayName;
@@ -3668,11 +3695,16 @@ async function confirmLobbyAccountRegistration(roomIdOverride?: string): Promise
   const validationError = validateAccountLifecycleConfirm("registration", {
     loginId,
     token: state.lobby.registrationToken,
-    password: state.lobby.registrationPassword
+    password: state.lobby.registrationPassword,
+    privacyConsentAccepted: state.lobby.privacyConsentAccepted
   });
   if (validationError) {
     state.lobby.status = validationError.message;
     render();
+    return;
+  }
+
+  if (!validateLobbyPrivacyConsent()) {
     return;
   }
 
@@ -3681,7 +3713,14 @@ async function confirmLobbyAccountRegistration(roomIdOverride?: string): Promise
   render();
 
   try {
-    const authSession = await confirmAccountRegistration(loginId, state.lobby.registrationToken, state.lobby.registrationPassword);
+    const authSession = await confirmAccountRegistration(
+      loginId,
+      state.lobby.registrationToken,
+      state.lobby.registrationPassword,
+      {
+        privacyConsentAccepted: state.lobby.privacyConsentAccepted
+      }
+    );
     state.lobby.authSession = authSession;
     state.lobby.playerId = authSession.playerId;
     state.lobby.displayName = authSession.displayName;
@@ -3741,7 +3780,8 @@ async function confirmLobbyPasswordRecovery(roomIdOverride?: string): Promise<vo
   const validationError = validateAccountLifecycleConfirm("recovery", {
     loginId,
     token: state.lobby.recoveryToken,
-    password: state.lobby.recoveryPassword
+    password: state.lobby.recoveryPassword,
+    privacyConsentAccepted: state.lobby.privacyConsentAccepted
   });
   if (validationError) {
     state.lobby.status = validationError.message;
@@ -3755,7 +3795,9 @@ async function confirmLobbyPasswordRecovery(roomIdOverride?: string): Promise<vo
 
   try {
     await confirmPasswordRecovery(loginId, state.lobby.recoveryToken, state.lobby.recoveryPassword);
-    const authSession = await loginPasswordAuthSession(loginId, state.lobby.recoveryPassword);
+      const authSession = await loginPasswordAuthSession(loginId, state.lobby.recoveryPassword, {
+        privacyConsentAccepted: state.lobby.privacyConsentAccepted
+      });
     state.lobby.authSession = authSession;
     state.lobby.playerId = authSession.playerId;
     state.lobby.displayName = authSession.displayName;
@@ -4352,6 +4394,17 @@ function renderLobby(): string {
               </div>
             </section>
           </div>
+          <label class="lobby-field muted">
+            <span>
+              <input
+                data-privacy-consent="true"
+                type="checkbox"
+                ${state.lobby.privacyConsentAccepted ? "checked" : ""}
+                ${state.lobby.entering ? "disabled" : ""}
+              />
+              我已阅读并同意隐私说明；首次登录、注册或绑定时会记录同意时间。
+            </span>
+          </label>
           <div class="lobby-actions">
             <button class="account-save" data-refresh-lobby="true" ${state.lobby.loading || state.lobby.entering ? "disabled" : ""}>
               ${state.lobby.loading ? "刷新中..." : "刷新房间"}
@@ -4504,6 +4557,12 @@ function render(): void {
         }
 
         void enterLobbyRoom();
+      });
+    }
+
+    for (const privacyConsentInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-privacy-consent]"))) {
+      privacyConsentInput.addEventListener("input", () => {
+        state.lobby.privacyConsentAccepted = privacyConsentInput.checked;
       });
     }
 
@@ -4695,6 +4754,9 @@ function render(): void {
               ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}
             >${state.accountBinding ? "提交中..." : state.account.loginId ? "更新口令" : "绑定账号"}</button>
           </div>
+          <button class="session-link" data-delete-account="true" ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}>
+            删除当前账号
+          </button>
           ${renderAccountSessionPanel()}
           <p class="muted account-status">${escapeHtml(state.accountStatus)}</p>
         </div>
@@ -5015,6 +5077,12 @@ function render(): void {
     });
   }
 
+  for (const deleteAccountButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-delete-account]"))) {
+    deleteAccountButton.addEventListener("click", () => {
+      void onDeleteAccountProfile();
+    });
+  }
+
   for (const revokeSessionButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-revoke-account-session]"))) {
     revokeSessionButton.addEventListener("click", () => {
       const sessionId = revokeSessionButton.dataset.revokeAccountSession?.trim();
@@ -5117,12 +5185,23 @@ async function onBindAccountProfile(): Promise<void> {
     return;
   }
 
+  if (!state.account.privacyConsentAt) {
+    const privacyConsentError = validatePrivacyConsentAccepted(state.lobby.privacyConsentAccepted);
+    if (privacyConsentError) {
+      state.accountStatus = privacyConsentError.message;
+      render();
+      return;
+    }
+  }
+
   state.accountBinding = true;
   state.accountStatus = state.account.loginId ? "正在更新账号口令..." : "正在绑定口令账号...";
   render();
 
   try {
-    const account = await bindAccountCredentials(loginId, state.accountPassword, roomId);
+    const account = await bindAccountCredentials(loginId, state.accountPassword, roomId, {
+      privacyConsentAccepted: state.lobby.privacyConsentAccepted
+    });
     state.account = account;
     state.accountSessions = await loadPlayerAccountSessions();
     state.accountLoginId = account.loginId ?? loginId;
@@ -5144,6 +5223,31 @@ async function onBindAccountProfile(): Promise<void> {
         : error instanceof Error
           ? error.message
           : "account_bind_failed";
+    render();
+  }
+}
+
+async function onDeleteAccountProfile(): Promise<void> {
+  const confirmDelete = globalThis.confirm;
+  if (typeof confirmDelete === "function" && !confirmDelete("删除后将移除账号个人资料并立即撤销当前会话。是否继续？")) {
+    return;
+  }
+
+  state.accountBinding = true;
+  state.accountStatus = "正在删除当前账号并撤销会话...";
+  render();
+
+  try {
+    await deleteCurrentPlayerAccount();
+    state.accountBinding = false;
+    state.lobby.authSession = null;
+    state.lobby.privacyConsentAccepted = false;
+    state.accountStatus = "账号已删除。";
+    state.lobby.status = "账号已删除，原会话已撤销。请重新确认隐私说明后再创建新档。";
+    await returnToLobby();
+  } catch (error) {
+    state.accountBinding = false;
+    state.accountStatus = error instanceof Error ? error.message : "account_delete_failed";
     render();
   }
 }
