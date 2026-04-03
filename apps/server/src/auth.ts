@@ -35,6 +35,7 @@ import {
   type PlayerAccountSnapshot,
   type RoomSnapshotStore
 } from "./persistence";
+import { cacheWechatSessionKey, readWechatSessionKeyTtlSeconds, resetWechatSessionKeyCache } from "./wechat-session-key";
 
 export type AuthMode = "guest" | "account";
 export type AuthProvider = "guest" | "account-password" | "wechat-mini-game";
@@ -114,6 +115,7 @@ interface WechatMiniGameCode2SessionPayload {
 interface WechatMiniGameIdentity {
   openId: string;
   unionId?: string;
+  sessionKey: string;
 }
 
 interface AccountAuthSessionState {
@@ -673,7 +675,8 @@ async function exchangeWechatMiniGameCode(
     }
 
     return {
-      openId: `mock-openid:${code}`
+      openId: `mock-openid:${code}`,
+      sessionKey: Buffer.from(`mock-session-key:${code}`, "utf8").toString("base64")
     };
   }
 
@@ -706,13 +709,15 @@ async function exchangeWechatMiniGameCode(
   }
 
   const openId = payload.openid?.trim();
-  if (!openId) {
+  const sessionKey = payload.session_key?.trim();
+  if (!openId || !sessionKey) {
     throw new Error("wechat_code2session_failed");
   }
 
   return {
     openId,
-    ...(payload.unionid?.trim() ? { unionId: payload.unionid.trim() } : {})
+    ...(payload.unionid?.trim() ? { unionId: payload.unionid.trim() } : {}),
+    sessionKey
   };
 }
 
@@ -1092,6 +1097,8 @@ async function handleWechatLogin(
     sendAuthFailure(response, "account_banned", activeBan);
     return;
   }
+
+  cacheWechatSessionKey(playerId, identity.sessionKey, readWechatSessionKeyTtlSeconds());
 
   sendJson(response, 200, {
     session:
@@ -1712,6 +1719,7 @@ export function resetGuestAuthSessions(): void {
   accountAuthStateByPlayerId.clear();
   accountRegistrationStateByLoginId.clear();
   passwordRecoveryStateByLoginId.clear();
+  resetWechatSessionKeyCache();
   syncAuthStateTelemetry();
 }
 
@@ -1800,6 +1808,79 @@ export function registerAuthRoutes(
       sendJson(response, 200, { session });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/auth/wechat-session-key/refresh", async (request, response) => {
+    try {
+      const { session: authSession, errorCode, ban } = await validateAuthSessionFromRequest(request, store);
+      if (!authSession) {
+        sendAuthFailure(response, errorCode, ban);
+        return;
+      }
+
+      const body = (await readJsonBody(request)) as {
+        code?: string | null;
+      };
+      if (body.code !== undefined && body.code !== null && typeof body.code !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: code"
+          }
+        });
+        return;
+      }
+
+      const identity = await exchangeWechatMiniGameCode(normalizeWechatMiniGameCode(body.code), readWechatMiniGameLoginConfig());
+      if (store) {
+        const boundAccount = await store.loadPlayerAccountByWechatMiniGameOpenId(identity.openId);
+        if (boundAccount && boundAccount.playerId !== authSession.playerId) {
+          sendJson(response, 409, {
+            error: {
+              code: "wechat_identity_already_bound",
+              message: "This WeChat identity is already bound to another account"
+            }
+          });
+          return;
+        }
+      }
+
+      const cached = cacheWechatSessionKey(authSession.playerId, identity.sessionKey, readWechatSessionKeyTtlSeconds());
+      sendJson(response, 200, {
+        ok: true,
+        playerId: authSession.playerId,
+        refreshedAt: new Date().toISOString(),
+        expiresAt: cached.expiresAt
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "wechat_session_key_refresh_failed";
+      if (message === "wechat_login_not_enabled") {
+        sendJson(response, 501, {
+          error: {
+            code: "wechat_login_not_enabled",
+            message: "WeChat login exchange exists, but code2Session is not configured"
+          }
+        });
+        return;
+      }
+
+      if (message === "invalid_wechat_code") {
+        sendJson(response, 401, {
+          error: {
+            code: "invalid_wechat_code",
+            message: "WeChat code is invalid or expired"
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 502, {
+        error: {
+          code: "wechat_code2session_failed",
+          message
+        }
+      });
     }
   });
 
