@@ -951,6 +951,10 @@ function getMovementPlan(state: WorldState, heroId: string, destination: Vec2): 
   return undefined;
 }
 
+function getMovementDistance(plan: Pick<MovementPlan, "path">): number {
+  return Math.max(0, plan.path.length - 1);
+}
+
 function buildNextWorldState(
   base: WorldState,
   heroes: HeroState[],
@@ -1409,7 +1413,7 @@ export function listReachableTiles(state: WorldState, heroId: string): Vec2[] {
   return state.map.tiles
     .filter((tile) => {
       const plan = planHeroMovement(state, heroId, tile.position);
-      return Boolean(plan && plan.moveCost <= hero.move.remaining);
+      return Boolean(plan && getMovementDistance(plan) <= hero.move.remaining);
     })
     .map((tile) => tile.position);
 }
@@ -1423,7 +1427,7 @@ export function listReachableTilesInPlayerView(view: PlayerWorldView, heroId: st
   return view.map.tiles
     .filter((tile) => {
       const plan = planPlayerViewMovement(view, heroId, tile.position);
-      return Boolean(plan && plan.moveCost <= hero.move.remaining);
+      return Boolean(plan && getMovementDistance(plan) <= hero.move.remaining);
     })
     .map((tile) => tile.position);
 }
@@ -1546,7 +1550,7 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
       };
     }
 
-    if (plan.moveCost > hero.move.remaining) {
+    if (getMovementDistance(plan) > hero.move.remaining) {
       return {
         world: view,
         movementPlan: null,
@@ -1928,7 +1932,7 @@ export function validateWorldAction(state: WorldState, action: WorldAction): Val
       return { valid: false, reason: "path_not_found" };
     }
 
-    if (plan.moveCost > hero.move.remaining) {
+    if (getMovementDistance(plan) > hero.move.remaining) {
       return { valid: false, reason: "not_enough_move_points" };
     }
 
