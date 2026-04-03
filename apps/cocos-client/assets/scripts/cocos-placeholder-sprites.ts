@@ -14,6 +14,7 @@ export interface PlaceholderTileSprites {
   dirt: Array<SpriteFrame | null>;
   sand: Array<SpriteFrame | null>;
   water: Array<SpriteFrame | null>;
+  swamp: Array<SpriteFrame | null>;
   unknown: Array<SpriteFrame | null>;
   hidden: Array<SpriteFrame | null>;
 }
@@ -79,6 +80,7 @@ function createEmptyPlaceholderSpriteAssets(): PlaceholderSpriteAssets {
       dirt: PLACEHOLDER_TILE_PATHS.dirt.map(() => null),
       sand: PLACEHOLDER_TILE_PATHS.sand.map(() => null),
       water: PLACEHOLDER_TILE_PATHS.water.map(() => null),
+      swamp: PLACEHOLDER_TILE_PATHS.swamp.map(() => null),
       unknown: PLACEHOLDER_TILE_PATHS.unknown.map(() => null),
       hidden: PLACEHOLDER_TILE_PATHS.hidden.map(() => null)
     },

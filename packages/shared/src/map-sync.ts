@@ -49,10 +49,11 @@ const TERRAIN_CODES: Record<PlayerTileView["terrain"], number> = {
   dirt: 1,
   sand: 2,
   water: 3,
-  unknown: 4
+  swamp: 4,
+  unknown: 5
 };
 
-const TERRAIN_VALUES: PlayerTileView["terrain"][] = ["grass", "dirt", "sand", "water", "unknown"];
+const TERRAIN_VALUES: PlayerTileView["terrain"][] = ["grass", "dirt", "sand", "water", "swamp", "unknown"];
 const FOG_CODES: Record<FogState, number> = {
   hidden: 0,
   explored: 1,

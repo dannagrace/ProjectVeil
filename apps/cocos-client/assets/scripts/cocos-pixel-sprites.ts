@@ -12,6 +12,7 @@ export interface PixelTileSprites {
   dirt: Array<SpriteFrame | null>;
   sand: Array<SpriteFrame | null>;
   water: Array<SpriteFrame | null>;
+  swamp: Array<SpriteFrame | null>;
   unknown: Array<SpriteFrame | null>;
   hidden: Array<SpriteFrame | null>;
 }
@@ -213,6 +214,7 @@ function buildPixelSpriteAssetsSnapshot(): PixelSpriteAssets {
       dirt: readSpriteSeries(pixelSpriteManifest.tiles.dirt),
       sand: readSpriteSeries(pixelSpriteManifest.tiles.sand),
       water: readSpriteSeries(pixelSpriteManifest.tiles.water),
+      swamp: readSpriteSeries(pixelSpriteManifest.tiles.swamp),
       unknown: readSpriteSeries(pixelSpriteManifest.tiles.unknown),
       hidden: readSpriteSeries(pixelSpriteManifest.tiles.hidden)
     },

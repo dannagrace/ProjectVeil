@@ -3,18 +3,28 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import assetConfig from "../../../configs/assets.json";
 import amberFieldsMapObjectsConfig from "../../../configs/phase1-map-objects-amber-fields.json";
+import ashpeakAscentMapObjectsConfig from "../../../configs/phase1-map-objects-ashpeak-ascent.json";
+import bogfenCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-bogfen-crossing.json";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
+import frostwatchRidgeMapObjectsConfig from "../../../configs/phase1-map-objects-frostwatch-ridge.json";
 import highlandReachMapObjectsConfig from "../../../configs/phase1-map-objects-highland-reach.json";
 import ironpassGorgeMapObjectsConfig from "../../../configs/phase1-map-objects-ironpass-gorge.json";
+import murkveilDeltaMapObjectsConfig from "../../../configs/phase1-map-objects-murkveil-delta.json";
 import splitrockCanyonMapObjectsConfig from "../../../configs/phase1-map-objects-splitrock-canyon.json";
 import stonewatchForkMapObjectsConfig from "../../../configs/phase1-map-objects-stonewatch-fork.json";
+import thornwallDivideMapObjectsConfig from "../../../configs/phase1-map-objects-thornwall-divide.json";
 import ridgewayCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-ridgeway-crossing.json";
 import amberFieldsWorldConfig from "../../../configs/phase1-world-amber-fields.json";
+import ashpeakAscentWorldConfig from "../../../configs/phase1-world-ashpeak-ascent.json";
+import bogfenCrossingWorldConfig from "../../../configs/phase1-world-bogfen-crossing.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import frostwatchRidgeWorldConfig from "../../../configs/phase1-world-frostwatch-ridge.json";
 import highlandReachWorldConfig from "../../../configs/phase1-world-highland-reach.json";
 import ironpassGorgeWorldConfig from "../../../configs/phase1-world-ironpass-gorge.json";
+import murkveilDeltaWorldConfig from "../../../configs/phase1-world-murkveil-delta.json";
 import splitrockCanyonWorldConfig from "../../../configs/phase1-world-splitrock-canyon.json";
 import stonewatchForkWorldConfig from "../../../configs/phase1-world-stonewatch-fork.json";
+import thornwallDivideWorldConfig from "../../../configs/phase1-world-thornwall-divide.json";
 import ridgewayCrossingWorldConfig from "../../../configs/phase1-world-ridgeway-crossing.json";
 import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
 import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
@@ -25,8 +35,10 @@ import {
   appendPlayerBattleReplaySummaries,
   applyBattleOutcomeToWorld,
   AMBER_FIELDS_MAP_VARIANT_ID,
+  ASHPEAK_ASCENT_MAP_VARIANT_ID,
   applyAchievementMetricDelta,
   applyAchievementProgressValue,
+  BOGFEN_CROSSING_MAP_VARIANT_ID,
   buildPlayerBattleReportCenter,
   buildPlayerProgressionSnapshot,
   queryAchievementProgress,
@@ -54,6 +66,7 @@ import {
   decodePlayerWorldView,
   encodePlayerWorldView,
   filterWorldEventsForPlayer,
+  FROSTWATCH_RIDGE_MAP_VARIANT_ID,
   FRONTIER_BASIN_MAP_VARIANT_ID,
   getBattleBalanceConfig,
   getAchievementDefinitions,
@@ -72,6 +85,7 @@ import {
   HIGHLAND_REACH_MAP_VARIANT_ID,
   hasFullyExploredMap,
   IRONPASS_GORGE_MAP_VARIANT_ID,
+  MURKVEIL_DELTA_MAP_VARIANT_ID,
   normalizeAchievementProgressQuery,
   normalizeEventLogQuery,
   normalizePlayerAccountReadModel,
@@ -96,6 +110,7 @@ import {
   rollEquipmentDrop,
   setBattleBalanceConfig,
   setBattleSkillCatalog,
+  THORNWALL_DIVIDE_MAP_VARIANT_ID,
   setUnitCatalog,
   getRuntimeConfigBundleForRoom,
   validateMapObjectsConfig,
@@ -214,7 +229,7 @@ function createLargePlayerWorldView(): PlayerWorldView {
   const tiles = Array.from({ length: width * height }, (_, index) => {
     const x = index % width;
     const y = Math.floor(index / width);
-    const terrain = (["grass", "dirt", "sand", "water"] as const)[(x + y) % 4] ?? "grass";
+    const terrain = (["grass", "dirt", "sand", "water", "swamp"] as const)[(x + y) % 5] ?? "grass";
     const resource = index % 47 === 0 ? { kind: "wood" as const, amount: 5 } : undefined;
     const occupant = index === width + 1 ? { kind: "hero" as const, refId: "hero-1" } : undefined;
 
@@ -335,6 +350,10 @@ test("asset config validation reports missing terrain variants and bad asset roo
         default: "/assets/terrain/water-tile.svg",
         variants: ["/assets/terrain/water-tile.svg"]
       },
+      swamp: {
+        default: "/assets/terrain/dirt-tile.svg",
+        variants: ["/assets/terrain/dirt-tile.svg"]
+      },
       unknown: {
         default: "/assets/terrain/fog-tile.svg",
         variants: []
@@ -425,6 +444,10 @@ test("asset config validation accepts prototype stage and open-source provenance
       water: {
         default: "/assets/terrain/water-tile.png",
         variants: ["/assets/terrain/water-tile.png"]
+      },
+      swamp: {
+        default: "/assets/terrain/dirt-tile.png",
+        variants: ["/assets/terrain/dirt-tile.png"]
       },
       unknown: {
         default: "/assets/terrain/fog-tile.png",
@@ -705,6 +728,10 @@ test("asset config validation reports missing metadata coverage and duplicate sl
         default: "/assets/terrain/water-tile.svg",
         variants: ["/assets/terrain/water-tile.svg"]
       },
+      swamp: {
+        default: "/assets/terrain/dirt-tile.svg",
+        variants: ["/assets/terrain/dirt-tile.svg"]
+      },
       unknown: {
         default: "/assets/terrain/fog-tile.svg",
         variants: ["/assets/terrain/fog-tile.svg"]
@@ -790,6 +817,10 @@ test("asset config validation reports missing metadata coverage", () => {
       water: {
         default: "/assets/pixel/terrain/water-tile.png",
         variants: ["/assets/pixel/terrain/water-tile.png"]
+      },
+      swamp: {
+        default: "/assets/pixel/terrain/dirt-tile.png",
+        variants: ["/assets/pixel/terrain/dirt-tile.png"]
       },
       unknown: {
         default: "/assets/pixel/terrain/fog-tile.png",
@@ -2403,7 +2434,7 @@ test("createWorldStateFromConfigs produces a valid frontier basin world", () => 
   const state = createWorldStateFromConfigs(bundle.world, bundle.mapObjects, seed, roomId);
   assert.ok(state.map.tiles.length > 0);
 
-  const validTerrains = new Set(["grass", "dirt", "sand", "water"]);
+  const validTerrains = new Set(["grass", "dirt", "sand", "water", "swamp"]);
   assert.ok(
     state.map.tiles.every((tile) => validTerrains.has(tile.terrain)),
     "frontier basin tiles must have a valid terrain type"
@@ -2532,6 +2563,87 @@ test("createInitialWorldState selects the splitrock canyon variant with asymmetr
   assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
   assert.equal(state.buildings["recruit-post-2"]?.kind, "recruitment_post");
   assert.equal(state.neutralArmies["neutral-4"]?.behavior?.mode, "patrol");
+});
+
+test("issue 782 batch 2 world and map-object configs pass schema validation", () => {
+  const unitCatalog = getDefaultUnitCatalog();
+  const variants: Array<[WorldGenerationConfig, MapObjectsConfig]> = [
+    [bogfenCrossingWorldConfig as WorldGenerationConfig, bogfenCrossingMapObjectsConfig as MapObjectsConfig],
+    [murkveilDeltaWorldConfig as WorldGenerationConfig, murkveilDeltaMapObjectsConfig as MapObjectsConfig],
+    [frostwatchRidgeWorldConfig as WorldGenerationConfig, frostwatchRidgeMapObjectsConfig as MapObjectsConfig],
+    [ashpeakAscentWorldConfig as WorldGenerationConfig, ashpeakAscentMapObjectsConfig as MapObjectsConfig],
+    [thornwallDivideWorldConfig as WorldGenerationConfig, thornwallDivideMapObjectsConfig as MapObjectsConfig]
+  ];
+
+  for (const [world, mapObjects] of variants) {
+    validateWorldConfig(world);
+    validateMapObjectsConfig(mapObjects, world, unitCatalog);
+  }
+});
+
+test("createInitialWorldState selects the bogfen crossing variant with passable swamp lanes", () => {
+  const state = createInitialWorldState(1001, "preview-bogfen[map:bogfen_crossing]");
+
+  assert.equal(state.meta.mapVariantId, BOGFEN_CROSSING_MAP_VARIANT_ID);
+  assert.equal(state.map.tiles.length, 144);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 5);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 4)?.terrain, "swamp");
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 5 && tile.position.y === 0)?.terrain, "water");
+  assert.equal(state.buildings["mine-wood-1"]?.resourceKind, "wood");
+  assert.equal(state.neutralArmies["neutral-4"]?.behavior?.mode, "patrol");
+});
+
+test("createInitialWorldState selects the murkveil delta variant with island resources", () => {
+  const state = createInitialWorldState(1001, "preview-murkveil[map:murkveil_delta]");
+
+  assert.equal(state.meta.mapVariantId, MURKVEIL_DELTA_MAP_VARIANT_ID);
+  assert.equal(state.map.tiles.length, 120);
+  assert.equal(state.heroes[1]?.position.x, 8);
+  assert.equal(state.heroes[1]?.position.y, 9);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 1)?.terrain, "water");
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 1 && tile.position.y === 4)?.terrain, "swamp");
+  assert.equal(state.buildings["shrine-power-1"]?.kind, "attribute_shrine");
+  assert.equal(state.neutralArmies["neutral-3"]?.reward?.kind, "ore");
+});
+
+test("createInitialWorldState selects the frostwatch ridge variant with a broad central lane", () => {
+  const state = createInitialWorldState(1001, "preview-frostwatch[map:frostwatch_ridge]");
+
+  assert.equal(state.meta.mapVariantId, FROSTWATCH_RIDGE_MAP_VARIANT_ID);
+  assert.equal(state.map.tiles.length, 140);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 4);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 6 && tile.position.y === 4)?.terrain, "sand");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.neutralArmies["neutral-2"]?.reward?.kind, "ore");
+});
+
+test("createInitialWorldState selects the ashpeak ascent variant with defender-favored high ground", () => {
+  const state = createInitialWorldState(1001, "preview-ashpeak[map:ashpeak_ascent]");
+
+  assert.equal(state.meta.mapVariantId, ASHPEAK_ASCENT_MAP_VARIANT_ID);
+  assert.equal(state.map.tiles.length, 144);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 8);
+  assert.equal(state.heroes[1]?.position.x, 10);
+  assert.equal(state.heroes[1]?.position.y, 3);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 8 && tile.position.y === 3)?.terrain, "dirt");
+  assert.equal(state.buildings["shrine-defense-1"]?.kind, "attribute_shrine");
+  assert.equal(state.neutralArmies["neutral-4"]?.behavior?.mode, "patrol");
+});
+
+test("createInitialWorldState selects the thornwall divide variant with asymmetric resource access", () => {
+  const state = createInitialWorldState(1001, "preview-thornwall[map:thornwall_divide]");
+
+  assert.equal(state.meta.mapVariantId, THORNWALL_DIVIDE_MAP_VARIANT_ID);
+  assert.equal(state.map.tiles.length, 144);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 3);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 3)?.terrain, "swamp");
+  assert.equal(state.buildings["mine-wood-1"]?.resourceKind, "wood");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.neutralArmies["neutral-2"]?.reward?.kind, "ore");
 });
 
 test("frontier basin generates a distinct layout from the default phase1 variant", () => {
@@ -2816,13 +2928,13 @@ test("applyBattleOutcomeToWorld grants PvP experience to the winning hero", () =
     heroes: [attacker, defender],
     tiles: [
       createTile(0, 0),
-      createTile(1, 0),
+      createTile(1, 0, { walkable: false, terrain: "water" }),
       createTile(2, 0),
       createTile(0, 1),
       createTile(1, 1, { occupant: { kind: "hero", refId: "hero-1" } }),
       createTile(2, 1, { occupant: { kind: "hero", refId: "hero-2" } }),
       createTile(0, 2),
-      createTile(1, 2),
+      createTile(1, 2, { walkable: false, terrain: "water" }),
       createTile(2, 2)
     ]
   });
@@ -4395,6 +4507,58 @@ test("hawk rider armies can path across water tiles in world and player views", 
     { x: 1, y: 1 },
     { x: 2, y: 1 }
   ]);
+});
+
+test("swamp tiles stay traversable but cost extra movement in world and player views", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 1 },
+    move: { total: 3, remaining: 3 }
+  });
+  const state = createWorldState({
+    width: 3,
+    height: 3,
+    heroes: [hero],
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(2, 0),
+      createTile(0, 1, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(1, 1, { terrain: "swamp" }),
+      createTile(2, 1),
+      createTile(0, 2),
+      createTile(1, 2),
+      createTile(2, 2)
+    ],
+    visibilityByPlayer: {
+      "player-1": new Array(9).fill("visible")
+    }
+  });
+  const view = createPlayerWorldView(state, "player-1");
+  const worldPlan = planHeroMovement(state, "hero-1", { x: 2, y: 1 });
+  const viewPlan = planPlayerViewMovement(view, "hero-1", { x: 2, y: 1 });
+
+  assert.deepEqual(worldPlan?.path, [
+    { x: 0, y: 1 },
+    { x: 1, y: 1 },
+    { x: 2, y: 1 }
+  ]);
+  assert.equal(worldPlan?.moveCost, 3);
+  assert.equal(viewPlan?.moveCost, 3);
+  assert.equal(validateWorldAction(state, { type: "hero.move", heroId: "hero-1", destination: { x: 2, y: 1 } }).valid, true);
+
+  const exhaustedState = {
+    ...state,
+    heroes: state.heroes.map((item) =>
+      item.id === "hero-1" ? { ...item, move: { ...item.move, remaining: 2 } } : item
+    )
+  };
+  assert.equal(
+    validateWorldAction(exhaustedState, { type: "hero.move", heroId: "hero-1", destination: { x: 2, y: 1 } }).valid,
+    false
+  );
 });
 
 test("predictPlayerWorldAction updates the player view immediately for move and collect", () => {

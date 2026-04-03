@@ -608,7 +608,7 @@ interface StoredSessionReplayEnvelope {
   update: SessionUpdate;
 }
 
-const TERRAIN_VALUES: TerrainType[] = ["grass", "dirt", "sand", "water", "unknown"];
+const TERRAIN_VALUES = ["grass", "dirt", "sand", "water", "swamp", "unknown"] as const;
 const FOG_VALUES: FogState[] = ["hidden", "explored", "visible"];
 
 function decodeBase64Bytes(encoded: string): Uint8Array {
