@@ -29,6 +29,7 @@
       "name": "Scout Gem Cache",
       "type": "gem_pack",
       "price": 5,
+      "wechatPriceFen": 600,
       "enabled": false,
       "grant": {
         "gems": 15

@@ -27,6 +27,7 @@ import type { RoomPersistenceSnapshot } from "./index";
 export interface RoomSnapshotStore {
   load(roomId: string): Promise<RoomPersistenceSnapshot | null>;
   loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
+  loadPaymentOrder?(orderId: string): Promise<PaymentOrderSnapshot | null>;
   loadPlayerReport?(reportId: string): Promise<PlayerReportRecord | null>;
   loadPlayerBan?(playerId: string): Promise<PlayerAccountBanSnapshot | null>;
   createPlayerReport?(input: PlayerReportCreateInput): Promise<PlayerReportRecord>;
@@ -46,6 +47,8 @@ export interface RoomSnapshotStore {
     playerId: string,
     input: PlayerAccountCredentialInput
   ): Promise<PlayerAccountSnapshot>;
+  createPaymentOrder?(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot>;
+  completePaymentOrder?(orderId: string, input: PaymentOrderCompleteInput): Promise<PaymentOrderSettlement>;
   creditGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   debitGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   purchaseShopProduct?(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult>;
@@ -243,6 +246,19 @@ interface ShopPurchaseRow extends RowDataPacket {
   created_at: Date | string;
 }
 
+interface PaymentOrderRow extends RowDataPacket {
+  order_id: string;
+  player_id: string;
+  product_id: string;
+  wechat_order_id: string | null;
+  status: string;
+  amount: number;
+  gem_amount: number;
+  created_at: Date | string;
+  paid_at: Date | string | null;
+  updated_at: Date | string;
+}
+
 interface PlayerReportRow extends RowDataPacket {
   report_id: string | number;
   reporter_id: string;
@@ -358,6 +374,40 @@ export interface ShopPurchaseResult {
   };
   gemsBalance: number;
   processedAt: string;
+}
+
+export type PaymentOrderStatus = "pending" | "paid";
+
+export interface PaymentOrderSnapshot {
+  orderId: string;
+  playerId: string;
+  productId: string;
+  status: PaymentOrderStatus;
+  amount: number;
+  gemAmount: number;
+  createdAt: string;
+  updatedAt: string;
+  wechatOrderId?: string;
+  paidAt?: string;
+}
+
+export interface PaymentOrderCreateInput {
+  orderId: string;
+  playerId: string;
+  productId: string;
+  amount: number;
+  gemAmount: number;
+}
+
+export interface PaymentOrderCompleteInput {
+  wechatOrderId: string;
+  paidAt?: string;
+}
+
+export interface PaymentOrderSettlement {
+  order: PaymentOrderSnapshot;
+  account: PlayerAccountSnapshot;
+  credited: boolean;
 }
 
 export interface GemLedgerEntry {
@@ -525,6 +575,9 @@ export const MYSQL_PLAYER_ACCOUNT_WECHAT_IDP_OPEN_ID_INDEX = "uidx_player_accoun
 export const MYSQL_GEM_LEDGER_TABLE = "gem_ledger";
 export const MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX = "idx_gem_ledger_player_created";
 export const MYSQL_SHOP_PURCHASE_TABLE = "shop_purchases";
+export const MYSQL_PAYMENT_ORDER_TABLE = "orders";
+export const MYSQL_PAYMENT_ORDER_PLAYER_CREATED_INDEX = "idx_orders_player_created";
+export const MYSQL_PAYMENT_ORDER_WECHAT_ORDER_ID_INDEX = "uidx_orders_wechat_order_id";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_TABLE = "player_account_sessions";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX = "idx_player_account_sessions_player_last_used";
 export const MYSQL_PLAYER_BAN_HISTORY_TABLE = "player_ban_history";
@@ -595,6 +648,56 @@ function normalizeShopPurchaseId(purchaseId: string): string {
   }
 
   return normalized.slice(0, 191);
+}
+
+function normalizePaymentOrderId(orderId: string): string {
+  const normalized = orderId.trim();
+  if (!normalized) {
+    throw new Error("orderId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizePaymentOrderStatus(status?: string | null): PaymentOrderStatus {
+  return status === "paid" ? "paid" : "pending";
+}
+
+function normalizeWechatOrderId(wechatOrderId: string): string {
+  const normalized = wechatOrderId.trim();
+  if (!normalized) {
+    throw new Error("wechatOrderId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizePaymentAmount(amount: number): number {
+  const normalized = Math.floor(amount);
+  if (!Number.isFinite(amount) || normalized <= 0) {
+    throw new Error("amount must be a positive integer");
+  }
+
+  return normalized;
+}
+
+function toPaymentOrderSnapshot(row: PaymentOrderRow): PaymentOrderSnapshot {
+  const createdAt = formatTimestamp(row.created_at) ?? new Date(0).toISOString();
+  const updatedAt = formatTimestamp(row.updated_at) ?? createdAt;
+  const paidAt = formatTimestamp(row.paid_at);
+
+  return {
+    orderId: normalizePaymentOrderId(row.order_id),
+    playerId: normalizePlayerId(row.player_id),
+    productId: normalizeShopProductId(row.product_id),
+    status: normalizePaymentOrderStatus(row.status),
+    amount: normalizePaymentAmount(row.amount),
+    gemAmount: normalizeGemAmount(row.gem_amount),
+    createdAt,
+    updatedAt,
+    ...(row.wechat_order_id ? { wechatOrderId: normalizeWechatOrderId(row.wechat_order_id) } : {}),
+    ...(paidAt ? { paidAt } : {})
+  };
 }
 
 function normalizeShopProductId(productId: string): string {
@@ -1331,6 +1434,20 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_SHOP_PURCHASE_TABLE}\` (
   PRIMARY KEY (player_id, purchase_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PAYMENT_ORDER_TABLE}\` (
+  order_id VARCHAR(191) NOT NULL,
+  player_id VARCHAR(191) NOT NULL,
+  product_id VARCHAR(191) NOT NULL,
+  wechat_order_id VARCHAR(191) NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  amount INT NOT NULL,
+  gem_amount INT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  paid_at DATETIME NULL DEFAULT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   session_id VARCHAR(64) NOT NULL,
@@ -1994,6 +2111,42 @@ SET @veil_gem_ledger_idx_sql := IF(
 PREPARE veil_gem_ledger_idx_stmt FROM @veil_gem_ledger_idx_sql;
 EXECUTE veil_gem_ledger_idx_stmt;
 DEALLOCATE PREPARE veil_gem_ledger_idx_stmt;
+
+SET @veil_payment_orders_player_created_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PAYMENT_ORDER_PLAYER_CREATED_INDEX}'
+);
+
+SET @veil_payment_orders_player_created_idx_sql := IF(
+  @veil_payment_orders_player_created_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PAYMENT_ORDER_PLAYER_CREATED_INDEX}\` ON \`${MYSQL_PAYMENT_ORDER_TABLE}\` (player_id, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_player_created_idx_stmt FROM @veil_payment_orders_player_created_idx_sql;
+EXECUTE veil_payment_orders_player_created_idx_stmt;
+DEALLOCATE PREPARE veil_payment_orders_player_created_idx_stmt;
+
+SET @veil_payment_orders_wechat_order_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PAYMENT_ORDER_WECHAT_ORDER_ID_INDEX}'
+);
+
+SET @veil_payment_orders_wechat_order_idx_sql := IF(
+  @veil_payment_orders_wechat_order_idx_exists = 0,
+  'CREATE UNIQUE INDEX \`${MYSQL_PAYMENT_ORDER_WECHAT_ORDER_ID_INDEX}\` ON \`${MYSQL_PAYMENT_ORDER_TABLE}\` (wechat_order_id)',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_wechat_order_idx_stmt FROM @veil_payment_orders_wechat_order_idx_sql;
+EXECUTE veil_payment_orders_wechat_order_idx_stmt;
+DEALLOCATE PREPARE veil_payment_orders_wechat_order_idx_stmt;
 
 SET @veil_player_ban_history_idx_exists := (
   SELECT COUNT(*)
@@ -2661,6 +2814,30 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     const normalizedPlayerId = normalizePlayerId(playerId);
     const accounts = await this.loadPlayerAccounts([normalizedPlayerId]);
     return accounts[0] ?? null;
+  }
+
+  async loadPaymentOrder(orderId: string): Promise<PaymentOrderSnapshot | null> {
+    const normalizedOrderId = normalizePaymentOrderId(orderId);
+    const [rows] = await this.pool.query<PaymentOrderRow[]>(
+      `SELECT
+         order_id,
+         player_id,
+         product_id,
+         wechat_order_id,
+         status,
+         amount,
+         gem_amount,
+         created_at,
+         paid_at,
+         updated_at
+       FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+       WHERE order_id = ?
+       LIMIT 1`,
+      [normalizedOrderId]
+    );
+
+    const row = rows[0];
+    return row ? toPaymentOrderSnapshot(row) : null;
   }
 
   async loadPlayerBan(playerId: string): Promise<PlayerAccountBanSnapshot | null> {
@@ -3355,6 +3532,155 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     }
 
     return this.mutateGems(playerId, -normalizePositiveGemDelta(amount), normalizedReason, refId);
+  }
+
+  async createPaymentOrder(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot> {
+    const orderId = normalizePaymentOrderId(input.orderId);
+    const playerId = normalizePlayerId(input.playerId);
+    const productId = normalizeShopProductId(input.productId);
+    const amount = normalizePaymentAmount(input.amount);
+    const gemAmount = normalizePositiveGemDelta(input.gemAmount);
+
+    await this.ensurePlayerAccount({ playerId });
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+         (order_id, player_id, product_id, status, amount, gem_amount)
+       VALUES (?, ?, ?, 'pending', ?, ?)`,
+      [orderId, playerId, productId, amount, gemAmount]
+    );
+
+    return {
+      orderId,
+      playerId,
+      productId,
+      status: "pending",
+      amount,
+      gemAmount,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  async completePaymentOrder(orderId: string, input: PaymentOrderCompleteInput): Promise<PaymentOrderSettlement> {
+    const normalizedOrderId = normalizePaymentOrderId(orderId);
+    const normalizedWechatOrderId = normalizeWechatOrderId(input.wechatOrderId);
+    const paidAt = input.paidAt ? new Date(input.paidAt) : new Date();
+    if (Number.isNaN(paidAt.getTime())) {
+      throw new Error("paidAt must be a valid ISO timestamp");
+    }
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [orderRows] = await connection.query<PaymentOrderRow[]>(
+        `SELECT
+           order_id,
+           player_id,
+           product_id,
+           wechat_order_id,
+           status,
+           amount,
+           gem_amount,
+           created_at,
+           paid_at,
+           updated_at
+         FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+         WHERE order_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedOrderId]
+      );
+      const currentOrderRow = orderRows[0];
+      if (!currentOrderRow) {
+        throw new Error("payment_order_not_found");
+      }
+
+      const currentOrder = toPaymentOrderSnapshot(currentOrderRow);
+      const [accountRows] = await connection.query<PlayerAccountRow[]>(
+        `SELECT *
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [currentOrder.playerId]
+      );
+      const currentAccount =
+        accountRows[0] != null
+          ? toPlayerAccountSnapshot(accountRows[0])
+          : normalizePlayerAccountSnapshot({
+              playerId: currentOrder.playerId,
+              displayName: currentOrder.playerId,
+              globalResources: normalizeResourceLedger()
+            });
+
+      if (currentOrder.status === "paid") {
+        await connection.commit();
+        return {
+          order: {
+            ...currentOrder,
+            ...(currentOrder.wechatOrderId ? { wechatOrderId: currentOrder.wechatOrderId } : { wechatOrderId: normalizedWechatOrderId }),
+            ...(currentOrder.paidAt ? { paidAt: currentOrder.paidAt } : { paidAt: paidAt.toISOString() })
+          },
+          account: currentAccount,
+          credited: false
+        };
+      }
+
+      const nextGems = normalizeGemAmount(currentAccount.gems) + currentOrder.gemAmount;
+      await connection.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET gems = ?,
+             version = version + 1
+         WHERE player_id = ?`,
+        [nextGems, currentOrder.playerId]
+      );
+      await appendGemLedgerEntry(connection, {
+        entryId: randomUUID(),
+        playerId: currentOrder.playerId,
+        delta: currentOrder.gemAmount,
+        reason: "purchase",
+        refId: currentOrder.orderId
+      });
+      await connection.query(
+        `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+         SET wechat_order_id = ?,
+             status = 'paid',
+             paid_at = ?
+         WHERE order_id = ?`,
+        [normalizedWechatOrderId, paidAt, currentOrder.orderId]
+      );
+
+      await connection.commit();
+
+      const nextAccount =
+        (await this.loadPlayerAccount(currentOrder.playerId)) ??
+        normalizePlayerAccountSnapshot({
+          ...currentAccount,
+          gems: nextGems
+        });
+      const nextOrder =
+        (await this.loadPaymentOrder(currentOrder.orderId)) ??
+        ({
+          ...currentOrder,
+          status: "paid",
+          wechatOrderId: normalizedWechatOrderId,
+          paidAt: paidAt.toISOString(),
+          updatedAt: paidAt.toISOString()
+        } satisfies PaymentOrderSnapshot);
+
+      return {
+        order: nextOrder,
+        account: nextAccount,
+        credited: true
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   async purchaseShopProduct(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult> {

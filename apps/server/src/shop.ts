@@ -17,6 +17,7 @@ export interface ShopProduct {
   name: string;
   type: ShopProductType;
   price: number;
+  wechatPriceFen?: number;
   enabled: boolean;
   grant: ShopProductGrant;
 }
@@ -25,7 +26,7 @@ interface ShopConfigDocument {
   products?: Partial<ShopProduct>[] | null;
 }
 
-interface RegisterShopRoutesOptions {
+export interface RegisterShopRoutesOptions {
   products?: Partial<ShopProduct>[];
 }
 
@@ -148,13 +149,16 @@ function normalizeShopProducts(rawProducts?: Partial<ShopProduct>[] | null): Sho
       name,
       type: rawProduct.type,
       price: normalizePositiveInteger(rawProduct.price ?? Number.NaN, `shop product ${productId} price`, true),
+      ...(rawProduct.wechatPriceFen != null
+        ? { wechatPriceFen: normalizePositiveInteger(rawProduct.wechatPriceFen, `shop product ${productId} wechatPriceFen`) }
+        : {}),
       enabled: rawProduct.enabled !== false,
       grant
     };
   });
 }
 
-function resolveShopProducts(options?: RegisterShopRoutesOptions): ShopProduct[] {
+export function resolveShopProducts(options?: RegisterShopRoutesOptions): ShopProduct[] {
   const configuredProducts = options?.products ?? (shopConfigDocument as ShopConfigDocument).products;
   return normalizeShopProducts(configuredProducts);
 }
