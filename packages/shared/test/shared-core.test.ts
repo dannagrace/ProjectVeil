@@ -1330,6 +1330,22 @@ test("player account read model helper normalizes progression, replays, and reso
   assert.equal(account.battleReportCenter.items[0]?.result, "victory");
 });
 
+test("player account read model helper normalizes minor protection fields", () => {
+  const account = normalizePlayerAccountReadModel({
+    playerId: "player-minor",
+    displayName: "Minor",
+    ageVerified: true,
+    isMinor: true,
+    dailyPlayMinutes: 91.8,
+    lastPlayDate: " 2026-04-03 "
+  });
+
+  assert.equal(account.ageVerified, true);
+  assert.equal(account.isMinor, true);
+  assert.equal(account.dailyPlayMinutes, 91);
+  assert.equal(account.lastPlayDate, "2026-04-03");
+});
+
 test("player account read model helper falls back to empty progression collections", () => {
   const account = normalizePlayerAccountReadModel();
 

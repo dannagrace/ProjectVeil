@@ -28,6 +28,7 @@ import {
   setPendingAuthRegistrationCount,
   upsertAuthAccountSession
 } from "./observability";
+import { deriveWechatMinorProtection } from "./minor-protection";
 import { isPlayerBanActive, type PlayerAccountBanSnapshot, type RoomSnapshotStore } from "./persistence";
 
 export type AuthMode = "guest" | "account";
@@ -861,6 +862,9 @@ async function handleWechatLogin(
     playerId?: string | null;
     displayName?: string | null;
     avatarUrl?: string | null;
+    ageVerified?: boolean | null;
+    isAdult?: boolean | null;
+    ageRange?: string | null;
   };
 
   if (body.code !== undefined && body.code !== null && typeof body.code !== "string") {
@@ -903,8 +907,43 @@ async function handleWechatLogin(
     return;
   }
 
+  if (body.ageVerified !== undefined && body.ageVerified !== null && typeof body.ageVerified !== "boolean") {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "Expected optional boolean field: ageVerified"
+      }
+    });
+    return;
+  }
+
+  if (body.isAdult !== undefined && body.isAdult !== null && typeof body.isAdult !== "boolean") {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "Expected optional boolean field: isAdult"
+      }
+    });
+    return;
+  }
+
+  if (body.ageRange !== undefined && body.ageRange !== null && typeof body.ageRange !== "string") {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "Expected optional string field: ageRange"
+      }
+    });
+    return;
+  }
+
   const code = normalizeWechatMiniGameCode(body.code);
   const avatarUrl = normalizeAvatarUrl(body.avatarUrl);
+  const minorProtection = deriveWechatMinorProtection({
+    ...(body.ageVerified !== undefined ? { ageVerified: body.ageVerified } : {}),
+    ...(body.isAdult !== undefined ? { isAdult: body.isAdult } : {}),
+    ...(body.ageRange !== undefined ? { ageRange: body.ageRange } : {})
+  });
   const wechatConfig = readWechatMiniGameLoginConfig();
 
   let identity: WechatMiniGameIdentity;
@@ -971,7 +1010,8 @@ async function handleWechatLogin(
         openId: identity.openId,
         ...(identity.unionId ? { unionId: identity.unionId } : {}),
         ...(body.displayName?.trim() ? { displayName: body.displayName } : {}),
-        ...(avatarUrl ? { avatarUrl } : {})
+        ...(avatarUrl ? { avatarUrl } : {}),
+        ...minorProtection
       });
       playerId = syncedAccount.playerId;
       displayName = syncedAccount.displayName;
@@ -982,7 +1022,8 @@ async function handleWechatLogin(
         openId: identity.openId,
         ...(identity.unionId ? { unionId: identity.unionId } : {}),
         ...(body.displayName?.trim() ? { displayName: body.displayName } : {}),
-        ...(avatarUrl ? { avatarUrl } : {})
+        ...(avatarUrl ? { avatarUrl } : {}),
+        ...minorProtection
       });
       playerId = boundAccountResult.playerId;
       displayName = boundAccountResult.displayName;

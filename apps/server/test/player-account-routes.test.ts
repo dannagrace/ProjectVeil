@@ -150,6 +150,10 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.ageVerified ? { ageVerified: existing.ageVerified } : {}),
+      ...(existing?.isMinor ? { isMinor: existing.isMinor } : {}),
+      ...(existing?.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
+      ...(existing?.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(existing?.banStatus ? { banStatus: existing.banStatus } : {}),
       ...(existing?.banExpiry ? { banExpiry: existing.banExpiry } : {}),
       ...(existing?.banReason ? { banReason: existing.banReason } : {}),
@@ -312,7 +316,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   async bindPlayerAccountWechatMiniGameIdentity(
     playerId: string,
-    input: { openId: string; unionId?: string; displayName?: string; avatarUrl?: string | null }
+    input: { openId: string; unionId?: string; displayName?: string; avatarUrl?: string | null; ageVerified?: boolean; isMinor?: boolean }
   ): Promise<PlayerAccountSnapshot> {
     const existing = await this.ensurePlayerAccount({
       playerId,
@@ -336,6 +340,8 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
           : {}),
       wechatMiniGameOpenId: normalizedOpenId,
       ...(input.unionId?.trim() ? { wechatMiniGameUnionId: input.unionId.trim() } : existing.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
+      ...(input.ageVerified !== undefined ? { ageVerified: input.ageVerified } : existing.ageVerified ? { ageVerified: existing.ageVerified } : {}),
+      ...(input.isMinor !== undefined ? { isMinor: input.isMinor } : existing.isMinor ? { isMinor: existing.isMinor } : {}),
       wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -390,6 +396,8 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       recentBattleReplays: structuredClone(
         (patch.recentBattleReplays as PlayerAccountSnapshot["recentBattleReplays"] | undefined) ?? existing.recentBattleReplays
       ),
+      ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
+      ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }

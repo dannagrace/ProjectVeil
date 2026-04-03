@@ -27,6 +27,10 @@ export interface PlayerAccountReadModel {
   battleReportCenter?: PlayerBattleReportCenter;
   loginId?: string;
   credentialBoundAt?: string;
+  ageVerified?: boolean;
+  isMinor?: boolean;
+  dailyPlayMinutes?: number;
+  lastPlayDate?: string;
   banStatus?: PlayerBanStatus;
   banExpiry?: string;
   banReason?: string;
@@ -46,6 +50,10 @@ export interface PlayerAccountReadModelInput {
   battleReportCenter?: Partial<PlayerBattleReportCenter> | null | undefined;
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
+  ageVerified?: boolean | undefined;
+  isMinor?: boolean | undefined;
+  dailyPlayMinutes?: number | undefined;
+  lastPlayDate?: string | undefined;
   banStatus?: PlayerBanStatus | undefined;
   banExpiry?: string | undefined;
   banReason?: string | undefined;
@@ -61,6 +69,12 @@ export function normalizePlayerAccountReadModel(
   const avatarUrl = account?.avatarUrl?.trim();
   const loginId = account?.loginId?.trim().toLowerCase();
   const credentialBoundAt = account?.credentialBoundAt?.trim();
+  const ageVerified = account?.ageVerified === true;
+  const isMinor = account?.isMinor === true;
+  const dailyPlayMinutes = Math.max(0, Math.floor(account?.dailyPlayMinutes ?? 0));
+  const lastPlayDate = /^\d{4}-\d{2}-\d{2}$/.test(account?.lastPlayDate?.trim() ?? "")
+    ? account?.lastPlayDate?.trim()
+    : undefined;
   const banStatus = account?.banStatus === "temporary" || account?.banStatus === "permanent" ? account.banStatus : "none";
   const banExpiry = account?.banExpiry?.trim();
   const banReason = account?.banReason?.trim();
@@ -88,6 +102,10 @@ export function normalizePlayerAccountReadModel(
     }),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
+    ...(ageVerified ? { ageVerified } : {}),
+    ...(isMinor ? { isMinor } : {}),
+    ...(dailyPlayMinutes > 0 ? { dailyPlayMinutes } : {}),
+    ...(lastPlayDate ? { lastPlayDate } : {}),
     ...(banStatus !== "none" ? { banStatus } : {}),
     ...(banExpiry ? { banExpiry } : {}),
     ...(banReason ? { banReason } : {}),

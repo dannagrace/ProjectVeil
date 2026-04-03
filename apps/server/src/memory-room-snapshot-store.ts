@@ -206,6 +206,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
           : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.ageVerified ? { ageVerified: existing.ageVerified } : {}),
+      ...(existing?.isMinor ? { isMinor: existing.isMinor } : {}),
+      ...(existing?.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
+      ...(existing?.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(existing?.banStatus ? { banStatus: existing.banStatus } : {}),
       ...(existing?.banExpiry ? { banExpiry: existing.banExpiry } : {}),
       ...(existing?.banReason ? { banReason: existing.banReason } : {}),
@@ -486,6 +490,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...(normalizedAvatarUrl ? { avatarUrl: normalizedAvatarUrl } : existing.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       wechatMiniGameOpenId: normalizedOpenId,
       ...(normalizedUnionId ? { wechatMiniGameUnionId: normalizedUnionId } : {}),
+      ...(input.ageVerified !== undefined ? { ageVerified: input.ageVerified } : existing.ageVerified ? { ageVerified: existing.ageVerified } : {}),
+      ...(input.isMinor !== undefined ? { isMinor: input.isMinor } : existing.isMinor ? { isMinor: existing.isMinor } : {}),
       wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -552,6 +558,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
           existing.recentBattleReplays ??
           []
       ),
+      ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
+      ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -584,6 +592,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         achievements: structuredClone(previous?.achievements ?? account.achievements),
         recentEventLog: structuredClone(previous?.recentEventLog ?? account.recentEventLog),
         recentBattleReplays: structuredClone(previous?.recentBattleReplays ?? account.recentBattleReplays ?? []),
+        ...(previous?.ageVerified ? { ageVerified: previous.ageVerified } : {}),
+        ...(previous?.isMinor ? { isMinor: previous.isMinor } : {}),
+        ...(previous?.dailyPlayMinutes ? { dailyPlayMinutes: previous.dailyPlayMinutes } : {}),
+        ...(previous?.lastPlayDate ? { lastPlayDate: previous.lastPlayDate } : {}),
         ...(previous?.loginId ? { loginId: previous.loginId } : {}),
         ...(previous?.accountSessionVersion != null ? { accountSessionVersion: previous.accountSessionVersion } : {}),
         ...(previous?.refreshSessionId ? { refreshSessionId: previous.refreshSessionId } : {}),
