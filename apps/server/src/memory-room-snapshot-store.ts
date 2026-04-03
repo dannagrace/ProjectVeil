@@ -245,6 +245,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       displayName: normalizeDisplayName(playerId, input.displayName ?? existing?.displayName),
       ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       eloRating: normalizeEloRating(existing?.eloRating),
+      gems: existing?.gems ?? 0,
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
       achievements: existing?.achievements ?? [],
       recentEventLog: existing?.recentEventLog ?? [],
@@ -277,6 +278,50 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const stored = structuredClone(nextAccount);
     this.accounts.set(playerId, stored);
     return structuredClone(stored);
+  }
+
+  async creditGems(playerId: string, amount: number, reason: "purchase" | "reward", _refId: string): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedAmount = Math.floor(amount);
+    if (!Number.isFinite(amount) || normalizedAmount <= 0) {
+      throw new Error("gem amount must be a positive integer");
+    }
+    if (reason !== "purchase" && reason !== "reward") {
+      throw new Error("credit reason must be purchase or reward");
+    }
+
+    const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const nextAccount: PlayerAccountSnapshot = {
+      ...existing,
+      gems: (existing.gems ?? 0) + normalizedAmount,
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
+    return cloneAccount(nextAccount);
+  }
+
+  async debitGems(playerId: string, amount: number, reason: "spend", _refId: string): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedAmount = Math.floor(amount);
+    if (!Number.isFinite(amount) || normalizedAmount <= 0) {
+      throw new Error("gem amount must be a positive integer");
+    }
+    if (reason !== "spend") {
+      throw new Error("debit reason must be spend");
+    }
+
+    const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    if ((existing.gems ?? 0) < normalizedAmount) {
+      throw new Error("insufficient gems");
+    }
+
+    const nextAccount: PlayerAccountSnapshot = {
+      ...existing,
+      gems: (existing.gems ?? 0) - normalizedAmount,
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
+    return cloneAccount(nextAccount);
   }
 
   async listPlayerBanHistory(

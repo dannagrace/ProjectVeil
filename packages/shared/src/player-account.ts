@@ -20,6 +20,7 @@ export interface PlayerAccountReadModel {
   displayName: string;
   avatarUrl?: string;
   eloRating?: number;
+  gems?: number;
   globalResources: ResourceLedger;
   achievements: PlayerAchievementProgress[];
   recentEventLog: EventLogEntry[];
@@ -46,6 +47,7 @@ export interface PlayerAccountReadModelInput {
   displayName?: string | undefined;
   avatarUrl?: string | undefined;
   eloRating?: number | undefined;
+  gems?: number | undefined;
   globalResources?: Partial<ResourceLedger> | null | undefined;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -97,6 +99,7 @@ export function normalizePlayerAccountReadModel(
     displayName: displayName || playerId || "player",
     ...(avatarUrl ? { avatarUrl } : {}),
     eloRating: normalizeEloRating(account?.eloRating),
+    gems: Math.max(0, Math.floor(account?.gems ?? 0)),
     globalResources: {
       gold: Math.max(0, Math.floor(account?.globalResources?.gold ?? 0)),
       wood: Math.max(0, Math.floor(account?.globalResources?.wood ?? 0)),

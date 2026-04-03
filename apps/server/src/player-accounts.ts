@@ -414,6 +414,7 @@ function createLocalModeAccount(input: {
   return {
     playerId,
     displayName,
+    gems: 0,
     globalResources: {
       gold: 0,
       wood: 0,

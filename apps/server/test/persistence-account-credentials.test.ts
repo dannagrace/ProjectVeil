@@ -10,6 +10,7 @@ function createExistingAccount(overrides: Partial<PlayerAccountSnapshot> = {}): 
   return {
     playerId: "player-1",
     displayName: "player-1",
+    gems: 0,
     globalResources: { gold: 0, wood: 0, ore: 0 },
     achievements: [],
     recentEventLog: [],
@@ -22,7 +23,16 @@ function createExistingAccount(overrides: Partial<PlayerAccountSnapshot> = {}): 
 
 function createStoreHarness() {
   return Object.create(MySqlRoomSnapshotStore.prototype) as MySqlRoomSnapshotStore & {
-    pool: { query: (sql: string, params: unknown[]) => Promise<unknown> };
+    pool: {
+      query: (sql: string, params: unknown[]) => Promise<unknown>;
+      getConnection?: () => Promise<{
+        beginTransaction: () => Promise<void>;
+        query: (sql: string, params: unknown[]) => Promise<unknown>;
+        commit: () => Promise<void>;
+        rollback: () => Promise<void>;
+        release: () => void;
+      }>;
+    };
     ensurePlayerAccount: (input: { playerId: string }) => Promise<PlayerAccountSnapshot>;
     loadPlayerAccount: (playerId: string) => Promise<PlayerAccountSnapshot | null>;
     loadPlayerAccountByLoginId: (loginId: string) => Promise<PlayerAccountSnapshot | null>;
@@ -267,4 +277,85 @@ test("mysql player event history query applies inclusive timestamp filters", asy
   assert.deepEqual(queries[0].params, ["player-1", "2026-03-20T00:00:00.000Z", "2026-03-20T00:06:00.000Z"]);
   assert.match(queries[1].sql, /ORDER BY timestamp DESC, event_id ASC/);
   assert.deepEqual(queries[1].params, ["player-1", "2026-03-20T00:00:00.000Z", "2026-03-20T00:06:00.000Z"]);
+});
+
+test("creditGems updates balance and appends a ledger entry in one transaction", async () => {
+  const store = createStoreHarness();
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  const connection = {
+    beginTransaction: async () => {},
+    query: async (sql: string, params: unknown[]) => {
+      queries.push({ sql, params });
+      if (/SELECT gems/.test(sql)) {
+        return [[{ gems: 4 }]];
+      }
+
+      return [{}];
+    },
+    commit: async () => {},
+    rollback: async () => {},
+    release: () => {}
+  };
+
+  store.ensurePlayerAccount = async () => createExistingAccount({ gems: 4 });
+  store.loadPlayerAccount = async () => createExistingAccount({ gems: 9 });
+  store.loadPlayerAccountByLoginId = async () => null;
+  store.pool = {
+    query: async () => {
+      throw new Error("pool.query should not be used inside gem mutation transactions");
+    },
+    getConnection: async () => connection
+  };
+
+  const account = await store.creditGems("player-1", 5, "reward", "quest-1");
+
+  assert.equal(account.gems, 9);
+  assert.equal(queries.length, 3);
+  assert.match(queries[0].sql, /SELECT gems/);
+  assert.match(queries[1].sql, /UPDATE `player_accounts`/);
+  assert.deepEqual(queries[1].params, [9, "player-1"]);
+  assert.match(queries[2].sql, /INSERT INTO `gem_ledger`/);
+  assert.deepEqual(queries[2].params.slice(1), ["player-1", 5, "reward", "quest-1"]);
+});
+
+test("debitGems rejects overspend and rolls back without writing a ledger entry", async () => {
+  const store = createStoreHarness();
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  let committed = false;
+  let rolledBack = false;
+  const connection = {
+    beginTransaction: async () => {},
+    query: async (sql: string, params: unknown[]) => {
+      queries.push({ sql, params });
+      if (/SELECT gems/.test(sql)) {
+        return [[{ gems: 2 }]];
+      }
+
+      throw new Error("unexpected write during insufficient funds path");
+    },
+    commit: async () => {
+      committed = true;
+    },
+    rollback: async () => {
+      rolledBack = true;
+    },
+    release: () => {}
+  };
+
+  store.ensurePlayerAccount = async () => createExistingAccount({ gems: 2 });
+  store.loadPlayerAccount = async () => createExistingAccount({ gems: 2 });
+  store.loadPlayerAccountByLoginId = async () => null;
+  store.pool = {
+    query: async () => {
+      throw new Error("pool.query should not be used inside gem mutation transactions");
+    },
+    getConnection: async () => connection
+  };
+
+  await assert.rejects(() => store.debitGems("player-1", 3, "spend", "shop-1"), /insufficient gems/);
+
+  assert.equal(committed, false);
+  assert.equal(rolledBack, true);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /SELECT gems/);
 });
