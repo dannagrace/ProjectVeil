@@ -3,21 +3,31 @@ import defaultBattleBalanceConfig from "../../../configs/battle-balance.json";
 import defaultHeroSkillTreesConfig from "../../../configs/hero-skill-trees-full.json";
 import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
 import amberFieldsMapObjectsConfig from "../../../configs/phase1-map-objects-amber-fields.json";
+import ashpeakAscentMapObjectsConfig from "../../../configs/phase1-map-objects-ashpeak-ascent.json";
+import bogfenCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-bogfen-crossing.json";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
+import frostwatchRidgeMapObjectsConfig from "../../../configs/phase1-map-objects-frostwatch-ridge.json";
 import highlandReachMapObjectsConfig from "../../../configs/phase1-map-objects-highland-reach.json";
 import ironpassGorgeMapObjectsConfig from "../../../configs/phase1-map-objects-ironpass-gorge.json";
+import murkveilDeltaMapObjectsConfig from "../../../configs/phase1-map-objects-murkveil-delta.json";
 import splitrockCanyonMapObjectsConfig from "../../../configs/phase1-map-objects-splitrock-canyon.json";
 import stonewatchForkMapObjectsConfig from "../../../configs/phase1-map-objects-stonewatch-fork.json";
+import thornwallDivideMapObjectsConfig from "../../../configs/phase1-map-objects-thornwall-divide.json";
 import ridgewayCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-ridgeway-crossing.json";
 import defaultMapObjectsConfig from "../../../configs/phase1-map-objects.json";
 import defaultUnitsConfig from "../../../configs/units.json";
 import amberFieldsWorldConfig from "../../../configs/phase1-world-amber-fields.json";
+import ashpeakAscentWorldConfig from "../../../configs/phase1-world-ashpeak-ascent.json";
+import bogfenCrossingWorldConfig from "../../../configs/phase1-world-bogfen-crossing.json";
 import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import frostwatchRidgeWorldConfig from "../../../configs/phase1-world-frostwatch-ridge.json";
 import highlandReachWorldConfig from "../../../configs/phase1-world-highland-reach.json";
 import ironpassGorgeWorldConfig from "../../../configs/phase1-world-ironpass-gorge.json";
+import murkveilDeltaWorldConfig from "../../../configs/phase1-world-murkveil-delta.json";
 import splitrockCanyonWorldConfig from "../../../configs/phase1-world-splitrock-canyon.json";
 import stonewatchForkWorldConfig from "../../../configs/phase1-world-stonewatch-fork.json";
+import thornwallDivideWorldConfig from "../../../configs/phase1-world-thornwall-divide.json";
 import ridgewayCrossingWorldConfig from "../../../configs/phase1-world-ridgeway-crossing.json";
 import defaultWorldConfig from "../../../configs/phase1-world.json";
 import type {
@@ -50,6 +60,11 @@ export const HIGHLAND_REACH_MAP_VARIANT_ID = "highland_reach";
 export const AMBER_FIELDS_MAP_VARIANT_ID = "amber_fields";
 export const IRONPASS_GORGE_MAP_VARIANT_ID = "ironpass_gorge";
 export const SPLITROCK_CANYON_MAP_VARIANT_ID = "splitrock_canyon";
+export const BOGFEN_CROSSING_MAP_VARIANT_ID = "bogfen_crossing";
+export const MURKVEIL_DELTA_MAP_VARIANT_ID = "murkveil_delta";
+export const FROSTWATCH_RIDGE_MAP_VARIANT_ID = "frostwatch_ridge";
+export const ASHPEAK_ASCENT_MAP_VARIANT_ID = "ashpeak_ascent";
+export const THORNWALL_DIVIDE_MAP_VARIANT_ID = "thornwall_divide";
 export const CONTESTED_BASIN_MAP_VARIANT_ID = "contested_basin";
 
 export interface RuntimeConfigBundle {
@@ -152,7 +167,7 @@ function isResourceKind(value: unknown): value is "gold" | "wood" | "ore" {
 }
 
 function isTerrainType(value: unknown): value is TerrainType {
-  return value === "grass" || value === "dirt" || value === "sand" || value === "water";
+  return value === "grass" || value === "dirt" || value === "sand" || value === "water" || value === "swamp";
 }
 
 function isNeutralBehaviorMode(value: unknown): value is NeutralBehaviorMode {
@@ -768,6 +783,11 @@ function getAvailableMapVariantIds(): string[] {
     AMBER_FIELDS_MAP_VARIANT_ID,
     IRONPASS_GORGE_MAP_VARIANT_ID,
     SPLITROCK_CANYON_MAP_VARIANT_ID,
+    BOGFEN_CROSSING_MAP_VARIANT_ID,
+    MURKVEIL_DELTA_MAP_VARIANT_ID,
+    FROSTWATCH_RIDGE_MAP_VARIANT_ID,
+    ASHPEAK_ASCENT_MAP_VARIANT_ID,
+    THORNWALL_DIVIDE_MAP_VARIANT_ID,
     CONTESTED_BASIN_MAP_VARIANT_ID
   ];
 }
@@ -790,6 +810,11 @@ export function resolveMapVariantIdForRoom(roomId: string, seed = 1001): string 
     requested === AMBER_FIELDS_MAP_VARIANT_ID ||
     requested === IRONPASS_GORGE_MAP_VARIANT_ID ||
     requested === SPLITROCK_CANYON_MAP_VARIANT_ID ||
+    requested === BOGFEN_CROSSING_MAP_VARIANT_ID ||
+    requested === MURKVEIL_DELTA_MAP_VARIANT_ID ||
+    requested === FROSTWATCH_RIDGE_MAP_VARIANT_ID ||
+    requested === ASHPEAK_ASCENT_MAP_VARIANT_ID ||
+    requested === THORNWALL_DIVIDE_MAP_VARIANT_ID ||
     requested === CONTESTED_BASIN_MAP_VARIANT_ID
   ) {
     return requested;
@@ -818,6 +843,16 @@ export function getRuntimeConfigBundleForRoom(roomId: string, seed = 1001): Room
         ? cloneWorldConfig(ironpassGorgeWorldConfig as WorldGenerationConfig)
       : mapVariantId === SPLITROCK_CANYON_MAP_VARIANT_ID
         ? cloneWorldConfig(splitrockCanyonWorldConfig as WorldGenerationConfig)
+      : mapVariantId === BOGFEN_CROSSING_MAP_VARIANT_ID
+        ? cloneWorldConfig(bogfenCrossingWorldConfig as WorldGenerationConfig)
+      : mapVariantId === MURKVEIL_DELTA_MAP_VARIANT_ID
+        ? cloneWorldConfig(murkveilDeltaWorldConfig as WorldGenerationConfig)
+      : mapVariantId === FROSTWATCH_RIDGE_MAP_VARIANT_ID
+        ? cloneWorldConfig(frostwatchRidgeWorldConfig as WorldGenerationConfig)
+      : mapVariantId === ASHPEAK_ASCENT_MAP_VARIANT_ID
+        ? cloneWorldConfig(ashpeakAscentWorldConfig as WorldGenerationConfig)
+      : mapVariantId === THORNWALL_DIVIDE_MAP_VARIANT_ID
+        ? cloneWorldConfig(thornwallDivideWorldConfig as WorldGenerationConfig)
       : mapVariantId === CONTESTED_BASIN_MAP_VARIANT_ID
         ? cloneWorldConfig(contestedBasinWorldConfig as WorldGenerationConfig)
         : getDefaultWorldConfig();
@@ -836,6 +871,16 @@ export function getRuntimeConfigBundleForRoom(roomId: string, seed = 1001): Room
         ? cloneMapObjectsConfig(ironpassGorgeMapObjectsConfig as MapObjectsConfig)
       : mapVariantId === SPLITROCK_CANYON_MAP_VARIANT_ID
         ? cloneMapObjectsConfig(splitrockCanyonMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === BOGFEN_CROSSING_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(bogfenCrossingMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === MURKVEIL_DELTA_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(murkveilDeltaMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === FROSTWATCH_RIDGE_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(frostwatchRidgeMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === ASHPEAK_ASCENT_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(ashpeakAscentMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === THORNWALL_DIVIDE_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(thornwallDivideMapObjectsConfig as MapObjectsConfig)
       : mapVariantId === CONTESTED_BASIN_MAP_VARIANT_ID
         ? cloneMapObjectsConfig(contestedBasinMapObjectsConfig as MapObjectsConfig)
         : getDefaultMapObjectsConfig();

@@ -1,4 +1,4 @@
-export type TerrainType = "grass" | "dirt" | "sand" | "water";
+export type TerrainType = "grass" | "dirt" | "sand" | "water" | "swamp";
 export type FogState = "hidden" | "explored" | "visible";
 export type ResourceKind = "gold" | "wood" | "ore";
 export type OccupantKind = "hero" | "neutral" | "building";

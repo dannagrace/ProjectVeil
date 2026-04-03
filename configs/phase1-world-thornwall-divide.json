@@ -1,0 +1,94 @@
+{
+  "width": 12,
+  "height": 12,
+  "heroes": [
+    {
+      "id": "hero-1",
+      "playerId": "player-1",
+      "name": "凯琳",
+      "position": { "x": 1, "y": 3 },
+      "vision": 2,
+      "move": { "total": 6, "remaining": 6 },
+      "stats": {
+        "attack": 2,
+        "defense": 2,
+        "power": 1,
+        "knowledge": 1,
+        "hp": 30,
+        "maxHp": 30
+      },
+      "progression": {
+        "level": 1,
+        "experience": 0,
+        "battlesWon": 0,
+        "neutralBattlesWon": 0,
+        "pvpBattlesWon": 0
+      },
+      "loadout": {
+        "inventory": ["militia_pike", "vanguard_blade", "padded_gambeson", "scout_compass"]
+      },
+      "armyTemplateId": "hero_guard_basic",
+      "armyCount": 12
+    },
+    {
+      "id": "hero-2",
+      "playerId": "player-2",
+      "name": "罗安",
+      "position": { "x": 10, "y": 8 },
+      "vision": 2,
+      "move": { "total": 6, "remaining": 6 },
+      "stats": {
+        "attack": 2,
+        "defense": 2,
+        "power": 1,
+        "knowledge": 1,
+        "hp": 30,
+        "maxHp": 30
+      },
+      "progression": {
+        "level": 1,
+        "experience": 0,
+        "battlesWon": 0,
+        "neutralBattlesWon": 0,
+        "pvpBattlesWon": 0
+      },
+      "loadout": {
+        "inventory": ["oak_longbow", "tower_shield_mail", "scribe_charm", "captains_insignia"]
+      },
+      "armyTemplateId": "hero_guard_basic",
+      "armyCount": 10
+    }
+  ],
+  "resourceSpawn": {
+    "goldChance": 0.04,
+    "woodChance": 0.07,
+    "oreChance": 0.08
+  },
+  "terrainOverrides": [
+    { "position": { "x": 4, "y": 1 }, "terrain": "water" },
+    { "position": { "x": 4, "y": 2 }, "terrain": "water" },
+    { "position": { "x": 7, "y": 9 }, "terrain": "water" },
+    { "position": { "x": 7, "y": 10 }, "terrain": "water" },
+    { "position": { "x": 3, "y": 3 }, "terrain": "swamp" },
+    { "position": { "x": 4, "y": 3 }, "terrain": "swamp" },
+    { "position": { "x": 5, "y": 3 }, "terrain": "swamp" },
+    { "position": { "x": 3, "y": 4 }, "terrain": "swamp" },
+    { "position": { "x": 4, "y": 4 }, "terrain": "swamp" },
+    { "position": { "x": 5, "y": 4 }, "terrain": "swamp" },
+    { "position": { "x": 3, "y": 5 }, "terrain": "swamp" },
+    { "position": { "x": 4, "y": 5 }, "terrain": "swamp" },
+    { "position": { "x": 5, "y": 5 }, "terrain": "swamp" },
+    { "position": { "x": 6, "y": 6 }, "terrain": "dirt" },
+    { "position": { "x": 7, "y": 6 }, "terrain": "dirt" },
+    { "position": { "x": 8, "y": 6 }, "terrain": "dirt" },
+    { "position": { "x": 6, "y": 7 }, "terrain": "dirt" },
+    { "position": { "x": 7, "y": 7 }, "terrain": "dirt" },
+    { "position": { "x": 8, "y": 7 }, "terrain": "dirt" },
+    { "position": { "x": 2, "y": 8 }, "terrain": "sand" },
+    { "position": { "x": 3, "y": 8 }, "terrain": "sand" },
+    { "position": { "x": 4, "y": 8 }, "terrain": "sand" },
+    { "position": { "x": 7, "y": 4 }, "terrain": "sand" },
+    { "position": { "x": 8, "y": 4 }, "terrain": "sand" },
+    { "position": { "x": 9, "y": 4 }, "terrain": "sand" }
+  ]
+}

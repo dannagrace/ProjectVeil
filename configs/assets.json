@@ -28,6 +28,13 @@
         "/assets/pixel/terrain/water-tile-alt.png"
       ]
     },
+    "swamp": {
+      "default": "/assets/pixel/terrain/dirt-tile.png",
+      "variants": [
+        "/assets/pixel/terrain/dirt-tile.png",
+        "/assets/pixel/terrain/dirt-tile-alt.png"
+      ]
+    },
     "unknown": {
       "default": "/assets/pixel/terrain/fog-tile.png",
       "variants": [

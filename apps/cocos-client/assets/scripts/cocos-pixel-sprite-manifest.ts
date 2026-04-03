@@ -11,6 +11,7 @@ export interface PixelTileSpriteManifest {
   dirt: string[];
   sand: string[];
   water: string[];
+  swamp: string[];
   unknown: string[];
   hidden: string[];
 }
@@ -74,6 +75,7 @@ export const pixelSpriteManifest: PixelSpriteManifest = {
     dirt: requireResourceSeries(assetConfig.terrain.dirt.variants, "terrain.dirt.variants"),
     sand: requireResourceSeries(assetConfig.terrain.sand.variants, "terrain.sand.variants"),
     water: requireResourceSeries(assetConfig.terrain.water.variants, "terrain.water.variants"),
+    swamp: requireResourceSeries(assetConfig.terrain.swamp.variants, "terrain.swamp.variants"),
     unknown: requireResourceSeries(assetConfig.terrain.unknown.variants, "terrain.unknown.variants"),
     hidden: ["pixel/terrain/hidden-tile", "pixel/terrain/hidden-tile-alt", "pixel/terrain/hidden-tile-deep"]
   },

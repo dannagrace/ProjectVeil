@@ -107,6 +107,10 @@ function isTraversableTile(
   return tile.walkable || (canFlyOverWater && tile.terrain === "water");
 }
 
+function terrainMoveCost(terrain: TileState["terrain"] | PlayerTileView["terrain"]): number {
+  return terrain === "swamp" ? 2 : 1;
+}
+
 function maybeAwardBattleEquipmentDrop(
   hero: HeroState,
   state: WorldState,
@@ -940,7 +944,10 @@ function getMovementPlan(state: WorldState, heroId: string, destination: Vec2): 
             : "none";
       const endsInEncounter = encounterKind !== "none";
       const travelPath = endsInEncounter ? path.slice(0, -1) : path;
-      const moveCost = Math.max(0, travelPath.length - 1);
+      const moveCost = travelPath.slice(1).reduce((total, step) => {
+        const tile = findTile(state.map, step);
+        return total + (tile ? terrainMoveCost(tile.terrain) : 1);
+      }, 0);
       return {
         heroId,
         destination,
@@ -958,7 +965,9 @@ function getMovementPlan(state: WorldState, heroId: string, destination: Vec2): 
         continue;
       }
 
-      const tentative = (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + 1;
+      const neighborTile = findTile(state.map, neighbor);
+      const tentative =
+        (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + terrainMoveCost(neighborTile?.terrain ?? "grass");
       if (tentative >= (gScore.get(tileKey(neighbor)) ?? Number.POSITIVE_INFINITY)) {
         continue;
       }
@@ -1294,7 +1303,10 @@ export function planPlayerViewMovement(
             : "none";
       const endsInEncounter = encounterKind !== "none";
       const travelPath = endsInEncounter ? path.slice(0, -1) : path;
-      const moveCost = Math.max(0, travelPath.length - 1);
+      const moveCost = travelPath.slice(1).reduce((total, step) => {
+        const tile = findPlayerTile(view, step);
+        return total + (tile ? terrainMoveCost(tile.terrain) : 1);
+      }, 0);
       return {
         heroId,
         destination,
@@ -1312,7 +1324,9 @@ export function planPlayerViewMovement(
         continue;
       }
 
-      const tentative = (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + 1;
+      const neighborTile = findPlayerTile(view, neighbor);
+      const tentative =
+        (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + terrainMoveCost(neighborTile?.terrain ?? "grass");
       if (tentative >= (gScore.get(tileKey(neighbor)) ?? Number.POSITIVE_INFINITY)) {
         continue;
       }

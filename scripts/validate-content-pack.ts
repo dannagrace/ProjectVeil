@@ -95,7 +95,7 @@ function parseArgs(argv: string[]): {
       const definition = resolveContentPackMapPack(presetId);
       if (!definition) {
         throw new Error(
-          `Unknown map pack "${presetId}". Supported values: default, frontier-basin, stonewatch-fork, ridgeway-crossing, highland-reach, amber-fields, ironpass-gorge, splitrock-canyon, phase2.`
+          `Unknown map pack "${presetId}". Supported values: default, frontier-basin, stonewatch-fork, ridgeway-crossing, highland-reach, amber-fields, ironpass-gorge, splitrock-canyon, bogfen-crossing, murkveil-delta, frostwatch-ridge, ashpeak-ascent, thornwall-divide, phase2.`
         );
       }
       if (definition.id !== DEFAULT_CONTENT_PACK_MAP_PACK.id) {

@@ -50,7 +50,7 @@ export interface AssetConfig {
   };
 }
 
-const TERRAIN_KEYS = ["grass", "dirt", "sand", "water", "unknown"] as const;
+const TERRAIN_KEYS = ["grass", "dirt", "sand", "water", "swamp", "unknown"] as const;
 const RESOURCE_KEYS = ["gold", "wood", "ore"] as const;
 const BUILDING_KEYS = ["recruitment_post", "attribute_shrine", "resource_mine", "watchtower"] as const;
 const MARKER_KEYS = ["hero", "neutral"] as const;

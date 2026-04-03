@@ -107,6 +107,10 @@ function isTraversableTile(
   return tile.walkable || (canFlyOverWater && tile.terrain === "water");
 }
 
+function terrainMoveCost(terrain: TileState["terrain"] | PlayerTileView["terrain"]): number {
+  return terrain === "swamp" ? 2 : 1;
+}
+
 function maybeAwardBattleEquipmentDrop(
   hero: HeroState,
   state: WorldState,
@@ -940,7 +944,10 @@ function getMovementPlan(state: WorldState, heroId: string, destination: Vec2): 
             : "none";
       const endsInEncounter = encounterKind !== "none";
       const travelPath = endsInEncounter ? path.slice(0, -1) : path;
-      const moveCost = Math.max(0, travelPath.length - 1);
+      const moveCost = travelPath.slice(1).reduce((total, step) => {
+        const tile = findTile(state.map, step);
+        return total + (tile ? terrainMoveCost(tile.terrain) : 1);
+      }, 0);
       return {
         heroId,
         destination,
@@ -958,7 +965,9 @@ function getMovementPlan(state: WorldState, heroId: string, destination: Vec2): 
         continue;
       }
 
-      const tentative = (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + 1;
+      const neighborTile = findTile(state.map, neighbor);
+      const tentative =
+        (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + terrainMoveCost(neighborTile?.terrain ?? "grass");
       if (tentative >= (gScore.get(tileKey(neighbor)) ?? Number.POSITIVE_INFINITY)) {
         continue;
       }
@@ -1298,7 +1307,10 @@ export function planPlayerViewMovement(
             : "none";
       const endsInEncounter = encounterKind !== "none";
       const travelPath = endsInEncounter ? path.slice(0, -1) : path;
-      const moveCost = Math.max(0, travelPath.length - 1);
+      const moveCost = travelPath.slice(1).reduce((total, step) => {
+        const tile = findPlayerTile(view, step);
+        return total + (tile ? terrainMoveCost(tile.terrain) : 1);
+      }, 0);
       return {
         heroId,
         destination,
@@ -1316,7 +1328,9 @@ export function planPlayerViewMovement(
         continue;
       }
 
-      const tentative = (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + 1;
+      const neighborTile = findPlayerTile(view, neighbor);
+      const tentative =
+        (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + terrainMoveCost(neighborTile?.terrain ?? "grass");
       if (tentative >= (gScore.get(tileKey(neighbor)) ?? Number.POSITIVE_INFINITY)) {
         continue;
       }
@@ -1437,7 +1451,7 @@ export function listReachableTiles(state: WorldState, heroId: string): Vec2[] {
   return state.map.tiles
     .filter((tile) => {
       const plan = planHeroMovement(state, heroId, tile.position);
-      return Boolean(plan && getMovementDistance(plan) <= hero.move.remaining);
+      return Boolean(plan && plan.moveCost <= hero.move.remaining);
     })
     .map((tile) => tile.position);
 }
@@ -1451,7 +1465,7 @@ export function listReachableTilesInPlayerView(view: PlayerWorldView, heroId: st
   return view.map.tiles
     .filter((tile) => {
       const plan = planPlayerViewMovement(view, heroId, tile.position);
-      return Boolean(plan && getMovementDistance(plan) <= hero.move.remaining);
+      return Boolean(plan && plan.moveCost <= hero.move.remaining);
     })
     .map((tile) => tile.position);
 }
@@ -1574,7 +1588,7 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
       };
     }
 
-    if (getMovementDistance(plan) > hero.move.remaining) {
+    if (plan.moveCost > hero.move.remaining) {
       return {
         world: view,
         movementPlan: null,
@@ -1956,7 +1970,7 @@ export function validateWorldAction(state: WorldState, action: WorldAction): Val
       return { valid: false, reason: "path_not_found" };
     }
 
-    if (getMovementDistance(plan) > hero.move.remaining) {
+    if (plan.moveCost > hero.move.remaining) {
       return { valid: false, reason: "not_enough_move_points" };
     }
 
