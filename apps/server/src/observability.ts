@@ -304,20 +304,24 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
 function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadinessPayload {
   const health = buildHealthPayload(service);
   const alerts: string[] = [];
+  const isTestEnvironment = process.env.NODE_ENV?.trim().toLowerCase() === "test";
   const normalizedWechatMode = process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
+  const hasWechatCredentials = Boolean(process.env.WECHAT_APP_ID?.trim() && process.env.WECHAT_APP_SECRET?.trim());
   const wechatMode =
-    normalizedWechatMode === "mock"
+    normalizedWechatMode === "mock" && isTestEnvironment
       ? "mock"
       : normalizedWechatMode === "production" || normalizedWechatMode === "code2session"
         ? "production"
         : normalizedWechatMode === "disabled"
           ? "disabled"
-          : process.env.NODE_ENV?.trim().toLowerCase() === "production"
-            ? "disabled"
-            : "mock";
+          : isTestEnvironment
+            ? "mock"
+            : hasWechatCredentials
+              ? "production"
+              : "disabled";
   const wechatCredentialsStatus =
     wechatMode === "production"
-      ? process.env.VEIL_WECHAT_MINIGAME_APP_ID?.trim() && process.env.VEIL_WECHAT_MINIGAME_APP_SECRET?.trim()
+      ? process.env.WECHAT_APP_ID?.trim() && process.env.WECHAT_APP_SECRET?.trim()
         ? "configured"
         : "missing"
       : "not_required";
