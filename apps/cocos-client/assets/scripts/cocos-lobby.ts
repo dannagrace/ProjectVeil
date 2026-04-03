@@ -105,7 +105,8 @@ interface PlayerBattleReplayListApiPayload {
   items?: Partial<PlayerBattleReplaySummary>[];
 }
 
-interface PlayerBattleReportCenterApiPayload extends Partial<PlayerBattleReportCenter> {
+interface PlayerBattleReportCenterApiPayload {
+  latestReportId?: string | null;
   items?: Partial<PlayerBattleReportSummary>[];
 }
 
@@ -469,7 +470,7 @@ async function loadCocosBattleReportCenter(
         ...(options ? { storage: options.storage ?? null } : {})
       }
     )) as PlayerBattleReportCenterApiPayload;
-    return normalizePlayerBattleReportCenter(payload, query ? { query } : undefined);
+    return normalizePlayerBattleReportCenter(payload as Partial<PlayerBattleReportCenter>, query ? { query } : undefined);
   } catch (error) {
     if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && options?.storage) {
       clearStoredCocosAuthSession(options.storage);
@@ -893,6 +894,7 @@ export async function loginCocosGuestAuthSession(
   options?: {
     fetchImpl?: FetchLike;
     storage?: Pick<Storage, "setItem"> | null;
+    privacyConsentAccepted?: boolean;
   }
 ): Promise<CocosStoredAuthSession> {
   const normalizedPlayerId = normalizePlayerId(playerId) || createCocosGuestPlayerId();
@@ -909,7 +911,8 @@ export async function loginCocosGuestAuthSession(
         },
         body: JSON.stringify({
           playerId: normalizedPlayerId,
-          displayName: normalizedDisplayName
+          displayName: normalizedDisplayName,
+          ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {})
         })
       },
       options?.fetchImpl
@@ -947,6 +950,7 @@ export async function loginCocosPasswordAuthSession(
   options?: {
     fetchImpl?: FetchLike;
     storage?: Pick<Storage, "setItem"> | null;
+    privacyConsentAccepted?: boolean;
   }
 ): Promise<CocosStoredAuthSession> {
   const normalizedLoginId = normalizeLoginId(loginId);
@@ -963,7 +967,8 @@ export async function loginCocosPasswordAuthSession(
       },
       body: JSON.stringify({
         loginId: normalizedLoginId,
-        password
+        password,
+        ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {})
       })
     },
     options?.fetchImpl
@@ -1026,6 +1031,7 @@ export async function confirmCocosAccountRegistration(
   options?: {
     fetchImpl?: FetchLike;
     storage?: Pick<Storage, "setItem"> | null;
+    privacyConsentAccepted?: boolean;
   }
 ): Promise<CocosStoredAuthSession> {
   const normalizedLoginId = normalizeLoginId(loginId);
@@ -1043,7 +1049,8 @@ export async function confirmCocosAccountRegistration(
       body: JSON.stringify({
         loginId: normalizedLoginId,
         registrationToken,
-        password
+        password,
+        ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {})
       })
     },
     options?.fetchImpl
@@ -1142,6 +1149,7 @@ export async function loginCocosWechatAuthSession(
     exchangePath?: string;
     mockCode?: string;
     authToken?: string | null;
+    privacyConsentAccepted?: boolean;
   }
 ): Promise<CocosStoredAuthSession> {
   const normalizedPlayerId = normalizePlayerId(playerId) || createCocosGuestPlayerId();
@@ -1175,7 +1183,8 @@ export async function loginCocosWechatAuthSession(
         code,
         playerId: normalizedPlayerId,
         displayName: profile.displayName,
-        ...(profile.avatarUrl ? { avatarUrl: profile.avatarUrl } : {})
+        ...(profile.avatarUrl ? { avatarUrl: profile.avatarUrl } : {}),
+        ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {})
       })
     },
     options?.fetchImpl

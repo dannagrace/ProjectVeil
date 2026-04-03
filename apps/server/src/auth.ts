@@ -29,7 +29,12 @@ import {
   upsertAuthAccountSession
 } from "./observability";
 import { deriveWechatMinorProtection } from "./minor-protection";
-import { isPlayerBanActive, type PlayerAccountBanSnapshot, type RoomSnapshotStore } from "./persistence";
+import {
+  isPlayerBanActive,
+  type PlayerAccountBanSnapshot,
+  type PlayerAccountSnapshot,
+  type RoomSnapshotStore
+} from "./persistence";
 
 export type AuthMode = "guest" | "account";
 export type AuthProvider = "guest" | "account-password" | "wechat-mini-game";
@@ -621,6 +626,33 @@ function normalizeAvatarUrl(avatarUrl?: string | null): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function sendPrivacyConsentRequired(response: ServerResponse): void {
+  sendJson(response, 403, {
+    error: {
+      code: "privacy_consent_required",
+      message: "Privacy consent must be accepted before continuing"
+    }
+  });
+}
+
+async function ensurePlayerPrivacyConsent(
+  response: ServerResponse,
+  store: RoomSnapshotStore | null,
+  account: PlayerAccountSnapshot,
+  privacyConsentAccepted?: boolean | null
+): Promise<PlayerAccountSnapshot | null> {
+  if (!store || account.privacyConsentAt) {
+    return account;
+  }
+
+  if (privacyConsentAccepted !== true) {
+    sendPrivacyConsentRequired(response);
+    return null;
+  }
+
+  return store.savePlayerAccountPrivacyConsent(account.playerId);
+}
+
 export function createWechatMiniGamePlayerId(openId: string): string {
   const normalizedOpenId = openId.trim();
   if (!normalizedOpenId) {
@@ -862,6 +894,7 @@ async function handleWechatLogin(
     playerId?: string | null;
     displayName?: string | null;
     avatarUrl?: string | null;
+    privacyConsentAccepted?: boolean | null;
     ageVerified?: boolean | null;
     isAdult?: boolean | null;
     ageRange?: string | null;
@@ -902,6 +935,16 @@ async function handleWechatLogin(
       error: {
         code: "invalid_payload",
         message: "Expected optional string field: avatarUrl"
+      }
+    });
+    return;
+  }
+
+  if (body.privacyConsentAccepted !== undefined && body.privacyConsentAccepted !== null && typeof body.privacyConsentAccepted !== "boolean") {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "Expected optional boolean field: privacyConsentAccepted"
       }
     });
     return;
@@ -1006,25 +1049,35 @@ async function handleWechatLogin(
     }
 
     if (boundAccount) {
-      const syncedAccount = await store.bindPlayerAccountWechatMiniGameIdentity(boundAccount.playerId, {
+      let syncedAccount = await store.bindPlayerAccountWechatMiniGameIdentity(boundAccount.playerId, {
         openId: identity.openId,
         ...(identity.unionId ? { unionId: identity.unionId } : {}),
         ...(body.displayName?.trim() ? { displayName: body.displayName } : {}),
         ...(avatarUrl ? { avatarUrl } : {}),
         ...minorProtection
       });
+      const consentedAccount = await ensurePlayerPrivacyConsent(response, store, syncedAccount, body.privacyConsentAccepted);
+      if (!consentedAccount) {
+        return;
+      }
+      syncedAccount = consentedAccount;
       playerId = syncedAccount.playerId;
       displayName = syncedAccount.displayName;
       loginId = syncedAccount.loginId;
     } else {
       const targetPlayerId = authSession?.playerId ?? playerId;
-      const boundAccountResult = await store.bindPlayerAccountWechatMiniGameIdentity(targetPlayerId, {
+      let boundAccountResult = await store.bindPlayerAccountWechatMiniGameIdentity(targetPlayerId, {
         openId: identity.openId,
         ...(identity.unionId ? { unionId: identity.unionId } : {}),
         ...(body.displayName?.trim() ? { displayName: body.displayName } : {}),
         ...(avatarUrl ? { avatarUrl } : {}),
         ...minorProtection
       });
+      const consentedAccount = await ensurePlayerPrivacyConsent(response, store, boundAccountResult, body.privacyConsentAccepted);
+      if (!consentedAccount) {
+        return;
+      }
+      boundAccountResult = consentedAccount;
       playerId = boundAccountResult.playerId;
       displayName = boundAccountResult.displayName;
       loginId = boundAccountResult.loginId;
@@ -1646,6 +1699,12 @@ function touchGuestSession(sessionId: string, token: string): GuestAuthSession |
   return nextSession;
 }
 
+export function revokeGuestAuthSession(sessionId: string): boolean {
+  const revoked = guestSessionsById.delete(sessionId);
+  syncAuthStateTelemetry();
+  return revoked;
+}
+
 export function resetGuestAuthSessions(): void {
   authRateLimitCounters.clear();
   accountLockoutStateByLoginId.clear();
@@ -1782,6 +1841,7 @@ export function registerAuthRoutes(
       const body = (await readJsonBody(request)) as {
         playerId?: string | null;
         displayName?: string | null;
+        privacyConsentAccepted?: boolean | null;
       };
 
       if (body.playerId !== undefined && body.playerId !== null && typeof body.playerId !== "string") {
@@ -1804,14 +1864,29 @@ export function registerAuthRoutes(
         return;
       }
 
+      if (body.privacyConsentAccepted !== undefined && body.privacyConsentAccepted !== null && typeof body.privacyConsentAccepted !== "boolean") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional boolean field: privacyConsentAccepted"
+          }
+        });
+        return;
+      }
+
       let playerId = normalizePlayerId(body.playerId);
       let displayName = normalizeDisplayName(playerId, body.displayName);
 
       if (store) {
-        const account = await store.ensurePlayerAccount({
+        let account = await store.ensurePlayerAccount({
           playerId,
           displayName
         });
+        const consentedAccount = await ensurePlayerPrivacyConsent(response, store, account, body.privacyConsentAccepted);
+        if (!consentedAccount) {
+          return;
+        }
+        account = consentedAccount;
         const activeBan = await resolveActiveBanForPlayer(store, account.playerId);
         if (activeBan) {
           sendAuthFailure(response, "account_banned", activeBan);
@@ -1857,6 +1932,7 @@ export function registerAuthRoutes(
       const body = (await readJsonBody(request)) as {
         loginId?: string | null;
         password?: string | null;
+        privacyConsentAccepted?: boolean | null;
       };
 
       if (body.loginId !== undefined && body.loginId !== null && typeof body.loginId !== "string") {
@@ -1874,6 +1950,16 @@ export function registerAuthRoutes(
           error: {
             code: "invalid_payload",
             message: "Expected string field: password"
+          }
+        });
+        return;
+      }
+
+      if (body.privacyConsentAccepted !== undefined && body.privacyConsentAccepted !== null && typeof body.privacyConsentAccepted !== "boolean") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional boolean field: privacyConsentAccepted"
           }
         });
         return;
@@ -1929,10 +2015,15 @@ export function registerAuthRoutes(
       }
 
       clearAccountLoginFailures(loginId);
-      const account = await store.ensurePlayerAccount({
+      let account = await store.ensurePlayerAccount({
         playerId: authAccount.playerId,
         displayName: authAccount.displayName
       });
+      const consentedAccount = await ensurePlayerPrivacyConsent(response, store, account, body.privacyConsentAccepted);
+      if (!consentedAccount) {
+        return;
+      }
+      account = consentedAccount;
       const activeBan = await resolveActiveBanForPlayer(store, account.playerId);
       if (activeBan) {
         sendAuthFailure(response, "account_banned", activeBan);
@@ -2050,6 +2141,7 @@ export function registerAuthRoutes(
         loginId?: string | null;
         registrationToken?: string | null;
         password?: string | null;
+        privacyConsentAccepted?: boolean | null;
       };
 
       if (body.loginId !== undefined && body.loginId !== null && typeof body.loginId !== "string") {
@@ -2082,9 +2174,23 @@ export function registerAuthRoutes(
         return;
       }
 
+      if (body.privacyConsentAccepted !== undefined && body.privacyConsentAccepted !== null && typeof body.privacyConsentAccepted !== "boolean") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional boolean field: privacyConsentAccepted"
+          }
+        });
+        return;
+      }
+
       const loginId = normalizeAccountLoginId(body.loginId);
       const registrationToken = normalizeAccountRegistrationToken(body.registrationToken);
       const password = normalizeAccountPassword(body.password);
+      if (body.privacyConsentAccepted !== true) {
+        sendPrivacyConsentRequired(response);
+        return;
+      }
       const pendingRegistrationState = getAccountRegistrationState(loginId);
       if (!pendingRegistrationState) {
         sendJson(response, 401, {
@@ -2348,6 +2454,7 @@ export function registerAuthRoutes(
       const body = (await readJsonBody(request)) as {
         loginId?: string | null;
         password?: string | null;
+        privacyConsentAccepted?: boolean | null;
       };
 
       if (body.loginId !== undefined && body.loginId !== null && typeof body.loginId !== "string") {
@@ -2370,8 +2477,26 @@ export function registerAuthRoutes(
         return;
       }
 
+      if (body.privacyConsentAccepted !== undefined && body.privacyConsentAccepted !== null && typeof body.privacyConsentAccepted !== "boolean") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional boolean field: privacyConsentAccepted"
+          }
+        });
+        return;
+      }
+
       const loginId = normalizeAccountLoginId(body.loginId);
       const password = normalizeAccountPassword(body.password);
+      const existingAccount = await store.ensurePlayerAccount({
+        playerId: authSession.playerId,
+        displayName: authSession.displayName
+      });
+      const consentedAccount = await ensurePlayerPrivacyConsent(response, store, existingAccount, body.privacyConsentAccepted);
+      if (!consentedAccount) {
+        return;
+      }
       const account = await store.bindPlayerAccountCredentials(authSession.playerId, {
         loginId,
         passwordHash: hashAccountPassword(password)

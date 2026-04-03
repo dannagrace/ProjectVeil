@@ -5,7 +5,8 @@ import {
   normalizeAccountLoginIdDraft,
   validateAccountLifecycleConfirm,
   validateAccountLifecycleRequest,
-  validateAccountPassword
+  validateAccountPassword,
+  validatePrivacyConsentAccepted
 } from "../src/auth-ui.ts";
 
 test("auth ui helper normalizes login IDs and rejects malformed drafts", () => {
@@ -34,7 +35,8 @@ test("auth ui helper validates confirm drafts for registration and recovery", ()
     validateAccountLifecycleConfirm("recovery", {
       loginId: "veil-ranger",
       token: "dev-recovery-token",
-      password: "123"
+      password: "123",
+      privacyConsentAccepted: true
     }),
     {
       field: "password",
@@ -46,9 +48,23 @@ test("auth ui helper validates confirm drafts for registration and recovery", ()
     validateAccountLifecycleConfirm("registration", {
       loginId: "veil-ranger",
       token: "dev-registration-token",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     }),
     null
+  );
+
+  assert.deepEqual(
+    validateAccountLifecycleConfirm("registration", {
+      loginId: "veil-ranger",
+      token: "dev-registration-token",
+      password: "hunter2",
+      privacyConsentAccepted: false
+    }),
+    {
+      field: "privacyConsent",
+      message: "请先勾选并同意隐私说明后再继续。"
+    }
   );
 });
 
@@ -57,10 +73,18 @@ test("auth ui helper validates password labels and maps server failures", () => 
     field: "password",
     message: "请输入账号口令。"
   });
+  assert.deepEqual(validatePrivacyConsentAccepted(false), {
+    field: "privacyConsent",
+    message: "请先勾选并同意隐私说明后再继续。"
+  });
 
   assert.equal(
     describeAccountAuthFailure({ status: 403, code: "account_locked" }),
     "该账号因连续失败已被临时锁定，请稍后再试。"
+  );
+  assert.equal(
+    describeAccountAuthFailure({ status: 403, code: "privacy_consent_required" }),
+    "需先同意隐私说明，才能登录、注册或继续绑定账号。"
   );
   assert.equal(
     describeAccountAuthFailure({ status: 429, code: "too_many_requests" }),

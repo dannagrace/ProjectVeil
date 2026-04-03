@@ -60,6 +60,7 @@ interface PlayerAccountApiPayload {
     recentBattleReplays?: Partial<PlayerBattleReplaySummary>[];
     loginId?: string;
     credentialBoundAt?: string;
+    privacyConsentAt?: string;
     lastRoomId?: string;
     lastSeenAt?: string;
   };
@@ -692,7 +693,10 @@ export async function savePlayerAccountDisplayName(
 export async function bindPlayerAccountCredentials(
   loginId: string,
   password: string,
-  roomId: string
+  roomId: string,
+  options?: {
+    privacyConsentAccepted?: boolean;
+  }
 ): Promise<PlayerAccountProfile> {
   const authSession = readStoredAuthSession();
   if (!authSession?.token) {
@@ -707,7 +711,8 @@ export async function bindPlayerAccountCredentials(
     },
     body: JSON.stringify({
       loginId: normalizeLoginId(loginId),
-      password
+      password,
+      ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {})
     })
   }, authSession)) as PlayerAccountApiPayload;
 

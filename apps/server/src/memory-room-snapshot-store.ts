@@ -220,6 +220,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
+      ...(existing?.privacyConsentAt ? { privacyConsentAt: existing.privacyConsentAt } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -329,6 +330,22 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       accountSessionVersion: existing.accountSessionVersion ?? 0,
       ...(nextAccount.credentialBoundAt ? { credentialBoundAt: nextAccount.credentialBoundAt } : {})
     });
+    return cloneAccount(nextAccount);
+  }
+
+  async savePlayerAccountPrivacyConsent(
+    playerId: string,
+    input: { privacyConsentAt?: string } = {}
+  ): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const privacyConsentAt = existing.privacyConsentAt ?? new Date(input.privacyConsentAt ?? Date.now()).toISOString();
+    const nextAccount: PlayerAccountSnapshot = {
+      ...existing,
+      privacyConsentAt,
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
     return cloneAccount(nextAccount);
   }
 
@@ -506,6 +523,60 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         });
       }
     }
+    return cloneAccount(nextAccount);
+  }
+
+  async deletePlayerAccount(
+    playerId: string,
+    input: { deletedAt?: string } = {}
+  ): Promise<PlayerAccountSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existing = await this.loadPlayerAccount(normalizedPlayerId);
+    if (!existing) {
+      return null;
+    }
+
+    if (existing.loginId) {
+      this.authByLoginId.delete(existing.loginId);
+    }
+    if (existing.wechatMiniGameOpenId) {
+      this.playerIdByWechatOpenId.delete(existing.wechatMiniGameOpenId);
+    }
+    this.authSessionsByPlayerId.delete(normalizedPlayerId);
+    for (const key of Array.from(this.heroArchives.keys())) {
+      if (key.startsWith(`${normalizedPlayerId}:`)) {
+        this.heroArchives.delete(key);
+      }
+    }
+
+    const deletedAt = new Date(input.deletedAt ?? Date.now()).toISOString();
+    const nextAccount: PlayerAccountSnapshot = {
+      ...existing,
+      displayName: `deleted-${normalizedPlayerId}`,
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      banStatus: "none",
+      accountSessionVersion: (existing.accountSessionVersion ?? 0) + 1,
+      updatedAt: deletedAt
+    };
+    delete nextAccount.avatarUrl;
+    delete nextAccount.lastSeenAt;
+    delete nextAccount.lastRoomId;
+    delete nextAccount.loginId;
+    delete nextAccount.credentialBoundAt;
+    delete nextAccount.privacyConsentAt;
+    delete nextAccount.ageVerified;
+    delete nextAccount.isMinor;
+    delete nextAccount.dailyPlayMinutes;
+    delete nextAccount.lastPlayDate;
+    delete nextAccount.banExpiry;
+    delete nextAccount.banReason;
+    delete nextAccount.refreshSessionId;
+    delete nextAccount.refreshTokenExpiresAt;
+    delete nextAccount.wechatMiniGameOpenId;
+    delete nextAccount.wechatMiniGameUnionId;
+    delete nextAccount.wechatMiniGameBoundAt;
+    this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
     return cloneAccount(nextAccount);
   }
 

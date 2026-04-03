@@ -161,6 +161,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
+      ...(existing?.privacyConsentAt ? { privacyConsentAt: existing.privacyConsentAt } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -252,6 +253,20 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       accountSessionVersion: existing.accountSessionVersion ?? 0,
       credentialBoundAt
     });
+    return account;
+  }
+
+  async savePlayerAccountPrivacyConsent(
+    playerId: string,
+    input: { privacyConsentAt?: string } = {}
+  ): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      privacyConsentAt: existing.privacyConsentAt ?? new Date(input.privacyConsentAt ?? Date.now()).toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(account.playerId, account);
     return account;
   }
 
@@ -408,6 +423,48 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(playerId, account);
+    return account;
+  }
+
+  async deletePlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
+    const existing = this.accounts.get(playerId.trim());
+    if (!existing) {
+      return null;
+    }
+    if (existing.loginId) {
+      this.authByLoginId.delete(existing.loginId);
+    }
+    if (existing.wechatMiniGameOpenId) {
+      this.playerIdByWechatOpenId.delete(existing.wechatMiniGameOpenId);
+    }
+    this.authSessionsByPlayerId.delete(playerId.trim());
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      displayName: `deleted-${existing.playerId}`,
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      banStatus: "none",
+      accountSessionVersion: (existing.accountSessionVersion ?? 0) + 1,
+      updatedAt: new Date().toISOString()
+    };
+    delete account.avatarUrl;
+    delete account.lastRoomId;
+    delete account.lastSeenAt;
+    delete account.loginId;
+    delete account.credentialBoundAt;
+    delete account.privacyConsentAt;
+    delete account.ageVerified;
+    delete account.isMinor;
+    delete account.dailyPlayMinutes;
+    delete account.lastPlayDate;
+    delete account.banExpiry;
+    delete account.banReason;
+    delete account.refreshSessionId;
+    delete account.refreshTokenExpiresAt;
+    delete account.wechatMiniGameOpenId;
+    delete account.wechatMiniGameUnionId;
+    delete account.wechatMiniGameBoundAt;
+    this.accounts.set(account.playerId, account);
     return account;
   }
 
@@ -2280,4 +2337,85 @@ test("player account update routes reject oversized JSON bodies with 413", async
   const stored = await store.loadPlayerAccount("player-oversized");
   assert.equal(stored?.displayName, "起始名册");
   assert.equal(stored?.lastRoomId, "room-start");
+});
+
+test("player deletion anonymizes personal data, clears wechat bindings, and revokes the current token", async (t) => {
+  const port = 44740 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "player-delete",
+    displayName: "雾海旅人"
+  });
+  await store.savePlayerAccountPrivacyConsent("player-delete", {
+    privacyConsentAt: "2026-03-27T12:00:00.000Z"
+  });
+  await store.bindPlayerAccountCredentials("player-delete", {
+    loginId: "delete-ranger",
+    passwordHash: "hashed-password"
+  });
+  await store.bindPlayerAccountWechatMiniGameIdentity("player-delete", {
+    openId: "wx-delete-openid",
+    displayName: "雾海旅人"
+  });
+  await store.savePlayerAccountProgress("player-delete", {
+    recentEventLog: [
+      {
+        id: "delete-event-1",
+        timestamp: "2026-03-27T12:01:00.000Z",
+        roomId: "room-delete",
+        playerId: "player-delete",
+        category: "combat",
+        description: "完成一场遭遇战",
+        rewards: []
+      }
+    ],
+    recentBattleReplays: [createReplaySummary("delete-replay-1", "2026-03-27T12:02:00.000Z")]
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueAccountAuthSession({
+    playerId: "player-delete",
+    displayName: "雾海旅人",
+    loginId: "delete-ranger",
+    sessionVersion: 0
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const deleteResponse = await fetch(`http://127.0.0.1:${port}/api/players/me/delete`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const deletePayload = (await deleteResponse.json()) as {
+    ok: boolean;
+    deleted: { playerId: string; displayName: string };
+  };
+  assert.equal(deleteResponse.status, 200);
+  assert.equal(deletePayload.ok, true);
+  assert.equal(deletePayload.deleted.playerId, "player-delete");
+  assert.match(deletePayload.deleted.displayName, /^deleted-player-delete/);
+
+  const deletedAccount = await store.loadPlayerAccount("player-delete");
+  assert.equal(deletedAccount?.loginId, undefined);
+  assert.equal(deletedAccount?.privacyConsentAt, undefined);
+  assert.equal(deletedAccount?.wechatMiniGameOpenId, undefined);
+  assert.equal(deletedAccount?.recentBattleReplays?.[0]?.id, "delete-replay-1");
+  assert.equal(deletedAccount?.recentEventLog[0]?.id, "delete-event-1");
+
+  const reloginOpenId = await store.loadPlayerAccountByWechatMiniGameOpenId("wx-delete-openid");
+  assert.equal(reloginOpenId, null);
+
+  const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const mePayload = (await meResponse.json()) as {
+    error: { code: string };
+  };
+  assert.equal(meResponse.status, 401);
+  assert.equal(mePayload.error.code, "session_revoked");
 });

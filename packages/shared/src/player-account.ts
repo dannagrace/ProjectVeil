@@ -27,6 +27,7 @@ export interface PlayerAccountReadModel {
   battleReportCenter?: PlayerBattleReportCenter;
   loginId?: string;
   credentialBoundAt?: string;
+  privacyConsentAt?: string;
   ageVerified?: boolean;
   isMinor?: boolean;
   dailyPlayMinutes?: number;
@@ -50,6 +51,7 @@ export interface PlayerAccountReadModelInput {
   battleReportCenter?: Partial<PlayerBattleReportCenter> | null | undefined;
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
+  privacyConsentAt?: string | undefined;
   ageVerified?: boolean | undefined;
   isMinor?: boolean | undefined;
   dailyPlayMinutes?: number | undefined;
@@ -69,6 +71,7 @@ export function normalizePlayerAccountReadModel(
   const avatarUrl = account?.avatarUrl?.trim();
   const loginId = account?.loginId?.trim().toLowerCase();
   const credentialBoundAt = account?.credentialBoundAt?.trim();
+  const privacyConsentAt = account?.privacyConsentAt?.trim();
   const ageVerified = account?.ageVerified === true;
   const isMinor = account?.isMinor === true;
   const dailyPlayMinutes = Math.max(0, Math.floor(account?.dailyPlayMinutes ?? 0));
@@ -102,6 +105,7 @@ export function normalizePlayerAccountReadModel(
     }),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
+    ...(privacyConsentAt ? { privacyConsentAt } : {}),
     ...(ageVerified ? { ageVerified } : {}),
     ...(isMinor ? { isMinor } : {}),
     ...(dailyPlayMinutes > 0 ? { dailyPlayMinutes } : {}),
