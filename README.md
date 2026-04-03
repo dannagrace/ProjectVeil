@@ -95,6 +95,8 @@ npm run dev:client:h5
 
 如果你要启用 MySQL 持久化，再复制 `.env.example` 到 `.env`，填入 `VEIL_MYSQL_*`，然后执行 `npm run db:migrate`。更多说明见 `docs/mysql-persistence.md`。
 
+如果你要把 MySQL 备份自动上传到兼容 S3 的对象存储，再补充 `VEIL_BACKUP_*`，执行 `./scripts/db-backup.sh` 做一次手动演练，并按 `ops/mysql-backup.cron.example` 安装每日 03:00 的 cron。恢复步骤见 `docs/db-restore-runbook.md`。
+
 如果你要验证 Redis-backed Colyseus scaling，可先启动根目录的 `docker-compose.redis.yml`，再用同一个 `REDIS_URL` 启两个服务节点：
 
 ```bash
