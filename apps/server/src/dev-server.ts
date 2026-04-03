@@ -1,3 +1,4 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
@@ -12,7 +13,11 @@ import { registerConfigViewerRoutes } from "./config-viewer";
 import { registerLobbyRoutes } from "./lobby";
 import { registerMatchmakingRoutes } from "./matchmaking";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
-import { registerRuntimeObservabilityRoutes } from "./observability";
+import {
+  buildPrometheusMetricsDocument,
+  recordHttpRequestDuration,
+  registerRuntimeObservabilityRoutes
+} from "./observability";
 import {
   MySqlRoomSnapshotStore,
   readMySqlPersistenceConfig,
@@ -29,6 +34,11 @@ loadEnv();
 
 interface DevServerTransport {
   getExpressApp(): unknown;
+}
+
+interface DevServerHttpApp {
+  use(handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void): void;
+  get(path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>): void;
 }
 
 interface DevServerDefinitionChain {
@@ -102,6 +112,8 @@ export interface DevServerBootstrapDependencies {
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
   registerRuntimeObservabilityRoutes(app: unknown, options?: { store?: DevServerRoomSnapshotStore }): void;
+  registerPrometheusMetricsMiddleware(app: unknown): void;
+  registerPrometheusMetricsRoute(app: unknown): void;
   registerAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore, gameServer: DevServerGameServer): void;
   createGameServer(transport: DevServerTransport, realtimeOptions?: DevServerRealtimeOptions): DevServerGameServer;
   logger: DevServerLogger;
@@ -109,6 +121,35 @@ export interface DevServerBootstrapDependencies {
   setInterval(handler: () => void, delayMs: number): CleanupTimerHandle;
   clearInterval(timer: CleanupTimerHandle): void;
   isMySqlSnapshotStore(store: DevServerRoomSnapshotStore): store is DevServerMySqlSnapshotStore;
+}
+
+export function registerPrometheusMetricsMiddleware(app: DevServerHttpApp): void {
+  app.use((request, response, next) => {
+    const startedAt = process.hrtime.bigint();
+    let recorded = false;
+
+    const recordDuration = (): void => {
+      if (recorded) {
+        return;
+      }
+
+      recorded = true;
+      const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
+      recordHttpRequestDuration(durationSeconds);
+    };
+
+    response.once("finish", recordDuration);
+    response.once("close", recordDuration);
+    next();
+  });
+}
+
+export function registerPrometheusMetricsRoute(app: DevServerHttpApp): void {
+  app.get("/metrics", async (_request, response) => {
+    response.statusCode = 200;
+    response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+    response.end(`${buildPrometheusMetricsDocument()}\n`);
+  });
 }
 
 function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDependencies {
@@ -133,6 +174,8 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
     registerRuntimeObservabilityRoutes: (app, options) => registerRuntimeObservabilityRoutes(app as never, options),
+    registerPrometheusMetricsMiddleware: (app) => registerPrometheusMetricsMiddleware(app as DevServerHttpApp),
+    registerPrometheusMetricsRoute: (app) => registerPrometheusMetricsRoute(app as DevServerHttpApp),
     registerAdminRoutes: (app, store, gameServer) =>
       registerAdminRoutes(app as never, store as RoomSnapshotStore, gameServer),
     createGameServer: (transport, realtimeOptions) =>
@@ -182,6 +225,8 @@ export async function startDevServer(
 
   const transport = deps.createTransport();
   const expressApp = transport.getExpressApp();
+  deps.registerPrometheusMetricsMiddleware(expressApp);
+  deps.registerPrometheusMetricsRoute(expressApp);
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
   deps.registerConfigCenterRoutes(expressApp, configCenterStore);
   deps.registerConfigViewerRoutes(expressApp, configCenterStore);
@@ -209,6 +254,7 @@ export async function startDevServer(
   deps.logger.log(`Runtime health available at http://${host}:${port}/api/runtime/health`);
   deps.logger.log(`Auth readiness available at http://${host}:${port}/api/runtime/auth-readiness`);
   deps.logger.log(`Runtime diagnostic snapshot available at http://${host}:${port}/api/runtime/diagnostic-snapshot`);
+  deps.logger.log(`Prometheus metrics available at http://${host}:${port}/metrics`);
   deps.logger.log(`Runtime metrics available at http://${host}:${port}/api/runtime/metrics`);
   deps.logger.log(`Config center storage: ${configCenterStore.mode}`);
   if (redisUrl) {

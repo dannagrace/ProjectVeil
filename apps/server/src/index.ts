@@ -28,6 +28,7 @@ import {
   type CompletedBattleReplayCapture,
   type OngoingBattleReplayCapture
 } from "./battle-replays";
+import { recordActionValidationFailure, recordBattleDuration } from "./observability";
 
 export interface RoomSnapshot {
   roomId: string;
@@ -69,6 +70,7 @@ function hashBattleSeed(value: string): number {
 export class AuthoritativeWorldRoom {
   private state: WorldState;
   private readonly battles = new Map<string, BattleState>();
+  private readonly battleStartedAtByBattleId = new Map<string, number>();
   private readonly battleIdByHeroId = new Map<string, string>();
   private readonly battleReplayByBattleId = new Map<string, OngoingBattleReplayCapture>();
   private readonly completedBattleReplays: CompletedBattleReplayCapture[] = [];
@@ -158,6 +160,9 @@ export class AuthoritativeWorldRoom {
 
   private setBattle(battle: BattleState): void {
     this.battles.set(battle.id, battle);
+    if (!this.battleStartedAtByBattleId.has(battle.id)) {
+      this.battleStartedAtByBattleId.set(battle.id, Date.now());
+    }
     if (battle.worldHeroId) {
       this.battleIdByHeroId.set(battle.worldHeroId, battle.id);
     }
@@ -168,6 +173,7 @@ export class AuthoritativeWorldRoom {
 
   private clearBattle(battle: BattleState): void {
     this.battles.delete(battle.id);
+    this.battleStartedAtByBattleId.delete(battle.id);
     if (battle.worldHeroId) {
       this.battleIdByHeroId.delete(battle.worldHeroId);
     }
@@ -223,6 +229,15 @@ export class AuthoritativeWorldRoom {
     }
   }
 
+  private recordCompletedBattleDuration(battleId: string): void {
+    const startedAt = this.battleStartedAtByBattleId.get(battleId);
+    if (startedAt == null) {
+      return;
+    }
+
+    recordBattleDuration((Date.now() - startedAt) / 1_000);
+  }
+
   getSnapshot(playerId: string): RoomSnapshot {
     return {
       roomId: this.state.meta.roomId,
@@ -258,6 +273,7 @@ export class AuthoritativeWorldRoom {
       const outcome = getBattleOutcome(battle);
       if (outcome.status !== "in_progress") {
         this.finalizeBattleReplay(battle, outcome);
+        this.recordCompletedBattleDuration(battle.id);
         if (battle.worldHeroId) {
           const worldOutcome = applyBattleOutcomeToWorld(
             this.state,
@@ -294,6 +310,7 @@ export class AuthoritativeWorldRoom {
     if ("heroId" in action) {
       const hero = this.state.heroes.find((item) => item.id === action.heroId);
       if (!hero || hero.playerId !== playerId) {
+        recordActionValidationFailure("world", "hero_not_owned_by_player");
         return {
           ok: false,
           reason: "hero_not_owned_by_player",
@@ -302,6 +319,7 @@ export class AuthoritativeWorldRoom {
       }
 
       if (this.getBattleIdForHero(hero.id)) {
+        recordActionValidationFailure("world", "hero_in_battle");
         return {
           ok: false,
           reason: "hero_in_battle",
@@ -313,6 +331,7 @@ export class AuthoritativeWorldRoom {
 
     const validation = validateWorldAction(this.state, action);
     if (!validation.valid) {
+      recordActionValidationFailure("world", validation.reason ?? "world_action_invalid");
       return {
         ok: false,
         ...(validation.reason ? { reason: validation.reason } : {}),
@@ -380,6 +399,7 @@ export class AuthoritativeWorldRoom {
   dispatchBattle(playerId: string, action: BattleAction): BattleDispatchResult {
     const activeBattle = this.getBattleForPlayer(playerId);
     if (!activeBattle) {
+      recordActionValidationFailure("battle", "battle_not_active");
       return {
         ok: false,
         reason: "battle_not_active",
@@ -389,6 +409,7 @@ export class AuthoritativeWorldRoom {
 
     const controllingCamp = this.getControllingCamp(playerId, activeBattle);
     if (!controllingCamp) {
+      recordActionValidationFailure("battle", "battle_not_owned_by_player");
       return {
         ok: false,
         reason: "battle_not_owned_by_player",
@@ -399,6 +420,7 @@ export class AuthoritativeWorldRoom {
     const actingUnitId = action.type === "battle.attack" ? action.attackerId : action.unitId;
     const actingUnit = activeBattle.units[actingUnitId];
     if (!actingUnit || actingUnit.camp !== controllingCamp) {
+      recordActionValidationFailure("battle", "unit_not_player_controlled");
       return {
         ok: false,
         reason: "unit_not_player_controlled",
@@ -409,6 +431,7 @@ export class AuthoritativeWorldRoom {
 
     const validation = validateBattleAction(activeBattle, action);
     if (!validation.valid) {
+      recordActionValidationFailure("battle", validation.reason ?? "battle_action_invalid");
       return {
         ok: false,
         ...(validation.reason ? { reason: validation.reason } : {}),
