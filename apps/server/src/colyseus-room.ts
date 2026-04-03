@@ -476,7 +476,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
           await store.savePlayerAccountProgress(playerId, {
             achievements: nextAccount.achievements,
             recentEventLog: nextAccount.recentEventLog,
-            ...(nextAccount.recentBattleReplays ? { recentBattleReplays: nextAccount.recentBattleReplays } : {}),
+            ...(playerReplays.length > 0 ? { recentBattleReplays: nextAccount.recentBattleReplays } : {}),
             lastRoomId: this.metadata.logicalRoomId
           });
         })

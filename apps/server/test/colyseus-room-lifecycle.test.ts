@@ -2,8 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
-import type { BattleState, ServerMessage } from "../../../packages/shared/src/index";
-import { VeilColyseusRoom, configureRoomSnapshotStore, listLobbyRooms, resetLobbyRoomRegistry } from "../src/colyseus-room";
+import type { BattleState, ServerMessage, WorldEvent } from "../../../packages/shared/src/index";
+import {
+  VeilColyseusRoom,
+  configureRoomSnapshotStore,
+  getActiveRoomInstances,
+  listLobbyRooms,
+  resetLobbyRoomRegistry
+} from "../src/colyseus-room";
 import { createRoom, type RoomPersistenceSnapshot } from "../src/index";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import type { PlayerAccountProgressPatch, PlayerAccountSnapshot } from "../src/persistence";
@@ -553,6 +559,30 @@ test("stale room disposal cannot unregister a replacement room with the same log
   assert.equal(listLobbyRooms().some((entry) => entry.roomId === logicalRoomId), false);
 });
 
+test("active room registry keeps the replacement instance through stale disposal", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const logicalRoomId = `lifecycle-active-room-registry-${Date.now()}`;
+  const firstRoom = await createTestRoom(logicalRoomId, 3101);
+  const secondRoom = await createTestRoom(logicalRoomId, 4202);
+
+  t.after(() => {
+    cleanupRoom(firstRoom);
+    cleanupRoom(secondRoom);
+    getActiveRoomInstances().clear();
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  assert.equal(getActiveRoomInstances().get(logicalRoomId), secondRoom);
+
+  firstRoom.onDispose();
+  assert.equal(getActiveRoomInstances().get(logicalRoomId), secondRoom);
+
+  secondRoom.onDispose();
+  assert.equal(getActiveRoomInstances().has(logicalRoomId), false);
+});
+
 test("simultaneous rooms keep seeded world state isolated", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
@@ -766,6 +796,58 @@ test("battle replay persistence runs once at settlement and is drained from the 
   assert.equal(replaySaves.length, 1);
   assert.equal(replaySaves[0]?.patch.recentBattleReplays?.[0]?.id, replay?.id);
   assert.deepEqual(internalRoom.worldRoom.consumeCompletedBattleReplays(), []);
+});
+
+test("battle replay patches are not re-emitted on later non-replay progress saves", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-replay-single-emission-${Date.now()}`);
+  const client = createFakeClient("session-replay-single-emission");
+  const internalRoom = room as VeilColyseusRoom & {
+    persistPlayerAccountProgress(events: WorldEvent[], completedReplays: unknown[]): Promise<void>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-replay-single-emission");
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: "move-replay-single-emission-start",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 5, y: 4 }
+    }
+  });
+
+  const openingMoveEvents = lastSessionState(client, "reply").payload.events;
+  const steps = await resolveBattleThroughRoom(room, client, "player-1");
+  const replayId = (await store.loadPlayerAccount("player-1"))?.recentBattleReplays?.[0]?.id;
+  const initialReplaySaves = store.progressSaves.filter(
+    (entry) => entry.playerId === "player-1" && (entry.patch.recentBattleReplays?.length ?? 0) > 0
+  );
+
+  assert.ok(steps > 0);
+  assert.ok(replayId);
+  assert.ok(openingMoveEvents.length > 0, "expected the opening room action to generate player-facing events");
+  assert.equal(initialReplaySaves.length, 1);
+
+  await internalRoom.persistPlayerAccountProgress(openingMoveEvents, []);
+
+  const replaySavesAfterFollowupPersist = store.progressSaves.filter(
+    (entry) => entry.playerId === "player-1" && (entry.patch.recentBattleReplays?.length ?? 0) > 0
+  );
+  const account = await store.loadPlayerAccount("player-1");
+
+  assert.equal(replaySavesAfterFollowupPersist.length, 1);
+  assert.equal(replaySavesAfterFollowupPersist[0]?.patch.recentBattleReplays?.[0]?.id, replayId);
+  assert.equal(account?.recentBattleReplays?.length, 1);
+  assert.equal(account?.recentBattleReplays?.[0]?.id, replayId);
 });
 
 test("battle replay persistence stays isolated to the room that settled the battle", async (t) => {
