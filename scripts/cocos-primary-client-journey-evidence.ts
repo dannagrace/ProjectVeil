@@ -914,6 +914,12 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
 
     writeJson(jsonOutputPath, artifact);
     writeText(markdownOutputPath, renderMarkdown(artifact));
+    console.error(`Primary-client journey smoke failed at stage: ${currentStep}`);
+    console.error(`Journey evidence JSON: ${toRepoRelative(jsonOutputPath)}`);
+    console.error(`Journey evidence Markdown: ${toRepoRelative(markdownOutputPath)}`);
+    if (failedArtifactPath) {
+      console.error(`Stage diagnostics artifact: ${failedArtifactPath}`);
+    }
     throw error;
   } finally {
     if (root) {

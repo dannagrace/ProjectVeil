@@ -123,7 +123,7 @@ const AUTOMATED_CHECKS: Array<Pick<ReleaseReadinessCheck, "id" | "title" | "comm
   {
     id: "cocos-primary-journey",
     title: "Cocos primary journey regression",
-    command: "npm run test:cocos:primary-journey",
+    command: "npm run smoke:cocos:canonical-journey",
     required: true
   },
   {

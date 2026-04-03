@@ -13,7 +13,7 @@
 - 当前自动化可把已校验导出目录打成确定性的 `tar.gz` 发布包，并输出 sidecar 元数据 `codex.wechat.package.json`
   - sidecar 会记录归档文件名、SHA-256、字节数、导出目录来源，以及归档内文件清单摘要
 - 当前自动化还会运行 `npm run audit:cocos-primary-delivery`，把 primary client 的导出校验与 artifact 校验收口成一份简明 JSON / Markdown 摘要
-- 当 PR 改动 `apps/cocos-client/**`、`scripts/cocos-*`、`scripts/*release*`、`docs/cocos-*` 或微信小游戏打包路径时，CI 会额外运行 `npm run test:cocos:primary-journey` 与 `npm run release:cocos:primary-diagnostics`
+- 当 PR 改动 `apps/cocos-client/**`、`scripts/cocos-*`、`scripts/*release*`、`docs/cocos-*` 或微信小游戏打包路径时，CI 会额外运行 `npm run smoke:cocos:canonical-journey` 与 `npm run release:cocos:primary-diagnostics`
   - 结果会统一上传为 GitHub Actions artifact `cocos-release-packaging-evidence-<sha>`，其中固定包含 `SUMMARY.md`，并在成功时附带 primary delivery audit 与 primary-client diagnostics 的 JSON / Markdown 证据
   - 若任一证据缺失，`SUMMARY.md` 会明确指出缺失的是 delivery audit 还是 diagnostics artifact，并给出对应回归命令
 - CI 会把上述归档与 sidecar 元数据作为 GitHub Actions artifact `wechat-release-<sha>` 上传，供提审前下载、留档与回滚追溯
