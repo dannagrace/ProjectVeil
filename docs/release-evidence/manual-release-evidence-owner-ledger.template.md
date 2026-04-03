@@ -2,7 +2,7 @@
 
 Use this ledger when one candidate still depends on manual release evidence that lives across multiple JSON artifacts, checklist files, or sign-off notes.
 
-Create one copy per candidate under `artifacts/release-readiness/` or attach the same table to the release PR. Keep it lightweight: the goal is to show, in one place, which manual sign-offs are still missing, who owns them, whether they are still fresh for this candidate revision, and which artifact proves completion.
+Create one copy per candidate under `artifacts/release-readiness/` or attach the same table to the release PR. Use the candidate-scoped filename convention `manual-release-evidence-owner-ledger-<candidate>-<short-sha>.md`; see `artifacts/release-readiness/manual-release-evidence-owner-ledger-phase1-rc-abc1234.md` for a tracked example. Keep it lightweight: the goal is to show, in one place, which manual sign-offs are still missing, who owns them, whether they are still fresh for this candidate revision, and which artifact proves completion.
 
 ## Candidate
 
