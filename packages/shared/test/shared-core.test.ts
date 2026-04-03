@@ -4603,6 +4603,7 @@ test("applyBattleAction supports active ranged skills without retaliation", () =
   assert.equal(next.units["pikeman-a"]?.count, 12);
   assert.equal(next.units["wolf-d"]?.count, 6);
   assert.equal(next.units["wolf-d"]?.hasRetaliated, false);
+  assert.equal(next.unitCooldowns["pikeman-a"]?.power_shot, 2);
   assert.equal(next.units["pikeman-a"]?.skills?.find((skill) => skill.id === "power_shot")?.remainingCooldown, 2);
   assert.match(next.log.at(-1) ?? "", /投矛射击/);
 });
@@ -4615,6 +4616,7 @@ test("executeBattleSkill resolves enemy and self-target skills through the share
   const rangedNext = executeBattleSkill(rangedState, "pikeman-a", "power_shot", "wolf-d");
 
   assert.equal(rangedNext.activeUnitId, "wolf-d");
+  assert.equal(rangedNext.unitCooldowns["pikeman-a"]?.power_shot, 2);
   assert.equal(rangedNext.units["pikeman-a"]?.skills?.find((skill) => skill.id === "power_shot")?.remainingCooldown, 2);
   assert.equal(rangedNext.units["wolf-d"]?.hasRetaliated, false);
   assert.match(rangedNext.log.at(-1) ?? "", /投矛射击/);
@@ -4627,6 +4629,7 @@ test("executeBattleSkill resolves enemy and self-target skills through the share
 
   assert.equal(buffNext.activeUnitId, "wolf-d");
   assert.equal(buffNext.units["pikeman-a"]?.statusEffects?.[0]?.id, "arcane_armor");
+  assert.equal(buffNext.unitCooldowns["pikeman-a"]?.armor_spell, 3);
   assert.equal(buffNext.units["pikeman-a"]?.skills?.find((skill) => skill.id === "armor_spell")?.remainingCooldown, 3);
   assert.match(buffNext.log.at(-1) ?? "", /护甲术/);
 });
@@ -4646,6 +4649,7 @@ test("applyBattleAction supports armor spell buffs on the acting unit", () => {
   assert.equal(next.activeUnitId, "wolf-d");
   assert.equal(next.units["pikeman-a"]?.statusEffects?.[0]?.id, "arcane_armor");
   assert.equal(next.units["pikeman-a"]?.statusEffects?.[0]?.defenseModifier, 3);
+  assert.equal(next.unitCooldowns["pikeman-a"]?.armor_spell, 3);
   assert.equal(next.units["pikeman-a"]?.skills?.find((skill) => skill.id === "armor_spell")?.remainingCooldown, 3);
   assert.match(next.log.at(-1) ?? "", /护甲术/);
 });
@@ -4788,11 +4792,9 @@ test("validateBattleAction covers wait and skill rejection branches", () => {
   const cooldownState = cloneBattleState(initial);
   cooldownState.activeUnitId = "pikeman-a";
   cooldownState.turnOrder = ["pikeman-a", "wolf-d"];
-  cooldownState.units["pikeman-a"] = {
-    ...cooldownState.units["pikeman-a"]!,
-    skills: cooldownState.units["pikeman-a"]!.skills?.map((skill) =>
-      skill.id === "power_shot" ? { ...skill, remainingCooldown: 1 } : skill
-    )
+  cooldownState.unitCooldowns["pikeman-a"] = {
+    ...cooldownState.unitCooldowns["pikeman-a"],
+    power_shot: 1
   };
   assert.deepEqual(
     validateBattleAction(cooldownState, {
@@ -4885,6 +4887,34 @@ test("validateBattleAction covers wait and skill rejection branches", () => {
     {
       valid: false,
       reason: "friendly_fire_blocked"
+    }
+  );
+});
+
+test("validateBattleAction rejects skills from server-side cooldown state even when unit skill data looks ready", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d"];
+  state.unitCooldowns["pikeman-a"] = {
+    power_shot: 1
+  };
+  state.units["pikeman-a"] = {
+    ...state.units["pikeman-a"]!,
+    skills: state.units["pikeman-a"]!.skills?.map((skill) =>
+      skill.id === "power_shot" ? { ...skill, remainingCooldown: 0 } : skill
+    )
+  };
+
+  assert.deepEqual(
+    validateBattleAction(state, {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "power_shot",
+      targetId: "wolf-d"
+    }),
+    {
+      valid: false,
+      reason: "skill_on_cooldown"
     }
   );
 });
@@ -5017,6 +5047,9 @@ test("applyBattleAction resolves wait plus turn-start poison death and cooldown 
   const initial = createDemoBattleState();
   initial.activeUnitId = "pikeman-a";
   initial.turnOrder = ["pikeman-a", "wolf-d"];
+  initial.unitCooldowns["wolf-d"] = {
+    crippling_howl: 1
+  };
   initial.units["wolf-d"] = {
     ...initial.units["wolf-d"]!,
     count: 1,
@@ -5048,9 +5081,75 @@ test("applyBattleAction resolves wait plus turn-start poison death and cooldown 
   assert.deepEqual(next.turnOrder, ["pikeman-a"]);
   assert.equal(next.units["wolf-d"]?.count, 0);
   assert.equal(next.units["wolf-d"]?.currentHp, 0);
+  assert.deepEqual(next.unitCooldowns["wolf-d"], {});
   assert.equal(next.units["wolf-d"]?.skills?.find((skill) => skill.id === "crippling_howl")?.remainingCooldown, 0);
   assert.deepEqual(next.units["wolf-d"]?.statusEffects, []);
   assert.deepEqual(next.log.slice(-3), ["pikeman-a 选择等待", "恶狼 受到中毒影响，损失 2 生命", "恶狼 的中毒结束"]);
+});
+
+test("skill cooldowns are stored on battle state, decremented on each acting turn, and cleared when ready", () => {
+  const initial = createDemoBattleState();
+  initial.activeUnitId = "pikeman-a";
+  initial.turnOrder = ["pikeman-a", "wolf-d"];
+  initial.units["pikeman-a"] = {
+    ...initial.units["pikeman-a"]!,
+    initiative: 12
+  };
+  initial.units["wolf-d"] = {
+    ...initial.units["wolf-d"]!,
+    initiative: 8
+  };
+
+  const afterUse = applyBattleAction(initial, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "power_shot",
+    targetId: "wolf-d"
+  });
+
+  assert.equal(afterUse.unitCooldowns["pikeman-a"]?.power_shot, 2);
+  assert.equal(afterUse.units["pikeman-a"]?.skills?.find((skill) => skill.id === "power_shot")?.remainingCooldown, 2);
+
+  const afterEnemyTurn = applyBattleAction(afterUse, {
+    type: "battle.defend",
+    unitId: "wolf-d"
+  });
+
+  assert.equal(afterEnemyTurn.activeUnitId, "pikeman-a");
+  assert.equal(afterEnemyTurn.unitCooldowns["pikeman-a"]?.power_shot, 1);
+  assert.equal(
+    validateBattleAction(afterEnemyTurn, {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "power_shot",
+      targetId: "wolf-d"
+    }).reason,
+    "skill_on_cooldown"
+  );
+
+  const afterWait = applyBattleAction(afterEnemyTurn, {
+    type: "battle.wait",
+    unitId: "pikeman-a"
+  });
+  const afterSecondEnemyTurn = applyBattleAction(afterWait, {
+    type: "battle.defend",
+    unitId: "wolf-d"
+  });
+
+  assert.equal(afterSecondEnemyTurn.activeUnitId, "pikeman-a");
+  assert.deepEqual(afterSecondEnemyTurn.unitCooldowns["pikeman-a"], {});
+  assert.equal(afterSecondEnemyTurn.units["pikeman-a"]?.skills?.find((skill) => skill.id === "power_shot")?.remainingCooldown, 0);
+  assert.deepEqual(
+    validateBattleAction(afterSecondEnemyTurn, {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "power_shot",
+      targetId: "wolf-d"
+    }),
+    {
+      valid: true
+    }
+  );
 });
 
 test("applyBattleAction advances into turn-start processing even when the next unit has no skills", () => {
@@ -5286,6 +5385,7 @@ test("createEmptyBattleState returns the minimal neutral battle shell", () => {
     activeUnitId: null,
     turnOrder: [],
     units: {},
+    unitCooldowns: {},
     environment: [],
     log: [],
     rng: {

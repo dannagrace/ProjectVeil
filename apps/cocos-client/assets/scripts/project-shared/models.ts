@@ -506,6 +506,7 @@ export interface BattleState {
   activeUnitId: string | null;
   turnOrder: string[];
   units: Record<string, UnitStack>;
+  unitCooldowns: Record<string, Record<string, number>>;
   environment: BattleHazardState[];
   log: string[];
   rng: DeterministicRngState;
