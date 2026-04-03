@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import {
   appendPlayerBattleReplaySummaries,
@@ -41,6 +42,8 @@ export interface RoomSnapshotStore {
     playerId: string,
     input: PlayerAccountCredentialInput
   ): Promise<PlayerAccountSnapshot>;
+  creditGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
+  debitGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   savePlayerAccountPrivacyConsent(
     playerId: string,
     input?: PlayerAccountPrivacyConsentInput
@@ -130,6 +133,7 @@ interface PlayerAccountRow extends RowDataPacket {
   display_name: string | null;
   avatar_url: string | null;
   elo_rating: number | null;
+  gems: number | null;
   global_resources_json: string | ResourceLedger;
   achievements_json: string | PlayerAchievementProgress[] | null;
   recent_event_log_json: string | EventLogEntry[] | null;
@@ -307,6 +311,17 @@ export interface PlayerAccountEnsureInput {
   lastRoomId?: string;
 }
 
+export type GemLedgerReason = "purchase" | "reward" | "spend";
+
+export interface GemLedgerEntry {
+  entryId: string;
+  playerId: string;
+  delta: number;
+  reason: GemLedgerReason;
+  refId: string;
+  createdAt: string;
+}
+
 export type PlayerReportReason = "cheating" | "harassment" | "afk";
 export type PlayerReportStatus = "pending" | "dismissed" | "warned" | "banned";
 
@@ -460,6 +475,8 @@ export const MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX = "idx_player_accounts_update
 export const MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX = "uidx_player_accounts_login_id";
 export const MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX = "uidx_player_accounts_wechat_open_id";
 export const MYSQL_PLAYER_ACCOUNT_WECHAT_IDP_OPEN_ID_INDEX = "uidx_player_accounts_wechat_idp_open_id";
+export const MYSQL_GEM_LEDGER_TABLE = "gem_ledger";
+export const MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX = "idx_gem_ledger_player_created";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_TABLE = "player_account_sessions";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX = "idx_player_account_sessions_player_last_used";
 export const MYSQL_PLAYER_BAN_HISTORY_TABLE = "player_ban_history";
@@ -657,6 +674,36 @@ function normalizeDailyPlayMinutes(minutes?: number | null): number {
   return Math.max(0, Math.floor(minutes ?? 0));
 }
 
+function normalizeGemAmount(amount?: number | null): number {
+  return Math.max(0, Math.floor(amount ?? 0));
+}
+
+function normalizePositiveGemDelta(amount: number): number {
+  const normalized = Math.floor(amount);
+  if (!Number.isFinite(amount) || normalized <= 0) {
+    throw new Error("gem amount must be a positive integer");
+  }
+
+  return normalized;
+}
+
+function normalizeGemLedgerReason(reason: GemLedgerReason): GemLedgerReason {
+  if (reason === "purchase" || reason === "reward" || reason === "spend") {
+    return reason;
+  }
+
+  throw new Error("gem reason must be purchase, reward, or spend");
+}
+
+function normalizeGemLedgerRefId(refId: string): string {
+  const normalized = refId.trim();
+  if (!normalized) {
+    throw new Error("refId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
 function normalizeLastPlayDate(value?: string | Date | null): string | undefined {
   if (!value) {
     return undefined;
@@ -753,6 +800,7 @@ function normalizePlayerAccountSnapshot(account: {
   displayName?: string | null | undefined;
   avatarUrl?: string | null | undefined;
   eloRating?: number | null | undefined;
+  gems?: number | null | undefined;
   globalResources?: Partial<ResourceLedger>;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -792,6 +840,7 @@ function normalizePlayerAccountSnapshot(account: {
       displayName: normalizePlayerDisplayName(playerId, account.displayName),
       avatarUrl: normalizePlayerAvatarUrl(account.avatarUrl),
       eloRating: normalizeEloRating(account.eloRating),
+      gems: normalizeGemAmount(account.gems),
       globalResources: normalizeResourceLedger(account.globalResources),
       achievements: account.achievements,
       recentEventLog: account.recentEventLog,
@@ -1083,6 +1132,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   display_name VARCHAR(80) NULL,
   avatar_url VARCHAR(512) NULL,
   elo_rating INT NOT NULL DEFAULT 1000,
+  gems INT NOT NULL DEFAULT 0,
   global_resources_json LONGTEXT NOT NULL,
   achievements_json LONGTEXT NULL,
   recent_event_log_json LONGTEXT NULL,
@@ -1111,6 +1161,16 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (player_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS \`${MYSQL_GEM_LEDGER_TABLE}\` (
+  entry_id VARCHAR(191) NOT NULL,
+  player_id VARCHAR(191) NOT NULL,
+  delta INT NOT NULL,
+  reason VARCHAR(16) NOT NULL,
+  ref_id VARCHAR(191) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (entry_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\` (
@@ -1272,6 +1332,24 @@ SET @veil_player_accounts_elo_rating_sql := IF(
 PREPARE veil_player_accounts_elo_rating_stmt FROM @veil_player_accounts_elo_rating_sql;
 EXECUTE veil_player_accounts_elo_rating_stmt;
 DEALLOCATE PREPARE veil_player_accounts_elo_rating_stmt;
+
+SET @veil_player_accounts_gems_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'gems'
+);
+
+SET @veil_player_accounts_gems_sql := IF(
+  @veil_player_accounts_gems_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`gems\` INT NOT NULL DEFAULT 0 AFTER \`elo_rating\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_gems_stmt FROM @veil_player_accounts_gems_sql;
+EXECUTE veil_player_accounts_gems_stmt;
+DEALLOCATE PREPARE veil_player_accounts_gems_stmt;
 
 SET @veil_player_accounts_event_log_exists := (
   SELECT COUNT(*)
@@ -1741,6 +1819,24 @@ PREPARE veil_player_accounts_wechat_idp_open_id_idx_stmt FROM @veil_player_accou
 EXECUTE veil_player_accounts_wechat_idp_open_id_idx_stmt;
 DEALLOCATE PREPARE veil_player_accounts_wechat_idp_open_id_idx_stmt;
 
+SET @veil_gem_ledger_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_GEM_LEDGER_TABLE}'
+    AND INDEX_NAME = '${MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX}'
+);
+
+SET @veil_gem_ledger_idx_sql := IF(
+  @veil_gem_ledger_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX}\` ON \`${MYSQL_GEM_LEDGER_TABLE}\` (player_id, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_gem_ledger_idx_stmt FROM @veil_gem_ledger_idx_sql;
+EXECUTE veil_gem_ledger_idx_stmt;
+DEALLOCATE PREPARE veil_gem_ledger_idx_stmt;
+
 SET @veil_player_ban_history_idx_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.STATISTICS
@@ -1965,6 +2061,7 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     playerId: row.player_id,
     ...(row.avatar_url ? { avatarUrl: row.avatar_url } : {}),
     ...(row.elo_rating != null ? { eloRating: row.elo_rating } : {}),
+    gems: normalizeGemAmount(row.gems),
     globalResources: parseJsonColumn<ResourceLedger>(row.global_resources_json),
     achievements:
       row.achievements_json != null
@@ -2176,6 +2273,29 @@ async function appendPlayerBanHistoryEntry(
   );
 }
 
+async function appendGemLedgerEntry(
+  queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
+  entry: {
+    entryId: string;
+    playerId: string;
+    delta: number;
+    reason: GemLedgerReason;
+    refId: string;
+  }
+): Promise<void> {
+  await queryable.query(
+    `INSERT INTO \`${MYSQL_GEM_LEDGER_TABLE}\` (
+       entry_id,
+       player_id,
+       delta,
+       reason,
+       ref_id
+     )
+     VALUES (?, ?, ?, ?, ?)`,
+    [entry.entryId, entry.playerId, Math.trunc(entry.delta), normalizeGemLedgerReason(entry.reason), entry.refId]
+  );
+}
+
 async function deletePlayerProfilesForRoom(connection: PoolConnection, roomId: string): Promise<void> {
   await connection.query(`DELETE FROM \`${MYSQL_PLAYER_ROOM_PROFILE_TABLE}\` WHERE room_id = ?`, [roomId]);
 }
@@ -2222,16 +2342,18 @@ async function savePlayerAccounts(
          player_id,
          display_name,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json
          ,
          recent_battle_replays_json
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
+         gems = VALUES(gems),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
          recent_event_log_json = COALESCE(recent_event_log_json, VALUES(recent_event_log_json)),
@@ -2241,6 +2363,7 @@ async function savePlayerAccounts(
         normalizedAccount.playerId,
         normalizedAccount.displayName,
         normalizedAccount.eloRating,
+        normalizedAccount.gems,
         JSON.stringify(normalizedAccount.globalResources),
         JSON.stringify(normalizedAccount.achievements),
         JSON.stringify(normalizedAccount.recentEventLog),
@@ -2448,6 +2571,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -2495,6 +2619,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -2626,6 +2751,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -2767,6 +2893,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -2774,7 +2901,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(?, display_name),
          last_room_id = COALESCE(?, last_room_id),
@@ -2784,6 +2911,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         playerId,
         insertDisplayName,
         normalizeEloRating(undefined),
+        0,
         JSON.stringify(normalizeResourceLedger()),
         JSON.stringify(normalizeAchievementProgress()),
         JSON.stringify(normalizeEventLogEntries()),
@@ -3030,6 +3158,86 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         ...existingAccount,
         loginId: normalizedLoginId,
         credentialBoundAt
+      })
+    );
+  }
+
+  async creditGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot> {
+    const normalizedReason = normalizeGemLedgerReason(reason);
+    if (normalizedReason === "spend") {
+      throw new Error("credit reason must be purchase or reward");
+    }
+
+    return this.mutateGems(playerId, normalizePositiveGemDelta(amount), normalizedReason, refId);
+  }
+
+  async debitGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot> {
+    const normalizedReason = normalizeGemLedgerReason(reason);
+    if (normalizedReason !== "spend") {
+      throw new Error("debit reason must be spend");
+    }
+
+    return this.mutateGems(playerId, -normalizePositiveGemDelta(amount), normalizedReason, refId);
+  }
+
+  private async mutateGems(
+    playerId: string,
+    delta: number,
+    reason: GemLedgerReason,
+    refId: string
+  ): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedRefId = normalizeGemLedgerRefId(refId);
+    let nextGems = 0;
+    await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [rows] = await connection.query<RowDataPacket[]>(
+        `SELECT gems
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedPlayerId]
+      );
+
+      const currentGems = normalizeGemAmount((rows[0] as { gems?: number } | undefined)?.gems);
+      nextGems = currentGems + delta;
+      if (nextGems < 0) {
+        throw new Error("insufficient gems");
+      }
+
+      await connection.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET gems = ?,
+             version = version + 1
+         WHERE player_id = ?`,
+        [nextGems, normalizedPlayerId]
+      );
+      await appendGemLedgerEntry(connection, {
+        entryId: randomUUID(),
+        playerId: normalizedPlayerId,
+        delta,
+        reason,
+        refId: normalizedRefId
+      });
+
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        playerId: normalizedPlayerId,
+        gems: nextGems
       })
     );
   }
@@ -3399,6 +3607,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -3408,7 +3617,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
@@ -3427,6 +3636,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.displayName,
         nextAccount.avatarUrl ?? null,
         nextAccount.eloRating,
+        nextAccount.gems,
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
@@ -3484,6 +3694,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -3495,7 +3706,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          daily_play_minutes,
          last_play_date
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
@@ -3516,6 +3727,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.displayName,
         nextAccount.avatarUrl ?? null,
         nextAccount.eloRating,
+        nextAccount.gems,
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
@@ -3556,6 +3768,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,

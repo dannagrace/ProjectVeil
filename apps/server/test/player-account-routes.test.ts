@@ -145,6 +145,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       playerId: input.playerId,
       displayName: input.displayName?.trim() || existing?.displayName || input.playerId,
       ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
+      gems: existing?.gems ?? 0,
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
       achievements: structuredClone(existing?.achievements ?? []),
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
@@ -170,6 +171,47 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(account.playerId, account);
+    return account;
+  }
+
+  async creditGems(playerId: string, amount: number, reason: "purchase" | "reward", _refId: string): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    if (!Number.isFinite(amount) || Math.floor(amount) <= 0) {
+      throw new Error("gem amount must be a positive integer");
+    }
+    if (reason !== "purchase" && reason !== "reward") {
+      throw new Error("credit reason must be purchase or reward");
+    }
+
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      gems: existing.gems + Math.floor(amount),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(playerId, account);
+    return account;
+  }
+
+  async debitGems(playerId: string, amount: number, reason: "spend", _refId: string): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    if (!Number.isFinite(amount) || Math.floor(amount) <= 0) {
+      throw new Error("gem amount must be a positive integer");
+    }
+    if (reason !== "spend") {
+      throw new Error("debit reason must be spend");
+    }
+
+    const normalizedAmount = Math.floor(amount);
+    if (existing.gems < normalizedAmount) {
+      throw new Error("insufficient gems");
+    }
+
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      gems: existing.gems - normalizedAmount,
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(playerId, account);
     return account;
   }
 
@@ -746,6 +788,7 @@ test("player account routes list and fetch stored accounts", async (t) => {
   store.seedAccount({
     playerId: "player-1",
     displayName: "灰烬领主",
+    gems: 42,
     globalResources: { gold: 320, wood: 5, ore: 1 },
     achievements: [],
     recentEventLog: [],
@@ -767,6 +810,7 @@ test("player account routes list and fetch stored accounts", async (t) => {
   const detailPayload = (await detailResponse.json()) as { account: PlayerAccountSnapshot };
   assert.equal(detailResponse.status, 200);
   assert.equal(detailPayload.account.playerId, "player-1");
+  assert.equal(detailPayload.account.gems, 42);
   assert.equal(detailPayload.account.lastRoomId, "room-alpha");
 });
 
