@@ -18,6 +18,8 @@ interface RuntimeObservabilityCounters {
   connectMessagesTotal: number;
   worldActionsTotal: number;
   battleActionsTotal: number;
+  websocketActionRateLimitedTotal: number;
+  websocketActionKickTotal: number;
 }
 
 interface AuthObservabilityCounters {
@@ -106,11 +108,13 @@ interface RuntimeHealthPayload {
     activeBattleCount: number;
     heroCount: number;
     gameplayTraffic: {
-      connectMessagesTotal: number;
-      worldActionsTotal: number;
-      battleActionsTotal: number;
-      actionMessagesTotal: number;
-    };
+        connectMessagesTotal: number;
+        worldActionsTotal: number;
+        battleActionsTotal: number;
+        actionMessagesTotal: number;
+        websocketActionRateLimitedTotal: number;
+        websocketActionKickTotal: number;
+      };
     auth: {
       activeGuestSessionCount: number;
       activeAccountSessionCount: number;
@@ -173,7 +177,9 @@ const runtimeObservability: RuntimeObservabilityState = {
   counters: {
     connectMessagesTotal: 0,
     worldActionsTotal: 0,
-    battleActionsTotal: 0
+    battleActionsTotal: 0,
+    websocketActionRateLimitedTotal: 0,
+    websocketActionKickTotal: 0
   },
   auth: {
     counters: {
@@ -270,7 +276,9 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
         connectMessagesTotal: runtimeObservability.counters.connectMessagesTotal,
         worldActionsTotal: runtimeObservability.counters.worldActionsTotal,
         battleActionsTotal: runtimeObservability.counters.battleActionsTotal,
-        actionMessagesTotal
+        actionMessagesTotal,
+        websocketActionRateLimitedTotal: runtimeObservability.counters.websocketActionRateLimitedTotal,
+        websocketActionKickTotal: runtimeObservability.counters.websocketActionKickTotal
       },
       auth: {
         activeGuestSessionCount: runtimeObservability.auth.activeGuestSessionCount,
@@ -441,6 +449,7 @@ function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): Runtim
       logTail: [
         `service ${service} rooms=${health.runtime.activeRoomCount} connections=${health.runtime.connectionCount}`,
         `traffic connect=${health.runtime.gameplayTraffic.connectMessagesTotal} world=${health.runtime.gameplayTraffic.worldActionsTotal} battle=${health.runtime.gameplayTraffic.battleActionsTotal}`,
+        `ws_action_rate_limit violations=${health.runtime.gameplayTraffic.websocketActionRateLimitedTotal} kicks=${health.runtime.gameplayTraffic.websocketActionKickTotal}`,
         `auth guest=${health.runtime.auth.activeGuestSessionCount} account=${health.runtime.auth.activeAccountSessionCount} queue=${health.runtime.auth.tokenDelivery.queueCount} rateLimited=${health.runtime.auth.counters.rateLimitedTotal}`,
         `matchmaking rateLimited=${health.runtime.matchmaking.counters.rateLimitedTotal}`
       ],
@@ -484,6 +493,12 @@ function buildMetricsDocument(): string {
     "# HELP veil_gameplay_action_messages_total Total processed gameplay action messages.",
     "# TYPE veil_gameplay_action_messages_total counter",
     `veil_gameplay_action_messages_total ${health.runtime.gameplayTraffic.actionMessagesTotal}`,
+    "# HELP veil_ws_action_rate_limited_total Total gameplay action messages rejected by the WebSocket per-player rate limiter.",
+    "# TYPE veil_ws_action_rate_limited_total counter",
+    `veil_ws_action_rate_limited_total ${health.runtime.gameplayTraffic.websocketActionRateLimitedTotal}`,
+    "# HELP veil_ws_action_kicks_total Total client disconnects triggered by WebSocket action rate-limit violations.",
+    "# TYPE veil_ws_action_kicks_total counter",
+    `veil_ws_action_kicks_total ${health.runtime.gameplayTraffic.websocketActionKickTotal}`,
     "# HELP veil_auth_guest_sessions Active guest auth sessions tracked by this process.",
     "# TYPE veil_auth_guest_sessions gauge",
     `veil_auth_guest_sessions ${health.runtime.auth.activeGuestSessionCount}`,
@@ -610,6 +625,14 @@ export function recordWorldActionMessage(): void {
 
 export function recordBattleActionMessage(): void {
   runtimeObservability.counters.battleActionsTotal += 1;
+}
+
+export function recordWebSocketActionRateLimited(): void {
+  runtimeObservability.counters.websocketActionRateLimitedTotal += 1;
+}
+
+export function recordWebSocketActionKick(): void {
+  runtimeObservability.counters.websocketActionKickTotal += 1;
 }
 
 export function setAuthGuestSessionCount(count: number): void {
@@ -765,6 +788,8 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.counters.connectMessagesTotal = 0;
   runtimeObservability.counters.worldActionsTotal = 0;
   runtimeObservability.counters.battleActionsTotal = 0;
+  runtimeObservability.counters.websocketActionRateLimitedTotal = 0;
+  runtimeObservability.counters.websocketActionKickTotal = 0;
   runtimeObservability.auth.counters.sessionChecksTotal = 0;
   runtimeObservability.auth.counters.sessionFailuresTotal = 0;
   runtimeObservability.auth.counters.guestLoginsTotal = 0;
