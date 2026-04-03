@@ -106,11 +106,11 @@ function validateWorldReferences(
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
-  return Number.isInteger(value) && value >= 0;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 function isPositiveInteger(value: unknown): value is number {
-  return Number.isInteger(value) && value > 0;
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 function heroPath(heroIndex: number, suffix: string): string {

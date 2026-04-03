@@ -72,12 +72,85 @@ function normalizeBattleRngState(state: BattleState): BattleState["rng"] {
   };
 }
 
+function normalizedCooldownValue(value: unknown): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor(Number(value)));
+}
+
+function buildCooldownStateFromSkills(unit: UnitStack): Record<string, number> {
+  const cooldowns: Record<string, number> = {};
+
+  for (const skill of skillsOf(unit)) {
+    if (skill.kind !== "active") {
+      continue;
+    }
+
+    const remainingCooldown = normalizedCooldownValue(skill.remainingCooldown);
+    if (remainingCooldown > 0) {
+      cooldowns[skill.id] = remainingCooldown;
+    }
+  }
+
+  return cooldowns;
+}
+
+function withSynchronizedSkillCooldowns(unit: UnitStack, cooldowns: Record<string, number>): UnitStack {
+  const skills = skillsOf(unit);
+  if (skills.length === 0) {
+    return unit;
+  }
+
+  return {
+    ...unit,
+    skills: skills.map((skill) => ({
+      ...skill,
+      remainingCooldown: skill.kind === "active" ? normalizedCooldownValue(cooldowns[skill.id]) : 0
+    }))
+  };
+}
+
+function normalizeBattleCooldowns(
+  units: Record<string, UnitStack>,
+  existingCooldowns?: BattleState["unitCooldowns"]
+): BattleState["unitCooldowns"] {
+  return Object.fromEntries(
+    Object.entries(units).map(([unitId, unit]) => {
+      const fallbackCooldowns = buildCooldownStateFromSkills(unit);
+      const unitCooldowns = existingCooldowns?.[unitId];
+
+      if (!unitCooldowns) {
+        return [unitId, fallbackCooldowns];
+      }
+
+      const normalizedCooldowns = Object.fromEntries(
+        Object.entries(unitCooldowns)
+          .map(([skillId, remainingTurns]) => [skillId, normalizedCooldownValue(remainingTurns)] as const)
+          .filter(([, remainingTurns]) => remainingTurns > 0)
+      );
+
+      return [unitId, Object.keys(normalizedCooldowns).length > 0 ? normalizedCooldowns : fallbackCooldowns];
+    })
+  );
+}
+
 export function normalizeBattleState(state: BattleState): BattleState {
+  const normalizedUnits = Object.fromEntries(
+    Object.entries(state.units).map(([unitId, unit]) => [unitId, withNormalizedCollections(unit)])
+  );
+  const normalizedCooldowns = normalizeBattleCooldowns(normalizedUnits, state.unitCooldowns);
+
   return {
     ...state,
     units: Object.fromEntries(
-      Object.entries(state.units).map(([unitId, unit]) => [unitId, withNormalizedCollections(unit)])
+      Object.entries(normalizedUnits).map(([unitId, unit]) => [
+        unitId,
+        withSynchronizedSkillCooldowns(unit, normalizedCooldowns[unitId] ?? {})
+      ])
     ),
+    unitCooldowns: normalizedCooldowns,
     environment: hazardsOf(state).map(cloneHazardState),
     rng: normalizeBattleRngState(state)
   };
@@ -359,6 +432,20 @@ function tickUnitSkillCooldowns(unit: UnitStack): UnitStack {
     skills: skills.map((skill) =>
       skill.remainingCooldown > 0 ? { ...skill, remainingCooldown: skill.remainingCooldown - 1 } : skill
     )
+  };
+}
+
+function withUpdatedUnitCooldowns(state: BattleState, unit: UnitStack): BattleState {
+  return {
+    ...state,
+    units: {
+      ...state.units,
+      [unit.id]: unit
+    },
+    unitCooldowns: {
+      ...state.unitCooldowns,
+      [unit.id]: buildCooldownStateFromSkills(unit)
+    }
   };
 }
 
@@ -752,14 +839,13 @@ function prepareStateForActiveUnit(state: BattleState): BattleState {
     const activeUnit = nextState.units[nextState.activeUnitId]!;
 
     const processed = processTurnStartForUnit(activeUnit);
-    nextState = {
-      ...nextState,
-      units: {
-        ...nextState.units,
-        [activeUnit.id]: processed.unit
+    nextState = withUpdatedUnitCooldowns(
+      {
+        ...nextState,
+        log: processed.log.length > 0 ? nextState.log.concat(processed.log) : nextState.log
       },
-      log: processed.log.length > 0 ? nextState.log.concat(processed.log) : nextState.log
-    };
+      processed.unit
+    );
 
     if (processed.unit.count > 0) {
       break;
@@ -971,13 +1057,7 @@ export function executeBattleSkill(
   skillId: BattleSkillId,
   targetId?: string
 ): BattleState {
-  const normalizedState: BattleState = {
-    ...state,
-    units: Object.fromEntries(
-      Object.entries(state.units).map(([currentUnitId, unit]) => [currentUnitId, withNormalizedCollections(unit)])
-    ),
-    environment: hazardsOf(state).map(cloneHazardState)
-  };
+  const normalizedState = normalizeBattleState(state);
   const action: BattleAction = {
     type: "battle.skill",
     unitId,
@@ -996,15 +1076,12 @@ export function executeBattleSkill(
   const caster = normalizedState.units[unitId]!;
   const skillDefinition = skillDefinitionFor(skillId, catalogIndex);
   const casterWithCooldown = setSkillCooldown(caster, skillId);
+  const stateWithCooldown = withUpdatedUnitCooldowns(normalizedState, casterWithCooldown);
 
   if (skillDefinition.target === "enemy" && targetId) {
     return applyAttackSequence(
       {
-        ...normalizedState,
-        units: {
-          ...normalizedState.units,
-          [caster.id]: casterWithCooldown
-        }
+        ...stateWithCooldown
       },
       caster.id,
       targetId,
@@ -1029,11 +1106,7 @@ export function executeBattleSkill(
     );
     return advanceTurn(
       {
-        ...normalizedState,
-        units: {
-          ...normalizedState.units,
-          [caster.id]: empoweredCaster
-        },
+        ...withUpdatedUnitCooldowns(stateWithCooldown, empoweredCaster),
         log: normalizedState.log.concat(
           `${caster.stackName} 施放 ${skillDefinition.name}，获得 ${describeGrantedStatus(grantedStatus)}`
         )
@@ -1045,11 +1118,7 @@ export function executeBattleSkill(
 
   return advanceTurn(
     {
-      ...normalizedState,
-      units: {
-        ...normalizedState.units,
-        [caster.id]: casterWithCooldown
-      },
+      ...stateWithCooldown,
       log: normalizedState.log.concat(`${caster.stackName} 施放 ${skillDefinition.name}`)
     },
     caster.id,
@@ -1090,7 +1159,7 @@ export function validateBattleAction(state: BattleState, action: BattleAction): 
       return { valid: false, reason: "skill_disabled" };
     }
 
-    if (skill.remainingCooldown > 0) {
+    if (normalizedCooldownValue(state.unitCooldowns[action.unitId]?.[action.skillId]) > 0) {
       return { valid: false, reason: "skill_on_cooldown" };
     }
 
@@ -1146,6 +1215,7 @@ export function createEmptyBattleState(): BattleState {
     activeUnitId: null,
     turnOrder: [],
     units: {},
+    unitCooldowns: {},
     environment: [],
     log: [],
     rng: {
@@ -1217,6 +1287,7 @@ export function createDemoBattleState(): BattleState {
     activeUnitId: turnOrder[0] ?? null,
     turnOrder,
     units,
+    unitCooldowns: Object.fromEntries(Object.keys(units).map((unitId) => [unitId, {}])),
     environment: [],
     log: ["战斗开始"],
     rng: {
@@ -1301,6 +1372,7 @@ export function createNeutralBattleState(hero: HeroState, neutralArmy: NeutralAr
     activeUnitId: turnOrder[0] ?? null,
     turnOrder,
     units,
+    unitCooldowns: Object.fromEntries(Object.keys(units).map((unitId) => [unitId, {}])),
     environment,
     log: [`${hero.name} 遭遇 ${neutralArmy.id}`, ...visibleEnvironmentLog(environment, battleCatalogIndex)],
     rng: {
@@ -1388,6 +1460,7 @@ export function createHeroBattleState(attackerHero: HeroState, defenderHero: Her
     activeUnitId: turnOrder[0] ?? null,
     turnOrder,
     units,
+    unitCooldowns: Object.fromEntries(Object.keys(units).map((unitId) => [unitId, {}])),
     environment,
     log: [
       `${attackerHero.name} 遭遇 ${defenderHero.name}`,
