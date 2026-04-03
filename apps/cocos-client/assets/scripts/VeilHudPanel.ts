@@ -5,7 +5,7 @@ import {
   type EquipmentType,
   getLatestUnlockedAchievement
 } from "./project-shared/index.ts";
-import type { SessionUpdate } from "./VeilCocosSession.ts";
+import type { PlayerReportReason, SessionUpdate } from "./VeilCocosSession.ts";
 import type { CocosPlayerAccountProfile } from "./cocos-lobby.ts";
 import { getPixelSpriteAssets, loadPixelSpriteAssets, type PixelSpriteLoadStatus } from "./cocos-pixel-sprites.ts";
 import {
@@ -65,6 +65,7 @@ const HERO_PROGRESS_PREFIX = "HudHeroProgress";
 const SKILL_BUTTON_PREFIX = "HudSkillButton";
 const EQUIPMENT_BUTTON_PREFIX = "HudEquipButton";
 const ACHIEVEMENT_NOTICE_NODE_NAME = "HudAchievementNotice";
+const REPORT_DIALOG_NODE_NAME = "HudReportDialog";
 
 interface HudActionButtonState {
   name: string;
@@ -180,6 +181,13 @@ export interface VeilHudRenderState {
     title: string;
     detail: string;
   } | null;
+  reporting: {
+    open: boolean;
+    available: boolean;
+    targetLabel: string | null;
+    status: string | null;
+    submitting: boolean;
+  };
   presentation: {
     audio: CocosAudioRuntimeState;
     pixelAssets: PixelSpriteLoadStatus;
@@ -212,6 +220,9 @@ export interface VeilHudPanelOptions {
   onRefresh?: () => void;
   onToggleInventory?: () => void;
   onToggleAchievements?: () => void;
+  onToggleReport?: () => void;
+  onSubmitReport?: (reason: PlayerReportReason) => void;
+  onCancelReport?: () => void;
   onLearnSkill?: (skillId: string) => void;
   onEquipItem?: (slot: EquipmentType, equipmentId: string) => void;
   onUnequipItem?: (slot: EquipmentType) => void;
@@ -314,6 +325,9 @@ export class VeilHudPanel extends Component {
   private onRefresh: (() => void) | undefined;
   private onToggleInventory: (() => void) | undefined;
   private onToggleAchievements: (() => void) | undefined;
+  private onToggleReport: (() => void) | undefined;
+  private onSubmitReport: ((reason: PlayerReportReason) => void) | undefined;
+  private onCancelReport: (() => void) | undefined;
   private onLearnSkill: ((skillId: string) => void) | undefined;
   private onEquipItem: ((slot: EquipmentType, equipmentId: string) => void) | undefined;
   private onUnequipItem: ((slot: EquipmentType) => void) | undefined;
@@ -326,6 +340,9 @@ export class VeilHudPanel extends Component {
     this.onRefresh = options.onRefresh;
     this.onToggleInventory = options.onToggleInventory;
     this.onToggleAchievements = options.onToggleAchievements;
+    this.onToggleReport = options.onToggleReport;
+    this.onSubmitReport = options.onSubmitReport;
+    this.onCancelReport = options.onCancelReport;
     this.onLearnSkill = options.onLearnSkill;
     this.onEquipItem = options.onEquipItem;
     this.onUnequipItem = options.onUnequipItem;
@@ -544,6 +561,7 @@ export class VeilHudPanel extends Component {
 
     this.renderStatusBadge(`${CARD_PREFIX}-status`, statusBadge);
     this.renderAchievementNotice(state.achievementNotice);
+    this.renderReportDialog(state.reporting);
 
     const showDebug = false;
     if (showDebug) {
@@ -607,9 +625,27 @@ export class VeilHudPanel extends Component {
       { nodeName: "HudRefresh", debugLabel: "refresh", callback: this.onRefresh ?? null },
       { nodeName: "HudInventory", debugLabel: "inventory", callback: this.onToggleInventory ?? null },
       { nodeName: "HudAchievements", debugLabel: "achievements", callback: this.onToggleAchievements ?? null },
+      { nodeName: "HudReportPlayer", debugLabel: "report-player", callback: this.onToggleReport ?? null },
       { nodeName: "HudEndDay", debugLabel: "end-day", callback: this.onEndDay ?? null },
       { nodeName: "HudReturnLobby", debugLabel: "return-lobby", callback: this.onReturnLobby ?? null }
     ];
+
+    const reportDialogActions: Array<{ nodeName: string; debugLabel: string; callback: (() => void) | null }> = [
+      { nodeName: "HudReportReason-cheating", debugLabel: "report-reason:cheating", callback: this.onSubmitReport ? () => this.onSubmitReport?.("cheating") : null },
+      { nodeName: "HudReportReason-harassment", debugLabel: "report-reason:harassment", callback: this.onSubmitReport ? () => this.onSubmitReport?.("harassment") : null },
+      { nodeName: "HudReportReason-afk", debugLabel: "report-reason:afk", callback: this.onSubmitReport ? () => this.onSubmitReport?.("afk") : null },
+      { nodeName: "HudReportCancel", debugLabel: "report-cancel", callback: this.onCancelReport ?? null }
+    ];
+    const reportDialogNode = this.node.getChildByName(REPORT_DIALOG_NODE_NAME);
+    for (const action of reportDialogActions) {
+      const node = reportDialogNode?.getChildByName(action.nodeName) ?? null;
+      if (this.pointInNode(localX, localY, node)) {
+        return {
+          debugLabel: action.debugLabel,
+          callback: action.callback
+        };
+      }
+    }
 
     const actionsNode = this.node.getChildByName(ACTIONS_NODE_NAME);
     for (const action of chromeActions) {
@@ -1438,6 +1474,7 @@ export class VeilHudPanel extends Component {
       HEADER_ICON_NODE_NAME,
       WATERMARK_NODE_NAME,
       ACTIONS_NODE_NAME,
+      REPORT_DIALOG_NODE_NAME,
       `${CARD_PREFIX}-title`,
       `${CARD_PREFIX}-resources`,
       `${CARD_PREFIX}-hero`,
@@ -1466,6 +1503,7 @@ export class VeilHudPanel extends Component {
     this.ensureActionButton(actionsNode, "HudRefresh", "刷新状态");
     this.ensureActionButton(actionsNode, "HudInventory", "装备背包");
     this.ensureActionButton(actionsNode, "HudAchievements", "战报中心");
+    this.ensureActionButton(actionsNode, "HudReportPlayer", "举报玩家");
     this.ensureActionButton(actionsNode, "HudEndDay", "推进一天");
     this.ensureActionButton(actionsNode, "HudReturnLobby", "返回大厅");
   }
@@ -1479,7 +1517,7 @@ export class VeilHudPanel extends Component {
     }
 
     const actionsTransform = actionsNode.getComponent(UITransform) ?? actionsNode.addComponent(UITransform);
-    actionsTransform.setContentSize(Math.max(164, transform.width - 28), 206);
+    actionsTransform.setContentSize(Math.max(164, transform.width - 28), 246);
     actionsNode.setPosition(0, transform.height / 2 - 118, 1);
 
     const buttons: HudActionButtonState[] = [
@@ -1487,6 +1525,7 @@ export class VeilHudPanel extends Component {
       { name: "HudRefresh", label: "刷新状态", callback: this.onRefresh ?? null },
       { name: "HudInventory", label: "装备背包", callback: this.onToggleInventory ?? null },
       { name: "HudAchievements", label: "战报中心", callback: this.onToggleAchievements ?? null },
+      { name: "HudReportPlayer", label: "举报玩家", callback: this.onToggleReport ?? null },
       { name: "HudEndDay", label: "推进一天", callback: this.onEndDay ?? null },
       { name: "HudReturnLobby", label: "返回大厅", callback: this.onReturnLobby ?? null }
     ];
@@ -1589,5 +1628,98 @@ export class VeilHudPanel extends Component {
     assignUiLayer(labelNode);
     const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
     label.string = labelText;
+  }
+
+  private renderReportDialog(state: VeilHudRenderState["reporting"]): void {
+    let dialogNode = this.node.getChildByName(REPORT_DIALOG_NODE_NAME);
+    if (!state.open) {
+      if (dialogNode) {
+        dialogNode.active = false;
+      }
+      return;
+    }
+
+    if (!dialogNode) {
+      dialogNode = new Node(REPORT_DIALOG_NODE_NAME);
+      dialogNode.parent = this.node;
+    }
+    assignUiLayer(dialogNode);
+    dialogNode.active = true;
+
+    const rootTransform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
+    const dialogTransform = dialogNode.getComponent(UITransform) ?? dialogNode.addComponent(UITransform);
+    const width = Math.max(176, rootTransform.width - 38);
+    const height = 188;
+    dialogTransform.setContentSize(width, height);
+    dialogNode.setPosition(0, 8, 6);
+
+    const graphics = dialogNode.getComponent(Graphics) ?? dialogNode.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(26, 34, 48, 238);
+    graphics.strokeColor = new Color(248, 229, 197, 148);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 16);
+    graphics.fill();
+    graphics.stroke();
+
+    const titleNode = dialogNode.getChildByName("Label") ?? new Node("Label");
+    titleNode.parent = dialogNode;
+    assignUiLayer(titleNode);
+    const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform);
+    titleTransform.setContentSize(width - 24, 62);
+    titleNode.setPosition(0, 50, 1);
+    const title = titleNode.getComponent(Label) ?? titleNode.addComponent(Label);
+    title.string = `举报玩家\n${state.targetLabel ?? "当前没有可举报目标"}${state.status ? `\n${state.status}` : state.submitting ? "\n正在提交举报..." : ""}`;
+    title.fontSize = 13;
+    title.lineHeight = 16;
+    title.horizontalAlign = H_ALIGN_CENTER;
+    title.verticalAlign = V_ALIGN_MIDDLE;
+    title.overflow = OVERFLOW_RESIZE_HEIGHT;
+    title.enableWrapText = true;
+    title.color = new Color(248, 244, 233, 255);
+
+    const buttons: Array<{ name: string; label: string; enabled: boolean }> = [
+      { name: "HudReportReason-cheating", label: "作弊", enabled: state.available && !state.submitting },
+      { name: "HudReportReason-harassment", label: "骚扰", enabled: state.available && !state.submitting },
+      { name: "HudReportReason-afk", label: "挂机", enabled: state.available && !state.submitting },
+      { name: "HudReportCancel", label: "取消", enabled: !state.submitting }
+    ];
+
+    buttons.forEach((button, index) => {
+      this.renderDialogButton(dialogNode!, button.name, button.label, 14 - index * 30, button.enabled);
+    });
+  }
+
+  private renderDialogButton(parent: Node, name: string, labelText: string, y: number, enabled: boolean): void {
+    const buttonNode = parent.getChildByName(name) ?? new Node(name);
+    buttonNode.parent = parent;
+    assignUiLayer(buttonNode);
+    const transform = buttonNode.getComponent(UITransform) ?? buttonNode.addComponent(UITransform);
+    transform.setContentSize(136, 24);
+    buttonNode.setPosition(0, y, 1);
+
+    const graphics = buttonNode.getComponent(Graphics) ?? buttonNode.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = enabled ? new Color(91, 70, 54, 236) : new Color(70, 74, 82, 168);
+    graphics.strokeColor = enabled ? new Color(248, 224, 180, 124) : new Color(214, 220, 228, 76);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-68, -12, 136, 24, 8);
+    graphics.fill();
+    graphics.stroke();
+
+    const labelNode = buttonNode.getChildByName("Label") ?? new Node("Label");
+    labelNode.parent = buttonNode;
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(120, 18);
+    labelNode.setPosition(0, 0, 0.1);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
+    label.string = labelText;
+    label.fontSize = 12;
+    label.lineHeight = 14;
+    label.horizontalAlign = H_ALIGN_CENTER;
+    label.verticalAlign = V_ALIGN_MIDDLE;
+    label.enableWrapText = false;
+    label.color = enabled ? new Color(248, 244, 233, 255) : new Color(199, 204, 212, 255);
   }
 }

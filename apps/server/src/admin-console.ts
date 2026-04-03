@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ResourceLedger, WorldState } from "../../../packages/shared/src/index";
-import type { RoomSnapshotStore } from "./persistence";
+import type { PlayerReportResolveInput, PlayerReportStatus, RoomSnapshotStore } from "./persistence";
 import { listLobbyRooms, getActiveRoomInstances } from "./colyseus-room";
 
 class InvalidAdminJsonError extends Error {
@@ -68,6 +68,13 @@ function hasBanModerationStore(
 ): store is RoomSnapshotStore &
   Required<Pick<RoomSnapshotStore, "loadPlayerBan" | "listPlayerBanHistory" | "savePlayerBan" | "clearPlayerBan">> {
   return Boolean(store?.loadPlayerBan && store.listPlayerBanHistory && store.savePlayerBan && store.clearPlayerBan);
+}
+
+function hasPlayerReportStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore &
+  Required<Pick<RoomSnapshotStore, "createPlayerReport" | "listPlayerReports" | "resolvePlayerReport">> {
+  return Boolean(store?.createPlayerReport && store.listPlayerReports && store.resolvePlayerReport);
 }
 
 function sendInvalidJson(response: ServerResponse): void {
@@ -197,6 +204,34 @@ function parseBroadcastBody(value: unknown): { message: string; type: string } {
     message: message.trim(),
     type: typeof announcementType === "string" ? announcementType.trim() : "info"
   };
+}
+
+function parseReportStatus(value: string | null | undefined, fallback: PlayerReportStatus = "pending"): PlayerReportStatus {
+  if (!value || value.trim() === "") {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  if (normalized === "pending" || normalized === "dismissed" || normalized === "warned" || normalized === "banned") {
+    return normalized;
+  }
+
+  throw new InvalidAdminPayloadError('"status" must be "pending", "dismissed", "warned", or "banned"');
+}
+
+function parseResolveReportBody(value: unknown): PlayerReportResolveInput {
+  const payload = readRequiredObjectBody(value);
+  const status = parseReportStatus(readOptionalTrimmedString(payload, "status"), "pending");
+  if (status === "pending") {
+    throw new InvalidAdminPayloadError('"status" must be "dismissed", "warned", or "banned"');
+  }
+
+  return { status };
+}
+
+function readReportStatusFilter(request: IncomingMessage): PlayerReportStatus {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  return parseReportStatus(url.searchParams.get("status"), "pending");
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
@@ -416,6 +451,63 @@ export function registerAdminRoutes(
       const currentBan = await store.loadPlayerBan(playerId);
       sendJson(response, 200, { items, currentBan });
     } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/reports", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!hasPlayerReportStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const status = readReportStatusFilter(request);
+      const items = await store.listPlayerReports({ status, limit: readLimit(request, 50) });
+      sendJson(response, 200, { items, status });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/reports/:id/resolve", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!hasPlayerReportStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const reportId = readRequiredParam(request, "id");
+      const input = parseResolveReportBody(await readJsonBody(request));
+      const report = await store.resolvePlayerReport(reportId, input);
+      if (!report) {
+        sendJson(response, 404, { error: "Report not found" });
+        return;
+      }
+
+      let disconnectedClients = 0;
+      if (input.status === "banned" && hasBanModerationStore(store)) {
+        await store.savePlayerBan(report.targetId, {
+          banStatus: "permanent",
+          banReason: `Resolved from player report ${report.reportId}`
+        });
+        for (const room of getActiveRoomInstances().values()) {
+          disconnectedClients += room.disconnectPlayer(report.targetId, "account_banned");
+        }
+      }
+
+      sendJson(response, 200, { ok: true, report, disconnectedClients });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
       if (error instanceof InvalidAdminPayloadError) {
         sendInvalidPayload(response, error.message);
         return;

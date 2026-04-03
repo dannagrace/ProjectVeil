@@ -22,11 +22,14 @@ import type { RoomPersistenceSnapshot } from "./index";
 export interface RoomSnapshotStore {
   load(roomId: string): Promise<RoomPersistenceSnapshot | null>;
   loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
+  loadPlayerReport?(reportId: string): Promise<PlayerReportRecord | null>;
   loadPlayerBan?(playerId: string): Promise<PlayerAccountBanSnapshot | null>;
+  createPlayerReport?(input: PlayerReportCreateInput): Promise<PlayerReportRecord>;
   loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerEventHistory(playerId: string, query?: PlayerEventHistoryQuery): Promise<PlayerEventHistorySnapshot>;
   loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]>;
+  listPlayerReports?(options?: PlayerReportListOptions): Promise<PlayerReportRecord[]>;
   listPlayerBanHistory?(playerId: string, options?: PlayerAccountBanHistoryListOptions): Promise<PlayerBanHistoryRecord[]>;
   loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null>;
@@ -65,6 +68,7 @@ export interface RoomSnapshotStore {
     playerId: string,
     input?: PlayerAccountDeleteInput
   ): Promise<PlayerAccountSnapshot | null>;
+  resolvePlayerReport?(reportId: string, input: PlayerReportResolveInput): Promise<PlayerReportRecord | null>;
   savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot>;
   savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot>;
   listPlayerAccounts(options?: PlayerAccountListOptions): Promise<PlayerAccountSnapshot[]>;
@@ -219,6 +223,18 @@ interface PlayerHeroArchiveRow extends RowDataPacket {
   updated_at: Date | string;
 }
 
+interface PlayerReportRow extends RowDataPacket {
+  report_id: string | number;
+  reporter_id: string;
+  target_id: string;
+  reason: string;
+  description: string | null;
+  room_id: string;
+  status: string;
+  created_at: Date | string;
+  resolved_at: Date | string | null;
+}
+
 export interface RoomSnapshotSummary {
   roomId: string;
   version: number;
@@ -289,6 +305,41 @@ export interface PlayerAccountEnsureInput {
   playerId: string;
   displayName?: string;
   lastRoomId?: string;
+}
+
+export type PlayerReportReason = "cheating" | "harassment" | "afk";
+export type PlayerReportStatus = "pending" | "dismissed" | "warned" | "banned";
+
+export interface PlayerReportRecord {
+  reportId: string;
+  reporterId: string;
+  targetId: string;
+  reason: PlayerReportReason;
+  description?: string;
+  roomId: string;
+  status: PlayerReportStatus;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+export interface PlayerReportCreateInput {
+  reporterId: string;
+  targetId: string;
+  reason: PlayerReportReason;
+  description?: string;
+  roomId: string;
+}
+
+export interface PlayerReportListOptions {
+  status?: PlayerReportStatus;
+  roomId?: string;
+  reporterId?: string;
+  targetId?: string;
+  limit?: number;
+}
+
+export interface PlayerReportResolveInput {
+  status: Exclude<PlayerReportStatus, "pending">;
 }
 
 export interface PlayerAccountProfilePatch {
@@ -417,6 +468,9 @@ export const MYSQL_PLAYER_EVENT_HISTORY_TABLE = "player_event_history";
 export const MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX = "idx_player_event_history_player_time";
 export const MYSQL_PLAYER_HERO_ARCHIVE_TABLE = "player_hero_archives";
 export const MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX = "idx_player_hero_archives_updated_at";
+export const MYSQL_PLAYER_REPORT_TABLE = "player_reports";
+export const MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX = "idx_player_reports_status_created";
+export const MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX = "uidx_player_reports_room_reporter_target";
 export const MYSQL_CONFIG_DOCUMENT_TABLE = "config_documents";
 export const MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX = "idx_config_documents_updated_at";
 export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
@@ -481,6 +535,54 @@ function normalizePlayerBanExpiry(expiry?: string | Date | null): string | undef
   }
 
   return parsed.toISOString();
+}
+
+function normalizePlayerReportReason(reason?: string | null): PlayerReportReason {
+  if (reason === "cheating" || reason === "harassment" || reason === "afk") {
+    return reason;
+  }
+
+  throw new Error("report reason must be cheating, harassment, or afk");
+}
+
+function normalizePlayerReportStatus(status?: string | null): PlayerReportStatus {
+  if (status === "pending" || status === "dismissed" || status === "warned" || status === "banned") {
+    return status;
+  }
+
+  throw new Error("report status must be pending, dismissed, warned, or banned");
+}
+
+function normalizePlayerReportDescription(description?: string | null): string | undefined {
+  const normalized = description?.trim();
+  return normalized ? normalized.slice(0, 512) : undefined;
+}
+
+function normalizePlayerReportRecord(record: {
+  reportId: string | number;
+  reporterId: string;
+  targetId: string;
+  reason: string;
+  description?: string | null;
+  roomId: string;
+  status: string;
+  createdAt: string | Date;
+  resolvedAt?: string | Date | null;
+}): PlayerReportRecord {
+  const description = normalizePlayerReportDescription(record.description);
+  const resolvedAt = formatTimestamp(record.resolvedAt);
+
+  return {
+    reportId: String(record.reportId),
+    reporterId: normalizePlayerId(record.reporterId),
+    targetId: normalizePlayerId(record.targetId),
+    reason: normalizePlayerReportReason(record.reason),
+    ...(description ? { description } : {}),
+    roomId: record.roomId.trim(),
+    status: normalizePlayerReportStatus(record.status),
+    createdAt: formatTimestamp(record.createdAt) ?? new Date(0).toISOString(),
+    ...(resolvedAt ? { resolvedAt } : {})
+  };
 }
 
 export function isPlayerBanActive(
@@ -1049,6 +1151,20 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (
   PRIMARY KEY (player_id, event_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_REPORT_TABLE}\` (
+  report_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  reporter_id VARCHAR(191) NOT NULL,
+  target_id VARCHAR(191) NOT NULL,
+  reason VARCHAR(32) NOT NULL,
+  description VARCHAR(512) NULL,
+  room_id VARCHAR(191) NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  resolved_at DATETIME NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (report_id),
+  UNIQUE KEY \`${MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX}\` (room_id, reporter_id, target_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET @veil_player_accounts_display_name_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.COLUMNS
@@ -1084,6 +1200,24 @@ SET @veil_player_event_history_idx_sql := IF(
 PREPARE veil_player_event_history_idx_stmt FROM @veil_player_event_history_idx_sql;
 EXECUTE veil_player_event_history_idx_stmt;
 DEALLOCATE PREPARE veil_player_event_history_idx_stmt;
+
+SET @veil_player_reports_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_REPORT_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX}'
+);
+
+SET @veil_player_reports_idx_sql := IF(
+  @veil_player_reports_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX}\` ON \`${MYSQL_PLAYER_REPORT_TABLE}\` (status, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_reports_idx_stmt FROM @veil_player_reports_idx_sql;
+EXECUTE veil_player_reports_idx_stmt;
+DEALLOCATE PREPARE veil_player_reports_idx_stmt;
 
 SET @veil_player_accounts_achievements_exists := (
   SELECT COUNT(*)
@@ -1964,6 +2098,20 @@ function toPlayerBanHistoryRecord(row: PlayerBanHistoryRow): PlayerBanHistoryRec
   };
 }
 
+function toPlayerReportRecord(row: PlayerReportRow): PlayerReportRecord {
+  return normalizePlayerReportRecord({
+    reportId: row.report_id,
+    reporterId: row.reporter_id,
+    targetId: row.target_id,
+    reason: row.reason,
+    description: row.description,
+    roomId: row.room_id,
+    status: row.status,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at
+  });
+}
+
 async function appendPlayerEventHistoryEntries(
   queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
   playerId: string,
@@ -2233,6 +2381,65 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     return row ? toPlayerBanSnapshot(row) : null;
   }
 
+  async createPlayerReport(input: PlayerReportCreateInput): Promise<PlayerReportRecord> {
+    const reporterId = normalizePlayerId(input.reporterId);
+    const targetId = normalizePlayerId(input.targetId);
+    const roomId = input.roomId.trim();
+    if (!roomId) {
+      throw new Error("roomId must not be empty");
+    }
+    if (reporterId === targetId) {
+      throw new Error("reporterId must not match targetId");
+    }
+
+    const reason = normalizePlayerReportReason(input.reason);
+    const description = normalizePlayerReportDescription(input.description);
+
+    try {
+      const [result] = await this.pool.query<ResultSetHeader>(
+        `INSERT INTO \`${MYSQL_PLAYER_REPORT_TABLE}\` (
+           reporter_id,
+           target_id,
+           reason,
+           description,
+           room_id,
+           status
+         )
+         VALUES (?, ?, ?, ?, ?, 'pending')`,
+        [reporterId, targetId, reason, description ?? null, roomId]
+      );
+      const [rows] = await this.pool.query<PlayerReportRow[]>(
+        `SELECT
+           report_id,
+           reporter_id,
+           target_id,
+           reason,
+           description,
+           room_id,
+           status,
+           created_at,
+           resolved_at
+         FROM \`${MYSQL_PLAYER_REPORT_TABLE}\`
+         WHERE report_id = ?
+         LIMIT 1`,
+        [result.insertId]
+      );
+
+      const row = rows[0];
+      if (!row) {
+        throw new Error("player report insert failed");
+      }
+
+      return toPlayerReportRecord(row);
+    } catch (error) {
+      if (isMySqlDuplicateEntryError(error)) {
+        throw new Error("duplicate_player_report");
+      }
+
+      throw error;
+    }
+  }
+
   async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
     const normalizedLoginId = normalizePlayerLoginId(loginId);
     const [rows] = await this.pool.query<PlayerAccountRow[]>(
@@ -2454,6 +2661,50 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return rows.map((row) => toPlayerAccountSnapshot(row));
+  }
+
+  async listPlayerReports(options: PlayerReportListOptions = {}): Promise<PlayerReportRecord[]> {
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 50));
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(normalizePlayerReportStatus(options.status));
+    }
+    if (options.roomId?.trim()) {
+      clauses.push("room_id = ?");
+      params.push(options.roomId.trim());
+    }
+    if (options.reporterId?.trim()) {
+      clauses.push("reporter_id = ?");
+      params.push(normalizePlayerId(options.reporterId));
+    }
+    if (options.targetId?.trim()) {
+      clauses.push("target_id = ?");
+      params.push(normalizePlayerId(options.targetId));
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const [rows] = await this.pool.query<PlayerReportRow[]>(
+      `SELECT
+         report_id,
+         reporter_id,
+         target_id,
+         reason,
+         description,
+         room_id,
+         status,
+         created_at,
+         resolved_at
+       FROM \`${MYSQL_PLAYER_REPORT_TABLE}\`
+       ${whereClause}
+       ORDER BY created_at DESC, report_id DESC
+       LIMIT ?`,
+      [...params, safeLimit]
+    );
+
+    return rows.map((row) => toPlayerReportRecord(row));
   }
 
   async loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null> {
@@ -3050,6 +3301,50 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     ]);
 
     return this.loadPlayerAccount(normalizedPlayerId);
+  }
+
+  async resolvePlayerReport(reportId: string, input: PlayerReportResolveInput): Promise<PlayerReportRecord | null> {
+    const normalizedReportId = reportId.trim();
+    if (!normalizedReportId) {
+      throw new Error("reportId must not be empty");
+    }
+
+    const status = normalizePlayerReportStatus(input.status);
+    if (status === "pending") {
+      throw new Error("resolved report status must not be pending");
+    }
+
+    const [result] = await this.pool.query<ResultSetHeader>(
+      `UPDATE \`${MYSQL_PLAYER_REPORT_TABLE}\`
+       SET status = ?,
+           resolved_at = ?
+       WHERE report_id = ?`,
+      [status, new Date(), normalizedReportId]
+    );
+
+    if (result.affectedRows === 0) {
+      return null;
+    }
+
+    const [rows] = await this.pool.query<PlayerReportRow[]>(
+      `SELECT
+         report_id,
+         reporter_id,
+         target_id,
+         reason,
+         description,
+         room_id,
+         status,
+         created_at,
+         resolved_at
+       FROM \`${MYSQL_PLAYER_REPORT_TABLE}\`
+       WHERE report_id = ?
+       LIMIT 1`,
+      [normalizedReportId]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerReportRecord(row) : null;
   }
 
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {

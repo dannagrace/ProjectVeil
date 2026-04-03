@@ -2,6 +2,7 @@ import { _decorator, Camera, Canvas, Color, Component, EventMouse, EventTouch, G
 import { getEquipmentDefinition, type EquipmentType } from "./project-shared/index.ts";
 import {
   type BattleAction,
+  type PlayerReportReason,
   VeilCocosSession,
   type VeilCocosSessionOptions,
   type ConnectionEvent,
@@ -300,6 +301,9 @@ export class VeilRoot extends Component {
   private stopRuntimeMemoryWarnings: (() => void) | null = null;
   private battlePresentation = createCocosBattlePresentationController();
   private lastBattleSettlementSnapshot: BattleSettlementSnapshot | null = null;
+  private reportDialogOpen = false;
+  private reportSubmitting = false;
+  private reportStatusMessage: string | null = null;
 
   onLoad(): void {
     this.audioRuntime.dispose();
@@ -723,6 +727,15 @@ export class VeilRoot extends Component {
       onToggleAchievements: () => {
         void this.openGameplayBattleReportCenter();
       },
+      onToggleReport: () => {
+        this.toggleReportDialog();
+      },
+      onSubmitReport: (reason) => {
+        void this.submitPlayerReport(reason);
+      },
+      onCancelReport: () => {
+        this.closeReportDialog();
+      },
       onLearnSkill: (skillId) => {
         void this.learnHeroSkill(skillId);
       },
@@ -1095,6 +1108,13 @@ export class VeilRoot extends Component {
       achievementNotice: this.achievementNotice
         ? { title: this.achievementNotice.title, detail: this.achievementNotice.detail }
         : null,
+      reporting: {
+        open: this.reportDialogOpen,
+        available: Boolean(this.resolveReportTarget()),
+        targetLabel: this.resolveReportTarget()?.name ?? null,
+        status: this.reportStatusMessage,
+        submitting: this.reportSubmitting
+      },
       presentation: this.buildHudPresentationState()
     });
     this.mapBoard?.render(this.lastUpdate);
@@ -1356,6 +1376,78 @@ export class VeilRoot extends Component {
     this.renderView();
   }
 
+  private resolveReportTarget(): { playerId: string; name: string } | null {
+    const target = this.lastUpdate?.world.visibleHeroes.find((hero) => hero.playerId !== this.playerId) ?? null;
+    return target ? { playerId: target.playerId, name: `${target.name} · ${target.playerId}` } : null;
+  }
+
+  private toggleReportDialog(): void {
+    if (this.reportSubmitting) {
+      return;
+    }
+
+    const target = this.resolveReportTarget();
+    if (!target) {
+      this.reportDialogOpen = false;
+      this.reportStatusMessage = "当前没有可举报的对手。";
+      this.predictionStatus = this.reportStatusMessage;
+      this.renderView();
+      return;
+    }
+
+    this.reportDialogOpen = !this.reportDialogOpen;
+    this.reportStatusMessage = this.reportDialogOpen ? `目标 ${target.name} · ${target.playerId}` : null;
+    this.renderView();
+  }
+
+  private closeReportDialog(): void {
+    if (this.reportSubmitting) {
+      return;
+    }
+
+    this.reportDialogOpen = false;
+    this.reportStatusMessage = null;
+    this.renderView();
+  }
+
+  private async submitPlayerReport(reason: PlayerReportReason): Promise<void> {
+    const target = this.resolveReportTarget();
+    if (!this.session || !target) {
+      this.reportDialogOpen = false;
+      this.reportStatusMessage = "当前没有可举报的对手。";
+      this.renderView();
+      return;
+    }
+
+    this.reportSubmitting = true;
+    this.reportStatusMessage = `正在举报 ${target.name}...`;
+    this.renderView();
+
+    try {
+      await this.session.reportPlayer(target.playerId, reason);
+      this.reportDialogOpen = false;
+      this.reportStatusMessage = `已提交举报：${target.name}`;
+      this.predictionStatus = "举报已提交，等待管理员审核。";
+      this.pushLog(`已举报 ${target.name}：${reason}`);
+    } catch (error) {
+      this.reportStatusMessage = error instanceof Error
+        ? error.message === "duplicate_player_report"
+          ? "同一场对局中已举报过该玩家。"
+          : error.message === "report_target_unavailable"
+            ? "目标玩家已不在当前对局中。"
+            : error.message === "reporting_unavailable"
+              ? "当前服务器未启用举报存储。"
+              : error.message === "report_submit_failed"
+                ? "举报提交失败。"
+            : "举报提交失败。"
+        : "举报提交失败。";
+      this.predictionStatus = this.reportStatusMessage;
+    } finally {
+      this.reportSubmitting = false;
+      this.renderView();
+    }
+  }
+
   private async openGameplayBattleReportCenter(): Promise<void> {
     this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
       type: "section.selected",
@@ -1554,6 +1646,15 @@ export class VeilRoot extends Component {
         },
         onToggleAchievements: () => {
           void this.openGameplayBattleReportCenter();
+        },
+        onToggleReport: () => {
+          this.toggleReportDialog();
+        },
+        onSubmitReport: (reason) => {
+          void this.submitPlayerReport(reason);
+        },
+        onCancelReport: () => {
+          this.closeReportDialog();
         },
         onLearnSkill: (skillId) => {
           void this.learnHeroSkill(skillId);

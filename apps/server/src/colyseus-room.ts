@@ -75,6 +75,12 @@ interface WebSocketActionRateLimitConfig {
   max: number;
 }
 
+function hasPlayerReportStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "createPlayerReport">> {
+  return Boolean(store?.createPlayerReport);
+}
+
 export interface LobbyRoomSummary {
   roomId: string;
   seed: number;
@@ -459,6 +465,48 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         movementPlan: null
       });
     });
+
+    this.onMessage("report.player", async (client, message: Extract<ClientMessage, { type: "report.player" }>) => {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+      if (!hasPlayerReportStore(configuredRoomSnapshotStore)) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "reporting_unavailable" });
+        return;
+      }
+
+      const targetPlayerId = this.resolveReportTargetPlayerId(playerId, message.targetPlayerId);
+      if (!targetPlayerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "report_target_unavailable" });
+        return;
+      }
+
+      try {
+        const report = await configuredRoomSnapshotStore.createPlayerReport({
+          reporterId: playerId,
+          targetId: targetPlayerId,
+          reason: message.reason,
+          ...(message.description?.trim() ? { description: message.description.trim() } : {}),
+          roomId: logicalRoomId
+        });
+        sendMessage(client, "report.player", {
+          requestId: message.requestId,
+          reportId: report.reportId,
+          targetPlayerId: report.targetId,
+          reason: report.reason,
+          status: report.status,
+          createdAt: report.createdAt
+        });
+      } catch (error) {
+        const reason =
+          error instanceof Error && error.message === "duplicate_player_report"
+            ? "duplicate_player_report"
+            : "report_submit_failed";
+        sendMessage(client, "error", { requestId: message.requestId, reason });
+      }
+    });
   }
 
   onJoin(client: ColyseusClient, options?: JoinOptions): void {
@@ -737,6 +785,27 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     playerId: string
   ): PlayerBattleReplaySummary[] {
     return buildPlayerBattleReplaySummariesForPlayer(replay, playerId);
+  }
+
+  private resolveReportTargetPlayerId(playerId: string, requestedTargetPlayerId: string): string | null {
+    const targetPlayerId = requestedTargetPlayerId.trim();
+    if (!targetPlayerId || targetPlayerId === playerId) {
+      return null;
+    }
+
+    const battle = this.worldRoom.getBattleForPlayer(playerId);
+    if (!battle?.worldHeroId || !battle.defenderHeroId) {
+      return null;
+    }
+
+    const internalState = this.worldRoom.getInternalState();
+    const attackerHero = internalState.heroes.find((hero) => hero.id === battle.worldHeroId);
+    const defenderHero = internalState.heroes.find((hero) => hero.id === battle.defenderHeroId);
+    const participantPlayerIds = new Set(
+      [attackerHero?.playerId, defenderHero?.playerId].filter((value): value is string => Boolean(value))
+    );
+
+    return participantPlayerIds.has(targetPlayerId) ? targetPlayerId : null;
   }
 
   private publishLobbyRoomSummary(): void {

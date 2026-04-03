@@ -1086,6 +1086,70 @@ test("pvp replay persistence captures both attacker and defender accounts from r
   );
 });
 
+test("room report player flow persists one report per room target pair and rejects duplicates", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-report-pvp-${Date.now()}`);
+  const attackerClient = createFakeClient("session-report-attacker");
+  const defenderClient = createFakeClient("session-report-defender");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, attackerClient, "player-1", "connect-report-attacker");
+  await connectPlayer(room, defenderClient, "player-2", "connect-report-defender");
+
+  await emitRoomMessage(room, "world.action", attackerClient, {
+    type: "world.action",
+    requestId: "move-report-attacker",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 3, y: 4 }
+    }
+  });
+  await emitRoomMessage(room, "world.action", defenderClient, {
+    type: "world.action",
+    requestId: "move-report-defender",
+    action: {
+      type: "hero.move",
+      heroId: "hero-2",
+      destination: { x: 3, y: 4 }
+    }
+  });
+
+  await emitRoomMessage(room, "report.player", attackerClient, {
+    type: "report.player",
+    requestId: "report-once",
+    targetPlayerId: "player-2",
+    reason: "afk",
+    description: "Stopped acting during the PvP encounter."
+  });
+
+  const reports = await store.listPlayerReports({ status: "pending" });
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0]?.reporterId, "player-1");
+  assert.equal(reports[0]?.targetId, "player-2");
+  assert.equal(attackerClient.sent.some((message) => message.type === "report.player" && message.targetPlayerId === "player-2"), true);
+
+  await emitRoomMessage(room, "report.player", attackerClient, {
+    type: "report.player",
+    requestId: "report-twice",
+    targetPlayerId: "player-2",
+    reason: "cheating"
+  });
+
+  assert.equal(
+    attackerClient.sent.some((message) => message.type === "error" && message.requestId === "report-twice" && message.reason === "duplicate_player_report"),
+    true
+  );
+  assert.equal((await store.listPlayerReports({ status: "pending" })).length, 1);
+});
+
 test("room at maxClients capacity rejects a new join reservation", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
@@ -1105,4 +1169,59 @@ test("room at maxClients capacity rejects a new join reservation", async (t) => 
   }
 
   assert.equal(await internalRoom._reserveSeat("overflow-session", { playerId: "player-9" }), false);
+});
+
+test("room player reports are persisted once per target within the same room", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`report-room-${Date.now()}`);
+  const reporterClient = createFakeClient("reporter-session");
+  const targetClient = createFakeClient("target-session");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, reporterClient, "player-1", "connect-reporter");
+  await connectPlayer(room, targetClient, "player-2", "connect-target");
+
+  await emitRoomMessage(room, "report.player", reporterClient, {
+    type: "report.player",
+    requestId: "report-1",
+    targetPlayerId: "player-2",
+    reason: "cheating"
+  });
+
+  const reports = await store.listPlayerReports({ status: "pending" });
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0]?.reporterId, "player-1");
+  assert.equal(reports[0]?.targetId, "player-2");
+  assert.equal(reports[0]?.roomId, room.roomId);
+  assert.equal(
+    reporterClient.sent.some(
+      (message) =>
+        message.type === "session.state" &&
+        message.requestId === "report-1" &&
+        message.payload.reason === "report_submitted"
+    ),
+    true
+  );
+
+  await emitRoomMessage(room, "report.player", reporterClient, {
+    type: "report.player",
+    requestId: "report-2",
+    targetPlayerId: "player-2",
+    reason: "afk"
+  });
+
+  assert.equal((await store.listPlayerReports({ status: "pending" })).length, 1);
+  assert.equal(
+    reporterClient.sent.some(
+      (message) => message.type === "error" && message.requestId === "report-2" && message.reason === "duplicate_player_report"
+    ),
+    true
+  );
 });
