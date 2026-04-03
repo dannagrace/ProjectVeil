@@ -5,6 +5,7 @@ import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
 import { resetAccountTokenDeliveryState } from "../src/account-token-delivery";
 import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../src/colyseus-room";
+import { registerPrometheusMetricsMiddleware, registerPrometheusMetricsRoute } from "../src/dev-server";
 import {
   recordMatchmakingRateLimited,
   registerRuntimeObservabilityRoutes,
@@ -22,7 +23,10 @@ async function startObservabilityServer(port: number): Promise<Server> {
   resetRuntimeObservability();
 
   const transport = new WebSocketTransport();
-  registerRuntimeObservabilityRoutes(transport.getExpressApp() as never);
+  const app = transport.getExpressApp() as never;
+  registerPrometheusMetricsMiddleware(app);
+  registerPrometheusMetricsRoute(app);
+  registerRuntimeObservabilityRoutes(app);
   const server = new Server({ transport });
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
@@ -220,6 +224,8 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(metricsResponse.status, 200);
   assert.match(metricsResponse.headers.get("content-type") ?? "", /^text\/plain/);
   assert.match(metricsText, /^veil_up 1$/m);
+  assert.match(metricsText, /^veil_active_rooms 1$/m);
+  assert.match(metricsText, /^veil_connected_players 1$/m);
   assert.match(metricsText, /^veil_active_room_count 1$/m);
   assert.match(metricsText, /^veil_connection_count 1$/m);
   assert.match(metricsText, /^veil_connect_messages_total 1$/m);
@@ -229,4 +235,15 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(metricsText, /^veil_auth_account_sessions 0$/m);
   assert.match(metricsText, /^veil_auth_session_checks_total 0$/m);
   assert.match(metricsText, /^veil_matchmaking_rate_limited_total 2$/m);
+
+  const prometheusResponse = await fetch(`http://127.0.0.1:${port}/metrics`);
+  const prometheusText = await prometheusResponse.text();
+
+  assert.equal(prometheusResponse.status, 200);
+  assert.match(prometheusResponse.headers.get("content-type") ?? "", /^text\/plain/);
+  assert.match(prometheusText, /^veil_active_rooms 1$/m);
+  assert.match(prometheusText, /^veil_connected_players 1$/m);
+  assert.match(prometheusText, /^veil_action_validation_failures_total 0$/m);
+  assert.match(prometheusText, /^veil_http_request_duration_seconds_count [1-9]\d*$/m);
+  assert.match(prometheusText, /^veil_battle_duration_seconds_count 0$/m);
 });

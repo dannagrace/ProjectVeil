@@ -213,6 +213,14 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       matchmakingStore = dependencies.store;
       base.routeCalls.push("matchmaking");
     },
+    registerPrometheusMetricsMiddleware: (app) => {
+      assert.equal(app, base.expressApp);
+      base.routeCalls.push("prometheus-middleware");
+    },
+    registerPrometheusMetricsRoute: (app) => {
+      assert.equal(app, base.expressApp);
+      base.routeCalls.push("prometheus-route");
+    },
     registerRuntimeObservabilityRoutes: (app) => {
       assert.equal(app, base.expressApp);
       base.routeCalls.push("runtime-observability");
@@ -244,6 +252,8 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.equal(matchmakingStore, memoryStore);
   assert.equal(lobbyListRooms, listLobbyRooms);
   assert.deepEqual(base.routeCalls, [
+    "prometheus-middleware",
+    "prometheus-route",
     "auth",
     "config-center",
     "config-viewer",
@@ -265,6 +275,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     /Runtime health available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/health/,
     /Auth readiness available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/auth-readiness/,
     /Runtime diagnostic snapshot available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/diagnostic-snapshot/,
+    /Prometheus metrics available at http:\/\/0\.0\.0\.0:3101\/metrics/,
     /Runtime metrics available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/metrics/,
     /Config center storage: filesystem/,
     /Local in-memory Colyseus presence\/driver enabled/,
@@ -308,6 +319,8 @@ test("dev server logs process-level failures, closes stores, and exits non-zero"
     registerPlayerAccountRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
+    registerPrometheusMetricsMiddleware: () => undefined,
+    registerPrometheusMetricsRoute: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
@@ -364,6 +377,8 @@ test("dev server logs uncaught exceptions, closes stores, and exits non-zero", a
     registerPlayerAccountRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
+    registerPrometheusMetricsMiddleware: () => undefined,
+    registerPrometheusMetricsRoute: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
@@ -442,6 +457,8 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     registerPlayerAccountRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
+    registerPrometheusMetricsMiddleware: () => undefined,
+    registerPrometheusMetricsRoute: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
@@ -466,6 +483,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     /Runtime health available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/health/,
     /Auth readiness available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/auth-readiness/,
     /Runtime diagnostic snapshot available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/diagnostic-snapshot/,
+    /Prometheus metrics available at http:\/\/127\.0\.0\.1:3202\/metrics/,
     /Runtime metrics available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/metrics/,
     /Config center storage: filesystem/,
     /Local in-memory Colyseus presence\/driver enabled/,
@@ -505,6 +523,8 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
     registerPlayerAccountRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
+    registerPrometheusMetricsMiddleware: () => undefined,
+    registerPrometheusMetricsRoute: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
@@ -588,6 +608,8 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     registerPlayerAccountRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
+    registerPrometheusMetricsMiddleware: () => undefined,
+    registerPrometheusMetricsRoute: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
@@ -622,6 +644,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     /Runtime health available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/health/,
     /Auth readiness available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/auth-readiness/,
     /Runtime diagnostic snapshot available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/diagnostic-snapshot/,
+    /Prometheus metrics available at http:\/\/127\.0\.0\.2:3303\/metrics/,
     /Runtime metrics available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/metrics/,
     /Config center storage: mysql/,
     /Local in-memory Colyseus presence\/driver enabled/,

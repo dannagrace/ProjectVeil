@@ -44,6 +44,15 @@ interface MatchmakingObservabilityCounters {
   rateLimitedTotal: number;
 }
 
+type ActionValidationScope = "world" | "battle";
+
+interface HistogramMetricState {
+  buckets: number[];
+  bucketCounts: number[];
+  count: number;
+  sum: number;
+}
+
 type AuthSessionFailureReason =
   | "unauthorized"
   | "token_expired"
@@ -95,6 +104,11 @@ interface RuntimeObservabilityState {
   startedAt: number;
   rooms: Map<string, RuntimeRoomSnapshot>;
   counters: RuntimeObservabilityCounters;
+  prometheus: {
+    battleDurationSeconds: HistogramMetricState;
+    httpRequestDurationSeconds: HistogramMetricState;
+    actionValidationFailuresTotal: Map<string, number>;
+  };
   auth: AuthObservabilityState;
   matchmaking: {
     counters: MatchmakingObservabilityCounters;
@@ -175,6 +189,17 @@ interface AuthTokenDeliveryPayload {
 }
 
 const RECENT_TOKEN_DELIVERY_ATTEMPTS_LIMIT = 25;
+const BATTLE_DURATION_SECONDS_BUCKETS = [1, 5, 10, 30, 60, 120, 300, 600];
+const HTTP_REQUEST_DURATION_SECONDS_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5];
+
+function createHistogramMetricState(buckets: number[]): HistogramMetricState {
+  return {
+    buckets: [...buckets].sort((left, right) => left - right),
+    bucketCounts: new Array(buckets.length).fill(0),
+    count: 0,
+    sum: 0
+  };
+}
 
 const runtimeObservability: RuntimeObservabilityState = {
   startedAt: Date.now(),
@@ -185,6 +210,11 @@ const runtimeObservability: RuntimeObservabilityState = {
     battleActionsTotal: 0,
     websocketActionRateLimitedTotal: 0,
     websocketActionKickTotal: 0
+  },
+  prometheus: {
+    battleDurationSeconds: createHistogramMetricState(BATTLE_DURATION_SECONDS_BUCKETS),
+    httpRequestDurationSeconds: createHistogramMetricState(HTTP_REQUEST_DURATION_SECONDS_BUCKETS),
+    actionValidationFailuresTotal: new Map<string, number>()
   },
   auth: {
     counters: {
@@ -249,6 +279,51 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
     code: error instanceof Error ? error.name || "error" : "error",
     message: error instanceof Error ? error.message : String(error)
   };
+}
+
+function escapePrometheusLabelValue(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"").replaceAll("\n", "\\n");
+}
+
+function formatPrometheusLabels(labels: Record<string, string>): string {
+  const entries = Object.entries(labels).filter(([, value]) => value.length > 0);
+  if (entries.length === 0) {
+    return "";
+  }
+
+  return `{${entries
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}="${escapePrometheusLabelValue(value)}"`)
+    .join(",")}}`;
+}
+
+function observeHistogram(state: HistogramMetricState, value: number): void {
+  const normalized = Number.isFinite(value) ? Math.max(0, value) : 0;
+  state.count += 1;
+  state.sum += normalized;
+
+  for (let index = 0; index < state.buckets.length; index += 1) {
+    if (normalized <= state.buckets[index]!) {
+      state.bucketCounts[index] = (state.bucketCounts[index] ?? 0) + 1;
+    }
+  }
+}
+
+function resetHistogram(state: HistogramMetricState): void {
+  state.bucketCounts.fill(0);
+  state.count = 0;
+  state.sum = 0;
+}
+
+function renderHistogramMetric(name: string, help: string, state: HistogramMetricState): string[] {
+  const lines = [`# HELP ${name} ${help}`, `# TYPE ${name} histogram`];
+  for (let index = 0; index < state.buckets.length; index += 1) {
+    lines.push(`${name}_bucket{le="${state.buckets[index]}"}` + ` ${state.bucketCounts[index]}`);
+  }
+  lines.push(`${name}_bucket{le="+Inf"} ${state.count}`);
+  lines.push(`${name}_sum ${state.sum}`);
+  lines.push(`${name}_count ${state.count}`);
+  return lines;
 }
 
 function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPayload {
@@ -468,13 +543,56 @@ function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): Runtim
   };
 }
 
-function buildMetricsDocument(): string {
+export function buildPrometheusMetricsDocument(): string {
   const health = buildHealthPayload();
-
-  return [
+  const lines = [
     "# HELP veil_up Process health status.",
     "# TYPE veil_up gauge",
     "veil_up 1",
+    "# HELP veil_active_rooms Active room count.",
+    "# TYPE veil_active_rooms gauge",
+    `veil_active_rooms ${health.runtime.activeRoomCount}`,
+    "# HELP veil_connected_players Connected player count across active rooms.",
+    "# TYPE veil_connected_players gauge",
+    `veil_connected_players ${health.runtime.connectionCount}`
+  ];
+
+  lines.push(
+    ...renderHistogramMetric(
+      "veil_battle_duration_seconds",
+      "Battle duration from start until resolution.",
+      runtimeObservability.prometheus.battleDurationSeconds
+    )
+  );
+
+  lines.push("# HELP veil_action_validation_failures_total Total rejected gameplay actions.");
+  lines.push("# TYPE veil_action_validation_failures_total counter");
+  const actionValidationEntries = Array.from(runtimeObservability.prometheus.actionValidationFailuresTotal.entries()).sort(
+    ([left], [right]) => left.localeCompare(right)
+  );
+  if (actionValidationEntries.length === 0) {
+    lines.push("veil_action_validation_failures_total 0");
+  } else {
+    for (const [key, value] of actionValidationEntries) {
+      const [scope, reason] = key.split("::");
+      lines.push(
+        `veil_action_validation_failures_total${formatPrometheusLabels({
+          reason: reason ?? "unknown",
+          scope: scope ?? "unknown"
+        })} ${value}`
+      );
+    }
+  }
+
+  lines.push(
+    ...renderHistogramMetric(
+      "veil_http_request_duration_seconds",
+      "HTTP request duration for the dev server.",
+      runtimeObservability.prometheus.httpRequestDurationSeconds
+    )
+  );
+
+  lines.push(
     "# HELP veil_active_room_count Active room count.",
     "# TYPE veil_active_room_count gauge",
     `veil_active_room_count ${health.runtime.activeRoomCount}`,
@@ -610,7 +728,9 @@ function buildMetricsDocument(): string {
     "# HELP veil_auth_session_failures_session_revoked_total Total auth session failures caused by revoked sessions.",
     "# TYPE veil_auth_session_failures_session_revoked_total counter",
     `veil_auth_session_failures_session_revoked_total ${health.runtime.auth.sessionFailureReasons.session_revoked}`
-  ].join("\n");
+  );
+
+  return lines.join("\n");
 }
 
 export function recordRuntimeRoom(snapshot: RuntimeRoomSnapshot): void {
@@ -631,6 +751,23 @@ export function recordWorldActionMessage(): void {
 
 export function recordBattleActionMessage(): void {
   runtimeObservability.counters.battleActionsTotal += 1;
+}
+
+export function recordBattleDuration(durationSeconds: number): void {
+  observeHistogram(runtimeObservability.prometheus.battleDurationSeconds, durationSeconds);
+}
+
+export function recordActionValidationFailure(scope: ActionValidationScope, reason: string): void {
+  const normalizedReason = reason.trim() || "unknown";
+  const key = `${scope}::${normalizedReason}`;
+  runtimeObservability.prometheus.actionValidationFailuresTotal.set(
+    key,
+    (runtimeObservability.prometheus.actionValidationFailuresTotal.get(key) ?? 0) + 1
+  );
+}
+
+export function recordHttpRequestDuration(durationSeconds: number): void {
+  observeHistogram(runtimeObservability.prometheus.httpRequestDurationSeconds, durationSeconds);
 }
 
 export function recordWebSocketActionRateLimited(): void {
@@ -796,6 +933,9 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.counters.battleActionsTotal = 0;
   runtimeObservability.counters.websocketActionRateLimitedTotal = 0;
   runtimeObservability.counters.websocketActionKickTotal = 0;
+  resetHistogram(runtimeObservability.prometheus.battleDurationSeconds);
+  resetHistogram(runtimeObservability.prometheus.httpRequestDurationSeconds);
+  runtimeObservability.prometheus.actionValidationFailuresTotal.clear();
   runtimeObservability.auth.counters.sessionChecksTotal = 0;
   runtimeObservability.auth.counters.sessionFailuresTotal = 0;
   runtimeObservability.auth.counters.guestLoginsTotal = 0;
@@ -875,7 +1015,7 @@ export function registerRuntimeObservabilityRoutes(
     try {
       response.statusCode = 200;
       response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
-      response.end(`${buildMetricsDocument()}\n`);
+      response.end(`${buildPrometheusMetricsDocument()}\n`);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

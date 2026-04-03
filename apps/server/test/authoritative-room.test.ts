@@ -1,6 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createRoom } from "../src/index";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "../src/observability";
+
+function resolveBattle(room: ReturnType<typeof createRoom>, playerId: string): void {
+  let steps = 0;
+  while (steps < 20) {
+    const battle = room.getBattleForPlayer(playerId);
+    if (!battle) {
+      return;
+    }
+
+    const activeUnitId = battle.activeUnitId;
+    const activeUnit = activeUnitId ? battle.units[activeUnitId] : undefined;
+    const target = activeUnit
+      ? Object.values(battle.units).find((unit) => unit.camp !== activeUnit.camp && unit.count > 0)
+      : undefined;
+
+    assert.ok(activeUnitId);
+    assert.ok(target);
+
+    room.dispatchBattle(playerId, {
+      type: "battle.attack",
+      attackerId: activeUnitId,
+      defenderId: target.id
+    });
+    steps += 1;
+  }
+
+  assert.fail(`expected battle for ${playerId} to resolve within 20 actions`);
+}
 
 test("battle start auto-resolves defender opener before state is returned to the player", () => {
   const room = createRoom("room-auto-open", 1001);
@@ -96,6 +125,7 @@ test("player battle actions are followed by automated defender turns until contr
 });
 
 test("server rejects battle actions sent for non-player-controlled defender units", () => {
+  resetRuntimeObservability();
   const room = createRoom("room-control-check", 1001);
   room.dispatch("player-1", {
     type: "hero.move",
@@ -112,6 +142,27 @@ test("server rejects battle actions sent for non-player-controlled defender unit
   assert.equal(result.ok, false);
   assert.equal(result.reason, "unit_not_player_controlled");
   assert.ok(result.battle);
+  assert.match(
+    buildPrometheusMetricsDocument(),
+    /^veil_action_validation_failures_total\{reason="unit_not_player_controlled",scope="battle"\} 1$/m
+  );
+});
+
+test("completed battles contribute to Prometheus battle duration observations", () => {
+  resetRuntimeObservability();
+  const room = createRoom("room-battle-duration", 1001);
+
+  room.dispatch("player-1", {
+    type: "hero.move",
+    heroId: "hero-1",
+    destination: { x: 5, y: 4 }
+  });
+
+  resolveBattle(room, "player-1");
+
+  const metrics = buildPrometheusMetricsDocument();
+  assert.match(metrics, /^veil_battle_duration_seconds_count 1$/m);
+  assert.match(metrics, /^veil_battle_duration_seconds_bucket\{le="1"\} 1$/m);
 });
 
 test("room supports concurrent neutral battles and returns player-specific battle snapshots", () => {
