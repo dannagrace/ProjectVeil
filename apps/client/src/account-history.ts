@@ -216,6 +216,15 @@ function resolveBattleReportSummary(
   return resolveBattleReportCenter(account).items.find((report) => report.id === replay.id) ?? null;
 }
 
+function resolveBattleReportSummaryById(account: PlayerAccountProfile, reportId?: string | null) {
+  const normalizedReportId = reportId?.trim();
+  if (!normalizedReportId) {
+    return null;
+  }
+
+  return resolveBattleReportCenter(account).items.find((report) => report.id === normalizedReportId) ?? null;
+}
+
 function formatBattleReportEncounter(input: {
   battleKind: PlayerAccountProfile["recentBattleReplays"][number]["battleKind"];
   opponentHeroId?: string;
@@ -523,6 +532,7 @@ export function renderBattleReportReplayCenter(input: {
     })}
     ${renderBattleReplayInspector({
       account: input.account,
+      ...(input.selectedReplayId !== undefined ? { selectedReplayId: input.selectedReplayId } : {}),
       replay: input.replay,
       playback: input.playback,
       ...(input.loading !== undefined ? { loading: input.loading } : {}),
@@ -533,12 +543,59 @@ export function renderBattleReportReplayCenter(input: {
 
 export function renderBattleReplayInspector(input: {
   account: PlayerAccountProfile;
+  selectedReplayId?: string | null;
   replay: PlayerAccountProfile["recentBattleReplays"][number] | null;
   playback: BattleReplayPlaybackState | null;
   loading?: boolean;
   status?: string;
 }): string {
+  const selectedReport = resolveBattleReportSummaryById(input.account, input.selectedReplayId);
   if (!input.replay) {
+    if (selectedReport) {
+      return `<div class="account-subsection replay-inspector" data-testid="battle-replay-inspector">
+        <div class="account-replay-inspector-head">
+          <div>
+            <strong>战报详情</strong>
+            <p class="account-meta">${escapeHtml(
+              `${selectedReport.result === "victory" ? "胜利" : "失利"} · ${selectedReport.battleKind === "hero" ? "PVP" : "PVE"} · ${formatBattleReportEncounter(selectedReport)}`
+            )}</p>
+          </div>
+          <button type="button" class="account-replay-dismiss" data-clear-replay="true">收起</button>
+        </div>
+        <div class="account-replay-meta">
+          <span>房间 ${escapeHtml(selectedReport.roomId)}</span>
+          <span>英雄 ${escapeHtml(selectedReport.heroId)}</span>
+          <span>阵营 ${escapeHtml(selectedReport.playerCamp === "attacker" ? "攻方" : "守方")}</span>
+        </div>
+        <p class="account-meta">${escapeHtml(input.status?.trim() || "当前仅同步到战报摘要，完整回放暂不可用。")}</p>
+        <div class="account-replay-report-summary">
+          <div class="account-replay-summary-card">
+            <strong>结果概览</strong>
+            <p>${escapeHtml(`${selectedReport.turnCount} 回合 · ${selectedReport.actionCount} 步`)}</p>
+            <div class="account-replay-meta">
+              <span>${escapeHtml(`完成于 ${formatTimestamp(selectedReport.completedAt)}`)}</span>
+              <span>${escapeHtml(`回放证据 ${selectedReport.evidence.replay === "available" ? "可用" : "缺失"}`)}</span>
+            </div>
+          </div>
+          <div class="account-replay-summary-card">
+            <strong>战后收益</strong>
+            ${
+              selectedReport.rewards.length > 0
+                ? `<div class="account-event-rewards">${selectedReport.rewards
+                    .map((reward) => `<span class="account-reward-chip">${escapeHtml(formatBattleRewardChip(reward))}</span>`)
+                    .join("")}</div>`
+                : `<p class="account-meta">${
+                    selectedReport.evidence.rewards === "available" ? "收益证据同步中。" : "该战报暂未附带额外奖励记录。"
+                  }</p>`
+            }
+            <div class="account-replay-summary-notes">
+              <span class="account-meta">${escapeHtml(`收益证据 ${selectedReport.evidence.rewards === "available" ? "可用" : "缺失"}`)}</span>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }
+
     return `<div class="account-subsection">
       <strong>回放详情</strong>
       <p class="account-meta">${escapeHtml(input.status?.trim() || "选择一场最近战斗，即可查看逐步回放。")}</p>

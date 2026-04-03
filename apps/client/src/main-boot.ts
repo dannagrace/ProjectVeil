@@ -191,7 +191,8 @@ export async function syncH5PlayerAccountProfile({
       : "当前运行在本地游客档，昵称仅保存在浏览器。";
   if (
     state.replayDetail.selectedReplayId &&
-    !account.recentBattleReplays.some((replay) => replay.id === state.replayDetail.selectedReplayId)
+    !account.recentBattleReplays.some((replay) => replay.id === state.replayDetail.selectedReplayId) &&
+    !account.battleReportCenter?.items.some((report) => report.id === state.replayDetail.selectedReplayId)
   ) {
     clearReplayDetail("最近战报已刷新，当前选中的回放已不可用。");
   }

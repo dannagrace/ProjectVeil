@@ -249,6 +249,52 @@ test("account history renderer shows replay inspector placeholder before a repla
   assert.match(html, /选择一场最近战斗/);
 });
 
+test("account history renderer shows report-only detail when replay evidence is unavailable", () => {
+  const profile = createProfile();
+  profile.recentBattleReplays = [];
+  profile.battleReportCenter = {
+    latestReportId: "report-only",
+    items: [
+      {
+        id: "report-only",
+        replayId: "report-only",
+        roomId: "room-report",
+        playerId: "player-1",
+        battleId: "battle-report",
+        battleKind: "hero",
+        playerCamp: "defender",
+        heroId: "hero-1",
+        opponentHeroId: "hero-9",
+        startedAt: "2026-03-27T12:20:00.000Z",
+        completedAt: "2026-03-27T12:22:00.000Z",
+        result: "defeat",
+        turnCount: 3,
+        actionCount: 5,
+        rewards: [],
+        evidence: {
+          replay: "missing",
+          rewards: "missing"
+        }
+      }
+    ]
+  };
+
+  const html = renderBattleReplayInspector({
+    account: profile,
+    selectedReplayId: "report-only",
+    replay: null,
+    playback: null,
+    status: "当前仅同步到战报摘要，完整回放暂不可用。"
+  });
+
+  assert.match(html, /战报详情/);
+  assert.match(html, /失利 · PVP · 敌方英雄 hero-9/);
+  assert.match(html, /3 回合 · 5 步/);
+  assert.match(html, /回放证据 缺失/);
+  assert.match(html, /收益证据 缺失/);
+  assert.match(html, /完整回放暂不可用/);
+});
+
 test("account history renderer shows replay center empty state without blank content", () => {
   const profile = createProfile();
   profile.recentBattleReplays = [];

@@ -101,6 +101,10 @@ test("player account helpers can build a local fallback profile", () => {
     ],
     recentEventLog: [],
     recentBattleReplays: [],
+    battleReportCenter: {
+      latestReportId: null,
+      items: []
+    },
     lastRoomId: "room-beta",
     source: "local"
   });
@@ -227,6 +231,7 @@ test("player account loader can overlay progression snapshot onto base account p
     assert.deepEqual(requestedUrls, [
       "http://127.0.0.1:2567/api/player-accounts/player-1",
       "http://127.0.0.1:2567/api/player-accounts/player-1/battle-replays",
+      "http://127.0.0.1:2567/api/player-accounts/player-1/battle-reports",
       "http://127.0.0.1:2567/api/player-accounts/player-1/progression?limit=2"
     ]);
     assert.equal(account.displayName, "暮火侦骑");
@@ -1175,6 +1180,43 @@ test("player account profile loader merges recent battle replays from the dedica
       );
     }
 
+    if (url.endsWith("/api/player-accounts/player-1/battle-reports")) {
+      return new Response(
+        JSON.stringify({
+          latestReportId: "replay-newer",
+          items: [
+            {
+              id: "replay-newer",
+              replayId: "replay-newer",
+              roomId: "room-alpha",
+              playerId: "player-1",
+              battleId: "battle-2",
+              battleKind: "neutral",
+              playerCamp: "attacker",
+              heroId: "hero-1",
+              neutralArmyId: "neutral-1",
+              startedAt: "2026-03-27T12:01:00.000Z",
+              completedAt: "2026-03-27T12:02:00.000Z",
+              result: "victory",
+              turnCount: 1,
+              actionCount: 0,
+              rewards: [],
+              evidence: {
+                replay: "available",
+                rewards: "missing"
+              }
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
     return new Response(
       JSON.stringify({
         items: [
@@ -1236,10 +1278,13 @@ test("player account profile loader merges recent battle replays from the dedica
     const profile = await loadPlayerAccountProfile("player-1", "room-alpha");
     assert.deepEqual(requestedUrls, [
       "http://127.0.0.1:2567/api/player-accounts/player-1",
-      "http://127.0.0.1:2567/api/player-accounts/player-1/battle-replays"
+      "http://127.0.0.1:2567/api/player-accounts/player-1/battle-replays",
+      "http://127.0.0.1:2567/api/player-accounts/player-1/battle-reports"
     ]);
     assert.equal(profile.displayName, "霜火游侠");
     assert.deepEqual(profile.recentBattleReplays.map((replay) => replay.id), ["replay-newer"]);
+    assert.equal(profile.battleReportCenter?.latestReportId, "replay-newer");
+    assert.equal(profile.battleReportCenter?.items[0]?.evidence.rewards, "missing");
   } finally {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
