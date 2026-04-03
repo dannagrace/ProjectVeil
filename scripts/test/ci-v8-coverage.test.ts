@@ -7,6 +7,7 @@ import {
   buildCoverageSummary,
   coverageRoot,
   parseCoverageMetrics,
+  printGithubAnnotations,
   renderFailureSection,
   writeSummary,
 } from "../ci-v8-coverage.ts";
@@ -140,4 +141,48 @@ test("writeSummary includes overall status and explicit threshold failures", asy
       functions: 80.69,
     },
   });
+});
+
+test("printGithubAnnotations emits GitHub Actions error annotations per failed scope", () => {
+  const originalGithubActions = process.env.GITHUB_ACTIONS;
+  const originalWrite = process.stderr.write.bind(process.stderr);
+  let output = "";
+
+  process.env.GITHUB_ACTIONS = "true";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    output += chunk.toString();
+    return true;
+  }) as typeof process.stderr.write;
+
+  try {
+    printGithubAnnotations([
+      buildCoverageSummary(
+        {
+          name: "server",
+          include: "apps/server/src/**/*.ts",
+          lineThreshold: 75,
+          branchThreshold: 65,
+          functionThreshold: 75,
+          tests: ["apps/server/test/**/*.test.ts"],
+        },
+        {
+          lines: 77.25,
+          branches: 64.99,
+          functions: 74.5,
+        },
+      ),
+    ]);
+  } finally {
+    process.stderr.write = originalWrite;
+    if (originalGithubActions === undefined) {
+      delete process.env.GITHUB_ACTIONS;
+    } else {
+      process.env.GITHUB_ACTIONS = originalGithubActions;
+    }
+  }
+
+  assert.match(
+    output,
+    /::error title=Coverage threshold failure::server: branches 64\.99% below 65% floor; functions 74\.50% below 75% floor/,
+  );
 });

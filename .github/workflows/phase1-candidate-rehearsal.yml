@@ -67,6 +67,13 @@ jobs:
           npm run stress:rooms:reconnect-soak -- \
             --artifact-path "${RUNNER_TEMP}/release-readiness/colyseus-reconnect-soak-summary-${GITHUB_SHA}.json"
 
+      - name: Publish coverage summary
+        if: always()
+        run: |
+          if [[ -f .coverage/summary.md ]]; then
+            cat .coverage/summary.md >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
       - name: Upload V8 coverage artifacts
         if: always()
         uses: actions/upload-artifact@v4

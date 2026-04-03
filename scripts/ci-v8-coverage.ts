@@ -256,9 +256,21 @@ export function printFailureReport(summaries: CoverageSummary[]): void {
     return;
   }
 
+  printGithubAnnotations(failedSummaries);
   process.stderr.write("\nCoverage threshold failures:\n");
   for (const line of renderFailureSection(failedSummaries).slice(2)) {
     process.stderr.write(`${line}\n`);
+  }
+}
+
+export function printGithubAnnotations(failedSummaries: CoverageSummary[]): void {
+  if (process.env.GITHUB_ACTIONS !== "true") {
+    return;
+  }
+
+  for (const { suite, failures } of failedSummaries) {
+    const details = failures.map((failure) => formatFailure(failure)).join("; ");
+    process.stderr.write(`::error title=Coverage threshold failure::${suite.name}: ${details}\n`);
   }
 }
 
