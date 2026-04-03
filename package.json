@@ -27,6 +27,7 @@
     "plan:validation:minimal": "node --import tsx ./scripts/minimal-validation-plan.ts",
     "demo:flow": "node --import tsx ./scripts/demo.ts",
     "validate:quickstart": "node ./scripts/validate-local-dev-quickstart.mjs",
+    "validate:redis-scaling": "node --import tsx ./scripts/validate-redis-scaling.ts",
     "validate:e2e:fixtures": "node --import tsx ./scripts/validate-e2e-config-fixtures.ts",
     "validate:content-pack": "node --import tsx ./scripts/validate-content-pack.ts",
     "validate:content-pack:all": "node --import tsx ./scripts/validate-content-pack.ts --map-pack frontier-basin --map-pack stonewatch-fork --map-pack ridgeway-crossing --map-pack highland-reach --map-pack amber-fields --map-pack ironpass-gorge --map-pack splitrock-canyon --map-pack bogfen-crossing --map-pack murkveil-delta --map-pack frostwatch-ridge --map-pack ashpeak-ascent --map-pack thornwall-divide --map-pack phase2",
@@ -125,6 +126,7 @@
     "@types/node": "^24.5.2",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.25.12",
+    "ioredis-mock": "^8.13.1",
     "miniprogram-ci": "^2.1.31",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2",
@@ -132,10 +134,13 @@
     "ws": "^8.18.3"
   },
   "dependencies": {
+    "@colyseus/redis-driver": "^0.17.7",
+    "@colyseus/redis-presence": "^0.17.7",
     "@colyseus/sdk": "^0.17.35",
     "cc": "file:packages/cc-runtime-stub",
     "colyseus": "^0.17.8",
     "dotenv": "^17.3.1",
+    "ioredis": "^5.10.1",
     "mysql2": "^3.20.0",
     "xlsx": "^0.18.5"
   }

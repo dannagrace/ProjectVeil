@@ -121,6 +121,7 @@ function createBaseDependencies() {
     defineCalls: [] as Array<{ name: string; room: unknown }>,
     filterByCalls: [] as string[][],
     listenCalls: [] as Array<{ port: number; host: string }>,
+    realtimeOptions: [] as Array<{ driver?: unknown; presence?: unknown } | undefined>,
     define(name: string, room: unknown) {
       this.defineCalls.push({ name, room });
       return {
@@ -175,6 +176,13 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       configuredStore = store;
     },
     createTransport: () => base.transport,
+    readRedisUrl: () => null,
+    createRedisPresence: () => {
+      throw new Error("createRedisPresence should not be used without REDIS_URL");
+    },
+    createRedisDriver: () => {
+      throw new Error("createRedisDriver should not be used without REDIS_URL");
+    },
     registerAuthRoutes: (app, store) => {
       assert.equal(app, base.expressApp);
       authStore = store;
@@ -215,7 +223,10 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       assert.equal(gameServer, base.gameServer);
       base.routeCalls.push("admin");
     },
-    createGameServer: () => base.gameServer,
+    createGameServer: (_transport, realtimeOptions) => {
+      base.gameServer.realtimeOptions.push(realtimeOptions);
+      return base.gameServer;
+    },
     logger: base.logger,
     process: base.process,
     setInterval: () => {
@@ -245,6 +256,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.deepEqual(base.gameServer.defineCalls.map((call) => call.name), ["veil"]);
   assert.deepEqual(base.gameServer.filterByCalls, [["logicalRoomId"]]);
   assert.deepEqual(base.gameServer.listenCalls, [{ port: 3101, host: "0.0.0.0" }]);
+  assert.deepEqual(base.gameServer.realtimeOptions, [{ driver: undefined, presence: undefined }]);
   assert.equal(configCenterStore.initializeCalls, 1);
   assert.equal(base.logger.warnings.length, 0);
   assert.equal(base.logger.errors.length, 0);
@@ -255,6 +267,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     /Runtime diagnostic snapshot available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/diagnostic-snapshot/,
     /Runtime metrics available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/metrics/,
     /Config center storage: filesystem/,
+    /Local in-memory Colyseus presence\/driver enabled/,
     /Local in-memory room persistence enabled/
   ]);
   assert.ok(base.process.handlers.SIGINT);
@@ -282,6 +295,13 @@ test("dev server logs process-level failures, closes stores, and exits non-zero"
     createMemoryRoomSnapshotStore: () => memoryStore,
     configureRoomSnapshotStore: () => undefined,
     createTransport: () => base.transport,
+    readRedisUrl: () => null,
+    createRedisPresence: () => {
+      throw new Error("createRedisPresence should not be used without REDIS_URL");
+    },
+    createRedisDriver: () => {
+      throw new Error("createRedisDriver should not be used without REDIS_URL");
+    },
     registerAuthRoutes: () => undefined,
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
@@ -290,7 +310,10 @@ test("dev server logs process-level failures, closes stores, and exits non-zero"
     registerMatchmakingRoutes: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
     registerAdminRoutes: () => undefined,
-    createGameServer: () => base.gameServer,
+    createGameServer: (_transport, realtimeOptions) => {
+      base.gameServer.realtimeOptions.push(realtimeOptions);
+      return base.gameServer;
+    },
     logger: base.logger,
     process: base.process,
     setInterval: () => {
@@ -328,6 +351,13 @@ test("dev server logs uncaught exceptions, closes stores, and exits non-zero", a
     createMemoryRoomSnapshotStore: () => memoryStore,
     configureRoomSnapshotStore: () => undefined,
     createTransport: () => base.transport,
+    readRedisUrl: () => null,
+    createRedisPresence: () => {
+      throw new Error("createRedisPresence should not be used without REDIS_URL");
+    },
+    createRedisDriver: () => {
+      throw new Error("createRedisDriver should not be used without REDIS_URL");
+    },
     registerAuthRoutes: () => undefined,
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
@@ -336,7 +366,10 @@ test("dev server logs uncaught exceptions, closes stores, and exits non-zero", a
     registerMatchmakingRoutes: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
     registerAdminRoutes: () => undefined,
-    createGameServer: () => base.gameServer,
+    createGameServer: (_transport, realtimeOptions) => {
+      base.gameServer.realtimeOptions.push(realtimeOptions);
+      return base.gameServer;
+    },
     logger: base.logger,
     process: base.process,
     setInterval: () => {
@@ -396,6 +429,13 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     createMemoryRoomSnapshotStore: () => memoryStore,
     configureRoomSnapshotStore: () => undefined,
     createTransport: () => base.transport,
+    readRedisUrl: () => null,
+    createRedisPresence: () => {
+      throw new Error("createRedisPresence should not be used without REDIS_URL");
+    },
+    createRedisDriver: () => {
+      throw new Error("createRedisDriver should not be used without REDIS_URL");
+    },
     registerAuthRoutes: () => undefined,
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
@@ -404,7 +444,10 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     registerMatchmakingRoutes: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
     registerAdminRoutes: () => undefined,
-    createGameServer: () => base.gameServer,
+    createGameServer: (_transport, realtimeOptions) => {
+      base.gameServer.realtimeOptions.push(realtimeOptions);
+      return base.gameServer;
+    },
     logger: base.logger,
     process: base.process,
     setInterval: () => {
@@ -425,8 +468,68 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     /Runtime diagnostic snapshot available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/diagnostic-snapshot/,
     /Runtime metrics available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/metrics/,
     /Config center storage: filesystem/,
+    /Local in-memory Colyseus presence\/driver enabled/,
     /Local in-memory room persistence enabled/
   ]);
+});
+
+test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL is set", async () => {
+  const base = createBaseDependencies();
+  const configCenterStore = createConfigCenterStore("filesystem");
+  const memoryStore = createMemoryStore();
+  const redisPresence = {
+    shutdownCalls: 0,
+    shutdown() {
+      this.shutdownCalls += 1;
+    }
+  };
+  const redisDriver = {
+    shutdownCalls: 0,
+    shutdown() {
+      this.shutdownCalls += 1;
+    }
+  };
+
+  await startDevServer(3123, "127.0.0.1", {
+    readMySqlPersistenceConfig: () => null,
+    createFileSystemConfigCenterStore: () => configCenterStore,
+    createMemoryRoomSnapshotStore: () => memoryStore,
+    configureRoomSnapshotStore: () => undefined,
+    createTransport: () => base.transport,
+    readRedisUrl: () => "redis://127.0.0.1:6379/0",
+    createRedisPresence: () => redisPresence,
+    createRedisDriver: () => redisDriver,
+    registerAuthRoutes: () => undefined,
+    registerConfigCenterRoutes: () => undefined,
+    registerConfigViewerRoutes: () => undefined,
+    registerPlayerAccountRoutes: () => undefined,
+    registerLobbyRoutes: () => undefined,
+    registerMatchmakingRoutes: () => undefined,
+    registerRuntimeObservabilityRoutes: () => undefined,
+    registerAdminRoutes: () => undefined,
+    createGameServer: (_transport, realtimeOptions) => {
+      base.gameServer.realtimeOptions.push(realtimeOptions);
+      return base.gameServer;
+    },
+    logger: base.logger,
+    process: base.process,
+    setInterval: () => {
+      throw new Error("setInterval should not be used for in-memory startup");
+    },
+    clearInterval: () => undefined,
+    isMySqlSnapshotStore: () => false
+  });
+
+  assert.deepEqual(base.gameServer.realtimeOptions, [{ driver: redisDriver, presence: redisPresence }]);
+  assertStartupLogIncludes(base.logger, [/Redis-backed Colyseus presence\/driver enabled via REDIS_URL/]);
+
+  base.process.handlers.SIGTERM?.();
+  await flushAsyncWork();
+
+  assert.equal(redisPresence.shutdownCalls, 1);
+  assert.equal(redisDriver.shutdownCalls, 1);
+  assert.equal(memoryStore.closeCalls, 1);
+  assert.equal(configCenterStore.closeCalls, 1);
 });
 
 test("dev server starts MySQL persistence, runs retention cleanup, schedules pruning, and clears the timer on SIGTERM", async () => {
@@ -472,6 +575,13 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
       assert.equal(store, mysqlStore);
     },
     createTransport: () => base.transport,
+    readRedisUrl: () => null,
+    createRedisPresence: () => {
+      throw new Error("createRedisPresence should not be used without REDIS_URL");
+    },
+    createRedisDriver: () => {
+      throw new Error("createRedisDriver should not be used without REDIS_URL");
+    },
     registerAuthRoutes: () => undefined,
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
@@ -480,7 +590,10 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     registerMatchmakingRoutes: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
     registerAdminRoutes: () => undefined,
-    createGameServer: () => base.gameServer,
+    createGameServer: (_transport, realtimeOptions) => {
+      base.gameServer.realtimeOptions.push(realtimeOptions);
+      return base.gameServer;
+    },
     logger: base.logger,
     process: base.process,
     setInterval: (callback, delayMs) => {
@@ -511,6 +624,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     /Runtime diagnostic snapshot available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/diagnostic-snapshot/,
     /Runtime metrics available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/metrics/,
     /Config center storage: mysql/,
+    /Local in-memory Colyseus presence\/driver enabled/,
     /MySQL room persistence enabled/,
     /Snapshot retention: ttl=48h \/ cleanup=15m/,
     /Pruned 2 expired room snapshot\(s\)/
