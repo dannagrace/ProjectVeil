@@ -12,7 +12,7 @@ import {
 } from "../src/colyseus-room";
 import { createRoom, type RoomPersistenceSnapshot } from "../src/index";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import type { PlayerAccountProgressPatch, PlayerAccountSnapshot } from "../src/persistence";
+import type { PlayerAccountEnsureInput, PlayerAccountProgressPatch, PlayerAccountSnapshot } from "../src/persistence";
 
 interface FakeClient extends Client {
   sent: ServerMessage[];
@@ -36,6 +36,16 @@ class InstrumentedRoomSnapshotStore extends MemoryRoomSnapshotStore {
 class FailingBootstrapSaveStore extends MemoryRoomSnapshotStore {
   override async save(_roomId: string, _snapshot: RoomPersistenceSnapshot): Promise<void> {
     throw new Error("bootstrap save failed");
+  }
+}
+
+class FailingEnsurePlayerAccountStore extends MemoryRoomSnapshotStore {
+  constructor(private readonly failure: Error) {
+    super();
+  }
+
+  override async ensurePlayerAccount(_input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
+    throw this.failure;
   }
 }
 
@@ -324,6 +334,45 @@ test("room bootstrap save failures reject creation without publishing a lobby su
   assert.equal(listLobbyRooms().some((entry) => entry.roomId === roomId), false);
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
+});
+
+test("connect logs player account initialization failures instead of silently swallowing them", async (t) => {
+  resetLobbyRoomRegistry();
+  const failure = new Error("ensure account failed");
+  configureRoomSnapshotStore(new FailingEnsurePlayerAccountStore(failure));
+  const room = await createTestRoom(`lifecycle-account-init-failure-${Date.now()}`);
+  const client = createFakeClient("session-account-init-failure");
+  const errorCalls: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    errorCalls.push(args);
+  };
+
+  t.after(() => {
+    console.error = originalConsoleError;
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  room.clients.push(client);
+  room.onJoin(client, { playerId: "player-1" });
+
+  await emitRoomMessage(room, "connect", client, {
+    type: "connect",
+    requestId: "connect-account-init-failure",
+    roomId: room.roomId,
+    playerId: "player-1"
+  });
+
+  assert.equal(errorCalls.length, 1);
+  assert.equal(errorCalls[0]?.[0], "[VeilRoom] Failed to ensure player account during connect");
+  assert.deepEqual(errorCalls[0]?.[1], {
+    roomId: room.roomId,
+    playerId: "player-1",
+    error: failure
+  });
+  assert.equal(lastSessionState(client, "reply").payload.world.ownHeroes[0]?.playerId, "player-1");
 });
 
 test("client reconnect within the window restores room state and records reconnectedAt", async (t) => {

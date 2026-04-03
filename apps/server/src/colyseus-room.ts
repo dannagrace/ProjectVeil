@@ -269,7 +269,12 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
               : {}),
             lastRoomId: logicalRoomId
           });
-        } catch {
+        } catch (error) {
+          console.error("[VeilRoom] Failed to ensure player account during connect", {
+            roomId: logicalRoomId,
+            playerId,
+            error
+          });
           ensuredAccount = null;
         }
       }
