@@ -124,7 +124,7 @@ function isBattleSkillKind(value: unknown): value is BattleSkillKind {
 }
 
 function isBattleSkillTarget(value: unknown): value is BattleSkillTarget {
-  return value === "enemy" || value === "self";
+  return value === "enemy" || value === "self" || value === "ally";
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -259,6 +259,12 @@ export function validateBattleSkillCatalog(config: BattleSkillCatalogConfig): vo
     }
     if (status.blocksActiveSkills !== undefined && typeof status.blocksActiveSkills !== "boolean") {
       throw new Error(`Battle status ${status.id} blocksActiveSkills must be boolean`);
+    }
+    if (status.preventsAction !== undefined && typeof status.preventsAction !== "boolean") {
+      throw new Error(`Battle status ${status.id} preventsAction must be boolean`);
+    }
+    if (status.forcedAttackSource !== undefined && typeof status.forcedAttackSource !== "boolean") {
+      throw new Error(`Battle status ${status.id} forcedAttackSource must be boolean`);
     }
 
     statusIds.add(status.id);
