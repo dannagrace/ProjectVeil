@@ -38,7 +38,7 @@
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 统一 Cocos RC candidate bundle：`npm run release:cocos-rc:bundle`（会自动先跑 `npm run release:cocos:primary-journey-evidence`）
 - Primary client delivery checklist：`docs/cocos-primary-client-delivery.md`
-- Cocos Phase 1 占位 / fallback 表现签核：`docs/cocos-phase1-presentation-signoff.md`
+- Cocos Phase 1 占位 / fallback 表现签核（含当前允许 fallback inventory）：`docs/cocos-phase1-presentation-signoff.md`
 - WeChat runtime observability 签核：`docs/wechat-runtime-observability-signoff.md`
 - WeChat runtime observability 签核模板：`docs/release-evidence/wechat-runtime-observability-signoff.template.md`
 - Primary client delivery audit：`npm run audit:cocos-primary-delivery -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--expected-revision <git-sha>]`

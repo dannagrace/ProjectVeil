@@ -1,6 +1,6 @@
 # Primary Cocos Client Delivery Checklist
 
-This checklist is the maintained delivery baseline for the primary client at [`apps/cocos-client`](/home/gpt/project/ProjectVeil/apps/cocos-client). It keeps the release path small and stable by splitting regression validation into one runtime-journey guard, two automated artifact audits, and a short manual sign-off list. For remaining placeholder or fallback presentation debt, use the canonical reviewer checklist in [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) rather than tracking those items ad hoc in PR comments.
+This checklist is the maintained delivery baseline for the primary client at [`apps/cocos-client`](/home/gpt/project/ProjectVeil/apps/cocos-client). It keeps the release path small and stable by splitting regression validation into one runtime-journey guard, two automated artifact audits, and a short manual sign-off list. For remaining placeholder or fallback presentation debt, use the canonical reviewer checklist and maintained fallback inventory in [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) rather than tracking those items ad hoc in PR comments.
 
 ## Primary Client Regression Gate
 
@@ -84,7 +84,7 @@ Keep these manual items short and attach evidence through the existing release e
 1. Complete the current candidate snapshot with `npm run release:cocos-rc:snapshot`.
 2. Refresh the primary-client diagnostic artifact with `npm run release:cocos:primary-diagnostics`.
 3. Run `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface <surface>` and keep the generated `cocos-presentation-signoff-<candidate>-<short-sha>.json/.md` with the rest of the candidate bundle.
-   Review that artifact using [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md), and classify each presentation row as `pass`, `waived-controlled-test`, or `fail` so reviewers can distinguish functional RC pass from presentation risk.
+   Review that artifact using [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md), starting from the maintained Phase 1 fallback inventory there, and classify each presentation row as `pass`, `waived-controlled-test`, or `fail` so reviewers can distinguish functional RC pass from presentation risk.
    The same candidate evidence should explicitly show one polished battle journey covering encounter entry, at least one command/impact beat, and a stable victory or defeat settlement state before reconnect review.
 4. Copy and fill the RC checklist/template files in [`docs/release-evidence`](./release-evidence/), reusing the generated presentation sign-off artifact instead of free-form PR notes.
 5. Record any open risk in the blocker template before sign-off.

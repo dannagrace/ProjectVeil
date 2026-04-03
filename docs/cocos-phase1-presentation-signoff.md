@@ -8,6 +8,8 @@ It does not replace the broader RC snapshot, checklist, or blocker log. It narro
 
 For the primary-client battle path, reviewers should treat `encounter entry -> command/impact feedback -> result settlement` as one continuous presentation surface. Evidence is incomplete if it only shows the map shell or only the final settlement shell.
 
+The maintained baseline for current in-repo debt lives in the inventory below. Candidate-scoped `cocos-presentation-signoff-<candidate>-<short-sha>.json/.md` artifacts should start from this baseline, then tighten each row to the exact status for that candidate instead of inventing a fresh checklist each time.
+
 ## When To Use This
 
 Use this checklist whenever a candidate is being reviewed for:
@@ -37,7 +39,7 @@ That command now emits:
 
 Those files are the attachable per-candidate sign-off record. This doc defines how to review and, if needed, edit the generated checklist before the candidate is widened beyond controlled internal testing.
 
-When the sign-off conclusion changes, mirror the same owner, revision, timestamp, artifact path, and follow-up summary into the manual evidence owner ledger. The ledger should show whether `cocos-presentation-signoff` is still pending or stale without reopening the full artifact.
+When the sign-off conclusion changes, mirror the same owner, revision, timestamp, artifact path, and follow-up summary into the manual evidence owner ledger. The ledger should show whether `cocos-presentation-signoff` is still pending or stale without reopening the full artifact. Start from the maintained inventory in this doc, then record any candidate-specific deviation or closure in the generated artifact and ledger.
 
 ## Sign-Off Rules
 
@@ -47,6 +49,24 @@ When the sign-off conclusion changes, mirror the same owner, revision, timestamp
 - `fail` means the candidate is not presentation-ready for wider external evaluation.
 - Phase 1 exit is not signed off until no row remains ambiguous or undocumented.
 - If `cocos-presentation-readiness` or RC evidence reports a new substitution, add it to the candidate artifact rather than burying it in free-form notes.
+
+## Maintained Phase 1 Fallback Inventory
+
+This table is the single maintained inventory of Cocos presentation fallbacks still allowed during Phase 1 hardening. The current repo-backed baseline remains:
+
+- `cocos-presentation-readiness`: `像素 占位`, `音频 混合 2/8`, `动画 回退 2/2`
+- `configs/cocos-presentation.json`: `explore` / `battle` music plus `attack` / `skill` / `hit` / `level_up` cues are still `placeholder`, while `hero_guard_basic` and `wolf_pack` still ship as `deliveryMode: fallback`
+
+Unless a candidate-specific artifact proves otherwise, treat every row below as `waived-controlled-test`.
+
+| Surface | Current allowed fallback item | Current status | Owner | Next action |
+| --- | --- | --- | --- | --- |
+| Battle entry / transition | `VeilBattleTransition` still uses the lightweight overlay shell with retained placeholder terrain preview assets instead of final authored transition art/motion. Keep encounter identity, terrain/context, and chips visible in RC capture. | `waived-controlled-test` | `client-lead` | Refresh the battle-entry capture in the candidate sign-off artifact and replace the overlay chrome/terrain preview when production transition art is ready. |
+| Impact / resolution feedback | Battle command, hit, skill, and resolution beats are copy-first badge/label feedback from `cocos-battle-feedback` and diagnostics, not a final authored VFX-heavy impact pass. | `waived-controlled-test` | `client-lead` | Keep one command/impact capture in the candidate bundle and upgrade the impact pass only when it can preserve the same readable command/result summary. |
+| Settlement shell / authoritative handoff | The pending handoff shell (`结果回写中` / `PVP 结果回写中`) is intentionally kept as a neutral fallback state while authority resolves the final result; it is acceptable only if the same review also captures the final victory/defeat settlement. | `waived-controlled-test` | `client-lead` | Keep paired pending-handoff and final-settlement evidence in the candidate artifact; do not sign off a candidate that only shows the neutral shell. |
+| Placeholder art | `cocos-presentation-readiness` still reports pixel art as `placeholder`, so terrain / hero / unit / building presentation remains a controlled-test placeholder surface rather than production art. | `waived-controlled-test` | `client-lead` | Re-run `npm run check:cocos-release-readiness`, attach the updated readiness summary, and only close this row when the readiness output is no longer placeholder. |
+| Audio substitutions | Audio remains mixed: `victory` and `defeat` are production, while `explore`, `battle`, `attack`, `skill`, `hit`, and `level_up` still use placeholder asset/synth substitution paths. | `waived-controlled-test` | `client-lead` | Keep device or preview notes on audible substitutions in the candidate sign-off and update `configs/cocos-presentation.json` as cues are replaced with production assets. |
+| Animation fallback modes | Animation delivery is still fallback-only for `hero_guard_basic` and `wolf_pack`; no current profile ships as `clip` or `spine`. | `waived-controlled-test` | `client-lead` | Track each template conversion in the candidate sign-off and only close this row after the config moves the shipped profiles off `deliveryMode: fallback`. |
 
 ## Blocking Vs Controlled-Test Gaps
 
