@@ -16,6 +16,12 @@ type FindingCode =
   | "blocked";
 type FamilyStatus = "passed" | "failed";
 type AuditStatus = "passed" | "failed";
+type ManualEvidenceFamilyId =
+  | "runtime-observability"
+  | "cocos-rc-signoff"
+  | "wechat-release-signoff"
+  | "reconnect-followup";
+type ManualEvidenceContractStatus = "passed" | "failed";
 
 interface Args {
   candidate: string;
@@ -127,6 +133,23 @@ interface AuditFinding {
   artifactPath?: string;
 }
 
+interface ManualEvidenceFamilyReport {
+  id: ManualEvidenceFamilyId;
+  label: string;
+  required: true;
+  applicable: boolean;
+  status: ManualEvidenceContractStatus;
+  summary: string;
+  artifactPaths: string[];
+  findings: AuditFinding[];
+}
+
+interface ManualEvidenceContractReport {
+  status: ManualEvidenceContractStatus;
+  summary: string;
+  requiredFamilies: ManualEvidenceFamilyReport[];
+}
+
 interface ArtifactFamilyReport {
   id:
     | "release-readiness-snapshot"
@@ -146,7 +169,7 @@ interface ArtifactFamilyReport {
 }
 
 interface SameCandidateEvidenceAuditReport {
-  schemaVersion: 2;
+  schemaVersion: 3;
   generatedAt: string;
   candidate: {
     name: string;
@@ -164,6 +187,7 @@ interface SameCandidateEvidenceAuditReport {
     manualEvidenceLedgerPath?: string;
     wechatCandidateSummaryPath?: string;
   };
+  manualEvidenceContract: ManualEvidenceContractReport;
   artifactFamilies: ArtifactFamilyReport[];
 }
 
@@ -173,13 +197,28 @@ const MAX_DEFAULT_AGE_HOURS = 72;
 const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
 const LEDGER_PENDING_STATUSES = new Set(["pending", "in-review"]);
 const WECHAT_LEDGER_EVIDENCE_TYPES = new Set([
-  "runtime-observability-review",
-  "runtime-observability-signoff",
   "wechat-runtime-observability-signoff",
   "wechat-devtools-export-review",
   "wechat-device-runtime-smoke",
   "wechat-device-runtime-review",
   "wechat-release-checklist"
+]);
+const RUNTIME_OBSERVABILITY_LEDGER_EVIDENCE_TYPES = new Set([
+  "runtime-observability-review",
+  "runtime-observability-signoff",
+  "wechat-runtime-observability-signoff"
+]);
+const COCOS_RC_SIGNOFF_LEDGER_EVIDENCE_TYPES = new Set([
+  "cocos-rc-checklist-review",
+  "cocos-rc-blockers-review",
+  "cocos-presentation-signoff"
+]);
+const WECHAT_RELEASE_SIGNOFF_LEDGER_EVIDENCE_TYPES = new Set([
+  "wechat-devtools-export-review",
+  "wechat-device-runtime-smoke",
+  "wechat-device-runtime-review",
+  "wechat-release-checklist",
+  "wechat-runtime-observability-signoff"
 ]);
 
 function fail(message: string): never {
@@ -593,6 +632,252 @@ function selectRelevantWechatBlockers(blockers: WechatCandidateSummary["blockers
   return prioritized && prioritized.length > 0 ? prioritized : blockers;
 }
 
+interface ManualEvidenceSource {
+  label: string;
+  candidate?: string;
+  revision?: string;
+  observedAt?: string;
+  status?: string;
+  artifactPath?: string;
+}
+
+function normalizeStatus(value: string | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function collectManualEvidenceFindings(
+  sources: ManualEvidenceSource[],
+  expectedCandidate: string,
+  expectedRevision: string,
+  maxAgeMs: number
+): AuditFinding[] {
+  const findings: AuditFinding[] = [];
+  for (const source of sources) {
+    const status = normalizeStatus(source.status);
+    if (source.candidate?.trim() && source.candidate.trim() !== expectedCandidate) {
+      findings.push({
+        code: "candidate_mismatch",
+        summary: `${source.label} reports candidate ${source.candidate}, expected ${expectedCandidate}.`,
+        ...(source.artifactPath ? { artifactPath: source.artifactPath } : {})
+      });
+    }
+    if (!revisionsMatch(source.revision, expectedRevision)) {
+      findings.push({
+        code: "revision_mismatch",
+        summary: `${source.label} reports revision ${source.revision ?? "<missing>"}, expected ${expectedRevision}.`,
+        ...(source.artifactPath ? { artifactPath: source.artifactPath } : {})
+      });
+    }
+    if (LEDGER_PENDING_STATUSES.has(status) || status === "pending") {
+      findings.push({
+        code: "manual_pending",
+        summary: `${source.label} is still ${source.status ?? "pending"}.`,
+        ...(source.artifactPath ? { artifactPath: source.artifactPath } : {})
+      });
+    } else if (status === "failed" || status === "blocked") {
+      findings.push({
+        code: status === "blocked" ? "blocked" : "manual_failed",
+        summary: `${source.label} is ${source.status ?? "failed"}.`,
+        ...(source.artifactPath ? { artifactPath: source.artifactPath } : {})
+      });
+    }
+    const freshness = evaluateFreshness(source.observedAt, maxAgeMs);
+    maybeAddFreshnessFinding(findings, freshness, source.label, source.observedAt, maxAgeMs, source.artifactPath);
+  }
+  return findings;
+}
+
+function buildManualEvidenceFamilyReport(input: {
+  id: ManualEvidenceFamilyId;
+  label: string;
+  applicable: boolean;
+  sources: ManualEvidenceSource[];
+  expectedCandidate: string;
+  expectedRevision: string;
+  maxAgeMs: number;
+}): ManualEvidenceFamilyReport {
+  const artifactPaths = [...new Set(input.sources.map((source) => source.artifactPath).filter((value): value is string => Boolean(value)))];
+  if (!input.applicable) {
+    return {
+      id: input.id,
+      label: input.label,
+      required: true,
+      applicable: false,
+      status: "passed",
+      summary: `${input.label} is not required for this candidate.`,
+      artifactPaths,
+      findings: []
+    };
+  }
+
+  if (input.sources.length === 0) {
+    return {
+      id: input.id,
+      label: input.label,
+      required: true,
+      applicable: true,
+      status: "failed",
+      summary: `${input.label} is missing for candidate ${input.expectedRevision}.`,
+      artifactPaths,
+      findings: [
+        {
+          code: "missing",
+          summary: `${input.label} is missing for candidate ${input.expectedRevision}.`
+        }
+      ]
+    };
+  }
+
+  const findings = collectManualEvidenceFindings(input.sources, input.expectedCandidate, input.expectedRevision, input.maxAgeMs);
+  return {
+    id: input.id,
+    label: input.label,
+    required: true,
+    applicable: true,
+    status: findings.length === 0 ? "passed" : "failed",
+    summary:
+      findings.length === 0
+        ? `${input.label} is current for candidate ${input.expectedRevision}.`
+        : `${input.label} blocks candidate ${input.expectedRevision}: ${findings[0]?.summary}`,
+    artifactPaths,
+    findings
+  };
+}
+
+function buildManualEvidenceContractReport(input: {
+  candidate: string;
+  expectedRevision: string;
+  maxAgeMs: number;
+  ledger: ManualEvidenceOwnerLedger | undefined;
+  wechatSummary: WechatCandidateSummary | undefined;
+  wechatCandidateSummaryPath: string | undefined;
+}): ManualEvidenceContractReport {
+  const ledgerRows = input.ledger?.rows ?? [];
+  const manualReviewChecks = (input.wechatSummary?.evidence?.manualReview?.checks ?? []).filter((check) => check.required !== false);
+
+  const runtimeObservabilitySources: ManualEvidenceSource[] = [
+    ...ledgerRows
+      .filter((row) => RUNTIME_OBSERVABILITY_LEDGER_EVIDENCE_TYPES.has(row.evidenceType))
+      .map((row) => ({
+        label: `Ledger row ${row.evidenceType}`,
+        candidate: row.candidate,
+        revision: row.revision,
+        observedAt: row.lastUpdated,
+        status: row.status,
+        artifactPath: row.artifactPath
+      })),
+    ...manualReviewChecks
+      .filter((check) => `${check.id ?? ""} ${check.title ?? ""}`.toLowerCase().includes("observability"))
+      .map((check) => ({
+        label: check.title ?? check.id ?? "WeChat runtime observability sign-off",
+        revision: check.revision,
+        observedAt: check.recordedAt,
+        status: check.status,
+        artifactPath: check.artifactPath ?? input.wechatCandidateSummaryPath
+      }))
+  ];
+
+  const cocosRcSignoffSources: ManualEvidenceSource[] = ledgerRows
+    .filter((row) => COCOS_RC_SIGNOFF_LEDGER_EVIDENCE_TYPES.has(row.evidenceType))
+    .map((row) => ({
+      label: `Ledger row ${row.evidenceType}`,
+      candidate: row.candidate,
+      revision: row.revision,
+      observedAt: row.lastUpdated,
+      status: row.status,
+      artifactPath: row.artifactPath
+    }));
+
+  const wechatReleaseApplicable = isWechatEvidenceApplicable(input.ledger, input.wechatCandidateSummaryPath);
+  const wechatReleaseSignoffSources: ManualEvidenceSource[] = [
+    ...ledgerRows
+      .filter((row) => WECHAT_RELEASE_SIGNOFF_LEDGER_EVIDENCE_TYPES.has(row.evidenceType))
+      .map((row) => ({
+        label: `Ledger row ${row.evidenceType}`,
+        candidate: row.candidate,
+        revision: row.revision,
+        observedAt: row.lastUpdated,
+        status: row.status,
+        artifactPath: row.artifactPath
+      })),
+    ...manualReviewChecks
+      .filter((check) => {
+        const matcher = `${check.id ?? ""} ${check.title ?? ""}`.toLowerCase();
+        return matcher.includes("devtools") || matcher.includes("device runtime") || matcher.includes("checklist");
+      })
+      .map((check) => ({
+        label: check.title ?? check.id ?? "WeChat release sign-off",
+        revision: check.revision,
+        observedAt: check.recordedAt,
+        status: check.status,
+        artifactPath: check.artifactPath ?? input.wechatCandidateSummaryPath
+      }))
+  ];
+
+  const reconnectFollowupSources: ManualEvidenceSource[] = ledgerRows
+    .filter((row) => {
+      const matcher = `${row.evidenceType} ${row.notes ?? ""}`.toLowerCase();
+      return matcher.includes("reconnect") || matcher.includes("persistence");
+    })
+    .map((row) => ({
+      label: `Ledger row ${row.evidenceType}`,
+      candidate: row.candidate,
+      revision: row.revision,
+      observedAt: row.lastUpdated,
+      status: row.status,
+      artifactPath: row.artifactPath
+    }));
+
+  const requiredFamilies = [
+    buildManualEvidenceFamilyReport({
+      id: "runtime-observability",
+      label: "Runtime observability review",
+      applicable: true,
+      sources: runtimeObservabilitySources,
+      expectedCandidate: input.candidate,
+      expectedRevision: input.expectedRevision,
+      maxAgeMs: input.maxAgeMs
+    }),
+    buildManualEvidenceFamilyReport({
+      id: "cocos-rc-signoff",
+      label: "Cocos RC sign-off",
+      applicable: true,
+      sources: cocosRcSignoffSources,
+      expectedCandidate: input.candidate,
+      expectedRevision: input.expectedRevision,
+      maxAgeMs: input.maxAgeMs
+    }),
+    buildManualEvidenceFamilyReport({
+      id: "wechat-release-signoff",
+      label: "WeChat release sign-off",
+      applicable: wechatReleaseApplicable,
+      sources: wechatReleaseSignoffSources,
+      expectedCandidate: input.candidate,
+      expectedRevision: input.expectedRevision,
+      maxAgeMs: input.maxAgeMs
+    }),
+    buildManualEvidenceFamilyReport({
+      id: "reconnect-followup",
+      label: "Reconnect or persistence follow-up",
+      applicable: reconnectFollowupSources.length > 0,
+      sources: reconnectFollowupSources,
+      expectedCandidate: input.candidate,
+      expectedRevision: input.expectedRevision,
+      maxAgeMs: input.maxAgeMs
+    })
+  ];
+
+  const failedFamilies = requiredFamilies.filter((family) => family.applicable && family.status === "failed");
+  return {
+    status: failedFamilies.length === 0 ? "passed" : "failed",
+    summary:
+      failedFamilies.length === 0
+        ? `Required manual evidence families are current for ${input.candidate} at ${input.expectedRevision}.`
+        : `Required manual evidence family blocked: ${failedFamilies[0]?.summary}`,
+    requiredFamilies
+  };
+}
+
 export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidateEvidenceAuditReport {
   const snapshotPath = resolveSnapshotPath(args);
   const releaseGateSummaryPath = resolveReleaseGateSummaryPath(args);
@@ -605,6 +890,10 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
   const artifactFamilies: ArtifactFamilyReport[] = [];
   const parsedLedger =
     manualEvidenceLedgerPath && fs.existsSync(manualEvidenceLedgerPath) ? parseManualEvidenceOwnerLedger(manualEvidenceLedgerPath) : undefined;
+  const parsedWechatSummary =
+    wechatCandidateSummaryPath && fs.existsSync(wechatCandidateSummaryPath)
+      ? readJsonFile<WechatCandidateSummary>(wechatCandidateSummaryPath)
+      : undefined;
 
   if (!snapshotPath || !fs.existsSync(snapshotPath)) {
     artifactFamilies.push(buildMissingFamily("release-readiness-snapshot", "Release readiness snapshot"));
@@ -765,7 +1054,7 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
     if (!wechatCandidateSummaryPath || !fs.existsSync(wechatCandidateSummaryPath)) {
       artifactFamilies.push(buildMissingFamily("wechat-release-evidence", "WeChat release evidence summary"));
     } else {
-      const summary = readJsonFile<WechatCandidateSummary>(wechatCandidateSummaryPath);
+      const summary = parsedWechatSummary ?? readJsonFile<WechatCandidateSummary>(wechatCandidateSummaryPath);
       const findings: AuditFinding[] = [];
       const freshness = addCommonFindings(findings, {
         label: "WeChat release evidence summary",
@@ -865,11 +1154,23 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
     }
   }
 
+  const manualEvidenceContract = buildManualEvidenceContractReport({
+    candidate: args.candidate,
+    expectedRevision,
+    maxAgeMs,
+    ledger: parsedLedger,
+    wechatSummary: parsedWechatSummary,
+    wechatCandidateSummaryPath
+  });
   const findings = artifactFamilies.flatMap((family) => family.findings);
-  const status: AuditStatus = findings.length === 0 ? "passed" : "failed";
+  const status: AuditStatus = findings.length === 0 && manualEvidenceContract.status === "passed" ? "passed" : "failed";
+  const leadSummary =
+    manualEvidenceContract.status === "failed"
+      ? manualEvidenceContract.summary
+      : findings[0]?.summary;
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt: new Date().toISOString(),
     candidate: {
       name: args.candidate,
@@ -877,11 +1178,11 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
     },
     summary: {
       status,
-      findingCount: findings.length,
+      findingCount: findings.length + manualEvidenceContract.requiredFamilies.reduce((count, family) => count + family.findings.length, 0),
       summary:
         status === "passed"
           ? `Same-candidate evidence is current for ${args.candidate} at ${expectedRevision}.`
-          : `Same-candidate evidence drift detected: ${findings[0]?.summary}`
+          : `Same-candidate evidence drift detected: ${leadSummary ?? findings[0]?.summary}`
     },
     inputs: {
       ...(snapshotPath ? { snapshotPath } : {}),
@@ -890,6 +1191,7 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
       ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
       ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {})
     },
+    manualEvidenceContract,
     artifactFamilies
   };
 }
@@ -904,6 +1206,31 @@ export function renderMarkdown(report: SameCandidateEvidenceAuditReport): string
   lines.push(`- Overall status: **${report.summary.status.toUpperCase()}**`);
   lines.push(`- Summary: ${report.summary.summary}`);
   lines.push("");
+  lines.push("## Manual Evidence Contract");
+  lines.push("");
+  lines.push(`- Status: **${report.manualEvidenceContract.status.toUpperCase()}**`);
+  lines.push(`- Summary: ${report.manualEvidenceContract.summary}`);
+  lines.push("");
+  for (const family of report.manualEvidenceContract.requiredFamilies) {
+    lines.push(`### ${family.label}`);
+    lines.push("");
+    lines.push(`- Required: \`${family.required ? "yes" : "no"}\``);
+    lines.push(`- Applicable: \`${family.applicable ? "yes" : "no"}\``);
+    lines.push(`- Status: **${family.status.toUpperCase()}**`);
+    lines.push(`- Summary: ${family.summary}`);
+    lines.push(`- Artifacts: ${family.artifactPaths.length > 0 ? family.artifactPaths.map((artifactPath) => `\`${toRelativePath(artifactPath)}\``).join(", ") : "<none>"}`);
+    if (family.findings.length === 0) {
+      lines.push("- Findings: none.");
+    } else {
+      lines.push("- Findings:");
+      for (const finding of family.findings) {
+        lines.push(
+          `  - \`${finding.code}\` ${finding.summary}${finding.artifactPath ? ` (artifact: \`${toRelativePath(finding.artifactPath)}\`)` : ""}`
+        );
+      }
+    }
+    lines.push("");
+  }
   lines.push("## Selected Inputs");
   lines.push("");
   lines.push(`- Release readiness snapshot: \`${report.inputs.snapshotPath ? toRelativePath(report.inputs.snapshotPath) : "<missing>"}\``);
