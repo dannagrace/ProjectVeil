@@ -110,11 +110,23 @@ function seedQueue(service: MatchmakingService, requests: MatchmakingRequest[]):
     string,
     MatchmakingRequest
   >;
+  const queueOrder = Reflect.get(service as Record<string, unknown>, "queueOrder") as string[];
+  const queuePositionByPlayerId = Reflect.get(service as Record<string, unknown>, "queuePositionByPlayerId") as Map<
+    string,
+    number
+  >;
   const results = Reflect.get(service as Record<string, unknown>, "resultsByPlayerId") as Map<string, unknown>;
   queue.clear();
+  queueOrder.length = 0;
+  queuePositionByPlayerId.clear();
   results?.clear();
-  for (const request of requests) {
+  const sortedRequests = [...requests].sort(
+    (left, right) => left.enqueuedAt.localeCompare(right.enqueuedAt) || left.playerId.localeCompare(right.playerId)
+  );
+  for (const [index, request] of sortedRequests.entries()) {
     queue.set(request.playerId, request);
+    queueOrder.push(request.playerId);
+    queuePositionByPlayerId.set(request.playerId, index + 1);
   }
 }
 
