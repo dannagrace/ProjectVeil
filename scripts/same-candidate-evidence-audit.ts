@@ -9,7 +9,11 @@ type FindingCode =
   | "candidate_mismatch"
   | "missing_timestamp"
   | "invalid_timestamp"
-  | "linked_snapshot_mismatch";
+  | "linked_snapshot_mismatch"
+  | "manual_pending"
+  | "manual_failed"
+  | "metadata_failure"
+  | "blocked";
 type FamilyStatus = "passed" | "failed";
 type AuditStatus = "passed" | "failed";
 
@@ -20,6 +24,8 @@ interface Args {
   releaseGateSummaryPath?: string;
   cocosRcBundlePath?: string;
   manualEvidenceLedgerPath?: string;
+  wechatArtifactsDir?: string;
+  wechatCandidateSummaryPath?: string;
   outputPath?: string;
   markdownOutputPath?: string;
   maxAgeHours: number;
@@ -65,13 +71,69 @@ interface ManualEvidenceOwnerLedgerMetadata {
   linkedReadinessSnapshot?: string;
 }
 
+interface ManualEvidenceOwnerLedgerRow {
+  evidenceType: string;
+  candidate?: string;
+  revision?: string;
+  owner?: string;
+  status?: string;
+  lastUpdated?: string;
+  artifactPath?: string;
+  notes?: string;
+}
+
+interface ManualEvidenceOwnerLedger {
+  metadata: ManualEvidenceOwnerLedgerMetadata;
+  rows: ManualEvidenceOwnerLedgerRow[];
+}
+
+interface WechatManualReviewCheck {
+  id?: string;
+  title?: string;
+  required?: boolean;
+  status?: string;
+  owner?: string;
+  recordedAt?: string;
+  revision?: string;
+  artifactPath?: string;
+  notes?: string;
+}
+
+interface WechatCandidateSummary {
+  generatedAt?: string;
+  candidate?: {
+    revision?: string | null;
+    status?: string;
+  };
+  evidence?: {
+    manualReview?: {
+      status?: string;
+      requiredPendingChecks?: number;
+      requiredFailedChecks?: number;
+      requiredMetadataFailures?: number;
+      checks?: WechatManualReviewCheck[];
+    };
+  };
+  blockers?: Array<{
+    id?: string;
+    summary?: string;
+    artifactPath?: string;
+  }>;
+}
+
 interface AuditFinding {
   code: FindingCode;
   summary: string;
+  artifactPath?: string;
 }
 
 interface ArtifactFamilyReport {
-  id: "release-readiness-snapshot" | "release-gate-summary" | "cocos-rc-bundle" | "manual-evidence-ledger";
+  id:
+    | "release-readiness-snapshot"
+    | "release-gate-summary"
+    | "cocos-rc-bundle"
+    | "manual-evidence-ledger"
+    | "wechat-release-evidence";
   label: string;
   required: true;
   status: FamilyStatus;
@@ -84,7 +146,7 @@ interface ArtifactFamilyReport {
 }
 
 interface SameCandidateEvidenceAuditReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   generatedAt: string;
   candidate: {
     name: string;
@@ -100,13 +162,25 @@ interface SameCandidateEvidenceAuditReport {
     releaseGateSummaryPath?: string;
     cocosRcBundlePath?: string;
     manualEvidenceLedgerPath?: string;
+    wechatCandidateSummaryPath?: string;
   };
   artifactFamilies: ArtifactFamilyReport[];
 }
 
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
+const DEFAULT_WECHAT_ARTIFACTS_DIR = path.resolve("artifacts", "wechat-release");
 const MAX_DEFAULT_AGE_HOURS = 72;
 const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
+const LEDGER_PENDING_STATUSES = new Set(["pending", "in-review"]);
+const WECHAT_LEDGER_EVIDENCE_TYPES = new Set([
+  "runtime-observability-review",
+  "runtime-observability-signoff",
+  "wechat-runtime-observability-signoff",
+  "wechat-devtools-export-review",
+  "wechat-device-runtime-smoke",
+  "wechat-device-runtime-review",
+  "wechat-release-checklist"
+]);
 
 function fail(message: string): never {
   throw new Error(message);
@@ -119,6 +193,8 @@ function parseArgs(argv: string[]): Args {
   let releaseGateSummaryPath: string | undefined;
   let cocosRcBundlePath: string | undefined;
   let manualEvidenceLedgerPath: string | undefined;
+  let wechatArtifactsDir: string | undefined;
+  let wechatCandidateSummaryPath: string | undefined;
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
   let maxAgeHours = MAX_DEFAULT_AGE_HOURS;
@@ -154,6 +230,16 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--manual-evidence-ledger" && next) {
       manualEvidenceLedgerPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--wechat-artifacts-dir" && next) {
+      wechatArtifactsDir = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--wechat-candidate-summary" && next) {
+      wechatCandidateSummaryPath = next;
       index += 1;
       continue;
     }
@@ -194,6 +280,8 @@ function parseArgs(argv: string[]): Args {
     ...(releaseGateSummaryPath ? { releaseGateSummaryPath } : {}),
     ...(cocosRcBundlePath ? { cocosRcBundlePath } : {}),
     ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
+    ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
+    ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
     ...(outputPath ? { outputPath } : {}),
     ...(markdownOutputPath ? { markdownOutputPath } : {}),
     maxAgeHours
@@ -225,12 +313,12 @@ function slugifyCandidate(candidate: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-function normalizeRevision(revision: string | undefined): string | undefined {
+function normalizeRevision(revision: string | undefined | null): string | undefined {
   const trimmed = revision?.trim().toLowerCase();
   return trimmed && HEX_REVISION_PATTERN.test(trimmed) ? trimmed : undefined;
 }
 
-function revisionsMatch(left: string | undefined, right: string | undefined): boolean {
+function revisionsMatch(left: string | undefined | null, right: string | undefined | null): boolean {
   const normalizedLeft = normalizeRevision(left);
   const normalizedRight = normalizeRevision(right);
   if (!normalizedLeft || !normalizedRight) {
@@ -313,6 +401,15 @@ function resolveManualEvidenceLedgerPath(args: Args): string | undefined {
   );
 }
 
+function resolveWechatCandidateSummaryPath(args: Args): string | undefined {
+  if (args.wechatCandidateSummaryPath) {
+    return path.resolve(args.wechatCandidateSummaryPath);
+  }
+  const artifactsDir = path.resolve(args.wechatArtifactsDir ?? DEFAULT_WECHAT_ARTIFACTS_DIR);
+  const direct = path.join(artifactsDir, "codex.wechat.release-candidate-summary.json");
+  return fs.existsSync(direct) ? direct : undefined;
+}
+
 function evaluateFreshness(timestamp: string | undefined, maxAgeMs: number): ArtifactFamilyReport["freshness"] {
   if (!timestamp?.trim()) {
     return "missing_timestamp";
@@ -324,18 +421,48 @@ function evaluateFreshness(timestamp: string | undefined, maxAgeMs: number): Art
   return Date.now() - parsed > maxAgeMs ? "stale" : "fresh";
 }
 
-function parseManualEvidenceOwnerLedger(filePath: string): ManualEvidenceOwnerLedgerMetadata {
+function parseManualEvidenceOwnerLedger(filePath: string): ManualEvidenceOwnerLedger {
   const content = fs.readFileSync(filePath, "utf8");
   const capture = (label: string): string | undefined => {
     const match = content.match(new RegExp(`^- ${label}:\\s+\`([^\\n\`]+)\``, "m"));
     return match?.[1]?.trim();
   };
 
+  const rows: ManualEvidenceOwnerLedgerRow[] = [];
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim().startsWith("|")) {
+      continue;
+    }
+    const columns = line
+      .split("|")
+      .slice(1, -1)
+      .map((entry) => entry.trim());
+    if (columns.length !== 8) {
+      continue;
+    }
+    if (columns[0] === "Evidence type" || columns.every((entry) => /^-+$/.test(entry.replace(/\s+/g, "")))) {
+      continue;
+    }
+    rows.push({
+      evidenceType: columns[0].replace(/^`|`$/g, ""),
+      candidate: columns[1].replace(/^`|`$/g, ""),
+      revision: columns[2].replace(/^`|`$/g, ""),
+      owner: columns[3].replace(/^`|`$/g, ""),
+      status: columns[4].replace(/^`|`$/g, "").toLowerCase(),
+      lastUpdated: columns[5].replace(/^`|`$/g, ""),
+      artifactPath: columns[6].replace(/^`|`$/g, ""),
+      notes: columns[7]
+    });
+  }
+
   return {
-    candidate: capture("Candidate"),
-    targetRevision: capture("Target revision"),
-    lastUpdated: capture("Last updated"),
-    linkedReadinessSnapshot: capture("Linked readiness snapshot")
+    metadata: {
+      candidate: capture("Candidate"),
+      targetRevision: capture("Target revision"),
+      lastUpdated: capture("Last updated"),
+      linkedReadinessSnapshot: capture("Linked readiness snapshot")
+    },
+    rows
   };
 }
 
@@ -358,16 +485,46 @@ function compareLinkedSnapshot(
   };
 }
 
+function maybeAddFreshnessFinding(
+  findings: AuditFinding[],
+  freshness: ArtifactFamilyReport["freshness"],
+  label: string,
+  timestamp: string | undefined,
+  maxAgeMs: number,
+  artifactPath?: string
+): void {
+  if (freshness === "stale") {
+    findings.push({
+      code: "stale",
+      summary: `${label} is older than the ${Math.round(maxAgeMs / (1000 * 60 * 60))}h freshness window.`,
+      ...(artifactPath ? { artifactPath } : {})
+    });
+  } else if (freshness === "missing_timestamp") {
+    findings.push({
+      code: "missing_timestamp",
+      summary: `${label} is missing its generated timestamp.`,
+      ...(artifactPath ? { artifactPath } : {})
+    });
+  } else if (freshness === "invalid_timestamp") {
+    findings.push({
+      code: "invalid_timestamp",
+      summary: `${label} has an invalid generated timestamp (${timestamp ?? "<missing>"}).`,
+      ...(artifactPath ? { artifactPath } : {})
+    });
+  }
+}
+
 function addCommonFindings(
   findings: AuditFinding[],
   input: {
     label: string;
     candidate: string | undefined;
-    revision: string | undefined;
+    revision: string | undefined | null;
     generatedAt: string | undefined;
     expectedCandidate: string;
     expectedRevision: string;
     maxAgeMs: number;
+    artifactPath?: string;
   }
 ): ArtifactFamilyReport["freshness"] {
   const freshness = evaluateFreshness(input.generatedAt, input.maxAgeMs);
@@ -375,32 +532,19 @@ function addCommonFindings(
   if (input.candidate?.trim() && input.candidate.trim() !== input.expectedCandidate) {
     findings.push({
       code: "candidate_mismatch",
-      summary: `${input.label} reports candidate ${input.candidate}, expected ${input.expectedCandidate}.`
+      summary: `${input.label} reports candidate ${input.candidate}, expected ${input.expectedCandidate}.`,
+      ...(input.artifactPath ? { artifactPath: input.artifactPath } : {})
     });
   }
   if (!revisionsMatch(input.revision, input.expectedRevision)) {
     findings.push({
       code: "revision_mismatch",
-      summary: `${input.label} reports revision ${input.revision ?? "<missing>"}, expected ${input.expectedRevision}.`
-    });
-  }
-  if (freshness === "stale") {
-    findings.push({
-      code: "stale",
-      summary: `${input.label} is older than the ${Math.round(input.maxAgeMs / (1000 * 60 * 60))}h freshness window.`
-    });
-  } else if (freshness === "missing_timestamp") {
-    findings.push({
-      code: "missing_timestamp",
-      summary: `${input.label} is missing its generated timestamp.`
-    });
-  } else if (freshness === "invalid_timestamp") {
-    findings.push({
-      code: "invalid_timestamp",
-      summary: `${input.label} has an invalid generated timestamp (${input.generatedAt ?? "<missing>"}).`
+      summary: `${input.label} reports revision ${input.revision ?? "<missing>"}, expected ${input.expectedRevision}.`,
+      ...(input.artifactPath ? { artifactPath: input.artifactPath } : {})
     });
   }
 
+  maybeAddFreshnessFinding(findings, freshness, input.label, input.generatedAt, input.maxAgeMs, input.artifactPath);
   return freshness;
 }
 
@@ -420,15 +564,47 @@ function buildMissingFamily(id: ArtifactFamilyReport["id"], label: string): Arti
   };
 }
 
+function isWechatEvidenceApplicable(ledger: ManualEvidenceOwnerLedger | undefined, wechatCandidateSummaryPath: string | undefined): boolean {
+  if (wechatCandidateSummaryPath && fs.existsSync(wechatCandidateSummaryPath)) {
+    return true;
+  }
+  return (
+    ledger?.rows.some((row) => {
+      if (!WECHAT_LEDGER_EVIDENCE_TYPES.has(row.evidenceType)) {
+        return false;
+      }
+      return (row.status ?? "").toLowerCase() !== "waived";
+    }) ?? false
+  );
+}
+
+function findRuntimeObservabilityCheck(checks: WechatManualReviewCheck[] | undefined): WechatManualReviewCheck | undefined {
+  return checks?.find((check) => {
+    const matcher = `${check.id ?? ""} ${check.title ?? ""}`.toLowerCase();
+    return matcher.includes("observability");
+  });
+}
+
+function selectRelevantWechatBlockers(blockers: WechatCandidateSummary["blockers"]): WechatCandidateSummary["blockers"] {
+  const prioritized = blockers?.filter((blocker) => {
+    const matcher = `${blocker.id ?? ""} ${blocker.summary ?? ""}`.toLowerCase();
+    return matcher.includes("manual") || matcher.includes("smoke") || matcher.includes("observability");
+  });
+  return prioritized && prioritized.length > 0 ? prioritized : blockers;
+}
+
 export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidateEvidenceAuditReport {
   const snapshotPath = resolveSnapshotPath(args);
   const releaseGateSummaryPath = resolveReleaseGateSummaryPath(args);
   const cocosRcBundlePath = resolveCocosRcBundlePath(args);
   const manualEvidenceLedgerPath = resolveManualEvidenceLedgerPath(args);
+  const wechatCandidateSummaryPath = resolveWechatCandidateSummaryPath(args);
   const expectedRevision = args.candidateRevision;
   const maxAgeMs = args.maxAgeHours * 60 * 60 * 1000;
 
   const artifactFamilies: ArtifactFamilyReport[] = [];
+  const parsedLedger =
+    manualEvidenceLedgerPath && fs.existsSync(manualEvidenceLedgerPath) ? parseManualEvidenceOwnerLedger(manualEvidenceLedgerPath) : undefined;
 
   if (!snapshotPath || !fs.existsSync(snapshotPath)) {
     artifactFamilies.push(buildMissingFamily("release-readiness-snapshot", "Release readiness snapshot"));
@@ -442,7 +618,8 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
       generatedAt: snapshot.generatedAt,
       expectedCandidate: args.candidate,
       expectedRevision,
-      maxAgeMs
+      maxAgeMs,
+      artifactPath: snapshotPath
     });
     artifactFamilies.push({
       id: "release-readiness-snapshot",
@@ -469,7 +646,8 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
       generatedAt: report.generatedAt,
       expectedCandidate: args.candidate,
       expectedRevision,
-      maxAgeMs
+      maxAgeMs,
+      artifactPath: releaseGateSummaryPath
     });
     const linkedSnapshotFinding = compareLinkedSnapshot(snapshotPath, report.inputs?.snapshotPath, "Release gate summary");
     if (linkedSnapshotFinding) {
@@ -500,7 +678,8 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
       generatedAt: bundle.bundle?.generatedAt,
       expectedCandidate: args.candidate,
       expectedRevision,
-      maxAgeMs
+      maxAgeMs,
+      artifactPath: cocosRcBundlePath
     });
     const linkedSnapshotFinding = compareLinkedSnapshot(
       snapshotPath,
@@ -527,20 +706,46 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
   if (!manualEvidenceLedgerPath || !fs.existsSync(manualEvidenceLedgerPath)) {
     artifactFamilies.push(buildMissingFamily("manual-evidence-ledger", "Manual evidence owner ledger"));
   } else {
-    const ledger = parseManualEvidenceOwnerLedger(manualEvidenceLedgerPath);
+    const ledger = parsedLedger ?? parseManualEvidenceOwnerLedger(manualEvidenceLedgerPath);
     const findings: AuditFinding[] = [];
     const freshness = addCommonFindings(findings, {
       label: "Manual evidence owner ledger",
-      candidate: ledger.candidate,
-      revision: ledger.targetRevision,
-      generatedAt: ledger.lastUpdated,
+      candidate: ledger.metadata.candidate,
+      revision: ledger.metadata.targetRevision,
+      generatedAt: ledger.metadata.lastUpdated,
       expectedCandidate: args.candidate,
       expectedRevision,
-      maxAgeMs
+      maxAgeMs,
+      artifactPath: manualEvidenceLedgerPath
     });
-    const linkedSnapshotFinding = compareLinkedSnapshot(snapshotPath, ledger.linkedReadinessSnapshot, "Manual evidence owner ledger");
+    const linkedSnapshotFinding = compareLinkedSnapshot(
+      snapshotPath,
+      ledger.metadata.linkedReadinessSnapshot,
+      "Manual evidence owner ledger"
+    );
     if (linkedSnapshotFinding) {
       findings.push(linkedSnapshotFinding);
+    }
+    for (const row of ledger.rows) {
+      if ((row.status ?? "").toLowerCase() === "waived") {
+        continue;
+      }
+      if (LEDGER_PENDING_STATUSES.has((row.status ?? "").toLowerCase())) {
+        findings.push({
+          code: "manual_pending",
+          summary: `Manual evidence ledger still lists ${row.evidenceType} as ${row.status}.`,
+          ...(row.artifactPath ? { artifactPath: row.artifactPath } : {})
+        });
+      }
+      const rowFreshness = evaluateFreshness(row.lastUpdated, maxAgeMs);
+      maybeAddFreshnessFinding(
+        findings,
+        rowFreshness,
+        `Manual evidence ledger row ${row.evidenceType}`,
+        row.lastUpdated,
+        maxAgeMs,
+        row.artifactPath
+      );
     }
     artifactFamilies.push({
       id: "manual-evidence-ledger",
@@ -548,19 +753,123 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
       required: true,
       status: findings.length === 0 ? "passed" : "failed",
       artifactPath: manualEvidenceLedgerPath,
-      revision: ledger.targetRevision,
-      candidate: ledger.candidate,
-      generatedAt: ledger.lastUpdated,
+      revision: ledger.metadata.targetRevision,
+      candidate: ledger.metadata.candidate,
+      generatedAt: ledger.metadata.lastUpdated,
       freshness,
       findings
     });
+  }
+
+  if (isWechatEvidenceApplicable(parsedLedger, wechatCandidateSummaryPath)) {
+    if (!wechatCandidateSummaryPath || !fs.existsSync(wechatCandidateSummaryPath)) {
+      artifactFamilies.push(buildMissingFamily("wechat-release-evidence", "WeChat release evidence summary"));
+    } else {
+      const summary = readJsonFile<WechatCandidateSummary>(wechatCandidateSummaryPath);
+      const findings: AuditFinding[] = [];
+      const freshness = addCommonFindings(findings, {
+        label: "WeChat release evidence summary",
+        candidate: undefined,
+        revision: summary.candidate?.revision,
+        generatedAt: summary.generatedAt,
+        expectedCandidate: args.candidate,
+        expectedRevision,
+        maxAgeMs,
+        artifactPath: wechatCandidateSummaryPath
+      });
+
+      const manualReview = summary.evidence?.manualReview;
+      if ((manualReview?.requiredPendingChecks ?? 0) > 0) {
+        findings.push({
+          code: "manual_pending",
+          summary: `WeChat release evidence still has ${manualReview?.requiredPendingChecks} required manual review item(s) pending.`,
+          artifactPath: wechatCandidateSummaryPath
+        });
+      }
+      if ((manualReview?.requiredFailedChecks ?? 0) > 0) {
+        findings.push({
+          code: "manual_failed",
+          summary: `WeChat release evidence reports ${manualReview?.requiredFailedChecks} required manual review failure(s).`,
+          artifactPath: wechatCandidateSummaryPath
+        });
+      }
+      if ((manualReview?.requiredMetadataFailures ?? 0) > 0) {
+        findings.push({
+          code: "metadata_failure",
+          summary: `WeChat release evidence reports ${manualReview?.requiredMetadataFailures} manual review metadata failure(s).`,
+          artifactPath: wechatCandidateSummaryPath
+        });
+      }
+
+      const runtimeObservabilityCheck = findRuntimeObservabilityCheck(manualReview?.checks);
+      if (!runtimeObservabilityCheck) {
+        findings.push({
+          code: "missing",
+          summary: "WeChat release evidence is missing a runtime observability sign-off check.",
+          artifactPath: wechatCandidateSummaryPath
+        });
+      } else {
+        const runtimeArtifactPath = runtimeObservabilityCheck.artifactPath || wechatCandidateSummaryPath;
+        if (runtimeObservabilityCheck.status === "pending") {
+          findings.push({
+            code: "manual_pending",
+            summary: `Runtime observability sign-off is still pending: ${runtimeObservabilityCheck.title ?? runtimeObservabilityCheck.id ?? "runtime observability"}.`,
+            artifactPath: runtimeArtifactPath
+          });
+        } else if (runtimeObservabilityCheck.status === "failed") {
+          findings.push({
+            code: "manual_failed",
+            summary: `Runtime observability sign-off failed: ${runtimeObservabilityCheck.title ?? runtimeObservabilityCheck.id ?? "runtime observability"}.`,
+            artifactPath: runtimeArtifactPath
+          });
+        }
+        if (!revisionsMatch(runtimeObservabilityCheck.revision, expectedRevision)) {
+          findings.push({
+            code: "revision_mismatch",
+            summary: `Runtime observability sign-off reports revision ${runtimeObservabilityCheck.revision ?? "<missing>"}, expected ${expectedRevision}.`,
+            artifactPath: runtimeArtifactPath
+          });
+        }
+        const runtimeFreshness = evaluateFreshness(runtimeObservabilityCheck.recordedAt, maxAgeMs);
+        maybeAddFreshnessFinding(
+          findings,
+          runtimeFreshness,
+          "Runtime observability sign-off",
+          runtimeObservabilityCheck.recordedAt,
+          maxAgeMs,
+          runtimeArtifactPath
+        );
+      }
+
+      if (summary.candidate?.status === "blocked" && (summary.blockers?.length ?? 0) > 0) {
+        for (const blocker of selectRelevantWechatBlockers(summary.blockers)?.slice(0, 3) ?? []) {
+          findings.push({
+            code: "blocked",
+            summary: `WeChat release evidence is blocked: ${blocker.summary ?? blocker.id ?? "unknown blocker"}.`,
+            artifactPath: blocker.artifactPath ?? wechatCandidateSummaryPath
+          });
+        }
+      }
+
+      artifactFamilies.push({
+        id: "wechat-release-evidence",
+        label: "WeChat release evidence summary",
+        required: true,
+        status: findings.length === 0 ? "passed" : "failed",
+        artifactPath: wechatCandidateSummaryPath,
+        revision: summary.candidate?.revision ?? undefined,
+        generatedAt: summary.generatedAt,
+        freshness,
+        findings
+      });
+    }
   }
 
   const findings = artifactFamilies.flatMap((family) => family.findings);
   const status: AuditStatus = findings.length === 0 ? "passed" : "failed";
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     candidate: {
       name: args.candidate,
@@ -578,7 +887,8 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
       ...(snapshotPath ? { snapshotPath } : {}),
       ...(releaseGateSummaryPath ? { releaseGateSummaryPath } : {}),
       ...(cocosRcBundlePath ? { cocosRcBundlePath } : {}),
-      ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {})
+      ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
+      ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {})
     },
     artifactFamilies
   };
@@ -600,6 +910,9 @@ export function renderMarkdown(report: SameCandidateEvidenceAuditReport): string
   lines.push(`- Release gate summary: \`${report.inputs.releaseGateSummaryPath ? toRelativePath(report.inputs.releaseGateSummaryPath) : "<missing>"}\``);
   lines.push(`- Cocos RC bundle: \`${report.inputs.cocosRcBundlePath ? toRelativePath(report.inputs.cocosRcBundlePath) : "<missing>"}\``);
   lines.push(`- Manual evidence owner ledger: \`${report.inputs.manualEvidenceLedgerPath ? toRelativePath(report.inputs.manualEvidenceLedgerPath) : "<missing>"}\``);
+  lines.push(
+    `- WeChat release evidence summary: \`${report.inputs.wechatCandidateSummaryPath ? toRelativePath(report.inputs.wechatCandidateSummaryPath) : "<not-applicable>"}\``
+  );
   lines.push("");
   lines.push("## Artifact Families");
   lines.push("");
@@ -618,7 +931,9 @@ export function renderMarkdown(report: SameCandidateEvidenceAuditReport): string
     } else {
       lines.push("- Findings:");
       for (const finding of family.findings) {
-        lines.push(`  - \`${finding.code}\` ${finding.summary}`);
+        lines.push(
+          `  - \`${finding.code}\` ${finding.summary}${finding.artifactPath ? ` (artifact: \`${finding.artifactPath}\`)` : ""}`
+        );
       }
     }
     lines.push("");
