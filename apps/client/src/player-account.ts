@@ -8,9 +8,11 @@ import {
 } from "./auth-session";
 import {
   restoreBattleReplayPlaybackState,
+  normalizePlayerBattleReportCenter,
   type BattleReplayPlaybackCommand,
   type BattleReplayPlaybackState,
   type AchievementProgressQuery,
+  type PlayerBattleReportCenter,
   type PlayerBattleReplayQuery,
   findPlayerBattleReplaySummary,
   normalizePlayerProgressionSnapshot,
@@ -97,6 +99,8 @@ interface PlayerEventLogListApiPayload {
 interface PlayerAchievementListApiPayload {
   items?: Partial<PlayerAchievementProgress>[];
 }
+
+interface PlayerBattleReportCenterApiPayload extends Partial<PlayerBattleReportCenter> {}
 
 interface PlayerProgressionApiPayload extends Partial<PlayerProgressionSnapshot> {}
 
@@ -325,7 +329,8 @@ function asPlayerAccountProfile(
   roomId: string,
   source: PlayerAccountProfile["source"],
   account?: PlayerAccountApiPayload["account"],
-  fallbackDisplayName?: string | null
+  fallbackDisplayName?: string | null,
+  battleReportCenter?: PlayerBattleReportCenter
 ): PlayerAccountProfile {
   const accountProfile = normalizePlayerAccountReadModel({
     playerId,
@@ -334,6 +339,7 @@ function asPlayerAccountProfile(
     achievements: account?.achievements,
     recentEventLog: account?.recentEventLog,
     recentBattleReplays: account?.recentBattleReplays,
+    ...(battleReportCenter ? { battleReportCenter } : {}),
     loginId: normalizeLoginId(account?.loginId),
     credentialBoundAt: account?.credentialBoundAt,
     lastRoomId: account?.lastRoomId ?? roomId,
@@ -367,6 +373,31 @@ async function loadPlayerBattleReplaySummariesWithSession(
       clearCurrentAuthSession();
     }
     return queryPlayerBattleReplaySummaries(undefined, query);
+  }
+}
+
+async function loadPlayerBattleReportCenterWithSession(
+  playerId: string,
+  authSession: StoredAuthSession | null,
+  query?: PlayerBattleReplayQuery
+): Promise<PlayerBattleReportCenter> {
+  const queryString = toBattleReplayQueryString(query);
+  const endpoint = authSession?.token
+    ? `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/me/battle-reports${queryString}`
+    : `${resolvePlayerAccountApiBaseUrl()}/api/player-accounts/${encodeURIComponent(playerId)}/battle-reports${queryString}`;
+
+  const fallback = query ? { query } : undefined;
+
+  try {
+    const payload = (await fetchPlayerAccountJson(endpoint, {
+      ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
+    }, authSession)) as PlayerBattleReportCenterApiPayload;
+    return normalizePlayerBattleReportCenter(payload, fallback);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("player_account_request_failed:401:")) {
+      clearCurrentAuthSession();
+    }
+    return normalizePlayerBattleReportCenter(undefined, fallback);
   }
 }
 
@@ -452,9 +483,12 @@ export async function loadPlayerAccountProfile(playerId: string, roomId: string)
       ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
     }, authSession)) as PlayerAccountApiPayload;
     const resolvedPlayerId = payload.account?.playerId?.trim() || authSession?.playerId || playerId;
-    const recentBattleReplays = await loadPlayerBattleReplaySummariesWithSession(resolvedPlayerId, authSession ?? null);
+    const [recentBattleReplays, battleReportCenter] = await Promise.all([
+      loadPlayerBattleReplaySummariesWithSession(resolvedPlayerId, authSession ?? null),
+      loadPlayerBattleReportCenterWithSession(resolvedPlayerId, authSession ?? null)
+    ]);
     const profile = {
-      ...asPlayerAccountProfile(resolvedPlayerId, roomId, "remote", payload.account, storedDisplayName),
+      ...asPlayerAccountProfile(resolvedPlayerId, roomId, "remote", payload.account, storedDisplayName, battleReportCenter),
       recentBattleReplays
     };
 

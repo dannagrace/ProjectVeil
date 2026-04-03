@@ -986,6 +986,15 @@ function findReplaySummary(replayId: string | null | undefined): PlayerBattleRep
   return state.account.recentBattleReplays.find((replay) => replay.id === normalizedReplayId) ?? null;
 }
 
+function hasBattleReportSummary(reportId: string | null | undefined): boolean {
+  const normalizedReportId = reportId?.trim();
+  if (!normalizedReportId) {
+    return false;
+  }
+
+  return state.account.battleReportCenter?.items.some((report) => report.id === normalizedReportId) ?? false;
+}
+
 function clearReplayPlaybackLoop(): void {
   if (replayPlaybackTaskId != null) {
     window.clearTimeout(replayPlaybackTaskId);
@@ -1027,8 +1036,21 @@ function clearReplayDetail(status = "选择一场最近战斗，即可查看逐�
 
 async function selectReplayDetail(replayId: string): Promise<void> {
   const summary = findReplaySummary(replayId);
-  if (!summary) {
+  if (!summary && !hasBattleReportSummary(replayId)) {
     clearReplayDetail("该回放已不在最近战报列表中。");
+    render();
+    return;
+  }
+
+  if (!summary) {
+    clearReplayPlaybackLoop();
+    state.replayDetail = {
+      selectedReplayId: replayId,
+      replay: null,
+      playback: null,
+      loading: false,
+      status: "当前仅同步到战报摘要，完整回放暂不可用。"
+    };
     render();
     return;
   }

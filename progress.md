@@ -557,6 +557,20 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - 可以继续把当前 H5 回放详情区往“独立回放中心页面”推进
   - 或者把同一套 replay detail / playback 交互补到 Cocos 端入口上。
 
+## H5 battle report center parity - 2026-04-03
+
+- 已把 H5 最近遭遇入口补齐到和 Cocos 一致的战报读模型：
+  - `apps/client/src/player-account.ts`
+    - 账号资料加载时现在会并行请求 `/battle-reports`
+    - H5 资料卡不再只依赖本地从 replay + event log 推导的 fallback，可直接消费服务端战报中心返回的证据状态
+  - `apps/client/src/main.ts`
+    - 选择最近遭遇时，如果该条目只有战报摘要而没有 replay 详情，H5 会保留选中态并进入“战报详情”视图，而不是退回空白提示
+  - `apps/client/src/account-history.ts`
+    - 回放详情区新增 report-only 展示：可查看结果、回合/步数、收益证据与“完整回放暂不可用”提示
+- 新增 / 更新测试：
+  - `apps/client/test/player-account-storage.test.ts`
+  - `apps/client/test/account-history-render.test.ts`
+
 ## H5 pixel asset bundle - 2026-03-28
 
 - 已切到 `#33 高质量像素美术资源集成` 分支：`codex/issue-33-h5-pixel-assets`
