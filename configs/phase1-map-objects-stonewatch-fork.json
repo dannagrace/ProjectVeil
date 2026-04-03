@@ -158,7 +158,7 @@
         "y": 2
       },
       "label": "石望征募站",
-      "unitTemplateId": "hero_guard_basic",
+      "unitTemplateId": "crown_heavy_cavalry",
       "recruitCount": 4,
       "cost": {
         "gold": 240,
@@ -174,7 +174,7 @@
         "y": 4
       },
       "label": "岔路补员营",
-      "unitTemplateId": "hero_guard_basic",
+      "unitTemplateId": "crown_field_chaplain",
       "recruitCount": 3,
       "cost": {
         "gold": 170,

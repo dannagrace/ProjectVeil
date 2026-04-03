@@ -126,7 +126,7 @@
         "y": 3
       },
       "label": "峡湾征募站",
-      "unitTemplateId": "hero_guard_basic",
+      "unitTemplateId": "crown_field_chaplain",
       "recruitCount": 4,
       "cost": {
         "gold": 220,

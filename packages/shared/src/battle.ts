@@ -225,6 +225,10 @@ function isContactSkillDefinition(skill: BattleSkillConfig): boolean {
   return skill.target === "enemy" && skill.delivery !== "ranged";
 }
 
+function isSkillAvailableThisRound(skill: BattleSkillConfig, round: number): boolean {
+  return (skill.effects?.maxRound ?? Number.POSITIVE_INFINITY) >= round;
+}
+
 function buildFormationLanes(unitCount: number, totalLanes: number): number[] {
   if (unitCount <= 0) {
     return [];
@@ -696,7 +700,15 @@ export function pickAutomatedBattleAction(state: BattleState): BattleAction | nu
     };
   }
 
-  const readySkills = canUseActiveSkills(activeUnit) ? skillsOf(activeUnit).filter(isActiveSkillReady) : [];
+  const readySkills = canUseActiveSkills(activeUnit)
+    ? skillsOf(activeUnit).filter((skill) => {
+        if (!isActiveSkillReady(skill)) {
+          return false;
+        }
+
+        return isSkillAvailableThisRound(skillDefinitionFor(skill.id, catalogIndex), state.round);
+      })
+    : [];
   const alliedUnits = Object.values(state.units).filter((unit) => unit.camp === activeUnit.camp && unit.count > 0);
 
   for (const skill of readySkills) {
@@ -1184,13 +1196,12 @@ function applyAttackSequence(
   );
   nextUnits[defender.id] = damagedDefender;
 
-  const splashSkillDefinition =
-    options?.skillId && options.skillId === "war_cry"
-      ? skillDefinitionFor(options.skillId, catalogIndex)
-      : null;
+  const splashSkillDefinition = options?.skillId ? skillDefinitionFor(options.skillId, catalogIndex) : null;
   const splashMultiplier =
     splashSkillDefinition && damagedDefender.count > 0
-      ? splashSkillDefinition.effects?.damageMultiplier ?? 0.5
+      ? splashSkillDefinition.id === "war_cry"
+        ? splashSkillDefinition.effects?.splashDamageMultiplier ?? splashSkillDefinition.effects?.damageMultiplier ?? 0.5
+        : splashSkillDefinition.effects?.splashDamageMultiplier ?? 0
       : 0;
   if (splashMultiplier > 0) {
     const adjacentEnemies = Object.values(nextUnits)
@@ -1394,6 +1405,9 @@ export function validateBattleAction(state: BattleState, action: BattleAction): 
 
     if (normalizedCooldownValue(state.unitCooldowns[action.unitId]?.[action.skillId]) > 0) {
       return { valid: false, reason: "skill_on_cooldown" };
+    }
+    if (!isSkillAvailableThisRound(skillDefinitionFor(skill.id, getBattleCatalogIndex()), state.round)) {
+      return { valid: false, reason: "skill_round_expired" };
     }
 
     const forcedTargetId = forcedAttackTargetId(unit, state);

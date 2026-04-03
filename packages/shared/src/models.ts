@@ -995,6 +995,8 @@ export interface BattleSkillEffectConfig {
   allowRetaliation?: boolean;
   grantedStatusId?: BattleStatusEffectId;
   onHitStatusId?: BattleStatusEffectId;
+  splashDamageMultiplier?: number;
+  maxRound?: number;
 }
 
 export interface BattleSkillConfig {

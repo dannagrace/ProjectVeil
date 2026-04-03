@@ -296,8 +296,17 @@ export function validateBattleSkillCatalog(config: BattleSkillCatalogConfig): vo
     if (effects.damageMultiplier !== undefined && (!isFiniteNumber(effects.damageMultiplier) || effects.damageMultiplier <= 0)) {
       throw new Error(`Battle skill ${skill.id} damageMultiplier must be a positive number`);
     }
+    if (
+      effects.splashDamageMultiplier !== undefined &&
+      (!isFiniteNumber(effects.splashDamageMultiplier) || effects.splashDamageMultiplier <= 0)
+    ) {
+      throw new Error(`Battle skill ${skill.id} splashDamageMultiplier must be a positive number`);
+    }
     if (effects.allowRetaliation !== undefined && typeof effects.allowRetaliation !== "boolean") {
       throw new Error(`Battle skill ${skill.id} allowRetaliation must be boolean`);
+    }
+    if (effects.maxRound !== undefined && (!Number.isInteger(effects.maxRound) || effects.maxRound <= 0)) {
+      throw new Error(`Battle skill ${skill.id} maxRound must be a positive integer`);
     }
     if (effects.grantedStatusId !== undefined && !statusIds.has(effects.grantedStatusId)) {
       throw new Error(`Battle skill ${skill.id} references unknown granted status: ${effects.grantedStatusId}`);

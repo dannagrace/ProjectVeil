@@ -221,6 +221,10 @@ function isContactSkillDefinition(skill: BattleSkillConfig): boolean {
   return skill.target === "enemy" && skill.delivery !== "ranged";
 }
 
+function isSkillAvailableThisRound(skill: BattleSkillConfig, round: number): boolean {
+  return (skill.effects?.maxRound ?? Number.POSITIVE_INFINITY) >= round;
+}
+
 function buildFormationLanes(unitCount: number, totalLanes: number): number[] {
   if (unitCount <= 0) {
     return [];
@@ -596,7 +600,15 @@ export function pickAutomatedBattleAction(state: BattleState): BattleAction | nu
   }
 
   const catalogIndex = getBattleCatalogIndex();
-  const readySkills = canUseActiveSkills(activeUnit) ? skillsOf(activeUnit).filter(isActiveSkillReady) : [];
+  const readySkills = canUseActiveSkills(activeUnit)
+    ? skillsOf(activeUnit).filter((skill) => {
+        if (!isActiveSkillReady(skill)) {
+          return false;
+        }
+
+        return isSkillAvailableThisRound(skillDefinitionFor(skill.id, catalogIndex), state.round);
+      })
+    : [];
 
   for (const skill of readySkills) {
     if (skill.target !== "self") {
@@ -1022,6 +1034,25 @@ function applyAttackSequence(
   );
   nextUnits[defender.id] = damagedDefender;
 
+  const splashSkillDefinition = options?.skillId ? skillDefinitionFor(options.skillId, catalogIndex) : null;
+  const splashMultiplier =
+    splashSkillDefinition && damagedDefender.count > 0
+      ? splashSkillDefinition.id === "war_cry"
+        ? splashSkillDefinition.effects?.splashDamageMultiplier ?? splashSkillDefinition.effects?.damageMultiplier ?? 0.5
+        : splashSkillDefinition.effects?.splashDamageMultiplier ?? 0
+      : 0;
+  if (splashMultiplier > 0) {
+    const adjacentEnemies = Object.values(nextUnits)
+      .filter((unit) => unit.camp === damagedDefender.camp && unit.id !== damagedDefender.id && unit.count > 0)
+      .filter((unit) => Math.abs(unit.lane - damagedDefender.lane) === 1);
+
+    for (const adjacentEnemy of adjacentEnemies) {
+      const splashDamage = Math.max(1, Math.floor(attackDamage * splashMultiplier));
+      nextUnits[adjacentEnemy.id] = applyDamage(adjacentEnemy, splashDamage);
+      log.push(`${attacker.stackName} 的${splashSkillDefinition!.name}波及 ${adjacentEnemy.stackName}，造成 ${splashDamage} 伤害`);
+    }
+  }
+
   if ((options?.allowRetaliation ?? true) && damagedDefender.count > 0 && !damagedDefender.hasRetaliated) {
     const retaliationRoll = nextDeterministicRandom(nextRngState.seed);
     const retaliationDamage = estimateDamage(damagedDefender, attacker, retaliationRoll.value);
@@ -1161,6 +1192,9 @@ export function validateBattleAction(state: BattleState, action: BattleAction): 
 
     if (normalizedCooldownValue(state.unitCooldowns[action.unitId]?.[action.skillId]) > 0) {
       return { valid: false, reason: "skill_on_cooldown" };
+    }
+    if (!isSkillAvailableThisRound(skillDefinitionFor(skill.id, getBattleCatalogIndex()), state.round)) {
+      return { valid: false, reason: "skill_round_expired" };
     }
 
     if (skill.target === "self") {
