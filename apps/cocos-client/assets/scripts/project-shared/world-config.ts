@@ -686,7 +686,7 @@ export function validateUnitCatalog(
   const availableSkillIds = new Set(battleSkillCatalog.skills.map((skill) => skill.id));
   const ids = new Set<string>();
   for (const template of config.templates) {
-    if (template.faction !== "crown" && template.faction !== "wild") {
+    if (template.faction !== "crown" && template.faction !== "wild" && template.faction !== "shadow") {
       throw new Error(`Invalid faction for unit template: ${template.id}`);
     }
 

@@ -1,6 +1,6 @@
 import { getDefaultUnitCatalog } from "./project-shared/world-config.ts";
 
-export type BattlePanelUnitFaction = "crown" | "wild";
+export type BattlePanelUnitFaction = "crown" | "wild" | "shadow";
 export type BattlePanelUnitRarity = "common" | "elite";
 export type BattlePanelInteractionBadge = "battle";
 export type BattlePanelPortraitState = "idle" | "selected" | "hit";
@@ -27,7 +27,10 @@ export function resolveBattlePanelUnitVisual(
   const selected = options.selected === true || options.active === true;
   return {
     templateId,
-    faction: template?.faction === "crown" || template?.faction === "wild" ? template.faction : null,
+    faction:
+      template?.faction === "crown" || template?.faction === "wild" || template?.faction === "shadow"
+        ? template.faction
+        : null,
     rarity: template?.rarity === "elite" ? "elite" : "common",
     interaction: "battle",
     portraitState: selected ? "selected" : options.damaged === true ? "hit" : "idle"

@@ -1,7 +1,7 @@
 import objectVisuals from "../../../../configs/object-visuals.json";
 import type { PlayerTileView } from "./VeilCocosSession.ts";
 
-type FactionKey = "crown" | "wild";
+type FactionKey = "crown" | "wild" | "shadow";
 type RarityKey = "common" | "elite";
 type InteractionKey = "move" | "pickup" | "battle";
 export type CocosTileMarkerIconKey = "wood" | "gold" | "ore" | "neutral" | "hero" | "recruitment" | "shrine" | "mine" | "tower";
@@ -272,7 +272,7 @@ function resolveMarkerIconKey(tile: PlayerTileView | null): CocosTileMarkerIconK
 }
 
 function toFactionKey(value: string | undefined): FactionKey | null {
-  return value === "crown" || value === "wild" ? value : null;
+  return value === "crown" || value === "wild" || value === "shadow" ? value : null;
 }
 
 function toRarityKey(value: string): RarityKey {

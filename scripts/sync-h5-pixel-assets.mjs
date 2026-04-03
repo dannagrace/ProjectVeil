@@ -191,6 +191,15 @@ const generatedImages = [
   {
     width: 32,
     height: 32,
+    painter: drawFactionShadowBadge,
+    targets: [
+      "apps/client/public/assets/pixel/badges/faction-shadow.png",
+      "apps/cocos-client/assets/resources/pixel/badges/faction-shadow.png"
+    ]
+  },
+  {
+    width: 32,
+    height: 32,
     painter: drawCommonRarityBadge,
     targets: [
       "apps/client/public/assets/pixel/badges/rarity-common.png",
@@ -859,6 +868,20 @@ function drawFactionWildBadge(x, y, width, height) {
   if (isTriangle(x, y, [width * 0.72, height * 0.26], [width * 0.58, height * 0.48], [width * 0.7, height * 0.56])) color = rgb(245, 225, 196);
   if (isRoundedRect(x, y, width, height, 0.3, 0.5, 0.4, 0.18, 4)) color = rgb(66, 36, 32);
   if (isTriangle(x, y, [width * 0.38, height * 0.62], [width * 0.5, height * 0.8], [width * 0.62, height * 0.62])) color = rgb(245, 225, 196);
+  return color;
+}
+
+function drawFactionShadowBadge(x, y, width, height) {
+  let color = drawBadgeShell(x, y, width, height, rgb(54, 40, 92), rgb(157, 133, 214));
+  if (color[3] === 0) {
+    return color;
+  }
+
+  if (isCircle(x, y, width * 0.5, height * 0.42, width * 0.24)) color = rgb(240, 230, 255);
+  if (isCircle(x, y, width * 0.38, height * 0.42, width * 0.06)) color = rgb(90, 72, 138);
+  if (isCircle(x, y, width * 0.62, height * 0.42, width * 0.06)) color = rgb(90, 72, 138);
+  if (isRoundedRect(x, y, width, height, 0.34, 0.68, 0.32, 0.08, 2)) color = rgb(124, 98, 184);
+  if (isTriangle(x, y, [width * 0.38, height * 0.62], [width * 0.5, height * 0.88], [width * 0.62, height * 0.62])) color = rgb(220, 206, 250);
   return color;
 }
 

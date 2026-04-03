@@ -255,6 +255,47 @@
       "delivery": "ranged",
       "cooldown": 3,
       "effects": {}
+    },
+    {
+      "id": "death_resilience",
+      "name": "亡者韧性",
+      "description": "首次被击溃时有概率残留 1 点生命，强行续住战线。",
+      "kind": "passive",
+      "target": "self",
+      "cooldown": 0,
+      "effects": {}
+    },
+    {
+      "id": "armor_pierce",
+      "name": "幽镞穿甲",
+      "description": "攻击会无视部分防御，适合猎杀重甲目标。",
+      "kind": "passive",
+      "target": "enemy",
+      "cooldown": 0,
+      "effects": {}
+    },
+    {
+      "id": "grave_silence",
+      "name": "墓咒禁魔",
+      "description": "抛出阴咒侵蚀目标，压低伤害并令其短时间无法施法。",
+      "kind": "active",
+      "target": "enemy",
+      "delivery": "ranged",
+      "cooldown": 3,
+      "effects": {
+        "damageMultiplier": 0.75,
+        "allowRetaliation": false,
+        "onHitStatusId": "silenced"
+      }
+    },
+    {
+      "id": "life_drain",
+      "name": "噬生斩",
+      "description": "击杀敌军后抽取残存生机，恢复自身生命。",
+      "kind": "passive",
+      "target": "self",
+      "cooldown": 0,
+      "effects": {}
     }
   ],
   "statuses": [
@@ -389,6 +430,17 @@
       "defenseModifier": 3,
       "damagePerTurn": 0,
       "initiativeModifier": -1,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "death_resilience_spent",
+      "name": "韧性已耗",
+      "description": "本场战斗的亡者韧性已触发，无法再次保命。",
+      "duration": 99,
+      "attackModifier": 0,
+      "defenseModifier": 0,
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
       "blocksActiveSkills": false
     }
   ]

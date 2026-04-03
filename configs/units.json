@@ -191,6 +191,69 @@
         "taunt_shout",
         "watcher_stance"
       ]
+    },
+    {
+      "id": "shadow_skeleton",
+      "stackName": "枯骨兵",
+      "faction": "shadow",
+      "rarity": "common",
+      "initiative": 8,
+      "attack": 4,
+      "defense": 3,
+      "minDamage": 2,
+      "maxDamage": 3,
+      "maxHp": 9,
+      "battleSkills": [
+        "death_resilience"
+      ]
+    },
+    {
+      "id": "shadow_wraith",
+      "stackName": "幽灵游侠",
+      "faction": "shadow",
+      "rarity": "common",
+      "initiative": 11,
+      "attack": 5,
+      "defense": 3,
+      "minDamage": 2,
+      "maxDamage": 4,
+      "maxHp": 7,
+      "battleSkills": [
+        "power_shot",
+        "armor_pierce"
+      ]
+    },
+    {
+      "id": "shadow_hexer",
+      "stackName": "尸巫",
+      "faction": "shadow",
+      "rarity": "elite",
+      "initiative": 7,
+      "attack": 4,
+      "defense": 4,
+      "minDamage": 2,
+      "maxDamage": 4,
+      "maxHp": 10,
+      "battleSkills": [
+        "grave_silence",
+        "crippling_howl"
+      ]
+    },
+    {
+      "id": "shadow_death_knight",
+      "stackName": "影魔骑士",
+      "faction": "shadow",
+      "rarity": "elite",
+      "initiative": 9,
+      "attack": 8,
+      "defense": 6,
+      "minDamage": 4,
+      "maxDamage": 7,
+      "maxHp": 17,
+      "battleSkills": [
+        "battle_focus",
+        "life_drain"
+      ]
     }
   ]
 }
