@@ -203,6 +203,16 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       playerAccountStore = store;
       base.routeCalls.push("player-accounts");
     },
+    registerShopRoutes: (app, store) => {
+      assert.equal(app, base.expressApp);
+      assert.equal(store, memoryStore);
+      base.routeCalls.push("shop");
+    },
+    registerWechatPayRoutes: (app, store) => {
+      assert.equal(app, base.expressApp);
+      assert.equal(store, memoryStore);
+      base.routeCalls.push("wechat-pay");
+    },
     registerLobbyRoutes: (app, dependencies) => {
       assert.equal(app, base.expressApp);
       lobbyListRooms = dependencies.listRooms;
@@ -258,6 +268,8 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     "config-center",
     "config-viewer",
     "player-accounts",
+    "shop",
+    "wechat-pay",
     "lobby",
     "matchmaking",
     "runtime-observability",
@@ -272,6 +284,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.equal(base.logger.errors.length, 0);
   assertStartupLogIncludes(base.logger, [
     /Project Veil Colyseus dev server listening on ws:\/\/0\.0\.0\.0:3101/,
+    /WeChat Pay API available at http:\/\/0\.0\.0\.0:3101\/api\/payments\/wechat\/create/,
     /Runtime health available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/health/,
     /Auth readiness available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/auth-readiness/,
     /Runtime diagnostic snapshot available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/diagnostic-snapshot/,
@@ -317,6 +330,8 @@ test("dev server logs process-level failures, closes stores, and exits non-zero"
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
     registerPlayerAccountRoutes: () => undefined,
+    registerShopRoutes: () => undefined,
+    registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
@@ -375,6 +390,8 @@ test("dev server logs uncaught exceptions, closes stores, and exits non-zero", a
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
     registerPlayerAccountRoutes: () => undefined,
+    registerShopRoutes: () => undefined,
+    registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
@@ -455,6 +472,8 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
     registerPlayerAccountRoutes: () => undefined,
+    registerShopRoutes: () => undefined,
+    registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
@@ -521,6 +540,8 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
     registerPlayerAccountRoutes: () => undefined,
+    registerShopRoutes: () => undefined,
+    registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
@@ -606,6 +627,8 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
     registerPlayerAccountRoutes: () => undefined,
+    registerShopRoutes: () => undefined,
+    registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,

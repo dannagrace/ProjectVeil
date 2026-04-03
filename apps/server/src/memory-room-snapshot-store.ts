@@ -11,6 +11,10 @@ import {
   createPlayerAccountsFromWorldState,
   MAX_PLAYER_AVATAR_URL_LENGTH,
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
+  type PaymentOrderCompleteInput,
+  type PaymentOrderCreateInput,
+  type PaymentOrderSettlement,
+  type PaymentOrderSnapshot,
   type RoomSnapshotStore,
   type PlayerAccountBanHistoryListOptions,
   type PlayerAccountBanInput,
@@ -97,6 +101,7 @@ function normalizeResourceLedger(resources?: PlayerAccountSnapshot["globalResour
 export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
+  private readonly paymentOrders = new Map<string, PaymentOrderSnapshot>();
   private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
@@ -114,6 +119,16 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
     const account = this.accounts.get(normalizePlayerId(playerId));
     return account ? cloneAccount(account) : null;
+  }
+
+  async loadPaymentOrder(orderId: string): Promise<PaymentOrderSnapshot | null> {
+    const normalizedOrderId = orderId.trim();
+    if (!normalizedOrderId) {
+      throw new Error("orderId must not be empty");
+    }
+
+    const order = this.paymentOrders.get(normalizedOrderId);
+    return order ? structuredClone(order) : null;
   }
 
   async loadPlayerBan(playerId: string): Promise<PlayerAccountBanSnapshot | null> {
@@ -337,6 +352,88 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     };
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
     return cloneAccount(nextAccount);
+  }
+
+  async createPaymentOrder(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot> {
+    const orderId = input.orderId.trim();
+    const playerId = normalizePlayerId(input.playerId);
+    const productId = input.productId.trim();
+    const amount = Math.floor(input.amount);
+    const gemAmount = Math.floor(input.gemAmount);
+    if (!orderId) {
+      throw new Error("orderId must not be empty");
+    }
+    if (!productId) {
+      throw new Error("productId must not be empty");
+    }
+    if (!Number.isFinite(input.amount) || amount <= 0) {
+      throw new Error("amount must be a positive integer");
+    }
+    if (!Number.isFinite(input.gemAmount) || gemAmount <= 0) {
+      throw new Error("gemAmount must be a positive integer");
+    }
+
+    await this.ensurePlayerAccount({ playerId });
+    const now = new Date().toISOString();
+    const order: PaymentOrderSnapshot = {
+      orderId,
+      playerId,
+      productId,
+      status: "pending",
+      amount,
+      gemAmount,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.paymentOrders.set(orderId, structuredClone(order));
+    return structuredClone(order);
+  }
+
+  async completePaymentOrder(orderId: string, input: PaymentOrderCompleteInput): Promise<PaymentOrderSettlement> {
+    const normalizedOrderId = orderId.trim();
+    const normalizedWechatOrderId = input.wechatOrderId.trim();
+    if (!normalizedOrderId) {
+      throw new Error("orderId must not be empty");
+    }
+    if (!normalizedWechatOrderId) {
+      throw new Error("wechatOrderId must not be empty");
+    }
+
+    const existingOrder = this.paymentOrders.get(normalizedOrderId);
+    if (!existingOrder) {
+      throw new Error("payment_order_not_found");
+    }
+
+    const account = await this.ensurePlayerAccount({ playerId: existingOrder.playerId });
+    if (existingOrder.status === "paid") {
+      return {
+        order: structuredClone(existingOrder),
+        account,
+        credited: false
+      };
+    }
+
+    const paidAt = new Date(input.paidAt ?? Date.now()).toISOString();
+    const nextOrder: PaymentOrderSnapshot = {
+      ...structuredClone(existingOrder),
+      status: "paid",
+      wechatOrderId: normalizedWechatOrderId,
+      paidAt,
+      updatedAt: paidAt
+    };
+    const nextAccount: PlayerAccountSnapshot = {
+      ...account,
+      gems: (account.gems ?? 0) + existingOrder.gemAmount,
+      updatedAt: paidAt
+    };
+    this.paymentOrders.set(normalizedOrderId, structuredClone(nextOrder));
+    this.accounts.set(existingOrder.playerId, cloneAccount(nextAccount));
+
+    return {
+      order: structuredClone(nextOrder),
+      account: cloneAccount(nextAccount),
+      credited: true
+    };
   }
 
   async purchaseShopProduct(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult> {
