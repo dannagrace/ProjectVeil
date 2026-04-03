@@ -1,0 +1,38 @@
+{
+  "products": [
+    {
+      "productId": "resource-bundle-starter",
+      "name": "Starter Supply Cache",
+      "type": "resource_bundle",
+      "price": 25,
+      "enabled": true,
+      "grant": {
+        "resources": {
+          "gold": 250,
+          "wood": 40,
+          "ore": 20
+        }
+      }
+    },
+    {
+      "productId": "equipment-sunforged-kit",
+      "name": "Sunforged Kit",
+      "type": "equipment",
+      "price": 40,
+      "enabled": true,
+      "grant": {
+        "equipmentIds": ["sunforged_spear"]
+      }
+    },
+    {
+      "productId": "gem-pack-scout",
+      "name": "Scout Gem Cache",
+      "type": "gem_pack",
+      "price": 5,
+      "enabled": false,
+      "grant": {
+        "gems": 15
+      }
+    }
+  ]
+}

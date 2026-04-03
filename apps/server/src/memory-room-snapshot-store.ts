@@ -1,7 +1,10 @@
 import {
+  appendEventLogEntries,
+  getEquipmentDefinition,
   normalizeEloRating,
   normalizeEventLogEntries,
   normalizeEventLogQuery,
+  tryAddEquipmentToInventory,
   type EventLogEntry
 } from "../../../packages/shared/src/index";
 import {
@@ -32,6 +35,9 @@ import {
   type PlayerHeroArchiveSnapshot,
   type PlayerEventHistoryQuery,
   type PlayerEventHistorySnapshot
+  ,
+  type ShopPurchaseMutationInput,
+  type ShopPurchaseResult
 } from "./persistence";
 import type { RoomPersistenceSnapshot } from "./index";
 
@@ -80,6 +86,14 @@ function normalizeSessionId(sessionId: string): string {
   return normalized;
 }
 
+function normalizeResourceLedger(resources?: PlayerAccountSnapshot["globalResources"] | Partial<PlayerAccountSnapshot["globalResources"]>): PlayerAccountSnapshot["globalResources"] {
+  return {
+    gold: Math.max(0, Math.floor(resources?.gold ?? 0)),
+    wood: Math.max(0, Math.floor(resources?.wood ?? 0)),
+    ore: Math.max(0, Math.floor(resources?.ore ?? 0))
+  };
+}
+
 export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
@@ -88,6 +102,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
   private readonly heroArchives = new Map<string, PlayerHeroArchiveSnapshot>();
+  private readonly shopPurchases = new Map<string, ShopPurchaseResult>();
   private readonly reports = new Map<string, PlayerReportRecord>();
   private nextReportId = 1;
 
@@ -322,6 +337,132 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     };
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
     return cloneAccount(nextAccount);
+  }
+
+  async purchaseShopProduct(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const purchaseId = input.purchaseId.trim();
+    const productId = input.productId.trim();
+    const productName = input.productName.trim();
+    const quantity = Math.max(1, Math.floor(input.quantity));
+    const unitPrice = Math.max(0, Math.floor(input.unitPrice));
+    if (!purchaseId) {
+      throw new Error("purchaseId must not be empty");
+    }
+    if (!productId) {
+      throw new Error("productId must not be empty");
+    }
+    if (!productName) {
+      throw new Error("productName must not be empty");
+    }
+    if (!Number.isFinite(input.quantity) || quantity <= 0) {
+      throw new Error("quantity must be a positive integer");
+    }
+
+    const purchaseKey = `${normalizedPlayerId}:${purchaseId}`;
+    const existingPurchase = this.shopPurchases.get(purchaseKey);
+    if (existingPurchase) {
+      return structuredClone(existingPurchase);
+    }
+
+    const existingAccount = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const normalizedGrant = {
+      gems: Math.max(0, Math.floor(input.grant.gems ?? 0)) * quantity,
+      resources: {
+        gold: Math.max(0, Math.floor(input.grant.resources?.gold ?? 0)) * quantity,
+        wood: Math.max(0, Math.floor(input.grant.resources?.wood ?? 0)) * quantity,
+        ore: Math.max(0, Math.floor(input.grant.resources?.ore ?? 0)) * quantity
+      },
+      equipmentIds: Array.from({ length: quantity }, () => input.grant.equipmentIds ?? []).flat().map((equipmentId) => {
+        const normalizedEquipmentId = equipmentId.trim();
+        if (!normalizedEquipmentId || !getEquipmentDefinition(normalizedEquipmentId)) {
+          throw new Error(`unknown equipment grant: ${equipmentId}`);
+        }
+        return normalizedEquipmentId;
+      })
+    };
+    const totalPrice = unitPrice * quantity;
+    if ((existingAccount.gems ?? 0) < totalPrice) {
+      throw new Error("insufficient gems");
+    }
+
+    let heroId: string | undefined;
+    let updatedArchive: PlayerHeroArchiveSnapshot | undefined;
+    if (normalizedGrant.equipmentIds.length > 0) {
+      const currentArchive = Array.from(this.heroArchives.values())
+        .filter((archive) => archive.playerId === normalizedPlayerId)
+        .sort((left, right) => left.heroId.localeCompare(right.heroId))[0];
+      if (!currentArchive) {
+        throw new Error("player hero archive not found");
+      }
+
+      let nextInventory = [...currentArchive.hero.loadout.inventory];
+      for (const equipmentId of normalizedGrant.equipmentIds) {
+        const inventoryUpdate = tryAddEquipmentToInventory(nextInventory, equipmentId);
+        if (!inventoryUpdate.stored) {
+          throw new Error("equipment inventory full");
+        }
+        nextInventory = inventoryUpdate.inventory;
+      }
+
+      heroId = currentArchive.heroId;
+      updatedArchive = {
+        ...cloneArchive(currentArchive),
+        hero: {
+          ...cloneArchive(currentArchive).hero,
+          loadout: {
+            ...cloneArchive(currentArchive).hero.loadout,
+            inventory: nextInventory
+          }
+        }
+      };
+    }
+
+    const processedAt = new Date().toISOString();
+    const nextAccount: PlayerAccountSnapshot = {
+      ...existingAccount,
+      gems: (existingAccount.gems ?? 0) - totalPrice + normalizedGrant.gems,
+      globalResources: normalizeResourceLedger({
+        gold: (existingAccount.globalResources.gold ?? 0) + normalizedGrant.resources.gold,
+        wood: (existingAccount.globalResources.wood ?? 0) + normalizedGrant.resources.wood,
+        ore: (existingAccount.globalResources.ore ?? 0) + normalizedGrant.resources.ore
+      }),
+      recentEventLog: appendEventLogEntries(existingAccount.recentEventLog, [
+        {
+          id: `${normalizedPlayerId}:${processedAt}:shop:${productId}:${quantity}`,
+          timestamp: processedAt,
+          roomId: "shop",
+          playerId: normalizedPlayerId,
+          category: "account",
+          description: `Purchased ${productName} x${quantity}.`,
+          rewards: []
+        }
+      ]),
+      updatedAt: processedAt
+    };
+
+    this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
+    if (updatedArchive) {
+      this.heroArchives.set(`${updatedArchive.playerId}:${updatedArchive.heroId}`, cloneArchive(updatedArchive));
+    }
+
+    const result: ShopPurchaseResult = {
+      purchaseId,
+      productId,
+      quantity,
+      unitPrice,
+      totalPrice,
+      granted: {
+        gems: normalizedGrant.gems,
+        resources: normalizedGrant.resources,
+        equipmentIds: normalizedGrant.equipmentIds,
+        ...(heroId ? { heroId } : {})
+      },
+      gemsBalance: nextAccount.gems ?? 0,
+      processedAt
+    };
+    this.shopPurchases.set(purchaseKey, structuredClone(result));
+    return result;
   }
 
   async listPlayerBanHistory(
@@ -826,6 +967,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     this.authSessionsByPlayerId.clear();
     this.playerIdByWechatOpenId.clear();
     this.heroArchives.clear();
+    this.shopPurchases.clear();
   }
 }
 
