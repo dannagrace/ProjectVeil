@@ -135,6 +135,7 @@ test("buildBattlePanelViewModel surfaces settlement and presentation layer summa
   assert.equal(view.title, "战斗结算");
   assert.deepEqual(view.summaryLines, [
     "战斗胜利",
+    "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 战果结算",
     "会话：battle-1 · WIN",
     "下一步：返回世界地图并继续推进当前回合",
     "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
@@ -181,8 +182,9 @@ test("buildBattlePanelViewModel keeps neutral settlement in the battle result sh
   assert.equal(view.idle, true);
   assert.equal(view.title, "战斗结算");
   assert.equal(view.summaryLines[0], "结果回写中");
-  assert.equal(view.summaryLines[1], "会话：battle-1 · SETTLE");
-  assert.equal(view.summaryLines[2], "下一步：等待世界地图确认奖励、占位与最终结算");
+  assert.equal(view.summaryLines[1], "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 战果结算");
+  assert.equal(view.summaryLines[2], "会话：battle-1 · SETTLE");
+  assert.equal(view.summaryLines[3], "下一步：等待世界地图确认奖励、占位与最终结算");
 });
 
 test("buildBattlePanelViewModel shows an explicit settlement recovery path while reconnecting", () => {
@@ -329,10 +331,11 @@ test("buildBattlePanelViewModel surfaces reviewer-facing session and next-step c
   assert.equal(view.title, "战斗反馈");
   assert.deepEqual(view.summaryLines.slice(0, 4), [
     "battle-1 · 第 2 回合",
+    "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 受击反馈",
     "会话：room-battle/battle-1 · 中立遭遇",
-    "表现：HIT · 命中反馈",
-    "下一步：确认受击结果后继续选择目标或技能"
+    "表现：HIT · 命中反馈"
   ]);
+  assert.equal(view.summaryLines[4], "下一步：确认受击结果后继续选择目标或技能");
 });
 
 test("buildBattlePanelViewModel enables attack actions on the player's turn", () => {
@@ -445,14 +448,15 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
     subtitle: "坐标 (0,0) · 1 陷阱",
     badge: "PVE"
   });
-  assert.equal(view.summaryLines[1], "会话：room-alpha/battle-hero-1-vs-neutral-1 · 中立遭遇");
-  assert.equal(view.summaryLines[2], "表现：LIVE · 战斗进行中");
-  assert.equal(view.summaryLines[3], "下一步：选择目标并下达指令");
-  assert.equal(view.summaryLines[4], "阵营：我方先攻");
-  assert.equal(view.summaryLines[5], "阶段：轮到我方");
-  assert.equal(view.summaryLines[7], "技能1：投矛射击[敌/就绪] / 护甲术[自/就绪]");
-  assert.equal(view.summaryLines[8], "状态：无异常");
-  assert.equal(view.summaryLines[9], "环境1：1线 捕兽夹陷阱 · 2伤 · 1次");
+  assert.equal(view.summaryLines[1], "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 现场回合");
+  assert.equal(view.summaryLines[2], "会话：room-alpha/battle-hero-1-vs-neutral-1 · 中立遭遇");
+  assert.equal(view.summaryLines[3], "表现：LIVE · 战斗进行中");
+  assert.equal(view.summaryLines[4], "下一步：选择目标并下达指令");
+  assert.equal(view.summaryLines[5], "阵营：我方先攻");
+  assert.equal(view.summaryLines[6], "阶段：轮到我方");
+  assert.equal(view.summaryLines[8], "技能1：投矛射击[敌/就绪] / 护甲术[自/就绪]");
+  assert.equal(view.summaryLines[9], "状态：无异常");
+  assert.equal(view.summaryLines[10], "环境1：1线 捕兽夹陷阱 · 2伤 · 1次");
   assert.equal(view.orderLines[0], "行动顺序");
   assert.equal(view.orderLines[1], "> Guard x12");
   assert.equal(view.orderLines[2], "2. Orc x8 (DEF/RET)");
@@ -575,13 +579,14 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
     subtitle: "坐标 (0,0) · 无额外障碍",
     badge: "PVP"
   });
-  assert.equal(view.summaryLines[1], "会话：room-alpha/battle-hero-1-vs-hero-2 · 英雄对决");
-  assert.equal(view.summaryLines[2], "表现：LIVE · 战斗进行中");
-  assert.equal(view.summaryLines[3], "下一步：等待对方行动或权威同步");
-  assert.equal(view.summaryLines[4], "阵营：我方先攻");
-  assert.equal(view.summaryLines[5], "阶段：轮到对方");
-  assert.equal(view.summaryLines[7], "技能：普通攻击");
-  assert.equal(view.summaryLines[8], "状态：无异常");
+  assert.equal(view.summaryLines[1], "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 现场回合");
+  assert.equal(view.summaryLines[2], "会话：room-alpha/battle-hero-1-vs-hero-2 · 英雄对决");
+  assert.equal(view.summaryLines[3], "表现：LIVE · 战斗进行中");
+  assert.equal(view.summaryLines[4], "下一步：等待对方行动或权威同步");
+  assert.equal(view.summaryLines[5], "阵营：我方先攻");
+  assert.equal(view.summaryLines[6], "阶段：轮到对方");
+  assert.equal(view.summaryLines[8], "技能：普通攻击");
+  assert.equal(view.summaryLines[9], "状态：无异常");
   assert.equal(view.orderLines[1], "> Raider x11");
   assert.equal(view.orderItems[0]!.badge, "行动中");
   assert.equal(view.orderItems[1]!.badge, "2");
