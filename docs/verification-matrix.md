@@ -14,6 +14,20 @@ Quick routing rules:
 - `Optional diagnostics` stay optional unless the change crosses surfaces, a required check fails, or the PR changes release-facing evidence reviewers need to trust.
 - If your diff matches more than one row, combine the `Minimum required` commands from each row and keep the higher-risk artifact expectations.
 
+### Common Issue-Type Minimums
+
+Use this shorter list when the issue is already phrased as a common contribution slice instead of a file-path diff. It is the fastest reviewer-friendly route for the issue types that show up most often in repo maintenance and release-hardening work.
+
+| Issue or change type | Minimum required | Optional diagnostics | Notes |
+| --- | --- | --- | --- |
+| Docs-only or contributor-guidance updates | Review rendered Markdown plus every edited path and command. Run `npm run validate:quickstart` only if setup, onboarding, or quickstart text changed. | Re-run any edited setup command exactly as documented when practical in your environment. | Default path for `README.md`, `docs/**`, templates, and process notes. |
+| Shared rules plus server runtime behavior | `npm run typecheck:shared && npm run test:shared && npm run typecheck:server`, plus the nearest touched server `npm test` coverage. | `npm run test:contracts` when payload or snapshot shapes changed. `npm run validate:quickstart` when local-dev boot, auth readiness, or startup expectations changed. | Use this when a gameplay or contract change crosses `packages/shared/**` and `apps/server/**`. |
+| Release tooling or release-doc changes | `npm run typecheck:ci` plus the nearest script-level test for the touched release surface, such as `npm run test:release-gate-summary`, `npm run test:release-health-summary`, or `npm run test:sync-governance-matrix`. | `npm run release:gate:summary` when reviewer-facing release output or artifact fields changed. | Covers release-readiness scripts, CI-facing summaries, and release procedure docs that change expected output semantics. |
+| Cocos presentation or primary runtime changes | `npm run typecheck:cocos && npm run check:wechat-build` | `npm run audit:cocos-primary-delivery -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir artifacts/wechat-release --expect-exported-runtime` when delivery metadata, exported runtime assumptions, or release-facing evidence changed. | Default path for presentation, runtime, and primary-client delivery work under `apps/cocos-client/**`. |
+| WeChat packaging or release-packaging changes | `npm run check:wechat-build` plus the nearest touched packaging command such as `npm run package:wechat-release`, `npm run verify:wechat-release`, or `npm run validate:wechat-rc`. | `npm run smoke:wechat-release` when smoke-report schema or device/runtime evidence handling changed. `npm run release:cocos-rc:bundle` when candidate-level evidence assembly changed. | Use this for packaging scripts, release evidence templates, and WeChat release/manual-review flow updates. |
+
+If an issue spans more than one row, combine the `Minimum required` commands from each relevant type and use the broader optional diagnostics only where the reviewer-facing risk actually widened.
+
 | Change type | Typical examples | Minimum required | Optional diagnostics | Attach to PR when relevant | Deeper docs |
 | --- | --- | --- | --- | --- | --- |
 | Docs-only or process-only | `README.md`, `docs/**`, Markdown templates, contributor guidance, contributor workflow notes | Review rendered Markdown plus every edited path and command. Run `npm run validate:quickstart` only if setup or quickstart guidance changed. | Re-run any edited setup command exactly as documented when the wording changed and the command is practical in your environment. | Usually none. If the doc changes release or verification procedure, summarize which command or path you re-checked in the PR body. | [`README.md`](../README.md), [`docs/operational-entry-point-repo-map.md`](./operational-entry-point-repo-map.md) |
