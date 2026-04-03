@@ -172,10 +172,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       displayName: normalizeDisplayName(playerId, input.displayName ?? existing?.displayName),
       ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       eloRating: normalizeEloRating(existing?.eloRating),
-      globalResources: structuredClone(existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 }),
-      achievements: structuredClone(existing?.achievements ?? []),
-      recentEventLog: structuredClone(existing?.recentEventLog ?? []),
-      recentBattleReplays: structuredClone(existing?.recentBattleReplays ?? []),
+      globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
+      achievements: existing?.achievements ?? [],
+      recentEventLog: existing?.recentEventLog ?? [],
+      recentBattleReplays: existing?.recentBattleReplays ?? [],
       ...(input.lastRoomId?.trim()
         ? { lastRoomId: input.lastRoomId.trim() }
         : existing?.lastRoomId
@@ -193,8 +193,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    this.accounts.set(playerId, cloneAccount(nextAccount));
-    return cloneAccount(nextAccount);
+    const storedAccount = cloneAccount(nextAccount);
+    this.accounts.set(playerId, storedAccount);
+    return cloneAccount(storedAccount);
   }
 
   async bindPlayerAccountCredentials(
