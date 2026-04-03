@@ -41,7 +41,7 @@
       "id": "neutral-4",
       "position": { "x": 7, "y": 7 },
       "reward": { "kind": "gold", "amount": 260 },
-      "stacks": [{ "templateId": "wolf_pack", "count": 6 }],
+      "stacks": [{ "templateId": "shadow_skeleton", "count": 7 }, { "templateId": "shadow_hexer", "count": 3 }],
       "behavior": {
         "mode": "patrol",
         "patrolPath": [{ "x": 7, "y": 7 }, { "x": 8, "y": 7 }, { "x": 8, "y": 6 }, { "x": 7, "y": 6 }],

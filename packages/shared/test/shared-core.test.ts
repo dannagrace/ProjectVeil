@@ -222,6 +222,35 @@ function createWorldState(options?: {
   };
 }
 
+const battleSkillStateById = new Map(
+  getDefaultBattleSkillCatalog().skills.map((skill) => [
+    skill.id,
+    {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      kind: skill.kind,
+      target: skill.target,
+      ...(skill.delivery ? { delivery: skill.delivery } : {}),
+      cooldown: skill.cooldown,
+      remainingCooldown: 0
+    }
+  ])
+);
+
+function createUnitStackState(
+  overrides: Omit<UnitStack, "skills" | "statusEffects"> & {
+    skillIds?: string[];
+    statusEffects?: UnitStack["statusEffects"];
+  }
+): UnitStack {
+  return {
+    ...overrides,
+    skills: (overrides.skillIds ?? []).map((skillId) => structuredClone(battleSkillStateById.get(skillId)!)),
+    statusEffects: overrides.statusEffects ?? []
+  };
+}
+
 function createLargePlayerWorldView(): PlayerWorldView {
   const width = 32;
   const height = 32;
@@ -304,14 +333,14 @@ test("asset config exposes metadata for referenced asset paths", () => {
   });
 
   assert.deepEqual(summarizeAssetMetadata(assetConfig), {
-    total: 64,
+    total: 65,
     byStage: {
-      placeholder: 37,
+      placeholder: 38,
       prototype: 27,
       production: 0
     },
     bySource: {
-      generated: 64,
+      generated: 65,
       "open-source": 0,
       licensed: 0,
       commissioned: 0
@@ -6339,6 +6368,168 @@ test("applyBattleAction does not attach on-hit statuses to targets defeated by t
   assert.equal(next.units["pikeman-a"]?.currentHp, 0);
   assert.deepEqual(next.units["pikeman-a"]?.statusEffects, []);
   assert.match(next.log.at(-1) ?? "", /造成 \d+ 伤害/);
+});
+
+test("shadow faction templates are registered and Murkveil Delta includes a shadow neutral army", () => {
+  const unitCatalog = getDefaultUnitCatalog();
+  const shadowTemplateIds = unitCatalog.templates
+    .filter((template) => template.faction === "shadow")
+    .map((template) => template.id)
+    .sort();
+
+  assert.deepEqual(shadowTemplateIds, [
+    "shadow_death_knight",
+    "shadow_hexer",
+    "shadow_skeleton",
+    "shadow_wraith"
+  ]);
+
+  const murkveilShadowEncounter = murkveilDeltaMapObjectsConfig.neutralArmies.find((army) =>
+    army.stacks.some((stack) => stack.templateId === "shadow_skeleton" || stack.templateId === "shadow_hexer")
+  );
+
+  assert.equal(murkveilShadowEncounter?.id, "neutral-4");
+});
+
+test("death_resilience can preserve a shadow unit at 1 hp and marks the passive as spent", () => {
+  const createState = (seed: number): BattleState => ({
+    ...createEmptyBattleState(),
+    round: 1,
+    activeUnitId: "knight-a",
+    turnOrder: ["knight-a", "skeleton-d"],
+    units: {
+      "knight-a": createUnitStackState({
+        id: "knight-a",
+        templateId: "shadow_death_knight",
+        camp: "attacker",
+        lane: 0,
+        stackName: "影魔骑士",
+        initiative: 9,
+        attack: 12,
+        defense: 6,
+        minDamage: 8,
+        maxDamage: 8,
+        count: 2,
+        currentHp: 17,
+        maxHp: 17,
+        hasRetaliated: false,
+        defending: false
+      }),
+      "skeleton-d": createUnitStackState({
+        id: "skeleton-d",
+        templateId: "shadow_skeleton",
+        camp: "defender",
+        lane: 0,
+        stackName: "枯骨兵",
+        initiative: 8,
+        attack: 4,
+        defense: 3,
+        minDamage: 2,
+        maxDamage: 3,
+        count: 1,
+        currentHp: 9,
+        maxHp: 9,
+        hasRetaliated: false,
+        defending: false,
+        skillIds: ["death_resilience"]
+      }),
+    },
+    unitCooldowns: {
+      "knight-a": {},
+      "skeleton-d": {}
+    },
+    rng: {
+      seed,
+      cursor: 0
+    }
+  });
+
+  let recoveredState: BattleState | null = null;
+  for (let seed = 1; seed <= 64; seed += 1) {
+    const next = applyBattleAction(createState(seed), {
+      type: "battle.attack",
+      attackerId: "knight-a",
+      defenderId: "skeleton-d"
+    });
+    if (next.units["skeleton-d"]?.count === 1 && next.units["skeleton-d"]?.currentHp === 1) {
+      recoveredState = next;
+      break;
+    }
+  }
+
+  assert.ok(recoveredState);
+  assert.equal(recoveredState.units["skeleton-d"]?.statusEffects?.some((status) => status.id === "death_resilience_spent"), true);
+  assert.match(recoveredState.log.join("\n"), /触发韧性/);
+});
+
+test("armor_pierce increases lethal pressure and life_drain heals after a kill", () => {
+  const createState = (skillIds: string[]): BattleState => ({
+    ...createEmptyBattleState(),
+    round: 1,
+    activeUnitId: "wraith-a",
+    turnOrder: ["wraith-a", "guard-d"],
+    units: {
+      "wraith-a": createUnitStackState({
+        id: "wraith-a",
+        templateId: "shadow_wraith",
+        camp: "attacker",
+        lane: 0,
+        stackName: "幽灵游侠",
+        initiative: 11,
+        attack: 6,
+        defense: 3,
+        minDamage: 4,
+        maxDamage: 4,
+        count: 3,
+        currentHp: 3,
+        maxHp: 7,
+        hasRetaliated: false,
+        defending: false,
+        skillIds
+      }),
+      "guard-d": createUnitStackState({
+        id: "guard-d",
+        templateId: "hero_guard_basic",
+        camp: "defender",
+        lane: 0,
+        stackName: "凯琳卫队",
+        initiative: 8,
+        attack: 4,
+        defense: 7,
+        minDamage: 2,
+        maxDamage: 4,
+        count: 2,
+        currentHp: 1,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false
+      }),
+    },
+    unitCooldowns: {
+      "wraith-a": {},
+      "guard-d": {}
+    },
+    rng: {
+      seed: 7,
+      cursor: 0
+    }
+  });
+
+  const baseline = applyBattleAction(createState([]), {
+    type: "battle.attack",
+    attackerId: "wraith-a",
+    defenderId: "guard-d"
+  });
+  const pierced = applyBattleAction(createState(["armor_pierce", "life_drain"]), {
+    type: "battle.attack",
+    attackerId: "wraith-a",
+    defenderId: "guard-d"
+  });
+
+  assert.ok((pierced.units["guard-d"]?.count ?? 0) < (baseline.units["guard-d"]?.count ?? 0));
+  assert.equal(pierced.units["guard-d"]?.count, 0);
+  assert.equal((pierced.units["wraith-a"]?.currentHp ?? 0) > 3, true);
+  assert.match(pierced.log.join("\n"), /生命虹吸/);
 });
 
 test("pickAutomatedBattleAction falls back between buff, enemy skill, attack, and null states", () => {

@@ -984,7 +984,7 @@ export interface MapObjectsConfig {
 export interface UnitTemplateConfig {
   id: string;
   stackName: string;
-  faction: "crown" | "wild";
+  faction: "crown" | "wild" | "shadow";
   rarity: "common" | "elite";
   initiative: number;
   attack: number;

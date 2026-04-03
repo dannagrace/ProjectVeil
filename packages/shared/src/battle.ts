@@ -392,6 +392,10 @@ function terrainDamageMultiplier(unit: UnitStack, state: BattleState): number {
   return hasBattleSkill(unit, "terrain_mastery") && battlefieldTerrainOf(state) === "grass" ? 1.1 : 1;
 }
 
+function armorPierceDefenseIgnore(unit: UnitStack): number {
+  return hasBattleSkill(unit, "armor_pierce") ? 2 : 0;
+}
+
 function estimateDamage(
   attacker: UnitStack,
   defender: UnitStack,
@@ -402,7 +406,14 @@ function estimateDamage(
   const balance = getBattleBalanceConfig().damage;
   const defenseBonus = defender.defending ? balance.defendingDefenseBonus : 0;
   const effectiveAttack = attacker.attack + totalAttackModifier(attacker);
-  const effectiveDefense = defender.defense + totalDefenseModifier(defender) + defenseBonus + terrainDefenseBonus(defender, state);
+  const effectiveDefense = Math.max(
+    0,
+    defender.defense +
+      totalDefenseModifier(defender) +
+      defenseBonus +
+      terrainDefenseBonus(defender, state) -
+      armorPierceDefenseIgnore(attacker)
+  );
   const offenseModifier = 1 + (effectiveAttack - effectiveDefense) * balance.offenseAdvantageStep;
   const variance = balance.varianceBase + randomValue * balance.varianceRange;
   return Math.max(
@@ -462,8 +473,65 @@ function lifestealHealingAmount(unit: UnitStack): number {
   return Math.max(2, Math.ceil(unit.maxHp * 0.2));
 }
 
+function lifeDrainHealingAmount(unit: UnitStack): number {
+  return Math.max(3, Math.ceil(unit.maxHp * 0.35));
+}
+
 function thornsDamageAmount(incomingDamage: number): number {
   return Math.max(1, Math.floor(incomingDamage * 0.2));
+}
+
+function canTriggerDeathResilience(unit: UnitStack): boolean {
+  return hasBattleSkill(unit, "death_resilience") && !hasStatusEffect(unit, "death_resilience_spent");
+}
+
+function reviveWithDeathResilience(
+  unit: UnitStack,
+  log: string[],
+  catalogIndex: BattleCatalogIndex
+): UnitStack {
+  const recoveredUnit = upsertStatusEffect(
+    {
+      ...unit,
+      count: 1,
+      currentHp: 1
+    },
+    "death_resilience_spent",
+    unit.id,
+    catalogIndex
+  );
+  log.push(`${unit.stackName} 触发韧性，在崩解前强撑住最后 1 点生命`);
+  return recoveredUnit;
+}
+
+function maybeTriggerDeathResilience(
+  originalTarget: UnitStack,
+  damagedTarget: UnitStack,
+  log: string[],
+  rng: BattleState["rng"],
+  catalogIndex: BattleCatalogIndex
+): { unit: UnitStack; rng: BattleState["rng"] } {
+  if (damagedTarget.count > 0 || !canTriggerDeathResilience(originalTarget)) {
+    return { unit: damagedTarget, rng };
+  }
+
+  const resilienceRoll = nextDeterministicRandom(rng.seed);
+  const nextRng = {
+    seed: resilienceRoll.nextSeed,
+    cursor: rng.cursor + 1
+  };
+
+  if (resilienceRoll.value >= 0.35) {
+    return {
+      unit: damagedTarget,
+      rng: nextRng
+    };
+  }
+
+  return {
+    unit: reviveWithDeathResilience(damagedTarget, log, catalogIndex),
+    rng: nextRng
+  };
 }
 
 function buildUnitStack(
@@ -1205,6 +1273,15 @@ function applyAttackSequence(
 
   let damagedDefender = nextUnits[defender.id]!;
   let nextAttacker = attacker;
+  const deathResilienceResult = maybeTriggerDeathResilience(
+    defender,
+    damagedDefender,
+    log,
+    nextRngState,
+    catalogIndex
+  );
+  damagedDefender = deathResilienceResult.unit;
+  nextRngState = deathResilienceResult.rng;
   damagedDefender = applyOnHitStatuses(
     attacker,
     damagedDefender,
@@ -1226,6 +1303,13 @@ function applyAttackSequence(
     nextAttacker = applyHealing(nextAttacker, healingAmount);
     nextUnits[attacker.id] = nextAttacker;
     log.push(`${nextAttacker.stackName} 触发嗜血，恢复 ${healingAmount} 生命`);
+  }
+
+  if (damagedDefender.count === 0 && nextAttacker.count > 0 && hasBattleSkill(nextAttacker, "life_drain")) {
+    const healingAmount = lifeDrainHealingAmount(nextAttacker);
+    nextAttacker = applyHealing(nextAttacker, healingAmount);
+    nextUnits[attacker.id] = nextAttacker;
+    log.push(`${nextAttacker.stackName} 触发生命虹吸，恢复 ${healingAmount} 生命`);
   }
 
   const splashSkillDefinition = options?.skillId ? skillDefinitionFor(options.skillId, catalogIndex) : null;
@@ -1251,6 +1335,17 @@ function applyAttackSequence(
     const retaliationRoll = nextDeterministicRandom(nextRngState.seed);
     const retaliationDamage = estimateDamage(damagedDefender, nextAttacker, retaliationRoll.value, preparedState.state);
     let damagedAttacker = applyDamage(nextAttacker, retaliationDamage);
+    const retaliationResilienceResult = maybeTriggerDeathResilience(
+      nextAttacker,
+      damagedAttacker,
+      log,
+      {
+        seed: retaliationRoll.nextSeed,
+        cursor: nextRngState.cursor + 1
+      },
+      catalogIndex
+    );
+    damagedAttacker = retaliationResilienceResult.unit;
     damagedAttacker = applyOnHitStatuses(damagedDefender, damagedAttacker, log, catalogIndex);
     let retaliatingDefender = damagedDefender;
 
@@ -1266,15 +1361,18 @@ function applyAttackSequence(
       log.push(`${retaliatingDefender.stackName} 触发嗜血，恢复 ${healingAmount} 生命`);
     }
 
+    if (damagedAttacker.count === 0 && retaliatingDefender.count > 0 && hasBattleSkill(retaliatingDefender, "life_drain")) {
+      const healingAmount = lifeDrainHealingAmount(retaliatingDefender);
+      retaliatingDefender = applyHealing(retaliatingDefender, healingAmount);
+      log.push(`${retaliatingDefender.stackName} 触发生命虹吸，恢复 ${healingAmount} 生命`);
+    }
+
     nextUnits[attacker.id] = damagedAttacker;
     nextUnits[defender.id] = {
       ...retaliatingDefender,
       hasRetaliated: true
     };
-    nextRngState = {
-      seed: retaliationRoll.nextSeed,
-      cursor: nextRngState.cursor + 1
-    };
+    nextRngState = retaliationResilienceResult.rng;
     log.push(`${retaliatingDefender.stackName} 反击 ${attacker.stackName}，造成 ${retaliationDamage} 伤害`);
   }
 

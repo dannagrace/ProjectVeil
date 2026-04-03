@@ -205,6 +205,13 @@ writeBadge("faction-wild.svg", {
   glyph: wildGlyph(),
   title: "Wild Faction"
 });
+writeBadge("faction-shadow.svg", {
+  shell: "#221c2d",
+  trim: "#9b85d6",
+  accent: "#efe6ff",
+  glyph: shadowGlyph(),
+  title: "Shadow Faction"
+});
 writeBadge("rarity-common.svg", {
   shell: "#20242e",
   trim: "#8da0ba",
@@ -356,6 +363,15 @@ function wildGlyph() {
     <path d="M30 64l10-26 10 18 8-18 8 26z" fill="#ffd2a6"/>
     <rect x="36" y="66" width="24" height="6" fill="#f0a971"/>
     <rect x="44" y="30" width="8" height="18" fill="#fff4df"/>
+  `;
+}
+
+function shadowGlyph() {
+  return `
+    <path d="M48 28c-12 0-20 8-20 18 0 8 5 12 10 16l2 10h16l2-10c5-4 10-8 10-16 0-10-8-18-20-18z" fill="#f0e6ff"/>
+    <circle cx="40" cy="46" r="4" fill="#6c56a4"/>
+    <circle cx="56" cy="46" r="4" fill="#6c56a4"/>
+    <rect x="42" y="58" width="12" height="4" rx="2" fill="#7f68bc"/>
   `;
 }
 
