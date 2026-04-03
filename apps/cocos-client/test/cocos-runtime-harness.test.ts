@@ -284,6 +284,7 @@ test("Cocos lifecycle harness replays cached local boot state before VeilRoot op
   assert.equal(harness.root.authToken, "guest.local.token");
   assert.deepEqual(order, ["replay:2", "live:3"]);
   assert.equal(harness.root.lastUpdate?.world.meta.day, 3);
+  assert.equal(VeilCocosSession.readStoredReplay("room-local", "local-player")?.world.meta.day, 3);
   assert.deepEqual(room.sentMessages, [
     {
       type: "connect",
