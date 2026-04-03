@@ -117,12 +117,15 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const normalizedPlayerId = normalizePlayerId(playerId);
     const normalizedQuery = normalizeEventLogQuery(query);
     const items = normalizeEventLogEntries(this.accounts.get(normalizedPlayerId)?.recentEventLog)
-      .filter((entry) => (normalizedQuery.category ? entry.category === normalizedQuery.category : true))
-      .filter((entry) => (normalizedQuery.heroId ? entry.heroId === normalizedQuery.heroId : true))
-      .filter((entry) => (normalizedQuery.achievementId ? entry.achievementId === normalizedQuery.achievementId : true))
-      .filter((entry) => (normalizedQuery.worldEventType ? entry.worldEventType === normalizedQuery.worldEventType : true))
-      .filter((entry) => (normalizedQuery.since ? entry.timestamp >= normalizedQuery.since : true))
-      .filter((entry) => (normalizedQuery.until ? entry.timestamp <= normalizedQuery.until : true))
+      .filter(
+        (entry) =>
+          (!normalizedQuery.category || entry.category === normalizedQuery.category) &&
+          (!normalizedQuery.heroId || entry.heroId === normalizedQuery.heroId) &&
+          (!normalizedQuery.achievementId || entry.achievementId === normalizedQuery.achievementId) &&
+          (!normalizedQuery.worldEventType || entry.worldEventType === normalizedQuery.worldEventType) &&
+          (!normalizedQuery.since || entry.timestamp >= normalizedQuery.since) &&
+          (!normalizedQuery.until || entry.timestamp <= normalizedQuery.until)
+      )
       .sort(
         (left: EventLogEntry, right: EventLogEntry) =>
           right.timestamp.localeCompare(left.timestamp) || left.id.localeCompare(right.id)
@@ -172,10 +175,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       displayName: normalizeDisplayName(playerId, input.displayName ?? existing?.displayName),
       ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       eloRating: normalizeEloRating(existing?.eloRating),
-      globalResources: structuredClone(existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 }),
-      achievements: structuredClone(existing?.achievements ?? []),
-      recentEventLog: structuredClone(existing?.recentEventLog ?? []),
-      recentBattleReplays: structuredClone(existing?.recentBattleReplays ?? []),
+      globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
+      achievements: existing?.achievements ?? [],
+      recentEventLog: existing?.recentEventLog ?? [],
+      recentBattleReplays: existing?.recentBattleReplays ?? [],
       ...(input.lastRoomId?.trim()
         ? { lastRoomId: input.lastRoomId.trim() }
         : existing?.lastRoomId
@@ -193,8 +196,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    this.accounts.set(playerId, cloneAccount(nextAccount));
-    return cloneAccount(nextAccount);
+    const stored = structuredClone(nextAccount);
+    this.accounts.set(playerId, stored);
+    return structuredClone(stored);
   }
 
   async bindPlayerAccountCredentials(
