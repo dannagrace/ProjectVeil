@@ -256,7 +256,7 @@ test("battle presentation controller formalizes command, casualty, and result fl
   assertState(controller.getState(), {
     phase: "resolution",
     moment: "result_settlement",
-    label: "战斗收束",
+    label: "结果回写中",
     tone: "neutral",
     result: null
   });

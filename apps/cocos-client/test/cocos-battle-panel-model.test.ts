@@ -149,8 +149,8 @@ test("buildBattlePanelViewModel keeps neutral settlement in the battle result sh
     selectedTargetId: null,
     actionPending: false,
     feedback: {
-      title: "战斗收束",
-      detail: "PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图",
+      title: "战果回写中",
+      detail: "PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 1 队 · 等待世界地图确认奖励、占位与结算结果",
       badge: "SETTLE",
       tone: "neutral"
     },
@@ -158,14 +158,14 @@ test("buildBattlePanelViewModel keeps neutral settlement in the battle result sh
       battleId: "battle-1",
       phase: "resolution",
       moment: "result_settlement",
-      label: "战斗收束",
-      detail: "PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图",
+      label: "结果回写中",
+      detail: "PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 1 队 · 等待世界地图确认奖励、占位与结算结果",
       badge: "SETTLE",
       tone: "neutral",
       result: null,
       summaryLines: [
         "反馈层：动画 待机",
-        "播报：PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 1 队 · 准备返回世界地图"
+        "播报：PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 1 队 · 等待世界地图确认奖励、占位与结算结果"
       ],
       feedbackLayer: {
         animation: "idle",
@@ -178,7 +178,7 @@ test("buildBattlePanelViewModel keeps neutral settlement in the battle result sh
 
   assert.equal(view.idle, true);
   assert.equal(view.title, "战斗结算");
-  assert.equal(view.summaryLines[0], "战斗收束");
+  assert.equal(view.summaryLines[0], "结果回写中");
 });
 
 test("buildBattlePanelViewModel shows an explicit settlement recovery path while reconnecting", () => {
