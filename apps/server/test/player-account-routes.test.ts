@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { createCipheriv, createHash } from "node:crypto";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
 import { issueAccountAuthSession, issueGuestAuthSession, issueWechatMiniGameAuthSession, hashAccountPassword } from "../src/auth";
 import { applyPlayerEventLogAndAchievements } from "../src/player-achievements";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
+import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "../src/wechat-session-key";
 import type {
   PlayerAccountBanHistoryListOptions,
   PlayerAccountBanInput,
@@ -162,6 +164,8 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
       ...(existing?.privacyConsentAt ? { privacyConsentAt: existing.privacyConsentAt } : {}),
+      ...(existing?.phoneNumber ? { phoneNumber: existing.phoneNumber } : {}),
+      ...(existing?.phoneNumberBoundAt ? { phoneNumberBoundAt: existing.phoneNumberBoundAt } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -384,6 +388,20 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
         : existing.lastRoomId
           ? { lastRoomId: existing.lastRoomId }
           : {}),
+      ...(patch.phoneNumber !== undefined
+        ? patch.phoneNumber?.trim()
+          ? { phoneNumber: patch.phoneNumber.trim() }
+          : {}
+        : existing.phoneNumber
+          ? { phoneNumber: existing.phoneNumber }
+          : {}),
+      ...(patch.phoneNumberBoundAt !== undefined
+        ? patch.phoneNumberBoundAt?.trim()
+          ? { phoneNumberBoundAt: patch.phoneNumberBoundAt.trim() }
+          : {}
+        : existing.phoneNumberBoundAt
+          ? { phoneNumberBoundAt: existing.phoneNumberBoundAt }
+          : {}),
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(playerId, account);
@@ -503,6 +521,39 @@ async function startAccountRouteServer(port: number, store: RoomSnapshotStore | 
   const server = new Server({ transport });
   await server.listen(port, "127.0.0.1");
   return server;
+}
+
+function createWechatProfileSignature(rawData: string, sessionKey: string): string {
+  return createHash("sha1").update(`${rawData}${sessionKey}`, "utf8").digest("hex");
+}
+
+function createWechatPhonePayload(input: {
+  sessionKey: string;
+  appId: string;
+  phoneNumber: string;
+  purePhoneNumber?: string;
+  countryCode?: string;
+}): { encryptedData: string; iv: string } {
+  const iv = Buffer.from("1234567890abcdef", "utf8").toString("base64");
+  const cipher = createCipheriv(
+    "aes-128-cbc",
+    Buffer.from(input.sessionKey, "base64"),
+    Buffer.from(iv, "base64")
+  );
+  cipher.setAutoPadding(true);
+  const payload = JSON.stringify({
+    phoneNumber: input.phoneNumber,
+    purePhoneNumber: input.purePhoneNumber ?? input.phoneNumber.replace(/^\+\d+/, ""),
+    countryCode: input.countryCode ?? "86",
+    watermark: {
+      appid: input.appId
+    }
+  });
+  const encryptedData = Buffer.concat([cipher.update(payload, "utf8"), cipher.final()]).toString("base64");
+  return {
+    encryptedData,
+    iv
+  };
 }
 
 function createAccountTrackingWorldState(): WorldState {
@@ -2005,6 +2056,135 @@ test("player account me routes resolve and update the current authenticated acco
   const stored = await store.loadPlayerAccount("player-me");
   assert.equal(stored?.displayName, "风暴司灯人");
   assert.equal(stored?.lastRoomId, "room-next");
+});
+
+test("wechat account profile updates require a valid cached session-key signature", async (t) => {
+  const port = 42040 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "wechat-profile",
+    displayName: "云潮旅人",
+    globalResources: { gold: 0, wood: 0, ore: 0 },
+    achievements: [],
+    recentEventLog: [],
+    wechatMiniGameOpenId: "wx-openid-profile"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueWechatMiniGameAuthSession({
+    playerId: "wechat-profile",
+    displayName: "云潮旅人"
+  });
+  const sessionKey = Buffer.from("1234567890abcdef", "utf8").toString("base64");
+
+  t.after(async () => {
+    resetWechatSessionKeyCache();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  cacheWechatSessionKey("wechat-profile", sessionKey, 60);
+
+  const invalidResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      displayName: "未授权改名",
+      wechatSignature: {
+        rawData: "{\"op\":\"profile-update\"}",
+        signature: "bad-signature"
+      }
+    })
+  });
+  assert.equal(invalidResponse.status, 403);
+
+  const rawData = "{\"op\":\"profile-update\"}";
+  const validResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      displayName: "已验签旅人",
+      wechatSignature: {
+        rawData,
+        signature: createWechatProfileSignature(rawData, sessionKey)
+      }
+    })
+  });
+  const validPayload = (await validResponse.json()) as {
+    account: PlayerAccountSnapshot;
+  };
+
+  assert.equal(validResponse.status, 200);
+  assert.equal(validPayload.account.displayName, "已验签旅人");
+});
+
+test("wechat phone binding returns 403 for invalid payloads and succeeds after validation", async (t) => {
+  const port = 42080 + Math.floor(Math.random() * 1000);
+  const previousAppId = process.env.WECHAT_APP_ID;
+  process.env.WECHAT_APP_ID = "wx-phone-test-app";
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "wechat-phone",
+    displayName: "手机号旅人",
+    globalResources: { gold: 0, wood: 0, ore: 0 },
+    achievements: [],
+    recentEventLog: [],
+    wechatMiniGameOpenId: "wx-openid-phone"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueWechatMiniGameAuthSession({
+    playerId: "wechat-phone",
+    displayName: "手机号旅人"
+  });
+  const sessionKey = Buffer.from("abcdef1234567890", "utf8").toString("base64");
+
+  t.after(async () => {
+    process.env.WECHAT_APP_ID = previousAppId;
+    resetWechatSessionKeyCache();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  cacheWechatSessionKey("wechat-phone", sessionKey, 60);
+
+  const invalidResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/phone`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      encryptedData: Buffer.from("invalid-phone-payload", "utf8").toString("base64"),
+      iv: Buffer.from("1234567890abcdef", "utf8").toString("base64")
+    })
+  });
+  assert.equal(invalidResponse.status, 403);
+
+  const encrypted = createWechatPhonePayload({
+    sessionKey,
+    appId: "wx-phone-test-app",
+    phoneNumber: "+8613800138000"
+  });
+  const successResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/phone`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify(encrypted)
+  });
+  const successPayload = (await successResponse.json()) as {
+    account: PlayerAccountSnapshot;
+    phone: { phoneNumber: string };
+  };
+
+  assert.equal(successResponse.status, 200);
+  assert.equal(successPayload.phone.phoneNumber, "+8613800138000");
+  assert.equal(successPayload.account.phoneNumber, "+8613800138000");
+  assert.match(successPayload.account.phoneNumberBoundAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test("player account me route preserves account-mode sessions and returns the global vault", async (t) => {

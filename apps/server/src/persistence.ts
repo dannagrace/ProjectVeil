@@ -151,6 +151,8 @@ interface PlayerAccountRow extends RowDataPacket {
   wechat_mini_game_bound_at: Date | string | null;
   credential_bound_at: Date | string | null;
   privacy_consent_at: Date | string | null;
+  phone_number: string | null;
+  phone_number_bound_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -243,6 +245,8 @@ export interface PlayerAccountSnapshot extends PlayerAccountReadModel {
   wechatMiniGameBoundAt?: string;
   createdAt?: string;
   updatedAt?: string;
+  phoneNumber?: string;
+  phoneNumberBoundAt?: string;
 }
 
 export interface PlayerAccountBanSnapshot {
@@ -291,6 +295,8 @@ export interface PlayerAccountProfilePatch {
   displayName?: string;
   avatarUrl?: string | null;
   lastRoomId?: string | null;
+  phoneNumber?: string | null;
+  phoneNumberBoundAt?: string | null;
 }
 
 export interface PlayerAccountProgressPatch {
@@ -664,6 +670,8 @@ function normalizePlayerAccountSnapshot(account: {
   wechatMiniGameBoundAt?: string | undefined;
   credentialBoundAt?: string | undefined;
   privacyConsentAt?: string | Date | null | undefined;
+  phoneNumber?: string | null | undefined;
+  phoneNumberBoundAt?: string | Date | null | undefined;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 }): PlayerAccountSnapshot {
@@ -674,6 +682,7 @@ function normalizePlayerAccountSnapshot(account: {
   const normalizedWechatMiniGameUnionId = account.wechatMiniGameUnionId
     ? normalizeWechatMiniGameUnionId(account.wechatMiniGameUnionId)
     : undefined;
+  const phoneNumberBoundAt = formatTimestamp(account.phoneNumberBoundAt);
 
   return {
     ...normalizePlayerAccountReadModel({
@@ -690,6 +699,8 @@ function normalizePlayerAccountSnapshot(account: {
       loginId: account.loginId ? normalizePlayerLoginId(account.loginId) : undefined,
       credentialBoundAt: account.credentialBoundAt,
       privacyConsentAt: normalizePrivacyConsentAt(account.privacyConsentAt),
+      phoneNumber: account.phoneNumber?.trim() || undefined,
+      ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
       ageVerified: normalizePlayerAgeVerified(account.ageVerified),
       isMinor: normalizePlayerIsMinor(account.isMinor),
       dailyPlayMinutes: normalizeDailyPlayMinutes(account.dailyPlayMinutes),
@@ -701,6 +712,8 @@ function normalizePlayerAccountSnapshot(account: {
     ...(normalizedWechatMiniGameOpenId ? { wechatMiniGameOpenId: normalizedWechatMiniGameOpenId } : {}),
     ...(normalizedWechatMiniGameUnionId ? { wechatMiniGameUnionId: normalizedWechatMiniGameUnionId } : {}),
     ...(account.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: account.wechatMiniGameBoundAt } : {}),
+    ...(account.phoneNumber?.trim() ? { phoneNumber: account.phoneNumber.trim() } : {}),
+    ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
     ...(account.createdAt ? { createdAt: account.createdAt } : {}),
     ...(account.updatedAt ? { updatedAt: account.updatedAt } : {})
   };
@@ -990,6 +1003,8 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   password_hash VARCHAR(255) NULL,
   credential_bound_at DATETIME NULL DEFAULT NULL,
   privacy_consent_at DATETIME NULL DEFAULT NULL,
+  phone_number VARCHAR(32) NULL,
+  phone_number_bound_at DATETIME NULL DEFAULT NULL,
   version BIGINT UNSIGNED NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1375,6 +1390,42 @@ SET @veil_player_accounts_privacy_consent_sql := IF(
 PREPARE veil_player_accounts_privacy_consent_stmt FROM @veil_player_accounts_privacy_consent_sql;
 EXECUTE veil_player_accounts_privacy_consent_stmt;
 DEALLOCATE PREPARE veil_player_accounts_privacy_consent_stmt;
+
+SET @veil_player_accounts_phone_number_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'phone_number'
+);
+
+SET @veil_player_accounts_phone_number_sql := IF(
+  @veil_player_accounts_phone_number_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`phone_number\` VARCHAR(32) NULL AFTER \`privacy_consent_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_phone_number_stmt FROM @veil_player_accounts_phone_number_sql;
+EXECUTE veil_player_accounts_phone_number_stmt;
+DEALLOCATE PREPARE veil_player_accounts_phone_number_stmt;
+
+SET @veil_player_accounts_phone_number_bound_at_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'phone_number_bound_at'
+);
+
+SET @veil_player_accounts_phone_number_bound_at_sql := IF(
+  @veil_player_accounts_phone_number_bound_at_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`phone_number_bound_at\` DATETIME NULL DEFAULT NULL AFTER \`phone_number\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_phone_number_bound_at_stmt FROM @veil_player_accounts_phone_number_bound_at_sql;
+EXECUTE veil_player_accounts_phone_number_bound_at_stmt;
+DEALLOCATE PREPARE veil_player_accounts_phone_number_bound_at_stmt;
 
 SET @veil_player_accounts_wechat_idp_open_id_exists := (
   SELECT COUNT(*)
@@ -1770,6 +1821,7 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
   const wechatMiniGameBoundAt = formatTimestamp(row.wechat_mini_game_bound_at);
   const credentialBoundAt = formatTimestamp(row.credential_bound_at);
   const privacyConsentAt = formatTimestamp(row.privacy_consent_at);
+  const phoneNumberBoundAt = formatTimestamp(row.phone_number_bound_at);
   const createdAt = formatTimestamp(row.created_at);
   const updatedAt = formatTimestamp(row.updated_at);
   const wechatOpenId = row.wechat_open_id ?? row.wechat_mini_game_open_id;
@@ -1815,6 +1867,8 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(wechatMiniGameBoundAt ? { wechatMiniGameBoundAt } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
     ...(privacyConsentAt ? { privacyConsentAt } : {}),
+    ...(row.phone_number ? { phoneNumber: row.phone_number } : {}),
+    ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {})
   });
@@ -2212,6 +2266,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_bound_at,
          credential_bound_at,
          privacy_consent_at,
+         phone_number,
+         phone_number_bound_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -2257,6 +2313,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_bound_at,
          credential_bound_at,
          privacy_consent_at,
+         phone_number,
+         phone_number_bound_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -2386,6 +2444,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_bound_at,
          credential_bound_at,
          privacy_consent_at,
+         phone_number,
+         phone_number_bound_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -2955,6 +3015,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
            password_hash = NULL,
            credential_bound_at = NULL,
            privacy_consent_at = NULL,
+           phone_number = NULL,
+           phone_number_bound_at = NULL,
            age_verified = 0,
            is_minor = 0,
            daily_play_minutes = 0,
@@ -3019,6 +3081,20 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           : {}
         : existing.lastRoomId
           ? { lastRoomId: existing.lastRoomId }
+          : {}),
+      ...(patch.phoneNumber !== undefined
+        ? patch.phoneNumber
+          ? { phoneNumber: patch.phoneNumber.trim() }
+          : {}
+        : existing.phoneNumber
+          ? { phoneNumber: existing.phoneNumber }
+          : {}),
+      ...(patch.phoneNumberBoundAt !== undefined
+        ? patch.phoneNumberBoundAt
+          ? { phoneNumberBoundAt: new Date(patch.phoneNumberBoundAt).toISOString() }
+          : {}
+        : existing.phoneNumberBoundAt
+          ? { phoneNumberBoundAt: existing.phoneNumberBoundAt }
           : {})
     });
 
@@ -3033,9 +3109,11 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json,
          recent_battle_replays_json,
          last_room_id,
-         last_seen_at
+         last_seen_at,
+         phone_number,
+         phone_number_bound_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
@@ -3045,6 +3123,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json = VALUES(recent_event_log_json),
          recent_battle_replays_json = VALUES(recent_battle_replays_json),
          last_room_id = VALUES(last_room_id),
+         phone_number = VALUES(phone_number),
+         phone_number_bound_at = VALUES(phone_number_bound_at),
          last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
          version = version + 1`,
       [
@@ -3057,7 +3137,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(nextAccount.recentEventLog),
         JSON.stringify(nextAccount.recentBattleReplays),
         nextAccount.lastRoomId ?? null,
-        existing.lastSeenAt ? new Date(existing.lastSeenAt) : null
+        existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
+        nextAccount.phoneNumber ?? null,
+        nextAccount.phoneNumberBoundAt ? new Date(nextAccount.phoneNumberBoundAt) : null
       ]
     );
 
@@ -3200,6 +3282,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_bound_at,
          credential_bound_at,
          privacy_consent_at,
+         phone_number,
+         phone_number_bound_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`

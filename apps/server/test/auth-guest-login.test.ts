@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createCipheriv } from "node:crypto";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import test from "node:test";
@@ -16,6 +17,7 @@ import {
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
 import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
+import { resetWechatSessionKeyCache } from "../src/wechat-session-key";
 import type {
   PlayerAccountBanHistoryListOptions,
   PlayerAccountBanInput,
@@ -161,6 +163,8 @@ class MemoryAuthStore implements RoomSnapshotStore {
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
       ...(existing?.privacyConsentAt ? { privacyConsentAt: existing.privacyConsentAt } : {}),
+      ...(existing?.phoneNumber ? { phoneNumber: existing.phoneNumber } : {}),
+      ...(existing?.phoneNumberBoundAt ? { phoneNumberBoundAt: existing.phoneNumberBoundAt } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -378,6 +382,20 @@ class MemoryAuthStore implements RoomSnapshotStore {
         : existing.lastRoomId
           ? { lastRoomId: existing.lastRoomId }
           : {}),
+      ...(patch.phoneNumber !== undefined
+        ? patch.phoneNumber?.trim()
+          ? { phoneNumber: patch.phoneNumber.trim() }
+          : {}
+        : existing.phoneNumber
+          ? { phoneNumber: existing.phoneNumber }
+          : {}),
+      ...(patch.phoneNumberBoundAt !== undefined
+        ? patch.phoneNumberBoundAt?.trim()
+          ? { phoneNumberBoundAt: patch.phoneNumberBoundAt.trim() }
+          : {}
+        : existing.phoneNumberBoundAt
+          ? { phoneNumberBoundAt: existing.phoneNumberBoundAt }
+          : {}),
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(account.playerId, account);
@@ -487,6 +505,32 @@ async function startAuthServer(port: number, store: RoomSnapshotStore | null = n
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
   return server;
+}
+
+function createWechatPhonePayload(input: {
+  sessionKey: string;
+  appId: string;
+  phoneNumber: string;
+}): { encryptedData: string; iv: string } {
+  const iv = Buffer.from("1234567890abcdef", "utf8").toString("base64");
+  const cipher = createCipheriv(
+    "aes-128-cbc",
+    Buffer.from(input.sessionKey, "base64"),
+    Buffer.from(iv, "base64")
+  );
+  cipher.setAutoPadding(true);
+  const payload = JSON.stringify({
+    phoneNumber: input.phoneNumber,
+    purePhoneNumber: input.phoneNumber.replace(/^\+\d+/, ""),
+    countryCode: "86",
+    watermark: {
+      appid: input.appId
+    }
+  });
+  return {
+    encryptedData: Buffer.concat([cipher.update(payload, "utf8"), cipher.final()]).toString("base64"),
+    iv
+  };
 }
 
 async function joinRoom(port: number, logicalRoomId: string, playerId: string): Promise<ColyseusRoom> {
@@ -2984,6 +3028,119 @@ test("wechat mini game login reuses the bound player even when later requests sp
   assert.equal(boundAccount?.wechatMiniGameOpenId, "wx-openid-repeat");
   assert.equal(boundAccount?.displayName, "回归旅人");
   assert.equal(spoofedAccount, null);
+});
+
+test("wechat session key refresh restores phone binding after cached session expiry", { concurrency: false }, async (t) => {
+  const port = 45070 + Math.floor(Math.random() * 1000);
+  const previousAppId = process.env.WECHAT_APP_ID;
+  const previousTtl = process.env.VEIL_WECHAT_SESSION_KEY_TTL_SECONDS;
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    process.env.WECHAT_APP_ID = previousAppId;
+    process.env.VEIL_WECHAT_SESSION_KEY_TTL_SECONDS = previousTtl;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.WECHAT_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetWechatSessionKeyCache();
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.WECHAT_APP_ID = "wx-refresh-app";
+  process.env.WECHAT_APP_SECRET = "wx-refresh-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  process.env.VEIL_WECHAT_SESSION_KEY_TTL_SECONDS = "1";
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    const code = url.searchParams.get("js_code");
+    const sessionKey =
+      code === "wx-refresh-code"
+        ? Buffer.from("fedcba0987654321", "utf8").toString("base64")
+        : Buffer.from("1234567890abcdef", "utf8").toString("base64");
+    return new Response(
+      JSON.stringify({
+        openid: "wx-openid-refresh",
+        session_key: sessionKey
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  };
+
+  const loginResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-login-code",
+      playerId: "wechat-refresh-player",
+      displayName: "刷新旅人",
+      privacyConsentAccepted: true
+    })
+  });
+  const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
+  assert.equal(loginResponse.status, 200);
+
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+  const expiredPhoneResponse = await originalFetch(`http://127.0.0.1:${port}/api/player-accounts/me/phone`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${loginPayload.session.token}`
+    },
+    body: JSON.stringify(
+      createWechatPhonePayload({
+        sessionKey: Buffer.from("1234567890abcdef", "utf8").toString("base64"),
+        appId: "wx-refresh-app",
+        phoneNumber: "+8613800138001"
+      })
+    )
+  });
+  assert.equal(expiredPhoneResponse.status, 403);
+
+  const refreshResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-session-key/refresh`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${loginPayload.session.token}`
+    },
+    body: JSON.stringify({
+      code: "wx-refresh-code"
+    })
+  });
+  assert.equal(refreshResponse.status, 200);
+
+  const reboundPhoneResponse = await originalFetch(`http://127.0.0.1:${port}/api/player-accounts/me/phone`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${loginPayload.session.token}`
+    },
+    body: JSON.stringify(
+      createWechatPhonePayload({
+        sessionKey: Buffer.from("fedcba0987654321", "utf8").toString("base64"),
+        appId: "wx-refresh-app",
+        phoneNumber: "+8613800138002"
+      })
+    )
+  });
+  const reboundPayload = (await reboundPhoneResponse.json()) as {
+    account: PlayerAccountSnapshot;
+  };
+
+  assert.equal(reboundPhoneResponse.status, 200);
+  assert.equal(reboundPayload.account.phoneNumber, "+8613800138002");
 });
 
 test("wechat mock mode stays disabled outside NODE_ENV=test", { concurrency: false }, async (t) => {
