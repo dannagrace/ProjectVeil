@@ -25,6 +25,10 @@ import {
   type PlayerAccountProfilePatch,
   type PlayerAccountProgressPatch,
   type PlayerAccountSnapshot,
+  type PlayerReportCreateInput,
+  type PlayerReportListOptions,
+  type PlayerReportRecord,
+  type PlayerReportResolveInput,
   type PlayerHeroArchiveSnapshot,
   type PlayerEventHistoryQuery,
   type PlayerEventHistorySnapshot
@@ -84,6 +88,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
   private readonly heroArchives = new Map<string, PlayerHeroArchiveSnapshot>();
+  private readonly reports = new Map<string, PlayerReportRecord>();
+  private nextReportId = 1;
 
   async load(roomId: string): Promise<RoomPersistenceSnapshot | null> {
     const snapshot = this.snapshots.get(roomId);
@@ -130,6 +136,38 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     return account ? cloneAccount(account) : null;
   }
 
+  async createPlayerReport(input: PlayerReportCreateInput): Promise<PlayerReportRecord> {
+    const reporterId = normalizePlayerId(input.reporterId);
+    const targetId = normalizePlayerId(input.targetId);
+    const roomId = input.roomId.trim();
+    if (!roomId) {
+      throw new Error("roomId must not be empty");
+    }
+    if (reporterId === targetId) {
+      throw new Error("reporterId must not match targetId");
+    }
+
+    const duplicate = Array.from(this.reports.values()).find(
+      (report) => report.roomId === roomId && report.reporterId === reporterId && report.targetId === targetId
+    );
+    if (duplicate) {
+      throw new Error("duplicate_player_report");
+    }
+
+    const report: PlayerReportRecord = {
+      reportId: String(this.nextReportId++),
+      reporterId,
+      targetId,
+      reason: input.reason,
+      ...(input.description?.trim() ? { description: input.description.trim().slice(0, 512) } : {}),
+      roomId,
+      status: "pending",
+      createdAt: new Date().toISOString()
+    };
+    this.reports.set(report.reportId, structuredClone(report));
+    return structuredClone(report);
+  }
+
   async loadPlayerEventHistory(
     playerId: string,
     query: PlayerEventHistoryQuery = {}
@@ -167,6 +205,18 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       .map((playerId) => this.accounts.get(normalizePlayerId(playerId)))
       .filter((account): account is PlayerAccountSnapshot => Boolean(account))
       .map((account) => cloneAccount(account));
+  }
+
+  async listPlayerReports(options: PlayerReportListOptions = {}): Promise<PlayerReportRecord[]> {
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 50));
+    return Array.from(this.reports.values())
+      .filter((report) => !options.status || report.status === options.status)
+      .filter((report) => !options.roomId || report.roomId === options.roomId)
+      .filter((report) => !options.reporterId || report.reporterId === options.reporterId)
+      .filter((report) => !options.targetId || report.targetId === options.targetId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.reportId.localeCompare(right.reportId))
+      .slice(0, safeLimit)
+      .map((report) => structuredClone(report));
   }
 
   async loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null> {
@@ -578,6 +628,26 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     delete nextAccount.wechatMiniGameBoundAt;
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
     return cloneAccount(nextAccount);
+  }
+
+  async resolvePlayerReport(reportId: string, input: PlayerReportResolveInput): Promise<PlayerReportRecord | null> {
+    const normalizedReportId = reportId.trim();
+    if (!normalizedReportId) {
+      throw new Error("reportId must not be empty");
+    }
+
+    const existing = this.reports.get(normalizedReportId);
+    if (!existing) {
+      return null;
+    }
+
+    const next: PlayerReportRecord = {
+      ...existing,
+      status: input.status,
+      resolvedAt: new Date().toISOString()
+    };
+    this.reports.set(normalizedReportId, structuredClone(next));
+    return structuredClone(next);
   }
 
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {

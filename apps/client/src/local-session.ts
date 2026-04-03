@@ -12,6 +12,7 @@ import type {
   ClientMessage,
   EquipmentType,
   MovementPlan,
+  PlayerReportReason,
   PlayerWorldView,
   RuntimeConfigBundle,
   ServerMessage,
@@ -43,6 +44,17 @@ export interface GameSession {
   claimMine(heroId: string, buildingId: string): Promise<SessionUpdate>;
   endDay(): Promise<SessionUpdate>;
   actInBattle(action: BattleAction): Promise<SessionUpdate>;
+  reportPlayer(input: {
+    targetPlayerId: string;
+    reason: PlayerReportReason;
+    description?: string;
+  }): Promise<{
+    reportId: string;
+    targetPlayerId: string;
+    reason: PlayerReportReason;
+    status: "pending";
+    createdAt: string;
+  }>;
   previewMovement(heroId: string, destination: Vec2): Promise<MovementPlan | null>;
   listReachable(heroId: string): Promise<Vec2[]>;
 }
@@ -475,6 +487,10 @@ class LocalGameSession implements GameSession {
     };
   }
 
+  async reportPlayer(): Promise<never> {
+    throw new Error("reporting_unavailable");
+  }
+
   async previewMovement(heroId: string, destination: Vec2): Promise<MovementPlan | null> {
     return planHeroMovement(this.room.getInternalState(), heroId, destination) ?? null;
   }
@@ -854,6 +870,37 @@ class RemoteGameSession implements GameSession {
     return update;
   }
 
+  async reportPlayer(input: {
+    targetPlayerId: string;
+    reason: PlayerReportReason;
+    description?: string;
+  }): Promise<{
+    reportId: string;
+    targetPlayerId: string;
+    reason: PlayerReportReason;
+    status: "pending";
+    createdAt: string;
+  }> {
+    const response = await this.send<Extract<ServerMessage, { type: "report.player" }>>(
+      {
+        type: "report.player",
+        requestId: this.nextRequestId(),
+        targetPlayerId: input.targetPlayerId,
+        reason: input.reason,
+        ...(input.description?.trim() ? { description: input.description.trim() } : {})
+      },
+      "report.player"
+    );
+
+    return {
+      reportId: response.reportId,
+      targetPlayerId: response.targetPlayerId,
+      reason: response.reason,
+      status: "pending",
+      createdAt: response.createdAt
+    };
+  }
+
   async previewMovement(heroId: string, destination: Vec2): Promise<MovementPlan | null> {
     const response = await this.send<Extract<ServerMessage, { type: "world.preview" }>>(
       {
@@ -1106,6 +1153,20 @@ class RecoverableRemoteGameSession implements GameSession {
 
   async actInBattle(action: BattleAction): Promise<SessionUpdate> {
     return this.runWithSession((session) => session.actInBattle(action));
+  }
+
+  async reportPlayer(input: {
+    targetPlayerId: string;
+    reason: PlayerReportReason;
+    description?: string;
+  }): Promise<{
+    reportId: string;
+    targetPlayerId: string;
+    reason: PlayerReportReason;
+    status: "pending";
+    createdAt: string;
+  }> {
+    return this.runWithSession((session) => session.reportPlayer(input));
   }
 
   async previewMovement(heroId: string, destination: Vec2): Promise<MovementPlan | null> {

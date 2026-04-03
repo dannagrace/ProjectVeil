@@ -13,7 +13,7 @@ export interface ResourceLedger {
 }
 
 export type FogState = "hidden" | "explored" | "visible";
-export type TerrainType = "grass" | "dirt" | "sand" | "water" | "unknown";
+export type TerrainType = "grass" | "dirt" | "sand" | "water" | "swamp" | "unknown";
 export type OccupantKind = "hero" | "neutral" | "building";
 export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_mine" | "watchtower";
 
@@ -59,6 +59,15 @@ export interface HeroLoadout {
 }
 
 export type EquipmentRarity = "common" | "rare" | "epic";
+export type PlayerReportReason = "cheating" | "harassment" | "afk";
+export type PlayerReportStatus = "pending" | "dismissed" | "warned" | "banned";
+export interface PlayerReportReceipt {
+  reportId: string;
+  targetPlayerId: string;
+  reason: PlayerReportReason;
+  status: PlayerReportStatus;
+  createdAt: string;
+}
 
 export type HeroStatBonus = Pick<HeroStats, "attack" | "defense" | "power" | "knowledge">;
 
@@ -562,6 +571,13 @@ type ClientMessage =
       type: "world.reachable";
       requestId: string;
       heroId: string;
+    }
+  | {
+      type: "report.player";
+      requestId: string;
+      targetPlayerId: string;
+      reason: PlayerReportReason;
+      description?: string;
     };
 
 interface SessionStatePayload {
@@ -589,6 +605,15 @@ type ServerMessage =
       type: "error";
       requestId: string;
       reason: string;
+    }
+  | {
+      type: "report.player";
+      requestId: string;
+      reportId: string;
+      targetPlayerId: string;
+      reason: PlayerReportReason;
+      status: PlayerReportStatus;
+      createdAt: string;
     };
 
 const RECONNECTION_TOKEN_PREFIX = "project-veil:cocos:reconnection";
@@ -1201,6 +1226,27 @@ class RemoteGameSession {
     return response.reachableTiles;
   }
 
+  async reportPlayer(targetPlayerId: string, reason: PlayerReportReason, description?: string): Promise<PlayerReportReceipt> {
+    const response = await this.send<Extract<ServerMessage, { type: "report.player" }>>(
+      {
+        type: "report.player",
+        requestId: this.nextRequestId(),
+        targetPlayerId,
+        reason,
+        ...(description?.trim() ? { description: description.trim() } : {})
+      },
+      "report.player"
+    );
+
+    return {
+      reportId: response.reportId,
+      targetPlayerId: response.targetPlayerId,
+      reason: response.reason,
+      status: response.status,
+      createdAt: response.createdAt
+    };
+  }
+
   private persistReconnectionToken(): void {
     if (this.room.reconnectionToken) {
       writeReconnectionToken(this.roomId, this.playerId, this.room.reconnectionToken);
@@ -1365,6 +1411,10 @@ class RecoverableRemoteGameSession {
     return this.runWithSession((session) => session.endDay());
   }
 
+  async reportPlayer(targetPlayerId: string, reason: PlayerReportReason, description?: string): Promise<PlayerReportReceipt> {
+    return this.runWithSession((session) => session.reportPlayer(targetPlayerId, reason, description));
+  }
+
   async actInBattle(action: BattleAction): Promise<SessionUpdate> {
     return this.runWithSession((session) => session.actInBattle(action));
   }
@@ -1505,6 +1555,10 @@ export class VeilCocosSession {
 
   async endDay(): Promise<SessionUpdate> {
     return this.remoteSession.endDay();
+  }
+
+  async reportPlayer(targetPlayerId: string, reason: PlayerReportReason, description?: string): Promise<PlayerReportReceipt> {
+    return this.remoteSession.reportPlayer(targetPlayerId, reason, description);
   }
 
   async actInBattle(action: BattleAction): Promise<SessionUpdate> {

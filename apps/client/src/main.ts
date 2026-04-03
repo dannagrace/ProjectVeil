@@ -28,6 +28,7 @@ import {
   type BattleState,
   type EquipmentType,
   type MovementPlan,
+  type PlayerReportReason,
   type PlayerTileView,
   type PlayerWorldView,
   type RuntimeDiagnosticsConnectionStatus,
@@ -204,6 +205,14 @@ interface LobbyViewState {
   status: string;
 }
 
+interface BattleReportComposerState {
+  open: boolean;
+  targetPlayerId: string | null;
+  reason: PlayerReportReason;
+  description: string;
+  submitting: boolean;
+}
+
 interface AppState {
   world: PlayerWorldView;
   battle: BattleState | null;
@@ -232,6 +241,7 @@ interface AppState {
   previewPlan: MovementPlan | null;
   reachableTiles: Array<{ x: number; y: number }>;
   selectedBattleTargetId: string | null;
+  battleReport: BattleReportComposerState;
   feedbackTone: "idle" | "move" | "battle" | "loot";
   animatedPath: Array<{ x: number; y: number }>;
   animatedPathIndex: number;
@@ -350,6 +360,13 @@ const state: AppState = {
   previewPlan: null,
   reachableTiles: [],
   selectedBattleTargetId: null,
+  battleReport: {
+    open: false,
+    targetPlayerId: null,
+    reason: "afk",
+    description: "",
+    submitting: false
+  },
   feedbackTone: "idle",
   animatedPath: [],
   animatedPathIndex: -1,
@@ -1756,6 +1773,40 @@ function battleShortcutContext():
   };
 }
 
+function resolveBattleReportTargetPlayerId(
+  battle: BattleState | null = state.battle,
+  world: PlayerWorldView = state.world
+): string | null {
+  if (!battle?.worldHeroId || !battle.defenderHeroId) {
+    return null;
+  }
+
+  const playerCamp = controlledBattleCamp(battle, world);
+  if (!playerCamp) {
+    return null;
+  }
+
+  const heroes = [...world.ownHeroes, ...world.visibleHeroes];
+  const attacker = heroes.find((hero) => hero.id === battle.worldHeroId);
+  const defender = heroes.find((hero) => hero.id === battle.defenderHeroId);
+  if (!attacker?.playerId || !defender?.playerId) {
+    return null;
+  }
+
+  return playerCamp === "attacker" ? defender.playerId : attacker.playerId;
+}
+
+function battleReportReasonLabel(reason: PlayerReportReason): string {
+  switch (reason) {
+    case "cheating":
+      return "作弊";
+    case "harassment":
+      return "骚扰";
+    case "afk":
+      return "挂机";
+  }
+}
+
 function cycleBattleTarget(offset: number): void {
   const context = battleShortcutContext();
   if (!context || context.enemies.length === 0) {
@@ -2915,6 +2966,10 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
   state.selectedHeroId = update.world.ownHeroes[0]?.id ?? state.selectedHeroId;
   if (!update.battle) {
     state.selectedBattleTargetId = null;
+    state.battleReport.open = false;
+    state.battleReport.targetPlayerId = null;
+    state.battleReport.description = "";
+    state.battleReport.submitting = false;
   } else {
     const playerCamp = controlledBattleCamp(update.battle, update.world);
     const enemyCamp = opposingBattleCamp(playerCamp);
@@ -2922,6 +2977,7 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
     if (!state.selectedBattleTargetId || !enemies.some((unit) => unit.id === state.selectedBattleTargetId)) {
       state.selectedBattleTargetId = enemies[0]?.id ?? null;
     }
+    state.battleReport.targetPlayerId = resolveBattleReportTargetPlayerId(update.battle, update.world);
   }
   appendLog(update);
   pushTimeline(buildTimelineEntries(update, source));
@@ -3352,6 +3408,55 @@ async function onBattleAction(action: BattleAction): Promise<void> {
   state.pendingBattleAction = action;
   const session = await getSession();
   applyUpdate(await session.actInBattle(action));
+}
+
+function toggleBattleReportComposer(open: boolean): void {
+  state.battleReport.open = open;
+  state.battleReport.targetPlayerId = resolveBattleReportTargetPlayerId();
+  if (!open) {
+    state.battleReport.description = "";
+  }
+  render();
+}
+
+async function submitBattleReport(): Promise<void> {
+  const targetPlayerId = resolveBattleReportTargetPlayerId();
+  if (!targetPlayerId) {
+    openBattleModal("举报不可用", "当前只有与其他玩家交战时才能提交举报。");
+    return;
+  }
+
+  state.battleReport.submitting = true;
+  render();
+
+  try {
+    const session = await getSession();
+    const report = await session.reportPlayer({
+      targetPlayerId,
+      reason: state.battleReport.reason,
+      description: state.battleReport.description
+    });
+    state.battleReport.open = false;
+    state.battleReport.description = "";
+    state.battleReport.submitting = false;
+    openBattleModal(
+      "举报已提交",
+      `已提交对玩家 ${report.targetPlayerId} 的${battleReportReasonLabel(report.reason)}举报，管理员审核队列已收到该记录。`
+    );
+    render();
+  } catch (error) {
+    state.battleReport.submitting = false;
+    const message =
+      error instanceof Error && error.message === "duplicate_player_report"
+        ? "同一房间内你已经举报过这名玩家。"
+        : error instanceof Error && error.message === "report_target_unavailable"
+          ? "当前无法定位这个举报目标，请在战斗进行中重试。"
+          : error instanceof Error && error.message === "reporting_unavailable"
+            ? "当前服务器未启用举报存储，暂时无法提交。"
+            : "举报提交失败，请稍后再试。";
+    openBattleModal("举报提交失败", message);
+    render();
+  }
 }
 
 async function triggerBattleAttackShortcut(): Promise<void> {
@@ -3865,6 +3970,7 @@ function renderBattleActions(): string {
   const enemyCamp = opposingBattleCamp(playerCamp);
   const enemies = Object.values(state.battle.units).filter((unit) => unit.camp === enemyCamp && unit.count > 0);
   const selectedTarget = enemies.find((enemy) => enemy.id === state.selectedBattleTargetId) ?? enemies[0];
+  const reportTargetPlayerId = resolveBattleReportTargetPlayerId();
   const skillButtons = (active.skills ?? [])
     .filter((skill) => skill.kind === "active")
     .map((skill) => {
@@ -3900,6 +4006,50 @@ function renderBattleActions(): string {
       ${skillButtons}
       <button data-testid="battle-wait" data-battle-action="wait" data-unit="${active.id}">等待</button>
       <button data-testid="battle-defend" data-battle-action="defend" data-unit="${active.id}" ${active.defending ? "disabled" : ""}>防御</button>
+      <button
+        type="button"
+        data-battle-report-toggle="${state.battleReport.open ? "close" : "open"}"
+        ${reportTargetPlayerId ? "" : "disabled"}
+      >
+        ${reportTargetPlayerId ? `举报玩家 ${escapeHtml(reportTargetPlayerId)}` : "当前无法举报"}
+      </button>
+      ${
+        state.battleReport.open && reportTargetPlayerId
+          ? `
+        <div class="battle-report-form" data-testid="battle-report-form">
+          <div class="battle-report-head">
+            <strong>举报对手 ${escapeHtml(reportTargetPlayerId)}</strong>
+            <span>同一房间同一目标仅允许提交一次。</span>
+          </div>
+          <label>
+            原因
+            <select data-battle-report-reason ${state.battleReport.submitting ? "disabled" : ""}>
+              ${(["afk", "harassment", "cheating"] as const)
+                .map(
+                  (reason) =>
+                    `<option value="${reason}" ${state.battleReport.reason === reason ? "selected" : ""}>${battleReportReasonLabel(reason)}</option>`
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            说明
+            <textarea
+              data-battle-report-description
+              maxlength="512"
+              placeholder="补充时间点、行为描述或可复现线索（可选）"
+              ${state.battleReport.submitting ? "disabled" : ""}
+            >${escapeHtml(state.battleReport.description)}</textarea>
+          </label>
+          <div class="battle-report-actions">
+            <button type="button" data-battle-report-submit ${state.battleReport.submitting ? "disabled" : ""}>
+              ${state.battleReport.submitting ? "提交中..." : "提交举报"}
+            </button>
+            <button type="button" data-battle-report-toggle="close" ${state.battleReport.submitting ? "disabled" : ""}>取消</button>
+          </div>
+        </div>`
+          : ""
+      }
     </div>
   `;
 }
@@ -4940,6 +5090,33 @@ function render(): void {
         type: "battle.defend",
         unitId: actionButton.dataset.unit!
       });
+    });
+  }
+
+  for (const toggleButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-battle-report-toggle]"))) {
+    toggleButton.addEventListener("click", () => {
+      toggleBattleReportComposer(toggleButton.dataset.battleReportToggle === "open");
+    });
+  }
+
+  for (const reasonSelect of Array.from(root.querySelectorAll<HTMLSelectElement>("[data-battle-report-reason]"))) {
+    reasonSelect.addEventListener("change", () => {
+      const reason = reasonSelect.value;
+      if (reason === "cheating" || reason === "harassment" || reason === "afk") {
+        state.battleReport.reason = reason;
+      }
+    });
+  }
+
+  for (const descriptionInput of Array.from(root.querySelectorAll<HTMLTextAreaElement>("[data-battle-report-description]"))) {
+    descriptionInput.addEventListener("input", () => {
+      state.battleReport.description = descriptionInput.value;
+    });
+  }
+
+  for (const submitButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-battle-report-submit]"))) {
+    submitButton.addEventListener("click", () => {
+      void submitBattleReport();
     });
   }
 

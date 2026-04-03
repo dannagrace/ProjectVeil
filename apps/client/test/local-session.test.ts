@@ -484,6 +484,54 @@ test("remote game sessions clear persisted replay and reconnection token after a
   }
 });
 
+test("remote game sessions send player reports through the websocket protocol", { concurrency: false }, async () => {
+  const storage = createMemoryStorage();
+  const restoreWindow = installWindow(storage);
+  const room = new FakeRoom("token-report");
+
+  try {
+    const session = localSessionTestHooks.createRemoteGameSession(
+      room as unknown as ColyseusRoom,
+      "room-alpha",
+      "player-1"
+    );
+    const reportPromise = session.reportPlayer({
+      targetPlayerId: "player-2",
+      reason: "harassment",
+      description: "Repeated abuse in battle chat"
+    });
+
+    assert.equal(room.sent[0]?.type, "report.player");
+    assert.deepEqual(room.sent[0]?.payload, {
+      type: "report.player",
+      requestId: "req-1",
+      targetPlayerId: "player-2",
+      reason: "harassment",
+      description: "Repeated abuse in battle chat"
+    });
+
+    room.emitMessage({
+      type: "report.player",
+      requestId: "req-1",
+      reportId: "report-1",
+      targetPlayerId: "player-2",
+      reason: "harassment",
+      status: "pending",
+      createdAt: "2026-04-03T12:00:00.000Z"
+    });
+
+    assert.deepEqual(await reportPromise, {
+      reportId: "report-1",
+      targetPlayerId: "player-2",
+      reason: "harassment",
+      status: "pending",
+      createdAt: "2026-04-03T12:00:00.000Z"
+    });
+  } finally {
+    restoreWindow();
+  }
+});
+
 test("recoverable remote sessions retry after room loss and replay the recovered snapshot", { concurrency: false }, async () => {
   const storage = createMemoryStorage([
     [getReconnectionStorageKey("room-alpha", "player-1"), "stale-token"] as const
