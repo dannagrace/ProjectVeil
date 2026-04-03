@@ -51,6 +51,20 @@ The snapshot also supports manual gates, so the same file can carry pending or c
 
 When a candidate has more than one manual sign-off in flight, track ownership in [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) and keep the candidate copy under `artifacts/release-readiness/manual-release-evidence-owner-ledger-<candidate>-<short-sha>.md`; [`artifacts/release-readiness/manual-release-evidence-owner-ledger-phase1-rc-abc1234.md`](../artifacts/release-readiness/manual-release-evidence-owner-ledger-phase1-rc-abc1234.md) is the reviewer-facing example.
 
+When reviewers need one candidate-scoped freshness verdict across the snapshot, gate summary, Cocos RC bundle, owner ledger, and any applicable WeChat release evidence, run:
+
+```bash
+npm run release:same-candidate:evidence-audit -- \
+  --candidate <candidate-name> \
+  --candidate-revision <git-sha> \
+  --snapshot <snapshot-json> \
+  --release-gate-summary <release-gate-summary-json> \
+  --cocos-rc-bundle <cocos-rc-bundle-json> \
+  --manual-evidence-ledger <owner-ledger-md>
+```
+
+The audit writes both JSON and Markdown under `artifacts/release-readiness/`, links back to the underlying artifact paths, fails closed on revision drift, and now also flags pending ledger rows plus stale or blocked WeChat/runtime-observability evidence when `artifacts/wechat-release/codex.wechat.release-candidate-summary.json` is present.
+
 ## Usage
 
 Run the full automated snapshot and write the result under `artifacts/release-readiness/`:
