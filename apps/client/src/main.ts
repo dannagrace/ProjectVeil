@@ -1,4 +1,3 @@
-import "./styles.css";
 import {
   buildAchievementUiItems,
   groupAchievementUiItems,
@@ -140,9 +139,11 @@ declare global {
     render_diagnostic_snapshot_to_text?: () => string;
     advanceTime?: (ms: number) => Promise<void>;
   }
+
+  var __PROJECT_VEIL_MAIN_SKIP_AUTO_BOOT__: boolean | undefined;
 }
 
-const DEV_DIAGNOSTICS_ENABLED = import.meta.env.DEV;
+const DEV_DIAGNOSTICS_ENABLED = Boolean(import.meta.env?.DEV);
 
 interface BattleModalState {
   visible: boolean;
@@ -263,6 +264,35 @@ interface ScheduledUiTask {
   runAt: number;
   callback: () => void;
   canceled: boolean;
+}
+
+interface StartMainH5BootOverrides {
+  state?: AppState;
+  shouldBootGame?: boolean;
+  queryPlayerId?: string;
+  roomId?: string;
+  playerId?: string;
+  bindKeyboardShortcuts?: () => void;
+  render?: () => void;
+  syncCurrentAuthSession?: typeof syncCurrentAuthSession;
+  refreshLobbyRoomList?: typeof refreshLobbyRoomList;
+  logoutGuestSession?: typeof logoutGuestSession;
+  readStoredSessionReplay?: typeof readStoredSessionReplay;
+  applyReplayedUpdate?: typeof applyReplayedUpdate;
+  getSession?: typeof getSession;
+  applyUpdate?: typeof applyUpdate;
+  loadAccountProfileWithProgression?: typeof loadAccountProfileWithProgression;
+  loadPlayerAccountSessions?: typeof loadPlayerAccountSessions;
+  readStoredAuthSession?: typeof readStoredAuthSession;
+  clearReplayDetail?: typeof clearReplayDetail;
+  onPlayerAccountProfileSynced?: () => void;
+  window?: Window;
+  devDiagnosticsEnabled?: boolean;
+  renderGameToText?: typeof renderGameToText;
+  exportDiagnosticSnapshot?: typeof exportDiagnosticSnapshot;
+  renderDiagnosticSnapshotToText?: typeof renderDiagnosticSnapshotToText;
+  advanceUiTime?: typeof advanceUiTime;
+  launchMainH5AppImpl?: typeof launchMainH5App;
 }
 
 const state: AppState = {
@@ -5118,34 +5148,47 @@ async function onBindAccountProfile(): Promise<void> {
   }
 }
 
-launchMainH5App({
-  state,
-  shouldBootGame,
-  queryPlayerId,
-  roomId,
-  playerId,
-  bindKeyboardShortcuts,
-  render,
-  syncCurrentAuthSession,
-  refreshLobbyRoomList,
-  logoutGuestSession,
-  readStoredSessionReplay,
-  applyReplayedUpdate,
-  getSession,
-  applyUpdate,
-  loadAccountProfileWithProgression,
-  loadPlayerAccountSessions,
-  readStoredAuthSession,
-  clearReplayDetail,
-  onPlayerAccountProfileSynced: () => {
-    syncAchievementToastFeed(state.account, false);
-    hasHydratedAchievementFeed = true;
-    state.achievementPanel.items = state.account.achievements;
-  },
-  window,
-  devDiagnosticsEnabled: DEV_DIAGNOSTICS_ENABLED,
-  renderGameToText,
-  exportDiagnosticSnapshot,
-  renderDiagnosticSnapshotToText,
-  advanceUiTime
-});
+// Keep the entrypoint boot wiring in one place so node-level tests can import
+// `main.ts` directly, override the volatile runtime edges, and execute the real
+// H5 boot pipeline without the browser-only auto-start.
+export function startMainH5Boot(overrides: StartMainH5BootOverrides = {}): void {
+  const runtimeState = overrides.state ?? state;
+
+  (overrides.launchMainH5AppImpl ?? launchMainH5App)({
+    state: runtimeState,
+    shouldBootGame: overrides.shouldBootGame ?? shouldBootGame,
+    queryPlayerId: overrides.queryPlayerId ?? queryPlayerId,
+    roomId: overrides.roomId ?? roomId,
+    playerId: overrides.playerId ?? playerId,
+    bindKeyboardShortcuts: overrides.bindKeyboardShortcuts ?? bindKeyboardShortcuts,
+    render: overrides.render ?? render,
+    syncCurrentAuthSession: overrides.syncCurrentAuthSession ?? syncCurrentAuthSession,
+    refreshLobbyRoomList: overrides.refreshLobbyRoomList ?? refreshLobbyRoomList,
+    logoutGuestSession: overrides.logoutGuestSession ?? logoutGuestSession,
+    readStoredSessionReplay: overrides.readStoredSessionReplay ?? readStoredSessionReplay,
+    applyReplayedUpdate: overrides.applyReplayedUpdate ?? applyReplayedUpdate,
+    getSession: overrides.getSession ?? getSession,
+    applyUpdate: overrides.applyUpdate ?? applyUpdate,
+    loadAccountProfileWithProgression: overrides.loadAccountProfileWithProgression ?? loadAccountProfileWithProgression,
+    loadPlayerAccountSessions: overrides.loadPlayerAccountSessions ?? loadPlayerAccountSessions,
+    readStoredAuthSession: overrides.readStoredAuthSession ?? readStoredAuthSession,
+    clearReplayDetail: overrides.clearReplayDetail ?? clearReplayDetail,
+    onPlayerAccountProfileSynced:
+      overrides.onPlayerAccountProfileSynced ??
+      (() => {
+        syncAchievementToastFeed(runtimeState.account, false);
+        hasHydratedAchievementFeed = true;
+        runtimeState.achievementPanel.items = runtimeState.account.achievements;
+      }),
+    window: overrides.window ?? window,
+    devDiagnosticsEnabled: overrides.devDiagnosticsEnabled ?? DEV_DIAGNOSTICS_ENABLED,
+    renderGameToText: overrides.renderGameToText ?? renderGameToText,
+    exportDiagnosticSnapshot: overrides.exportDiagnosticSnapshot ?? exportDiagnosticSnapshot,
+    renderDiagnosticSnapshotToText: overrides.renderDiagnosticSnapshotToText ?? renderDiagnosticSnapshotToText,
+    advanceUiTime: overrides.advanceUiTime ?? advanceUiTime
+  });
+}
+
+if (!globalThis.__PROJECT_VEIL_MAIN_SKIP_AUTO_BOOT__) {
+  startMainH5Boot();
+}
