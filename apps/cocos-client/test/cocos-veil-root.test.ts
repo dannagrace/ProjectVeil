@@ -12,6 +12,26 @@ afterEach(() => {
   delete (globalThis as { wx?: unknown }).wx;
 });
 
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function createBattleUpdate(): SessionUpdate {
   const update = createSessionUpdate(3, "room-recover", "account-player");
   update.battle = {
@@ -188,6 +208,63 @@ test("VeilRoot warm boot keeps direct room resume in auto-connect mode", () => {
   assert.equal(root.displayName, "雾林司灯");
   assert.equal(root.authToken, "resume.token");
   assert.equal(root.sessionSource, "remote");
+});
+
+test("VeilRoot connect promotes cached replay boot state into an authoritative live snapshot", async () => {
+  const storage = createMemoryStorage();
+  storage.setItem(
+    "project-veil:auth-session",
+    JSON.stringify({
+      token: "recover.token",
+      playerId: "account-player",
+      displayName: "雾林司灯",
+      authMode: "account",
+      provider: "account-password",
+      loginId: "veil-ranger",
+      source: "remote"
+    })
+  );
+  (sys as unknown as { localStorage: Storage }).localStorage = storage;
+
+  const root = createVeilRootHarness();
+  root.readLaunchSearch = () => "?roomId=room-recover";
+  root.refreshGameplayAccountProfile = async () => undefined;
+  delete root.applyReplayedSessionUpdate;
+  delete root.applySessionUpdate;
+
+  const replayedUpdate = createSessionUpdate(2, "room-recover", "account-player");
+  const liveUpdate = createSessionUpdate(3, "room-recover", "account-player");
+  const snapshotDeferred = createDeferred<SessionUpdate>();
+
+  installVeilRootRuntime({
+    readStoredReplay: () => replayedUpdate,
+    createSession: async () =>
+      ({
+        async snapshot() {
+          return snapshotDeferred.promise;
+        },
+        async dispose() {}
+      }) as never
+  });
+
+  root.hydrateLaunchIdentity();
+  const connectPromise = root.connect();
+  await flushMicrotasks();
+
+  assert.equal(root.lastUpdate?.world.meta.day, 2);
+  assert.equal(root.lastRoomUpdateSource, "replay");
+  assert.equal(root.lastRoomUpdateReason, "cached_snapshot");
+  assert.equal(root.diagnosticsConnectionStatus, "connecting");
+  assert.equal(root.predictionStatus, "已回放缓存状态，等待房间同步...");
+
+  snapshotDeferred.resolve(liveUpdate);
+  await connectPromise;
+
+  assert.equal(root.lastUpdate?.world.meta.day, 3);
+  assert.equal(root.lastRoomUpdateSource, "session");
+  assert.equal(root.lastRoomUpdateReason, "snapshot");
+  assert.equal(root.diagnosticsConnectionStatus, "connected");
+  assert.equal(root.predictionStatus, "");
 });
 
 test("VeilRoot memory warnings request GC and surface the warning in HUD state", () => {
