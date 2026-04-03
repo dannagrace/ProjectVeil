@@ -201,6 +201,9 @@ interface Phase1PersistenceReleaseReport {
     commit?: string;
     shortCommit?: string;
   };
+  requestedStorageMode?: string;
+  effectiveStorageMode?: string;
+  storageDescription?: string;
   summary?: {
     status?: "passed";
     assertionCount?: number;
@@ -1371,10 +1374,10 @@ function buildPersistenceSection(persistencePath: string | undefined, candidateR
       label: "Phase 1 persistence/content-pack validation",
       required: true,
       result: "pending",
-      summary: "Phase 1 persistence regression artifact is missing.",
+      summary: "Phase 1 persistence evidence is missing, so the verified storage mode is not visible for this candidate.",
       artifactPath: persistencePath,
       freshness: "unknown",
-      details: ["Run npm run test:phase1-release-persistence for the candidate revision."],
+      details: ["Run npm run test:phase1-release-persistence for the candidate revision on the intended storage mode."],
       evidence: [],
       acceptedRisks: []
     };
@@ -1383,12 +1386,25 @@ function buildPersistenceSection(persistencePath: string | undefined, candidateR
   const report = readJsonFile<Phase1PersistenceReleaseReport>(persistencePath);
   const freshness = evaluateFreshness(report.generatedAt, maxAgeMs);
   const revision = report.revision?.commit ?? report.revision?.shortCommit;
+  const effectiveStorageMode = report.effectiveStorageMode?.trim();
+  const requestedStorageMode = report.requestedStorageMode?.trim();
   const details: string[] = [];
   if (report.contentValidation?.summary?.trim()) {
     details.push(report.contentValidation.summary.trim());
   }
   if ((report.contentValidation?.issueCount ?? 0) > 0) {
     details.push(`content validation issues=${report.contentValidation?.issueCount}`);
+  }
+  if (effectiveStorageMode) {
+    details.push(`verifiedStorage=${effectiveStorageMode}`);
+  } else {
+    details.push("verifiedStorage=<missing>");
+  }
+  if (requestedStorageMode && requestedStorageMode !== effectiveStorageMode) {
+    details.push(`requestedStorage=${requestedStorageMode}`);
+  }
+  if (report.storageDescription?.trim()) {
+    details.push(report.storageDescription.trim());
   }
   if (report.persistenceRegression?.mapPackId?.trim()) {
     details.push(`mapPack=${report.persistenceRegression.mapPackId.trim()}`);
@@ -1404,7 +1420,8 @@ function buildPersistenceSection(persistencePath: string | undefined, candidateR
   if (
     report.summary?.status !== "passed" ||
     report.contentValidation?.valid !== true ||
-    !commitsMatch(revision, candidateRevision)
+    !commitsMatch(revision, candidateRevision) ||
+    !effectiveStorageMode
   ) {
     result = "failed";
   } else if (freshness !== "fresh") {
@@ -1418,10 +1435,10 @@ function buildPersistenceSection(persistencePath: string | undefined, candidateR
     result,
     summary:
       result === "failed"
-        ? "Phase 1 persistence regression or content-pack validation is not aligned with this candidate."
+        ? "Phase 1 persistence evidence is not aligned with this candidate or does not record a verified storage mode."
         : result === "pending"
-          ? "Phase 1 persistence regression passed, but freshness still needs review."
-          : "Phase 1 persistence regression and content-pack validation passed.",
+          ? `Phase 1 persistence evidence verified ${effectiveStorageMode} storage, but the artifact is stale for this candidate.`
+          : `Phase 1 persistence regression and content-pack validation passed with verified storage mode ${effectiveStorageMode}.`,
     artifactPath: persistencePath,
     observedAt: report.generatedAt,
     freshness,
@@ -1431,7 +1448,7 @@ function buildPersistenceSection(persistencePath: string | undefined, candidateR
       {
         label: "Phase 1 persistence regression",
         path: persistencePath,
-        summary: `assertions=${report.summary?.assertionCount ?? 0} contentValid=${report.contentValidation?.valid === true}`,
+        summary: `storage=${effectiveStorageMode ?? "<missing>"} assertions=${report.summary?.assertionCount ?? 0} contentValid=${report.contentValidation?.valid === true}`,
         observedAt: report.generatedAt,
         freshness,
         revision

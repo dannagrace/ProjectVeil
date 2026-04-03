@@ -277,6 +277,9 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
       commit: revision,
       shortCommit: revision
     },
+    requestedStorageMode: "mysql",
+    effectiveStorageMode: "mysql",
+    storageDescription: "MySQL snapshot store backed by VEIL_MYSQL_*.",
     summary: {
       status: "passed",
       assertionCount: 6
@@ -373,6 +376,14 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     assert.equal(dossier.sections.find((section) => section.id === "runtime-health")?.result, "passed");
     assert.equal(dossier.sections.find((section) => section.id === "reconnect-soak")?.result, "passed");
     assert.equal(dossier.sections.find((section) => section.id === "phase1-persistence")?.result, "passed");
+    assert.match(
+      dossier.sections.find((section) => section.id === "phase1-persistence")?.summary ?? "",
+      /verified storage mode mysql/i
+    );
+    assert.deepEqual(
+      dossier.sections.find((section) => section.id === "phase1-persistence")?.details.includes("verifiedStorage=mysql"),
+      true
+    );
     assert.equal(dossier.acceptedRisks[0]?.label, "Unit and integration regression");
     assert.match(dossier.acceptedRisks[0]?.reason ?? "", /accepted for this RC only/i);
 
@@ -387,6 +398,8 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     assert.match(markdown, /WeChat candidate summary: `.*codex\.wechat\.release-candidate-summary\.json`/);
     assert.match(markdown, /Phase 1 persistence: `.*phase1-release-persistence-regression-abc1234\.json`/);
     assert.match(markdown, /Overall status: \*\*ACCEPTED_RISK\*\*/);
+    assert.match(markdown, /verifiedStorage=mysql/);
+    assert.match(markdown, /storage=mysql assertions=6 contentValid=true/);
     assert.match(markdown, /## Phase 1 Exit Evidence Gate/);
     assert.match(markdown, /Phase 1 exit evidence gate: `accepted_risk`/);
     assert.match(markdown, /Release readiness snapshot/);
@@ -501,6 +514,9 @@ test("phase1 candidate dossier fails the single exit evidence gate when the rele
   writeJson(persistencePath, {
     generatedAt: "2026-04-02T08:41:00.000Z",
     revision: { commit: revision, shortCommit: revision },
+    requestedStorageMode: "memory",
+    effectiveStorageMode: "memory",
+    storageDescription: "In-memory snapshot store.",
     summary: { status: "passed", assertionCount: 6 },
     contentValidation: { valid: true, bundleCount: 5, summary: "All shipped content packs validated.", issueCount: 0 },
     persistenceRegression: { mapPackId: "phase1", assertions: ["room hydration reapplied resources"] }
@@ -528,6 +544,119 @@ test("phase1 candidate dossier fails the single exit evidence gate when the rele
     assert.equal(dossier.summary.status, "failed");
     assert.match(dossier.phase1ExitEvidenceGate.summary, /blocked/i);
     assert.equal(dossier.phase1ExitEvidenceGate.blockingSections.includes("Release gate summary"), true);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      runtime.server.closeAllConnections?.();
+      runtime.server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
+test("phase1 candidate dossier marks stale persistence evidence as pending and keeps the verified storage mode visible", async () => {
+  const workspace = createTempWorkspace();
+  const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
+  const revision = "abc1234";
+
+  const snapshotPath = path.join(artifactsDir, "release-readiness-pass.json");
+  const h5SmokePath = path.join(artifactsDir, "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(artifactsDir, "colyseus-reconnect-soak-summary-pass.json");
+  const cocosBundlePath = path.join(artifactsDir, "cocos-rc-evidence-bundle-pass.json");
+  const persistencePath = path.join(artifactsDir, `phase1-release-persistence-regression-${revision}.json`);
+
+  writeJson(snapshotPath, {
+    generatedAt: "2026-04-02T08:30:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
+    checks: [{ id: "npm-test", required: true, status: "passed" }]
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: "2026-04-02T08:32:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    execution: { status: "passed", exitCode: 0 },
+    summary: { total: 2, passed: 2, failed: 0 }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-04-02T08:33:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    status: "passed",
+    summary: { failedScenarios: 0, scenarioNames: ["reconnect_soak"] },
+    soakSummary: { reconnectAttempts: 64, invariantChecks: 256 },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+  writeJson(cocosBundlePath, {
+    bundle: {
+      generatedAt: "2026-04-02T08:34:00.000Z",
+      candidate: "phase1-rc",
+      commit: revision,
+      shortCommit: revision,
+      overallStatus: "passed",
+      summary: "Cocos RC evidence is complete."
+    },
+    review: { phase1Gate: "passed" },
+    journey: [{ id: "lobby-entry", status: "passed" }],
+    requiredEvidence: [{ id: "roomId", label: "Room id recorded", filled: true }]
+  });
+  writeJson(persistencePath, {
+    generatedAt: "2026-03-20T08:41:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    requestedStorageMode: "memory",
+    effectiveStorageMode: "memory",
+    storageDescription: "In-memory snapshot store.",
+    summary: { status: "passed", assertionCount: 6 },
+    contentValidation: { valid: true, bundleCount: 5, summary: "All shipped content packs validated.", issueCount: 0 },
+    persistenceRegression: { mapPackId: "phase1", assertions: ["room hydration reapplied resources"] }
+  });
+
+  const runtime = await startRuntimeServer();
+  try {
+    const dossier = await buildPhase1CandidateDossier({
+      candidate: "phase1-rc",
+      candidateRevision: revision,
+      serverUrl: runtime.url,
+      snapshotPath,
+      h5SmokePath,
+      reconnectSoakPath,
+      cocosBundlePath,
+      persistencePath,
+      targetSurface: "h5",
+      maxEvidenceAgeHours: 72
+    });
+
+    assert.equal(dossier.sections.find((section) => section.id === "phase1-persistence")?.result, "pending");
+    assert.match(
+      dossier.sections.find((section) => section.id === "phase1-persistence")?.summary ?? "",
+      /verified memory storage, but the artifact is stale/i
+    );
+    assert.deepEqual(
+      dossier.sections.find((section) => section.id === "phase1-persistence")?.details.includes("verifiedStorage=memory"),
+      true
+    );
+    assert.deepEqual(
+      dossier.summary.requiredPending.includes("Phase 1 persistence/content-pack validation"),
+      true
+    );
+
+    const markdown = renderMarkdown(dossier);
+    assert.match(markdown, /Phase 1 persistence\/content-pack validation: `pending` required · freshness=stale · revision=abc1234/);
+    assert.match(markdown, /verifiedStorage=memory/);
+    assert.match(markdown, /persistence freshness=stale/);
   } finally {
     await new Promise<void>((resolve, reject) => {
       runtime.server.closeAllConnections?.();
@@ -606,6 +735,9 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
   writeJson(persistencePath, {
     generatedAt: "2026-04-02T08:41:00.000Z",
     revision: { commit: revision, shortCommit: revision },
+    requestedStorageMode: "memory",
+    effectiveStorageMode: "memory",
+    storageDescription: "In-memory snapshot store.",
     summary: { status: "passed", assertionCount: 6 },
     contentValidation: { valid: true, bundleCount: 5, summary: "All shipped content packs validated.", issueCount: 0 },
     persistenceRegression: { mapPackId: "phase1", assertions: ["room hydration reapplied resources"] }
