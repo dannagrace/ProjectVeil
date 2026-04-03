@@ -19,6 +19,70 @@
       ]
     },
     {
+      "id": "crown_heavy_cavalry",
+      "stackName": "皇家重骑",
+      "faction": "crown",
+      "rarity": "elite",
+      "initiative": 6,
+      "attack": 7,
+      "defense": 6,
+      "minDamage": 3,
+      "maxDamage": 6,
+      "maxHp": 16,
+      "battleSkills": [
+        "royal_charge",
+        "guardian_oath"
+      ]
+    },
+    {
+      "id": "crown_field_chaplain",
+      "stackName": "战场牧师",
+      "faction": "crown",
+      "rarity": "common",
+      "initiative": 8,
+      "attack": 3,
+      "defense": 4,
+      "minDamage": 1,
+      "maxDamage": 3,
+      "maxHp": 11,
+      "battleSkills": [
+        "field_mending",
+        "rally_morale"
+      ]
+    },
+    {
+      "id": "crown_crossbowman",
+      "stackName": "十字弩手",
+      "faction": "crown",
+      "rarity": "common",
+      "initiative": 8,
+      "attack": 6,
+      "defense": 3,
+      "minDamage": 3,
+      "maxDamage": 5,
+      "maxHp": 8,
+      "battleSkills": [
+        "power_shot",
+        "sundering_spear"
+      ]
+    },
+    {
+      "id": "crown_light_outrider",
+      "stackName": "轻骑斥候",
+      "faction": "crown",
+      "rarity": "common",
+      "initiative": 12,
+      "attack": 4,
+      "defense": 3,
+      "minDamage": 1,
+      "maxDamage": 2,
+      "maxHp": 8,
+      "battleSkills": [
+        "pinning_javelin",
+        "battle_focus"
+      ]
+    },
+    {
       "id": "wolf_pack",
       "stackName": "恶狼",
       "faction": "wild",

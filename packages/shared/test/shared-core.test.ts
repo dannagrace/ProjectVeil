@@ -4815,6 +4815,121 @@ test("ally battle skills heal wounded units and can cleanse one negative status"
   assert.match(rallied.log.at(-1) ?? "", /解除 削弱/);
 });
 
+test("round-limited splash skills only work on their allowed opening round", () => {
+  const customCatalog = getDefaultBattleSkillCatalog();
+  customCatalog.skills.push({
+    id: "royal_charge_test",
+    name: "皇家冲锋测试",
+    description: "首回合冲锋并波及相邻目标。",
+    kind: "active",
+    target: "enemy",
+    cooldown: 4,
+    effects: {
+      damageMultiplier: 1.2,
+      splashDamageMultiplier: 0.5,
+      maxRound: 1
+    }
+  });
+
+  try {
+    setBattleSkillCatalog(customCatalog);
+
+    const openingState = createDemoBattleState();
+    openingState.activeUnitId = "pikeman-a";
+    openingState.turnOrder = ["pikeman-a", "wolf-d", "wolf-side"];
+    openingState.units["pikeman-a"] = {
+      ...openingState.units["pikeman-a"]!,
+      skills: [
+        {
+          id: "royal_charge_test",
+          name: "皇家冲锋测试",
+          description: "首回合冲锋并波及相邻目标。",
+          kind: "active",
+          target: "enemy",
+          cooldown: 4,
+          remainingCooldown: 0
+        }
+      ],
+      lane: 1
+    };
+    openingState.units["wolf-d"] = {
+      ...openingState.units["wolf-d"]!,
+      lane: 1,
+      hasRetaliated: true
+    };
+    openingState.units["wolf-side"] = {
+      ...cloneBattleUnit(openingState.units["wolf-d"]!),
+      id: "wolf-side",
+      lane: 2,
+      stackName: "侧翼恶狼",
+      hasRetaliated: true
+    };
+
+    const charged = applyBattleAction(openingState, {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "royal_charge_test",
+      targetId: "wolf-d"
+    });
+
+    assert.ok(getUnitHpPool(charged.units["wolf-d"]!) < getUnitHpPool(openingState.units["wolf-d"]!));
+    assert.ok(getUnitHpPool(charged.units["wolf-side"]!) < getUnitHpPool(openingState.units["wolf-side"]!));
+    assert.match(charged.log.join("\n"), /波及 侧翼恶狼/);
+
+    const expiredState = createDemoBattleState();
+    expiredState.round = 2;
+    expiredState.activeUnitId = "pikeman-a";
+    expiredState.turnOrder = ["pikeman-a", "wolf-d", "wolf-side"];
+    expiredState.units["pikeman-a"] = {
+      ...expiredState.units["pikeman-a"]!,
+      skills: [
+        {
+          id: "royal_charge_test",
+          name: "皇家冲锋测试",
+          description: "首回合冲锋并波及相邻目标。",
+          kind: "active",
+          target: "enemy",
+          cooldown: 4,
+          remainingCooldown: 0
+        }
+      ],
+      lane: 1
+    };
+    expiredState.units["wolf-d"] = {
+      ...expiredState.units["wolf-d"]!,
+      lane: 1,
+      hasRetaliated: true
+    };
+    expiredState.units["wolf-side"] = {
+      ...cloneBattleUnit(expiredState.units["wolf-d"]!),
+      id: "wolf-side",
+      lane: 2,
+      stackName: "侧翼恶狼",
+      hasRetaliated: true
+    };
+
+    assert.deepEqual(
+      validateBattleAction(expiredState, {
+        type: "battle.skill",
+        unitId: "pikeman-a",
+        skillId: "royal_charge_test",
+        targetId: "wolf-d"
+      }),
+      {
+        valid: false,
+        reason: "skill_round_expired"
+      }
+    );
+    assert.deepEqual(pickAutomatedBattleAction(expiredState), {
+      type: "battle.attack",
+      attackerId: "pikeman-a",
+      defenderId: "wolf-d"
+    });
+  } finally {
+    resetRuntimeConfigs();
+  }
+});
+
 test("stunning blow skips the target's next action", () => {
   const state = createDemoBattleState();
   state.activeUnitId = "pikeman-a";

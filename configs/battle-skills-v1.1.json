@@ -175,6 +175,40 @@
       "effects": {
         "grantedStatusId": "watchful_guard"
       }
+    },
+    {
+      "id": "field_mending",
+      "name": "战地缝合",
+      "description": "根据施法者的 power 恢复己方单位生命。",
+      "kind": "active",
+      "target": "ally",
+      "delivery": "ranged",
+      "cooldown": 2,
+      "effects": {}
+    },
+    {
+      "id": "royal_charge",
+      "name": "皇家冲锋",
+      "description": "仅可在首回合发动的重骑冲锋，猛击主目标并穿透波及相邻敌军。",
+      "kind": "active",
+      "target": "enemy",
+      "cooldown": 4,
+      "effects": {
+        "damageMultiplier": 1.25,
+        "onHitStatusId": "armor_break",
+        "splashDamageMultiplier": 0.5,
+        "maxRound": 1
+      }
+    },
+    {
+      "id": "rally_morale",
+      "name": "鼓舞军心",
+      "description": "恢复少量生命，并解除一个负面状态。",
+      "kind": "active",
+      "target": "ally",
+      "delivery": "ranged",
+      "cooldown": 3,
+      "effects": {}
     }
   ],
   "statuses": [
