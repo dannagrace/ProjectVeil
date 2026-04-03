@@ -10,6 +10,7 @@ import {
   normalizeHeroState,
   type EventLogEntry,
   type HeroState,
+  type PlayerBanStatus,
   type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress,
@@ -21,14 +22,18 @@ import type { RoomPersistenceSnapshot } from "./index";
 export interface RoomSnapshotStore {
   load(roomId: string): Promise<RoomPersistenceSnapshot | null>;
   loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
+  loadPlayerBan?(playerId: string): Promise<PlayerAccountBanSnapshot | null>;
   loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerEventHistory(playerId: string, query?: PlayerEventHistoryQuery): Promise<PlayerEventHistorySnapshot>;
   loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]>;
+  listPlayerBanHistory?(playerId: string, options?: PlayerAccountBanHistoryListOptions): Promise<PlayerBanHistoryRecord[]>;
   loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]>;
   ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot>;
+  savePlayerBan?(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot>;
+  clearPlayerBan?(playerId: string, input?: PlayerAccountUnbanInput): Promise<PlayerAccountSnapshot>;
   bindPlayerAccountCredentials(
     playerId: string,
     input: PlayerAccountCredentialInput
@@ -120,6 +125,9 @@ interface PlayerAccountRow extends RowDataPacket {
   last_room_id: string | null;
   last_seen_at: Date | string | null;
   login_id: string | null;
+  ban_status: string | null;
+  ban_expiry: Date | string | null;
+  ban_reason: string | null;
   account_session_version: number;
   refresh_session_id: string | null;
   refresh_token_hash: string | null;
@@ -161,6 +169,16 @@ interface PlayerEventHistoryRow extends RowDataPacket {
 
 interface PlayerEventHistoryCountRow extends RowDataPacket {
   total: number;
+}
+
+interface PlayerBanHistoryRow extends RowDataPacket {
+  id: number;
+  player_id: string;
+  action: string;
+  ban_status: string;
+  ban_expiry: Date | string | null;
+  ban_reason: string | null;
+  created_at: Date | string;
 }
 
 interface PlayerAccountDeviceSessionRow extends RowDataPacket {
@@ -212,6 +230,13 @@ export interface PlayerAccountSnapshot extends PlayerAccountReadModel {
   wechatMiniGameBoundAt?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface PlayerAccountBanSnapshot {
+  playerId: string;
+  banStatus: PlayerBanStatus;
+  banExpiry?: string;
+  banReason?: string;
 }
 
 export interface PlayerAccountAuthSnapshot {
@@ -313,6 +338,30 @@ export interface PlayerEventHistorySnapshot {
   total: number;
 }
 
+export interface PlayerAccountBanInput {
+  banStatus: Exclude<PlayerBanStatus, "none">;
+  banExpiry?: string;
+  banReason: string;
+}
+
+export interface PlayerAccountUnbanInput {
+  reason?: string;
+}
+
+export interface PlayerBanHistoryRecord {
+  id: number;
+  playerId: string;
+  action: "ban" | "unban";
+  banStatus: PlayerBanStatus;
+  banExpiry?: string;
+  banReason?: string;
+  createdAt: string;
+}
+
+export interface PlayerAccountBanHistoryListOptions {
+  limit?: number;
+}
+
 export interface PlayerRoomProfileListOptions {
   limit?: number;
   roomId?: string;
@@ -331,6 +380,8 @@ export const MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX = "uidx_player_accounts_w
 export const MYSQL_PLAYER_ACCOUNT_WECHAT_IDP_OPEN_ID_INDEX = "uidx_player_accounts_wechat_idp_open_id";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_TABLE = "player_account_sessions";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX = "idx_player_account_sessions_player_last_used";
+export const MYSQL_PLAYER_BAN_HISTORY_TABLE = "player_ban_history";
+export const MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX = "idx_player_ban_history_player_created";
 export const MYSQL_PLAYER_EVENT_HISTORY_TABLE = "player_event_history";
 export const MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX = "idx_player_event_history_player_time";
 export const MYSQL_PLAYER_HERO_ARCHIVE_TABLE = "player_hero_archives";
@@ -377,6 +428,43 @@ function normalizeResourceLedger(resources?: Partial<ResourceLedger>): ResourceL
     ore: 0,
     ...resources
   };
+}
+
+function normalizePlayerBanStatus(status?: string | null): PlayerBanStatus {
+  return status === "temporary" || status === "permanent" ? status : "none";
+}
+
+function normalizePlayerBanReason(reason?: string | null): string | undefined {
+  const normalized = reason?.trim();
+  return normalized ? normalized.slice(0, 512) : undefined;
+}
+
+function normalizePlayerBanExpiry(expiry?: string | Date | null): string | undefined {
+  if (!expiry) {
+    return undefined;
+  }
+
+  const parsed = expiry instanceof Date ? expiry : new Date(expiry);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("banExpiry must be a valid ISO timestamp");
+  }
+
+  return parsed.toISOString();
+}
+
+export function isPlayerBanActive(
+  ban: Pick<PlayerAccountBanSnapshot, "banStatus" | "banExpiry"> | Pick<PlayerAccountSnapshot, "banStatus" | "banExpiry"> | null | undefined
+): boolean {
+  if (!ban || (ban.banStatus ?? "none") === "none") {
+    return false;
+  }
+
+  if (ban.banStatus === "permanent") {
+    return true;
+  }
+
+  const expiry = ban.banExpiry ? new Date(ban.banExpiry) : null;
+  return Boolean(expiry && !Number.isNaN(expiry.getTime()) && expiry.getTime() > Date.now());
 }
 
 function normalizePlayerId(playerId: string): string {
@@ -480,6 +568,9 @@ function normalizePlayerAccountSnapshot(account: {
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
   loginId?: string | null | undefined;
+  banStatus?: PlayerBanStatus | null | undefined;
+  banExpiry?: string | undefined;
+  banReason?: string | null | undefined;
   wechatMiniGameOpenId?: string | null | undefined;
   wechatMiniGameUnionId?: string | null | undefined;
   wechatMiniGameBoundAt?: string | undefined;
@@ -508,7 +599,10 @@ function normalizePlayerAccountSnapshot(account: {
       lastRoomId: account.lastRoomId,
       lastSeenAt: account.lastSeenAt,
       loginId: account.loginId ? normalizePlayerLoginId(account.loginId) : undefined,
-      credentialBoundAt: account.credentialBoundAt
+      credentialBoundAt: account.credentialBoundAt,
+      banStatus: normalizePlayerBanStatus(account.banStatus),
+      banExpiry: normalizePlayerBanExpiry(account.banExpiry),
+      banReason: normalizePlayerBanReason(account.banReason)
     }),
     ...(normalizedWechatMiniGameOpenId ? { wechatMiniGameOpenId: normalizedWechatMiniGameOpenId } : {}),
     ...(normalizedWechatMiniGameUnionId ? { wechatMiniGameUnionId: normalizedWechatMiniGameUnionId } : {}),
@@ -787,6 +881,9 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   last_room_id VARCHAR(191) NULL,
   last_seen_at DATETIME NULL DEFAULT NULL,
   login_id VARCHAR(40) NULL,
+  ban_status VARCHAR(16) NOT NULL DEFAULT 'none',
+  ban_expiry DATETIME NULL DEFAULT NULL,
+  ban_reason VARCHAR(512) NULL,
   wechat_open_id VARCHAR(191) NULL,
   wechat_union_id VARCHAR(191) NULL,
   wechat_mini_game_open_id VARCHAR(191) NULL,
@@ -811,6 +908,17 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\` (
   last_used_at DATETIME NOT NULL,
   PRIMARY KEY (session_id),
   KEY \`${MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX}\` (player_id, last_used_at DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_BAN_HISTORY_TABLE}\` (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  player_id VARCHAR(191) NOT NULL,
+  action VARCHAR(16) NOT NULL,
+  ban_status VARCHAR(16) NOT NULL,
+  ban_expiry DATETIME NULL DEFAULT NULL,
+  ban_reason VARCHAR(512) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (
@@ -1006,6 +1114,60 @@ SET @veil_player_accounts_login_id_sql := IF(
 PREPARE veil_player_accounts_login_id_stmt FROM @veil_player_accounts_login_id_sql;
 EXECUTE veil_player_accounts_login_id_stmt;
 DEALLOCATE PREPARE veil_player_accounts_login_id_stmt;
+
+SET @veil_player_accounts_ban_status_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'ban_status'
+);
+
+SET @veil_player_accounts_ban_status_sql := IF(
+  @veil_player_accounts_ban_status_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`ban_status\` VARCHAR(16) NOT NULL DEFAULT ''none'' AFTER \`login_id\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_ban_status_stmt FROM @veil_player_accounts_ban_status_sql;
+EXECUTE veil_player_accounts_ban_status_stmt;
+DEALLOCATE PREPARE veil_player_accounts_ban_status_stmt;
+
+SET @veil_player_accounts_ban_expiry_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'ban_expiry'
+);
+
+SET @veil_player_accounts_ban_expiry_sql := IF(
+  @veil_player_accounts_ban_expiry_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`ban_expiry\` DATETIME NULL DEFAULT NULL AFTER \`ban_status\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_ban_expiry_stmt FROM @veil_player_accounts_ban_expiry_sql;
+EXECUTE veil_player_accounts_ban_expiry_stmt;
+DEALLOCATE PREPARE veil_player_accounts_ban_expiry_stmt;
+
+SET @veil_player_accounts_ban_reason_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'ban_reason'
+);
+
+SET @veil_player_accounts_ban_reason_sql := IF(
+  @veil_player_accounts_ban_reason_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`ban_reason\` VARCHAR(512) NULL AFTER \`ban_expiry\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_ban_reason_stmt FROM @veil_player_accounts_ban_reason_sql;
+EXECUTE veil_player_accounts_ban_reason_stmt;
+DEALLOCATE PREPARE veil_player_accounts_ban_reason_stmt;
 
 SET @veil_player_accounts_password_hash_exists := (
   SELECT COUNT(*)
@@ -1205,6 +1367,24 @@ PREPARE veil_player_accounts_wechat_idp_open_id_idx_stmt FROM @veil_player_accou
 EXECUTE veil_player_accounts_wechat_idp_open_id_idx_stmt;
 DEALLOCATE PREPARE veil_player_accounts_wechat_idp_open_id_idx_stmt;
 
+SET @veil_player_ban_history_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_BAN_HISTORY_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX}'
+);
+
+SET @veil_player_ban_history_idx_sql := IF(
+  @veil_player_ban_history_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX}\` ON \`${MYSQL_PLAYER_BAN_HISTORY_TABLE}\` (player_id, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_ban_history_idx_stmt FROM @veil_player_ban_history_idx_sql;
+EXECUTE veil_player_ban_history_idx_stmt;
+DEALLOCATE PREPARE veil_player_ban_history_idx_stmt;
+
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   hero_id VARCHAR(191) NOT NULL,
@@ -1396,6 +1576,7 @@ function toPlayerHeroArchiveSnapshot(row: PlayerHeroArchiveRow): PlayerHeroArchi
 
 function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
   const lastSeenAt = formatTimestamp(row.last_seen_at);
+  const banExpiry = formatTimestamp(row.ban_expiry);
   const refreshTokenExpiresAt = formatTimestamp(row.refresh_token_expires_at);
   const wechatMiniGameBoundAt = formatTimestamp(row.wechat_mini_game_bound_at);
   const credentialBoundAt = formatTimestamp(row.credential_bound_at);
@@ -1424,6 +1605,9 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(row.display_name ? { displayName: row.display_name } : {}),
     ...(row.last_room_id ? { lastRoomId: row.last_room_id } : {}),
     ...(row.login_id ? { loginId: row.login_id } : {}),
+    banStatus: normalizePlayerBanStatus(row.ban_status),
+    ...(banExpiry ? { banExpiry } : {}),
+    ...(row.ban_reason ? { banReason: row.ban_reason } : {}),
     ...(row.account_session_version > 0 ? { accountSessionVersion: row.account_session_version } : {}),
     ...(row.refresh_session_id ? { refreshSessionId: row.refresh_session_id } : {}),
     ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}),
@@ -1435,6 +1619,18 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {})
   });
+}
+
+function toPlayerBanSnapshot(row: Pick<PlayerAccountRow, "player_id" | "ban_status" | "ban_expiry" | "ban_reason">): PlayerAccountBanSnapshot {
+  const banStatus = normalizePlayerBanStatus(row.ban_status);
+  const banExpiry = formatTimestamp(row.ban_expiry);
+
+  return {
+    playerId: normalizePlayerId(row.player_id),
+    banStatus,
+    ...(banExpiry ? { banExpiry } : {}),
+    ...(row.ban_reason ? { banReason: row.ban_reason } : {})
+  };
 }
 
 function toPlayerAccountAuthSnapshot(row: PlayerAccountAuthRow): PlayerAccountAuthSnapshot | null {
@@ -1497,6 +1693,24 @@ function toPlayerAccountDeviceSessionSnapshot(
   };
 }
 
+function toPlayerBanHistoryRecord(row: PlayerBanHistoryRow): PlayerBanHistoryRecord {
+  const createdAt = formatTimestamp(row.created_at);
+  if (!createdAt) {
+    throw new Error("player ban history created_at must be present");
+  }
+
+  const banExpiry = formatTimestamp(row.ban_expiry);
+  return {
+    id: Math.max(0, Math.floor(row.id)),
+    playerId: normalizePlayerId(row.player_id),
+    action: row.action === "unban" ? "unban" : "ban",
+    banStatus: normalizePlayerBanStatus(row.ban_status),
+    ...(banExpiry ? { banExpiry } : {}),
+    ...(row.ban_reason ? { banReason: row.ban_reason } : {}),
+    createdAt
+  };
+}
+
 async function appendPlayerEventHistoryEntries(
   queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
   playerId: string,
@@ -1531,6 +1745,34 @@ async function appendPlayerEventHistoryEntries(
       ]
     );
   }
+}
+
+async function appendPlayerBanHistoryEntry(
+  queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
+  playerId: string,
+  entry: {
+    action: "ban" | "unban";
+    banStatus: PlayerBanStatus;
+    banExpiry?: string;
+    banReason?: string;
+  }
+): Promise<void> {
+  const banExpiry = entry.banExpiry ? new Date(entry.banExpiry) : null;
+  if (entry.banExpiry && (!banExpiry || Number.isNaN(banExpiry.getTime()))) {
+    throw new Error("banExpiry must be a valid ISO timestamp");
+  }
+
+  await queryable.query(
+    `INSERT INTO \`${MYSQL_PLAYER_BAN_HISTORY_TABLE}\` (
+       player_id,
+       action,
+       ban_status,
+       ban_expiry,
+       ban_reason
+     )
+     VALUES (?, ?, ?, ?, ?)`,
+    [playerId, entry.action, entry.banStatus, banExpiry, entry.banReason ?? null]
+  );
 }
 
 async function deletePlayerProfilesForRoom(connection: PoolConnection, roomId: string): Promise<void> {
@@ -1720,6 +1962,24 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     return accounts[0] ?? null;
   }
 
+  async loadPlayerBan(playerId: string): Promise<PlayerAccountBanSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const [rows] = await this.pool.query<PlayerAccountRow[]>(
+      `SELECT
+         player_id,
+         ban_status,
+         ban_expiry,
+         ban_reason
+       FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       WHERE player_id = ?
+       LIMIT 1`,
+      [normalizedPlayerId]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerBanSnapshot(row) : null;
+  }
+
   async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
     const normalizedLoginId = normalizePlayerLoginId(loginId);
     const [rows] = await this.pool.query<PlayerAccountRow[]>(
@@ -1735,6 +1995,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         ban_status,
+         ban_expiry,
+         ban_reason,
          account_session_version,
          refresh_session_id,
          refresh_token_hash,
@@ -1772,6 +2035,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         ban_status,
+         ban_expiry,
+         ban_reason,
          account_session_version,
          refresh_session_id,
          refresh_token_hash,
@@ -1893,6 +2159,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         ban_status,
+         ban_expiry,
+         ban_reason,
          account_session_version,
          refresh_session_id,
          refresh_token_hash,
@@ -1934,6 +2203,31 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     const row = rows[0];
     return row ? toPlayerAccountAuthSnapshot(row) : null;
+  }
+
+  async listPlayerBanHistory(
+    playerId: string,
+    options: PlayerAccountBanHistoryListOptions = {}
+  ): Promise<PlayerBanHistoryRecord[]> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
+    const [rows] = await this.pool.query<PlayerBanHistoryRow[]>(
+      `SELECT
+         id,
+         player_id,
+         action,
+         ban_status,
+         ban_expiry,
+         ban_reason,
+         created_at
+       FROM \`${MYSQL_PLAYER_BAN_HISTORY_TABLE}\`
+       WHERE player_id = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+      [normalizedPlayerId, safeLimit]
+    );
+
+    return rows.map((row) => toPlayerBanHistoryRecord(row));
   }
 
   async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
@@ -1988,6 +2282,83 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         recentBattleReplays: appendPlayerBattleReplaySummaries([], []),
         ...(lastRoomId ? { lastRoomId } : {}),
         lastSeenAt: lastSeenAt.toISOString()
+      })
+    );
+  }
+
+  async savePlayerBan(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existingAccount = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const banStatus = normalizePlayerBanStatus(input.banStatus);
+    const banReason = normalizePlayerBanReason(input.banReason);
+    const banExpiry = normalizePlayerBanExpiry(input.banExpiry);
+    if (banStatus === "none") {
+      throw new Error("banStatus must be temporary or permanent");
+    }
+    if (!banReason) {
+      throw new Error("banReason must not be empty");
+    }
+    if (banStatus === "temporary") {
+      if (!banExpiry) {
+        throw new Error("temporary bans require banExpiry");
+      }
+      if (new Date(banExpiry).getTime() <= Date.now()) {
+        throw new Error("banExpiry must be in the future");
+      }
+    }
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET ban_status = ?,
+           ban_expiry = ?,
+           ban_reason = ?,
+           version = version + 1
+       WHERE player_id = ?`,
+      [banStatus, banStatus === "temporary" ? new Date(banExpiry!) : null, banReason, normalizedPlayerId]
+    );
+    await appendPlayerBanHistoryEntry(this.pool, normalizedPlayerId, {
+      action: "ban",
+      banStatus,
+      ...(banStatus === "temporary" && banExpiry ? { banExpiry } : {}),
+      banReason
+    });
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        ...existingAccount,
+        banStatus,
+        ...(banStatus === "temporary" && banExpiry ? { banExpiry } : {}),
+        banReason
+      })
+    );
+  }
+
+  async clearPlayerBan(playerId: string, input: PlayerAccountUnbanInput = {}): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existingAccount = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const reason = normalizePlayerBanReason(input.reason);
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET ban_status = 'none',
+           ban_expiry = NULL,
+           ban_reason = NULL,
+           version = version + 1
+       WHERE player_id = ?`,
+      [normalizedPlayerId]
+    );
+    await appendPlayerBanHistoryEntry(this.pool, normalizedPlayerId, {
+      action: "unban",
+      banStatus: "none",
+      ...(reason ? { banReason: reason } : {})
+    });
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        ...existingAccount,
+        banStatus: "none"
       })
     );
   }
@@ -2481,6 +2852,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         ban_status,
+         ban_expiry,
+         ban_reason,
          wechat_open_id,
          wechat_union_id,
          wechat_mini_game_open_id,

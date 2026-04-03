@@ -23,6 +23,7 @@ import {
 import {
   applyPlayerAccountsToWorldState,
   applyPlayerHeroArchivesToWorldState,
+  isPlayerBanActive,
   type PlayerAccountSnapshot,
   type RoomSnapshotStore
 } from "./persistence";
@@ -321,6 +322,11 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
           ensuredAccount = null;
         }
       }
+      if (isPlayerBanActive(ensuredAccount)) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "account_banned" });
+        client.leave(CloseCode.WITH_ERROR, "account_banned");
+        return;
+      }
       await this.ensurePlayerWorldSlot(playerId, ensuredAccount);
       this.publishLobbyRoomSummary();
 
@@ -451,6 +457,20 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     this.publishLobbyRoomSummary();
   }
 
+  disconnectPlayer(playerId: string, reason = "account_banned"): number {
+    let disconnected = 0;
+    for (const client of this.clients) {
+      if (this.playerIdBySessionId.get(client.sessionId) !== playerId) {
+        continue;
+      }
+
+      sendMessage(client, "error", { requestId: "push", reason });
+      client.leave(CloseCode.WITH_ERROR, reason);
+      disconnected += 1;
+    }
+    return disconnected;
+  }
+
   async onDrop(client: ColyseusClient): Promise<void> {
     const playerId = this.playerIdBySessionId.get(client.sessionId);
     if (!playerId) {
@@ -459,6 +479,15 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
     try {
       const reconnectedClient = await this.allowReconnection(client, RECONNECTION_WINDOW_SECONDS);
+      if (configuredRoomSnapshotStore?.loadPlayerBan) {
+        const ban = await configuredRoomSnapshotStore.loadPlayerBan(playerId);
+        if (isPlayerBanActive(ban)) {
+          this.playerIdBySessionId.delete(client.sessionId);
+          reconnectedClient.leave(CloseCode.WITH_ERROR, "account_banned");
+          this.publishLobbyRoomSummary();
+          return;
+        }
+      }
       this.playerIdBySessionId.delete(client.sessionId);
       this.playerIdBySessionId.set(reconnectedClient.sessionId, playerId);
       this.reconnectedAtByPlayerId.set(playerId, new Date().toISOString());

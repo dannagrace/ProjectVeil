@@ -44,7 +44,12 @@ interface MatchmakingObservabilityCounters {
   rateLimitedTotal: number;
 }
 
-type AuthSessionFailureReason = "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked";
+type AuthSessionFailureReason =
+  | "unauthorized"
+  | "token_expired"
+  | "token_kind_invalid"
+  | "session_revoked"
+  | "account_banned";
 type AuthTokenDeliveryFailureReason =
   | "misconfigured"
   | "timeout"
@@ -208,7 +213,8 @@ const runtimeObservability: RuntimeObservabilityState = {
       unauthorized: 0,
       token_expired: 0,
       token_kind_invalid: 0,
-      session_revoked: 0
+      session_revoked: 0,
+      account_banned: 0
     },
     tokenDeliveryQueueCount: 0,
     tokenDeliveryDeadLetterCount: 0,

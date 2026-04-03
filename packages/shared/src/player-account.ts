@@ -13,6 +13,8 @@ import { normalizePlayerBattleReplaySummaries, type PlayerBattleReplaySummary } 
 import { normalizeEloRating } from "./matchmaking.ts";
 import type { ResourceLedger } from "./models.ts";
 
+export type PlayerBanStatus = "none" | "temporary" | "permanent";
+
 export interface PlayerAccountReadModel {
   playerId: string;
   displayName: string;
@@ -25,6 +27,9 @@ export interface PlayerAccountReadModel {
   battleReportCenter?: PlayerBattleReportCenter;
   loginId?: string;
   credentialBoundAt?: string;
+  banStatus?: PlayerBanStatus;
+  banExpiry?: string;
+  banReason?: string;
   lastRoomId?: string;
   lastSeenAt?: string;
 }
@@ -41,6 +46,9 @@ export interface PlayerAccountReadModelInput {
   battleReportCenter?: Partial<PlayerBattleReportCenter> | null | undefined;
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
+  banStatus?: PlayerBanStatus | undefined;
+  banExpiry?: string | undefined;
+  banReason?: string | undefined;
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
 }
@@ -53,6 +61,9 @@ export function normalizePlayerAccountReadModel(
   const avatarUrl = account?.avatarUrl?.trim();
   const loginId = account?.loginId?.trim().toLowerCase();
   const credentialBoundAt = account?.credentialBoundAt?.trim();
+  const banStatus = account?.banStatus === "temporary" || account?.banStatus === "permanent" ? account.banStatus : "none";
+  const banExpiry = account?.banExpiry?.trim();
+  const banReason = account?.banReason?.trim();
   const lastRoomId = account?.lastRoomId?.trim();
   const lastSeenAt = account?.lastSeenAt?.trim();
   const recentEventLog = normalizeEventLogEntries(account?.recentEventLog);
@@ -77,6 +88,9 @@ export function normalizePlayerAccountReadModel(
     }),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
+    ...(banStatus !== "none" ? { banStatus } : {}),
+    ...(banExpiry ? { banExpiry } : {}),
+    ...(banReason ? { banReason } : {}),
     ...(lastRoomId ? { lastRoomId } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {})
   };
