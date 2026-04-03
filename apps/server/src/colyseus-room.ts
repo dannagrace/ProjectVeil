@@ -1,3 +1,4 @@
+import { CloseCode } from "@colyseus/shared-types";
 import { Room, type Client as ColyseusClient } from "colyseus";
 import {
   createInitialWorldState,
@@ -32,6 +33,8 @@ import {
   recordBattleActionMessage,
   recordConnectMessage,
   recordRuntimeRoom,
+  recordWebSocketActionKick,
+  recordWebSocketActionRateLimited,
   recordWorldActionMessage,
   removeRuntimeRoom
 } from "./observability";
@@ -55,12 +58,19 @@ interface JoinOptions {
 const RECONNECTION_WINDOW_SECONDS = 20;
 const MAP_SYNC_CHUNK_SIZE = 8;
 const MAP_SYNC_CHUNK_PADDING = 1;
+const DEFAULT_WS_ACTION_RATE_LIMIT_WINDOW_MS = 1_000;
+const DEFAULT_WS_ACTION_RATE_LIMIT_MAX = 8;
 const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
 const lobbyRoomOwnerTokens = new Map<string, number>();
 const activeRoomInstances = new Map<string, VeilColyseusRoom>();
 let nextLobbyRoomOwnerToken = 1;
+
+interface WebSocketActionRateLimitConfig {
+  windowMs: number;
+  max: number;
+}
 
 export interface LobbyRoomSummary {
   roomId: string;
@@ -89,6 +99,37 @@ export function resetLobbyRoomRegistry(): void {
 
 export function getActiveRoomInstances(): Map<string, VeilColyseusRoom> {
   return activeRoomInstances;
+}
+
+function parseEnvNumber(
+  value: string | undefined,
+  fallback: number,
+  options: { minimum?: number; integer?: boolean } = {}
+): number {
+  const parsed = Number(value?.trim());
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const normalized = options.integer ? Math.floor(parsed) : parsed;
+  if (options.minimum != null && normalized < options.minimum) {
+    return fallback;
+  }
+
+  return normalized;
+}
+
+function readWebSocketActionRateLimitConfig(env: NodeJS.ProcessEnv = process.env): WebSocketActionRateLimitConfig {
+  return {
+    windowMs: parseEnvNumber(env.VEIL_RATE_LIMIT_WS_ACTION_WINDOW_MS, DEFAULT_WS_ACTION_RATE_LIMIT_WINDOW_MS, {
+      minimum: 1,
+      integer: true
+    }),
+    max: parseEnvNumber(env.VEIL_RATE_LIMIT_WS_ACTION_MAX, DEFAULT_WS_ACTION_RATE_LIMIT_MAX, {
+      minimum: 1,
+      integer: true
+    })
+  };
 }
 
 function sendMessage<T extends ServerMessage["type"]>(
@@ -194,9 +235,11 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   patchRate = null;
 
   public worldRoom!: AuthoritativeWorldRoom;
+  private readonly wsActionRateLimitConfig = readWebSocketActionRateLimitConfig();
   private readonly lobbyRoomOwnerToken = nextLobbyRoomOwnerToken++;
   private readonly playerIdBySessionId = new Map<string, string>();
   private readonly reconnectedAtByPlayerId = new Map<string, string>();
+  private readonly wsActionTimestampsByPlayerId = new Map<string, number[]>();
   private unsubscribeConfigUpdate: (() => void) | null = null;
 
   async onCreate(options: JoinOptions): Promise<void> {
@@ -321,6 +364,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
 
+      if (!this.consumePlayerActionRateLimit(playerId)) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "rate_limit_exceeded" });
+        recordWebSocketActionRateLimited();
+        recordWebSocketActionKick();
+        client.leave(CloseCode.WITH_ERROR, "rate_limit_exceeded");
+        return;
+      }
+
       recordWorldActionMessage();
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
       const result = this.worldRoom.dispatch(playerId, message.action);
@@ -354,6 +405,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       const playerId = this.getPlayerId(client);
       if (!playerId) {
         sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+
+      if (!this.consumePlayerActionRateLimit(playerId)) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "rate_limit_exceeded" });
+        recordWebSocketActionRateLimited();
+        recordWebSocketActionKick();
+        client.leave(CloseCode.WITH_ERROR, "rate_limit_exceeded");
         return;
       }
 
@@ -423,6 +482,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   onDispose(): void {
     this.unsubscribeConfigUpdate?.();
     this.unsubscribeConfigUpdate = null;
+    this.wsActionTimestampsByPlayerId.clear();
 
     if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) !== this.lobbyRoomOwnerToken) {
       return;
@@ -436,6 +496,20 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
   private restoreWorldRoom(snapshot: RoomPersistenceSnapshot): void {
     this.worldRoom = createRoom(this.metadata.logicalRoomId, snapshot.state.meta.seed, snapshot);
+  }
+
+  private consumePlayerActionRateLimit(playerId: string): boolean {
+    const now = Date.now();
+    const windowStart = now - this.wsActionRateLimitConfig.windowMs;
+    const timestamps = (this.wsActionTimestampsByPlayerId.get(playerId) ?? []).filter((timestamp) => timestamp > windowStart);
+    if (timestamps.length >= this.wsActionRateLimitConfig.max) {
+      this.wsActionTimestampsByPlayerId.set(playerId, timestamps);
+      return false;
+    }
+
+    timestamps.push(now);
+    this.wsActionTimestampsByPlayerId.set(playerId, timestamps);
+    return true;
   }
 
   private async persistRoomState(): Promise<void> {
