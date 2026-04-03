@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import Redis from "ioredis-mock";
 import {
   createDefaultHeroLoadout,
   createDefaultHeroProgression,
@@ -7,7 +8,7 @@ import {
   type HeroState,
   type MatchmakingRequest
 } from "../../../packages/shared/src/index";
-import { MatchmakingService } from "../src/matchmaking";
+import { MatchmakingService, RedisMatchmakingService } from "../src/matchmaking";
 
 function createHero(playerId: string, heroId: string): HeroState {
   return {
@@ -118,6 +119,82 @@ test("matchmaking service updates maintained positions after dequeue and prune",
   assert.equal(removed, 1);
   assert.equal(service.getStatus("player-earlier").status, "idle");
   assert.deepEqual(service.getStatus("player-beta"), {
+    status: "queued",
+    position: 1,
+    estimatedWaitSeconds: 0
+  });
+});
+
+test("redis matchmaking service shares queue state and match results across service instances", async (t) => {
+  const redis = new Redis();
+  const serviceA = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix: "test:matchmaking:shared",
+    lockRetryDelayMs: 1
+  });
+  const serviceB = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix: "test:matchmaking:shared",
+    lockRetryDelayMs: 1
+  });
+
+  t.after(async () => {
+    await serviceA.close();
+  });
+
+  const firstQueued = await serviceA.enqueue(createQueueRequest("player-alpha", "2026-03-28T08:00:00.000Z"));
+  const secondQueued = await serviceB.enqueue(createQueueRequest("player-beta", "2026-03-28T08:00:05.000Z"));
+
+  assert.deepEqual(firstQueued, {
+    status: "queued",
+    position: 1,
+    estimatedWaitSeconds: 0
+  });
+  assert.deepEqual(secondQueued, {
+    status: "queued",
+    position: 2,
+    estimatedWaitSeconds: 15
+  });
+
+  const statusA = await serviceA.getStatus("player-alpha");
+  const statusB = await serviceB.getStatus("player-beta");
+
+  assert.equal(statusA.status, "matched");
+  assert.equal(statusB.status, "matched");
+  assert.equal(statusA.roomId, statusB.roomId);
+  assert.deepEqual(statusA.playerIds, ["player-alpha", "player-beta"]);
+});
+
+test("redis matchmaking service prunes stale queue entries across shared instances", async (t) => {
+  const redis = new Redis();
+  const serviceA = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix: "test:matchmaking:prune",
+    lockRetryDelayMs: 1
+  });
+  const serviceB = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix: "test:matchmaking:prune",
+    lockRetryDelayMs: 1
+  });
+
+  t.after(async () => {
+    await serviceA.close();
+  });
+
+  await serviceA.enqueue(createQueueRequest("player-expired", "2026-03-28T08:00:00.000Z"));
+
+  const removed = await serviceB.pruneStaleEntries(2 * 60 * 1000, new Date("2026-03-28T08:05:00.000Z"));
+  assert.equal(removed, 1);
+  assert.equal((await serviceA.getStatus("player-expired")).status, "idle");
+
+  const freshQueued = await serviceB.enqueue(createQueueRequest("player-fresh", "2026-03-28T08:04:30.000Z"));
+  assert.deepEqual(freshQueued, {
+    status: "queued",
+    position: 1,
+    estimatedWaitSeconds: 0
+  });
+  assert.deepEqual(await serviceB.getStatus("player-fresh"), {
     status: "queued",
     position: 1,
     estimatedWaitSeconds: 0

@@ -23,6 +23,7 @@ import {
 import { registerPlayerAccountRoutes } from "./player-accounts";
 import { registerAdminRoutes } from "./admin-console";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
+import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "./redis";
 
 loadEnv();
 
@@ -37,6 +38,11 @@ interface DevServerDefinitionChain {
 interface DevServerGameServer {
   define(name: string, room: typeof VeilColyseusRoom): DevServerDefinitionChain;
   listen(port: number, host: string): Promise<void>;
+}
+
+interface DevServerRealtimeOptions {
+  driver?: unknown;
+  presence?: unknown;
 }
 
 interface DevServerLogger {
@@ -86,6 +92,9 @@ export interface DevServerBootstrapDependencies {
   createMemoryRoomSnapshotStore(): DevServerRoomSnapshotStore;
   configureRoomSnapshotStore(store: DevServerRoomSnapshotStore): void;
   createTransport(): DevServerTransport;
+  readRedisUrl(): string | null;
+  createRedisPresence(redisUrl: string): { shutdown(): Promise<void> | void };
+  createRedisDriver(redisUrl: string): { shutdown(): Promise<void> | void };
   registerAuthRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerConfigCenterRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerConfigViewerRoutes(app: unknown, store: DevServerConfigCenterStore): void;
@@ -94,7 +103,7 @@ export interface DevServerBootstrapDependencies {
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
   registerRuntimeObservabilityRoutes(app: unknown, options?: { store?: DevServerRoomSnapshotStore }): void;
   registerAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore, gameServer: DevServerGameServer): void;
-  createGameServer(transport: DevServerTransport): DevServerGameServer;
+  createGameServer(transport: DevServerTransport, realtimeOptions?: DevServerRealtimeOptions): DevServerGameServer;
   logger: DevServerLogger;
   process: DevServerProcess;
   setInterval(handler: () => void, delayMs: number): CleanupTimerHandle;
@@ -113,6 +122,9 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     createMemoryRoomSnapshotStore: () => createMemoryRoomSnapshotStore(),
     configureRoomSnapshotStore: (store) => configureRoomSnapshotStore(store as RoomSnapshotStore),
     createTransport: () => new WebSocketTransport(),
+    readRedisUrl,
+    createRedisPresence,
+    createRedisDriver,
     registerAuthRoutes: (app, store) => registerAuthRoutes(app as never, store as RoomSnapshotStore),
     registerConfigCenterRoutes: (app, store) => registerConfigCenterRoutes(app as never, store as ConfigCenterStore),
     registerConfigViewerRoutes: (app, store) => registerConfigViewerRoutes(app as never, store as ConfigCenterStore),
@@ -123,9 +135,11 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerRuntimeObservabilityRoutes: (app, options) => registerRuntimeObservabilityRoutes(app as never, options),
     registerAdminRoutes: (app, store, gameServer) =>
       registerAdminRoutes(app as never, store as RoomSnapshotStore, gameServer),
-    createGameServer: (transport) =>
+    createGameServer: (transport, realtimeOptions) =>
       new Server({
-        transport: transport as WebSocketTransport
+        transport: transport as WebSocketTransport,
+        driver: realtimeOptions?.driver as never,
+        presence: realtimeOptions?.presence as never
       }),
     logger: console,
     process,
@@ -162,6 +176,9 @@ export async function startDevServer(
   const effectiveSnapshotStore = snapshotStore ?? deps.createMemoryRoomSnapshotStore();
   deps.configureRoomSnapshotStore(effectiveSnapshotStore);
   await configCenterStore.initializeRuntimeConfigs();
+  const redisUrl = deps.readRedisUrl();
+  const redisPresence = redisUrl ? deps.createRedisPresence(redisUrl) : null;
+  const redisDriver = redisUrl ? deps.createRedisDriver(redisUrl) : null;
 
   const transport = deps.createTransport();
   const expressApp = transport.getExpressApp();
@@ -173,7 +190,10 @@ export async function startDevServer(
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
   deps.registerRuntimeObservabilityRoutes(expressApp, { store: effectiveSnapshotStore });
 
-  const gameServer = deps.createGameServer(transport);
+  const gameServer = deps.createGameServer(transport, {
+    driver: redisDriver ?? undefined,
+    presence: redisPresence ?? undefined
+  });
   deps.registerAdminRoutes(expressApp, effectiveSnapshotStore, gameServer);
   gameServer.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await gameServer.listen(port, host);
@@ -191,6 +211,11 @@ export async function startDevServer(
   deps.logger.log(`Runtime diagnostic snapshot available at http://${host}:${port}/api/runtime/diagnostic-snapshot`);
   deps.logger.log(`Runtime metrics available at http://${host}:${port}/api/runtime/metrics`);
   deps.logger.log(`Config center storage: ${configCenterStore.mode}`);
+  if (redisUrl) {
+    deps.logger.log("Redis-backed Colyseus presence/driver enabled via REDIS_URL");
+  } else {
+    deps.logger.log("Local in-memory Colyseus presence/driver enabled");
+  }
   if (snapshotStore) {
     deps.logger.log("MySQL room persistence enabled");
   } else {
@@ -232,10 +257,17 @@ export async function startDevServer(
     if (!snapshotStore) {
       await effectiveSnapshotStore.close();
       await configCenterStore.close();
+      await closeRedisResource(redisPresence);
+      await closeRedisResource(redisDriver);
       return;
     }
 
-    await Promise.all([effectiveSnapshotStore.close(), configCenterStore.close()]);
+    await Promise.all([
+      effectiveSnapshotStore.close(),
+      configCenterStore.close(),
+      closeRedisResource(redisPresence),
+      closeRedisResource(redisDriver)
+    ]);
   };
 
   let shutdownStarted = false;

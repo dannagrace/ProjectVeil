@@ -63,6 +63,7 @@
 - Node.js 22 LTS（CI 同款；仓库提供 `.nvmrc`）
 - npm 10+
 - 可选：MySQL 8+（只有在你要验证持久化时才需要）
+- 可选：Redis 7+（只有在你要验证多节点 Colyseus / 跨节点匹配时才需要）
 
 ### 5-Minute Setup
 
@@ -90,8 +91,20 @@ npm run dev:client:h5
 - 配置台：`http://127.0.0.1:5173/config-center.html`
 - 服务端健康检查：`http://127.0.0.1:2567/api/runtime/health`
 - 匹配队列默认会把断线玩家 5 分钟后清理掉，可用 `VEIL_MATCHMAKING_QUEUE_TTL_SECONDS`（默认 `300` 秒）覆盖
+- 设置 `REDIS_URL` 后，Colyseus presence/driver 和 matchmaking 队列都会自动切到 Redis-backed 实现
 
 如果你要启用 MySQL 持久化，再复制 `.env.example` 到 `.env`，填入 `VEIL_MYSQL_*`，然后执行 `npm run db:migrate`。更多说明见 `docs/mysql-persistence.md`。
+
+如果你要验证 Redis-backed Colyseus scaling，可先启动根目录的 `docker-compose.redis.yml`，再用同一个 `REDIS_URL` 启两个服务节点：
+
+```bash
+docker compose -f docker-compose.redis.yml up -d
+REDIS_URL=redis://127.0.0.1:6379/0 PORT=2567 npm run dev:server
+REDIS_URL=redis://127.0.0.1:6379/0 PORT=2568 npm run dev:server
+REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
+```
+
+未设置 `REDIS_URL` 时，服务端保持现有单进程本地行为不变。完整部署说明见 `docs/redis-colyseus-scaling.md`。
 
 ## 当前仓库落地内容
 
@@ -201,6 +214,7 @@ npm run dev:client:h5
 - 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
 - 微信小游戏 runtime observability 签核：`docs/wechat-runtime-observability-signoff.md`
 - 微信小游戏 runtime observability 签核模板：`docs/release-evidence/wechat-runtime-observability-signoff.template.md`
+- Redis-backed Colyseus 多节点部署：`docs/redis-colyseus-scaling.md`
 - Phase 1 成熟度记分卡与退出标准：`docs/phase1-maturity-scorecard.md`
 - 仓库成熟度基线与独立 follow-up slices：`docs/repo-maturity-baseline.md`
 - 核心玩法发布门禁清单：`docs/core-gameplay-release-readiness.md`
