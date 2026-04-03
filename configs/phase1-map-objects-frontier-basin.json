@@ -130,7 +130,7 @@
         "y": 3
       },
       "label": "前线招募所",
-      "unitTemplateId": "hero_guard_basic",
+      "unitTemplateId": "crown_crossbowman",
       "recruitCount": 4,
       "cost": {
         "gold": 240,
@@ -172,7 +172,7 @@
         "y": 1
       },
       "label": "峡口哨募站",
-      "unitTemplateId": "hero_guard_basic",
+      "unitTemplateId": "crown_light_outrider",
       "recruitCount": 3,
       "cost": {
         "gold": 180,

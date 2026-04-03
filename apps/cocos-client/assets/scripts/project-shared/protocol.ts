@@ -10,6 +10,9 @@ export interface SessionStatePayload {
   reason?: string;
 }
 
+export type PlayerReportReason = "cheating" | "harassment" | "afk";
+export type PlayerReportStatus = "pending" | "dismissed" | "warned" | "banned";
+
 export type ClientMessage =
   | {
       type: "connect";
@@ -40,6 +43,13 @@ export type ClientMessage =
       type: "world.reachable";
       requestId: string;
       heroId: string;
+    }
+  | {
+      type: "report.player";
+      requestId: string;
+      targetPlayerId: string;
+      reason: PlayerReportReason;
+      description?: string;
     };
 
 export type ServerMessage =
@@ -63,4 +73,13 @@ export type ServerMessage =
       type: "error";
       requestId: string;
       reason: string;
+    }
+  | {
+      type: "report.player";
+      requestId: string;
+      reportId: string;
+      targetPlayerId: string;
+      reason: PlayerReportReason;
+      status: PlayerReportStatus;
+      createdAt: string;
     };

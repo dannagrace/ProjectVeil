@@ -12,6 +12,7 @@ import {
 import { validateAuthSessionFromRequest } from "./auth";
 import { recordMatchmakingRateLimited } from "./observability";
 import type { RoomSnapshotStore } from "./persistence";
+import { createRedisClient, readRedisUrl, type RedisClientLike } from "./redis";
 
 export const DEFAULT_MATCHMAKING_QUEUE_TTL_SECONDS = 5 * 60;
 const DEFAULT_RATE_LIMIT_MATCHMAKING_WINDOW_MS = 60_000;
@@ -145,6 +146,18 @@ async function requireAuthSession(
     return result.session;
   }
 
+  if (result.errorCode === "account_banned") {
+    sendJson(response, 403, {
+      error: {
+        code: "account_banned",
+        message: "Account is banned",
+        reason: result.ban?.banReason ?? "No reason provided",
+        ...(result.ban?.banExpiry ? { expiry: result.ban.banExpiry } : {})
+      }
+    });
+    return null;
+  }
+
   sendJson(response, 401, {
     error: {
       code: result.errorCode ?? "unauthorized",
@@ -197,8 +210,26 @@ interface MatchmakingStatusIdle {
 
 type MatchmakingStatusResponse = MatchmakingStatusQueued | MatchmakingStatusMatched | MatchmakingStatusIdle;
 
-export class MatchmakingService {
+export interface MatchmakingServiceController {
+  enqueue(request: MatchmakingRequest, now?: Date): MatchmakingStatusQueued | Promise<MatchmakingStatusQueued>;
+  dequeue(playerId: string): boolean | Promise<boolean>;
+  getStatus(playerId: string): MatchmakingStatusResponse | Promise<MatchmakingStatusResponse>;
+  pruneStaleEntries(maxAgeMs: number, now?: Date): number | Promise<number>;
+  close?(): Promise<void>;
+}
+
+interface RedisMatchmakingServiceOptions {
+  redisUrl?: string;
+  redisClient?: RedisClientLike;
+  keyPrefix?: string;
+  lockTimeoutMs?: number;
+  lockRetryDelayMs?: number;
+}
+
+export class MatchmakingService implements MatchmakingServiceController {
   private readonly queueByPlayerId = new Map<string, MatchmakingRequest>();
+  private readonly queueOrder: string[] = [];
+  private readonly queuePositionByPlayerId = new Map<string, number>();
   private readonly resultsByPlayerId = new Map<string, MatchResult>();
   private nextMatchSequence = 1;
 
@@ -206,7 +237,9 @@ export class MatchmakingService {
     const normalized = normalizeMatchmakingRequest(request);
     this.resultsByPlayerId.delete(normalized.playerId);
 
+    this.removeQueuedPlayer(normalized.playerId);
     this.queueByPlayerId.set(normalized.playerId, normalized);
+    this.insertQueuedPlayer(normalized);
     const status = this.getQueuedStatus(normalized.playerId);
     this.matchQueuedPlayers(now);
     if (!status) {
@@ -218,7 +251,7 @@ export class MatchmakingService {
   dequeue(playerId: string): boolean {
     const normalizedPlayerId = playerId.trim();
     this.resultsByPlayerId.delete(normalizedPlayerId);
-    return this.queueByPlayerId.delete(normalizedPlayerId);
+    return this.removeQueuedPlayer(normalizedPlayerId);
   }
 
   getStatus(playerId: string): MatchmakingStatusResponse {
@@ -238,18 +271,15 @@ export class MatchmakingService {
 
   private getQueuedStatus(playerId: string): MatchmakingStatusQueued | null {
     const normalizedPlayerId = playerId.trim();
-    const queue = Array.from(this.queueByPlayerId.values()).sort(
-      (left, right) => left.enqueuedAt.localeCompare(right.enqueuedAt) || left.playerId.localeCompare(right.playerId)
-    );
-    const position = queue.findIndex((entry) => entry.playerId === normalizedPlayerId);
-    if (position < 0) {
+    const position = this.queuePositionByPlayerId.get(normalizedPlayerId);
+    if (position == null) {
       return null;
     }
 
     return {
       status: "queued",
-      position: position + 1,
-      estimatedWaitSeconds: estimateMatchmakingWaitSeconds(position + 1)
+      position,
+      estimatedWaitSeconds: estimateMatchmakingWaitSeconds(position)
     };
   }
 
@@ -274,8 +304,8 @@ export class MatchmakingService {
       }
 
       const [left, right] = selection.players;
-      this.queueByPlayerId.delete(left.playerId);
-      this.queueByPlayerId.delete(right.playerId);
+      this.removeQueuedPlayer(left.playerId);
+      this.removeQueuedPlayer(right.playerId);
 
       const result = this.createMatchResult([left, right], now);
       this.resultsByPlayerId.set(left.playerId, result);
@@ -296,20 +326,318 @@ export class MatchmakingService {
     for (const [playerId, request] of this.queueByPlayerId.entries()) {
       const enqueuedAtMs = new Date(request.enqueuedAt).getTime();
       if (Number.isNaN(enqueuedAtMs) || referenceTime - enqueuedAtMs > maxAgeMs) {
-        this.queueByPlayerId.delete(playerId);
+        this.removeQueuedPlayer(playerId);
         this.resultsByPlayerId.delete(playerId);
         removed += 1;
       }
     }
     return removed;
   }
+
+  private insertQueuedPlayer(request: MatchmakingRequest): void {
+    let insertAt = this.queueOrder.length;
+    for (let index = 0; index < this.queueOrder.length; index += 1) {
+      const existingPlayerId = this.queueOrder[index];
+      const existingRequest = existingPlayerId ? this.queueByPlayerId.get(existingPlayerId) : null;
+      if (!existingRequest || compareQueuedPlayers(request, existingRequest) < 0) {
+        insertAt = index;
+        break;
+      }
+    }
+
+    this.queueOrder.splice(insertAt, 0, request.playerId);
+    this.reindexQueuePositions(insertAt);
+  }
+
+  private removeQueuedPlayer(playerId: string): boolean {
+    const normalizedPlayerId = playerId.trim();
+    const hadRequest = this.queueByPlayerId.delete(normalizedPlayerId);
+    const queuedPosition = this.queuePositionByPlayerId.get(normalizedPlayerId);
+    if (queuedPosition == null) {
+      return hadRequest;
+    }
+
+    this.queueOrder.splice(queuedPosition - 1, 1);
+    this.queuePositionByPlayerId.delete(normalizedPlayerId);
+    this.reindexQueuePositions(queuedPosition - 1);
+    return true;
+  }
+
+  private reindexQueuePositions(startIndex = 0): void {
+    for (let index = startIndex; index < this.queueOrder.length; index += 1) {
+      const playerId = this.queueOrder[index];
+      if (playerId) {
+        this.queuePositionByPlayerId.set(playerId, index + 1);
+      }
+    }
+  }
 }
 
-let configuredMatchmakingService = new MatchmakingService();
+export class RedisMatchmakingService implements MatchmakingServiceController {
+  private readonly redis: RedisClientLike;
+  private readonly keyPrefix: string;
+  private readonly lockTimeoutMs: number;
+  private readonly lockRetryDelayMs: number;
+
+  constructor(options: RedisMatchmakingServiceOptions = {}) {
+    const redisUrl = options.redisUrl ?? readRedisUrl();
+    if (!options.redisClient && !redisUrl) {
+      throw new Error("REDIS_URL is required to enable Redis matchmaking");
+    }
+
+    this.redis = options.redisClient ?? createRedisClient(redisUrl!);
+    this.keyPrefix = options.keyPrefix?.trim() || "veil:matchmaking";
+    this.lockTimeoutMs = Math.max(250, Math.floor(options.lockTimeoutMs ?? 5_000));
+    this.lockRetryDelayMs = Math.max(10, Math.floor(options.lockRetryDelayMs ?? 50));
+  }
+
+  async enqueue(request: MatchmakingRequest, now = new Date()): Promise<MatchmakingStatusQueued> {
+    return this.withLock(async () => {
+      const normalized = normalizeMatchmakingRequest(request);
+      const requestsByPlayerId = await this.loadQueueRequests();
+
+      await this.redis.hdel(this.resultKey, normalized.playerId);
+      requestsByPlayerId.delete(normalized.playerId);
+      await this.redis.lrem(this.queueKey, 0, normalized.playerId);
+
+      const queueIds = await this.redis.lrange(this.queueKey, 0, -1);
+      const insertAt = this.findInsertIndex(
+        normalized,
+        queueIds.map((playerId) => requestsByPlayerId.get(playerId)).filter((value): value is MatchmakingRequest => value != null)
+      );
+
+      await this.redis.hset(this.requestKey, normalized.playerId, JSON.stringify(normalized));
+      if (insertAt >= queueIds.length) {
+        await this.redis.rpush(this.queueKey, normalized.playerId);
+      } else {
+        const pivotPlayerId = queueIds[insertAt];
+        if (!pivotPlayerId) {
+          await this.redis.rpush(this.queueKey, normalized.playerId);
+        } else {
+          await this.redis.linsert(this.queueKey, "BEFORE", pivotPlayerId, normalized.playerId);
+        }
+      }
+
+      const status = await this.getQueuedStatus(normalized.playerId);
+      await this.matchQueuedPlayers(now);
+      if (!status) {
+        throw new Error(`Failed to enqueue player for matchmaking: ${normalized.playerId}`);
+      }
+      return status;
+    });
+  }
+
+  async dequeue(playerId: string): Promise<boolean> {
+    return this.withLock(async () => {
+      const normalizedPlayerId = playerId.trim();
+      await this.redis.hdel(this.resultKey, normalizedPlayerId);
+      await this.redis.hdel(this.requestKey, normalizedPlayerId);
+      const removed = await this.redis.lrem(this.queueKey, 0, normalizedPlayerId);
+      return removed > 0;
+    });
+  }
+
+  async getStatus(playerId: string): Promise<MatchmakingStatusResponse> {
+    const normalizedPlayerId = playerId.trim();
+    const result = await this.redis.hget(this.resultKey, normalizedPlayerId);
+    if (result) {
+      const parsed = JSON.parse(result) as MatchResult;
+      return {
+        status: "matched",
+        roomId: parsed.roomId,
+        playerIds: parsed.playerIds,
+        seedOverride: parsed.seedOverride
+      };
+    }
+
+    return (await this.getQueuedStatus(normalizedPlayerId)) ?? { status: "idle" };
+  }
+
+  async pruneStaleEntries(maxAgeMs: number, now = new Date()): Promise<number> {
+    if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
+      return 0;
+    }
+
+    const referenceTime = now.getTime();
+    if (!Number.isFinite(referenceTime)) {
+      return 0;
+    }
+
+    return this.withLock(async () => {
+      const requestsByPlayerId = await this.loadQueueRequests();
+      const queueIds = await this.redis.lrange(this.queueKey, 0, -1);
+      const expiredPlayerIds = queueIds.filter((playerId) => {
+        const request = requestsByPlayerId.get(playerId);
+        if (!request) {
+          return true;
+        }
+
+        const enqueuedAtMs = new Date(request.enqueuedAt).getTime();
+        return Number.isNaN(enqueuedAtMs) || referenceTime - enqueuedAtMs > maxAgeMs;
+      });
+
+      if (expiredPlayerIds.length === 0) {
+        return 0;
+      }
+
+      for (const playerId of expiredPlayerIds) {
+        await this.redis.lrem(this.queueKey, 0, playerId);
+        await this.redis.hdel(this.requestKey, playerId);
+        await this.redis.hdel(this.resultKey, playerId);
+      }
+      return expiredPlayerIds.length;
+    });
+  }
+
+  async close(): Promise<void> {
+    await this.redis.quit?.();
+  }
+
+  private get lockKey(): string {
+    return `${this.keyPrefix}:lock`;
+  }
+
+  private get queueKey(): string {
+    return `${this.keyPrefix}:queue`;
+  }
+
+  private get requestKey(): string {
+    return `${this.keyPrefix}:requests`;
+  }
+
+  private get resultKey(): string {
+    return `${this.keyPrefix}:results`;
+  }
+
+  private get sequenceKey(): string {
+    return `${this.keyPrefix}:sequence`;
+  }
+
+  private async getQueuedStatus(playerId: string): Promise<MatchmakingStatusQueued | null> {
+    const queueIds = await this.redis.lrange(this.queueKey, 0, -1);
+    const position = queueIds.indexOf(playerId.trim());
+    if (position < 0) {
+      return null;
+    }
+
+    return {
+      status: "queued",
+      position: position + 1,
+      estimatedWaitSeconds: estimateMatchmakingWaitSeconds(position + 1)
+    };
+  }
+
+  private async loadQueueRequests(): Promise<Map<string, MatchmakingRequest>> {
+    const queueIds = await this.redis.lrange(this.queueKey, 0, -1);
+    const requestsByPlayerId = new Map<string, MatchmakingRequest>();
+
+    for (const playerId of queueIds) {
+      const encoded = await this.redis.hget(this.requestKey, playerId);
+      if (encoded) {
+        requestsByPlayerId.set(playerId, JSON.parse(encoded) as MatchmakingRequest);
+      }
+    }
+
+    return requestsByPlayerId;
+  }
+
+  private findInsertIndex(request: MatchmakingRequest, queue: MatchmakingRequest[]): number {
+    for (let index = 0; index < queue.length; index += 1) {
+      const existingRequest = queue[index];
+      if (existingRequest && compareQueuedPlayers(request, existingRequest) < 0) {
+        return index;
+      }
+    }
+
+    return queue.length;
+  }
+
+  private async createMatchResult(players: [MatchmakingRequest, MatchmakingRequest], now: Date): Promise<MatchResult> {
+    const orderedPlayerIds = [players[0].playerId, players[1].playerId].sort() as [string, string];
+    const sequence = await this.redis.incr(this.sequenceKey);
+
+    return {
+      roomId: `pvp-match-${now.getTime()}-${sequence}`,
+      playerIds: orderedPlayerIds,
+      seedOverride: ((now.getTime() + sequence) >>> 0) || sequence
+    };
+  }
+
+  private async matchQueuedPlayers(now: Date): Promise<void> {
+    while ((await this.redis.llen(this.queueKey)) >= 2) {
+      const requestsByPlayerId = await this.loadQueueRequests();
+      const queue = Array.from(requestsByPlayerId.values());
+      const selection = selectBestMatchPair(queue, now);
+      if (!selection) {
+        return;
+      }
+
+      const [left, right] = selection.players;
+      await this.redis.lrem(this.queueKey, 0, left.playerId);
+      await this.redis.lrem(this.queueKey, 0, right.playerId);
+      await this.redis.hdel(this.requestKey, left.playerId, right.playerId);
+
+      const result = await this.createMatchResult([left, right], now);
+      const encodedResult = JSON.stringify(result);
+      await this.redis.hset(this.resultKey, left.playerId, encodedResult);
+      await this.redis.hset(this.resultKey, right.playerId, encodedResult);
+    }
+  }
+
+  private async withLock<T>(action: () => Promise<T>): Promise<T> {
+    const token = `${process.pid}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+    const timeoutAt = Date.now() + this.lockTimeoutMs;
+
+    while (true) {
+      const acquired = await this.redis.set(this.lockKey, token, "PX", this.lockTimeoutMs, "NX");
+      if (acquired === "OK") {
+        break;
+      }
+
+      if (Date.now() >= timeoutAt) {
+        throw new Error("Timed out waiting for Redis matchmaking lock");
+      }
+
+      await delay(this.lockRetryDelayMs);
+    }
+
+    try {
+      return await action();
+    } finally {
+      await this.releaseLock(token);
+    }
+  }
+
+  private async releaseLock(token: string): Promise<void> {
+    await this.redis.eval(
+      [
+        "if redis.call('get', KEYS[1]) == ARGV[1] then",
+        "  return redis.call('del', KEYS[1])",
+        "end",
+        "return 0"
+      ].join("\n"),
+      1,
+      this.lockKey,
+      token
+    );
+  }
+}
+
+function compareQueuedPlayers(left: MatchmakingRequest, right: MatchmakingRequest): number {
+  return left.enqueuedAt.localeCompare(right.enqueuedAt) || left.playerId.localeCompare(right.playerId);
+}
+
+let configuredMatchmakingService: MatchmakingServiceController = createConfiguredMatchmakingService();
 
 export function resetMatchmakingService(): void {
-  configuredMatchmakingService = new MatchmakingService();
+  void configuredMatchmakingService.close?.();
+  configuredMatchmakingService = createConfiguredMatchmakingService();
   matchmakingRateLimitCounters.clear();
+}
+
+function createConfiguredMatchmakingService(env: NodeJS.ProcessEnv = process.env): MatchmakingServiceController {
+  const redisUrl = readRedisUrl(env);
+  return redisUrl ? new RedisMatchmakingService({ redisUrl }) : new MatchmakingService();
 }
 
 export function registerMatchmakingRoutes(
@@ -321,7 +649,7 @@ export function registerMatchmakingRoutes(
   },
   options: {
     store: RoomSnapshotStore | null;
-    service?: MatchmakingService;
+    service?: MatchmakingServiceController;
     queueTtlSeconds?: number;
   }
 ): void {
@@ -348,7 +676,7 @@ export function registerMatchmakingRoutes(
     }
 
     if (queueTtlMs > 0) {
-      service.pruneStaleEntries(queueTtlMs);
+      await Promise.resolve(service.pruneStaleEntries(queueTtlMs));
     }
 
     const authSession = await requireAuthSession(request, response, options.store);
@@ -384,12 +712,12 @@ export function registerMatchmakingRoutes(
         return;
       }
 
-      const queued = service.enqueue({
+      const queued = await Promise.resolve(service.enqueue({
         playerId: authSession.playerId,
         heroSnapshot: createMatchmakingHeroSnapshot(hero),
         rating: normalizeEloRating(account.eloRating),
         enqueuedAt: new Date().toISOString()
-      });
+      }));
       sendJson(response, 200, queued);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -407,8 +735,9 @@ export function registerMatchmakingRoutes(
     }
 
     try {
+      const dequeued = await Promise.resolve(service.dequeue(authSession.playerId));
       sendJson(response, 200, {
-        status: service.dequeue(authSession.playerId) ? "dequeued" : "idle"
+        status: dequeued ? "dequeued" : "idle"
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -429,7 +758,7 @@ export function registerMatchmakingRoutes(
     }
 
     try {
-      sendJson(response, 200, service.getStatus(authSession.playerId));
+      sendJson(response, 200, await Promise.resolve(service.getStatus(authSession.playerId)));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
@@ -460,4 +789,8 @@ function normalizePositiveSeconds(value: number | undefined): number | null {
     return null;
   }
   return Math.floor(value);
+}
+
+function delay(durationMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
 }

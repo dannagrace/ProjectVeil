@@ -40,6 +40,15 @@ interface AccountAuthApiPayload extends AuthSessionApiPayload {
   };
 }
 
+interface AccountDeletionApiPayload {
+  ok?: boolean;
+  deleted?: {
+    playerId?: string;
+    displayName?: string;
+    deletedAt?: string;
+  };
+}
+
 export interface AccountRegistrationRequestResult {
   status: string;
   expiresAt?: string;
@@ -124,8 +133,14 @@ async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
     });
 
     if (!response.ok) {
-      // ... 保持原有逻辑
-      throw new Error(`auth_request_failed:${response.status}`);
+      let errorCode = "unknown";
+      try {
+        const payload = (await response.clone().json()) as { error?: { code?: string } };
+        errorCode = payload.error?.code?.trim() || "unknown";
+      } catch {
+        errorCode = "unknown";
+      }
+      throw new Error(`auth_request_failed:${response.status}:${errorCode}`);
     }
 
     (window as any).updateDebugStatus?.("Auth Success", "#0f0");
@@ -314,7 +329,13 @@ export async function logoutCurrentAuthSession(): Promise<void> {
   clearCurrentAuthSession();
 }
 
-export async function loginGuestAuthSession(playerId: string, displayName: string): Promise<StoredAuthSession> {
+export async function loginGuestAuthSession(
+  playerId: string,
+  displayName: string,
+  options?: {
+    privacyConsentAccepted?: boolean;
+  }
+): Promise<StoredAuthSession> {
   const normalizedPlayerId = normalizePlayerId(playerId);
   const normalizedDisplayName = normalizeDisplayName(normalizedPlayerId, displayName);
 
@@ -327,7 +348,8 @@ export async function loginGuestAuthSession(playerId: string, displayName: strin
       },
       body: JSON.stringify({
         playerId: normalizedPlayerId,
-        displayName: normalizedDisplayName
+        displayName: normalizedDisplayName,
+        ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {})
       })
     })) as AuthSessionApiPayload;
     const session = asStoredAuthSession(payload.session, "remote", {
@@ -337,12 +359,21 @@ export async function loginGuestAuthSession(playerId: string, displayName: strin
     });
     return storeAuthSession(session);
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("auth_request_failed:")) {
+      throw error;
+    }
     console.error("[Auth] CRITICAL: Server connection failed. Local fallback DISABLED.", error);
     throw new Error("server_connection_failed");
   }
 }
 
-export async function loginPasswordAuthSession(loginId: string, password: string): Promise<StoredAuthSession> {
+export async function loginPasswordAuthSession(
+  loginId: string,
+  password: string,
+  options?: {
+    privacyConsentAccepted?: boolean;
+  }
+): Promise<StoredAuthSession> {
   const normalizedLoginId = normalizeLoginId(loginId);
   if (!normalizedLoginId) {
     throw new Error("loginId_required");
@@ -361,7 +392,8 @@ export async function loginPasswordAuthSession(loginId: string, password: string
     },
     body: JSON.stringify({
       loginId: normalizedLoginId,
-      password
+      password,
+      ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {})
     })
   })) as AuthSessionApiPayload;
 
@@ -404,7 +436,10 @@ export async function requestAccountRegistration(
 export async function confirmAccountRegistration(
   loginId: string,
   registrationToken: string,
-  password: string
+  password: string,
+  options?: {
+    privacyConsentAccepted?: boolean;
+  }
 ): Promise<StoredAuthSession> {
   const normalizedLoginId = normalizeLoginId(loginId);
   if (!normalizedLoginId) {
@@ -419,7 +454,8 @@ export async function confirmAccountRegistration(
     body: JSON.stringify({
       loginId: normalizedLoginId,
       registrationToken,
-      password
+      password,
+      ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {})
     })
   })) as AccountAuthApiPayload;
 
@@ -502,4 +538,24 @@ export async function syncCurrentAuthSession(): Promise<StoredAuthSession | null
 
     return currentSession;
   }
+}
+
+export async function deleteCurrentPlayerAccount(): Promise<AccountDeletionApiPayload["deleted"] | null> {
+  const currentSession = readStoredAuthSession();
+  if (!currentSession?.token) {
+    throw new Error("auth_session_required");
+  }
+
+  const payload = (await fetchAuthJson(
+    `${resolveAuthApiBaseUrl()}/api/players/me/delete`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      }
+    },
+    currentSession
+  )) as AccountDeletionApiPayload;
+  clearCurrentAuthSession();
+  return payload.deleted ?? null;
 }

@@ -125,8 +125,8 @@
         "x": 1,
         "y": 3
       },
-      "label": "峡湾征募站",
-      "unitTemplateId": "hero_guard_basic",
+      "label": "峡湾鹰骑岗",
+      "unitTemplateId": "wild_hawk_rider",
       "recruitCount": 4,
       "cost": {
         "gold": 220,

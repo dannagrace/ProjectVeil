@@ -1777,6 +1777,55 @@ h1 {
   opacity: 0.45;
 }
 
+.battle-report-form {
+  flex: 1 1 100%;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(71, 28, 19, 0.08);
+  border: 1px solid rgba(154, 68, 38, 0.24);
+}
+
+.battle-report-head {
+  display: grid;
+  gap: 4px;
+}
+
+.battle-report-head span {
+  font-size: 13px;
+  color: #6c4c42;
+}
+
+.battle-report-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+  color: #52362b;
+}
+
+.battle-report-form select,
+.battle-report-form textarea {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(82, 54, 43, 0.18);
+  background: rgba(255, 251, 246, 0.94);
+  color: #2b1e19;
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.battle-report-form textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.battle-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .room-status-panel,
 .battle-settlement-panel {
   margin-top: 14px;

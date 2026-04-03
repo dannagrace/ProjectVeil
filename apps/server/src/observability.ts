@@ -18,6 +18,8 @@ interface RuntimeObservabilityCounters {
   connectMessagesTotal: number;
   worldActionsTotal: number;
   battleActionsTotal: number;
+  websocketActionRateLimitedTotal: number;
+  websocketActionKickTotal: number;
 }
 
 interface AuthObservabilityCounters {
@@ -42,7 +44,21 @@ interface MatchmakingObservabilityCounters {
   rateLimitedTotal: number;
 }
 
-type AuthSessionFailureReason = "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked";
+type ActionValidationScope = "world" | "battle";
+
+interface HistogramMetricState {
+  buckets: number[];
+  bucketCounts: number[];
+  count: number;
+  sum: number;
+}
+
+type AuthSessionFailureReason =
+  | "unauthorized"
+  | "token_expired"
+  | "token_kind_invalid"
+  | "session_revoked"
+  | "account_banned";
 type AuthTokenDeliveryFailureReason =
   | "misconfigured"
   | "timeout"
@@ -88,6 +104,11 @@ interface RuntimeObservabilityState {
   startedAt: number;
   rooms: Map<string, RuntimeRoomSnapshot>;
   counters: RuntimeObservabilityCounters;
+  prometheus: {
+    battleDurationSeconds: HistogramMetricState;
+    httpRequestDurationSeconds: HistogramMetricState;
+    actionValidationFailuresTotal: Map<string, number>;
+  };
   auth: AuthObservabilityState;
   matchmaking: {
     counters: MatchmakingObservabilityCounters;
@@ -106,11 +127,13 @@ interface RuntimeHealthPayload {
     activeBattleCount: number;
     heroCount: number;
     gameplayTraffic: {
-      connectMessagesTotal: number;
-      worldActionsTotal: number;
-      battleActionsTotal: number;
-      actionMessagesTotal: number;
-    };
+        connectMessagesTotal: number;
+        worldActionsTotal: number;
+        battleActionsTotal: number;
+        actionMessagesTotal: number;
+        websocketActionRateLimitedTotal: number;
+        websocketActionKickTotal: number;
+      };
     auth: {
       activeGuestSessionCount: number;
       activeAccountSessionCount: number;
@@ -166,6 +189,17 @@ interface AuthTokenDeliveryPayload {
 }
 
 const RECENT_TOKEN_DELIVERY_ATTEMPTS_LIMIT = 25;
+const BATTLE_DURATION_SECONDS_BUCKETS = [1, 5, 10, 30, 60, 120, 300, 600];
+const HTTP_REQUEST_DURATION_SECONDS_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5];
+
+function createHistogramMetricState(buckets: number[]): HistogramMetricState {
+  return {
+    buckets: [...buckets].sort((left, right) => left - right),
+    bucketCounts: new Array(buckets.length).fill(0),
+    count: 0,
+    sum: 0
+  };
+}
 
 const runtimeObservability: RuntimeObservabilityState = {
   startedAt: Date.now(),
@@ -173,7 +207,14 @@ const runtimeObservability: RuntimeObservabilityState = {
   counters: {
     connectMessagesTotal: 0,
     worldActionsTotal: 0,
-    battleActionsTotal: 0
+    battleActionsTotal: 0,
+    websocketActionRateLimitedTotal: 0,
+    websocketActionKickTotal: 0
+  },
+  prometheus: {
+    battleDurationSeconds: createHistogramMetricState(BATTLE_DURATION_SECONDS_BUCKETS),
+    httpRequestDurationSeconds: createHistogramMetricState(HTTP_REQUEST_DURATION_SECONDS_BUCKETS),
+    actionValidationFailuresTotal: new Map<string, number>()
   },
   auth: {
     counters: {
@@ -202,7 +243,8 @@ const runtimeObservability: RuntimeObservabilityState = {
       unauthorized: 0,
       token_expired: 0,
       token_kind_invalid: 0,
-      session_revoked: 0
+      session_revoked: 0,
+      account_banned: 0
     },
     tokenDeliveryQueueCount: 0,
     tokenDeliveryDeadLetterCount: 0,
@@ -239,6 +281,51 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
   };
 }
 
+function escapePrometheusLabelValue(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"").replaceAll("\n", "\\n");
+}
+
+function formatPrometheusLabels(labels: Record<string, string>): string {
+  const entries = Object.entries(labels).filter(([, value]) => value.length > 0);
+  if (entries.length === 0) {
+    return "";
+  }
+
+  return `{${entries
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}="${escapePrometheusLabelValue(value)}"`)
+    .join(",")}}`;
+}
+
+function observeHistogram(state: HistogramMetricState, value: number): void {
+  const normalized = Number.isFinite(value) ? Math.max(0, value) : 0;
+  state.count += 1;
+  state.sum += normalized;
+
+  for (let index = 0; index < state.buckets.length; index += 1) {
+    if (normalized <= state.buckets[index]!) {
+      state.bucketCounts[index] = (state.bucketCounts[index] ?? 0) + 1;
+    }
+  }
+}
+
+function resetHistogram(state: HistogramMetricState): void {
+  state.bucketCounts.fill(0);
+  state.count = 0;
+  state.sum = 0;
+}
+
+function renderHistogramMetric(name: string, help: string, state: HistogramMetricState): string[] {
+  const lines = [`# HELP ${name} ${help}`, `# TYPE ${name} histogram`];
+  for (let index = 0; index < state.buckets.length; index += 1) {
+    lines.push(`${name}_bucket{le="${state.buckets[index]}"}` + ` ${state.bucketCounts[index]}`);
+  }
+  lines.push(`${name}_bucket{le="+Inf"} ${state.count}`);
+  lines.push(`${name}_sum ${state.sum}`);
+  lines.push(`${name}_count ${state.count}`);
+  return lines;
+}
+
 function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPayload {
   const roomSnapshots = Array.from(runtimeObservability.rooms.values());
   const activeRoomCount = roomSnapshots.length;
@@ -270,7 +357,9 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
         connectMessagesTotal: runtimeObservability.counters.connectMessagesTotal,
         worldActionsTotal: runtimeObservability.counters.worldActionsTotal,
         battleActionsTotal: runtimeObservability.counters.battleActionsTotal,
-        actionMessagesTotal
+        actionMessagesTotal,
+        websocketActionRateLimitedTotal: runtimeObservability.counters.websocketActionRateLimitedTotal,
+        websocketActionKickTotal: runtimeObservability.counters.websocketActionKickTotal
       },
       auth: {
         activeGuestSessionCount: runtimeObservability.auth.activeGuestSessionCount,
@@ -304,20 +393,24 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
 function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadinessPayload {
   const health = buildHealthPayload(service);
   const alerts: string[] = [];
+  const isTestEnvironment = process.env.NODE_ENV?.trim().toLowerCase() === "test";
   const normalizedWechatMode = process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
+  const hasWechatCredentials = Boolean(process.env.WECHAT_APP_ID?.trim() && process.env.WECHAT_APP_SECRET?.trim());
   const wechatMode =
-    normalizedWechatMode === "mock"
+    normalizedWechatMode === "mock" && isTestEnvironment
       ? "mock"
       : normalizedWechatMode === "production" || normalizedWechatMode === "code2session"
         ? "production"
         : normalizedWechatMode === "disabled"
           ? "disabled"
-          : process.env.NODE_ENV?.trim().toLowerCase() === "production"
-            ? "disabled"
-            : "mock";
+          : isTestEnvironment
+            ? "mock"
+            : hasWechatCredentials
+              ? "production"
+              : "disabled";
   const wechatCredentialsStatus =
     wechatMode === "production"
-      ? process.env.VEIL_WECHAT_MINIGAME_APP_ID?.trim() && process.env.VEIL_WECHAT_MINIGAME_APP_SECRET?.trim()
+      ? process.env.WECHAT_APP_ID?.trim() && process.env.WECHAT_APP_SECRET?.trim()
         ? "configured"
         : "missing"
       : "not_required";
@@ -437,6 +530,7 @@ function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): Runtim
       logTail: [
         `service ${service} rooms=${health.runtime.activeRoomCount} connections=${health.runtime.connectionCount}`,
         `traffic connect=${health.runtime.gameplayTraffic.connectMessagesTotal} world=${health.runtime.gameplayTraffic.worldActionsTotal} battle=${health.runtime.gameplayTraffic.battleActionsTotal}`,
+        `ws_action_rate_limit violations=${health.runtime.gameplayTraffic.websocketActionRateLimitedTotal} kicks=${health.runtime.gameplayTraffic.websocketActionKickTotal}`,
         `auth guest=${health.runtime.auth.activeGuestSessionCount} account=${health.runtime.auth.activeAccountSessionCount} queue=${health.runtime.auth.tokenDelivery.queueCount} rateLimited=${health.runtime.auth.counters.rateLimitedTotal}`,
         `matchmaking rateLimited=${health.runtime.matchmaking.counters.rateLimitedTotal}`
       ],
@@ -449,13 +543,56 @@ function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): Runtim
   };
 }
 
-function buildMetricsDocument(): string {
+export function buildPrometheusMetricsDocument(): string {
   const health = buildHealthPayload();
-
-  return [
+  const lines = [
     "# HELP veil_up Process health status.",
     "# TYPE veil_up gauge",
     "veil_up 1",
+    "# HELP veil_active_rooms Active room count.",
+    "# TYPE veil_active_rooms gauge",
+    `veil_active_rooms ${health.runtime.activeRoomCount}`,
+    "# HELP veil_connected_players Connected player count across active rooms.",
+    "# TYPE veil_connected_players gauge",
+    `veil_connected_players ${health.runtime.connectionCount}`
+  ];
+
+  lines.push(
+    ...renderHistogramMetric(
+      "veil_battle_duration_seconds",
+      "Battle duration from start until resolution.",
+      runtimeObservability.prometheus.battleDurationSeconds
+    )
+  );
+
+  lines.push("# HELP veil_action_validation_failures_total Total rejected gameplay actions.");
+  lines.push("# TYPE veil_action_validation_failures_total counter");
+  const actionValidationEntries = Array.from(runtimeObservability.prometheus.actionValidationFailuresTotal.entries()).sort(
+    ([left], [right]) => left.localeCompare(right)
+  );
+  if (actionValidationEntries.length === 0) {
+    lines.push("veil_action_validation_failures_total 0");
+  } else {
+    for (const [key, value] of actionValidationEntries) {
+      const [scope, reason] = key.split("::");
+      lines.push(
+        `veil_action_validation_failures_total${formatPrometheusLabels({
+          reason: reason ?? "unknown",
+          scope: scope ?? "unknown"
+        })} ${value}`
+      );
+    }
+  }
+
+  lines.push(
+    ...renderHistogramMetric(
+      "veil_http_request_duration_seconds",
+      "HTTP request duration for the dev server.",
+      runtimeObservability.prometheus.httpRequestDurationSeconds
+    )
+  );
+
+  lines.push(
     "# HELP veil_active_room_count Active room count.",
     "# TYPE veil_active_room_count gauge",
     `veil_active_room_count ${health.runtime.activeRoomCount}`,
@@ -480,6 +617,12 @@ function buildMetricsDocument(): string {
     "# HELP veil_gameplay_action_messages_total Total processed gameplay action messages.",
     "# TYPE veil_gameplay_action_messages_total counter",
     `veil_gameplay_action_messages_total ${health.runtime.gameplayTraffic.actionMessagesTotal}`,
+    "# HELP veil_ws_action_rate_limited_total Total gameplay action messages rejected by the WebSocket per-player rate limiter.",
+    "# TYPE veil_ws_action_rate_limited_total counter",
+    `veil_ws_action_rate_limited_total ${health.runtime.gameplayTraffic.websocketActionRateLimitedTotal}`,
+    "# HELP veil_ws_action_kicks_total Total client disconnects triggered by WebSocket action rate-limit violations.",
+    "# TYPE veil_ws_action_kicks_total counter",
+    `veil_ws_action_kicks_total ${health.runtime.gameplayTraffic.websocketActionKickTotal}`,
     "# HELP veil_auth_guest_sessions Active guest auth sessions tracked by this process.",
     "# TYPE veil_auth_guest_sessions gauge",
     `veil_auth_guest_sessions ${health.runtime.auth.activeGuestSessionCount}`,
@@ -585,7 +728,9 @@ function buildMetricsDocument(): string {
     "# HELP veil_auth_session_failures_session_revoked_total Total auth session failures caused by revoked sessions.",
     "# TYPE veil_auth_session_failures_session_revoked_total counter",
     `veil_auth_session_failures_session_revoked_total ${health.runtime.auth.sessionFailureReasons.session_revoked}`
-  ].join("\n");
+  );
+
+  return lines.join("\n");
 }
 
 export function recordRuntimeRoom(snapshot: RuntimeRoomSnapshot): void {
@@ -606,6 +751,31 @@ export function recordWorldActionMessage(): void {
 
 export function recordBattleActionMessage(): void {
   runtimeObservability.counters.battleActionsTotal += 1;
+}
+
+export function recordBattleDuration(durationSeconds: number): void {
+  observeHistogram(runtimeObservability.prometheus.battleDurationSeconds, durationSeconds);
+}
+
+export function recordActionValidationFailure(scope: ActionValidationScope, reason: string): void {
+  const normalizedReason = reason.trim() || "unknown";
+  const key = `${scope}::${normalizedReason}`;
+  runtimeObservability.prometheus.actionValidationFailuresTotal.set(
+    key,
+    (runtimeObservability.prometheus.actionValidationFailuresTotal.get(key) ?? 0) + 1
+  );
+}
+
+export function recordHttpRequestDuration(durationSeconds: number): void {
+  observeHistogram(runtimeObservability.prometheus.httpRequestDurationSeconds, durationSeconds);
+}
+
+export function recordWebSocketActionRateLimited(): void {
+  runtimeObservability.counters.websocketActionRateLimitedTotal += 1;
+}
+
+export function recordWebSocketActionKick(): void {
+  runtimeObservability.counters.websocketActionKickTotal += 1;
 }
 
 export function setAuthGuestSessionCount(count: number): void {
@@ -761,6 +931,11 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.counters.connectMessagesTotal = 0;
   runtimeObservability.counters.worldActionsTotal = 0;
   runtimeObservability.counters.battleActionsTotal = 0;
+  runtimeObservability.counters.websocketActionRateLimitedTotal = 0;
+  runtimeObservability.counters.websocketActionKickTotal = 0;
+  resetHistogram(runtimeObservability.prometheus.battleDurationSeconds);
+  resetHistogram(runtimeObservability.prometheus.httpRequestDurationSeconds);
+  runtimeObservability.prometheus.actionValidationFailuresTotal.clear();
   runtimeObservability.auth.counters.sessionChecksTotal = 0;
   runtimeObservability.auth.counters.sessionFailuresTotal = 0;
   runtimeObservability.auth.counters.guestLoginsTotal = 0;
@@ -840,7 +1015,7 @@ export function registerRuntimeObservabilityRoutes(
     try {
       response.statusCode = 200;
       response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
-      response.end(`${buildMetricsDocument()}\n`);
+      response.end(`${buildPrometheusMetricsDocument()}\n`);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

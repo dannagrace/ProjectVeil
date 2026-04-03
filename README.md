@@ -63,6 +63,7 @@
 - Node.js 22 LTS（CI 同款；仓库提供 `.nvmrc`）
 - npm 10+
 - 可选：MySQL 8+（只有在你要验证持久化时才需要）
+- 可选：Redis 7+（只有在你要验证多节点 Colyseus / 跨节点匹配时才需要）
 
 ### 5-Minute Setup
 
@@ -90,8 +91,22 @@ npm run dev:client:h5
 - 配置台：`http://127.0.0.1:5173/config-center.html`
 - 服务端健康检查：`http://127.0.0.1:2567/api/runtime/health`
 - 匹配队列默认会把断线玩家 5 分钟后清理掉，可用 `VEIL_MATCHMAKING_QUEUE_TTL_SECONDS`（默认 `300` 秒）覆盖
+- 设置 `REDIS_URL` 后，Colyseus presence/driver 和 matchmaking 队列都会自动切到 Redis-backed 实现
 
 如果你要启用 MySQL 持久化，再复制 `.env.example` 到 `.env`，填入 `VEIL_MYSQL_*`，然后执行 `npm run db:migrate`。更多说明见 `docs/mysql-persistence.md`。
+
+如果你要把 MySQL 备份自动上传到兼容 S3 的对象存储，再补充 `VEIL_BACKUP_*`，执行 `./scripts/db-backup.sh` 做一次手动演练，并按 `ops/mysql-backup.cron.example` 安装每日 03:00 的 cron。恢复步骤见 `docs/db-restore-runbook.md`。
+
+如果你要验证 Redis-backed Colyseus scaling，可先启动根目录的 `docker-compose.redis.yml`，再用同一个 `REDIS_URL` 启两个服务节点：
+
+```bash
+docker compose -f docker-compose.redis.yml up -d
+REDIS_URL=redis://127.0.0.1:6379/0 PORT=2567 npm run dev:server
+REDIS_URL=redis://127.0.0.1:6379/0 PORT=2568 npm run dev:server
+REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
+```
+
+未设置 `REDIS_URL` 时，服务端保持现有单进程本地行为不变。完整部署说明见 `docs/redis-colyseus-scaling.md`。
 
 ## 当前仓库落地内容
 
@@ -201,6 +216,7 @@ npm run dev:client:h5
 - 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
 - 微信小游戏 runtime observability 签核：`docs/wechat-runtime-observability-signoff.md`
 - 微信小游戏 runtime observability 签核模板：`docs/release-evidence/wechat-runtime-observability-signoff.template.md`
+- Redis-backed Colyseus 多节点部署：`docs/redis-colyseus-scaling.md`
 - Phase 1 成熟度记分卡与退出标准：`docs/phase1-maturity-scorecard.md`
 - 仓库成熟度基线与独立 follow-up slices：`docs/repo-maturity-baseline.md`
 - 核心玩法发布门禁清单：`docs/core-gameplay-release-readiness.md`
@@ -284,6 +300,7 @@ npm run dev:client:h5
 - 服务端还新增了 `GET /api/auth/session` 与 `GET /api/player-accounts/me`、`PUT /api/player-accounts/me`：前者用于校验和刷新当前游客会话，后者用于按当前登录态读取/修改自己的账号资料，不需要前端再手拼 `playerId`。
 - 账号体系现已从“纯游客模式”升级为“双模式骨架”：`player_accounts` 新增 `loginId / passwordHash / credentialBoundAt`，服务端开放 `POST /api/auth/account-bind` 与 `POST /api/auth/account-login`，可把当前游客档绑定成口令账号，并在之后直接用登录 ID + 口令进入房间。
 - 鉴权入口现已补上进程内安全闸门：`POST /api/auth/guest-login`、`/account-login`、`/account-bind` 都会按来源 IP 走滑动窗口限流，`account-login` 还会在连续失败达到阈值后临时锁定账号；默认值分别来自 `VEIL_RATE_LIMIT_AUTH_WINDOW_MS=60000`、`VEIL_RATE_LIMIT_AUTH_MAX=10`、`VEIL_AUTH_LOCKOUT_THRESHOLD=10`、`VEIL_AUTH_LOCKOUT_DURATION_MINUTES=15`，游客会话缓存还会受 `VEIL_MAX_GUEST_SESSIONS=10000` 的 LRU 上限约束。
+- 房间内玩家的 `world.action` / `battle.action` WebSocket 消息也会按玩家维度走滑动窗口限流；默认值来自 `VEIL_RATE_LIMIT_WS_ACTION_WINDOW_MS=1000` 和 `VEIL_RATE_LIMIT_WS_ACTION_MAX=8`，超限会返回 `rate_limit_exceeded` 并立即断开该连接。
 - 正式账号会话现在补上了过期、设备列表与撤销链路：访问令牌默认 1 小时（`VEIL_AUTH_ACCESS_TTL_SECONDS`），刷新令牌默认 30 天（`VEIL_AUTH_REFRESH_TTL_SECONDS`），游客 token 默认 7 天（`VEIL_AUTH_GUEST_TTL_SECONDS`）；服务端新增 `POST /api/auth/refresh`、`POST /api/auth/logout`、`GET /api/player-accounts/me/sessions` 与 `DELETE /api/player-accounts/me/sessions/:sessionId`，正式账号可在 H5 资料卡查看当前设备列表、标记当前设备并撤销其他设备会话，账号口令修改仍会同步撤销现有会话。
 - 服务端现已补上正式注册令牌投递适配层：`POST /api/auth/account-registration/request` 可为全新正式账号预留 `loginId` 并生成短时效注册令牌，`POST /api/auth/account-registration/confirm` 会创建新的 `player_accounts` 档案、绑定口令并立即签发首个账号会话；默认仍用 `VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE=dev-token` 直出联调令牌，也可切到 `smtp` 或 `webhook` 走外部投递且不再把 token 回给客户端，TTL 由 `VEIL_ACCOUNT_REGISTRATION_TTL_MINUTES` 控制。外部投递现已补上有界重试 / dead-letter 机制，`request` 响应会附带 `deliveryStatus`，临时失败会返回 `202 + retry_scheduled` 而不是立即丢失投递。
 - 服务端现已补上密码找回令牌投递适配层：`POST /api/auth/password-recovery/request` 会为已绑定口令账号生成短时效重置令牌，`POST /api/auth/password-recovery/confirm` 可用该令牌重置口令并撤销旧会话；默认通过 `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE=dev-token` 直接回传开发态令牌，也可切到 `smtp` 或 `webhook` 走外部投递且不再把 token 回给客户端，TTL 由 `VEIL_PASSWORD_RECOVERY_TTL_MINUTES` 控制，且找回申请/确认都会写入账号 `recentEventLog` 的 `account` 审计事件。运行时新增 `GET /api/runtime/account-token-delivery` 与对应 Prometheus 指标，方便查看最近投递尝试、重试队列和 dead-letter。详细说明见 `docs/account-auth-lifecycle.md`。

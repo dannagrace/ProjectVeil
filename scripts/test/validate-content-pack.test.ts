@@ -28,6 +28,14 @@ async function seedContentPackRoot(tempDir: string): Promise<void> {
       "phase1-map-objects-stonewatch-fork.json",
       "phase1-world-ridgeway-crossing.json",
       "phase1-map-objects-ridgeway-crossing.json",
+      "phase1-world-highland-reach.json",
+      "phase1-map-objects-highland-reach.json",
+      "phase1-world-amber-fields.json",
+      "phase1-map-objects-amber-fields.json",
+      "phase1-world-ironpass-gorge.json",
+      "phase1-map-objects-ironpass-gorge.json",
+      "phase1-world-splitrock-canyon.json",
+      "phase1-map-objects-splitrock-canyon.json",
       "phase2-contested-basin.json",
       "phase2-map-objects-contested-basin.json",
       "units.json",
@@ -53,15 +61,27 @@ test("validate-content-pack validates all shipped map packs with CLI presets", a
       "--map-pack",
       "ridgeway-crossing",
       "--map-pack",
+      "highland-reach",
+      "--map-pack",
+      "amber-fields",
+      "--map-pack",
+      "ironpass-gorge",
+      "--map-pack",
+      "splitrock-canyon",
+      "--map-pack",
       "phase2"
     ],
     { cwd: repoRoot }
   );
 
-  assert.match(stdout, /Bundles: 5/);
+  assert.match(stdout, /Bundles: 9/);
   assert.match(stdout, /Bundle: frontier-basin/);
   assert.match(stdout, /Bundle: stonewatch-fork/);
   assert.match(stdout, /Bundle: ridgeway-crossing/);
+  assert.match(stdout, /Bundle: highland-reach/);
+  assert.match(stdout, /Bundle: amber-fields/);
+  assert.match(stdout, /Bundle: ironpass-gorge/);
+  assert.match(stdout, /Bundle: splitrock-canyon/);
   assert.match(stdout, /Bundle: phase2/);
   assert.match(stdout, /Result: PASS/);
 });

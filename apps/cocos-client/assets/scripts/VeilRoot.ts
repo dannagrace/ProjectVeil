@@ -2,6 +2,7 @@ import { _decorator, Camera, Canvas, Color, Component, EventMouse, EventTouch, G
 import { getEquipmentDefinition, type EquipmentType } from "./project-shared/index.ts";
 import {
   type BattleAction,
+  type PlayerReportReason,
   VeilCocosSession,
   type VeilCocosSessionOptions,
   type ConnectionEvent,
@@ -126,7 +127,8 @@ import {
   type RuntimeDiagnosticsConnectionStatus,
   validateAccountLifecycleConfirm,
   validateAccountLifecycleRequest,
-  validateAccountPassword
+  validateAccountPassword,
+  validatePrivacyConsentAccepted
 } from "../../../../packages/shared/src/index.ts";
 
 const { ccclass, property } = _decorator;
@@ -254,6 +256,7 @@ export class VeilRoot extends Component {
   private authMode: "guest" | "account" = "guest";
   private authProvider: CocosAuthProvider = "guest";
   private loginId = "";
+  private privacyConsentAccepted = false;
   private sessionSource: "remote" | "local" | "manual" | "none" = "none";
   private levelUpNotice: (HeroProgressNotice & { expiresAt: number }) | null = null;
   private achievementNotice: ({ title: string; detail: string; expiresAt: number } & { eventId: string }) | null = null;
@@ -298,6 +301,9 @@ export class VeilRoot extends Component {
   private stopRuntimeMemoryWarnings: (() => void) | null = null;
   private battlePresentation = createCocosBattlePresentationController();
   private lastBattleSettlementSnapshot: BattleSettlementSnapshot | null = null;
+  private reportDialogOpen = false;
+  private reportSubmitting = false;
+  private reportStatusMessage: string | null = null;
 
   onLoad(): void {
     this.audioRuntime.dispose();
@@ -721,6 +727,15 @@ export class VeilRoot extends Component {
       onToggleAchievements: () => {
         void this.openGameplayBattleReportCenter();
       },
+      onToggleReport: () => {
+        this.toggleReportDialog();
+      },
+      onSubmitReport: (reason) => {
+        void this.submitPlayerReport(reason);
+      },
+      onCancelReport: () => {
+        this.closeReportDialog();
+      },
       onLearnSkill: (skillId) => {
         void this.learnHeroSkill(skillId);
       },
@@ -759,6 +774,9 @@ export class VeilRoot extends Component {
       },
       onEditLoginId: () => {
         this.promptForLobbyField("loginId");
+      },
+      onTogglePrivacyConsent: () => {
+        this.togglePrivacyConsent();
       },
       onRefresh: () => {
         void this.refreshLobbyRoomList();
@@ -1032,6 +1050,7 @@ export class VeilRoot extends Component {
         roomId: this.roomId,
         authMode: this.authMode,
         loginId: this.loginId,
+        privacyConsentAccepted: this.privacyConsentAccepted,
         loginHint: this.describeLobbyLoginHint(),
         loginActionLabel: this.primaryLoginProvider().label,
         shareHint: this.describeLobbyShareHint(),
@@ -1089,6 +1108,13 @@ export class VeilRoot extends Component {
       achievementNotice: this.achievementNotice
         ? { title: this.achievementNotice.title, detail: this.achievementNotice.detail }
         : null,
+      reporting: {
+        open: this.reportDialogOpen,
+        available: Boolean(this.resolveReportTarget()),
+        targetLabel: this.resolveReportTarget()?.name ?? null,
+        status: this.reportStatusMessage,
+        submitting: this.reportSubmitting
+      },
       presentation: this.buildHudPresentationState()
     });
     this.mapBoard?.render(this.lastUpdate);
@@ -1350,6 +1376,78 @@ export class VeilRoot extends Component {
     this.renderView();
   }
 
+  private resolveReportTarget(): { playerId: string; name: string } | null {
+    const target = this.lastUpdate?.world.visibleHeroes.find((hero) => hero.playerId !== this.playerId) ?? null;
+    return target ? { playerId: target.playerId, name: `${target.name} · ${target.playerId}` } : null;
+  }
+
+  private toggleReportDialog(): void {
+    if (this.reportSubmitting) {
+      return;
+    }
+
+    const target = this.resolveReportTarget();
+    if (!target) {
+      this.reportDialogOpen = false;
+      this.reportStatusMessage = "当前没有可举报的对手。";
+      this.predictionStatus = this.reportStatusMessage;
+      this.renderView();
+      return;
+    }
+
+    this.reportDialogOpen = !this.reportDialogOpen;
+    this.reportStatusMessage = this.reportDialogOpen ? `目标 ${target.name} · ${target.playerId}` : null;
+    this.renderView();
+  }
+
+  private closeReportDialog(): void {
+    if (this.reportSubmitting) {
+      return;
+    }
+
+    this.reportDialogOpen = false;
+    this.reportStatusMessage = null;
+    this.renderView();
+  }
+
+  private async submitPlayerReport(reason: PlayerReportReason): Promise<void> {
+    const target = this.resolveReportTarget();
+    if (!this.session || !target) {
+      this.reportDialogOpen = false;
+      this.reportStatusMessage = "当前没有可举报的对手。";
+      this.renderView();
+      return;
+    }
+
+    this.reportSubmitting = true;
+    this.reportStatusMessage = `正在举报 ${target.name}...`;
+    this.renderView();
+
+    try {
+      await this.session.reportPlayer(target.playerId, reason);
+      this.reportDialogOpen = false;
+      this.reportStatusMessage = `已提交举报：${target.name}`;
+      this.predictionStatus = "举报已提交，等待管理员审核。";
+      this.pushLog(`已举报 ${target.name}：${reason}`);
+    } catch (error) {
+      this.reportStatusMessage = error instanceof Error
+        ? error.message === "duplicate_player_report"
+          ? "同一场对局中已举报过该玩家。"
+          : error.message === "report_target_unavailable"
+            ? "目标玩家已不在当前对局中。"
+            : error.message === "reporting_unavailable"
+              ? "当前服务器未启用举报存储。"
+              : error.message === "report_submit_failed"
+                ? "举报提交失败。"
+            : "举报提交失败。"
+        : "举报提交失败。";
+      this.predictionStatus = this.reportStatusMessage;
+    } finally {
+      this.reportSubmitting = false;
+      this.renderView();
+    }
+  }
+
   private async openGameplayBattleReportCenter(): Promise<void> {
     this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
       type: "section.selected",
@@ -1548,6 +1646,15 @@ export class VeilRoot extends Component {
         },
         onToggleAchievements: () => {
           void this.openGameplayBattleReportCenter();
+        },
+        onToggleReport: () => {
+          this.toggleReportDialog();
+        },
+        onSubmitReport: (reason) => {
+          void this.submitPlayerReport(reason);
+        },
+        onCancelReport: () => {
+          this.closeReportDialog();
         },
         onLearnSkill: (skillId) => {
           void this.learnHeroSkill(skillId);
@@ -2078,6 +2185,10 @@ export class VeilRoot extends Component {
       return;
     }
 
+    if (!this.ensurePrivacyConsentAccepted()) {
+      return;
+    }
+
     const storage = this.readWebStorage();
     const preferences = saveCocosLobbyPreferences(this.playerId, roomIdOverride ?? this.roomId, undefined, storage);
     const displayName = rememberPreferredCocosDisplayName(preferences.playerId, this.displayName || preferences.playerId, storage);
@@ -2104,7 +2215,8 @@ export class VeilRoot extends Component {
         authSession = syncedSession;
       } else {
         authSession = await resolveVeilRootRuntime().loginGuestAuthSession(this.remoteUrl, preferences.playerId, displayName, {
-          storage
+          storage,
+          privacyConsentAccepted: this.privacyConsentAccepted
         });
       }
       this.authToken = authSession.token ?? null;
@@ -2211,6 +2323,10 @@ export class VeilRoot extends Component {
       return;
     }
 
+    if (!this.ensurePrivacyConsentAccepted()) {
+      return;
+    }
+
     const storage = this.readWebStorage();
     this.lobbyEntering = true;
     this.lobbyStatus = `正在使用账号 ${nextLoginId.toLowerCase()} 登录并进入房间 ${this.roomId}...`;
@@ -2224,7 +2340,10 @@ export class VeilRoot extends Component {
           loginId: nextLoginId,
           password
         },
-        { storage }
+        {
+          storage,
+          privacyConsentAccepted: this.privacyConsentAccepted
+        }
       );
       this.authToken = authSession.token ?? null;
       this.playerId = authSession.playerId;
@@ -2283,6 +2402,17 @@ export class VeilRoot extends Component {
     return error instanceof Error ? error.message : fallback;
   }
 
+  private ensurePrivacyConsentAccepted(): boolean {
+    const privacyConsentError = validatePrivacyConsentAccepted(this.privacyConsentAccepted);
+    if (!privacyConsentError) {
+      return true;
+    }
+
+    this.lobbyStatus = privacyConsentError.message;
+    this.renderView();
+    return false;
+  }
+
   private async registerLobbyAccount(): Promise<void> {
     this.openLobbyAccountFlow("registration");
   }
@@ -2292,6 +2422,10 @@ export class VeilRoot extends Component {
   }
 
   private async loginLobbyWechatMiniGame(): Promise<void> {
+    if (!this.ensurePrivacyConsentAccepted()) {
+      return;
+    }
+
     const storage = this.readWebStorage();
     this.lobbyEntering = true;
     this.lobbyStatus = "正在调用 wx.login() 并交换小游戏会话...";
@@ -2309,7 +2443,8 @@ export class VeilRoot extends Component {
           storage,
           wx: (globalThis as { wx?: { login?: ((options: unknown) => void) | undefined } }).wx ?? null,
           config: this.loginRuntimeConfig,
-          authToken: this.authToken
+          authToken: this.authToken,
+          privacyConsentAccepted: this.privacyConsentAccepted
         }
       );
       this.authToken = authSession.token ?? null;
@@ -2453,6 +2588,12 @@ export class VeilRoot extends Component {
     this.renderView();
   }
 
+  private togglePrivacyConsent(): void {
+    this.privacyConsentAccepted = !this.privacyConsentAccepted;
+    this.lobbyStatus = this.privacyConsentAccepted ? "已同意隐私说明。" : "已取消隐私说明勾选。";
+    this.renderView();
+  }
+
   private promptForAccountFlowField(field: "loginId" | "displayName" | "token" | "password"): void {
     const promptRef = globalThis.prompt;
     if (typeof promptRef !== "function" || !this.activeAccountFlow) {
@@ -2579,7 +2720,8 @@ export class VeilRoot extends Component {
     const validationError = validateAccountLifecycleConfirm(this.activeAccountFlow, {
       loginId,
       token: this.activeAccountFlow === "registration" ? this.registrationToken : this.recoveryToken,
-      password: this.activeAccountFlow === "registration" ? this.registrationPassword : this.recoveryPassword
+      password: this.activeAccountFlow === "registration" ? this.registrationPassword : this.recoveryPassword,
+      privacyConsentAccepted: this.privacyConsentAccepted
     });
     if (validationError) {
       this.lobbyStatus = validationError.message;
@@ -2607,7 +2749,10 @@ export class VeilRoot extends Component {
         loginId,
         this.registrationToken,
         this.registrationPassword,
-        { storage }
+        {
+          storage,
+          privacyConsentAccepted: this.privacyConsentAccepted
+        }
       );
       this.authToken = authSession.token ?? null;
       this.playerId = authSession.playerId;
@@ -2652,7 +2797,10 @@ export class VeilRoot extends Component {
           loginId,
           password: this.recoveryPassword
         },
-        { storage }
+        {
+          storage,
+          privacyConsentAccepted: this.privacyConsentAccepted
+        }
       );
       this.authToken = authSession.token ?? null;
       this.playerId = authSession.playerId;

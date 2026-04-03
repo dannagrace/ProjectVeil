@@ -1,3 +1,4 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
@@ -12,7 +13,11 @@ import { registerConfigViewerRoutes } from "./config-viewer";
 import { registerLobbyRoutes } from "./lobby";
 import { registerMatchmakingRoutes } from "./matchmaking";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
-import { registerRuntimeObservabilityRoutes } from "./observability";
+import {
+  buildPrometheusMetricsDocument,
+  recordHttpRequestDuration,
+  registerRuntimeObservabilityRoutes
+} from "./observability";
 import {
   MySqlRoomSnapshotStore,
   readMySqlPersistenceConfig,
@@ -22,12 +27,20 @@ import {
 } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
 import { registerAdminRoutes } from "./admin-console";
+import { registerShopRoutes } from "./shop";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
+import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "./redis";
+import { registerWechatPayRoutes } from "./wechat-pay";
 
 loadEnv();
 
 interface DevServerTransport {
   getExpressApp(): unknown;
+}
+
+interface DevServerHttpApp {
+  use(handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void): void;
+  get(path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>): void;
 }
 
 interface DevServerDefinitionChain {
@@ -37,6 +50,11 @@ interface DevServerDefinitionChain {
 interface DevServerGameServer {
   define(name: string, room: typeof VeilColyseusRoom): DevServerDefinitionChain;
   listen(port: number, host: string): Promise<void>;
+}
+
+interface DevServerRealtimeOptions {
+  driver?: unknown;
+  presence?: unknown;
 }
 
 interface DevServerLogger {
@@ -86,20 +104,56 @@ export interface DevServerBootstrapDependencies {
   createMemoryRoomSnapshotStore(): DevServerRoomSnapshotStore;
   configureRoomSnapshotStore(store: DevServerRoomSnapshotStore): void;
   createTransport(): DevServerTransport;
+  readRedisUrl(): string | null;
+  createRedisPresence(redisUrl: string): { shutdown(): Promise<void> | void };
+  createRedisDriver(redisUrl: string): { shutdown(): Promise<void> | void };
   registerAuthRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerConfigCenterRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerConfigViewerRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerPlayerAccountRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
+  registerShopRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
+  registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
   registerRuntimeObservabilityRoutes(app: unknown, options?: { store?: DevServerRoomSnapshotStore }): void;
+  registerPrometheusMetricsMiddleware(app: unknown): void;
+  registerPrometheusMetricsRoute(app: unknown): void;
   registerAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore, gameServer: DevServerGameServer): void;
-  createGameServer(transport: DevServerTransport): DevServerGameServer;
+  createGameServer(transport: DevServerTransport, realtimeOptions?: DevServerRealtimeOptions): DevServerGameServer;
   logger: DevServerLogger;
   process: DevServerProcess;
   setInterval(handler: () => void, delayMs: number): CleanupTimerHandle;
   clearInterval(timer: CleanupTimerHandle): void;
   isMySqlSnapshotStore(store: DevServerRoomSnapshotStore): store is DevServerMySqlSnapshotStore;
+}
+
+export function registerPrometheusMetricsMiddleware(app: DevServerHttpApp): void {
+  app.use((request, response, next) => {
+    const startedAt = process.hrtime.bigint();
+    let recorded = false;
+
+    const recordDuration = (): void => {
+      if (recorded) {
+        return;
+      }
+
+      recorded = true;
+      const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
+      recordHttpRequestDuration(durationSeconds);
+    };
+
+    response.once("finish", recordDuration);
+    response.once("close", recordDuration);
+    next();
+  });
+}
+
+export function registerPrometheusMetricsRoute(app: DevServerHttpApp): void {
+  app.get("/metrics", async (_request, response) => {
+    response.statusCode = 200;
+    response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+    response.end(`${buildPrometheusMetricsDocument()}\n`);
+  });
 }
 
 function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDependencies {
@@ -113,19 +167,28 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     createMemoryRoomSnapshotStore: () => createMemoryRoomSnapshotStore(),
     configureRoomSnapshotStore: (store) => configureRoomSnapshotStore(store as RoomSnapshotStore),
     createTransport: () => new WebSocketTransport(),
+    readRedisUrl,
+    createRedisPresence,
+    createRedisDriver,
     registerAuthRoutes: (app, store) => registerAuthRoutes(app as never, store as RoomSnapshotStore),
     registerConfigCenterRoutes: (app, store) => registerConfigCenterRoutes(app as never, store as ConfigCenterStore),
     registerConfigViewerRoutes: (app, store) => registerConfigViewerRoutes(app as never, store as ConfigCenterStore),
     registerPlayerAccountRoutes: (app, store) => registerPlayerAccountRoutes(app as never, store as RoomSnapshotStore),
+    registerShopRoutes: (app, store) => registerShopRoutes(app as never, store as RoomSnapshotStore),
+    registerWechatPayRoutes: (app, store) => registerWechatPayRoutes(app as never, store as RoomSnapshotStore),
     registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
     registerRuntimeObservabilityRoutes: (app, options) => registerRuntimeObservabilityRoutes(app as never, options),
+    registerPrometheusMetricsMiddleware: (app) => registerPrometheusMetricsMiddleware(app as DevServerHttpApp),
+    registerPrometheusMetricsRoute: (app) => registerPrometheusMetricsRoute(app as DevServerHttpApp),
     registerAdminRoutes: (app, store, gameServer) =>
       registerAdminRoutes(app as never, store as RoomSnapshotStore, gameServer),
-    createGameServer: (transport) =>
+    createGameServer: (transport, realtimeOptions) =>
       new Server({
-        transport: transport as WebSocketTransport
+        transport: transport as WebSocketTransport,
+        driver: realtimeOptions?.driver as never,
+        presence: realtimeOptions?.presence as never
       }),
     logger: console,
     process,
@@ -162,18 +225,28 @@ export async function startDevServer(
   const effectiveSnapshotStore = snapshotStore ?? deps.createMemoryRoomSnapshotStore();
   deps.configureRoomSnapshotStore(effectiveSnapshotStore);
   await configCenterStore.initializeRuntimeConfigs();
+  const redisUrl = deps.readRedisUrl();
+  const redisPresence = redisUrl ? deps.createRedisPresence(redisUrl) : null;
+  const redisDriver = redisUrl ? deps.createRedisDriver(redisUrl) : null;
 
   const transport = deps.createTransport();
   const expressApp = transport.getExpressApp();
+  deps.registerPrometheusMetricsMiddleware(expressApp);
+  deps.registerPrometheusMetricsRoute(expressApp);
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
   deps.registerConfigCenterRoutes(expressApp, configCenterStore);
   deps.registerConfigViewerRoutes(expressApp, configCenterStore);
   deps.registerPlayerAccountRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerShopRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
   deps.registerRuntimeObservabilityRoutes(expressApp, { store: effectiveSnapshotStore });
 
-  const gameServer = deps.createGameServer(transport);
+  const gameServer = deps.createGameServer(transport, {
+    driver: redisDriver ?? undefined,
+    presence: redisPresence ?? undefined
+  });
   deps.registerAdminRoutes(expressApp, effectiveSnapshotStore, gameServer);
   gameServer.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await gameServer.listen(port, host);
@@ -184,13 +257,20 @@ export async function startDevServer(
   deps.logger.log(`Player account API available at http://${host}:${port}/api/player-accounts`);
   deps.logger.log(`Guest auth API available at http://${host}:${port}/api/auth/guest-login`);
   deps.logger.log(`WeChat auth API available at http://${host}:${port}/api/auth/wechat-login`);
+  deps.logger.log(`WeChat Pay API available at http://${host}:${port}/api/payments/wechat/create`);
   deps.logger.log(`Lobby API available at http://${host}:${port}/api/lobby/rooms`);
   deps.logger.log(`Matchmaking API available at http://${host}:${port}/api/matchmaking/status`);
   deps.logger.log(`Runtime health available at http://${host}:${port}/api/runtime/health`);
   deps.logger.log(`Auth readiness available at http://${host}:${port}/api/runtime/auth-readiness`);
   deps.logger.log(`Runtime diagnostic snapshot available at http://${host}:${port}/api/runtime/diagnostic-snapshot`);
+  deps.logger.log(`Prometheus metrics available at http://${host}:${port}/metrics`);
   deps.logger.log(`Runtime metrics available at http://${host}:${port}/api/runtime/metrics`);
   deps.logger.log(`Config center storage: ${configCenterStore.mode}`);
+  if (redisUrl) {
+    deps.logger.log("Redis-backed Colyseus presence/driver enabled via REDIS_URL");
+  } else {
+    deps.logger.log("Local in-memory Colyseus presence/driver enabled");
+  }
   if (snapshotStore) {
     deps.logger.log("MySQL room persistence enabled");
   } else {
@@ -232,10 +312,17 @@ export async function startDevServer(
     if (!snapshotStore) {
       await effectiveSnapshotStore.close();
       await configCenterStore.close();
+      await closeRedisResource(redisPresence);
+      await closeRedisResource(redisDriver);
       return;
     }
 
-    await Promise.all([effectiveSnapshotStore.close(), configCenterStore.close()]);
+    await Promise.all([
+      effectiveSnapshotStore.close(),
+      configCenterStore.close(),
+      closeRedisResource(redisPresence),
+      closeRedisResource(redisDriver)
+    ]);
   };
 
   let shutdownStarted = false;

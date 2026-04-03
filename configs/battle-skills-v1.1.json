@@ -175,6 +175,127 @@
       "effects": {
         "grantedStatusId": "watchful_guard"
       }
+    },
+    {
+      "id": "cave_bear_cleave",
+      "name": "裂岩横扫",
+      "description": "洞熊正面撕咬主目标，并以蛮力横扫相邻敌军。",
+      "kind": "active",
+      "target": "enemy",
+      "cooldown": 3,
+      "effects": {
+        "damageMultiplier": 1.1,
+        "splashDamageMultiplier": 0.5
+      }
+    },
+    {
+      "id": "serpent_venom",
+      "name": "蛇毒獠牙",
+      "description": "命中时注入更持久的蛇毒，让目标持续失血。",
+      "kind": "passive",
+      "target": "enemy",
+      "cooldown": 0,
+      "effects": {
+        "onHitStatusId": "serpent_poison"
+      }
+    },
+    {
+      "id": "skybound",
+      "name": "鹰翼凌空",
+      "description": "借助飞行机动越过地形阻隔，可跨越水域移动。",
+      "kind": "passive",
+      "target": "self",
+      "cooldown": 0,
+      "effects": {}
+    },
+    {
+      "id": "field_mending",
+      "name": "战地缝合",
+      "description": "根据施法者的 power 恢复己方单位生命。",
+      "kind": "active",
+      "target": "ally",
+      "delivery": "ranged",
+      "cooldown": 2,
+      "effects": {}
+    },
+    {
+      "id": "royal_charge",
+      "name": "皇家冲锋",
+      "description": "仅可在首回合发动的重骑冲锋，猛击主目标并穿透波及相邻敌军。",
+      "kind": "active",
+      "target": "enemy",
+      "cooldown": 4,
+      "effects": {
+        "damageMultiplier": 1.25,
+        "onHitStatusId": "armor_break",
+        "splashDamageMultiplier": 0.5,
+        "maxRound": 1
+      }
+    },
+    {
+      "id": "taunt_shout",
+      "name": "嘲阵怒喝",
+      "description": "激怒敌军，迫使其下次行动优先攻击施放者。",
+      "kind": "active",
+      "target": "enemy",
+      "delivery": "ranged",
+      "cooldown": 3,
+      "effects": {
+        "damageMultiplier": 0.6,
+        "allowRetaliation": false,
+        "onHitStatusId": "taunted"
+      }
+    },
+    {
+      "id": "rally_morale",
+      "name": "鼓舞军心",
+      "description": "恢复少量生命，并解除一个负面状态。",
+      "kind": "active",
+      "target": "ally",
+      "delivery": "ranged",
+      "cooldown": 3,
+      "effects": {}
+    },
+    {
+      "id": "death_resilience",
+      "name": "亡者韧性",
+      "description": "首次被击溃时有概率残留 1 点生命，强行续住战线。",
+      "kind": "passive",
+      "target": "self",
+      "cooldown": 0,
+      "effects": {}
+    },
+    {
+      "id": "armor_pierce",
+      "name": "幽镞穿甲",
+      "description": "攻击会无视部分防御，适合猎杀重甲目标。",
+      "kind": "passive",
+      "target": "enemy",
+      "cooldown": 0,
+      "effects": {}
+    },
+    {
+      "id": "grave_silence",
+      "name": "墓咒禁魔",
+      "description": "抛出阴咒侵蚀目标，压低伤害并令其短时间无法施法。",
+      "kind": "active",
+      "target": "enemy",
+      "delivery": "ranged",
+      "cooldown": 3,
+      "effects": {
+        "damageMultiplier": 0.75,
+        "allowRetaliation": false,
+        "onHitStatusId": "silenced"
+      }
+    },
+    {
+      "id": "life_drain",
+      "name": "噬生斩",
+      "description": "击杀敌军后抽取残存生机，恢复自身生命。",
+      "kind": "passive",
+      "target": "self",
+      "cooldown": 0,
+      "effects": {}
     }
   ],
   "statuses": [
@@ -186,6 +307,17 @@
       "attackModifier": 0,
       "defenseModifier": 0,
       "damagePerTurn": 2,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "serpent_poison",
+      "name": "蛇毒",
+      "description": "蛇毒会持续侵蚀生命，持续时间更长。",
+      "duration": 3,
+      "attackModifier": 0,
+      "defenseModifier": 0,
+      "damagePerTurn": 3,
       "initiativeModifier": 0,
       "blocksActiveSkills": false
     },
@@ -245,6 +377,18 @@
       "blocksActiveSkills": false
     },
     {
+      "id": "taunted",
+      "name": "嘲讽",
+      "description": "下次行动会被迫优先攻击施放者。",
+      "duration": 2,
+      "attackModifier": 0,
+      "defenseModifier": 0,
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
+      "blocksActiveSkills": false,
+      "forcedAttackSource": true
+    },
+    {
       "id": "slowed",
       "name": "减速",
       "description": "被陷阱拖慢，下轮行动顺序会延后。",
@@ -286,6 +430,17 @@
       "defenseModifier": 3,
       "damagePerTurn": 0,
       "initiativeModifier": -1,
+      "blocksActiveSkills": false
+    },
+    {
+      "id": "death_resilience_spent",
+      "name": "韧性已耗",
+      "description": "本场战斗的亡者韧性已触发，无法再次保命。",
+      "duration": 99,
+      "attackModifier": 0,
+      "defenseModifier": 0,
+      "damagePerTurn": 0,
+      "initiativeModifier": 0,
       "blocksActiveSkills": false
     }
   ]

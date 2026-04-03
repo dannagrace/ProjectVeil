@@ -28,7 +28,14 @@ import {
   setPendingAuthRegistrationCount,
   upsertAuthAccountSession
 } from "./observability";
-import type { RoomSnapshotStore } from "./persistence";
+import { deriveWechatMinorProtection } from "./minor-protection";
+import {
+  isPlayerBanActive,
+  type PlayerAccountBanSnapshot,
+  type PlayerAccountSnapshot,
+  type RoomSnapshotStore
+} from "./persistence";
+import { cacheWechatSessionKey, readWechatSessionKeyTtlSeconds, resetWechatSessionKeyCache } from "./wechat-session-key";
 
 export type AuthMode = "guest" | "account";
 export type AuthProvider = "guest" | "account-password" | "wechat-mini-game";
@@ -75,7 +82,8 @@ interface AuthRuntimeConfig {
 
 interface ValidateAuthSessionResult {
   session: GuestAuthSession | null;
-  errorCode?: "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked";
+  errorCode?: "unauthorized" | "token_expired" | "token_kind_invalid" | "session_revoked" | "account_banned";
+  ban?: PlayerAccountBanSnapshot;
 }
 
 interface RateLimitResult {
@@ -107,6 +115,7 @@ interface WechatMiniGameCode2SessionPayload {
 interface WechatMiniGameIdentity {
   openId: string;
   unionId?: string;
+  sessionKey: string;
 }
 
 interface AccountAuthSessionState {
@@ -285,10 +294,12 @@ export function cachePlayerAccountAuthState(input: {
 }
 
 function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): WechatMiniGameLoginConfig {
+  const isTestEnvironment = env.NODE_ENV?.trim().toLowerCase() === "test";
   const normalizedMode = env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
-  const defaultMode = env.NODE_ENV?.trim().toLowerCase() === "production" ? "disabled" : "mock";
+  const hasWechatCredentials = Boolean(env.WECHAT_APP_ID?.trim() && env.WECHAT_APP_SECRET?.trim());
+  const defaultMode = isTestEnvironment ? "mock" : hasWechatCredentials ? "production" : "disabled";
   const mode =
-    normalizedMode === "mock"
+    normalizedMode === "mock" && isTestEnvironment
       ? "mock"
       : normalizedMode === "production" || normalizedMode === "code2session"
         ? "production"
@@ -299,8 +310,8 @@ function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): We
     mode,
     mockCode: env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE?.trim() || "wechat-dev-code",
     code2SessionUrl: env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL?.trim() || "https://api.weixin.qq.com/sns/jscode2session",
-    ...(env.VEIL_WECHAT_MINIGAME_APP_ID?.trim() ? { appId: env.VEIL_WECHAT_MINIGAME_APP_ID.trim() } : {}),
-    ...(env.VEIL_WECHAT_MINIGAME_APP_SECRET?.trim() ? { appSecret: env.VEIL_WECHAT_MINIGAME_APP_SECRET.trim() } : {})
+    ...(env.WECHAT_APP_ID?.trim() ? { appId: env.WECHAT_APP_ID.trim() } : {}),
+    ...(env.WECHAT_APP_SECRET?.trim() ? { appSecret: env.WECHAT_APP_SECRET.trim() } : {})
   };
 }
 
@@ -482,6 +493,22 @@ async function appendAccountAuditLog(
   });
 }
 
+async function resolveActiveBanForPlayer(
+  store: RoomSnapshotStore | null,
+  playerId: string
+): Promise<PlayerAccountBanSnapshot | null> {
+  if (!store) {
+    return null;
+  }
+
+  if (!store.loadPlayerBan) {
+    return null;
+  }
+
+  const ban = await store.loadPlayerBan(playerId);
+  return isPlayerBanActive(ban) ? ban : null;
+}
+
 function createPasswordRecoveryToken(): string {
   return randomBytes(24).toString("base64url");
 }
@@ -601,6 +628,33 @@ function normalizeAvatarUrl(avatarUrl?: string | null): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function sendPrivacyConsentRequired(response: ServerResponse): void {
+  sendJson(response, 403, {
+    error: {
+      code: "privacy_consent_required",
+      message: "Privacy consent must be accepted before continuing"
+    }
+  });
+}
+
+async function ensurePlayerPrivacyConsent(
+  response: ServerResponse,
+  store: RoomSnapshotStore | null,
+  account: PlayerAccountSnapshot,
+  privacyConsentAccepted?: boolean | null
+): Promise<PlayerAccountSnapshot | null> {
+  if (!store || account.privacyConsentAt) {
+    return account;
+  }
+
+  if (privacyConsentAccepted !== true) {
+    sendPrivacyConsentRequired(response);
+    return null;
+  }
+
+  return store.savePlayerAccountPrivacyConsent(account.playerId);
+}
+
 export function createWechatMiniGamePlayerId(openId: string): string {
   const normalizedOpenId = openId.trim();
   if (!normalizedOpenId) {
@@ -621,7 +675,8 @@ async function exchangeWechatMiniGameCode(
     }
 
     return {
-      openId: `mock-openid:${code}`
+      openId: `mock-openid:${code}`,
+      sessionKey: Buffer.from(`mock-session-key:${code}`, "utf8").toString("base64")
     };
   }
 
@@ -654,13 +709,15 @@ async function exchangeWechatMiniGameCode(
   }
 
   const openId = payload.openid?.trim();
-  if (!openId) {
+  const sessionKey = payload.session_key?.trim();
+  if (!openId || !sessionKey) {
     throw new Error("wechat_code2session_failed");
   }
 
   return {
     openId,
-    ...(payload.unionid?.trim() ? { unionId: payload.unionid.trim() } : {})
+    ...(payload.unionid?.trim() ? { unionId: payload.unionid.trim() } : {}),
+    sessionKey
   };
 }
 
@@ -832,7 +889,7 @@ async function handleWechatLogin(
   if (authToken) {
     const validation = await validateAuthToken(authToken, store);
     if (!validation.session) {
-      sendAuthFailure(response, validation.errorCode);
+      sendAuthFailure(response, validation.errorCode, validation.ban);
       return;
     }
     authSession = validation.session;
@@ -842,6 +899,10 @@ async function handleWechatLogin(
     playerId?: string | null;
     displayName?: string | null;
     avatarUrl?: string | null;
+    privacyConsentAccepted?: boolean | null;
+    ageVerified?: boolean | null;
+    isAdult?: boolean | null;
+    ageRange?: string | null;
   };
 
   if (body.code !== undefined && body.code !== null && typeof body.code !== "string") {
@@ -884,8 +945,53 @@ async function handleWechatLogin(
     return;
   }
 
+  if (body.privacyConsentAccepted !== undefined && body.privacyConsentAccepted !== null && typeof body.privacyConsentAccepted !== "boolean") {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "Expected optional boolean field: privacyConsentAccepted"
+      }
+    });
+    return;
+  }
+
+  if (body.ageVerified !== undefined && body.ageVerified !== null && typeof body.ageVerified !== "boolean") {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "Expected optional boolean field: ageVerified"
+      }
+    });
+    return;
+  }
+
+  if (body.isAdult !== undefined && body.isAdult !== null && typeof body.isAdult !== "boolean") {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "Expected optional boolean field: isAdult"
+      }
+    });
+    return;
+  }
+
+  if (body.ageRange !== undefined && body.ageRange !== null && typeof body.ageRange !== "string") {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "Expected optional string field: ageRange"
+      }
+    });
+    return;
+  }
+
   const code = normalizeWechatMiniGameCode(body.code);
   const avatarUrl = normalizeAvatarUrl(body.avatarUrl);
+  const minorProtection = deriveWechatMinorProtection({
+    ...(body.ageVerified !== undefined ? { ageVerified: body.ageVerified } : {}),
+    ...(body.isAdult !== undefined ? { isAdult: body.isAdult } : {}),
+    ...(body.ageRange !== undefined ? { ageRange: body.ageRange } : {})
+  });
   const wechatConfig = readWechatMiniGameLoginConfig();
 
   let identity: WechatMiniGameIdentity;
@@ -948,23 +1054,35 @@ async function handleWechatLogin(
     }
 
     if (boundAccount) {
-      const syncedAccount = await store.bindPlayerAccountWechatMiniGameIdentity(boundAccount.playerId, {
+      let syncedAccount = await store.bindPlayerAccountWechatMiniGameIdentity(boundAccount.playerId, {
         openId: identity.openId,
         ...(identity.unionId ? { unionId: identity.unionId } : {}),
         ...(body.displayName?.trim() ? { displayName: body.displayName } : {}),
-        ...(avatarUrl ? { avatarUrl } : {})
+        ...(avatarUrl ? { avatarUrl } : {}),
+        ...minorProtection
       });
+      const consentedAccount = await ensurePlayerPrivacyConsent(response, store, syncedAccount, body.privacyConsentAccepted);
+      if (!consentedAccount) {
+        return;
+      }
+      syncedAccount = consentedAccount;
       playerId = syncedAccount.playerId;
       displayName = syncedAccount.displayName;
       loginId = syncedAccount.loginId;
     } else {
       const targetPlayerId = authSession?.playerId ?? playerId;
-      const boundAccountResult = await store.bindPlayerAccountWechatMiniGameIdentity(targetPlayerId, {
+      let boundAccountResult = await store.bindPlayerAccountWechatMiniGameIdentity(targetPlayerId, {
         openId: identity.openId,
         ...(identity.unionId ? { unionId: identity.unionId } : {}),
         ...(body.displayName?.trim() ? { displayName: body.displayName } : {}),
-        ...(avatarUrl ? { avatarUrl } : {})
+        ...(avatarUrl ? { avatarUrl } : {}),
+        ...minorProtection
       });
+      const consentedAccount = await ensurePlayerPrivacyConsent(response, store, boundAccountResult, body.privacyConsentAccepted);
+      if (!consentedAccount) {
+        return;
+      }
+      boundAccountResult = consentedAccount;
       playerId = boundAccountResult.playerId;
       displayName = boundAccountResult.displayName;
       loginId = boundAccountResult.loginId;
@@ -973,6 +1091,14 @@ async function handleWechatLogin(
     playerId = normalizePlayerId(body.playerId);
     displayName = normalizeDisplayName(playerId, body.displayName);
   }
+
+  const activeBan = await resolveActiveBanForPlayer(store, playerId);
+  if (activeBan) {
+    sendAuthFailure(response, "account_banned", activeBan);
+    return;
+  }
+
+  cacheWechatSessionKey(playerId, identity.sessionKey, readWechatSessionKeyTtlSeconds());
 
   sendJson(response, 200, {
     session:
@@ -1186,6 +1312,11 @@ async function validateAuthToken(
     }
 
     if (session.authMode === "guest") {
+      const activeBan = await resolveActiveBanForPlayer(store, session.playerId);
+      if (activeBan) {
+        recordAuthSessionFailure("account_banned");
+        return { session: null, errorCode: "account_banned", ban: activeBan };
+      }
       if (session.sessionId) {
         const touchedSession = touchGuestSession(session.sessionId, normalizedToken);
         if (!touchedSession) {
@@ -1199,6 +1330,12 @@ async function validateAuthToken(
 
     if (!store) {
       return { session };
+    }
+
+    const activeBan = await resolveActiveBanForPlayer(store, session.playerId);
+    if (activeBan) {
+      recordAuthSessionFailure("account_banned");
+      return { session: null, errorCode: "account_banned", ban: activeBan };
     }
 
     const authAccount = await store.loadPlayerAccountAuthByPlayerId(session.playerId);
@@ -1402,9 +1539,22 @@ function sendAccountTokenDeliveryFailure(
 function sendAuthFailure(
   response: ServerResponse,
   errorCode: ValidateAuthSessionResult["errorCode"],
+  ban?: PlayerAccountBanSnapshot | null,
   fallbackMessage = "Guest auth session is missing or invalid"
 ): void {
   const code = errorCode ?? "unauthorized";
+  if (code === "account_banned") {
+    sendJson(response, 403, {
+      error: {
+        code,
+        message: "Account is banned",
+        reason: ban?.banReason ?? "No reason provided",
+        ...(ban?.banExpiry ? { expiry: ban.banExpiry } : {})
+      }
+    });
+    return;
+  }
+
   const message =
     code === "token_expired"
       ? "Auth token has expired"
@@ -1556,6 +1706,12 @@ function touchGuestSession(sessionId: string, token: string): GuestAuthSession |
   return nextSession;
 }
 
+export function revokeGuestAuthSession(sessionId: string): boolean {
+  const revoked = guestSessionsById.delete(sessionId);
+  syncAuthStateTelemetry();
+  return revoked;
+}
+
 export function resetGuestAuthSessions(): void {
   authRateLimitCounters.clear();
   accountLockoutStateByLoginId.clear();
@@ -1563,6 +1719,7 @@ export function resetGuestAuthSessions(): void {
   accountAuthStateByPlayerId.clear();
   accountRegistrationStateByLoginId.clear();
   passwordRecoveryStateByLoginId.clear();
+  resetWechatSessionKeyCache();
   syncAuthStateTelemetry();
 }
 
@@ -1590,9 +1747,9 @@ export function registerAuthRoutes(
 
   app.get("/api/auth/session", async (request, response) => {
     try {
-      const { session: authSession, errorCode } = await validateAuthSessionFromRequest(request, store);
+      const { session: authSession, errorCode, ban } = await validateAuthSessionFromRequest(request, store);
       if (!authSession) {
-        sendAuthFailure(response, errorCode);
+        sendAuthFailure(response, errorCode, ban);
         return;
       }
 
@@ -1629,9 +1786,9 @@ export function registerAuthRoutes(
     }
 
     try {
-      const { session: refreshSession, errorCode } = await validateAuthSessionFromRequest(request, store, "refresh");
+      const { session: refreshSession, errorCode, ban } = await validateAuthSessionFromRequest(request, store, "refresh");
       if (!refreshSession || refreshSession.authMode !== "account" || !refreshSession.loginId) {
-        sendAuthFailure(response, errorCode, "Refresh token is missing or invalid");
+        sendAuthFailure(response, errorCode, ban, "Refresh token is missing or invalid");
         return;
       }
 
@@ -1654,11 +1811,84 @@ export function registerAuthRoutes(
     }
   });
 
+  app.post("/api/auth/wechat-session-key/refresh", async (request, response) => {
+    try {
+      const { session: authSession, errorCode, ban } = await validateAuthSessionFromRequest(request, store);
+      if (!authSession) {
+        sendAuthFailure(response, errorCode, ban);
+        return;
+      }
+
+      const body = (await readJsonBody(request)) as {
+        code?: string | null;
+      };
+      if (body.code !== undefined && body.code !== null && typeof body.code !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string field: code"
+          }
+        });
+        return;
+      }
+
+      const identity = await exchangeWechatMiniGameCode(normalizeWechatMiniGameCode(body.code), readWechatMiniGameLoginConfig());
+      if (store) {
+        const boundAccount = await store.loadPlayerAccountByWechatMiniGameOpenId(identity.openId);
+        if (boundAccount && boundAccount.playerId !== authSession.playerId) {
+          sendJson(response, 409, {
+            error: {
+              code: "wechat_identity_already_bound",
+              message: "This WeChat identity is already bound to another account"
+            }
+          });
+          return;
+        }
+      }
+
+      const cached = cacheWechatSessionKey(authSession.playerId, identity.sessionKey, readWechatSessionKeyTtlSeconds());
+      sendJson(response, 200, {
+        ok: true,
+        playerId: authSession.playerId,
+        refreshedAt: new Date().toISOString(),
+        expiresAt: cached.expiresAt
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "wechat_session_key_refresh_failed";
+      if (message === "wechat_login_not_enabled") {
+        sendJson(response, 501, {
+          error: {
+            code: "wechat_login_not_enabled",
+            message: "WeChat login exchange exists, but code2Session is not configured"
+          }
+        });
+        return;
+      }
+
+      if (message === "invalid_wechat_code") {
+        sendJson(response, 401, {
+          error: {
+            code: "invalid_wechat_code",
+            message: "WeChat code is invalid or expired"
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 502, {
+        error: {
+          code: "wechat_code2session_failed",
+          message
+        }
+      });
+    }
+  });
+
   app.post("/api/auth/logout", async (request, response) => {
     try {
-      const { session: authSession, errorCode } = await validateAuthSessionFromRequest(request, store);
+      const { session: authSession, errorCode, ban } = await validateAuthSessionFromRequest(request, store);
       if (!authSession) {
-        sendAuthFailure(response, errorCode);
+        sendAuthFailure(response, errorCode, ban);
         return;
       }
 
@@ -1692,6 +1922,7 @@ export function registerAuthRoutes(
       const body = (await readJsonBody(request)) as {
         playerId?: string | null;
         displayName?: string | null;
+        privacyConsentAccepted?: boolean | null;
       };
 
       if (body.playerId !== undefined && body.playerId !== null && typeof body.playerId !== "string") {
@@ -1714,14 +1945,34 @@ export function registerAuthRoutes(
         return;
       }
 
+      if (body.privacyConsentAccepted !== undefined && body.privacyConsentAccepted !== null && typeof body.privacyConsentAccepted !== "boolean") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional boolean field: privacyConsentAccepted"
+          }
+        });
+        return;
+      }
+
       let playerId = normalizePlayerId(body.playerId);
       let displayName = normalizeDisplayName(playerId, body.displayName);
 
       if (store) {
-        const account = await store.ensurePlayerAccount({
+        let account = await store.ensurePlayerAccount({
           playerId,
           displayName
         });
+        const consentedAccount = await ensurePlayerPrivacyConsent(response, store, account, body.privacyConsentAccepted);
+        if (!consentedAccount) {
+          return;
+        }
+        account = consentedAccount;
+        const activeBan = await resolveActiveBanForPlayer(store, account.playerId);
+        if (activeBan) {
+          sendAuthFailure(response, "account_banned", activeBan);
+          return;
+        }
         playerId = account.playerId;
         displayName = account.displayName;
       }
@@ -1762,6 +2013,7 @@ export function registerAuthRoutes(
       const body = (await readJsonBody(request)) as {
         loginId?: string | null;
         password?: string | null;
+        privacyConsentAccepted?: boolean | null;
       };
 
       if (body.loginId !== undefined && body.loginId !== null && typeof body.loginId !== "string") {
@@ -1784,6 +2036,16 @@ export function registerAuthRoutes(
         return;
       }
 
+      if (body.privacyConsentAccepted !== undefined && body.privacyConsentAccepted !== null && typeof body.privacyConsentAccepted !== "boolean") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional boolean field: privacyConsentAccepted"
+          }
+        });
+        return;
+      }
+
       const loginId = normalizeAccountLoginId(body.loginId);
       const password = normalizeAccountPassword(body.password);
 
@@ -1794,6 +2056,11 @@ export function registerAuthRoutes(
           playerId: loginId,
           displayName: loginId
         }) || { playerId: loginId, displayName: loginId };
+        const activeBan = await resolveActiveBanForPlayer(store, account.playerId);
+        if (activeBan) {
+          sendAuthFailure(response, "account_banned", activeBan);
+          return;
+        }
         
         sendJson(response, 200, {
           account,
@@ -1829,10 +2096,20 @@ export function registerAuthRoutes(
       }
 
       clearAccountLoginFailures(loginId);
-      const account = await store.ensurePlayerAccount({
+      let account = await store.ensurePlayerAccount({
         playerId: authAccount.playerId,
         displayName: authAccount.displayName
       });
+      const consentedAccount = await ensurePlayerPrivacyConsent(response, store, account, body.privacyConsentAccepted);
+      if (!consentedAccount) {
+        return;
+      }
+      account = consentedAccount;
+      const activeBan = await resolveActiveBanForPlayer(store, account.playerId);
+      if (activeBan) {
+        sendAuthFailure(response, "account_banned", activeBan);
+        return;
+      }
       sendJson(response, 200, {
         account,
         session: await createAccountSessionBundle(store, {
@@ -1945,6 +2222,7 @@ export function registerAuthRoutes(
         loginId?: string | null;
         registrationToken?: string | null;
         password?: string | null;
+        privacyConsentAccepted?: boolean | null;
       };
 
       if (body.loginId !== undefined && body.loginId !== null && typeof body.loginId !== "string") {
@@ -1977,9 +2255,23 @@ export function registerAuthRoutes(
         return;
       }
 
+      if (body.privacyConsentAccepted !== undefined && body.privacyConsentAccepted !== null && typeof body.privacyConsentAccepted !== "boolean") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional boolean field: privacyConsentAccepted"
+          }
+        });
+        return;
+      }
+
       const loginId = normalizeAccountLoginId(body.loginId);
       const registrationToken = normalizeAccountRegistrationToken(body.registrationToken);
       const password = normalizeAccountPassword(body.password);
+      if (body.privacyConsentAccepted !== true) {
+        sendPrivacyConsentRequired(response);
+        return;
+      }
       const pendingRegistrationState = getAccountRegistrationState(loginId);
       if (!pendingRegistrationState) {
         sendJson(response, 401, {
@@ -2234,15 +2526,16 @@ export function registerAuthRoutes(
     }
 
     try {
-      const { session: authSession, errorCode } = await validateAuthSessionFromRequest(request, store);
+      const { session: authSession, errorCode, ban } = await validateAuthSessionFromRequest(request, store);
       if (!authSession) {
-        sendAuthFailure(response, errorCode);
+        sendAuthFailure(response, errorCode, ban);
         return;
       }
 
       const body = (await readJsonBody(request)) as {
         loginId?: string | null;
         password?: string | null;
+        privacyConsentAccepted?: boolean | null;
       };
 
       if (body.loginId !== undefined && body.loginId !== null && typeof body.loginId !== "string") {
@@ -2265,8 +2558,26 @@ export function registerAuthRoutes(
         return;
       }
 
+      if (body.privacyConsentAccepted !== undefined && body.privacyConsentAccepted !== null && typeof body.privacyConsentAccepted !== "boolean") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected optional boolean field: privacyConsentAccepted"
+          }
+        });
+        return;
+      }
+
       const loginId = normalizeAccountLoginId(body.loginId);
       const password = normalizeAccountPassword(body.password);
+      const existingAccount = await store.ensurePlayerAccount({
+        playerId: authSession.playerId,
+        displayName: authSession.displayName
+      });
+      const consentedAccount = await ensurePlayerPrivacyConsent(response, store, existingAccount, body.privacyConsentAccepted);
+      if (!consentedAccount) {
+        return;
+      }
       const account = await store.bindPlayerAccountCredentials(authSession.playerId, {
         loginId,
         passwordHash: hashAccountPassword(password)

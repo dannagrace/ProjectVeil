@@ -1,4 +1,4 @@
-export type TerrainType = "grass" | "dirt" | "sand" | "water";
+export type TerrainType = "grass" | "dirt" | "sand" | "water" | "swamp";
 export type FogState = "hidden" | "explored" | "visible";
 export type ResourceKind = "gold" | "wood" | "ore";
 export type OccupantKind = "hero" | "neutral" | "building";
@@ -27,7 +27,14 @@ export type HeroSkillBranchId = string;
 export type EquipmentId = string;
 export type EquipmentType = "weapon" | "armor" | "accessory";
 export type EquipmentRarity = "common" | "rare" | "epic";
-export type EquipmentSpecialEffectId = "initiative_edge" | "brace" | "channeling" | "momentum" | "ward";
+export type EquipmentSpecialEffectId =
+  | "initiative_edge"
+  | "brace"
+  | "channeling"
+  | "momentum"
+  | "ward"
+  | "lifesteal"
+  | "thorns";
 
 export interface EquipmentStatBonuses {
   attackPercent: number;
@@ -50,6 +57,7 @@ export interface EquipmentDefinition {
   rarity: EquipmentRarity;
   description: string;
   bonuses: Partial<EquipmentStatBonuses>;
+  setId?: string;
   specialEffect?: EquipmentSpecialEffectConfig;
 }
 
@@ -422,7 +430,7 @@ export interface MovementPlan {
 
 export type BattleSkillId = string;
 export type BattleSkillKind = "active" | "passive";
-export type BattleSkillTarget = "enemy" | "self";
+export type BattleSkillTarget = "enemy" | "self" | "ally";
 export type BattleSkillDelivery = "contact" | "ranged";
 export type BattleStatusEffectId = string;
 
@@ -447,6 +455,8 @@ export interface BattleStatusEffectState {
   damagePerTurn: number;
   initiativeModifier: number;
   blocksActiveSkills: boolean;
+  preventsAction?: boolean;
+  forcedAttackSource?: boolean;
   sourceUnitId?: string;
 }
 
@@ -464,8 +474,10 @@ export interface UnitStack {
   count: number;
   currentHp: number;
   maxHp: number;
+  power?: number;
   hasRetaliated: boolean;
   defending: boolean;
+  equipmentEffects?: EquipmentSpecialEffectId[];
   skills?: BattleSkillState[];
   statusEffects?: BattleStatusEffectState[];
 }
@@ -509,6 +521,7 @@ export interface BattleState {
   activeUnitId: string | null;
   turnOrder: string[];
   units: Record<string, UnitStack>;
+  unitCooldowns: Record<string, Record<string, number>>;
   environment: BattleHazardState[];
   log: string[];
   rng: DeterministicRngState;
@@ -516,6 +529,7 @@ export interface BattleState {
   neutralArmyId?: string;
   defenderHeroId?: string;
   encounterPosition?: Vec2;
+  battlefieldTerrain?: TerrainType;
 }
 
 export type WorldAction =
@@ -970,7 +984,7 @@ export interface MapObjectsConfig {
 export interface UnitTemplateConfig {
   id: string;
   stackName: string;
-  faction: "crown" | "wild";
+  faction: "crown" | "wild" | "shadow";
   rarity: "common" | "elite";
   initiative: number;
   attack: number;
@@ -990,6 +1004,8 @@ export interface BattleSkillEffectConfig {
   allowRetaliation?: boolean;
   grantedStatusId?: BattleStatusEffectId;
   onHitStatusId?: BattleStatusEffectId;
+  splashDamageMultiplier?: number;
+  maxRound?: number;
 }
 
 export interface BattleSkillConfig {
@@ -1013,6 +1029,8 @@ export interface BattleStatusEffectConfig {
   damagePerTurn: number;
   initiativeModifier?: number;
   blocksActiveSkills?: boolean;
+  preventsAction?: boolean;
+  forcedAttackSource?: boolean;
 }
 
 export interface BattleSkillCatalogConfig {

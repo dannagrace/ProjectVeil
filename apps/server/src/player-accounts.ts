@@ -16,6 +16,7 @@ import {
   cachePlayerAccountAuthState,
   hashAccountPassword,
   issueNextAuthSession,
+  revokeGuestAuthSession,
   readGuestAuthTokenFromRequest,
   validateAuthSessionFromRequest,
   verifyAccountPassword
@@ -27,6 +28,7 @@ import type {
   PlayerEventHistoryQuery,
   RoomSnapshotStore
 } from "./persistence";
+import { decryptWechatPhoneNumber, validateWechatSignature } from "./wechat-session-key";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -55,6 +57,56 @@ class PayloadTooLargeError extends Error {
     super(`Request body exceeds ${maxBytes} bytes`);
     this.name = "payload_too_large";
   }
+}
+
+interface WechatSignatureEnvelope {
+  rawData?: string | null;
+  signature?: string | null;
+}
+
+function readExpectedWechatAppId(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const appId = env.WECHAT_APP_ID?.trim();
+  return appId ? appId : undefined;
+}
+
+function logWechatValidationFailure(playerId: string, operation: string, reason: string): void {
+  console.warn(`[WeChatValidation] player=${playerId} operation=${operation} reason=${reason}`);
+}
+
+function sendWechatValidationForbidden(response: ServerResponse, message = "WeChat signature validation failed"): void {
+  sendJson(response, 403, {
+    error: {
+      code: "wechat_signature_invalid",
+      message
+    }
+  });
+}
+
+function validateWechatSignatureEnvelope(
+  response: ServerResponse,
+  playerId: string,
+  operation: string,
+  signature?: WechatSignatureEnvelope | null
+): boolean {
+  if (!signature || typeof signature !== "object") {
+    logWechatValidationFailure(playerId, operation, "missing_signature");
+    sendWechatValidationForbidden(response);
+    return false;
+  }
+
+  if (typeof signature.rawData !== "string" || typeof signature.signature !== "string") {
+    logWechatValidationFailure(playerId, operation, "invalid_signature_payload");
+    sendWechatValidationForbidden(response);
+    return false;
+  }
+
+  if (!validateWechatSignature({ playerId, rawData: signature.rawData, signature: signature.signature })) {
+    logWechatValidationFailure(playerId, operation, "signature_mismatch_or_missing_session_key");
+    sendWechatValidationForbidden(response);
+    return false;
+  }
+
+  return true;
 }
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
@@ -362,6 +414,7 @@ function createLocalModeAccount(input: {
   return {
     playerId,
     displayName,
+    gems: 0,
     globalResources: {
       gold: 0,
       wood: 0,
@@ -394,6 +447,17 @@ function sendUnauthorized(
   });
 }
 
+function sendAccountBanned(response: ServerResponse, ban?: { banReason?: string; banExpiry?: string } | null): void {
+  sendJson(response, 403, {
+    error: {
+      code: "account_banned",
+      message: "Account is banned",
+      reason: ban?.banReason ?? "No reason provided",
+      ...(ban?.banExpiry ? { expiry: ban.banExpiry } : {})
+    }
+  });
+}
+
 function sendForbidden(response: ServerResponse): void {
   sendJson(response, 403, {
     error: {
@@ -410,6 +474,10 @@ async function requireAuthSession(
 ) {
   const result = await validateAuthSessionFromRequest(request, store);
   if (!result.session) {
+    if (result.errorCode === "account_banned") {
+      sendAccountBanned(response, result.ban);
+      return null;
+    }
     sendUnauthorized(response, result.errorCode ?? "unauthorized");
     return null;
   }
@@ -445,13 +513,27 @@ function toPublicPlayerAccount(
   account: PlayerAccountSnapshot
 ): Omit<
   PlayerAccountSnapshot,
-  "loginId" | "credentialBoundAt" | "wechatMiniGameOpenId" | "wechatMiniGameUnionId"
+  | "loginId"
+  | "credentialBoundAt"
+  | "privacyConsentAt"
+  | "phoneNumber"
+  | "phoneNumberBoundAt"
+  | "wechatMiniGameOpenId"
+  | "wechatMiniGameUnionId"
+  | "banStatus"
+  | "banExpiry"
+  | "banReason"
 > {
   const {
     loginId: _loginId,
     credentialBoundAt: _credentialBoundAt,
+    phoneNumber: _phoneNumber,
+    phoneNumberBoundAt: _phoneNumberBoundAt,
     wechatMiniGameOpenId: _wechatMiniGameOpenId,
     wechatMiniGameUnionId: _wechatMiniGameUnionId,
+    banStatus: _banStatus,
+    banExpiry: _banExpiry,
+    banReason: _banReason,
     ...publicAccount
   } = account;
   return publicAccount;
@@ -461,6 +543,7 @@ export function registerPlayerAccountRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
     get: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
+    post: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
     delete: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
     put: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
   },
@@ -468,7 +551,7 @@ export function registerPlayerAccountRoutes(
 ): void {
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
-    response.setHeader("Access-Control-Allow-Methods", "GET,PUT,DELETE,OPTIONS");
+    response.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
     response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Veil-Auth");
 
     if (request.method === "OPTIONS") {
@@ -576,6 +659,53 @@ export function registerPlayerAccountRoutes(
           refreshExpiresAt: session.refreshTokenExpiresAt,
           current: authSession.sessionId === session.sessionId
         }))
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/players/me/delete", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      if (authSession.sessionId) {
+        revokeGuestAuthSession(authSession.sessionId);
+      }
+      sendJson(response, 200, { ok: true, deleted: null });
+      return;
+    }
+
+    try {
+      const deleted = await store.deletePlayerAccount(authSession.playerId, {
+        deletedAt: new Date().toISOString()
+      });
+      if (!deleted) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_not_found",
+            message: `Player account not found: ${authSession.playerId}`
+          }
+        });
+        return;
+      }
+
+      if (authSession.authMode === "account") {
+        removeAuthAccountSessionsForPlayer(authSession.playerId);
+      } else if (authSession.sessionId) {
+        revokeGuestAuthSession(authSession.sessionId);
+      }
+
+      sendJson(response, 200, {
+        ok: true,
+        deleted: {
+          playerId: deleted.playerId,
+          displayName: deleted.displayName,
+          deletedAt: deleted.updatedAt ?? new Date().toISOString()
+        }
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -1373,6 +1503,85 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.post("/api/player-accounts/me/phone", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        encryptedData?: string | null;
+        iv?: string | null;
+      };
+      if (typeof body.encryptedData !== "string" || typeof body.iv !== "string") {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_payload",
+            message: "Expected string fields: encryptedData, iv"
+          }
+        });
+        return;
+      }
+
+      const decrypted = decryptWechatPhoneNumber({
+        playerId: authSession.playerId,
+        encryptedData: body.encryptedData,
+        iv: body.iv,
+        ...(readExpectedWechatAppId() ? { expectedAppId: readExpectedWechatAppId() } : {})
+      });
+      const phoneNumber = decrypted?.payload.phoneNumber?.trim() || decrypted?.payload.purePhoneNumber?.trim();
+      if (!decrypted || !phoneNumber) {
+        logWechatValidationFailure(authSession.playerId, "bind-phone", "decrypt_failed_or_missing_phone_number");
+        sendWechatValidationForbidden(response);
+        return;
+      }
+
+      const phoneNumberBoundAt = new Date().toISOString();
+      if (!store) {
+        const account = createLocalModeAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName,
+          ...(authSession.loginId ? { loginId: authSession.loginId } : {})
+        });
+        sendJson(response, 200, {
+          account: withBattleReportCenter({
+            ...account,
+            phoneNumber,
+            phoneNumberBoundAt
+          }),
+          phone: {
+            phoneNumber,
+            ...(decrypted.payload.countryCode?.trim() ? { countryCode: decrypted.payload.countryCode.trim() } : {}),
+            boundAt: phoneNumberBoundAt
+          },
+          session: issueNextAuthSession(account, authSession)
+        });
+        return;
+      }
+
+      const account = await store.savePlayerAccountProfile(authSession.playerId, {
+        phoneNumber,
+        phoneNumberBoundAt
+      });
+      sendJson(response, 200, {
+        account: withBattleReportCenter(account),
+        phone: {
+          phoneNumber,
+          ...(decrypted.payload.countryCode?.trim() ? { countryCode: decrypted.payload.countryCode.trim() } : {}),
+          boundAt: phoneNumberBoundAt
+        },
+        session: issueNextAuthSession(account, authSession)
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
   app.put("/api/player-accounts/me", async (request, response) => {
     const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
@@ -1386,6 +1595,7 @@ export function registerPlayerAccountRoutes(
         lastRoomId?: string | null;
         currentPassword?: string | null;
         newPassword?: string | null;
+        wechatSignature?: WechatSignatureEnvelope | null;
       };
 
       if (body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== "string") {
@@ -1444,6 +1654,13 @@ export function registerPlayerAccountRoutes(
         ...(body.lastRoomId !== undefined ? { lastRoomId: body.lastRoomId } : {})
       };
       const wantsPasswordChange = body.currentPassword !== undefined || body.newPassword !== undefined;
+      const wantsSensitiveWechatValidation =
+        authSession.provider === "wechat-mini-game" &&
+        (body.displayName !== undefined || body.avatarUrl !== undefined || wantsPasswordChange);
+
+      if (wantsSensitiveWechatValidation && !validateWechatSignatureEnvelope(response, authSession.playerId, "update-profile", body.wechatSignature)) {
+        return;
+      }
 
       if (!store) {
         if (wantsPasswordChange) {
@@ -1560,6 +1777,10 @@ export function registerPlayerAccountRoutes(
     const authResult = await validateAuthSessionFromRequest(request, store);
     const authSession = authResult.session;
     if (!authSession && readGuestAuthTokenFromRequest(request)) {
+      if (authResult.errorCode === "account_banned") {
+        sendAccountBanned(response, authResult.ban);
+        return;
+      }
       sendUnauthorized(response, authResult.errorCode ?? "unauthorized");
       return;
     }
@@ -1573,6 +1794,7 @@ export function registerPlayerAccountRoutes(
         displayName?: string | null;
         avatarUrl?: string | null;
         lastRoomId?: string | null;
+        wechatSignature?: WechatSignatureEnvelope | null;
       };
 
       if (body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== "string") {
@@ -1627,7 +1849,19 @@ export function registerPlayerAccountRoutes(
       }
 
       if (!authSession) {
+        if (authResult.errorCode === "account_banned") {
+          sendAccountBanned(response, authResult.ban);
+          return;
+        }
         sendUnauthorized(response, authResult.errorCode ?? "unauthorized");
+        return;
+      }
+
+      if (
+        authSession.provider === "wechat-mini-game" &&
+        (body.displayName !== undefined || body.avatarUrl !== undefined) &&
+        !validateWechatSignatureEnvelope(response, authSession.playerId, "update-profile", body.wechatSignature)
+      ) {
         return;
       }
 

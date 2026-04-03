@@ -2,14 +2,32 @@ import defaultBattleSkillsConfig from "../../../../../configs/battle-skills.json
 import defaultBattleBalanceConfig from "../../../../../configs/battle-balance.json";
 import defaultHeroSkillTreesConfig from "../../../../../configs/hero-skill-trees-full.json";
 import contestedBasinMapObjectsConfig from "../../../../../configs/phase2-map-objects-contested-basin.json";
+import amberFieldsMapObjectsConfig from "../../../../../configs/phase1-map-objects-amber-fields.json";
+import ashpeakAscentMapObjectsConfig from "../../../../../configs/phase1-map-objects-ashpeak-ascent.json";
+import bogfenCrossingMapObjectsConfig from "../../../../../configs/phase1-map-objects-bogfen-crossing.json";
 import frontierBasinMapObjectsConfig from "../../../../../configs/phase1-map-objects-frontier-basin.json";
+import frostwatchRidgeMapObjectsConfig from "../../../../../configs/phase1-map-objects-frostwatch-ridge.json";
+import highlandReachMapObjectsConfig from "../../../../../configs/phase1-map-objects-highland-reach.json";
+import ironpassGorgeMapObjectsConfig from "../../../../../configs/phase1-map-objects-ironpass-gorge.json";
+import murkveilDeltaMapObjectsConfig from "../../../../../configs/phase1-map-objects-murkveil-delta.json";
+import splitrockCanyonMapObjectsConfig from "../../../../../configs/phase1-map-objects-splitrock-canyon.json";
 import stonewatchForkMapObjectsConfig from "../../../../../configs/phase1-map-objects-stonewatch-fork.json";
+import thornwallDivideMapObjectsConfig from "../../../../../configs/phase1-map-objects-thornwall-divide.json";
 import ridgewayCrossingMapObjectsConfig from "../../../../../configs/phase1-map-objects-ridgeway-crossing.json";
 import defaultMapObjectsConfig from "../../../../../configs/phase1-map-objects.json";
 import defaultUnitsConfig from "../../../../../configs/units.json";
+import amberFieldsWorldConfig from "../../../../../configs/phase1-world-amber-fields.json";
+import ashpeakAscentWorldConfig from "../../../../../configs/phase1-world-ashpeak-ascent.json";
+import bogfenCrossingWorldConfig from "../../../../../configs/phase1-world-bogfen-crossing.json";
 import contestedBasinWorldConfig from "../../../../../configs/phase2-contested-basin.json";
 import frontierBasinWorldConfig from "../../../../../configs/phase1-world-frontier-basin.json";
+import frostwatchRidgeWorldConfig from "../../../../../configs/phase1-world-frostwatch-ridge.json";
+import highlandReachWorldConfig from "../../../../../configs/phase1-world-highland-reach.json";
+import ironpassGorgeWorldConfig from "../../../../../configs/phase1-world-ironpass-gorge.json";
+import murkveilDeltaWorldConfig from "../../../../../configs/phase1-world-murkveil-delta.json";
+import splitrockCanyonWorldConfig from "../../../../../configs/phase1-world-splitrock-canyon.json";
 import stonewatchForkWorldConfig from "../../../../../configs/phase1-world-stonewatch-fork.json";
+import thornwallDivideWorldConfig from "../../../../../configs/phase1-world-thornwall-divide.json";
 import ridgewayCrossingWorldConfig from "../../../../../configs/phase1-world-ridgeway-crossing.json";
 import defaultWorldConfig from "../../../../../configs/phase1-world.json";
 import type {
@@ -38,6 +56,15 @@ export const DEFAULT_MAP_VARIANT_ID = "phase1";
 export const FRONTIER_BASIN_MAP_VARIANT_ID = "frontier_basin";
 export const STONEWATCH_FORK_MAP_VARIANT_ID = "stonewatch_fork";
 export const RIDGEWAY_CROSSING_MAP_VARIANT_ID = "ridgeway_crossing";
+export const HIGHLAND_REACH_MAP_VARIANT_ID = "highland_reach";
+export const AMBER_FIELDS_MAP_VARIANT_ID = "amber_fields";
+export const IRONPASS_GORGE_MAP_VARIANT_ID = "ironpass_gorge";
+export const SPLITROCK_CANYON_MAP_VARIANT_ID = "splitrock_canyon";
+export const BOGFEN_CROSSING_MAP_VARIANT_ID = "bogfen_crossing";
+export const MURKVEIL_DELTA_MAP_VARIANT_ID = "murkveil_delta";
+export const FROSTWATCH_RIDGE_MAP_VARIANT_ID = "frostwatch_ridge";
+export const ASHPEAK_ASCENT_MAP_VARIANT_ID = "ashpeak_ascent";
+export const THORNWALL_DIVIDE_MAP_VARIANT_ID = "thornwall_divide";
 export const CONTESTED_BASIN_MAP_VARIANT_ID = "contested_basin";
 
 export interface RuntimeConfigBundle {
@@ -140,7 +167,7 @@ function isResourceKind(value: unknown): value is "gold" | "wood" | "ore" {
 }
 
 function isTerrainType(value: unknown): value is TerrainType {
-  return value === "grass" || value === "dirt" || value === "sand" || value === "water";
+  return value === "grass" || value === "dirt" || value === "sand" || value === "water" || value === "swamp";
 }
 
 function isNeutralBehaviorMode(value: unknown): value is NeutralBehaviorMode {
@@ -296,8 +323,17 @@ export function validateBattleSkillCatalog(config: BattleSkillCatalogConfig): vo
     if (effects.damageMultiplier !== undefined && (!isFiniteNumber(effects.damageMultiplier) || effects.damageMultiplier <= 0)) {
       throw new Error(`Battle skill ${skill.id} damageMultiplier must be a positive number`);
     }
+    if (
+      effects.splashDamageMultiplier !== undefined &&
+      (!isFiniteNumber(effects.splashDamageMultiplier) || effects.splashDamageMultiplier <= 0)
+    ) {
+      throw new Error(`Battle skill ${skill.id} splashDamageMultiplier must be a positive number`);
+    }
     if (effects.allowRetaliation !== undefined && typeof effects.allowRetaliation !== "boolean") {
       throw new Error(`Battle skill ${skill.id} allowRetaliation must be boolean`);
+    }
+    if (effects.maxRound !== undefined && (!Number.isInteger(effects.maxRound) || effects.maxRound <= 0)) {
+      throw new Error(`Battle skill ${skill.id} maxRound must be a positive integer`);
     }
     if (effects.grantedStatusId !== undefined && !statusIds.has(effects.grantedStatusId)) {
       throw new Error(`Battle skill ${skill.id} references unknown granted status: ${effects.grantedStatusId}`);
@@ -650,7 +686,7 @@ export function validateUnitCatalog(
   const availableSkillIds = new Set(battleSkillCatalog.skills.map((skill) => skill.id));
   const ids = new Set<string>();
   for (const template of config.templates) {
-    if (template.faction !== "crown" && template.faction !== "wild") {
+    if (template.faction !== "crown" && template.faction !== "wild" && template.faction !== "shadow") {
       throw new Error(`Invalid faction for unit template: ${template.id}`);
     }
 
@@ -727,6 +763,15 @@ function getAvailableMapVariantIds(): string[] {
     FRONTIER_BASIN_MAP_VARIANT_ID,
     STONEWATCH_FORK_MAP_VARIANT_ID,
     RIDGEWAY_CROSSING_MAP_VARIANT_ID,
+    HIGHLAND_REACH_MAP_VARIANT_ID,
+    AMBER_FIELDS_MAP_VARIANT_ID,
+    IRONPASS_GORGE_MAP_VARIANT_ID,
+    SPLITROCK_CANYON_MAP_VARIANT_ID,
+    BOGFEN_CROSSING_MAP_VARIANT_ID,
+    MURKVEIL_DELTA_MAP_VARIANT_ID,
+    FROSTWATCH_RIDGE_MAP_VARIANT_ID,
+    ASHPEAK_ASCENT_MAP_VARIANT_ID,
+    THORNWALL_DIVIDE_MAP_VARIANT_ID,
     CONTESTED_BASIN_MAP_VARIANT_ID
   ];
 }
@@ -745,6 +790,15 @@ export function resolveMapVariantIdForRoom(roomId: string, seed = 1001): string 
     requested === FRONTIER_BASIN_MAP_VARIANT_ID ||
     requested === STONEWATCH_FORK_MAP_VARIANT_ID ||
     requested === RIDGEWAY_CROSSING_MAP_VARIANT_ID ||
+    requested === HIGHLAND_REACH_MAP_VARIANT_ID ||
+    requested === AMBER_FIELDS_MAP_VARIANT_ID ||
+    requested === IRONPASS_GORGE_MAP_VARIANT_ID ||
+    requested === SPLITROCK_CANYON_MAP_VARIANT_ID ||
+    requested === BOGFEN_CROSSING_MAP_VARIANT_ID ||
+    requested === MURKVEIL_DELTA_MAP_VARIANT_ID ||
+    requested === FROSTWATCH_RIDGE_MAP_VARIANT_ID ||
+    requested === ASHPEAK_ASCENT_MAP_VARIANT_ID ||
+    requested === THORNWALL_DIVIDE_MAP_VARIANT_ID ||
     requested === CONTESTED_BASIN_MAP_VARIANT_ID
   ) {
     return requested;
@@ -765,6 +819,24 @@ export function getRuntimeConfigBundleForRoom(roomId: string, seed = 1001): Room
         ? cloneWorldConfig(stonewatchForkWorldConfig as WorldGenerationConfig)
       : mapVariantId === RIDGEWAY_CROSSING_MAP_VARIANT_ID
         ? cloneWorldConfig(ridgewayCrossingWorldConfig as WorldGenerationConfig)
+      : mapVariantId === HIGHLAND_REACH_MAP_VARIANT_ID
+        ? cloneWorldConfig(highlandReachWorldConfig as WorldGenerationConfig)
+      : mapVariantId === AMBER_FIELDS_MAP_VARIANT_ID
+        ? cloneWorldConfig(amberFieldsWorldConfig as WorldGenerationConfig)
+      : mapVariantId === IRONPASS_GORGE_MAP_VARIANT_ID
+        ? cloneWorldConfig(ironpassGorgeWorldConfig as WorldGenerationConfig)
+      : mapVariantId === SPLITROCK_CANYON_MAP_VARIANT_ID
+        ? cloneWorldConfig(splitrockCanyonWorldConfig as WorldGenerationConfig)
+      : mapVariantId === BOGFEN_CROSSING_MAP_VARIANT_ID
+        ? cloneWorldConfig(bogfenCrossingWorldConfig as WorldGenerationConfig)
+      : mapVariantId === MURKVEIL_DELTA_MAP_VARIANT_ID
+        ? cloneWorldConfig(murkveilDeltaWorldConfig as WorldGenerationConfig)
+      : mapVariantId === FROSTWATCH_RIDGE_MAP_VARIANT_ID
+        ? cloneWorldConfig(frostwatchRidgeWorldConfig as WorldGenerationConfig)
+      : mapVariantId === ASHPEAK_ASCENT_MAP_VARIANT_ID
+        ? cloneWorldConfig(ashpeakAscentWorldConfig as WorldGenerationConfig)
+      : mapVariantId === THORNWALL_DIVIDE_MAP_VARIANT_ID
+        ? cloneWorldConfig(thornwallDivideWorldConfig as WorldGenerationConfig)
       : mapVariantId === CONTESTED_BASIN_MAP_VARIANT_ID
         ? cloneWorldConfig(contestedBasinWorldConfig as WorldGenerationConfig)
         : getDefaultWorldConfig();
@@ -775,6 +847,24 @@ export function getRuntimeConfigBundleForRoom(roomId: string, seed = 1001): Room
         ? cloneMapObjectsConfig(stonewatchForkMapObjectsConfig as MapObjectsConfig)
       : mapVariantId === RIDGEWAY_CROSSING_MAP_VARIANT_ID
         ? cloneMapObjectsConfig(ridgewayCrossingMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === HIGHLAND_REACH_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(highlandReachMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === AMBER_FIELDS_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(amberFieldsMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === IRONPASS_GORGE_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(ironpassGorgeMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === SPLITROCK_CANYON_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(splitrockCanyonMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === BOGFEN_CROSSING_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(bogfenCrossingMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === MURKVEIL_DELTA_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(murkveilDeltaMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === FROSTWATCH_RIDGE_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(frostwatchRidgeMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === ASHPEAK_ASCENT_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(ashpeakAscentMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === THORNWALL_DIVIDE_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(thornwallDivideMapObjectsConfig as MapObjectsConfig)
       : mapVariantId === CONTESTED_BASIN_MAP_VARIANT_ID
         ? cloneMapObjectsConfig(contestedBasinMapObjectsConfig as MapObjectsConfig)
         : getDefaultMapObjectsConfig();

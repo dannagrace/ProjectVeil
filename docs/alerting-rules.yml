@@ -1,0 +1,53 @@
+groups:
+  - name: project-veil-prometheus
+    interval: 30s
+    rules:
+      - alert: VeilConnectedPlayersHigh
+        expr: veil_connected_players > 150
+        for: 10m
+        labels:
+          severity: warning
+          service: project-veil-server
+        annotations:
+          summary: Project Veil connected player count is elevated
+          description: veil_connected_players has been above 150 for 10 minutes. Add capacity or shed test traffic before matchmaking and room latency degrade.
+
+      - alert: VeilRoomsHot
+        expr: (veil_connected_players / clamp_min(veil_active_rooms, 1)) > 12
+        for: 10m
+        labels:
+          severity: warning
+          service: project-veil-server
+        annotations:
+          summary: Project Veil room density is high
+          description: Average connected players per active room has stayed above 12 for 10 minutes, which indicates hot shards or uneven room placement.
+
+      - alert: VeilBattleDurationP95High
+        expr: histogram_quantile(0.95, sum(rate(veil_battle_duration_seconds_bucket[30m])) by (le)) > 180
+        for: 15m
+        labels:
+          severity: warning
+          service: project-veil-server
+        annotations:
+          summary: Project Veil battles are taking too long to resolve
+          description: The 95th percentile battle duration has exceeded 180 seconds for 15 minutes, which usually means turn processing stalls or players are stuck in combat loops.
+
+      - alert: VeilActionValidationFailuresHigh
+        expr: sum(rate(veil_action_validation_failures_total[15m])) > 0.5
+        for: 15m
+        labels:
+          severity: warning
+          service: project-veil-server
+        annotations:
+          summary: Project Veil is rejecting gameplay actions at an abnormal rate
+          description: veil_action_validation_failures_total is averaging more than 0.5 rejected actions per second over 15 minutes. Check recent deploys, protocol drift, and client desync.
+
+      - alert: VeilHttpRequestLatencyP95High
+        expr: histogram_quantile(0.95, sum(rate(veil_http_request_duration_seconds_bucket[15m])) by (le)) > 0.75
+        for: 10m
+        labels:
+          severity: warning
+          service: project-veil-server
+        annotations:
+          summary: Project Veil HTTP latency is elevated
+          description: The 95th percentile HTTP request latency has exceeded 750ms for 10 minutes. Inspect runtime saturation, downstream auth/config dependencies, and noisy operators.

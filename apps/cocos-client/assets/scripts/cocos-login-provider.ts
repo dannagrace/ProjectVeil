@@ -79,6 +79,7 @@ export interface CocosLoginOptions {
   wx?: CocosWechatMiniGameLike | null;
   config?: CocosLoginRuntimeConfig;
   authToken?: string | null;
+  privacyConsentAccepted?: boolean;
 }
 
 function normalizeBoolean(value: unknown): boolean | null {
@@ -196,7 +197,8 @@ export async function loginWithCocosProvider(
           ? { exchangePath: options.config.wechatMiniGame.exchangePath }
           : {}),
         ...(options?.config?.wechatMiniGame.mockCode ? { mockCode: options.config.wechatMiniGame.mockCode } : {}),
-        ...(options?.authToken ? { authToken: options.authToken } : {})
+        ...(options?.authToken ? { authToken: options.authToken } : {}),
+        ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {})
       });
   }
 }

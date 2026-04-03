@@ -4,6 +4,8 @@
 
 It now also emits one explicit candidate-level `Phase 1 exit evidence gate` so reviewers can make the final pass/pending/fail call from one object instead of re-interpreting each evidence section by hand.
 
+The same run also emits a smaller runtime observability dossier that keeps the target-environment runtime probes and reconnect/session-recovery evidence in one reviewer-facing artifact for the same candidate revision.
+
 The Markdown artifact is the canonical reviewer-facing attachment for one candidate revision: it records the candidate metadata, selected evidence inputs, the single Phase 1 exit gate decision, and the per-section drill-down in one place.
 
 The command stays intentionally thin and reuses the existing evidence producers:
@@ -69,6 +71,8 @@ If you do not pass output flags, the script writes one stable candidate bundle d
 
 - `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/phase1-candidate-dossier.json`
 - `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/phase1-candidate-dossier.md`
+- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/runtime-observability-dossier.json`
+- `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/runtime-observability-dossier.md`
 - `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/release-gate-summary.json`
 - `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/release-gate-summary.md`
 - `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/release-health-summary.json`
@@ -84,6 +88,7 @@ The dossier surfaces:
 - one candidate revision and target surface
 - one `Selected Inputs` block so reviewers can see the exact artifact paths and runtime URL that were used
 - one `Generated Bundle` block so PR/release巡检 reviewers can stay inside the dossier directory
+- one runtime observability companion dossier that ties `/api/runtime/health`, `/api/runtime/auth-readiness`, `/api/runtime/metrics`, and reconnect soak evidence to the same candidate revision
 - one `phase1ExitEvidenceGate` result with blocking/pending/accepted-risk section lists
 - `requiredFailed`
 - `requiredPending`

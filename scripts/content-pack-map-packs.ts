@@ -37,6 +37,69 @@ export const EXTRA_CONTENT_PACK_MAP_PACKS: ContentPackMapPackDefinition[] = [
     aliases: ["ridgeway_crossing", "ridgeway"]
   },
   {
+    id: "highland-reach",
+    worldFileName: "phase1-world-highland-reach.json",
+    mapObjectsFileName: "phase1-map-objects-highland-reach.json",
+    phase: "phase1",
+    aliases: ["highland_reach", "highland"]
+  },
+  {
+    id: "amber-fields",
+    worldFileName: "phase1-world-amber-fields.json",
+    mapObjectsFileName: "phase1-map-objects-amber-fields.json",
+    phase: "phase1",
+    aliases: ["amber_fields", "amber"]
+  },
+  {
+    id: "ironpass-gorge",
+    worldFileName: "phase1-world-ironpass-gorge.json",
+    mapObjectsFileName: "phase1-map-objects-ironpass-gorge.json",
+    phase: "phase1",
+    aliases: ["ironpass_gorge", "ironpass"]
+  },
+  {
+    id: "splitrock-canyon",
+    worldFileName: "phase1-world-splitrock-canyon.json",
+    mapObjectsFileName: "phase1-map-objects-splitrock-canyon.json",
+    phase: "phase1",
+    aliases: ["splitrock_canyon", "splitrock"]
+  },
+  {
+    id: "bogfen-crossing",
+    worldFileName: "phase1-world-bogfen-crossing.json",
+    mapObjectsFileName: "phase1-map-objects-bogfen-crossing.json",
+    phase: "phase1",
+    aliases: ["bogfen_crossing", "bogfen"]
+  },
+  {
+    id: "murkveil-delta",
+    worldFileName: "phase1-world-murkveil-delta.json",
+    mapObjectsFileName: "phase1-map-objects-murkveil-delta.json",
+    phase: "phase1",
+    aliases: ["murkveil_delta", "murkveil"]
+  },
+  {
+    id: "frostwatch-ridge",
+    worldFileName: "phase1-world-frostwatch-ridge.json",
+    mapObjectsFileName: "phase1-map-objects-frostwatch-ridge.json",
+    phase: "phase1",
+    aliases: ["frostwatch_ridge", "frostwatch"]
+  },
+  {
+    id: "ashpeak-ascent",
+    worldFileName: "phase1-world-ashpeak-ascent.json",
+    mapObjectsFileName: "phase1-map-objects-ashpeak-ascent.json",
+    phase: "phase1",
+    aliases: ["ashpeak_ascent", "ashpeak"]
+  },
+  {
+    id: "thornwall-divide",
+    worldFileName: "phase1-world-thornwall-divide.json",
+    mapObjectsFileName: "phase1-map-objects-thornwall-divide.json",
+    phase: "phase1",
+    aliases: ["thornwall_divide", "thornwall"]
+  },
+  {
     id: "phase2",
     worldFileName: "phase2-contested-basin.json",
     mapObjectsFileName: "phase2-map-objects-contested-basin.json",

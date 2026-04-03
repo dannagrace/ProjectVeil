@@ -376,6 +376,8 @@ interface Phase1CandidateDossier {
     outputDir: string;
     dossierJsonPath: string;
     dossierMarkdownPath: string;
+    runtimeObservabilityDossierPath: string;
+    runtimeObservabilityDossierMarkdownPath: string;
     releaseGateSummaryPath: string;
     releaseGateMarkdownPath: string;
     releaseHealthSummaryPath: string;
@@ -383,6 +385,26 @@ interface Phase1CandidateDossier {
   };
   sections: DossierSection[];
   acceptedRisks: DossierAcceptedRisk[];
+}
+
+interface RuntimeObservabilityDossier {
+  schemaVersion: 1;
+  generatedAt: string;
+  candidate: Phase1CandidateDossier["candidate"];
+  targetEnvironment: {
+    serverUrl?: string;
+  };
+  summary: {
+    status: DossierResult;
+    headline: string;
+    runtimeStatus: DossierResult;
+    reconnectStatus: DossierResult;
+  };
+  artifacts?: {
+    jsonPath: string;
+    markdownPath: string;
+  };
+  sections: Array<Pick<DossierSection, "id" | "label" | "result" | "summary" | "artifactPath" | "observedAt" | "freshness" | "revision" | "details" | "evidence">>;
 }
 
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
@@ -803,16 +825,26 @@ async function fetchText(url: string): Promise<string> {
   return response.text();
 }
 
-async function buildRuntimeSection(serverUrl: string | undefined, maxAgeMs: number): Promise<DossierSection> {
+async function buildRuntimeSection(
+  targetSurface: TargetSurface,
+  serverUrl: string | undefined,
+  maxAgeMs: number
+): Promise<DossierSection> {
   if (!serverUrl) {
     return {
       id: "runtime-health",
       label: "Runtime health/auth-readiness/metrics",
       required: true,
-      result: "pending",
-      summary: "Live runtime evidence was not sampled for this candidate.",
+      result: targetSurface === "wechat" ? "pending" : "passed",
+      summary:
+        targetSurface === "wechat"
+          ? "Live runtime evidence was not sampled for this candidate."
+          : "Live runtime sampling was not requested for this target surface.",
       freshness: "unknown",
-      details: ["Pass --server-url <base-url> to sample /api/runtime/health, /api/runtime/auth-readiness, and /api/runtime/metrics."],
+      details:
+        targetSurface === "wechat"
+          ? ["Pass --server-url <base-url> to sample /api/runtime/health, /api/runtime/auth-readiness, and /api/runtime/metrics."]
+          : ["No --server-url was provided; dossier relies on packaged-artifact and reconnect-soak evidence for this target surface."],
       evidence: [],
       acceptedRisks: []
     };
@@ -1618,6 +1650,62 @@ function replaceSectionEvidence(
   return sections.map((section) => (section.id === id ? { ...section, evidence } : section));
 }
 
+export function buildRuntimeObservabilityDossier(
+  dossier: Phase1CandidateDossier,
+  artifactPaths?: RuntimeObservabilityDossier["artifacts"]
+): RuntimeObservabilityDossier {
+  const runtimeSection = dossier.sections.find((section) => section.id === "runtime-health");
+  const reconnectSection = dossier.sections.find((section) => section.id === "reconnect-soak");
+  if (!runtimeSection || !reconnectSection) {
+    fail("Phase 1 candidate dossier is missing runtime-health or reconnect-soak sections.");
+  }
+
+  const summaryStatus =
+    runtimeSection.result === "failed" || reconnectSection.result === "failed"
+      ? "failed"
+      : runtimeSection.result === "pending" || reconnectSection.result === "pending"
+        ? "pending"
+        : runtimeSection.result === "accepted_risk" || reconnectSection.result === "accepted_risk"
+          ? "accepted_risk"
+          : "passed";
+  const headline =
+    summaryStatus === "failed"
+      ? "Target-environment runtime observability or reconnect evidence failed for this candidate."
+      : summaryStatus === "pending"
+        ? "Target-environment runtime observability is partially ready, but reviewer follow-up is still required."
+        : summaryStatus === "accepted_risk"
+          ? "Target-environment runtime observability passed with accepted risk."
+          : "Target-environment runtime observability and reconnect evidence are aligned with this candidate.";
+
+  return {
+    schemaVersion: 1,
+    generatedAt: dossier.generatedAt,
+    candidate: dossier.candidate,
+    targetEnvironment: {
+      ...(dossier.inputs.serverUrl ? { serverUrl: dossier.inputs.serverUrl } : {})
+    },
+    summary: {
+      status: summaryStatus,
+      headline,
+      runtimeStatus: runtimeSection.result,
+      reconnectStatus: reconnectSection.result
+    },
+    ...(artifactPaths ? { artifacts: artifactPaths } : {}),
+    sections: [runtimeSection, reconnectSection].map((section) => ({
+      id: section.id,
+      label: section.label,
+      result: section.result,
+      summary: section.summary,
+      ...(section.artifactPath ? { artifactPath: section.artifactPath } : {}),
+      ...(section.observedAt ? { observedAt: section.observedAt } : {}),
+      freshness: section.freshness,
+      ...(section.revision ? { revision: section.revision } : {}),
+      details: [...section.details],
+      evidence: section.evidence.map((entry) => ({ ...entry }))
+    }))
+  };
+}
+
 function buildSupportingReports(
   inputs: Phase1CandidateDossier["inputs"],
   args: Args,
@@ -1675,11 +1763,69 @@ function resolveBundlePaths(args: Args, dossier: Phase1CandidateDossier): Phase1
     outputDir: bundleDir,
     dossierJsonPath,
     dossierMarkdownPath,
+    runtimeObservabilityDossierPath: path.join(bundleDir, "runtime-observability-dossier.json"),
+    runtimeObservabilityDossierMarkdownPath: path.join(bundleDir, "runtime-observability-dossier.md"),
     releaseGateSummaryPath: path.join(bundleDir, "release-gate-summary.json"),
     releaseGateMarkdownPath: path.join(bundleDir, "release-gate-summary.md"),
     releaseHealthSummaryPath: path.join(bundleDir, "release-health-summary.json"),
     releaseHealthMarkdownPath: path.join(bundleDir, "release-health-summary.md")
   };
+}
+
+export function renderRuntimeObservabilityMarkdown(dossier: RuntimeObservabilityDossier): string {
+  const lines: string[] = [];
+  lines.push("# Runtime Observability Dossier", "");
+  lines.push(`- Generated at: \`${dossier.generatedAt}\``);
+  lines.push(`- Candidate: \`${dossier.candidate.name}\``);
+  lines.push(`- Revision: \`${dossier.candidate.revision}\``);
+  lines.push(`- Branch: \`${dossier.candidate.branch}\``);
+  lines.push(`- Target surface: \`${dossier.candidate.targetSurface}\``);
+  lines.push(`- Target environment: \`${dossier.targetEnvironment.serverUrl ?? "<missing>"}\``);
+  lines.push(`- Overall status: **${dossier.summary.status.toUpperCase()}**`);
+  lines.push(`- Headline: ${dossier.summary.headline}`);
+  lines.push(`- Runtime endpoint status: \`${dossier.summary.runtimeStatus}\``);
+  lines.push(`- Reconnect/session-recovery status: \`${dossier.summary.reconnectStatus}\``, "");
+
+  if (dossier.artifacts) {
+    lines.push("## Generated Bundle", "");
+    lines.push(`- JSON: \`${relativeArtifactPath(dossier.artifacts.jsonPath)}\``);
+    lines.push(`- Markdown: \`${relativeArtifactPath(dossier.artifacts.markdownPath)}\``, "");
+  }
+
+  lines.push("## Evidence Summary", "");
+  for (const section of dossier.sections) {
+    lines.push(`### ${section.label}`, "");
+    lines.push(`- Result: \`${section.result}\``);
+    lines.push(`- Summary: ${section.summary}`);
+    lines.push(`- Freshness: \`${section.freshness}\``);
+    if (section.observedAt) {
+      lines.push(`- Observed at: \`${section.observedAt}\``);
+    }
+    if (section.revision) {
+      lines.push(`- Revision: \`${section.revision}\``);
+    }
+    if (section.artifactPath) {
+      lines.push(`- Artifact: \`${relativeArtifactPath(section.artifactPath)}\``);
+    }
+    if (section.details.length > 0) {
+      lines.push("- Details:");
+      for (const detail of section.details) {
+        lines.push(`  - ${detail}`);
+      }
+    }
+    if (section.evidence.length > 0) {
+      lines.push("- Evidence:");
+      for (const entry of section.evidence) {
+        const extras = [entry.observedAt ? `observedAt=${entry.observedAt}` : "", entry.revision ? `revision=${entry.revision}` : "", `freshness=${entry.freshness}`]
+          .filter((value) => value.length > 0)
+          .join(" ");
+        lines.push(`  - ${entry.label}: \`${entry.path}\` (${entry.summary}${extras ? `; ${extras}` : ""})`);
+      }
+    }
+    lines.push("");
+  }
+
+  return `${lines.join("\n").trim()}\n`;
 }
 
 function buildPhase1ExitEvidenceGateSection(sections: DossierSection[], generatedAt: string | undefined): {
@@ -1778,6 +1924,8 @@ export function renderMarkdown(dossier: Phase1CandidateDossier): string {
     lines.push(`- Output dir: \`${relativeArtifactPath(dossier.artifacts.outputDir)}\``);
     lines.push(`- Dossier JSON: \`${relativeArtifactPath(dossier.artifacts.dossierJsonPath)}\``);
     lines.push(`- Dossier Markdown: \`${relativeArtifactPath(dossier.artifacts.dossierMarkdownPath)}\``);
+    lines.push(`- Runtime observability dossier JSON: \`${relativeArtifactPath(dossier.artifacts.runtimeObservabilityDossierPath)}\``);
+    lines.push(`- Runtime observability dossier Markdown: \`${relativeArtifactPath(dossier.artifacts.runtimeObservabilityDossierMarkdownPath)}\``);
     lines.push(`- Release gate summary JSON: \`${relativeArtifactPath(dossier.artifacts.releaseGateSummaryPath)}\``);
     lines.push(`- Release gate summary Markdown: \`${relativeArtifactPath(dossier.artifacts.releaseGateMarkdownPath)}\``);
     lines.push(`- Release health summary JSON: \`${relativeArtifactPath(dossier.artifacts.releaseHealthSummaryPath)}\``);
@@ -1894,7 +2042,7 @@ export async function buildPhase1CandidateDossier(args: Args): Promise<Phase1Can
     revision.commit,
     maxAgeMs
   );
-  const runtimeSection = await buildRuntimeSection(inputs.serverUrl, maxAgeMs);
+  const runtimeSection = await buildRuntimeSection(args.targetSurface, inputs.serverUrl, maxAgeMs);
   const reconnectSoakSection = buildReconnectSoakSection(inputs.reconnectSoakPath, revision.commit, maxAgeMs);
   const persistenceSection = buildPersistenceSection(inputs.persistencePath, revision.commit, maxAgeMs);
 
@@ -1999,11 +2147,17 @@ async function main(): Promise<void> {
   const { gateReport, healthReport } = buildSupportingReports(inputs, args, revision);
   let dossier = await buildPhase1CandidateDossier(args);
   const artifacts = resolveBundlePaths(args, dossier);
+  const runtimeObservabilityDossier = buildRuntimeObservabilityDossier(dossier, {
+    jsonPath: artifacts.runtimeObservabilityDossierPath,
+    markdownPath: artifacts.runtimeObservabilityDossierMarkdownPath
+  });
 
   writeJsonFile(artifacts.releaseGateSummaryPath, gateReport);
   writeFile(artifacts.releaseGateMarkdownPath, renderReleaseGateMarkdown(gateReport));
   writeJsonFile(artifacts.releaseHealthSummaryPath, healthReport);
   writeFile(artifacts.releaseHealthMarkdownPath, renderReleaseHealthMarkdown(healthReport));
+  writeJsonFile(artifacts.runtimeObservabilityDossierPath, runtimeObservabilityDossier);
+  writeFile(artifacts.runtimeObservabilityDossierMarkdownPath, renderRuntimeObservabilityMarkdown(runtimeObservabilityDossier));
 
   dossier = {
     ...dossier,
@@ -2059,6 +2213,7 @@ async function main(): Promise<void> {
   console.log(`Wrote Phase 1 candidate dossier bundle: ${path.relative(process.cwd(), artifacts.outputDir).replace(/\\/g, "/")}`);
   console.log(`Wrote Phase 1 candidate dossier JSON: ${path.relative(process.cwd(), artifacts.dossierJsonPath).replace(/\\/g, "/")}`);
   console.log(`Wrote Phase 1 candidate dossier Markdown: ${path.relative(process.cwd(), artifacts.dossierMarkdownPath).replace(/\\/g, "/")}`);
+  console.log(`Wrote runtime observability dossier JSON: ${path.relative(process.cwd(), artifacts.runtimeObservabilityDossierPath).replace(/\\/g, "/")}`);
   console.log(`Wrote release gate summary JSON: ${path.relative(process.cwd(), artifacts.releaseGateSummaryPath).replace(/\\/g, "/")}`);
   console.log(`Wrote release health summary JSON: ${path.relative(process.cwd(), artifacts.releaseHealthSummaryPath).replace(/\\/g, "/")}`);
   console.log(`Candidate: ${dossier.candidate.name}`);

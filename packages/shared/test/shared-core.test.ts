@@ -2,11 +2,29 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import assetConfig from "../../../configs/assets.json";
+import amberFieldsMapObjectsConfig from "../../../configs/phase1-map-objects-amber-fields.json";
+import ashpeakAscentMapObjectsConfig from "../../../configs/phase1-map-objects-ashpeak-ascent.json";
+import bogfenCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-bogfen-crossing.json";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
+import frostwatchRidgeMapObjectsConfig from "../../../configs/phase1-map-objects-frostwatch-ridge.json";
+import highlandReachMapObjectsConfig from "../../../configs/phase1-map-objects-highland-reach.json";
+import ironpassGorgeMapObjectsConfig from "../../../configs/phase1-map-objects-ironpass-gorge.json";
+import murkveilDeltaMapObjectsConfig from "../../../configs/phase1-map-objects-murkveil-delta.json";
+import splitrockCanyonMapObjectsConfig from "../../../configs/phase1-map-objects-splitrock-canyon.json";
 import stonewatchForkMapObjectsConfig from "../../../configs/phase1-map-objects-stonewatch-fork.json";
+import thornwallDivideMapObjectsConfig from "../../../configs/phase1-map-objects-thornwall-divide.json";
 import ridgewayCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-ridgeway-crossing.json";
+import amberFieldsWorldConfig from "../../../configs/phase1-world-amber-fields.json";
+import ashpeakAscentWorldConfig from "../../../configs/phase1-world-ashpeak-ascent.json";
+import bogfenCrossingWorldConfig from "../../../configs/phase1-world-bogfen-crossing.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import frostwatchRidgeWorldConfig from "../../../configs/phase1-world-frostwatch-ridge.json";
+import highlandReachWorldConfig from "../../../configs/phase1-world-highland-reach.json";
+import ironpassGorgeWorldConfig from "../../../configs/phase1-world-ironpass-gorge.json";
+import murkveilDeltaWorldConfig from "../../../configs/phase1-world-murkveil-delta.json";
+import splitrockCanyonWorldConfig from "../../../configs/phase1-world-splitrock-canyon.json";
 import stonewatchForkWorldConfig from "../../../configs/phase1-world-stonewatch-fork.json";
+import thornwallDivideWorldConfig from "../../../configs/phase1-world-thornwall-divide.json";
 import ridgewayCrossingWorldConfig from "../../../configs/phase1-world-ridgeway-crossing.json";
 import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
 import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
@@ -16,8 +34,11 @@ import {
   appendEventLogEntries,
   appendPlayerBattleReplaySummaries,
   applyBattleOutcomeToWorld,
+  AMBER_FIELDS_MAP_VARIANT_ID,
+  ASHPEAK_ASCENT_MAP_VARIANT_ID,
   applyAchievementMetricDelta,
   applyAchievementProgressValue,
+  BOGFEN_CROSSING_MAP_VARIANT_ID,
   buildPlayerBattleReportCenter,
   buildPlayerProgressionSnapshot,
   queryAchievementProgress,
@@ -45,6 +66,7 @@ import {
   decodePlayerWorldView,
   encodePlayerWorldView,
   filterWorldEventsForPlayer,
+  FROSTWATCH_RIDGE_MAP_VARIANT_ID,
   FRONTIER_BASIN_MAP_VARIANT_ID,
   getBattleBalanceConfig,
   getAchievementDefinitions,
@@ -60,13 +82,17 @@ import {
   getLatestProgressedAchievement,
   getLatestUnlockedAchievement,
   HERO_EQUIPMENT_INVENTORY_CAPACITY,
+  HIGHLAND_REACH_MAP_VARIANT_ID,
   hasFullyExploredMap,
+  IRONPASS_GORGE_MAP_VARIANT_ID,
+  MURKVEIL_DELTA_MAP_VARIANT_ID,
   normalizeAchievementProgressQuery,
   normalizeEventLogQuery,
   normalizePlayerAccountReadModel,
   normalizePlayerBattleReplaySummaries,
   pauseBattleReplayPlayback,
   pickAutomatedBattleAction,
+  planHeroMovement,
   planPlayerViewMovement,
   playBattleReplayPlayback,
   predictPlayerWorldAction,
@@ -75,6 +101,7 @@ import {
   RIDGEWAY_CROSSING_MAP_VARIANT_ID,
   simulateAutomatedBattle,
   simulateAutomatedBattles,
+  SPLITROCK_CANYON_MAP_VARIANT_ID,
   STONEWATCH_FORK_MAP_VARIANT_ID,
   summarizeAssetMetadata,
   stepBattleReplayPlayback,
@@ -83,6 +110,7 @@ import {
   rollEquipmentDrop,
   setBattleBalanceConfig,
   setBattleSkillCatalog,
+  THORNWALL_DIVIDE_MAP_VARIANT_ID,
   setUnitCatalog,
   getRuntimeConfigBundleForRoom,
   validateMapObjectsConfig,
@@ -194,6 +222,35 @@ function createWorldState(options?: {
   };
 }
 
+const battleSkillStateById = new Map(
+  getDefaultBattleSkillCatalog().skills.map((skill) => [
+    skill.id,
+    {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      kind: skill.kind,
+      target: skill.target,
+      ...(skill.delivery ? { delivery: skill.delivery } : {}),
+      cooldown: skill.cooldown,
+      remainingCooldown: 0
+    }
+  ])
+);
+
+function createUnitStackState(
+  overrides: Omit<UnitStack, "skills" | "statusEffects"> & {
+    skillIds?: string[];
+    statusEffects?: UnitStack["statusEffects"];
+  }
+): UnitStack {
+  return {
+    ...overrides,
+    skills: (overrides.skillIds ?? []).map((skillId) => structuredClone(battleSkillStateById.get(skillId)!)),
+    statusEffects: overrides.statusEffects ?? []
+  };
+}
+
 function createLargePlayerWorldView(): PlayerWorldView {
   const width = 32;
   const height = 32;
@@ -201,7 +258,7 @@ function createLargePlayerWorldView(): PlayerWorldView {
   const tiles = Array.from({ length: width * height }, (_, index) => {
     const x = index % width;
     const y = Math.floor(index / width);
-    const terrain = (["grass", "dirt", "sand", "water"] as const)[(x + y) % 4] ?? "grass";
+    const terrain = (["grass", "dirt", "sand", "water", "swamp"] as const)[(x + y) % 5] ?? "grass";
     const resource = index % 47 === 0 ? { kind: "wood" as const, amount: 5 } : undefined;
     const occupant = index === width + 1 ? { kind: "hero" as const, refId: "hero-1" } : undefined;
 
@@ -276,14 +333,14 @@ test("asset config exposes metadata for referenced asset paths", () => {
   });
 
   assert.deepEqual(summarizeAssetMetadata(assetConfig), {
-    total: 64,
+    total: 65,
     byStage: {
-      placeholder: 37,
+      placeholder: 38,
       prototype: 27,
       production: 0
     },
     bySource: {
-      generated: 64,
+      generated: 65,
       "open-source": 0,
       licensed: 0,
       commissioned: 0
@@ -321,6 +378,10 @@ test("asset config validation reports missing terrain variants and bad asset roo
       water: {
         default: "/assets/terrain/water-tile.svg",
         variants: ["/assets/terrain/water-tile.svg"]
+      },
+      swamp: {
+        default: "/assets/terrain/dirt-tile.svg",
+        variants: ["/assets/terrain/dirt-tile.svg"]
       },
       unknown: {
         default: "/assets/terrain/fog-tile.svg",
@@ -412,6 +473,10 @@ test("asset config validation accepts prototype stage and open-source provenance
       water: {
         default: "/assets/terrain/water-tile.png",
         variants: ["/assets/terrain/water-tile.png"]
+      },
+      swamp: {
+        default: "/assets/terrain/dirt-tile.png",
+        variants: ["/assets/terrain/dirt-tile.png"]
       },
       unknown: {
         default: "/assets/terrain/fog-tile.png",
@@ -692,6 +757,10 @@ test("asset config validation reports missing metadata coverage and duplicate sl
         default: "/assets/terrain/water-tile.svg",
         variants: ["/assets/terrain/water-tile.svg"]
       },
+      swamp: {
+        default: "/assets/terrain/dirt-tile.svg",
+        variants: ["/assets/terrain/dirt-tile.svg"]
+      },
       unknown: {
         default: "/assets/terrain/fog-tile.svg",
         variants: ["/assets/terrain/fog-tile.svg"]
@@ -777,6 +846,10 @@ test("asset config validation reports missing metadata coverage", () => {
       water: {
         default: "/assets/pixel/terrain/water-tile.png",
         variants: ["/assets/pixel/terrain/water-tile.png"]
+      },
+      swamp: {
+        default: "/assets/pixel/terrain/dirt-tile.png",
+        variants: ["/assets/pixel/terrain/dirt-tile.png"]
       },
       unknown: {
         default: "/assets/pixel/terrain/fog-tile.png",
@@ -1330,6 +1403,22 @@ test("player account read model helper normalizes progression, replays, and reso
   assert.equal(account.battleReportCenter.items[0]?.result, "victory");
 });
 
+test("player account read model helper normalizes minor protection fields", () => {
+  const account = normalizePlayerAccountReadModel({
+    playerId: "player-minor",
+    displayName: "Minor",
+    ageVerified: true,
+    isMinor: true,
+    dailyPlayMinutes: 91.8,
+    lastPlayDate: " 2026-04-03 "
+  });
+
+  assert.equal(account.ageVerified, true);
+  assert.equal(account.isMinor, true);
+  assert.equal(account.dailyPlayMinutes, 91);
+  assert.equal(account.lastPlayDate, "2026-04-03");
+});
+
 test("player account read model helper falls back to empty progression collections", () => {
   const account = normalizePlayerAccountReadModel();
 
@@ -1869,19 +1958,54 @@ test("equipment catalog exposes the minimum foundation set and resolves hero bon
 
   const bonuses = createHeroEquipmentBonusSummary(hero);
 
-  assert.equal(countsByType.weapon, 6);
-  assert.equal(countsByType.armor, 6);
-  assert.equal(countsByType.accessory, 6);
+  assert.equal(catalog.entries.length, 40);
+  assert.equal(countsByType.weapon, 13);
+  assert.equal(countsByType.armor, 13);
+  assert.equal(countsByType.accessory, 14);
   assert.equal(bonuses.attack, 1);
   assert.equal(bonuses.defense, 1);
   assert.equal(bonuses.power, 2);
   assert.equal(bonuses.knowledge, 2);
   assert.equal(bonuses.maxHp, 6);
   assert.deepEqual(bonuses.resolvedItemIds, ["sunforged_spear", "warden_aegis", "oracle_lens"]);
+  assert.deepEqual(bonuses.activeSetBonuses, []);
   assert.deepEqual(
     bonuses.specialEffects.map((effect) => effect.id).sort(),
     ["channeling", "momentum", "ward"]
   );
+});
+
+test("equipment set bonuses activate at two matching pieces and add special effects", () => {
+  const hero = createHero({
+    id: "hero-warhost",
+    playerId: "player-1",
+    name: "突袭指挥官",
+    stats: {
+      attack: 5,
+      defense: 4,
+      power: 1,
+      knowledge: 2,
+      hp: 30,
+      maxHp: 30
+    },
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        weaponId: "siege_maul",
+        armorId: "assault_cuirass",
+        trinketIds: []
+      }
+    }
+  });
+
+  const bonuses = createHeroEquipmentBonusSummary(hero);
+
+  assert.deepEqual(bonuses.resolvedItemIds, ["siege_maul", "assault_cuirass"]);
+  assert.deepEqual(bonuses.activeSetBonuses.map((bonus) => bonus.setId), ["warhost"]);
+  assert.equal(bonuses.attackPercent, 28);
+  assert.equal(bonuses.power, 1);
+  assert.equal(bonuses.maxHp, 3);
+  assert.deepEqual(bonuses.specialEffects.map((effect) => effect.id), ["lifesteal"]);
 });
 
 test("hero equipment loadout view resolves slot metadata for equipped and empty slots", () => {
@@ -2018,8 +2142,8 @@ test("hero equip and unequip actions rotate items between slots and inventory", 
 test("equipment drops respect rarity pools and battle victories add loot to hero inventory", () => {
   assert.equal(rollEquipmentDrop(0.9, 0.1, 0.1), null);
   assert.deepEqual(rollEquipmentDrop(0.01, 0.98, 0.9), {
-    itemId: "oracle_lens",
-    item: getDefaultEquipmentCatalog().entries.find((entry) => entry.id === "oracle_lens")
+    itemId: "briar_heart_charm",
+    item: getDefaultEquipmentCatalog().entries.find((entry) => entry.id === "briar_heart_charm")
   });
 
   const hero = createHero({
@@ -2052,15 +2176,15 @@ test("equipment drops respect rarity pools and battle victories add loot to hero
     survivingDefenders: []
   });
 
-  assert.deepEqual(outcome.state.heroes[0]?.loadout.inventory, ["tower_shield_mail"]);
+  assert.deepEqual(outcome.state.heroes[0]?.loadout.inventory, ["skirmisher_cuirass"]);
   assert.deepEqual(outcome.events.slice(-1), [
     {
       type: "hero.equipmentFound",
       heroId: "hero-1",
       battleId: "battle-neutral-1",
       battleKind: "neutral",
-      equipmentId: "tower_shield_mail",
-      equipmentName: "塔盾链甲",
+      equipmentId: "skirmisher_cuirass",
+      equipmentName: "游斗胸甲",
       rarity: "common"
     }
   ]);
@@ -2114,8 +2238,8 @@ test("equipment drops overflow cleanly when the backpack is already full", () =>
       heroId: "hero-1",
       battleId: "battle-neutral-1",
       battleKind: "neutral",
-      equipmentId: "tower_shield_mail",
-      equipmentName: "塔盾链甲",
+      equipmentId: "skirmisher_cuirass",
+      equipmentName: "游斗胸甲",
       rarity: "common",
       overflowed: true
     }
@@ -2374,7 +2498,7 @@ test("createWorldStateFromConfigs produces a valid frontier basin world", () => 
   const state = createWorldStateFromConfigs(bundle.world, bundle.mapObjects, seed, roomId);
   assert.ok(state.map.tiles.length > 0);
 
-  const validTerrains = new Set(["grass", "dirt", "sand", "water"]);
+  const validTerrains = new Set(["grass", "dirt", "sand", "water", "swamp"]);
   assert.ok(
     state.map.tiles.every((tile) => validTerrains.has(tile.terrain)),
     "frontier basin tiles must have a valid terrain type"
@@ -2395,12 +2519,29 @@ test("createInitialWorldState selects the contested basin variant with the new c
   assert.equal(state.meta.mapVariantId, "contested_basin");
   assert.equal(state.heroes[0]?.position.x, 1);
   assert.equal(state.heroes[0]?.position.y, 2);
+  assert.equal(state.buildings["recruit-post-basin-1"]?.kind, "recruitment_post");
+  assert.equal(state.buildings["recruit-post-basin-1"]?.unitTemplateId, "wild_hawk_rider");
   assert.equal(state.buildings["watchtower-basin-1"]?.kind, "watchtower");
   assert.equal(state.buildings["watchtower-basin-1"]?.visionBonus, 2);
   assert.equal(state.neutralArmies["neutral-reed-patrol"]?.behavior?.mode, "patrol");
   assert.equal(state.neutralArmies["neutral-watch-guard"]?.behavior?.mode, "guard");
   assert.equal(state.neutralArmies["neutral-watch-guard"]?.stacks[0]?.templateId, "iron_walker");
   assert.equal(state.neutralArmies["neutral-reed-patrol"]?.stacks[0]?.templateId, "moss_stalker");
+});
+
+test("issue 784 wild templates and battle catalog entries are available", () => {
+  const unitCatalog = getDefaultUnitCatalog();
+  const templateById = new Map(unitCatalog.templates.map((template) => [template.id, template]));
+  const battleCatalog = getDefaultBattleSkillCatalog();
+
+  assert.deepEqual(templateById.get("wild_cave_bear")?.battleSkills, ["cave_bear_cleave"]);
+  assert.deepEqual(templateById.get("wild_serpent")?.battleSkills, ["serpent_venom"]);
+  assert.deepEqual(templateById.get("wild_hawk_rider")?.battleSkills, ["skybound", "pinning_javelin"]);
+  assert.deepEqual(templateById.get("wild_cave_troll")?.battleSkills, ["taunt_shout", "watcher_stance"]);
+  assert.ok(battleCatalog.skills.some((skill) => skill.id === "cave_bear_cleave"));
+  assert.ok(battleCatalog.skills.some((skill) => skill.id === "serpent_venom"));
+  assert.ok(battleCatalog.skills.some((skill) => skill.id === "skybound"));
+  assert.ok(battleCatalog.statuses.some((status) => status.id === "serpent_poison"));
 });
 
 test("createInitialWorldState selects the ridgeway crossing variant with the new Phase 1 content pack", () => {
@@ -2429,6 +2570,144 @@ test("createInitialWorldState selects the stonewatch fork variant with the addit
   assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
   assert.equal(state.neutralArmies["neutral-2"]?.reward?.kind, "wood");
   assert.equal(state.neutralArmies["neutral-4"]?.behavior?.mode, "patrol");
+});
+
+test("createInitialWorldState selects the highland reach variant with the wider plains layout", () => {
+  const state = createInitialWorldState(1001, "preview-highland[map:highland_reach]");
+
+  assert.equal(state.meta.mapVariantId, "highland_reach");
+  assert.equal(state.map.tiles.length, 100);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 4);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 2 && tile.position.y === 1)?.terrain, "water");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.buildings["shrine-defense-1"]?.kind, "attribute_shrine");
+  assert.equal(state.neutralArmies["neutral-2"]?.reward?.kind, "ore");
+  assert.equal(state.neutralArmies["neutral-3"]?.behavior?.mode, "patrol");
+});
+
+test("createInitialWorldState selects the amber fields variant with the central resource contest", () => {
+  const state = createInitialWorldState(1001, "preview-amber[map:amber_fields]");
+
+  assert.equal(state.meta.mapVariantId, "amber_fields");
+  assert.equal(state.map.tiles.length, 100);
+  assert.equal(state.heroes[1]?.position.x, 8);
+  assert.equal(state.heroes[1]?.position.y, 8);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 4 && tile.position.y === 4)?.terrain, "dirt");
+  assert.equal(state.buildings["shrine-power-1"]?.kind, "attribute_shrine");
+  assert.equal(state.buildings["mine-wood-1"]?.resourceKind, "wood");
+  assert.equal(state.neutralArmies["neutral-1"]?.reward?.kind, "wood");
+  assert.equal(state.neutralArmies["neutral-4"]?.reward?.amount, 260);
+});
+
+test("createInitialWorldState selects the ironpass gorge variant with a narrow canyon corridor", () => {
+  const state = createInitialWorldState(1001, "preview-ironpass[map:ironpass_gorge]");
+
+  assert.equal(state.meta.mapVariantId, "ironpass_gorge");
+  assert.equal(state.map.tiles.length, 120);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 4);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 0)?.terrain, "water");
+  assert.equal(state.buildings["shrine-defense-1"]?.kind, "attribute_shrine");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.neutralArmies["neutral-2"]?.behavior?.mode, "patrol");
+  assert.equal(state.neutralArmies["neutral-3"]?.reward?.kind, "wood");
+});
+
+test("createInitialWorldState selects the splitrock canyon variant with asymmetric starts", () => {
+  const state = createInitialWorldState(1001, "preview-splitrock[map:splitrock_canyon]");
+
+  assert.equal(state.meta.mapVariantId, "splitrock_canyon");
+  assert.equal(state.map.tiles.length, 120);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 2);
+  assert.equal(state.heroes[1]?.position.x, 9);
+  assert.equal(state.heroes[1]?.position.y, 7);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 1)?.terrain, "water");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.buildings["recruit-post-2"]?.kind, "recruitment_post");
+  assert.equal(state.neutralArmies["neutral-4"]?.behavior?.mode, "patrol");
+});
+
+test("issue 782 batch 2 world and map-object configs pass schema validation", () => {
+  const unitCatalog = getDefaultUnitCatalog();
+  const variants: Array<[WorldGenerationConfig, MapObjectsConfig]> = [
+    [bogfenCrossingWorldConfig as WorldGenerationConfig, bogfenCrossingMapObjectsConfig as MapObjectsConfig],
+    [murkveilDeltaWorldConfig as WorldGenerationConfig, murkveilDeltaMapObjectsConfig as MapObjectsConfig],
+    [frostwatchRidgeWorldConfig as WorldGenerationConfig, frostwatchRidgeMapObjectsConfig as MapObjectsConfig],
+    [ashpeakAscentWorldConfig as WorldGenerationConfig, ashpeakAscentMapObjectsConfig as MapObjectsConfig],
+    [thornwallDivideWorldConfig as WorldGenerationConfig, thornwallDivideMapObjectsConfig as MapObjectsConfig]
+  ];
+
+  for (const [world, mapObjects] of variants) {
+    validateWorldConfig(world);
+    validateMapObjectsConfig(mapObjects, world, unitCatalog);
+  }
+});
+
+test("createInitialWorldState selects the bogfen crossing variant with passable swamp lanes", () => {
+  const state = createInitialWorldState(1001, "preview-bogfen[map:bogfen_crossing]");
+
+  assert.equal(state.meta.mapVariantId, BOGFEN_CROSSING_MAP_VARIANT_ID);
+  assert.equal(state.map.tiles.length, 144);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 5);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 4)?.terrain, "swamp");
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 5 && tile.position.y === 0)?.terrain, "water");
+  assert.equal(state.buildings["mine-wood-1"]?.resourceKind, "wood");
+  assert.equal(state.neutralArmies["neutral-4"]?.behavior?.mode, "patrol");
+});
+
+test("createInitialWorldState selects the murkveil delta variant with island resources", () => {
+  const state = createInitialWorldState(1001, "preview-murkveil[map:murkveil_delta]");
+
+  assert.equal(state.meta.mapVariantId, MURKVEIL_DELTA_MAP_VARIANT_ID);
+  assert.equal(state.map.tiles.length, 120);
+  assert.equal(state.heroes[1]?.position.x, 8);
+  assert.equal(state.heroes[1]?.position.y, 9);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 1)?.terrain, "water");
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 1 && tile.position.y === 4)?.terrain, "swamp");
+  assert.equal(state.buildings["shrine-power-1"]?.kind, "attribute_shrine");
+  assert.equal(state.neutralArmies["neutral-3"]?.reward?.kind, "ore");
+});
+
+test("createInitialWorldState selects the frostwatch ridge variant with a broad central lane", () => {
+  const state = createInitialWorldState(1001, "preview-frostwatch[map:frostwatch_ridge]");
+
+  assert.equal(state.meta.mapVariantId, FROSTWATCH_RIDGE_MAP_VARIANT_ID);
+  assert.equal(state.map.tiles.length, 140);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 4);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 6 && tile.position.y === 4)?.terrain, "sand");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.neutralArmies["neutral-2"]?.reward?.kind, "ore");
+});
+
+test("createInitialWorldState selects the ashpeak ascent variant with defender-favored high ground", () => {
+  const state = createInitialWorldState(1001, "preview-ashpeak[map:ashpeak_ascent]");
+
+  assert.equal(state.meta.mapVariantId, ASHPEAK_ASCENT_MAP_VARIANT_ID);
+  assert.equal(state.map.tiles.length, 144);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 8);
+  assert.equal(state.heroes[1]?.position.x, 10);
+  assert.equal(state.heroes[1]?.position.y, 3);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 8 && tile.position.y === 3)?.terrain, "dirt");
+  assert.equal(state.buildings["shrine-defense-1"]?.kind, "attribute_shrine");
+  assert.equal(state.neutralArmies["neutral-4"]?.behavior?.mode, "patrol");
+});
+
+test("createInitialWorldState selects the thornwall divide variant with asymmetric resource access", () => {
+  const state = createInitialWorldState(1001, "preview-thornwall[map:thornwall_divide]");
+
+  assert.equal(state.meta.mapVariantId, THORNWALL_DIVIDE_MAP_VARIANT_ID);
+  assert.equal(state.map.tiles.length, 144);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 3);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 3)?.terrain, "swamp");
+  assert.equal(state.buildings["mine-wood-1"]?.resourceKind, "wood");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.neutralArmies["neutral-2"]?.reward?.kind, "ore");
 });
 
 test("frontier basin generates a distinct layout from the default phase1 variant", () => {
@@ -2539,6 +2818,62 @@ test("stonewatch fork configs validate alongside the existing Phase 1 variants",
   assert.doesNotThrow(() => {
     validateWorldConfig(stonewatchWorld);
     validateMapObjectsConfig(stonewatchMapObjects, stonewatchWorld, units);
+  });
+});
+
+test("highland reach configs validate alongside the expanded Phase 1 variants", () => {
+  const units = getDefaultUnitCatalog();
+  const highlandWorld = highlandReachWorldConfig as WorldGenerationConfig;
+  const highlandMapObjects = highlandReachMapObjectsConfig as MapObjectsConfig;
+  const bundle = getRuntimeConfigBundleForRoom("preview-highland[map:highland_reach]", 5124);
+
+  assert.equal(bundle.mapVariantId, HIGHLAND_REACH_MAP_VARIANT_ID);
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(highlandWorld);
+    validateMapObjectsConfig(highlandMapObjects, highlandWorld, units);
+  });
+});
+
+test("amber fields configs validate alongside the expanded Phase 1 variants", () => {
+  const units = getDefaultUnitCatalog();
+  const amberWorld = amberFieldsWorldConfig as WorldGenerationConfig;
+  const amberMapObjects = amberFieldsMapObjectsConfig as MapObjectsConfig;
+  const bundle = getRuntimeConfigBundleForRoom("preview-amber[map:amber_fields]", 5124);
+
+  assert.equal(bundle.mapVariantId, AMBER_FIELDS_MAP_VARIANT_ID);
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(amberWorld);
+    validateMapObjectsConfig(amberMapObjects, amberWorld, units);
+  });
+});
+
+test("ironpass gorge configs validate alongside the expanded Phase 1 variants", () => {
+  const units = getDefaultUnitCatalog();
+  const ironpassWorld = ironpassGorgeWorldConfig as WorldGenerationConfig;
+  const ironpassMapObjects = ironpassGorgeMapObjectsConfig as MapObjectsConfig;
+  const bundle = getRuntimeConfigBundleForRoom("preview-ironpass[map:ironpass_gorge]", 5124);
+
+  assert.equal(bundle.mapVariantId, IRONPASS_GORGE_MAP_VARIANT_ID);
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(ironpassWorld);
+    validateMapObjectsConfig(ironpassMapObjects, ironpassWorld, units);
+  });
+});
+
+test("splitrock canyon configs validate alongside the expanded Phase 1 variants", () => {
+  const units = getDefaultUnitCatalog();
+  const splitrockWorld = splitrockCanyonWorldConfig as WorldGenerationConfig;
+  const splitrockMapObjects = splitrockCanyonMapObjectsConfig as MapObjectsConfig;
+  const bundle = getRuntimeConfigBundleForRoom("preview-splitrock[map:splitrock_canyon]", 5124);
+
+  assert.equal(bundle.mapVariantId, SPLITROCK_CANYON_MAP_VARIANT_ID);
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(splitrockWorld);
+    validateMapObjectsConfig(splitrockMapObjects, splitrockWorld, units);
   });
 });
 
@@ -2657,13 +2992,13 @@ test("applyBattleOutcomeToWorld grants PvP experience to the winning hero", () =
     heroes: [attacker, defender],
     tiles: [
       createTile(0, 0),
-      createTile(1, 0),
+      createTile(1, 0, { walkable: false, terrain: "water" }),
       createTile(2, 0),
       createTile(0, 1),
       createTile(1, 1, { occupant: { kind: "hero", refId: "hero-1" } }),
       createTile(2, 1, { occupant: { kind: "hero", refId: "hero-2" } }),
       createTile(0, 2),
-      createTile(1, 2),
+      createTile(1, 2, { walkable: false, terrain: "water" }),
       createTile(2, 2)
     ]
   });
@@ -2964,6 +3299,140 @@ test("battle state builders fold equipped item bonuses into hero-led stacks", ()
     battle.units["hero-2-stack"]?.defense,
     (baselineBattle.units["hero-2-stack"]?.defense ?? 0) + defenderBonuses.defense
   );
+});
+
+test("battle attacks apply lifesteal from an active equipment set after a kill", () => {
+  const state: BattleState = {
+    id: "battle-lifesteal",
+    round: 1,
+    lanes: 1,
+    activeUnitId: "attacker",
+    turnOrder: ["attacker", "defender"],
+    units: {
+      attacker: {
+        id: "attacker",
+        templateId: "hero_guard_basic",
+        camp: "attacker",
+        lane: 0,
+        stackName: "先锋队",
+        initiative: 10,
+        attack: 9,
+        defense: 4,
+        minDamage: 8,
+        maxDamage: 8,
+        count: 1,
+        currentHp: 6,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false,
+        equipmentEffects: ["lifesteal"]
+      },
+      defender: {
+        id: "defender",
+        templateId: "hero_guard_basic",
+        camp: "defender",
+        lane: 0,
+        stackName: "守军",
+        initiative: 5,
+        attack: 2,
+        defense: 1,
+        minDamage: 1,
+        maxDamage: 1,
+        count: 1,
+        currentHp: 5,
+        maxHp: 5,
+        hasRetaliated: false,
+        defending: false
+      }
+    },
+    unitCooldowns: {
+      attacker: {},
+      defender: {}
+    },
+    environment: [],
+    log: [],
+    rng: {
+      seed: 1,
+      cursor: 0
+    }
+  };
+
+  const next = applyBattleAction(state, {
+    type: "battle.attack",
+    attackerId: "attacker",
+    defenderId: "defender"
+  });
+
+  assert.equal(next.units.defender?.count, 0);
+  assert.equal(next.units.attacker?.currentHp, 8);
+  assert.match(next.log.join("\n"), /恢复 2 生命/);
+});
+
+test("battle attacks apply thorns from an active equipment set on contact damage", () => {
+  const state: BattleState = {
+    id: "battle-thorns",
+    round: 1,
+    lanes: 1,
+    activeUnitId: "attacker",
+    turnOrder: ["attacker", "defender"],
+    units: {
+      attacker: {
+        id: "attacker",
+        templateId: "hero_guard_basic",
+        camp: "attacker",
+        lane: 0,
+        stackName: "攻方",
+        initiative: 10,
+        attack: 6,
+        defense: 3,
+        minDamage: 6,
+        maxDamage: 6,
+        count: 1,
+        currentHp: 10,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false
+      },
+      defender: {
+        id: "defender",
+        templateId: "hero_guard_basic",
+        camp: "defender",
+        lane: 0,
+        stackName: "守方",
+        initiative: 4,
+        attack: 3,
+        defense: 3,
+        minDamage: 1,
+        maxDamage: 1,
+        count: 1,
+        currentHp: 20,
+        maxHp: 20,
+        hasRetaliated: false,
+        defending: false,
+        equipmentEffects: ["thorns"]
+      }
+    },
+    unitCooldowns: {
+      attacker: {},
+      defender: {}
+    },
+    environment: [],
+    log: [],
+    rng: {
+      seed: 1,
+      cursor: 0
+    }
+  };
+
+  const next = applyBattleAction(state, {
+    type: "battle.attack",
+    attackerId: "attacker",
+    defenderId: "defender"
+  });
+
+  assert.ok((next.units.defender?.currentHp ?? 0) < 20);
+  assert.ok((next.units.attacker?.currentHp ?? 0) < 10);
+  assert.match(next.log.join("\n"), /反刺/);
 });
 
 test("createPlayerWorldView returns player-scoped resources after collection", () => {
@@ -4196,6 +4665,100 @@ test("planPlayerViewMovement stops at the tile before a visible neutral encounte
   assert.equal(plan?.moveCost, 1);
 });
 
+test("hawk rider armies can path across water tiles in world and player views", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    armyTemplateId: "wild_hawk_rider",
+    position: { x: 0, y: 1 },
+    move: { total: 6, remaining: 6 }
+  });
+  const state = createWorldState({
+    width: 3,
+    height: 3,
+    heroes: [hero],
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(2, 0),
+      createTile(0, 1, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(1, 1, { walkable: false, terrain: "water" }),
+      createTile(2, 1),
+      createTile(0, 2),
+      createTile(1, 2),
+      createTile(2, 2)
+    ],
+    visibilityByPlayer: {
+      "player-1": new Array(9).fill("visible")
+    }
+  });
+  const view = createPlayerWorldView(state, "player-1");
+
+  assert.deepEqual(planHeroMovement(state, "hero-1", { x: 2, y: 1 })?.path, [
+    { x: 0, y: 1 },
+    { x: 1, y: 1 },
+    { x: 2, y: 1 }
+  ]);
+  assert.deepEqual(planPlayerViewMovement(view, "hero-1", { x: 2, y: 1 })?.path, [
+    { x: 0, y: 1 },
+    { x: 1, y: 1 },
+    { x: 2, y: 1 }
+  ]);
+});
+
+test("swamp tiles stay traversable but cost extra movement in world and player views", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 1 },
+    move: { total: 3, remaining: 3 }
+  });
+  const state = createWorldState({
+    width: 3,
+    height: 3,
+    heroes: [hero],
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(2, 0),
+      createTile(0, 1, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(1, 1, { terrain: "swamp" }),
+      createTile(2, 1),
+      createTile(0, 2),
+      createTile(1, 2),
+      createTile(2, 2)
+    ],
+    visibilityByPlayer: {
+      "player-1": new Array(9).fill("visible")
+    }
+  });
+  const view = createPlayerWorldView(state, "player-1");
+  const worldPlan = planHeroMovement(state, "hero-1", { x: 2, y: 1 });
+  const viewPlan = planPlayerViewMovement(view, "hero-1", { x: 2, y: 1 });
+
+  assert.deepEqual(worldPlan?.path, [
+    { x: 0, y: 1 },
+    { x: 1, y: 1 },
+    { x: 2, y: 1 }
+  ]);
+  assert.equal(worldPlan?.moveCost, 3);
+  assert.equal(viewPlan?.moveCost, 3);
+  assert.equal(validateWorldAction(state, { type: "hero.move", heroId: "hero-1", destination: { x: 2, y: 1 } }).valid, true);
+
+  const exhaustedState = {
+    ...state,
+    heroes: state.heroes.map((item) =>
+      item.id === "hero-1" ? { ...item, move: { ...item.move, remaining: 2 } } : item
+    )
+  };
+  assert.equal(
+    validateWorldAction(exhaustedState, { type: "hero.move", heroId: "hero-1", destination: { x: 2, y: 1 } }).valid,
+    false
+  );
+});
+
 test("predictPlayerWorldAction updates the player view immediately for move and collect", () => {
   const hero = createHero({
     id: "hero-1",
@@ -4603,6 +5166,7 @@ test("applyBattleAction supports active ranged skills without retaliation", () =
   assert.equal(next.units["pikeman-a"]?.count, 12);
   assert.equal(next.units["wolf-d"]?.count, 6);
   assert.equal(next.units["wolf-d"]?.hasRetaliated, false);
+  assert.equal(next.unitCooldowns["pikeman-a"]?.power_shot, 2);
   assert.equal(next.units["pikeman-a"]?.skills?.find((skill) => skill.id === "power_shot")?.remainingCooldown, 2);
   assert.match(next.log.at(-1) ?? "", /投矛射击/);
 });
@@ -4615,6 +5179,7 @@ test("executeBattleSkill resolves enemy and self-target skills through the share
   const rangedNext = executeBattleSkill(rangedState, "pikeman-a", "power_shot", "wolf-d");
 
   assert.equal(rangedNext.activeUnitId, "wolf-d");
+  assert.equal(rangedNext.unitCooldowns["pikeman-a"]?.power_shot, 2);
   assert.equal(rangedNext.units["pikeman-a"]?.skills?.find((skill) => skill.id === "power_shot")?.remainingCooldown, 2);
   assert.equal(rangedNext.units["wolf-d"]?.hasRetaliated, false);
   assert.match(rangedNext.log.at(-1) ?? "", /投矛射击/);
@@ -4627,6 +5192,7 @@ test("executeBattleSkill resolves enemy and self-target skills through the share
 
   assert.equal(buffNext.activeUnitId, "wolf-d");
   assert.equal(buffNext.units["pikeman-a"]?.statusEffects?.[0]?.id, "arcane_armor");
+  assert.equal(buffNext.unitCooldowns["pikeman-a"]?.armor_spell, 3);
   assert.equal(buffNext.units["pikeman-a"]?.skills?.find((skill) => skill.id === "armor_spell")?.remainingCooldown, 3);
   assert.match(buffNext.log.at(-1) ?? "", /护甲术/);
 });
@@ -4646,8 +5212,554 @@ test("applyBattleAction supports armor spell buffs on the acting unit", () => {
   assert.equal(next.activeUnitId, "wolf-d");
   assert.equal(next.units["pikeman-a"]?.statusEffects?.[0]?.id, "arcane_armor");
   assert.equal(next.units["pikeman-a"]?.statusEffects?.[0]?.defenseModifier, 3);
+  assert.equal(next.unitCooldowns["pikeman-a"]?.armor_spell, 3);
   assert.equal(next.units["pikeman-a"]?.skills?.find((skill) => skill.id === "armor_spell")?.remainingCooldown, 3);
   assert.match(next.log.at(-1) ?? "", /护甲术/);
+});
+
+test("applyBattleAction resolves war cry splash onto adjacent enemy lanes without hitting allies", () => {
+  const state = createDemoBattleState();
+  state.lanes = 3;
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d", "wolf-side", "ally-side"];
+  state.units["pikeman-a"] = {
+    ...state.units["pikeman-a"]!,
+    skills: [
+      {
+        id: "war_cry",
+        name: "战吼震荡",
+        description: "正面打击主目标，并以余波震伤相邻敌军。",
+        kind: "active",
+        target: "enemy",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ],
+    lane: 1,
+    count: 5,
+    minDamage: 4,
+    maxDamage: 4
+  };
+  state.units["wolf-d"] = {
+    ...state.units["wolf-d"]!,
+    lane: 1,
+    hasRetaliated: true
+  };
+  state.units["wolf-side"] = {
+    ...cloneBattleUnit(state.units["wolf-d"]!),
+    id: "wolf-side",
+    lane: 2,
+    stackName: "侧翼恶狼",
+    hasRetaliated: true
+  };
+  state.units["ally-side"] = {
+    ...cloneBattleUnit(state.units["pikeman-a"]!),
+    id: "ally-side",
+    lane: 0,
+    stackName: "侧翼枪兵"
+  };
+  state.unitCooldowns["pikeman-a"] = {};
+
+  const next = applyBattleAction(state, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "war_cry",
+    targetId: "wolf-d"
+  });
+
+  assert.ok(getUnitHpPool(next.units["wolf-side"]!) < getUnitHpPool(state.units["wolf-side"]!));
+  assert.equal(getUnitHpPool(next.units["ally-side"]!), getUnitHpPool(state.units["ally-side"]!));
+  assert.match(next.log.join("\n"), /波及 侧翼恶狼/);
+});
+
+test("cave bear cleave uses splash support against adjacent enemies", () => {
+  const caveBearTemplate = getDefaultUnitCatalog().templates.find((template) => template.id === "wild_cave_bear");
+  const cleaveSkill = getDefaultBattleSkillCatalog().skills.find((skill) => skill.id === "cave_bear_cleave");
+  assert.ok(caveBearTemplate);
+  assert.ok(cleaveSkill);
+
+  const state = createDemoBattleState();
+  state.activeUnitId = "bear-a";
+  state.turnOrder = ["bear-a", "wolf-d", "wolf-side", "ally-side"];
+  state.units["bear-a"] = {
+    ...cloneBattleUnit(state.units["pikeman-a"]!),
+    id: "bear-a",
+    templateId: caveBearTemplate.id,
+    stackName: caveBearTemplate.stackName,
+    initiative: caveBearTemplate.initiative,
+    attack: caveBearTemplate.attack,
+    defense: caveBearTemplate.defense,
+    minDamage: caveBearTemplate.minDamage,
+    maxDamage: caveBearTemplate.maxDamage,
+    count: 4,
+    currentHp: caveBearTemplate.maxHp,
+    maxHp: caveBearTemplate.maxHp,
+    lane: 1,
+    skills: [
+      {
+        id: cleaveSkill.id,
+        name: cleaveSkill.name,
+        description: cleaveSkill.description,
+        kind: cleaveSkill.kind,
+        target: cleaveSkill.target,
+        cooldown: cleaveSkill.cooldown,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  state.units["wolf-d"] = {
+    ...state.units["wolf-d"]!,
+    lane: 1,
+    hasRetaliated: true
+  };
+  state.units["wolf-side"] = {
+    ...cloneBattleUnit(state.units["wolf-d"]!),
+    id: "wolf-side",
+    lane: 2,
+    stackName: "侧翼恶狼",
+    hasRetaliated: true
+  };
+  state.units["ally-side"] = {
+    ...cloneBattleUnit(state.units["pikeman-a"]!),
+    id: "ally-side",
+    lane: 0,
+    stackName: "友军枪兵"
+  };
+  state.unitCooldowns["bear-a"] = {};
+
+  const next = applyBattleAction(state, {
+    type: "battle.skill",
+    unitId: "bear-a",
+    skillId: "cave_bear_cleave",
+    targetId: "wolf-d"
+  });
+
+  assert.ok(getUnitHpPool(next.units["wolf-d"]!) < getUnitHpPool(state.units["wolf-d"]!));
+  assert.ok(getUnitHpPool(next.units["wolf-side"]!) < getUnitHpPool(state.units["wolf-side"]!));
+  assert.equal(getUnitHpPool(next.units["ally-side"]!), getUnitHpPool(state.units["ally-side"]!));
+  assert.match(next.log.join("\n"), /裂岩横扫波及 侧翼恶狼/);
+});
+
+test("ally battle skills heal wounded units and can cleanse one negative status", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "ally-a", "wolf-d"];
+  state.units["pikeman-a"] = {
+    ...state.units["pikeman-a"]!,
+    power: 3,
+    skills: [
+      {
+        id: "field_mending",
+        name: "战地缝合",
+        description: "根据施法者的 power 恢复己方单位生命。",
+        kind: "active",
+        target: "ally",
+        delivery: "ranged",
+        cooldown: 2,
+        remainingCooldown: 0
+      },
+      {
+        id: "rally_morale",
+        name: "鼓舞军心",
+        description: "恢复少量生命，并解除一个负面状态。",
+        kind: "active",
+        target: "ally",
+        delivery: "ranged",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  state.units["ally-a"] = {
+    ...cloneBattleUnit(state.units["pikeman-a"]!),
+    id: "ally-a",
+    stackName: "友军枪兵",
+    currentHp: 4,
+    statusEffects: [
+      {
+        id: "weakened",
+        name: "削弱",
+        description: "暂时降低攻击力。",
+        durationRemaining: 2,
+        attackModifier: -2,
+        defenseModifier: 0,
+        damagePerTurn: 0,
+        initiativeModifier: 0,
+        blocksActiveSkills: false,
+        preventsAction: false,
+        forcedAttackSource: false
+      }
+    ]
+  };
+
+  const mended = applyBattleAction(state, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "field_mending",
+    targetId: "ally-a"
+  });
+
+  assert.ok(mended.units["ally-a"]!.currentHp > state.units["ally-a"]!.currentHp);
+  assert.equal(mended.units["ally-a"]?.statusEffects?.length, 1);
+
+  const ralliedBase = cloneBattleState(state);
+  ralliedBase.units["pikeman-a"] = {
+    ...ralliedBase.units["pikeman-a"]!,
+    skills: [
+      {
+        id: "rally_morale",
+        name: "鼓舞军心",
+        description: "恢复少量生命，并解除一个负面状态。",
+        kind: "active",
+        target: "ally",
+        delivery: "ranged",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  const rallied = applyBattleAction(ralliedBase, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "rally_morale",
+    targetId: "ally-a"
+  });
+
+  assert.ok(rallied.units["ally-a"]!.currentHp > ralliedBase.units["ally-a"]!.currentHp);
+  assert.deepEqual(rallied.units["ally-a"]?.statusEffects, []);
+  assert.match(rallied.log.at(-1) ?? "", /解除 削弱/);
+});
+
+test("round-limited splash skills only work on their allowed opening round", () => {
+  const customCatalog = getDefaultBattleSkillCatalog();
+  customCatalog.skills.push({
+    id: "royal_charge_test",
+    name: "皇家冲锋测试",
+    description: "首回合冲锋并波及相邻目标。",
+    kind: "active",
+    target: "enemy",
+    cooldown: 4,
+    effects: {
+      damageMultiplier: 1.2,
+      splashDamageMultiplier: 0.5,
+      maxRound: 1
+    }
+  });
+
+  try {
+    setBattleSkillCatalog(customCatalog);
+
+    const openingState = createDemoBattleState();
+    openingState.activeUnitId = "pikeman-a";
+    openingState.turnOrder = ["pikeman-a", "wolf-d", "wolf-side"];
+    openingState.units["pikeman-a"] = {
+      ...openingState.units["pikeman-a"]!,
+      skills: [
+        {
+          id: "royal_charge_test",
+          name: "皇家冲锋测试",
+          description: "首回合冲锋并波及相邻目标。",
+          kind: "active",
+          target: "enemy",
+          cooldown: 4,
+          remainingCooldown: 0
+        }
+      ],
+      lane: 1
+    };
+    openingState.units["wolf-d"] = {
+      ...openingState.units["wolf-d"]!,
+      lane: 1,
+      hasRetaliated: true
+    };
+    openingState.units["wolf-side"] = {
+      ...cloneBattleUnit(openingState.units["wolf-d"]!),
+      id: "wolf-side",
+      lane: 2,
+      stackName: "侧翼恶狼",
+      hasRetaliated: true
+    };
+
+    const charged = applyBattleAction(openingState, {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "royal_charge_test",
+      targetId: "wolf-d"
+    });
+
+    assert.ok(getUnitHpPool(charged.units["wolf-d"]!) < getUnitHpPool(openingState.units["wolf-d"]!));
+    assert.ok(getUnitHpPool(charged.units["wolf-side"]!) < getUnitHpPool(openingState.units["wolf-side"]!));
+    assert.match(charged.log.join("\n"), /波及 侧翼恶狼/);
+
+    const expiredState = createDemoBattleState();
+    expiredState.round = 2;
+    expiredState.activeUnitId = "pikeman-a";
+    expiredState.turnOrder = ["pikeman-a", "wolf-d", "wolf-side"];
+    expiredState.units["pikeman-a"] = {
+      ...expiredState.units["pikeman-a"]!,
+      skills: [
+        {
+          id: "royal_charge_test",
+          name: "皇家冲锋测试",
+          description: "首回合冲锋并波及相邻目标。",
+          kind: "active",
+          target: "enemy",
+          cooldown: 4,
+          remainingCooldown: 0
+        }
+      ],
+      lane: 1
+    };
+    expiredState.units["wolf-d"] = {
+      ...expiredState.units["wolf-d"]!,
+      lane: 1,
+      hasRetaliated: true
+    };
+    expiredState.units["wolf-side"] = {
+      ...cloneBattleUnit(expiredState.units["wolf-d"]!),
+      id: "wolf-side",
+      lane: 2,
+      stackName: "侧翼恶狼",
+      hasRetaliated: true
+    };
+
+    assert.deepEqual(
+      validateBattleAction(expiredState, {
+        type: "battle.skill",
+        unitId: "pikeman-a",
+        skillId: "royal_charge_test",
+        targetId: "wolf-d"
+      }),
+      {
+        valid: false,
+        reason: "skill_round_expired"
+      }
+    );
+    assert.deepEqual(pickAutomatedBattleAction(expiredState), {
+      type: "battle.attack",
+      attackerId: "pikeman-a",
+      defenderId: "wolf-d"
+    });
+  } finally {
+    resetRuntimeConfigs();
+  }
+});
+
+test("stunning blow skips the target's next action", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d"];
+  state.units["pikeman-a"] = {
+    ...state.units["pikeman-a"]!,
+    skills: [
+      {
+        id: "stunning_blow",
+        name: "震荡猛击",
+        description: "重击敌军并附加短暂眩晕。",
+        kind: "active",
+        target: "enemy",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  state.units["wolf-d"] = {
+    ...state.units["wolf-d"]!,
+    hasRetaliated: true
+  };
+
+  const next = applyBattleAction(state, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "stunning_blow",
+    targetId: "wolf-d"
+  });
+
+  assert.equal(next.round, 2);
+  assert.equal(next.activeUnitId, "wolf-d");
+  assert.deepEqual(next.units["wolf-d"]?.statusEffects, []);
+  assert.match(next.log.join("\n"), /陷入眩晕/);
+  assert.match(next.log.join("\n"), /跳过行动/);
+});
+
+test("taunt shout constrains the target to attack the taunter on its next action", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d", "ally-a"];
+  state.units["pikeman-a"] = {
+    ...state.units["pikeman-a"]!,
+    skills: [
+      {
+        id: "taunt_shout",
+        name: "嘲阵怒喝",
+        description: "激怒敌军，迫使其下次行动优先攻击施放者。",
+        kind: "active",
+        target: "enemy",
+        delivery: "ranged",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  state.units["ally-a"] = {
+    ...cloneBattleUnit(state.units["pikeman-a"]!),
+    id: "ally-a",
+    stackName: "友军枪兵"
+  };
+
+  const taunted = applyBattleAction(state, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "taunt_shout",
+    targetId: "wolf-d"
+  });
+
+  assert.equal(taunted.activeUnitId, "wolf-d");
+  assert.equal(taunted.units["wolf-d"]?.statusEffects?.[0]?.id, "taunted");
+  assert.deepEqual(pickAutomatedBattleAction(taunted), {
+    type: "battle.attack",
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  });
+  assert.deepEqual(
+    validateBattleAction(taunted, {
+      type: "battle.attack",
+      attackerId: "wolf-d",
+      defenderId: "ally-a"
+    }),
+    {
+      valid: false,
+      reason: "taunted_must_attack_source"
+    }
+  );
+});
+
+test("terrain-linked battle skills use battlefield terrain snapshots", () => {
+  const grassState = createDemoBattleState();
+  grassState.activeUnitId = "pikeman-a";
+  grassState.turnOrder = ["pikeman-a", "wolf-d"];
+  grassState.battlefieldTerrain = "grass";
+  grassState.units["pikeman-a"] = {
+    ...grassState.units["pikeman-a"]!,
+    minDamage: 5,
+    maxDamage: 5,
+    count: 4,
+    skills: [
+      {
+        id: "terrain_mastery",
+        name: "地形精通",
+        description: "在草地上进攻更猛，在水泽地带更耐打。",
+        kind: "passive",
+        target: "self",
+        cooldown: 0,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  grassState.units["wolf-d"] = {
+    ...grassState.units["wolf-d"]!,
+    hasRetaliated: true
+  };
+
+  const waterState = cloneBattleState(grassState);
+  waterState.battlefieldTerrain = "water";
+  waterState.units["pikeman-a"] = {
+    ...waterState.units["pikeman-a"]!,
+    skills: [
+      ...(waterState.units["pikeman-a"]?.skills ?? []),
+      {
+        id: "bog_ambush",
+        name: "泥沼伏袭",
+        description: "只有在水泽地形中才能发动，伤害显著提升。",
+        kind: "active",
+        target: "enemy",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ]
+  };
+
+  const grassResult = applyBattleAction(cloneBattleState(grassState), {
+    type: "battle.attack",
+    attackerId: "pikeman-a",
+    defenderId: "wolf-d"
+  });
+  const neutralResult = applyBattleAction(
+    {
+      ...cloneBattleState(grassState),
+      units: {
+        ...cloneBattleState(grassState).units,
+        "pikeman-a": {
+          ...cloneBattleState(grassState).units["pikeman-a"]!,
+          skills: []
+        }
+      }
+    },
+    {
+      type: "battle.attack",
+      attackerId: "pikeman-a",
+      defenderId: "wolf-d"
+    }
+  );
+  const ambushResult = applyBattleAction(waterState, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "bog_ambush",
+    targetId: "wolf-d"
+  });
+  const rejectedAmbush = applyBattleAction(
+    {
+      ...cloneBattleState(waterState),
+      battlefieldTerrain: "grass"
+    },
+    {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "bog_ambush",
+      targetId: "wolf-d"
+    }
+  );
+
+  assert.ok(getUnitHpPool(grassResult.units["wolf-d"]!) < getUnitHpPool(neutralResult.units["wolf-d"]!));
+  assert.ok(getUnitHpPool(ambushResult.units["wolf-d"]!) < getUnitHpPool(waterState.units["wolf-d"]!));
+  assert.equal(rejectedAmbush.log.at(-1), "Action rejected: skill_requires_water_terrain");
+});
+
+test("battle state builders read battlefield terrain from world state", () => {
+  const hero = createHero({
+    id: "hero-terrain-a",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 0 }
+  });
+  const defender = createHero({
+    id: "hero-terrain-b",
+    playerId: "player-2",
+    name: "罗安",
+    position: { x: 1, y: 0 }
+  });
+  const neutralArmy: NeutralArmyState = {
+    id: "neutral-terrain",
+    position: { x: 2, y: 0 },
+    reward: { kind: "ore", amount: 2 },
+    stacks: [{ templateId: "wolf_pack", count: 4 }]
+  };
+  const world = createWorldState({
+    width: 3,
+    height: 1,
+    heroes: [hero, defender],
+    neutralArmies: {
+      [neutralArmy.id]: neutralArmy
+    },
+    tiles: [
+      createTile(0, 0, { terrain: "grass" }),
+      createTile(1, 0, { terrain: "water" }),
+      createTile(2, 0, { terrain: "water" })
+    ]
+  });
+
+  assert.equal(createNeutralBattleState(hero, neutralArmy, 1001, world).battlefieldTerrain, "water");
+  assert.equal(createHeroBattleState(hero, defender, 1002, world).battlefieldTerrain, "water");
 });
 
 test("applyBattleAction reduces damage against defending targets", () => {
@@ -4788,11 +5900,9 @@ test("validateBattleAction covers wait and skill rejection branches", () => {
   const cooldownState = cloneBattleState(initial);
   cooldownState.activeUnitId = "pikeman-a";
   cooldownState.turnOrder = ["pikeman-a", "wolf-d"];
-  cooldownState.units["pikeman-a"] = {
-    ...cooldownState.units["pikeman-a"]!,
-    skills: cooldownState.units["pikeman-a"]!.skills?.map((skill) =>
-      skill.id === "power_shot" ? { ...skill, remainingCooldown: 1 } : skill
-    )
+  cooldownState.unitCooldowns["pikeman-a"] = {
+    ...cooldownState.unitCooldowns["pikeman-a"],
+    power_shot: 1
   };
   assert.deepEqual(
     validateBattleAction(cooldownState, {
@@ -4885,6 +5995,34 @@ test("validateBattleAction covers wait and skill rejection branches", () => {
     {
       valid: false,
       reason: "friendly_fire_blocked"
+    }
+  );
+});
+
+test("validateBattleAction rejects skills from server-side cooldown state even when unit skill data looks ready", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d"];
+  state.unitCooldowns["pikeman-a"] = {
+    power_shot: 1
+  };
+  state.units["pikeman-a"] = {
+    ...state.units["pikeman-a"]!,
+    skills: state.units["pikeman-a"]!.skills?.map((skill) =>
+      skill.id === "power_shot" ? { ...skill, remainingCooldown: 0 } : skill
+    )
+  };
+
+  assert.deepEqual(
+    validateBattleAction(state, {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "power_shot",
+      targetId: "wolf-d"
+    }),
+    {
+      valid: false,
+      reason: "skill_on_cooldown"
     }
   );
 });
@@ -5017,6 +6155,9 @@ test("applyBattleAction resolves wait plus turn-start poison death and cooldown 
   const initial = createDemoBattleState();
   initial.activeUnitId = "pikeman-a";
   initial.turnOrder = ["pikeman-a", "wolf-d"];
+  initial.unitCooldowns["wolf-d"] = {
+    crippling_howl: 1
+  };
   initial.units["wolf-d"] = {
     ...initial.units["wolf-d"]!,
     count: 1,
@@ -5048,9 +6189,75 @@ test("applyBattleAction resolves wait plus turn-start poison death and cooldown 
   assert.deepEqual(next.turnOrder, ["pikeman-a"]);
   assert.equal(next.units["wolf-d"]?.count, 0);
   assert.equal(next.units["wolf-d"]?.currentHp, 0);
+  assert.deepEqual(next.unitCooldowns["wolf-d"], {});
   assert.equal(next.units["wolf-d"]?.skills?.find((skill) => skill.id === "crippling_howl")?.remainingCooldown, 0);
   assert.deepEqual(next.units["wolf-d"]?.statusEffects, []);
   assert.deepEqual(next.log.slice(-3), ["pikeman-a 选择等待", "恶狼 受到中毒影响，损失 2 生命", "恶狼 的中毒结束"]);
+});
+
+test("skill cooldowns are stored on battle state, decremented on each acting turn, and cleared when ready", () => {
+  const initial = createDemoBattleState();
+  initial.activeUnitId = "pikeman-a";
+  initial.turnOrder = ["pikeman-a", "wolf-d"];
+  initial.units["pikeman-a"] = {
+    ...initial.units["pikeman-a"]!,
+    initiative: 12
+  };
+  initial.units["wolf-d"] = {
+    ...initial.units["wolf-d"]!,
+    initiative: 8
+  };
+
+  const afterUse = applyBattleAction(initial, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "power_shot",
+    targetId: "wolf-d"
+  });
+
+  assert.equal(afterUse.unitCooldowns["pikeman-a"]?.power_shot, 2);
+  assert.equal(afterUse.units["pikeman-a"]?.skills?.find((skill) => skill.id === "power_shot")?.remainingCooldown, 2);
+
+  const afterEnemyTurn = applyBattleAction(afterUse, {
+    type: "battle.defend",
+    unitId: "wolf-d"
+  });
+
+  assert.equal(afterEnemyTurn.activeUnitId, "pikeman-a");
+  assert.equal(afterEnemyTurn.unitCooldowns["pikeman-a"]?.power_shot, 1);
+  assert.equal(
+    validateBattleAction(afterEnemyTurn, {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "power_shot",
+      targetId: "wolf-d"
+    }).reason,
+    "skill_on_cooldown"
+  );
+
+  const afterWait = applyBattleAction(afterEnemyTurn, {
+    type: "battle.wait",
+    unitId: "pikeman-a"
+  });
+  const afterSecondEnemyTurn = applyBattleAction(afterWait, {
+    type: "battle.defend",
+    unitId: "wolf-d"
+  });
+
+  assert.equal(afterSecondEnemyTurn.activeUnitId, "pikeman-a");
+  assert.deepEqual(afterSecondEnemyTurn.unitCooldowns["pikeman-a"], {});
+  assert.equal(afterSecondEnemyTurn.units["pikeman-a"]?.skills?.find((skill) => skill.id === "power_shot")?.remainingCooldown, 0);
+  assert.deepEqual(
+    validateBattleAction(afterSecondEnemyTurn, {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "power_shot",
+      targetId: "wolf-d"
+    }),
+    {
+      valid: true
+    }
+  );
 });
 
 test("applyBattleAction advances into turn-start processing even when the next unit has no skills", () => {
@@ -5161,6 +6368,168 @@ test("applyBattleAction does not attach on-hit statuses to targets defeated by t
   assert.equal(next.units["pikeman-a"]?.currentHp, 0);
   assert.deepEqual(next.units["pikeman-a"]?.statusEffects, []);
   assert.match(next.log.at(-1) ?? "", /造成 \d+ 伤害/);
+});
+
+test("shadow faction templates are registered and Murkveil Delta includes a shadow neutral army", () => {
+  const unitCatalog = getDefaultUnitCatalog();
+  const shadowTemplateIds = unitCatalog.templates
+    .filter((template) => template.faction === "shadow")
+    .map((template) => template.id)
+    .sort();
+
+  assert.deepEqual(shadowTemplateIds, [
+    "shadow_death_knight",
+    "shadow_hexer",
+    "shadow_skeleton",
+    "shadow_wraith"
+  ]);
+
+  const murkveilShadowEncounter = murkveilDeltaMapObjectsConfig.neutralArmies.find((army) =>
+    army.stacks.some((stack) => stack.templateId === "shadow_skeleton" || stack.templateId === "shadow_hexer")
+  );
+
+  assert.equal(murkveilShadowEncounter?.id, "neutral-4");
+});
+
+test("death_resilience can preserve a shadow unit at 1 hp and marks the passive as spent", () => {
+  const createState = (seed: number): BattleState => ({
+    ...createEmptyBattleState(),
+    round: 1,
+    activeUnitId: "knight-a",
+    turnOrder: ["knight-a", "skeleton-d"],
+    units: {
+      "knight-a": createUnitStackState({
+        id: "knight-a",
+        templateId: "shadow_death_knight",
+        camp: "attacker",
+        lane: 0,
+        stackName: "影魔骑士",
+        initiative: 9,
+        attack: 12,
+        defense: 6,
+        minDamage: 8,
+        maxDamage: 8,
+        count: 2,
+        currentHp: 17,
+        maxHp: 17,
+        hasRetaliated: false,
+        defending: false
+      }),
+      "skeleton-d": createUnitStackState({
+        id: "skeleton-d",
+        templateId: "shadow_skeleton",
+        camp: "defender",
+        lane: 0,
+        stackName: "枯骨兵",
+        initiative: 8,
+        attack: 4,
+        defense: 3,
+        minDamage: 2,
+        maxDamage: 3,
+        count: 1,
+        currentHp: 9,
+        maxHp: 9,
+        hasRetaliated: false,
+        defending: false,
+        skillIds: ["death_resilience"]
+      }),
+    },
+    unitCooldowns: {
+      "knight-a": {},
+      "skeleton-d": {}
+    },
+    rng: {
+      seed,
+      cursor: 0
+    }
+  });
+
+  let recoveredState: BattleState | null = null;
+  for (let seed = 1; seed <= 64; seed += 1) {
+    const next = applyBattleAction(createState(seed), {
+      type: "battle.attack",
+      attackerId: "knight-a",
+      defenderId: "skeleton-d"
+    });
+    if (next.units["skeleton-d"]?.count === 1 && next.units["skeleton-d"]?.currentHp === 1) {
+      recoveredState = next;
+      break;
+    }
+  }
+
+  assert.ok(recoveredState);
+  assert.equal(recoveredState.units["skeleton-d"]?.statusEffects?.some((status) => status.id === "death_resilience_spent"), true);
+  assert.match(recoveredState.log.join("\n"), /触发韧性/);
+});
+
+test("armor_pierce increases lethal pressure and life_drain heals after a kill", () => {
+  const createState = (skillIds: string[]): BattleState => ({
+    ...createEmptyBattleState(),
+    round: 1,
+    activeUnitId: "wraith-a",
+    turnOrder: ["wraith-a", "guard-d"],
+    units: {
+      "wraith-a": createUnitStackState({
+        id: "wraith-a",
+        templateId: "shadow_wraith",
+        camp: "attacker",
+        lane: 0,
+        stackName: "幽灵游侠",
+        initiative: 11,
+        attack: 6,
+        defense: 3,
+        minDamage: 4,
+        maxDamage: 4,
+        count: 3,
+        currentHp: 3,
+        maxHp: 7,
+        hasRetaliated: false,
+        defending: false,
+        skillIds
+      }),
+      "guard-d": createUnitStackState({
+        id: "guard-d",
+        templateId: "hero_guard_basic",
+        camp: "defender",
+        lane: 0,
+        stackName: "凯琳卫队",
+        initiative: 8,
+        attack: 4,
+        defense: 7,
+        minDamage: 2,
+        maxDamage: 4,
+        count: 2,
+        currentHp: 1,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false
+      }),
+    },
+    unitCooldowns: {
+      "wraith-a": {},
+      "guard-d": {}
+    },
+    rng: {
+      seed: 7,
+      cursor: 0
+    }
+  });
+
+  const baseline = applyBattleAction(createState([]), {
+    type: "battle.attack",
+    attackerId: "wraith-a",
+    defenderId: "guard-d"
+  });
+  const pierced = applyBattleAction(createState(["armor_pierce", "life_drain"]), {
+    type: "battle.attack",
+    attackerId: "wraith-a",
+    defenderId: "guard-d"
+  });
+
+  assert.ok((pierced.units["guard-d"]?.count ?? 0) < (baseline.units["guard-d"]?.count ?? 0));
+  assert.equal(pierced.units["guard-d"]?.count, 0);
+  assert.equal((pierced.units["wraith-a"]?.currentHp ?? 0) > 3, true);
+  assert.match(pierced.log.join("\n"), /生命虹吸/);
 });
 
 test("pickAutomatedBattleAction falls back between buff, enemy skill, attack, and null states", () => {
@@ -5286,6 +6655,7 @@ test("createEmptyBattleState returns the minimal neutral battle shell", () => {
     activeUnitId: null,
     turnOrder: [],
     units: {},
+    unitCooldowns: {},
     environment: [],
     log: [],
     rng: {

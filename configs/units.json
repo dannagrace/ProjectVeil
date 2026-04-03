@@ -19,6 +19,70 @@
       ]
     },
     {
+      "id": "crown_heavy_cavalry",
+      "stackName": "皇家重骑",
+      "faction": "crown",
+      "rarity": "elite",
+      "initiative": 6,
+      "attack": 7,
+      "defense": 6,
+      "minDamage": 3,
+      "maxDamage": 6,
+      "maxHp": 16,
+      "battleSkills": [
+        "royal_charge",
+        "guardian_oath"
+      ]
+    },
+    {
+      "id": "crown_field_chaplain",
+      "stackName": "战场牧师",
+      "faction": "crown",
+      "rarity": "common",
+      "initiative": 8,
+      "attack": 3,
+      "defense": 4,
+      "minDamage": 1,
+      "maxDamage": 3,
+      "maxHp": 11,
+      "battleSkills": [
+        "field_mending",
+        "rally_morale"
+      ]
+    },
+    {
+      "id": "crown_crossbowman",
+      "stackName": "十字弩手",
+      "faction": "crown",
+      "rarity": "common",
+      "initiative": 8,
+      "attack": 6,
+      "defense": 3,
+      "minDamage": 3,
+      "maxDamage": 5,
+      "maxHp": 8,
+      "battleSkills": [
+        "power_shot",
+        "sundering_spear"
+      ]
+    },
+    {
+      "id": "crown_light_outrider",
+      "stackName": "轻骑斥候",
+      "faction": "crown",
+      "rarity": "common",
+      "initiative": 12,
+      "attack": 4,
+      "defense": 3,
+      "minDamage": 1,
+      "maxDamage": 2,
+      "maxHp": 8,
+      "battleSkills": [
+        "pinning_javelin",
+        "battle_focus"
+      ]
+    },
+    {
       "id": "wolf_pack",
       "stackName": "恶狼",
       "faction": "wild",
@@ -64,6 +128,131 @@
       "battleSkills": [
         "shield_bash",
         "watcher_stance"
+      ]
+    },
+    {
+      "id": "wild_cave_bear",
+      "stackName": "洞穴巨熊",
+      "faction": "wild",
+      "rarity": "elite",
+      "initiative": 6,
+      "attack": 7,
+      "defense": 5,
+      "minDamage": 3,
+      "maxDamage": 6,
+      "maxHp": 18,
+      "battleSkills": [
+        "cave_bear_cleave"
+      ]
+    },
+    {
+      "id": "wild_serpent",
+      "stackName": "毒蛇猎手",
+      "faction": "wild",
+      "rarity": "common",
+      "initiative": 14,
+      "attack": 6,
+      "defense": 2,
+      "minDamage": 2,
+      "maxDamage": 4,
+      "maxHp": 6,
+      "battleSkills": [
+        "serpent_venom"
+      ]
+    },
+    {
+      "id": "wild_hawk_rider",
+      "stackName": "鹰击骑兵",
+      "faction": "wild",
+      "rarity": "elite",
+      "initiative": 13,
+      "attack": 5,
+      "defense": 4,
+      "minDamage": 2,
+      "maxDamage": 4,
+      "maxHp": 9,
+      "battleSkills": [
+        "skybound",
+        "pinning_javelin"
+      ]
+    },
+    {
+      "id": "wild_cave_troll",
+      "stackName": "洞穴巨魔",
+      "faction": "wild",
+      "rarity": "elite",
+      "initiative": 5,
+      "attack": 5,
+      "defense": 8,
+      "minDamage": 3,
+      "maxDamage": 5,
+      "maxHp": 20,
+      "battleSkills": [
+        "taunt_shout",
+        "watcher_stance"
+      ]
+    },
+    {
+      "id": "shadow_skeleton",
+      "stackName": "枯骨兵",
+      "faction": "shadow",
+      "rarity": "common",
+      "initiative": 8,
+      "attack": 4,
+      "defense": 3,
+      "minDamage": 2,
+      "maxDamage": 3,
+      "maxHp": 9,
+      "battleSkills": [
+        "death_resilience"
+      ]
+    },
+    {
+      "id": "shadow_wraith",
+      "stackName": "幽灵游侠",
+      "faction": "shadow",
+      "rarity": "common",
+      "initiative": 11,
+      "attack": 5,
+      "defense": 3,
+      "minDamage": 2,
+      "maxDamage": 4,
+      "maxHp": 7,
+      "battleSkills": [
+        "power_shot",
+        "armor_pierce"
+      ]
+    },
+    {
+      "id": "shadow_hexer",
+      "stackName": "尸巫",
+      "faction": "shadow",
+      "rarity": "elite",
+      "initiative": 7,
+      "attack": 4,
+      "defense": 4,
+      "minDamage": 2,
+      "maxDamage": 4,
+      "maxHp": 10,
+      "battleSkills": [
+        "grave_silence",
+        "crippling_howl"
+      ]
+    },
+    {
+      "id": "shadow_death_knight",
+      "stackName": "影魔骑士",
+      "faction": "shadow",
+      "rarity": "elite",
+      "initiative": 9,
+      "attack": 8,
+      "defense": 6,
+      "minDamage": 4,
+      "maxDamage": 7,
+      "maxHp": 17,
+      "battleSkills": [
+        "battle_focus",
+        "life_drain"
       ]
     }
   ]

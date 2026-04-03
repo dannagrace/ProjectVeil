@@ -31,6 +31,15 @@
         #status { padding: 10px; border-radius: 8px; margin-bottom: 16px; display: none; white-space: pre-wrap; word-break: break-all; }
         .status-error { background: #fee2e2; color: #991b1b; display: block !important; }
         .status-success { background: #dcfce7; color: var(--success); display: block !important; }
+        .report-row { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: rgba(255, 255, 255, 0.65); display: grid; gap: 10px; }
+        .report-row p { margin: 0; color: var(--muted); }
+        .report-row strong { color: var(--text); }
+        .report-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+        .report-actions button[data-status="dismissed"] { background: #7a6b5d; }
+        .report-actions button[data-status="warned"] { background: #c77b22; }
+        .report-actions button[data-status="banned"] { background: #a32020; }
+        #reportList { display: grid; gap: 12px; }
+        .empty-state { color: var(--muted); }
     </style>
 </head>
 <body>
@@ -67,11 +76,29 @@
             </div>
             <button onclick="modifyResources()">确认修改并强制同步</button>
         </div>
+
+        <div class="card">
+            <h2>举报审核队列</h2>
+            <div class="grid">
+                <div class="form-group">
+                    <label>状态筛选</label>
+                    <select id="reportStatusFilter">
+                        <option value="pending">待处理</option>
+                        <option value="dismissed">已驳回</option>
+                        <option value="warned">已警告</option>
+                        <option value="banned">已封禁</option>
+                    </select>
+                </div>
+            </div>
+            <div id="reportList"><div class="empty-state">正在加载举报队列...</div></div>
+        </div>
     </main>
 
     <script>
         const secretInput = document.getElementById('adminSecret');
         const statusDiv = document.getElementById('status');
+        const reportFilter = document.getElementById('reportStatusFilter');
+        const reportList = document.getElementById('reportList');
 
         function showStatus(msg, type) {
             statusDiv.textContent = msg;
@@ -121,8 +148,80 @@
             }
         }
 
+        function renderReports(items) {
+            if (!items.length) {
+                reportList.innerHTML = '<div class="empty-state">当前筛选下没有举报记录。</div>';
+                return;
+            }
+
+            reportList.innerHTML = items.map((report) => `
+                <div class="report-row">
+                    <div><strong>${report.reportId}</strong> · ${report.reporterId} -> ${report.targetId}</div>
+                    <p>原因：${report.reason} · 房间：${report.roomId} · 状态：${report.status}</p>
+                    <p>创建时间：${report.createdAt}${report.description ? `\n说明：${report.description}` : ''}</p>
+                    ${report.status === 'pending' ? `
+                        <div class="report-actions">
+                            <button data-report-id="${report.reportId}" data-status="dismissed">驳回</button>
+                            <button data-report-id="${report.reportId}" data-status="warned">警告</button>
+                            <button data-report-id="${report.reportId}" data-status="banned">封禁</button>
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+
+            for (const button of reportList.querySelectorAll('[data-report-id]')) {
+                button.addEventListener('click', async () => {
+                    const reportId = button.dataset.reportId;
+                    const status = button.dataset.status;
+                    if (!reportId || !status) {
+                        return;
+                    }
+                    showStatus(`正在处理举报 ${reportId}...`, 'success');
+                    try {
+                        const res = await fetch(`/api/admin/reports/${reportId}/resolve`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'x-veil-admin-secret': secretInput.value
+                            },
+                            body: JSON.stringify({ status })
+                        });
+                        const data = await res.json();
+                        if (!res.ok) {
+                            showStatus(`处理失败：${data.error || res.status}`, 'error');
+                            return;
+                        }
+                        showStatus(`举报 ${reportId} 已更新为 ${data.report.status}`, 'success');
+                        await fetchReports();
+                    } catch (e) {
+                        showStatus(`网络错误: ${e.message}`, 'error');
+                    }
+                });
+            }
+        }
+
+        async function fetchReports() {
+            try {
+                const status = reportFilter.value;
+                const res = await fetch(`/api/admin/reports?status=${encodeURIComponent(status)}`, {
+                    headers: { 'x-veil-admin-secret': secretInput.value }
+                });
+                if (!res.ok) {
+                    const data = await res.json();
+                    reportList.innerHTML = `<div class="empty-state">加载失败：${data.error || res.status}</div>`;
+                    return;
+                }
+                const data = await res.json();
+                renderReports(data.items || []);
+            } catch (e) {
+                reportList.innerHTML = `<div class="empty-state">网络错误：${e.message}</div>`;
+            }
+        }
+
         setInterval(fetchOverview, 5000);
+        reportFilter.addEventListener('change', () => { void fetchReports(); });
         fetchOverview();
+        fetchReports();
     </script>
 </body>
 </html>

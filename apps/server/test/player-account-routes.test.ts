@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { createCipheriv, createHash } from "node:crypto";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
 import { issueAccountAuthSession, issueGuestAuthSession, issueWechatMiniGameAuthSession, hashAccountPassword } from "../src/auth";
 import { applyPlayerEventLogAndAchievements } from "../src/player-achievements";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
+import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "../src/wechat-session-key";
 import type {
+  PlayerAccountBanHistoryListOptions,
+  PlayerAccountBanInput,
+  PlayerAccountBanSnapshot,
   PlayerAccountProgressPatch,
   PlayerAccountAuthSnapshot,
   PlayerAccountDeviceSessionSnapshot,
@@ -13,6 +18,8 @@ import type {
   PlayerEventHistoryQuery,
   PlayerEventHistorySnapshot,
   PlayerAccountListOptions,
+  PlayerAccountUnbanInput,
+  PlayerBanHistoryRecord,
   PlayerAccountProfilePatch,
   PlayerAccountSnapshot,
   PlayerHeroArchiveSnapshot,
@@ -32,6 +39,7 @@ import {
 
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
+  private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
@@ -43,6 +51,19 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
     return this.accounts.get(playerId) ?? null;
+  }
+
+  async loadPlayerBan(playerId: string): Promise<PlayerAccountBanSnapshot | null> {
+    const account = this.accounts.get(playerId);
+    if (!account) {
+      return null;
+    }
+    return {
+      playerId: account.playerId,
+      banStatus: account.banStatus ?? "none",
+      ...(account.banExpiry ? { banExpiry: account.banExpiry } : {}),
+      ...(account.banReason ? { banReason: account.banReason } : {})
+    };
   }
 
   async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
@@ -124,6 +145,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       playerId: input.playerId,
       displayName: input.displayName?.trim() || existing?.displayName || input.playerId,
       ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
+      gems: existing?.gems ?? 0,
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
       achievements: structuredClone(existing?.achievements ?? []),
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
@@ -131,14 +153,122 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.ageVerified ? { ageVerified: existing.ageVerified } : {}),
+      ...(existing?.isMinor ? { isMinor: existing.isMinor } : {}),
+      ...(existing?.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
+      ...(existing?.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
+      ...(existing?.banStatus ? { banStatus: existing.banStatus } : {}),
+      ...(existing?.banExpiry ? { banExpiry: existing.banExpiry } : {}),
+      ...(existing?.banReason ? { banReason: existing.banReason } : {}),
       ...(existing?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: existing.wechatMiniGameOpenId } : {}),
       ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
+      ...(existing?.privacyConsentAt ? { privacyConsentAt: existing.privacyConsentAt } : {}),
+      ...(existing?.phoneNumber ? { phoneNumber: existing.phoneNumber } : {}),
+      ...(existing?.phoneNumberBoundAt ? { phoneNumberBoundAt: existing.phoneNumberBoundAt } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(account.playerId, account);
+    return account;
+  }
+
+  async creditGems(playerId: string, amount: number, reason: "purchase" | "reward", _refId: string): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    if (!Number.isFinite(amount) || Math.floor(amount) <= 0) {
+      throw new Error("gem amount must be a positive integer");
+    }
+    if (reason !== "purchase" && reason !== "reward") {
+      throw new Error("credit reason must be purchase or reward");
+    }
+
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      gems: existing.gems + Math.floor(amount),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(playerId, account);
+    return account;
+  }
+
+  async debitGems(playerId: string, amount: number, reason: "spend", _refId: string): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    if (!Number.isFinite(amount) || Math.floor(amount) <= 0) {
+      throw new Error("gem amount must be a positive integer");
+    }
+    if (reason !== "spend") {
+      throw new Error("debit reason must be spend");
+    }
+
+    const normalizedAmount = Math.floor(amount);
+    if (existing.gems < normalizedAmount) {
+      throw new Error("insufficient gems");
+    }
+
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      gems: existing.gems - normalizedAmount,
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(playerId, account);
+    return account;
+  }
+
+  async listPlayerBanHistory(
+    playerId: string,
+    options: PlayerAccountBanHistoryListOptions = {}
+  ): Promise<PlayerBanHistoryRecord[]> {
+    return (this.banHistoryByPlayerId.get(playerId.trim()) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
+  }
+
+  async savePlayerBan(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      banStatus: input.banStatus,
+      ...(input.banStatus === "temporary" && input.banExpiry ? { banExpiry: new Date(input.banExpiry).toISOString() } : {}),
+      banReason: input.banReason.trim(),
+      updatedAt: new Date().toISOString()
+    };
+    if (input.banStatus === "permanent") {
+      delete account.banExpiry;
+    }
+    this.accounts.set(account.playerId, account);
+    const history = this.banHistoryByPlayerId.get(account.playerId) ?? [];
+    history.unshift({
+      id: (history[0]?.id ?? 0) + 1,
+      playerId: account.playerId,
+      action: "ban",
+      banStatus: input.banStatus,
+      ...(account.banExpiry ? { banExpiry: account.banExpiry } : {}),
+      banReason: account.banReason,
+      createdAt: new Date().toISOString()
+    });
+    this.banHistoryByPlayerId.set(account.playerId, history);
+    return account;
+  }
+
+  async clearPlayerBan(playerId: string, input: PlayerAccountUnbanInput = {}): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      banStatus: "none",
+      updatedAt: new Date().toISOString()
+    };
+    delete account.banExpiry;
+    delete account.banReason;
+    this.accounts.set(account.playerId, account);
+    const history = this.banHistoryByPlayerId.get(account.playerId) ?? [];
+    history.unshift({
+      id: (history[0]?.id ?? 0) + 1,
+      playerId: account.playerId,
+      action: "unban",
+      banStatus: "none",
+      ...(input.reason?.trim() ? { banReason: input.reason.trim() } : {}),
+      createdAt: new Date().toISOString()
+    });
+    this.banHistoryByPlayerId.set(account.playerId, history);
     return account;
   }
 
@@ -169,6 +299,20 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       accountSessionVersion: existing.accountSessionVersion ?? 0,
       credentialBoundAt
     });
+    return account;
+  }
+
+  async savePlayerAccountPrivacyConsent(
+    playerId: string,
+    input: { privacyConsentAt?: string } = {}
+  ): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      privacyConsentAt: existing.privacyConsentAt ?? new Date(input.privacyConsentAt ?? Date.now()).toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(account.playerId, account);
     return account;
   }
 
@@ -233,7 +377,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   async bindPlayerAccountWechatMiniGameIdentity(
     playerId: string,
-    input: { openId: string; unionId?: string; displayName?: string; avatarUrl?: string | null }
+    input: { openId: string; unionId?: string; displayName?: string; avatarUrl?: string | null; ageVerified?: boolean; isMinor?: boolean }
   ): Promise<PlayerAccountSnapshot> {
     const existing = await this.ensurePlayerAccount({
       playerId,
@@ -257,6 +401,8 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
           : {}),
       wechatMiniGameOpenId: normalizedOpenId,
       ...(input.unionId?.trim() ? { wechatMiniGameUnionId: input.unionId.trim() } : existing.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
+      ...(input.ageVerified !== undefined ? { ageVerified: input.ageVerified } : existing.ageVerified ? { ageVerified: existing.ageVerified } : {}),
+      ...(input.isMinor !== undefined ? { isMinor: input.isMinor } : existing.isMinor ? { isMinor: existing.isMinor } : {}),
       wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -283,6 +429,20 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
           : {}
         : existing.lastRoomId
           ? { lastRoomId: existing.lastRoomId }
+          : {}),
+      ...(patch.phoneNumber !== undefined
+        ? patch.phoneNumber?.trim()
+          ? { phoneNumber: patch.phoneNumber.trim() }
+          : {}
+        : existing.phoneNumber
+          ? { phoneNumber: existing.phoneNumber }
+          : {}),
+      ...(patch.phoneNumberBoundAt !== undefined
+        ? patch.phoneNumberBoundAt?.trim()
+          ? { phoneNumberBoundAt: patch.phoneNumberBoundAt.trim() }
+          : {}
+        : existing.phoneNumberBoundAt
+          ? { phoneNumberBoundAt: existing.phoneNumberBoundAt }
           : {}),
       updatedAt: new Date().toISOString()
     };
@@ -311,6 +471,8 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       recentBattleReplays: structuredClone(
         (patch.recentBattleReplays as PlayerAccountSnapshot["recentBattleReplays"] | undefined) ?? existing.recentBattleReplays
       ),
+      ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
+      ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -321,6 +483,48 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(playerId, account);
+    return account;
+  }
+
+  async deletePlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
+    const existing = this.accounts.get(playerId.trim());
+    if (!existing) {
+      return null;
+    }
+    if (existing.loginId) {
+      this.authByLoginId.delete(existing.loginId);
+    }
+    if (existing.wechatMiniGameOpenId) {
+      this.playerIdByWechatOpenId.delete(existing.wechatMiniGameOpenId);
+    }
+    this.authSessionsByPlayerId.delete(playerId.trim());
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      displayName: `deleted-${existing.playerId}`,
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      banStatus: "none",
+      accountSessionVersion: (existing.accountSessionVersion ?? 0) + 1,
+      updatedAt: new Date().toISOString()
+    };
+    delete account.avatarUrl;
+    delete account.lastRoomId;
+    delete account.lastSeenAt;
+    delete account.loginId;
+    delete account.credentialBoundAt;
+    delete account.privacyConsentAt;
+    delete account.ageVerified;
+    delete account.isMinor;
+    delete account.dailyPlayMinutes;
+    delete account.lastPlayDate;
+    delete account.banExpiry;
+    delete account.banReason;
+    delete account.refreshSessionId;
+    delete account.refreshTokenExpiresAt;
+    delete account.wechatMiniGameOpenId;
+    delete account.wechatMiniGameUnionId;
+    delete account.wechatMiniGameBoundAt;
+    this.accounts.set(account.playerId, account);
     return account;
   }
 
@@ -359,6 +563,39 @@ async function startAccountRouteServer(port: number, store: RoomSnapshotStore | 
   const server = new Server({ transport });
   await server.listen(port, "127.0.0.1");
   return server;
+}
+
+function createWechatProfileSignature(rawData: string, sessionKey: string): string {
+  return createHash("sha1").update(`${rawData}${sessionKey}`, "utf8").digest("hex");
+}
+
+function createWechatPhonePayload(input: {
+  sessionKey: string;
+  appId: string;
+  phoneNumber: string;
+  purePhoneNumber?: string;
+  countryCode?: string;
+}): { encryptedData: string; iv: string } {
+  const iv = Buffer.from("1234567890abcdef", "utf8").toString("base64");
+  const cipher = createCipheriv(
+    "aes-128-cbc",
+    Buffer.from(input.sessionKey, "base64"),
+    Buffer.from(iv, "base64")
+  );
+  cipher.setAutoPadding(true);
+  const payload = JSON.stringify({
+    phoneNumber: input.phoneNumber,
+    purePhoneNumber: input.purePhoneNumber ?? input.phoneNumber.replace(/^\+\d+/, ""),
+    countryCode: input.countryCode ?? "86",
+    watermark: {
+      appid: input.appId
+    }
+  });
+  const encryptedData = Buffer.concat([cipher.update(payload, "utf8"), cipher.final()]).toString("base64");
+  return {
+    encryptedData,
+    iv
+  };
 }
 
 function createAccountTrackingWorldState(): WorldState {
@@ -551,6 +788,7 @@ test("player account routes list and fetch stored accounts", async (t) => {
   store.seedAccount({
     playerId: "player-1",
     displayName: "灰烬领主",
+    gems: 42,
     globalResources: { gold: 320, wood: 5, ore: 1 },
     achievements: [],
     recentEventLog: [],
@@ -572,6 +810,7 @@ test("player account routes list and fetch stored accounts", async (t) => {
   const detailPayload = (await detailResponse.json()) as { account: PlayerAccountSnapshot };
   assert.equal(detailResponse.status, 200);
   assert.equal(detailPayload.account.playerId, "player-1");
+  assert.equal(detailPayload.account.gems, 42);
   assert.equal(detailPayload.account.lastRoomId, "room-alpha");
 });
 
@@ -1863,6 +2102,135 @@ test("player account me routes resolve and update the current authenticated acco
   assert.equal(stored?.lastRoomId, "room-next");
 });
 
+test("wechat account profile updates require a valid cached session-key signature", async (t) => {
+  const port = 42040 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "wechat-profile",
+    displayName: "云潮旅人",
+    globalResources: { gold: 0, wood: 0, ore: 0 },
+    achievements: [],
+    recentEventLog: [],
+    wechatMiniGameOpenId: "wx-openid-profile"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueWechatMiniGameAuthSession({
+    playerId: "wechat-profile",
+    displayName: "云潮旅人"
+  });
+  const sessionKey = Buffer.from("1234567890abcdef", "utf8").toString("base64");
+
+  t.after(async () => {
+    resetWechatSessionKeyCache();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  cacheWechatSessionKey("wechat-profile", sessionKey, 60);
+
+  const invalidResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      displayName: "未授权改名",
+      wechatSignature: {
+        rawData: "{\"op\":\"profile-update\"}",
+        signature: "bad-signature"
+      }
+    })
+  });
+  assert.equal(invalidResponse.status, 403);
+
+  const rawData = "{\"op\":\"profile-update\"}";
+  const validResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      displayName: "已验签旅人",
+      wechatSignature: {
+        rawData,
+        signature: createWechatProfileSignature(rawData, sessionKey)
+      }
+    })
+  });
+  const validPayload = (await validResponse.json()) as {
+    account: PlayerAccountSnapshot;
+  };
+
+  assert.equal(validResponse.status, 200);
+  assert.equal(validPayload.account.displayName, "已验签旅人");
+});
+
+test("wechat phone binding returns 403 for invalid payloads and succeeds after validation", async (t) => {
+  const port = 42080 + Math.floor(Math.random() * 1000);
+  const previousAppId = process.env.WECHAT_APP_ID;
+  process.env.WECHAT_APP_ID = "wx-phone-test-app";
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "wechat-phone",
+    displayName: "手机号旅人",
+    globalResources: { gold: 0, wood: 0, ore: 0 },
+    achievements: [],
+    recentEventLog: [],
+    wechatMiniGameOpenId: "wx-openid-phone"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueWechatMiniGameAuthSession({
+    playerId: "wechat-phone",
+    displayName: "手机号旅人"
+  });
+  const sessionKey = Buffer.from("abcdef1234567890", "utf8").toString("base64");
+
+  t.after(async () => {
+    process.env.WECHAT_APP_ID = previousAppId;
+    resetWechatSessionKeyCache();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  cacheWechatSessionKey("wechat-phone", sessionKey, 60);
+
+  const invalidResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/phone`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      encryptedData: Buffer.from("invalid-phone-payload", "utf8").toString("base64"),
+      iv: Buffer.from("1234567890abcdef", "utf8").toString("base64")
+    })
+  });
+  assert.equal(invalidResponse.status, 403);
+
+  const encrypted = createWechatPhonePayload({
+    sessionKey,
+    appId: "wx-phone-test-app",
+    phoneNumber: "+8613800138000"
+  });
+  const successResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/phone`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify(encrypted)
+  });
+  const successPayload = (await successResponse.json()) as {
+    account: PlayerAccountSnapshot;
+    phone: { phoneNumber: string };
+  };
+
+  assert.equal(successResponse.status, 200);
+  assert.equal(successPayload.phone.phoneNumber, "+8613800138000");
+  assert.equal(successPayload.account.phoneNumber, "+8613800138000");
+  assert.match(successPayload.account.phoneNumberBoundAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+});
+
 test("player account me route preserves account-mode sessions and returns the global vault", async (t) => {
   const port = 42100 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
@@ -2193,4 +2561,85 @@ test("player account update routes reject oversized JSON bodies with 413", async
   const stored = await store.loadPlayerAccount("player-oversized");
   assert.equal(stored?.displayName, "起始名册");
   assert.equal(stored?.lastRoomId, "room-start");
+});
+
+test("player deletion anonymizes personal data, clears wechat bindings, and revokes the current token", async (t) => {
+  const port = 44740 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "player-delete",
+    displayName: "雾海旅人"
+  });
+  await store.savePlayerAccountPrivacyConsent("player-delete", {
+    privacyConsentAt: "2026-03-27T12:00:00.000Z"
+  });
+  await store.bindPlayerAccountCredentials("player-delete", {
+    loginId: "delete-ranger",
+    passwordHash: "hashed-password"
+  });
+  await store.bindPlayerAccountWechatMiniGameIdentity("player-delete", {
+    openId: "wx-delete-openid",
+    displayName: "雾海旅人"
+  });
+  await store.savePlayerAccountProgress("player-delete", {
+    recentEventLog: [
+      {
+        id: "delete-event-1",
+        timestamp: "2026-03-27T12:01:00.000Z",
+        roomId: "room-delete",
+        playerId: "player-delete",
+        category: "combat",
+        description: "完成一场遭遇战",
+        rewards: []
+      }
+    ],
+    recentBattleReplays: [createReplaySummary("delete-replay-1", "2026-03-27T12:02:00.000Z")]
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueAccountAuthSession({
+    playerId: "player-delete",
+    displayName: "雾海旅人",
+    loginId: "delete-ranger",
+    sessionVersion: 0
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const deleteResponse = await fetch(`http://127.0.0.1:${port}/api/players/me/delete`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const deletePayload = (await deleteResponse.json()) as {
+    ok: boolean;
+    deleted: { playerId: string; displayName: string };
+  };
+  assert.equal(deleteResponse.status, 200);
+  assert.equal(deletePayload.ok, true);
+  assert.equal(deletePayload.deleted.playerId, "player-delete");
+  assert.match(deletePayload.deleted.displayName, /^deleted-player-delete/);
+
+  const deletedAccount = await store.loadPlayerAccount("player-delete");
+  assert.equal(deletedAccount?.loginId, undefined);
+  assert.equal(deletedAccount?.privacyConsentAt, undefined);
+  assert.equal(deletedAccount?.wechatMiniGameOpenId, undefined);
+  assert.equal(deletedAccount?.recentBattleReplays?.[0]?.id, "delete-replay-1");
+  assert.equal(deletedAccount?.recentEventLog[0]?.id, "delete-event-1");
+
+  const reloginOpenId = await store.loadPlayerAccountByWechatMiniGameOpenId("wx-delete-openid");
+  assert.equal(reloginOpenId, null);
+
+  const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const mePayload = (await meResponse.json()) as {
+    error: { code: string };
+  };
+  assert.equal(meResponse.status, 401);
+  assert.equal(mePayload.error.code, "session_revoked");
 });

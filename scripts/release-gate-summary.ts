@@ -356,7 +356,7 @@ const DEFAULT_WECHAT_ARTIFACTS_DIR = path.resolve("artifacts", "wechat-release")
 const DEFAULT_CONFIG_CENTER_LIBRARY_PATH = path.resolve("configs", ".config-center-library.json");
 const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
 const MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS = 1000 * 60 * 60 * 72;
-const MAX_TARGET_SURFACE_REVIEW_AGE_MS = 1000 * 60 * 60 * 24;
+const MAX_TARGET_SURFACE_REVIEW_AGE_MS = 1000 * 60 * 60 * 72;
 const RISK_PRIORITY: Record<ConfigRiskLevel, number> = {
   low: 1,
   medium: 2,

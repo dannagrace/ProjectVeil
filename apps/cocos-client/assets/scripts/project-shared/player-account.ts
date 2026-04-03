@@ -29,6 +29,7 @@ export interface PlayerAccountReadModel {
   battleReportCenter?: PlayerBattleReportCenter;
   loginId?: string;
   credentialBoundAt?: string;
+  privacyConsentAt?: string;
   lastRoomId?: string;
   lastSeenAt?: string;
 }
@@ -45,6 +46,7 @@ export interface PlayerAccountReadModelInput {
   battleReportCenter?: Partial<PlayerBattleReportCenter> | null | undefined;
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
+  privacyConsentAt?: string | undefined;
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
 }
@@ -57,6 +59,7 @@ export function normalizePlayerAccountReadModel(
   const avatarUrl = account?.avatarUrl?.trim();
   const loginId = account?.loginId?.trim().toLowerCase();
   const credentialBoundAt = account?.credentialBoundAt?.trim();
+  const privacyConsentAt = account?.privacyConsentAt?.trim();
   const lastRoomId = account?.lastRoomId?.trim();
   const lastSeenAt = account?.lastSeenAt?.trim();
   const recentEventLog = normalizeEventLogEntries(account?.recentEventLog);
@@ -81,6 +84,7 @@ export function normalizePlayerAccountReadModel(
     }),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
+    ...(privacyConsentAt ? { privacyConsentAt } : {}),
     ...(lastRoomId ? { lastRoomId } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {})
   };

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createCipheriv } from "node:crypto";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import test from "node:test";
@@ -16,7 +17,11 @@ import {
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
 import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
+import { resetWechatSessionKeyCache } from "../src/wechat-session-key";
 import type {
+  PlayerAccountBanHistoryListOptions,
+  PlayerAccountBanInput,
+  PlayerAccountBanSnapshot,
   PlayerAccountProgressPatch,
   PlayerAccountAuthSnapshot,
   PlayerAccountDeviceSessionSnapshot,
@@ -25,6 +30,8 @@ import type {
   PlayerEventHistoryQuery,
   PlayerEventHistorySnapshot,
   PlayerAccountListOptions,
+  PlayerAccountUnbanInput,
+  PlayerBanHistoryRecord,
   PlayerAccountProfilePatch,
   PlayerAccountSnapshot,
   PlayerHeroArchiveSnapshot,
@@ -35,6 +42,7 @@ import { queryEventLogEntries } from "../../../packages/shared/src/index";
 
 class MemoryAuthStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
+  private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
@@ -45,6 +53,19 @@ class MemoryAuthStore implements RoomSnapshotStore {
 
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
     return this.accounts.get(playerId) ?? null;
+  }
+
+  async loadPlayerBan(playerId: string): Promise<PlayerAccountBanSnapshot | null> {
+    const account = this.accounts.get(playerId);
+    if (!account) {
+      return null;
+    }
+    return {
+      playerId: account.playerId,
+      banStatus: account.banStatus ?? "none",
+      ...(account.banExpiry ? { banExpiry: account.banExpiry } : {}),
+      ...(account.banReason ? { banReason: account.banReason } : {})
+    };
   }
 
   async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
@@ -130,14 +151,81 @@ class MemoryAuthStore implements RoomSnapshotStore {
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.ageVerified ? { ageVerified: existing.ageVerified } : {}),
+      ...(existing?.isMinor ? { isMinor: existing.isMinor } : {}),
+      ...(existing?.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
+      ...(existing?.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
+      ...(existing?.banStatus ? { banStatus: existing.banStatus } : {}),
+      ...(existing?.banExpiry ? { banExpiry: existing.banExpiry } : {}),
+      ...(existing?.banReason ? { banReason: existing.banReason } : {}),
       ...(existing?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: existing.wechatMiniGameOpenId } : {}),
       ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
+      ...(existing?.privacyConsentAt ? { privacyConsentAt: existing.privacyConsentAt } : {}),
+      ...(existing?.phoneNumber ? { phoneNumber: existing.phoneNumber } : {}),
+      ...(existing?.phoneNumberBoundAt ? { phoneNumberBoundAt: existing.phoneNumberBoundAt } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(playerId, account);
+    return account;
+  }
+
+  async listPlayerBanHistory(
+    playerId: string,
+    options: PlayerAccountBanHistoryListOptions = {}
+  ): Promise<PlayerBanHistoryRecord[]> {
+    return (this.banHistoryByPlayerId.get(playerId.trim()) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
+  }
+
+  async savePlayerBan(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      banStatus: input.banStatus,
+      ...(input.banStatus === "temporary" && input.banExpiry ? { banExpiry: new Date(input.banExpiry).toISOString() } : {}),
+      banReason: input.banReason.trim(),
+      updatedAt: new Date().toISOString()
+    };
+    if (input.banStatus === "permanent") {
+      delete account.banExpiry;
+    }
+    this.accounts.set(account.playerId, account);
+    const history = this.banHistoryByPlayerId.get(account.playerId) ?? [];
+    history.unshift({
+      id: (history[0]?.id ?? 0) + 1,
+      playerId: account.playerId,
+      action: "ban",
+      banStatus: input.banStatus,
+      ...(account.banExpiry ? { banExpiry: account.banExpiry } : {}),
+      banReason: account.banReason,
+      createdAt: new Date().toISOString()
+    });
+    this.banHistoryByPlayerId.set(account.playerId, history);
+    return account;
+  }
+
+  async clearPlayerBan(playerId: string, input: PlayerAccountUnbanInput = {}): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      banStatus: "none",
+      updatedAt: new Date().toISOString()
+    };
+    delete account.banExpiry;
+    delete account.banReason;
+    this.accounts.set(account.playerId, account);
+    const history = this.banHistoryByPlayerId.get(account.playerId) ?? [];
+    history.unshift({
+      id: (history[0]?.id ?? 0) + 1,
+      playerId: account.playerId,
+      action: "unban",
+      banStatus: "none",
+      ...(input.reason?.trim() ? { banReason: input.reason.trim() } : {}),
+      createdAt: new Date().toISOString()
+    });
+    this.banHistoryByPlayerId.set(account.playerId, history);
     return account;
   }
 
@@ -167,6 +255,20 @@ class MemoryAuthStore implements RoomSnapshotStore {
       accountSessionVersion: existing.accountSessionVersion ?? 0,
       ...(account.credentialBoundAt ? { credentialBoundAt: account.credentialBoundAt } : {})
     });
+    return account;
+  }
+
+  async savePlayerAccountPrivacyConsent(
+    playerId: string,
+    input: { privacyConsentAt?: string } = {}
+  ): Promise<PlayerAccountSnapshot> {
+    const existing = await this.ensurePlayerAccount({ playerId });
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      privacyConsentAt: existing.privacyConsentAt ?? new Date(input.privacyConsentAt ?? Date.now()).toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(account.playerId, account);
     return account;
   }
 
@@ -233,7 +335,7 @@ class MemoryAuthStore implements RoomSnapshotStore {
 
   async bindPlayerAccountWechatMiniGameIdentity(
     playerId: string,
-    input: { openId: string; unionId?: string; displayName?: string; avatarUrl?: string | null }
+    input: { openId: string; unionId?: string; displayName?: string; avatarUrl?: string | null; ageVerified?: boolean; isMinor?: boolean }
   ): Promise<PlayerAccountSnapshot> {
     const existing = await this.ensurePlayerAccount({
       playerId,
@@ -251,6 +353,8 @@ class MemoryAuthStore implements RoomSnapshotStore {
       ...(input.avatarUrl?.trim() ? { avatarUrl: input.avatarUrl.trim() } : existing.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       wechatMiniGameOpenId: normalizedOpenId,
       ...(input.unionId?.trim() ? { wechatMiniGameUnionId: input.unionId.trim() } : existing.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
+      ...(input.ageVerified !== undefined ? { ageVerified: input.ageVerified } : existing.ageVerified ? { ageVerified: existing.ageVerified } : {}),
+      ...(input.isMinor !== undefined ? { isMinor: input.isMinor } : existing.isMinor ? { isMinor: existing.isMinor } : {}),
       wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -278,6 +382,20 @@ class MemoryAuthStore implements RoomSnapshotStore {
         : existing.lastRoomId
           ? { lastRoomId: existing.lastRoomId }
           : {}),
+      ...(patch.phoneNumber !== undefined
+        ? patch.phoneNumber?.trim()
+          ? { phoneNumber: patch.phoneNumber.trim() }
+          : {}
+        : existing.phoneNumber
+          ? { phoneNumber: existing.phoneNumber }
+          : {}),
+      ...(patch.phoneNumberBoundAt !== undefined
+        ? patch.phoneNumberBoundAt?.trim()
+          ? { phoneNumberBoundAt: patch.phoneNumberBoundAt.trim() }
+          : {}
+        : existing.phoneNumberBoundAt
+          ? { phoneNumberBoundAt: existing.phoneNumberBoundAt }
+          : {}),
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(account.playerId, account);
@@ -302,6 +420,8 @@ class MemoryAuthStore implements RoomSnapshotStore {
       ),
       achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
       recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
+      ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
+      ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -311,6 +431,48 @@ class MemoryAuthStore implements RoomSnapshotStore {
           : {}),
       updatedAt: new Date().toISOString()
     };
+    this.accounts.set(account.playerId, account);
+    return account;
+  }
+
+  async deletePlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
+    const existing = this.accounts.get(playerId.trim());
+    if (!existing) {
+      return null;
+    }
+    if (existing.loginId) {
+      this.authByLoginId.delete(existing.loginId);
+    }
+    if (existing.wechatMiniGameOpenId) {
+      this.playerIdByWechatOpenId.delete(existing.wechatMiniGameOpenId);
+    }
+    this.authSessionsByPlayerId.delete(playerId.trim());
+    const account: PlayerAccountSnapshot = {
+      ...existing,
+      displayName: `deleted-${existing.playerId.slice(0, 12)}`,
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      banStatus: "none",
+      accountSessionVersion: (existing.accountSessionVersion ?? 0) + 1,
+      updatedAt: new Date().toISOString()
+    };
+    delete account.avatarUrl;
+    delete account.lastRoomId;
+    delete account.lastSeenAt;
+    delete account.loginId;
+    delete account.credentialBoundAt;
+    delete account.privacyConsentAt;
+    delete account.ageVerified;
+    delete account.isMinor;
+    delete account.dailyPlayMinutes;
+    delete account.lastPlayDate;
+    delete account.banExpiry;
+    delete account.banReason;
+    delete account.refreshSessionId;
+    delete account.refreshTokenExpiresAt;
+    delete account.wechatMiniGameOpenId;
+    delete account.wechatMiniGameUnionId;
+    delete account.wechatMiniGameBoundAt;
     this.accounts.set(account.playerId, account);
     return account;
   }
@@ -343,6 +505,32 @@ async function startAuthServer(port: number, store: RoomSnapshotStore | null = n
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
   return server;
+}
+
+function createWechatPhonePayload(input: {
+  sessionKey: string;
+  appId: string;
+  phoneNumber: string;
+}): { encryptedData: string; iv: string } {
+  const iv = Buffer.from("1234567890abcdef", "utf8").toString("base64");
+  const cipher = createCipheriv(
+    "aes-128-cbc",
+    Buffer.from(input.sessionKey, "base64"),
+    Buffer.from(iv, "base64")
+  );
+  cipher.setAutoPadding(true);
+  const payload = JSON.stringify({
+    phoneNumber: input.phoneNumber,
+    purePhoneNumber: input.phoneNumber.replace(/^\+\d+/, ""),
+    countryCode: "86",
+    watermark: {
+      appid: input.appId
+    }
+  });
+  return {
+    encryptedData: Buffer.concat([cipher.update(payload, "utf8"), cipher.final()]).toString("base64"),
+    iv
+  };
 }
 
 async function joinRoom(port: number, logicalRoomId: string, playerId: string): Promise<ColyseusRoom> {
@@ -596,7 +784,8 @@ test("guest auth route issues a signed session token", async (t) => {
     },
     body: JSON.stringify({
       playerId: "player-auth",
-      displayName: "访客骑士"
+      displayName: "访客骑士",
+      privacyConsentAccepted: true
     })
   });
   const payload = (await response.json()) as { session: GuestAuthSession };
@@ -618,7 +807,8 @@ test("auth session route resolves a bearer token into the current guest session"
     },
     body: JSON.stringify({
       playerId: "player-session",
-      displayName: "回声旅人"
+      displayName: "回声旅人",
+      privacyConsentAccepted: true
     })
   });
   const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
@@ -652,7 +842,8 @@ test("connect message prefers auth token identity over a spoofed playerId", asyn
     },
     body: JSON.stringify({
       playerId: "trusted-player",
-      displayName: "真正的访客"
+      displayName: "真正的访客",
+      privacyConsentAccepted: true
     })
   });
   const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
@@ -690,7 +881,8 @@ test("guest auth connect claims a default hero slot for non-template player ids"
     },
     body: JSON.stringify({
       playerId: "guest-rune",
-      displayName: "灰烬行者"
+      displayName: "灰烬行者",
+      privacyConsentAccepted: true
     })
   });
   const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
@@ -739,7 +931,8 @@ test("account bind upgrades a guest session into password login and account-logi
     },
     body: JSON.stringify({
       playerId: "account-player",
-      displayName: "暮潮守望"
+      displayName: "暮潮守望",
+      privacyConsentAccepted: true
     })
   });
   const guestLoginPayload = (await guestLoginResponse.json()) as { session: GuestAuthSession };
@@ -752,7 +945,8 @@ test("account bind upgrades a guest session into password login and account-logi
     },
     body: JSON.stringify({
       loginId: "veil-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const bindPayload = (await bindResponse.json()) as {
@@ -831,7 +1025,8 @@ test("account access tokens expire with token_expired and can be rotated through
     },
     body: JSON.stringify({
       loginId: "expiry-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const loginPayload = (await loginResponse.json()) as {
@@ -887,7 +1082,8 @@ test("refresh rotation invalidates the previous refresh token and logout revokes
     },
     body: JSON.stringify({
       loginId: "rotate-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
@@ -955,7 +1151,8 @@ test("auth readiness and metrics summarize auth posture for dashboards", async (
     },
     body: JSON.stringify({
       playerId: "metrics-guest",
-      displayName: "指标访客"
+      displayName: "指标访客",
+      privacyConsentAccepted: true
     })
   });
   const guestLoginPayload = (await guestLoginResponse.json()) as { session: GuestAuthSession };
@@ -969,7 +1166,8 @@ test("auth readiness and metrics summarize auth posture for dashboards", async (
     },
     body: JSON.stringify({
       loginId: "metrics-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const accountLoginPayload = (await accountLoginResponse.json()) as { session: GuestAuthSession };
@@ -999,7 +1197,8 @@ test("auth readiness and metrics summarize auth posture for dashboards", async (
     },
     body: JSON.stringify({
       loginId: "metrics-ranger",
-      password: "wrong-password"
+      password: "wrong-password",
+      privacyConsentAccepted: true
     })
   });
   assert.equal(invalidLoginResponse.status, 401);
@@ -1096,7 +1295,8 @@ test("revoking one device session leaves other account sessions active and block
     },
     body: JSON.stringify({
       loginId: "device-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const firstLoginPayload = (await firstLoginResponse.json()) as { session: GuestAuthSession };
@@ -1109,7 +1309,8 @@ test("revoking one device session leaves other account sessions active and block
     },
     body: JSON.stringify({
       loginId: "device-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const secondLoginPayload = (await secondLoginResponse.json()) as { session: GuestAuthSession };
@@ -1171,7 +1372,8 @@ test("password changes revoke the current account session family", async (t) => 
     },
     body: JSON.stringify({
       loginId: "password-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
@@ -1238,7 +1440,8 @@ test("guest auth route returns 429 after the per-IP rate limit is exceeded", asy
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        playerId: `guest-rate-limit-${index}`
+        playerId: `guest-rate-limit-${index}`,
+        privacyConsentAccepted: true
       })
     });
     assert.equal(response.status, 200);
@@ -1250,7 +1453,8 @@ test("guest auth route returns 429 after the per-IP rate limit is exceeded", asy
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      playerId: "guest-rate-limit-3"
+      playerId: "guest-rate-limit-3",
+      privacyConsentAccepted: true
     })
   });
   const limitedPayload = (await limitedResponse.json()) as { error: { code: string } };
@@ -1297,7 +1501,8 @@ test("account login locks after repeated invalid credentials and returns lockedU
       },
       body: JSON.stringify({
         loginId: "lockout-ranger",
-        password: "wrong-password"
+        password: "wrong-password",
+        privacyConsentAccepted: true
       })
     });
 
@@ -1321,7 +1526,8 @@ test("account login locks after repeated invalid credentials and returns lockedU
     },
     body: JSON.stringify({
       loginId: "lockout-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const lockedPayload = (await lockedResponse.json()) as { error: { code: string; lockedUntil?: string } };
@@ -1368,7 +1574,8 @@ test("account login lockout expires after the configured duration", async (t) =>
       },
       body: JSON.stringify({
         loginId: "expiry-ranger",
-        password: "wrong-password"
+        password: "wrong-password",
+        privacyConsentAccepted: true
       })
     });
   }
@@ -1382,7 +1589,8 @@ test("account login lockout expires after the configured duration", async (t) =>
     },
     body: JSON.stringify({
       loginId: "expiry-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const payload = (await response.json()) as {
@@ -1420,7 +1628,7 @@ test("guest auth session LRU eviction invalidates the oldest idle guest token", 
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ playerId })
+      body: JSON.stringify({ playerId, privacyConsentAccepted: true })
     });
     const payload = (await response.json()) as { session: GuestAuthSession };
     assert.equal(response.status, 200);
@@ -1485,7 +1693,8 @@ test("account registration request and confirm create a new formal account, sess
     body: JSON.stringify({
       loginId: "formal-ranger",
       registrationToken: requestPayload.registrationToken,
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const confirmPayload = (await confirmResponse.json()) as {
@@ -1514,7 +1723,8 @@ test("account registration request and confirm create a new formal account, sess
     },
     body: JSON.stringify({
       loginId: "formal-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   assert.equal(loginResponse.status, 200);
@@ -1584,7 +1794,8 @@ test("account registration confirm rejects invalid tokens", { concurrency: false
     body: JSON.stringify({
       loginId: "invalid-registration-ranger",
       registrationToken: "wrong-token",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const confirmPayload = (await confirmResponse.json()) as { error: { code: string } };
@@ -1650,7 +1861,8 @@ test("account registration request reuses the active token for the same loginId 
     body: JSON.stringify({
       loginId: "stable-registration-ranger",
       registrationToken: firstPayload.registrationToken,
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
 
@@ -1734,7 +1946,8 @@ test("password recovery request and confirm reset the password, revoke old sessi
     },
     body: JSON.stringify({
       loginId: "recovery-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
@@ -1792,7 +2005,8 @@ test("password recovery request and confirm reset the password, revoke old sessi
     },
     body: JSON.stringify({
       loginId: "recovery-ranger",
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
   assert.equal(stalePasswordResponse.status, 401);
@@ -1804,7 +2018,8 @@ test("password recovery request and confirm reset the password, revoke old sessi
     },
     body: JSON.stringify({
       loginId: "recovery-ranger",
-      password: "hunter3"
+      password: "hunter3",
+      privacyConsentAccepted: true
     })
   });
   assert.equal(freshPasswordResponse.status, 200);
@@ -2074,7 +2289,8 @@ test("account registration request uses webhook delivery without leaking the tok
     body: JSON.stringify({
       loginId: "webhook-registration-ranger",
       registrationToken: webhook.requests[0]?.body.token,
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
 
@@ -2143,7 +2359,8 @@ test("account registration request uses smtp delivery without leaking the token"
     body: JSON.stringify({
       loginId: "smtp-registration-ranger",
       registrationToken: tokenMatch?.[1],
-      password: "hunter2"
+      password: "hunter2",
+      privacyConsentAccepted: true
     })
   });
 
@@ -2485,17 +2702,20 @@ test("password recovery request returns 502 and dead-letters non-retryable webho
   assert.equal(deliveryPayload.delivery.recentAttempts[0]?.failureReason, "webhook_4xx");
 });
 
-test("wechat login defaults to mock mode outside production", { concurrency: false }, async (t) => {
+test("wechat login defaults to mock mode in NODE_ENV=test", { concurrency: false }, async (t) => {
   const port = 44750 + Math.floor(Math.random() * 1000);
   const server = await startAuthServer(port);
+  const previousNodeEnv = process.env.NODE_ENV;
 
   t.after(async () => {
+    process.env.NODE_ENV = previousNodeEnv;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE;
     resetGuestAuthSessions();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
+  process.env.NODE_ENV = "test";
   delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
   const response = await fetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
     method: "POST",
@@ -2505,7 +2725,8 @@ test("wechat login defaults to mock mode outside production", { concurrency: fal
     body: JSON.stringify({
       code: "wechat-dev-code",
       playerId: "wechat-player",
-      displayName: "云桥旅人"
+      displayName: "云桥旅人",
+      privacyConsentAccepted: true
     })
   });
   const payload = (await response.json()) as { session: GuestAuthSession };
@@ -2513,6 +2734,7 @@ test("wechat login defaults to mock mode outside production", { concurrency: fal
   assert.equal(response.status, 200);
   assert.equal(payload.session.playerId, "wechat-player");
   assert.equal(payload.session.provider, "wechat-mini-game");
+  assert.equal("session_key" in payload.session, false);
 });
 
 test("wechat login route can be explicitly disabled", { concurrency: false }, async (t) => {
@@ -2535,7 +2757,8 @@ test("wechat login route can be explicitly disabled", { concurrency: false }, as
     body: JSON.stringify({
       code: "wx-dev-code",
       playerId: "wechat-player",
-      displayName: "云桥旅人"
+      displayName: "云桥旅人",
+      privacyConsentAccepted: true
     })
   });
   const payload = (await response.json()) as { error: { code: string } };
@@ -2547,14 +2770,17 @@ test("wechat login route can be explicitly disabled", { concurrency: false }, as
 test("legacy wechat mini game route remains available as an alias", { concurrency: false }, async (t) => {
   const port = 44855 + Math.floor(Math.random() * 1000);
   const server = await startAuthServer(port, new MemoryAuthStore());
+  const previousNodeEnv = process.env.NODE_ENV;
 
   t.after(async () => {
+    process.env.NODE_ENV = previousNodeEnv;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE;
     resetGuestAuthSessions();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
+  process.env.NODE_ENV = "test";
   process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "mock";
   process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE = "wx-dev-code";
   const response = await fetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
@@ -2565,7 +2791,8 @@ test("legacy wechat mini game route remains available as an alias", { concurrenc
     body: JSON.stringify({
       code: "wx-dev-code",
       playerId: "wechat-player",
-      displayName: "云桥旅人"
+      displayName: "云桥旅人",
+      privacyConsentAccepted: true
     })
   });
   const payload = (await response.json()) as { session: GuestAuthSession };
@@ -2574,6 +2801,7 @@ test("legacy wechat mini game route remains available as an alias", { concurrenc
   assert.equal(payload.session.playerId, "wechat-player");
   assert.equal(payload.session.provider, "wechat-mini-game");
   assert.equal(payload.session.authMode, "guest");
+  assert.equal("session_key" in payload.session, false);
 });
 
 test("wechat mini game production exchange binds code2Session identity onto an authenticated account", { concurrency: false }, async (t) => {
@@ -2602,16 +2830,16 @@ test("wechat mini game production exchange binds code2Session identity onto an a
   t.after(async () => {
     globalThis.fetch = originalFetch;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
-    delete process.env.VEIL_WECHAT_MINIGAME_APP_ID;
-    delete process.env.VEIL_WECHAT_MINIGAME_APP_SECRET;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
     delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
     resetGuestAuthSessions();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
   process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
-  process.env.VEIL_WECHAT_MINIGAME_APP_ID = "wx-prod-app";
-  process.env.VEIL_WECHAT_MINIGAME_APP_SECRET = "wx-prod-secret";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
   process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
   globalThis.fetch = async (input, init) => {
     requestedUrl = String(input);
@@ -2640,7 +2868,8 @@ test("wechat mini game production exchange binds code2Session identity onto an a
     body: JSON.stringify({
       code: "wx-prod-code",
       displayName: "微信暮潮守望",
-      avatarUrl: " https://cdn.example.com/avatar.png "
+      avatarUrl: " https://cdn.example.com/avatar.png ",
+      privacyConsentAccepted: true
     })
   });
   const payload = (await response.json()) as { session: GuestAuthSession };
@@ -2651,6 +2880,7 @@ test("wechat mini game production exchange binds code2Session identity onto an a
   assert.equal(payload.session.provider, "wechat-mini-game");
   assert.equal(payload.session.authMode, "account");
   assert.equal(payload.session.loginId, "veil-ranger");
+  assert.equal("session_key" in payload.session, false);
 
   const requestUrl = new URL(requestedUrl);
   assert.equal(requestUrl.origin + requestUrl.pathname, "https://wechat.example.test/code2session");
@@ -2668,6 +2898,60 @@ test("wechat mini game production exchange binds code2Session identity onto an a
   assert.equal(storedAccount?.loginId, "veil-ranger");
 });
 
+test("wechat mini game login stores verified minor status when age data is provided", { concurrency: false }, async (t) => {
+  const port = 44980 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        openid: "wx-openid-minor",
+        session_key: "session-key"
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      playerId: "wechat-minor",
+      displayName: "夜巡学员",
+      isAdult: false,
+      privacyConsentAccepted: true
+    })
+  });
+
+  assert.equal(response.status, 200);
+  const storedAccount = await store.loadPlayerAccount("wechat-minor");
+  assert.equal(storedAccount?.ageVerified, true);
+  assert.equal(storedAccount?.isMinor, true);
+});
+
 test("wechat mini game login reuses the bound player even when later requests spoof another playerId", { concurrency: false }, async (t) => {
   const port = 45050 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
@@ -2677,16 +2961,16 @@ test("wechat mini game login reuses the bound player even when later requests sp
   t.after(async () => {
     globalThis.fetch = originalFetch;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
-    delete process.env.VEIL_WECHAT_MINIGAME_APP_ID;
-    delete process.env.VEIL_WECHAT_MINIGAME_APP_SECRET;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
     delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
     resetGuestAuthSessions();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
   process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
-  process.env.VEIL_WECHAT_MINIGAME_APP_ID = "wx-prod-app";
-  process.env.VEIL_WECHAT_MINIGAME_APP_SECRET = "wx-prod-secret";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
   process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
   globalThis.fetch = async () =>
     new Response(
@@ -2710,7 +2994,8 @@ test("wechat mini game login reuses the bound player even when later requests sp
     body: JSON.stringify({
       code: "wx-prod-code",
       playerId: "wechat-player",
-      displayName: "初次旅人"
+      displayName: "初次旅人",
+      privacyConsentAccepted: true
     })
   });
   const firstPayload = (await firstResponse.json()) as { session: GuestAuthSession };
@@ -2723,7 +3008,8 @@ test("wechat mini game login reuses the bound player even when later requests sp
     body: JSON.stringify({
       code: "wx-prod-code",
       playerId: "spoofed-player",
-      displayName: "回归旅人"
+      displayName: "回归旅人",
+      privacyConsentAccepted: true
     })
   });
   const secondPayload = (await secondResponse.json()) as { session: GuestAuthSession };
@@ -2734,10 +3020,312 @@ test("wechat mini game login reuses the bound player even when later requests sp
   assert.equal(secondPayload.session.playerId, "wechat-player");
   assert.equal(secondPayload.session.displayName, "回归旅人");
   assert.equal(secondPayload.session.provider, "wechat-mini-game");
+  assert.equal("session_key" in firstPayload.session, false);
+  assert.equal("session_key" in secondPayload.session, false);
 
   const boundAccount = await store.loadPlayerAccount("wechat-player");
   const spoofedAccount = await store.loadPlayerAccount("spoofed-player");
   assert.equal(boundAccount?.wechatMiniGameOpenId, "wx-openid-repeat");
   assert.equal(boundAccount?.displayName, "回归旅人");
   assert.equal(spoofedAccount, null);
+});
+
+test("wechat session key refresh restores phone binding after cached session expiry", { concurrency: false }, async (t) => {
+  const port = 45070 + Math.floor(Math.random() * 1000);
+  const previousAppId = process.env.WECHAT_APP_ID;
+  const previousTtl = process.env.VEIL_WECHAT_SESSION_KEY_TTL_SECONDS;
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    process.env.WECHAT_APP_ID = previousAppId;
+    process.env.VEIL_WECHAT_SESSION_KEY_TTL_SECONDS = previousTtl;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.WECHAT_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetWechatSessionKeyCache();
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.WECHAT_APP_ID = "wx-refresh-app";
+  process.env.WECHAT_APP_SECRET = "wx-refresh-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  process.env.VEIL_WECHAT_SESSION_KEY_TTL_SECONDS = "1";
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    const code = url.searchParams.get("js_code");
+    const sessionKey =
+      code === "wx-refresh-code"
+        ? Buffer.from("fedcba0987654321", "utf8").toString("base64")
+        : Buffer.from("1234567890abcdef", "utf8").toString("base64");
+    return new Response(
+      JSON.stringify({
+        openid: "wx-openid-refresh",
+        session_key: sessionKey
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  };
+
+  const loginResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-login-code",
+      playerId: "wechat-refresh-player",
+      displayName: "刷新旅人",
+      privacyConsentAccepted: true
+    })
+  });
+  const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
+  assert.equal(loginResponse.status, 200);
+
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+  const expiredPhoneResponse = await originalFetch(`http://127.0.0.1:${port}/api/player-accounts/me/phone`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${loginPayload.session.token}`
+    },
+    body: JSON.stringify(
+      createWechatPhonePayload({
+        sessionKey: Buffer.from("1234567890abcdef", "utf8").toString("base64"),
+        appId: "wx-refresh-app",
+        phoneNumber: "+8613800138001"
+      })
+    )
+  });
+  assert.equal(expiredPhoneResponse.status, 403);
+
+  const refreshResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-session-key/refresh`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${loginPayload.session.token}`
+    },
+    body: JSON.stringify({
+      code: "wx-refresh-code"
+    })
+  });
+  assert.equal(refreshResponse.status, 200);
+
+  const reboundPhoneResponse = await originalFetch(`http://127.0.0.1:${port}/api/player-accounts/me/phone`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${loginPayload.session.token}`
+    },
+    body: JSON.stringify(
+      createWechatPhonePayload({
+        sessionKey: Buffer.from("fedcba0987654321", "utf8").toString("base64"),
+        appId: "wx-refresh-app",
+        phoneNumber: "+8613800138002"
+      })
+    )
+  });
+  const reboundPayload = (await reboundPhoneResponse.json()) as {
+    account: PlayerAccountSnapshot;
+  };
+
+  assert.equal(reboundPhoneResponse.status, 200);
+  assert.equal(reboundPayload.account.phoneNumber, "+8613800138002");
+});
+
+test("wechat mock mode stays disabled outside NODE_ENV=test", { concurrency: false }, async (t) => {
+  const port = 45080 + Math.floor(Math.random() * 1000);
+  const server = await startAuthServer(port, new MemoryAuthStore());
+  const previousNodeEnv = process.env.NODE_ENV;
+
+  t.after(async () => {
+    process.env.NODE_ENV = previousNodeEnv;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.NODE_ENV = "development";
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "mock";
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE = "wx-dev-code";
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-dev-code",
+      playerId: "wechat-player",
+      displayName: "云桥旅人"
+    })
+  });
+  const payload = (await response.json()) as { error: { code: string } };
+
+  assert.equal(response.status, 501);
+  assert.equal(payload.error.code, "wechat_login_not_enabled");
+});
+
+test("banned accounts are blocked on account-login and subsequent session checks with reason and expiry", async (t) => {
+  const port = 45120 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  await store.ensurePlayerAccount({
+    playerId: "banned-player",
+    displayName: "Banned Ranger"
+  });
+  await store.bindPlayerAccountCredentials("banned-player", {
+    loginId: "banned-ranger",
+    passwordHash: hashAccountPassword("secret-pass")
+  });
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const initialLoginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "banned-ranger",
+      password: "secret-pass",
+      privacyConsentAccepted: true
+    })
+  });
+  const initialLoginPayload = (await initialLoginResponse.json()) as { session: GuestAuthSession };
+  assert.equal(initialLoginResponse.status, 200);
+
+  await store.savePlayerBan("banned-player", {
+    banStatus: "temporary",
+    banExpiry: "2026-04-06T00:00:00.000Z",
+    banReason: "Harassment"
+  });
+
+  const sessionResponse = await fetch(`http://127.0.0.1:${port}/api/auth/session`, {
+    headers: {
+      Authorization: `Bearer ${initialLoginPayload.session.token}`
+    }
+  });
+  const sessionPayload = (await sessionResponse.json()) as {
+    error: { code: string; reason: string; expiry?: string };
+  };
+  assert.equal(sessionResponse.status, 403);
+  assert.equal(sessionPayload.error.code, "account_banned");
+  assert.equal(sessionPayload.error.reason, "Harassment");
+  assert.equal(sessionPayload.error.expiry, "2026-04-06T00:00:00.000Z");
+
+  const reloginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "banned-ranger",
+      password: "secret-pass",
+      privacyConsentAccepted: true
+    })
+  });
+  const reloginPayload = (await reloginResponse.json()) as {
+    error: { code: string; reason: string; expiry?: string };
+  };
+  assert.equal(reloginResponse.status, 403);
+  assert.equal(reloginPayload.error.code, "account_banned");
+  assert.equal(reloginPayload.error.reason, "Harassment");
+  assert.equal(reloginPayload.error.expiry, "2026-04-06T00:00:00.000Z");
+});
+
+test("guest login requires privacy consent before issuing the first session", async (t) => {
+  const port = 45160 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const rejectedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "guest-consent",
+      displayName: "雾行者"
+    })
+  });
+  const rejectedPayload = (await rejectedResponse.json()) as { error: { code: string } };
+  assert.equal(rejectedResponse.status, 403);
+  assert.equal(rejectedPayload.error.code, "privacy_consent_required");
+
+  const acceptedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "guest-consent",
+      displayName: "雾行者",
+      privacyConsentAccepted: true
+    })
+  });
+  assert.equal(acceptedResponse.status, 200);
+  assert.ok((await store.loadPlayerAccount("guest-consent"))?.privacyConsentAt);
+});
+
+test("account registration confirmation requires privacy consent", async (t) => {
+  const port = 45180 + Math.floor(Math.random() * 1000);
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides({ VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE: "dev-token" }, cleanup);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    while (cleanup.length > 0) {
+      cleanup.pop()?.();
+    }
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const requestResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "consent-ranger",
+      displayName: "同意旅人"
+    })
+  });
+  const requestPayload = (await requestResponse.json()) as { registrationToken?: string };
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "consent-ranger",
+      registrationToken: requestPayload.registrationToken,
+      password: "hunter2"
+    })
+  });
+  const confirmPayload = (await confirmResponse.json()) as { error: { code: string } };
+  assert.equal(confirmResponse.status, 403);
+  assert.equal(confirmPayload.error.code, "privacy_consent_required");
 });

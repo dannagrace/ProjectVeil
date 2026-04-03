@@ -1,3 +1,4 @@
+import { CloseCode } from "@colyseus/shared-types";
 import { Room, type Client as ColyseusClient } from "colyseus";
 import {
   createInitialWorldState,
@@ -22,16 +23,20 @@ import {
 import {
   applyPlayerAccountsToWorldState,
   applyPlayerHeroArchivesToWorldState,
+  isPlayerBanActive,
   type PlayerAccountSnapshot,
   type RoomSnapshotStore
 } from "./persistence";
 import { registerConfigUpdateListener } from "./config-center";
 import { applyPlayerEventLogAndAchievements } from "./player-achievements";
 import { resolveGuestAuthSession } from "./auth";
+import { deriveMinorProtectionState, readMinorProtectionConfig } from "./minor-protection";
 import {
   recordBattleActionMessage,
   recordConnectMessage,
   recordRuntimeRoom,
+  recordWebSocketActionKick,
+  recordWebSocketActionRateLimited,
   recordWorldActionMessage,
   removeRuntimeRoom
 } from "./observability";
@@ -55,12 +60,26 @@ interface JoinOptions {
 const RECONNECTION_WINDOW_SECONDS = 20;
 const MAP_SYNC_CHUNK_SIZE = 8;
 const MAP_SYNC_CHUNK_PADDING = 1;
+const DEFAULT_WS_ACTION_RATE_LIMIT_WINDOW_MS = 1_000;
+const DEFAULT_WS_ACTION_RATE_LIMIT_MAX = 8;
 const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
+const MINOR_PROTECTION_TICK_MS = 60_000;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
 const lobbyRoomOwnerTokens = new Map<string, number>();
 const activeRoomInstances = new Map<string, VeilColyseusRoom>();
 let nextLobbyRoomOwnerToken = 1;
+
+interface WebSocketActionRateLimitConfig {
+  windowMs: number;
+  max: number;
+}
+
+function hasPlayerReportStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "createPlayerReport">> {
+  return Boolean(store?.createPlayerReport);
+}
 
 export interface LobbyRoomSummary {
   roomId: string;
@@ -89,6 +108,37 @@ export function resetLobbyRoomRegistry(): void {
 
 export function getActiveRoomInstances(): Map<string, VeilColyseusRoom> {
   return activeRoomInstances;
+}
+
+function parseEnvNumber(
+  value: string | undefined,
+  fallback: number,
+  options: { minimum?: number; integer?: boolean } = {}
+): number {
+  const parsed = Number(value?.trim());
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const normalized = options.integer ? Math.floor(parsed) : parsed;
+  if (options.minimum != null && normalized < options.minimum) {
+    return fallback;
+  }
+
+  return normalized;
+}
+
+function readWebSocketActionRateLimitConfig(env: NodeJS.ProcessEnv = process.env): WebSocketActionRateLimitConfig {
+  return {
+    windowMs: parseEnvNumber(env.VEIL_RATE_LIMIT_WS_ACTION_WINDOW_MS, DEFAULT_WS_ACTION_RATE_LIMIT_WINDOW_MS, {
+      minimum: 1,
+      integer: true
+    }),
+    max: parseEnvNumber(env.VEIL_RATE_LIMIT_WS_ACTION_MAX, DEFAULT_WS_ACTION_RATE_LIMIT_MAX, {
+      minimum: 1,
+      integer: true
+    })
+  };
 }
 
 function sendMessage<T extends ServerMessage["type"]>(
@@ -194,9 +244,12 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   patchRate = null;
 
   public worldRoom!: AuthoritativeWorldRoom;
+  private readonly wsActionRateLimitConfig = readWebSocketActionRateLimitConfig();
+  private readonly minorProtectionConfig = readMinorProtectionConfig();
   private readonly lobbyRoomOwnerToken = nextLobbyRoomOwnerToken++;
   private readonly playerIdBySessionId = new Map<string, string>();
   private readonly reconnectedAtByPlayerId = new Map<string, string>();
+  private readonly wsActionTimestampsByPlayerId = new Map<string, number[]>();
   private unsubscribeConfigUpdate: (() => void) | null = null;
 
   async onCreate(options: JoinOptions): Promise<void> {
@@ -243,6 +296,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         });
       }
     });
+    this.clock.setInterval(() => {
+      void this.tickMinorPlaytime();
+    }, MINOR_PROTECTION_TICK_MS);
 
     this.onMessage("connect", async (client, message: Extract<ClientMessage, { type: "connect" }>) => {
       recordConnectMessage();
@@ -269,9 +325,22 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
               : {}),
             lastRoomId: logicalRoomId
           });
-        } catch {
+        } catch (error) {
+          console.error("[VeilRoom] Failed to ensure player account during connect", {
+            roomId: logicalRoomId,
+            playerId,
+            error
+          });
           ensuredAccount = null;
         }
+      }
+      if (isPlayerBanActive(ensuredAccount)) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "account_banned" });
+        client.leave(CloseCode.WITH_ERROR, "account_banned");
+        return;
+      }
+      if (await this.enforceMinorProtectionForClient(client, playerId, ensuredAccount, message.requestId)) {
+        return;
       }
       await this.ensurePlayerWorldSlot(playerId, ensuredAccount);
       this.publishLobbyRoomSummary();
@@ -316,6 +385,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
 
+      if (!this.consumePlayerActionRateLimit(playerId)) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "rate_limit_exceeded" });
+        recordWebSocketActionRateLimited();
+        recordWebSocketActionKick();
+        client.leave(CloseCode.WITH_ERROR, "rate_limit_exceeded");
+        return;
+      }
+
       recordWorldActionMessage();
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
       const result = this.worldRoom.dispatch(playerId, message.action);
@@ -352,6 +429,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
 
+      if (!this.consumePlayerActionRateLimit(playerId)) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "rate_limit_exceeded" });
+        recordWebSocketActionRateLimited();
+        recordWebSocketActionKick();
+        client.leave(CloseCode.WITH_ERROR, "rate_limit_exceeded");
+        return;
+      }
+
       recordBattleActionMessage();
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
       const result = this.worldRoom.dispatchBattle(playerId, message.action);
@@ -380,11 +465,67 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         movementPlan: null
       });
     });
+
+    this.onMessage("report.player", async (client, message: Extract<ClientMessage, { type: "report.player" }>) => {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+      if (!hasPlayerReportStore(configuredRoomSnapshotStore)) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "reporting_unavailable" });
+        return;
+      }
+
+      const targetPlayerId = this.resolveReportTargetPlayerId(playerId, message.targetPlayerId);
+      if (!targetPlayerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "report_target_unavailable" });
+        return;
+      }
+
+      try {
+        const report = await configuredRoomSnapshotStore.createPlayerReport({
+          reporterId: playerId,
+          targetId: targetPlayerId,
+          reason: message.reason,
+          ...(message.description?.trim() ? { description: message.description.trim() } : {}),
+          roomId: logicalRoomId
+        });
+        sendMessage(client, "report.player", {
+          requestId: message.requestId,
+          reportId: report.reportId,
+          targetPlayerId: report.targetId,
+          reason: report.reason,
+          status: report.status,
+          createdAt: report.createdAt
+        });
+      } catch (error) {
+        const reason =
+          error instanceof Error && error.message === "duplicate_player_report"
+            ? "duplicate_player_report"
+            : "report_submit_failed";
+        sendMessage(client, "error", { requestId: message.requestId, reason });
+      }
+    });
   }
 
   onJoin(client: ColyseusClient, options?: JoinOptions): void {
     this.playerIdBySessionId.set(client.sessionId, options?.playerId ?? client.sessionId);
     this.publishLobbyRoomSummary();
+  }
+
+  disconnectPlayer(playerId: string, reason = "account_banned"): number {
+    let disconnected = 0;
+    for (const client of this.clients) {
+      if (this.playerIdBySessionId.get(client.sessionId) !== playerId) {
+        continue;
+      }
+
+      sendMessage(client, "error", { requestId: "push", reason });
+      client.leave(CloseCode.WITH_ERROR, reason);
+      disconnected += 1;
+    }
+    return disconnected;
   }
 
   async onDrop(client: ColyseusClient): Promise<void> {
@@ -395,6 +536,20 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
     try {
       const reconnectedClient = await this.allowReconnection(client, RECONNECTION_WINDOW_SECONDS);
+      if (configuredRoomSnapshotStore?.loadPlayerBan) {
+        const ban = await configuredRoomSnapshotStore.loadPlayerBan(playerId);
+        if (isPlayerBanActive(ban)) {
+          this.playerIdBySessionId.delete(client.sessionId);
+          reconnectedClient.leave(CloseCode.WITH_ERROR, "account_banned");
+          this.publishLobbyRoomSummary();
+          return;
+        }
+      }
+      if (await this.enforceMinorProtectionForClient(reconnectedClient, playerId, null, "push")) {
+        this.playerIdBySessionId.delete(client.sessionId);
+        this.publishLobbyRoomSummary();
+        return;
+      }
       this.playerIdBySessionId.delete(client.sessionId);
       this.playerIdBySessionId.set(reconnectedClient.sessionId, playerId);
       this.reconnectedAtByPlayerId.set(playerId, new Date().toISOString());
@@ -418,6 +573,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   onDispose(): void {
     this.unsubscribeConfigUpdate?.();
     this.unsubscribeConfigUpdate = null;
+    this.wsActionTimestampsByPlayerId.clear();
 
     if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) !== this.lobbyRoomOwnerToken) {
       return;
@@ -431,6 +587,141 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
   private restoreWorldRoom(snapshot: RoomPersistenceSnapshot): void {
     this.worldRoom = createRoom(this.metadata.logicalRoomId, snapshot.state.meta.seed, snapshot);
+  }
+
+  private consumePlayerActionRateLimit(playerId: string): boolean {
+    const now = Date.now();
+    const windowStart = now - this.wsActionRateLimitConfig.windowMs;
+    const timestamps = (this.wsActionTimestampsByPlayerId.get(playerId) ?? []).filter((timestamp) => timestamp > windowStart);
+    if (timestamps.length >= this.wsActionRateLimitConfig.max) {
+      this.wsActionTimestampsByPlayerId.set(playerId, timestamps);
+      return false;
+    }
+
+    timestamps.push(now);
+    this.wsActionTimestampsByPlayerId.set(playerId, timestamps);
+    return true;
+  }
+
+  private getConnectedPlayerIds(): string[] {
+    return Array.from(new Set(this.playerIdBySessionId.values()));
+  }
+
+  private async syncMinorProtectionAccount(
+    playerId: string,
+    account: PlayerAccountSnapshot
+  ): Promise<PlayerAccountSnapshot> {
+    const store = configuredRoomSnapshotStore;
+    if (!store) {
+      return account;
+    }
+
+    const state = deriveMinorProtectionState(account, new Date(), this.minorProtectionConfig);
+    if (
+      account.lastPlayDate === state.localDate &&
+      (account.dailyPlayMinutes ?? 0) === state.normalizedDailyPlayMinutes
+    ) {
+      return account;
+    }
+
+    return store.savePlayerAccountProgress(playerId, {
+      dailyPlayMinutes: state.normalizedDailyPlayMinutes,
+      lastPlayDate: state.localDate,
+      lastRoomId: this.metadata.logicalRoomId
+    });
+  }
+
+  private async enforceMinorProtectionForClient(
+    client: ColyseusClient,
+    playerId: string,
+    ensuredAccount: PlayerAccountSnapshot | null,
+    requestId: string
+  ): Promise<boolean> {
+    const store = configuredRoomSnapshotStore;
+    const account =
+      ensuredAccount ??
+      (store
+        ? await store.ensurePlayerAccount({
+            playerId,
+            lastRoomId: this.metadata.logicalRoomId
+          })
+        : null);
+
+    if (!account || account.isMinor !== true) {
+      return false;
+    }
+
+    const syncedAccount = await this.syncMinorProtectionAccount(playerId, account);
+    const state = deriveMinorProtectionState(syncedAccount, new Date(), this.minorProtectionConfig);
+    if (state.restrictedHours) {
+      sendMessage(client, "error", { requestId, reason: "minor_restricted_hours" });
+      client.leave(CloseCode.WITH_ERROR, "minor_restricted_hours");
+      return true;
+    }
+
+    if (state.dailyLimitReached) {
+      sendMessage(client, "error", { requestId, reason: "minor_daily_limit_reached" });
+      client.leave(CloseCode.WITH_ERROR, "minor_daily_limit_reached");
+      return true;
+    }
+
+    return false;
+  }
+
+  private async tickMinorPlaytime(): Promise<void> {
+    const store = configuredRoomSnapshotStore;
+    if (!store) {
+      return;
+    }
+
+    const playerIds = this.getConnectedPlayerIds();
+    if (playerIds.length === 0) {
+      return;
+    }
+
+    try {
+      const loadedAccounts = await store.loadPlayerAccounts(playerIds);
+      const accountsByPlayerId = new Map(loadedAccounts.map((account) => [account.playerId, account] as const));
+
+      await Promise.all(
+        playerIds.map(async (playerId) => {
+          const account =
+            accountsByPlayerId.get(playerId) ??
+            (await store.ensurePlayerAccount({
+              playerId,
+              lastRoomId: this.metadata.logicalRoomId
+            }));
+          if (account.isMinor !== true) {
+            return;
+          }
+
+          const state = deriveMinorProtectionState(account, new Date(), this.minorProtectionConfig);
+          if (state.restrictedHours) {
+            await store.savePlayerAccountProgress(playerId, {
+              dailyPlayMinutes: state.normalizedDailyPlayMinutes,
+              lastPlayDate: state.localDate,
+              lastRoomId: this.metadata.logicalRoomId
+            });
+            this.disconnectPlayer(playerId, "minor_restricted_hours");
+            return;
+          }
+          const nextMinutes = state.normalizedDailyPlayMinutes + 1;
+          await store.savePlayerAccountProgress(playerId, {
+            dailyPlayMinutes: nextMinutes,
+            lastPlayDate: state.localDate,
+            lastRoomId: this.metadata.logicalRoomId
+          });
+          if (nextMinutes >= state.dailyLimitMinutes) {
+            this.disconnectPlayer(playerId, "minor_daily_limit_reached");
+          }
+        })
+      );
+    } catch (error) {
+      console.error("[VeilRoom] Failed to update minor playtime", {
+        roomId: this.metadata.logicalRoomId,
+        error
+      });
+    }
   }
 
   private async persistRoomState(): Promise<void> {
@@ -494,6 +785,27 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     playerId: string
   ): PlayerBattleReplaySummary[] {
     return buildPlayerBattleReplaySummariesForPlayer(replay, playerId);
+  }
+
+  private resolveReportTargetPlayerId(playerId: string, requestedTargetPlayerId: string): string | null {
+    const targetPlayerId = requestedTargetPlayerId.trim();
+    if (!targetPlayerId || targetPlayerId === playerId) {
+      return null;
+    }
+
+    const battle = this.worldRoom.getBattleForPlayer(playerId);
+    if (!battle?.worldHeroId || !battle.defenderHeroId) {
+      return null;
+    }
+
+    const internalState = this.worldRoom.getInternalState();
+    const attackerHero = internalState.heroes.find((hero) => hero.id === battle.worldHeroId);
+    const defenderHero = internalState.heroes.find((hero) => hero.id === battle.defenderHeroId);
+    const participantPlayerIds = new Set(
+      [attackerHero?.playerId, defenderHero?.playerId].filter((value): value is string => Boolean(value))
+    );
+
+    return participantPlayerIds.has(targetPlayerId) ? targetPlayerId : null;
   }
 
   private publishLobbyRoomSummary(): void {

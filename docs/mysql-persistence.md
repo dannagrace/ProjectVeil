@@ -191,6 +191,75 @@ The repository also includes manual player profile management commands:
 
 These commands are useful when you want to inspect retained per-player room progress, delete a specific player profile row, or force profile cleanup immediately.
 
+## Automated Backup To Object Storage
+
+Project Veil also includes [`scripts/db-backup.sh`](../scripts/db-backup.sh) for full MySQL backups to S3-compatible object storage.
+
+The script performs:
+
+- `mysqldump` full export with `--single-transaction`
+- gzip compression
+- SHA-256 hash generation beside the archive
+- upload to a daily object prefix
+- weekly mirror upload on the configured weekday
+- retention pruning for daily backups older than 30 days and weekly backups older than 183 days
+- optional failure notification through `VEIL_BACKUP_NOTIFY_COMMAND`
+
+### Required Environment
+
+The backup script reuses the existing `VEIL_MYSQL_*` connection settings and expects:
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `VEIL_BACKUP_S3_BUCKET` | Yes | - | Target object storage bucket |
+| `VEIL_BACKUP_S3_PREFIX` | No | `backups/mysql` | Object prefix under the bucket |
+| `VEIL_BACKUP_S3_ENDPOINT` | No | - | Custom S3-compatible endpoint URL for OSS/COS/minio-style storage |
+| `VEIL_BACKUP_S3_REGION` | No | `us-east-1` | AWS CLI region passed to upload/list/delete commands |
+| `VEIL_BACKUP_AWS_PROFILE` | No | - | Optional AWS CLI profile name |
+| `VEIL_BACKUP_KEEP_DAILY_DAYS` | No | `30` | Daily retention window in days |
+| `VEIL_BACKUP_KEEP_WEEKLY_DAYS` | No | `183` | Weekly retention window in days |
+| `VEIL_BACKUP_WEEKLY_DAY` | No | `7` | Day of week used for weekly copies; `7` means Sunday |
+| `VEIL_BACKUP_NOTIFY_COMMAND` | No | - | Shell command executed on failure with `VEIL_BACKUP_FAILURE_MESSAGE` exported |
+
+The script requires `mysqldump`, `gzip`, `aws`, and `sha256sum` (or `shasum`) on the runner host.
+
+### Manual Dry Run
+
+Use a real bucket and run one manual backup before installing cron:
+
+```bash
+./scripts/db-backup.sh
+```
+
+Successful output ends with:
+
+```text
+[db-backup] Backup complete: project_veil-<timestamp>.sql.gz
+```
+
+The uploaded object layout is:
+
+- `s3://<bucket>/<prefix>/daily/<database>-<timestamp>.sql.gz`
+- `s3://<bucket>/<prefix>/daily/<database>-<timestamp>.sql.gz.sha256`
+- `s3://<bucket>/<prefix>/weekly/<database>-<timestamp>.sql.gz` on the configured weekly day
+- `s3://<bucket>/<prefix>/weekly/<database>-<timestamp>.sql.gz.sha256` on the configured weekly day
+
+### Cron Schedule
+
+Install the example cron from [`ops/mysql-backup.cron.example`](../ops/mysql-backup.cron.example) to run at `03:00` server local time every day.
+
+Recommended rollout:
+
+1. Copy `.env.example` to the deployment host and fill in `VEIL_MYSQL_*` plus `VEIL_BACKUP_*`.
+2. Confirm `aws s3 ls` can reach the bucket with the selected profile or credentials.
+3. Run `./scripts/db-backup.sh` manually once.
+4. Install the cron entry.
+5. Wire `VEIL_BACKUP_NOTIFY_COMMAND` to your pager, webhook, or mail wrapper so failures are visible without waiting for cron mail.
+
+### Restore
+
+Use [`docs/db-restore-runbook.md`](./db-restore-runbook.md) to download a timestamped backup, verify the hash, restore into a fresh instance, and validate the recovered data with the existing MySQL persistence regression.
+
 ## Release Regression
 
 Use the Phase 1 release regression when you need one bounded proof that MySQL persistence and shipped config/content data are healthy together:

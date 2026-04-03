@@ -28,13 +28,15 @@ import {
   type BattleState,
   type EquipmentType,
   type MovementPlan,
+  type PlayerReportReason,
   type PlayerTileView,
   type PlayerWorldView,
   type RuntimeDiagnosticsConnectionStatus,
   type RuntimeDiagnosticsTriageSection,
   validateAccountLifecycleConfirm,
   validateAccountLifecycleRequest,
-  validateAccountPassword
+  validateAccountPassword,
+  validatePrivacyConsentAccepted
 } from "../../../packages/shared/src/index";
 import { createGameSession, readStoredSessionReplay, type SessionUpdate } from "./local-session";
 import { buildH5RuntimeDiagnosticsSnapshot } from "./runtime-diagnostics";
@@ -53,6 +55,7 @@ import { launchMainH5App } from "./main-bootstrap-launch";
 import {
   confirmAccountRegistration,
   confirmPasswordRecovery,
+  deleteCurrentPlayerAccount,
   loginGuestAuthSession,
   loginPasswordAuthSession,
   logoutCurrentAuthSession,
@@ -194,11 +197,20 @@ interface LobbyViewState {
   registrationPassword: string;
   recoveryToken: string;
   recoveryPassword: string;
+  privacyConsentAccepted: boolean;
   authSession: StoredAuthSession | null;
   rooms: LobbyRoomSummary[];
   loading: boolean;
   entering: boolean;
   status: string;
+}
+
+interface BattleReportComposerState {
+  open: boolean;
+  targetPlayerId: string | null;
+  reason: PlayerReportReason;
+  description: string;
+  submitting: boolean;
 }
 
 interface AppState {
@@ -229,6 +241,7 @@ interface AppState {
   previewPlan: MovementPlan | null;
   reachableTiles: Array<{ x: number; y: number }>;
   selectedBattleTargetId: string | null;
+  battleReport: BattleReportComposerState;
   feedbackTone: "idle" | "move" | "battle" | "loot";
   animatedPath: Array<{ x: number; y: number }>;
   animatedPathIndex: number;
@@ -317,6 +330,7 @@ const state: AppState = {
     registrationPassword: "",
     recoveryToken: "",
     recoveryPassword: "",
+    privacyConsentAccepted: false,
     authSession: storedAuthSession,
     rooms: [],
     loading: false,
@@ -346,6 +360,13 @@ const state: AppState = {
   previewPlan: null,
   reachableTiles: [],
   selectedBattleTargetId: null,
+  battleReport: {
+    open: false,
+    targetPlayerId: null,
+    reason: "afk",
+    description: "",
+    submitting: false
+  },
   feedbackTone: "idle",
   animatedPath: [],
   animatedPathIndex: -1,
@@ -1752,6 +1773,40 @@ function battleShortcutContext():
   };
 }
 
+function resolveBattleReportTargetPlayerId(
+  battle: BattleState | null = state.battle,
+  world: PlayerWorldView = state.world
+): string | null {
+  if (!battle?.worldHeroId || !battle.defenderHeroId) {
+    return null;
+  }
+
+  const playerCamp = controlledBattleCamp(battle, world);
+  if (!playerCamp) {
+    return null;
+  }
+
+  const heroes = [...world.ownHeroes, ...world.visibleHeroes];
+  const attacker = heroes.find((hero) => hero.id === battle.worldHeroId);
+  const defender = heroes.find((hero) => hero.id === battle.defenderHeroId);
+  if (!attacker?.playerId || !defender?.playerId) {
+    return null;
+  }
+
+  return playerCamp === "attacker" ? defender.playerId : attacker.playerId;
+}
+
+function battleReportReasonLabel(reason: PlayerReportReason): string {
+  switch (reason) {
+    case "cheating":
+      return "作弊";
+    case "harassment":
+      return "骚扰";
+    case "afk":
+      return "挂机";
+  }
+}
+
 function cycleBattleTarget(offset: number): void {
   const context = battleShortcutContext();
   if (!context || context.enemies.length === 0) {
@@ -2911,6 +2966,10 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
   state.selectedHeroId = update.world.ownHeroes[0]?.id ?? state.selectedHeroId;
   if (!update.battle) {
     state.selectedBattleTargetId = null;
+    state.battleReport.open = false;
+    state.battleReport.targetPlayerId = null;
+    state.battleReport.description = "";
+    state.battleReport.submitting = false;
   } else {
     const playerCamp = controlledBattleCamp(update.battle, update.world);
     const enemyCamp = opposingBattleCamp(playerCamp);
@@ -2918,6 +2977,7 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
     if (!state.selectedBattleTargetId || !enemies.some((unit) => unit.id === state.selectedBattleTargetId)) {
       state.selectedBattleTargetId = enemies[0]?.id ?? null;
     }
+    state.battleReport.targetPlayerId = resolveBattleReportTargetPlayerId(update.battle, update.world);
   }
   appendLog(update);
   pushTimeline(buildTimelineEntries(update, source));
@@ -3350,6 +3410,55 @@ async function onBattleAction(action: BattleAction): Promise<void> {
   applyUpdate(await session.actInBattle(action));
 }
 
+function toggleBattleReportComposer(open: boolean): void {
+  state.battleReport.open = open;
+  state.battleReport.targetPlayerId = resolveBattleReportTargetPlayerId();
+  if (!open) {
+    state.battleReport.description = "";
+  }
+  render();
+}
+
+async function submitBattleReport(): Promise<void> {
+  const targetPlayerId = resolveBattleReportTargetPlayerId();
+  if (!targetPlayerId) {
+    openBattleModal("举报不可用", "当前只有与其他玩家交战时才能提交举报。");
+    return;
+  }
+
+  state.battleReport.submitting = true;
+  render();
+
+  try {
+    const session = await getSession();
+    const report = await session.reportPlayer({
+      targetPlayerId,
+      reason: state.battleReport.reason,
+      description: state.battleReport.description
+    });
+    state.battleReport.open = false;
+    state.battleReport.description = "";
+    state.battleReport.submitting = false;
+    openBattleModal(
+      "举报已提交",
+      `已提交对玩家 ${report.targetPlayerId} 的${battleReportReasonLabel(report.reason)}举报，管理员审核队列已收到该记录。`
+    );
+    render();
+  } catch (error) {
+    state.battleReport.submitting = false;
+    const message =
+      error instanceof Error && error.message === "duplicate_player_report"
+        ? "同一房间内你已经举报过这名玩家。"
+        : error instanceof Error && error.message === "report_target_unavailable"
+          ? "当前无法定位这个举报目标，请在战斗进行中重试。"
+          : error instanceof Error && error.message === "reporting_unavailable"
+            ? "当前服务器未启用举报存储，暂时无法提交。"
+            : "举报提交失败，请稍后再试。";
+    openBattleModal("举报提交失败", message);
+    render();
+  }
+}
+
 async function triggerBattleAttackShortcut(): Promise<void> {
   const context = battleShortcutContext();
   if (!context?.selectedTarget) {
@@ -3564,7 +3673,22 @@ function describeAccountFlowError(
   return error instanceof Error ? error.message : fallback;
 }
 
+function validateLobbyPrivacyConsent(): boolean {
+  const privacyConsentError = validatePrivacyConsentAccepted(state.lobby.privacyConsentAccepted);
+  if (!privacyConsentError) {
+    return true;
+  }
+
+  state.lobby.status = privacyConsentError.message;
+  render();
+  return false;
+}
+
 async function enterLobbyRoom(roomIdOverride?: string): Promise<void> {
+  if (!validateLobbyPrivacyConsent()) {
+    return;
+  }
+
   const preferences = saveLobbyPreferences(state.lobby.playerId, roomIdOverride ?? state.lobby.roomId);
   const displayName = rememberPreferredPlayerDisplayName(preferences.playerId, state.lobby.displayName);
   state.lobby.playerId = preferences.playerId;
@@ -3574,7 +3698,9 @@ async function enterLobbyRoom(roomIdOverride?: string): Promise<void> {
   state.lobby.status = `正在登录游客账号并进入房间 ${preferences.roomId}...`;
   render();
 
-  const authSession = await loginGuestAuthSession(preferences.playerId, displayName);
+  const authSession = await loginGuestAuthSession(preferences.playerId, displayName, {
+    privacyConsentAccepted: state.lobby.privacyConsentAccepted
+  });
   state.lobby.authSession = authSession;
   state.lobby.playerId = authSession.playerId;
   state.lobby.displayName = authSession.displayName;
@@ -3607,12 +3733,18 @@ async function loginLobbyAccount(roomIdOverride?: string): Promise<void> {
     return;
   }
 
+  if (!validateLobbyPrivacyConsent()) {
+    return;
+  }
+
   state.lobby.entering = true;
   state.lobby.status = `正在使用账号 ${loginId} 登录并进入房间 ${preferences.roomId}...`;
   render();
 
   try {
-    const authSession = await loginPasswordAuthSession(loginId, state.lobby.password);
+    const authSession = await loginPasswordAuthSession(loginId, state.lobby.password, {
+      privacyConsentAccepted: state.lobby.privacyConsentAccepted
+    });
     state.lobby.authSession = authSession;
     state.lobby.playerId = authSession.playerId;
     state.lobby.displayName = authSession.displayName;
@@ -3668,11 +3800,16 @@ async function confirmLobbyAccountRegistration(roomIdOverride?: string): Promise
   const validationError = validateAccountLifecycleConfirm("registration", {
     loginId,
     token: state.lobby.registrationToken,
-    password: state.lobby.registrationPassword
+    password: state.lobby.registrationPassword,
+    privacyConsentAccepted: state.lobby.privacyConsentAccepted
   });
   if (validationError) {
     state.lobby.status = validationError.message;
     render();
+    return;
+  }
+
+  if (!validateLobbyPrivacyConsent()) {
     return;
   }
 
@@ -3681,7 +3818,14 @@ async function confirmLobbyAccountRegistration(roomIdOverride?: string): Promise
   render();
 
   try {
-    const authSession = await confirmAccountRegistration(loginId, state.lobby.registrationToken, state.lobby.registrationPassword);
+    const authSession = await confirmAccountRegistration(
+      loginId,
+      state.lobby.registrationToken,
+      state.lobby.registrationPassword,
+      {
+        privacyConsentAccepted: state.lobby.privacyConsentAccepted
+      }
+    );
     state.lobby.authSession = authSession;
     state.lobby.playerId = authSession.playerId;
     state.lobby.displayName = authSession.displayName;
@@ -3741,7 +3885,8 @@ async function confirmLobbyPasswordRecovery(roomIdOverride?: string): Promise<vo
   const validationError = validateAccountLifecycleConfirm("recovery", {
     loginId,
     token: state.lobby.recoveryToken,
-    password: state.lobby.recoveryPassword
+    password: state.lobby.recoveryPassword,
+    privacyConsentAccepted: state.lobby.privacyConsentAccepted
   });
   if (validationError) {
     state.lobby.status = validationError.message;
@@ -3755,7 +3900,9 @@ async function confirmLobbyPasswordRecovery(roomIdOverride?: string): Promise<vo
 
   try {
     await confirmPasswordRecovery(loginId, state.lobby.recoveryToken, state.lobby.recoveryPassword);
-    const authSession = await loginPasswordAuthSession(loginId, state.lobby.recoveryPassword);
+      const authSession = await loginPasswordAuthSession(loginId, state.lobby.recoveryPassword, {
+        privacyConsentAccepted: state.lobby.privacyConsentAccepted
+      });
     state.lobby.authSession = authSession;
     state.lobby.playerId = authSession.playerId;
     state.lobby.displayName = authSession.displayName;
@@ -3823,6 +3970,7 @@ function renderBattleActions(): string {
   const enemyCamp = opposingBattleCamp(playerCamp);
   const enemies = Object.values(state.battle.units).filter((unit) => unit.camp === enemyCamp && unit.count > 0);
   const selectedTarget = enemies.find((enemy) => enemy.id === state.selectedBattleTargetId) ?? enemies[0];
+  const reportTargetPlayerId = resolveBattleReportTargetPlayerId();
   const skillButtons = (active.skills ?? [])
     .filter((skill) => skill.kind === "active")
     .map((skill) => {
@@ -3858,6 +4006,50 @@ function renderBattleActions(): string {
       ${skillButtons}
       <button data-testid="battle-wait" data-battle-action="wait" data-unit="${active.id}">等待</button>
       <button data-testid="battle-defend" data-battle-action="defend" data-unit="${active.id}" ${active.defending ? "disabled" : ""}>防御</button>
+      <button
+        type="button"
+        data-battle-report-toggle="${state.battleReport.open ? "close" : "open"}"
+        ${reportTargetPlayerId ? "" : "disabled"}
+      >
+        ${reportTargetPlayerId ? `举报玩家 ${escapeHtml(reportTargetPlayerId)}` : "当前无法举报"}
+      </button>
+      ${
+        state.battleReport.open && reportTargetPlayerId
+          ? `
+        <div class="battle-report-form" data-testid="battle-report-form">
+          <div class="battle-report-head">
+            <strong>举报对手 ${escapeHtml(reportTargetPlayerId)}</strong>
+            <span>同一房间同一目标仅允许提交一次。</span>
+          </div>
+          <label>
+            原因
+            <select data-battle-report-reason ${state.battleReport.submitting ? "disabled" : ""}>
+              ${(["afk", "harassment", "cheating"] as const)
+                .map(
+                  (reason) =>
+                    `<option value="${reason}" ${state.battleReport.reason === reason ? "selected" : ""}>${battleReportReasonLabel(reason)}</option>`
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            说明
+            <textarea
+              data-battle-report-description
+              maxlength="512"
+              placeholder="补充时间点、行为描述或可复现线索（可选）"
+              ${state.battleReport.submitting ? "disabled" : ""}
+            >${escapeHtml(state.battleReport.description)}</textarea>
+          </label>
+          <div class="battle-report-actions">
+            <button type="button" data-battle-report-submit ${state.battleReport.submitting ? "disabled" : ""}>
+              ${state.battleReport.submitting ? "提交中..." : "提交举报"}
+            </button>
+            <button type="button" data-battle-report-toggle="close" ${state.battleReport.submitting ? "disabled" : ""}>取消</button>
+          </div>
+        </div>`
+          : ""
+      }
     </div>
   `;
 }
@@ -4352,6 +4544,17 @@ function renderLobby(): string {
               </div>
             </section>
           </div>
+          <label class="lobby-field muted">
+            <span>
+              <input
+                data-privacy-consent="true"
+                type="checkbox"
+                ${state.lobby.privacyConsentAccepted ? "checked" : ""}
+                ${state.lobby.entering ? "disabled" : ""}
+              />
+              我已阅读并同意隐私说明；首次登录、注册或绑定时会记录同意时间。
+            </span>
+          </label>
           <div class="lobby-actions">
             <button class="account-save" data-refresh-lobby="true" ${state.lobby.loading || state.lobby.entering ? "disabled" : ""}>
               ${state.lobby.loading ? "刷新中..." : "刷新房间"}
@@ -4504,6 +4707,12 @@ function render(): void {
         }
 
         void enterLobbyRoom();
+      });
+    }
+
+    for (const privacyConsentInput of Array.from(root.querySelectorAll<HTMLInputElement>("[data-privacy-consent]"))) {
+      privacyConsentInput.addEventListener("input", () => {
+        state.lobby.privacyConsentAccepted = privacyConsentInput.checked;
       });
     }
 
@@ -4695,6 +4904,9 @@ function render(): void {
               ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}
             >${state.accountBinding ? "提交中..." : state.account.loginId ? "更新口令" : "绑定账号"}</button>
           </div>
+          <button class="session-link" data-delete-account="true" ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}>
+            删除当前账号
+          </button>
           ${renderAccountSessionPanel()}
           <p class="muted account-status">${escapeHtml(state.accountStatus)}</p>
         </div>
@@ -4881,6 +5093,33 @@ function render(): void {
     });
   }
 
+  for (const toggleButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-battle-report-toggle]"))) {
+    toggleButton.addEventListener("click", () => {
+      toggleBattleReportComposer(toggleButton.dataset.battleReportToggle === "open");
+    });
+  }
+
+  for (const reasonSelect of Array.from(root.querySelectorAll<HTMLSelectElement>("[data-battle-report-reason]"))) {
+    reasonSelect.addEventListener("change", () => {
+      const reason = reasonSelect.value;
+      if (reason === "cheating" || reason === "harassment" || reason === "afk") {
+        state.battleReport.reason = reason;
+      }
+    });
+  }
+
+  for (const descriptionInput of Array.from(root.querySelectorAll<HTMLTextAreaElement>("[data-battle-report-description]"))) {
+    descriptionInput.addEventListener("input", () => {
+      state.battleReport.description = descriptionInput.value;
+    });
+  }
+
+  for (const submitButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-battle-report-submit]"))) {
+    submitButton.addEventListener("click", () => {
+      void submitBattleReport();
+    });
+  }
+
   for (const targetButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-target-unit]"))) {
     targetButton.addEventListener("click", () => {
       state.selectedBattleTargetId = targetButton.dataset.targetUnit ?? null;
@@ -5015,6 +5254,12 @@ function render(): void {
     });
   }
 
+  for (const deleteAccountButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-delete-account]"))) {
+    deleteAccountButton.addEventListener("click", () => {
+      void onDeleteAccountProfile();
+    });
+  }
+
   for (const revokeSessionButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-revoke-account-session]"))) {
     revokeSessionButton.addEventListener("click", () => {
       const sessionId = revokeSessionButton.dataset.revokeAccountSession?.trim();
@@ -5117,12 +5362,23 @@ async function onBindAccountProfile(): Promise<void> {
     return;
   }
 
+  if (!state.account.privacyConsentAt) {
+    const privacyConsentError = validatePrivacyConsentAccepted(state.lobby.privacyConsentAccepted);
+    if (privacyConsentError) {
+      state.accountStatus = privacyConsentError.message;
+      render();
+      return;
+    }
+  }
+
   state.accountBinding = true;
   state.accountStatus = state.account.loginId ? "正在更新账号口令..." : "正在绑定口令账号...";
   render();
 
   try {
-    const account = await bindAccountCredentials(loginId, state.accountPassword, roomId);
+    const account = await bindAccountCredentials(loginId, state.accountPassword, roomId, {
+      privacyConsentAccepted: state.lobby.privacyConsentAccepted
+    });
     state.account = account;
     state.accountSessions = await loadPlayerAccountSessions();
     state.accountLoginId = account.loginId ?? loginId;
@@ -5144,6 +5400,31 @@ async function onBindAccountProfile(): Promise<void> {
         : error instanceof Error
           ? error.message
           : "account_bind_failed";
+    render();
+  }
+}
+
+async function onDeleteAccountProfile(): Promise<void> {
+  const confirmDelete = globalThis.confirm;
+  if (typeof confirmDelete === "function" && !confirmDelete("删除后将移除账号个人资料并立即撤销当前会话。是否继续？")) {
+    return;
+  }
+
+  state.accountBinding = true;
+  state.accountStatus = "正在删除当前账号并撤销会话...";
+  render();
+
+  try {
+    await deleteCurrentPlayerAccount();
+    state.accountBinding = false;
+    state.lobby.authSession = null;
+    state.lobby.privacyConsentAccepted = false;
+    state.accountStatus = "账号已删除。";
+    state.lobby.status = "账号已删除，原会话已撤销。请重新确认隐私说明后再创建新档。";
+    await returnToLobby();
+  } catch (error) {
+    state.accountBinding = false;
+    state.accountStatus = error instanceof Error ? error.message : "account_delete_failed";
     render();
   }
 }

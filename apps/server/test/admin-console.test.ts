@@ -3,7 +3,7 @@ import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { registerAdminRoutes } from "../src/admin-console";
 import { getActiveRoomInstances } from "../src/colyseus-room";
-import type { RoomSnapshotStore } from "../src/persistence";
+import type { PlayerBanHistoryRecord, RoomSnapshotStore } from "../src/persistence";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
 
@@ -31,6 +31,7 @@ function createRequest(options: {
   headers?: Record<string, string | undefined>;
   params?: Record<string, string>;
   body?: string;
+  url?: string;
 } = {}): IncomingMessage & {
   params: Record<string, string>;
 } {
@@ -44,7 +45,8 @@ function createRequest(options: {
   Object.assign(request, {
     method: options.method ?? "GET",
     headers: options.headers ?? {},
-    params: options.params ?? {}
+    params: options.params ?? {},
+    url: options.url ?? "/"
   });
   return request;
 }
@@ -105,12 +107,66 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
       }
     ])
   );
+  const banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
+  const reports = new Map<string, {
+    reportId: string;
+    reporterId: string;
+    targetId: string;
+    reason: "cheating" | "harassment" | "afk";
+    description?: string;
+    roomId: string;
+    status: "pending" | "dismissed" | "warned" | "banned";
+    createdAt: string;
+    resolvedAt?: string;
+  }>();
   const saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }> = [];
+  let nextReportId = 1;
 
   const store = {
     saveCalls,
     async loadPlayerAccount(playerId: string) {
       return accounts.get(playerId) ?? null;
+    },
+    async createPlayerReport(input: {
+      reporterId: string;
+      targetId: string;
+      reason: "cheating" | "harassment" | "afk";
+      description?: string;
+      roomId: string;
+    }) {
+      const duplicate = Array.from(reports.values()).find(
+        (report) =>
+          report.reporterId === input.reporterId &&
+          report.targetId === input.targetId &&
+          report.roomId === input.roomId
+      );
+      if (duplicate) {
+        throw new Error("duplicate_player_report");
+      }
+      const report = {
+        reportId: String(nextReportId++),
+        reporterId: input.reporterId,
+        targetId: input.targetId,
+        reason: input.reason,
+        ...(input.description ? { description: input.description } : {}),
+        roomId: input.roomId,
+        status: "pending" as const,
+        createdAt: new Date().toISOString()
+      };
+      reports.set(report.reportId, report);
+      return report;
+    },
+    async loadPlayerBan(playerId: string) {
+      const account = accounts.get(playerId);
+      if (!account) {
+        return null;
+      }
+      return {
+        playerId: account.playerId,
+        banStatus: account.banStatus ?? "none",
+        ...(account.banExpiry ? { banExpiry: account.banExpiry } : {}),
+        ...(account.banReason ? { banReason: account.banReason } : {})
+      };
     },
     async ensurePlayerAccount(input: { playerId: string; displayName?: string }) {
       const existing = accounts.get(input.playerId);
@@ -120,7 +176,8 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
       const created = {
         playerId: input.playerId,
         displayName: input.displayName ?? input.playerId,
-        globalResources: { gold: 0, wood: 0, ore: 0 }
+        globalResources: { gold: 0, wood: 0, ore: 0 },
+        banStatus: "none" as const
       };
       accounts.set(input.playerId, created);
       return created;
@@ -135,10 +192,83 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
       account.globalResources = { ...account.globalResources, ...patch.globalResources };
       saveCalls.push({ playerId, globalResources: { ...account.globalResources } });
       return account;
+    },
+    async savePlayerBan(playerId: string, input: { banStatus: "temporary" | "permanent"; banReason: string; banExpiry?: string }) {
+      const account =
+        (await this.loadPlayerAccount(playerId)) ??
+        (await this.ensurePlayerAccount({
+          playerId,
+          displayName: playerId
+        }));
+      account.banStatus = input.banStatus;
+      account.banReason = input.banReason;
+      account.banExpiry = input.banStatus === "temporary" ? input.banExpiry : undefined;
+      const history = banHistoryByPlayerId.get(playerId) ?? [];
+      history.unshift({
+        id: (history[0]?.id ?? 0) + 1,
+        playerId,
+        action: "ban",
+        banStatus: input.banStatus,
+        ...(input.banExpiry ? { banExpiry: input.banExpiry } : {}),
+        banReason: input.banReason,
+        createdAt: new Date().toISOString()
+      });
+      banHistoryByPlayerId.set(playerId, history);
+      return account;
+    },
+    async clearPlayerBan(playerId: string, input: { reason?: string } = {}) {
+      const account =
+        (await this.loadPlayerAccount(playerId)) ??
+        (await this.ensurePlayerAccount({
+          playerId,
+          displayName: playerId
+        }));
+      account.banStatus = "none";
+      delete account.banReason;
+      delete account.banExpiry;
+      const history = banHistoryByPlayerId.get(playerId) ?? [];
+      history.unshift({
+        id: (history[0]?.id ?? 0) + 1,
+        playerId,
+        action: "unban",
+        banStatus: "none",
+        ...(input.reason ? { banReason: input.reason } : {}),
+        createdAt: new Date().toISOString()
+      });
+      banHistoryByPlayerId.set(playerId, history);
+      return account;
+    },
+    async listPlayerBanHistory(playerId: string, options: { limit?: number } = {}) {
+      return (banHistoryByPlayerId.get(playerId) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
+    },
+    async listPlayerReports(options: {
+      status?: "pending" | "dismissed" | "warned" | "banned";
+      limit?: number;
+    } = {}) {
+      return Array.from(reports.values())
+        .filter((report) => !options.status || report.status === options.status)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.reportId.localeCompare(right.reportId))
+        .slice(0, Math.max(1, Math.floor(options.limit ?? 50)));
+    },
+    async resolvePlayerReport(reportId: string, input: { status: "dismissed" | "warned" | "banned" }) {
+      const report = reports.get(reportId);
+      if (!report) {
+        return null;
+      }
+      const next = {
+        ...report,
+        status: input.status,
+        resolvedAt: new Date().toISOString()
+      };
+      reports.set(reportId, next);
+      return next;
     }
   };
 
-  return store as Pick<RoomSnapshotStore, "loadPlayerAccount" | "ensurePlayerAccount" | "savePlayerAccountProgress"> & {
+  return store as Pick<
+    RoomSnapshotStore,
+    "loadPlayerAccount" | "createPlayerReport" | "loadPlayerBan" | "ensurePlayerAccount" | "savePlayerAccountProgress" | "savePlayerBan" | "clearPlayerBan" | "listPlayerBanHistory" | "listPlayerReports" | "resolvePlayerReport"
+  > & {
     saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }>;
   };
 }
@@ -238,6 +368,49 @@ test("POST /api/admin/players/:id/resources returns 400 for malformed JSON", asy
 
   assert.equal(response.statusCode, 400);
   assert.deepEqual(JSON.parse(response.body), { error: "Invalid JSON body" });
+});
+
+test("POST /api/admin/players/:id/resources returns 400 for invalid resource payload types", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore({
+    "player-1": { gold: 10, wood: 4, ore: 1 }
+  });
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/resources");
+  assert.ok(handler);
+
+  const nonObjectResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-1" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: "null"
+    }),
+    nonObjectResponse
+  );
+
+  assert.equal(nonObjectResponse.statusCode, 400);
+  assert.deepEqual(JSON.parse(nonObjectResponse.body), { error: "JSON body must be an object" });
+
+  const invalidFieldResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-1" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({ gold: "drop table", wood: 2.5, ore: 1 })
+    }),
+    invalidFieldResponse
+  );
+
+  assert.equal(invalidFieldResponse.statusCode, 400);
+  assert.deepEqual(JSON.parse(invalidFieldResponse.body), { error: '"gold" must be a finite integer' });
+  assert.equal(store.saveCalls.length, 0);
 });
 
 test("POST /api/admin/players/:id/resources adds and clamps resources and syncs active rooms", async (t) => {
@@ -410,4 +583,262 @@ test("POST /api/admin/broadcast broadcasts to all active rooms and succeeds when
 
   assert.equal(noRoomsResponse.statusCode, 200);
   assert.deepEqual(JSON.parse(noRoomsResponse.body), { ok: true });
+});
+
+test("POST /api/admin/broadcast returns 400 for invalid payload types", async (t) => {
+  const secret = withAdminSecret(t);
+  const { posts } = registerRoutes();
+  const handler = posts.get("/api/admin/broadcast");
+  assert.ok(handler);
+
+  const nonObjectResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: "[]"
+    }),
+    nonObjectResponse
+  );
+
+  assert.equal(nonObjectResponse.statusCode, 400);
+  assert.deepEqual(JSON.parse(nonObjectResponse.body), { error: "JSON body must be an object" });
+
+  const invalidMessageResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({ message: "   ", type: 42 })
+    }),
+    invalidMessageResponse
+  );
+
+  assert.equal(invalidMessageResponse.statusCode, 400);
+  assert.deepEqual(JSON.parse(invalidMessageResponse.body), { error: '"message" must be a non-empty string' });
+});
+
+test("POST /api/admin/players/:id/ban bans the player and POST /unban clears it", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore({
+    "player-7": { gold: 1, wood: 2, ore: 3 }
+  });
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const banHandler = posts.get("/api/admin/players/:id/ban");
+  const unbanHandler = posts.get("/api/admin/players/:id/unban");
+  assert.ok(banHandler);
+  assert.ok(unbanHandler);
+
+  const banResponse = createResponse();
+  await banHandler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-7" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({
+        banStatus: "temporary",
+        banExpiry: "2026-04-05T00:00:00.000Z",
+        banReason: "Chargeback abuse"
+      })
+    }),
+    banResponse
+  );
+
+  assert.equal(banResponse.statusCode, 200);
+  const banPayload = JSON.parse(banResponse.body) as {
+    ok: boolean;
+    account: { banStatus: string; banExpiry?: string; banReason?: string };
+    disconnectedClients: number;
+  };
+  assert.equal(banPayload.ok, true);
+  assert.equal(banPayload.account.banStatus, "temporary");
+  assert.equal(banPayload.account.banExpiry, "2026-04-05T00:00:00.000Z");
+  assert.equal(banPayload.account.banReason, "Chargeback abuse");
+  assert.equal(banPayload.disconnectedClients, 0);
+
+  const unbanResponse = createResponse();
+  await unbanHandler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-7" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({ reason: "Appeal approved" })
+    }),
+    unbanResponse
+  );
+
+  assert.equal(unbanResponse.statusCode, 200);
+  const unbanPayload = JSON.parse(unbanResponse.body) as {
+    ok: boolean;
+    account: { banStatus: string; banExpiry?: string; banReason?: string };
+  };
+  assert.equal(unbanPayload.ok, true);
+  assert.equal(unbanPayload.account.banStatus, "none");
+  assert.equal("banExpiry" in unbanPayload.account, false);
+  assert.equal("banReason" in unbanPayload.account, false);
+});
+
+test("GET /api/admin/players/:id/ban-history returns current ban state and history records", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore();
+  await store.savePlayerBan("player-history", {
+    banStatus: "permanent",
+    banReason: "Botting"
+  });
+  await store.clearPlayerBan("player-history", {
+    reason: "Manual review"
+  });
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/players/:id/ban-history");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      params: { id: "player-history" },
+      headers: {
+        "x-veil-admin-secret": secret
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    items: PlayerBanHistoryRecord[];
+    currentBan: { banStatus: string };
+  };
+  assert.equal(payload.currentBan.banStatus, "none");
+  assert.ok(payload.items.length >= 1);
+  assert.equal(payload.items[0]?.action, "unban");
+  assert.equal(payload.items[0]?.banReason, "Manual review");
+});
+
+test("GET /api/admin/reports returns filtered player reports", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore();
+  await store.createPlayerReport({
+    reporterId: "player-1",
+    targetId: "player-2",
+    reason: "cheating",
+    roomId: "room-report"
+  });
+  const report = await store.createPlayerReport({
+    reporterId: "player-3",
+    targetId: "player-4",
+    reason: "harassment",
+    roomId: "room-report"
+  });
+  await store.resolvePlayerReport(report.reportId, { status: "dismissed" });
+
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/reports");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      url: "/api/admin/reports?status=pending",
+      headers: {
+        "x-veil-admin-secret": secret
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    status: string;
+    items: Array<{ reporterId: string; status: string }>;
+  };
+  assert.equal(payload.status, "pending");
+  assert.equal(payload.items.length, 1);
+  assert.equal(payload.items[0]?.reporterId, "player-1");
+  assert.equal(payload.items[0]?.status, "pending");
+});
+
+test("POST /api/admin/reports/:id/resolve marks a report resolved", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore();
+  const report = await store.createPlayerReport({
+    reporterId: "player-1",
+    targetId: "player-2",
+    reason: "afk",
+    roomId: "room-report"
+  });
+
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/reports/:id/resolve");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: report.reportId },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({ status: "warned" })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    ok: boolean;
+    report: { status: string; resolvedAt?: string };
+  };
+  assert.equal(payload.ok, true);
+  assert.equal(payload.report.status, "warned");
+  assert.ok(payload.report.resolvedAt);
+});
+
+test("POST /api/admin/reports/:id/resolve with banned also bans the reported player", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore();
+  const report = await store.createPlayerReport({
+    reporterId: "player-1",
+    targetId: "player-2",
+    reason: "cheating",
+    roomId: "room-report"
+  });
+
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/reports/:id/resolve");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: report.reportId },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({ status: "banned" })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    ok: boolean;
+    disconnectedClients: number;
+    report: { status: string; targetId: string };
+  };
+  const currentBan = await store.loadPlayerBan("player-2");
+  assert.equal(payload.ok, true);
+  assert.equal(payload.report.status, "banned");
+  assert.equal(payload.disconnectedClients, 0);
+  assert.equal(currentBan?.banStatus, "permanent");
+  assert.match(currentBan?.banReason ?? "", /player report/);
 });

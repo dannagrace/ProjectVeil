@@ -2,12 +2,12 @@ import objectVisuals from "../../../configs/object-visuals.json";
 import type { PlayerTileView } from "../../../packages/shared/src/index";
 import { buildingAsset, markerAsset, resourceAsset } from "./assets";
 
-type FactionKey = "crown" | "wild";
+type FactionKey = "crown" | "wild" | "shadow";
 type RarityKey = "common" | "elite";
 type InteractionKey = "move" | "pickup" | "battle";
 
 function toFactionKey(value: string | undefined): FactionKey | null {
-  return value === "crown" || value === "wild" ? value : null;
+  return value === "crown" || value === "wild" || value === "shadow" ? value : null;
 }
 
 function toRarityKey(value: string): RarityKey {

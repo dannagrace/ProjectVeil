@@ -95,6 +95,7 @@ export interface VeilLobbyRenderState {
   roomId: string;
   authMode: "guest" | "account";
   loginId: string;
+  privacyConsentAccepted: boolean;
   loginHint: string;
   loginActionLabel: string;
   shareHint: string;
@@ -119,6 +120,7 @@ export interface VeilLobbyPanelOptions {
   onEditDisplayName?: () => void;
   onEditRoomId?: () => void;
   onEditLoginId?: () => void;
+  onTogglePrivacyConsent?: () => void;
   onRefresh?: () => void;
   onEnterRoom?: () => void;
   onLoginAccount?: () => void;
@@ -155,6 +157,7 @@ export class VeilLobbyPanel extends Component {
   private onEditDisplayName: (() => void) | undefined;
   private onEditRoomId: (() => void) | undefined;
   private onEditLoginId: (() => void) | undefined;
+  private onTogglePrivacyConsent: (() => void) | undefined;
   private onRefresh: (() => void) | undefined;
   private onEnterRoom: (() => void) | undefined;
   private onLoginAccount: (() => void) | undefined;
@@ -187,6 +190,7 @@ export class VeilLobbyPanel extends Component {
     this.onEditDisplayName = options.onEditDisplayName;
     this.onEditRoomId = options.onEditRoomId;
     this.onEditLoginId = options.onEditLoginId;
+    this.onTogglePrivacyConsent = options.onTogglePrivacyConsent;
     this.onRefresh = options.onRefresh;
     this.onEnterRoom = options.onEnterRoom;
     this.onLoginAccount = options.onLoginAccount;
@@ -306,6 +310,25 @@ export class VeilLobbyPanel extends Component {
         accent: new Color(216, 182, 118, 196)
       },
       state.entering ? null : this.onEditLoginId ?? null
+    );
+
+    leftCursorY = this.renderCard(
+      "LobbyPrivacyConsent",
+      leftX,
+      leftCursorY,
+      leftWidth,
+      58,
+      [
+        "隐私同意",
+        state.privacyConsentAccepted ? "已同意" : "未同意",
+        "首次登录、注册或绑定前需要先确认。点击可切换状态。"
+      ],
+      {
+        fill: FIELD_FILL,
+        stroke: new Color(224, 235, 246, 52),
+        accent: new Color(112, 194, 164, 196)
+      },
+      state.entering ? null : this.onTogglePrivacyConsent ?? null
     );
 
     const sessionLabel =

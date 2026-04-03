@@ -8,6 +8,14 @@ type FakeRoomReply =
       delivery?: "reply" | "push";
     }
   | {
+      kind: "report";
+      reportId: string;
+      targetPlayerId: string;
+      reason: "cheating" | "harassment" | "afk";
+      status: "pending" | "dismissed" | "warned" | "banned";
+      createdAt: string;
+    }
+  | {
       kind: "reachable";
       reachableTiles: Array<{ x: number; y: number }>;
     }
@@ -184,6 +192,23 @@ export function createReachableReply(reachableTiles: Array<{ x: number; y: numbe
   };
 }
 
+export function createReportReply(input: {
+  reportId: string;
+  targetPlayerId: string;
+  reason: "cheating" | "harassment" | "afk";
+  status?: "pending" | "dismissed" | "warned" | "banned";
+  createdAt: string;
+}): FakeRoomReply {
+  return {
+    kind: "report",
+    reportId: input.reportId,
+    targetPlayerId: input.targetPlayerId,
+    reason: input.reason,
+    status: input.status ?? "pending",
+    createdAt: input.createdAt
+  };
+}
+
 type MessageHandler = (type: string, payload: unknown) => void;
 
 export class FakeColyseusRoom {
@@ -249,6 +274,11 @@ export class FakeColyseusRoom {
         return;
       }
 
+      if (reply.kind === "report") {
+        this.emitReport(payload.requestId, reply);
+        return;
+      }
+
       this.emitState(reply.payload, reply.delivery ?? "reply", payload.requestId);
       return;
     }
@@ -282,6 +312,27 @@ export class FakeColyseusRoom {
       type: "world.reachable",
       requestId,
       reachableTiles
+    });
+  }
+
+  emitReport(
+    requestId: string,
+    report: {
+      reportId: string;
+      targetPlayerId: string;
+      reason: "cheating" | "harassment" | "afk";
+      status: "pending" | "dismissed" | "warned" | "banned";
+      createdAt: string;
+    }
+  ): void {
+    this.messageHandler?.("report.player", {
+      type: "report.player",
+      requestId,
+      reportId: report.reportId,
+      targetPlayerId: report.targetPlayerId,
+      reason: report.reason,
+      status: report.status,
+      createdAt: report.createdAt
     });
   }
 

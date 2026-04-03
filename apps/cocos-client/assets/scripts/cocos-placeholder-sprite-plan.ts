@@ -5,6 +5,7 @@ export const PLACEHOLDER_TILE_PATHS = {
   dirt: ["placeholder/tiles/dirt-1", "placeholder/tiles/dirt-2", "placeholder/tiles/dirt-3"],
   sand: ["placeholder/tiles/sand-1", "placeholder/tiles/sand-2"],
   water: ["placeholder/tiles/water-1", "placeholder/tiles/water-2"],
+  swamp: ["placeholder/tiles/dirt-1", "placeholder/tiles/dirt-2", "placeholder/tiles/dirt-3"],
   unknown: ["placeholder/tiles/unknown-1"],
   hidden: ["placeholder/tiles/hidden-1", "placeholder/tiles/hidden-2", "placeholder/tiles/hidden-3"]
 } as const;
@@ -29,6 +30,7 @@ export const PLACEHOLDER_SCOPE_PATHS = {
     ...PLACEHOLDER_TILE_PATHS.dirt,
     ...PLACEHOLDER_TILE_PATHS.sand,
     ...PLACEHOLDER_TILE_PATHS.water,
+    ...PLACEHOLDER_TILE_PATHS.swamp,
     ...PLACEHOLDER_TILE_PATHS.unknown,
     ...PLACEHOLDER_TILE_PATHS.hidden,
     PLACEHOLDER_ICON_PATHS.wood,

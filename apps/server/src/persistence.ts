@@ -1,15 +1,21 @@
+import { randomUUID } from "node:crypto";
 import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import {
+  appendEventLogEntries,
+  getEquipmentDefinition,
   appendPlayerBattleReplaySummaries,
   normalizeEloRating,
   normalizeEventLogQuery,
   normalizeAchievementProgress,
   normalizeEventLogEntries,
   normalizePlayerAccountReadModel,
+  tryAddEquipmentToInventory,
   type EventLogQuery,
   normalizeHeroState,
   type EventLogEntry,
+  type EquipmentId,
   type HeroState,
+  type PlayerBanStatus,
   type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress,
@@ -21,17 +27,34 @@ import type { RoomPersistenceSnapshot } from "./index";
 export interface RoomSnapshotStore {
   load(roomId: string): Promise<RoomPersistenceSnapshot | null>;
   loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
+  loadPaymentOrder?(orderId: string): Promise<PaymentOrderSnapshot | null>;
+  loadPlayerReport?(reportId: string): Promise<PlayerReportRecord | null>;
+  loadPlayerBan?(playerId: string): Promise<PlayerAccountBanSnapshot | null>;
+  createPlayerReport?(input: PlayerReportCreateInput): Promise<PlayerReportRecord>;
   loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerEventHistory(playerId: string, query?: PlayerEventHistoryQuery): Promise<PlayerEventHistorySnapshot>;
   loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]>;
+  listPlayerReports?(options?: PlayerReportListOptions): Promise<PlayerReportRecord[]>;
+  listPlayerBanHistory?(playerId: string, options?: PlayerAccountBanHistoryListOptions): Promise<PlayerBanHistoryRecord[]>;
   loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]>;
   ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot>;
+  savePlayerBan?(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot>;
+  clearPlayerBan?(playerId: string, input?: PlayerAccountUnbanInput): Promise<PlayerAccountSnapshot>;
   bindPlayerAccountCredentials(
     playerId: string,
     input: PlayerAccountCredentialInput
+  ): Promise<PlayerAccountSnapshot>;
+  createPaymentOrder?(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot>;
+  completePaymentOrder?(orderId: string, input: PaymentOrderCompleteInput): Promise<PaymentOrderSettlement>;
+  creditGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
+  debitGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
+  purchaseShopProduct?(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult>;
+  savePlayerAccountPrivacyConsent(
+    playerId: string,
+    input?: PlayerAccountPrivacyConsentInput
   ): Promise<PlayerAccountSnapshot>;
   savePlayerAccountAuthSession(
     playerId: string,
@@ -52,6 +75,11 @@ export interface RoomSnapshotStore {
     playerId: string,
     input: PlayerAccountWechatMiniGameIdentityInput
   ): Promise<PlayerAccountSnapshot>;
+  deletePlayerAccount(
+    playerId: string,
+    input?: PlayerAccountDeleteInput
+  ): Promise<PlayerAccountSnapshot | null>;
+  resolvePlayerReport?(reportId: string, input: PlayerReportResolveInput): Promise<PlayerReportRecord | null>;
   savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot>;
   savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot>;
   listPlayerAccounts(options?: PlayerAccountListOptions): Promise<PlayerAccountSnapshot[]>;
@@ -113,6 +141,7 @@ interface PlayerAccountRow extends RowDataPacket {
   display_name: string | null;
   avatar_url: string | null;
   elo_rating: number | null;
+  gems: number | null;
   global_resources_json: string | ResourceLedger;
   achievements_json: string | PlayerAchievementProgress[] | null;
   recent_event_log_json: string | EventLogEntry[] | null;
@@ -120,6 +149,13 @@ interface PlayerAccountRow extends RowDataPacket {
   last_room_id: string | null;
   last_seen_at: Date | string | null;
   login_id: string | null;
+  age_verified: number | boolean | null;
+  is_minor: number | boolean | null;
+  daily_play_minutes: number | null;
+  last_play_date: Date | string | null;
+  ban_status: string | null;
+  ban_expiry: Date | string | null;
+  ban_reason: string | null;
   account_session_version: number;
   refresh_session_id: string | null;
   refresh_token_hash: string | null;
@@ -130,6 +166,9 @@ interface PlayerAccountRow extends RowDataPacket {
   wechat_mini_game_union_id: string | null;
   wechat_mini_game_bound_at: Date | string | null;
   credential_bound_at: Date | string | null;
+  privacy_consent_at: Date | string | null;
+  phone_number: string | null;
+  phone_number_bound_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -163,6 +202,16 @@ interface PlayerEventHistoryCountRow extends RowDataPacket {
   total: number;
 }
 
+interface PlayerBanHistoryRow extends RowDataPacket {
+  id: number;
+  player_id: string;
+  action: string;
+  ban_status: string;
+  ban_expiry: Date | string | null;
+  ban_reason: string | null;
+  created_at: Date | string;
+}
+
 interface PlayerAccountDeviceSessionRow extends RowDataPacket {
   player_id: string;
   session_id: string;
@@ -184,6 +233,42 @@ interface PlayerHeroArchiveRow extends RowDataPacket {
   equipment_json: string | HeroState["loadout"]["equipment"] | null;
   inventory_json: string | HeroState["loadout"]["inventory"] | null;
   updated_at: Date | string;
+}
+
+interface ShopPurchaseRow extends RowDataPacket {
+  player_id: string;
+  purchase_id: string;
+  product_id: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+  result_json: string | ShopPurchaseResult;
+  created_at: Date | string;
+}
+
+interface PaymentOrderRow extends RowDataPacket {
+  order_id: string;
+  player_id: string;
+  product_id: string;
+  wechat_order_id: string | null;
+  status: string;
+  amount: number;
+  gem_amount: number;
+  created_at: Date | string;
+  paid_at: Date | string | null;
+  updated_at: Date | string;
+}
+
+interface PlayerReportRow extends RowDataPacket {
+  report_id: string | number;
+  reporter_id: string;
+  target_id: string;
+  reason: string;
+  description: string | null;
+  room_id: string;
+  status: string;
+  created_at: Date | string;
+  resolved_at: Date | string | null;
 }
 
 export interface RoomSnapshotSummary {
@@ -212,6 +297,15 @@ export interface PlayerAccountSnapshot extends PlayerAccountReadModel {
   wechatMiniGameBoundAt?: string;
   createdAt?: string;
   updatedAt?: string;
+  phoneNumber?: string;
+  phoneNumberBoundAt?: string;
+}
+
+export interface PlayerAccountBanSnapshot {
+  playerId: string;
+  banStatus: PlayerBanStatus;
+  banExpiry?: string;
+  banReason?: string;
 }
 
 export interface PlayerAccountAuthSnapshot {
@@ -249,10 +343,123 @@ export interface PlayerAccountEnsureInput {
   lastRoomId?: string;
 }
 
+export type GemLedgerReason = "purchase" | "reward" | "spend";
+
+export interface ShopPurchaseGrant {
+  gems?: number;
+  resources?: Partial<ResourceLedger>;
+  equipmentIds?: EquipmentId[];
+}
+
+export interface ShopPurchaseMutationInput {
+  purchaseId: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  grant: ShopPurchaseGrant;
+}
+
+export interface ShopPurchaseResult {
+  purchaseId: string;
+  productId: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  granted: {
+    gems: number;
+    resources: ResourceLedger;
+    equipmentIds: EquipmentId[];
+    heroId?: string;
+  };
+  gemsBalance: number;
+  processedAt: string;
+}
+
+export type PaymentOrderStatus = "pending" | "paid";
+
+export interface PaymentOrderSnapshot {
+  orderId: string;
+  playerId: string;
+  productId: string;
+  status: PaymentOrderStatus;
+  amount: number;
+  gemAmount: number;
+  createdAt: string;
+  updatedAt: string;
+  wechatOrderId?: string;
+  paidAt?: string;
+}
+
+export interface PaymentOrderCreateInput {
+  orderId: string;
+  playerId: string;
+  productId: string;
+  amount: number;
+  gemAmount: number;
+}
+
+export interface PaymentOrderCompleteInput {
+  wechatOrderId: string;
+  paidAt?: string;
+}
+
+export interface PaymentOrderSettlement {
+  order: PaymentOrderSnapshot;
+  account: PlayerAccountSnapshot;
+  credited: boolean;
+}
+
+export interface GemLedgerEntry {
+  entryId: string;
+  playerId: string;
+  delta: number;
+  reason: GemLedgerReason;
+  refId: string;
+  createdAt: string;
+}
+
+export type PlayerReportReason = "cheating" | "harassment" | "afk";
+export type PlayerReportStatus = "pending" | "dismissed" | "warned" | "banned";
+
+export interface PlayerReportRecord {
+  reportId: string;
+  reporterId: string;
+  targetId: string;
+  reason: PlayerReportReason;
+  description?: string;
+  roomId: string;
+  status: PlayerReportStatus;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+export interface PlayerReportCreateInput {
+  reporterId: string;
+  targetId: string;
+  reason: PlayerReportReason;
+  description?: string;
+  roomId: string;
+}
+
+export interface PlayerReportListOptions {
+  status?: PlayerReportStatus;
+  roomId?: string;
+  reporterId?: string;
+  targetId?: string;
+  limit?: number;
+}
+
+export interface PlayerReportResolveInput {
+  status: Exclude<PlayerReportStatus, "pending">;
+}
+
 export interface PlayerAccountProfilePatch {
   displayName?: string;
   avatarUrl?: string | null;
   lastRoomId?: string | null;
+  phoneNumber?: string | null;
+  phoneNumberBoundAt?: string | null;
 }
 
 export interface PlayerAccountProgressPatch {
@@ -260,12 +467,18 @@ export interface PlayerAccountProgressPatch {
   achievements?: Partial<PlayerAchievementProgress>[] | null;
   recentEventLog?: Partial<EventLogEntry>[] | null;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null;
+  dailyPlayMinutes?: number | null;
+  lastPlayDate?: string | null;
   lastRoomId?: string | null;
 }
 
 export interface PlayerAccountCredentialInput {
   loginId: string;
   passwordHash: string;
+}
+
+export interface PlayerAccountPrivacyConsentInput {
+  privacyConsentAt?: string;
 }
 
 export interface PlayerAccountAuthSessionInput {
@@ -287,6 +500,12 @@ export interface PlayerAccountWechatMiniGameIdentityInput {
   unionId?: string;
   displayName?: string;
   avatarUrl?: string | null;
+  ageVerified?: boolean;
+  isMinor?: boolean;
+}
+
+export interface PlayerAccountDeleteInput {
+  deletedAt?: string;
 }
 
 export interface PlayerAccountListOptions {
@@ -313,6 +532,30 @@ export interface PlayerEventHistorySnapshot {
   total: number;
 }
 
+export interface PlayerAccountBanInput {
+  banStatus: Exclude<PlayerBanStatus, "none">;
+  banExpiry?: string;
+  banReason: string;
+}
+
+export interface PlayerAccountUnbanInput {
+  reason?: string;
+}
+
+export interface PlayerBanHistoryRecord {
+  id: number;
+  playerId: string;
+  action: "ban" | "unban";
+  banStatus: PlayerBanStatus;
+  banExpiry?: string;
+  banReason?: string;
+  createdAt: string;
+}
+
+export interface PlayerAccountBanHistoryListOptions {
+  limit?: number;
+}
+
 export interface PlayerRoomProfileListOptions {
   limit?: number;
   roomId?: string;
@@ -329,12 +572,23 @@ export const MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX = "idx_player_accounts_update
 export const MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX = "uidx_player_accounts_login_id";
 export const MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX = "uidx_player_accounts_wechat_open_id";
 export const MYSQL_PLAYER_ACCOUNT_WECHAT_IDP_OPEN_ID_INDEX = "uidx_player_accounts_wechat_idp_open_id";
+export const MYSQL_GEM_LEDGER_TABLE = "gem_ledger";
+export const MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX = "idx_gem_ledger_player_created";
+export const MYSQL_SHOP_PURCHASE_TABLE = "shop_purchases";
+export const MYSQL_PAYMENT_ORDER_TABLE = "orders";
+export const MYSQL_PAYMENT_ORDER_PLAYER_CREATED_INDEX = "idx_orders_player_created";
+export const MYSQL_PAYMENT_ORDER_WECHAT_ORDER_ID_INDEX = "uidx_orders_wechat_order_id";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_TABLE = "player_account_sessions";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX = "idx_player_account_sessions_player_last_used";
+export const MYSQL_PLAYER_BAN_HISTORY_TABLE = "player_ban_history";
+export const MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX = "idx_player_ban_history_player_created";
 export const MYSQL_PLAYER_EVENT_HISTORY_TABLE = "player_event_history";
 export const MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX = "idx_player_event_history_player_time";
 export const MYSQL_PLAYER_HERO_ARCHIVE_TABLE = "player_hero_archives";
 export const MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX = "idx_player_hero_archives_updated_at";
+export const MYSQL_PLAYER_REPORT_TABLE = "player_reports";
+export const MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX = "idx_player_reports_status_created";
+export const MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX = "uidx_player_reports_room_reporter_target";
 export const MYSQL_CONFIG_DOCUMENT_TABLE = "config_documents";
 export const MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX = "idx_config_documents_updated_at";
 export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
@@ -379,6 +633,239 @@ function normalizeResourceLedger(resources?: Partial<ResourceLedger>): ResourceL
   };
 }
 
+function addResourceLedgers(base: Partial<ResourceLedger>, delta: Partial<ResourceLedger>): ResourceLedger {
+  return {
+    gold: Math.max(0, Math.floor((base.gold ?? 0) + (delta.gold ?? 0))),
+    wood: Math.max(0, Math.floor((base.wood ?? 0) + (delta.wood ?? 0))),
+    ore: Math.max(0, Math.floor((base.ore ?? 0) + (delta.ore ?? 0)))
+  };
+}
+
+function normalizeShopPurchaseId(purchaseId: string): string {
+  const normalized = purchaseId.trim();
+  if (!normalized) {
+    throw new Error("purchaseId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizePaymentOrderId(orderId: string): string {
+  const normalized = orderId.trim();
+  if (!normalized) {
+    throw new Error("orderId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizePaymentOrderStatus(status?: string | null): PaymentOrderStatus {
+  return status === "paid" ? "paid" : "pending";
+}
+
+function normalizeWechatOrderId(wechatOrderId: string): string {
+  const normalized = wechatOrderId.trim();
+  if (!normalized) {
+    throw new Error("wechatOrderId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizePaymentAmount(amount: number): number {
+  const normalized = Math.floor(amount);
+  if (!Number.isFinite(amount) || normalized <= 0) {
+    throw new Error("amount must be a positive integer");
+  }
+
+  return normalized;
+}
+
+function toPaymentOrderSnapshot(row: PaymentOrderRow): PaymentOrderSnapshot {
+  const createdAt = formatTimestamp(row.created_at) ?? new Date(0).toISOString();
+  const updatedAt = formatTimestamp(row.updated_at) ?? createdAt;
+  const paidAt = formatTimestamp(row.paid_at);
+
+  return {
+    orderId: normalizePaymentOrderId(row.order_id),
+    playerId: normalizePlayerId(row.player_id),
+    productId: normalizeShopProductId(row.product_id),
+    status: normalizePaymentOrderStatus(row.status),
+    amount: normalizePaymentAmount(row.amount),
+    gemAmount: normalizeGemAmount(row.gem_amount),
+    createdAt,
+    updatedAt,
+    ...(row.wechat_order_id ? { wechatOrderId: normalizeWechatOrderId(row.wechat_order_id) } : {}),
+    ...(paidAt ? { paidAt } : {})
+  };
+}
+
+function normalizeShopProductId(productId: string): string {
+  const normalized = productId.trim();
+  if (!normalized) {
+    throw new Error("productId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizeShopProductName(productName: string): string {
+  const normalized = productName.trim();
+  if (!normalized) {
+    throw new Error("productName must not be empty");
+  }
+
+  return normalized.slice(0, 80);
+}
+
+function normalizeShopPurchaseQuantity(quantity: number): number {
+  const normalized = Math.floor(quantity);
+  if (!Number.isFinite(quantity) || normalized <= 0) {
+    throw new Error("quantity must be a positive integer");
+  }
+
+  return normalized;
+}
+
+function normalizeShopPurchaseGrant(grant: ShopPurchaseGrant): { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] } {
+  const equipmentIds = (grant.equipmentIds ?? []).map((equipmentId) => equipmentId.trim()).filter(Boolean);
+  for (const equipmentId of equipmentIds) {
+    if (!getEquipmentDefinition(equipmentId)) {
+      throw new Error(`unknown equipment grant: ${equipmentId}`);
+    }
+  }
+
+  return {
+    gems: grant.gems != null ? normalizeGemAmount(grant.gems) : 0,
+    resources: normalizeResourceLedger(grant.resources),
+    equipmentIds
+  };
+}
+
+function multiplyShopPurchaseGrant(
+  grant: { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] },
+  quantity: number
+): { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] } {
+  return {
+    gems: grant.gems * quantity,
+    resources: {
+      gold: grant.resources.gold * quantity,
+      wood: grant.resources.wood * quantity,
+      ore: grant.resources.ore * quantity
+    },
+    equipmentIds: Array.from({ length: quantity }, () => grant.equipmentIds).flat()
+  };
+}
+
+function createShopPurchaseEventLogEntry(playerId: string, input: {
+  productId: string;
+  productName: string;
+  quantity: number;
+  granted: { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] };
+  processedAt: string;
+}): EventLogEntry {
+  const resourceRewards = [
+    input.granted.resources.gold > 0 ? { type: "resource" as const, label: "gold", amount: input.granted.resources.gold } : null,
+    input.granted.resources.wood > 0 ? { type: "resource" as const, label: "wood", amount: input.granted.resources.wood } : null,
+    input.granted.resources.ore > 0 ? { type: "resource" as const, label: "ore", amount: input.granted.resources.ore } : null
+  ].filter((reward): reward is NonNullable<typeof reward> => Boolean(reward));
+
+  return {
+    id: `${playerId}:${input.processedAt}:shop:${input.productId}:${input.quantity}`,
+    timestamp: input.processedAt,
+    roomId: "shop",
+    playerId,
+    category: "account",
+    description: `Purchased ${input.productName} x${input.quantity}.`,
+    rewards: resourceRewards
+  };
+}
+
+function normalizePlayerBanStatus(status?: string | null): PlayerBanStatus {
+  return status === "temporary" || status === "permanent" ? status : "none";
+}
+
+function normalizePlayerBanReason(reason?: string | null): string | undefined {
+  const normalized = reason?.trim();
+  return normalized ? normalized.slice(0, 512) : undefined;
+}
+
+function normalizePlayerBanExpiry(expiry?: string | Date | null): string | undefined {
+  if (!expiry) {
+    return undefined;
+  }
+
+  const parsed = expiry instanceof Date ? expiry : new Date(expiry);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("banExpiry must be a valid ISO timestamp");
+  }
+
+  return parsed.toISOString();
+}
+
+function normalizePlayerReportReason(reason?: string | null): PlayerReportReason {
+  if (reason === "cheating" || reason === "harassment" || reason === "afk") {
+    return reason;
+  }
+
+  throw new Error("report reason must be cheating, harassment, or afk");
+}
+
+function normalizePlayerReportStatus(status?: string | null): PlayerReportStatus {
+  if (status === "pending" || status === "dismissed" || status === "warned" || status === "banned") {
+    return status;
+  }
+
+  throw new Error("report status must be pending, dismissed, warned, or banned");
+}
+
+function normalizePlayerReportDescription(description?: string | null): string | undefined {
+  const normalized = description?.trim();
+  return normalized ? normalized.slice(0, 512) : undefined;
+}
+
+function normalizePlayerReportRecord(record: {
+  reportId: string | number;
+  reporterId: string;
+  targetId: string;
+  reason: string;
+  description?: string | null;
+  roomId: string;
+  status: string;
+  createdAt: string | Date;
+  resolvedAt?: string | Date | null;
+}): PlayerReportRecord {
+  const description = normalizePlayerReportDescription(record.description);
+  const resolvedAt = formatTimestamp(record.resolvedAt);
+
+  return {
+    reportId: String(record.reportId),
+    reporterId: normalizePlayerId(record.reporterId),
+    targetId: normalizePlayerId(record.targetId),
+    reason: normalizePlayerReportReason(record.reason),
+    ...(description ? { description } : {}),
+    roomId: record.roomId.trim(),
+    status: normalizePlayerReportStatus(record.status),
+    createdAt: formatTimestamp(record.createdAt) ?? new Date(0).toISOString(),
+    ...(resolvedAt ? { resolvedAt } : {})
+  };
+}
+
+export function isPlayerBanActive(
+  ban: Pick<PlayerAccountBanSnapshot, "banStatus" | "banExpiry"> | Pick<PlayerAccountSnapshot, "banStatus" | "banExpiry"> | null | undefined
+): boolean {
+  if (!ban || (ban.banStatus ?? "none") === "none") {
+    return false;
+  }
+
+  if (ban.banStatus === "permanent") {
+    return true;
+  }
+
+  const expiry = ban.banExpiry ? new Date(ban.banExpiry) : null;
+  return Boolean(expiry && !Number.isNaN(expiry.getTime()) && expiry.getTime() > Date.now());
+}
+
 function normalizePlayerId(playerId: string): string {
   const normalized = playerId.trim();
   if (normalized.length === 0) {
@@ -401,6 +888,95 @@ function normalizePlayerDisplayName(playerId: string, displayName?: string | nul
 function normalizePlayerAvatarUrl(avatarUrl?: string | null): string | undefined {
   const normalized = avatarUrl?.trim();
   return normalized ? normalized.slice(0, MAX_PLAYER_AVATAR_URL_LENGTH) : undefined;
+}
+
+function normalizePrivacyConsentAt(value?: string | Date | null): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("privacyConsentAt must be a valid ISO timestamp");
+  }
+
+  return parsed.toISOString();
+}
+
+function normalizePlayerAgeVerified(ageVerified?: boolean | number | null): boolean | undefined {
+  if (ageVerified == null) {
+    return undefined;
+  }
+
+  return ageVerified === true || ageVerified === 1;
+}
+
+function normalizePlayerIsMinor(isMinor?: boolean | number | null): boolean | undefined {
+  if (isMinor == null) {
+    return undefined;
+  }
+
+  return isMinor === true || isMinor === 1;
+}
+
+function normalizeDailyPlayMinutes(minutes?: number | null): number {
+  return Math.max(0, Math.floor(minutes ?? 0));
+}
+
+function normalizeGemAmount(amount?: number | null): number {
+  return Math.max(0, Math.floor(amount ?? 0));
+}
+
+function normalizePositiveGemDelta(amount: number): number {
+  const normalized = Math.floor(amount);
+  if (!Number.isFinite(amount) || normalized <= 0) {
+    throw new Error("gem amount must be a positive integer");
+  }
+
+  return normalized;
+}
+
+function normalizeGemLedgerReason(reason: GemLedgerReason): GemLedgerReason {
+  if (reason === "purchase" || reason === "reward" || reason === "spend") {
+    return reason;
+  }
+
+  throw new Error("gem reason must be purchase, reward, or spend");
+}
+
+function normalizeGemLedgerRefId(refId: string): string {
+  const normalized = refId.trim();
+  if (!normalized) {
+    throw new Error("refId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizeLastPlayDate(value?: string | Date | null): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      return normalized;
+    }
+
+    const parsed = new Date(normalized);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+
+    throw new Error("lastPlayDate must be a valid date string");
+  }
+
+  if (Number.isNaN(value.getTime())) {
+    throw new Error("lastPlayDate must be a valid date");
+  }
+
+  return value.toISOString().slice(0, 10);
 }
 
 export function normalizePlayerLoginId(loginId: string): string {
@@ -473,6 +1049,7 @@ function normalizePlayerAccountSnapshot(account: {
   displayName?: string | null | undefined;
   avatarUrl?: string | null | undefined;
   eloRating?: number | null | undefined;
+  gems?: number | null | undefined;
   globalResources?: Partial<ResourceLedger>;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -480,10 +1057,20 @@ function normalizePlayerAccountSnapshot(account: {
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
   loginId?: string | null | undefined;
+  ageVerified?: boolean | number | null | undefined;
+  isMinor?: boolean | number | null | undefined;
+  dailyPlayMinutes?: number | null | undefined;
+  lastPlayDate?: string | Date | null | undefined;
+  banStatus?: PlayerBanStatus | null | undefined;
+  banExpiry?: string | undefined;
+  banReason?: string | null | undefined;
   wechatMiniGameOpenId?: string | null | undefined;
   wechatMiniGameUnionId?: string | null | undefined;
   wechatMiniGameBoundAt?: string | undefined;
   credentialBoundAt?: string | undefined;
+  privacyConsentAt?: string | Date | null | undefined;
+  phoneNumber?: string | null | undefined;
+  phoneNumberBoundAt?: string | Date | null | undefined;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 }): PlayerAccountSnapshot {
@@ -494,6 +1081,7 @@ function normalizePlayerAccountSnapshot(account: {
   const normalizedWechatMiniGameUnionId = account.wechatMiniGameUnionId
     ? normalizeWechatMiniGameUnionId(account.wechatMiniGameUnionId)
     : undefined;
+  const phoneNumberBoundAt = formatTimestamp(account.phoneNumberBoundAt);
 
   return {
     ...normalizePlayerAccountReadModel({
@@ -501,6 +1089,7 @@ function normalizePlayerAccountSnapshot(account: {
       displayName: normalizePlayerDisplayName(playerId, account.displayName),
       avatarUrl: normalizePlayerAvatarUrl(account.avatarUrl),
       eloRating: normalizeEloRating(account.eloRating),
+      gems: normalizeGemAmount(account.gems),
       globalResources: normalizeResourceLedger(account.globalResources),
       achievements: account.achievements,
       recentEventLog: account.recentEventLog,
@@ -508,11 +1097,23 @@ function normalizePlayerAccountSnapshot(account: {
       lastRoomId: account.lastRoomId,
       lastSeenAt: account.lastSeenAt,
       loginId: account.loginId ? normalizePlayerLoginId(account.loginId) : undefined,
-      credentialBoundAt: account.credentialBoundAt
+      credentialBoundAt: account.credentialBoundAt,
+      privacyConsentAt: normalizePrivacyConsentAt(account.privacyConsentAt),
+      phoneNumber: account.phoneNumber?.trim() || undefined,
+      ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
+      ageVerified: normalizePlayerAgeVerified(account.ageVerified),
+      isMinor: normalizePlayerIsMinor(account.isMinor),
+      dailyPlayMinutes: normalizeDailyPlayMinutes(account.dailyPlayMinutes),
+      lastPlayDate: normalizeLastPlayDate(account.lastPlayDate),
+      banStatus: normalizePlayerBanStatus(account.banStatus),
+      banExpiry: normalizePlayerBanExpiry(account.banExpiry),
+      banReason: normalizePlayerBanReason(account.banReason)
     }),
     ...(normalizedWechatMiniGameOpenId ? { wechatMiniGameOpenId: normalizedWechatMiniGameOpenId } : {}),
     ...(normalizedWechatMiniGameUnionId ? { wechatMiniGameUnionId: normalizedWechatMiniGameUnionId } : {}),
     ...(account.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: account.wechatMiniGameBoundAt } : {}),
+    ...(account.phoneNumber?.trim() ? { phoneNumber: account.phoneNumber.trim() } : {}),
+    ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
     ...(account.createdAt ? { createdAt: account.createdAt } : {}),
     ...(account.updatedAt ? { updatedAt: account.updatedAt } : {})
   };
@@ -780,6 +1381,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   display_name VARCHAR(80) NULL,
   avatar_url VARCHAR(512) NULL,
   elo_rating INT NOT NULL DEFAULT 1000,
+  gems INT NOT NULL DEFAULT 0,
   global_resources_json LONGTEXT NOT NULL,
   achievements_json LONGTEXT NULL,
   recent_event_log_json LONGTEXT NULL,
@@ -787,6 +1389,13 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   last_room_id VARCHAR(191) NULL,
   last_seen_at DATETIME NULL DEFAULT NULL,
   login_id VARCHAR(40) NULL,
+  age_verified TINYINT(1) NOT NULL DEFAULT 0,
+  is_minor TINYINT(1) NOT NULL DEFAULT 0,
+  daily_play_minutes INT NOT NULL DEFAULT 0,
+  last_play_date DATE NULL DEFAULT NULL,
+  ban_status VARCHAR(16) NOT NULL DEFAULT 'none',
+  ban_expiry DATETIME NULL DEFAULT NULL,
+  ban_reason VARCHAR(512) NULL,
   wechat_open_id VARCHAR(191) NULL,
   wechat_union_id VARCHAR(191) NULL,
   wechat_mini_game_open_id VARCHAR(191) NULL,
@@ -794,10 +1403,49 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   wechat_mini_game_bound_at DATETIME NULL DEFAULT NULL,
   password_hash VARCHAR(255) NULL,
   credential_bound_at DATETIME NULL DEFAULT NULL,
+  privacy_consent_at DATETIME NULL DEFAULT NULL,
+  phone_number VARCHAR(32) NULL,
+  phone_number_bound_at DATETIME NULL DEFAULT NULL,
   version BIGINT UNSIGNED NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (player_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS \`${MYSQL_GEM_LEDGER_TABLE}\` (
+  entry_id VARCHAR(191) NOT NULL,
+  player_id VARCHAR(191) NOT NULL,
+  delta INT NOT NULL,
+  reason VARCHAR(16) NOT NULL,
+  ref_id VARCHAR(191) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (entry_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS \`${MYSQL_SHOP_PURCHASE_TABLE}\` (
+  player_id VARCHAR(191) NOT NULL,
+  purchase_id VARCHAR(191) NOT NULL,
+  product_id VARCHAR(191) NOT NULL,
+  quantity INT NOT NULL,
+  unit_price INT NOT NULL,
+  total_price INT NOT NULL,
+  result_json LONGTEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (player_id, purchase_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PAYMENT_ORDER_TABLE}\` (
+  order_id VARCHAR(191) NOT NULL,
+  player_id VARCHAR(191) NOT NULL,
+  product_id VARCHAR(191) NOT NULL,
+  wechat_order_id VARCHAR(191) NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  amount INT NOT NULL,
+  gem_amount INT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  paid_at DATETIME NULL DEFAULT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\` (
@@ -813,6 +1461,17 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\` (
   KEY \`${MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX}\` (player_id, last_used_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_BAN_HISTORY_TABLE}\` (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  player_id VARCHAR(191) NOT NULL,
+  action VARCHAR(16) NOT NULL,
+  ban_status VARCHAR(16) NOT NULL,
+  ban_expiry DATETIME NULL DEFAULT NULL,
+  ban_reason VARCHAR(512) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   event_id VARCHAR(191) NOT NULL,
@@ -825,6 +1484,20 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (
   entry_json LONGTEXT NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (player_id, event_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_REPORT_TABLE}\` (
+  report_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  reporter_id VARCHAR(191) NOT NULL,
+  target_id VARCHAR(191) NOT NULL,
+  reason VARCHAR(32) NOT NULL,
+  description VARCHAR(512) NULL,
+  room_id VARCHAR(191) NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  resolved_at DATETIME NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (report_id),
+  UNIQUE KEY \`${MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX}\` (room_id, reporter_id, target_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET @veil_player_accounts_display_name_exists := (
@@ -862,6 +1535,24 @@ SET @veil_player_event_history_idx_sql := IF(
 PREPARE veil_player_event_history_idx_stmt FROM @veil_player_event_history_idx_sql;
 EXECUTE veil_player_event_history_idx_stmt;
 DEALLOCATE PREPARE veil_player_event_history_idx_stmt;
+
+SET @veil_player_reports_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_REPORT_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX}'
+);
+
+SET @veil_player_reports_idx_sql := IF(
+  @veil_player_reports_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX}\` ON \`${MYSQL_PLAYER_REPORT_TABLE}\` (status, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_reports_idx_stmt FROM @veil_player_reports_idx_sql;
+EXECUTE veil_player_reports_idx_stmt;
+DEALLOCATE PREPARE veil_player_reports_idx_stmt;
 
 SET @veil_player_accounts_achievements_exists := (
   SELECT COUNT(*)
@@ -916,6 +1607,24 @@ SET @veil_player_accounts_elo_rating_sql := IF(
 PREPARE veil_player_accounts_elo_rating_stmt FROM @veil_player_accounts_elo_rating_sql;
 EXECUTE veil_player_accounts_elo_rating_stmt;
 DEALLOCATE PREPARE veil_player_accounts_elo_rating_stmt;
+
+SET @veil_player_accounts_gems_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'gems'
+);
+
+SET @veil_player_accounts_gems_sql := IF(
+  @veil_player_accounts_gems_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`gems\` INT NOT NULL DEFAULT 0 AFTER \`elo_rating\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_gems_stmt FROM @veil_player_accounts_gems_sql;
+EXECUTE veil_player_accounts_gems_stmt;
+DEALLOCATE PREPARE veil_player_accounts_gems_stmt;
 
 SET @veil_player_accounts_event_log_exists := (
   SELECT COUNT(*)
@@ -1007,6 +1716,132 @@ PREPARE veil_player_accounts_login_id_stmt FROM @veil_player_accounts_login_id_s
 EXECUTE veil_player_accounts_login_id_stmt;
 DEALLOCATE PREPARE veil_player_accounts_login_id_stmt;
 
+SET @veil_player_accounts_age_verified_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'age_verified'
+);
+
+SET @veil_player_accounts_age_verified_sql := IF(
+  @veil_player_accounts_age_verified_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`age_verified\` TINYINT(1) NOT NULL DEFAULT 0 AFTER \`login_id\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_age_verified_stmt FROM @veil_player_accounts_age_verified_sql;
+EXECUTE veil_player_accounts_age_verified_stmt;
+DEALLOCATE PREPARE veil_player_accounts_age_verified_stmt;
+
+SET @veil_player_accounts_is_minor_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'is_minor'
+);
+
+SET @veil_player_accounts_is_minor_sql := IF(
+  @veil_player_accounts_is_minor_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`is_minor\` TINYINT(1) NOT NULL DEFAULT 0 AFTER \`age_verified\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_is_minor_stmt FROM @veil_player_accounts_is_minor_sql;
+EXECUTE veil_player_accounts_is_minor_stmt;
+DEALLOCATE PREPARE veil_player_accounts_is_minor_stmt;
+
+SET @veil_player_accounts_daily_play_minutes_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'daily_play_minutes'
+);
+
+SET @veil_player_accounts_daily_play_minutes_sql := IF(
+  @veil_player_accounts_daily_play_minutes_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`daily_play_minutes\` INT NOT NULL DEFAULT 0 AFTER \`is_minor\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_daily_play_minutes_stmt FROM @veil_player_accounts_daily_play_minutes_sql;
+EXECUTE veil_player_accounts_daily_play_minutes_stmt;
+DEALLOCATE PREPARE veil_player_accounts_daily_play_minutes_stmt;
+
+SET @veil_player_accounts_last_play_date_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'last_play_date'
+);
+
+SET @veil_player_accounts_last_play_date_sql := IF(
+  @veil_player_accounts_last_play_date_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`last_play_date\` DATE NULL DEFAULT NULL AFTER \`daily_play_minutes\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_last_play_date_stmt FROM @veil_player_accounts_last_play_date_sql;
+EXECUTE veil_player_accounts_last_play_date_stmt;
+DEALLOCATE PREPARE veil_player_accounts_last_play_date_stmt;
+
+SET @veil_player_accounts_ban_status_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'ban_status'
+);
+
+SET @veil_player_accounts_ban_status_sql := IF(
+  @veil_player_accounts_ban_status_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`ban_status\` VARCHAR(16) NOT NULL DEFAULT ''none'' AFTER \`login_id\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_ban_status_stmt FROM @veil_player_accounts_ban_status_sql;
+EXECUTE veil_player_accounts_ban_status_stmt;
+DEALLOCATE PREPARE veil_player_accounts_ban_status_stmt;
+
+SET @veil_player_accounts_ban_expiry_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'ban_expiry'
+);
+
+SET @veil_player_accounts_ban_expiry_sql := IF(
+  @veil_player_accounts_ban_expiry_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`ban_expiry\` DATETIME NULL DEFAULT NULL AFTER \`ban_status\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_ban_expiry_stmt FROM @veil_player_accounts_ban_expiry_sql;
+EXECUTE veil_player_accounts_ban_expiry_stmt;
+DEALLOCATE PREPARE veil_player_accounts_ban_expiry_stmt;
+
+SET @veil_player_accounts_ban_reason_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'ban_reason'
+);
+
+SET @veil_player_accounts_ban_reason_sql := IF(
+  @veil_player_accounts_ban_reason_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`ban_reason\` VARCHAR(512) NULL AFTER \`ban_expiry\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_ban_reason_stmt FROM @veil_player_accounts_ban_reason_sql;
+EXECUTE veil_player_accounts_ban_reason_stmt;
+DEALLOCATE PREPARE veil_player_accounts_ban_reason_stmt;
+
 SET @veil_player_accounts_password_hash_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.COLUMNS
@@ -1024,6 +1859,60 @@ SET @veil_player_accounts_password_hash_sql := IF(
 PREPARE veil_player_accounts_password_hash_stmt FROM @veil_player_accounts_password_hash_sql;
 EXECUTE veil_player_accounts_password_hash_stmt;
 DEALLOCATE PREPARE veil_player_accounts_password_hash_stmt;
+
+SET @veil_player_accounts_privacy_consent_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'privacy_consent_at'
+);
+
+SET @veil_player_accounts_privacy_consent_sql := IF(
+  @veil_player_accounts_privacy_consent_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`privacy_consent_at\` DATETIME NULL DEFAULT NULL AFTER \`credential_bound_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_privacy_consent_stmt FROM @veil_player_accounts_privacy_consent_sql;
+EXECUTE veil_player_accounts_privacy_consent_stmt;
+DEALLOCATE PREPARE veil_player_accounts_privacy_consent_stmt;
+
+SET @veil_player_accounts_phone_number_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'phone_number'
+);
+
+SET @veil_player_accounts_phone_number_sql := IF(
+  @veil_player_accounts_phone_number_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`phone_number\` VARCHAR(32) NULL AFTER \`privacy_consent_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_phone_number_stmt FROM @veil_player_accounts_phone_number_sql;
+EXECUTE veil_player_accounts_phone_number_stmt;
+DEALLOCATE PREPARE veil_player_accounts_phone_number_stmt;
+
+SET @veil_player_accounts_phone_number_bound_at_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'phone_number_bound_at'
+);
+
+SET @veil_player_accounts_phone_number_bound_at_sql := IF(
+  @veil_player_accounts_phone_number_bound_at_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`phone_number_bound_at\` DATETIME NULL DEFAULT NULL AFTER \`phone_number\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_phone_number_bound_at_stmt FROM @veil_player_accounts_phone_number_bound_at_sql;
+EXECUTE veil_player_accounts_phone_number_bound_at_stmt;
+DEALLOCATE PREPARE veil_player_accounts_phone_number_bound_at_stmt;
 
 SET @veil_player_accounts_wechat_idp_open_id_exists := (
   SELECT COUNT(*)
@@ -1204,6 +2093,78 @@ SET @veil_player_accounts_wechat_idp_open_id_idx_sql := IF(
 PREPARE veil_player_accounts_wechat_idp_open_id_idx_stmt FROM @veil_player_accounts_wechat_idp_open_id_idx_sql;
 EXECUTE veil_player_accounts_wechat_idp_open_id_idx_stmt;
 DEALLOCATE PREPARE veil_player_accounts_wechat_idp_open_id_idx_stmt;
+
+SET @veil_gem_ledger_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_GEM_LEDGER_TABLE}'
+    AND INDEX_NAME = '${MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX}'
+);
+
+SET @veil_gem_ledger_idx_sql := IF(
+  @veil_gem_ledger_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX}\` ON \`${MYSQL_GEM_LEDGER_TABLE}\` (player_id, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_gem_ledger_idx_stmt FROM @veil_gem_ledger_idx_sql;
+EXECUTE veil_gem_ledger_idx_stmt;
+DEALLOCATE PREPARE veil_gem_ledger_idx_stmt;
+
+SET @veil_payment_orders_player_created_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PAYMENT_ORDER_PLAYER_CREATED_INDEX}'
+);
+
+SET @veil_payment_orders_player_created_idx_sql := IF(
+  @veil_payment_orders_player_created_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PAYMENT_ORDER_PLAYER_CREATED_INDEX}\` ON \`${MYSQL_PAYMENT_ORDER_TABLE}\` (player_id, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_player_created_idx_stmt FROM @veil_payment_orders_player_created_idx_sql;
+EXECUTE veil_payment_orders_player_created_idx_stmt;
+DEALLOCATE PREPARE veil_payment_orders_player_created_idx_stmt;
+
+SET @veil_payment_orders_wechat_order_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PAYMENT_ORDER_WECHAT_ORDER_ID_INDEX}'
+);
+
+SET @veil_payment_orders_wechat_order_idx_sql := IF(
+  @veil_payment_orders_wechat_order_idx_exists = 0,
+  'CREATE UNIQUE INDEX \`${MYSQL_PAYMENT_ORDER_WECHAT_ORDER_ID_INDEX}\` ON \`${MYSQL_PAYMENT_ORDER_TABLE}\` (wechat_order_id)',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_wechat_order_idx_stmt FROM @veil_payment_orders_wechat_order_idx_sql;
+EXECUTE veil_payment_orders_wechat_order_idx_stmt;
+DEALLOCATE PREPARE veil_payment_orders_wechat_order_idx_stmt;
+
+SET @veil_player_ban_history_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_BAN_HISTORY_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX}'
+);
+
+SET @veil_player_ban_history_idx_sql := IF(
+  @veil_player_ban_history_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX}\` ON \`${MYSQL_PLAYER_BAN_HISTORY_TABLE}\` (player_id, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_ban_history_idx_stmt FROM @veil_player_ban_history_idx_sql;
+EXECUTE veil_player_ban_history_idx_stmt;
+DEALLOCATE PREPARE veil_player_ban_history_idx_stmt;
 
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
@@ -1394,11 +2355,33 @@ function toPlayerHeroArchiveSnapshot(row: PlayerHeroArchiveRow): PlayerHeroArchi
   };
 }
 
+function toShopPurchaseResult(row: ShopPurchaseRow): ShopPurchaseResult {
+  const result = parseJsonColumn<ShopPurchaseResult>(row.result_json);
+  return {
+    purchaseId: normalizeShopPurchaseId(result.purchaseId ?? row.purchase_id),
+    productId: normalizeShopProductId(result.productId ?? row.product_id),
+    quantity: normalizeShopPurchaseQuantity(result.quantity ?? row.quantity),
+    unitPrice: normalizePositiveGemDelta(result.unitPrice ?? row.unit_price),
+    totalPrice: normalizePositiveGemDelta(result.totalPrice ?? row.total_price),
+    granted: {
+      gems: normalizeGemAmount(result.granted?.gems),
+      resources: normalizeResourceLedger(result.granted?.resources),
+      equipmentIds: (result.granted?.equipmentIds ?? []).map((equipmentId) => equipmentId.trim()).filter(Boolean),
+      ...(result.granted?.heroId?.trim() ? { heroId: result.granted.heroId.trim() } : {})
+    },
+    gemsBalance: normalizeGemAmount(result.gemsBalance),
+    processedAt: formatTimestamp(result.processedAt) ?? formatTimestamp(row.created_at) ?? new Date(0).toISOString()
+  };
+}
+
 function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
   const lastSeenAt = formatTimestamp(row.last_seen_at);
+  const banExpiry = formatTimestamp(row.ban_expiry);
   const refreshTokenExpiresAt = formatTimestamp(row.refresh_token_expires_at);
   const wechatMiniGameBoundAt = formatTimestamp(row.wechat_mini_game_bound_at);
   const credentialBoundAt = formatTimestamp(row.credential_bound_at);
+  const privacyConsentAt = formatTimestamp(row.privacy_consent_at);
+  const phoneNumberBoundAt = formatTimestamp(row.phone_number_bound_at);
   const createdAt = formatTimestamp(row.created_at);
   const updatedAt = formatTimestamp(row.updated_at);
   const wechatOpenId = row.wechat_open_id ?? row.wechat_mini_game_open_id;
@@ -1408,6 +2391,7 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     playerId: row.player_id,
     ...(row.avatar_url ? { avatarUrl: row.avatar_url } : {}),
     ...(row.elo_rating != null ? { eloRating: row.elo_rating } : {}),
+    gems: normalizeGemAmount(row.gems),
     globalResources: parseJsonColumn<ResourceLedger>(row.global_resources_json),
     achievements:
       row.achievements_json != null
@@ -1424,6 +2408,17 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(row.display_name ? { displayName: row.display_name } : {}),
     ...(row.last_room_id ? { lastRoomId: row.last_room_id } : {}),
     ...(row.login_id ? { loginId: row.login_id } : {}),
+    ...(normalizePlayerAgeVerified(row.age_verified) !== undefined
+      ? { ageVerified: normalizePlayerAgeVerified(row.age_verified) }
+      : {}),
+    ...(normalizePlayerIsMinor(row.is_minor) !== undefined ? { isMinor: normalizePlayerIsMinor(row.is_minor) } : {}),
+    ...(normalizeDailyPlayMinutes(row.daily_play_minutes) > 0
+      ? { dailyPlayMinutes: normalizeDailyPlayMinutes(row.daily_play_minutes) }
+      : {}),
+    ...(normalizeLastPlayDate(row.last_play_date) ? { lastPlayDate: normalizeLastPlayDate(row.last_play_date) } : {}),
+    banStatus: normalizePlayerBanStatus(row.ban_status),
+    ...(banExpiry ? { banExpiry } : {}),
+    ...(row.ban_reason ? { banReason: row.ban_reason } : {}),
     ...(row.account_session_version > 0 ? { accountSessionVersion: row.account_session_version } : {}),
     ...(row.refresh_session_id ? { refreshSessionId: row.refresh_session_id } : {}),
     ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}),
@@ -1432,9 +2427,24 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(lastSeenAt ? { lastSeenAt } : {}),
     ...(wechatMiniGameBoundAt ? { wechatMiniGameBoundAt } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
+    ...(privacyConsentAt ? { privacyConsentAt } : {}),
+    ...(row.phone_number ? { phoneNumber: row.phone_number } : {}),
+    ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {})
   });
+}
+
+function toPlayerBanSnapshot(row: Pick<PlayerAccountRow, "player_id" | "ban_status" | "ban_expiry" | "ban_reason">): PlayerAccountBanSnapshot {
+  const banStatus = normalizePlayerBanStatus(row.ban_status);
+  const banExpiry = formatTimestamp(row.ban_expiry);
+
+  return {
+    playerId: normalizePlayerId(row.player_id),
+    banStatus,
+    ...(banExpiry ? { banExpiry } : {}),
+    ...(row.ban_reason ? { banReason: row.ban_reason } : {})
+  };
 }
 
 function toPlayerAccountAuthSnapshot(row: PlayerAccountAuthRow): PlayerAccountAuthSnapshot | null {
@@ -1497,6 +2507,38 @@ function toPlayerAccountDeviceSessionSnapshot(
   };
 }
 
+function toPlayerBanHistoryRecord(row: PlayerBanHistoryRow): PlayerBanHistoryRecord {
+  const createdAt = formatTimestamp(row.created_at);
+  if (!createdAt) {
+    throw new Error("player ban history created_at must be present");
+  }
+
+  const banExpiry = formatTimestamp(row.ban_expiry);
+  return {
+    id: Math.max(0, Math.floor(row.id)),
+    playerId: normalizePlayerId(row.player_id),
+    action: row.action === "unban" ? "unban" : "ban",
+    banStatus: normalizePlayerBanStatus(row.ban_status),
+    ...(banExpiry ? { banExpiry } : {}),
+    ...(row.ban_reason ? { banReason: row.ban_reason } : {}),
+    createdAt
+  };
+}
+
+function toPlayerReportRecord(row: PlayerReportRow): PlayerReportRecord {
+  return normalizePlayerReportRecord({
+    reportId: row.report_id,
+    reporterId: row.reporter_id,
+    targetId: row.target_id,
+    reason: row.reason,
+    description: row.description,
+    roomId: row.room_id,
+    status: row.status,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at
+  });
+}
+
 async function appendPlayerEventHistoryEntries(
   queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
   playerId: string,
@@ -1531,6 +2573,57 @@ async function appendPlayerEventHistoryEntries(
       ]
     );
   }
+}
+
+async function appendPlayerBanHistoryEntry(
+  queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
+  playerId: string,
+  entry: {
+    action: "ban" | "unban";
+    banStatus: PlayerBanStatus;
+    banExpiry?: string;
+    banReason?: string;
+  }
+): Promise<void> {
+  const banExpiry = entry.banExpiry ? new Date(entry.banExpiry) : null;
+  if (entry.banExpiry && (!banExpiry || Number.isNaN(banExpiry.getTime()))) {
+    throw new Error("banExpiry must be a valid ISO timestamp");
+  }
+
+  await queryable.query(
+    `INSERT INTO \`${MYSQL_PLAYER_BAN_HISTORY_TABLE}\` (
+       player_id,
+       action,
+       ban_status,
+       ban_expiry,
+       ban_reason
+     )
+     VALUES (?, ?, ?, ?, ?)`,
+    [playerId, entry.action, entry.banStatus, banExpiry, entry.banReason ?? null]
+  );
+}
+
+async function appendGemLedgerEntry(
+  queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
+  entry: {
+    entryId: string;
+    playerId: string;
+    delta: number;
+    reason: GemLedgerReason;
+    refId: string;
+  }
+): Promise<void> {
+  await queryable.query(
+    `INSERT INTO \`${MYSQL_GEM_LEDGER_TABLE}\` (
+       entry_id,
+       player_id,
+       delta,
+       reason,
+       ref_id
+     )
+     VALUES (?, ?, ?, ?, ?)`,
+    [entry.entryId, entry.playerId, Math.trunc(entry.delta), normalizeGemLedgerReason(entry.reason), entry.refId]
+  );
 }
 
 async function deletePlayerProfilesForRoom(connection: PoolConnection, roomId: string): Promise<void> {
@@ -1579,16 +2672,18 @@ async function savePlayerAccounts(
          player_id,
          display_name,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json
          ,
          recent_battle_replays_json
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
+         gems = VALUES(gems),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
          recent_event_log_json = COALESCE(recent_event_log_json, VALUES(recent_event_log_json)),
@@ -1598,6 +2693,7 @@ async function savePlayerAccounts(
         normalizedAccount.playerId,
         normalizedAccount.displayName,
         normalizedAccount.eloRating,
+        normalizedAccount.gems,
         JSON.stringify(normalizedAccount.globalResources),
         JSON.stringify(normalizedAccount.achievements),
         JSON.stringify(normalizedAccount.recentEventLog),
@@ -1720,6 +2816,107 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     return accounts[0] ?? null;
   }
 
+  async loadPaymentOrder(orderId: string): Promise<PaymentOrderSnapshot | null> {
+    const normalizedOrderId = normalizePaymentOrderId(orderId);
+    const [rows] = await this.pool.query<PaymentOrderRow[]>(
+      `SELECT
+         order_id,
+         player_id,
+         product_id,
+         wechat_order_id,
+         status,
+         amount,
+         gem_amount,
+         created_at,
+         paid_at,
+         updated_at
+       FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+       WHERE order_id = ?
+       LIMIT 1`,
+      [normalizedOrderId]
+    );
+
+    const row = rows[0];
+    return row ? toPaymentOrderSnapshot(row) : null;
+  }
+
+  async loadPlayerBan(playerId: string): Promise<PlayerAccountBanSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const [rows] = await this.pool.query<PlayerAccountRow[]>(
+      `SELECT
+         player_id,
+         ban_status,
+         ban_expiry,
+         ban_reason
+       FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       WHERE player_id = ?
+       LIMIT 1`,
+      [normalizedPlayerId]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerBanSnapshot(row) : null;
+  }
+
+  async createPlayerReport(input: PlayerReportCreateInput): Promise<PlayerReportRecord> {
+    const reporterId = normalizePlayerId(input.reporterId);
+    const targetId = normalizePlayerId(input.targetId);
+    const roomId = input.roomId.trim();
+    if (!roomId) {
+      throw new Error("roomId must not be empty");
+    }
+    if (reporterId === targetId) {
+      throw new Error("reporterId must not match targetId");
+    }
+
+    const reason = normalizePlayerReportReason(input.reason);
+    const description = normalizePlayerReportDescription(input.description);
+
+    try {
+      const [result] = await this.pool.query<ResultSetHeader>(
+        `INSERT INTO \`${MYSQL_PLAYER_REPORT_TABLE}\` (
+           reporter_id,
+           target_id,
+           reason,
+           description,
+           room_id,
+           status
+         )
+         VALUES (?, ?, ?, ?, ?, 'pending')`,
+        [reporterId, targetId, reason, description ?? null, roomId]
+      );
+      const [rows] = await this.pool.query<PlayerReportRow[]>(
+        `SELECT
+           report_id,
+           reporter_id,
+           target_id,
+           reason,
+           description,
+           room_id,
+           status,
+           created_at,
+           resolved_at
+         FROM \`${MYSQL_PLAYER_REPORT_TABLE}\`
+         WHERE report_id = ?
+         LIMIT 1`,
+        [result.insertId]
+      );
+
+      const row = rows[0];
+      if (!row) {
+        throw new Error("player report insert failed");
+      }
+
+      return toPlayerReportRecord(row);
+    } catch (error) {
+      if (isMySqlDuplicateEntryError(error)) {
+        throw new Error("duplicate_player_report");
+      }
+
+      throw error;
+    }
+  }
+
   async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
     const normalizedLoginId = normalizePlayerLoginId(loginId);
     const [rows] = await this.pool.query<PlayerAccountRow[]>(
@@ -1728,6 +2925,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1735,6 +2933,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         age_verified,
+         is_minor,
+         daily_play_minutes,
+         last_play_date,
+         ban_status,
+         ban_expiry,
+         ban_reason,
          account_session_version,
          refresh_session_id,
          refresh_token_hash,
@@ -1745,6 +2950,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
          credential_bound_at,
+         privacy_consent_at,
+         phone_number,
+         phone_number_bound_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -1765,6 +2973,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1772,6 +2981,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         age_verified,
+         is_minor,
+         daily_play_minutes,
+         last_play_date,
+         ban_status,
+         ban_expiry,
+         ban_reason,
          account_session_version,
          refresh_session_id,
          refresh_token_hash,
@@ -1782,6 +2998,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
          credential_bound_at,
+         privacy_consent_at,
+         phone_number,
+         phone_number_bound_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -1886,6 +3105,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1893,6 +3113,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         age_verified,
+         is_minor,
+         daily_play_minutes,
+         last_play_date,
+         ban_status,
+         ban_expiry,
+         ban_reason,
          account_session_version,
          refresh_session_id,
          refresh_token_hash,
@@ -1903,6 +3130,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
          credential_bound_at,
+         privacy_consent_at,
+         phone_number,
+         phone_number_bound_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -1911,6 +3141,50 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return rows.map((row) => toPlayerAccountSnapshot(row));
+  }
+
+  async listPlayerReports(options: PlayerReportListOptions = {}): Promise<PlayerReportRecord[]> {
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 50));
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(normalizePlayerReportStatus(options.status));
+    }
+    if (options.roomId?.trim()) {
+      clauses.push("room_id = ?");
+      params.push(options.roomId.trim());
+    }
+    if (options.reporterId?.trim()) {
+      clauses.push("reporter_id = ?");
+      params.push(normalizePlayerId(options.reporterId));
+    }
+    if (options.targetId?.trim()) {
+      clauses.push("target_id = ?");
+      params.push(normalizePlayerId(options.targetId));
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const [rows] = await this.pool.query<PlayerReportRow[]>(
+      `SELECT
+         report_id,
+         reporter_id,
+         target_id,
+         reason,
+         description,
+         room_id,
+         status,
+         created_at,
+         resolved_at
+       FROM \`${MYSQL_PLAYER_REPORT_TABLE}\`
+       ${whereClause}
+       ORDER BY created_at DESC, report_id DESC
+       LIMIT ?`,
+      [...params, safeLimit]
+    );
+
+    return rows.map((row) => toPlayerReportRecord(row));
   }
 
   async loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null> {
@@ -1936,6 +3210,31 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     return row ? toPlayerAccountAuthSnapshot(row) : null;
   }
 
+  async listPlayerBanHistory(
+    playerId: string,
+    options: PlayerAccountBanHistoryListOptions = {}
+  ): Promise<PlayerBanHistoryRecord[]> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
+    const [rows] = await this.pool.query<PlayerBanHistoryRow[]>(
+      `SELECT
+         id,
+         player_id,
+         action,
+         ban_status,
+         ban_expiry,
+         ban_reason,
+         created_at
+       FROM \`${MYSQL_PLAYER_BAN_HISTORY_TABLE}\`
+       WHERE player_id = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+      [normalizedPlayerId, safeLimit]
+    );
+
+    return rows.map((row) => toPlayerBanHistoryRecord(row));
+  }
+
   async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
     const playerId = normalizePlayerId(input.playerId);
     const explicitDisplayName = input.displayName?.trim() ? normalizePlayerDisplayName(playerId, input.displayName) : null;
@@ -1948,6 +3247,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -1955,7 +3255,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(?, display_name),
          last_room_id = COALESCE(?, last_room_id),
@@ -1965,6 +3265,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         playerId,
         insertDisplayName,
         normalizeEloRating(undefined),
+        0,
         JSON.stringify(normalizeResourceLedger()),
         JSON.stringify(normalizeAchievementProgress()),
         JSON.stringify(normalizeEventLogEntries()),
@@ -1988,6 +3289,83 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         recentBattleReplays: appendPlayerBattleReplaySummaries([], []),
         ...(lastRoomId ? { lastRoomId } : {}),
         lastSeenAt: lastSeenAt.toISOString()
+      })
+    );
+  }
+
+  async savePlayerBan(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existingAccount = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const banStatus = normalizePlayerBanStatus(input.banStatus);
+    const banReason = normalizePlayerBanReason(input.banReason);
+    const banExpiry = normalizePlayerBanExpiry(input.banExpiry);
+    if (banStatus === "none") {
+      throw new Error("banStatus must be temporary or permanent");
+    }
+    if (!banReason) {
+      throw new Error("banReason must not be empty");
+    }
+    if (banStatus === "temporary") {
+      if (!banExpiry) {
+        throw new Error("temporary bans require banExpiry");
+      }
+      if (new Date(banExpiry).getTime() <= Date.now()) {
+        throw new Error("banExpiry must be in the future");
+      }
+    }
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET ban_status = ?,
+           ban_expiry = ?,
+           ban_reason = ?,
+           version = version + 1
+       WHERE player_id = ?`,
+      [banStatus, banStatus === "temporary" ? new Date(banExpiry!) : null, banReason, normalizedPlayerId]
+    );
+    await appendPlayerBanHistoryEntry(this.pool, normalizedPlayerId, {
+      action: "ban",
+      banStatus,
+      ...(banStatus === "temporary" && banExpiry ? { banExpiry } : {}),
+      banReason
+    });
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        ...existingAccount,
+        banStatus,
+        ...(banStatus === "temporary" && banExpiry ? { banExpiry } : {}),
+        banReason
+      })
+    );
+  }
+
+  async clearPlayerBan(playerId: string, input: PlayerAccountUnbanInput = {}): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existingAccount = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const reason = normalizePlayerBanReason(input.reason);
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET ban_status = 'none',
+           ban_expiry = NULL,
+           ban_reason = NULL,
+           version = version + 1
+       WHERE player_id = ?`,
+      [normalizedPlayerId]
+    );
+    await appendPlayerBanHistoryEntry(this.pool, normalizedPlayerId, {
+      action: "unban",
+      banStatus: "none",
+      ...(reason ? { banReason: reason } : {})
+    });
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        ...existingAccount,
+        banStatus: "none"
       })
     );
   }
@@ -2138,6 +3516,461 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
   }
 
+  async creditGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot> {
+    const normalizedReason = normalizeGemLedgerReason(reason);
+    if (normalizedReason === "spend") {
+      throw new Error("credit reason must be purchase or reward");
+    }
+
+    return this.mutateGems(playerId, normalizePositiveGemDelta(amount), normalizedReason, refId);
+  }
+
+  async debitGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot> {
+    const normalizedReason = normalizeGemLedgerReason(reason);
+    if (normalizedReason !== "spend") {
+      throw new Error("debit reason must be spend");
+    }
+
+    return this.mutateGems(playerId, -normalizePositiveGemDelta(amount), normalizedReason, refId);
+  }
+
+  async createPaymentOrder(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot> {
+    const orderId = normalizePaymentOrderId(input.orderId);
+    const playerId = normalizePlayerId(input.playerId);
+    const productId = normalizeShopProductId(input.productId);
+    const amount = normalizePaymentAmount(input.amount);
+    const gemAmount = normalizePositiveGemDelta(input.gemAmount);
+
+    await this.ensurePlayerAccount({ playerId });
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+         (order_id, player_id, product_id, status, amount, gem_amount)
+       VALUES (?, ?, ?, 'pending', ?, ?)`,
+      [orderId, playerId, productId, amount, gemAmount]
+    );
+
+    return {
+      orderId,
+      playerId,
+      productId,
+      status: "pending",
+      amount,
+      gemAmount,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  async completePaymentOrder(orderId: string, input: PaymentOrderCompleteInput): Promise<PaymentOrderSettlement> {
+    const normalizedOrderId = normalizePaymentOrderId(orderId);
+    const normalizedWechatOrderId = normalizeWechatOrderId(input.wechatOrderId);
+    const paidAt = input.paidAt ? new Date(input.paidAt) : new Date();
+    if (Number.isNaN(paidAt.getTime())) {
+      throw new Error("paidAt must be a valid ISO timestamp");
+    }
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [orderRows] = await connection.query<PaymentOrderRow[]>(
+        `SELECT
+           order_id,
+           player_id,
+           product_id,
+           wechat_order_id,
+           status,
+           amount,
+           gem_amount,
+           created_at,
+           paid_at,
+           updated_at
+         FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+         WHERE order_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedOrderId]
+      );
+      const currentOrderRow = orderRows[0];
+      if (!currentOrderRow) {
+        throw new Error("payment_order_not_found");
+      }
+
+      const currentOrder = toPaymentOrderSnapshot(currentOrderRow);
+      const [accountRows] = await connection.query<PlayerAccountRow[]>(
+        `SELECT *
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [currentOrder.playerId]
+      );
+      const currentAccount =
+        accountRows[0] != null
+          ? toPlayerAccountSnapshot(accountRows[0])
+          : normalizePlayerAccountSnapshot({
+              playerId: currentOrder.playerId,
+              displayName: currentOrder.playerId,
+              globalResources: normalizeResourceLedger()
+            });
+
+      if (currentOrder.status === "paid") {
+        await connection.commit();
+        return {
+          order: {
+            ...currentOrder,
+            ...(currentOrder.wechatOrderId ? { wechatOrderId: currentOrder.wechatOrderId } : { wechatOrderId: normalizedWechatOrderId }),
+            ...(currentOrder.paidAt ? { paidAt: currentOrder.paidAt } : { paidAt: paidAt.toISOString() })
+          },
+          account: currentAccount,
+          credited: false
+        };
+      }
+
+      const nextGems = normalizeGemAmount(currentAccount.gems) + currentOrder.gemAmount;
+      await connection.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET gems = ?,
+             version = version + 1
+         WHERE player_id = ?`,
+        [nextGems, currentOrder.playerId]
+      );
+      await appendGemLedgerEntry(connection, {
+        entryId: randomUUID(),
+        playerId: currentOrder.playerId,
+        delta: currentOrder.gemAmount,
+        reason: "purchase",
+        refId: currentOrder.orderId
+      });
+      await connection.query(
+        `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+         SET wechat_order_id = ?,
+             status = 'paid',
+             paid_at = ?
+         WHERE order_id = ?`,
+        [normalizedWechatOrderId, paidAt, currentOrder.orderId]
+      );
+
+      await connection.commit();
+
+      const nextAccount =
+        (await this.loadPlayerAccount(currentOrder.playerId)) ??
+        normalizePlayerAccountSnapshot({
+          ...currentAccount,
+          gems: nextGems
+        });
+      const nextOrder =
+        (await this.loadPaymentOrder(currentOrder.orderId)) ??
+        ({
+          ...currentOrder,
+          status: "paid",
+          wechatOrderId: normalizedWechatOrderId,
+          paidAt: paidAt.toISOString(),
+          updatedAt: paidAt.toISOString()
+        } satisfies PaymentOrderSnapshot);
+
+      return {
+        order: nextOrder,
+        account: nextAccount,
+        credited: true
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async purchaseShopProduct(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedPurchaseId = normalizeShopPurchaseId(input.purchaseId);
+    const normalizedProductId = normalizeShopProductId(input.productId);
+    const normalizedProductName = normalizeShopProductName(input.productName);
+    const normalizedQuantity = normalizeShopPurchaseQuantity(input.quantity);
+    const normalizedUnitPrice = normalizeGemAmount(input.unitPrice);
+    const normalizedGrant = multiplyShopPurchaseGrant(normalizeShopPurchaseGrant(input.grant), normalizedQuantity);
+    const totalPrice = normalizedUnitPrice * normalizedQuantity;
+
+    await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [existingPurchaseRows] = await connection.query<ShopPurchaseRow[]>(
+        `SELECT player_id, purchase_id, product_id, quantity, unit_price, total_price, result_json, created_at
+         FROM \`${MYSQL_SHOP_PURCHASE_TABLE}\`
+         WHERE player_id = ? AND purchase_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedPlayerId, normalizedPurchaseId]
+      );
+      const existingPurchase = existingPurchaseRows[0];
+      if (existingPurchase) {
+        await connection.commit();
+        return toShopPurchaseResult(existingPurchase);
+      }
+
+      const [accountRows] = await connection.query<PlayerAccountRow[]>(
+        `SELECT *
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedPlayerId]
+      );
+      const currentAccount =
+        accountRows[0] != null
+          ? toPlayerAccountSnapshot(accountRows[0])
+          : normalizePlayerAccountSnapshot({
+              playerId: normalizedPlayerId,
+              displayName: normalizedPlayerId,
+              globalResources: normalizeResourceLedger()
+            });
+      const currentGems = normalizeGemAmount(currentAccount.gems);
+
+      if (currentGems < totalPrice) {
+        throw new Error("insufficient gems");
+      }
+
+      let grantedHeroId: string | undefined;
+      let nextHeroArchive: PlayerHeroArchiveSnapshot | null = null;
+      if (normalizedGrant.equipmentIds.length > 0) {
+        const [heroArchiveRows] = await connection.query<PlayerHeroArchiveRow[]>(
+          `SELECT player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json, updated_at
+           FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+           WHERE player_id = ?
+           ORDER BY updated_at DESC, hero_id ASC
+           LIMIT 1
+           FOR UPDATE`,
+          [normalizedPlayerId]
+        );
+        const currentArchive = heroArchiveRows[0] ? toPlayerHeroArchiveSnapshot(heroArchiveRows[0]) : null;
+        if (!currentArchive) {
+          throw new Error("player hero archive not found");
+        }
+
+        let nextInventory = [...currentArchive.hero.loadout.inventory];
+        for (const equipmentId of normalizedGrant.equipmentIds) {
+          const inventoryUpdate = tryAddEquipmentToInventory(nextInventory, equipmentId);
+          if (!inventoryUpdate.stored) {
+            throw new Error("equipment inventory full");
+          }
+          nextInventory = inventoryUpdate.inventory;
+        }
+
+        grantedHeroId = currentArchive.heroId;
+        nextHeroArchive = {
+          ...currentArchive,
+          hero: normalizeHeroState({
+            ...currentArchive.hero,
+            loadout: {
+              ...currentArchive.hero.loadout,
+              inventory: nextInventory
+            }
+          })
+        };
+      }
+
+      const processedAt = new Date().toISOString();
+      const nextRecentEventLog = appendEventLogEntries(
+        currentAccount.recentEventLog,
+        [
+          createShopPurchaseEventLogEntry(normalizedPlayerId, {
+            productId: normalizedProductId,
+            productName: normalizedProductName,
+            quantity: normalizedQuantity,
+            granted: normalizedGrant,
+            processedAt
+          })
+        ]
+      );
+      const nextGlobalResources = addResourceLedgers(currentAccount.globalResources, normalizedGrant.resources);
+      const nextGems = currentGems - totalPrice + normalizedGrant.gems;
+
+      await connection.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET gems = ?,
+             global_resources_json = ?,
+             recent_event_log_json = ?,
+             version = version + 1
+         WHERE player_id = ?`,
+        [nextGems, JSON.stringify(nextGlobalResources), JSON.stringify(nextRecentEventLog), normalizedPlayerId]
+      );
+      await appendGemLedgerEntry(connection, {
+        entryId: randomUUID(),
+        playerId: normalizedPlayerId,
+        delta: -totalPrice,
+        reason: "spend",
+        refId: normalizedPurchaseId
+      });
+      if (normalizedGrant.gems > 0) {
+        await appendGemLedgerEntry(connection, {
+          entryId: randomUUID(),
+          playerId: normalizedPlayerId,
+          delta: normalizedGrant.gems,
+          reason: "reward",
+          refId: normalizedPurchaseId
+        });
+      }
+
+      if (nextHeroArchive) {
+        await connection.query(
+          `INSERT INTO \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+             (player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             hero_json = VALUES(hero_json),
+             army_template_id = VALUES(army_template_id),
+             army_count = VALUES(army_count),
+             learned_skills_json = VALUES(learned_skills_json),
+             equipment_json = VALUES(equipment_json),
+             inventory_json = VALUES(inventory_json),
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            nextHeroArchive.playerId,
+            nextHeroArchive.heroId,
+            JSON.stringify(nextHeroArchive.hero),
+            nextHeroArchive.hero.armyTemplateId,
+            nextHeroArchive.hero.armyCount,
+            JSON.stringify(nextHeroArchive.hero.loadout.learnedSkills),
+            JSON.stringify(nextHeroArchive.hero.loadout.equipment),
+            JSON.stringify(nextHeroArchive.hero.loadout.inventory)
+          ]
+        );
+      }
+
+      const result: ShopPurchaseResult = {
+        purchaseId: normalizedPurchaseId,
+        productId: normalizedProductId,
+        quantity: normalizedQuantity,
+        unitPrice: normalizedUnitPrice,
+        totalPrice,
+        granted: {
+          gems: normalizedGrant.gems,
+          resources: normalizedGrant.resources,
+          equipmentIds: normalizedGrant.equipmentIds,
+          ...(grantedHeroId ? { heroId: grantedHeroId } : {})
+        },
+        gemsBalance: nextGems,
+        processedAt
+      };
+
+      await connection.query(
+        `INSERT INTO \`${MYSQL_SHOP_PURCHASE_TABLE}\`
+           (player_id, purchase_id, product_id, quantity, unit_price, total_price, result_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          normalizedPlayerId,
+          normalizedPurchaseId,
+          normalizedProductId,
+          normalizedQuantity,
+          normalizedUnitPrice,
+          totalPrice,
+          JSON.stringify(result)
+        ]
+      );
+      await appendPlayerEventHistoryEntries(connection, normalizedPlayerId, nextRecentEventLog.slice(0, 1));
+
+      await connection.commit();
+      return result;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  private async mutateGems(
+    playerId: string,
+    delta: number,
+    reason: GemLedgerReason,
+    refId: string
+  ): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedRefId = normalizeGemLedgerRefId(refId);
+    let nextGems = 0;
+    await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [rows] = await connection.query<RowDataPacket[]>(
+        `SELECT gems
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedPlayerId]
+      );
+
+      const currentGems = normalizeGemAmount((rows[0] as { gems?: number } | undefined)?.gems);
+      nextGems = currentGems + delta;
+      if (nextGems < 0) {
+        throw new Error("insufficient gems");
+      }
+
+      await connection.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET gems = ?,
+             version = version + 1
+         WHERE player_id = ?`,
+        [nextGems, normalizedPlayerId]
+      );
+      await appendGemLedgerEntry(connection, {
+        entryId: randomUUID(),
+        playerId: normalizedPlayerId,
+        delta,
+        reason,
+        refId: normalizedRefId
+      });
+
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        playerId: normalizedPlayerId,
+        gems: nextGems
+      })
+    );
+  }
+
+  async savePlayerAccountPrivacyConsent(
+    playerId: string,
+    input: PlayerAccountPrivacyConsentInput = {}
+  ): Promise<PlayerAccountSnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existingAccount = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const privacyConsentAt = normalizePrivacyConsentAt(input.privacyConsentAt) ?? new Date().toISOString();
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET privacy_consent_at = COALESCE(privacy_consent_at, ?),
+           version = version + 1
+       WHERE player_id = ?`,
+      [new Date(privacyConsentAt), normalizedPlayerId]
+    );
+
+    return (
+      (await this.loadPlayerAccount(normalizedPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        ...existingAccount,
+        privacyConsentAt
+      })
+    );
+  }
+
   async savePlayerAccountAuthSession(
     playerId: string,
     input: PlayerAccountAuthSessionInput
@@ -2256,6 +4089,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       ? normalizePlayerDisplayName(normalizedPlayerId, input.displayName)
       : null;
     const boundAt = existingAccount.wechatMiniGameBoundAt ?? new Date().toISOString();
+    const ageVerified =
+      input.ageVerified !== undefined ? normalizePlayerAgeVerified(input.ageVerified) : existingAccount.ageVerified;
+    const isMinor = input.isMinor !== undefined ? normalizePlayerIsMinor(input.isMinor) : existingAccount.isMinor;
 
     try {
       await this.pool.query(
@@ -2267,6 +4103,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
              wechat_mini_game_open_id = ?,
              wechat_mini_game_union_id = COALESCE(?, wechat_mini_game_union_id),
              wechat_mini_game_bound_at = COALESCE(wechat_mini_game_bound_at, ?),
+             age_verified = COALESCE(?, age_verified),
+             is_minor = COALESCE(?, is_minor),
              version = version + 1
          WHERE player_id = ?`,
         [
@@ -2277,6 +4115,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           normalizedOpenId,
           normalizedUnionId ?? null,
           new Date(boundAt),
+          ageVerified != null ? (ageVerified ? 1 : 0) : null,
+          isMinor != null ? (isMinor ? 1 : 0) : null,
           normalizedPlayerId
         ]
       );
@@ -2296,9 +4136,127 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         ...(normalizedAvatarUrl ? { avatarUrl: normalizedAvatarUrl } : {}),
         wechatMiniGameOpenId: normalizedOpenId,
         ...(normalizedUnionId ? { wechatMiniGameUnionId: normalizedUnionId } : {}),
+        ...(ageVerified !== undefined ? { ageVerified } : {}),
+        ...(isMinor !== undefined ? { isMinor } : {}),
         wechatMiniGameBoundAt: boundAt
       })
     );
+  }
+
+  async deletePlayerAccount(
+    playerId: string,
+    input: PlayerAccountDeleteInput = {}
+  ): Promise<PlayerAccountSnapshot | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const existingAccount = await this.loadPlayerAccount(normalizedPlayerId);
+    if (!existingAccount) {
+      return null;
+    }
+
+    const deletedAt = normalizePrivacyConsentAt(input.deletedAt) ?? new Date().toISOString();
+    const anonymizedDisplayName = `deleted-${normalizedPlayerId}`;
+
+    await this.pool.query(
+      `DELETE FROM \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\`
+       WHERE player_id = ?`,
+      [normalizedPlayerId]
+    );
+    await this.pool.query(
+      `DELETE FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+       WHERE player_id = ?`,
+      [normalizedPlayerId]
+    );
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       SET display_name = ?,
+           avatar_url = NULL,
+           global_resources_json = ?,
+           achievements_json = ?,
+           last_room_id = NULL,
+           last_seen_at = NULL,
+           login_id = NULL,
+           password_hash = NULL,
+           credential_bound_at = NULL,
+           privacy_consent_at = NULL,
+           phone_number = NULL,
+           phone_number_bound_at = NULL,
+           age_verified = 0,
+           is_minor = 0,
+           daily_play_minutes = 0,
+           last_play_date = NULL,
+           ban_status = 'none',
+           ban_expiry = NULL,
+           ban_reason = NULL,
+           account_session_version = account_session_version + 1,
+           refresh_session_id = NULL,
+           refresh_token_hash = NULL,
+           refresh_token_expires_at = NULL,
+           wechat_open_id = NULL,
+           wechat_union_id = NULL,
+           wechat_mini_game_open_id = NULL,
+           wechat_mini_game_union_id = NULL,
+           wechat_mini_game_bound_at = NULL,
+           version = version + 1
+       WHERE player_id = ?`,
+      [anonymizedDisplayName, JSON.stringify(normalizeResourceLedger()), JSON.stringify([]), normalizedPlayerId]
+    );
+    await appendPlayerEventHistoryEntries(this.pool, normalizedPlayerId, [
+      {
+        id: `${normalizedPlayerId}:${deletedAt}:account-deleted`,
+        timestamp: deletedAt,
+        roomId: "auth",
+        playerId: normalizedPlayerId,
+        category: "account",
+        description: "Account deleted and personal data anonymized.",
+        rewards: []
+      }
+    ]);
+
+    return this.loadPlayerAccount(normalizedPlayerId);
+  }
+
+  async resolvePlayerReport(reportId: string, input: PlayerReportResolveInput): Promise<PlayerReportRecord | null> {
+    const normalizedReportId = reportId.trim();
+    if (!normalizedReportId) {
+      throw new Error("reportId must not be empty");
+    }
+
+    const status = normalizePlayerReportStatus(input.status);
+    if (status === "pending") {
+      throw new Error("resolved report status must not be pending");
+    }
+
+    const [result] = await this.pool.query<ResultSetHeader>(
+      `UPDATE \`${MYSQL_PLAYER_REPORT_TABLE}\`
+       SET status = ?,
+           resolved_at = ?
+       WHERE report_id = ?`,
+      [status, new Date(), normalizedReportId]
+    );
+
+    if (result.affectedRows === 0) {
+      return null;
+    }
+
+    const [rows] = await this.pool.query<PlayerReportRow[]>(
+      `SELECT
+         report_id,
+         reporter_id,
+         target_id,
+         reason,
+         description,
+         room_id,
+         status,
+         created_at,
+         resolved_at
+       FROM \`${MYSQL_PLAYER_REPORT_TABLE}\`
+       WHERE report_id = ?
+       LIMIT 1`,
+      [normalizedReportId]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerReportRecord(row) : null;
   }
 
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {
@@ -2330,6 +4288,20 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           : {}
         : existing.lastRoomId
           ? { lastRoomId: existing.lastRoomId }
+          : {}),
+      ...(patch.phoneNumber !== undefined
+        ? patch.phoneNumber
+          ? { phoneNumber: patch.phoneNumber.trim() }
+          : {}
+        : existing.phoneNumber
+          ? { phoneNumber: existing.phoneNumber }
+          : {}),
+      ...(patch.phoneNumberBoundAt !== undefined
+        ? patch.phoneNumberBoundAt
+          ? { phoneNumberBoundAt: new Date(patch.phoneNumberBoundAt).toISOString() }
+          : {}
+        : existing.phoneNumberBoundAt
+          ? { phoneNumberBoundAt: existing.phoneNumberBoundAt }
           : {})
     });
 
@@ -2339,14 +4311,17 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
          recent_battle_replays_json,
          last_room_id,
-         last_seen_at
+         last_seen_at,
+         phone_number,
+         phone_number_bound_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
@@ -2356,6 +4331,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json = VALUES(recent_event_log_json),
          recent_battle_replays_json = VALUES(recent_battle_replays_json),
          last_room_id = VALUES(last_room_id),
+         phone_number = VALUES(phone_number),
+         phone_number_bound_at = VALUES(phone_number_bound_at),
          last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
          version = version + 1`,
       [
@@ -2363,12 +4340,15 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.displayName,
         nextAccount.avatarUrl ?? null,
         nextAccount.eloRating,
+        nextAccount.gems,
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
         JSON.stringify(nextAccount.recentBattleReplays),
         nextAccount.lastRoomId ?? null,
-        existing.lastSeenAt ? new Date(existing.lastSeenAt) : null
+        existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
+        nextAccount.phoneNumber ?? null,
+        nextAccount.phoneNumberBoundAt ? new Date(nextAccount.phoneNumberBoundAt) : null
       ]
     );
 
@@ -2398,6 +4378,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       achievements: patch.achievements ?? existing.achievements,
       recentEventLog: patch.recentEventLog ?? existing.recentEventLog,
       recentBattleReplays: patch.recentBattleReplays ?? existing.recentBattleReplays,
+      dailyPlayMinutes:
+        patch.dailyPlayMinutes !== undefined ? normalizeDailyPlayMinutes(patch.dailyPlayMinutes) : existing.dailyPlayMinutes,
+      lastPlayDate:
+        patch.lastPlayDate !== undefined ? normalizeLastPlayDate(patch.lastPlayDate) : existing.lastPlayDate,
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -2414,14 +4398,19 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
          recent_battle_replays_json,
          last_room_id,
-         last_seen_at
+         last_seen_at,
+         age_verified,
+         is_minor,
+         daily_play_minutes,
+         last_play_date
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
@@ -2432,18 +4421,27 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_battle_replays_json = VALUES(recent_battle_replays_json),
          last_room_id = VALUES(last_room_id),
          last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
+         age_verified = VALUES(age_verified),
+         is_minor = VALUES(is_minor),
+         daily_play_minutes = VALUES(daily_play_minutes),
+         last_play_date = VALUES(last_play_date),
          version = version + 1`,
       [
         nextAccount.playerId,
         nextAccount.displayName,
         nextAccount.avatarUrl ?? null,
         nextAccount.eloRating,
+        nextAccount.gems,
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
         JSON.stringify(nextAccount.recentBattleReplays),
         nextAccount.lastRoomId ?? null,
-        existing.lastSeenAt ? new Date(existing.lastSeenAt) : null
+        existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
+        nextAccount.ageVerified === true ? 1 : 0,
+        nextAccount.isMinor === true ? 1 : 0,
+        normalizeDailyPlayMinutes(nextAccount.dailyPlayMinutes),
+        nextAccount.lastPlayDate ? new Date(nextAccount.lastPlayDate) : null
       ]
     );
     await appendPlayerEventHistoryEntries(this.pool, normalizedPlayerId, newHistoryEntries);
@@ -2474,6 +4472,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         gems,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -2481,12 +4480,22 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         age_verified,
+         is_minor,
+         daily_play_minutes,
+         last_play_date,
+         ban_status,
+         ban_expiry,
+         ban_reason,
          wechat_open_id,
          wechat_union_id,
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
          credential_bound_at,
+         privacy_consent_at,
+         phone_number,
+         phone_number_bound_at,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`

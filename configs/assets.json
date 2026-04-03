@@ -28,6 +28,13 @@
         "/assets/pixel/terrain/water-tile-alt.png"
       ]
     },
+    "swamp": {
+      "default": "/assets/pixel/terrain/dirt-tile.png",
+      "variants": [
+        "/assets/pixel/terrain/dirt-tile.png",
+        "/assets/pixel/terrain/dirt-tile-alt.png"
+      ]
+    },
     "unknown": {
       "default": "/assets/pixel/terrain/fog-tile.png",
       "variants": [
@@ -76,6 +83,102 @@
         "idle": "/assets/pixel/showcase-units/iron-walker.png",
         "selected": "/assets/pixel/showcase-units/iron-walker-selected.png",
         "hit": "/assets/pixel/showcase-units/iron-walker-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "crown_heavy_cavalry": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/sunlance-knight.png",
+        "selected": "/assets/pixel/showcase-units/sunlance-knight-selected.png",
+        "hit": "/assets/pixel/showcase-units/sunlance-knight-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-ally.png"
+    },
+    "crown_field_chaplain": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/ember-mage.png",
+        "selected": "/assets/pixel/showcase-units/ember-mage-selected.png",
+        "hit": "/assets/pixel/showcase-units/ember-mage-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-ally.png"
+    },
+    "crown_crossbowman": {
+      "portrait": {
+        "idle": "/assets/pixel/units/hero-guard-basic.png",
+        "selected": "/assets/pixel/units/hero-guard-basic-selected.png",
+        "hit": "/assets/pixel/units/hero-guard-basic-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-ally.png"
+    },
+    "crown_light_outrider": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/dune-raider.png",
+        "selected": "/assets/pixel/showcase-units/dune-raider-selected.png",
+        "hit": "/assets/pixel/showcase-units/dune-raider-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-ally.png"
+    },
+    "wild_cave_bear": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/iron-walker.png",
+        "selected": "/assets/pixel/showcase-units/iron-walker-selected.png",
+        "hit": "/assets/pixel/showcase-units/iron-walker-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "wild_serpent": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/moss-stalker.png",
+        "selected": "/assets/pixel/showcase-units/moss-stalker-selected.png",
+        "hit": "/assets/pixel/showcase-units/moss-stalker-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "wild_hawk_rider": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/dune-raider.png",
+        "selected": "/assets/pixel/showcase-units/dune-raider-selected.png",
+        "hit": "/assets/pixel/showcase-units/dune-raider-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "wild_cave_troll": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/iron-walker.png",
+        "selected": "/assets/pixel/showcase-units/iron-walker-selected.png",
+        "hit": "/assets/pixel/showcase-units/iron-walker-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "shadow_skeleton": {
+      "portrait": {
+        "idle": "/assets/pixel/units/wolf-pack.png",
+        "selected": "/assets/pixel/units/wolf-pack-selected.png",
+        "hit": "/assets/pixel/units/wolf-pack-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "shadow_wraith": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/glacier-warden.png",
+        "selected": "/assets/pixel/showcase-units/glacier-warden-selected.png",
+        "hit": "/assets/pixel/showcase-units/glacier-warden-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "shadow_hexer": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/ember-mage.png",
+        "selected": "/assets/pixel/showcase-units/ember-mage-selected.png",
+        "hit": "/assets/pixel/showcase-units/ember-mage-hit.png"
+      },
+      "frame": "/assets/pixel/frames/unit-frame-enemy.png"
+    },
+    "shadow_death_knight": {
+      "portrait": {
+        "idle": "/assets/pixel/showcase-units/sunlance-knight.png",
+        "selected": "/assets/pixel/showcase-units/sunlance-knight-selected.png",
+        "hit": "/assets/pixel/showcase-units/sunlance-knight-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-enemy.png"
     }
@@ -250,6 +353,11 @@
       "stage": "placeholder",
       "source": "generated"
     },
+    "/assets/pixel/badges/faction-shadow.png": {
+      "slot": "badge.factions.shadow",
+      "stage": "placeholder",
+      "source": "generated"
+    },
     "/assets/pixel/badges/rarity-common.png": {
       "slot": "badge.rarities.common",
       "stage": "placeholder",
@@ -420,7 +528,8 @@
   "badges": {
     "factions": {
       "crown": "/assets/pixel/badges/faction-crown.png",
-      "wild": "/assets/pixel/badges/faction-wild.png"
+      "wild": "/assets/pixel/badges/faction-wild.png",
+      "shadow": "/assets/pixel/badges/faction-shadow.png"
     },
     "rarities": {
       "common": "/assets/pixel/badges/rarity-common.png",

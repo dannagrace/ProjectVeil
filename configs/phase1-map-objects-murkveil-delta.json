@@ -1,0 +1,110 @@
+{
+  "neutralArmies": [
+    {
+      "id": "neutral-1",
+      "position": { "x": 2, "y": 3 },
+      "reward": { "kind": "wood", "amount": 6 },
+      "stacks": [{ "templateId": "wolf_pack", "count": 6 }],
+      "behavior": {
+        "mode": "patrol",
+        "patrolPath": [{ "x": 2, "y": 3 }, { "x": 2, "y": 4 }, { "x": 1, "y": 4 }, { "x": 1, "y": 3 }],
+        "detectionRadius": 3,
+        "chaseDistance": 5,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-2",
+      "position": { "x": 7, "y": 3 },
+      "reward": { "kind": "gold", "amount": 280 },
+      "stacks": [{ "templateId": "hero_guard_basic", "count": 5 }],
+      "behavior": {
+        "mode": "guard",
+        "detectionRadius": 3,
+        "chaseDistance": 6,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-3",
+      "position": { "x": 4, "y": 10 },
+      "reward": { "kind": "ore", "amount": 5 },
+      "stacks": [{ "templateId": "hero_guard_basic", "count": 4 }, { "templateId": "wolf_pack", "count": 2 }],
+      "behavior": {
+        "mode": "guard",
+        "detectionRadius": 2,
+        "chaseDistance": 4,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-4",
+      "position": { "x": 7, "y": 7 },
+      "reward": { "kind": "gold", "amount": 260 },
+      "stacks": [{ "templateId": "shadow_skeleton", "count": 7 }, { "templateId": "shadow_hexer", "count": 3 }],
+      "behavior": {
+        "mode": "patrol",
+        "patrolPath": [{ "x": 7, "y": 7 }, { "x": 8, "y": 7 }, { "x": 8, "y": 6 }, { "x": 7, "y": 6 }],
+        "detectionRadius": 3,
+        "chaseDistance": 5,
+        "speed": 1
+      }
+    }
+  ],
+  "guaranteedResources": [
+    { "position": { "x": 1, "y": 1 }, "resource": { "kind": "wood", "amount": 5 } },
+    { "position": { "x": 8, "y": 10 }, "resource": { "kind": "ore", "amount": 4 } },
+    { "position": { "x": 4, "y": 7 }, "resource": { "kind": "gold", "amount": 220 } },
+    { "position": { "x": 6, "y": 5 }, "resource": { "kind": "gold", "amount": 220 } }
+  ],
+  "buildings": [
+    {
+      "id": "recruit-post-1",
+      "kind": "recruitment_post",
+      "position": { "x": 1, "y": 5 },
+      "label": "雾港募兵点",
+      "unitTemplateId": "crown_light_outrider",
+      "recruitCount": 4,
+      "cost": { "gold": 240, "wood": 0, "ore": 0 }
+    },
+    {
+      "id": "recruit-post-2",
+      "kind": "recruitment_post",
+      "position": { "x": 8, "y": 6 },
+      "label": "暗洲补员营",
+      "unitTemplateId": "crown_field_chaplain",
+      "recruitCount": 3,
+      "cost": { "gold": 170, "wood": 0, "ore": 1 }
+    },
+    {
+      "id": "shrine-power-1",
+      "kind": "attribute_shrine",
+      "position": { "x": 4, "y": 6 },
+      "label": "雾潮星坛",
+      "bonus": { "attack": 0, "defense": 0, "power": 1, "knowledge": 1 }
+    },
+    {
+      "id": "shrine-defense-1",
+      "kind": "attribute_shrine",
+      "position": { "x": 5, "y": 7 },
+      "label": "暗汊守誓坛",
+      "bonus": { "attack": 0, "defense": 2, "power": 0, "knowledge": 0 }
+    },
+    {
+      "id": "mine-wood-1",
+      "kind": "resource_mine",
+      "position": { "x": 2, "y": 10 },
+      "label": "黑芦林场",
+      "resourceKind": "wood",
+      "income": 4
+    },
+    {
+      "id": "mine-ore-1",
+      "kind": "resource_mine",
+      "position": { "x": 7, "y": 2 },
+      "label": "泥角矿井",
+      "resourceKind": "ore",
+      "income": 4
+    }
+  ]
+}
