@@ -1,15 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import {
+  appendEventLogEntries,
+  getEquipmentDefinition,
   appendPlayerBattleReplaySummaries,
   normalizeEloRating,
   normalizeEventLogQuery,
   normalizeAchievementProgress,
   normalizeEventLogEntries,
   normalizePlayerAccountReadModel,
+  tryAddEquipmentToInventory,
   type EventLogQuery,
   normalizeHeroState,
   type EventLogEntry,
+  type EquipmentId,
   type HeroState,
   type PlayerBanStatus,
   type PlayerAccountReadModel,
@@ -44,6 +48,7 @@ export interface RoomSnapshotStore {
   ): Promise<PlayerAccountSnapshot>;
   creditGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   debitGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
+  purchaseShopProduct?(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult>;
   savePlayerAccountPrivacyConsent(
     playerId: string,
     input?: PlayerAccountPrivacyConsentInput
@@ -227,6 +232,17 @@ interface PlayerHeroArchiveRow extends RowDataPacket {
   updated_at: Date | string;
 }
 
+interface ShopPurchaseRow extends RowDataPacket {
+  player_id: string;
+  purchase_id: string;
+  product_id: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+  result_json: string | ShopPurchaseResult;
+  created_at: Date | string;
+}
+
 interface PlayerReportRow extends RowDataPacket {
   report_id: string | number;
   reporter_id: string;
@@ -312,6 +328,37 @@ export interface PlayerAccountEnsureInput {
 }
 
 export type GemLedgerReason = "purchase" | "reward" | "spend";
+
+export interface ShopPurchaseGrant {
+  gems?: number;
+  resources?: Partial<ResourceLedger>;
+  equipmentIds?: EquipmentId[];
+}
+
+export interface ShopPurchaseMutationInput {
+  purchaseId: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  grant: ShopPurchaseGrant;
+}
+
+export interface ShopPurchaseResult {
+  purchaseId: string;
+  productId: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  granted: {
+    gems: number;
+    resources: ResourceLedger;
+    equipmentIds: EquipmentId[];
+    heroId?: string;
+  };
+  gemsBalance: number;
+  processedAt: string;
+}
 
 export interface GemLedgerEntry {
   entryId: string;
@@ -477,6 +524,7 @@ export const MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX = "uidx_player_accounts_w
 export const MYSQL_PLAYER_ACCOUNT_WECHAT_IDP_OPEN_ID_INDEX = "uidx_player_accounts_wechat_idp_open_id";
 export const MYSQL_GEM_LEDGER_TABLE = "gem_ledger";
 export const MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX = "idx_gem_ledger_player_created";
+export const MYSQL_SHOP_PURCHASE_TABLE = "shop_purchases";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_TABLE = "player_account_sessions";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX = "idx_player_account_sessions_player_last_used";
 export const MYSQL_PLAYER_BAN_HISTORY_TABLE = "player_ban_history";
@@ -529,6 +577,104 @@ function normalizeResourceLedger(resources?: Partial<ResourceLedger>): ResourceL
     wood: 0,
     ore: 0,
     ...resources
+  };
+}
+
+function addResourceLedgers(base: Partial<ResourceLedger>, delta: Partial<ResourceLedger>): ResourceLedger {
+  return {
+    gold: Math.max(0, Math.floor((base.gold ?? 0) + (delta.gold ?? 0))),
+    wood: Math.max(0, Math.floor((base.wood ?? 0) + (delta.wood ?? 0))),
+    ore: Math.max(0, Math.floor((base.ore ?? 0) + (delta.ore ?? 0)))
+  };
+}
+
+function normalizeShopPurchaseId(purchaseId: string): string {
+  const normalized = purchaseId.trim();
+  if (!normalized) {
+    throw new Error("purchaseId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizeShopProductId(productId: string): string {
+  const normalized = productId.trim();
+  if (!normalized) {
+    throw new Error("productId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizeShopProductName(productName: string): string {
+  const normalized = productName.trim();
+  if (!normalized) {
+    throw new Error("productName must not be empty");
+  }
+
+  return normalized.slice(0, 80);
+}
+
+function normalizeShopPurchaseQuantity(quantity: number): number {
+  const normalized = Math.floor(quantity);
+  if (!Number.isFinite(quantity) || normalized <= 0) {
+    throw new Error("quantity must be a positive integer");
+  }
+
+  return normalized;
+}
+
+function normalizeShopPurchaseGrant(grant: ShopPurchaseGrant): { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] } {
+  const equipmentIds = (grant.equipmentIds ?? []).map((equipmentId) => equipmentId.trim()).filter(Boolean);
+  for (const equipmentId of equipmentIds) {
+    if (!getEquipmentDefinition(equipmentId)) {
+      throw new Error(`unknown equipment grant: ${equipmentId}`);
+    }
+  }
+
+  return {
+    gems: grant.gems != null ? normalizeGemAmount(grant.gems) : 0,
+    resources: normalizeResourceLedger(grant.resources),
+    equipmentIds
+  };
+}
+
+function multiplyShopPurchaseGrant(
+  grant: { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] },
+  quantity: number
+): { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] } {
+  return {
+    gems: grant.gems * quantity,
+    resources: {
+      gold: grant.resources.gold * quantity,
+      wood: grant.resources.wood * quantity,
+      ore: grant.resources.ore * quantity
+    },
+    equipmentIds: Array.from({ length: quantity }, () => grant.equipmentIds).flat()
+  };
+}
+
+function createShopPurchaseEventLogEntry(playerId: string, input: {
+  productId: string;
+  productName: string;
+  quantity: number;
+  granted: { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] };
+  processedAt: string;
+}): EventLogEntry {
+  const resourceRewards = [
+    input.granted.resources.gold > 0 ? { type: "resource" as const, label: "gold", amount: input.granted.resources.gold } : null,
+    input.granted.resources.wood > 0 ? { type: "resource" as const, label: "wood", amount: input.granted.resources.wood } : null,
+    input.granted.resources.ore > 0 ? { type: "resource" as const, label: "ore", amount: input.granted.resources.ore } : null
+  ].filter((reward): reward is NonNullable<typeof reward> => Boolean(reward));
+
+  return {
+    id: `${playerId}:${input.processedAt}:shop:${input.productId}:${input.quantity}`,
+    timestamp: input.processedAt,
+    roomId: "shop",
+    playerId,
+    category: "account",
+    description: `Purchased ${input.productName} x${input.quantity}.`,
+    rewards: resourceRewards
   };
 }
 
@@ -1171,6 +1317,18 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_GEM_LEDGER_TABLE}\` (
   ref_id VARCHAR(191) NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (entry_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS \`${MYSQL_SHOP_PURCHASE_TABLE}\` (
+  player_id VARCHAR(191) NOT NULL,
+  purchase_id VARCHAR(191) NOT NULL,
+  product_id VARCHAR(191) NOT NULL,
+  quantity INT NOT NULL,
+  unit_price INT NOT NULL,
+  total_price INT NOT NULL,
+  result_json LONGTEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (player_id, purchase_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\` (
@@ -2041,6 +2199,25 @@ function toPlayerHeroArchiveSnapshot(row: PlayerHeroArchiveRow): PlayerHeroArchi
             : archivedHero.loadout.inventory
       }
     })
+  };
+}
+
+function toShopPurchaseResult(row: ShopPurchaseRow): ShopPurchaseResult {
+  const result = parseJsonColumn<ShopPurchaseResult>(row.result_json);
+  return {
+    purchaseId: normalizeShopPurchaseId(result.purchaseId ?? row.purchase_id),
+    productId: normalizeShopProductId(result.productId ?? row.product_id),
+    quantity: normalizeShopPurchaseQuantity(result.quantity ?? row.quantity),
+    unitPrice: normalizePositiveGemDelta(result.unitPrice ?? row.unit_price),
+    totalPrice: normalizePositiveGemDelta(result.totalPrice ?? row.total_price),
+    granted: {
+      gems: normalizeGemAmount(result.granted?.gems),
+      resources: normalizeResourceLedger(result.granted?.resources),
+      equipmentIds: (result.granted?.equipmentIds ?? []).map((equipmentId) => equipmentId.trim()).filter(Boolean),
+      ...(result.granted?.heroId?.trim() ? { heroId: result.granted.heroId.trim() } : {})
+    },
+    gemsBalance: normalizeGemAmount(result.gemsBalance),
+    processedAt: formatTimestamp(result.processedAt) ?? formatTimestamp(row.created_at) ?? new Date(0).toISOString()
   };
 }
 
@@ -3178,6 +3355,207 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     }
 
     return this.mutateGems(playerId, -normalizePositiveGemDelta(amount), normalizedReason, refId);
+  }
+
+  async purchaseShopProduct(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedPurchaseId = normalizeShopPurchaseId(input.purchaseId);
+    const normalizedProductId = normalizeShopProductId(input.productId);
+    const normalizedProductName = normalizeShopProductName(input.productName);
+    const normalizedQuantity = normalizeShopPurchaseQuantity(input.quantity);
+    const normalizedUnitPrice = normalizeGemAmount(input.unitPrice);
+    const normalizedGrant = multiplyShopPurchaseGrant(normalizeShopPurchaseGrant(input.grant), normalizedQuantity);
+    const totalPrice = normalizedUnitPrice * normalizedQuantity;
+
+    await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [existingPurchaseRows] = await connection.query<ShopPurchaseRow[]>(
+        `SELECT player_id, purchase_id, product_id, quantity, unit_price, total_price, result_json, created_at
+         FROM \`${MYSQL_SHOP_PURCHASE_TABLE}\`
+         WHERE player_id = ? AND purchase_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedPlayerId, normalizedPurchaseId]
+      );
+      const existingPurchase = existingPurchaseRows[0];
+      if (existingPurchase) {
+        await connection.commit();
+        return toShopPurchaseResult(existingPurchase);
+      }
+
+      const [accountRows] = await connection.query<PlayerAccountRow[]>(
+        `SELECT *
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedPlayerId]
+      );
+      const currentAccount =
+        accountRows[0] != null
+          ? toPlayerAccountSnapshot(accountRows[0])
+          : normalizePlayerAccountSnapshot({
+              playerId: normalizedPlayerId,
+              displayName: normalizedPlayerId,
+              globalResources: normalizeResourceLedger()
+            });
+      const currentGems = normalizeGemAmount(currentAccount.gems);
+
+      if (currentGems < totalPrice) {
+        throw new Error("insufficient gems");
+      }
+
+      let grantedHeroId: string | undefined;
+      let nextHeroArchive: PlayerHeroArchiveSnapshot | null = null;
+      if (normalizedGrant.equipmentIds.length > 0) {
+        const [heroArchiveRows] = await connection.query<PlayerHeroArchiveRow[]>(
+          `SELECT player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json, updated_at
+           FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+           WHERE player_id = ?
+           ORDER BY updated_at DESC, hero_id ASC
+           LIMIT 1
+           FOR UPDATE`,
+          [normalizedPlayerId]
+        );
+        const currentArchive = heroArchiveRows[0] ? toPlayerHeroArchiveSnapshot(heroArchiveRows[0]) : null;
+        if (!currentArchive) {
+          throw new Error("player hero archive not found");
+        }
+
+        let nextInventory = [...currentArchive.hero.loadout.inventory];
+        for (const equipmentId of normalizedGrant.equipmentIds) {
+          const inventoryUpdate = tryAddEquipmentToInventory(nextInventory, equipmentId);
+          if (!inventoryUpdate.stored) {
+            throw new Error("equipment inventory full");
+          }
+          nextInventory = inventoryUpdate.inventory;
+        }
+
+        grantedHeroId = currentArchive.heroId;
+        nextHeroArchive = {
+          ...currentArchive,
+          hero: normalizeHeroState({
+            ...currentArchive.hero,
+            loadout: {
+              ...currentArchive.hero.loadout,
+              inventory: nextInventory
+            }
+          })
+        };
+      }
+
+      const processedAt = new Date().toISOString();
+      const nextRecentEventLog = appendEventLogEntries(
+        currentAccount.recentEventLog,
+        [
+          createShopPurchaseEventLogEntry(normalizedPlayerId, {
+            productId: normalizedProductId,
+            productName: normalizedProductName,
+            quantity: normalizedQuantity,
+            granted: normalizedGrant,
+            processedAt
+          })
+        ]
+      );
+      const nextGlobalResources = addResourceLedgers(currentAccount.globalResources, normalizedGrant.resources);
+      const nextGems = currentGems - totalPrice + normalizedGrant.gems;
+
+      await connection.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET gems = ?,
+             global_resources_json = ?,
+             recent_event_log_json = ?,
+             version = version + 1
+         WHERE player_id = ?`,
+        [nextGems, JSON.stringify(nextGlobalResources), JSON.stringify(nextRecentEventLog), normalizedPlayerId]
+      );
+      await appendGemLedgerEntry(connection, {
+        entryId: randomUUID(),
+        playerId: normalizedPlayerId,
+        delta: -totalPrice,
+        reason: "spend",
+        refId: normalizedPurchaseId
+      });
+      if (normalizedGrant.gems > 0) {
+        await appendGemLedgerEntry(connection, {
+          entryId: randomUUID(),
+          playerId: normalizedPlayerId,
+          delta: normalizedGrant.gems,
+          reason: "reward",
+          refId: normalizedPurchaseId
+        });
+      }
+
+      if (nextHeroArchive) {
+        await connection.query(
+          `INSERT INTO \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+             (player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             hero_json = VALUES(hero_json),
+             army_template_id = VALUES(army_template_id),
+             army_count = VALUES(army_count),
+             learned_skills_json = VALUES(learned_skills_json),
+             equipment_json = VALUES(equipment_json),
+             inventory_json = VALUES(inventory_json),
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            nextHeroArchive.playerId,
+            nextHeroArchive.heroId,
+            JSON.stringify(nextHeroArchive.hero),
+            nextHeroArchive.hero.armyTemplateId,
+            nextHeroArchive.hero.armyCount,
+            JSON.stringify(nextHeroArchive.hero.loadout.learnedSkills),
+            JSON.stringify(nextHeroArchive.hero.loadout.equipment),
+            JSON.stringify(nextHeroArchive.hero.loadout.inventory)
+          ]
+        );
+      }
+
+      const result: ShopPurchaseResult = {
+        purchaseId: normalizedPurchaseId,
+        productId: normalizedProductId,
+        quantity: normalizedQuantity,
+        unitPrice: normalizedUnitPrice,
+        totalPrice,
+        granted: {
+          gems: normalizedGrant.gems,
+          resources: normalizedGrant.resources,
+          equipmentIds: normalizedGrant.equipmentIds,
+          ...(grantedHeroId ? { heroId: grantedHeroId } : {})
+        },
+        gemsBalance: nextGems,
+        processedAt
+      };
+
+      await connection.query(
+        `INSERT INTO \`${MYSQL_SHOP_PURCHASE_TABLE}\`
+           (player_id, purchase_id, product_id, quantity, unit_price, total_price, result_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          normalizedPlayerId,
+          normalizedPurchaseId,
+          normalizedProductId,
+          normalizedQuantity,
+          normalizedUnitPrice,
+          totalPrice,
+          JSON.stringify(result)
+        ]
+      );
+      await appendPlayerEventHistoryEntries(connection, normalizedPlayerId, nextRecentEventLog.slice(0, 1));
+
+      await connection.commit();
+      return result;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   private async mutateGems(

@@ -27,6 +27,7 @@ import {
 } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
 import { registerAdminRoutes } from "./admin-console";
+import { registerShopRoutes } from "./shop";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
 import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "./redis";
 
@@ -109,6 +110,7 @@ export interface DevServerBootstrapDependencies {
   registerConfigCenterRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerConfigViewerRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerPlayerAccountRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
+  registerShopRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
   registerRuntimeObservabilityRoutes(app: unknown, options?: { store?: DevServerRoomSnapshotStore }): void;
@@ -170,6 +172,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerConfigCenterRoutes: (app, store) => registerConfigCenterRoutes(app as never, store as ConfigCenterStore),
     registerConfigViewerRoutes: (app, store) => registerConfigViewerRoutes(app as never, store as ConfigCenterStore),
     registerPlayerAccountRoutes: (app, store) => registerPlayerAccountRoutes(app as never, store as RoomSnapshotStore),
+    registerShopRoutes: (app, store) => registerShopRoutes(app as never, store as RoomSnapshotStore),
     registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
@@ -231,6 +234,7 @@ export async function startDevServer(
   deps.registerConfigCenterRoutes(expressApp, configCenterStore);
   deps.registerConfigViewerRoutes(expressApp, configCenterStore);
   deps.registerPlayerAccountRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerShopRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
   deps.registerRuntimeObservabilityRoutes(expressApp, { store: effectiveSnapshotStore });
