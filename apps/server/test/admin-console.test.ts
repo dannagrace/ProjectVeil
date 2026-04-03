@@ -240,6 +240,49 @@ test("POST /api/admin/players/:id/resources returns 400 for malformed JSON", asy
   assert.deepEqual(JSON.parse(response.body), { error: "Invalid JSON body" });
 });
 
+test("POST /api/admin/players/:id/resources returns 400 for invalid resource payload types", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore({
+    "player-1": { gold: 10, wood: 4, ore: 1 }
+  });
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/resources");
+  assert.ok(handler);
+
+  const nonObjectResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-1" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: "null"
+    }),
+    nonObjectResponse
+  );
+
+  assert.equal(nonObjectResponse.statusCode, 400);
+  assert.deepEqual(JSON.parse(nonObjectResponse.body), { error: "JSON body must be an object" });
+
+  const invalidFieldResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-1" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({ gold: "drop table", wood: 2.5, ore: 1 })
+    }),
+    invalidFieldResponse
+  );
+
+  assert.equal(invalidFieldResponse.statusCode, 400);
+  assert.deepEqual(JSON.parse(invalidFieldResponse.body), { error: '"gold" must be a finite integer' });
+  assert.equal(store.saveCalls.length, 0);
+});
+
 test("POST /api/admin/players/:id/resources adds and clamps resources and syncs active rooms", async (t) => {
   const secret = withAdminSecret(t);
   const store = createStore({
@@ -410,4 +453,41 @@ test("POST /api/admin/broadcast broadcasts to all active rooms and succeeds when
 
   assert.equal(noRoomsResponse.statusCode, 200);
   assert.deepEqual(JSON.parse(noRoomsResponse.body), { ok: true });
+});
+
+test("POST /api/admin/broadcast returns 400 for invalid payload types", async (t) => {
+  const secret = withAdminSecret(t);
+  const { posts } = registerRoutes();
+  const handler = posts.get("/api/admin/broadcast");
+  assert.ok(handler);
+
+  const nonObjectResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: "[]"
+    }),
+    nonObjectResponse
+  );
+
+  assert.equal(nonObjectResponse.statusCode, 400);
+  assert.deepEqual(JSON.parse(nonObjectResponse.body), { error: "JSON body must be an object" });
+
+  const invalidMessageResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({ message: "   ", type: 42 })
+    }),
+    invalidMessageResponse
+  );
+
+  assert.equal(invalidMessageResponse.statusCode, 400);
+  assert.deepEqual(JSON.parse(invalidMessageResponse.body), { error: '"message" must be a non-empty string' });
 });
