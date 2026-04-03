@@ -339,7 +339,8 @@ export class AuthoritativeWorldRoom {
         const battle = createNeutralBattleState(
           hero,
           neutralArmy,
-          this.createBattleSeed(battleEvent.battleId)
+          this.createBattleSeed(battleEvent.battleId),
+          this.state
         );
         this.trackStartedBattle(battle);
         startedBattleIds.push(battle.id);
@@ -355,7 +356,8 @@ export class AuthoritativeWorldRoom {
         const battle = createHeroBattleState(
           hero,
           defenderHero,
-          this.createBattleSeed(battleEvent.battleId)
+          this.createBattleSeed(battleEvent.battleId),
+          this.state
         );
         this.trackStartedBattle(battle);
         startedBattleIds.push(battle.id);

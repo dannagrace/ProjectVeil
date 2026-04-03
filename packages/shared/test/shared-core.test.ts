@@ -4670,6 +4670,368 @@ test("applyBattleAction supports armor spell buffs on the acting unit", () => {
   assert.match(next.log.at(-1) ?? "", /护甲术/);
 });
 
+test("applyBattleAction resolves war cry splash onto adjacent enemy lanes without hitting allies", () => {
+  const state = createDemoBattleState();
+  state.lanes = 3;
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d", "wolf-side", "ally-side"];
+  state.units["pikeman-a"] = {
+    ...state.units["pikeman-a"]!,
+    skills: [
+      {
+        id: "war_cry",
+        name: "战吼震荡",
+        description: "正面打击主目标，并以余波震伤相邻敌军。",
+        kind: "active",
+        target: "enemy",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ],
+    lane: 1,
+    count: 5,
+    minDamage: 4,
+    maxDamage: 4
+  };
+  state.units["wolf-d"] = {
+    ...state.units["wolf-d"]!,
+    lane: 1,
+    hasRetaliated: true
+  };
+  state.units["wolf-side"] = {
+    ...cloneBattleUnit(state.units["wolf-d"]!),
+    id: "wolf-side",
+    lane: 2,
+    stackName: "侧翼恶狼",
+    hasRetaliated: true
+  };
+  state.units["ally-side"] = {
+    ...cloneBattleUnit(state.units["pikeman-a"]!),
+    id: "ally-side",
+    lane: 0,
+    stackName: "侧翼枪兵"
+  };
+  state.unitCooldowns["pikeman-a"] = {};
+
+  const next = applyBattleAction(state, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "war_cry",
+    targetId: "wolf-d"
+  });
+
+  assert.ok(getUnitHpPool(next.units["wolf-side"]!) < getUnitHpPool(state.units["wolf-side"]!));
+  assert.equal(getUnitHpPool(next.units["ally-side"]!), getUnitHpPool(state.units["ally-side"]!));
+  assert.match(next.log.join("\n"), /波及 侧翼恶狼/);
+});
+
+test("ally battle skills heal wounded units and can cleanse one negative status", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "ally-a", "wolf-d"];
+  state.units["pikeman-a"] = {
+    ...state.units["pikeman-a"]!,
+    power: 3,
+    skills: [
+      {
+        id: "field_mending",
+        name: "战地缝合",
+        description: "根据施法者的 power 恢复己方单位生命。",
+        kind: "active",
+        target: "ally",
+        delivery: "ranged",
+        cooldown: 2,
+        remainingCooldown: 0
+      },
+      {
+        id: "rally_morale",
+        name: "鼓舞军心",
+        description: "恢复少量生命，并解除一个负面状态。",
+        kind: "active",
+        target: "ally",
+        delivery: "ranged",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  state.units["ally-a"] = {
+    ...cloneBattleUnit(state.units["pikeman-a"]!),
+    id: "ally-a",
+    stackName: "友军枪兵",
+    currentHp: 4,
+    statusEffects: [
+      {
+        id: "weakened",
+        name: "削弱",
+        description: "暂时降低攻击力。",
+        durationRemaining: 2,
+        attackModifier: -2,
+        defenseModifier: 0,
+        damagePerTurn: 0,
+        initiativeModifier: 0,
+        blocksActiveSkills: false,
+        preventsAction: false,
+        forcedAttackSource: false
+      }
+    ]
+  };
+
+  const mended = applyBattleAction(state, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "field_mending",
+    targetId: "ally-a"
+  });
+
+  assert.ok(mended.units["ally-a"]!.currentHp > state.units["ally-a"]!.currentHp);
+  assert.equal(mended.units["ally-a"]?.statusEffects?.length, 1);
+
+  const ralliedBase = cloneBattleState(state);
+  ralliedBase.units["pikeman-a"] = {
+    ...ralliedBase.units["pikeman-a"]!,
+    skills: [
+      {
+        id: "rally_morale",
+        name: "鼓舞军心",
+        description: "恢复少量生命，并解除一个负面状态。",
+        kind: "active",
+        target: "ally",
+        delivery: "ranged",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  const rallied = applyBattleAction(ralliedBase, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "rally_morale",
+    targetId: "ally-a"
+  });
+
+  assert.ok(rallied.units["ally-a"]!.currentHp > ralliedBase.units["ally-a"]!.currentHp);
+  assert.deepEqual(rallied.units["ally-a"]?.statusEffects, []);
+  assert.match(rallied.log.at(-1) ?? "", /解除 削弱/);
+});
+
+test("stunning blow skips the target's next action", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d"];
+  state.units["pikeman-a"] = {
+    ...state.units["pikeman-a"]!,
+    skills: [
+      {
+        id: "stunning_blow",
+        name: "震荡猛击",
+        description: "重击敌军并附加短暂眩晕。",
+        kind: "active",
+        target: "enemy",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  state.units["wolf-d"] = {
+    ...state.units["wolf-d"]!,
+    hasRetaliated: true
+  };
+
+  const next = applyBattleAction(state, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "stunning_blow",
+    targetId: "wolf-d"
+  });
+
+  assert.equal(next.round, 2);
+  assert.equal(next.activeUnitId, "wolf-d");
+  assert.deepEqual(next.units["wolf-d"]?.statusEffects, []);
+  assert.match(next.log.join("\n"), /陷入眩晕/);
+  assert.match(next.log.join("\n"), /跳过行动/);
+});
+
+test("taunt shout constrains the target to attack the taunter on its next action", () => {
+  const state = createDemoBattleState();
+  state.activeUnitId = "pikeman-a";
+  state.turnOrder = ["pikeman-a", "wolf-d", "ally-a"];
+  state.units["pikeman-a"] = {
+    ...state.units["pikeman-a"]!,
+    skills: [
+      {
+        id: "taunt_shout",
+        name: "嘲阵怒喝",
+        description: "激怒敌军，迫使其下次行动优先攻击施放者。",
+        kind: "active",
+        target: "enemy",
+        delivery: "ranged",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  state.units["ally-a"] = {
+    ...cloneBattleUnit(state.units["pikeman-a"]!),
+    id: "ally-a",
+    stackName: "友军枪兵"
+  };
+
+  const taunted = applyBattleAction(state, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "taunt_shout",
+    targetId: "wolf-d"
+  });
+
+  assert.equal(taunted.activeUnitId, "wolf-d");
+  assert.equal(taunted.units["wolf-d"]?.statusEffects?.[0]?.id, "taunted");
+  assert.deepEqual(pickAutomatedBattleAction(taunted), {
+    type: "battle.attack",
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  });
+  assert.deepEqual(
+    validateBattleAction(taunted, {
+      type: "battle.attack",
+      attackerId: "wolf-d",
+      defenderId: "ally-a"
+    }),
+    {
+      valid: false,
+      reason: "taunted_must_attack_source"
+    }
+  );
+});
+
+test("terrain-linked battle skills use battlefield terrain snapshots", () => {
+  const grassState = createDemoBattleState();
+  grassState.activeUnitId = "pikeman-a";
+  grassState.turnOrder = ["pikeman-a", "wolf-d"];
+  grassState.battlefieldTerrain = "grass";
+  grassState.units["pikeman-a"] = {
+    ...grassState.units["pikeman-a"]!,
+    minDamage: 5,
+    maxDamage: 5,
+    count: 4,
+    skills: [
+      {
+        id: "terrain_mastery",
+        name: "地形精通",
+        description: "在草地上进攻更猛，在水泽地带更耐打。",
+        kind: "passive",
+        target: "self",
+        cooldown: 0,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  grassState.units["wolf-d"] = {
+    ...grassState.units["wolf-d"]!,
+    hasRetaliated: true
+  };
+
+  const waterState = cloneBattleState(grassState);
+  waterState.battlefieldTerrain = "water";
+  waterState.units["pikeman-a"] = {
+    ...waterState.units["pikeman-a"]!,
+    skills: [
+      ...(waterState.units["pikeman-a"]?.skills ?? []),
+      {
+        id: "bog_ambush",
+        name: "泥沼伏袭",
+        description: "只有在水泽地形中才能发动，伤害显著提升。",
+        kind: "active",
+        target: "enemy",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ]
+  };
+
+  const grassResult = applyBattleAction(cloneBattleState(grassState), {
+    type: "battle.attack",
+    attackerId: "pikeman-a",
+    defenderId: "wolf-d"
+  });
+  const neutralResult = applyBattleAction(
+    {
+      ...cloneBattleState(grassState),
+      units: {
+        ...cloneBattleState(grassState).units,
+        "pikeman-a": {
+          ...cloneBattleState(grassState).units["pikeman-a"]!,
+          skills: []
+        }
+      }
+    },
+    {
+      type: "battle.attack",
+      attackerId: "pikeman-a",
+      defenderId: "wolf-d"
+    }
+  );
+  const ambushResult = applyBattleAction(waterState, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "bog_ambush",
+    targetId: "wolf-d"
+  });
+  const rejectedAmbush = applyBattleAction(
+    {
+      ...cloneBattleState(waterState),
+      battlefieldTerrain: "grass"
+    },
+    {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "bog_ambush",
+      targetId: "wolf-d"
+    }
+  );
+
+  assert.ok(getUnitHpPool(grassResult.units["wolf-d"]!) < getUnitHpPool(neutralResult.units["wolf-d"]!));
+  assert.ok(getUnitHpPool(ambushResult.units["wolf-d"]!) < getUnitHpPool(waterState.units["wolf-d"]!));
+  assert.equal(rejectedAmbush.log.at(-1), "Action rejected: skill_requires_water_terrain");
+});
+
+test("battle state builders read battlefield terrain from world state", () => {
+  const hero = createHero({
+    id: "hero-terrain-a",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 0 }
+  });
+  const defender = createHero({
+    id: "hero-terrain-b",
+    playerId: "player-2",
+    name: "罗安",
+    position: { x: 1, y: 0 }
+  });
+  const neutralArmy: NeutralArmyState = {
+    id: "neutral-terrain",
+    position: { x: 2, y: 0 },
+    reward: { kind: "ore", amount: 2 },
+    stacks: [{ templateId: "wolf_pack", count: 4 }]
+  };
+  const world = createWorldState({
+    width: 3,
+    height: 1,
+    heroes: [hero, defender],
+    neutralArmies: {
+      [neutralArmy.id]: neutralArmy
+    },
+    tiles: [
+      createTile(0, 0, { terrain: "grass" }),
+      createTile(1, 0, { terrain: "water" }),
+      createTile(2, 0, { terrain: "water" })
+    ]
+  });
+
+  assert.equal(createNeutralBattleState(hero, neutralArmy, 1001, world).battlefieldTerrain, "water");
+  assert.equal(createHeroBattleState(hero, defender, 1002, world).battlefieldTerrain, "water");
+});
+
 test("applyBattleAction reduces damage against defending targets", () => {
   const baselineState = createDemoBattleState();
   baselineState.activeUnitId = "wolf-d";
