@@ -89,6 +89,7 @@ The dossier surfaces:
 - `requiredPending`
 - `acceptedRisks`
 - per-section freshness and artifact paths
+- explicit Phase 1 persistence storage-mode evidence, including the verified storage mode (`memory` / `mysql`) and whether that artifact is stale or missing for the candidate revision
 - Phase 1 sections for readiness, Cocos RC, WeChat release, runtime sampling, reconnect soak, persistence/content-pack validation, release gate summary, and release health summary
 
 The JSON artifact is intended for CI/automation, and the Markdown artifact is intended for PR/release review so reviewers do not need to stitch Phase 1 exit evidence together by hand.
