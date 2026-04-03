@@ -220,7 +220,8 @@ test("battle feedback summarizes action, progress, and outcome", () => {
   );
   assert.equal(unsettledFeedback?.tone, "neutral");
   assert.equal(unsettledFeedback?.badge, "SETTLE");
-  assert.match(unsettledFeedback?.detail ?? "", /准备返回世界地图/);
+  assert.equal(unsettledFeedback?.title, "战果回写中");
+  assert.match(unsettledFeedback?.detail ?? "", /等待世界地图确认奖励、占位与结算结果/);
 });
 
 test("battle feedback calls out pvp encounter identity and settlement state", () => {
@@ -261,9 +262,9 @@ test("battle feedback calls out pvp encounter identity and settlement state", ()
     "hero-1",
     pvpBattle
   );
-  assert.equal(pvpSettlement?.title, "PVP 结算同步中");
+  assert.equal(pvpSettlement?.title, "PVP 结果回写中");
   assert.match(pvpSettlement?.detail ?? "", /PVP 结算：对手 hero-9/);
-  assert.match(pvpSettlement?.detail ?? "", /准备回写 PVP 世界态/);
+  assert.match(pvpSettlement?.detail ?? "", /等待房间确认胜负并回写 PVP 世界态/);
 });
 
 test("battle transition feedback summarizes settlement rewards and field state", () => {

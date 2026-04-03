@@ -104,7 +104,7 @@ export function buildBattleTransitionFeedback(
 
     const settlement = buildBattleSettlementSummary(previousBattle, update, heroId);
     return {
-      title: previousBattle?.defenderHeroId ? "PVP 结算同步中" : "战斗收束",
+      title: previousBattle?.defenderHeroId ? "PVP 结果回写中" : "战果回写中",
       detail: settlement.detail,
       badge: "SETTLE",
       tone: "neutral"
@@ -263,7 +263,7 @@ function buildBattleSettlementSummary(
     encounterStatus,
     fieldStatus,
     rewards.length > 0 ? rewards.join(" / ") : null,
-    previousBattle?.defenderHeroId ? "准备回写 PVP 世界态" : "准备返回世界地图"
+    buildSettlementHandoffLabel(previousBattle, resolved)
   ].filter((part): part is string => Boolean(part));
 
   return {
@@ -409,6 +409,17 @@ function describeSettlementEncounterState(
   return didHoldField
     ? `PVP 结算：对手 ${previousBattle.defenderHeroId} 已退出当前遭遇`
     : `PVP 结算：对手 ${previousBattle.defenderHeroId} 仍保留在房间地图上`;
+}
+
+function buildSettlementHandoffLabel(
+  previousBattle: BattleState | null,
+  resolved: BattleResolvedView | null
+): string {
+  if (previousBattle?.defenderHeroId) {
+    return resolved ? "房间胜负已确认，等待回写 PVP 世界态" : "等待房间确认胜负并回写 PVP 世界态";
+  }
+
+  return resolved ? "奖励已确认，准备返回世界地图" : "等待世界地图确认奖励、占位与结算结果";
 }
 
 function didHeroWinResolution(resolved: BattleResolvedView | null, heroId: string | null): boolean | null {

@@ -93,6 +93,19 @@ The generated candidate artifact already fills this header. Review and correct i
 - Blocking items, if any:
 - Controlled-test gaps, if any:
 
+## Battle Journey Manual Verification
+
+Use this short path when reviewing the battle presentation slice for a candidate:
+
+1. Start from the same candidate revision used for the RC snapshot and launch the main Cocos client flow.
+2. Enter one encounter from the world map and capture the battle-entry overlay showing terrain/context plus encounter identity.
+3. Execute at least one command that produces visible impact feedback, then capture the battle panel while the command/impact labels and badges are on screen.
+4. Finish the encounter and capture the settlement shell twice if possible:
+   first on the pending handoff state (`结果回写中` or `PVP 结果回写中`), then on the final victory/defeat result once the authoritative event arrives.
+5. Confirm the settlement copy makes the world handoff explicit without looking at logs:
+   `等待世界地图确认奖励、占位与结算结果` for PVE, or `等待房间确认胜负并回写 PVP 世界态` for PVP.
+6. Attach the screenshots/video to the candidate RC bundle and classify any remaining placeholder or fallback item in the generated sign-off artifact.
+
 ## Exit Standard
 
 For Phase 1 exit, this checklist should end in one of two states:

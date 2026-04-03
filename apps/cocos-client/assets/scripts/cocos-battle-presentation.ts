@@ -327,7 +327,7 @@ function resolvePresentationLabel(moment: CocosBattlePresentationMoment, fallbac
     case "active_skill":
       return "技能结算";
     case "result_settlement":
-      return "战斗收束";
+      return "结果回写中";
     case "result_victory":
       return "战斗胜利";
     case "result_defeat":
