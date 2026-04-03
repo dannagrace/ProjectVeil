@@ -24,7 +24,7 @@
 - Phase 1 发布就绪看板：`npm run release:readiness:dashboard`
 - Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
 - Cocos 发布证据模板：`docs/cocos-release-evidence-template.md`
-- Cocos Phase 1 占位 / fallback 表现签核：`docs/cocos-phase1-presentation-signoff.md`
+- Cocos Phase 1 占位 / fallback 表现签核（含 maintained fallback inventory）：`docs/cocos-phase1-presentation-signoff.md`
 - Cocos / WeChat RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
 - Cocos / WeChat RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - WeChat runtime observability 签核模板：`docs/release-evidence/wechat-runtime-observability-signoff.template.md`
@@ -120,7 +120,7 @@
 
 `P1 follow-up`
 
-- [ ] Cocos 脚本层的展示配置、图集、动画 fallback 与资源清单在每次 release candidate 上重新核对一次，并通过 [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) 明确记录为已关闭、可接受非阻断，或仍然阻断。
+- [ ] Cocos 脚本层的展示配置、图集、动画 fallback 与资源清单在每次 release candidate 上重新核对一次，并以 [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) 的 maintained fallback inventory 为基线，明确记录为已关闭、可接受非阻断，或仍然阻断。
 - [ ] H5 与 Cocos 对同一 shared 规则的表现差异有记录，避免“规则一致但表现不一致”。
 
 建议证据：
