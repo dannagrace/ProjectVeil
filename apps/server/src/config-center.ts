@@ -3,8 +3,16 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { createPool, type Pool, type RowDataPacket } from "mysql2/promise";
 import * as XLSX from "xlsx";
+import amberFieldsMapObjectsConfig from "../../../configs/phase1-map-objects-amber-fields.json";
+import amberFieldsWorldConfig from "../../../configs/phase1-world-amber-fields.json";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import highlandReachMapObjectsConfig from "../../../configs/phase1-map-objects-highland-reach.json";
+import highlandReachWorldConfig from "../../../configs/phase1-world-highland-reach.json";
+import ironpassGorgeMapObjectsConfig from "../../../configs/phase1-map-objects-ironpass-gorge.json";
+import ironpassGorgeWorldConfig from "../../../configs/phase1-world-ironpass-gorge.json";
+import splitrockCanyonMapObjectsConfig from "../../../configs/phase1-map-objects-splitrock-canyon.json";
+import splitrockCanyonWorldConfig from "../../../configs/phase1-world-splitrock-canyon.json";
 import stonewatchForkMapObjectsConfig from "../../../configs/phase1-map-objects-stonewatch-fork.json";
 import stonewatchForkWorldConfig from "../../../configs/phase1-world-stonewatch-fork.json";
 import ridgewayCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-ridgeway-crossing.json";
@@ -452,6 +460,10 @@ const BUILTIN_WORLD_LAYOUT_PRESETS = [
   "layout_frontier_basin",
   "layout_stonewatch_fork",
   "layout_ridgeway_crossing",
+  "layout_highland_reach",
+  "layout_amber_fields",
+  "layout_ironpass_gorge",
+  "layout_splitrock_canyon",
   "layout_contested_basin"
 ] as const;
 const BUILTIN_MAP_OBJECT_LAYOUT_PRESETS = [
@@ -459,6 +471,10 @@ const BUILTIN_MAP_OBJECT_LAYOUT_PRESETS = [
   "layout_frontier_basin",
   "layout_stonewatch_fork",
   "layout_ridgeway_crossing",
+  "layout_highland_reach",
+  "layout_amber_fields",
+  "layout_ironpass_gorge",
+  "layout_splitrock_canyon",
   "layout_contested_basin"
 ] as const;
 const CONFIG_SCHEMA_VERSION = "2026-03-26";
@@ -1800,6 +1816,14 @@ function buildLayoutPresetSummary(id: typeof BUILTIN_WORLD_LAYOUT_PRESETS[number
         ? "Stonewatch Fork"
       : id === "layout_ridgeway_crossing"
         ? "Ridgeway Crossing"
+      : id === "layout_highland_reach"
+        ? "Highland Reach"
+      : id === "layout_amber_fields"
+        ? "Amber Fields"
+      : id === "layout_ironpass_gorge"
+        ? "Ironpass Gorge"
+      : id === "layout_splitrock_canyon"
+        ? "Splitrock Canyon"
       : id === "layout_contested_basin"
         ? "Contested Basin"
         : "Phase 1";
@@ -1810,6 +1834,14 @@ function buildLayoutPresetSummary(id: typeof BUILTIN_WORLD_LAYOUT_PRESETS[number
         ? "切换为石望岔路布局，适合验证双招募点、分叉矿线与南北奖励节奏。"
       : id === "layout_ridgeway_crossing"
         ? "切换为第二个 Phase 1 岭桥布局，适合验证中央渡口争夺、双招募点和木矿/矿井分流。"
+      : id === "layout_highland_reach"
+        ? "切换为高地平原布局，适合验证大尺寸对称开阔地与中央高台争夺。"
+      : id === "layout_amber_fields"
+        ? "切换为琥珀田布局，适合验证多资源点分布与中路高地争夺。"
+      : id === "layout_ironpass_gorge"
+        ? "切换为铁关峡谷布局，适合验证狭窄通道、峡口守军与双侧矿线。"
+      : id === "layout_splitrock_canyon"
+        ? "切换为裂岩峡谷布局，适合验证非对称出生点与双线路径压迫。"
       : id === "layout_contested_basin"
         ? "切换为争夺盆地布局，包含新巡逻守军与瞭望塔。"
         : "恢复默认 Phase 1 地图布局。";
@@ -1856,6 +1888,18 @@ function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: strin
     if (presetId === "layout_ridgeway_crossing") {
       return normalizeJsonContent(ridgewayCrossingWorldConfig as WorldGenerationConfig);
     }
+    if (presetId === "layout_highland_reach") {
+      return normalizeJsonContent(highlandReachWorldConfig as WorldGenerationConfig);
+    }
+    if (presetId === "layout_amber_fields") {
+      return normalizeJsonContent(amberFieldsWorldConfig as WorldGenerationConfig);
+    }
+    if (presetId === "layout_ironpass_gorge") {
+      return normalizeJsonContent(ironpassGorgeWorldConfig as WorldGenerationConfig);
+    }
+    if (presetId === "layout_splitrock_canyon") {
+      return normalizeJsonContent(splitrockCanyonWorldConfig as WorldGenerationConfig);
+    }
     if (presetId === "layout_contested_basin") {
       return normalizeJsonContent(contestedBasinWorldConfig as WorldGenerationConfig);
     }
@@ -1873,6 +1917,18 @@ function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: strin
     }
     if (presetId === "layout_ridgeway_crossing") {
       return normalizeJsonContent(ridgewayCrossingMapObjectsConfig as MapObjectsConfig);
+    }
+    if (presetId === "layout_highland_reach") {
+      return normalizeJsonContent(highlandReachMapObjectsConfig as MapObjectsConfig);
+    }
+    if (presetId === "layout_amber_fields") {
+      return normalizeJsonContent(amberFieldsMapObjectsConfig as MapObjectsConfig);
+    }
+    if (presetId === "layout_ironpass_gorge") {
+      return normalizeJsonContent(ironpassGorgeMapObjectsConfig as MapObjectsConfig);
+    }
+    if (presetId === "layout_splitrock_canyon") {
+      return normalizeJsonContent(splitrockCanyonMapObjectsConfig as MapObjectsConfig);
     }
     if (presetId === "layout_contested_basin") {
       return normalizeJsonContent(contestedBasinMapObjectsConfig as MapObjectsConfig);

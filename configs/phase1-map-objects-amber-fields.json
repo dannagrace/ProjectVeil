@@ -1,0 +1,235 @@
+{
+  "neutralArmies": [
+    {
+      "id": "neutral-1",
+      "position": {
+        "x": 4,
+        "y": 3
+      },
+      "reward": {
+        "kind": "wood",
+        "amount": 6
+      },
+      "stacks": [
+        {
+          "templateId": "wolf_pack",
+          "count": 6
+        }
+      ],
+      "behavior": {
+        "mode": "patrol",
+        "patrolPath": [
+          { "x": 4, "y": 3 },
+          { "x": 5, "y": 3 },
+          { "x": 5, "y": 4 },
+          { "x": 4, "y": 4 }
+        ],
+        "detectionRadius": 3,
+        "chaseDistance": 5,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-2",
+      "position": {
+        "x": 5,
+        "y": 6
+      },
+      "reward": {
+        "kind": "ore",
+        "amount": 5
+      },
+      "stacks": [
+        {
+          "templateId": "hero_guard_basic",
+          "count": 5
+        }
+      ],
+      "behavior": {
+        "mode": "guard",
+        "detectionRadius": 3,
+        "chaseDistance": 6,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-3",
+      "position": {
+        "x": 3,
+        "y": 4
+      },
+      "reward": {
+        "kind": "gold",
+        "amount": 240
+      },
+      "stacks": [
+        {
+          "templateId": "wolf_pack",
+          "count": 5
+        }
+      ],
+      "behavior": {
+        "mode": "patrol",
+        "patrolRadius": 2,
+        "detectionRadius": 3,
+        "chaseDistance": 5,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-4",
+      "position": {
+        "x": 6,
+        "y": 5
+      },
+      "reward": {
+        "kind": "gold",
+        "amount": 260
+      },
+      "stacks": [
+        {
+          "templateId": "hero_guard_basic",
+          "count": 4
+        },
+        {
+          "templateId": "wolf_pack",
+          "count": 2
+        }
+      ],
+      "behavior": {
+        "mode": "guard",
+        "detectionRadius": 2,
+        "chaseDistance": 4,
+        "speed": 1
+      }
+    }
+  ],
+  "guaranteedResources": [
+    {
+      "position": {
+        "x": 2,
+        "y": 2
+      },
+      "resource": {
+        "kind": "wood",
+        "amount": 5
+      }
+    },
+    {
+      "position": {
+        "x": 7,
+        "y": 7
+      },
+      "resource": {
+        "kind": "ore",
+        "amount": 4
+      }
+    },
+    {
+      "position": {
+        "x": 2,
+        "y": 7
+      },
+      "resource": {
+        "kind": "gold",
+        "amount": 200
+      }
+    },
+    {
+      "position": {
+        "x": 7,
+        "y": 2
+      },
+      "resource": {
+        "kind": "gold",
+        "amount": 200
+      }
+    }
+  ],
+  "buildings": [
+    {
+      "id": "recruit-post-1",
+      "kind": "recruitment_post",
+      "position": {
+        "x": 1,
+        "y": 3
+      },
+      "label": "琥珀田前哨",
+      "unitTemplateId": "crown_crossbowman",
+      "recruitCount": 4,
+      "cost": {
+        "gold": 240,
+        "wood": 0,
+        "ore": 0
+      }
+    },
+    {
+      "id": "recruit-post-2",
+      "kind": "recruitment_post",
+      "position": {
+        "x": 8,
+        "y": 6
+      },
+      "label": "麦垄补员所",
+      "unitTemplateId": "crown_heavy_cavalry",
+      "recruitCount": 3,
+      "cost": {
+        "gold": 180,
+        "wood": 1,
+        "ore": 0
+      }
+    },
+    {
+      "id": "shrine-power-1",
+      "kind": "attribute_shrine",
+      "position": {
+        "x": 4,
+        "y": 4
+      },
+      "label": "金穗观象坛",
+      "bonus": {
+        "attack": 0,
+        "defense": 0,
+        "power": 1,
+        "knowledge": 1
+      }
+    },
+    {
+      "id": "shrine-knowledge-1",
+      "kind": "attribute_shrine",
+      "position": {
+        "x": 5,
+        "y": 5
+      },
+      "label": "丰岁识见坛",
+      "bonus": {
+        "attack": 0,
+        "defense": 0,
+        "power": 0,
+        "knowledge": 2
+      }
+    },
+    {
+      "id": "mine-wood-1",
+      "kind": "resource_mine",
+      "position": {
+        "x": 2,
+        "y": 6
+      },
+      "label": "谷仓林场",
+      "resourceKind": "wood",
+      "income": 4
+    },
+    {
+      "id": "mine-ore-1",
+      "kind": "resource_mine",
+      "position": {
+        "x": 7,
+        "y": 3
+      },
+      "label": "田脊矿井",
+      "resourceKind": "ore",
+      "income": 4
+    }
+  ]
+}

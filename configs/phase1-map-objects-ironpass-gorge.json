@@ -1,0 +1,240 @@
+{
+  "neutralArmies": [
+    {
+      "id": "neutral-1",
+      "position": {
+        "x": 5,
+        "y": 6
+      },
+      "reward": {
+        "kind": "ore",
+        "amount": 5
+      },
+      "stacks": [
+        {
+          "templateId": "hero_guard_basic",
+          "count": 5
+        }
+      ],
+      "behavior": {
+        "mode": "guard",
+        "detectionRadius": 3,
+        "chaseDistance": 6,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-2",
+      "position": {
+        "x": 6,
+        "y": 3
+      },
+      "reward": {
+        "kind": "gold",
+        "amount": 300
+      },
+      "stacks": [
+        {
+          "templateId": "wolf_pack",
+          "count": 7
+        }
+      ],
+      "behavior": {
+        "mode": "patrol",
+        "patrolPath": [
+          { "x": 6, "y": 3 },
+          { "x": 6, "y": 4 },
+          { "x": 5, "y": 4 },
+          { "x": 5, "y": 3 }
+        ],
+        "detectionRadius": 3,
+        "chaseDistance": 5,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-3",
+      "position": {
+        "x": 2,
+        "y": 5
+      },
+      "reward": {
+        "kind": "wood",
+        "amount": 6
+      },
+      "stacks": [
+        {
+          "templateId": "hero_guard_basic",
+          "count": 4
+        },
+        {
+          "templateId": "wolf_pack",
+          "count": 2
+        }
+      ],
+      "behavior": {
+        "mode": "guard",
+        "detectionRadius": 2,
+        "chaseDistance": 4,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-4",
+      "position": {
+        "x": 9,
+        "y": 4
+      },
+      "reward": {
+        "kind": "gold",
+        "amount": 260
+      },
+      "stacks": [
+        {
+          "templateId": "wolf_pack",
+          "count": 6
+        }
+      ],
+      "behavior": {
+        "mode": "patrol",
+        "patrolPath": [
+          { "x": 9, "y": 4 },
+          { "x": 10, "y": 4 },
+          { "x": 10, "y": 5 },
+          { "x": 9, "y": 5 }
+        ],
+        "detectionRadius": 3,
+        "chaseDistance": 5,
+        "speed": 1
+      }
+    }
+  ],
+  "guaranteedResources": [
+    {
+      "position": {
+        "x": 2,
+        "y": 2
+      },
+      "resource": {
+        "kind": "wood",
+        "amount": 5
+      }
+    },
+    {
+      "position": {
+        "x": 9,
+        "y": 7
+      },
+      "resource": {
+        "kind": "ore",
+        "amount": 4
+      }
+    },
+    {
+      "position": {
+        "x": 5,
+        "y": 2
+      },
+      "resource": {
+        "kind": "gold",
+        "amount": 220
+      }
+    },
+    {
+      "position": {
+        "x": 6,
+        "y": 7
+      },
+      "resource": {
+        "kind": "gold",
+        "amount": 220
+      }
+    }
+  ],
+  "buildings": [
+    {
+      "id": "recruit-post-1",
+      "kind": "recruitment_post",
+      "position": {
+        "x": 1,
+        "y": 3
+      },
+      "label": "铁关前哨营",
+      "unitTemplateId": "crown_crossbowman",
+      "recruitCount": 4,
+      "cost": {
+        "gold": 240,
+        "wood": 0,
+        "ore": 0
+      }
+    },
+    {
+      "id": "recruit-post-2",
+      "kind": "recruitment_post",
+      "position": {
+        "x": 10,
+        "y": 6
+      },
+      "label": "峡口补员站",
+      "unitTemplateId": "crown_heavy_cavalry",
+      "recruitCount": 3,
+      "cost": {
+        "gold": 180,
+        "wood": 1,
+        "ore": 0
+      }
+    },
+    {
+      "id": "shrine-defense-1",
+      "kind": "attribute_shrine",
+      "position": {
+        "x": 5,
+        "y": 4
+      },
+      "label": "隘口守望坛",
+      "bonus": {
+        "attack": 0,
+        "defense": 2,
+        "power": 0,
+        "knowledge": 0
+      }
+    },
+    {
+      "id": "shrine-attack-1",
+      "kind": "attribute_shrine",
+      "position": {
+        "x": 6,
+        "y": 5
+      },
+      "label": "断崖战意坛",
+      "bonus": {
+        "attack": 2,
+        "defense": 0,
+        "power": 0,
+        "knowledge": 0
+      }
+    },
+    {
+      "id": "mine-ore-1",
+      "kind": "resource_mine",
+      "position": {
+        "x": 2,
+        "y": 7
+      },
+      "label": "铁关矿井",
+      "resourceKind": "ore",
+      "income": 4
+    },
+    {
+      "id": "mine-wood-1",
+      "kind": "resource_mine",
+      "position": {
+        "x": 9,
+        "y": 2
+      },
+      "label": "峡谷林场",
+      "resourceKind": "wood",
+      "income": 4
+    }
+  ]
+}

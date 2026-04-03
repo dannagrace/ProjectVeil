@@ -37,6 +37,34 @@ export const EXTRA_CONTENT_PACK_MAP_PACKS: ContentPackMapPackDefinition[] = [
     aliases: ["ridgeway_crossing", "ridgeway"]
   },
   {
+    id: "highland-reach",
+    worldFileName: "phase1-world-highland-reach.json",
+    mapObjectsFileName: "phase1-map-objects-highland-reach.json",
+    phase: "phase1",
+    aliases: ["highland_reach", "highland"]
+  },
+  {
+    id: "amber-fields",
+    worldFileName: "phase1-world-amber-fields.json",
+    mapObjectsFileName: "phase1-map-objects-amber-fields.json",
+    phase: "phase1",
+    aliases: ["amber_fields", "amber"]
+  },
+  {
+    id: "ironpass-gorge",
+    worldFileName: "phase1-world-ironpass-gorge.json",
+    mapObjectsFileName: "phase1-map-objects-ironpass-gorge.json",
+    phase: "phase1",
+    aliases: ["ironpass_gorge", "ironpass"]
+  },
+  {
+    id: "splitrock-canyon",
+    worldFileName: "phase1-world-splitrock-canyon.json",
+    mapObjectsFileName: "phase1-map-objects-splitrock-canyon.json",
+    phase: "phase1",
+    aliases: ["splitrock_canyon", "splitrock"]
+  },
+  {
     id: "phase2",
     worldFileName: "phase2-contested-basin.json",
     mapObjectsFileName: "phase2-map-objects-contested-basin.json",

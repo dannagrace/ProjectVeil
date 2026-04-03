@@ -2,10 +2,18 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import assetConfig from "../../../configs/assets.json";
+import amberFieldsMapObjectsConfig from "../../../configs/phase1-map-objects-amber-fields.json";
 import frontierBasinMapObjectsConfig from "../../../configs/phase1-map-objects-frontier-basin.json";
+import highlandReachMapObjectsConfig from "../../../configs/phase1-map-objects-highland-reach.json";
+import ironpassGorgeMapObjectsConfig from "../../../configs/phase1-map-objects-ironpass-gorge.json";
+import splitrockCanyonMapObjectsConfig from "../../../configs/phase1-map-objects-splitrock-canyon.json";
 import stonewatchForkMapObjectsConfig from "../../../configs/phase1-map-objects-stonewatch-fork.json";
 import ridgewayCrossingMapObjectsConfig from "../../../configs/phase1-map-objects-ridgeway-crossing.json";
+import amberFieldsWorldConfig from "../../../configs/phase1-world-amber-fields.json";
 import frontierBasinWorldConfig from "../../../configs/phase1-world-frontier-basin.json";
+import highlandReachWorldConfig from "../../../configs/phase1-world-highland-reach.json";
+import ironpassGorgeWorldConfig from "../../../configs/phase1-world-ironpass-gorge.json";
+import splitrockCanyonWorldConfig from "../../../configs/phase1-world-splitrock-canyon.json";
 import stonewatchForkWorldConfig from "../../../configs/phase1-world-stonewatch-fork.json";
 import ridgewayCrossingWorldConfig from "../../../configs/phase1-world-ridgeway-crossing.json";
 import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
@@ -16,6 +24,7 @@ import {
   appendEventLogEntries,
   appendPlayerBattleReplaySummaries,
   applyBattleOutcomeToWorld,
+  AMBER_FIELDS_MAP_VARIANT_ID,
   applyAchievementMetricDelta,
   applyAchievementProgressValue,
   buildPlayerBattleReportCenter,
@@ -60,7 +69,9 @@ import {
   getLatestProgressedAchievement,
   getLatestUnlockedAchievement,
   HERO_EQUIPMENT_INVENTORY_CAPACITY,
+  HIGHLAND_REACH_MAP_VARIANT_ID,
   hasFullyExploredMap,
+  IRONPASS_GORGE_MAP_VARIANT_ID,
   normalizeAchievementProgressQuery,
   normalizeEventLogQuery,
   normalizePlayerAccountReadModel,
@@ -76,6 +87,7 @@ import {
   RIDGEWAY_CROSSING_MAP_VARIANT_ID,
   simulateAutomatedBattle,
   simulateAutomatedBattles,
+  SPLITROCK_CANYON_MAP_VARIANT_ID,
   STONEWATCH_FORK_MAP_VARIANT_ID,
   summarizeAssetMetadata,
   stepBattleReplayPlayback,
@@ -2465,6 +2477,63 @@ test("createInitialWorldState selects the stonewatch fork variant with the addit
   assert.equal(state.neutralArmies["neutral-4"]?.behavior?.mode, "patrol");
 });
 
+test("createInitialWorldState selects the highland reach variant with the wider plains layout", () => {
+  const state = createInitialWorldState(1001, "preview-highland[map:highland_reach]");
+
+  assert.equal(state.meta.mapVariantId, "highland_reach");
+  assert.equal(state.map.tiles.length, 100);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 4);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 2 && tile.position.y === 1)?.terrain, "water");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.buildings["shrine-defense-1"]?.kind, "attribute_shrine");
+  assert.equal(state.neutralArmies["neutral-2"]?.reward?.kind, "ore");
+  assert.equal(state.neutralArmies["neutral-3"]?.behavior?.mode, "patrol");
+});
+
+test("createInitialWorldState selects the amber fields variant with the central resource contest", () => {
+  const state = createInitialWorldState(1001, "preview-amber[map:amber_fields]");
+
+  assert.equal(state.meta.mapVariantId, "amber_fields");
+  assert.equal(state.map.tiles.length, 100);
+  assert.equal(state.heroes[1]?.position.x, 8);
+  assert.equal(state.heroes[1]?.position.y, 8);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 4 && tile.position.y === 4)?.terrain, "dirt");
+  assert.equal(state.buildings["shrine-power-1"]?.kind, "attribute_shrine");
+  assert.equal(state.buildings["mine-wood-1"]?.resourceKind, "wood");
+  assert.equal(state.neutralArmies["neutral-1"]?.reward?.kind, "wood");
+  assert.equal(state.neutralArmies["neutral-4"]?.reward?.amount, 260);
+});
+
+test("createInitialWorldState selects the ironpass gorge variant with a narrow canyon corridor", () => {
+  const state = createInitialWorldState(1001, "preview-ironpass[map:ironpass_gorge]");
+
+  assert.equal(state.meta.mapVariantId, "ironpass_gorge");
+  assert.equal(state.map.tiles.length, 120);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 4);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 0)?.terrain, "water");
+  assert.equal(state.buildings["shrine-defense-1"]?.kind, "attribute_shrine");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.neutralArmies["neutral-2"]?.behavior?.mode, "patrol");
+  assert.equal(state.neutralArmies["neutral-3"]?.reward?.kind, "wood");
+});
+
+test("createInitialWorldState selects the splitrock canyon variant with asymmetric starts", () => {
+  const state = createInitialWorldState(1001, "preview-splitrock[map:splitrock_canyon]");
+
+  assert.equal(state.meta.mapVariantId, "splitrock_canyon");
+  assert.equal(state.map.tiles.length, 120);
+  assert.equal(state.heroes[0]?.position.x, 1);
+  assert.equal(state.heroes[0]?.position.y, 2);
+  assert.equal(state.heroes[1]?.position.x, 9);
+  assert.equal(state.heroes[1]?.position.y, 7);
+  assert.equal(state.map.tiles.find((tile) => tile.position.x === 3 && tile.position.y === 1)?.terrain, "water");
+  assert.equal(state.buildings["mine-ore-1"]?.resourceKind, "ore");
+  assert.equal(state.buildings["recruit-post-2"]?.kind, "recruitment_post");
+  assert.equal(state.neutralArmies["neutral-4"]?.behavior?.mode, "patrol");
+});
+
 test("frontier basin generates a distinct layout from the default phase1 variant", () => {
   const seed = 5124;
   const defaultRoomId = "preview-default";
@@ -2573,6 +2642,62 @@ test("stonewatch fork configs validate alongside the existing Phase 1 variants",
   assert.doesNotThrow(() => {
     validateWorldConfig(stonewatchWorld);
     validateMapObjectsConfig(stonewatchMapObjects, stonewatchWorld, units);
+  });
+});
+
+test("highland reach configs validate alongside the expanded Phase 1 variants", () => {
+  const units = getDefaultUnitCatalog();
+  const highlandWorld = highlandReachWorldConfig as WorldGenerationConfig;
+  const highlandMapObjects = highlandReachMapObjectsConfig as MapObjectsConfig;
+  const bundle = getRuntimeConfigBundleForRoom("preview-highland[map:highland_reach]", 5124);
+
+  assert.equal(bundle.mapVariantId, HIGHLAND_REACH_MAP_VARIANT_ID);
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(highlandWorld);
+    validateMapObjectsConfig(highlandMapObjects, highlandWorld, units);
+  });
+});
+
+test("amber fields configs validate alongside the expanded Phase 1 variants", () => {
+  const units = getDefaultUnitCatalog();
+  const amberWorld = amberFieldsWorldConfig as WorldGenerationConfig;
+  const amberMapObjects = amberFieldsMapObjectsConfig as MapObjectsConfig;
+  const bundle = getRuntimeConfigBundleForRoom("preview-amber[map:amber_fields]", 5124);
+
+  assert.equal(bundle.mapVariantId, AMBER_FIELDS_MAP_VARIANT_ID);
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(amberWorld);
+    validateMapObjectsConfig(amberMapObjects, amberWorld, units);
+  });
+});
+
+test("ironpass gorge configs validate alongside the expanded Phase 1 variants", () => {
+  const units = getDefaultUnitCatalog();
+  const ironpassWorld = ironpassGorgeWorldConfig as WorldGenerationConfig;
+  const ironpassMapObjects = ironpassGorgeMapObjectsConfig as MapObjectsConfig;
+  const bundle = getRuntimeConfigBundleForRoom("preview-ironpass[map:ironpass_gorge]", 5124);
+
+  assert.equal(bundle.mapVariantId, IRONPASS_GORGE_MAP_VARIANT_ID);
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(ironpassWorld);
+    validateMapObjectsConfig(ironpassMapObjects, ironpassWorld, units);
+  });
+});
+
+test("splitrock canyon configs validate alongside the expanded Phase 1 variants", () => {
+  const units = getDefaultUnitCatalog();
+  const splitrockWorld = splitrockCanyonWorldConfig as WorldGenerationConfig;
+  const splitrockMapObjects = splitrockCanyonMapObjectsConfig as MapObjectsConfig;
+  const bundle = getRuntimeConfigBundleForRoom("preview-splitrock[map:splitrock_canyon]", 5124);
+
+  assert.equal(bundle.mapVariantId, SPLITROCK_CANYON_MAP_VARIANT_ID);
+
+  assert.doesNotThrow(() => {
+    validateWorldConfig(splitrockWorld);
+    validateMapObjectsConfig(splitrockMapObjects, splitrockWorld, units);
   });
 });
 
