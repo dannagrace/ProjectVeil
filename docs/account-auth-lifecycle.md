@@ -256,4 +256,4 @@
 当前仍未完成：
 
 - 短信 / 独立验证码供应商通道
-- 更完整的前端自动化回归矩阵；当前已补上 `npm run test:cocos:primary-journey` 这条 primary Cocos client 的账号会话 -> Lobby -> 首次进房自动化切片，但更广的交互矩阵仍待继续扩充
+- 更完整的前端自动化回归矩阵；当前已补上 `npm run smoke:cocos:canonical-journey` 这条 primary Cocos client 的账号会话 -> Lobby -> 首次进房自动化切片，但更广的交互矩阵仍待继续扩充

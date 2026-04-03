@@ -250,9 +250,12 @@ jobs:
             --markdown-output "${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.md" \
             --github-step-summary "${GITHUB_STEP_SUMMARY}"
 
-      - name: Run primary Cocos client journey regression gate
+      - name: Run canonical primary Cocos journey smoke
         if: always() && github.event_name == 'pull_request' && steps.cocos-release-packaging.outputs.touched == 'true'
-        run: npm run test:cocos:primary-journey
+        run: |
+          npm run smoke:cocos:canonical-journey -- \
+            --output "${RUNNER_TEMP}/release-readiness/cocos-primary-journey-smoke-${GITHUB_SHA}.json" \
+            --markdown-output "${RUNNER_TEMP}/release-readiness/cocos-primary-journey-smoke-${GITHUB_SHA}.md"
 
       - name: Capture primary Cocos diagnostics evidence
         if: always() && github.event_name == 'pull_request' && steps.cocos-release-packaging.outputs.touched == 'true'
@@ -287,12 +290,14 @@ jobs:
           changed_paths="${RUNNER_TEMP}/release-readiness/cocos-release-packaging-changed-paths-${GITHUB_SHA}.txt"
           audit_json="${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.json"
           audit_md="${RUNNER_TEMP}/release-readiness/cocos-primary-delivery-audit-${GITHUB_SHA}.md"
+          smoke_json="${RUNNER_TEMP}/release-readiness/cocos-primary-journey-smoke-${GITHUB_SHA}.json"
+          smoke_md="${RUNNER_TEMP}/release-readiness/cocos-primary-journey-smoke-${GITHUB_SHA}.md"
           diagnostics_json="${RUNNER_TEMP}/release-readiness/cocos-primary-client-diagnostics-${GITHUB_SHA}.json"
           diagnostics_md="${RUNNER_TEMP}/release-readiness/cocos-primary-client-diagnostics-${GITHUB_SHA}.md"
           summary_path="${BUNDLE_DIR}/SUMMARY.md"
 
           cp "${changed_paths}" "${BUNDLE_DIR}/changed-paths.txt"
-          for candidate in "${audit_json}" "${audit_md}" "${diagnostics_json}" "${diagnostics_md}"; do
+          for candidate in "${audit_json}" "${audit_md}" "${smoke_json}" "${smoke_md}" "${diagnostics_json}" "${diagnostics_md}"; do
             if [[ -f "${candidate}" ]]; then
               cp "${candidate}" "${BUNDLE_DIR}/"
             fi
@@ -311,6 +316,11 @@ jobs:
               echo "- Delivery audit: present"
             else
               echo "- Delivery audit: missing. Regressed command: \`npm run audit:cocos-primary-delivery -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir \\\"\${WECHAT_RELEASE_ARTIFACTS_DIR}\\\" --expect-exported-runtime --expected-revision \\\"\${GITHUB_SHA}\\\"\`"
+            fi
+            if [[ -f "${smoke_json}" && -f "${smoke_md}" ]]; then
+              echo "- Canonical Cocos journey smoke: present"
+            else
+              echo "- Canonical Cocos journey smoke: missing. Regressed command: \`npm run smoke:cocos:canonical-journey -- --output <json> --markdown-output <md>\`"
             fi
             if [[ -f "${diagnostics_json}" && -f "${diagnostics_md}" ]]; then
               echo "- Primary-client diagnostics: present"

@@ -143,6 +143,7 @@ npm run dev:client:h5
 - 终端逻辑演示：`npm run demo:flow`
 - 主客户端入口说明：`npm run client:primary`
 - Cocos 主客户端类型检查：`npm run typecheck:client`
+- Cocos canonical journey smoke：`npm run smoke:cocos:canonical-journey`（输出 `artifacts/release-readiness/` 下的结构化 JSON / Markdown / milestone diagnostics，并在失败时打印具体 stage）
 - 微信小游戏模板刷新：`npm run prepare:wechat-build`
 - 微信小游戏 CI 同款校验：`npm run check:wechat-build`
 - 发布就绪快照：`npm run release:readiness:snapshot`

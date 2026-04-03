@@ -7,10 +7,10 @@ This checklist is the maintained delivery baseline for the primary client at [`a
 Run the account -> lobby -> room-entry automation slice before packaging or signing off the primary client:
 
 ```bash
-npm run test:cocos:primary-journey
+npm run smoke:cocos:canonical-journey
 ```
 
-The command exercises the Cocos `VeilRoot` launch path in CI-friendly node-based automation, reuses the existing runtime/session harness, and records artifact-rich assertion payloads when it fails so contributors can tell apart:
+The command exercises the Cocos `VeilRoot` launch path in CI-friendly node-based automation, reuses the existing runtime/session harness, and emits JSON + Markdown evidence under `artifacts/release-readiness/`. On failure it prints the failed stage plus the exact diagnostic artifact path so contributors can tell apart:
 
 - lobby/bootstrap environment issues
 - stale or unavailable auth session bootstrap
@@ -43,7 +43,7 @@ The command emits a concise JSON plus Markdown summary under `artifacts/release-
 
 For PRs that touch Cocos release-packaging surfaces, GitHub Actions now treats this audit as part of the merge gate. The same run also executes:
 
-- `npm run test:cocos:primary-journey`
+- `npm run smoke:cocos:canonical-journey`
 - `npm run release:cocos:primary-diagnostics`
 
 CI then uploads a single reviewer-facing artifact named `cocos-release-packaging-evidence-<sha>`. Its `SUMMARY.md` calls out whether the delivery audit or primary-client diagnostics evidence was missing so regressions are actionable without digging through raw logs first.
@@ -93,7 +93,7 @@ Keep these manual items short and attach evidence through the existing release e
 ## Related Commands
 
 - Export template refresh: `npm run prepare:wechat-build`
-- Primary client journey regression: `npm run test:cocos:primary-journey`
+- Primary client canonical smoke evidence: `npm run smoke:cocos:canonical-journey`
 - Export validation: `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - Package artifact: `npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime --source-revision <git-sha>`
 - RC artifact validation: `npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> --expected-revision <git-sha>`

@@ -126,7 +126,7 @@
 建议证据：
 
 - `npm test`
-- `npm run test:cocos:primary-journey`
+- `npm run smoke:cocos:canonical-journey`
 - `npm run check:cocos-release-readiness`
 - `npm run release:cocos-rc:snapshot -- --output <snapshot-path>`
 - `docs/cocos-phase1-presentation-signoff.md`

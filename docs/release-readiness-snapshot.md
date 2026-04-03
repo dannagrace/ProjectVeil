@@ -186,7 +186,7 @@ Sample output:
       "id": "cocos-primary-journey",
       "kind": "automated",
       "status": "passed",
-      "command": "npm run test:cocos:primary-journey"
+      "command": "npm run smoke:cocos:canonical-journey"
     },
     {
       "id": "wechat-device-smoke",
