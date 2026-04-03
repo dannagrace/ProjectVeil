@@ -199,6 +199,8 @@ type MatchmakingStatusResponse = MatchmakingStatusQueued | MatchmakingStatusMatc
 
 export class MatchmakingService {
   private readonly queueByPlayerId = new Map<string, MatchmakingRequest>();
+  private readonly queueOrder: string[] = [];
+  private readonly queuePositionByPlayerId = new Map<string, number>();
   private readonly resultsByPlayerId = new Map<string, MatchResult>();
   private nextMatchSequence = 1;
 
@@ -206,7 +208,9 @@ export class MatchmakingService {
     const normalized = normalizeMatchmakingRequest(request);
     this.resultsByPlayerId.delete(normalized.playerId);
 
+    this.removeQueuedPlayer(normalized.playerId);
     this.queueByPlayerId.set(normalized.playerId, normalized);
+    this.insertQueuedPlayer(normalized);
     const status = this.getQueuedStatus(normalized.playerId);
     this.matchQueuedPlayers(now);
     if (!status) {
@@ -218,7 +222,7 @@ export class MatchmakingService {
   dequeue(playerId: string): boolean {
     const normalizedPlayerId = playerId.trim();
     this.resultsByPlayerId.delete(normalizedPlayerId);
-    return this.queueByPlayerId.delete(normalizedPlayerId);
+    return this.removeQueuedPlayer(normalizedPlayerId);
   }
 
   getStatus(playerId: string): MatchmakingStatusResponse {
@@ -238,18 +242,15 @@ export class MatchmakingService {
 
   private getQueuedStatus(playerId: string): MatchmakingStatusQueued | null {
     const normalizedPlayerId = playerId.trim();
-    const queue = Array.from(this.queueByPlayerId.values()).sort(
-      (left, right) => left.enqueuedAt.localeCompare(right.enqueuedAt) || left.playerId.localeCompare(right.playerId)
-    );
-    const position = queue.findIndex((entry) => entry.playerId === normalizedPlayerId);
-    if (position < 0) {
+    const position = this.queuePositionByPlayerId.get(normalizedPlayerId);
+    if (position == null) {
       return null;
     }
 
     return {
       status: "queued",
-      position: position + 1,
-      estimatedWaitSeconds: estimateMatchmakingWaitSeconds(position + 1)
+      position,
+      estimatedWaitSeconds: estimateMatchmakingWaitSeconds(position)
     };
   }
 
@@ -274,8 +275,8 @@ export class MatchmakingService {
       }
 
       const [left, right] = selection.players;
-      this.queueByPlayerId.delete(left.playerId);
-      this.queueByPlayerId.delete(right.playerId);
+      this.removeQueuedPlayer(left.playerId);
+      this.removeQueuedPlayer(right.playerId);
 
       const result = this.createMatchResult([left, right], now);
       this.resultsByPlayerId.set(left.playerId, result);
@@ -296,13 +297,55 @@ export class MatchmakingService {
     for (const [playerId, request] of this.queueByPlayerId.entries()) {
       const enqueuedAtMs = new Date(request.enqueuedAt).getTime();
       if (Number.isNaN(enqueuedAtMs) || referenceTime - enqueuedAtMs > maxAgeMs) {
-        this.queueByPlayerId.delete(playerId);
+        this.removeQueuedPlayer(playerId);
         this.resultsByPlayerId.delete(playerId);
         removed += 1;
       }
     }
     return removed;
   }
+
+  private insertQueuedPlayer(request: MatchmakingRequest): void {
+    let insertAt = this.queueOrder.length;
+    for (let index = 0; index < this.queueOrder.length; index += 1) {
+      const existingPlayerId = this.queueOrder[index];
+      const existingRequest = existingPlayerId ? this.queueByPlayerId.get(existingPlayerId) : null;
+      if (!existingRequest || compareQueuedPlayers(request, existingRequest) < 0) {
+        insertAt = index;
+        break;
+      }
+    }
+
+    this.queueOrder.splice(insertAt, 0, request.playerId);
+    this.reindexQueuePositions(insertAt);
+  }
+
+  private removeQueuedPlayer(playerId: string): boolean {
+    const normalizedPlayerId = playerId.trim();
+    const hadRequest = this.queueByPlayerId.delete(normalizedPlayerId);
+    const queuedPosition = this.queuePositionByPlayerId.get(normalizedPlayerId);
+    if (queuedPosition == null) {
+      return hadRequest;
+    }
+
+    this.queueOrder.splice(queuedPosition - 1, 1);
+    this.queuePositionByPlayerId.delete(normalizedPlayerId);
+    this.reindexQueuePositions(queuedPosition - 1);
+    return true;
+  }
+
+  private reindexQueuePositions(startIndex = 0): void {
+    for (let index = startIndex; index < this.queueOrder.length; index += 1) {
+      const playerId = this.queueOrder[index];
+      if (playerId) {
+        this.queuePositionByPlayerId.set(playerId, index + 1);
+      }
+    }
+  }
+}
+
+function compareQueuedPlayers(left: MatchmakingRequest, right: MatchmakingRequest): number {
+  return left.enqueuedAt.localeCompare(right.enqueuedAt) || left.playerId.localeCompare(right.playerId);
 }
 
 let configuredMatchmakingService = new MatchmakingService();
