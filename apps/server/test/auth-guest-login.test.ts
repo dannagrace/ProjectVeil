@@ -2485,17 +2485,20 @@ test("password recovery request returns 502 and dead-letters non-retryable webho
   assert.equal(deliveryPayload.delivery.recentAttempts[0]?.failureReason, "webhook_4xx");
 });
 
-test("wechat login defaults to mock mode outside production", { concurrency: false }, async (t) => {
+test("wechat login defaults to mock mode in NODE_ENV=test", { concurrency: false }, async (t) => {
   const port = 44750 + Math.floor(Math.random() * 1000);
   const server = await startAuthServer(port);
+  const previousNodeEnv = process.env.NODE_ENV;
 
   t.after(async () => {
+    process.env.NODE_ENV = previousNodeEnv;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE;
     resetGuestAuthSessions();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
+  process.env.NODE_ENV = "test";
   delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
   const response = await fetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
     method: "POST",
@@ -2513,6 +2516,7 @@ test("wechat login defaults to mock mode outside production", { concurrency: fal
   assert.equal(response.status, 200);
   assert.equal(payload.session.playerId, "wechat-player");
   assert.equal(payload.session.provider, "wechat-mini-game");
+  assert.equal("session_key" in payload.session, false);
 });
 
 test("wechat login route can be explicitly disabled", { concurrency: false }, async (t) => {
@@ -2547,14 +2551,17 @@ test("wechat login route can be explicitly disabled", { concurrency: false }, as
 test("legacy wechat mini game route remains available as an alias", { concurrency: false }, async (t) => {
   const port = 44855 + Math.floor(Math.random() * 1000);
   const server = await startAuthServer(port, new MemoryAuthStore());
+  const previousNodeEnv = process.env.NODE_ENV;
 
   t.after(async () => {
+    process.env.NODE_ENV = previousNodeEnv;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE;
     resetGuestAuthSessions();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
+  process.env.NODE_ENV = "test";
   process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "mock";
   process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE = "wx-dev-code";
   const response = await fetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
@@ -2574,6 +2581,7 @@ test("legacy wechat mini game route remains available as an alias", { concurrenc
   assert.equal(payload.session.playerId, "wechat-player");
   assert.equal(payload.session.provider, "wechat-mini-game");
   assert.equal(payload.session.authMode, "guest");
+  assert.equal("session_key" in payload.session, false);
 });
 
 test("wechat mini game production exchange binds code2Session identity onto an authenticated account", { concurrency: false }, async (t) => {
@@ -2602,16 +2610,16 @@ test("wechat mini game production exchange binds code2Session identity onto an a
   t.after(async () => {
     globalThis.fetch = originalFetch;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
-    delete process.env.VEIL_WECHAT_MINIGAME_APP_ID;
-    delete process.env.VEIL_WECHAT_MINIGAME_APP_SECRET;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
     delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
     resetGuestAuthSessions();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
   process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
-  process.env.VEIL_WECHAT_MINIGAME_APP_ID = "wx-prod-app";
-  process.env.VEIL_WECHAT_MINIGAME_APP_SECRET = "wx-prod-secret";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
   process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
   globalThis.fetch = async (input, init) => {
     requestedUrl = String(input);
@@ -2651,6 +2659,7 @@ test("wechat mini game production exchange binds code2Session identity onto an a
   assert.equal(payload.session.provider, "wechat-mini-game");
   assert.equal(payload.session.authMode, "account");
   assert.equal(payload.session.loginId, "veil-ranger");
+  assert.equal("session_key" in payload.session, false);
 
   const requestUrl = new URL(requestedUrl);
   assert.equal(requestUrl.origin + requestUrl.pathname, "https://wechat.example.test/code2session");
@@ -2677,16 +2686,16 @@ test("wechat mini game login reuses the bound player even when later requests sp
   t.after(async () => {
     globalThis.fetch = originalFetch;
     delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
-    delete process.env.VEIL_WECHAT_MINIGAME_APP_ID;
-    delete process.env.VEIL_WECHAT_MINIGAME_APP_SECRET;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
     delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
     resetGuestAuthSessions();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
   process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
-  process.env.VEIL_WECHAT_MINIGAME_APP_ID = "wx-prod-app";
-  process.env.VEIL_WECHAT_MINIGAME_APP_SECRET = "wx-prod-secret";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
   process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
   globalThis.fetch = async () =>
     new Response(
@@ -2734,10 +2743,46 @@ test("wechat mini game login reuses the bound player even when later requests sp
   assert.equal(secondPayload.session.playerId, "wechat-player");
   assert.equal(secondPayload.session.displayName, "回归旅人");
   assert.equal(secondPayload.session.provider, "wechat-mini-game");
+  assert.equal("session_key" in firstPayload.session, false);
+  assert.equal("session_key" in secondPayload.session, false);
 
   const boundAccount = await store.loadPlayerAccount("wechat-player");
   const spoofedAccount = await store.loadPlayerAccount("spoofed-player");
   assert.equal(boundAccount?.wechatMiniGameOpenId, "wx-openid-repeat");
   assert.equal(boundAccount?.displayName, "回归旅人");
   assert.equal(spoofedAccount, null);
+});
+
+test("wechat mock mode stays disabled outside NODE_ENV=test", { concurrency: false }, async (t) => {
+  const port = 45080 + Math.floor(Math.random() * 1000);
+  const server = await startAuthServer(port, new MemoryAuthStore());
+  const previousNodeEnv = process.env.NODE_ENV;
+
+  t.after(async () => {
+    process.env.NODE_ENV = previousNodeEnv;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.NODE_ENV = "development";
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "mock";
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE = "wx-dev-code";
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-dev-code",
+      playerId: "wechat-player",
+      displayName: "云桥旅人"
+    })
+  });
+  const payload = (await response.json()) as { error: { code: string } };
+
+  assert.equal(response.status, 501);
+  assert.equal(payload.error.code, "wechat_login_not_enabled");
 });

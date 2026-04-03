@@ -285,10 +285,12 @@ export function cachePlayerAccountAuthState(input: {
 }
 
 function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): WechatMiniGameLoginConfig {
+  const isTestEnvironment = env.NODE_ENV?.trim().toLowerCase() === "test";
   const normalizedMode = env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
-  const defaultMode = env.NODE_ENV?.trim().toLowerCase() === "production" ? "disabled" : "mock";
+  const hasWechatCredentials = Boolean(env.WECHAT_APP_ID?.trim() && env.WECHAT_APP_SECRET?.trim());
+  const defaultMode = isTestEnvironment ? "mock" : hasWechatCredentials ? "production" : "disabled";
   const mode =
-    normalizedMode === "mock"
+    normalizedMode === "mock" && isTestEnvironment
       ? "mock"
       : normalizedMode === "production" || normalizedMode === "code2session"
         ? "production"
@@ -299,8 +301,8 @@ function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): We
     mode,
     mockCode: env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE?.trim() || "wechat-dev-code",
     code2SessionUrl: env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL?.trim() || "https://api.weixin.qq.com/sns/jscode2session",
-    ...(env.VEIL_WECHAT_MINIGAME_APP_ID?.trim() ? { appId: env.VEIL_WECHAT_MINIGAME_APP_ID.trim() } : {}),
-    ...(env.VEIL_WECHAT_MINIGAME_APP_SECRET?.trim() ? { appSecret: env.VEIL_WECHAT_MINIGAME_APP_SECRET.trim() } : {})
+    ...(env.WECHAT_APP_ID?.trim() ? { appId: env.WECHAT_APP_ID.trim() } : {}),
+    ...(env.WECHAT_APP_SECRET?.trim() ? { appSecret: env.WECHAT_APP_SECRET.trim() } : {})
   };
 }
 

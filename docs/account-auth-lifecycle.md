@@ -5,6 +5,7 @@
 ## 当前已落地能力
 
 - 游客登录：`POST /api/auth/guest-login`
+- 微信小游戏登录：`POST /api/auth/wechat-login`（`/api/auth/wechat-mini-game-login` 仍保留别名）
 - 游客档升级成口令账号：`POST /api/auth/account-bind`
 - 口令账号登录：`POST /api/auth/account-login`
 - 会话校验 / 刷新 / 退出：`GET /api/auth/session`、`POST /api/auth/refresh`、`POST /api/auth/logout`
@@ -17,6 +18,14 @@
 1. 玩家可先以游客身份进入房间并形成 `player_accounts` 档案。
 2. 需要长期登录时，再把当前游客档绑定到 `loginId + password`。
 3. 后续账号登录会继续复用同一份英雄长期档、全局资源仓库和账号事件历史。
+
+## 微信小游戏 code2session
+
+- `POST /api/auth/wechat-login` 会用服务端环境变量 `WECHAT_APP_ID` / `WECHAT_APP_SECRET` 调用微信 `jscode2session`。
+- 当同一个微信小游戏账号重复登录时，服务端会复用已经绑定过的 `playerId`，不会因为客户端再次提交不同的 `playerId` 而漂移。
+- 若当前请求已经带有正式账号会话，服务端会把该微信身份绑定到现有账号；后续该微信登录会继续命中同一个账号档。
+- 服务端只消费微信返回的 `openid` / `unionid` 做绑定，不会把 `session_key` 写入客户端响应。
+- mock code 仅保留给 `NODE_ENV=test` 的自动化测试；非测试环境即使显式配置 `VEIL_WECHAT_MINIGAME_LOGIN_MODE=mock` 也不会启用。
 
 ## 设备会话管理
 
