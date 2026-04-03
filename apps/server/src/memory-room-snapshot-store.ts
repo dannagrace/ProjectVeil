@@ -305,9 +305,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    const stored = structuredClone(nextAccount);
-    this.accounts.set(playerId, stored);
-    return structuredClone(stored);
+    const storedAccount = cloneAccount(nextAccount);
+    this.accounts.set(playerId, storedAccount);
+    return cloneAccount(storedAccount);
   }
 
   async creditGems(playerId: string, amount: number, reason: "purchase" | "reward", _refId: string): Promise<PlayerAccountSnapshot> {

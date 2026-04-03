@@ -132,3 +132,41 @@ test("memory room snapshot store supports binding and resolving account credenti
   assert.equal(auth?.playerId, "player-1");
   assert.equal(auth?.displayName, "灰烬领主");
 });
+
+test("memory room snapshot store ensurePlayerAccount keeps stored snapshots isolated", async () => {
+  const store = createMemoryRoomSnapshotStore();
+  const first = await store.ensurePlayerAccount({
+    playerId: "player-1",
+    displayName: "灰烬领主"
+  });
+
+  first.globalResources.gold = 999;
+  first.achievements.push({
+    id: "first_battle",
+    title: "First Battle",
+    description: "Win or complete your first battle.",
+    metric: "battles_started",
+    current: 1,
+    target: 1,
+    unlocked: true,
+    progressUpdatedAt: "2026-03-27T12:00:00.000Z",
+    unlockedAt: "2026-03-27T12:00:00.000Z"
+  });
+  first.recentEventLog.push({
+    id: "mutated-event",
+    timestamp: "2026-03-27T12:00:00.000Z",
+    roomId: "room-memory",
+    playerId: "player-1",
+    category: "account",
+    description: "mutated",
+    rewards: []
+  });
+  first.recentBattleReplays.push(createReplaySummary("mutated-replay"));
+
+  const second = await store.ensurePlayerAccount({ playerId: "player-1" });
+
+  assert.equal(second.globalResources.gold, 0);
+  assert.equal(second.achievements.length, 0);
+  assert.equal(second.recentEventLog.length, 0);
+  assert.equal(second.recentBattleReplays.length, 0);
+});
