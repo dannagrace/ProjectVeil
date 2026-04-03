@@ -4,6 +4,7 @@ import {
   type EquipmentId,
   type EquipmentDefinition,
   type EquipmentRarity,
+  type EquipmentSpecialEffectConfig,
   type EquipmentStatBonuses,
   type EquipmentType,
   type HeroState,
@@ -95,6 +96,87 @@ const DEFAULT_EQUIPMENT_CATALOG: EquipmentCatalogConfig = {
       }
     },
     {
+      id: "emberwood_staff",
+      name: "烬木法杖",
+      type: "weapon",
+      rarity: "common",
+      description: "在廉价木杖中嵌入火纹碎片，适合初阶施法者。",
+      bonuses: {
+        power: 1,
+        knowledge: 1
+      }
+    },
+    {
+      id: "windrider_javelin",
+      name: "逐风标枪",
+      type: "weapon",
+      rarity: "common",
+      description: "轻型投枪便于远距离压制和追击。",
+      bonuses: {
+        attackPercent: 5
+      }
+    },
+    {
+      id: "ironbound_greatblade",
+      name: "铁缚巨刃",
+      type: "weapon",
+      rarity: "common",
+      description: "双手重刃以笨重换取稳定的破甲能力。",
+      bonuses: {
+        attackPercent: 9
+      }
+    },
+    {
+      id: "runeshard_staff",
+      name: "符晶法杖",
+      type: "weapon",
+      rarity: "rare",
+      description: "杖首的符晶会在法术聚焦时放大破坏力。",
+      bonuses: {
+        attackPercent: 4,
+        power: 2
+      }
+    },
+    {
+      id: "siege_maul",
+      name: "攻城战锤",
+      type: "weapon",
+      rarity: "rare",
+      description: "以重击撕开防线的冲锋武器。",
+      bonuses: {
+        attackPercent: 14
+      },
+      setId: "warhost"
+    },
+    {
+      id: "frostfang_javelin",
+      name: "霜牙飞枪",
+      type: "weapon",
+      rarity: "rare",
+      description: "投掷时带着寒雾轨迹，擅长抢先压低敌军气势。",
+      bonuses: {
+        attackPercent: 7,
+        knowledge: 1
+      },
+      specialEffect: {
+        id: "initiative_edge",
+        name: "抢攻",
+        description: "在开战后的第一轮拥有更强的压制力。"
+      }
+    },
+    {
+      id: "titanbreaker_greatsword",
+      name: "裂岳巨剑",
+      type: "weapon",
+      rarity: "epic",
+      description: "专为突破重甲阵列打造的双手巨剑。",
+      bonuses: {
+        attackPercent: 18,
+        defensePercent: 2
+      },
+      setId: "warhost"
+    },
+    {
       id: "padded_gambeson",
       name: "厚绗布甲",
       type: "armor",
@@ -170,6 +252,90 @@ const DEFAULT_EQUIPMENT_CATALOG: EquipmentCatalogConfig = {
         defensePercent: 14,
         maxHp: 5
       }
+    },
+    {
+      id: "leather_brigandine",
+      name: "轻革战衣",
+      type: "armor",
+      rarity: "common",
+      description: "轻甲结构在保留机动性的同时提供基础防护。",
+      bonuses: {
+        attackPercent: 3,
+        defensePercent: 6,
+        maxHp: 2
+      }
+    },
+    {
+      id: "duskweave_robes",
+      name: "暮纱法袍",
+      type: "armor",
+      rarity: "common",
+      description: "袍摆的暗纹有助于稳定施法节奏。",
+      bonuses: {
+        power: 1,
+        knowledge: 1,
+        maxHp: 2
+      }
+    },
+    {
+      id: "skirmisher_cuirass",
+      name: "游斗胸甲",
+      type: "armor",
+      rarity: "common",
+      description: "偏向攻守均衡的前哨轻甲。",
+      bonuses: {
+        attackPercent: 4,
+        defensePercent: 5,
+        maxHp: 2
+      }
+    },
+    {
+      id: "runic_vestments",
+      name: "符印法衣",
+      type: "armor",
+      rarity: "rare",
+      description: "由多层符印布面缝制，能承载更多法术波动。",
+      bonuses: {
+        defensePercent: 4,
+        power: 2,
+        knowledge: 1
+      }
+    },
+    {
+      id: "assault_cuirass",
+      name: "突袭胸甲",
+      type: "armor",
+      rarity: "rare",
+      description: "为破阵先锋打造的轻重混编胸甲。",
+      bonuses: {
+        attackPercent: 6,
+        defensePercent: 8,
+        maxHp: 3
+      },
+      setId: "warhost"
+    },
+    {
+      id: "thornhide_cape",
+      name: "棘皮披风",
+      type: "armor",
+      rarity: "rare",
+      description: "外层的硬棘纤维能分散近身冲击。",
+      bonuses: {
+        defensePercent: 9,
+        maxHp: 4
+      }
+    },
+    {
+      id: "bulwark_plate",
+      name: "磐垒重铠",
+      type: "armor",
+      rarity: "epic",
+      description: "重装守军的压阵护甲，越久战越难被击穿。",
+      bonuses: {
+        defensePercent: 18,
+        maxHp: 7
+      },
+      setId: "bulwark"
     },
     {
       id: "scout_compass",
@@ -248,9 +414,142 @@ const DEFAULT_EQUIPMENT_CATALOG: EquipmentCatalogConfig = {
         name: "引导",
         description: "为后续技能结算预留更高的法术上限。"
       }
+    },
+    {
+      id: "trailblazer_lantern",
+      name: "拓路灯盏",
+      type: "accessory",
+      rarity: "common",
+      description: "发光符灯能帮助部队更早识别前路威胁。",
+      bonuses: {
+        attackPercent: 2,
+        knowledge: 1
+      }
+    },
+    {
+      id: "wayfinder_map",
+      name: "行路图卷",
+      type: "accessory",
+      rarity: "common",
+      description: "一卷不断修订的地图草图，适合长期行军。",
+      bonuses: {
+        defensePercent: 2,
+        knowledge: 1
+      }
+    },
+    {
+      id: "restorers_kit",
+      name: "复原急救包",
+      type: "accessory",
+      rarity: "common",
+      description: "包含绷带与药膏的随身套件，适合持久战。",
+      bonuses: {
+        defensePercent: 2,
+        maxHp: 2
+      }
+    },
+    {
+      id: "blood_oath_emblem",
+      name: "血誓徽印",
+      type: "accessory",
+      rarity: "rare",
+      description: "战团先锋间流转的誓约信物。",
+      bonuses: {
+        attackPercent: 6,
+        power: 1
+      },
+      setId: "warhost"
+    },
+    {
+      id: "sentinel_badge",
+      name: "守卫徽章",
+      type: "accessory",
+      rarity: "rare",
+      description: "常由城防指挥官佩戴，用以稳住整条阵线。",
+      bonuses: {
+        defensePercent: 7
+      },
+      setId: "bulwark"
+    },
+    {
+      id: "cartographer_monocle",
+      name: "绘界单片镜",
+      type: "accessory",
+      rarity: "rare",
+      description: "经常被探索队长用于快速判定地形与射界。",
+      bonuses: {
+        attackPercent: 3,
+        knowledge: 2
+      }
+    },
+    {
+      id: "phoenix_feather",
+      name: "炎凰羽饰",
+      type: "accessory",
+      rarity: "epic",
+      description: "燃尽后仍有余辉的羽饰，能提升战意与专注。",
+      bonuses: {
+        attackPercent: 4,
+        power: 1,
+        maxHp: 3
+      }
+    },
+    {
+      id: "briar_heart_charm",
+      name: "荆心护符",
+      type: "accessory",
+      rarity: "epic",
+      description: "镶着硬棘核心的护符，擅长将冲击返还给来敌。",
+      bonuses: {
+        defensePercent: 6,
+        maxHp: 4
+      },
+      setId: "bulwark"
     }
   ]
 };
+
+export interface EquipmentSetBonusConfig {
+  setId: string;
+  name: string;
+  piecesRequired: number;
+  description: string;
+  bonuses: Partial<EquipmentStatBonuses>;
+  specialEffect?: EquipmentSpecialEffectConfig;
+}
+
+export const SET_BONUSES: EquipmentSetBonusConfig[] = [
+  {
+    setId: "warhost",
+    name: "战团突袭套",
+    piecesRequired: 2,
+    description: "2 件：攻击 +8% / 力量 +1，并获得击杀回血。",
+    bonuses: {
+      attackPercent: 8,
+      power: 1
+    },
+    specialEffect: {
+      id: "lifesteal",
+      name: "嗜血",
+      description: "击杀敌方单位后恢复自身生命。"
+    }
+  },
+  {
+    setId: "bulwark",
+    name: "磐垒守御套",
+    piecesRequired: 2,
+    description: "2 件：防御 +10% / 生命上限 +4，并获得反伤。",
+    bonuses: {
+      defensePercent: 10,
+      maxHp: 4
+    },
+    specialEffect: {
+      id: "thorns",
+      name: "反刺",
+      description: "受到近战攻击时，对攻击者造成反伤。"
+    }
+  }
+];
 
 const DEFAULT_EQUIPMENT_BY_ID = new Map(
   DEFAULT_EQUIPMENT_CATALOG.entries.map((entry) => [entry.id, entry] as const)
@@ -266,6 +565,7 @@ export interface HeroEquipmentBonusSummary extends EquipmentStatBonuses {
   attack: number;
   defense: number;
   resolvedItemIds: string[];
+  activeSetBonuses: EquipmentSetBonusConfig[];
   specialEffects: NonNullable<EquipmentDefinition["specialEffect"]>[];
 }
 
@@ -307,6 +607,19 @@ function numericBonus(value: number | undefined): number {
 
 function resolveEquipmentDefinition(id: string | undefined): EquipmentDefinition | undefined {
   return id ? DEFAULT_EQUIPMENT_BY_ID.get(id) : undefined;
+}
+
+function resolveActiveSetBonuses(resolvedItems: EquipmentDefinition[]): EquipmentSetBonusConfig[] {
+  const countsBySetId = resolvedItems.reduce<Record<string, number>>((counts, item) => {
+    if (!item.setId) {
+      return counts;
+    }
+
+    counts[item.setId] = (counts[item.setId] ?? 0) + 1;
+    return counts;
+  }, {});
+
+  return SET_BONUSES.filter((entry) => (countsBySetId[entry.setId] ?? 0) >= entry.piecesRequired);
 }
 
 function percentageDelta(base: number, percent: number): number {
@@ -353,6 +666,7 @@ export function getDefaultEquipmentCatalog(): EquipmentCatalogConfig {
     entries: DEFAULT_EQUIPMENT_CATALOG.entries.map((entry) => ({
       ...entry,
       bonuses: { ...entry.bonuses },
+      ...(entry.setId ? { setId: entry.setId } : {}),
       ...(entry.specialEffect ? { specialEffect: { ...entry.specialEffect } } : {})
     }))
   };
@@ -497,6 +811,7 @@ export function createHeroEquipmentBonusSummary(
     resolveEquipmentDefinition(hero.loadout.equipment.armorId),
     resolveEquipmentDefinition(hero.loadout.equipment.accessoryId)
   ].filter((entry): entry is EquipmentDefinition => Boolean(entry));
+  const activeSetBonuses = resolveActiveSetBonuses(resolvedItems);
 
   for (const item of resolvedItems) {
     bonuses.attackPercent += numericBonus(item.bonuses.attackPercent);
@@ -505,6 +820,19 @@ export function createHeroEquipmentBonusSummary(
     bonuses.knowledge += numericBonus(item.bonuses.knowledge);
     bonuses.maxHp += numericBonus(item.bonuses.maxHp);
   }
+
+  for (const setBonus of activeSetBonuses) {
+    bonuses.attackPercent += numericBonus(setBonus.bonuses.attackPercent);
+    bonuses.defensePercent += numericBonus(setBonus.bonuses.defensePercent);
+    bonuses.power += numericBonus(setBonus.bonuses.power);
+    bonuses.knowledge += numericBonus(setBonus.bonuses.knowledge);
+    bonuses.maxHp += numericBonus(setBonus.bonuses.maxHp);
+  }
+
+  const specialEffects = resolvedItems
+    .flatMap((item) => (item.specialEffect ? [item.specialEffect] : []))
+    .concat(activeSetBonuses.flatMap((setBonus) => (setBonus.specialEffect ? [setBonus.specialEffect] : [])))
+    .filter((effect, index, effects) => effects.findIndex((item) => item.id === effect.id) === index);
 
   return {
     attack: percentageDelta(hero.stats.attack, bonuses.attackPercent),
@@ -515,9 +843,8 @@ export function createHeroEquipmentBonusSummary(
     knowledge: bonuses.knowledge,
     maxHp: bonuses.maxHp,
     resolvedItemIds: resolvedItems.map((item) => item.id),
-    specialEffects: resolvedItems
-      .flatMap((item) => (item.specialEffect ? [item.specialEffect] : []))
-      .filter((effect, index, effects) => effects.findIndex((item) => item.id === effect.id) === index)
+    activeSetBonuses,
+    specialEffects
   };
 }
 

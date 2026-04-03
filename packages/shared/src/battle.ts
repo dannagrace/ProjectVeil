@@ -10,6 +10,7 @@ import type {
   BattleStatusEffectConfig,
   BattleStatusEffectId,
   BattleStatusEffectState,
+  EquipmentSpecialEffectId,
   HeroState,
   NeutralArmyState,
   TerrainType,
@@ -52,6 +53,10 @@ function skillsOf(unit: UnitStack): BattleSkillState[] {
 
 function statusEffectsOf(unit: UnitStack): BattleStatusEffectState[] {
   return unit.statusEffects ?? [];
+}
+
+function equipmentEffectsOf(unit: UnitStack): EquipmentSpecialEffectId[] {
+  return unit.equipmentEffects ?? [];
 }
 
 function withNormalizedCollections(unit: UnitStack): UnitStack {
@@ -447,6 +452,18 @@ function applyHealing(target: UnitStack, amount: number): UnitStack {
     ...target,
     currentHp: currentHp > 0 ? currentHp : target.maxHp
   };
+}
+
+function hasEquipmentEffect(unit: UnitStack, effectId: EquipmentSpecialEffectId): boolean {
+  return equipmentEffectsOf(unit).includes(effectId);
+}
+
+function lifestealHealingAmount(unit: UnitStack): number {
+  return Math.max(2, Math.ceil(unit.maxHp * 0.2));
+}
+
+function thornsDamageAmount(incomingDamage: number): number {
+  return Math.max(1, Math.floor(incomingDamage * 0.2));
 }
 
 function buildUnitStack(
@@ -1187,6 +1204,7 @@ function applyAttackSequence(
   );
 
   let damagedDefender = nextUnits[defender.id]!;
+  let nextAttacker = attacker;
   damagedDefender = applyOnHitStatuses(
     attacker,
     damagedDefender,
@@ -1195,6 +1213,20 @@ function applyAttackSequence(
     options?.skillId ? [options.skillId] : []
   );
   nextUnits[defender.id] = damagedDefender;
+
+  if ((options?.delivery ?? "contact") === "contact" && damagedDefender.count > 0 && hasEquipmentEffect(damagedDefender, "thorns")) {
+    const reflectedDamage = thornsDamageAmount(attackDamage);
+    nextAttacker = applyDamage(nextAttacker, reflectedDamage);
+    nextUnits[attacker.id] = nextAttacker;
+    log.push(`${damagedDefender.stackName} 的反刺对 ${attacker.stackName} 造成 ${reflectedDamage} 伤害`);
+  }
+
+  if (damagedDefender.count === 0 && hasEquipmentEffect(nextAttacker, "lifesteal")) {
+    const healingAmount = lifestealHealingAmount(nextAttacker);
+    nextAttacker = applyHealing(nextAttacker, healingAmount);
+    nextUnits[attacker.id] = nextAttacker;
+    log.push(`${nextAttacker.stackName} 触发嗜血，恢复 ${healingAmount} 生命`);
+  }
 
   const splashSkillDefinition = options?.skillId ? skillDefinitionFor(options.skillId, catalogIndex) : null;
   const splashMultiplier =
@@ -1217,19 +1249,33 @@ function applyAttackSequence(
 
   if ((options?.allowRetaliation ?? true) && damagedDefender.count > 0 && !damagedDefender.hasRetaliated) {
     const retaliationRoll = nextDeterministicRandom(nextRngState.seed);
-    const retaliationDamage = estimateDamage(damagedDefender, attacker, retaliationRoll.value, preparedState.state);
-    let damagedAttacker = applyDamage(attacker, retaliationDamage);
+    const retaliationDamage = estimateDamage(damagedDefender, nextAttacker, retaliationRoll.value, preparedState.state);
+    let damagedAttacker = applyDamage(nextAttacker, retaliationDamage);
     damagedAttacker = applyOnHitStatuses(damagedDefender, damagedAttacker, log, catalogIndex);
+    let retaliatingDefender = damagedDefender;
+
+    if (damagedAttacker.count > 0 && hasEquipmentEffect(damagedAttacker, "thorns")) {
+      const reflectedDamage = thornsDamageAmount(retaliationDamage);
+      retaliatingDefender = applyDamage(retaliatingDefender, reflectedDamage);
+      log.push(`${damagedAttacker.stackName} 的反刺对 ${retaliatingDefender.stackName} 造成 ${reflectedDamage} 伤害`);
+    }
+
+    if (damagedAttacker.count === 0 && hasEquipmentEffect(retaliatingDefender, "lifesteal")) {
+      const healingAmount = lifestealHealingAmount(retaliatingDefender);
+      retaliatingDefender = applyHealing(retaliatingDefender, healingAmount);
+      log.push(`${retaliatingDefender.stackName} 触发嗜血，恢复 ${healingAmount} 生命`);
+    }
+
     nextUnits[attacker.id] = damagedAttacker;
     nextUnits[defender.id] = {
-      ...damagedDefender,
+      ...retaliatingDefender,
       hasRetaliated: true
     };
     nextRngState = {
       seed: retaliationRoll.nextSeed,
       cursor: nextRngState.cursor + 1
     };
-    log.push(`${damagedDefender.stackName} 反击 ${attacker.stackName}，造成 ${retaliationDamage} 伤害`);
+    log.push(`${retaliatingDefender.stackName} 反击 ${attacker.stackName}，造成 ${retaliationDamage} 伤害`);
   }
 
   return advanceTurn(
@@ -1616,6 +1662,7 @@ export function createNeutralBattleState(
       currentHp: heroTemplate.maxHp,
       maxHp: heroTemplate.maxHp,
       power: hero.stats.power,
+      equipmentEffects: heroEquipment.specialEffects.map((effect) => effect.id),
       hasRetaliated: false,
       defending: false
     },
@@ -1712,15 +1759,16 @@ export function createHeroBattleState(
         initiative: attackerTemplate.initiative,
         attack: attackerTemplate.attack + attackerHero.stats.attack + attackerEquipment.attack,
         defense: attackerTemplate.defense + attackerHero.stats.defense + attackerEquipment.defense,
-      minDamage: attackerTemplate.minDamage,
-      maxDamage: attackerTemplate.maxDamage,
-      count: attackerHero.armyCount,
-      currentHp: attackerTemplate.maxHp,
-      maxHp: attackerTemplate.maxHp,
-      power: attackerHero.stats.power,
-      hasRetaliated: false,
-      defending: false
-    },
+        minDamage: attackerTemplate.minDamage,
+        maxDamage: attackerTemplate.maxDamage,
+        count: attackerHero.armyCount,
+        currentHp: attackerTemplate.maxHp,
+        maxHp: attackerTemplate.maxHp,
+        power: attackerHero.stats.power,
+        equipmentEffects: attackerEquipment.specialEffects.map((effect) => effect.id),
+        hasRetaliated: false,
+        defending: false
+      },
       attackerBattleSkills,
       battleCatalogIndex
     ),
@@ -1734,15 +1782,16 @@ export function createHeroBattleState(
         initiative: defenderTemplate.initiative,
         attack: defenderTemplate.attack + defenderHero.stats.attack + defenderEquipment.attack,
         defense: defenderTemplate.defense + defenderHero.stats.defense + defenderEquipment.defense,
-      minDamage: defenderTemplate.minDamage,
-      maxDamage: defenderTemplate.maxDamage,
-      count: defenderHero.armyCount,
-      currentHp: defenderTemplate.maxHp,
-      maxHp: defenderTemplate.maxHp,
-      power: defenderHero.stats.power,
-      hasRetaliated: false,
-      defending: false
-    },
+        minDamage: defenderTemplate.minDamage,
+        maxDamage: defenderTemplate.maxDamage,
+        count: defenderHero.armyCount,
+        currentHp: defenderTemplate.maxHp,
+        maxHp: defenderTemplate.maxHp,
+        power: defenderHero.stats.power,
+        equipmentEffects: defenderEquipment.specialEffects.map((effect) => effect.id),
+        hasRetaliated: false,
+        defending: false
+      },
       defenderBattleSkills,
       battleCatalogIndex
     )
