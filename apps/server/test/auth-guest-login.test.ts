@@ -149,6 +149,10 @@ class MemoryAuthStore implements RoomSnapshotStore {
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
+      ...(existing?.ageVerified ? { ageVerified: existing.ageVerified } : {}),
+      ...(existing?.isMinor ? { isMinor: existing.isMinor } : {}),
+      ...(existing?.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
+      ...(existing?.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(existing?.banStatus ? { banStatus: existing.banStatus } : {}),
       ...(existing?.banExpiry ? { banExpiry: existing.banExpiry } : {}),
       ...(existing?.banReason ? { banReason: existing.banReason } : {}),
@@ -312,7 +316,7 @@ class MemoryAuthStore implements RoomSnapshotStore {
 
   async bindPlayerAccountWechatMiniGameIdentity(
     playerId: string,
-    input: { openId: string; unionId?: string; displayName?: string; avatarUrl?: string | null }
+    input: { openId: string; unionId?: string; displayName?: string; avatarUrl?: string | null; ageVerified?: boolean; isMinor?: boolean }
   ): Promise<PlayerAccountSnapshot> {
     const existing = await this.ensurePlayerAccount({
       playerId,
@@ -330,6 +334,8 @@ class MemoryAuthStore implements RoomSnapshotStore {
       ...(input.avatarUrl?.trim() ? { avatarUrl: input.avatarUrl.trim() } : existing.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       wechatMiniGameOpenId: normalizedOpenId,
       ...(input.unionId?.trim() ? { wechatMiniGameUnionId: input.unionId.trim() } : existing.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
+      ...(input.ageVerified !== undefined ? { ageVerified: input.ageVerified } : existing.ageVerified ? { ageVerified: existing.ageVerified } : {}),
+      ...(input.isMinor !== undefined ? { isMinor: input.isMinor } : existing.isMinor ? { isMinor: existing.isMinor } : {}),
       wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -381,6 +387,8 @@ class MemoryAuthStore implements RoomSnapshotStore {
       ),
       achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
       recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
+      ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
+      ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -2754,6 +2762,59 @@ test("wechat mini game production exchange binds code2Session identity onto an a
   assert.equal(storedAccount?.wechatMiniGameOpenId, "wx-openid-prod");
   assert.equal(storedAccount?.wechatMiniGameUnionId, "wx-union-prod");
   assert.equal(storedAccount?.loginId, "veil-ranger");
+});
+
+test("wechat mini game login stores verified minor status when age data is provided", { concurrency: false }, async (t) => {
+  const port = 44980 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        openid: "wx-openid-minor",
+        session_key: "session-key"
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      playerId: "wechat-minor",
+      displayName: "夜巡学员",
+      isAdult: false
+    })
+  });
+
+  assert.equal(response.status, 200);
+  const storedAccount = await store.loadPlayerAccount("wechat-minor");
+  assert.equal(storedAccount?.ageVerified, true);
+  assert.equal(storedAccount?.isMinor, true);
 });
 
 test("wechat mini game login reuses the bound player even when later requests spoof another playerId", { concurrency: false }, async (t) => {

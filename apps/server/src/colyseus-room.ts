@@ -30,6 +30,7 @@ import {
 import { registerConfigUpdateListener } from "./config-center";
 import { applyPlayerEventLogAndAchievements } from "./player-achievements";
 import { resolveGuestAuthSession } from "./auth";
+import { deriveMinorProtectionState, readMinorProtectionConfig } from "./minor-protection";
 import {
   recordBattleActionMessage,
   recordConnectMessage,
@@ -62,6 +63,7 @@ const MAP_SYNC_CHUNK_PADDING = 1;
 const DEFAULT_WS_ACTION_RATE_LIMIT_WINDOW_MS = 1_000;
 const DEFAULT_WS_ACTION_RATE_LIMIT_MAX = 8;
 const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
+const MINOR_PROTECTION_TICK_MS = 60_000;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
 const lobbyRoomOwnerTokens = new Map<string, number>();
@@ -237,6 +239,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
   public worldRoom!: AuthoritativeWorldRoom;
   private readonly wsActionRateLimitConfig = readWebSocketActionRateLimitConfig();
+  private readonly minorProtectionConfig = readMinorProtectionConfig();
   private readonly lobbyRoomOwnerToken = nextLobbyRoomOwnerToken++;
   private readonly playerIdBySessionId = new Map<string, string>();
   private readonly reconnectedAtByPlayerId = new Map<string, string>();
@@ -287,6 +290,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         });
       }
     });
+    this.clock.setInterval(() => {
+      void this.tickMinorPlaytime();
+    }, MINOR_PROTECTION_TICK_MS);
 
     this.onMessage("connect", async (client, message: Extract<ClientMessage, { type: "connect" }>) => {
       recordConnectMessage();
@@ -325,6 +331,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       if (isPlayerBanActive(ensuredAccount)) {
         sendMessage(client, "error", { requestId: message.requestId, reason: "account_banned" });
         client.leave(CloseCode.WITH_ERROR, "account_banned");
+        return;
+      }
+      if (await this.enforceMinorProtectionForClient(client, playerId, ensuredAccount, message.requestId)) {
         return;
       }
       await this.ensurePlayerWorldSlot(playerId, ensuredAccount);
@@ -488,6 +497,11 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
           return;
         }
       }
+      if (await this.enforceMinorProtectionForClient(reconnectedClient, playerId, null, "push")) {
+        this.playerIdBySessionId.delete(client.sessionId);
+        this.publishLobbyRoomSummary();
+        return;
+      }
       this.playerIdBySessionId.delete(client.sessionId);
       this.playerIdBySessionId.set(reconnectedClient.sessionId, playerId);
       this.reconnectedAtByPlayerId.set(playerId, new Date().toISOString());
@@ -539,6 +553,127 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     timestamps.push(now);
     this.wsActionTimestampsByPlayerId.set(playerId, timestamps);
     return true;
+  }
+
+  private getConnectedPlayerIds(): string[] {
+    return Array.from(new Set(this.playerIdBySessionId.values()));
+  }
+
+  private async syncMinorProtectionAccount(
+    playerId: string,
+    account: PlayerAccountSnapshot
+  ): Promise<PlayerAccountSnapshot> {
+    const store = configuredRoomSnapshotStore;
+    if (!store) {
+      return account;
+    }
+
+    const state = deriveMinorProtectionState(account, new Date(), this.minorProtectionConfig);
+    if (
+      account.lastPlayDate === state.localDate &&
+      (account.dailyPlayMinutes ?? 0) === state.normalizedDailyPlayMinutes
+    ) {
+      return account;
+    }
+
+    return store.savePlayerAccountProgress(playerId, {
+      dailyPlayMinutes: state.normalizedDailyPlayMinutes,
+      lastPlayDate: state.localDate,
+      lastRoomId: this.metadata.logicalRoomId
+    });
+  }
+
+  private async enforceMinorProtectionForClient(
+    client: ColyseusClient,
+    playerId: string,
+    ensuredAccount: PlayerAccountSnapshot | null,
+    requestId: string
+  ): Promise<boolean> {
+    const store = configuredRoomSnapshotStore;
+    const account =
+      ensuredAccount ??
+      (store
+        ? await store.ensurePlayerAccount({
+            playerId,
+            lastRoomId: this.metadata.logicalRoomId
+          })
+        : null);
+
+    if (!account || account.isMinor !== true) {
+      return false;
+    }
+
+    const syncedAccount = await this.syncMinorProtectionAccount(playerId, account);
+    const state = deriveMinorProtectionState(syncedAccount, new Date(), this.minorProtectionConfig);
+    if (state.restrictedHours) {
+      sendMessage(client, "error", { requestId, reason: "minor_restricted_hours" });
+      client.leave(CloseCode.WITH_ERROR, "minor_restricted_hours");
+      return true;
+    }
+
+    if (state.dailyLimitReached) {
+      sendMessage(client, "error", { requestId, reason: "minor_daily_limit_reached" });
+      client.leave(CloseCode.WITH_ERROR, "minor_daily_limit_reached");
+      return true;
+    }
+
+    return false;
+  }
+
+  private async tickMinorPlaytime(): Promise<void> {
+    const store = configuredRoomSnapshotStore;
+    if (!store) {
+      return;
+    }
+
+    const playerIds = this.getConnectedPlayerIds();
+    if (playerIds.length === 0) {
+      return;
+    }
+
+    try {
+      const loadedAccounts = await store.loadPlayerAccounts(playerIds);
+      const accountsByPlayerId = new Map(loadedAccounts.map((account) => [account.playerId, account] as const));
+
+      await Promise.all(
+        playerIds.map(async (playerId) => {
+          const account =
+            accountsByPlayerId.get(playerId) ??
+            (await store.ensurePlayerAccount({
+              playerId,
+              lastRoomId: this.metadata.logicalRoomId
+            }));
+          if (account.isMinor !== true) {
+            return;
+          }
+
+          const state = deriveMinorProtectionState(account, new Date(), this.minorProtectionConfig);
+          if (state.restrictedHours) {
+            await store.savePlayerAccountProgress(playerId, {
+              dailyPlayMinutes: state.normalizedDailyPlayMinutes,
+              lastPlayDate: state.localDate,
+              lastRoomId: this.metadata.logicalRoomId
+            });
+            this.disconnectPlayer(playerId, "minor_restricted_hours");
+            return;
+          }
+          const nextMinutes = state.normalizedDailyPlayMinutes + 1;
+          await store.savePlayerAccountProgress(playerId, {
+            dailyPlayMinutes: nextMinutes,
+            lastPlayDate: state.localDate,
+            lastRoomId: this.metadata.logicalRoomId
+          });
+          if (nextMinutes >= state.dailyLimitMinutes) {
+            this.disconnectPlayer(playerId, "minor_daily_limit_reached");
+          }
+        })
+      );
+    } catch (error) {
+      console.error("[VeilRoom] Failed to update minor playtime", {
+        roomId: this.metadata.logicalRoomId,
+        error
+      });
+    }
   }
 
   private async persistRoomState(): Promise<void> {

@@ -125,6 +125,10 @@ interface PlayerAccountRow extends RowDataPacket {
   last_room_id: string | null;
   last_seen_at: Date | string | null;
   login_id: string | null;
+  age_verified: number | boolean | null;
+  is_minor: number | boolean | null;
+  daily_play_minutes: number | null;
+  last_play_date: Date | string | null;
   ban_status: string | null;
   ban_expiry: Date | string | null;
   ban_reason: string | null;
@@ -285,6 +289,8 @@ export interface PlayerAccountProgressPatch {
   achievements?: Partial<PlayerAchievementProgress>[] | null;
   recentEventLog?: Partial<EventLogEntry>[] | null;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null;
+  dailyPlayMinutes?: number | null;
+  lastPlayDate?: string | null;
   lastRoomId?: string | null;
 }
 
@@ -312,6 +318,8 @@ export interface PlayerAccountWechatMiniGameIdentityInput {
   unionId?: string;
   displayName?: string;
   avatarUrl?: string | null;
+  ageVerified?: boolean;
+  isMinor?: boolean;
 }
 
 export interface PlayerAccountListOptions {
@@ -491,6 +499,52 @@ function normalizePlayerAvatarUrl(avatarUrl?: string | null): string | undefined
   return normalized ? normalized.slice(0, MAX_PLAYER_AVATAR_URL_LENGTH) : undefined;
 }
 
+function normalizePlayerAgeVerified(ageVerified?: boolean | number | null): boolean | undefined {
+  if (ageVerified == null) {
+    return undefined;
+  }
+
+  return ageVerified === true || ageVerified === 1;
+}
+
+function normalizePlayerIsMinor(isMinor?: boolean | number | null): boolean | undefined {
+  if (isMinor == null) {
+    return undefined;
+  }
+
+  return isMinor === true || isMinor === 1;
+}
+
+function normalizeDailyPlayMinutes(minutes?: number | null): number {
+  return Math.max(0, Math.floor(minutes ?? 0));
+}
+
+function normalizeLastPlayDate(value?: string | Date | null): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      return normalized;
+    }
+
+    const parsed = new Date(normalized);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+
+    throw new Error("lastPlayDate must be a valid date string");
+  }
+
+  if (Number.isNaN(value.getTime())) {
+    throw new Error("lastPlayDate must be a valid date");
+  }
+
+  return value.toISOString().slice(0, 10);
+}
+
 export function normalizePlayerLoginId(loginId: string): string {
   const normalized = loginId.trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{2,39}$/.test(normalized)) {
@@ -568,6 +622,10 @@ function normalizePlayerAccountSnapshot(account: {
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
   loginId?: string | null | undefined;
+  ageVerified?: boolean | number | null | undefined;
+  isMinor?: boolean | number | null | undefined;
+  dailyPlayMinutes?: number | null | undefined;
+  lastPlayDate?: string | Date | null | undefined;
   banStatus?: PlayerBanStatus | null | undefined;
   banExpiry?: string | undefined;
   banReason?: string | null | undefined;
@@ -600,6 +658,10 @@ function normalizePlayerAccountSnapshot(account: {
       lastSeenAt: account.lastSeenAt,
       loginId: account.loginId ? normalizePlayerLoginId(account.loginId) : undefined,
       credentialBoundAt: account.credentialBoundAt,
+      ageVerified: normalizePlayerAgeVerified(account.ageVerified),
+      isMinor: normalizePlayerIsMinor(account.isMinor),
+      dailyPlayMinutes: normalizeDailyPlayMinutes(account.dailyPlayMinutes),
+      lastPlayDate: normalizeLastPlayDate(account.lastPlayDate),
       banStatus: normalizePlayerBanStatus(account.banStatus),
       banExpiry: normalizePlayerBanExpiry(account.banExpiry),
       banReason: normalizePlayerBanReason(account.banReason)
@@ -881,6 +943,10 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   last_room_id VARCHAR(191) NULL,
   last_seen_at DATETIME NULL DEFAULT NULL,
   login_id VARCHAR(40) NULL,
+  age_verified TINYINT(1) NOT NULL DEFAULT 0,
+  is_minor TINYINT(1) NOT NULL DEFAULT 0,
+  daily_play_minutes INT NOT NULL DEFAULT 0,
+  last_play_date DATE NULL DEFAULT NULL,
   ban_status VARCHAR(16) NOT NULL DEFAULT 'none',
   ban_expiry DATETIME NULL DEFAULT NULL,
   ban_reason VARCHAR(512) NULL,
@@ -1114,6 +1180,78 @@ SET @veil_player_accounts_login_id_sql := IF(
 PREPARE veil_player_accounts_login_id_stmt FROM @veil_player_accounts_login_id_sql;
 EXECUTE veil_player_accounts_login_id_stmt;
 DEALLOCATE PREPARE veil_player_accounts_login_id_stmt;
+
+SET @veil_player_accounts_age_verified_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'age_verified'
+);
+
+SET @veil_player_accounts_age_verified_sql := IF(
+  @veil_player_accounts_age_verified_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`age_verified\` TINYINT(1) NOT NULL DEFAULT 0 AFTER \`login_id\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_age_verified_stmt FROM @veil_player_accounts_age_verified_sql;
+EXECUTE veil_player_accounts_age_verified_stmt;
+DEALLOCATE PREPARE veil_player_accounts_age_verified_stmt;
+
+SET @veil_player_accounts_is_minor_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'is_minor'
+);
+
+SET @veil_player_accounts_is_minor_sql := IF(
+  @veil_player_accounts_is_minor_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`is_minor\` TINYINT(1) NOT NULL DEFAULT 0 AFTER \`age_verified\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_is_minor_stmt FROM @veil_player_accounts_is_minor_sql;
+EXECUTE veil_player_accounts_is_minor_stmt;
+DEALLOCATE PREPARE veil_player_accounts_is_minor_stmt;
+
+SET @veil_player_accounts_daily_play_minutes_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'daily_play_minutes'
+);
+
+SET @veil_player_accounts_daily_play_minutes_sql := IF(
+  @veil_player_accounts_daily_play_minutes_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`daily_play_minutes\` INT NOT NULL DEFAULT 0 AFTER \`is_minor\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_daily_play_minutes_stmt FROM @veil_player_accounts_daily_play_minutes_sql;
+EXECUTE veil_player_accounts_daily_play_minutes_stmt;
+DEALLOCATE PREPARE veil_player_accounts_daily_play_minutes_stmt;
+
+SET @veil_player_accounts_last_play_date_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'last_play_date'
+);
+
+SET @veil_player_accounts_last_play_date_sql := IF(
+  @veil_player_accounts_last_play_date_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`last_play_date\` DATE NULL DEFAULT NULL AFTER \`daily_play_minutes\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_last_play_date_stmt FROM @veil_player_accounts_last_play_date_sql;
+EXECUTE veil_player_accounts_last_play_date_stmt;
+DEALLOCATE PREPARE veil_player_accounts_last_play_date_stmt;
 
 SET @veil_player_accounts_ban_status_exists := (
   SELECT COUNT(*)
@@ -1605,6 +1743,14 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(row.display_name ? { displayName: row.display_name } : {}),
     ...(row.last_room_id ? { lastRoomId: row.last_room_id } : {}),
     ...(row.login_id ? { loginId: row.login_id } : {}),
+    ...(normalizePlayerAgeVerified(row.age_verified) !== undefined
+      ? { ageVerified: normalizePlayerAgeVerified(row.age_verified) }
+      : {}),
+    ...(normalizePlayerIsMinor(row.is_minor) !== undefined ? { isMinor: normalizePlayerIsMinor(row.is_minor) } : {}),
+    ...(normalizeDailyPlayMinutes(row.daily_play_minutes) > 0
+      ? { dailyPlayMinutes: normalizeDailyPlayMinutes(row.daily_play_minutes) }
+      : {}),
+    ...(normalizeLastPlayDate(row.last_play_date) ? { lastPlayDate: normalizeLastPlayDate(row.last_play_date) } : {}),
     banStatus: normalizePlayerBanStatus(row.ban_status),
     ...(banExpiry ? { banExpiry } : {}),
     ...(row.ban_reason ? { banReason: row.ban_reason } : {}),
@@ -1995,6 +2141,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         age_verified,
+         is_minor,
+         daily_play_minutes,
+         last_play_date,
          ban_status,
          ban_expiry,
          ban_reason,
@@ -2035,6 +2185,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         age_verified,
+         is_minor,
+         daily_play_minutes,
+         last_play_date,
          ban_status,
          ban_expiry,
          ban_reason,
@@ -2159,6 +2313,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         age_verified,
+         is_minor,
+         daily_play_minutes,
+         last_play_date,
          ban_status,
          ban_expiry,
          ban_reason,
@@ -2627,6 +2785,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       ? normalizePlayerDisplayName(normalizedPlayerId, input.displayName)
       : null;
     const boundAt = existingAccount.wechatMiniGameBoundAt ?? new Date().toISOString();
+    const ageVerified =
+      input.ageVerified !== undefined ? normalizePlayerAgeVerified(input.ageVerified) : existingAccount.ageVerified;
+    const isMinor = input.isMinor !== undefined ? normalizePlayerIsMinor(input.isMinor) : existingAccount.isMinor;
 
     try {
       await this.pool.query(
@@ -2638,6 +2799,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
              wechat_mini_game_open_id = ?,
              wechat_mini_game_union_id = COALESCE(?, wechat_mini_game_union_id),
              wechat_mini_game_bound_at = COALESCE(wechat_mini_game_bound_at, ?),
+             age_verified = COALESCE(?, age_verified),
+             is_minor = COALESCE(?, is_minor),
              version = version + 1
          WHERE player_id = ?`,
         [
@@ -2648,6 +2811,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           normalizedOpenId,
           normalizedUnionId ?? null,
           new Date(boundAt),
+          ageVerified != null ? (ageVerified ? 1 : 0) : null,
+          isMinor != null ? (isMinor ? 1 : 0) : null,
           normalizedPlayerId
         ]
       );
@@ -2667,6 +2832,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         ...(normalizedAvatarUrl ? { avatarUrl: normalizedAvatarUrl } : {}),
         wechatMiniGameOpenId: normalizedOpenId,
         ...(normalizedUnionId ? { wechatMiniGameUnionId: normalizedUnionId } : {}),
+        ...(ageVerified !== undefined ? { ageVerified } : {}),
+        ...(isMinor !== undefined ? { isMinor } : {}),
         wechatMiniGameBoundAt: boundAt
       })
     );
@@ -2769,6 +2936,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       achievements: patch.achievements ?? existing.achievements,
       recentEventLog: patch.recentEventLog ?? existing.recentEventLog,
       recentBattleReplays: patch.recentBattleReplays ?? existing.recentBattleReplays,
+      dailyPlayMinutes:
+        patch.dailyPlayMinutes !== undefined ? normalizeDailyPlayMinutes(patch.dailyPlayMinutes) : existing.dailyPlayMinutes,
+      lastPlayDate:
+        patch.lastPlayDate !== undefined ? normalizeLastPlayDate(patch.lastPlayDate) : existing.lastPlayDate,
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -2790,9 +2961,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json,
          recent_battle_replays_json,
          last_room_id,
-         last_seen_at
+         last_seen_at,
+         age_verified,
+         is_minor,
+         daily_play_minutes,
+         last_play_date
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
@@ -2803,6 +2978,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_battle_replays_json = VALUES(recent_battle_replays_json),
          last_room_id = VALUES(last_room_id),
          last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
+         age_verified = VALUES(age_verified),
+         is_minor = VALUES(is_minor),
+         daily_play_minutes = VALUES(daily_play_minutes),
+         last_play_date = VALUES(last_play_date),
          version = version + 1`,
       [
         nextAccount.playerId,
@@ -2814,7 +2993,11 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(nextAccount.recentEventLog),
         JSON.stringify(nextAccount.recentBattleReplays),
         nextAccount.lastRoomId ?? null,
-        existing.lastSeenAt ? new Date(existing.lastSeenAt) : null
+        existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
+        nextAccount.ageVerified === true ? 1 : 0,
+        nextAccount.isMinor === true ? 1 : 0,
+        normalizeDailyPlayMinutes(nextAccount.dailyPlayMinutes),
+        nextAccount.lastPlayDate ? new Date(nextAccount.lastPlayDate) : null
       ]
     );
     await appendPlayerEventHistoryEntries(this.pool, normalizedPlayerId, newHistoryEntries);
@@ -2852,6 +3035,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          login_id,
+         age_verified,
+         is_minor,
+         daily_play_minutes,
+         last_play_date,
          ban_status,
          ban_expiry,
          ban_reason,
