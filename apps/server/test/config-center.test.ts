@@ -519,14 +519,23 @@ test("config center exposes built-in layout presets for the additional map varia
   assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_stonewatch_fork"));
   assert.ok(worldPresets.some((preset) => preset.id === "layout_ridgeway_crossing"));
   assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_ridgeway_crossing"));
+  assert.ok(worldPresets.some((preset) => preset.id === "layout_highland_reach"));
+  assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_highland_reach"));
+  assert.ok(worldPresets.some((preset) => preset.id === "layout_amber_fields"));
+  assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_amber_fields"));
+  assert.ok(worldPresets.some((preset) => preset.id === "layout_ironpass_gorge"));
+  assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_ironpass_gorge"));
+  assert.ok(worldPresets.some((preset) => preset.id === "layout_splitrock_canyon"));
+  assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_splitrock_canyon"));
   assert.ok(worldPresets.some((preset) => preset.id === "layout_contested_basin"));
   assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_contested_basin"));
 
-  const stonewatchWorldDocument = await store.applyPreset("world", "layout_stonewatch_fork");
-  const stonewatchMapObjectsDocument = await store.applyPreset("mapObjects", "layout_stonewatch_fork");
+  const highlandWorldDocument = await store.applyPreset("world", "layout_highland_reach");
+  const highlandMapObjectsDocument = await store.applyPreset("mapObjects", "layout_highland_reach");
 
-  assert.match(stonewatchWorldDocument.content, /"position": \{\s+"x": 1,\s+"y": 5/s);
-  assert.match(stonewatchMapObjectsDocument.content, /"id": "shrine-power-1"/);
+  assert.match(highlandWorldDocument.content, /"width": 10/);
+  assert.match(highlandWorldDocument.content, /"position": \{\s+"x": 1,\s+"y": 4/s);
+  assert.match(highlandMapObjectsDocument.content, /"id": "mine-ore-1"/);
 });
 
 test("config center diff classifies added, removed, and type changes", async () => {
