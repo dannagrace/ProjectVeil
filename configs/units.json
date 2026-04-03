@@ -129,6 +129,68 @@
         "shield_bash",
         "watcher_stance"
       ]
+    },
+    {
+      "id": "wild_cave_bear",
+      "stackName": "洞穴巨熊",
+      "faction": "wild",
+      "rarity": "elite",
+      "initiative": 6,
+      "attack": 7,
+      "defense": 5,
+      "minDamage": 3,
+      "maxDamage": 6,
+      "maxHp": 18,
+      "battleSkills": [
+        "cave_bear_cleave"
+      ]
+    },
+    {
+      "id": "wild_serpent",
+      "stackName": "毒蛇猎手",
+      "faction": "wild",
+      "rarity": "common",
+      "initiative": 14,
+      "attack": 6,
+      "defense": 2,
+      "minDamage": 2,
+      "maxDamage": 4,
+      "maxHp": 6,
+      "battleSkills": [
+        "serpent_venom"
+      ]
+    },
+    {
+      "id": "wild_hawk_rider",
+      "stackName": "鹰击骑兵",
+      "faction": "wild",
+      "rarity": "elite",
+      "initiative": 13,
+      "attack": 5,
+      "defense": 4,
+      "minDamage": 2,
+      "maxDamage": 4,
+      "maxHp": 9,
+      "battleSkills": [
+        "skybound",
+        "pinning_javelin"
+      ]
+    },
+    {
+      "id": "wild_cave_troll",
+      "stackName": "洞穴巨魔",
+      "faction": "wild",
+      "rarity": "elite",
+      "initiative": 5,
+      "attack": 5,
+      "defense": 8,
+      "minDamage": 3,
+      "maxDamage": 5,
+      "maxHp": 20,
+      "battleSkills": [
+        "taunt_shout",
+        "watcher_stance"
+      ]
     }
   ]
 }

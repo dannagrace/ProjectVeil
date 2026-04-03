@@ -42,6 +42,7 @@ import {
 } from "./models.ts";
 import { getRuntimeConfigBundleForRoom } from "./world-config.ts";
 import {
+  getDefaultUnitCatalog,
   validateMapObjectsConfig,
   validateWorldConfig
 } from "./world-config.ts";
@@ -84,6 +85,26 @@ function tileKey(position: Vec2): string {
 
 function tileIndex(map: WorldMapState, position: Vec2): number {
   return position.y * map.width + position.x;
+}
+
+function templateHasBattleSkill(templateId: string, skillId: string): boolean {
+  const template = getDefaultUnitCatalog().templates.find((item) => item.id === templateId);
+  return template?.battleSkills?.includes(skillId) ?? false;
+}
+
+function heroCanFlyOverWater(hero: Pick<HeroState, "armyTemplateId">): boolean {
+  return templateHasBattleSkill(hero.armyTemplateId, "skybound");
+}
+
+function neutralArmyCanFlyOverWater(neutralArmy: NeutralArmyState): boolean {
+  return neutralArmy.stacks.some((stack) => templateHasBattleSkill(stack.templateId, "skybound"));
+}
+
+function isTraversableTile(
+  tile: Pick<TileState, "walkable" | "terrain"> | Pick<PlayerTileView, "walkable" | "terrain">,
+  canFlyOverWater: boolean
+): boolean {
+  return tile.walkable || (canFlyOverWater && tile.terrain === "water");
 }
 
 function maybeAwardBattleEquipmentDrop(
@@ -642,7 +663,8 @@ function getPlayerNeighbors(view: PlayerWorldView, position: Vec2): Vec2[] {
 
 function isBlockedForPlayerView(view: PlayerWorldView, heroId: string, position: Vec2, destination: Vec2): boolean {
   const tile = findPlayerTile(view, position);
-  if (!tile || tile.fog === "hidden" || !tile.walkable) {
+  const hero = view.ownHeroes.find((item) => item.id === heroId);
+  if (!tile || !hero || tile.fog === "hidden" || !isTraversableTile(tile, heroCanFlyOverWater(hero))) {
     return true;
   }
 
@@ -757,7 +779,8 @@ function getNeighbors(map: WorldMapState, position: Vec2): Vec2[] {
 
 function isBlockedForHero(state: WorldState, heroId: string, position: Vec2, destination: Vec2): boolean {
   const tile = findTile(state.map, position);
-  if (!tile || !tile.walkable) {
+  const hero = findHero(state, heroId);
+  if (!tile || !hero || !isTraversableTile(tile, heroCanFlyOverWater(hero))) {
     return true;
   }
 
@@ -777,7 +800,8 @@ function isBlockedForNeutral(
   targetHeroId?: string
 ): boolean {
   const tile = findTile(state.map, position);
-  if (!tile || !tile.walkable || tile.building) {
+  const neutralArmy = state.neutralArmies[neutralArmyId];
+  if (!tile || !neutralArmy || !isTraversableTile(tile, neutralArmyCanFlyOverWater(neutralArmy)) || tile.building) {
     return true;
   }
 
@@ -1252,7 +1276,7 @@ export function planPlayerViewMovement(
   }
 
   const destinationTile = findPlayerTile(view, destination);
-  if (!destinationTile || destinationTile.fog === "hidden" || !destinationTile.walkable) {
+  if (!destinationTile || destinationTile.fog === "hidden" || !isTraversableTile(destinationTile, heroCanFlyOverWater(hero))) {
     return undefined;
   }
 
@@ -1519,7 +1543,7 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
       };
     }
 
-    if (!destinationTile.walkable || destinationTile.fog === "hidden") {
+    if (!isTraversableTile(destinationTile, heroCanFlyOverWater(hero)) || destinationTile.fog === "hidden") {
       return {
         world: view,
         movementPlan: null,
@@ -1916,7 +1940,7 @@ export function validateWorldAction(state: WorldState, action: WorldAction): Val
       return { valid: false, reason: "destination_not_found" };
     }
 
-    if (!tile.walkable) {
+    if (!isTraversableTile(tile, heroCanFlyOverWater(hero))) {
       return { valid: false, reason: "destination_blocked" };
     }
 

@@ -175,7 +175,7 @@ function buildReplaySessionUpdate(replay: PlayerBattleReplaySummary, playback: B
       },
       playerId: replay.playerId
     },
-    battle: playback.currentState,
+    battle: playback.currentState as SessionUpdate["battle"],
     events: [],
     movementPlan: null,
     reachableTiles: []

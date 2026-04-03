@@ -67,6 +67,7 @@ import {
   normalizePlayerBattleReplaySummaries,
   pauseBattleReplayPlayback,
   pickAutomatedBattleAction,
+  planHeroMovement,
   planPlayerViewMovement,
   playBattleReplayPlayback,
   predictPlayerWorldAction,
@@ -2411,12 +2412,29 @@ test("createInitialWorldState selects the contested basin variant with the new c
   assert.equal(state.meta.mapVariantId, "contested_basin");
   assert.equal(state.heroes[0]?.position.x, 1);
   assert.equal(state.heroes[0]?.position.y, 2);
+  assert.equal(state.buildings["recruit-post-basin-1"]?.kind, "recruitment_post");
+  assert.equal(state.buildings["recruit-post-basin-1"]?.unitTemplateId, "wild_hawk_rider");
   assert.equal(state.buildings["watchtower-basin-1"]?.kind, "watchtower");
   assert.equal(state.buildings["watchtower-basin-1"]?.visionBonus, 2);
   assert.equal(state.neutralArmies["neutral-reed-patrol"]?.behavior?.mode, "patrol");
   assert.equal(state.neutralArmies["neutral-watch-guard"]?.behavior?.mode, "guard");
   assert.equal(state.neutralArmies["neutral-watch-guard"]?.stacks[0]?.templateId, "iron_walker");
   assert.equal(state.neutralArmies["neutral-reed-patrol"]?.stacks[0]?.templateId, "moss_stalker");
+});
+
+test("issue 784 wild templates and battle catalog entries are available", () => {
+  const unitCatalog = getDefaultUnitCatalog();
+  const templateById = new Map(unitCatalog.templates.map((template) => [template.id, template]));
+  const battleCatalog = getDefaultBattleSkillCatalog();
+
+  assert.deepEqual(templateById.get("wild_cave_bear")?.battleSkills, ["cave_bear_cleave"]);
+  assert.deepEqual(templateById.get("wild_serpent")?.battleSkills, ["serpent_venom"]);
+  assert.deepEqual(templateById.get("wild_hawk_rider")?.battleSkills, ["skybound", "pinning_javelin"]);
+  assert.deepEqual(templateById.get("wild_cave_troll")?.battleSkills, ["taunt_shout", "watcher_stance"]);
+  assert.ok(battleCatalog.skills.some((skill) => skill.id === "cave_bear_cleave"));
+  assert.ok(battleCatalog.skills.some((skill) => skill.id === "serpent_venom"));
+  assert.ok(battleCatalog.skills.some((skill) => skill.id === "skybound"));
+  assert.ok(battleCatalog.statuses.some((status) => status.id === "serpent_poison"));
 });
 
 test("createInitialWorldState selects the ridgeway crossing variant with the new Phase 1 content pack", () => {
@@ -4212,6 +4230,48 @@ test("planPlayerViewMovement stops at the tile before a visible neutral encounte
   assert.equal(plan?.moveCost, 1);
 });
 
+test("hawk rider armies can path across water tiles in world and player views", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    armyTemplateId: "wild_hawk_rider",
+    position: { x: 0, y: 1 },
+    move: { total: 6, remaining: 6 }
+  });
+  const state = createWorldState({
+    width: 3,
+    height: 3,
+    heroes: [hero],
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(2, 0),
+      createTile(0, 1, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(1, 1, { walkable: false, terrain: "water" }),
+      createTile(2, 1),
+      createTile(0, 2),
+      createTile(1, 2),
+      createTile(2, 2)
+    ],
+    visibilityByPlayer: {
+      "player-1": new Array(9).fill("visible")
+    }
+  });
+  const view = createPlayerWorldView(state, "player-1");
+
+  assert.deepEqual(planHeroMovement(state, "hero-1", { x: 2, y: 1 })?.path, [
+    { x: 0, y: 1 },
+    { x: 1, y: 1 },
+    { x: 2, y: 1 }
+  ]);
+  assert.deepEqual(planPlayerViewMovement(view, "hero-1", { x: 2, y: 1 })?.path, [
+    { x: 0, y: 1 },
+    { x: 1, y: 1 },
+    { x: 2, y: 1 }
+  ]);
+});
+
 test("predictPlayerWorldAction updates the player view immediately for move and collect", () => {
   const hero = createHero({
     id: "hero-1",
@@ -4723,6 +4783,74 @@ test("applyBattleAction resolves war cry splash onto adjacent enemy lanes withou
   assert.ok(getUnitHpPool(next.units["wolf-side"]!) < getUnitHpPool(state.units["wolf-side"]!));
   assert.equal(getUnitHpPool(next.units["ally-side"]!), getUnitHpPool(state.units["ally-side"]!));
   assert.match(next.log.join("\n"), /波及 侧翼恶狼/);
+});
+
+test("cave bear cleave uses splash support against adjacent enemies", () => {
+  const caveBearTemplate = getDefaultUnitCatalog().templates.find((template) => template.id === "wild_cave_bear");
+  const cleaveSkill = getDefaultBattleSkillCatalog().skills.find((skill) => skill.id === "cave_bear_cleave");
+  assert.ok(caveBearTemplate);
+  assert.ok(cleaveSkill);
+
+  const state = createDemoBattleState();
+  state.activeUnitId = "bear-a";
+  state.turnOrder = ["bear-a", "wolf-d", "wolf-side", "ally-side"];
+  state.units["bear-a"] = {
+    ...cloneBattleUnit(state.units["pikeman-a"]!),
+    id: "bear-a",
+    templateId: caveBearTemplate.id,
+    stackName: caveBearTemplate.stackName,
+    initiative: caveBearTemplate.initiative,
+    attack: caveBearTemplate.attack,
+    defense: caveBearTemplate.defense,
+    minDamage: caveBearTemplate.minDamage,
+    maxDamage: caveBearTemplate.maxDamage,
+    count: 4,
+    currentHp: caveBearTemplate.maxHp,
+    maxHp: caveBearTemplate.maxHp,
+    lane: 1,
+    skills: [
+      {
+        id: cleaveSkill.id,
+        name: cleaveSkill.name,
+        description: cleaveSkill.description,
+        kind: cleaveSkill.kind,
+        target: cleaveSkill.target,
+        cooldown: cleaveSkill.cooldown,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  state.units["wolf-d"] = {
+    ...state.units["wolf-d"]!,
+    lane: 1,
+    hasRetaliated: true
+  };
+  state.units["wolf-side"] = {
+    ...cloneBattleUnit(state.units["wolf-d"]!),
+    id: "wolf-side",
+    lane: 2,
+    stackName: "侧翼恶狼",
+    hasRetaliated: true
+  };
+  state.units["ally-side"] = {
+    ...cloneBattleUnit(state.units["pikeman-a"]!),
+    id: "ally-side",
+    lane: 0,
+    stackName: "友军枪兵"
+  };
+  state.unitCooldowns["bear-a"] = {};
+
+  const next = applyBattleAction(state, {
+    type: "battle.skill",
+    unitId: "bear-a",
+    skillId: "cave_bear_cleave",
+    targetId: "wolf-d"
+  });
+
+  assert.ok(getUnitHpPool(next.units["wolf-d"]!) < getUnitHpPool(state.units["wolf-d"]!));
+  assert.ok(getUnitHpPool(next.units["wolf-side"]!) < getUnitHpPool(state.units["wolf-side"]!));
+  assert.equal(getUnitHpPool(next.units["ally-side"]!), getUnitHpPool(state.units["ally-side"]!));
+  assert.match(next.log.join("\n"), /裂岩横扫波及 侧翼恶狼/);
 });
 
 test("ally battle skills heal wounded units and can cleanse one negative status", () => {
