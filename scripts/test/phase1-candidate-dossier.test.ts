@@ -822,6 +822,8 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
 
   const dossierJsonPath = path.join(outputDir, "phase1-candidate-dossier.json");
   const dossierMarkdownPath = path.join(outputDir, "phase1-candidate-dossier.md");
+  const runtimeObservabilityDossierPath = path.join(outputDir, "runtime-observability-dossier.json");
+  const runtimeObservabilityDossierMarkdownPath = path.join(outputDir, "runtime-observability-dossier.md");
   const releaseGateSummaryPath = path.join(outputDir, "release-gate-summary.json");
   const releaseGateMarkdownPath = path.join(outputDir, "release-gate-summary.md");
   const releaseHealthSummaryPath = path.join(outputDir, "release-health-summary.json");
@@ -830,6 +832,8 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
   for (const filePath of [
     dossierJsonPath,
     dossierMarkdownPath,
+    runtimeObservabilityDossierPath,
+    runtimeObservabilityDossierMarkdownPath,
     releaseGateSummaryPath,
     releaseGateMarkdownPath,
     releaseHealthSummaryPath,
@@ -841,19 +845,42 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
   const dossier = JSON.parse(fs.readFileSync(dossierJsonPath, "utf8")) as {
     artifacts?: {
       outputDir: string;
+      runtimeObservabilityDossierPath: string;
       releaseGateSummaryPath: string;
       releaseHealthSummaryPath: string;
     };
     sections: Array<{ id: string; artifactPath?: string }>;
   };
   assert.equal(dossier.artifacts?.outputDir, outputDir);
+  assert.equal(dossier.artifacts?.runtimeObservabilityDossierPath, runtimeObservabilityDossierPath);
   assert.equal(dossier.artifacts?.releaseGateSummaryPath, releaseGateSummaryPath);
   assert.equal(dossier.artifacts?.releaseHealthSummaryPath, releaseHealthSummaryPath);
   assert.equal(dossier.sections.find((section) => section.id === "release-gate")?.artifactPath, releaseGateSummaryPath);
   assert.equal(dossier.sections.find((section) => section.id === "release-health")?.artifactPath, releaseHealthSummaryPath);
 
+  const runtimeObservabilityDossier = JSON.parse(fs.readFileSync(runtimeObservabilityDossierPath, "utf8")) as {
+    summary: {
+      status: string;
+      runtimeStatus: string;
+      reconnectStatus: string;
+    };
+    sections: Array<{ id: string }>;
+  };
+  assert.equal(runtimeObservabilityDossier.summary.status, "passed");
+  assert.equal(runtimeObservabilityDossier.summary.runtimeStatus, "passed");
+  assert.equal(runtimeObservabilityDossier.summary.reconnectStatus, "passed");
+  assert.deepEqual(
+    runtimeObservabilityDossier.sections.map((section) => section.id),
+    ["runtime-health", "reconnect-soak"]
+  );
+
   const markdown = fs.readFileSync(dossierMarkdownPath, "utf8");
   assert.match(markdown, /## Generated Bundle/);
+  assert.match(markdown, /runtime-observability-dossier\.json/);
   assert.match(markdown, /release-gate-summary\.json/);
   assert.match(markdown, /release-health-summary\.json/);
+
+  const runtimeMarkdown = fs.readFileSync(runtimeObservabilityDossierMarkdownPath, "utf8");
+  assert.match(runtimeMarkdown, /# Runtime Observability Dossier/);
+  assert.match(runtimeMarkdown, /Reconnect\/session-recovery status: `passed`/);
 });

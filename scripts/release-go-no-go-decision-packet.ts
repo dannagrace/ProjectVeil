@@ -47,6 +47,8 @@ interface Phase1CandidateDossier {
     outputDir: string;
     dossierJsonPath: string;
     dossierMarkdownPath: string;
+    runtimeObservabilityDossierPath: string;
+    runtimeObservabilityDossierMarkdownPath: string;
     releaseGateSummaryPath: string;
     releaseGateMarkdownPath: string;
     releaseHealthSummaryPath: string;
@@ -211,6 +213,7 @@ interface GoNoGoDecisionPacket {
   };
   inputs: {
     dossierPath: string;
+    runtimeObservabilityDossierPath?: string;
     releaseGateSummaryPath: string;
     wechatCandidateSummaryPath?: string;
   };
@@ -524,6 +527,10 @@ export function buildGoNoGoDecisionPacket(args: Args): GoNoGoDecisionPacket {
       : dossier.artifacts?.releaseGateSummaryPath && fs.existsSync(dossier.artifacts.releaseGateSummaryPath)
         ? dossier.artifacts.releaseGateSummaryPath
         : resolveReleaseGateSummaryPath(args);
+  const runtimeObservabilityDossierPath =
+    dossier.artifacts?.runtimeObservabilityDossierPath && fs.existsSync(dossier.artifacts.runtimeObservabilityDossierPath)
+      ? dossier.artifacts.runtimeObservabilityDossierPath
+      : undefined;
   const releaseGate = readJsonFile<ReleaseGateSummaryReport>(releaseGateSummaryPath);
   const wechatCandidateSummaryPath = resolveWechatCandidateSummaryPath(args, releaseGateSummaryPath, dossier);
   const wechatCandidateSummary = wechatCandidateSummaryPath
@@ -688,6 +695,7 @@ export function buildGoNoGoDecisionPacket(args: Args): GoNoGoDecisionPacket {
     },
     inputs: {
       dossierPath,
+      ...(runtimeObservabilityDossierPath ? { runtimeObservabilityDossierPath } : {}),
       releaseGateSummaryPath,
       ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {})
     },
@@ -736,6 +744,9 @@ export function renderMarkdown(packet: GoNoGoDecisionPacket): string {
   lines.push("## Candidate Metadata");
   lines.push("");
   lines.push(`- Candidate dossier: \`${toDisplayPath(packet.inputs.dossierPath)}\``);
+  if (packet.inputs.runtimeObservabilityDossierPath) {
+    lines.push(`- Runtime observability dossier: \`${toDisplayPath(packet.inputs.runtimeObservabilityDossierPath)}\``);
+  }
   lines.push(`- Release gate summary: \`${toDisplayPath(packet.inputs.releaseGateSummaryPath)}\``);
   if (packet.inputs.wechatCandidateSummaryPath) {
     lines.push(`- WeChat candidate summary: \`${toDisplayPath(packet.inputs.wechatCandidateSummaryPath)}\``);

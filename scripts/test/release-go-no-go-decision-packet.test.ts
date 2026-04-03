@@ -22,8 +22,16 @@ test("buildGoNoGoDecisionPacket aggregates candidate, gate, and manual review ev
   const dossierDir = path.join(releaseDir, "phase1-candidate-dossier-phase1-rc-abc1234");
   const wechatDir = path.join(workspace, "artifacts", "wechat-release");
   const dossierPath = path.join(dossierDir, "phase1-candidate-dossier.json");
+  const runtimeObservabilityDossierPath = path.join(dossierDir, "runtime-observability-dossier.json");
   const releaseGateSummaryPath = path.join(releaseDir, "release-gate-summary-abc1234.json");
   const wechatCandidateSummaryPath = path.join(wechatDir, "codex.wechat.release-candidate-summary.json");
+
+  writeJson(runtimeObservabilityDossierPath, {
+    generatedAt: "2026-04-03T02:01:00.000Z",
+    summary: {
+      status: "passed"
+    }
+  });
 
   writeJson(dossierPath, {
     generatedAt: "2026-04-03T02:00:00.000Z",
@@ -53,6 +61,8 @@ test("buildGoNoGoDecisionPacket aggregates candidate, gate, and manual review ev
       outputDir: dossierDir,
       dossierJsonPath: dossierPath,
       dossierMarkdownPath: path.join(dossierDir, "phase1-candidate-dossier.md"),
+      runtimeObservabilityDossierPath,
+      runtimeObservabilityDossierMarkdownPath: path.join(dossierDir, "runtime-observability-dossier.md"),
       releaseGateSummaryPath,
       releaseGateMarkdownPath: path.join(dossierDir, "release-gate-summary.md"),
       releaseHealthSummaryPath: path.join(dossierDir, "release-health-summary.json"),
@@ -171,6 +181,7 @@ test("buildGoNoGoDecisionPacket aggregates candidate, gate, and manual review ev
 
   assert.equal(packet.decision.status, "no_go");
   assert.equal(packet.candidate.name, "phase1-rc");
+  assert.equal(packet.inputs.runtimeObservabilityDossierPath, runtimeObservabilityDossierPath);
   assert.equal(packet.sections.runtimeObservabilitySignoffLinks.length, 1);
   assert.equal(packet.sections.unresolvedManualChecks.length, 1);
   assert.match(packet.sections.validationSummary.summary, /Phase 1 exit evidence gate is accepted_risk/);
@@ -179,6 +190,7 @@ test("buildGoNoGoDecisionPacket aggregates candidate, gate, and manual review ev
 
   const markdown = renderMarkdown(packet);
   assert.match(markdown, /Decision: `no_go`/);
+  assert.match(markdown, /Runtime observability dossier: `.*runtime-observability-dossier\.json`/);
   assert.match(markdown, /## Runtime Observability Sign-Off Links/);
   assert.match(markdown, /WeChat runtime observability reviewed for this candidate/);
   assert.match(markdown, /## Unresolved Manual Checks \(1\)/);
