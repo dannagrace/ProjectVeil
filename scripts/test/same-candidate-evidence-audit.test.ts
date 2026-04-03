@@ -124,7 +124,29 @@ test("same-candidate evidence audit passes when artifact families align to the s
     candidate,
     targetRevision: revision,
     lastUpdated: "2026-04-02T08:42:00.000Z",
-    linkedReadinessSnapshot: snapshotPath
+    linkedReadinessSnapshot: snapshotPath,
+    rows: [
+      {
+        evidenceType: "runtime-observability-review",
+        candidate,
+        revision,
+        owner: "oncall-ops",
+        status: "done",
+        lastUpdated: "2026-04-02T08:41:00.000Z",
+        artifactPath: path.join(artifactsDir, `runtime-observability-signoff-${revision}.md`),
+        notes: "Release runtime endpoints reviewed for this candidate."
+      },
+      {
+        evidenceType: "cocos-rc-checklist-review",
+        candidate,
+        revision,
+        owner: "release-owner",
+        status: "done",
+        lastUpdated: "2026-04-02T08:42:00.000Z",
+        artifactPath: path.join(artifactsDir, `cocos-rc-checklist-${revision}.md`),
+        notes: "Checklist reviewed for this candidate."
+      }
+    ]
   });
 
   const outputPath = path.join(workspace, "same-candidate-evidence-audit.json");
@@ -154,12 +176,19 @@ test("same-candidate evidence audit passes when artifact families align to the s
   assert.equal(result.status, 0);
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
     summary: { status: string; findingCount: number };
+    manualEvidenceContract: {
+      status: string;
+      requiredFamilies: Array<{ id: string; status: string; applicable: boolean; findings: unknown[] }>;
+    };
     artifactFamilies: Array<{ status: string; findings: unknown[] }>;
   };
   assert.equal(report.summary.status, "passed");
   assert.equal(report.summary.findingCount, 0);
+  assert.equal(report.manualEvidenceContract.status, "passed");
+  assert.equal(report.manualEvidenceContract.requiredFamilies.every((family) => !family.applicable || family.status === "passed"), true);
   assert.equal(report.artifactFamilies.every((family) => family.status === "passed"), true);
   assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Overall status: \*\*PASSED\*\*/);
+  assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /## Manual Evidence Contract/);
 });
 
 test("same-candidate evidence audit reports missing, stale, and revision mismatch findings in one summary", () => {
@@ -193,7 +222,19 @@ test("same-candidate evidence audit reports missing, stale, and revision mismatc
     candidate,
     targetRevision: revision,
     lastUpdated: "2026-04-02T08:42:00.000Z",
-    linkedReadinessSnapshot: snapshotPath
+    linkedReadinessSnapshot: snapshotPath,
+    rows: [
+      {
+        evidenceType: "runtime-observability-review",
+        candidate,
+        revision,
+        owner: "oncall-ops",
+        status: "done",
+        lastUpdated: "2026-04-02T08:41:00.000Z",
+        artifactPath: path.join(artifactsDir, `runtime-observability-signoff-${revision}.md`),
+        notes: "Release runtime endpoints reviewed for this candidate."
+      }
+    ]
   });
 
   const outputPath = path.join(workspace, "same-candidate-evidence-audit.json");
@@ -222,15 +263,22 @@ test("same-candidate evidence audit reports missing, stale, and revision mismatc
   assert.equal(result.status, 1);
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
     summary: { status: string };
+    manualEvidenceContract: {
+      status: string;
+      requiredFamilies: Array<{ id: string; findings: Array<{ code: string }> }>;
+    };
     artifactFamilies: Array<{ id: string; findings: Array<{ code: string }> }>;
   };
   assert.equal(report.summary.status, "failed");
+  assert.equal(report.manualEvidenceContract.status, "failed");
   const snapshotFamily = report.artifactFamilies.find((family) => family.id === "release-readiness-snapshot");
   const gateSummaryFamily = report.artifactFamilies.find((family) => family.id === "release-gate-summary");
   const bundleFamily = report.artifactFamilies.find((family) => family.id === "cocos-rc-bundle");
+  const cocosContractFamily = report.manualEvidenceContract.requiredFamilies.find((family) => family.id === "cocos-rc-signoff");
   assert.deepEqual(snapshotFamily?.findings.map((finding) => finding.code), ["stale"]);
   assert.deepEqual(gateSummaryFamily?.findings.map((finding) => finding.code), ["revision_mismatch", "linked_snapshot_mismatch"]);
   assert.deepEqual(bundleFamily?.findings.map((finding) => finding.code), ["missing"]);
+  assert.deepEqual(cocosContractFamily?.findings.map((finding) => finding.code), ["missing"]);
 });
 
 test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat evidence, and pending ledger items", () => {
@@ -363,18 +411,28 @@ test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat
   assert.equal(result.status, 1);
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
     summary: { status: string };
+    manualEvidenceContract: {
+      status: string;
+      requiredFamilies: Array<{ id: string; findings: Array<{ code: string; artifactPath?: string }>; summary: string }>;
+    };
     artifactFamilies: Array<{ id: string; findings: Array<{ code: string; artifactPath?: string }> }>;
   };
   assert.equal(report.summary.status, "failed");
+  assert.equal(report.manualEvidenceContract.status, "failed");
 
   const ledgerFamily = report.artifactFamilies.find((family) => family.id === "manual-evidence-ledger");
   const wechatFamily = report.artifactFamilies.find((family) => family.id === "wechat-release-evidence");
+  const runtimeContractFamily = report.manualEvidenceContract.requiredFamilies.find((family) => family.id === "runtime-observability");
+  const wechatContractFamily = report.manualEvidenceContract.requiredFamilies.find((family) => family.id === "wechat-release-signoff");
 
   assert.deepEqual(ledgerFamily?.findings.map((finding) => finding.code), ["manual_pending"]);
   assert.deepEqual(wechatFamily?.findings.map((finding) => finding.code), ["manual_pending", "manual_pending", "stale", "blocked"]);
   assert.equal(wechatFamily?.findings[1]?.artifactPath, runtimeSignoffPath);
+  assert.deepEqual(runtimeContractFamily?.findings.map((finding) => finding.code), ["manual_pending", "manual_pending", "stale"]);
+  assert.match(wechatContractFamily?.summary ?? "", /missing for candidate/);
 
   const markdown = fs.readFileSync(markdownOutputPath, "utf8");
+  assert.match(markdown, /Manual Evidence Contract/);
   assert.match(markdown, /WeChat release evidence summary/);
   assert.match(markdown, /Runtime observability sign-off is still pending/);
   assert.match(markdown, /Smoke report is stale for this candidate/);
