@@ -212,6 +212,7 @@ WeChat checklist / blockers 至少要覆盖以下证据面：
 5. 回填完成后执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`
 6. 再执行 `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json`，把 `login-lobby`、`room-entry`、`reconnect-recovery` 自动映射到统一 RC 快照，同时保留同一 revision 的 primary-client canonical journey evidence，并在 `artifacts/release-readiness/` 生成可直接附到 CI artifact / PR 评论的 bundle 摘要；若设备 evidence 缺失，快照会标成 `blocked`，避免在 RC 汇总里被误判为通过。
 7. 回填同一 bundle 里的 checklist / blockers 文件，并同步附上 [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) 与 [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md) 的当前结论，确保 reviewer 能直接看到当前 RC 的设备、observability 结论与未关闭风险。
+8. 若当前 candidate 还有人工证据在流转，立即同步更新 [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) 的当次 candidate 副本；至少回填 WeChat DevTools 导出复核、device/runtime smoke、runtime observability sign-off、RC checklist / blockers review 的 owner、status、timestamp、artifactPath 与 follow-up notes。不要等到最终 release call 才补记。
 
 ### 自动化 Runtime Evidence Schema
 
