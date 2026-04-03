@@ -93,7 +93,11 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     const presentationSummary = state.recovery
       ? state.recovery.summaryLines
       : state.presentationState
-        ? [state.presentationState.label, ...state.presentationState.summaryLines]
+        ? [
+            state.presentationState.label,
+            ...buildBattleResultContextLines(state.presentationState),
+            ...state.presentationState.summaryLines
+          ]
         : ["当前没有战斗。"];
     return {
       title: state.recovery ? "结算恢复" : state.presentationState?.phase === "resolution" ? "战斗结算" : "战斗面板",
@@ -185,14 +189,16 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     : [];
   const skillSummaryLines = activeUnit ? buildSkillSummaryLines(activeUnit) : [];
   const statusSummary = activeUnit ? buildStatusSummary(activeUnit) : "无异常";
+  const stage = buildBattleStageView(state.update, battle);
+  const presentationLines = buildBattlePresentationContextLines(state.update, battle, state.presentationState, canAct, state.actionPending);
 
   return {
-    title: state.presentationState?.phase === "enter" ? "战斗展开" : "战斗面板",
-    stage: buildBattleStageView(state.update, battle),
+    title: resolveBattlePanelTitle(state.presentationState),
+    stage,
     feedback: state.feedback,
     summaryLines: [
       `${battle.id} · 第 ${battle.round} 回合`,
-      `流程：${state.presentationState?.label ?? "战斗进行中"}`,
+      ...presentationLines,
       ...(state.presentationState?.summaryLines ?? []),
       `阵营：${controlLabel}`,
       `阶段：${turnLabel}`,
@@ -209,6 +215,21 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     actions,
     idle: false
   };
+}
+
+function resolveBattlePanelTitle(presentationState: CocosBattlePresentationState | null): string {
+  switch (presentationState?.phase) {
+    case "enter":
+      return "战斗展开";
+    case "command":
+      return "战斗指令";
+    case "impact":
+      return "战斗反馈";
+    case "resolution":
+      return "战斗结算";
+    default:
+      return "战斗面板";
+  }
 }
 
 export function buildBattlePanelSections(state: BattlePanelInput): BattlePanelSections {
@@ -238,6 +259,59 @@ function buildBattleStageView(update: SessionUpdate | null, battle: BattleState)
     subtitle: subtitleParts.join(" · "),
     badge: battle.defenderHeroId ? "PVP" : battle.neutralArmyId ? "PVE" : "BATTLE"
   };
+}
+
+function buildBattlePresentationContextLines(
+  update: SessionUpdate | null,
+  battle: BattleState,
+  presentationState: CocosBattlePresentationState | null,
+  canAct: boolean,
+  actionPending: boolean
+): string[] {
+  const roomId = update?.world.meta.roomId ?? "unknown-room";
+  return [
+    `会话：${roomId}/${battle.id} · ${formatEncounterLabel(battle)}`,
+    `表现：${presentationState?.badge ?? "LIVE"} · ${presentationState?.label ?? "战斗进行中"}`,
+    `下一步：${resolveBattleNextStepLine(presentationState, canAct, actionPending)}`
+  ];
+}
+
+function buildBattleResultContextLines(presentationState: CocosBattlePresentationState): string[] {
+  const battleId = presentationState.battleId ? `会话：${presentationState.battleId} · ${presentationState.badge}` : null;
+  return [battleId, `下一步：${resolveBattleResultNextStepLine(presentationState)}`].filter((line): line is string => Boolean(line));
+}
+
+function resolveBattleNextStepLine(
+  presentationState: CocosBattlePresentationState | null,
+  canAct: boolean,
+  actionPending: boolean
+): string {
+  if (actionPending) {
+    return "等待权威结算当前指令";
+  }
+
+  switch (presentationState?.phase) {
+    case "enter":
+      return "确认遭遇信息后选择目标并下达首个指令";
+    case "command":
+      return "等待本次指令返回伤害、状态或技能结果";
+    case "impact":
+      return canAct ? "确认受击结果后继续选择目标或技能" : "等待下一行动方接管回合";
+    case "resolution":
+      return resolveBattleResultNextStepLine(presentationState);
+    default:
+      return canAct ? "选择目标并下达指令" : "等待对方行动或权威同步";
+  }
+}
+
+function resolveBattleResultNextStepLine(presentationState: CocosBattlePresentationState): string {
+  if (presentationState.result === "victory") {
+    return "返回世界地图并继续推进当前回合";
+  }
+  if (presentationState.result === "defeat") {
+    return "等待世界地图回写后调整部队与下一行动";
+  }
+  return "等待世界地图确认奖励、占位与最终结算";
 }
 
 function resolveEncounterPosition(update: SessionUpdate | null, battle: BattleState): Vec2 | null {
