@@ -109,6 +109,7 @@
     "test:validate-assets": "node --import tsx --test ./scripts/test/validate-assets.test.ts",
     "test:ci-trend-summary": "node --import tsx --test ./scripts/test/publish-ci-trend-summary.test.ts",
     "test:multiplayer-protocol-compatibility:unit": "node --import tsx --test ./scripts/test/multiplayer-protocol-compatibility.test.ts",
+    "test:db-backup": "node --import tsx --test ./scripts/test/db-backup.test.ts",
     "test:client:config-center": "node --import tsx --test ./apps/client/test/config-center.test.ts ./apps/client/test/config-center-render.test.ts",
     "test:shared": "node --import tsx --test \"packages/shared/test/**/*.test.ts\"",
     "test:contracts": "node --import tsx --test ./packages/shared/test/client-payload-contracts.test.ts",
