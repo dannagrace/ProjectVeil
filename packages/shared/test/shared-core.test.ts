@@ -1929,19 +1929,54 @@ test("equipment catalog exposes the minimum foundation set and resolves hero bon
 
   const bonuses = createHeroEquipmentBonusSummary(hero);
 
-  assert.equal(countsByType.weapon, 6);
-  assert.equal(countsByType.armor, 6);
-  assert.equal(countsByType.accessory, 6);
+  assert.equal(catalog.entries.length, 40);
+  assert.equal(countsByType.weapon, 13);
+  assert.equal(countsByType.armor, 13);
+  assert.equal(countsByType.accessory, 14);
   assert.equal(bonuses.attack, 1);
   assert.equal(bonuses.defense, 1);
   assert.equal(bonuses.power, 2);
   assert.equal(bonuses.knowledge, 2);
   assert.equal(bonuses.maxHp, 6);
   assert.deepEqual(bonuses.resolvedItemIds, ["sunforged_spear", "warden_aegis", "oracle_lens"]);
+  assert.deepEqual(bonuses.activeSetBonuses, []);
   assert.deepEqual(
     bonuses.specialEffects.map((effect) => effect.id).sort(),
     ["channeling", "momentum", "ward"]
   );
+});
+
+test("equipment set bonuses activate at two matching pieces and add special effects", () => {
+  const hero = createHero({
+    id: "hero-warhost",
+    playerId: "player-1",
+    name: "突袭指挥官",
+    stats: {
+      attack: 5,
+      defense: 4,
+      power: 1,
+      knowledge: 2,
+      hp: 30,
+      maxHp: 30
+    },
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        weaponId: "siege_maul",
+        armorId: "assault_cuirass",
+        trinketIds: []
+      }
+    }
+  });
+
+  const bonuses = createHeroEquipmentBonusSummary(hero);
+
+  assert.deepEqual(bonuses.resolvedItemIds, ["siege_maul", "assault_cuirass"]);
+  assert.deepEqual(bonuses.activeSetBonuses.map((bonus) => bonus.setId), ["warhost"]);
+  assert.equal(bonuses.attackPercent, 28);
+  assert.equal(bonuses.power, 1);
+  assert.equal(bonuses.maxHp, 3);
+  assert.deepEqual(bonuses.specialEffects.map((effect) => effect.id), ["lifesteal"]);
 });
 
 test("hero equipment loadout view resolves slot metadata for equipped and empty slots", () => {
@@ -2078,8 +2113,8 @@ test("hero equip and unequip actions rotate items between slots and inventory", 
 test("equipment drops respect rarity pools and battle victories add loot to hero inventory", () => {
   assert.equal(rollEquipmentDrop(0.9, 0.1, 0.1), null);
   assert.deepEqual(rollEquipmentDrop(0.01, 0.98, 0.9), {
-    itemId: "oracle_lens",
-    item: getDefaultEquipmentCatalog().entries.find((entry) => entry.id === "oracle_lens")
+    itemId: "briar_heart_charm",
+    item: getDefaultEquipmentCatalog().entries.find((entry) => entry.id === "briar_heart_charm")
   });
 
   const hero = createHero({
@@ -2112,15 +2147,15 @@ test("equipment drops respect rarity pools and battle victories add loot to hero
     survivingDefenders: []
   });
 
-  assert.deepEqual(outcome.state.heroes[0]?.loadout.inventory, ["tower_shield_mail"]);
+  assert.deepEqual(outcome.state.heroes[0]?.loadout.inventory, ["skirmisher_cuirass"]);
   assert.deepEqual(outcome.events.slice(-1), [
     {
       type: "hero.equipmentFound",
       heroId: "hero-1",
       battleId: "battle-neutral-1",
       battleKind: "neutral",
-      equipmentId: "tower_shield_mail",
-      equipmentName: "塔盾链甲",
+      equipmentId: "skirmisher_cuirass",
+      equipmentName: "游斗胸甲",
       rarity: "common"
     }
   ]);
@@ -2174,8 +2209,8 @@ test("equipment drops overflow cleanly when the backpack is already full", () =>
       heroId: "hero-1",
       battleId: "battle-neutral-1",
       battleKind: "neutral",
-      equipmentId: "tower_shield_mail",
-      equipmentName: "塔盾链甲",
+      equipmentId: "skirmisher_cuirass",
+      equipmentName: "游斗胸甲",
       rarity: "common",
       overflowed: true
     }
@@ -3235,6 +3270,140 @@ test("battle state builders fold equipped item bonuses into hero-led stacks", ()
     battle.units["hero-2-stack"]?.defense,
     (baselineBattle.units["hero-2-stack"]?.defense ?? 0) + defenderBonuses.defense
   );
+});
+
+test("battle attacks apply lifesteal from an active equipment set after a kill", () => {
+  const state: BattleState = {
+    id: "battle-lifesteal",
+    round: 1,
+    lanes: 1,
+    activeUnitId: "attacker",
+    turnOrder: ["attacker", "defender"],
+    units: {
+      attacker: {
+        id: "attacker",
+        templateId: "hero_guard_basic",
+        camp: "attacker",
+        lane: 0,
+        stackName: "先锋队",
+        initiative: 10,
+        attack: 9,
+        defense: 4,
+        minDamage: 8,
+        maxDamage: 8,
+        count: 1,
+        currentHp: 6,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false,
+        equipmentEffects: ["lifesteal"]
+      },
+      defender: {
+        id: "defender",
+        templateId: "hero_guard_basic",
+        camp: "defender",
+        lane: 0,
+        stackName: "守军",
+        initiative: 5,
+        attack: 2,
+        defense: 1,
+        minDamage: 1,
+        maxDamage: 1,
+        count: 1,
+        currentHp: 5,
+        maxHp: 5,
+        hasRetaliated: false,
+        defending: false
+      }
+    },
+    unitCooldowns: {
+      attacker: {},
+      defender: {}
+    },
+    environment: [],
+    log: [],
+    rng: {
+      seed: 1,
+      cursor: 0
+    }
+  };
+
+  const next = applyBattleAction(state, {
+    type: "battle.attack",
+    attackerId: "attacker",
+    defenderId: "defender"
+  });
+
+  assert.equal(next.units.defender?.count, 0);
+  assert.equal(next.units.attacker?.currentHp, 8);
+  assert.match(next.log.join("\n"), /恢复 2 生命/);
+});
+
+test("battle attacks apply thorns from an active equipment set on contact damage", () => {
+  const state: BattleState = {
+    id: "battle-thorns",
+    round: 1,
+    lanes: 1,
+    activeUnitId: "attacker",
+    turnOrder: ["attacker", "defender"],
+    units: {
+      attacker: {
+        id: "attacker",
+        templateId: "hero_guard_basic",
+        camp: "attacker",
+        lane: 0,
+        stackName: "攻方",
+        initiative: 10,
+        attack: 6,
+        defense: 3,
+        minDamage: 6,
+        maxDamage: 6,
+        count: 1,
+        currentHp: 10,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false
+      },
+      defender: {
+        id: "defender",
+        templateId: "hero_guard_basic",
+        camp: "defender",
+        lane: 0,
+        stackName: "守方",
+        initiative: 4,
+        attack: 3,
+        defense: 3,
+        minDamage: 1,
+        maxDamage: 1,
+        count: 1,
+        currentHp: 20,
+        maxHp: 20,
+        hasRetaliated: false,
+        defending: false,
+        equipmentEffects: ["thorns"]
+      }
+    },
+    unitCooldowns: {
+      attacker: {},
+      defender: {}
+    },
+    environment: [],
+    log: [],
+    rng: {
+      seed: 1,
+      cursor: 0
+    }
+  };
+
+  const next = applyBattleAction(state, {
+    type: "battle.attack",
+    attackerId: "attacker",
+    defenderId: "defender"
+  });
+
+  assert.ok((next.units.defender?.currentHp ?? 0) < 20);
+  assert.ok((next.units.attacker?.currentHp ?? 0) < 10);
+  assert.match(next.log.join("\n"), /反刺/);
 });
 
 test("createPlayerWorldView returns player-scoped resources after collection", () => {

@@ -27,7 +27,14 @@ export type HeroSkillBranchId = string;
 export type EquipmentId = string;
 export type EquipmentType = "weapon" | "armor" | "accessory";
 export type EquipmentRarity = "common" | "rare" | "epic";
-export type EquipmentSpecialEffectId = "initiative_edge" | "brace" | "channeling" | "momentum" | "ward";
+export type EquipmentSpecialEffectId =
+  | "initiative_edge"
+  | "brace"
+  | "channeling"
+  | "momentum"
+  | "ward"
+  | "lifesteal"
+  | "thorns";
 
 export interface EquipmentStatBonuses {
   attackPercent: number;
@@ -50,6 +57,7 @@ export interface EquipmentDefinition {
   rarity: EquipmentRarity;
   description: string;
   bonuses: Partial<EquipmentStatBonuses>;
+  setId?: string;
   specialEffect?: EquipmentSpecialEffectConfig;
 }
 
@@ -110,6 +118,9 @@ export interface BattleEnvironmentBalanceConfig {
 export interface BattleBalanceConfig {
   damage: BattleDamageBalanceConfig;
   environment: BattleEnvironmentBalanceConfig;
+  pvp: {
+    eloK: number;
+  };
 }
 
 export interface MovePoints {
@@ -466,6 +477,7 @@ export interface UnitStack {
   power?: number;
   hasRetaliated: boolean;
   defending: boolean;
+  equipmentEffects?: EquipmentSpecialEffectId[];
   skills?: BattleSkillState[];
   statusEffects?: BattleStatusEffectState[];
 }
