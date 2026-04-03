@@ -24,12 +24,17 @@ export interface CocosAnimationReadinessSection extends CocosPresentationReadine
   deliveryModes: Record<CocosAnimationDeliveryMode, number>;
 }
 
+export interface CocosBattleJourneyReadinessSection extends CocosPresentationReadinessSection {
+  verifiedStages: Array<"entry" | "command" | "impact" | "resolution">;
+}
+
 export interface CocosPresentationReadiness {
   summary: string;
   nextStep: string;
   pixel: CocosPresentationReadinessSection;
   audio: CocosPresentationReadinessSection;
   animation: CocosAnimationReadinessSection;
+  battleJourney: CocosBattleJourneyReadinessSection;
 }
 
 export interface CocosPresentationReleaseGate {
@@ -130,25 +135,46 @@ function buildAnimationReadiness(): CocosAnimationReadinessSection {
   };
 }
 
-function buildNextStep(pixel: CocosPresentationReadinessSection, audio: CocosPresentationReadinessSection, animation: CocosAnimationReadinessSection): string {
+function buildBattleJourneyReadiness(): CocosBattleJourneyReadinessSection {
+  const verifiedStages: CocosBattleJourneyReadinessSection["verifiedStages"] = ["entry", "command", "impact", "resolution"];
+  return {
+    label: "战斗流程",
+    stage: "production",
+    headline: "战斗主流程已正式化 · 进场 / 指令 / 受击 / 结算",
+    detail: "Battle panel 与 transition feedback 已明确暴露阶段标签、badge、下一步提示与中性结算回写壳，剩余占位风险转入资产层追踪",
+    shortLabel: "战斗流程 正式 4/4",
+    verifiedStages
+  };
+}
+
+function buildNextStep(
+  pixel: CocosPresentationReadinessSection,
+  audio: CocosPresentationReadinessSection,
+  animation: CocosAnimationReadinessSection,
+  battleJourney: CocosBattleJourneyReadinessSection
+): string {
   const blockers = getCocosPresentationReleaseGate({
     pixel,
     audio,
     animation
   }).blockers;
-  return blockers.length > 0 ? `待替换 ${blockers.join(" / ")}` : "已达到正式表现资源阶段";
+  return blockers.length > 0
+    ? `${battleJourney.shortLabel} · 待替换 ${blockers.join(" / ")}`
+    : "战斗流程与表现资源均已达到正式阶段";
 }
 
 export function buildCocosPresentationReadiness(): CocosPresentationReadiness {
   const pixel = buildPixelReadiness();
   const audio = buildAudioReadiness();
   const animation = buildAnimationReadiness();
+  const battleJourney = buildBattleJourneyReadiness();
   return {
     pixel,
     audio,
     animation,
+    battleJourney,
     summary: formatPresentationReadinessSummary({ pixel, audio, animation }),
-    nextStep: buildNextStep(pixel, audio, animation)
+    nextStep: buildNextStep(pixel, audio, animation, battleJourney)
   };
 }
 

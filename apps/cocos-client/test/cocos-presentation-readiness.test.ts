@@ -9,6 +9,9 @@ import {
 
 test("presentation readiness summarizes placeholder pixel, audio and fallback animation coverage", () => {
   const readiness = buildCocosPresentationReadiness();
+  assert.equal(readiness.battleJourney.stage, "production");
+  assert.deepEqual(readiness.battleJourney.verifiedStages, ["entry", "command", "impact", "resolution"]);
+  assert.match(readiness.battleJourney.detail, /中性结算回写壳/);
   assert.equal(readiness.pixel.stage, "placeholder");
   assert.match(readiness.pixel.headline, /5 地形 \/ 4 英雄 \/ 10 单位 \/ 5 建筑/);
   assert.equal(readiness.audio.stage, "mixed");
@@ -16,6 +19,7 @@ test("presentation readiness summarizes placeholder pixel, audio and fallback an
   assert.match(readiness.audio.detail, /2 正式 \/ 6 占位/);
   assert.equal(readiness.animation.deliveryModes.fallback, 2);
   assert.equal(readiness.animation.deliveryModes.spine, 0);
+  assert.match(readiness.nextStep, /战斗流程 正式 4\/4/);
   assert.match(readiness.nextStep, /正式像素美术/);
   assert.match(readiness.nextStep, /Spine Skeleton/);
   assert.deepEqual(getCocosPresentationReleaseGate(readiness), {

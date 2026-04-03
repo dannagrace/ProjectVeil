@@ -55,6 +55,7 @@ When the sign-off conclusion changes, mirror the same owner, revision, timestamp
 This table is the single maintained inventory of Cocos presentation fallbacks still allowed during Phase 1 hardening. The current repo-backed baseline remains:
 
 - `cocos-presentation-readiness`: `像素 占位`, `音频 混合 2/8`, `动画 回退 2/2`
+- `cocos-presentation-readiness`: `战斗流程 正式 4/4`，表示 battle journey 的 `进场 / 指令 / 受击 / 结算` 已在状态/copy 层正式化，剩余 debt 继续按资产 fallback 管理
 - `configs/cocos-presentation.json`: `explore` / `battle` music plus `attack` / `skill` / `hit` / `level_up` cues are still `placeholder`, while `hero_guard_basic` and `wolf_pack` still ship as `deliveryMode: fallback`
 
 Unless a candidate-specific artifact proves otherwise, treat every row below as `waived-controlled-test`.

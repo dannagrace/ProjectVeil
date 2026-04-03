@@ -270,6 +270,7 @@ function buildBattlePresentationContextLines(
 ): string[] {
   const roomId = update?.world.meta.roomId ?? "unknown-room";
   return [
+    `流程：${formatBattleJourneyLine(presentationState)}`,
     `会话：${roomId}/${battle.id} · ${formatEncounterLabel(battle)}`,
     `表现：${presentationState?.badge ?? "LIVE"} · ${presentationState?.label ?? "战斗进行中"}`,
     `下一步：${resolveBattleNextStepLine(presentationState, canAct, actionPending)}`
@@ -278,7 +279,31 @@ function buildBattlePresentationContextLines(
 
 function buildBattleResultContextLines(presentationState: CocosBattlePresentationState): string[] {
   const battleId = presentationState.battleId ? `会话：${presentationState.battleId} · ${presentationState.badge}` : null;
-  return [battleId, `下一步：${resolveBattleResultNextStepLine(presentationState)}`].filter((line): line is string => Boolean(line));
+  return [
+    `流程：${formatBattleJourneyLine(presentationState)}`,
+    battleId,
+    `下一步：${resolveBattleResultNextStepLine(presentationState)}`
+  ].filter((line): line is string => Boolean(line));
+}
+
+function formatBattleJourneyLine(presentationState: CocosBattlePresentationState | null): string {
+  const activePhase = resolveBattleJourneyPhaseLabel(presentationState);
+  return `进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 ${activePhase}`;
+}
+
+function resolveBattleJourneyPhaseLabel(presentationState: CocosBattlePresentationState | null): string {
+  switch (presentationState?.phase) {
+    case "enter":
+      return "进场确认";
+    case "command":
+      return "指令下达";
+    case "impact":
+      return "受击反馈";
+    case "resolution":
+      return "战果结算";
+    default:
+      return "现场回合";
+  }
 }
 
 function resolveBattleNextStepLine(
