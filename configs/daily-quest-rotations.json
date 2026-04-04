@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 1,
+  "rotations": [
+    {
+      "id": "spring-weekday-patrol",
+      "label": "Spring Weekday Patrol",
+      "schedule": {
+        "startDate": "2026-04-01",
+        "endDate": "2026-04-30",
+        "weekdays": ["mon", "tue", "wed", "thu", "fri"]
+      },
+      "quests": [
+        {
+          "id": "daily_explore_frontier",
+          "title": "侦察前线",
+          "description": "完成 3 次探索移动。",
+          "metric": "hero_moves",
+          "target": 3,
+          "reward": {
+            "gems": 3,
+            "gold": 40
+          }
+        },
+        {
+          "id": "daily_resource_run",
+          "title": "补给回收",
+          "description": "完成 2 次资源收集。",
+          "metric": "resource_collections",
+          "target": 2,
+          "reward": {
+            "gems": 2,
+            "gold": 35
+          }
+        },
+        {
+          "id": "daily_battle_victory",
+          "title": "凯旋号角",
+          "description": "取得 1 场战斗胜利。",
+          "metric": "battle_wins",
+          "target": 1,
+          "reward": {
+            "gems": 5,
+            "gold": 60
+          }
+        }
+      ]
+    },
+    {
+      "id": "spring-weekend-surge",
+      "label": "Spring Weekend Surge",
+      "schedule": {
+        "startDate": "2026-04-01",
+        "endDate": "2026-04-30",
+        "weekdays": ["sun", "sat"]
+      },
+      "quests": [
+        {
+          "id": "daily_explore_frontier",
+          "title": "侦察前线",
+          "description": "完成 3 次探索移动。",
+          "metric": "hero_moves",
+          "target": 3,
+          "reward": {
+            "gems": 3,
+            "gold": 40
+          }
+        },
+        {
+          "id": "daily_battle_victory",
+          "title": "凯旋号角",
+          "description": "取得 1 场战斗胜利。",
+          "metric": "battle_wins",
+          "target": 1,
+          "reward": {
+            "gems": 5,
+            "gold": 60
+          }
+        },
+        {
+          "id": "daily_resource_run",
+          "title": "补给回收",
+          "description": "完成 2 次资源收集。",
+          "metric": "resource_collections",
+          "target": 2,
+          "reward": {
+            "gems": 2,
+            "gold": 35
+          }
+        }
+      ]
+    },
+    {
+      "id": "pve-launch-weekday",
+      "label": "PvE Launch Weekday Rotation",
+      "schedule": {
+        "startDate": "2026-05-01",
+        "endDate": "2026-05-31",
+        "weekdays": ["mon", "tue", "wed", "thu", "fri"],
+        "requiredFlags": ["pve_enabled"]
+      },
+      "quests": [
+        {
+          "id": "daily_explore_frontier",
+          "title": "远征探路",
+          "description": "完成 4 次探索移动。",
+          "metric": "hero_moves",
+          "target": 4,
+          "reward": {
+            "gems": 4,
+            "gold": 55
+          }
+        },
+        {
+          "id": "daily_battle_victory",
+          "title": "征战回响",
+          "description": "取得 2 场战斗胜利。",
+          "metric": "battle_wins",
+          "target": 2,
+          "reward": {
+            "gems": 8,
+            "gold": 85
+          }
+        },
+        {
+          "id": "daily_resource_run",
+          "title": "前线补给线",
+          "description": "完成 3 次资源收集。",
+          "metric": "resource_collections",
+          "target": 3,
+          "reward": {
+            "gems": 3,
+            "gold": 45
+          }
+        }
+      ]
+    },
+    {
+      "id": "pve-launch-weekend",
+      "label": "PvE Launch Weekend Rotation",
+      "schedule": {
+        "startDate": "2026-05-01",
+        "endDate": "2026-05-31",
+        "weekdays": ["sun", "sat"],
+        "requiredFlags": ["pve_enabled"]
+      },
+      "quests": [
+        {
+          "id": "daily_explore_frontier",
+          "title": "远征探路",
+          "description": "完成 4 次探索移动。",
+          "metric": "hero_moves",
+          "target": 4,
+          "reward": {
+            "gems": 4,
+            "gold": 55
+          }
+        },
+        {
+          "id": "daily_battle_victory",
+          "title": "征战回响",
+          "description": "取得 2 场战斗胜利。",
+          "metric": "battle_wins",
+          "target": 2,
+          "reward": {
+            "gems": 8,
+            "gold": 85
+          }
+        },
+        {
+          "id": "daily_resource_run",
+          "title": "前线补给线",
+          "description": "完成 3 次资源收集。",
+          "metric": "resource_collections",
+          "target": 3,
+          "reward": {
+            "gems": 3,
+            "gold": 45
+          }
+        }
+      ]
+    }
+  ]
+}
