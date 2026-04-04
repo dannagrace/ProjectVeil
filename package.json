@@ -23,6 +23,7 @@
     "db:profiles:list": "node --import tsx ./scripts/manage-player-room-profiles.ts list",
     "db:profiles:delete": "node --import tsx ./scripts/manage-player-room-profiles.ts delete",
     "db:profiles:prune": "node --import tsx ./scripts/manage-player-room-profiles.ts prune",
+    "config-center:restore": "node --import tsx ./scripts/config-center-restore.ts",
     "ops:codex-branches": "node --import tsx ./scripts/audit-codex-automation-branches.ts",
     "plan:validation:minimal": "node --import tsx ./scripts/minimal-validation-plan.ts",
     "demo:flow": "node --import tsx ./scripts/demo.ts",

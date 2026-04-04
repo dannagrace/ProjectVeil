@@ -160,6 +160,8 @@ interface ConfigPublishHistoryEntry {
   documentId: ConfigDocumentId;
   author: string;
   summary: string;
+  candidate: string | null;
+  revision: string | null;
   publishedAt: string;
   fromVersion: number;
   toVersion: number;
@@ -188,6 +190,8 @@ interface ConfigPublishAuditEvent {
   id: string;
   author: string;
   summary: string;
+  candidate: string | null;
+  revision: string | null;
   publishedAt: string;
   resultStatus: ConfigPublishResultStatus;
   resultMessage: string;
@@ -330,6 +334,8 @@ interface AppState {
   publishAuditHistory: ConfigPublishAuditEvent[];
   publishAuditFilterId: ConfigDocumentId | "all";
   publishAuditFilterStatus: ConfigPublishResultStatus | "all";
+  publishAuditFilterCandidate: string;
+  publishAuditFilterRevision: string;
   publishStage: ConfigStageState | null;
   publishStageLoading: boolean;
 }
@@ -402,6 +408,8 @@ interface ConfigCenterPublishHistorySectionInput {
   publishAuditHistory: ConfigPublishAuditEvent[];
   publishAuditFilterId: ConfigDocumentId | "all";
   publishAuditFilterStatus: ConfigPublishResultStatus | "all";
+  publishAuditFilterCandidate: string;
+  publishAuditFilterRevision: string;
   historyLoading: boolean;
 }
 
@@ -600,15 +608,23 @@ export function renderConfigCenterPublishHistoryList({
   publishAuditHistory,
   publishAuditFilterId,
   publishAuditFilterStatus,
+  publishAuditFilterCandidate,
+  publishAuditFilterRevision,
   historyLoading
 }: ConfigCenterPublishHistorySectionInput): string {
+  const candidateQuery = publishAuditFilterCandidate.trim().toLowerCase();
+  const revisionQuery = publishAuditFilterRevision.trim().toLowerCase();
   const entries = publishAuditHistory.filter((entry) => {
     const matchesDocument =
       publishAuditFilterId === "all" ||
       entry.changes.some((change) => change.documentId === publishAuditFilterId);
     const matchesResult =
       publishAuditFilterStatus === "all" || entry.resultStatus === publishAuditFilterStatus;
-    return matchesDocument && matchesResult;
+    const matchesCandidate =
+      candidateQuery.length === 0 || (entry.candidate ?? "").toLowerCase().includes(candidateQuery);
+    const matchesRevision =
+      revisionQuery.length === 0 || (entry.revision ?? "").toLowerCase().includes(revisionQuery);
+    return matchesDocument && matchesResult && matchesCandidate && matchesRevision;
   });
   if (historyLoading && entries.length === 0 && publishAuditHistory.length === 0) {
     return `<div class="world-preview-empty">正在加载发布记录...</div>`;
@@ -640,6 +656,14 @@ export function renderConfigCenterPublishHistoryList({
               <option value="applied" ${publishAuditFilterStatus === "applied" ? "selected" : ""}>已应用</option>
               <option value="failed" ${publishAuditFilterStatus === "failed" ? "selected" : ""}>失败</option>
             </select>
+          </label>
+          <label>
+            <span>Candidate</span>
+            <input data-role="publish-filter-candidate" value="${escapeHtml(publishAuditFilterCandidate)}" placeholder="phase1-rc" />
+          </label>
+          <label>
+            <span>Revision</span>
+            <input data-role="publish-filter-revision" value="${escapeHtml(publishAuditFilterRevision)}" placeholder="abc1234" />
           </label>
         </div>
         <div class="world-preview-empty">暂无匹配的发布记录，先使用“发布草稿”功能再回来查看。</div>
@@ -673,6 +697,14 @@ export function renderConfigCenterPublishHistoryList({
             <option value="failed" ${publishAuditFilterStatus === "failed" ? "selected" : ""}>失败</option>
           </select>
         </label>
+        <label>
+          <span>Candidate</span>
+          <input data-role="publish-filter-candidate" value="${escapeHtml(publishAuditFilterCandidate)}" placeholder="phase1-rc" />
+        </label>
+        <label>
+          <span>Revision</span>
+          <input data-role="publish-filter-revision" value="${escapeHtml(publishAuditFilterRevision)}" placeholder="abc1234" />
+        </label>
       </div>
       <div class="publish-history-list">
         ${entries
@@ -688,6 +720,16 @@ export function renderConfigCenterPublishHistoryList({
                   <span class="publish-result-pill is-${entry.resultStatus}">${entry.resultStatus === "applied" ? "已应用" : "失败"}</span>
                 </div>
                 <small>${escapeHtml(entry.resultMessage)}</small>
+                ${
+                  entry.candidate || entry.revision
+                    ? `
+                        <div class="config-badge-row">
+                          ${entry.candidate ? `<span class="config-badge">Candidate · ${escapeHtml(entry.candidate)}</span>` : ""}
+                          ${entry.revision ? `<span class="config-badge">Revision · ${escapeHtml(entry.revision)}</span>` : ""}
+                        </div>
+                      `
+                    : ""
+                }
                 <div class="config-badge-row">
                   ${entry.changes.map((change) => `<span class="config-badge">${escapeHtml(change.title)} · v${change.fromVersion}→v${change.toVersion}</span>`).join("")}
                 </div>
@@ -1701,6 +1743,8 @@ function renderPublishHistoryList(): string {
     publishAuditHistory: state.publishAuditHistory,
     publishAuditFilterId: state.publishAuditFilterId,
     publishAuditFilterStatus: state.publishAuditFilterStatus,
+    publishAuditFilterCandidate: state.publishAuditFilterCandidate,
+    publishAuditFilterRevision: state.publishAuditFilterRevision,
     historyLoading: state.historyLoading
   });
 }
@@ -2090,6 +2134,20 @@ function bindPublishStageControls(): void {
   statusFilter?.addEventListener("change", () => {
     setPublishAuditFilters({
       resultStatus: (statusFilter.value || "all") as ConfigPublishResultStatus | "all"
+    });
+  });
+
+  const candidateFilter = document.querySelector<HTMLInputElement>("[data-role='publish-filter-candidate']");
+  candidateFilter?.addEventListener("input", () => {
+    setPublishAuditFilters({
+      candidate: candidateFilter.value
+    });
+  });
+
+  const revisionFilter = document.querySelector<HTMLInputElement>("[data-role='publish-filter-revision']");
+  revisionFilter?.addEventListener("input", () => {
+    setPublishAuditFilters({
+      revision: revisionFilter.value
     });
   });
 
