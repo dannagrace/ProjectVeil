@@ -19,6 +19,7 @@ export * from "./map.ts";
 export * from "./map-sync.ts";
 export * from "./matchmaking.ts";
 export * from "./models.ts";
+export * from "./onboarding-funnel.ts";
 export * from "./protocol.ts";
 export * from "./player-account.ts";
 export * from "./runtime-diagnostics.ts";

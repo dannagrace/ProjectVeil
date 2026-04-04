@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "failures": [
+    {
+      "playerId": "player-drop-step2",
+      "reason": "disconnect",
+      "at": "2026-04-01T12:04:00.000Z",
+      "stageId": "tutorial_step_2_seen"
+    },
+    {
+      "playerId": "player-drop-step3",
+      "reason": "validation_failure",
+      "at": "2026-04-01T13:07:00.000Z",
+      "stageId": "tutorial_step_3_seen"
+    },
+    {
+      "playerId": "player-timeout",
+      "reason": "timeout",
+      "at": "2026-04-01T15:00:00.000Z",
+      "stageId": "tutorial_step_1_seen"
+    }
+  ]
+}
