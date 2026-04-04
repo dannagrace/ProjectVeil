@@ -102,6 +102,8 @@ test("config center render shows publish history changes with impact summary and
         id: "publish-1",
         author: "ConfigOps",
         summary: "扩图并补资源",
+        candidate: "phase1-rc",
+        revision: "abc1234",
         publishedAt: "2026-03-30T05:00:00.000Z",
         resultStatus: "applied",
         resultMessage: "运行时配置已刷新",
@@ -145,10 +147,14 @@ test("config center render shows publish history changes with impact summary and
     ],
     publishAuditFilterId: "world",
     publishAuditFilterStatus: "applied",
+    publishAuditFilterCandidate: "phase1",
+    publishAuditFilterRevision: "abc",
     historyLoading: false
   });
 
   assert.match(html, /发布审计历史/);
+  assert.match(html, /phase1-rc/);
+  assert.match(html, /abc1234/);
   assert.match(html, /地图扩图会影响世界预览与出生点分布/);
   assert.match(html, /width/);
   assert.match(html, /快速回滚/);

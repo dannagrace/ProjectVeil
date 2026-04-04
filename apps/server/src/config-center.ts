@@ -173,6 +173,8 @@ export interface ConfigPublishHistoryEntry {
   documentId: ConfigDocumentId;
   author: string;
   summary: string;
+  candidate: string | null;
+  revision: string | null;
   publishedAt: string;
   fromVersion: number;
   toVersion: number;
@@ -201,6 +203,8 @@ export interface ConfigPublishAuditEvent {
   id: string;
   author: string;
   summary: string;
+  candidate: string | null;
+  revision: string | null;
   publishedAt: string;
   resultStatus: ConfigPublishResultStatus;
   resultMessage: string;
@@ -350,7 +354,12 @@ export interface ConfigCenterStore {
   importDocumentFromWorkbook(id: ConfigDocumentId, workbook: Buffer): Promise<ConfigDocument>;
   getStagedDraft(): Promise<ConfigStageState | null>;
   saveStagedDraft(documents: ConfigStageDocumentInput[]): Promise<ConfigStageState | null>;
-  publishStagedDraft(metadata: { author: string; summary: string }): Promise<{
+  publishStagedDraft(metadata: {
+    author: string;
+    summary: string;
+    candidate?: string | null;
+    revision?: string | null;
+  }): Promise<{
     stage: ConfigStageState | null;
     publish: ConfigPublishEventSummary;
   }>;
@@ -2940,12 +2949,22 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
 
   async listPublishHistory(id: ConfigDocumentId): Promise<ConfigPublishHistoryEntry[]> {
     const state = await this.readLibraryState();
-    return [...(state.publishHistory[id] ?? [])];
+    return [...(state.publishHistory[id] ?? [])].map((entry) => ({
+      ...entry,
+      candidate: entry.candidate ?? null,
+      revision: entry.revision ?? null
+    }));
   }
 
   async listPublishAuditHistory(): Promise<ConfigPublishAuditEvent[]> {
     const state = await this.readLibraryState();
-    return [...(state.publishAuditHistory ?? [])].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+    return [...(state.publishAuditHistory ?? [])]
+      .map((entry) => ({
+        ...entry,
+        candidate: entry.candidate ?? null,
+        revision: entry.revision ?? null
+      }))
+      .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
   }
 
   async getStagedDraft(): Promise<ConfigStageState | null> {
@@ -2967,7 +2986,12 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
     return this.mapStageRecordToState(stageRecord);
   }
 
-  async publishStagedDraft(metadata: { author: string; summary: string }): Promise<{
+  async publishStagedDraft(metadata: {
+    author: string;
+    summary: string;
+    candidate?: string | null;
+    revision?: string | null;
+  }): Promise<{
     stage: ConfigStageState | null;
     publish: ConfigPublishEventSummary;
   }> {
@@ -2983,6 +3007,8 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
 
     const publishId = createId("publish");
     const publishedAt = new Date().toISOString();
+    const candidate = metadata.candidate?.trim() ? metadata.candidate.trim() : null;
+    const revision = metadata.revision?.trim() ? metadata.revision.trim() : null;
     const publishChanges: ConfigPublishChangeSummary[] = [];
     const historyEntries: ConfigPublishHistoryEntry[] = [];
     const auditChanges: ConfigPublishAuditChange[] = [];
@@ -2994,6 +3020,22 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
       const structuralCount = diffEntries.filter((entry) => entry.kind !== "value").length;
       const definition = configDefinitionFor(stagedDocument.id);
       const fromVersion = current.version ?? 1;
+      const existingRollbackSnapshot = (state.snapshots[stagedDocument.id] ?? []).find(
+        (snapshot) => snapshot.version === fromVersion
+      );
+      const rollbackSnapshot =
+        existingRollbackSnapshot ??
+        (() => {
+          const snapshot: ConfigSnapshotRecord = {
+            id: createId("snapshot"),
+            label: `${definition?.title ?? stagedDocument.id} v${fromVersion}（发布前回滚点）`,
+            createdAt: publishedAt,
+            version: fromVersion,
+            content: current.content
+          };
+          state.snapshots[stagedDocument.id] = [snapshot, ...(state.snapshots[stagedDocument.id] ?? [])].slice(0, 30);
+          return snapshot;
+        })();
       auditChanges.push({
         documentId: stagedDocument.id,
         title: definition?.title ?? stagedDocument.id,
@@ -3001,7 +3043,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
         toVersion: fromVersion,
         changeCount: diffEntries.length,
         structuralChangeCount: structuralCount,
-        snapshotId: null,
+        snapshotId: rollbackSnapshot.id,
         runtimeStatus: "pending",
         runtimeMessage: "等待运行时应用",
         diffSummary: diffEntries.slice(0, 4),
@@ -3022,10 +3064,8 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
 
         const saved = await this.saveDocument(auditChange.documentId, nextContent);
         const toVersion = saved.version ?? auditChange.fromVersion;
-        const snapshot = await this.findSnapshotByVersion(auditChange.documentId, toVersion);
 
         auditChange.toVersion = toVersion;
-        auditChange.snapshotId = snapshot?.id ?? null;
         auditChange.runtimeStatus = "applied";
         auditChange.runtimeMessage = "运行时已刷新";
         publishChanges.push({
@@ -3041,6 +3081,8 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
           documentId: auditChange.documentId,
           author: metadata.author,
           summary: metadata.summary,
+          candidate,
+          revision,
           publishedAt,
           fromVersion: auditChange.fromVersion,
           toVersion,
@@ -3059,6 +3101,8 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
         id: publishId,
         author: metadata.author,
         summary: metadata.summary,
+        candidate,
+        revision,
         publishedAt,
         resultStatus: "applied",
         resultMessage: "运行时配置已刷新",
@@ -3092,6 +3136,8 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
         id: publishId,
         author: metadata.author,
         summary: metadata.summary,
+        candidate,
+        revision,
         publishedAt,
         resultStatus: "failed",
         resultMessage: failedMessage,
@@ -3682,7 +3728,12 @@ export function registerConfigCenterRoutes(
 
   app.post("/api/config-center/publish-stage/publish", async (request, response) => {
     try {
-      const body = (await readJsonBody(request)) as { author?: string; summary?: string };
+      const body = (await readJsonBody(request)) as {
+        author?: string;
+        summary?: string;
+        candidate?: string | null;
+        revision?: string | null;
+      };
       if (typeof body.author !== "string" || !body.author.trim() || typeof body.summary !== "string" || !body.summary.trim()) {
         sendJson(response, 400, {
           error: {
@@ -3695,7 +3746,9 @@ export function registerConfigCenterRoutes(
 
       const result = await store.publishStagedDraft({
         author: body.author.trim(),
-        summary: body.summary.trim()
+        summary: body.summary.trim(),
+        candidate: typeof body.candidate === "string" ? body.candidate : null,
+        revision: typeof body.revision === "string" ? body.revision : null
       });
       sendJson(response, 200, {
         storage: store.mode,

@@ -644,6 +644,8 @@ test("config center publish audit history supports filters and snapshot inspecti
               id: "publish-1",
               author: "ConfigOps",
               summary: "扩图并补资源",
+              candidate: "phase1-rc",
+              revision: "abc1234",
               publishedAt: "2026-03-30T05:00:00.000Z",
               resultStatus: "applied",
               resultMessage: "运行时配置已刷新",
@@ -777,6 +779,9 @@ test("config center publish audit history supports filters and snapshot inspecti
   controller.setPublishAuditFilters({ documentId: "world", resultStatus: "applied" });
   assert.equal(controller.state.publishAuditFilterId, "world");
   assert.equal(controller.state.publishAuditFilterStatus, "applied");
+  controller.setPublishAuditFilters({ candidate: "phase1", revision: "abc" });
+  assert.equal(controller.state.publishAuditFilterCandidate, "phase1");
+  assert.equal(controller.state.publishAuditFilterRevision, "abc");
 
   await controller.inspectPublishedSnapshot("world", "snapshot-world-3");
 
@@ -788,6 +793,121 @@ test("config center publish audit history supports filters and snapshot inspecti
     requests.some((request) => request.url === "/api/config-center/configs/world/diff" && request.method === "POST"),
     true
   );
+});
+
+test("config center publish stage sends optional candidate and revision metadata", async () => {
+  const prompts = ["ConfigOps", "扩图并补资源", "phase1-rc", "abc1234"];
+  const { fetch, requests } = createFetchStub((request) => {
+    if (request.url === "/api/config-center/publish-stage/publish" && request.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          storage: "filesystem",
+          stage: null,
+          publish: {
+            id: "publish-1",
+            author: "ConfigOps",
+            summary: "扩图并补资源",
+            publishedAt: "2026-03-30T05:00:00.000Z",
+            changes: [{ documentId: "world" }]
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (request.url === "/api/config-center/publish-history") {
+      return new Response(JSON.stringify({ storage: "filesystem", history: [] }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    if (request.url === "/api/config-center/configs") {
+      return new Response(JSON.stringify({ storage: "filesystem", items: [] }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    if (request.url === "/api/config-center/configs/world") {
+      return new Response(
+        JSON.stringify({
+          storage: "filesystem",
+          document: createDocument("world", "{\n  \"width\": 10,\n  \"height\": 8\n}\n", { version: 3 })
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (request.url === "/api/config-center/configs/world/snapshots") {
+      return new Response(JSON.stringify({ storage: "filesystem", snapshots: [], publishHistory: [] }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    if (request.url === "/api/config-center/configs/world/presets") {
+      return new Response(JSON.stringify({ storage: "filesystem", presets: [] }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+  });
+
+  const controller = createConfigCenterController({
+    fetch,
+    prompt: () => prompts.shift() ?? null
+  });
+  controller.state.current = createDocument("world", "{\n  \"width\": 8,\n  \"height\": 8\n}\n", { version: 2 });
+  controller.state.publishStage = {
+    id: "stage-1",
+    createdAt: "2026-03-30T05:00:00.000Z",
+    updatedAt: "2026-03-30T05:00:00.000Z",
+    valid: true,
+    documents: [
+      {
+        id: "world",
+        title: "世界配置",
+        fileName: "phase1-world.json",
+        content: "{\n  \"width\": 10,\n  \"height\": 8\n}\n",
+        updatedAt: "2026-03-30T05:00:00.000Z",
+        validation: createValidationReport(true)
+      }
+    ]
+  };
+
+  await controller.publishStageDrafts();
+
+  const publishRequest = requests.find(
+    (request) => request.url === "/api/config-center/publish-stage/publish" && request.method === "POST"
+  );
+  assert.notEqual(publishRequest, undefined);
+  assert.deepEqual(JSON.parse(publishRequest?.body ?? "{}"), {
+    author: "ConfigOps",
+    summary: "扩图并补资源",
+    candidate: "phase1-rc",
+    revision: "abc1234"
+  });
 });
 
 test("config center builtin presets apply the expected field changes", async () => {

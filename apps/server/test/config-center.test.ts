@@ -211,7 +211,9 @@ const BATTLE_BALANCE_CONFIG = {
   },
   pvp: {
     eloK: 32
-  }
+  },
+  turnTimerSeconds: 30,
+  afkStrikesBeforeForfeit: 2
 };
 
 async function seedConfigRoot(rootDir: string): Promise<void> {
@@ -731,7 +733,12 @@ test("config center staged publish applies bundled drafts and records publish hi
   assert.equal(staged?.documents.length, 2);
   assert.equal(staged?.valid, true);
 
-  const published = await store.publishStagedDraft({ author: "ConfigOps", summary: "调大地图并补齐资源" });
+  const published = await store.publishStagedDraft({
+    author: "ConfigOps",
+    summary: "调大地图并补齐资源",
+    candidate: "phase1-rc",
+    revision: "abc1234"
+  });
   assert.equal(published.stage, null);
   assert.equal(published.publish.changes.length, 2);
   assert.equal(published.publish.author, "ConfigOps");
@@ -742,6 +749,8 @@ test("config center staged publish applies bundled drafts and records publish hi
   const worldHistory = await store.listPublishHistory("world");
   assert.equal(worldHistory[0]?.author, "ConfigOps");
   assert.equal(worldHistory[0]?.summary, "调大地图并补齐资源");
+  assert.equal(worldHistory[0]?.candidate, "phase1-rc");
+  assert.equal(worldHistory[0]?.revision, "abc1234");
   assert.equal((worldHistory[0]?.changeCount ?? 0) > 0, true);
 
   const mapHistory = await store.listPublishHistory("mapObjects");
@@ -750,6 +759,8 @@ test("config center staged publish applies bundled drafts and records publish hi
 
   const auditHistory = await store.listPublishAuditHistory();
   assert.equal(auditHistory[0]?.author, "ConfigOps");
+  assert.equal(auditHistory[0]?.candidate, "phase1-rc");
+  assert.equal(auditHistory[0]?.revision, "abc1234");
   assert.equal(auditHistory[0]?.resultStatus, "applied");
   assert.equal(auditHistory[0]?.changes.length, 2);
   assert.equal(auditHistory[0]?.changes[0]?.runtimeStatus, "applied");
@@ -759,6 +770,11 @@ test("config center staged publish applies bundled drafts and records publish hi
   assert.equal((auditHistory[0]?.changes[0]?.impactSummary?.changedFields.length ?? 0) > 0, true);
   assert.equal((auditHistory[0]?.changes[0]?.impactSummary?.impactedModules.length ?? 0) > 0, true);
   assert.equal((auditHistory[0]?.changes[0]?.impactSummary?.riskHints.length ?? 0) > 0, true);
+
+  const rollbackSnapshotId = auditHistory[0]?.changes.find((change) => change.documentId === "world")?.snapshotId;
+  assert.equal(typeof rollbackSnapshotId, "string");
+  const rolledBack = await store.rollbackToSnapshot("world", rollbackSnapshotId ?? "");
+  assert.equal(JSON.parse(rolledBack.content).width, WORLD_CONFIG.width);
 
   const stageAfter = await store.getStagedDraft();
   assert.equal(stageAfter, null);

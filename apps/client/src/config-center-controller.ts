@@ -99,6 +99,8 @@ interface ConfigPublishHistoryEntry {
   documentId: ConfigDocumentId;
   author: string;
   summary: string;
+  candidate: string | null;
+  revision: string | null;
   publishedAt: string;
   fromVersion: number;
   toVersion: number;
@@ -127,6 +129,8 @@ interface ConfigPublishAuditEvent {
   id: string;
   author: string;
   summary: string;
+  candidate: string | null;
+  revision: string | null;
   publishedAt: string;
   resultStatus: ConfigPublishResultStatus;
   resultMessage: string;
@@ -272,6 +276,8 @@ interface AppState {
   publishAuditHistory: ConfigPublishAuditEvent[];
   publishAuditFilterId: ConfigDocumentId | "all";
   publishAuditFilterStatus: ConfigPublishResultStatus | "all";
+  publishAuditFilterCandidate: string;
+  publishAuditFilterRevision: string;
   publishStage: ConfigStageState | null;
   publishStageLoading: boolean;
 }
@@ -400,6 +406,8 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     publishAuditHistory: [],
     publishAuditFilterId: "all",
     publishAuditFilterStatus: "all",
+    publishAuditFilterCandidate: "",
+    publishAuditFilterRevision: "",
     publishStage: null,
     publishStageLoading: false
   };
@@ -641,12 +649,20 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
   function setPublishAuditFilters(filters: {
     documentId?: ConfigDocumentId | "all";
     resultStatus?: ConfigPublishResultStatus | "all";
+    candidate?: string;
+    revision?: string;
   }): void {
     if (filters.documentId) {
       state.publishAuditFilterId = filters.documentId;
     }
     if (filters.resultStatus) {
       state.publishAuditFilterStatus = filters.resultStatus;
+    }
+    if (typeof filters.candidate === "string") {
+      state.publishAuditFilterCandidate = filters.candidate;
+    }
+    if (typeof filters.revision === "string") {
+      state.publishAuditFilterRevision = filters.revision;
     }
     notify();
   }
@@ -794,6 +810,9 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       return;
     }
 
+    const candidate = promptImpl("候选标识（可选，用于历史检索）", "")?.trim() ?? "";
+    const revision = promptImpl("Revision（可选，用于历史检索）", "")?.trim() ?? "";
+
     const publishedDocumentIds = stage.documents.map((document) => document.id);
     state.publishStageLoading = true;
     state.statusTone = "neutral";
@@ -818,7 +837,9 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
         },
         body: JSON.stringify({
           author,
-          summary
+          summary,
+          candidate,
+          revision
         })
       });
       state.storageMode = response.storage;
