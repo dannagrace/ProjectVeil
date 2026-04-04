@@ -152,6 +152,7 @@
 建议证据：
 
 - `npm test`
+- `npm run release:runtime-observability:gate -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>`
 - 手动抓取：`GET /api/runtime/health`
 - 手动抓取：`GET /api/runtime/auth-readiness`
 - 手动抓取：`GET /api/runtime/metrics`

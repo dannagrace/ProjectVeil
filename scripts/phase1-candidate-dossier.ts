@@ -6,8 +6,12 @@ import { pathToFileURL } from "node:url";
 
 import { buildReleaseGateSummaryReport, renderMarkdown as renderReleaseGateMarkdown } from "./release-gate-summary.ts";
 import { buildReleaseHealthSummaryReport, renderMarkdown as renderReleaseHealthMarkdown } from "./release-health-summary.ts";
+import {
+  buildRuntimeObservabilityGateReport,
+  type RuntimeObservabilityGateReport,
+  type TargetSurface
+} from "./runtime-observability-gate.ts";
 
-type TargetSurface = "h5" | "wechat";
 type EvidenceFreshness = "fresh" | "stale" | "missing_timestamp" | "invalid_timestamp" | "unknown";
 type DossierResult = "passed" | "failed" | "pending" | "accepted_risk";
 
@@ -15,6 +19,7 @@ interface Args {
   candidate?: string;
   candidateRevision?: string;
   serverUrl?: string;
+  runtimeObservabilityGatePath?: string;
   snapshotPath?: string;
   h5SmokePath?: string;
   reconnectSoakPath?: string;
@@ -358,6 +363,7 @@ interface Phase1CandidateDossier {
   phase1ExitEvidenceGate: Phase1ExitEvidenceGate;
   inputs: {
     serverUrl?: string;
+    runtimeObservabilityGatePath?: string;
     snapshotPath?: string;
     h5SmokePath?: string;
     reconnectSoakPath?: string;
@@ -427,6 +433,7 @@ function parseArgs(argv: string[]): Args {
   let candidate: string | undefined;
   let candidateRevision: string | undefined;
   let serverUrl: string | undefined;
+  let runtimeObservabilityGatePath: string | undefined;
   let snapshotPath: string | undefined;
   let h5SmokePath: string | undefined;
   let reconnectSoakPath: string | undefined;
@@ -462,6 +469,11 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--server-url" && next) {
       serverUrl = next.trim();
+      index += 1;
+      continue;
+    }
+    if (arg === "--runtime-observability-gate" && next) {
+      runtimeObservabilityGatePath = next;
       index += 1;
       continue;
     }
@@ -570,6 +582,7 @@ function parseArgs(argv: string[]): Args {
     ...(candidate ? { candidate } : {}),
     ...(candidateRevision ? { candidateRevision } : {}),
     ...(serverUrl ? { serverUrl } : {}),
+    ...(runtimeObservabilityGatePath ? { runtimeObservabilityGatePath } : {}),
     ...(snapshotPath ? { snapshotPath } : {}),
     ...(h5SmokePath ? { h5SmokePath } : {}),
     ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
@@ -640,6 +653,9 @@ function resolveInputPaths(args: Args): Phase1CandidateDossier["inputs"] {
   const wechatArtifactsDir = resolveWechatArtifactsDir(args);
   return {
     ...(args.serverUrl ? { serverUrl: args.serverUrl } : {}),
+    ...(resolveOptionalPath(args.runtimeObservabilityGatePath, undefined)
+      ? { runtimeObservabilityGatePath: resolveOptionalPath(args.runtimeObservabilityGatePath, undefined)! }
+      : {}),
     ...(resolveOptionalPath(
       args.snapshotPath,
       resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("release-readiness-") && entry.endsWith(".json"))
@@ -809,27 +825,78 @@ function relativeArtifactPath(filePath: string): string {
   return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`.trim());
-  }
-  return (await response.json()) as T;
-}
+function buildRuntimeSectionFromGateReport(
+  report: RuntimeObservabilityGateReport,
+  artifactPath: string | undefined,
+  maxAgeMs: number
+): DossierSection {
+  const observedAt = report.generatedAt;
+  const freshness = evaluateFreshness(observedAt, maxAgeMs);
+  const details: string[] = [
+    `targetEnvironment=${report.targetEnvironment.label ?? report.targetEnvironment.serverUrl}`,
+    `activeRooms=${report.readiness.activeRoomCount ?? "missing"}`,
+    `connections=${report.readiness.connectionCount ?? "missing"}`,
+    `actions=${report.readiness.actionMessagesTotal ?? "missing"}`,
+    `guestSessions=${report.readiness.activeGuestSessionCount ?? "missing"}`,
+    `accountSessions=${report.readiness.activeAccountSessionCount ?? "missing"}`,
+    `lockouts=${report.readiness.activeAccountLockCount ?? "missing"}`,
+    `pendingRegistrations=${report.readiness.pendingRegistrationCount ?? "missing"}`,
+    `pendingRecoveries=${report.readiness.pendingRecoveryCount ?? "missing"}`,
+    `tokenQueue=${report.readiness.tokenDeliveryQueueCount ?? "missing"}`,
+    `tokenDeadLetters=${report.readiness.tokenDeliveryDeadLetterCount ?? "missing"}`
+  ];
+  const evidence: DossierEvidenceRef[] = report.endpoints.map((endpoint) => ({
+    label: endpoint.label,
+    path: endpoint.url,
+    summary: endpoint.summary,
+    observedAt: endpoint.observedAt,
+    freshness: endpoint.freshness
+  }));
 
-async function fetchText(url: string): Promise<string> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`.trim());
+  for (const endpoint of report.endpoints) {
+    for (const detail of endpoint.details) {
+      details.push(`${endpoint.id}: ${detail}`);
+    }
   }
-  return response.text();
+  if (artifactPath) {
+    evidence.push({
+      label: "Runtime observability gate report",
+      path: artifactPath,
+      summary: `status=${report.summary.status}`,
+      observedAt: report.generatedAt,
+      freshness
+    });
+  }
+
+  return {
+    id: "runtime-health",
+    label: "Runtime health/auth-readiness/metrics",
+    required: true,
+    result: report.summary.status === "passed" ? "passed" : "failed",
+    summary: report.summary.headline,
+    ...(artifactPath ? { artifactPath } : {}),
+    observedAt,
+    freshness,
+    revision: report.candidate.revision,
+    details,
+    evidence,
+    acceptedRisks: []
+  };
 }
 
 async function buildRuntimeSection(
   targetSurface: TargetSurface,
   serverUrl: string | undefined,
-  maxAgeMs: number
+  maxAgeMs: number,
+  candidateName: string | undefined,
+  candidateRevision: string,
+  runtimeObservabilityGatePath?: string
 ): Promise<DossierSection> {
+  if (runtimeObservabilityGatePath && fs.existsSync(runtimeObservabilityGatePath)) {
+    const report = readJsonFile<RuntimeObservabilityGateReport>(runtimeObservabilityGatePath);
+    return buildRuntimeSectionFromGateReport(report, runtimeObservabilityGatePath, maxAgeMs);
+  }
+
   if (!serverUrl) {
     return {
       id: "runtime-health",
@@ -840,124 +907,25 @@ async function buildRuntimeSection(
         targetSurface === "wechat"
           ? "Live runtime evidence was not sampled for this candidate."
           : "Live runtime sampling was not requested for this target surface.",
+      ...(runtimeObservabilityGatePath ? { artifactPath: runtimeObservabilityGatePath } : {}),
       freshness: "unknown",
       details:
         targetSurface === "wechat"
-          ? ["Pass --server-url <base-url> to sample /api/runtime/health, /api/runtime/auth-readiness, and /api/runtime/metrics."]
+          ? ["Pass --server-url <base-url> or --runtime-observability-gate <path> to sample /api/runtime/health, /api/runtime/auth-readiness, and /api/runtime/metrics."]
           : ["No --server-url was provided; dossier relies on packaged-artifact and reconnect-soak evidence for this target surface."],
       evidence: [],
       acceptedRisks: []
     };
   }
 
-  const normalizedServerUrl = serverUrl.replace(/\/$/, "");
-  let healthPayload: RuntimeHealthPayload | undefined;
-  let authPayload: AuthReadinessPayload | undefined;
-  let metricsText: string | undefined;
-  const details: string[] = [];
-  const evidence: DossierEvidenceRef[] = [];
-  let hardFailure = false;
-  let pending = false;
-
-  try {
-    healthPayload = await fetchJson<RuntimeHealthPayload>(`${normalizedServerUrl}/api/runtime/health`);
-  } catch (error) {
-    hardFailure = true;
-    details.push(`Runtime health probe failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  try {
-    authPayload = await fetchJson<AuthReadinessPayload>(`${normalizedServerUrl}/api/runtime/auth-readiness`);
-  } catch (error) {
-    hardFailure = true;
-    details.push(`Auth readiness probe failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  try {
-    metricsText = await fetchText(`${normalizedServerUrl}/api/runtime/metrics`);
-  } catch (error) {
-    hardFailure = true;
-    details.push(`Runtime metrics probe failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  const observedAt = healthPayload?.checkedAt ?? authPayload?.checkedAt;
-  const freshness = evaluateFreshness(observedAt, maxAgeMs);
-
-  if (healthPayload) {
-    details.push(
-      `health activeRooms=${healthPayload.runtime?.activeRoomCount ?? 0} connections=${healthPayload.runtime?.connectionCount ?? 0} actionMessages=${healthPayload.runtime?.gameplayTraffic?.actionMessagesTotal ?? 0}`
-    );
-    evidence.push({
-      label: "Runtime health",
-      path: `${normalizedServerUrl}/api/runtime/health`,
-      summary: `status=${healthPayload.status ?? "missing"}`,
-      observedAt: healthPayload.checkedAt,
-      freshness: evaluateFreshness(healthPayload.checkedAt, maxAgeMs)
-    });
-    if (healthPayload.status !== "ok") {
-      hardFailure = true;
-      details.push(`Runtime health status is ${JSON.stringify(healthPayload.status ?? "missing")}.`);
-    }
-  }
-
-  if (authPayload) {
-    const authSummary = authPayload.headline?.trim() || `status=${authPayload.status ?? "missing"}`;
-    details.push(
-      `auth lockouts=${authPayload.auth?.activeAccountLockCount ?? 0} pendingRegistrations=${authPayload.auth?.pendingRegistrationCount ?? 0} pendingRecoveries=${authPayload.auth?.pendingRecoveryCount ?? 0}`
-    );
-    evidence.push({
-      label: "Auth readiness",
-      path: `${normalizedServerUrl}/api/runtime/auth-readiness`,
-      summary: authSummary,
-      observedAt: authPayload.checkedAt,
-      freshness: evaluateFreshness(authPayload.checkedAt, maxAgeMs)
-    });
-    if (authPayload.status === "warn") {
-      pending = true;
-      for (const alert of authPayload.alerts ?? []) {
-        details.push(`auth alert: ${alert}`);
-      }
-    }
-    if (authPayload.status !== "ok" && authPayload.status !== "warn") {
-      hardFailure = true;
-      details.push(`Auth readiness status is ${JSON.stringify(authPayload.status ?? "missing")}.`);
-    }
-  }
-
-  const missingMetrics = metricsText
-    ? REQUIRED_RUNTIME_METRICS.filter((metric) => !metricsText.includes(metric))
-    : [...REQUIRED_RUNTIME_METRICS];
-  evidence.push({
-    label: "Runtime metrics",
-    path: `${normalizedServerUrl}/api/runtime/metrics`,
-    summary: missingMetrics.length === 0 ? "Required Prometheus metrics present." : `Missing metrics: ${missingMetrics.join(", ")}`,
-    observedAt,
-    freshness
+  const report = await buildRuntimeObservabilityGateReport({
+    ...(candidateName ? { candidate: candidateName } : {}),
+    candidateRevision,
+    serverUrl,
+    targetSurface,
+    maxSampleAgeMinutes: Math.max(1, Math.ceil(maxAgeMs / 60_000))
   });
-  if (missingMetrics.length > 0) {
-    hardFailure = true;
-    details.push(`Missing metrics: ${missingMetrics.join(", ")}`);
-  }
-  if (freshness === "stale" || freshness === "missing_timestamp" || freshness === "invalid_timestamp") {
-    pending = true;
-  }
-
-  return {
-    id: "runtime-health",
-    label: "Runtime health/auth-readiness/metrics",
-    required: true,
-    result: hardFailure ? "failed" : pending ? "pending" : "passed",
-    summary: hardFailure
-      ? "Runtime health sampling failed or returned incomplete evidence."
-      : pending
-        ? "Runtime endpoints responded, but auth or freshness evidence still needs review."
-        : "Runtime health, auth readiness, and required metrics were sampled for this candidate.",
-    observedAt,
-    freshness,
-    details,
-    evidence,
-    acceptedRisks: []
-  };
+  return buildRuntimeSectionFromGateReport(report, undefined, maxAgeMs);
 }
 
 function buildSnapshotSection(
@@ -1903,6 +1871,7 @@ export function renderMarkdown(dossier: Phase1CandidateDossier): string {
 
   lines.push("## Selected Inputs", "");
   lines.push(`- Runtime server: \`${dossier.inputs.serverUrl ?? "<missing>"}\``);
+  lines.push(`- Runtime observability gate: \`${dossier.inputs.runtimeObservabilityGatePath ? relativeArtifactPath(dossier.inputs.runtimeObservabilityGatePath) : "<missing>"}\``);
   lines.push(`- Release readiness snapshot: \`${dossier.inputs.snapshotPath ? relativeArtifactPath(dossier.inputs.snapshotPath) : "<missing>"}\``);
   lines.push(`- H5 smoke: \`${dossier.inputs.h5SmokePath ? relativeArtifactPath(dossier.inputs.h5SmokePath) : "<missing>"}\``);
   lines.push(`- Cocos RC bundle: \`${dossier.inputs.cocosBundlePath ? relativeArtifactPath(dossier.inputs.cocosBundlePath) : "<missing>"}\``);
@@ -2042,7 +2011,14 @@ export async function buildPhase1CandidateDossier(args: Args): Promise<Phase1Can
     revision.commit,
     maxAgeMs
   );
-  const runtimeSection = await buildRuntimeSection(args.targetSurface, inputs.serverUrl, maxAgeMs);
+  const runtimeSection = await buildRuntimeSection(
+    args.targetSurface,
+    inputs.serverUrl,
+    maxAgeMs,
+    args.candidate,
+    revision.commit,
+    inputs.runtimeObservabilityGatePath
+  );
   const reconnectSoakSection = buildReconnectSoakSection(inputs.reconnectSoakPath, revision.commit, maxAgeMs);
   const persistenceSection = buildPersistenceSection(inputs.persistencePath, revision.commit, maxAgeMs);
 

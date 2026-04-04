@@ -10,6 +10,7 @@ It keeps the implementation narrow by reusing the existing evidence commands ins
 - `npm run validate:wechat-rc`
 - `npm run smoke:client:release-candidate`
 - `npm run release:cocos-rc:bundle`
+- `npm run release:runtime-observability:gate`
 - `npm run release:gate:summary`
 - `npm run ci:trend-summary`
 - `npm run release:health:summary`
@@ -36,7 +37,7 @@ The bundle contains:
 
 The workflow fails when an evidence-generation stage regresses or when a required rehearsal artifact is missing from the final bundle.
 
-The workflow does not treat an otherwise valid dossier `pending` result as a generation failure. That pending state is expected when automation intentionally omits live runtime sampling or WeChat manual-review evidence.
+The workflow does not treat an otherwise valid dossier `pending` result as a generation failure. That pending state is expected when automation intentionally omits live runtime sampling or WeChat manual-review evidence. When `--server-url` is supplied, the rehearsal also writes a stable runtime observability gate JSON/Markdown pair and feeds that artifact into the candidate dossier instead of resampling the environment.
 
 ## Local Rerun
 
@@ -49,6 +50,7 @@ npm run stress:rooms:reconnect-soak -- --artifact-path artifacts/release-readine
 npm run package:wechat-release -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir artifacts/wechat-release-local --expect-exported-runtime --source-revision "$(git rev-parse HEAD)"
 npm run validate:wechat-rc -- --artifacts-dir artifacts/wechat-release-local --expected-revision "$(git rev-parse HEAD)"
 npm run smoke:client:release-candidate -- --output artifacts/release-readiness/client-release-candidate-smoke-local.json
+npm run release:runtime-observability:gate -- --candidate phase1-mainline --candidate-revision "$(git rev-parse HEAD)" --target-surface h5 --target-environment local --server-url http://127.0.0.1:2567
 ```
 
 Then run the orchestration command that the workflow uses:
@@ -59,6 +61,7 @@ npm run release:phase1:candidate-rehearsal -- \
   --output-dir artifacts/release-readiness/phase1-candidate-rehearsal-local \
   --h5-smoke artifacts/release-readiness/client-release-candidate-smoke-local.json \
   --reconnect-soak artifacts/release-readiness/colyseus-reconnect-soak-summary-local.json \
+  --server-url http://127.0.0.1:2567 \
   --wechat-artifacts-dir artifacts/wechat-release-local \
   --validate-status success \
   --wechat-build-status success \

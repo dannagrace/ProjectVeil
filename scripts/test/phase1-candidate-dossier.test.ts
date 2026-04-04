@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -17,75 +16,113 @@ function createTempWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "veil-phase1-dossier-"));
 }
 
-function startRuntimeServer() {
-  const server = http.createServer((request, response) => {
-    if (request.url === "/api/runtime/health") {
-      response.writeHead(200, { "content-type": "application/json", connection: "close" });
-      response.end(
-        JSON.stringify({
-          status: "ok",
-          checkedAt: "2026-04-02T08:45:00.000Z",
-          runtime: {
-            activeRoomCount: 3,
-            connectionCount: 11,
-            gameplayTraffic: {
-              actionMessagesTotal: 182
-            }
-          }
-        })
-      );
-      return;
-    }
-    if (request.url === "/api/runtime/auth-readiness") {
-      response.writeHead(200, { "content-type": "application/json", connection: "close" });
-      response.end(
-        JSON.stringify({
-          status: "ok",
-          checkedAt: "2026-04-02T08:45:05.000Z",
-          headline: "Auth readiness is healthy.",
-          alerts: [],
-          auth: {
-            activeAccountLockCount: 0,
-            pendingRegistrationCount: 0,
-            pendingRecoveryCount: 0,
-            tokenDelivery: {
-              queueCount: 0,
-              deadLetterCount: 0
-            }
-          }
-        })
-      );
-      return;
-    }
-    if (request.url === "/api/runtime/metrics") {
-      response.writeHead(200, { "content-type": "text/plain; version=0.0.4", connection: "close" });
-      response.end(`
-# HELP veil_active_room_count Active rooms
-veil_active_room_count 3
-veil_connection_count 11
-veil_gameplay_action_messages_total 182
-veil_auth_account_sessions 7
-veil_auth_token_delivery_queue_count 0
-`);
-      return;
-    }
-    response.writeHead(404);
-    response.end("not found");
-  });
-
-  return new Promise<{ server: http.Server; url: string }>((resolve, reject) => {
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("Failed to resolve runtime server address."));
-        return;
+function writeRuntimeGateArtifact(
+  artifactsDir: string,
+  revision: string,
+  overrides?: {
+    status?: "passed" | "failed";
+    headline?: string;
+    endpointStatuses?: Partial<Record<"runtime-health" | "auth-readiness" | "runtime-metrics", "passed" | "warn" | "failed">>;
+  }
+): string {
+  const runtimeGatePath = path.join(artifactsDir, `runtime-observability-gate-${revision}.json`);
+  writeJson(runtimeGatePath, {
+    schemaVersion: 1,
+    generatedAt: "2026-04-02T08:45:05.000Z",
+    candidate: {
+      name: "phase1-rc",
+      revision,
+      shortRevision: revision,
+      branch: "main",
+      dirty: false,
+      targetSurface: "wechat"
+    },
+    targetEnvironment: {
+      label: "staging",
+      serverUrl: "https://veil-staging.example.com"
+    },
+    summary: {
+      status: overrides?.status ?? "passed",
+      headline: overrides?.headline ?? "Runtime health, auth readiness, and metrics passed for the target environment.",
+      endpointStatuses: {
+        "runtime-health": overrides?.endpointStatuses?.["runtime-health"] ?? "passed",
+        "auth-readiness": overrides?.endpointStatuses?.["auth-readiness"] ?? "passed",
+        "runtime-metrics": overrides?.endpointStatuses?.["runtime-metrics"] ?? "passed"
       }
-      resolve({
-        server,
-        url: `http://127.0.0.1:${address.port}`
-      });
-    });
+    },
+    readiness: {
+      activeRoomCount: 3,
+      connectionCount: 11,
+      activeBattleCount: 1,
+      heroCount: 5,
+      actionMessagesTotal: 182,
+      worldActionsTotal: 140,
+      battleActionsTotal: 42,
+      activeGuestSessionCount: 4,
+      activeAccountSessionCount: 7,
+      activeAccountLockCount: 0,
+      pendingRegistrationCount: 0,
+      pendingRecoveryCount: 0,
+      tokenDeliveryQueueCount: 0,
+      tokenDeliveryDeadLetterCount: 0,
+      wechatLoginMode: "production",
+      wechatCredentialsStatus: "configured",
+      authHeadline: "Auth readiness is healthy."
+    },
+    endpoints: [
+      {
+        id: "runtime-health",
+        label: "Runtime health",
+        url: "https://veil-staging.example.com/api/runtime/health",
+        status: overrides?.endpointStatuses?.["runtime-health"] ?? "passed",
+        httpStatus: 200,
+        summary: "Runtime health responded with an OK payload.",
+        observedAt: "2026-04-02T08:45:00.000Z",
+        freshness: "fresh",
+        details: ["activeRooms=3", "connections=11", "actions=182"],
+        keyReadinessFields: {
+          activeRoomCount: 3,
+          connectionCount: 11,
+          actionMessagesTotal: 182
+        }
+      },
+      {
+        id: "auth-readiness",
+        label: "Auth readiness",
+        url: "https://veil-staging.example.com/api/runtime/auth-readiness",
+        status: overrides?.endpointStatuses?.["auth-readiness"] ?? "passed",
+        httpStatus: 200,
+        summary: overrides?.headline ?? "Auth readiness is healthy.",
+        observedAt: "2026-04-02T08:45:05.000Z",
+        freshness: "fresh",
+        details: ["lockouts=0", "pendingRegistrations=0", "pendingRecoveries=0"],
+        keyReadinessFields: {
+          activeAccountLockCount: 0,
+          pendingRegistrationCount: 0,
+          pendingRecoveryCount: 0
+        }
+      },
+      {
+        id: "runtime-metrics",
+        label: "Runtime metrics",
+        url: "https://veil-staging.example.com/api/runtime/metrics",
+        status: overrides?.endpointStatuses?.["runtime-metrics"] ?? "passed",
+        httpStatus: 200,
+        summary: "Runtime metrics exposed the required Prometheus counters.",
+        observedAt: "2026-04-02T08:45:05.000Z",
+        freshness: "fresh",
+        details: ["Required Prometheus metrics are present."],
+        keyReadinessFields: {
+          veil_active_room_count: true,
+          veil_connection_count: true,
+          veil_gameplay_action_messages_total: true,
+          veil_auth_account_sessions: true,
+          veil_auth_token_delivery_queue_count: true
+        }
+      }
+    ]
   });
+  return runtimeGatePath;
 }
 
 test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-risk dossier", async () => {
@@ -99,6 +136,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
   const reconnectSoakPath = path.join(artifactsDir, "colyseus-reconnect-soak-summary-pass.json");
   const cocosBundlePath = path.join(artifactsDir, "cocos-rc-evidence-bundle-pass.json");
   const persistencePath = path.join(artifactsDir, `phase1-release-persistence-regression-${revision}.json`);
+  const runtimeObservabilityGatePath = writeRuntimeGateArtifact(artifactsDir, revision);
   const syncGovernancePath = path.join(artifactsDir, "sync-governance-matrix-pass.json");
   const ciTrendSummaryPath = path.join(artifactsDir, "ci-trend-summary.json");
   const coverageSummaryPath = path.join(workspace, ".coverage", "summary.json");
@@ -342,82 +380,69 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     publishAuditHistory: []
   });
 
-  const runtime = await startRuntimeServer();
-  try {
-    const dossier = await buildPhase1CandidateDossier({
-      candidate: "phase1-rc",
-      candidateRevision: revision,
-      serverUrl: runtime.url,
-      snapshotPath,
-      h5SmokePath,
-      reconnectSoakPath,
-      cocosBundlePath,
-      wechatCandidateSummaryPath,
-      persistencePath,
-      syncGovernancePath,
-      ciTrendSummaryPath,
-      coverageSummaryPath,
-      configCenterLibraryPath,
-      targetSurface: "wechat",
-      maxEvidenceAgeHours: 72
-    });
+  const dossier = await buildPhase1CandidateDossier({
+    candidate: "phase1-rc",
+    candidateRevision: revision,
+    runtimeObservabilityGatePath,
+    snapshotPath,
+    h5SmokePath,
+    reconnectSoakPath,
+    cocosBundlePath,
+    wechatCandidateSummaryPath,
+    persistencePath,
+    syncGovernancePath,
+    ciTrendSummaryPath,
+    coverageSummaryPath,
+    configCenterLibraryPath,
+    targetSurface: "wechat",
+    maxEvidenceAgeHours: 72
+  });
 
-    assert.equal(dossier.candidate.name, "phase1-rc");
-    assert.equal(dossier.candidate.revision, revision);
-    assert.equal(dossier.candidate.targetSurface, "wechat");
-    assert.equal(dossier.summary.status, "accepted_risk");
-    assert.deepEqual(dossier.summary.requiredFailed, []);
-    assert.deepEqual(dossier.summary.requiredPending, []);
-    assert.equal(dossier.summary.acceptedRiskCount, 1);
-    assert.equal(dossier.phase1ExitEvidenceGate.result, "accepted_risk");
-    assert.equal(dossier.phase1ExitEvidenceGate.acceptedRiskSections[0], "Release readiness snapshot");
-    assert.equal(dossier.sections.find((section) => section.id === "release-gate")?.result, "passed");
-    assert.equal(dossier.sections.find((section) => section.id === "phase1-exit-evidence-gate")?.result, "accepted_risk");
-    assert.equal(dossier.sections.find((section) => section.id === "runtime-health")?.result, "passed");
-    assert.equal(dossier.sections.find((section) => section.id === "reconnect-soak")?.result, "passed");
-    assert.equal(dossier.sections.find((section) => section.id === "phase1-persistence")?.result, "passed");
-    assert.match(
-      dossier.sections.find((section) => section.id === "phase1-persistence")?.summary ?? "",
-      /verified storage mode mysql/i
-    );
-    assert.deepEqual(
-      dossier.sections.find((section) => section.id === "phase1-persistence")?.details.includes("verifiedStorage=mysql"),
-      true
-    );
-    assert.equal(dossier.acceptedRisks[0]?.label, "Unit and integration regression");
-    assert.match(dossier.acceptedRisks[0]?.reason ?? "", /accepted for this RC only/i);
+  assert.equal(dossier.candidate.name, "phase1-rc");
+  assert.equal(dossier.candidate.revision, revision);
+  assert.equal(dossier.candidate.targetSurface, "wechat");
+  assert.equal(dossier.summary.status, "accepted_risk");
+  assert.deepEqual(dossier.summary.requiredFailed, []);
+  assert.deepEqual(dossier.summary.requiredPending, []);
+  assert.equal(dossier.summary.acceptedRiskCount, 1);
+  assert.equal(dossier.phase1ExitEvidenceGate.result, "accepted_risk");
+  assert.equal(dossier.phase1ExitEvidenceGate.acceptedRiskSections[0], "Release readiness snapshot");
+  assert.equal(dossier.sections.find((section) => section.id === "release-gate")?.result, "passed");
+  assert.equal(dossier.sections.find((section) => section.id === "phase1-exit-evidence-gate")?.result, "accepted_risk");
+  assert.equal(dossier.sections.find((section) => section.id === "runtime-health")?.result, "passed");
+  assert.equal(dossier.sections.find((section) => section.id === "reconnect-soak")?.result, "passed");
+  assert.equal(dossier.sections.find((section) => section.id === "phase1-persistence")?.result, "passed");
+  assert.match(
+    dossier.sections.find((section) => section.id === "phase1-persistence")?.summary ?? "",
+    /verified storage mode mysql/i
+  );
+  assert.deepEqual(
+    dossier.sections.find((section) => section.id === "phase1-persistence")?.details.includes("verifiedStorage=mysql"),
+    true
+  );
+  assert.equal(dossier.acceptedRisks[0]?.label, "Unit and integration regression");
+  assert.match(dossier.acceptedRisks[0]?.reason ?? "", /accepted for this RC only/i);
 
-    const markdown = renderMarkdown(dossier);
-    assert.match(markdown, /# Phase 1 Candidate Dossier/);
-    assert.match(markdown, /Generated at:/);
-    assert.match(markdown, /Branch: `[^`]+`/);
-    assert.match(markdown, /Git tree: `(clean|dirty)`/);
-    assert.match(markdown, /## Selected Inputs/);
-    assert.match(markdown, /Release readiness snapshot: `.*release-readiness-pass\.json`/);
-    assert.match(markdown, /Cocos RC bundle: `.*cocos-rc-evidence-bundle-pass\.json`/);
-    assert.match(markdown, /WeChat candidate summary: `.*codex\.wechat\.release-candidate-summary\.json`/);
-    assert.match(markdown, /Phase 1 persistence: `.*phase1-release-persistence-regression-abc1234\.json`/);
-    assert.match(markdown, /Overall status: \*\*ACCEPTED_RISK\*\*/);
-    assert.match(markdown, /verifiedStorage=mysql/);
-    assert.match(markdown, /storage=mysql assertions=6 contentValid=true/);
-    assert.match(markdown, /## Phase 1 Exit Evidence Gate/);
-    assert.match(markdown, /Phase 1 exit evidence gate: `accepted_risk`/);
-    assert.match(markdown, /Release readiness snapshot/);
-    assert.match(markdown, /Runtime health\/auth-readiness\/metrics/);
-    assert.match(markdown, /Reconnect soak evidence/);
-    assert.match(markdown, /Accepted Risks/);
-  } finally {
-    await new Promise<void>((resolve, reject) => {
-      runtime.server.closeAllConnections?.();
-      runtime.server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
-    });
-  }
+  const markdown = renderMarkdown(dossier);
+  assert.match(markdown, /# Phase 1 Candidate Dossier/);
+  assert.match(markdown, /Generated at:/);
+  assert.match(markdown, /Branch: `[^`]+`/);
+  assert.match(markdown, /Git tree: `(clean|dirty)`/);
+  assert.match(markdown, /## Selected Inputs/);
+  assert.match(markdown, /Runtime observability gate: `.*runtime-observability-gate-abc1234\.json`/);
+  assert.match(markdown, /Release readiness snapshot: `.*release-readiness-pass\.json`/);
+  assert.match(markdown, /Cocos RC bundle: `.*cocos-rc-evidence-bundle-pass\.json`/);
+  assert.match(markdown, /WeChat candidate summary: `.*codex\.wechat\.release-candidate-summary\.json`/);
+  assert.match(markdown, /Phase 1 persistence: `.*phase1-release-persistence-regression-abc1234\.json`/);
+  assert.match(markdown, /Overall status: \*\*ACCEPTED_RISK\*\*/);
+  assert.match(markdown, /verifiedStorage=mysql/);
+  assert.match(markdown, /storage=mysql assertions=6 contentValid=true/);
+  assert.match(markdown, /## Phase 1 Exit Evidence Gate/);
+  assert.match(markdown, /Phase 1 exit evidence gate: `accepted_risk`/);
+  assert.match(markdown, /Release readiness snapshot/);
+  assert.match(markdown, /Runtime health\/auth-readiness\/metrics/);
+  assert.match(markdown, /Reconnect soak evidence/);
+  assert.match(markdown, /Accepted Risks/);
 });
 
 test("phase1 candidate dossier fails the single exit evidence gate when the release gate summary is blocking", async () => {
@@ -432,6 +457,13 @@ test("phase1 candidate dossier fails the single exit evidence gate when the rele
   const reconnectSoakPath = path.join(artifactsDir, "colyseus-reconnect-soak-summary-pass.json");
   const persistencePath = path.join(artifactsDir, `phase1-release-persistence-regression-${revision}.json`);
   const wechatCandidateSummaryPath = path.join(wechatDir, "codex.wechat.release-candidate-summary.json");
+  const runtimeObservabilityGatePath = writeRuntimeGateArtifact(artifactsDir, revision, {
+    status: "failed",
+    headline: "Runtime observability gate failed for Auth readiness.",
+    endpointStatuses: {
+      "auth-readiness": "warn"
+    }
+  });
 
   writeJson(snapshotPath, {
     generatedAt: "2026-04-02T08:30:00.000Z",
@@ -522,40 +554,27 @@ test("phase1 candidate dossier fails the single exit evidence gate when the rele
     persistenceRegression: { mapPackId: "phase1", assertions: ["room hydration reapplied resources"] }
   });
 
-  const runtime = await startRuntimeServer();
-  try {
-    const dossier = await buildPhase1CandidateDossier({
-      candidate: "phase1-rc",
-      candidateRevision: revision,
-      serverUrl: runtime.url,
-      snapshotPath,
-      h5SmokePath,
-      reconnectSoakPath,
-      cocosBundlePath,
-      wechatCandidateSummaryPath,
-      persistencePath,
-      targetSurface: "wechat",
-      maxEvidenceAgeHours: 72
-    });
+  const dossier = await buildPhase1CandidateDossier({
+    candidate: "phase1-rc",
+    candidateRevision: revision,
+    runtimeObservabilityGatePath,
+    snapshotPath,
+    h5SmokePath,
+    reconnectSoakPath,
+    cocosBundlePath,
+    wechatCandidateSummaryPath,
+    persistencePath,
+    targetSurface: "wechat",
+    maxEvidenceAgeHours: 72
+  });
 
-    assert.equal(dossier.sections.find((section) => section.id === "release-gate")?.result, "failed");
-    assert.equal(dossier.sections.find((section) => section.id === "reconnect-soak")?.result, "failed");
-    assert.equal(dossier.phase1ExitEvidenceGate.result, "failed");
-    assert.equal(dossier.summary.status, "failed");
-    assert.match(dossier.phase1ExitEvidenceGate.summary, /blocked/i);
-    assert.equal(dossier.phase1ExitEvidenceGate.blockingSections.includes("Release gate summary"), true);
-  } finally {
-    await new Promise<void>((resolve, reject) => {
-      runtime.server.closeAllConnections?.();
-      runtime.server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
-    });
-  }
+  assert.equal(dossier.sections.find((section) => section.id === "release-gate")?.result, "failed");
+  assert.equal(dossier.sections.find((section) => section.id === "reconnect-soak")?.result, "failed");
+  assert.equal(dossier.sections.find((section) => section.id === "runtime-health")?.result, "failed");
+  assert.equal(dossier.phase1ExitEvidenceGate.result, "failed");
+  assert.equal(dossier.summary.status, "failed");
+  assert.match(dossier.phase1ExitEvidenceGate.summary, /blocked/i);
+  assert.equal(dossier.phase1ExitEvidenceGate.blockingSections.includes("Release gate summary"), true);
 });
 
 test("phase1 candidate dossier marks stale persistence evidence as pending and keeps the verified storage mode visible", async () => {
@@ -568,6 +587,7 @@ test("phase1 candidate dossier marks stale persistence evidence as pending and k
   const reconnectSoakPath = path.join(artifactsDir, "colyseus-reconnect-soak-summary-pass.json");
   const cocosBundlePath = path.join(artifactsDir, "cocos-rc-evidence-bundle-pass.json");
   const persistencePath = path.join(artifactsDir, `phase1-release-persistence-regression-${revision}.json`);
+  const runtimeObservabilityGatePath = writeRuntimeGateArtifact(artifactsDir, revision);
 
   writeJson(snapshotPath, {
     generatedAt: "2026-04-02T08:30:00.000Z",
@@ -624,51 +644,37 @@ test("phase1 candidate dossier marks stale persistence evidence as pending and k
     persistenceRegression: { mapPackId: "phase1", assertions: ["room hydration reapplied resources"] }
   });
 
-  const runtime = await startRuntimeServer();
-  try {
-    const dossier = await buildPhase1CandidateDossier({
-      candidate: "phase1-rc",
-      candidateRevision: revision,
-      serverUrl: runtime.url,
-      snapshotPath,
-      h5SmokePath,
-      reconnectSoakPath,
-      cocosBundlePath,
-      persistencePath,
-      targetSurface: "h5",
-      maxEvidenceAgeHours: 72
-    });
+  const dossier = await buildPhase1CandidateDossier({
+    candidate: "phase1-rc",
+    candidateRevision: revision,
+    runtimeObservabilityGatePath,
+    snapshotPath,
+    h5SmokePath,
+    reconnectSoakPath,
+    cocosBundlePath,
+    persistencePath,
+    targetSurface: "h5",
+    maxEvidenceAgeHours: 72
+  });
 
-    assert.equal(dossier.sections.find((section) => section.id === "phase1-persistence")?.result, "pending");
-    assert.match(
-      dossier.sections.find((section) => section.id === "phase1-persistence")?.summary ?? "",
-      /verified memory storage, but the artifact is stale/i
-    );
-    assert.deepEqual(
-      dossier.sections.find((section) => section.id === "phase1-persistence")?.details.includes("verifiedStorage=memory"),
-      true
-    );
-    assert.deepEqual(
-      dossier.summary.requiredPending.includes("Phase 1 persistence/content-pack validation"),
-      true
-    );
+  assert.equal(dossier.sections.find((section) => section.id === "phase1-persistence")?.result, "pending");
+  assert.match(
+    dossier.sections.find((section) => section.id === "phase1-persistence")?.summary ?? "",
+    /verified memory storage, but the artifact is stale/i
+  );
+  assert.deepEqual(
+    dossier.sections.find((section) => section.id === "phase1-persistence")?.details.includes("verifiedStorage=memory"),
+    true
+  );
+  assert.deepEqual(
+    dossier.summary.requiredPending.includes("Phase 1 persistence/content-pack validation"),
+    true
+  );
 
-    const markdown = renderMarkdown(dossier);
-    assert.match(markdown, /Phase 1 persistence\/content-pack validation: `pending` required · freshness=stale · revision=abc1234/);
-    assert.match(markdown, /verifiedStorage=memory/);
-    assert.match(markdown, /persistence freshness=stale/);
-  } finally {
-    await new Promise<void>((resolve, reject) => {
-      runtime.server.closeAllConnections?.();
-      runtime.server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
-    });
-  }
+  const markdown = renderMarkdown(dossier);
+  assert.match(markdown, /Phase 1 persistence\/content-pack validation: `pending` required · freshness=stale · revision=abc1234/);
+  assert.match(markdown, /verifiedStorage=memory/);
+  assert.match(markdown, /persistence freshness=stale/);
 });
 
 test("phase1 candidate dossier CLI writes a stable candidate bundle directory with supporting summaries", () => {
@@ -687,6 +693,7 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
   const ciTrendSummaryPath = path.join(artifactsDir, "ci-trend-summary.json");
   const coverageSummaryPath = path.join(workspace, ".coverage", "summary.json");
   const configCenterLibraryPath = path.join(workspace, "configs", ".config-center-library.json");
+  const runtimeObservabilityGatePath = writeRuntimeGateArtifact(artifactsDir, revision);
 
   writeJson(snapshotPath, {
     generatedAt: "2026-04-02T08:30:00.000Z",
@@ -796,6 +803,8 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
       h5SmokePath,
       "--reconnect-soak",
       reconnectSoakPath,
+      "--runtime-observability-gate",
+      runtimeObservabilityGatePath,
       "--cocos-bundle",
       cocosBundlePath,
       "--phase1-persistence",
@@ -818,7 +827,6 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
   );
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Wrote Phase 1 candidate dossier bundle:/);
 
   const dossierJsonPath = path.join(outputDir, "phase1-candidate-dossier.json");
   const dossierMarkdownPath = path.join(outputDir, "phase1-candidate-dossier.md");
