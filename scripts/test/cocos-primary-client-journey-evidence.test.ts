@@ -42,10 +42,15 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
 
   const artifact = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
     candidate: { name: string };
-    execution: { owner: string; overallStatus: string; summary: string };
+    execution: { owner: string; overallStatus: string; summary: string; durationMs: number };
     environment: { evidenceMode: string };
     artifacts: { milestoneDir: string };
-    journey: Array<{ id: string; status: string; evidence: string[] }>;
+    journey: Array<{
+      id: string;
+      status: string;
+      evidence: string[];
+      timing?: { startedAt: string; completedAt: string; durationMs: number };
+    }>;
     requiredEvidence: Array<{ id: string; value: string; evidence: string[] }>;
   };
 
@@ -53,12 +58,15 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
   assert.equal(artifact.execution.owner, "codex");
   assert.equal(artifact.execution.overallStatus, "passed");
   assert.match(artifact.execution.summary, /Headless primary-client journey evidence passed/);
+  assert.ok(artifact.execution.durationMs >= 0);
   assert.equal(artifact.environment.evidenceMode, "headless-runtime-diagnostics");
   assert.deepEqual(
     artifact.journey.map((step) => step.id),
     ["lobby-entry", "room-join", "map-explore", "first-battle", "battle-settlement", "reconnect-restore", "return-to-world"]
   );
   assert.ok(artifact.journey.every((step) => step.status === "passed"));
+  assert.ok(artifact.journey.every((step) => (step.timing?.durationMs ?? -1) >= 0));
+  assert.ok(artifact.journey.every((step) => Boolean(step.timing?.startedAt) && Boolean(step.timing?.completedAt)));
   assert.equal(artifact.requiredEvidence.find((field) => field.id === "roomId")?.value, "room-primary-journey");
   assert.match(artifact.requiredEvidence.find((field) => field.id === "reconnectPrompt")?.value ?? "", /连接已恢复/);
   assert.equal(
@@ -81,5 +89,7 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
   const markdown = fs.readFileSync(markdownOutputPath, "utf8");
   assert.match(markdown, /# Cocos Primary-Client Journey Evidence/);
   assert.match(markdown, /Battle settlement/);
+  assert.match(markdown, /Duration: `\d+ms`/);
+  assert.match(markdown, /Timing/);
   assert.match(markdown, /headless-runtime-diagnostics/);
 });

@@ -482,6 +482,7 @@ test("primary cocos client journey reuses an account session from lobby bootstra
   assert.equal(root.authMode, "account");
   assert.equal(root.loginId, "veil-ranger");
   assert.equal(root.lobbyRooms[0]?.roomId, "room-journey");
+  (root as typeof root & { privacyConsentAccepted: boolean }).privacyConsentAccepted = true;
   await root.enterLobbyRoom("room-journey");
 
   await waitFor(
@@ -591,6 +592,7 @@ test("primary cocos client journey gates lobby entry, world exploration, battle 
     () => root.showLobby === true && root.lobbyRooms.length === 1 && root.sessionSource === "remote",
     () => captureJourneyArtifact({ root, phase: "lobby-bootstrap", joinedOptions, room: initialRoom })
   );
+  (root as typeof root & { privacyConsentAccepted: boolean }).privacyConsentAccepted = true;
 
   await root.enterLobbyRoom(roomId);
 
@@ -752,6 +754,7 @@ test("primary cocos client journey surfaces stale stored account sessions before
 
   const { root } = createRootHarness();
   root.onLoad();
+  (root as typeof root & { privacyConsentAccepted: boolean }).privacyConsentAccepted = true;
 
   await root.enterLobbyRoom("room-expired");
 
@@ -833,6 +836,7 @@ test("primary cocos client journey renders actionable HUD and battle-panel contr
       ...captureJourneyUiState(rootNode)
     })
   );
+  (root as typeof root & { privacyConsentAccepted: boolean }).privacyConsentAccepted = true;
 
   await root.enterLobbyRoom(roomId);
 
@@ -955,6 +959,7 @@ test("primary cocos client journey closes the loot, inventory, and equip loop af
       ...captureJourneyUiState(rootNode)
     })
   );
+  (root as typeof root & { privacyConsentAccepted: boolean }).privacyConsentAccepted = true;
 
   await root.enterLobbyRoom(roomId);
 
@@ -1094,6 +1099,7 @@ test("primary cocos client journey resumes interrupted loot settlement and conve
       ...captureJourneyUiState(rootNode)
     })
   );
+  (root as typeof root & { privacyConsentAccepted: boolean }).privacyConsentAccepted = true;
 
   await root.enterLobbyRoom(roomId);
 

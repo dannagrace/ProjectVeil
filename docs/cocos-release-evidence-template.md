@@ -1,6 +1,6 @@
 # Cocos Release Evidence Template
 
-本模板现在以 `npm run release:cocos-rc:bundle` 生成的 candidate-level evidence bundle 为主，内部会先自动执行 `npm run release:cocos:primary-journey-evidence`，再复用 `npm run release:cocos-rc:snapshot` 作为 machine-readable JSON。目标是把 Cocos 主客户端的 canonical `Lobby -> room -> world explore -> first battle -> settlement -> reconnect/session recovery` 证据，与微信小游戏 RC 的补充证据收口到同一份可归档、可校验、可对比的快照里，并自动补齐可直接附到 CI artifact / PR 评论的 Markdown 摘要、检查清单与 blocker 记录。
+本模板现在以 `npm run release:cocos-rc:bundle` 生成的 candidate-level evidence bundle 为主，内部会先自动执行 `npm run release:cocos:primary-journey-evidence`，再复用 `npm run release:cocos-rc:snapshot` 作为 machine-readable JSON。`release:cocos:primary-journey-evidence` 是 primary client main path 的 canonical RC evidence source；release gate review、PR artifact、和 candidate dossier 都应直接引用它生成的 candidate+revision JSON / Markdown，而不是再补 ad hoc 截图或另起格式。目标是把 Cocos 主客户端的 canonical `Lobby -> room -> world explore -> first battle -> settlement -> reconnect/session recovery` 证据，与微信小游戏 RC 的补充证据收口到同一份可归档、可校验、可对比的快照里，并自动补齐可直接附到 CI artifact / PR 评论的 Markdown 摘要、检查清单与 blocker 记录。
 
 相关文档：
 
@@ -18,9 +18,9 @@
 每个 Cocos / WeChat release candidate 都固定产出同一组证据，并统一落在 `artifacts/release-readiness/`：
 
 1. `artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.json`
-   - headless primary-client canonical journey 结构化结果，固定带每个 milestone 的 runtime diagnostics JSON
+   - headless primary-client canonical journey 结构化结果，固定带每个 milestone 的 runtime diagnostics JSON，以及 stage pass/fail、timing、failure diagnostics
 2. `artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.md`
-   - 同一 primary journey 的 reviewer 摘要，说明当前使用的是 headless runtime diagnostics fallback
+   - 同一 primary journey 的 reviewer 摘要，说明当前使用的是 headless runtime diagnostics fallback，并可直接作为 release gate review 的 canonical main-path handoff
 3. `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.json`
    - candidate-scoped bundle manifest，适合挂 CI artifact 或 PR 机器人
 4. `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.md`
@@ -144,6 +144,7 @@ npm run release:cocos-rc:snapshot -- \
 Headless primary journey automation 默认补：
 
 - 每个 milestone 一份 runtime diagnostics JSON
+- 每个 stage 的 pass/fail、startedAt/completedAt、durationMs
 - `roomId`、首战结算、恢复提示、恢复后状态四个结构化字段
 - 一份可直接附到 PR / RC issue 的 Markdown 摘要
 
