@@ -1,0 +1,36 @@
+{
+  "castle": [
+    {
+      "fromTier": 1,
+      "toTier": 2,
+      "cost": {
+        "gold": 1000,
+        "wood": 10,
+        "ore": 5
+      },
+      "effect": "unlock_elite_recruitment"
+    },
+    {
+      "fromTier": 2,
+      "toTier": 3,
+      "cost": {
+        "gold": 2500,
+        "wood": 20,
+        "ore": 15
+      },
+      "effect": "unlock_legendary_recruitment"
+    }
+  ],
+  "mine": [
+    {
+      "fromTier": 1,
+      "toTier": 2,
+      "cost": {
+        "gold": 500,
+        "wood": 0,
+        "ore": 10
+      },
+      "effect": "income_bonus_1"
+    }
+  ]
+}

@@ -136,7 +136,8 @@
         "gold": 240,
         "wood": 0,
         "ore": 0
-      }
+      },
+      "maxTier": 3
     },
     {
       "id": "shrine-attack-1",
@@ -162,7 +163,8 @@
       },
       "label": "前线伐木场",
       "resourceKind": "wood",
-      "income": 5
+      "income": 5,
+      "maxTier": 2
     },
     {
       "id": "recruit-post-2",
@@ -178,7 +180,8 @@
         "gold": 180,
         "wood": 1,
         "ore": 0
-      }
+      },
+      "maxTier": 3
     },
     {
       "id": "shrine-knowledge-1",
@@ -204,7 +207,8 @@
       },
       "label": "裂谷矿井",
       "resourceKind": "ore",
-      "income": 4
+      "income": 4,
+      "maxTier": 2
     }
   ]
 }

@@ -70,10 +70,22 @@
       "behavior": {
         "mode": "patrol",
         "patrolPath": [
-          { "x": 5, "y": 2 },
-          { "x": 6, "y": 2 },
-          { "x": 6, "y": 3 },
-          { "x": 5, "y": 3 }
+          {
+            "x": 5,
+            "y": 2
+          },
+          {
+            "x": 6,
+            "y": 2
+          },
+          {
+            "x": 6,
+            "y": 3
+          },
+          {
+            "x": 5,
+            "y": 3
+          }
         ],
         "detectionRadius": 3,
         "chaseDistance": 5,
@@ -151,7 +163,8 @@
         "gold": 240,
         "wood": 0,
         "ore": 0
-      }
+      },
+      "maxTier": 3
     },
     {
       "id": "shrine-attack-1",
@@ -177,7 +190,8 @@
       },
       "label": "岭口伐木场",
       "resourceKind": "wood",
-      "income": 5
+      "income": 5,
+      "maxTier": 2
     },
     {
       "id": "recruit-post-2",
@@ -193,7 +207,8 @@
         "gold": 180,
         "wood": 1,
         "ore": 0
-      }
+      },
+      "maxTier": 3
     },
     {
       "id": "shrine-defense-1",
@@ -219,7 +234,8 @@
       },
       "label": "峡岭矿井",
       "resourceKind": "ore",
-      "income": 4
+      "income": 4,
+      "maxTier": 2
     }
   ]
 }

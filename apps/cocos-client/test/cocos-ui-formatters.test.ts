@@ -76,6 +76,20 @@ test("buildTimelineEntriesFromUpdate formats world events and system rejection",
         ownerPlayerId: "player-1"
       },
       {
+        type: "hero.upgradedBuilding",
+        heroId: "hero-1",
+        buildingId: "mine-1",
+        buildingKind: "resource_mine",
+        fromTier: 1,
+        toTier: 2,
+        cost: {
+          gold: 500,
+          wood: 0,
+          ore: 10
+        },
+        effect: "income_bonus_1"
+      },
+      {
         type: "resource.produced",
         playerId: "player-1",
         buildingId: "mine-1",
@@ -141,6 +155,7 @@ test("buildTimelineEntriesFromUpdate formats world events and system rejection",
     "事件：在招募所补充 hero_guard_basic x4。",
     "事件：访问属性建筑，获得 攻击 +1。",
     "事件：采集矿场，获得 木材 +2。",
+    "事件：建筑升级完成：mine-1 1 -> 2。",
     "事件：资源矿场结算 木材 +2。",
     "事件：中立守军 neutral-1 主动追击，移动到 (2,2)。",
     "事件：中立守军 neutral-1 主动发起战斗。",
@@ -229,6 +244,12 @@ test("buildTimelineEntriesFromUpdate translates known rejection reasons for the 
   });
 
   assert.deepEqual(entries, ["系统：操作被拒绝，原因是 不能攻击友军"]);
+});
+
+test("formatSessionActionReason covers building-upgrade failures", () => {
+  assert.equal(formatSessionActionReason("hero_not_adjacent_to_building"), "英雄必须站在建筑旁边或建筑上");
+  assert.equal(formatSessionActionReason("building_not_owned_by_player"), "只能升级己方拥有的建筑");
+  assert.equal(formatSessionActionReason("building_max_tier_reached"), "这个建筑已经满级");
 });
 
 test("formatSystemTimelineEntry and pickRecentBattleTimeline keep timeline presentation stable", () => {

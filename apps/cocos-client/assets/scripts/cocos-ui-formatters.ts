@@ -67,6 +67,8 @@ export function formatSessionActionReason(reason: string): string {
       return "战斗结算前不能认输";
     case "hero_not_on_building":
       return "英雄没有站在目标建筑上";
+    case "hero_not_adjacent_to_building":
+      return "英雄必须站在建筑旁边或建筑上";
     case "hero_not_on_tile":
       return "英雄没有站在目标格子上";
     case "building_not_found":
@@ -77,6 +79,16 @@ export function formatSessionActionReason(reason: string): string {
       return "这个建筑当前不能访问";
     case "building_not_claimable":
       return "这个建筑当前不能占领";
+    case "building_not_upgradeable":
+      return "这个建筑当前不能升级";
+    case "building_not_owned_by_player":
+      return "只能升级己方拥有的建筑";
+    case "building_max_tier_reached":
+      return "这个建筑已经满级";
+    case "building_upgrade_unavailable":
+      return "当前没有可用的升级方案";
+    case "building_tier_too_low":
+      return "建筑等级不足，无法解锁该招募";
     case "building_depleted":
       return "这个建筑今天已经没有可领取内容了";
     case "building_on_cooldown":
@@ -221,6 +233,10 @@ function formatWorldEvent(event: WorldEvent): string | null {
     const resourceKind = typeof event.resourceKind === "string" ? event.resourceKind : "resource";
     const income = typeof event.income === "number" ? event.income : 0;
     return `采集矿场，获得 ${formatResourceKindLabel(resourceKind)} +${income}。`;
+  }
+
+  if (event.type === "hero.upgradedBuilding") {
+    return `建筑升级完成：${event.buildingId} ${event.fromTier} -> ${event.toTier}。`;
   }
 
   if (event.type === "hero.skillLearned") {

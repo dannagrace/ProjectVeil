@@ -1,4 +1,11 @@
-import { applyHeroEquipmentChange, type EquipmentType, type HeroState, validateHeroEquipmentChange } from "./project-shared/index.ts";
+import {
+  applyHeroEquipmentChange,
+  getBuildingUpgradeConfig,
+  getDefaultUnitCatalog,
+  type EquipmentType,
+  type HeroState,
+  validateHeroEquipmentChange
+} from "./project-shared/index.ts";
 import type {
   AttributeShrineBuildingView,
   HeroView,
@@ -34,6 +41,11 @@ export type CocosWorldAction =
     }
   | {
       type: "hero.claimMine";
+      heroId: string;
+      buildingId: string;
+    }
+  | {
+      type: "hero.upgradeBuilding";
       heroId: string;
       buildingId: string;
     }
@@ -259,11 +271,16 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
       };
     }
 
-    if (
-      view.resources.gold < building.cost.gold ||
-      view.resources.wood < building.cost.wood ||
-      view.resources.ore < building.cost.ore
-    ) {
+    if (building.tier < getRequiredBuildingTierForUnit(building.unitTemplateId)) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_tier_too_low"
+      };
+    }
+
+    if (!hasEnoughResources(view.resources, building.cost)) {
       return {
         world: view,
         movementPlan: null,
@@ -464,10 +481,127 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: CocosWor
             ...item,
             building: {
               ...currentBuilding,
-              lastHarvestDay: view.meta.day
+              lastHarvestDay: view.meta.day,
+              ownerPlayerId: view.playerId
             }
           };
         })
+      }
+    };
+
+    return {
+      world: predictedWorld,
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+    };
+  }
+
+  if (action.type === "hero.upgradeBuilding") {
+    const tile = view.map.tiles.find((item) => item.building?.id === action.buildingId);
+    const building = tile?.building;
+    if (!tile || !building) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_found"
+      };
+    }
+
+    if (distance(hero.position, tile.position) > 1) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "hero_not_adjacent_to_building"
+      };
+    }
+
+    const trackId = getBuildingUpgradeTrackId(building);
+    if (!trackId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_upgradeable"
+      };
+    }
+
+    if (!building.ownerPlayerId || building.ownerPlayerId !== view.playerId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_owned_by_player"
+      };
+    }
+
+    const maxTier = building.maxTier ?? (trackId === "castle" ? 3 : 2);
+    if (building.tier >= maxTier) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_max_tier_reached"
+      };
+    }
+
+    if (!isRecruitmentBuilding(building) && !isResourceMineBuilding(building)) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_upgradeable"
+      };
+    }
+
+    const upgradeStep = getBuildingUpgradeStep(building);
+    if (!upgradeStep) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_upgrade_unavailable"
+      };
+    }
+
+    if (!hasEnoughResources(view.resources, upgradeStep.cost)) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "not_enough_resources"
+      };
+    }
+
+    const predictedWorld: PlayerWorldView = {
+      ...view,
+      resources: {
+        gold: Math.max(0, view.resources.gold - upgradeStep.cost.gold),
+        wood: Math.max(0, view.resources.wood - upgradeStep.cost.wood),
+        ore: Math.max(0, view.resources.ore - upgradeStep.cost.ore)
+      },
+      map: {
+        ...view.map,
+        tiles: view.map.tiles.map((item) =>
+          item.building?.id === action.buildingId
+            ? {
+                ...item,
+                building: isResourceMineBuilding(item.building) && upgradeStep.effect === "income_bonus_1"
+                  ? {
+                      ...item.building,
+                      tier: upgradeStep.toTier,
+                      income: item.building.income + 1,
+                      ownerPlayerId: view.playerId
+                    }
+                  : {
+                      ...item.building!,
+                      tier: upgradeStep.toTier,
+                      ownerPlayerId: view.playerId
+                    }
+              }
+            : item
+        )
       }
     };
 
@@ -715,6 +849,41 @@ function reconstructPath(cameFrom: Map<string, Vec2>, current: Vec2): Vec2[] {
     path.unshift(cursor);
   }
   return path;
+}
+
+function hasEnoughResources(
+  resources: PlayerWorldView["resources"],
+  cost: { gold: number; wood: number; ore: number }
+): boolean {
+  return resources.gold >= cost.gold && resources.wood >= cost.wood && resources.ore >= cost.ore;
+}
+
+function getRequiredBuildingTierForUnit(unitTemplateId: string): number {
+  const template = getDefaultUnitCatalog().templates.find((item) => item.id === unitTemplateId);
+  if (!template) {
+    return 1;
+  }
+
+  return template.rarity === "legendary" ? 3 : template.rarity === "elite" ? 2 : 1;
+}
+
+function getBuildingUpgradeTrackId(building: PlayerTileView["building"]): "castle" | "mine" | null {
+  if (building?.kind === "recruitment_post") {
+    return "castle";
+  }
+  if (building?.kind === "resource_mine") {
+    return "mine";
+  }
+  return null;
+}
+
+function getBuildingUpgradeStep(building: RecruitmentBuildingView | ResourceMineBuildingView) {
+  const trackId = getBuildingUpgradeTrackId(building);
+  if (!trackId) {
+    return null;
+  }
+
+  return getBuildingUpgradeConfig()[trackId].find((step) => step.fromTier === building.tier) ?? null;
 }
 
 function isRecruitmentBuilding(building: PlayerTileView["building"]): building is RecruitmentBuildingView {

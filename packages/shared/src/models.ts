@@ -3,6 +3,7 @@ export type FogState = "hidden" | "explored" | "visible";
 export type ResourceKind = "gold" | "wood" | "ore";
 export type OccupantKind = "hero" | "neutral" | "building";
 export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_mine" | "watchtower";
+export type BuildingUpgradeTrackId = "castle" | "mine";
 export type ResourceLedger = Record<ResourceKind, number>;
 export type WorldResourceLedger = Record<string, ResourceLedger>;
 
@@ -222,6 +223,7 @@ export interface RecruitmentBuildingConfig {
   unitTemplateId: string;
   recruitCount: number;
   cost: ResourceLedger;
+  maxTier?: number;
 }
 
 export interface AttributeShrineBuildingConfig {
@@ -230,6 +232,7 @@ export interface AttributeShrineBuildingConfig {
   position: Vec2;
   label: string;
   bonus: HeroStatBonus;
+  maxTier?: number;
 }
 
 export interface ResourceMineBuildingConfig {
@@ -239,6 +242,7 @@ export interface ResourceMineBuildingConfig {
   label: string;
   resourceKind: ResourceKind;
   income: number;
+  maxTier?: number;
 }
 
 export interface WatchtowerBuildingConfig {
@@ -247,6 +251,7 @@ export interface WatchtowerBuildingConfig {
   position: Vec2;
   label: string;
   visionBonus: number;
+  maxTier?: number;
 }
 
 export type MapBuildingConfig =
@@ -256,20 +261,28 @@ export type MapBuildingConfig =
   | WatchtowerBuildingConfig;
 
 export interface RecruitmentBuildingState extends RecruitmentBuildingConfig {
+  tier: number;
   availableCount: number;
   lastUsedDay?: number;
+  ownerPlayerId?: string;
 }
 
 export interface AttributeShrineBuildingState extends AttributeShrineBuildingConfig {
+  tier: number;
   lastUsedDay?: number;
+  ownerPlayerId?: string;
 }
 
 export interface ResourceMineBuildingState extends ResourceMineBuildingConfig {
+  tier: number;
   lastHarvestDay?: number;
+  ownerPlayerId?: string;
 }
 
 export interface WatchtowerBuildingState extends WatchtowerBuildingConfig {
+  tier: number;
   lastUsedDay?: number;
+  ownerPlayerId?: string;
 }
 
 export type MapBuildingState =
@@ -284,9 +297,12 @@ export interface RecruitmentBuildingView {
   label: string;
   unitTemplateId: string;
   recruitCount: number;
+  tier: number;
+  maxTier?: number;
   availableCount: number;
   cost: ResourceLedger;
   lastUsedDay?: number;
+  ownerPlayerId?: string;
 }
 
 export interface AttributeShrineBuildingView {
@@ -294,7 +310,10 @@ export interface AttributeShrineBuildingView {
   kind: "attribute_shrine";
   label: string;
   bonus: HeroStatBonus;
+  tier: number;
+  maxTier?: number;
   lastUsedDay?: number;
+  ownerPlayerId?: string;
 }
 
 export interface ResourceMineBuildingView {
@@ -303,7 +322,10 @@ export interface ResourceMineBuildingView {
   label: string;
   resourceKind: ResourceKind;
   income: number;
+  tier: number;
+  maxTier?: number;
   lastHarvestDay?: number;
+  ownerPlayerId?: string;
 }
 
 export interface WatchtowerBuildingView {
@@ -311,7 +333,22 @@ export interface WatchtowerBuildingView {
   kind: "watchtower";
   label: string;
   visionBonus: number;
+  tier: number;
+  maxTier?: number;
   lastUsedDay?: number;
+  ownerPlayerId?: string;
+}
+
+export interface BuildingUpgradeStep {
+  fromTier: number;
+  toTier: number;
+  cost: ResourceLedger;
+  effect: string;
+}
+
+export interface BuildingUpgradeConfig {
+  castle: BuildingUpgradeStep[];
+  mine: BuildingUpgradeStep[];
 }
 
 export type PlayerBuildingView =
@@ -572,6 +609,11 @@ export type WorldAction =
       buildingId: string;
     }
   | {
+      type: "hero.upgradeBuilding";
+      heroId: string;
+      buildingId: string;
+    }
+  | {
       type: "hero.learnSkill";
       heroId: string;
       skillId: HeroSkillId;
@@ -668,6 +710,16 @@ export type WorldEvent =
       resourceKind: ResourceKind;
       income: number;
       ownerPlayerId: string;
+    }
+  | {
+      type: "hero.upgradedBuilding";
+      heroId: string;
+      buildingId: string;
+      buildingKind: "recruitment_post" | "resource_mine";
+      fromTier: number;
+      toTier: number;
+      cost: ResourceLedger;
+      effect: string;
     }
   | {
       type: "resource.produced";
@@ -1006,7 +1058,7 @@ export interface UnitTemplateConfig {
   id: string;
   stackName: string;
   faction: "crown" | "wild" | "shadow";
-  rarity: "common" | "elite";
+  rarity: "common" | "elite" | "legendary";
   initiative: number;
   attack: number;
   defense: number;

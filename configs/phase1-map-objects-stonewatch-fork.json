@@ -19,10 +19,22 @@
       "behavior": {
         "mode": "patrol",
         "patrolPath": [
-          { "x": 2, "y": 2 },
-          { "x": 3, "y": 2 },
-          { "x": 3, "y": 3 },
-          { "x": 2, "y": 3 }
+          {
+            "x": 2,
+            "y": 2
+          },
+          {
+            "x": 3,
+            "y": 2
+          },
+          {
+            "x": 3,
+            "y": 3
+          },
+          {
+            "x": 2,
+            "y": 3
+          }
         ],
         "detectionRadius": 3,
         "chaseDistance": 5,
@@ -106,10 +118,22 @@
       "behavior": {
         "mode": "patrol",
         "patrolPath": [
-          { "x": 6, "y": 5 },
-          { "x": 6, "y": 4 },
-          { "x": 5, "y": 3 },
-          { "x": 4, "y": 3 }
+          {
+            "x": 6,
+            "y": 5
+          },
+          {
+            "x": 6,
+            "y": 4
+          },
+          {
+            "x": 5,
+            "y": 3
+          },
+          {
+            "x": 4,
+            "y": 3
+          }
         ],
         "detectionRadius": 3,
         "chaseDistance": 5,
@@ -164,7 +188,8 @@
         "gold": 240,
         "wood": 0,
         "ore": 0
-      }
+      },
+      "maxTier": 3
     },
     {
       "id": "recruit-post-2",
@@ -180,7 +205,8 @@
         "gold": 170,
         "wood": 0,
         "ore": 1
-      }
+      },
+      "maxTier": 3
     },
     {
       "id": "shrine-defense-1",
@@ -221,7 +247,8 @@
       },
       "label": "坡麓伐木场",
       "resourceKind": "wood",
-      "income": 4
+      "income": 4,
+      "maxTier": 2
     },
     {
       "id": "mine-ore-1",
@@ -232,7 +259,8 @@
       },
       "label": "岔口铁矿井",
       "resourceKind": "ore",
-      "income": 5
+      "income": 5,
+      "maxTier": 2
     }
   ]
 }
