@@ -2047,7 +2047,67 @@ test("hero equipment loadout view resolves slot metadata for equipped and empty 
   assert.equal(view.slots[1]?.itemName, "未装备");
   assert.equal(view.slots[1]?.bonusSummary, "等待拾取或替换");
   assert.equal(view.slots[2]?.specialEffectSummary, "引导: 为后续技能结算预留更高的法术上限。");
+  assert.equal(view.setBonuses.find((bonus) => bonus.setId === "warhost")?.active, false);
   assert.deepEqual(view.summary.resolvedItemIds, ["sunforged_spear", "oracle_lens"]);
+});
+
+test("hero equipment loadout view tracks warhost and bulwark set progress", () => {
+  const warhostHero = createHero({
+    id: "hero-warhost-view",
+    playerId: "player-1",
+    name: "战团视图",
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        weaponId: "siege_maul",
+        armorId: "assault_cuirass",
+        trinketIds: []
+      }
+    }
+  });
+  const bulwarkHero = createHero({
+    id: "hero-bulwark-view",
+    playerId: "player-1",
+    name: "磐垒视图",
+    loadout: {
+      learnedSkills: [],
+      equipment: {
+        armorId: "bulwark_plate",
+        accessoryId: "sentinel_badge",
+        trinketIds: []
+      }
+    }
+  });
+
+  const warhostView = createHeroEquipmentLoadoutView(warhostHero);
+  const bulwarkView = createHeroEquipmentLoadoutView(bulwarkHero);
+
+  assert.deepEqual(
+    warhostView.setBonuses.find((bonus) => bonus.setId === "warhost"),
+    {
+      setId: "warhost",
+      name: "战团突袭套",
+      piecesRequired: 2,
+      equippedPieces: 2,
+      active: true,
+      description: "2 件：攻击 +8% / 力量 +1，并获得击杀回血。",
+      bonusSummary: "攻击 +8% / 力量 +1",
+      specialEffectSummary: "嗜血: 击杀敌方单位后恢复自身生命。"
+    }
+  );
+  assert.deepEqual(
+    bulwarkView.setBonuses.find((bonus) => bonus.setId === "bulwark"),
+    {
+      setId: "bulwark",
+      name: "磐垒守御套",
+      piecesRequired: 2,
+      equippedPieces: 2,
+      active: true,
+      description: "2 件：防御 +10% / 生命上限 +4，并获得反伤。",
+      bonusSummary: "防御 +10% / 生命上限 +4",
+      specialEffectSummary: "反刺: 受到近战攻击时，对攻击者造成反伤。"
+    }
+  );
 });
 
 test("hero equipment loadout view tolerates archived ids missing from the equipment catalog", () => {
@@ -3085,6 +3145,7 @@ test("resolveWorldAction lets heroes learn and upgrade long-term skills after le
 
   assert.equal(learned.state.heroes[0]?.progression.skillPoints, 1);
   assert.deepEqual(learned.state.heroes[0]?.learnedSkills, [{ skillId: "war_banner", rank: 1 }]);
+  assert.equal(learned.state.heroes[0]?.stats.attack, hero.stats.attack + 1);
   assert.deepEqual(learned.events, [
     {
       type: "hero.skillLearned",
@@ -3108,6 +3169,7 @@ test("resolveWorldAction lets heroes learn and upgrade long-term skills after le
 
   assert.equal(upgraded.state.heroes[0]?.progression.skillPoints, 0);
   assert.deepEqual(upgraded.state.heroes[0]?.learnedSkills, [{ skillId: "war_banner", rank: 2 }]);
+  assert.equal(upgraded.state.heroes[0]?.stats.attack, hero.stats.attack + 2);
   assert.deepEqual(validateWorldAction(upgraded.state, {
     type: "hero.learnSkill",
     heroId: "hero-1",
@@ -3154,9 +3216,24 @@ test("hero skill tree view and resolveWorldAction advance branch prerequisites i
   });
 
   const initialView = createHeroSkillTreeView(hero);
+  const warpathBranch = initialView.branches.find((branch) => branch.id === "warpath");
   const initialLearnableIds = initialView.branches.flatMap((branch) => branch.skills.filter((skill) => skill.canLearn).map((skill) => skill.id));
   assert.ok(initialLearnableIds.includes("war_banner"));
   assert.ok(!initialLearnableIds.includes("spearhead_assault"));
+  assert.deepEqual(
+    warpathBranch?.tiers.map((tier) => [tier.tier, tier.requiredLevel, tier.skills.map((skill) => skill.id)]),
+    [
+      [1, 2, ["war_banner"]],
+      [2, 3, ["spearhead_assault"]],
+      [3, 4, ["battle_drill"]],
+      [4, 5, ["hunter_volley"]],
+      [5, 6, ["ravager_doctrine"]]
+    ]
+  );
+  assert.deepEqual(
+    warpathBranch?.skills.find((skill) => skill.id === "war_banner")?.nextGrantedStatBonuses,
+    { attack: 1, defense: 0, power: 0, knowledge: 0, maxHp: 0 }
+  );
 
   const firstLearn = resolveWorldAction(state, {
     type: "hero.learnSkill",
@@ -3196,6 +3273,39 @@ test("hero skill tree view and resolveWorldAction advance branch prerequisites i
       newlyGrantedBattleSkillIds: ["sundering_spear"]
     }
   ]);
+});
+
+test("hero attribute breakdown attributes learned passive talent bonuses to skills", () => {
+  const hero = createHero({
+    id: "hero-skill-breakdown",
+    playerId: "player-1",
+    name: "技能拆解",
+    progression: {
+      ...createDefaultHeroProgression(),
+      level: 2,
+      experience: 120,
+      skillPoints: 1
+    }
+  });
+  const state = createWorldState({
+    width: 1,
+    height: 1,
+    heroes: [hero],
+    tiles: [createTile(0, 0, { occupant: { kind: "hero", refId: "hero-skill-breakdown" } })],
+    visibilityByPlayer: {
+      "player-1": ["visible"]
+    }
+  });
+
+  const learned = resolveWorldAction(state, {
+    type: "hero.learnSkill",
+    heroId: "hero-skill-breakdown",
+    skillId: "war_banner"
+  });
+  const breakdown = createHeroAttributeBreakdown(learned.state.heroes[0]!);
+
+  assert.equal(breakdown.find((row) => row.key === "attack")?.skills, 1);
+  assert.match(breakdown.find((row) => row.key === "attack")?.formula ?? "", /技能 \+1/);
 });
 
 test("createHeroBattleState carries learned hero skill tree rewards into battle", () => {

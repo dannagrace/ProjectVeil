@@ -474,6 +474,15 @@ export function validateHeroSkillTreeConfig(
         throw new Error(`Hero skill ${skill.id} rank ${rank.rank} must define a description`);
       }
 
+      for (const [key, value] of Object.entries(rank.statBonuses ?? {})) {
+        if (!["attack", "defense", "power", "knowledge", "maxHp"].includes(key)) {
+          throw new Error(`Hero skill ${skill.id} rank ${rank.rank} has unknown stat bonus: ${key}`);
+        }
+        if (!Number.isInteger(value) || value < 0) {
+          throw new Error(`Hero skill ${skill.id} rank ${rank.rank} stat bonus ${key} must be a non-negative integer`);
+        }
+      }
+
       for (const battleSkillId of rank.battleSkillIds ?? []) {
         if (!battleSkillIds.has(battleSkillId)) {
           throw new Error(`Hero skill ${skill.id} rank ${rank.rank} references unknown battle skill: ${battleSkillId}`);

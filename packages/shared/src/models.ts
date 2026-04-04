@@ -22,6 +22,7 @@ export interface HeroStats {
 }
 
 export type HeroStatBonus = Pick<HeroStats, "attack" | "defense" | "power" | "knowledge">;
+export type HeroAttributeBonuses = Pick<HeroStats, "attack" | "defense" | "power" | "knowledge" | "maxHp">;
 
 export type HeroSkillId = string;
 export type HeroSkillBranchId = string;
@@ -81,6 +82,7 @@ export interface HeroSkillRankConfig {
   rank: number;
   description: string;
   battleSkillIds?: BattleSkillId[];
+  statBonuses?: Partial<HeroAttributeBonuses>;
 }
 
 export interface HeroSkillConfig {
