@@ -24,6 +24,11 @@ export interface MinorProtectionState {
   dailyLimitReached: boolean;
 }
 
+export interface MinorProtectionEvaluation extends MinorProtectionState {
+  wouldBlock: boolean;
+  reason: "minor_restricted_hours" | "minor_daily_limit_reached" | null;
+}
+
 function parseEnvInteger(value: string | undefined, fallback: number, minimum: number, maximum?: number): number {
   const parsed = Number(value?.trim());
   if (!Number.isFinite(parsed)) {
@@ -173,6 +178,21 @@ export function deriveMinorProtectionState(
     dailyLimitMinutes,
     restrictedHours,
     dailyLimitReached: normalizedDailyPlayMinutes >= dailyLimitMinutes
+  };
+}
+
+export function evaluateMinorProtectionState(
+  account: Pick<PlayerAccountSnapshot, "isMinor" | "dailyPlayMinutes" | "lastPlayDate">,
+  now = new Date(),
+  config = readMinorProtectionConfig()
+): MinorProtectionEvaluation {
+  const state = deriveMinorProtectionState(account, now, config);
+  const wouldBlock = state.enforced && (state.restrictedHours || state.dailyLimitReached);
+
+  return {
+    ...state,
+    wouldBlock,
+    reason: !wouldBlock ? null : state.restrictedHours ? "minor_restricted_hours" : "minor_daily_limit_reached"
   };
 }
 
