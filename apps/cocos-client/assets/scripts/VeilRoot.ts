@@ -1,5 +1,5 @@
 import { _decorator, Camera, Canvas, Color, Component, EventMouse, EventTouch, Graphics, input, Input, Label, Layers, Node, sys, UITransform, view } from "cc";
-import { getEquipmentDefinition, type EquipmentType } from "./project-shared/index.ts";
+import { getBuildingUpgradeConfig, getEquipmentDefinition, type EquipmentType } from "./project-shared/index.ts";
 import {
   type BattleAction,
   type LeaderboardEntry,
@@ -298,6 +298,7 @@ export class VeilRoot extends Component {
   private inputDebug = "input waiting";
   private pendingPrediction: SessionUpdate | null = null;
   private selectedBattleTargetId: string | null = null;
+  private selectedInteractionBuildingId: string | null = null;
   private battleFeedback: (CocosBattleFeedbackView & { expiresAt: number }) | null = null;
   private fogPulsePhase = 0;
   private hudActionBinding = false;
@@ -1268,6 +1269,7 @@ export class VeilRoot extends Component {
       sharing: {
         available: this.canShareLatestBattleResult()
       },
+      interaction: this.buildHudInteractionState(),
       presentation: this.buildHudPresentationState()
     });
     this.renderSettingsOverlay();
@@ -1937,6 +1939,15 @@ export class VeilRoot extends Component {
         },
         onReturnLobby: () => {
           void this.returnToLobby();
+        },
+        onInteractionAction: (actionId) => {
+          const tile = this.selectedInteractionTile();
+          if (!tile?.building) {
+            return;
+          }
+          if (actionId === "recruit" || actionId === "visit" || actionId === "claim" || actionId === "upgrade") {
+            void this.executeBuildingInteraction(tile, actionId);
+          }
         }
       });
     }
@@ -2160,6 +2171,159 @@ export class VeilRoot extends Component {
     }
   }
 
+  private selectedInteractionTile(): PlayerTileView | null {
+    const buildingId = this.selectedInteractionBuildingId;
+    if (!buildingId) {
+      return null;
+    }
+
+    return this.lastUpdate?.world.map.tiles.find((tile) => tile.building?.id === buildingId) ?? null;
+  }
+
+  private clearSelectedInteractionBuilding(): void {
+    this.selectedInteractionBuildingId = null;
+  }
+
+  private formatUpgradeCostLabel(cost: { gold: number; wood: number; ore: number }): string {
+    return [`金币 ${cost.gold}`, `木材 ${cost.wood}`, `矿石 ${cost.ore}`].join(" / ");
+  }
+
+  private buildHudInteractionState(): VeilHudRenderState["interaction"] {
+    const hero = this.activeHero();
+    const tile = this.selectedInteractionTile();
+    const building = tile?.building;
+    if (!hero || !tile || !building) {
+      return null;
+    }
+
+    const heroDistance = Math.abs(hero.position.x - tile.position.x) + Math.abs(hero.position.y - tile.position.y);
+    if (heroDistance > 1) {
+      return null;
+    }
+
+    const actions: NonNullable<VeilHudRenderState["interaction"]>["actions"] = [];
+    const tierLabel = `等级 ${building.tier}${building.maxTier ? `/${building.maxTier}` : ""}`;
+    const trackId = building.kind === "recruitment_post" ? "castle" : building.kind === "resource_mine" ? "mine" : null;
+    const maxTier = building.maxTier ?? (trackId === "castle" ? 3 : trackId === "mine" ? 2 : building.tier);
+    const upgradeStep =
+      building.kind === "recruitment_post" || building.kind === "resource_mine"
+        ? getBuildingUpgradeConfig()[trackId!].find((step) => step.fromTier === building.tier) ?? null
+        : null;
+
+    if (heroDistance === 0) {
+      if (building.kind === "recruitment_post") {
+        actions.push({ id: "recruit", label: "招募部队" });
+      } else if (building.kind === "attribute_shrine" || building.kind === "watchtower") {
+        actions.push({ id: "visit", label: "访问建筑" });
+      } else if (building.kind === "resource_mine") {
+        actions.push({ id: "claim", label: "采集矿场" });
+      }
+    }
+
+    if ((building.kind === "recruitment_post" || building.kind === "resource_mine") && building.ownerPlayerId === hero.playerId) {
+      if (building.tier >= maxTier) {
+        return {
+          title: building.label,
+          detail: `${tierLabel} · 已满级`,
+          actions
+        };
+      }
+
+      if (upgradeStep) {
+        actions.push({ id: "upgrade", label: `升级建筑 · ${building.tier}→${upgradeStep.toTier}` });
+        return {
+          title: building.label,
+          detail: `${tierLabel} · 升级花费 ${this.formatUpgradeCostLabel(upgradeStep.cost)}`,
+          actions
+        };
+      }
+    }
+
+    return {
+      title: building.label,
+      detail:
+        building.kind === "resource_mine"
+          ? `${tierLabel} · ${formatResourceKindLabel(building.resourceKind)} +${building.income}`
+          : building.kind === "recruitment_post"
+            ? `${tierLabel} · 可招募 ${building.availableCount} 单位`
+            : tierLabel,
+      actions
+    };
+  }
+
+  private async executeBuildingInteraction(tile: PlayerTileView, actionId: "recruit" | "visit" | "claim" | "upgrade"): Promise<void> {
+    const hero = this.activeHero();
+    const building = tile.building;
+    if (!hero || !building || !this.session) {
+      return;
+    }
+
+    this.moveInFlight = true;
+    const predictionAction =
+      actionId === "recruit"
+        ? { type: "hero.recruit", heroId: hero.id, buildingId: building.id } as const
+        : actionId === "visit"
+          ? { type: "hero.visit", heroId: hero.id, buildingId: building.id } as const
+          : actionId === "claim"
+            ? { type: "hero.claimMine", heroId: hero.id, buildingId: building.id } as const
+            : { type: "hero.upgradeBuilding", heroId: hero.id, buildingId: building.id } as const;
+    const predictionLabel =
+      actionId === "recruit"
+        ? `预演招募 ${building.kind === "recruitment_post" ? building.availableCount : 0} 单位`
+        : actionId === "visit"
+          ? building.kind === "attribute_shrine"
+            ? `预演获得 ${formatHeroStatBonus(building.bonus)}`
+            : building.kind === "watchtower"
+              ? `预演提高视野 ${building.visionBonus}`
+              : "预演访问建筑"
+          : actionId === "claim"
+            ? building.kind === "resource_mine"
+              ? `预演占领矿场，改为每日产出 ${building.income} ${formatResourceKindLabel(building.resourceKind)}`
+              : "预演矿场采集"
+            : "预演建筑升级";
+    this.applyPrediction(predictionAction, predictionLabel);
+    this.renderView();
+
+    try {
+      this.mapBoard?.playHeroAnimation("attack");
+      const update =
+        actionId === "recruit"
+          ? await this.session.recruit(hero.id, building.id)
+          : actionId === "visit"
+            ? await this.session.visitBuilding(hero.id, building.id)
+            : actionId === "claim"
+              ? await this.session.claimMine(hero.id, building.id)
+              : await this.session.upgradeBuilding(hero.id, building.id);
+      this.clearSelectedInteractionBuilding();
+      await this.applySessionUpdate(update);
+      this.pushSessionActionOutcome(update, {
+        successMessage:
+          actionId === "recruit"
+            ? "招募已结算。"
+            : actionId === "visit"
+              ? building.kind === "watchtower"
+                ? "瞭望塔访问已结算。"
+                : "建筑访问已结算。"
+              : actionId === "claim"
+                ? "矿场占领已结算。"
+                : "建筑升级已结算。",
+        rejectedLabel:
+          actionId === "recruit"
+            ? "招募"
+            : actionId === "visit"
+              ? "访问"
+              : actionId === "claim"
+                ? "矿场占领"
+                : "建筑升级"
+      });
+    } catch (error) {
+      this.rollbackPrediction(error instanceof Error ? error.message : `${actionId}失败。`);
+    } finally {
+      this.moveInFlight = false;
+      this.renderView();
+    }
+  }
+
   private async moveHeroToTile(tile: PlayerTileView): Promise<void> {
     if (this.moveInFlight) {
       return;
@@ -2185,6 +2349,17 @@ export class VeilRoot extends Component {
 
     const reachableTiles = await this.ensureReachableTiles(hero.id);
     const clickedCurrentTile = hero.position.x === tile.position.x && hero.position.y === tile.position.y;
+    if (!clickedCurrentTile && tile.building) {
+      const interactionDistance = Math.abs(hero.position.x - tile.position.x) + Math.abs(hero.position.y - tile.position.y);
+      if (interactionDistance <= 1) {
+        this.selectedInteractionBuildingId = tile.building.id;
+        this.pushLog(`已选中 ${tile.building.label}，请在 HUD 中确认操作。`);
+        this.mapBoard?.pulseObject(tile.position, 1.2, 0.24);
+        this.renderView();
+        return;
+      }
+    }
+
     if (clickedCurrentTile) {
       if (!tile.resource && !tile.building) {
         this.pushLog("英雄已经站在这里了。");
@@ -2195,84 +2370,16 @@ export class VeilRoot extends Component {
       }
 
       if (tile.building) {
-        this.moveInFlight = true;
-        this.pushLog(`正在访问 ${tile.building.label}...`);
-        this.mapBoard?.pulseTile(tile.position, 1.12, 0.22);
+        this.selectedInteractionBuildingId = tile.building.id;
+        this.pushLog(`已选中 ${tile.building.label}，请在 HUD 中确认操作。`);
         this.mapBoard?.pulseObject(tile.position, 1.2, 0.24);
-        this.applyPrediction(
-          tile.building.kind === "recruitment_post"
-            ? {
-                type: "hero.recruit",
-                heroId: hero.id,
-                buildingId: tile.building.id
-              }
-            : tile.building.kind === "attribute_shrine" || tile.building.kind === "watchtower"
-              ? {
-                  type: "hero.visit",
-                  heroId: hero.id,
-                  buildingId: tile.building.id
-                }
-              : {
-                  type: "hero.claimMine",
-                  heroId: hero.id,
-                  buildingId: tile.building.id
-                },
-          tile.building.kind === "recruitment_post"
-            ? `预演招募 ${tile.building.availableCount} 单位`
-            : tile.building.kind === "attribute_shrine"
-              ? `预演获得 ${formatHeroStatBonus(tile.building.bonus)}`
-              : tile.building.kind === "watchtower"
-                ? `预演提高视野 ${tile.building.visionBonus}`
-              : `预演占领矿场，改为每日产出 ${tile.building.income} ${formatResourceKindLabel(tile.building.resourceKind)}`
-        );
         this.renderView();
-
-        try {
-          this.mapBoard?.playHeroAnimation("attack");
-          const update =
-            tile.building.kind === "recruitment_post"
-              ? await this.session.recruit(hero.id, tile.building.id)
-              : tile.building.kind === "attribute_shrine" || tile.building.kind === "watchtower"
-                ? await this.session.visitBuilding(hero.id, tile.building.id)
-                : await this.session.claimMine(hero.id, tile.building.id);
-          await this.applySessionUpdate(update);
-          this.pushSessionActionOutcome(update, {
-            successMessage:
-              tile.building.kind === "recruitment_post"
-                ? "招募已结算。"
-                : tile.building.kind === "attribute_shrine"
-                  ? "神殿访问已结算。"
-                  : tile.building.kind === "watchtower"
-                    ? "瞭望塔访问已结算。"
-                  : "矿场占领已结算。",
-            rejectedLabel:
-              tile.building.kind === "recruitment_post"
-                ? "招募"
-                : tile.building.kind === "attribute_shrine"
-                  ? "神殿访问"
-                  : tile.building.kind === "watchtower"
-                    ? "瞭望塔访问"
-                  : "矿场占领"
-          });
-        } catch (error) {
-          this.rollbackPrediction(
-            error instanceof Error
-              ? error.message
-              : tile.building.kind === "recruitment_post"
-                ? "招募失败。"
-                : tile.building.kind === "attribute_shrine" || tile.building.kind === "watchtower"
-                  ? "访问失败。"
-                  : "占领失败。"
-          );
-        } finally {
-          this.moveInFlight = false;
-          this.renderView();
-        }
         return;
       }
 
       const resource = tile.resource;
       if (!resource) {
+        this.clearSelectedInteractionBuilding();
         this.pushLog("当前格子没有可采集资源。");
         this.renderView();
         return;
@@ -2310,6 +2417,7 @@ export class VeilRoot extends Component {
       return;
     }
 
+    this.clearSelectedInteractionBuilding();
     if (hero.move.remaining <= 0) {
       this.pushLog(`${hero.name} 今天已经没有移动力了。`);
       this.predictionStatus = "今天已经没有移动点了。";

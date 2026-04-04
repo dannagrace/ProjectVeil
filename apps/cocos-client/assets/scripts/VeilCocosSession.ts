@@ -169,8 +169,12 @@ export interface RecruitmentBuildingView {
   label: string;
   unitTemplateId: string;
   recruitCount: number;
+  tier: number;
+  maxTier?: number;
   availableCount: number;
   cost: ResourceLedger;
+  ownerPlayerId?: string;
+  lastUsedDay?: number;
 }
 
 export interface AttributeShrineBuildingView {
@@ -178,7 +182,10 @@ export interface AttributeShrineBuildingView {
   kind: "attribute_shrine";
   label: string;
   bonus: HeroStatBonus;
+  tier: number;
+  maxTier?: number;
   lastUsedDay?: number;
+  ownerPlayerId?: string;
 }
 
 export interface ResourceMineBuildingView {
@@ -187,7 +194,10 @@ export interface ResourceMineBuildingView {
   label: string;
   resourceKind: keyof ResourceLedger;
   income: number;
+  tier: number;
+  maxTier?: number;
   lastHarvestDay?: number;
+  ownerPlayerId?: string;
 }
 
 export interface WatchtowerBuildingView {
@@ -195,7 +205,10 @@ export interface WatchtowerBuildingView {
   kind: "watchtower";
   label: string;
   visionBonus: number;
+  tier: number;
+  maxTier?: number;
   lastUsedDay?: number;
+  ownerPlayerId?: string;
 }
 
 export type PlayerBuildingView =
@@ -371,6 +384,16 @@ export type WorldEvent =
       ownerPlayerId: string;
     }
   | {
+      type: "hero.upgradedBuilding";
+      heroId: string;
+      buildingId: string;
+      buildingKind: "recruitment_post" | "resource_mine";
+      fromTier: number;
+      toTier: number;
+      cost: ResourceLedger;
+      effect: string;
+    }
+  | {
       type: "resource.produced";
       playerId: string;
       buildingId: string;
@@ -531,6 +554,11 @@ type WorldAction =
     }
   | {
       type: "hero.claimMine";
+      heroId: string;
+      buildingId: string;
+    }
+  | {
+      type: "hero.upgradeBuilding";
       heroId: string;
       buildingId: string;
     }
@@ -1220,6 +1248,26 @@ class RemoteGameSession {
     return update;
   }
 
+  async upgradeBuilding(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "hero.upgradeBuilding",
+          heroId,
+          buildingId
+        }
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
   async learnSkill(heroId: string, skillId: string): Promise<SessionUpdate> {
     const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
       {
@@ -1516,6 +1564,10 @@ class RecoverableRemoteGameSession {
     return this.runWithSession((session) => session.claimMine(heroId, buildingId));
   }
 
+  async upgradeBuilding(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.upgradeBuilding(heroId, buildingId));
+  }
+
   async learnSkill(heroId: string, skillId: string): Promise<SessionUpdate> {
     return this.runWithSession((session) => session.learnSkill(heroId, skillId));
   }
@@ -1735,6 +1787,10 @@ export class VeilCocosSession {
 
   async claimMine(heroId: string, buildingId: string): Promise<SessionUpdate> {
     return this.remoteSession.claimMine(heroId, buildingId);
+  }
+
+  async upgradeBuilding(heroId: string, buildingId: string): Promise<SessionUpdate> {
+    return this.remoteSession.upgradeBuilding(heroId, buildingId);
   }
 
   async learnSkill(heroId: string, skillId: string): Promise<SessionUpdate> {

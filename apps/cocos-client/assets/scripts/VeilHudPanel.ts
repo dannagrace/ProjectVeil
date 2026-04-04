@@ -78,6 +78,11 @@ interface HudActionButtonState {
   visible?: boolean;
 }
 
+interface HudInteractionActionState {
+  id: string;
+  label: string;
+}
+
 interface HudEquipmentButtonState {
   name: string;
   label: string;
@@ -203,6 +208,11 @@ export interface VeilHudRenderState {
   sharing: {
     available: boolean;
   };
+  interaction: {
+    title: string;
+    detail: string;
+    actions: HudInteractionActionState[];
+  } | null;
   presentation: {
     audio: CocosAudioRuntimeState;
     pixelAssets: PixelSpriteLoadStatus;
@@ -248,6 +258,7 @@ export interface VeilHudPanelOptions {
   onUnequipItem?: (slot: EquipmentType) => void;
   onEndDay?: () => void;
   onReturnLobby?: () => void;
+  onInteractionAction?: (actionId: string) => void;
 }
 
 function formatAchievementSummary(account: CocosPlayerAccountProfile): string {
@@ -359,6 +370,7 @@ export class VeilHudPanel extends Component {
   private onUnequipItem: ((slot: EquipmentType) => void) | undefined;
   private onEndDay: (() => void) | undefined;
   private onReturnLobby: (() => void) | undefined;
+  private onInteractionAction: ((actionId: string) => void) | undefined;
   private placeholderAssetsRetained = false;
 
   configure(options: VeilHudPanelOptions): void {
@@ -379,6 +391,7 @@ export class VeilHudPanel extends Component {
     this.onUnequipItem = options.onUnequipItem;
     this.onEndDay = options.onEndDay;
     this.onReturnLobby = options.onReturnLobby;
+    this.onInteractionAction = options.onInteractionAction;
     this.retainPlaceholderAssets();
     this.ensureActionButtons();
     this.syncActionButtons();
@@ -424,6 +437,7 @@ export class VeilHudPanel extends Component {
       state.update?.reachableTiles.filter((tile) => !hero || tile.x !== hero.position.x || tile.y !== hero.position.y).length ?? 0;
     const sessionStatusBadge = getSessionIndicatorBadge(state.sessionIndicators);
     const sessionIndicatorLines = state.sessionIndicators.map((indicator) => `会话 ${indicator.label} · ${indicator.detail}`);
+    const interactionLines = state.interaction ? [`交互 ${state.interaction.title}`, state.interaction.detail] : [];
     const statusTitle = state.levelUpNotice?.title ?? "状态";
     const statusBadge = state.levelUpNotice
       ? "升级!"
@@ -447,6 +461,7 @@ export class VeilHudPanel extends Component {
       statusDetail,
       ...sessionIndicatorLines,
       state.runtimeHealth,
+      ...interactionLines,
       ...state.triageSummaryLines,
       formatAchievementSummary(state.account),
       formatRecentEventLog(state.account),
@@ -670,6 +685,11 @@ export class VeilHudPanel extends Component {
       { nodeName: "HudEndDay", debugLabel: "end-day", callback: this.onEndDay ?? null },
       { nodeName: "HudReturnLobby", debugLabel: "return-lobby", callback: this.onReturnLobby ?? null }
     ];
+    const interactionActions = (this.currentState?.interaction?.actions ?? []).map((action) => ({
+      nodeName: `HudInteraction-${action.id}`,
+      debugLabel: `interaction:${action.id}`,
+      callback: this.onInteractionAction ? () => this.onInteractionAction?.(action.id) : null
+    }));
 
     const reportDialogActions: Array<{ nodeName: string; debugLabel: string; callback: (() => void) | null }> = [
       { nodeName: "HudReportReason-cheating", debugLabel: "report-reason:cheating", callback: this.onSubmitReport ? () => this.onSubmitReport?.("cheating") : null },
@@ -704,7 +724,7 @@ export class VeilHudPanel extends Component {
     }
 
     const actionsNode = this.node.getChildByName(ACTIONS_NODE_NAME);
-    for (const action of chromeActions) {
+    for (const action of [...interactionActions, ...chromeActions]) {
       const node = actionsNode?.getChildByName(action.nodeName) ?? null;
       if (this.pointInNode(localX, localY, node)) {
         return {
@@ -1622,7 +1642,13 @@ export class VeilHudPanel extends Component {
       return;
     }
 
+    const interactionButtons: HudActionButtonState[] = (this.currentState?.interaction?.actions ?? []).map((action) => ({
+      name: `HudInteraction-${action.id}`,
+      label: action.label,
+      callback: this.onInteractionAction ? () => this.onInteractionAction?.(action.id) : null
+    }));
     const buttons: HudActionButtonState[] = [
+      ...interactionButtons,
       { name: "HudNewRun", label: "新开一局", callback: this.onNewRun ?? null },
       { name: "HudRefresh", label: "刷新状态", callback: this.onRefresh ?? null },
       { name: "HudSettings", label: "设置", callback: this.onToggleSettings ?? null },
@@ -1650,10 +1676,8 @@ export class VeilHudPanel extends Component {
     actionsNode.setPosition(0, transform.height / 2 - 118, 1);
 
     visibleButtons.forEach((button, index) => {
-      const node = actionsNode.getChildByName(button.name);
-      if (!node) {
-        return;
-      }
+      this.ensureActionButton(actionsNode, button.name, button.label);
+      const node = actionsNode.getChildByName(button.name)!;
       node.active = true;
 
       const buttonTransform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
@@ -1665,30 +1689,33 @@ export class VeilHudPanel extends Component {
 
       const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
       graphics.clear();
-      graphics.fillColor =
-        index === 0
+      const isInteractionButton = button.name.startsWith("HudInteraction-");
+      graphics.fillColor = isInteractionButton
+        ? new Color(93, 116, 68, 236)
+        : index === 0
           ? new Color(78, 102, 140, 236)
           : index === 1
             ? new Color(51, 70, 99, 228)
             : index === 2
               ? new Color(76, 98, 72, 232)
               : index === 3
-              ? new Color(73, 88, 62, 230)
-              : index === 4
-              ? new Color(92, 86, 54, 232)
-              : new Color(121, 84, 70, 234);
-      graphics.strokeColor =
-        index === 0
+                ? new Color(73, 88, 62, 230)
+                : index === 4
+                  ? new Color(92, 86, 54, 232)
+                  : new Color(121, 84, 70, 234);
+      graphics.strokeColor = isInteractionButton
+        ? new Color(232, 244, 214, 132)
+        : index === 0
           ? new Color(245, 248, 252, 158)
           : index === 1
             ? new Color(218, 229, 242, 112)
             : index === 2
               ? new Color(224, 240, 214, 108)
               : index === 3
-              ? new Color(224, 240, 199, 108)
-              : index === 4
-              ? new Color(242, 224, 171, 120)
-              : new Color(244, 225, 213, 116);
+                ? new Color(224, 240, 199, 108)
+                : index === 4
+                  ? new Color(242, 224, 171, 120)
+                  : new Color(244, 225, 213, 116);
       graphics.lineWidth = 2;
       graphics.roundRect(-buttonWidth / 2, -buttonHeight / 2, buttonWidth, buttonHeight, 10);
       graphics.fill();
@@ -1697,7 +1724,7 @@ export class VeilHudPanel extends Component {
         255,
         255,
         255,
-        index === 0 ? 22 : index === 1 ? 14 : index === 2 ? 16 : index === 3 ? 16 : index === 4 ? 18 : 16
+        isInteractionButton ? 20 : index === 0 ? 22 : index === 1 ? 14 : index === 2 ? 16 : index === 3 ? 16 : index === 4 ? 18 : 16
       );
       graphics.roundRect(-buttonWidth / 2 + 12, buttonHeight / 2 - 9, buttonWidth - 24, 3, 2);
       graphics.fill();
@@ -1736,6 +1763,12 @@ export class VeilHudPanel extends Component {
       const hiddenNode = actionsNode.getChildByName(button.name);
       if (hiddenNode) {
         hiddenNode.active = false;
+      }
+    }
+
+    for (const node of actionsNode.children) {
+      if (node.name.startsWith("HudInteraction-") && !visibleButtons.some((button) => button.name === node.name)) {
+        node.active = false;
       }
     }
   }

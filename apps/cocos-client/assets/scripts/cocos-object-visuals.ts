@@ -47,9 +47,12 @@ export function describeCocosTileObject(tile: PlayerTileView | null): CocosTileV
 
   if (tile.building?.kind === "recruitment_post") {
     const config = objectVisuals.buildings.recruitment_post;
+    const tierSummary = `等级 ${tile.building.tier}${tile.building.maxTier ? `/${tile.building.maxTier}` : ""}`;
     return {
       title: tile.building.label || config.title,
-      subtitle: tile.building.availableCount > 0 ? `可招募 ${tile.building.availableCount} 单位。` : "今日库存已售罄。",
+      subtitle: tile.building.availableCount > 0
+        ? `${tierSummary} · 可招募 ${tile.building.availableCount} 单位。`
+        : `${tierSummary} · 今日库存已售罄。`,
       shortLabel: "招募",
       tag: "访问",
       faction: toFactionKey(config.faction),
@@ -73,9 +76,10 @@ export function describeCocosTileObject(tile: PlayerTileView | null): CocosTileV
 
   if (tile.building?.kind === "resource_mine") {
     const config = objectVisuals.buildings.resource_mine;
+    const tierSummary = `等级 ${tile.building.tier}${tile.building.maxTier ? `/${tile.building.maxTier}` : ""}`;
     return {
       title: tile.building.label || config.title,
-      subtitle: `${formatResourceKindLabel(tile.building.resourceKind)} +${tile.building.income}${typeof tile.building.lastHarvestDay === "number" ? " · 今日已采集" : " · 可立即采集"}`,
+      subtitle: `${tierSummary} · ${formatResourceKindLabel(tile.building.resourceKind)} +${tile.building.income}${typeof tile.building.lastHarvestDay === "number" ? " · 今日已采集" : " · 可立即采集"}`,
       shortLabel: "矿场",
       tag: "采集",
       faction: toFactionKey(config.faction),

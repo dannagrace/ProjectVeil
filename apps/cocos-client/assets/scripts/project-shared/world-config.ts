@@ -1,5 +1,6 @@
 import defaultBattleSkillsConfig from "../../../../../configs/battle-skills.json";
 import defaultBattleBalanceConfig from "../../../../../configs/battle-balance.json";
+import defaultBuildingUpgradeConfig from "../../../../../configs/building-upgrades.json";
 import defaultHeroSkillTreesConfig from "../../../../../configs/hero-skill-trees-full.json";
 import contestedBasinMapObjectsConfig from "../../../../../configs/phase2-map-objects-contested-basin.json";
 import amberFieldsMapObjectsConfig from "../../../../../configs/phase1-map-objects-amber-fields.json";
@@ -35,6 +36,7 @@ import type {
   BattleBalanceConfig,
   BattleSkillKind,
   BattleSkillTarget,
+  BuildingUpgradeConfig,
   HeroSkillTreeConfig,
   MapObjectsConfig,
   NeutralBehaviorMode,
@@ -50,6 +52,7 @@ let runtimeMapObjectsConfig: MapObjectsConfig = structuredClone(defaultMapObject
 let runtimeUnitCatalog: UnitCatalogConfig = structuredClone(defaultUnitsConfig as UnitCatalogConfig);
 let runtimeBattleSkillCatalog: BattleSkillCatalogConfig = structuredClone(defaultBattleSkillsConfig as BattleSkillCatalogConfig);
 let runtimeBattleBalanceConfig: BattleBalanceConfig = structuredClone(defaultBattleBalanceConfig as BattleBalanceConfig);
+let runtimeBuildingUpgradeConfig: BuildingUpgradeConfig = structuredClone(defaultBuildingUpgradeConfig as BuildingUpgradeConfig);
 let runtimeHeroSkillTree: HeroSkillTreeConfig = structuredClone(defaultHeroSkillTreesConfig as HeroSkillTreeConfig);
 
 export const DEFAULT_MAP_VARIANT_ID = "phase1";
@@ -96,6 +99,10 @@ function cloneBattleSkillCatalog(config: BattleSkillCatalogConfig): BattleSkillC
 }
 
 function cloneBattleBalanceConfig(config: BattleBalanceConfig): BattleBalanceConfig {
+  return structuredClone(config);
+}
+
+function cloneBuildingUpgradeConfig(config: BuildingUpgradeConfig): BuildingUpgradeConfig {
   return structuredClone(config);
 }
 
@@ -202,6 +209,9 @@ export function validateBattleBalanceConfig(
   if (!Number.isInteger(config.afkStrikesBeforeForfeit) || config.afkStrikesBeforeForfeit <= 0) {
     throw new Error("Battle balance afkStrikesBeforeForfeit must be a positive integer");
   }
+  if (typeof config.pvp !== "object" || config.pvp === null) {
+    throw new Error("Battle balance config must define pvp");
+  }
 
   if (!isFiniteNumber(config.damage.defendingDefenseBonus)) {
     throw new Error("Battle balance damage.defendingDefenseBonus must be a finite number");
@@ -248,6 +258,9 @@ export function validateBattleBalanceConfig(
   ) {
     throw new Error("Battle balance environment.trapGrantedStatusId must be a non-empty string when provided");
   }
+  if (!Number.isInteger(config.pvp.eloK) || config.pvp.eloK <= 0) {
+    throw new Error("Battle balance pvp.eloK must be a positive integer");
+  }
 }
 
 export function validateBattleSkillCatalog(config: BattleSkillCatalogConfig): void {
@@ -286,6 +299,12 @@ export function validateBattleSkillCatalog(config: BattleSkillCatalogConfig): vo
     }
     if (status.blocksActiveSkills !== undefined && typeof status.blocksActiveSkills !== "boolean") {
       throw new Error(`Battle status ${status.id} blocksActiveSkills must be boolean`);
+    }
+    if (status.preventsAction !== undefined && typeof status.preventsAction !== "boolean") {
+      throw new Error(`Battle status ${status.id} preventsAction must be boolean`);
+    }
+    if (status.forcedAttackSource !== undefined && typeof status.forcedAttackSource !== "boolean") {
+      throw new Error(`Battle status ${status.id} forcedAttackSource must be boolean`);
     }
 
     statusIds.add(status.id);
@@ -349,6 +368,44 @@ export function validateBattleSkillCatalog(config: BattleSkillCatalogConfig): vo
     }
 
     skillIds.add(skill.id);
+  }
+}
+
+export function validateBuildingUpgradeConfig(config: BuildingUpgradeConfig): void {
+  if (typeof config !== "object" || config === null) {
+    throw new Error("Building upgrade config must be an object");
+  }
+
+  for (const trackName of ["castle", "mine"] as const) {
+    const steps = config[trackName];
+    if (!Array.isArray(steps)) {
+      throw new Error(`Building upgrade config must define ${trackName} as an array`);
+    }
+
+    for (const [index, step] of steps.entries()) {
+      if (!Number.isInteger(step?.fromTier) || step.fromTier < 1) {
+        throw new Error(`Building upgrade ${trackName}[${index}] fromTier must be a positive integer`);
+      }
+      if (!Number.isInteger(step?.toTier) || step.toTier <= step.fromTier) {
+        throw new Error(`Building upgrade ${trackName}[${index}] toTier must be greater than fromTier`);
+      }
+      if (!isResourceLedger(step?.cost)) {
+        throw new Error(`Building upgrade ${trackName}[${index}] cost must define gold/wood/ore numbers`);
+      }
+      if (
+        !Number.isInteger(step.cost.gold) ||
+        !Number.isInteger(step.cost.wood) ||
+        !Number.isInteger(step.cost.ore) ||
+        step.cost.gold < 0 ||
+        step.cost.wood < 0 ||
+        step.cost.ore < 0
+      ) {
+        throw new Error(`Building upgrade ${trackName}[${index}] cost must use non-negative integers`);
+      }
+      if (!isNonEmptyString(step.effect)) {
+        throw new Error(`Building upgrade ${trackName}[${index}] effect must be a non-empty string`);
+      }
+    }
   }
 }
 
@@ -649,6 +706,9 @@ export function validateMapObjectsConfig(
       ) {
         throw new Error(`Map building ${building.id} cost must use non-negative integers`);
       }
+      if (building.maxTier !== undefined && (!Number.isInteger(building.maxTier) || building.maxTier < 1)) {
+        throw new Error(`Map building ${building.id} maxTier must be a positive integer`);
+      }
     } else if (building.kind === "attribute_shrine") {
       if (!isHeroStatBonusRecord(building.bonus)) {
         throw new Error(`Map building ${building.id} bonus must define attack/defense/power/knowledge numbers`);
@@ -661,6 +721,9 @@ export function validateMapObjectsConfig(
       if (values.every((value) => value === 0)) {
         throw new Error(`Map building ${building.id} bonus must increase at least one hero stat`);
       }
+      if (building.maxTier !== undefined && (!Number.isInteger(building.maxTier) || building.maxTier < 1)) {
+        throw new Error(`Map building ${building.id} maxTier must be a positive integer`);
+      }
     } else if (building.kind === "resource_mine") {
       if (!isResourceKind(building.resourceKind)) {
         throw new Error(`Map building ${building.id} resourceKind must be gold/wood/ore`);
@@ -668,9 +731,15 @@ export function validateMapObjectsConfig(
       if (!Number.isInteger(building.income) || building.income <= 0) {
         throw new Error(`Map building ${building.id} income must be a positive integer`);
       }
+      if (building.maxTier !== undefined && (!Number.isInteger(building.maxTier) || building.maxTier < 1)) {
+        throw new Error(`Map building ${building.id} maxTier must be a positive integer`);
+      }
     } else if (building.kind === "watchtower") {
       if (!Number.isInteger(building.visionBonus) || building.visionBonus <= 0) {
         throw new Error(`Map building ${building.id} visionBonus must be a positive integer`);
+      }
+      if (building.maxTier !== undefined && (!Number.isInteger(building.maxTier) || building.maxTier < 1)) {
+        throw new Error(`Map building ${building.id} maxTier must be a positive integer`);
       }
     } else {
       throw new Error(`Map building has invalid kind: ${String((building as { kind?: unknown }).kind)}`);
@@ -696,7 +765,7 @@ export function validateUnitCatalog(
       throw new Error(`Invalid faction for unit template: ${template.id}`);
     }
 
-    if (template.rarity !== "common" && template.rarity !== "elite") {
+    if (template.rarity !== "common" && template.rarity !== "elite" && template.rarity !== "legendary") {
       throw new Error(`Invalid rarity for unit template: ${template.id}`);
     }
 
@@ -742,6 +811,16 @@ export function getBattleBalanceConfig(): BattleBalanceConfig {
   const config = cloneBattleBalanceConfig(runtimeBattleBalanceConfig);
   validateBattleBalanceConfig(config, runtimeBattleSkillCatalog);
   return config;
+}
+
+export function getBuildingUpgradeConfig(): BuildingUpgradeConfig {
+  const config = cloneBuildingUpgradeConfig(runtimeBuildingUpgradeConfig);
+  validateBuildingUpgradeConfig(config);
+  return config;
+}
+
+export function getDefaultBattleBalanceConfig(): BattleBalanceConfig {
+  return getBattleBalanceConfig();
 }
 
 export function getDefaultHeroSkillTreeConfig(): HeroSkillTreeConfig {
@@ -955,5 +1034,6 @@ export function resetRuntimeConfigs(): void {
   runtimeUnitCatalog = structuredClone(defaultUnitsConfig as UnitCatalogConfig);
   runtimeBattleSkillCatalog = structuredClone(defaultBattleSkillsConfig as BattleSkillCatalogConfig);
   runtimeBattleBalanceConfig = structuredClone(defaultBattleBalanceConfig as BattleBalanceConfig);
+  runtimeBuildingUpgradeConfig = structuredClone(defaultBuildingUpgradeConfig as BuildingUpgradeConfig);
   runtimeHeroSkillTree = structuredClone(defaultHeroSkillTreesConfig as HeroSkillTreeConfig);
 }

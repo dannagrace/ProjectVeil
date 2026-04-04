@@ -42,6 +42,7 @@ import {
 } from "./models.ts";
 import { getRuntimeConfigBundleForRoom } from "./world-config.ts";
 import {
+  getBuildingUpgradeConfig,
   getDefaultUnitCatalog,
   validateMapObjectsConfig,
   validateWorldConfig
@@ -389,13 +390,17 @@ function createNeutralArmyState(
   });
 }
 
-function createBuildingState(config: MapObjectsConfig["buildings"][number]): MapBuildingState {
+function createBuildingState(config: MapObjectsConfig["buildings"][number], heroes: HeroState[]): MapBuildingState {
   if (config.kind === "recruitment_post") {
+    const ownerPlayerId = inferInitialBuildingOwnerPlayerId(config, heroes);
     return {
       ...config,
       position: { ...config.position },
       cost: cloneResourceLedger(config.cost),
-      availableCount: config.recruitCount
+      tier: 1,
+      availableCount: config.recruitCount,
+      ...(config.maxTier !== undefined ? { maxTier: config.maxTier } : {}),
+      ...(ownerPlayerId ? { ownerPlayerId } : {})
     };
   }
 
@@ -403,6 +408,7 @@ function createBuildingState(config: MapObjectsConfig["buildings"][number]): Map
     return {
       ...config,
       position: { ...config.position },
+      tier: 1,
       bonus: cloneHeroStatBonus(config.bonus)
     };
   }
@@ -410,13 +416,15 @@ function createBuildingState(config: MapObjectsConfig["buildings"][number]): Map
   if (config.kind === "watchtower") {
     return {
       ...config,
-      position: { ...config.position }
+      position: { ...config.position },
+      tier: 1
     };
   }
 
   return {
     ...config,
-    position: { ...config.position }
+    position: { ...config.position },
+    tier: 1
   };
 }
 
@@ -523,6 +531,63 @@ function spendResources(resources: WorldResourceLedger, playerId: string, cost: 
   };
 }
 
+function getBuildingUpgradeTrackId(building: Pick<MapBuildingState, "kind">): "castle" | "mine" | null {
+  if (building.kind === "recruitment_post") {
+    return "castle";
+  }
+  if (building.kind === "resource_mine") {
+    return "mine";
+  }
+  return null;
+}
+
+function getBuildingUpgradeStep(building: Pick<MapBuildingState, "kind" | "tier">) {
+  const trackId = getBuildingUpgradeTrackId(building);
+  if (!trackId) {
+    return null;
+  }
+
+  return getBuildingUpgradeConfig()[trackId].find((step) => step.fromTier === building.tier) ?? null;
+}
+
+function getRequiredBuildingTierForUnit(unitTemplateId: string): number {
+  const unitTemplate = getDefaultUnitCatalog().templates.find((item) => item.id === unitTemplateId);
+  if (!unitTemplate) {
+    return 1;
+  }
+
+  return unitTemplate.rarity === "legendary" ? 3 : unitTemplate.rarity === "elite" ? 2 : 1;
+}
+
+function canHeroUpgradeBuilding(hero: Pick<HeroState, "position">, building: Pick<MapBuildingState, "position">): boolean {
+  return distance(hero.position, building.position) <= 1;
+}
+
+function inferInitialBuildingOwnerPlayerId(
+  config: MapObjectsConfig["buildings"][number],
+  heroes: HeroState[]
+): string | undefined {
+  if (config.kind !== "recruitment_post" || heroes.length === 0) {
+    return undefined;
+  }
+
+  const sorted = heroes
+    .map((hero) => ({
+      playerId: hero.playerId,
+      distance: distance(hero.position, config.position)
+    }))
+    .sort((left, right) => left.distance - right.distance);
+  const nearest = sorted[0];
+  const secondNearest = sorted[1];
+  if (!nearest) {
+    return undefined;
+  }
+  if (secondNearest && secondNearest.distance === nearest.distance && secondNearest.playerId !== nearest.playerId) {
+    return undefined;
+  }
+  return nearest.playerId;
+}
+
 function clonePlayerBuildingView(building: MapBuildingState): PlayerBuildingView {
   if (building.kind === "recruitment_post") {
     return {
@@ -531,9 +596,12 @@ function clonePlayerBuildingView(building: MapBuildingState): PlayerBuildingView
       label: building.label,
       unitTemplateId: building.unitTemplateId,
       recruitCount: building.recruitCount,
+      tier: building.tier,
+      ...(building.maxTier !== undefined ? { maxTier: building.maxTier } : {}),
       availableCount: building.availableCount,
       cost: cloneResourceLedger(building.cost),
-      ...(typeof building.lastUsedDay === "number" ? { lastUsedDay: building.lastUsedDay } : {})
+      ...(typeof building.lastUsedDay === "number" ? { lastUsedDay: building.lastUsedDay } : {}),
+      ...(building.ownerPlayerId ? { ownerPlayerId: building.ownerPlayerId } : {})
     };
   }
 
@@ -543,7 +611,10 @@ function clonePlayerBuildingView(building: MapBuildingState): PlayerBuildingView
       kind: building.kind,
       label: building.label,
       bonus: cloneHeroStatBonus(building.bonus),
-      ...(typeof building.lastUsedDay === "number" ? { lastUsedDay: building.lastUsedDay } : {})
+      tier: building.tier,
+      ...(building.maxTier !== undefined ? { maxTier: building.maxTier } : {}),
+      ...(typeof building.lastUsedDay === "number" ? { lastUsedDay: building.lastUsedDay } : {}),
+      ...(building.ownerPlayerId ? { ownerPlayerId: building.ownerPlayerId } : {})
     };
   }
 
@@ -553,7 +624,10 @@ function clonePlayerBuildingView(building: MapBuildingState): PlayerBuildingView
       kind: building.kind,
       label: building.label,
       visionBonus: building.visionBonus,
-      ...(typeof building.lastUsedDay === "number" ? { lastUsedDay: building.lastUsedDay } : {})
+      tier: building.tier,
+      ...(building.maxTier !== undefined ? { maxTier: building.maxTier } : {}),
+      ...(typeof building.lastUsedDay === "number" ? { lastUsedDay: building.lastUsedDay } : {}),
+      ...(building.ownerPlayerId ? { ownerPlayerId: building.ownerPlayerId } : {})
     };
   }
 
@@ -563,7 +637,10 @@ function clonePlayerBuildingView(building: MapBuildingState): PlayerBuildingView
     label: building.label,
     resourceKind: building.resourceKind,
     income: building.income,
-    ...(typeof building.lastHarvestDay === "number" ? { lastHarvestDay: building.lastHarvestDay } : {})
+    tier: building.tier,
+    ...(building.maxTier !== undefined ? { maxTier: building.maxTier } : {}),
+    ...(typeof building.lastHarvestDay === "number" ? { lastHarvestDay: building.lastHarvestDay } : {}),
+    ...(building.ownerPlayerId ? { ownerPlayerId: building.ownerPlayerId } : {})
   };
 }
 
@@ -1406,7 +1483,7 @@ export function createWorldStateFromConfigs(
     mapObjects.neutralArmies.map((army) => [army.id, createNeutralArmyState(army, width, height)])
   );
   const buildings: Record<string, MapBuildingState> = Object.fromEntries(
-    mapObjects.buildings.map((building) => [building.id, createBuildingState(building)])
+    mapObjects.buildings.map((building) => [building.id, createBuildingState(building, heroes)])
   );
 
   const initialMap = syncWorldTiles({ width, height, tiles }, heroes, neutralArmies, buildings);
@@ -1691,6 +1768,15 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
       };
     }
 
+    if (building.tier < getRequiredBuildingTierForUnit(building.unitTemplateId)) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_tier_too_low"
+      };
+    }
+
     if (!hasEnoughResources(view.resources, building.cost)) {
       return {
         world: view,
@@ -1867,8 +1953,116 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
                 ...item,
                 building: {
                   ...item.building,
-                  lastHarvestDay: view.meta.day
+                  lastHarvestDay: view.meta.day,
+                  ownerPlayerId: view.playerId
                 }
+              }
+            : item
+        )
+      }
+    };
+
+    return {
+      world: predictedWorld,
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(predictedWorld, hero.id)
+    };
+  }
+
+  if (action.type === "hero.upgradeBuilding") {
+    const tile = view.map.tiles.find((item) => item.building?.id === action.buildingId);
+    const building = tile?.building;
+    if (!tile || !building) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_found"
+      };
+    }
+
+    if (distance(hero.position, tile.position) > 1) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "hero_not_adjacent_to_building"
+      };
+    }
+
+    const trackId = getBuildingUpgradeTrackId(building);
+    if (!trackId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_upgradeable"
+      };
+    }
+
+    if (!building.ownerPlayerId || building.ownerPlayerId !== view.playerId) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_not_owned_by_player"
+      };
+    }
+
+    const maxTier = building.maxTier ?? (trackId === "castle" ? 3 : 2);
+    if (building.tier >= maxTier) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_max_tier_reached"
+      };
+    }
+
+    const upgradeStep = getBuildingUpgradeStep(building);
+    if (!upgradeStep) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "building_upgrade_unavailable"
+      };
+    }
+
+    if (!hasEnoughResources(view.resources, upgradeStep.cost)) {
+      return {
+        world: view,
+        movementPlan: null,
+        reachableTiles: [],
+        reason: "not_enough_resources"
+      };
+    }
+
+    const predictedWorld: PlayerWorldView = {
+      ...view,
+      resources: {
+        gold: Math.max(0, view.resources.gold - upgradeStep.cost.gold),
+        wood: Math.max(0, view.resources.wood - upgradeStep.cost.wood),
+        ore: Math.max(0, view.resources.ore - upgradeStep.cost.ore)
+      },
+      map: {
+        ...view.map,
+        tiles: view.map.tiles.map((item) =>
+          item.building?.id === action.buildingId
+            ? {
+                ...item,
+                building: item.building.kind === "resource_mine" && upgradeStep.effect === "income_bonus_1"
+                  ? {
+                      ...item.building,
+                      tier: upgradeStep.toTier,
+                      income: item.building.income + 1,
+                      ownerPlayerId: view.playerId
+                    }
+                  : {
+                      ...item.building,
+                      tier: upgradeStep.toTier,
+                      ownerPlayerId: view.playerId
+                    }
               }
             : item
         )
@@ -2028,6 +2222,10 @@ export function validateWorldAction(
       return { valid: false, reason: "building_depleted" };
     }
 
+    if (building.tier < getRequiredBuildingTierForUnit(building.unitTemplateId)) {
+      return { valid: false, reason: "building_tier_too_low" };
+    }
+
     const resources = getPlayerResources(state.resources, hero.playerId);
     if (!hasEnoughResources(resources, building.cost)) {
       return { valid: false, reason: "not_enough_resources" };
@@ -2073,6 +2271,43 @@ export function validateWorldAction(
 
     if (isBuildingOnCurrentDayCooldown(state.meta.day, building.lastHarvestDay)) {
       return { valid: false, reason: "building_on_cooldown" };
+    }
+
+    return { valid: true };
+  }
+
+  if (action.type === "hero.upgradeBuilding") {
+    const building = state.buildings[action.buildingId];
+    if (!building) {
+      return { valid: false, reason: "building_not_found" };
+    }
+
+    if (!canHeroUpgradeBuilding(hero, building)) {
+      return { valid: false, reason: "hero_not_adjacent_to_building" };
+    }
+
+    const trackId = getBuildingUpgradeTrackId(building);
+    if (!trackId) {
+      return { valid: false, reason: "building_not_upgradeable" };
+    }
+
+    if (!building.ownerPlayerId || building.ownerPlayerId !== hero.playerId) {
+      return { valid: false, reason: "building_not_owned_by_player" };
+    }
+
+    const maxTier = building.maxTier ?? (trackId === "castle" ? 3 : 2);
+    if (building.tier >= maxTier) {
+      return { valid: false, reason: "building_max_tier_reached" };
+    }
+
+    const upgradeStep = getBuildingUpgradeStep(building);
+    if (!upgradeStep) {
+      return { valid: false, reason: "building_upgrade_unavailable" };
+    }
+
+    const resources = getPlayerResources(state.resources, hero.playerId);
+    if (!hasEnoughResources(resources, upgradeStep.cost)) {
+      return { valid: false, reason: "not_enough_resources" };
     }
 
     return { valid: true };
@@ -2495,7 +2730,8 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
         position: { ...building.position },
         resourceKind: building.resourceKind,
         income: building.income,
-        lastHarvestDay: state.meta.day
+        lastHarvestDay: state.meta.day,
+        ownerPlayerId: hero.playerId
       }
     };
     const harvestedResource = {
@@ -2523,6 +2759,68 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
           resourceKind: building.resourceKind,
           income: building.income,
           ownerPlayerId: hero.playerId
+        }
+      ]
+    };
+  }
+
+  if (action.type === "hero.upgradeBuilding") {
+    const hero = state.heroes.find((item) => item.id === action.heroId);
+    const building = state.buildings[action.buildingId];
+    const upgradeStep = building ? getBuildingUpgradeStep(building) : null;
+    if (!hero || !building || !upgradeStep || (building.kind !== "recruitment_post" && building.kind !== "resource_mine")) {
+      return { state, events: [] };
+    }
+
+    const nextBuilding =
+      building.kind === "resource_mine" && upgradeStep.effect === "income_bonus_1"
+        ? {
+            ...building,
+            position: { ...building.position },
+            tier: upgradeStep.toTier,
+            income: building.income + 1,
+            ownerPlayerId: hero.playerId
+          }
+        : building.kind === "recruitment_post"
+          ? {
+              ...building,
+              position: { ...building.position },
+              cost: cloneResourceLedger(building.cost),
+              tier: upgradeStep.toTier,
+              ownerPlayerId: hero.playerId
+            }
+          : {
+              ...building,
+              position: { ...building.position },
+              tier: upgradeStep.toTier,
+              ownerPlayerId: hero.playerId
+            };
+    const buildings = {
+      ...state.buildings,
+      [building.id]: nextBuilding
+    };
+    const nextState = buildNextWorldState(
+      {
+        ...state,
+        resources: spendResources(state.resources, hero.playerId, upgradeStep.cost)
+      },
+      state.heroes,
+      state.neutralArmies,
+      buildings
+    );
+
+    return {
+      state: nextState,
+      events: [
+        {
+          type: "hero.upgradedBuilding",
+          heroId: hero.id,
+          buildingId: building.id,
+          buildingKind: building.kind,
+          fromTier: upgradeStep.fromTier,
+          toTier: upgradeStep.toTier,
+          cost: cloneResourceLedger(upgradeStep.cost),
+          effect: upgradeStep.effect
         }
       ]
     };
@@ -2591,6 +2889,7 @@ export function filterWorldEventsForPlayer(
       case "hero.recruited":
       case "hero.visited":
       case "hero.claimedMine":
+      case "hero.upgradedBuilding":
       case "hero.progressed":
       case "hero.skillLearned":
       case "hero.equipmentChanged":

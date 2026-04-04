@@ -52,7 +52,8 @@
         "gold": 240,
         "wood": 0,
         "ore": 0
-      }
+      },
+      "maxTier": 3
     },
     {
       "id": "shrine-attack-1",
@@ -78,7 +79,8 @@
       },
       "label": "前线伐木场",
       "resourceKind": "wood",
-      "income": 5
+      "income": 5,
+      "maxTier": 2
     }
   ]
 }

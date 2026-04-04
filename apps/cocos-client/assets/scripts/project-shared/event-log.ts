@@ -188,6 +188,7 @@ const worldEventTypeLabels: Partial<Record<WorldEvent["type"], string>> = {
   "hero.recruited": "部队招募",
   "hero.visited": "建筑造访",
   "hero.claimedMine": "矿点占领",
+  "hero.upgradedBuilding": "建筑升级",
   "resource.produced": "矿点结算",
   "neutral.moved": "中立移动",
   "hero.progressed": "英雄成长",
@@ -303,6 +304,18 @@ export function createWorldEventLogEntry(
         heroId: event.heroId,
         worldEventType: event.type,
         rewards: [formatResourceReward(event.resourceKind, event.income)]
+      };
+    case "hero.upgradedBuilding":
+      return {
+        id: createEventLogId(playerId, timestamp, event.type, sequence),
+        timestamp,
+        roomId: state.meta.roomId,
+        playerId,
+        category: "building",
+        description: `${hero?.name ?? event.heroId} 将 ${event.buildingId} 从 ${event.fromTier} 级升级到 ${event.toTier} 级。`,
+        heroId: event.heroId,
+        worldEventType: event.type,
+        rewards: []
       };
     case "resource.produced":
       return {

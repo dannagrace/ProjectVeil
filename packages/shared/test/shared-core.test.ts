@@ -3993,6 +3993,195 @@ test("resolveWorldAction visits an attribute shrine once, grants permanent stats
   assert.equal(nextDayOutcome.state.heroes[0]?.stats.power, 2);
 });
 
+test("validateWorldAction rejects building upgrades when the player cannot afford the configured cost", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 1, y: 1 }
+  });
+  const building = {
+    id: "recruit-post-1",
+    kind: "recruitment_post" as const,
+    position: { x: 2, y: 1 },
+    label: "前线招募所",
+    unitTemplateId: "crown_crossbowman",
+    recruitCount: 4,
+    availableCount: 4,
+    cost: { gold: 240, wood: 0, ore: 0 },
+    tier: 1,
+    maxTier: 3,
+    ownerPlayerId: "player-1"
+  };
+  const state = createWorldState({
+    width: 3,
+    height: 3,
+    heroes: [hero],
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(2, 0),
+      createTile(0, 1),
+      createTile(1, 1, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(2, 1, { building }),
+      createTile(0, 2),
+      createTile(1, 2),
+      createTile(2, 2)
+    ],
+    buildings: {
+      [building.id]: building
+    },
+    resources: {
+      "player-1": {
+        gold: 900,
+        wood: 9,
+        ore: 4
+      }
+    }
+  });
+
+  assert.deepEqual(validateWorldAction(state, {
+    type: "hero.upgradeBuilding",
+    heroId: "hero-1",
+    buildingId: building.id
+  }), {
+    valid: false,
+    reason: "not_enough_resources"
+  });
+});
+
+test("resolveWorldAction upgrades owned buildings, advances the tier, and deducts configured resources", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 1, y: 1 }
+  });
+  const building = {
+    id: "mine-1",
+    kind: "resource_mine" as const,
+    position: { x: 2, y: 1 },
+    label: "裂谷矿井",
+    resourceKind: "ore" as const,
+    income: 4,
+    tier: 1,
+    maxTier: 2,
+    ownerPlayerId: "player-1"
+  };
+  const state = createWorldState({
+    width: 3,
+    height: 3,
+    heroes: [hero],
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(2, 0),
+      createTile(0, 1),
+      createTile(1, 1, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(2, 1, { building }),
+      createTile(0, 2),
+      createTile(1, 2),
+      createTile(2, 2)
+    ],
+    buildings: {
+      [building.id]: building
+    },
+    resources: {
+      "player-1": {
+        gold: 800,
+        wood: 2,
+        ore: 20
+      }
+    }
+  });
+
+  const outcome = resolveWorldAction(state, {
+    type: "hero.upgradeBuilding",
+    heroId: "hero-1",
+    buildingId: building.id
+  });
+  const upgraded = outcome.state.buildings[building.id];
+  const upgradedTile = outcome.state.map.tiles.find((tile) => tile.building?.id === building.id)?.building;
+
+  assert.equal(upgraded?.tier, 2);
+  assert.equal(upgraded?.kind, "resource_mine");
+  assert.equal(upgraded?.kind === "resource_mine" ? upgraded.income : 0, 5);
+  assert.equal(upgradedTile?.tier, 2);
+  assert.equal(outcome.state.resources["player-1"]?.gold, 300);
+  assert.equal(outcome.state.resources["player-1"]?.ore, 10);
+  assert.deepEqual(outcome.events, [
+    {
+      type: "hero.upgradedBuilding",
+      heroId: "hero-1",
+      buildingId: "mine-1",
+      buildingKind: "resource_mine",
+      fromTier: 1,
+      toTier: 2,
+      cost: {
+        gold: 500,
+        wood: 0,
+        ore: 10
+      },
+      effect: "income_bonus_1"
+    }
+  ]);
+});
+
+test("validateWorldAction rejects upgrade attempts after a building reaches max tier", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 1, y: 1 }
+  });
+  const building = {
+    id: "mine-1",
+    kind: "resource_mine" as const,
+    position: { x: 2, y: 1 },
+    label: "裂谷矿井",
+    resourceKind: "ore" as const,
+    income: 5,
+    tier: 2,
+    maxTier: 2,
+    ownerPlayerId: "player-1"
+  };
+  const state = createWorldState({
+    width: 3,
+    height: 3,
+    heroes: [hero],
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(2, 0),
+      createTile(0, 1),
+      createTile(1, 1, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(2, 1, { building }),
+      createTile(0, 2),
+      createTile(1, 2),
+      createTile(2, 2)
+    ],
+    buildings: {
+      [building.id]: building
+    },
+    resources: {
+      "player-1": {
+        gold: 3000,
+        wood: 30,
+        ore: 30
+      }
+    }
+  });
+
+  assert.deepEqual(validateWorldAction(state, {
+    type: "hero.upgradeBuilding",
+    heroId: "hero-1",
+    buildingId: building.id
+  }), {
+    valid: false,
+    reason: "building_max_tier_reached"
+  });
+});
+
 test("resolveWorldAction visits a watchtower once, grants permanent vision, and keeps it after day advance", () => {
   const hero = createHero({
     id: "hero-1",
