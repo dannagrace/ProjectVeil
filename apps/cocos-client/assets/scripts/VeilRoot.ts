@@ -3,6 +3,7 @@ import { getEquipmentDefinition, type EquipmentType } from "./project-shared/ind
 import {
   type BattleAction,
   type LeaderboardEntry,
+  type MatchmakingStatusResponse,
   type PlayerReportReason,
   VeilCocosSession,
   type VeilCocosSessionOptions,
@@ -64,6 +65,14 @@ import {
 import { buildHeroProgressNotice, type HeroProgressNotice } from "./cocos-hero-progression.ts";
 import { VeilHudPanel, type VeilHudRenderState } from "./VeilHudPanel.ts";
 import { VeilLobbyPanel } from "./VeilLobbyPanel.ts";
+import {
+  startCocosMatchmakingStatusPolling,
+  type CocosMatchmakingPollController
+} from "./cocos-matchmaking.ts";
+import {
+  buildMatchmakingStatusView,
+  type MatchmakingStatusView
+} from "./cocos-matchmaking-status.ts";
 import {
   buildCocosAccountLifecyclePanelView,
   type CocosAccountLifecycleDeliveryMode,
@@ -157,6 +166,10 @@ interface BattleSettlementSnapshot {
 interface VeilRootRuntime {
   createSession: typeof VeilCocosSession.create;
   loadLeaderboard: typeof VeilCocosSession.fetchLeaderboard;
+  enqueueMatchmaking: typeof VeilCocosSession.enqueueForMatchmaking;
+  getMatchmakingStatus: typeof VeilCocosSession.getMatchmakingStatus;
+  cancelMatchmaking: typeof VeilCocosSession.cancelMatchmaking;
+  startMatchmakingPolling: typeof startCocosMatchmakingStatusPolling;
   readStoredReplay: typeof VeilCocosSession.readStoredReplay;
   loadLobbyRooms: typeof loadCocosLobbyRooms;
   syncAuthSession: typeof syncCurrentCocosAuthSession;
@@ -171,6 +184,10 @@ interface VeilRootRuntime {
 const defaultVeilRootRuntime: VeilRootRuntime = {
   createSession: (...args) => VeilCocosSession.create(...args),
   loadLeaderboard: (...args) => VeilCocosSession.fetchLeaderboard(...args),
+  enqueueMatchmaking: (...args) => VeilCocosSession.enqueueForMatchmaking(...args),
+  getMatchmakingStatus: (...args) => VeilCocosSession.getMatchmakingStatus(...args),
+  cancelMatchmaking: (...args) => VeilCocosSession.cancelMatchmaking(...args),
+  startMatchmakingPolling: (...args) => startCocosMatchmakingStatusPolling(...args),
   readStoredReplay: (...args) => VeilCocosSession.readStoredReplay(...args),
   loadLobbyRooms: (...args) => loadCocosLobbyRooms(...args),
   syncAuthSession: (...args) => syncCurrentCocosAuthSession(...args),
@@ -268,6 +285,12 @@ export class VeilRoot extends Component {
   private lobbyStatus = "请选择一个房间，或手动输入新的房间 ID。";
   private lobbyLoading = false;
   private lobbyEntering = false;
+  private matchmakingStatus: MatchmakingStatusResponse = { status: "idle" };
+  private matchmakingPollController: CocosMatchmakingPollController | null = null;
+  private matchmakingTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  private matchmakingTimeoutMs = 120_000;
+  private matchmakingView: MatchmakingStatusView = buildMatchmakingStatusView({ status: "idle" });
+  private matchmakingJoinInFlight = false;
   private lobbyLeaderboardEntries: LeaderboardEntry[] = [];
   private lobbyLeaderboardStatus: "idle" | "loading" | "ready" | "error" = "idle";
   private lobbyLeaderboardError: string | null = null;
@@ -346,6 +369,7 @@ export class VeilRoot extends Component {
 
   onDestroy(): void {
     this.unscheduleAllCallbacks();
+    this.stopMatchmakingPolling();
     this.audioRuntime.dispose();
     this.stopRuntimeMemoryWarnings?.();
     this.stopRuntimeMemoryWarnings = null;
@@ -790,6 +814,12 @@ export class VeilRoot extends Component {
       onEnterRoom: () => {
         void this.enterLobbyRoom();
       },
+      onEnterMatchmaking: () => {
+        void this.enterLobbyMatchmaking();
+      },
+      onCancelMatchmaking: () => {
+        void this.cancelLobbyMatchmaking();
+      },
       onLoginAccount: () => {
         void this.loginLobbyAccount();
       },
@@ -1074,6 +1104,9 @@ export class VeilRoot extends Component {
         loading: this.lobbyLoading,
         entering: this.lobbyEntering,
         status: this.lobbyStatus,
+        matchmaking: this.matchmakingView,
+        matchmakingSearching: this.isMatchmakingActive(),
+        matchmakingBusy: this.lobbyEntering || this.matchmakingJoinInFlight,
         rooms: this.lobbyRooms,
         accountFlow: this.buildActiveAccountFlowPanelView(),
         presentationReadiness: cocosPresentationReadiness
@@ -2213,6 +2246,12 @@ export class VeilRoot extends Component {
       return;
     }
 
+    if (this.isMatchmakingActive()) {
+      this.lobbyStatus = "正在匹配中，请先取消当前队列。";
+      this.renderView();
+      return;
+    }
+
     if (!this.ensurePrivacyConsentAccepted()) {
       return;
     }
@@ -2303,6 +2342,225 @@ export class VeilRoot extends Component {
     } finally {
       this.lobbyEntering = false;
     }
+  }
+
+  private isMatchmakingActive(): boolean {
+    return this.matchmakingStatus.status === "queued" || this.matchmakingJoinInFlight;
+  }
+
+  private updateMatchmakingStatus(status: MatchmakingStatusResponse, lobbyStatus?: string): void {
+    this.matchmakingStatus = status;
+    this.matchmakingView = buildMatchmakingStatusView(status);
+    if (lobbyStatus) {
+      this.lobbyStatus = lobbyStatus;
+    }
+  }
+
+  private stopMatchmakingPolling(): void {
+    this.matchmakingPollController?.stop();
+    this.matchmakingPollController = null;
+    if (this.matchmakingTimeoutHandle) {
+      clearTimeout(this.matchmakingTimeoutHandle);
+      this.matchmakingTimeoutHandle = null;
+    }
+  }
+
+  private startMatchmakingPolling(): void {
+    this.stopMatchmakingPolling();
+    this.matchmakingPollController = resolveVeilRootRuntime().startMatchmakingPolling(
+      this.remoteUrl,
+      (status) => {
+        void this.handleMatchmakingStatusUpdate(status);
+      },
+      {
+        pollIntervalMs: 3000,
+        stopOnMatched: true,
+        authSession: this.authToken
+          ? {
+              token: this.authToken,
+              playerId: this.playerId,
+              displayName: this.displayName || this.playerId,
+              authMode: this.authMode,
+              ...(this.loginId ? { loginId: this.loginId } : {}),
+              source: "remote"
+            }
+          : null
+      }
+    );
+    this.matchmakingTimeoutHandle = setTimeout(() => {
+      void this.handleMatchmakingTimeout();
+    }, this.matchmakingTimeoutMs);
+  }
+
+  private async ensureMatchmakingAuthSession(): Promise<void> {
+    const storage = this.readWebStorage();
+    if (this.authMode === "account" && this.authToken) {
+      const syncedSession = await resolveVeilRootRuntime().syncAuthSession(this.remoteUrl, {
+        storage,
+        session: readStoredCocosAuthSession(storage)
+      });
+      if (!syncedSession) {
+        throw new Error("cocos_request_failed:401");
+      }
+      this.authToken = syncedSession.token ?? null;
+      this.playerId = syncedSession.playerId;
+      this.displayName = syncedSession.displayName;
+      this.authMode = syncedSession.authMode;
+      this.authProvider = syncedSession.provider ?? "account-password";
+      this.loginId = syncedSession.loginId ?? "";
+      this.sessionSource = syncedSession.source;
+      return;
+    }
+
+    const authSession = await resolveVeilRootRuntime().loginGuestAuthSession(
+      this.remoteUrl,
+      this.playerId,
+      this.displayName || this.playerId,
+      {
+        storage,
+        privacyConsentAccepted: this.privacyConsentAccepted
+      }
+    );
+    this.authToken = authSession.token ?? null;
+    this.playerId = authSession.playerId;
+    this.displayName = authSession.displayName;
+    this.authMode = authSession.authMode;
+    this.authProvider = authSession.provider ?? "guest";
+    this.loginId = authSession.loginId ?? "";
+    this.sessionSource = authSession.source;
+  }
+
+  private async enterLobbyMatchmaking(): Promise<void> {
+    if (this.lobbyEntering || this.isMatchmakingActive()) {
+      return;
+    }
+
+    if (!this.ensurePrivacyConsentAccepted()) {
+      return;
+    }
+
+    this.lobbyEntering = true;
+    this.updateMatchmakingStatus({ status: "idle" }, "正在进入 PVP 匹配队列...");
+    this.renderView();
+
+    try {
+      await this.ensureMatchmakingAuthSession();
+      const rating = this.lobbyAccountProfile.eloRating ?? 1000;
+      const status = await resolveVeilRootRuntime().enqueueMatchmaking(this.remoteUrl, this.playerId, rating, {
+        getDisplayName: () => this.displayName || this.playerId,
+        getAuthToken: () => this.authToken
+      });
+      this.updateMatchmakingStatus(status, this.describeMatchmakingStatus(status));
+      this.startMatchmakingPolling();
+    } catch (error) {
+      this.updateMatchmakingStatus({ status: "idle" });
+      this.lobbyStatus = this.describeMatchmakingError(error);
+    } finally {
+      this.lobbyEntering = false;
+      this.renderView();
+    }
+  }
+
+  private async cancelLobbyMatchmaking(): Promise<void> {
+    if (!this.isMatchmakingActive() || this.lobbyEntering) {
+      return;
+    }
+
+    this.lobbyEntering = true;
+    this.lobbyStatus = "正在取消 PVP 匹配...";
+    this.renderView();
+
+    try {
+      await resolveVeilRootRuntime().cancelMatchmaking(this.remoteUrl, this.playerId, {
+        getDisplayName: () => this.displayName || this.playerId,
+        getAuthToken: () => this.authToken
+      });
+      this.stopMatchmakingPolling();
+      this.updateMatchmakingStatus({ status: "idle" }, "已取消当前匹配队列。");
+    } catch (error) {
+      this.lobbyStatus = this.describeMatchmakingError(error);
+    } finally {
+      this.lobbyEntering = false;
+      this.renderView();
+    }
+  }
+
+  private async handleMatchmakingStatusUpdate(status: MatchmakingStatusResponse): Promise<void> {
+    if (status.status === "idle") {
+      this.stopMatchmakingPolling();
+    }
+    this.updateMatchmakingStatus(status, this.describeMatchmakingStatus(status));
+    this.renderView();
+
+    if (status.status === "matched" && !this.matchmakingJoinInFlight) {
+      await this.enterMatchedRoom(status);
+    }
+  }
+
+  private async handleMatchmakingTimeout(): Promise<void> {
+    if (!this.isMatchmakingActive()) {
+      return;
+    }
+
+    this.stopMatchmakingPolling();
+    try {
+      await resolveVeilRootRuntime().cancelMatchmaking(this.remoteUrl, this.playerId, {
+        getDisplayName: () => this.displayName || this.playerId,
+        getAuthToken: () => this.authToken
+      });
+    } catch {
+      // Keep the timeout surfaced locally even if remote dequeue fails.
+    }
+    this.updateMatchmakingStatus({ status: "idle" }, "匹配超时，请稍后重试。");
+    this.renderView();
+  }
+
+  private async enterMatchedRoom(status: Extract<MatchmakingStatusResponse, { status: "matched" }>): Promise<void> {
+    this.matchmakingJoinInFlight = true;
+    this.stopMatchmakingPolling();
+    this.lobbyStatus = `匹配成功，正在进入房间 ${status.roomId}...`;
+    this.renderView();
+
+    try {
+      this.roomId = status.roomId;
+      this.seed = status.seedOverride;
+      this.resetSessionViewport(`正在进入匹配房间 ${status.roomId} ...`);
+      this.showLobby = false;
+      this.syncBrowserRoomQuery(status.roomId);
+      this.syncWechatShareBridge();
+      await this.connect();
+      if (!this.session && !this.lastUpdate) {
+        throw new Error("enter_room_failed");
+      }
+      this.updateMatchmakingStatus({ status: "idle" }, `已进入匹配房间 ${status.roomId}。`);
+    } catch (error) {
+      this.showLobby = true;
+      this.updateMatchmakingStatus({ status: "idle" }, this.describeMatchmakingError(error));
+    } finally {
+      this.matchmakingJoinInFlight = false;
+      this.renderView();
+    }
+  }
+
+  private describeMatchmakingStatus(status: MatchmakingStatusResponse): string {
+    const view = buildMatchmakingStatusView(status);
+    if (status.status === "queued") {
+      return `${view.statusLabel} ${view.queuePositionLabel}，${view.waitEstimateLabel}`;
+    }
+    if (status.status === "matched") {
+      return view.matchedLabel ? `${view.statusLabel} · ${view.matchedLabel}` : view.statusLabel;
+    }
+    return view.statusLabel;
+  }
+
+  private describeMatchmakingError(error: unknown): string {
+    if (error instanceof Error && error.message === "cocos_request_failed:401") {
+      return "匹配会话已失效，请重新登录后再试。";
+    }
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return "matchmaking_failed";
   }
 
   private async loginLobbyAccount(): Promise<void> {
@@ -2534,6 +2792,8 @@ export class VeilRoot extends Component {
     const storage = this.readWebStorage();
     saveCocosLobbyPreferences(this.playerId, this.roomId, undefined, storage);
     this.displayName = rememberPreferredCocosDisplayName(this.playerId, this.displayName || this.playerId, storage);
+    this.stopMatchmakingPolling();
+    this.updateMatchmakingStatus({ status: "idle" });
     await this.disposeCurrentSession();
     this.resetSessionViewport("已返回 Cocos Lobby。");
     this.gameplayAccountReviewPanelOpen = false;
@@ -2547,6 +2807,8 @@ export class VeilRoot extends Component {
   }
 
   private async logoutAuthSession(): Promise<void> {
+    this.stopMatchmakingPolling();
+    this.updateMatchmakingStatus({ status: "idle" });
     await logoutCurrentCocosAuthSession(this.remoteUrl, {
       storage: this.readWebStorage()
     });
@@ -2933,6 +3195,7 @@ export class VeilRoot extends Component {
 
   private async disposeCurrentSession(): Promise<void> {
     this.bumpSessionEpoch();
+    this.stopMatchmakingPolling();
     const currentSession = this.session;
     this.session = null;
     if (currentSession) {
@@ -3091,6 +3354,8 @@ export class VeilRoot extends Component {
   }
 
   private hydrateLaunchIdentity(): void {
+    this.stopMatchmakingPolling();
+    this.updateMatchmakingStatus({ status: "idle" });
     const storage = this.readWebStorage();
     const launchIdentity = resolveCocosLaunchIdentity({
       defaultRoomId: this.roomId,
