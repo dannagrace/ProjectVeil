@@ -199,3 +199,26 @@ test("VeilLobbyPanel keeps empty-room rendering separate from replay transport f
   assert.match(String(statefulComponent.replayPlaybackStatus ?? ""), /502 Bad Gateway/);
   component.onDestroy();
 });
+
+test("VeilLobbyPanel renders leaderboard rows and highlights the current player summary", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const state = createLobbyState({
+    playerId: "player-2",
+    leaderboardStatus: "ready",
+    leaderboardEntries: [
+      { playerId: "player-1", rank: 1, displayName: "Alpha", eloRating: 1688, tier: "platinum" },
+      { playerId: "player-2", rank: 2, displayName: "Bravo", eloRating: 1524, tier: "platinum" },
+      { playerId: "player-3", rank: 3, displayName: "Charlie", eloRating: 1499, tier: "gold" }
+    ]
+  });
+
+  component.configure({});
+  component.scheduleOnce = () => undefined;
+  component.render(state);
+
+  assert.match(readCardLabel(node, "LobbyLeaderboardStatus"), /当前徽记 铂金/);
+  assert.match(readCardLabel(node, "LobbyLeaderboardList"), /#2 Bravo · 我 · ELO 1524 · 铂金/);
+  assert.match(readCardLabel(node, "LobbyLeaderboardMyRank"), /我的排名/);
+  assert.match(readCardLabel(node, "LobbyLeaderboardMyRank"), /#2 Bravo/);
+  component.onDestroy();
+});

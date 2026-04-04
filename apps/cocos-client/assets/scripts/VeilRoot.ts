@@ -2,6 +2,7 @@ import { _decorator, Camera, Canvas, Color, Component, EventMouse, EventTouch, G
 import { getEquipmentDefinition, type EquipmentType } from "./project-shared/index.ts";
 import {
   type BattleAction,
+  type LeaderboardEntry,
   type PlayerReportReason,
   VeilCocosSession,
   type VeilCocosSessionOptions,
@@ -155,6 +156,7 @@ interface BattleSettlementSnapshot {
 
 interface VeilRootRuntime {
   createSession: typeof VeilCocosSession.create;
+  loadLeaderboard: typeof VeilCocosSession.fetchLeaderboard;
   readStoredReplay: typeof VeilCocosSession.readStoredReplay;
   loadLobbyRooms: typeof loadCocosLobbyRooms;
   syncAuthSession: typeof syncCurrentCocosAuthSession;
@@ -168,6 +170,7 @@ interface VeilRootRuntime {
 
 const defaultVeilRootRuntime: VeilRootRuntime = {
   createSession: (...args) => VeilCocosSession.create(...args),
+  loadLeaderboard: (...args) => VeilCocosSession.fetchLeaderboard(...args),
   readStoredReplay: (...args) => VeilCocosSession.readStoredReplay(...args),
   loadLobbyRooms: (...args) => loadCocosLobbyRooms(...args),
   syncAuthSession: (...args) => syncCurrentCocosAuthSession(...args),
@@ -265,6 +268,9 @@ export class VeilRoot extends Component {
   private lobbyStatus = "请选择一个房间，或手动输入新的房间 ID。";
   private lobbyLoading = false;
   private lobbyEntering = false;
+  private lobbyLeaderboardEntries: LeaderboardEntry[] = [];
+  private lobbyLeaderboardStatus: "idle" | "loading" | "ready" | "error" = "idle";
+  private lobbyLeaderboardError: string | null = null;
   private lobbyAccountProfile: CocosPlayerAccountProfile = createFallbackCocosPlayerAccountProfile("player-1", "test-room");
   private lobbyAccountReviewState: CocosAccountReviewState = createCocosAccountReviewState(this.lobbyAccountProfile);
   private lobbyAccountEpoch = 0;
@@ -779,7 +785,7 @@ export class VeilRoot extends Component {
         this.togglePrivacyConsent();
       },
       onRefresh: () => {
-        void this.refreshLobbyRoomList();
+        void this.syncLobbyBootstrap();
       },
       onEnterRoom: () => {
         void this.enterLobbyRoom();
@@ -1061,6 +1067,9 @@ export class VeilRoot extends Component {
         battleReplaySectionStatus: this.lobbyAccountReviewState.battleReplays.status,
         battleReplaySectionError: this.lobbyAccountReviewState.battleReplays.errorMessage,
         selectedBattleReplayId: this.lobbyAccountReviewState.selectedBattleReplayId,
+        leaderboardEntries: this.lobbyLeaderboardEntries,
+        leaderboardStatus: this.lobbyLeaderboardStatus,
+        leaderboardError: this.lobbyLeaderboardError,
         sessionSource: this.sessionSource,
         loading: this.lobbyLoading,
         entering: this.lobbyEntering,
@@ -1222,6 +1231,9 @@ export class VeilRoot extends Component {
   private async refreshLobbyAccountProfile(): Promise<void> {
     const storage = this.readWebStorage();
     const requestEpoch = this.bumpLobbyAccountEpoch();
+    this.lobbyLeaderboardStatus = "loading";
+    this.lobbyLeaderboardError = null;
+    this.renderView();
     const storedSession = readStoredCocosAuthSession(storage);
     const activeSession = storedSession?.playerId === this.playerId ? storedSession : null;
     const syncedSession = await resolveVeilRootRuntime().syncAuthSession(this.remoteUrl, {
@@ -1248,15 +1260,31 @@ export class VeilRoot extends Component {
       this.sessionSource = "none";
     }
 
-    const profile = await resolveVeilRootRuntime().loadAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
-      storage,
-      authSession: syncedSession
-    });
+    const [profile, leaderboardResult] = await Promise.all([
+      resolveVeilRootRuntime().loadAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
+        storage,
+        authSession: syncedSession
+      }),
+      resolveVeilRootRuntime()
+        .loadLeaderboard(this.remoteUrl, 50)
+        .then((entries) => ({ ok: true as const, entries }))
+        .catch((error: unknown) => ({ ok: false as const, error }))
+    ]);
     if (!this.isActiveLobbyAccountEpoch(requestEpoch)) {
       return;
     }
 
     this.commitAccountProfile(profile, false);
+    if (leaderboardResult.ok) {
+      this.lobbyLeaderboardEntries = leaderboardResult.entries;
+      this.lobbyLeaderboardStatus = "ready";
+      this.lobbyLeaderboardError = null;
+    } else {
+      this.lobbyLeaderboardEntries = [];
+      this.lobbyLeaderboardStatus = "error";
+      this.lobbyLeaderboardError =
+        leaderboardResult.error instanceof Error ? leaderboardResult.error.message : "leaderboard_unavailable";
+    }
     if (profile.source === "remote") {
       this.displayName = profile.displayName;
       this.loginId = profile.loginId ?? this.loginId;

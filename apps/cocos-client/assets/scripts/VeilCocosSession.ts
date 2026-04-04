@@ -12,6 +12,16 @@ export interface ResourceLedger {
   ore: number;
 }
 
+export type LeaderboardTier = "bronze" | "silver" | "gold" | "platinum" | "diamond";
+
+export interface LeaderboardEntry {
+  playerId: string;
+  rank: number;
+  displayName: string;
+  eloRating: number;
+  tier: LeaderboardTier;
+}
+
 export type FogState = "hidden" | "explored" | "visible";
 export type TerrainType = "grass" | "dirt" | "sand" | "water" | "swamp" | "unknown";
 export type OccupantKind = "hero" | "neutral" | "building";
@@ -451,6 +461,15 @@ export interface VeilCocosSessionOptions {
   getAuthToken?: () => string | null;
 }
 
+interface LeaderboardApiPayload {
+  players?: Array<{
+    playerId?: string;
+    displayName?: string;
+    eloRating?: number;
+    tier?: LeaderboardTier;
+  }>;
+}
+
 interface ColyseusCloseCodes {
   CONSENTED: number;
   FAILED_TO_RECONNECT: number;
@@ -626,6 +645,7 @@ let cachedColyseusSdkPromise: Promise<ColyseusSdkRuntime> | null = null;
 let testStorageOverride: Storage | null | undefined;
 let testSdkLoaderOverride: (() => Promise<ColyseusSdkRuntime>) | null = null;
 let testWaitOverride: ((ms: number) => Promise<void>) | null = null;
+let testFetchOverride: typeof fetch | null = null;
 
 interface StoredSessionReplayEnvelope {
   version: number;
@@ -770,6 +790,65 @@ function getRemoteUrl(explicitUrl?: string): string {
   }
 
   return "http://127.0.0.1:2567";
+}
+
+function resolveApiBaseUrl(explicitUrl?: string): string {
+  const resolved = getRemoteUrl(explicitUrl);
+  try {
+    const parsed = new URL(resolved);
+    if (parsed.protocol === "ws:") {
+      parsed.protocol = "http:";
+    } else if (parsed.protocol === "wss:") {
+      parsed.protocol = "https:";
+    }
+    parsed.pathname = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return resolved.replace(/\/$/, "");
+  }
+}
+
+function getLeaderboardFetch(): typeof fetch {
+  return testFetchOverride ?? fetch;
+}
+
+function normalizeLeaderboardTier(value: unknown): LeaderboardTier {
+  switch (value) {
+    case "silver":
+    case "gold":
+    case "platinum":
+    case "diamond":
+      return value;
+    default:
+      return "bronze";
+  }
+}
+
+async function fetchLeaderboardEntries(remoteUrl?: string, limit = 50): Promise<LeaderboardEntry[]> {
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(limit || 50)));
+  const response = await getLeaderboardFetch()(
+    `${resolveApiBaseUrl(remoteUrl)}/api/leaderboard?limit=${encodeURIComponent(String(safeLimit))}`
+  );
+  if (!response.ok) {
+    throw new Error(`leaderboard_request_failed:${response.status}`);
+  }
+
+  const payload = (await response.json()) as LeaderboardApiPayload;
+  return (payload.players ?? []).map((player, index) => {
+    const eloRating = typeof player.eloRating === "number" && Number.isFinite(player.eloRating)
+      ? Math.floor(player.eloRating)
+      : 1000;
+
+    return {
+      playerId: player.playerId?.trim() || `player-${index + 1}`,
+      rank: index + 1,
+      displayName: player.displayName?.trim() || player.playerId?.trim() || `玩家 ${index + 1}`,
+      eloRating,
+      tier: normalizeLeaderboardTier(player.tier)
+    };
+  });
 }
 
 function wait(ms: number): Promise<void> {
@@ -1501,7 +1580,10 @@ class RecoverableRemoteGameSession {
 }
 
 export class VeilCocosSession {
-  private constructor(private readonly remoteSession: RecoverableRemoteGameSession) {}
+  private constructor(
+    private readonly remoteSession: RecoverableRemoteGameSession,
+    private readonly remoteUrl?: string
+  ) {}
 
   static readStoredReplay(roomId: string, playerId: string): SessionUpdate | null {
     return readSessionReplay(roomId, playerId);
@@ -1514,7 +1596,11 @@ export class VeilCocosSession {
     options?: VeilCocosSessionOptions
   ): Promise<VeilCocosSession> {
     const remoteSession = await RecoverableRemoteGameSession.create(roomId, playerId, seed, options);
-    return new VeilCocosSession(remoteSession);
+    return new VeilCocosSession(remoteSession, options?.remoteUrl);
+  }
+
+  static async fetchLeaderboard(remoteUrl?: string, limit = 50): Promise<LeaderboardEntry[]> {
+    return fetchLeaderboardEntries(remoteUrl, limit);
   }
 
   async snapshot(reason?: string): Promise<SessionUpdate> {
@@ -1569,6 +1655,10 @@ export class VeilCocosSession {
     return this.remoteSession.listReachable(heroId);
   }
 
+  async fetchLeaderboard(limit = 50): Promise<LeaderboardEntry[]> {
+    return fetchLeaderboardEntries(this.remoteUrl, limit);
+  }
+
   async dispose(): Promise<void> {
     await this.remoteSession.dispose();
   }
@@ -1578,6 +1668,7 @@ export function setVeilCocosSessionRuntimeForTests(runtime: {
   storage?: Storage | null;
   loadSdk?: (() => Promise<ColyseusSdkRuntime>) | null;
   wait?: ((ms: number) => Promise<void>) | null;
+  fetchImpl?: typeof fetch | null;
 }): void {
   // Keep the session state machine real in tests; only storage, SDK loading,
   // and retry timing are swapped so reconnect orchestration stays exercised.
@@ -1593,12 +1684,17 @@ export function setVeilCocosSessionRuntimeForTests(runtime: {
   if ("wait" in runtime) {
     testWaitOverride = runtime.wait ?? null;
   }
+
+  if ("fetchImpl" in runtime) {
+    testFetchOverride = runtime.fetchImpl ?? null;
+  }
 }
 
 export function resetVeilCocosSessionRuntimeForTests(): void {
   testStorageOverride = undefined;
   testSdkLoaderOverride = null;
   testWaitOverride = null;
+  testFetchOverride = null;
   cachedColyseusSdkPromise = null;
 }
 
