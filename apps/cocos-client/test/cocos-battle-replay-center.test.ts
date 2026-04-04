@@ -105,14 +105,16 @@ test("buildCocosBattleReplayCenterView derives ready-state summary lines and tar
   assert.match(view.subtitle, /PVE · 守军 neutral-1 · 已暂停/);
   assert.equal(view.badge, "0/2");
   assert.match(view.detailLines[0] ?? "", /03-27 12:03 · 攻方 · 房间 room-alpha/);
-  assert.equal(view.detailLines[1], "当前动作：暂无动作");
-  assert.equal(view.detailLines[2], "下一动作：hero-1-stack 施放 power-shot -> neutral-1-stack");
-  assert.match(view.detailLines[3] ?? "", /战场：未知战场 · 战场交锋 · 坐标 \(0,0\)/);
-  assert.equal(view.detailLines[4], "阶段：轮到我方");
-  assert.equal(view.detailLines[5], "行动单位：Guard x12");
-  assert.equal(view.detailLines[6], "我方编队：Guard x12");
-  assert.equal(view.detailLines[7], "目标摘要：Wolf x8");
-  assert.match(view.detailLines[8] ?? "", /1/);
+  assert.equal(view.detailLines[1], "回合定位：1/1 · ========");
+  assert.equal(view.detailLines[2], "播放倍率：1x");
+  assert.equal(view.detailLines[3], "当前动作：暂无动作");
+  assert.equal(view.detailLines[4], "下一动作：hero-1-stack 施放 power-shot -> neutral-1-stack");
+  assert.match(view.detailLines[5] ?? "", /战场：未知战场 · 战场交锋 · 坐标 \(0,0\)/);
+  assert.equal(view.detailLines[6], "阶段：轮到我方");
+  assert.equal(view.detailLines[7], "行动单位：Guard x12");
+  assert.equal(view.detailLines[8], "我方编队：Guard x12");
+  assert.equal(view.detailLines[9], "目标摘要：Wolf x8");
+  assert.match(view.detailLines[10] ?? "", /1/);
   assert.deepEqual(
     view.controls.map((control) => [control.action, control.enabled]),
     [
@@ -120,6 +122,10 @@ test("buildCocosBattleReplayCenterView derives ready-state summary lines and tar
       ["pause", false],
       ["step-back", false],
       ["step-forward", true],
+      ["turn-back", false],
+      ["turn-forward", false],
+      ["speed-down", true],
+      ["speed-up", true],
       ["reset", false]
     ]
   );
@@ -142,7 +148,7 @@ test("buildCocosBattleReplayCenterView updates controls across playing, stepped,
   assert.equal(playingView.subtitle.endsWith("播放中"), true);
   assert.deepEqual(
     playingView.controls.map((control) => control.enabled),
-    [false, true, false, true, false]
+    [false, true, false, true, false, false, true, true, false]
   );
 
   const steppedView = buildCocosBattleReplayCenterView({
@@ -152,11 +158,11 @@ test("buildCocosBattleReplayCenterView updates controls across playing, stepped,
     status: "ready"
   });
   assert.equal(steppedView.badge, "1/2");
-  assert.equal(steppedView.detailLines[1], "当前动作：hero-1-stack 等待");
-  assert.equal(steppedView.detailLines[2], "下一动作：neutral-1-stack 防御");
+  assert.equal(steppedView.detailLines[3], "当前动作：hero-1-stack 等待");
+  assert.equal(steppedView.detailLines[4], "下一动作：neutral-1-stack 防御");
   assert.deepEqual(
     steppedView.controls.map((control) => control.enabled),
-    [false, true, true, true, true]
+    [false, true, true, true, false, false, true, true, true]
   );
 
   const completedView = buildCocosBattleReplayCenterView({
@@ -167,10 +173,10 @@ test("buildCocosBattleReplayCenterView updates controls across playing, stepped,
   });
   assert.equal(completedView.subtitle.endsWith("已播完"), true);
   assert.equal(completedView.badge, "2/2");
-  assert.equal(completedView.detailLines[2], "下一动作：暂无动作");
+  assert.equal(completedView.detailLines[4], "下一动作：暂无动作");
   assert.deepEqual(
     completedView.controls.map((control) => control.enabled),
-    [false, false, true, false, true]
+    [false, false, true, false, false, false, true, true, true]
   );
 
   const resetView = buildCocosBattleReplayCenterView({
@@ -182,6 +188,6 @@ test("buildCocosBattleReplayCenterView updates controls across playing, stepped,
   assert.equal(resetView.badge, "0/2");
   assert.deepEqual(
     resetView.controls.map((control) => control.enabled),
-    [true, false, false, true, false]
+    [true, false, false, true, false, false, true, true, false]
   );
 });
