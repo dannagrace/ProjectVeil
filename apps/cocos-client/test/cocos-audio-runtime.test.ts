@@ -25,7 +25,9 @@ test("audio runtime keeps scene and cue state when AudioContext is unavailable",
     lastCue: null,
     cueCount: 0,
     musicMode: "idle",
-    cueMode: "idle"
+    cueMode: "idle",
+    bgmVolume: 100,
+    sfxVolume: 100
   });
 
   runtime.setScene("explore");
@@ -109,7 +111,9 @@ test("audio runtime waits for a user gesture before creating WebAudio context", 
     lastCue: "attack",
     cueCount: 1,
     musicMode: "pending",
-    cueMode: "idle"
+    cueMode: "idle",
+    bgmVolume: 100,
+    sfxVolume: 100
   });
   assert.equal(audioContextCount, 0);
   assert.equal(starts.length, 0);

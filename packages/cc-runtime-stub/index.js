@@ -362,6 +362,13 @@ export const input = {
   off() {}
 };
 
+export const game = {
+  frameRate: 60,
+  setFrameRate(value) {
+    this.frameRate = value;
+  }
+};
+
 export const resources = {
   load(_path, Type, callback) {
     callback(null, new Type());

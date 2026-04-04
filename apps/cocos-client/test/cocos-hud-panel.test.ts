@@ -60,7 +60,9 @@ function createHudState(): VeilHudRenderState {
         lastCue: null,
         cueCount: 0,
         musicMode: "idle",
-        cueMode: "idle"
+        cueMode: "idle",
+        bgmVolume: 100,
+        sfxVolume: 100
       },
       pixelAssets: {
         phase: "idle",

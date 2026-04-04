@@ -230,6 +230,7 @@ function getSessionIndicatorBadge(indicators: VeilHudSessionIndicator[]): string
 export interface VeilHudPanelOptions {
   onNewRun?: () => void;
   onRefresh?: () => void;
+  onToggleSettings?: () => void;
   onToggleInventory?: () => void;
   onToggleAchievements?: () => void;
   onToggleReport?: () => void;
@@ -339,6 +340,7 @@ export class VeilHudPanel extends Component {
   private requestedIcons = false;
   private onNewRun: (() => void) | undefined;
   private onRefresh: (() => void) | undefined;
+  private onToggleSettings: (() => void) | undefined;
   private onToggleInventory: (() => void) | undefined;
   private onToggleAchievements: (() => void) | undefined;
   private onToggleReport: (() => void) | undefined;
@@ -357,6 +359,7 @@ export class VeilHudPanel extends Component {
   configure(options: VeilHudPanelOptions): void {
     this.onNewRun = options.onNewRun;
     this.onRefresh = options.onRefresh;
+    this.onToggleSettings = options.onToggleSettings;
     this.onToggleInventory = options.onToggleInventory;
     this.onToggleAchievements = options.onToggleAchievements;
     this.onToggleReport = options.onToggleReport;
@@ -652,6 +655,7 @@ export class VeilHudPanel extends Component {
     const chromeActions: Array<{ nodeName: string; debugLabel: string; callback: (() => void) | null }> = [
       { nodeName: "HudNewRun", debugLabel: "new-run", callback: this.onNewRun ?? null },
       { nodeName: "HudRefresh", debugLabel: "refresh", callback: this.onRefresh ?? null },
+      { nodeName: "HudSettings", debugLabel: "settings", callback: this.onToggleSettings ?? null },
       { nodeName: "HudInventory", debugLabel: "inventory", callback: this.onToggleInventory ?? null },
       { nodeName: "HudAchievements", debugLabel: "achievements", callback: this.onToggleAchievements ?? null },
       { nodeName: "HudReportPlayer", debugLabel: "report-player", callback: this.onToggleReport ?? null },
@@ -1593,6 +1597,7 @@ export class VeilHudPanel extends Component {
 
     this.ensureActionButton(actionsNode, "HudNewRun", "新开一局");
     this.ensureActionButton(actionsNode, "HudRefresh", "刷新状态");
+    this.ensureActionButton(actionsNode, "HudSettings", "设置");
     this.ensureActionButton(actionsNode, "HudInventory", "装备背包");
     this.ensureActionButton(actionsNode, "HudAchievements", "战报中心");
     this.ensureActionButton(actionsNode, "HudReportPlayer", "举报玩家");
@@ -1612,6 +1617,7 @@ export class VeilHudPanel extends Component {
     const buttons: HudActionButtonState[] = [
       { name: "HudNewRun", label: "新开一局", callback: this.onNewRun ?? null },
       { name: "HudRefresh", label: "刷新状态", callback: this.onRefresh ?? null },
+      { name: "HudSettings", label: "设置", callback: this.onToggleSettings ?? null },
       { name: "HudInventory", label: "装备背包", callback: this.onToggleInventory ?? null },
       { name: "HudAchievements", label: "战报中心", callback: this.onToggleAchievements ?? null },
       { name: "HudReportPlayer", label: "举报玩家", callback: this.onToggleReport ?? null },
