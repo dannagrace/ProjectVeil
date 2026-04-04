@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
+import { applyEloMatchResult } from "../../../packages/shared/src/index";
 import type { BattleState, ServerMessage, WorldEvent } from "../../../packages/shared/src/index";
 import {
   VeilColyseusRoom,
@@ -1084,6 +1085,46 @@ test("pvp replay persistence captures both attacker and defender accounts from r
     replaySaves.map((entry) => entry.playerId).sort(),
     ["player-1", "player-2"]
   );
+});
+
+test("surrender settles the room with the surrendering player as loser and persists ELO deltas", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-surrender-${Date.now()}`);
+  const surrenderingClient = createFakeClient("session-surrender-loser");
+  const opponentClient = createFakeClient("session-surrender-winner");
+  const expectedRatings = applyEloMatchResult(1000, 1000);
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, surrenderingClient, "player-1", "connect-surrender-loser");
+  await connectPlayer(room, opponentClient, "player-2", "connect-surrender-winner");
+
+  await emitRoomMessage(room, "world.action", surrenderingClient, {
+    type: "world.action",
+    requestId: "surrender-room",
+    action: {
+      type: "world.surrender",
+      heroId: "hero-1"
+    }
+  });
+
+  const surrenderReply = lastSessionState(surrenderingClient, "reply");
+  const winnerPush = lastSessionState(opponentClient, "push");
+  const loserAccount = await store.loadPlayerAccount("player-1");
+  const winnerAccount = await store.loadPlayerAccount("player-2");
+
+  assert.equal(surrenderReply.requestId, "surrender-room");
+  assert.equal(surrenderReply.payload.reason, "surrender");
+  assert.equal(winnerPush.payload.reason, "surrender");
+  assert.equal(loserAccount?.eloRating, expectedRatings.loserRating);
+  assert.equal(winnerAccount?.eloRating, expectedRatings.winnerRating);
+  assert.equal(await store.load(room.roomId), null);
 });
 
 test("room report player flow persists one report per room target pair and rejects duplicates", async (t) => {

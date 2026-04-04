@@ -60,7 +60,9 @@ import {
   buildTimelineEntriesFromUpdate,
   describeMoveAttemptFeedback,
   describeSessionActionOutcome,
-  formatSessionActionReason
+  formatSessionActionReason,
+  formatSessionSettlementReason,
+  isSessionSettlementReason
 } from "./cocos-ui-formatters.ts";
 import { buildHeroProgressNotice, type HeroProgressNotice } from "./cocos-hero-progression.ts";
 import { VeilHudPanel, type VeilHudRenderState } from "./VeilHudPanel.ts";
@@ -333,6 +335,9 @@ export class VeilRoot extends Component {
   private reportDialogOpen = false;
   private reportSubmitting = false;
   private reportStatusMessage: string | null = null;
+  private surrenderDialogOpen = false;
+  private surrenderSubmitting = false;
+  private surrenderStatusMessage: string | null = null;
 
   onLoad(): void {
     this.audioRuntime.dispose();
@@ -760,11 +765,20 @@ export class VeilRoot extends Component {
       onToggleReport: () => {
         this.toggleReportDialog();
       },
+      onToggleSurrender: () => {
+        this.toggleSurrenderDialog();
+      },
       onSubmitReport: (reason) => {
         void this.submitPlayerReport(reason);
       },
       onCancelReport: () => {
         this.closeReportDialog();
+      },
+      onConfirmSurrender: () => {
+        void this.confirmSurrender();
+      },
+      onCancelSurrender: () => {
+        this.closeSurrenderDialog();
       },
       onLearnSkill: (skillId) => {
         void this.learnHeroSkill(skillId);
@@ -1157,6 +1171,13 @@ export class VeilRoot extends Component {
         status: this.reportStatusMessage,
         submitting: this.reportSubmitting
       },
+      surrendering: {
+        open: this.surrenderDialogOpen,
+        available: this.isSurrenderAvailable(),
+        targetLabel: this.resolveSurrenderTarget()?.name ?? null,
+        status: this.surrenderStatusMessage,
+        submitting: this.surrenderSubmitting
+      },
       presentation: this.buildHudPresentationState()
     });
     this.mapBoard?.render(this.lastUpdate);
@@ -1442,6 +1463,15 @@ export class VeilRoot extends Component {
     return target ? { playerId: target.playerId, name: `${target.name} · ${target.playerId}` } : null;
   }
 
+  private resolveSurrenderTarget(): { playerId: string; name: string } | null {
+    const target = this.lastUpdate?.world.visibleHeroes.find((hero) => hero.playerId !== this.playerId) ?? null;
+    return target ? { playerId: target.playerId, name: `${target.name} · ${target.playerId}` } : null;
+  }
+
+  private isSurrenderAvailable(): boolean {
+    return Boolean(this.activeHero() && this.resolveSurrenderTarget() && !this.lastUpdate?.battle);
+  }
+
   private toggleReportDialog(): void {
     if (this.reportSubmitting) {
       return;
@@ -1468,6 +1498,35 @@ export class VeilRoot extends Component {
 
     this.reportDialogOpen = false;
     this.reportStatusMessage = null;
+    this.renderView();
+  }
+
+  private toggleSurrenderDialog(): void {
+    if (this.surrenderSubmitting) {
+      return;
+    }
+
+    if (!this.isSurrenderAvailable()) {
+      this.surrenderDialogOpen = false;
+      this.surrenderStatusMessage = "当前不满足认输条件。";
+      this.predictionStatus = this.surrenderStatusMessage;
+      this.renderView();
+      return;
+    }
+
+    const target = this.resolveSurrenderTarget();
+    this.surrenderDialogOpen = !this.surrenderDialogOpen;
+    this.surrenderStatusMessage = this.surrenderDialogOpen ? `认输后将判负给 ${target?.name ?? "当前对手"}。` : null;
+    this.renderView();
+  }
+
+  private closeSurrenderDialog(): void {
+    if (this.surrenderSubmitting) {
+      return;
+    }
+
+    this.surrenderDialogOpen = false;
+    this.surrenderStatusMessage = null;
     this.renderView();
   }
 
@@ -1505,6 +1564,47 @@ export class VeilRoot extends Component {
       this.predictionStatus = this.reportStatusMessage;
     } finally {
       this.reportSubmitting = false;
+      this.renderView();
+    }
+  }
+
+  private async confirmSurrender(): Promise<void> {
+    if (!this.session) {
+      await this.connect();
+      return;
+    }
+
+    const hero = this.activeHero();
+    const target = this.resolveSurrenderTarget();
+    if (!hero || !target || this.lastUpdate?.battle) {
+      this.surrenderDialogOpen = false;
+      this.surrenderStatusMessage = "当前不满足认输条件。";
+      this.predictionStatus = this.surrenderStatusMessage;
+      this.renderView();
+      return;
+    }
+
+    this.surrenderSubmitting = true;
+    this.surrenderStatusMessage = `正在向 ${target.name} 提交认输...`;
+    this.renderView();
+
+    try {
+      const update = await this.session.surrender(hero.id);
+      await this.applySessionUpdate(update);
+      if (update.reason && isSessionSettlementReason(update.reason)) {
+        const message = formatSessionSettlementReason(update.reason, false);
+        this.predictionStatus = message;
+        this.pushLog(message);
+      }
+      this.surrenderDialogOpen = false;
+      this.surrenderStatusMessage = "认输已提交。";
+    } catch (error) {
+      const failureMessage = this.describeSessionError(error, "认输失败。");
+      this.surrenderStatusMessage = failureMessage;
+      this.predictionStatus = failureMessage;
+      this.pushLog(failureMessage);
+    } finally {
+      this.surrenderSubmitting = false;
       this.renderView();
     }
   }
@@ -1711,11 +1811,20 @@ export class VeilRoot extends Component {
         onToggleReport: () => {
           this.toggleReportDialog();
         },
+        onToggleSurrender: () => {
+          this.toggleSurrenderDialog();
+        },
         onSubmitReport: (reason) => {
           void this.submitPlayerReport(reason);
         },
         onCancelReport: () => {
           this.closeReportDialog();
+        },
+        onConfirmSurrender: () => {
+          void this.confirmSurrender();
+        },
+        onCancelSurrender: () => {
+          this.closeSurrenderDialog();
         },
         onLearnSkill: (skillId) => {
           void this.learnHeroSkill(skillId);
@@ -3593,6 +3702,8 @@ export class VeilRoot extends Component {
 
     this.pendingPrediction = null;
     this.predictionStatus = "";
+    this.surrenderDialogOpen = false;
+    this.surrenderStatusMessage = null;
     this.diagnosticsConnectionStatus = "connected";
     this.lastRoomUpdateSource = "session";
     this.lastRoomUpdateReason = update.reason ?? "snapshot";
@@ -3616,6 +3727,10 @@ export class VeilRoot extends Component {
       this.audioRuntime.playCue(presentation.cue);
     }
     this.mapBoard?.playHeroAnimation(presentation.animation);
+
+    if (update.reason && isSessionSettlementReason(update.reason)) {
+      this.predictionStatus = formatSessionSettlementReason(update.reason, !this.surrenderSubmitting);
+    }
 
     if (presentation.transition?.kind === "enter") {
       await this.battleTransition?.playEnter(presentation.transition.copy);

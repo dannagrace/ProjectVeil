@@ -8,10 +8,12 @@ import {
   listReachableTiles,
   normalizeEloRating,
   planHeroMovement,
+  validateWorldAction,
   type PlayerWorldView,
   type PlayerBattleReplaySummary,
   type ClientMessage,
   type MovementPlan,
+  type SessionStateReason,
   type ServerMessage,
   type SessionStatePayload,
   type WorldEvent
@@ -396,6 +398,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       }
 
       recordWorldActionMessage();
+      if (message.action.type === "world.surrender") {
+        const resolved = await this.handleSurrenderAction(client, playerId, message);
+        if (!resolved) {
+          sendMessage(client, "error", { requestId: message.requestId, reason: "surrender_failed" });
+        }
+        return;
+      }
+
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
       const result = this.worldRoom.dispatch(playerId, message.action);
       try {
@@ -808,6 +818,136 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     playerId: string
   ): PlayerBattleReplaySummary[] {
     return buildPlayerBattleReplaySummariesForPlayer(replay, playerId);
+  }
+
+  private async handleSurrenderAction(
+    sourceClient: ColyseusClient,
+    playerId: string,
+    message: Extract<ClientMessage, { type: "world.action" }>
+  ): Promise<boolean> {
+    const action = message.action;
+    if (action.type !== "world.surrender") {
+      return false;
+    }
+
+    const internalState = this.worldRoom.getInternalState();
+    if (this.worldRoom.getBattleForPlayer(playerId)) {
+      sendMessage(sourceClient, "error", { requestId: message.requestId, reason: "hero_in_battle" });
+      return true;
+    }
+
+    const validation = validateWorldAction(internalState, action, playerId);
+    if (!validation.valid) {
+      sendMessage(sourceClient, "error", {
+        requestId: message.requestId,
+        reason: validation.reason ?? "surrender_failed"
+      });
+      return true;
+    }
+
+    const surrenderingHero = internalState.heroes.find((hero) => hero.id === action.heroId);
+    if (!surrenderingHero || surrenderingHero.playerId !== playerId) {
+      sendMessage(sourceClient, "error", { requestId: message.requestId, reason: "hero_not_owned_by_player" });
+      return true;
+    }
+
+    const opponentPlayerIds = Array.from(
+      new Set(internalState.heroes.map((hero) => hero.playerId).filter((candidatePlayerId) => candidatePlayerId !== playerId))
+    );
+    if (opponentPlayerIds.length !== 1) {
+      sendMessage(sourceClient, "error", { requestId: message.requestId, reason: "surrender_opponent_not_found" });
+      return true;
+    }
+
+    const winnerPlayerId = opponentPlayerIds[0]!;
+    if (!(await this.applySurrenderEloResult(winnerPlayerId, playerId))) {
+      return false;
+    }
+
+    await this.broadcastSettlementAndCloseRoom(sourceClient, "surrender", message.requestId);
+    return true;
+  }
+
+  private async applySurrenderEloResult(winnerPlayerId: string, loserPlayerId: string): Promise<boolean> {
+    const store = configuredRoomSnapshotStore;
+    if (!store) {
+      return true;
+    }
+
+    try {
+      const accounts = await store.loadPlayerAccounts([winnerPlayerId, loserPlayerId]);
+      const winnerAccount = accounts.find((account) => account.playerId === winnerPlayerId);
+      const loserAccount = accounts.find((account) => account.playerId === loserPlayerId);
+      const { winnerRating, loserRating } = applyEloMatchResult(
+        normalizeEloRating(winnerAccount?.eloRating),
+        normalizeEloRating(loserAccount?.eloRating)
+      );
+
+      await Promise.all([
+        store.savePlayerAccountProgress(winnerPlayerId, {
+          eloRating: winnerRating,
+          lastRoomId: this.metadata.logicalRoomId
+        }),
+        store.savePlayerAccountProgress(loserPlayerId, {
+          eloRating: loserRating,
+          lastRoomId: this.metadata.logicalRoomId
+        })
+      ]);
+      return true;
+    } catch (error) {
+      console.error("[VeilRoom] Failed to persist surrender ELO result", {
+        roomId: this.metadata.logicalRoomId,
+        winnerPlayerId,
+        loserPlayerId,
+        error
+      });
+      return false;
+    }
+  }
+
+  private async broadcastSettlementAndCloseRoom(
+    sourceClient: ColyseusClient,
+    reason: SessionStateReason,
+    requestId: string
+  ): Promise<void> {
+    for (const client of [...this.clients]) {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        continue;
+      }
+
+      sendMessage(client, "session.state", {
+        requestId: client === sourceClient ? requestId : "push",
+        delivery: client === sourceClient ? "reply" : "push",
+        payload: this.buildStatePayload(playerId, {
+          movementPlan: null,
+          reason
+        })
+      });
+    }
+
+    if (configuredRoomSnapshotStore) {
+      try {
+        await configuredRoomSnapshotStore.delete(this.metadata.logicalRoomId);
+      } catch (error) {
+        console.error("[VeilRoom] Failed to delete surrendered room snapshot", {
+          roomId: this.metadata.logicalRoomId,
+          error
+        });
+      }
+    }
+
+    for (const client of [...this.clients]) {
+      this.playerIdBySessionId.delete(client.sessionId);
+      try {
+        void client.leave();
+      } catch {
+        // Ignore disconnect errors while retiring the room after settlement.
+      }
+    }
+    this.clients.splice(0, this.clients.length);
+    lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
+    activeRoomInstances.delete(this.metadata.logicalRoomId);
   }
 
   private resolveReportTargetPlayerId(playerId: string, requestedTargetPlayerId: string): string | null {
