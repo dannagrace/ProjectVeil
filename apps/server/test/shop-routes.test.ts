@@ -8,6 +8,7 @@ import { registerShopRoutes, type ShopProduct } from "../src/shop";
 import {
   createDefaultHeroLoadout,
   createDefaultHeroProgression,
+  resolveWeeklyShopRotation,
   type PlayerAccountSnapshot
 } from "../../../packages/shared/src/index";
 
@@ -102,6 +103,16 @@ const TEST_PRODUCTS: Partial<ShopProduct>[] = [
     grant: {
       gems: 10
     }
+  },
+  {
+    productId: "border-shadowcourt-direct",
+    name: "Shadowcourt Border",
+    type: "cosmetic",
+    price: 12,
+    enabled: true,
+    grant: {
+      cosmeticIds: ["border-shadowcourt"]
+    }
   }
 ];
 
@@ -115,10 +126,29 @@ test("shop products route returns only enabled items", async (t) => {
   });
 
   const response = await fetch(`http://127.0.0.1:${port}/api/shop/products`);
-  const payload = (await response.json()) as { items: ShopProduct[] };
+  const payload = (await response.json()) as { items: ShopProduct[]; rotation: { seed: string } };
 
   assert.equal(response.status, 200);
-  assert.deepEqual(payload.items.map((item) => item.productId), ["starter-bundle", "sunforged-spear"]);
+  assert.deepEqual(payload.items.slice(0, 3).map((item) => item.productId), [
+    "starter-bundle",
+    "sunforged-spear",
+    "border-shadowcourt-direct"
+  ]);
+  assert.ok(payload.items.some((item) => item.productId.startsWith("cosmetic:")));
+  assert.match(payload.rotation.seed, /^\d{4}-W\d{2}$/);
+});
+
+test("weekly shop rotation is deterministic within an ISO week and advances on the next ISO week", () => {
+  const currentWeek = resolveWeeklyShopRotation(new Date("2026-01-06T12:00:00.000Z"));
+  const sameWeek = resolveWeeklyShopRotation(new Date("2026-01-08T12:00:00.000Z"));
+  const nextWeek = resolveWeeklyShopRotation(new Date("2026-01-13T12:00:00.000Z"));
+
+  assert.equal(currentWeek.seed, "2026-W02");
+  assert.equal(sameWeek.seed, currentWeek.seed);
+  assert.deepEqual(sameWeek.featuredSlots, currentWeek.featuredSlots);
+  assert.deepEqual(sameWeek.discountSlots, currentWeek.discountSlots);
+  assert.equal(nextWeek.seed, "2026-W03");
+  assert.notEqual(nextWeek.seed, currentWeek.seed);
 });
 
 test("shop purchase debits gems and grants resource bundles", async (t) => {
@@ -165,6 +195,73 @@ test("shop purchase debits gems and grants resource bundles", async (t) => {
   assert.deepEqual(payload.granted.resources, { gold: 240, wood: 20, ore: 10 });
   assert.deepEqual(account?.globalResources, { gold: 240, wood: 20, ore: 10 });
   assert.equal(account?.gems, 40);
+});
+
+test("shop purchase grants cosmetics and equip route applies an owned cosmetic", async (t) => {
+  const port = 42480 + Math.floor(Math.random() * 1000);
+  const store = new MemoryRoomSnapshotStore();
+  await store.save("shop-room", createShopWorldSnapshot());
+  const baselineSnapshot = await store.load("shop-room");
+  await store.creditGems("shop-player", 30, "purchase", "seed-gems");
+  const server = await startShopRouteServer(port, store, TEST_PRODUCTS);
+  const session = issueAccountAuthSession({
+    playerId: "shop-player",
+    displayName: "暮潮守望",
+    loginId: "shop-player"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const purchaseResponse = await fetch(`http://127.0.0.1:${port}/api/shop/purchase`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "border-shadowcourt-direct",
+      quantity: 1,
+      purchaseId: "purchase-cosmetic-1"
+    })
+  });
+  const purchasePayload = (await purchaseResponse.json()) as {
+    granted: {
+      cosmeticIds: string[];
+    };
+    gemsBalance: number;
+  };
+
+  const equipResponse = await fetch(`http://127.0.0.1:${port}/api/shop/equip`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      cosmeticId: "border-shadowcourt"
+    })
+  });
+  const equipPayload = (await equipResponse.json()) as {
+    equippedCosmetics: {
+      profileBorderId?: string;
+    };
+  };
+
+  const account = await store.loadPlayerAccount("shop-player");
+  const roomSnapshot = await store.load("shop-room");
+
+  assert.equal(purchaseResponse.status, 200);
+  assert.deepEqual(purchasePayload.granted.cosmeticIds, ["border-shadowcourt"]);
+  assert.equal(purchasePayload.gemsBalance, 18);
+  assert.deepEqual(account?.cosmeticInventory?.ownedIds, ["border-shadowcourt"]);
+
+  assert.equal(equipResponse.status, 200);
+  assert.equal(equipPayload.equippedCosmetics.profileBorderId, "border-shadowcourt");
+  assert.equal(account?.equippedCosmetics?.profileBorderId, "border-shadowcourt");
+  assert.deepEqual(roomSnapshot?.state.heroes[0]?.stats, baselineSnapshot?.state.heroes[0]?.stats);
+  assert.deepEqual(roomSnapshot?.state.heroes[0]?.loadout, baselineSnapshot?.state.heroes[0]?.loadout);
 });
 
 test("shop purchase grants equipment and replays the original result for the same purchaseId", async (t) => {

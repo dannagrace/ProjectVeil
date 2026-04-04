@@ -4,11 +4,14 @@ import {
   getEquipmentDefinition,
   getTierForDivision,
   normalizeGuildState,
+  normalizeCosmeticInventory,
   normalizeEloRating,
   normalizeEventLogEntries,
   normalizeEventLogQuery,
+  resolveCosmeticCatalog,
   tryAddEquipmentToInventory,
   type EventLogEntry,
+  type CosmeticId,
   type GuildState
 } from "../../../packages/shared/src/index";
 import {
@@ -566,6 +569,13 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         ore: Math.max(0, Math.floor(input.grant.resources?.ore ?? 0)) * quantity
       },
       seasonPassPremium: input.grant.seasonPassPremium === true,
+      cosmeticIds: Array.from({ length: quantity }, () => input.grant.cosmeticIds ?? []).flat().map((cosmeticId) => {
+        const normalizedCosmeticId = cosmeticId.trim();
+        if (!normalizedCosmeticId || !resolveCosmeticCatalog().some((entry) => entry.id === normalizedCosmeticId)) {
+          throw new Error(`unknown cosmetic grant: ${cosmeticId}`);
+        }
+        return normalizedCosmeticId;
+      }),
       equipmentIds: Array.from({ length: quantity }, () => input.grant.equipmentIds ?? []).flat().map((equipmentId) => {
         const normalizedEquipmentId = equipmentId.trim();
         if (!normalizedEquipmentId || !getEquipmentDefinition(normalizedEquipmentId)) {
@@ -616,6 +626,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...existingAccount,
       gems: (existingAccount.gems ?? 0) - totalPrice + normalizedGrant.gems,
       seasonPassPremium: existingAccount.seasonPassPremium === true || normalizedGrant.seasonPassPremium,
+      cosmeticInventory: normalizeCosmeticInventory({
+        ownedIds: [...(existingAccount.cosmeticInventory?.ownedIds ?? []), ...normalizedGrant.cosmeticIds]
+      }),
       globalResources: normalizeResourceLedger({
         gold: (existingAccount.globalResources.gold ?? 0) + normalizedGrant.resources.gold,
         wood: (existingAccount.globalResources.wood ?? 0) + normalizedGrant.resources.wood,
@@ -646,10 +659,11 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       quantity,
       unitPrice,
       totalPrice,
-      granted: {
+        granted: {
           gems: normalizedGrant.gems,
           resources: normalizedGrant.resources,
           equipmentIds: normalizedGrant.equipmentIds,
+          cosmeticIds: normalizedGrant.cosmeticIds,
           ...(heroId ? { heroId } : {}),
           ...(normalizedGrant.seasonPassPremium ? { seasonPassPremium: true } : {})
         },
@@ -1091,6 +1105,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         : existing.seasonPassPremium
           ? { seasonPassPremium: true }
           : {}),
+      cosmeticInventory: structuredClone((patch.cosmeticInventory as PlayerAccountSnapshot["cosmeticInventory"]) ?? existing.cosmeticInventory ?? { ownedIds: [] }),
+      equippedCosmetics: structuredClone((patch.equippedCosmetics as PlayerAccountSnapshot["equippedCosmetics"]) ?? existing.equippedCosmetics ?? {}),
       seasonPassClaimedTiers: structuredClone(
         (patch.seasonPassClaimedTiers as number[] | undefined) ?? existing.seasonPassClaimedTiers ?? []
       ),

@@ -1459,6 +1459,63 @@ test("room report player flow persists one report per room target pair and rejec
   assert.equal((await store.listPlayerReports({ status: "pending" })).length, 1);
 });
 
+test("room battle emotes reply to the sender and broadcast to other participants", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-emote-${Date.now()}`);
+  const emoteClient = createFakeClient("session-emote-owner");
+  const watcherClient = createFakeClient("session-emote-watcher");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, emoteClient, "player-1", "connect-emote-owner");
+  await connectPlayer(room, watcherClient, "player-2", "connect-emote-watcher");
+  await store.savePlayerAccountProgress("player-1", {
+    cosmeticInventory: {
+      ownedIds: ["emote-cheer-spark"]
+    },
+    equippedCosmetics: {
+      battleEmoteId: "emote-cheer-spark"
+    }
+  });
+
+  await emitRoomMessage(room, "USE_EMOTE", emoteClient, {
+    type: "USE_EMOTE",
+    requestId: "use-emote-1",
+    emoteId: "emote-cheer-spark"
+  });
+
+  assert.equal(
+    emoteClient.sent.some(
+      (message) =>
+        message.type === "COSMETIC_APPLIED" &&
+        message.requestId === "use-emote-1" &&
+        message.delivery === "reply" &&
+        message.playerId === "player-1" &&
+        message.cosmeticId === "emote-cheer-spark" &&
+        message.action === "emote"
+    ),
+    true
+  );
+  assert.equal(
+    watcherClient.sent.some(
+      (message) =>
+        message.type === "COSMETIC_APPLIED" &&
+        message.requestId === "push" &&
+        message.delivery === "push" &&
+        message.playerId === "player-1" &&
+        message.cosmeticId === "emote-cheer-spark" &&
+        message.action === "emote"
+    ),
+    true
+  );
+});
+
 test("room at maxClients capacity rejects a new join reservation", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);

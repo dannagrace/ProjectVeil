@@ -30,9 +30,10 @@ export interface ShopProductGrant {
   gems?: number;
   resources?: Partial<ResourceLedger>;
   equipmentIds?: string[];
+  cosmeticIds?: string[];
 }
 
-export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle";
+export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle" | "cosmetic";
 
 export interface ShopProduct {
   productId: string;
@@ -54,6 +55,7 @@ export interface ShopPurchaseResult {
     gems: number;
     resources: ResourceLedger;
     equipmentIds: string[];
+    cosmeticIds: string[];
     heroId?: string;
   };
   gemsBalance: number;
@@ -541,6 +543,7 @@ export interface VeilCocosSessionOptions {
   remoteUrl?: string;
   onPushUpdate?: (update: SessionUpdate) => void;
   onConnectionEvent?: (event: ConnectionEvent) => void;
+  onServerMessage?: (message: ServerMessage) => void;
   getDisplayName?: () => string | null;
   getAuthToken?: () => string | null;
 }
@@ -704,6 +707,11 @@ type ClientMessage =
       targetPlayerId: string;
       reason: PlayerReportReason;
       description?: string;
+    }
+  | {
+      type: "USE_EMOTE";
+      requestId: string;
+      emoteId: string;
     };
 
 interface SessionStatePayload {
@@ -748,6 +756,20 @@ type ServerMessage =
       reason: PlayerReportReason;
       status: PlayerReportStatus;
       createdAt: string;
+    }
+  | {
+      type: "COSMETIC_APPLIED";
+      requestId: string;
+      delivery?: "reply" | "push";
+      playerId: string;
+      cosmeticId: string;
+      action: "purchased" | "equipped" | "emote";
+      equippedCosmetics?: {
+        heroSkinId?: string;
+        unitRecolorId?: string;
+        profileBorderId?: string;
+        battleEmoteId?: string;
+      };
     };
 
 const RECONNECTION_TOKEN_PREFIX = "project-veil:cocos:reconnection";
@@ -1022,6 +1044,9 @@ function normalizeShopProductGrant(value: unknown): ShopProductGrant {
   const equipmentIds = Array.isArray(raw.equipmentIds)
     ? raw.equipmentIds.map((entry) => String(entry).trim()).filter(Boolean)
     : [];
+  const cosmeticIds = Array.isArray(raw.cosmeticIds)
+    ? raw.cosmeticIds.map((entry) => String(entry).trim()).filter(Boolean)
+    : [];
 
   return {
     ...(typeof raw.gems === "number" && Number.isFinite(raw.gems) ? { gems: Math.max(0, Math.floor(raw.gems)) } : {}),
@@ -1034,7 +1059,8 @@ function normalizeShopProductGrant(value: unknown): ShopProductGrant {
           }
         }
       : {}),
-    ...(equipmentIds.length > 0 ? { equipmentIds } : {})
+    ...(equipmentIds.length > 0 ? { equipmentIds } : {}),
+    ...(cosmeticIds.length > 0 ? { cosmeticIds } : {})
   };
 }
 
@@ -1043,7 +1069,10 @@ function normalizeShopProduct(raw: unknown, index: number): ShopProduct {
   return {
     productId: typeof value.productId === "string" && value.productId.trim() ? value.productId.trim() : `shop-product-${index + 1}`,
     name: typeof value.name === "string" && value.name.trim() ? value.name.trim() : `Shop Product ${index + 1}`,
-    type: value.type === "equipment" || value.type === "resource_bundle" ? value.type : "gem_pack",
+    type:
+      value.type === "equipment" || value.type === "resource_bundle" || value.type === "cosmetic"
+        ? value.type
+        : "gem_pack",
     price: typeof value.price === "number" && Number.isFinite(value.price) ? Math.max(0, Math.floor(value.price)) : 0,
     ...(typeof value.wechatPriceFen === "number" && Number.isFinite(value.wechatPriceFen)
       ? { wechatPriceFen: Math.max(0, Math.floor(value.wechatPriceFen)) }
@@ -1079,6 +1108,24 @@ async function purchaseShopProduct(
       purchaseId
     })
   })) as ShopPurchaseResult;
+}
+
+async function equipShopCosmetic(
+  remoteUrl: string | undefined,
+  cosmeticId: string,
+  getAuthToken?: (() => string | null) | undefined
+): Promise<{ cosmeticId: string; equippedCosmetics: Record<string, string> }> {
+  const token = getAuthToken?.()?.trim() ?? "";
+  return (await fetchApiJson(`${resolveCocosApiBaseUrl(remoteUrl ?? "")}/api/shop/equip`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildCocosAuthHeaders(token)
+    },
+    body: JSON.stringify({
+      cosmeticId
+    })
+  })) as { cosmeticId: string; equippedCosmetics: Record<string, string> };
 }
 
 function wait(ms: number): Promise<void> {
@@ -1259,6 +1306,7 @@ class RemoteGameSession {
 
       const pending = "requestId" in message ? this.pendingRequests.get(message.requestId) : undefined;
       if (!pending) {
+        this.options?.onServerMessage?.(message);
         return;
       }
 
@@ -1595,6 +1643,17 @@ class RemoteGameSession {
     return update;
   }
 
+  async useEmote(emoteId: string): Promise<Extract<ServerMessage, { type: "COSMETIC_APPLIED" }>> {
+    return this.send<Extract<ServerMessage, { type: "COSMETIC_APPLIED" }>>(
+      {
+        type: "USE_EMOTE",
+        requestId: this.nextRequestId(),
+        emoteId
+      },
+      "COSMETIC_APPLIED"
+    );
+  }
+
   private persistReconnectionToken(): void {
     if (this.room.reconnectionToken) {
       writeReconnectionToken(this.roomId, this.playerId, this.room.reconnectionToken);
@@ -1775,6 +1834,10 @@ class RecoverableRemoteGameSession {
     return this.runWithSession((session) => session.actInBattle(action));
   }
 
+  async useEmote(emoteId: string): Promise<Extract<ServerMessage, { type: "COSMETIC_APPLIED" }>> {
+    return this.runWithSession((session) => session.useEmote(emoteId));
+  }
+
   async listReachable(heroId: string): Promise<Vec2[]> {
     return this.runWithSession((session) => session.listReachable(heroId));
   }
@@ -1785,6 +1848,7 @@ class RecoverableRemoteGameSession {
     const nestedOptions: VeilCocosSessionOptions = {
       ...(this.options?.remoteUrl ? { remoteUrl: this.options.remoteUrl } : {}),
       ...(this.options?.onPushUpdate ? { onPushUpdate: this.options.onPushUpdate } : {}),
+      ...(this.options?.onServerMessage ? { onServerMessage: this.options.onServerMessage } : {}),
       ...(this.options?.getDisplayName ? { getDisplayName: this.options.getDisplayName } : {}),
       ...(this.options?.getAuthToken ? { getAuthToken: this.options.getAuthToken } : {}),
       onConnectionEvent: (event) => this.handleConnectionEvent(event)
@@ -1895,6 +1959,16 @@ export class VeilCocosSession {
     }
   ): Promise<ShopPurchaseResult> {
     return purchaseShopProduct(remoteUrl, productId, options?.getAuthToken);
+  }
+
+  static async equipShopCosmetic(
+    remoteUrl: string,
+    cosmeticId: string,
+    options?: {
+      getAuthToken?: (() => string | null) | undefined;
+    }
+  ): Promise<{ cosmeticId: string; equippedCosmetics: Record<string, string> }> {
+    return equipShopCosmetic(remoteUrl, cosmeticId, options?.getAuthToken);
   }
 
   static async enqueueForMatchmaking(
@@ -2010,6 +2084,10 @@ export class VeilCocosSession {
     return this.remoteSession.surrender(heroId);
   }
 
+  async useEmote(emoteId: string): Promise<Extract<ServerMessage, { type: "COSMETIC_APPLIED" }>> {
+    return this.remoteSession.useEmote(emoteId);
+  }
+
   async actInBattle(action: BattleAction): Promise<SessionUpdate> {
     return this.remoteSession.actInBattle(action);
   }
@@ -2028,6 +2106,10 @@ export class VeilCocosSession {
 
   async purchaseShopProduct(productId: string): Promise<ShopPurchaseResult> {
     return purchaseShopProduct(this.remoteUrl, productId, this.getAuthToken);
+  }
+
+  async equipShopCosmetic(cosmeticId: string): Promise<{ cosmeticId: string; equippedCosmetics: Record<string, string> }> {
+    return equipShopCosmetic(this.remoteUrl, cosmeticId, this.getAuthToken);
   }
 
   async enqueueForMatchmaking(rating: number): Promise<MatchmakingStatusResponse> {

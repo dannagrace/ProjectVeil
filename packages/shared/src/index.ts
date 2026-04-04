@@ -9,6 +9,7 @@ export * from "./campaign.ts";
 export * from "./competitive-season.ts";
 export * from "./analytics-events.ts";
 export * from "./content-pack-validation.ts";
+export * from "./cosmetics.ts";
 export * from "./daily-quests.ts";
 export * from "./daily-quest-rotation.ts";
 export * from "./deterministic-rng.ts";

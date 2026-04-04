@@ -10,7 +10,8 @@ import {
 } from "./event-log.ts";
 import { normalizeDailyQuestBoard, type DailyQuestBoard } from "./daily-quests.ts";
 import { normalizePlayerBattleReplaySummaries, type PlayerBattleReplaySummary } from "./battle-replay.ts";
-import type { ResourceLedger } from "./models.ts";
+import type { CosmeticInventory, EquippedCosmetics, ResourceLedger, ShopRotation } from "./models.ts";
+import { normalizeCosmeticInventory, normalizeEquippedCosmetics } from "./cosmetics.ts";
 import { normalizeTutorialStep } from "./tutorial.ts";
 
 const DEFAULT_ELO_RATING = 1000;
@@ -26,6 +27,9 @@ export interface PlayerAccountReadModel {
   eloRating?: number;
   gems?: number;
   loginStreak?: number;
+  cosmeticInventory?: CosmeticInventory;
+  equippedCosmetics?: EquippedCosmetics;
+  currentShopRotation?: ShopRotation;
   globalResources: ResourceLedger;
   achievements: PlayerAchievementProgress[];
   recentEventLog: EventLogEntry[];
@@ -47,6 +51,9 @@ export interface PlayerAccountReadModelInput {
   eloRating?: number | undefined;
   gems?: number | undefined;
   loginStreak?: number | undefined;
+  cosmeticInventory?: Partial<CosmeticInventory> | null | undefined;
+  equippedCosmetics?: Partial<EquippedCosmetics> | null | undefined;
+  currentShopRotation?: ShopRotation | null | undefined;
   globalResources?: Partial<ResourceLedger> | null | undefined;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -71,6 +78,8 @@ export function normalizePlayerAccountReadModel(
   const credentialBoundAt = account?.credentialBoundAt?.trim();
   const privacyConsentAt = account?.privacyConsentAt?.trim();
   const loginStreak = Math.max(0, Math.floor(account?.loginStreak ?? 0));
+  const cosmeticInventory = normalizeCosmeticInventory(account?.cosmeticInventory);
+  const equippedCosmetics = normalizeEquippedCosmetics(account?.equippedCosmetics);
   const lastRoomId = account?.lastRoomId?.trim();
   const lastSeenAt = account?.lastSeenAt?.trim();
   const recentEventLog = normalizeEventLogEntries(account?.recentEventLog);
@@ -85,6 +94,9 @@ export function normalizePlayerAccountReadModel(
     eloRating: normalizeEloRating(account?.eloRating),
     gems: Math.max(0, Math.floor(account?.gems ?? 0)),
     ...(loginStreak > 0 ? { loginStreak } : {}),
+    ...(cosmeticInventory.ownedIds.length > 0 ? { cosmeticInventory } : {}),
+    ...(Object.keys(equippedCosmetics).length > 0 ? { equippedCosmetics } : {}),
+    ...(account?.currentShopRotation ? { currentShopRotation: account.currentShopRotation } : {}),
     globalResources: {
       gold: Math.max(0, Math.floor(account?.globalResources?.gold ?? 0)),
       wood: Math.max(0, Math.floor(account?.globalResources?.wood ?? 0)),

@@ -23,12 +23,16 @@ import {
 } from "./matchmaking.ts";
 import type {
   CampaignProgressState,
+  CosmeticInventory,
   DailyDungeonState,
+  EquippedCosmetics,
   SeasonalEventState,
   RankedWeeklyProgress,
   ResourceLedger,
-  SeasonArchiveEntry
+  SeasonArchiveEntry,
+  ShopRotation
 } from "./models.ts";
+import { normalizeCosmeticInventory, normalizeEquippedCosmetics } from "./cosmetics.ts";
 import { normalizeTutorialStep } from "./tutorial.ts";
 
 export type PlayerBanStatus = "none" | "temporary" | "permanent";
@@ -49,6 +53,9 @@ export interface PlayerAccountReadModel {
   seasonXp?: number;
   seasonPassTier?: number;
   seasonPassPremium?: boolean;
+  cosmeticInventory?: CosmeticInventory;
+  equippedCosmetics?: EquippedCosmetics;
+  currentShopRotation?: ShopRotation;
   seasonPassClaimedTiers?: number[];
   seasonBadges?: string[];
   globalResources: ResourceLedger;
@@ -93,6 +100,9 @@ export interface PlayerAccountReadModelInput {
   seasonXp?: number | undefined;
   seasonPassTier?: number | undefined;
   seasonPassPremium?: boolean | undefined;
+  cosmeticInventory?: Partial<CosmeticInventory> | null | undefined;
+  equippedCosmetics?: Partial<EquippedCosmetics> | null | undefined;
+  currentShopRotation?: ShopRotation | null | undefined;
   seasonPassClaimedTiers?: number[] | null | undefined;
   seasonBadges?: string[] | null | undefined;
   globalResources?: Partial<ResourceLedger> | null | undefined;
@@ -139,6 +149,8 @@ export function normalizePlayerAccountReadModel(
   const seasonXp = Math.max(0, Math.floor(account?.seasonXp ?? 0));
   const seasonPassTier = Math.max(1, Math.floor(account?.seasonPassTier ?? 1));
   const seasonPassPremium = account?.seasonPassPremium === true;
+  const cosmeticInventory = normalizeCosmeticInventory(account?.cosmeticInventory);
+  const equippedCosmetics = normalizeEquippedCosmetics(account?.equippedCosmetics);
   const seasonPassClaimedTiers = Array.from(
     new Set(
       (account?.seasonPassClaimedTiers ?? [])
@@ -233,6 +245,9 @@ export function normalizePlayerAccountReadModel(
     ...(seasonXp > 0 ? { seasonXp } : {}),
     ...(seasonPassTier > 1 ? { seasonPassTier } : {}),
     ...(seasonPassPremium ? { seasonPassPremium } : {}),
+    ...(cosmeticInventory.ownedIds.length > 0 ? { cosmeticInventory } : {}),
+    ...(Object.keys(equippedCosmetics).length > 0 ? { equippedCosmetics } : {}),
+    ...(account?.currentShopRotation ? { currentShopRotation: account.currentShopRotation } : {}),
     ...(seasonPassClaimedTiers.length > 0 ? { seasonPassClaimedTiers } : {}),
     ...(seasonBadges.length > 0 ? { seasonBadges } : {}),
     globalResources: {
