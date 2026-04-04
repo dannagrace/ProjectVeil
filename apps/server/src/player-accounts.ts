@@ -47,7 +47,7 @@ import {
   getActiveSeasonalEvents,
   resolveSeasonalEvents
 } from "./event-engine";
-import { resolveFeatureFlagsForPlayer } from "./feature-flags";
+import { resolveFeatureEntitlementsForPlayer, resolveFeatureFlagsForPlayer } from "./feature-flags";
 import {
   buildCampaignMissionStates,
   buildDailyDungeonSummary,
@@ -109,6 +109,39 @@ function sendWechatValidationForbidden(response: ServerResponse, message = "WeCh
       message
     }
   });
+}
+
+function emitExperimentExposureForSurface(
+  playerId: string,
+  roomId: string,
+  surface: string,
+  experiments: Array<{
+    experimentKey: string;
+    experimentName: string;
+    variant: string;
+    bucket: number;
+    owner: string;
+    assigned: boolean;
+  }>
+): void {
+  for (const experiment of experiments) {
+    if (!experiment.assigned) {
+      continue;
+    }
+
+    emitAnalyticsEvent("experiment_exposure", {
+      playerId,
+      roomId,
+      payload: {
+        experimentKey: experiment.experimentKey,
+        experimentName: experiment.experimentName,
+        variant: experiment.variant,
+        bucket: experiment.bucket,
+        surface,
+        owner: experiment.owner
+      }
+    });
+  }
 }
 
 function validateWechatSignatureEnvelope(
@@ -777,28 +810,43 @@ export function registerPlayerAccountRoutes(
     }
 
     if (!store) {
+      const entitlements = resolveFeatureEntitlementsForPlayer(authSession.playerId);
       const account = createLocalModeAccount({
         playerId: authSession.playerId,
         displayName: authSession.displayName,
         ...(authSession.loginId ? { loginId: authSession.loginId } : {})
       });
+      emitExperimentExposureForSurface(account.playerId, account.lastRoomId ?? "account-profile", "player_account_profile", entitlements.experiments);
       sendJson(response, 200, {
-        account: withBattleReportCenter(account),
+        account: {
+          ...withBattleReportCenter(account),
+          experiments: entitlements.experiments
+        },
         session: issueNextAuthSession(account, authSession)
       });
       return;
     }
 
     try {
-      const featureFlags = resolveFeatureFlagsForPlayer(authSession.playerId);
+      const entitlements = resolveFeatureEntitlementsForPlayer(authSession.playerId);
+      const featureFlags = entitlements.featureFlags;
       const account =
         (await store.loadPlayerAccount(authSession.playerId)) ??
         (await store.ensurePlayerAccount({
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
+      emitExperimentExposureForSurface(
+        account.playerId,
+        account.lastRoomId ?? "account-profile",
+        "player_account_profile",
+        entitlements.experiments
+      );
       sendJson(response, 200, {
-        account: await withDailyQuestBoard(withBattleReportCenter(account), store, featureFlags.quest_system_enabled),
+        account: {
+          ...(await withDailyQuestBoard(withBattleReportCenter(account), store, featureFlags.quest_system_enabled)),
+          experiments: entitlements.experiments
+        },
         session: issueNextAuthSession(account, authSession)
       });
     } catch (error) {

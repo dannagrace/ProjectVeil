@@ -8,6 +8,11 @@ import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
 import { resetAccountTokenDeliveryState } from "../src/account-token-delivery";
 import {
+  configureAnalyticsRuntimeDependencies,
+  flushAnalyticsEventsForTest,
+  resetAnalyticsRuntimeDependencies
+} from "../src/analytics";
+import {
   hashAccountPassword,
   issueAccountAuthSession,
   registerAuthRoutes,
@@ -1012,6 +1017,76 @@ test("account bind upgrades a guest session into password login and account-logi
   assert.equal(sessionPayload.session.authMode, "account");
   assert.equal(sessionPayload.session.provider, "account-password");
   assert.equal(sessionPayload.session.loginId, "veil-ranger");
+});
+
+test("account bind emits experiment conversion analytics for the assigned variant", async (t) => {
+  const port = 44510 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const analyticsLogs: string[] = [];
+  process.env.VEIL_FEATURE_FLAGS_JSON = JSON.stringify({
+    schemaVersion: 1,
+    flags: {},
+    experiments: {
+      account_portal_copy: {
+        name: "Account Portal Upgrade Copy",
+        owner: "growth",
+        enabled: true,
+        fallbackVariant: "control",
+        whitelist: {
+          "account-exp-player": "upgrade"
+        },
+        variants: [{ key: "control", allocation: 100 }]
+      }
+    }
+  });
+  configureAnalyticsRuntimeDependencies({
+    log: (message) => {
+      analyticsLogs.push(message);
+    }
+  });
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    delete process.env.VEIL_FEATURE_FLAGS_JSON;
+    resetAnalyticsRuntimeDependencies();
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const guestLoginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "account-exp-player",
+      displayName: "实验绑定玩家",
+      privacyConsentAccepted: true
+    })
+  });
+  const guestLoginPayload = (await guestLoginResponse.json()) as { session: GuestAuthSession };
+
+  const bindResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-bind`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${guestLoginPayload.session.token}`
+    },
+    body: JSON.stringify({
+      loginId: "veil-experiment",
+      password: "hunter2",
+      privacyConsentAccepted: true
+    })
+  });
+
+  assert.equal(bindResponse.status, 200);
+  await flushAnalyticsEventsForTest();
+
+  const conversionLog = analyticsLogs.find((entry) => entry.includes("\"name\":\"experiment_conversion\""));
+  assert.ok(conversionLog);
+  assert.match(conversionLog ?? "", /"experimentKey":"account_portal_copy"/);
+  assert.match(conversionLog ?? "", /"variant":"upgrade"/);
+  assert.match(conversionLog ?? "", /"conversion":"account_bound"/);
 });
 
 test("account access tokens expire with token_expired and can be rotated through refresh", async (t) => {

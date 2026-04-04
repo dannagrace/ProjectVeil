@@ -884,6 +884,29 @@ function formatGlobalVault(account: ClientPlayerAccountProfile): string {
   return `全局仓库 金币 ${account.globalResources.gold} / 木材 ${account.globalResources.wood} / 矿石 ${account.globalResources.ore}`;
 }
 
+function resolveExperimentVariant(account: ClientPlayerAccountProfile, experimentKey: string): string | null {
+  return account.experiments?.find((experiment) => experiment.experimentKey === experimentKey)?.variant ?? null;
+}
+
+function formatExperimentAuditLabel(account: ClientPlayerAccountProfile): string | null {
+  const experiment = account.experiments?.find((entry) => entry.experimentKey === "account_portal_copy");
+  if (!experiment) {
+    return null;
+  }
+
+  return `${experiment.experimentName} · ${experiment.variant} · bucket ${experiment.bucket} · owner ${experiment.owner}`;
+}
+
+function formatAccountBindingCta(account: ClientPlayerAccountProfile): string {
+  if (account.loginId) {
+    return "当前档案已可用登录 ID 直接进入";
+  }
+
+  return resolveExperimentVariant(account, "account_portal_copy") === "upgrade"
+    ? "绑定口令账号，保留当前游客档进度、成就和战报，并支持后续多设备继续。"
+    : "把当前游客档升级成可长期登录的账号";
+}
+
 function formatRelativeSessionTimestamp(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
@@ -4905,6 +4928,9 @@ function render(): void {
           <p class="account-meta">${escapeHtml(formatCredentialBinding(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
+          ${formatExperimentAuditLabel(state.account)
+            ? `<p class="account-meta">${escapeHtml(formatExperimentAuditLabel(state.account) ?? "")}</p>`
+            : ""}
           ${state.featureFlags.quest_system_enabled
             ? renderDailyQuestBoard(state.account, {
                 claimingQuestId: state.dailyQuestClaimingId
@@ -4938,7 +4964,7 @@ function render(): void {
           <div class="account-binding-card">
             <div class="account-binding-head">
               <strong>${state.account.loginId ? "更新账号口令" : "绑定口令账号"}</strong>
-              <span>${state.account.loginId ? "当前档案已可用登录 ID 直接进入" : "把当前游客档升级成可长期登录的账号"}</span>
+              <span>${escapeHtml(formatAccountBindingCta(state.account))}</span>
             </div>
             <div class="account-binding-grid">
               <input

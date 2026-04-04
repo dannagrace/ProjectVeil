@@ -15,6 +15,7 @@ import {
   getRankDivisionForRating,
   getUtcWeekStart
 } from "./competitive-season.ts";
+import { normalizeExperimentAssignments, type ExperimentAssignment } from "./feature-flags.ts";
 import {
   normalizeEloRating,
   type DemotionShieldState,
@@ -82,6 +83,7 @@ export interface PlayerAccountReadModel {
   banReason?: string;
   lastRoomId?: string;
   lastSeenAt?: string;
+  experiments?: ExperimentAssignment[];
 }
 
 export interface PlayerAccountReadModelInput {
@@ -129,6 +131,7 @@ export interface PlayerAccountReadModelInput {
   banReason?: string | undefined;
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
+  experiments?: Partial<ExperimentAssignment>[] | null | undefined;
 }
 
 export function normalizePlayerAccountReadModel(
@@ -173,6 +176,7 @@ export function normalizePlayerAccountReadModel(
   const banReason = account?.banReason?.trim();
   const lastRoomId = account?.lastRoomId?.trim();
   const lastSeenAt = account?.lastSeenAt?.trim();
+  const experiments = normalizeExperimentAssignments(account?.experiments);
   const recentEventLog = normalizeEventLogEntries(account?.recentEventLog);
   const recentBattleReplays = normalizePlayerBattleReplaySummaries(account?.recentBattleReplays);
   const rankDivision = account?.rankDivision ?? getRankDivisionForRating(account?.eloRating);
@@ -280,7 +284,8 @@ export function normalizePlayerAccountReadModel(
     ...(banExpiry ? { banExpiry } : {}),
     ...(banReason ? { banReason } : {}),
     ...(lastRoomId ? { lastRoomId } : {}),
-    ...(lastSeenAt ? { lastSeenAt } : {})
+    ...(lastSeenAt ? { lastSeenAt } : {}),
+    ...(experiments.length > 0 ? { experiments } : {})
   };
 }
 

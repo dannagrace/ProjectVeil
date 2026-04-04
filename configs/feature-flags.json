@@ -29,5 +29,27 @@
       "enabled": true,
       "rollout": 1
     }
+  },
+  "experiments": {
+    "account_portal_copy": {
+      "name": "Account Portal Upgrade Copy",
+      "owner": "growth",
+      "enabled": true,
+      "startAt": "2026-04-05T00:00:00.000Z",
+      "fallbackVariant": "control",
+      "variants": [
+        {
+          "key": "control",
+          "allocation": 50
+        },
+        {
+          "key": "upgrade",
+          "allocation": 50
+        }
+      ],
+      "whitelist": {
+        "pm-demo-player": "upgrade"
+      }
+    }
   }
 }

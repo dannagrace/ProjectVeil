@@ -57,7 +57,28 @@ export const ANALYTICS_EVENT_CATALOG = {
   tutorial_step: defineAnalyticsEvent("tutorial_step", 1, "Tutorial milestone advanced by the player.", {
     stepId: "movement_intro",
     status: "completed"
-  })
+  }),
+  experiment_exposure: defineAnalyticsEvent("experiment_exposure", 1, "Experiment assignment was exposed to a player in a product surface.", {
+    experimentKey: "account_portal_copy",
+    experimentName: "Account Portal Upgrade Copy",
+    variant: "upgrade",
+    bucket: 42,
+    surface: "player_account_profile",
+    owner: "growth"
+  }),
+  experiment_conversion: defineAnalyticsEvent(
+    "experiment_conversion",
+    1,
+    "Player completed a conversion event tied to an experiment assignment.",
+    {
+      experimentKey: "account_portal_copy",
+      experimentName: "Account Portal Upgrade Copy",
+      variant: "upgrade",
+      bucket: 42,
+      conversion: "account_bound",
+      owner: "growth"
+    }
+  )
 } as const;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENT_CATALOG;
