@@ -118,6 +118,24 @@ class MemoryAuthStore implements RoomSnapshotStore {
     );
   }
 
+  async getCurrentSeason() {
+    return null;
+  }
+
+  async listSeasons() {
+    return [];
+  }
+
+  async createSeason(seasonId: string) {
+    return {
+      seasonId,
+      status: "active" as const,
+      startedAt: new Date().toISOString()
+    };
+  }
+
+  async closeSeason(): Promise<void> {}
+
   async touchPlayerAccountAuthSession(playerId: string, sessionId: string, lastUsedAt?: string): Promise<void> {
     const sessions = this.authSessionsByPlayerId.get(playerId.trim());
     const existing = sessions?.get(sessionId.trim());

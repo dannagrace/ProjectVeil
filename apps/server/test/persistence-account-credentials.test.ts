@@ -228,6 +228,72 @@ test("loadPlayerEventHistory returns paged rows and total count", async () => {
   assert.deepEqual(queries[1].params, ["player-1", "achievement", "hero-1", 1, 1]);
 });
 
+test("listSeasons reads closed seasons by default and caps the query limit at 100", async () => {
+  const store = createStoreHarness();
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+
+  store.pool = {
+    query: async (sql: string, params: unknown[]) => {
+      queries.push({ sql, params });
+      return [[
+        {
+          season_id: "season-2",
+          status: "closed",
+          started_at: "2026-03-01T00:00:00.000Z",
+          ended_at: "2026-03-15T00:00:00.000Z"
+        }
+      ]];
+    }
+  };
+
+  const seasons = await store.listSeasons({ limit: 999 });
+
+  assert.deepEqual(seasons, [
+    {
+      seasonId: "season-2",
+      status: "closed",
+      startedAt: "2026-03-01T00:00:00.000Z",
+      endedAt: "2026-03-15T00:00:00.000Z"
+    }
+  ]);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /FROM `veil_seasons`/);
+  assert.match(queries[0].sql, /WHERE status = \?/);
+  assert.deepEqual(queries[0].params, ["closed", 100]);
+});
+
+test("listSeasons supports status=all without a status filter", async () => {
+  const store = createStoreHarness();
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+
+  store.pool = {
+    query: async (sql: string, params: unknown[]) => {
+      queries.push({ sql, params });
+      return [[
+        {
+          season_id: "season-3",
+          status: "active",
+          started_at: "2026-04-01T00:00:00.000Z",
+          ended_at: null
+        }
+      ]];
+    }
+  };
+
+  const seasons = await store.listSeasons({ status: "all", limit: 5 });
+
+  assert.deepEqual(seasons, [
+    {
+      seasonId: "season-3",
+      status: "active",
+      startedAt: "2026-04-01T00:00:00.000Z"
+    }
+  ]);
+  assert.equal(queries.length, 1);
+  assert.doesNotMatch(queries[0].sql, /WHERE status = \?/);
+  assert.deepEqual(queries[0].params, [5]);
+});
+
 test("mysql player event history query applies inclusive timestamp filters", async () => {
   const queries: Array<{ sql: string; params: unknown[] | undefined }> = [];
   const store = new MySqlRoomSnapshotStore({

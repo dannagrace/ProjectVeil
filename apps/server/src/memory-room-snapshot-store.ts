@@ -40,6 +40,8 @@ import {
   type PlayerEventHistoryQuery,
   type PlayerEventHistorySnapshot
   ,
+  type SeasonListOptions,
+  type SeasonSnapshot,
   type ShopPurchaseMutationInput,
   type ShopPurchaseResult
 } from "./persistence";
@@ -109,6 +111,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly heroArchives = new Map<string, PlayerHeroArchiveSnapshot>();
   private readonly shopPurchases = new Map<string, ShopPurchaseResult>();
   private readonly reports = new Map<string, PlayerReportRecord>();
+  private readonly seasons = new Map<string, SeasonSnapshot>();
   private nextReportId = 1;
 
   async load(roomId: string): Promise<RoomPersistenceSnapshot | null> {
@@ -1060,18 +1063,36 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   }
 
   async getCurrentSeason(): Promise<import("./persistence").SeasonSnapshot | null> {
-    return null;
+    return this.selectSeasons({ status: "active", limit: 1 })[0] ?? null;
+  }
+
+  async listSeasons(options: SeasonListOptions = {}): Promise<SeasonSnapshot[]> {
+    return this.selectSeasons(options);
   }
 
   async createSeason(seasonId: string): Promise<import("./persistence").SeasonSnapshot> {
-    return {
+    const season: SeasonSnapshot = {
       seasonId: seasonId.trim(),
       status: "active",
       startedAt: new Date().toISOString()
     };
+    this.seasons.set(season.seasonId, structuredClone(season));
+    return structuredClone(season);
   }
 
-  async closeSeason(_seasonId: string): Promise<void> {}
+  async closeSeason(seasonId: string): Promise<void> {
+    const normalizedSeasonId = seasonId.trim();
+    const existing = this.seasons.get(normalizedSeasonId);
+    if (!existing) {
+      return;
+    }
+
+    this.seasons.set(normalizedSeasonId, {
+      ...existing,
+      status: "closed",
+      endedAt: new Date().toISOString()
+    });
+  }
 
   async close(): Promise<void> {}
 
@@ -1084,6 +1105,19 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     this.playerIdByWechatOpenId.clear();
     this.heroArchives.clear();
     this.shopPurchases.clear();
+    this.seasons.clear();
+  }
+
+  private selectSeasons(options: SeasonListOptions): SeasonSnapshot[] {
+    const status = options.status ?? "closed";
+    const rawLimit = options.limit ?? 20;
+    const limit = Math.min(100, Math.max(1, Math.floor(rawLimit)));
+
+    return Array.from(this.seasons.values())
+      .filter((season) => status === "all" || season.status === status)
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt) || left.seasonId.localeCompare(right.seasonId))
+      .slice(0, limit)
+      .map((season) => structuredClone(season));
   }
 }
 

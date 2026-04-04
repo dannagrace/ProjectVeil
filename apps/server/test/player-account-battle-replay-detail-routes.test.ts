@@ -111,6 +111,24 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return [];
   }
 
+  async getCurrentSeason() {
+    return null;
+  }
+
+  async listSeasons() {
+    return [];
+  }
+
+  async createSeason(seasonId: string) {
+    return {
+      seasonId,
+      status: "active" as const,
+      startedAt: new Date().toISOString()
+    };
+  }
+
+  async closeSeason(): Promise<void> {}
+
   async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
     const existing = this.accounts.get(input.playerId);
     const account: PlayerAccountSnapshot = {

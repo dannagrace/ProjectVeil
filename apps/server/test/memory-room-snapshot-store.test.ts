@@ -170,3 +170,21 @@ test("memory room snapshot store ensurePlayerAccount keeps stored snapshots isol
   assert.equal(second.recentEventLog.length, 0);
   assert.equal(second.recentBattleReplays.length, 0);
 });
+
+test("memory room snapshot store lists closed seasons and retains active season separately", async () => {
+  const store = createMemoryRoomSnapshotStore();
+  await store.createSeason("season-1");
+  await store.closeSeason("season-1");
+  await store.createSeason("season-2");
+
+  const currentSeason = await store.getCurrentSeason();
+  const closedSeasons = await store.listSeasons?.({ status: "closed", limit: 10 });
+  const allSeasons = await store.listSeasons?.({ status: "all", limit: 10 });
+
+  assert.equal(currentSeason?.seasonId, "season-2");
+  assert.deepEqual(closedSeasons?.map((season) => season.seasonId), ["season-1"]);
+  assert.deepEqual(new Set(allSeasons?.map((season) => season.seasonId)), new Set(["season-1", "season-2"]));
+  assert.equal(allSeasons?.find((season) => season.seasonId === "season-2")?.status, "active");
+  assert.equal(allSeasons?.find((season) => season.seasonId === "season-1")?.status, "closed");
+  assert.ok(allSeasons?.find((season) => season.seasonId === "season-1")?.endedAt);
+});
