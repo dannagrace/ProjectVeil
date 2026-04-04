@@ -5,6 +5,7 @@ import {
   normalizeEloRating,
   normalizeMatchmakingRequest,
   selectBestMatchPair,
+  resolveMapVariantIdForRoom,
   type HeroState,
   type MatchResult,
   type MatchmakingRequest
@@ -13,6 +14,7 @@ import { validateAuthSessionFromRequest } from "./auth";
 import { recordMatchmakingRateLimited } from "./observability";
 import type { RoomSnapshotStore } from "./persistence";
 import { createRedisClient, readRedisUrl, type RedisClientLike } from "./redis";
+import { sendWechatSubscribeMessage } from "./wechat-subscribe";
 
 export const DEFAULT_MATCHMAKING_QUEUE_TTL_SECONDS = 5 * 60;
 const DEFAULT_RATE_LIMIT_MATCHMAKING_WINDOW_MS = 60_000;
@@ -224,6 +226,7 @@ interface RedisMatchmakingServiceOptions {
   keyPrefix?: string;
   lockTimeoutMs?: number;
   lockRetryDelayMs?: number;
+  onMatchCreated?: (result: MatchResult, players: [MatchmakingRequest, MatchmakingRequest]) => void;
 }
 
 export class MatchmakingService implements MatchmakingServiceController {
@@ -232,6 +235,11 @@ export class MatchmakingService implements MatchmakingServiceController {
   private readonly queuePositionByPlayerId = new Map<string, number>();
   private readonly resultsByPlayerId = new Map<string, MatchResult>();
   private nextMatchSequence = 1;
+  private readonly onMatchCreated: ((result: MatchResult, players: [MatchmakingRequest, MatchmakingRequest]) => void) | undefined;
+
+  constructor(options: { onMatchCreated?: (result: MatchResult, players: [MatchmakingRequest, MatchmakingRequest]) => void } = {}) {
+    this.onMatchCreated = options.onMatchCreated;
+  }
 
   enqueue(request: MatchmakingRequest, now = new Date()): MatchmakingStatusQueued {
     const normalized = normalizeMatchmakingRequest(request);
@@ -310,6 +318,7 @@ export class MatchmakingService implements MatchmakingServiceController {
       const result = this.createMatchResult([left, right], now);
       this.resultsByPlayerId.set(left.playerId, result);
       this.resultsByPlayerId.set(right.playerId, result);
+      this.onMatchCreated?.(result, [left, right]);
     }
   }
 
@@ -378,6 +387,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
   private readonly keyPrefix: string;
   private readonly lockTimeoutMs: number;
   private readonly lockRetryDelayMs: number;
+  private readonly onMatchCreated: ((result: MatchResult, players: [MatchmakingRequest, MatchmakingRequest]) => void) | undefined;
 
   constructor(options: RedisMatchmakingServiceOptions = {}) {
     const redisUrl = options.redisUrl ?? readRedisUrl();
@@ -389,6 +399,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
     this.keyPrefix = options.keyPrefix?.trim() || "veil:matchmaking";
     this.lockTimeoutMs = Math.max(250, Math.floor(options.lockTimeoutMs ?? 5_000));
     this.lockRetryDelayMs = Math.max(10, Math.floor(options.lockRetryDelayMs ?? 50));
+    this.onMatchCreated = options.onMatchCreated;
   }
 
   async enqueue(request: MatchmakingRequest, now = new Date()): Promise<MatchmakingStatusQueued> {
@@ -581,6 +592,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       const encodedResult = JSON.stringify(result);
       await this.redis.hset(this.resultKey, left.playerId, encodedResult);
       await this.redis.hset(this.resultKey, right.playerId, encodedResult);
+      this.onMatchCreated?.(result, [left, right]);
     }
   }
 
@@ -627,17 +639,81 @@ function compareQueuedPlayers(left: MatchmakingRequest, right: MatchmakingReques
   return left.enqueuedAt.localeCompare(right.enqueuedAt) || left.playerId.localeCompare(right.playerId);
 }
 
+let configuredMatchmakingNotificationStore: RoomSnapshotStore | null = null;
 let configuredMatchmakingService: MatchmakingServiceController = createConfiguredMatchmakingService();
 
 export function resetMatchmakingService(): void {
   void configuredMatchmakingService.close?.();
+  configuredMatchmakingNotificationStore = null;
   configuredMatchmakingService = createConfiguredMatchmakingService();
   matchmakingRateLimitCounters.clear();
 }
 
+function describeMatchmakingMapName(roomId: string): string {
+  const normalizedRoomId = roomId.trim();
+  if (!normalizedRoomId) {
+    return "Default";
+  }
+
+  const variantId = resolveMapVariantIdForRoom(normalizedRoomId);
+  return variantId
+    .split(/[_-]+/)
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+async function notifyPlayersAboutMatchFound(
+  result: MatchResult,
+  players: [MatchmakingRequest, MatchmakingRequest]
+): Promise<void> {
+  const store = configuredMatchmakingNotificationStore;
+  if (!store) {
+    return;
+  }
+
+  try {
+    const playerIds = players.map((player) => player.playerId);
+    const accounts = await store.loadPlayerAccounts(playerIds);
+    const accountsByPlayerId = new Map(accounts.map((account) => [account.playerId, account]));
+
+    await Promise.all(
+      playerIds.map(async (playerId) => {
+        const opponentId = playerIds.find((candidatePlayerId) => candidatePlayerId !== playerId);
+        if (!opponentId) {
+          return;
+        }
+
+        const account = accountsByPlayerId.get(playerId);
+        const opponentAccount = accountsByPlayerId.get(opponentId);
+        await sendWechatSubscribeMessage(
+          playerId,
+          "match_found",
+          {
+            mapName: describeMatchmakingMapName(account?.lastRoomId ?? result.roomId),
+            opponentName: opponentAccount?.displayName?.trim() || opponentId
+          },
+          { store }
+        );
+      })
+    );
+  } catch (error) {
+    console.error("[matchmaking] Failed to send WeChat match-found notifications", {
+      roomId: result.roomId,
+      playerIds: result.playerIds,
+      error
+    });
+  }
+}
+
 function createConfiguredMatchmakingService(env: NodeJS.ProcessEnv = process.env): MatchmakingServiceController {
   const redisUrl = readRedisUrl(env);
-  return redisUrl ? new RedisMatchmakingService({ redisUrl }) : new MatchmakingService();
+  const onMatchCreated = (result: MatchResult, players: [MatchmakingRequest, MatchmakingRequest]) => {
+    void notifyPlayersAboutMatchFound(result, players);
+  };
+  return redisUrl
+    ? new RedisMatchmakingService({ redisUrl, onMatchCreated })
+    : new MatchmakingService({ onMatchCreated });
 }
 
 export function registerMatchmakingRoutes(
@@ -653,6 +729,7 @@ export function registerMatchmakingRoutes(
     queueTtlSeconds?: number;
   }
 ): void {
+  configuredMatchmakingNotificationStore = options.store;
   const service = options.service ?? configuredMatchmakingService;
   const queueTtlMs = resolveQueueTtlMs(options.queueTtlSeconds);
 

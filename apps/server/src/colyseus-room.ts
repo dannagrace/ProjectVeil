@@ -47,6 +47,7 @@ import {
   recordWorldActionMessage,
   removeRuntimeRoom
 } from "./observability";
+import { sendWechatSubscribeMessage, type WechatSubscribeTemplateKey } from "./wechat-subscribe";
 
 type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;
 
@@ -72,6 +73,7 @@ const DEFAULT_WS_ACTION_RATE_LIMIT_MAX = 8;
 const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
 const MINOR_PROTECTION_TICK_MS = 60_000;
 const TURN_TIMER_TICK_MS = 5_000;
+const TURN_REMINDER_DISCONNECT_THRESHOLD_MS = 30_000;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
 const lobbyRoomOwnerTokens = new Map<string, number>();
@@ -87,13 +89,21 @@ interface RoomRuntimeDependencies {
   clearInterval(handle: RoomTimerHandle): void;
   isMySqlSnapshotStore(store: RoomSnapshotStore | null): boolean;
   now(): number;
+  sendWechatSubscribeMessage(
+    playerId: string,
+    templateKey: WechatSubscribeTemplateKey,
+    data: Record<string, unknown>,
+    options?: { store?: RoomSnapshotStore | null }
+  ): Promise<boolean>;
 }
 
 const defaultRoomRuntimeDependencies: RoomRuntimeDependencies = {
   setInterval: (handler, delayMs) => globalThis.setInterval(handler, delayMs),
   clearInterval: (handle) => globalThis.clearInterval(handle as ReturnType<typeof globalThis.setInterval>),
   isMySqlSnapshotStore: (store) => Boolean(store && "getRetentionPolicy" in store),
-  now: () => Date.now()
+  now: () => Date.now(),
+  sendWechatSubscribeMessage: (playerId, templateKey, data, options) =>
+    sendWechatSubscribeMessage(playerId, templateKey, data, options)
 };
 
 let roomRuntimeDependencies: RoomRuntimeDependencies = defaultRoomRuntimeDependencies;
@@ -294,6 +304,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   private readonly minorProtectionConfig = readMinorProtectionConfig();
   private readonly lobbyRoomOwnerToken = nextLobbyRoomOwnerToken++;
   private readonly playerIdBySessionId = new Map<string, string>();
+  private readonly disconnectedAtByPlayerId = new Map<string, string>();
   private readonly reconnectedAtByPlayerId = new Map<string, string>();
   private readonly wsActionTimestampsByPlayerId = new Map<string, number[]>();
   private unsubscribeConfigUpdate: (() => void) | null = null;
@@ -365,6 +376,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       }
 
       this.playerIdBySessionId.set(client.sessionId, playerId);
+      this.disconnectedAtByPlayerId.delete(playerId);
       let ensuredAccount: PlayerAccountSnapshot | null = null;
       if (configuredRoomSnapshotStore) {
         try {
@@ -457,6 +469,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       }
 
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
+      const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
       const result = this.worldRoom.dispatch(playerId, message.action);
       if (result.ok) {
         this.afterSuccessfulWorldAction(playerId, message.action);
@@ -486,6 +499,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         events: result.events ?? [],
         movementPlan: result.movementPlan ?? null
       });
+      await this.maybeSendTurnReminderForTurnStart(previousTurnOwnerPlayerId);
     });
 
     this.onMessage("battle.action", async (client, message: Extract<ClientMessage, { type: "battle.action" }>) => {
@@ -505,6 +519,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
       recordBattleActionMessage();
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
+      const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
       const result = this.worldRoom.dispatchBattle(playerId, message.action);
       if (result.ok) {
         this.afterSuccessfulBattleAction(playerId);
@@ -534,6 +549,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         events: result.events ?? [],
         movementPlan: null
       });
+      await this.maybeSendTurnReminderForTurnStart(previousTurnOwnerPlayerId);
     });
 
     this.onMessage("report.player", async (client, message: Extract<ClientMessage, { type: "report.player" }>) => {
@@ -612,6 +628,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       return;
     }
 
+    this.disconnectedAtByPlayerId.set(playerId, new Date(roomRuntimeDependencies.now()).toISOString());
+
     try {
       const reconnectedClient = await this.allowReconnection(client, RECONNECTION_WINDOW_SECONDS);
       if (configuredRoomSnapshotStore?.loadPlayerBan) {
@@ -630,6 +648,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       }
       this.playerIdBySessionId.delete(client.sessionId);
       this.playerIdBySessionId.set(reconnectedClient.sessionId, playerId);
+      this.disconnectedAtByPlayerId.delete(playerId);
       this.reconnectedAtByPlayerId.set(playerId, new Date().toISOString());
       this.ensureTurnTimerState();
       this.publishLobbyRoomSummary();
@@ -646,7 +665,11 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   }
 
   onLeave(client: ColyseusClient): void {
+    const playerId = this.playerIdBySessionId.get(client.sessionId);
     this.playerIdBySessionId.delete(client.sessionId);
+    if (playerId && !this.getConnectedPlayerIds().includes(playerId)) {
+      this.disconnectedAtByPlayerId.set(playerId, new Date(roomRuntimeDependencies.now()).toISOString());
+    }
     this.ensureTurnTimerState();
     this.publishLobbyRoomSummary();
   }
@@ -926,6 +949,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
   private async applyAutoEndDay(playerId: string): Promise<void> {
     const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
+    const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
     const result = this.worldRoom.dispatch(playerId, { type: "turn.endDay" });
     if (!result.ok) {
       this.ensureTurnTimerState();
@@ -949,6 +973,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       movementPlan: result.movementPlan ?? null
     });
     this.pushTurnTimerUpdate();
+    await this.maybeSendTurnReminderForTurnStart(previousTurnOwnerPlayerId);
   }
 
   private async applyAutoBattlePass(playerId: string): Promise<void> {
@@ -960,6 +985,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
+    const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
     const result = this.worldRoom.dispatchBattle(playerId, {
       type: "battle.pass",
       unitId: activeUnitId
@@ -986,6 +1012,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       movementPlan: null
     });
     this.pushTurnTimerUpdate();
+    await this.maybeSendTurnReminderForTurnStart(previousTurnOwnerPlayerId);
   }
 
   private async applyAfkForfeit(loserPlayerId: string): Promise<void> {
@@ -1379,6 +1406,47 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     };
     lobbyRoomSummaries.set(this.metadata.logicalRoomId, summary);
     recordRuntimeRoom(summary);
+  }
+
+  private hasPlayerBeenDisconnectedLongEnough(playerId: string): boolean {
+    if (this.getConnectedPlayerIds().includes(playerId)) {
+      return false;
+    }
+
+    const disconnectedAt = this.disconnectedAtByPlayerId.get(playerId);
+    if (!disconnectedAt) {
+      return false;
+    }
+
+    const disconnectedAtMs = Date.parse(disconnectedAt);
+    if (!Number.isFinite(disconnectedAtMs)) {
+      return false;
+    }
+
+    return roomRuntimeDependencies.now() - disconnectedAtMs > TURN_REMINDER_DISCONNECT_THRESHOLD_MS;
+  }
+
+  private async maybeSendTurnReminderForTurnStart(previousTurnOwnerPlayerId: string | null): Promise<void> {
+    const nextTurnOwnerPlayerId = this.turnOwnerPlayerId;
+    if (!configuredRoomSnapshotStore || !nextTurnOwnerPlayerId || nextTurnOwnerPlayerId === previousTurnOwnerPlayerId) {
+      return;
+    }
+
+    if (!this.hasPlayerBeenDisconnectedLongEnough(nextTurnOwnerPlayerId)) {
+      return;
+    }
+
+    await roomRuntimeDependencies.sendWechatSubscribeMessage(
+      nextTurnOwnerPlayerId,
+      "turn_reminder",
+      {
+        roomId: this.metadata.logicalRoomId,
+        turnNumber: this.worldRoom.getInternalState().meta.day
+      },
+      {
+        store: configuredRoomSnapshotStore
+      }
+    );
   }
 
   private getPlayerId(client: ColyseusClient, fallback?: string): string | undefined {

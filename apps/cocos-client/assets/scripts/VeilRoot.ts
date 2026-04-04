@@ -43,6 +43,7 @@ import {
   postCocosPlayerReferral,
   readPreferredCocosDisplayName,
   rememberPreferredCocosDisplayName,
+  requestCocosWechatSubscribeConsent,
   requestCocosAccountRegistration,
   requestCocosPasswordRecovery,
   resolveCocosConfigCenterUrl,
@@ -2941,6 +2942,7 @@ export class VeilRoot extends Component {
         getAuthToken: () => this.authToken
       });
       this.updateMatchmakingStatus(status, this.describeMatchmakingStatus(status));
+      void requestCocosWechatSubscribeConsent();
       this.startMatchmakingPolling();
     } catch (error) {
       this.updateMatchmakingStatus({ status: "idle" });
