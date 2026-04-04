@@ -6,10 +6,56 @@ export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_m
 export type BuildingUpgradeTrackId = "castle" | "mine";
 export type ResourceLedger = Record<ResourceKind, number>;
 export type WorldResourceLedger = Record<string, ResourceLedger>;
+export type GuildRole = "owner" | "officer" | "member";
+export type GuildJoinRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
+export type GuildInviteStatus = "pending" | "accepted" | "declined" | "revoked";
 
 export interface Vec2 {
   x: number;
   y: number;
+}
+
+export interface GuildMemberState {
+  playerId: string;
+  displayName: string;
+  role: GuildRole;
+  joinedAt: string;
+  invitedByPlayerId?: string;
+}
+
+export interface GuildJoinRequestState {
+  requestId: string;
+  playerId: string;
+  displayName: string;
+  requestedAt: string;
+  status: GuildJoinRequestStatus;
+  reviewedAt?: string;
+  reviewedByPlayerId?: string;
+  rejectionReason?: string;
+}
+
+export interface GuildInviteState {
+  inviteId: string;
+  playerId: string;
+  invitedByPlayerId: string;
+  createdAt: string;
+  status: GuildInviteStatus;
+  respondedAt?: string;
+}
+
+export interface GuildState {
+  id: string;
+  name: string;
+  tag: string;
+  description?: string;
+  memberLimit: number;
+  level: number;
+  xp: number;
+  createdAt: string;
+  updatedAt: string;
+  members: GuildMemberState[];
+  joinRequests: GuildJoinRequestState[];
+  invites: GuildInviteState[];
 }
 
 export interface HeroStats {
