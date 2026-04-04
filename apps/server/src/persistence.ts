@@ -195,10 +195,12 @@ interface PlayerAccountRow extends RowDataPacket {
   season_pass_premium: number | boolean | null;
   season_pass_claimed_tiers_json: string | number[] | null;
   season_badges_json: string | string[] | null;
+  campaign_progress_json: string | PlayerAccountSnapshot["campaignProgress"] | null;
   global_resources_json: string | ResourceLedger;
   achievements_json: string | PlayerAchievementProgress[] | null;
   recent_event_log_json: string | EventLogEntry[] | null;
   recent_battle_replays_json: string | PlayerBattleReplaySummary[] | null;
+  daily_dungeon_state_json: string | PlayerAccountSnapshot["dailyDungeonState"] | null;
   last_room_id: string | null;
   last_seen_at: Date | string | null;
   login_id: string | null;
@@ -524,10 +526,12 @@ export interface PlayerAccountProgressPatch {
   seasonPassPremium?: boolean;
   seasonPassClaimedTiers?: number[] | null;
   seasonBadges?: string[] | null;
+  campaignProgress?: PlayerAccountSnapshot["campaignProgress"] | null;
   globalResources?: Partial<ResourceLedger> | null;
   achievements?: Partial<PlayerAchievementProgress>[] | null;
   recentEventLog?: Partial<EventLogEntry>[] | null;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null;
+  dailyDungeonState?: PlayerAccountSnapshot["dailyDungeonState"] | null;
   dailyPlayMinutes?: number | null;
   lastPlayDate?: string | null;
   loginStreak?: number | null;
@@ -1156,10 +1160,12 @@ function normalizePlayerAccountSnapshot(account: {
   seasonPassPremium?: boolean | number | null | undefined;
   seasonPassClaimedTiers?: number[] | null | undefined;
   seasonBadges?: string[] | null | undefined;
+  campaignProgress?: PlayerAccountSnapshot["campaignProgress"] | null | undefined;
   globalResources?: Partial<ResourceLedger>;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null | undefined;
+  dailyDungeonState?: PlayerAccountSnapshot["dailyDungeonState"] | null | undefined;
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
   loginId?: string | null | undefined;
@@ -1202,10 +1208,12 @@ function normalizePlayerAccountSnapshot(account: {
       seasonPassPremium: account.seasonPassPremium === true || account.seasonPassPremium === 1,
       seasonPassClaimedTiers: account.seasonPassClaimedTiers ?? [],
       seasonBadges: account.seasonBadges,
+      campaignProgress: account.campaignProgress,
       globalResources: normalizeResourceLedger(account.globalResources),
       achievements: account.achievements,
       recentEventLog: account.recentEventLog,
       recentBattleReplays: appendPlayerBattleReplaySummaries([], account.recentBattleReplays),
+      dailyDungeonState: account.dailyDungeonState,
       lastRoomId: account.lastRoomId,
       lastSeenAt: account.lastSeenAt,
       loginId: account.loginId ? normalizePlayerLoginId(account.loginId) : undefined,
@@ -1500,10 +1508,12 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   season_pass_premium TINYINT(1) NOT NULL DEFAULT 0,
   season_pass_claimed_tiers_json LONGTEXT NULL,
   season_badges_json LONGTEXT NULL,
+  campaign_progress_json LONGTEXT NULL,
   global_resources_json LONGTEXT NOT NULL,
   achievements_json LONGTEXT NULL,
   recent_event_log_json LONGTEXT NULL,
   recent_battle_replays_json LONGTEXT NULL,
+  daily_dungeon_state_json LONGTEXT NULL,
   last_room_id VARCHAR(191) NULL,
   last_seen_at DATETIME NULL DEFAULT NULL,
   login_id VARCHAR(40) NULL,
@@ -1800,6 +1810,24 @@ PREPARE veil_player_accounts_season_badges_stmt FROM @veil_player_accounts_seaso
 EXECUTE veil_player_accounts_season_badges_stmt;
 DEALLOCATE PREPARE veil_player_accounts_season_badges_stmt;
 
+SET @veil_player_accounts_campaign_progress_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'campaign_progress_json'
+);
+
+SET @veil_player_accounts_campaign_progress_sql := IF(
+  @veil_player_accounts_campaign_progress_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`campaign_progress_json\` LONGTEXT NULL AFTER \`season_badges_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_campaign_progress_stmt FROM @veil_player_accounts_campaign_progress_sql;
+EXECUTE veil_player_accounts_campaign_progress_stmt;
+DEALLOCATE PREPARE veil_player_accounts_campaign_progress_stmt;
+
 SET @veil_player_accounts_event_log_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.COLUMNS
@@ -1835,6 +1863,24 @@ SET @veil_player_accounts_battle_replays_sql := IF(
 PREPARE veil_player_accounts_battle_replays_stmt FROM @veil_player_accounts_battle_replays_sql;
 EXECUTE veil_player_accounts_battle_replays_stmt;
 DEALLOCATE PREPARE veil_player_accounts_battle_replays_stmt;
+
+SET @veil_player_accounts_daily_dungeon_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'daily_dungeon_state_json'
+);
+
+SET @veil_player_accounts_daily_dungeon_sql := IF(
+  @veil_player_accounts_daily_dungeon_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`daily_dungeon_state_json\` LONGTEXT NULL AFTER \`recent_battle_replays_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_daily_dungeon_stmt FROM @veil_player_accounts_daily_dungeon_sql;
+EXECUTE veil_player_accounts_daily_dungeon_stmt;
+DEALLOCATE PREPARE veil_player_accounts_daily_dungeon_stmt;
 
 SET @veil_player_accounts_last_room_exists := (
   SELECT COUNT(*)
@@ -2642,6 +2688,10 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
       row.season_badges_json != null
         ? parseJsonColumn<string[]>(row.season_badges_json)
         : [],
+    campaignProgress:
+      row.campaign_progress_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["campaignProgress"]>>(row.campaign_progress_json)
+        : undefined,
     globalResources: parseJsonColumn<ResourceLedger>(row.global_resources_json),
     achievements:
       row.achievements_json != null
@@ -2655,6 +2705,10 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
       row.recent_battle_replays_json != null
         ? parseJsonColumn<PlayerBattleReplaySummary[]>(row.recent_battle_replays_json)
         : [],
+    dailyDungeonState:
+      row.daily_dungeon_state_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["dailyDungeonState"]>>(row.daily_dungeon_state_json)
+        : undefined,
     ...(row.display_name ? { displayName: row.display_name } : {}),
     ...(row.last_room_id ? { lastRoomId: row.last_room_id } : {}),
     ...(row.login_id ? { loginId: row.login_id } : {}),
@@ -2929,14 +2983,16 @@ async function savePlayerAccounts(
          season_pass_premium,
          season_pass_claimed_tiers_json,
          season_badges_json,
+         campaign_progress_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json
          ,
          recent_battle_replays_json,
+         daily_dungeon_state_json,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
@@ -2946,10 +3002,12 @@ async function savePlayerAccounts(
          season_pass_premium = VALUES(season_pass_premium),
          season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
          season_badges_json = COALESCE(season_badges_json, VALUES(season_badges_json)),
+         campaign_progress_json = COALESCE(campaign_progress_json, VALUES(campaign_progress_json)),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
          recent_event_log_json = COALESCE(recent_event_log_json, VALUES(recent_event_log_json)),
          recent_battle_replays_json = COALESCE(recent_battle_replays_json, VALUES(recent_battle_replays_json)),
+         daily_dungeon_state_json = COALESCE(daily_dungeon_state_json, VALUES(daily_dungeon_state_json)),
          login_streak = VALUES(login_streak),
          version = version + 1`,
       [
@@ -2962,10 +3020,12 @@ async function savePlayerAccounts(
         normalizedAccount.seasonPassPremium === true ? 1 : 0,
         JSON.stringify(normalizedAccount.seasonPassClaimedTiers ?? []),
         JSON.stringify(normalizedAccount.seasonBadges ?? []),
+        JSON.stringify(normalizedAccount.campaignProgress ?? null),
         JSON.stringify(normalizedAccount.globalResources),
         JSON.stringify(normalizedAccount.achievements),
         JSON.stringify(normalizedAccount.recentEventLog),
         JSON.stringify(normalizedAccount.recentBattleReplays),
+        JSON.stringify(normalizedAccount.dailyDungeonState ?? null),
         normalizeLoginStreak(normalizedAccount.loginStreak)
       ]
     );
@@ -3200,10 +3260,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_premium,
          season_pass_claimed_tiers_json,
          season_badges_json,
+         campaign_progress_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
          recent_battle_replays_json,
+         daily_dungeon_state_json,
          last_room_id,
          last_seen_at,
          login_id,
@@ -3254,10 +3316,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_premium,
          season_pass_claimed_tiers_json,
          season_badges_json,
+         campaign_progress_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
          recent_battle_replays_json,
+         daily_dungeon_state_json,
          last_room_id,
          last_seen_at,
          login_id,
@@ -3392,10 +3456,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_premium,
          season_pass_claimed_tiers_json,
          season_badges_json,
+         campaign_progress_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
          recent_battle_replays_json,
+         daily_dungeon_state_json,
          last_room_id,
          last_seen_at,
          login_id,
@@ -3535,15 +3601,21 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          elo_rating,
          gems,
+         season_xp,
+         season_pass_tier,
+         season_pass_premium,
+         season_pass_claimed_tiers_json,
          season_badges_json,
+         campaign_progress_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
          recent_battle_replays_json,
+         daily_dungeon_state_json,
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(?, display_name),
          last_room_id = COALESCE(?, last_room_id),
@@ -3559,10 +3631,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         0,
         JSON.stringify([]),
         JSON.stringify([]),
+        JSON.stringify(null),
         JSON.stringify(normalizeResourceLedger()),
         JSON.stringify(normalizeAchievementProgress()),
         JSON.stringify(normalizeEventLogEntries()),
         JSON.stringify(appendPlayerBattleReplaySummaries([], [])),
+        JSON.stringify(null),
         lastRoomId,
         lastSeenAt,
         explicitDisplayName,
@@ -4884,25 +4958,33 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_premium,
          season_pass_claimed_tiers_json,
          season_badges_json,
+         campaign_progress_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
          recent_battle_replays_json,
+         daily_dungeon_state_json,
          last_room_id,
          last_seen_at,
          phone_number,
          phone_number_bound_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
          elo_rating = VALUES(elo_rating),
+         season_xp = VALUES(season_xp),
+         season_pass_tier = VALUES(season_pass_tier),
+         season_pass_premium = VALUES(season_pass_premium),
+         season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
          season_badges_json = COALESCE(season_badges_json, VALUES(season_badges_json)),
+         campaign_progress_json = COALESCE(campaign_progress_json, VALUES(campaign_progress_json)),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
          recent_event_log_json = VALUES(recent_event_log_json),
          recent_battle_replays_json = VALUES(recent_battle_replays_json),
+         daily_dungeon_state_json = COALESCE(daily_dungeon_state_json, VALUES(daily_dungeon_state_json)),
          last_room_id = VALUES(last_room_id),
          phone_number = VALUES(phone_number),
          phone_number_bound_at = VALUES(phone_number_bound_at),
@@ -4914,11 +4996,17 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.avatarUrl ?? null,
         nextAccount.eloRating,
         nextAccount.gems,
+        Math.max(0, Math.floor(nextAccount.seasonXp ?? 0)),
+        Math.max(1, Math.floor(nextAccount.seasonPassTier ?? 1)),
+        nextAccount.seasonPassPremium === true ? 1 : 0,
+        JSON.stringify(nextAccount.seasonPassClaimedTiers ?? []),
         JSON.stringify(nextAccount.seasonBadges ?? []),
+        JSON.stringify(nextAccount.campaignProgress ?? null),
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
         JSON.stringify(nextAccount.recentBattleReplays),
+        JSON.stringify(nextAccount.dailyDungeonState ?? null),
         nextAccount.lastRoomId ?? null,
         existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
         nextAccount.phoneNumber ?? null,
@@ -4956,10 +5044,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       seasonPassPremium: patch.seasonPassPremium ?? existing.seasonPassPremium,
       seasonPassClaimedTiers: patch.seasonPassClaimedTiers ?? existing.seasonPassClaimedTiers,
       seasonBadges: patch.seasonBadges ?? existing.seasonBadges,
+      campaignProgress: patch.campaignProgress ?? existing.campaignProgress,
       globalResources: patch.globalResources ?? existing.globalResources,
       achievements: patch.achievements ?? existing.achievements,
       recentEventLog: patch.recentEventLog ?? existing.recentEventLog,
       recentBattleReplays: patch.recentBattleReplays ?? existing.recentBattleReplays,
+      dailyDungeonState: patch.dailyDungeonState ?? existing.dailyDungeonState,
       dailyPlayMinutes:
         patch.dailyPlayMinutes !== undefined ? normalizeDailyPlayMinutes(patch.dailyPlayMinutes) : existing.dailyPlayMinutes,
       lastPlayDate:
@@ -4988,10 +5078,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_premium,
          season_pass_claimed_tiers_json,
          season_badges_json,
+         campaign_progress_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
          recent_battle_replays_json,
+         daily_dungeon_state_json,
          last_room_id,
          last_seen_at,
          age_verified,
@@ -5000,7 +5092,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_play_date,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
@@ -5010,11 +5102,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_premium = VALUES(season_pass_premium),
          season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
          season_badges_json = VALUES(season_badges_json),
+         campaign_progress_json = VALUES(campaign_progress_json),
          elo_rating = VALUES(elo_rating),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
          recent_event_log_json = VALUES(recent_event_log_json),
          recent_battle_replays_json = VALUES(recent_battle_replays_json),
+         daily_dungeon_state_json = VALUES(daily_dungeon_state_json),
          last_room_id = VALUES(last_room_id),
          last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
          age_verified = VALUES(age_verified),
@@ -5034,10 +5128,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.seasonPassPremium === true ? 1 : 0,
         JSON.stringify(nextAccount.seasonPassClaimedTiers ?? []),
         JSON.stringify(nextAccount.seasonBadges ?? []),
+        JSON.stringify(nextAccount.campaignProgress ?? null),
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
         JSON.stringify(nextAccount.recentBattleReplays),
+        JSON.stringify(nextAccount.dailyDungeonState ?? null),
         nextAccount.lastRoomId ?? null,
         existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
         nextAccount.ageVerified === true ? 1 : 0,
@@ -5081,10 +5177,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_tier,
          season_pass_premium,
          season_pass_claimed_tiers_json,
+         season_badges_json,
+         campaign_progress_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
          recent_battle_replays_json,
+         daily_dungeon_state_json,
          last_room_id,
          last_seen_at,
          login_id,

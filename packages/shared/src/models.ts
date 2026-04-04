@@ -1112,3 +1112,75 @@ export interface BattleSkillCatalogConfig {
   skills: BattleSkillConfig[];
   statuses: BattleStatusEffectConfig[];
 }
+
+export interface CampaignReward {
+  gems?: number;
+  resources?: Partial<ResourceLedger>;
+}
+
+export interface CampaignMission {
+  id: string;
+  chapterId: string;
+  order: number;
+  name: string;
+  description: string;
+  recommendedHeroLevel: number;
+  enemyArmyTemplateId: string;
+  enemyArmyCount: number;
+  enemyStatMultiplier: number;
+  unlockMissionId?: string;
+  reward: CampaignReward;
+}
+
+export interface CampaignMissionProgress {
+  missionId: string;
+  attempts: number;
+  completedAt?: string;
+}
+
+export interface CampaignProgressState {
+  missions: CampaignMissionProgress[];
+}
+
+export type CampaignMissionStatus = "locked" | "available" | "completed";
+
+export interface CampaignMissionState extends CampaignMissionProgress, CampaignMission {
+  status: CampaignMissionStatus;
+}
+
+export interface DailyDungeonReward {
+  gems?: number;
+  resources?: Partial<ResourceLedger>;
+}
+
+export interface DailyDungeonFloor {
+  floor: number;
+  recommendedHeroLevel: number;
+  enemyArmyTemplateId: string;
+  enemyArmyCount: number;
+  enemyStatMultiplier: number;
+  reward: DailyDungeonReward;
+}
+
+export interface DailyDungeonDefinition {
+  id: string;
+  name: string;
+  description: string;
+  attemptLimit: number;
+  floors: DailyDungeonFloor[];
+}
+
+export interface DailyDungeonRunRecord {
+  runId: string;
+  dungeonId: string;
+  floor: number;
+  startedAt: string;
+  rewardClaimedAt?: string;
+}
+
+export interface DailyDungeonState {
+  dateKey: string;
+  attemptsUsed: number;
+  claimedRunIds: string[];
+  runs: DailyDungeonRunRecord[];
+}
