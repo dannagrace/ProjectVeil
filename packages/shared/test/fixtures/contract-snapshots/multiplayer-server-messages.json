@@ -410,5 +410,16 @@
     "type": "error",
     "requestId": "req-world-action-002",
     "reason": "destination_occupied"
+  },
+  {
+    "type": "event.progress.update",
+    "requestId": "push",
+    "delivery": "push",
+    "payload": {
+      "eventId": "defend-the-bridge",
+      "points": 40,
+      "delta": 40,
+      "objectiveId": "bridge-dungeon-clear"
+    }
   }
 ]

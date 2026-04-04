@@ -1,5 +1,7 @@
 import type { PlayerTier, RankDivisionId } from "./matchmaking.ts";
 
+import type { DialogueLine, MissionObjective } from "./campaign.ts";
+
 export type TerrainType = "grass" | "dirt" | "sand" | "water" | "swamp";
 export type FogState = "hidden" | "explored" | "visible";
 export type ResourceKind = "gold" | "wood" | "ore";
@@ -1197,6 +1199,7 @@ export interface CampaignMission {
   id: string;
   chapterId: string;
   order: number;
+  mapId: string;
   name: string;
   description: string;
   recommendedHeroLevel: number;
@@ -1204,6 +1207,9 @@ export interface CampaignMission {
   enemyArmyCount: number;
   enemyStatMultiplier: number;
   unlockMissionId?: string;
+  introDialogue?: DialogueLine[];
+  outroDialogue?: DialogueLine[];
+  objectives: MissionObjective[];
   reward: CampaignReward;
 }
 
@@ -1258,4 +1264,67 @@ export interface DailyDungeonState {
   attemptsUsed: number;
   claimedRunIds: string[];
   runs: DailyDungeonRunRecord[];
+}
+
+export type SeasonalEventActionType = "daily_dungeon_reward_claimed" | (string & {});
+export type SeasonalEventRewardKind = "gems" | "resources" | "badge" | "cosmetic";
+
+export interface SeasonalEventObjective {
+  id: string;
+  description: string;
+  actionType: SeasonalEventActionType;
+  points: number;
+  dungeonId?: string;
+}
+
+export interface SeasonalEventReward {
+  id: string;
+  name: string;
+  pointsRequired: number;
+  kind: SeasonalEventRewardKind;
+  gems?: number;
+  resources?: Partial<ResourceLedger>;
+  badge?: string;
+  cosmeticId?: string;
+}
+
+export interface SeasonalEventLeaderboardRewardTier {
+  rankStart: number;
+  rankEnd: number;
+  title: string;
+  badge?: string;
+  cosmeticId?: string;
+}
+
+export interface SeasonalEventDefinition {
+  id: string;
+  name: string;
+  description: string;
+  startsAt: string;
+  endsAt: string;
+  durationDays: number;
+  bannerText: string;
+  objectives: SeasonalEventObjective[];
+  rewards: SeasonalEventReward[];
+  leaderboard: {
+    size: number;
+    rewardTiers: SeasonalEventLeaderboardRewardTier[];
+  };
+}
+
+export interface SeasonalEventState {
+  eventId: string;
+  points: number;
+  claimedRewardIds: string[];
+  appliedActionIds: string[];
+  lastUpdatedAt: string;
+}
+
+export interface EventLeaderboardEntry {
+  rank: number;
+  playerId: string;
+  displayName: string;
+  points: number;
+  lastUpdatedAt: string;
+  rewardPreview?: string;
 }

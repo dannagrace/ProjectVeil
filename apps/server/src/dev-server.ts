@@ -10,6 +10,7 @@ import {
 } from "./config-center";
 import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./colyseus-room";
 import { registerConfigViewerRoutes } from "./config-viewer";
+import { registerEventRoutes } from "./event-engine";
 import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
 import { registerMatchmakingRoutes } from "./matchmaking";
@@ -108,6 +109,7 @@ export interface DevServerBootstrapDependencies {
   registerAuthRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerConfigCenterRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerConfigViewerRoutes(app: unknown, store: DevServerConfigCenterStore): void;
+  registerEventRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerPlayerAccountRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerShopRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
@@ -175,6 +177,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerAuthRoutes: (app, store) => registerAuthRoutes(app as never, store as RoomSnapshotStore),
     registerConfigCenterRoutes: (app, store) => registerConfigCenterRoutes(app as never, store as ConfigCenterStore),
     registerConfigViewerRoutes: (app, store) => registerConfigViewerRoutes(app as never, store as ConfigCenterStore),
+    registerEventRoutes: (app, store) => registerEventRoutes(app as never, store as RoomSnapshotStore | null),
     registerPlayerAccountRoutes: (app, store) => registerPlayerAccountRoutes(app as never, store as RoomSnapshotStore),
     registerShopRoutes: (app, store) => registerShopRoutes(app as never, store as RoomSnapshotStore),
     registerWechatPayRoutes: (app, store) => registerWechatPayRoutes(app as never, store as RoomSnapshotStore),
@@ -244,6 +247,9 @@ export async function startDevServer(
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
   deps.registerConfigCenterRoutes(expressApp, configCenterStore);
   deps.registerConfigViewerRoutes(expressApp, configCenterStore);
+  if ("use" in (expressApp as object) && "get" in (expressApp as object)) {
+    deps.registerEventRoutes(expressApp, effectiveSnapshotStore);
+  }
   deps.registerPlayerAccountRoutes(expressApp, effectiveSnapshotStore);
   deps.registerShopRoutes(expressApp, effectiveSnapshotStore);
   deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);

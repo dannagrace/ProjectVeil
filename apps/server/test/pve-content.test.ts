@@ -10,11 +10,13 @@ import {
   startDailyDungeonRun
 } from "../src/pve-content";
 
-test("campaign config exposes a 10-mission scaffold with sequential unlocks", () => {
+test("campaign config exposes a 6-mission chapter 1 arc with dialogue and sequential unlocks", () => {
   const missions = resolveCampaignConfig();
   const states = buildCampaignMissionStates(missions, undefined);
 
-  assert.equal(missions.length, 10);
+  assert.equal(missions.length, 6);
+  assert.equal(missions[0]?.introDialogue?.length, 2);
+  assert.equal(missions[0]?.objectives[0]?.id, "c1m1-clear-patrol");
   assert.equal(states[0]?.status, "available");
   assert.equal(states[1]?.unlockMissionId, states[0]?.id);
   assert.equal(states[1]?.status, "locked");

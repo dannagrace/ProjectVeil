@@ -5,6 +5,7 @@ export * from "./assets-config.ts";
 export * from "./battle.ts";
 export * from "./battle-report.ts";
 export * from "./battle-replay.ts";
+export * from "./campaign.ts";
 export * from "./competitive-season.ts";
 export * from "./analytics-events.ts";
 export * from "./content-pack-validation.ts";

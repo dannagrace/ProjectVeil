@@ -180,6 +180,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
       recentBattleReplays: structuredClone(existing?.recentBattleReplays ?? []),
       ...(existing?.campaignProgress ? { campaignProgress: structuredClone(existing.campaignProgress) } : {}),
+      ...(existing?.seasonalEventStates ? { seasonalEventStates: structuredClone(existing.seasonalEventStates) } : {}),
       ...(existing?.dailyDungeonState ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) } : {}),
       ...(existing?.tutorialStep !== undefined ? { tutorialStep: existing.tutorialStep } : { tutorialStep: DEFAULT_TUTORIAL_STEP }),
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
@@ -546,6 +547,13 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
           : {}
         : existing.campaignProgress
           ? { campaignProgress: structuredClone(existing.campaignProgress) }
+          : {}),
+      ...(patch.seasonalEventStates !== undefined
+        ? patch.seasonalEventStates
+          ? { seasonalEventStates: structuredClone(patch.seasonalEventStates) }
+          : {}
+        : existing.seasonalEventStates
+          ? { seasonalEventStates: structuredClone(existing.seasonalEventStates) }
           : {}),
       globalResources: structuredClone(
         (patch.globalResources as PlayerAccountSnapshot["globalResources"] | undefined) ?? existing.globalResources
@@ -3314,7 +3322,7 @@ test("referral endpoint credits both accounts exactly once", async (t) => {
   assert.equal(newPlayer?.gems, 23);
 });
 
-test("campaign mission completion unlocks the next scaffold mission and grants rewards", async (t) => {
+test("campaign mission completion unlocks the next chapter 1 mission and grants rewards", async (t) => {
   const port = 44980 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
@@ -3346,13 +3354,13 @@ test("campaign mission completion unlocks the next scaffold mission and grants r
   };
 
   assert.equal(initialResponse.status, 200);
-  assert.equal(initialPayload.campaign.totalMissions, 10);
-  assert.equal(initialPayload.campaign.nextMissionId, "campaign_tutorial_1");
+  assert.equal(initialPayload.campaign.totalMissions, 6);
+  assert.equal(initialPayload.campaign.nextMissionId, "chapter1-ember-watch");
   assert.equal(initialPayload.campaign.missions[0]?.status, "available");
   assert.equal(initialPayload.campaign.missions[1]?.status, "locked");
 
   const completeResponse = await fetch(
-    `http://127.0.0.1:${port}/api/player-accounts/me/campaign/campaign_tutorial_1/complete`,
+    `http://127.0.0.1:${port}/api/player-accounts/me/campaign/chapter1-ember-watch/complete`,
     {
       method: "POST",
       headers: {
@@ -3372,19 +3380,19 @@ test("campaign mission completion unlocks the next scaffold mission and grants r
 
   assert.equal(completeResponse.status, 200);
   assert.equal(completePayload.completed, true);
-  assert.equal(completePayload.reward.gems, 10);
-  assert.equal(completePayload.reward.resources.gold, 120);
+  assert.equal(completePayload.reward.gems, 12);
+  assert.equal(completePayload.reward.resources.gold, 140);
   assert.equal(completePayload.campaign.completedCount, 1);
-  assert.equal(completePayload.campaign.nextMissionId, "campaign_tutorial_2");
+  assert.equal(completePayload.campaign.nextMissionId, "chapter1-thornwall-road");
   assert.equal(
-    completePayload.campaign.missions.find((mission) => mission.id === "campaign_tutorial_2")?.status,
+    completePayload.campaign.missions.find((mission) => mission.id === "chapter1-thornwall-road")?.status,
     "available"
   );
 
   const account = await store.loadPlayerAccount("campaign-player");
-  assert.equal(account?.gems, 10);
-  assert.equal(account?.globalResources.gold, 120);
-  assert.equal(account?.campaignProgress?.missions[0]?.missionId, "campaign_tutorial_1");
+  assert.equal(account?.gems, 12);
+  assert.equal(account?.globalResources.gold, 140);
+  assert.equal(account?.campaignProgress?.missions[0]?.missionId, "chapter1-ember-watch");
 });
 
 test("daily dungeon attempts are capped per day and rewards can only be claimed once per run", async (t) => {
@@ -3457,6 +3465,7 @@ test("daily dungeon attempts are capped per day and rewards can only be claimed 
     claimed: boolean;
     reward: { gems: number; resources: { gold: number; ore: number } };
     dailyDungeon: { attemptsRemaining: number };
+    eventProgress?: Array<{ eventId: string; delta: number; points: number; objectiveId: string }>;
   };
   const claimAgainPayload = (await claimAgainResponse.json()) as { error: { code: string } };
 
@@ -3466,6 +3475,9 @@ test("daily dungeon attempts are capped per day and rewards can only be claimed 
   assert.equal(claimPayload.reward.resources.gold, 220);
   assert.equal(claimPayload.reward.resources.ore, 10);
   assert.equal(claimPayload.dailyDungeon.attemptsRemaining, 0);
+  assert.equal(claimPayload.eventProgress?.[0]?.eventId, "defend-the-bridge");
+  assert.equal(claimPayload.eventProgress?.[0]?.delta, 40);
+  assert.equal(claimPayload.eventProgress?.[0]?.points, 40);
   assert.equal(claimAgainResponse.status, 409);
   assert.equal(claimAgainPayload.error.code, "daily_dungeon_reward_already_claimed");
 
@@ -3475,4 +3487,6 @@ test("daily dungeon attempts are capped per day and rewards can only be claimed 
   assert.equal(account?.globalResources.ore, 10);
   assert.equal(account?.dailyDungeonState?.attemptsUsed, 3);
   assert.equal(account?.dailyDungeonState?.claimedRunIds.includes(firstRunPayload.run.runId), true);
+  assert.equal(account?.seasonalEventStates?.[0]?.eventId, "defend-the-bridge");
+  assert.equal(account?.seasonalEventStates?.[0]?.points, 40);
 });
