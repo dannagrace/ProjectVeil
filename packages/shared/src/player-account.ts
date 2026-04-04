@@ -24,6 +24,7 @@ import {
 import type {
   CampaignProgressState,
   DailyDungeonState,
+  SeasonalEventState,
   RankedWeeklyProgress,
   ResourceLedger,
   SeasonArchiveEntry
@@ -58,6 +59,7 @@ export interface PlayerAccountReadModel {
   dailyQuestBoard?: DailyQuestBoard;
   campaignProgress?: CampaignProgressState;
   dailyDungeonState?: DailyDungeonState;
+  seasonalEventStates?: SeasonalEventState[];
   tutorialStep?: number | null;
   loginId?: string;
   credentialBoundAt?: string;
@@ -101,6 +103,7 @@ export interface PlayerAccountReadModelInput {
   dailyQuestBoard?: Partial<DailyQuestBoard> | null | undefined;
   campaignProgress?: Partial<CampaignProgressState> | null | undefined;
   dailyDungeonState?: Partial<DailyDungeonState> | null | undefined;
+  seasonalEventStates?: Partial<SeasonalEventState>[] | null | undefined;
   tutorialStep?: number | null | undefined;
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
@@ -211,6 +214,7 @@ export function normalizePlayerAccountReadModel(
   const dailyQuestBoard = normalizeDailyQuestBoard(account?.dailyQuestBoard);
   const campaignProgress = normalizeCampaignProgressState(account?.campaignProgress);
   const dailyDungeonState = normalizeDailyDungeonState(account?.dailyDungeonState);
+  const seasonalEventStates = normalizeSeasonalEventStates(account?.seasonalEventStates);
   const tutorialStep = normalizeTutorialStep(account?.tutorialStep);
 
   return {
@@ -246,6 +250,7 @@ export function normalizePlayerAccountReadModel(
     ...(dailyQuestBoard ? { dailyQuestBoard } : {}),
     ...(campaignProgress ? { campaignProgress } : {}),
     ...(dailyDungeonState ? { dailyDungeonState } : {}),
+    ...(seasonalEventStates ? { seasonalEventStates } : {}),
     ...(account?.tutorialStep !== undefined ? { tutorialStep } : {}),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
@@ -362,4 +367,47 @@ function normalizeDailyDungeonState(
         runs
       }
     : undefined;
+}
+
+function normalizeSeasonalEventStates(
+  seasonalEventStates?: Partial<SeasonalEventState>[] | null
+): SeasonalEventState[] | undefined {
+  const states = Array.from(
+    new Map(
+      (seasonalEventStates ?? [])
+        .map((state) => {
+          const eventId = state.eventId?.trim();
+          const lastUpdatedAt = normalizeTimestamp(state.lastUpdatedAt);
+          if (!eventId || !lastUpdatedAt) {
+            return null;
+          }
+
+          return [
+            eventId,
+            {
+              eventId,
+              points: Math.max(0, Math.floor(state.points ?? 0)),
+              claimedRewardIds: Array.from(
+                new Set(
+                  (state.claimedRewardIds ?? [])
+                    .map((rewardId) => rewardId?.trim())
+                    .filter((rewardId): rewardId is string => Boolean(rewardId))
+                )
+              ).sort((left, right) => left.localeCompare(right)),
+              appliedActionIds: Array.from(
+                new Set(
+                  (state.appliedActionIds ?? [])
+                    .map((actionId) => actionId?.trim())
+                    .filter((actionId): actionId is string => Boolean(actionId))
+                )
+              ).sort((left, right) => left.localeCompare(right)),
+              lastUpdatedAt
+            }
+          ] as const;
+        })
+        .filter((entry): entry is readonly [string, SeasonalEventState] => Boolean(entry))
+    ).values()
+  ).sort((left, right) => left.eventId.localeCompare(right.eventId));
+
+  return states.length > 0 ? states : undefined;
 }

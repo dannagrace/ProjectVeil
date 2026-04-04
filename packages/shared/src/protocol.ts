@@ -10,6 +10,19 @@ export interface TutorialProgressAction {
   reason?: "advance" | "skip" | "complete";
 }
 
+export interface CampaignDialogueAckAction {
+  missionId: string;
+  sequence: "intro" | "outro";
+  dialogueLineId: string;
+}
+
+export interface EventProgressUpdatePayload {
+  eventId: string;
+  points: number;
+  delta: number;
+  objectiveId: string;
+}
+
 export interface SessionStatePayload {
   world: PlayerWorldViewPayload;
   battle: BattleState | null;
@@ -65,6 +78,11 @@ export type ClientMessage =
       type: "tutorial.progress";
       requestId: string;
       action: TutorialProgressAction;
+    }
+  | {
+      type: "campaign.dialogue.ack";
+      requestId: string;
+      action: CampaignDialogueAckAction;
     };
 
 export type ServerMessage =
@@ -110,4 +128,10 @@ export type ServerMessage =
       requestId: "push";
       delivery: "push";
       payload: { bundle: RuntimeConfigBundle };
+    }
+  | {
+      type: "event.progress.update";
+      requestId: "push";
+      delivery: "push";
+      payload: EventProgressUpdatePayload;
     };

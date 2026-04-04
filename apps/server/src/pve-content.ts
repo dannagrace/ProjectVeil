@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import campaignDocument from "../../../configs/campaign.json";
+import campaignDocument from "../../../configs/campaign-chapter1.json";
 import dailyDungeonsDocument from "../../../configs/daily-dungeons.json";
 import type {
   CampaignMission,
@@ -10,12 +10,32 @@ import type {
   DailyDungeonFloor,
   DailyDungeonReward,
   DailyDungeonRunRecord,
-  DailyDungeonState
+  DailyDungeonState,
+  DialogueLine,
+  MissionObjective
 } from "../../../packages/shared/src/index";
 import { getDailyRewardDateKey } from "./daily-rewards";
 
+interface CampaignConfigMissionDocument {
+  id?: string | null;
+  chapterId?: string | null;
+  order?: number | null;
+  mapId?: string | null;
+  name?: string | null;
+  description?: string | null;
+  recommendedHeroLevel?: number | null;
+  enemyArmyTemplateId?: string | null;
+  enemyArmyCount?: number | null;
+  enemyStatMultiplier?: number | null;
+  unlockMissionId?: string | null;
+  reward?: DailyDungeonReward | null;
+  introDialogue?: Partial<DialogueLine>[] | null;
+  outroDialogue?: Partial<DialogueLine>[] | null;
+  objectives?: Partial<MissionObjective>[] | null;
+}
+
 interface CampaignConfigDocument {
-  missions?: Partial<CampaignMission>[] | null;
+  missions?: CampaignConfigMissionDocument[] | null;
 }
 
 interface DailyDungeonConfigDocument {
@@ -58,6 +78,56 @@ function normalizeReward(rawReward: DailyDungeonReward | undefined, field: strin
   };
 }
 
+function normalizeDialogueLine(rawLine: Partial<DialogueLine> | null | undefined, field: string): DialogueLine {
+  const id = rawLine?.id?.trim();
+  const speakerId = rawLine?.speakerId?.trim();
+  const speakerName = rawLine?.speakerName?.trim();
+  const text = rawLine?.text?.trim();
+  const portraitId = rawLine?.portraitId?.trim();
+
+  if (!id || !speakerId || !speakerName || !text) {
+    throw new Error(`${field} must define id, speakerId, speakerName, and text`);
+  }
+
+  return {
+    id,
+    speakerId,
+    speakerName,
+    text,
+    ...(portraitId ? { portraitId } : {}),
+    ...(rawLine?.mood ? { mood: rawLine.mood } : {})
+  };
+}
+
+function normalizeMissionObjective(rawObjective: Partial<MissionObjective> | null | undefined, field: string): MissionObjective {
+  const candidate = rawObjective ?? {};
+  const id = candidate.id?.trim();
+  const description = candidate.description?.trim();
+  if (!id || !description) {
+    throw new Error(`${field} must define id and description`);
+  }
+
+  const unlocksObjectiveIds = Array.from(
+    new Set(
+      (candidate.unlocksObjectiveIds ?? [])
+        .map((objectiveId) => objectiveId?.trim())
+        .filter((objectiveId): objectiveId is string => Boolean(objectiveId))
+    )
+  ).sort((left, right) => left.localeCompare(right));
+
+  return {
+    id,
+    description,
+    kind: candidate.kind ?? "defeat",
+    ...(candidate.gate ? { gate: candidate.gate } : {}),
+    ...(candidate.optional === true ? { optional: true } : {}),
+    ...(candidate.targetCount != null
+      ? { targetCount: normalizeNonNegativeInteger(candidate.targetCount, `${field}.targetCount`, 1) }
+      : {}),
+    ...(unlocksObjectiveIds.length > 0 ? { unlocksObjectiveIds } : {})
+  };
+}
+
 export function resolveCampaignConfig(
   document: CampaignConfigDocument = campaignDocument as CampaignConfigDocument
 ): CampaignMission[] {
@@ -69,18 +139,51 @@ export function resolveCampaignConfig(
   const missions = rawMissions.map((rawMission, index) => {
     const id = rawMission.id?.trim();
     const chapterId = rawMission.chapterId?.trim();
+    const mapId = rawMission.mapId?.trim();
     const name = rawMission.name?.trim();
     const description = rawMission.description?.trim();
     const enemyArmyTemplateId = rawMission.enemyArmyTemplateId?.trim();
-    if (!id || !chapterId || !name || !description || !enemyArmyTemplateId) {
-      throw new Error(`campaign mission[${index}] must define id, chapterId, name, description, and enemyArmyTemplateId`);
+    if (!id || !chapterId || !mapId || !name || !description || !enemyArmyTemplateId) {
+      throw new Error(
+        `campaign mission[${index}] must define id, chapterId, mapId, name, description, and enemyArmyTemplateId`
+      );
     }
 
     const unlockMissionId = rawMission.unlockMissionId?.trim();
+    const objectives = (rawMission.objectives ?? []).map((objective, objectiveIndex) =>
+      normalizeMissionObjective(objective, `campaign mission ${id} objective[${objectiveIndex}]`)
+    );
+    if (objectives.length === 0) {
+      throw new Error(`campaign mission ${id} must define at least one objective`);
+    }
+
+    const objectiveIds = new Set<string>();
+    for (const objective of objectives) {
+      if (objectiveIds.has(objective.id)) {
+        throw new Error(`campaign mission ${id} objective ids must be unique: ${objective.id}`);
+      }
+      objectiveIds.add(objective.id);
+    }
+
+    for (const objective of objectives) {
+      for (const unlockedObjectiveId of objective.unlocksObjectiveIds ?? []) {
+        if (!objectiveIds.has(unlockedObjectiveId)) {
+          throw new Error(`campaign mission ${id} objective ${objective.id} unlock references unknown objective ${unlockedObjectiveId}`);
+        }
+      }
+    }
+
+    const introDialogue = (rawMission.introDialogue ?? []).map((line, lineIndex) =>
+      normalizeDialogueLine(line, `campaign mission ${id} introDialogue[${lineIndex}]`)
+    );
+    const outroDialogue = (rawMission.outroDialogue ?? []).map((line, lineIndex) =>
+      normalizeDialogueLine(line, `campaign mission ${id} outroDialogue[${lineIndex}]`)
+    );
     return {
       id,
       chapterId,
       order: normalizeNonNegativeInteger(rawMission.order, `campaign mission ${id} order`, 1),
+      mapId,
       name,
       description,
       recommendedHeroLevel: normalizeNonNegativeInteger(
@@ -95,7 +198,10 @@ export function resolveCampaignConfig(
         `campaign mission ${id} enemyStatMultiplier`
       ),
       ...(unlockMissionId ? { unlockMissionId } : {}),
-      reward: normalizeReward(rawMission.reward, `campaign mission ${id} reward`)
+      ...(introDialogue.length > 0 ? { introDialogue } : {}),
+      ...(outroDialogue.length > 0 ? { outroDialogue } : {}),
+      objectives,
+      reward: normalizeReward(rawMission.reward ?? undefined, `campaign mission ${id} reward`)
     } satisfies CampaignMission;
   });
 

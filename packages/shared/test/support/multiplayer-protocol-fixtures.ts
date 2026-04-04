@@ -482,6 +482,15 @@ export function createClientMessageFixtures(): ClientMessage[] {
       type: "world.reachable",
       requestId: "req-world-reachable-001",
       heroId: "hero-1"
+    },
+    {
+      type: "campaign.dialogue.ack",
+      requestId: "req-campaign-dialogue-001",
+      action: {
+        missionId: "chapter1-ember-watch",
+        sequence: "intro",
+        dialogueLineId: "c1m1-intro-1"
+      }
     }
   ];
 }
@@ -517,6 +526,17 @@ export function createServerMessageFixtures(): ServerMessage[] {
       type: "error",
       requestId: "req-world-action-002",
       reason: "destination_occupied"
+    },
+    {
+      type: "event.progress.update",
+      requestId: "push",
+      delivery: "push",
+      payload: {
+        eventId: "defend-the-bridge",
+        points: 40,
+        delta: 40,
+        objectiveId: "bridge-dungeon-clear"
+      }
     }
   ];
 }

@@ -1,0 +1,69 @@
+{
+  "id": "defend-the-bridge",
+  "name": "Defend the Bridge",
+  "description": "Clear the Shadow Archives during the siege week to earn bridge defense points and claim frontier rewards.",
+  "startsAt": "2026-04-01T00:00:00.000Z",
+  "endsAt": "2026-04-08T00:00:00.000Z",
+  "durationDays": 7,
+  "bannerText": "Hold the bridge. Every daily dungeon clear sends supplies to the garrison.",
+  "objectives": [
+    {
+      "id": "bridge-dungeon-clear",
+      "description": "Claim rewards from a Shadow Archives run",
+      "actionType": "daily_dungeon_reward_claimed",
+      "dungeonId": "shadow-archives",
+      "points": 40
+    }
+  ],
+  "rewards": [
+    {
+      "id": "bridge-ration-cache",
+      "name": "Ration Cache",
+      "pointsRequired": 40,
+      "kind": "resources",
+      "resources": {
+        "gold": 180,
+        "wood": 20
+      }
+    },
+    {
+      "id": "bridge-relief-fund",
+      "name": "Relief Fund",
+      "pointsRequired": 120,
+      "kind": "gems",
+      "gems": 35
+    },
+    {
+      "id": "bridge-vanguard-badge",
+      "name": "Bridge Vanguard",
+      "pointsRequired": 200,
+      "kind": "badge",
+      "badge": "bridge_vanguard_2026"
+    }
+  ],
+  "leaderboard": {
+    "size": 100,
+    "rewardTiers": [
+      {
+        "rankStart": 1,
+        "rankEnd": 1,
+        "title": "Bridge Champion",
+        "badge": "bridge_champion_2026",
+        "cosmeticId": "bridge-champion-border"
+      },
+      {
+        "rankStart": 2,
+        "rankEnd": 3,
+        "title": "Frontier Defender",
+        "badge": "frontier_defender_2026",
+        "cosmeticId": "bridge-warden-banner"
+      },
+      {
+        "rankStart": 4,
+        "rankEnd": 100,
+        "title": "Siege Veteran",
+        "badge": "siege_veteran_2026"
+      }
+    ]
+  }
+}

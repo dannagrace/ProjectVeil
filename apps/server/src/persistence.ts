@@ -24,6 +24,7 @@ import {
   type PlayerAchievementProgress,
   type RankedWeeklyProgress,
   type ResourceLedger,
+  type SeasonalEventState,
   type SeasonArchiveEntry,
   type WorldState
 } from "../../../packages/shared/src/index";
@@ -207,6 +208,7 @@ interface PlayerAccountRow extends RowDataPacket {
   season_pass_claimed_tiers_json: string | number[] | null;
   season_badges_json: string | string[] | null;
   campaign_progress_json: string | PlayerAccountSnapshot["campaignProgress"] | null;
+  seasonal_event_states_json: string | PlayerAccountSnapshot["seasonalEventStates"] | null;
   global_resources_json: string | ResourceLedger;
   achievements_json: string | PlayerAchievementProgress[] | null;
   recent_event_log_json: string | EventLogEntry[] | null;
@@ -545,6 +547,7 @@ export interface PlayerAccountProgressPatch {
   seasonHistory?: PlayerAccountSnapshot["seasonHistory"] | null;
   rankedWeeklyProgress?: PlayerAccountSnapshot["rankedWeeklyProgress"] | null;
   campaignProgress?: PlayerAccountSnapshot["campaignProgress"] | null;
+  seasonalEventStates?: SeasonalEventState[] | null;
   globalResources?: Partial<ResourceLedger> | null;
   achievements?: Partial<PlayerAchievementProgress>[] | null;
   recentEventLog?: Partial<EventLogEntry>[] | null;
@@ -1186,6 +1189,7 @@ function normalizePlayerAccountSnapshot(account: {
   seasonPassClaimedTiers?: number[] | null | undefined;
   seasonBadges?: string[] | null | undefined;
   campaignProgress?: PlayerAccountSnapshot["campaignProgress"] | null | undefined;
+  seasonalEventStates?: PlayerAccountSnapshot["seasonalEventStates"] | null | undefined;
   globalResources?: Partial<ResourceLedger>;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -1244,6 +1248,7 @@ function normalizePlayerAccountSnapshot(account: {
       seasonPassClaimedTiers: account.seasonPassClaimedTiers ?? [],
       seasonBadges: account.seasonBadges,
       campaignProgress: account.campaignProgress,
+      seasonalEventStates: account.seasonalEventStates,
       globalResources: normalizeResourceLedger(account.globalResources),
       achievements: account.achievements,
       recentEventLog: account.recentEventLog,
@@ -1551,6 +1556,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   season_pass_claimed_tiers_json LONGTEXT NULL,
   season_badges_json LONGTEXT NULL,
   campaign_progress_json LONGTEXT NULL,
+  seasonal_event_states_json LONGTEXT NULL,
   global_resources_json LONGTEXT NOT NULL,
   achievements_json LONGTEXT NULL,
   recent_event_log_json LONGTEXT NULL,
@@ -1978,6 +1984,22 @@ SET @veil_player_accounts_campaign_progress_sql := IF(
 PREPARE veil_player_accounts_campaign_progress_stmt FROM @veil_player_accounts_campaign_progress_sql;
 EXECUTE veil_player_accounts_campaign_progress_stmt;
 DEALLOCATE PREPARE veil_player_accounts_campaign_progress_stmt;
+
+SET @veil_player_accounts_seasonal_event_states_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'seasonal_event_states_json'
+);
+SET @veil_player_accounts_seasonal_event_states_sql := IF(
+  @veil_player_accounts_seasonal_event_states_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`seasonal_event_states_json\` LONGTEXT NULL AFTER \`campaign_progress_json\`',
+  'SELECT 1'
+);
+PREPARE veil_player_accounts_seasonal_event_states_stmt FROM @veil_player_accounts_seasonal_event_states_sql;
+EXECUTE veil_player_accounts_seasonal_event_states_stmt;
+DEALLOCATE PREPARE veil_player_accounts_seasonal_event_states_stmt;
 
 SET @veil_player_accounts_event_log_exists := (
   SELECT COUNT(*)
@@ -2879,6 +2901,10 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
       row.campaign_progress_json != null
         ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["campaignProgress"]>>(row.campaign_progress_json)
         : undefined,
+    seasonalEventStates:
+      row.seasonal_event_states_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["seasonalEventStates"]>>(row.seasonal_event_states_json)
+        : undefined,
     globalResources: parseJsonColumn<ResourceLedger>(row.global_resources_json),
     achievements:
       row.achievements_json != null
@@ -3178,6 +3204,7 @@ async function savePlayerAccounts(
          season_pass_claimed_tiers_json,
          season_badges_json,
          campaign_progress_json,
+         seasonal_event_states_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json
@@ -3187,7 +3214,7 @@ async function savePlayerAccounts(
          tutorial_step,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
@@ -3204,6 +3231,7 @@ async function savePlayerAccounts(
          season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
          season_badges_json = COALESCE(season_badges_json, VALUES(season_badges_json)),
          campaign_progress_json = COALESCE(campaign_progress_json, VALUES(campaign_progress_json)),
+         seasonal_event_states_json = COALESCE(seasonal_event_states_json, VALUES(seasonal_event_states_json)),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
          recent_event_log_json = COALESCE(recent_event_log_json, VALUES(recent_event_log_json)),
@@ -3229,6 +3257,7 @@ async function savePlayerAccounts(
         JSON.stringify(normalizedAccount.seasonPassClaimedTiers ?? []),
         JSON.stringify(normalizedAccount.seasonBadges ?? []),
         JSON.stringify(normalizedAccount.campaignProgress ?? null),
+        JSON.stringify(normalizedAccount.seasonalEventStates ?? null),
         JSON.stringify(normalizedAccount.globalResources),
         JSON.stringify(normalizedAccount.achievements),
         JSON.stringify(normalizedAccount.recentEventLog),
@@ -3476,6 +3505,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_claimed_tiers_json,
          season_badges_json,
          campaign_progress_json,
+         seasonal_event_states_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -3539,6 +3569,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_claimed_tiers_json,
          season_badges_json,
          campaign_progress_json,
+         seasonal_event_states_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -3686,6 +3717,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_claimed_tiers_json,
          season_badges_json,
          campaign_progress_json,
+         seasonal_event_states_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -3843,6 +3875,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_claimed_tiers_json,
          season_badges_json,
          campaign_progress_json,
+         seasonal_event_states_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -5219,7 +5252,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
@@ -5236,6 +5269,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
          season_badges_json = COALESCE(season_badges_json, VALUES(season_badges_json)),
          campaign_progress_json = COALESCE(campaign_progress_json, VALUES(campaign_progress_json)),
+         seasonal_event_states_json = COALESCE(seasonal_event_states_json, VALUES(seasonal_event_states_json)),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
          recent_event_log_json = VALUES(recent_event_log_json),
@@ -5265,6 +5299,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(nextAccount.seasonPassClaimedTiers ?? []),
         JSON.stringify(nextAccount.seasonBadges ?? []),
         JSON.stringify(nextAccount.campaignProgress ?? null),
+        JSON.stringify(nextAccount.seasonalEventStates ?? null),
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
@@ -5316,6 +5351,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       seasonPassClaimedTiers: patch.seasonPassClaimedTiers ?? existing.seasonPassClaimedTiers,
       seasonBadges: patch.seasonBadges ?? existing.seasonBadges,
       campaignProgress: patch.campaignProgress ?? existing.campaignProgress,
+      seasonalEventStates: patch.seasonalEventStates ?? existing.seasonalEventStates,
       globalResources: patch.globalResources ?? existing.globalResources,
       achievements: patch.achievements ?? existing.achievements,
       recentEventLog: patch.recentEventLog ?? existing.recentEventLog,
@@ -5363,6 +5399,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_claimed_tiers_json,
          season_badges_json,
          campaign_progress_json,
+         seasonal_event_states_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -5377,7 +5414,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_play_date,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
@@ -5388,6 +5425,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
          season_badges_json = VALUES(season_badges_json),
          campaign_progress_json = VALUES(campaign_progress_json),
+         seasonal_event_states_json = VALUES(seasonal_event_states_json),
          elo_rating = VALUES(elo_rating),
          rank_division = VALUES(rank_division),
          peak_rank_division = VALUES(peak_rank_division),
@@ -5427,6 +5465,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(nextAccount.seasonPassClaimedTiers ?? []),
         JSON.stringify(nextAccount.seasonBadges ?? []),
         JSON.stringify(nextAccount.campaignProgress ?? null),
+        JSON.stringify(nextAccount.seasonalEventStates ?? null),
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
@@ -5484,6 +5523,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_claimed_tiers_json,
          season_badges_json,
          campaign_progress_json,
+         seasonal_event_states_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
