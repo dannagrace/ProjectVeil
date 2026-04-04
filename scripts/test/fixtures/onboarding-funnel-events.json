@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 1,
+  "emittedAt": "2026-04-04T00:00:00.000Z",
+  "events": [
+    {
+      "schemaVersion": 1,
+      "name": "session_start",
+      "version": 1,
+      "at": "2026-04-01T10:00:00.000Z",
+      "playerId": "player-complete-fast",
+      "source": "server",
+      "payload": {
+        "roomId": "lobby",
+        "authMode": "guest",
+        "platform": "colyseus",
+        "onboarding": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T10:01:00.000Z",
+      "playerId": "player-complete-fast",
+      "source": "server",
+      "payload": {
+        "stepId": "step_2",
+        "status": "active"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T10:02:00.000Z",
+      "playerId": "player-complete-fast",
+      "source": "server",
+      "payload": {
+        "stepId": "step_3",
+        "status": "active"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T10:04:00.000Z",
+      "playerId": "player-complete-fast",
+      "source": "server",
+      "payload": {
+        "stepId": "tutorial_completed",
+        "status": "completed"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "session_start",
+      "version": 1,
+      "at": "2026-04-01T11:00:00.000Z",
+      "playerId": "player-complete-slow",
+      "source": "server",
+      "payload": {
+        "roomId": "lobby",
+        "authMode": "guest",
+        "platform": "colyseus",
+        "onboarding": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T11:02:00.000Z",
+      "playerId": "player-complete-slow",
+      "source": "server",
+      "payload": {
+        "stepId": "step_2",
+        "status": "active"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T11:06:00.000Z",
+      "playerId": "player-complete-slow",
+      "source": "server",
+      "payload": {
+        "stepId": "step_3",
+        "status": "active"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T11:10:00.000Z",
+      "playerId": "player-complete-slow",
+      "source": "server",
+      "payload": {
+        "stepId": "tutorial_completed",
+        "status": "completed"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "session_start",
+      "version": 1,
+      "at": "2026-04-01T12:00:00.000Z",
+      "playerId": "player-drop-step2",
+      "source": "server",
+      "payload": {
+        "roomId": "lobby",
+        "authMode": "guest",
+        "platform": "colyseus",
+        "onboarding": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T12:01:00.000Z",
+      "playerId": "player-drop-step2",
+      "source": "server",
+      "payload": {
+        "stepId": "step_2",
+        "status": "active"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "session_start",
+      "version": 1,
+      "at": "2026-04-01T13:00:00.000Z",
+      "playerId": "player-drop-step3",
+      "source": "server",
+      "payload": {
+        "roomId": "lobby",
+        "authMode": "guest",
+        "platform": "colyseus",
+        "onboarding": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T13:02:00.000Z",
+      "playerId": "player-drop-step3",
+      "source": "server",
+      "payload": {
+        "stepId": "step_2",
+        "status": "active"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T13:05:00.000Z",
+      "playerId": "player-drop-step3",
+      "source": "server",
+      "payload": {
+        "stepId": "step_3",
+        "status": "active"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "session_start",
+      "version": 1,
+      "at": "2026-04-01T14:00:00.000Z",
+      "playerId": "player-skipped",
+      "source": "server",
+      "payload": {
+        "roomId": "lobby",
+        "authMode": "guest",
+        "platform": "colyseus",
+        "onboarding": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T14:02:00.000Z",
+      "playerId": "player-skipped",
+      "source": "server",
+      "payload": {
+        "stepId": "tutorial_skipped",
+        "status": "skipped",
+        "reasonCode": "manual_exit",
+        "stageId": "tutorial_step_1_seen"
+      }
+    }
+  ]
+}
