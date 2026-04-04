@@ -677,6 +677,134 @@ test("phase1 candidate dossier marks stale persistence evidence as pending and k
   assert.match(markdown, /persistence freshness=stale/);
 });
 
+test("phase1 candidate dossier blocks Phase 1 sign-off when required WeChat manual evidence is still pending", async () => {
+  const workspace = createTempWorkspace();
+  const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
+  const wechatDir = path.join(workspace, "artifacts", "wechat-release");
+  const revision = "abc1234";
+
+  const snapshotPath = path.join(artifactsDir, "release-readiness-pass.json");
+  const h5SmokePath = path.join(artifactsDir, "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(artifactsDir, "colyseus-reconnect-soak-summary-pass.json");
+  const cocosBundlePath = path.join(artifactsDir, "cocos-rc-evidence-bundle-pass.json");
+  const persistencePath = path.join(artifactsDir, `phase1-release-persistence-regression-${revision}.json`);
+  const runtimeObservabilityGatePath = writeRuntimeGateArtifact(artifactsDir, revision);
+  const wechatCandidateSummaryPath = path.join(wechatDir, "codex.wechat.release-candidate-summary.json");
+
+  writeJson(snapshotPath, {
+    generatedAt: "2026-04-02T08:30:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
+    checks: [{ id: "npm-test", required: true, status: "passed" }]
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: "2026-04-02T08:32:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    execution: { status: "passed", exitCode: 0 },
+    summary: { total: 2, passed: 2, failed: 0 }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-04-02T08:33:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    status: "passed",
+    summary: { failedScenarios: 0, scenarioNames: ["reconnect_soak"] },
+    soakSummary: { reconnectAttempts: 12, invariantChecks: 48 },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: { activeRoomCount: 0, connectionCount: 0, activeBattleCount: 0, heroCount: 0 }
+      }
+    ]
+  });
+  writeJson(cocosBundlePath, {
+    bundle: {
+      generatedAt: "2026-04-02T08:34:00.000Z",
+      candidate: "phase1-rc",
+      commit: revision,
+      shortCommit: revision,
+      overallStatus: "passed",
+      summary: "Cocos RC evidence is complete."
+    },
+    review: { phase1Gate: "passed" },
+    journey: [{ id: "lobby-entry", status: "passed" }],
+    requiredEvidence: [{ id: "roomId", label: "Room id recorded", filled: true }]
+  });
+  writeJson(wechatCandidateSummaryPath, {
+    generatedAt: "2026-04-02T08:40:00.000Z",
+    candidate: { revision, status: "blocked" },
+    evidence: {
+      package: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatDir, "codex.wechat.package.json")
+      },
+      validation: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatDir, "codex.wechat.rc-validation-report.json")
+      },
+      smoke: {
+        status: "skipped",
+        summary: "Smoke report not present.",
+        artifactPath: path.join(wechatDir, "codex.wechat.smoke-report.json")
+      },
+      manualReview: {
+        status: "blocked",
+        requiredPendingChecks: 1,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: [
+          {
+            id: "wechat-devtools-export-review",
+            title: "Real WeChat export imported and launched in Developer Tools",
+            required: true,
+            status: "pending",
+            notes: "Import the packaged candidate into WeChat Developer Tools.",
+            artifactPath: path.join(wechatDir, "devtools-export-review.json")
+          }
+        ]
+      }
+    },
+    blockers: [{ id: "manual:wechat-devtools-export-review", summary: "Manual review pending: Real WeChat export imported and launched in Developer Tools." }]
+  });
+  writeJson(persistencePath, {
+    generatedAt: "2026-04-02T08:41:00.000Z",
+    revision: { commit: revision, shortCommit: revision },
+    requestedStorageMode: "memory",
+    effectiveStorageMode: "memory",
+    storageDescription: "In-memory snapshot store.",
+    summary: { status: "passed", assertionCount: 6 },
+    contentValidation: { valid: true, bundleCount: 5, summary: "All shipped content packs validated.", issueCount: 0 },
+    persistenceRegression: { mapPackId: "phase1", assertions: ["room hydration reapplied resources"] }
+  });
+
+  const dossier = await buildPhase1CandidateDossier({
+    candidate: "phase1-rc",
+    candidateRevision: revision,
+    runtimeObservabilityGatePath,
+    snapshotPath,
+    h5SmokePath,
+    reconnectSoakPath,
+    wechatCandidateSummaryPath,
+    cocosBundlePath,
+    persistencePath,
+    targetSurface: "wechat",
+    maxEvidenceAgeHours: 72
+  });
+
+  const wechatSection = dossier.sections.find((section) => section.id === "wechat-release");
+  assert.equal(wechatSection?.result, "failed");
+  assert.match(wechatSection?.summary ?? "", /blocked by missing, failed, or mismatched candidate-level package\/verify\/smoke\/manual evidence/);
+  assert.match(wechatSection?.details.join("\n") ?? "", /package status=passed/);
+  assert.match(wechatSection?.details.join("\n") ?? "", /verify status=passed/);
+  assert.match(wechatSection?.details.join("\n") ?? "", /smoke status=skipped/);
+  assert.match(wechatSection?.details.join("\n") ?? "", /manual review pending=1/);
+  assert.equal(dossier.phase1ExitEvidenceGate.result, "failed");
+  assert.match(dossier.phase1ExitEvidenceGate.summary, /blocked by WeChat release evidence/);
+  assert.match(renderMarkdown(dossier), /Phase 1 exit evidence gate: `failed`/);
+});
+
 test("phase1 candidate dossier CLI writes a stable candidate bundle directory with supporting summaries", () => {
   const workspace = createTempWorkspace();
   const artifactsDir = path.join(workspace, "artifacts", "release-readiness");

@@ -109,6 +109,7 @@ The dossier surfaces:
 - one `Generated Bundle` block so PR/release巡检 reviewers can stay inside the dossier directory
 - one runtime observability companion dossier that ties `/api/runtime/health`, `/api/runtime/auth-readiness`, `/api/runtime/metrics`, and reconnect soak evidence to the same candidate revision
 - one `phase1ExitEvidenceGate` result with blocking/pending/accepted-risk section lists
+- for WeChat targets, candidate-level package / verify / smoke / manual-review evidence is surfaced explicitly, and missing required manual checks keep the exit gate blocked instead of being treated as build-only success
 - `requiredFailed`
 - `requiredPending`
 - `acceptedRisks`

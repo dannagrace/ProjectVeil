@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 type GateStatus = "passed" | "failed";
 type TargetSurface = "h5" | "wechat";
 type EvidenceFreshness = "fresh" | "stale" | "missing_timestamp" | "invalid_timestamp" | "unknown";
+type ReleaseSurfaceEvidenceStatus = "passed" | "failed" | "pending";
 
 interface Args {
   snapshotPath?: string;
@@ -180,7 +181,7 @@ interface ReleaseSurfaceEvidenceItem {
   id: string;
   label: string;
   required: boolean;
-  status: GateStatus;
+  status: ReleaseSurfaceEvidenceStatus;
   summary: string;
   freshness: EvidenceFreshness;
   observedAt?: string;
@@ -1235,16 +1236,70 @@ function buildReleaseSurfaceContract(
       );
     } else {
       const summary = readJsonFile<WechatReleaseCandidateSummary>(wechatCandidateSummaryPath);
+      const packageStatus = summary.evidence?.package?.status ?? "skipped";
+      const validationStatus = summary.evidence?.validation?.status ?? "skipped";
+      const smokeStatus = summary.evidence?.smoke?.status ?? "skipped";
+      const pendingManualChecks = (summary.evidence?.manualReview?.requiredPendingChecks ?? 0) > 0;
+      const candidateStatus: ReleaseSurfaceEvidenceStatus =
+        summary.candidate?.status === "ready"
+          ? "passed"
+          : pendingManualChecks || smokeStatus === "skipped" || packageStatus === "skipped" || validationStatus === "skipped"
+            ? "pending"
+            : "failed";
+
+      evidence.push(
+        createSurfaceEvidenceItem({
+          id: "wechat-package-evidence",
+          label: "WeChat package evidence",
+          required: true,
+          status: packageStatus === "passed" ? "passed" : packageStatus === "skipped" ? "pending" : "failed",
+          summary: summary.evidence?.package?.summary ?? "WeChat package evidence is missing.",
+          freshness: evaluateFreshness(summary.generatedAt, MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS),
+          observedAt: summary.generatedAt,
+          revision: summary.candidate?.revision ?? undefined,
+          artifactPath: summary.evidence?.package?.artifactPath
+        })
+      );
+      evidence.push(
+        createSurfaceEvidenceItem({
+          id: "wechat-verify-evidence",
+          label: "WeChat verify evidence",
+          required: true,
+          status: validationStatus === "passed" ? "passed" : validationStatus === "skipped" ? "pending" : "failed",
+          summary: summary.evidence?.validation?.summary ?? "WeChat artifact verification evidence is missing.",
+          freshness: evaluateFreshness(summary.generatedAt, MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS),
+          observedAt: summary.generatedAt,
+          revision: summary.candidate?.revision ?? undefined,
+          artifactPath: summary.artifacts?.validationReportPath
+        })
+      );
+      evidence.push(
+        createSurfaceEvidenceItem({
+          id: "wechat-smoke-evidence",
+          label: "WeChat smoke evidence",
+          required: true,
+          status: smokeStatus === "passed" ? "passed" : smokeStatus === "skipped" ? "pending" : "failed",
+          summary: summary.evidence?.smoke?.summary ?? "WeChat smoke evidence is missing.",
+          freshness: summary.evidence?.deviceRuntime
+            ? summary.evidence.deviceRuntime.freshness ?? evaluateFreshness(summary.generatedAt, MAX_TARGET_SURFACE_REVIEW_AGE_MS)
+            : evaluateFreshness(summary.generatedAt, MAX_TARGET_SURFACE_REVIEW_AGE_MS),
+          observedAt: summary.evidence?.deviceRuntime?.execution?.executedAt ?? summary.generatedAt,
+          revision: summary.candidate?.revision ?? undefined,
+          artifactPath: summary.evidence?.smoke?.artifactPath
+        })
+      );
       evidence.push(
         createSurfaceEvidenceItem({
           id: "wechat-candidate-summary",
           label: "WeChat candidate summary",
           required: true,
-          status: summary.candidate?.status === "ready" ? "passed" : "failed",
+          status: candidateStatus,
           summary:
             summary.candidate?.status === "ready"
               ? "WeChat candidate summary is ready for release review."
-              : `WeChat candidate summary is ${JSON.stringify(summary.candidate?.status ?? "missing")}.`,
+              : candidateStatus === "pending"
+                ? "WeChat candidate summary is blocked pending required candidate-level package/verify/smoke/manual evidence."
+                : `WeChat candidate summary is ${JSON.stringify(summary.candidate?.status ?? "missing")}.`,
           freshness: evaluateFreshness(summary.generatedAt, MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS),
           observedAt: summary.generatedAt,
           revision: summary.candidate?.revision ?? undefined,
@@ -1267,11 +1322,18 @@ function buildReleaseSurfaceContract(
             id: `manual:${check.id ?? "unknown"}`,
             label: check.title ?? check.id ?? "WeChat manual review",
             required: true,
-            status: check.status === "passed" && metadataFailures.length === 0 ? "passed" : "failed",
+            status:
+              check.status === "passed" && metadataFailures.length === 0
+                ? "passed"
+                : check.status === "pending"
+                  ? "pending"
+                  : "failed",
             summary:
               check.status === "passed" && metadataFailures.length === 0
                 ? "Manual review is complete and current."
-                : `${JSON.stringify(check.status ?? "missing")} (${metadataFailures.join(", ") || "review unresolved"})`,
+                : check.status === "pending"
+                  ? `${JSON.stringify(check.status)} (${metadataFailures.join(", ") || "review unresolved"})`
+                  : `${JSON.stringify(check.status ?? "missing")} (${metadataFailures.join(", ") || "review unresolved"})`,
             freshness,
             observedAt: check.recordedAt,
             owner: check.owner,
@@ -1286,7 +1348,13 @@ function buildReleaseSurfaceContract(
   }
 
   const failures = evidence.filter(
-    (entry) => entry.required && (entry.status === "failed" || entry.freshness === "stale" || entry.freshness === "missing_timestamp" || entry.freshness === "invalid_timestamp")
+    (entry) =>
+      entry.required &&
+      (entry.status === "failed" ||
+        entry.status === "pending" ||
+        entry.freshness === "stale" ||
+        entry.freshness === "missing_timestamp" ||
+        entry.freshness === "invalid_timestamp")
   );
 
   return {

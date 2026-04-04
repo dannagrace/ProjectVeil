@@ -61,6 +61,8 @@
 
 这条 contract 的核心区别是：桌面 / H5 / Creator 调试面通过，只能证明对应 surface 的验证完成，不能替代 WeChat 目标面的放行证据。
 
+`npm run release:gate:summary -- --target-surface wechat` 的 `Target Surface Contract` 会显式列出 WeChat package、verify、smoke、candidate summary 与 manual review 的 `passed` / `failed` / `pending` 状态；只要 required manual review 仍是 `pending`，Phase 1 sign-off 就保持 blocked。
+
 WeChat checklist / blockers 至少要覆盖以下证据面：
 
 - package / verify / RC validation 产物
