@@ -397,6 +397,75 @@ export function renderAchievementProgress(account: PlayerAccountProfile): string
   </div>`;
 }
 
+export function renderDailyQuestBoard(
+  account: PlayerAccountProfile,
+  options: {
+    claimingQuestId?: string | null;
+  } = {}
+): string {
+  const board = account.dailyQuestBoard;
+  if (!board?.enabled) {
+    return "";
+  }
+
+  const pendingRewardSummary = [
+    board.pendingRewards.gems > 0 ? `宝石 +${board.pendingRewards.gems}` : "",
+    board.pendingRewards.gold > 0 ? `金币 +${board.pendingRewards.gold}` : ""
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const resetLabel = board.resetAt ? `重置 ${formatTimestamp(board.resetAt)}` : "每日重置";
+
+  return `<div class="account-subsection account-daily-quests">
+    <div class="account-daily-quests-head">
+      <div>
+        <strong>每日任务</strong>
+        <p class="account-meta">${escapeHtml(
+          board.availableClaims > 0
+            ? `可领取 ${board.availableClaims} 项 · ${pendingRewardSummary || "奖励待领取"}`
+            : `${resetLabel} · 今日目标进行中`
+        )}</p>
+      </div>
+      <span class="account-badge">${escapeHtml(resetLabel)}</span>
+    </div>
+    <div class="account-daily-quest-list">
+      ${board.quests
+        .map((quest) => {
+          const isClaiming = options.claimingQuestId === quest.id;
+          const progressPercent = Math.max(0, Math.min(100, Math.floor((quest.current / quest.target) * 100)));
+          const rewardSummary = [
+            quest.reward.gems > 0 ? `宝石 +${quest.reward.gems}` : "",
+            quest.reward.gold > 0 ? `金币 +${quest.reward.gold}` : ""
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return `<div class="account-daily-quest ${quest.claimed ? "is-claimed" : quest.completed ? "is-complete" : ""}">
+            <div class="account-daily-quest-head">
+              <strong>${escapeHtml(quest.title)}</strong>
+              <span class="account-achievement-status">${escapeHtml(
+                quest.claimed ? "已领取" : quest.completed ? "可领取" : `${quest.current}/${quest.target}`
+              )}</span>
+            </div>
+            <p>${escapeHtml(quest.description)}</p>
+            <div class="account-achievement-meta">
+              <span>${escapeHtml(rewardSummary)}</span>
+              <span>${progressPercent}%</span>
+            </div>
+            <div class="account-achievement-bar"><span style="width:${progressPercent}%"></span></div>
+            ${
+              quest.completed
+                ? `<button class="account-save account-daily-quest-claim" data-claim-daily-quest="${escapeHtml(quest.id)}" ${
+                    quest.claimed || isClaiming ? "disabled" : ""
+                  }>${quest.claimed ? "已领取" : isClaiming ? "领取中..." : "领取奖励"}</button>`
+                : `<div class="account-daily-quest-foot">${escapeHtml(`还差 ${Math.max(0, quest.target - quest.current)} 步`)}</div>`
+            }
+          </div>`;
+        })
+        .join("")}
+    </div>
+  </div>`;
+}
+
 export function renderRecentAccountEvents(account: PlayerAccountProfile): string {
   if (account.recentEventLog.length === 0) {
     return '<div class="account-subsection"><strong>世界事件日志</strong><p class="account-meta">尚未记录关键事件。</p></div>';

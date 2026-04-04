@@ -492,6 +492,50 @@ h1 {
   gap: 8px;
 }
 
+.account-daily-quests {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(78, 58, 42, 0.08);
+  background: rgba(255, 248, 240, 0.72);
+}
+
+.account-daily-quests-head,
+.account-daily-quest-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.account-daily-quest-list {
+  display: grid;
+  gap: 10px;
+}
+
+.account-daily-quest {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(78, 58, 42, 0.1);
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.account-daily-quest.is-complete {
+  border-color: rgba(47, 110, 91, 0.18);
+}
+
+.account-daily-quest.is-claimed {
+  opacity: 0.72;
+}
+
+.account-daily-quest-claim {
+  margin-top: 8px;
+}
+
+.account-daily-quest-foot {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .account-replay-center {
   padding: 12px;
   border-radius: 14px;

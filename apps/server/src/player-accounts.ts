@@ -14,6 +14,12 @@ import {
   type PlayerBattleReplaySummary
 } from "../../../packages/shared/src/index";
 import {
+  createDailyQuestClaimEventLogEntry,
+  findDailyQuestDefinition,
+  loadDailyQuestBoard,
+  readDailyQuestFeatureEnabled
+} from "./daily-quests";
+import {
   cachePlayerAccountAuthState,
   hashAccountPassword,
   issueNextAuthSession,
@@ -279,6 +285,20 @@ function withBattleReportCenter(account: PlayerAccountSnapshot): PlayerAccountSn
   return {
     ...account,
     battleReportCenter: buildPlayerBattleReportCenter(account.recentBattleReplays, account.recentEventLog)
+  };
+}
+
+async function withDailyQuestBoard(
+  account: PlayerAccountSnapshot,
+  store: RoomSnapshotStore | null
+): Promise<PlayerAccountSnapshot> {
+  if (!store) {
+    return account;
+  }
+
+  return {
+    ...account,
+    dailyQuestBoard: await loadDailyQuestBoard(store, account)
   };
 }
 
@@ -647,7 +667,7 @@ export function registerPlayerAccountRoutes(
           displayName: authSession.displayName
         }));
       sendJson(response, 200, {
-        account: withBattleReportCenter(account),
+        account: await withDailyQuestBoard(withBattleReportCenter(account), store),
         session: issueNextAuthSession(account, authSession)
       });
     } catch (error) {
@@ -705,6 +725,137 @@ export function registerPlayerAccountRoutes(
         claimed: true,
         streak,
         reward
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player-accounts/me/daily-quests/:questId/claim", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, {
+        claimed: false,
+        reason: "persistence_unavailable"
+      });
+      return;
+    }
+
+    if (!readDailyQuestFeatureEnabled()) {
+      sendJson(response, 200, {
+        claimed: false,
+        reason: "daily_quests_disabled"
+      });
+      return;
+    }
+
+    const definition = findDailyQuestDefinition(request.params.questId);
+    if (!definition) {
+      sendJson(response, 404, {
+        error: {
+          code: "daily_quest_not_found",
+          message: "Daily quest was not found"
+        }
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const board = await loadDailyQuestBoard(store, account);
+      const quest = board.quests.find((item) => item.id === definition.id);
+
+      if (!quest) {
+        sendJson(response, 404, {
+          error: {
+            code: "daily_quest_not_found",
+            message: "Daily quest was not found"
+          }
+        });
+        return;
+      }
+
+      if (!quest.completed) {
+        sendJson(response, 200, {
+          claimed: false,
+          reason: "quest_incomplete",
+          dailyQuestBoard: board
+        });
+        return;
+      }
+
+      if (quest.claimed) {
+        sendJson(response, 200, {
+          claimed: false,
+          reason: "already_claimed",
+          dailyQuestBoard: board
+        });
+        return;
+      }
+
+      const timestamp = new Date().toISOString();
+      const claimEntry = createDailyQuestClaimEventLogEntry(
+        account.playerId,
+        account.lastRoomId ?? "daily-quests",
+        definition,
+        timestamp
+      );
+      const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
+        gems: (account.gems ?? 0) + definition.reward.gems,
+        globalResources: {
+          ...account.globalResources,
+          gold: (account.globalResources.gold ?? 0) + definition.reward.gold
+        },
+        recentEventLog: appendEventLogEntries(account.recentEventLog, [claimEntry])
+      });
+
+      sendJson(response, 200, {
+        claimed: true,
+        questId: definition.id,
+        reward: definition.reward,
+        dailyQuestBoard: await loadDailyQuestBoard(store, nextAccount)
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/me/daily-quests", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, {
+        dailyQuestBoard: {
+          enabled: false,
+          availableClaims: 0,
+          pendingRewards: { gems: 0, gold: 0 },
+          quests: []
+        }
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      sendJson(response, 200, {
+        dailyQuestBoard: await loadDailyQuestBoard(store, account)
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -1219,7 +1370,10 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
-      sendJson(response, 200, toProgressionResponse(account, parseLimit(request)));
+      sendJson(response, 200, {
+        ...toProgressionResponse(account, parseLimit(request)),
+        dailyQuestBoard: await loadDailyQuestBoard(store, account)
+      });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

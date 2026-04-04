@@ -9,6 +9,7 @@ import {
   type EventLogEntry,
   type PlayerAchievementProgress
 } from "./event-log.ts";
+import { normalizeDailyQuestBoard, type DailyQuestBoard } from "./daily-quests.ts";
 import { normalizePlayerBattleReplaySummaries, type PlayerBattleReplaySummary } from "./battle-replay.ts";
 import { normalizeEloRating } from "./matchmaking.ts";
 import type { ResourceLedger } from "./models.ts";
@@ -28,6 +29,7 @@ export interface PlayerAccountReadModel {
   recentEventLog: EventLogEntry[];
   recentBattleReplays?: PlayerBattleReplaySummary[];
   battleReportCenter?: PlayerBattleReportCenter;
+  dailyQuestBoard?: DailyQuestBoard;
   loginId?: string;
   credentialBoundAt?: string;
   privacyConsentAt?: string;
@@ -57,6 +59,7 @@ export interface PlayerAccountReadModelInput {
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null | undefined;
   battleReportCenter?: Partial<PlayerBattleReportCenter> | null | undefined;
+  dailyQuestBoard?: Partial<DailyQuestBoard> | null | undefined;
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
   privacyConsentAt?: string | undefined;
@@ -105,6 +108,7 @@ export function normalizePlayerAccountReadModel(
   const lastSeenAt = account?.lastSeenAt?.trim();
   const recentEventLog = normalizeEventLogEntries(account?.recentEventLog);
   const recentBattleReplays = normalizePlayerBattleReplaySummaries(account?.recentBattleReplays);
+  const dailyQuestBoard = normalizeDailyQuestBoard(account?.dailyQuestBoard);
 
   return {
     playerId,
@@ -126,6 +130,7 @@ export function normalizePlayerAccountReadModel(
       replays: recentBattleReplays,
       eventLog: recentEventLog
     }),
+    ...(dailyQuestBoard ? { dailyQuestBoard } : {}),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
     ...(privacyConsentAt ? { privacyConsentAt } : {}),
