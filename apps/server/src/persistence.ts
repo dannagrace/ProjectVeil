@@ -3020,6 +3020,7 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     seasonalEventStates:
       row.seasonal_event_states_json != null
         ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["seasonalEventStates"]>>(row.seasonal_event_states_json)
+        : undefined,
     cosmeticInventory:
       row.cosmetic_inventory_json != null
         ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["cosmeticInventory"]>>(row.cosmetic_inventory_json)

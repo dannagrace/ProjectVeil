@@ -8,6 +8,7 @@ import { registerShopRoutes, type ShopProduct } from "../src/shop";
 import {
   createDefaultHeroLoadout,
   createDefaultHeroProgression,
+  resolveWeeklyShopRotation,
   type PlayerAccountSnapshot
 } from "../../../packages/shared/src/index";
 
@@ -137,6 +138,19 @@ test("shop products route returns only enabled items", async (t) => {
   assert.match(payload.rotation.seed, /^\d{4}-W\d{2}$/);
 });
 
+test("weekly shop rotation is deterministic within an ISO week and advances on the next ISO week", () => {
+  const currentWeek = resolveWeeklyShopRotation(new Date("2026-01-06T12:00:00.000Z"));
+  const sameWeek = resolveWeeklyShopRotation(new Date("2026-01-08T12:00:00.000Z"));
+  const nextWeek = resolveWeeklyShopRotation(new Date("2026-01-13T12:00:00.000Z"));
+
+  assert.equal(currentWeek.seed, "2026-W02");
+  assert.equal(sameWeek.seed, currentWeek.seed);
+  assert.deepEqual(sameWeek.featuredSlots, currentWeek.featuredSlots);
+  assert.deepEqual(sameWeek.discountSlots, currentWeek.discountSlots);
+  assert.equal(nextWeek.seed, "2026-W03");
+  assert.notEqual(nextWeek.seed, currentWeek.seed);
+});
+
 test("shop purchase debits gems and grants resource bundles", async (t) => {
   const port = 42420 + Math.floor(Math.random() * 1000);
   const store = new MemoryRoomSnapshotStore();
@@ -187,6 +201,7 @@ test("shop purchase grants cosmetics and equip route applies an owned cosmetic",
   const port = 42480 + Math.floor(Math.random() * 1000);
   const store = new MemoryRoomSnapshotStore();
   await store.save("shop-room", createShopWorldSnapshot());
+  const baselineSnapshot = await store.load("shop-room");
   await store.creditGems("shop-player", 30, "purchase", "seed-gems");
   const server = await startShopRouteServer(port, store, TEST_PRODUCTS);
   const session = issueAccountAuthSession({
@@ -235,6 +250,7 @@ test("shop purchase grants cosmetics and equip route applies an owned cosmetic",
   };
 
   const account = await store.loadPlayerAccount("shop-player");
+  const roomSnapshot = await store.load("shop-room");
 
   assert.equal(purchaseResponse.status, 200);
   assert.deepEqual(purchasePayload.granted.cosmeticIds, ["border-shadowcourt"]);
@@ -244,6 +260,8 @@ test("shop purchase grants cosmetics and equip route applies an owned cosmetic",
   assert.equal(equipResponse.status, 200);
   assert.equal(equipPayload.equippedCosmetics.profileBorderId, "border-shadowcourt");
   assert.equal(account?.equippedCosmetics?.profileBorderId, "border-shadowcourt");
+  assert.deepEqual(roomSnapshot?.state.heroes[0]?.stats, baselineSnapshot?.state.heroes[0]?.stats);
+  assert.deepEqual(roomSnapshot?.state.heroes[0]?.loadout, baselineSnapshot?.state.heroes[0]?.loadout);
 });
 
 test("shop purchase grants equipment and replays the original result for the same purchaseId", async (t) => {
