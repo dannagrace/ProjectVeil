@@ -4,13 +4,17 @@ import {
   applyBattleReplayPlaybackCommand,
   buildPlayerBattleReportCenter,
   buildPlayerProgressionSnapshot,
+  canSkipTutorial,
+  DEFAULT_TUTORIAL_STEP,
   findPlayerBattleReplaySummary,
   getAchievementDefinitions,
+  isTutorialComplete,
   normalizeAchievementProgressQuery,
   normalizeEventLogQuery,
   queryPlayerBattleReplaySummaries,
   queryAchievementProgress,
   queryEventLogEntries,
+  type TutorialProgressAction,
   type PlayerBattleReplaySummary
 } from "../../../packages/shared/src/index";
 import {
@@ -310,7 +314,34 @@ async function withDailyQuestBoard(
 
   return {
     ...account,
-    dailyQuestBoard: await loadDailyQuestBoard(store, account, new Date(), enabled)
+    dailyQuestBoard: await loadDailyQuestBoard(
+      store,
+      account,
+      new Date(),
+      enabled && isTutorialComplete(account.tutorialStep)
+    )
+  };
+}
+
+function normalizeTutorialProgressAction(input: unknown, currentStep?: number | null): TutorialProgressAction {
+  const raw = input as Partial<TutorialProgressAction> | null | undefined;
+  const reason =
+    raw?.reason === "skip" || raw?.reason === "complete" || raw?.reason === "advance" ? raw.reason : "advance";
+  const step = raw?.step == null ? null : Math.floor(raw.step);
+
+  if (step !== null && (!Number.isFinite(step) || step <= 0)) {
+    throw new Error("tutorial_progress_invalid_step");
+  }
+  if (reason === "skip" && !canSkipTutorial(currentStep)) {
+    throw new Error("tutorial_skip_locked");
+  }
+  if (reason === "advance" && step === null) {
+    throw new Error("tutorial_progress_invalid_step");
+  }
+
+  return {
+    step,
+    reason
   };
 }
 
@@ -498,6 +529,7 @@ function createLocalModeAccount(input: {
     achievements: [],
     recentEventLog: [],
     recentBattleReplays: [],
+    tutorialStep: null,
     ...(avatarUrl ? { avatarUrl } : {}),
     ...(lastRoomId ? { lastRoomId } : {}),
     ...(loginId ? { loginId } : {}),
@@ -912,7 +944,20 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
-      const board = await loadDailyQuestBoard(store, account, new Date(), featureFlags.quest_system_enabled);
+      const board = await loadDailyQuestBoard(
+        store,
+        account,
+        new Date(),
+        featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep)
+      );
+      if (!board.enabled) {
+        sendJson(response, 409, {
+          claimed: false,
+          reason: "tutorial_incomplete",
+          dailyQuestBoard: board
+        });
+        return;
+      }
       const quest = board.quests.find((item) => item.id === definition.id);
 
       if (!quest) {
@@ -972,7 +1017,12 @@ export function registerPlayerAccountRoutes(
         claimed: true,
         questId: definition.id,
         reward: definition.reward,
-        dailyQuestBoard: await loadDailyQuestBoard(store, nextAccount, new Date(), featureFlags.quest_system_enabled)
+        dailyQuestBoard: await loadDailyQuestBoard(
+          store,
+          nextAccount,
+          new Date(),
+          featureFlags.quest_system_enabled && isTutorialComplete(nextAccount.tutorialStep)
+        )
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -1006,9 +1056,90 @@ export function registerPlayerAccountRoutes(
           displayName: authSession.displayName
         }));
       sendJson(response, 200, {
-        dailyQuestBoard: await loadDailyQuestBoard(store, account, new Date(), featureFlags.quest_system_enabled)
+        dailyQuestBoard: await loadDailyQuestBoard(
+          store,
+          account,
+          new Date(),
+          featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep)
+        )
       });
     } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player-accounts/me/tutorial-progress", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, {
+        account: withBattleReportCenter(
+          createLocalModeAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            ...(authSession.loginId ? { loginId: authSession.loginId } : {})
+          })
+        )
+      });
+      return;
+    }
+
+    try {
+      const featureFlags = resolveFeatureFlagsForPlayer(authSession.playerId);
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const action = normalizeTutorialProgressAction(
+        await readJsonBody(request),
+        account.tutorialStep ?? DEFAULT_TUTORIAL_STEP
+      );
+      const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
+        tutorialStep: action.step
+      });
+
+      emitAnalyticsEvent("tutorial_step", {
+        playerId: account.playerId,
+        roomId: account.lastRoomId ?? "lobby",
+        payload: {
+          stepId:
+            action.step == null
+              ? action.reason === "skip"
+                ? "tutorial_skipped"
+                : "tutorial_completed"
+              : `step_${action.step}`,
+          status: action.reason === "skip" ? "skipped" : action.step == null ? "completed" : "active"
+        }
+      });
+
+      sendJson(response, 200, {
+        action,
+        account: await withDailyQuestBoard(withBattleReportCenter(nextAccount), store, featureFlags.quest_system_enabled)
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "tutorial_skip_locked") {
+        sendJson(response, 409, {
+          error: {
+            code: "tutorial_skip_locked",
+            message: "Tutorial skip unlocks after the initial onboarding step"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "tutorial_progress_invalid_step") {
+        sendJson(response, 400, {
+          error: {
+            code: "tutorial_progress_invalid_step",
+            message: "Tutorial progress payload is invalid"
+          }
+        });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
@@ -1791,7 +1922,12 @@ export function registerPlayerAccountRoutes(
         }));
       sendJson(response, 200, {
         ...toProgressionResponse(account, parseLimit(request)),
-        dailyQuestBoard: await loadDailyQuestBoard(store, account, new Date(), featureFlags.quest_system_enabled),
+        dailyQuestBoard: await loadDailyQuestBoard(
+          store,
+          account,
+          new Date(),
+          featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep)
+        ),
         campaign: toCampaignResponse(account),
         dailyDungeon: toDailyDungeonResponse(account)
       });

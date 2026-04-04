@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import {
   appendEventLogEntries,
+  DEFAULT_TUTORIAL_STEP,
   getEquipmentDefinition,
   getTierForRating,
   appendPlayerBattleReplaySummaries,
@@ -201,6 +202,7 @@ interface PlayerAccountRow extends RowDataPacket {
   recent_event_log_json: string | EventLogEntry[] | null;
   recent_battle_replays_json: string | PlayerBattleReplaySummary[] | null;
   daily_dungeon_state_json: string | PlayerAccountSnapshot["dailyDungeonState"] | null;
+  tutorial_step: number | null;
   last_room_id: string | null;
   last_seen_at: Date | string | null;
   login_id: string | null;
@@ -532,6 +534,7 @@ export interface PlayerAccountProgressPatch {
   recentEventLog?: Partial<EventLogEntry>[] | null;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null;
   dailyDungeonState?: PlayerAccountSnapshot["dailyDungeonState"] | null;
+  tutorialStep?: number | null;
   dailyPlayMinutes?: number | null;
   lastPlayDate?: string | null;
   loginStreak?: number | null;
@@ -1166,6 +1169,7 @@ function normalizePlayerAccountSnapshot(account: {
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null | undefined;
   dailyDungeonState?: PlayerAccountSnapshot["dailyDungeonState"] | null | undefined;
+  tutorialStep?: number | null | undefined;
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
   loginId?: string | null | undefined;
@@ -1214,6 +1218,7 @@ function normalizePlayerAccountSnapshot(account: {
       recentEventLog: account.recentEventLog,
       recentBattleReplays: appendPlayerBattleReplaySummaries([], account.recentBattleReplays),
       dailyDungeonState: account.dailyDungeonState,
+      tutorialStep: account.tutorialStep,
       lastRoomId: account.lastRoomId,
       lastSeenAt: account.lastSeenAt,
       loginId: account.loginId ? normalizePlayerLoginId(account.loginId) : undefined,
@@ -1514,6 +1519,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   recent_event_log_json LONGTEXT NULL,
   recent_battle_replays_json LONGTEXT NULL,
   daily_dungeon_state_json LONGTEXT NULL,
+  tutorial_step INT NULL DEFAULT NULL,
   last_room_id VARCHAR(191) NULL,
   last_seen_at DATETIME NULL DEFAULT NULL,
   login_id VARCHAR(40) NULL,
@@ -1881,6 +1887,24 @@ SET @veil_player_accounts_daily_dungeon_sql := IF(
 PREPARE veil_player_accounts_daily_dungeon_stmt FROM @veil_player_accounts_daily_dungeon_sql;
 EXECUTE veil_player_accounts_daily_dungeon_stmt;
 DEALLOCATE PREPARE veil_player_accounts_daily_dungeon_stmt;
+
+SET @veil_player_accounts_tutorial_step_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'tutorial_step'
+);
+
+SET @veil_player_accounts_tutorial_step_sql := IF(
+  @veil_player_accounts_tutorial_step_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`tutorial_step\` INT NULL DEFAULT NULL AFTER \`daily_dungeon_state_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_tutorial_step_stmt FROM @veil_player_accounts_tutorial_step_sql;
+EXECUTE veil_player_accounts_tutorial_step_stmt;
+DEALLOCATE PREPARE veil_player_accounts_tutorial_step_stmt;
 
 SET @veil_player_accounts_last_room_exists := (
   SELECT COUNT(*)
@@ -2709,6 +2733,7 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
       row.daily_dungeon_state_json != null
         ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["dailyDungeonState"]>>(row.daily_dungeon_state_json)
         : undefined,
+    ...(row.tutorial_step != null ? { tutorialStep: row.tutorial_step } : {}),
     ...(row.display_name ? { displayName: row.display_name } : {}),
     ...(row.last_room_id ? { lastRoomId: row.last_room_id } : {}),
     ...(row.login_id ? { loginId: row.login_id } : {}),
@@ -2990,9 +3015,10 @@ async function savePlayerAccounts(
          ,
          recent_battle_replays_json,
          daily_dungeon_state_json,
+         tutorial_step,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
@@ -3008,6 +3034,7 @@ async function savePlayerAccounts(
          recent_event_log_json = COALESCE(recent_event_log_json, VALUES(recent_event_log_json)),
          recent_battle_replays_json = COALESCE(recent_battle_replays_json, VALUES(recent_battle_replays_json)),
          daily_dungeon_state_json = COALESCE(daily_dungeon_state_json, VALUES(daily_dungeon_state_json)),
+         tutorial_step = COALESCE(tutorial_step, VALUES(tutorial_step)),
          login_streak = VALUES(login_streak),
          version = version + 1`,
       [
@@ -3026,6 +3053,7 @@ async function savePlayerAccounts(
         JSON.stringify(normalizedAccount.recentEventLog),
         JSON.stringify(normalizedAccount.recentBattleReplays),
         JSON.stringify(normalizedAccount.dailyDungeonState ?? null),
+        normalizedAccount.tutorialStep,
         normalizeLoginStreak(normalizedAccount.loginStreak)
       ]
     );
@@ -3266,6 +3294,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json,
          recent_battle_replays_json,
          daily_dungeon_state_json,
+         tutorial_step,
          last_room_id,
          last_seen_at,
          login_id,
@@ -3322,6 +3351,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json,
          recent_battle_replays_json,
          daily_dungeon_state_json,
+         tutorial_step,
          last_room_id,
          last_seen_at,
          login_id,
@@ -3462,6 +3492,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json,
          recent_battle_replays_json,
          daily_dungeon_state_json,
+         tutorial_step,
          last_room_id,
          last_seen_at,
          login_id,
@@ -3612,10 +3643,11 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json,
          recent_battle_replays_json,
          daily_dungeon_state_json,
+         tutorial_step,
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(?, display_name),
          last_room_id = COALESCE(?, last_room_id),
@@ -3637,6 +3669,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(normalizeEventLogEntries()),
         JSON.stringify(appendPlayerBattleReplaySummaries([], [])),
         JSON.stringify(null),
+        DEFAULT_TUTORIAL_STEP,
         lastRoomId,
         lastSeenAt,
         explicitDisplayName,
@@ -3657,6 +3690,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         achievements: normalizeAchievementProgress(),
         recentEventLog: normalizeEventLogEntries(),
         recentBattleReplays: appendPlayerBattleReplaySummaries([], []),
+        tutorialStep: DEFAULT_TUTORIAL_STEP,
         ...(lastRoomId ? { lastRoomId } : {}),
         lastSeenAt: lastSeenAt.toISOString()
       })
@@ -4964,12 +4998,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json,
          recent_battle_replays_json,
          daily_dungeon_state_json,
+         tutorial_step,
          last_room_id,
          last_seen_at,
          phone_number,
          phone_number_bound_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
@@ -4985,6 +5020,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json = VALUES(recent_event_log_json),
          recent_battle_replays_json = VALUES(recent_battle_replays_json),
          daily_dungeon_state_json = COALESCE(daily_dungeon_state_json, VALUES(daily_dungeon_state_json)),
+         tutorial_step = COALESCE(tutorial_step, VALUES(tutorial_step)),
          last_room_id = VALUES(last_room_id),
          phone_number = VALUES(phone_number),
          phone_number_bound_at = VALUES(phone_number_bound_at),
@@ -5007,6 +5043,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(nextAccount.recentEventLog),
         JSON.stringify(nextAccount.recentBattleReplays),
         JSON.stringify(nextAccount.dailyDungeonState ?? null),
+        nextAccount.tutorialStep,
         nextAccount.lastRoomId ?? null,
         existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
         nextAccount.phoneNumber ?? null,
@@ -5050,6 +5087,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       recentEventLog: patch.recentEventLog ?? existing.recentEventLog,
       recentBattleReplays: patch.recentBattleReplays ?? existing.recentBattleReplays,
       dailyDungeonState: patch.dailyDungeonState ?? existing.dailyDungeonState,
+      tutorialStep: patch.tutorialStep !== undefined ? patch.tutorialStep : existing.tutorialStep,
       dailyPlayMinutes:
         patch.dailyPlayMinutes !== undefined ? normalizeDailyPlayMinutes(patch.dailyPlayMinutes) : existing.dailyPlayMinutes,
       lastPlayDate:
@@ -5084,6 +5122,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json,
          recent_battle_replays_json,
          daily_dungeon_state_json,
+         tutorial_step,
          last_room_id,
          last_seen_at,
          age_verified,
@@ -5092,7 +5131,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_play_date,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
@@ -5109,6 +5148,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json = VALUES(recent_event_log_json),
          recent_battle_replays_json = VALUES(recent_battle_replays_json),
          daily_dungeon_state_json = VALUES(daily_dungeon_state_json),
+         tutorial_step = VALUES(tutorial_step),
          last_room_id = VALUES(last_room_id),
          last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
          age_verified = VALUES(age_verified),
@@ -5134,6 +5174,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(nextAccount.recentEventLog),
         JSON.stringify(nextAccount.recentBattleReplays),
         JSON.stringify(nextAccount.dailyDungeonState ?? null),
+        nextAccount.tutorialStep,
         nextAccount.lastRoomId ?? null,
         existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
         nextAccount.ageVerified === true ? 1 : 0,
@@ -5184,6 +5225,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json,
          recent_battle_replays_json,
          daily_dungeon_state_json,
+         tutorial_step,
          last_room_id,
          last_seen_at,
          login_id,

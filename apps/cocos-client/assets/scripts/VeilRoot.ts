@@ -49,6 +49,7 @@ import {
   resolveCocosConfigCenterUrl,
   saveCocosLobbyPreferences,
   syncCurrentCocosAuthSession,
+  updateCocosTutorialProgress,
   type CocosLobbyRoomSummary,
   type CocosPlayerAccountProfile
 } from "./cocos-lobby.ts";
@@ -133,6 +134,7 @@ import { buildCocosShopPanelView, type ShopProduct } from "./cocos-shop-panel.ts
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { VeilProgressionPanel } from "./VeilProgressionPanel.ts";
 import { VeilEquipmentPanel } from "./VeilEquipmentPanel.ts";
+import { VeilTutorialOverlay, type TutorialOverlayView } from "./VeilTutorialOverlay.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
 import { type CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
 import { buildLobbySkillPanelView, toLobbySkillPanelHeroState } from "./cocos-lobby-skill-panel.ts";
@@ -163,6 +165,8 @@ import {
 } from "./cocos-primary-client-telemetry.ts";
 import {
   describeAccountAuthFailure,
+  normalizeTutorialStep,
+  type TutorialProgressAction,
   type PrimaryClientTelemetryEvent,
   type RuntimeDiagnosticsConnectionStatus,
   validateAccountLifecycleConfirm,
@@ -183,6 +187,7 @@ const MAP_NODE_NAME = "ProjectVeilMap";
 const BATTLE_NODE_NAME = "ProjectVeilBattlePanel";
 const TIMELINE_NODE_NAME = "ProjectVeilTimelinePanel";
 const LOBBY_NODE_NAME = "ProjectVeilLobbyPanel";
+const TUTORIAL_OVERLAY_NODE_NAME = "ProjectVeilTutorialOverlay";
 const ACCOUNT_REVIEW_PANEL_NODE_NAME = "ProjectVeilAccountReviewPanel";
 const EQUIPMENT_PANEL_NODE_NAME = "ProjectVeilEquipmentPanel";
 const SETTINGS_PANEL_NODE_NAME = "ProjectVeilSettingsPanel";
@@ -211,6 +216,7 @@ interface VeilRootRuntime {
   loadLobbyRooms: typeof loadCocosLobbyRooms;
   syncAuthSession: typeof syncCurrentCocosAuthSession;
   loadAccountProfile: typeof loadCocosPlayerAccountProfile;
+  updateTutorialProgress: typeof updateCocosTutorialProgress;
   loadProgressionSnapshot: typeof loadCocosPlayerProgressionSnapshot;
   loadAchievementProgress: typeof loadCocosPlayerAchievementProgress;
   loadEventHistory: typeof loadCocosPlayerEventHistory;
@@ -234,6 +240,7 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   loadLobbyRooms: (...args) => loadCocosLobbyRooms(...args),
   syncAuthSession: (...args) => syncCurrentCocosAuthSession(...args),
   loadAccountProfile: (...args) => loadCocosPlayerAccountProfile(...args),
+  updateTutorialProgress: (...args) => updateCocosTutorialProgress(...args),
   loadProgressionSnapshot: (...args) => loadCocosPlayerProgressionSnapshot(...args),
   loadAchievementProgress: (...args) => loadCocosPlayerAchievementProgress(...args),
   loadEventHistory: (...args) => loadCocosPlayerEventHistory(...args),
@@ -343,6 +350,8 @@ export class VeilRoot extends Component {
   private lobbyLeaderboardStatus: "idle" | "loading" | "ready" | "error" = "idle";
   private lobbyLeaderboardError: string | null = null;
   private lobbyAccountProfile: CocosPlayerAccountProfile = createFallbackCocosPlayerAccountProfile("player-1", "test-room");
+  private tutorialOverlay: VeilTutorialOverlay | null = null;
+  private tutorialProgressInFlight = false;
   private lobbyShopProducts: ShopProduct[] = [];
   private lobbyShopLoading = false;
   private lobbyShopStatus = "可用商品会在这里显示。";
@@ -964,6 +973,25 @@ export class VeilRoot extends Component {
       }
     });
 
+    let tutorialOverlayNode = this.node.getChildByName(TUTORIAL_OVERLAY_NODE_NAME);
+    if (!tutorialOverlayNode) {
+      tutorialOverlayNode = new Node(TUTORIAL_OVERLAY_NODE_NAME);
+      tutorialOverlayNode.parent = this.node;
+    }
+    assignUiLayer(tutorialOverlayNode);
+    const tutorialOverlayTransform = tutorialOverlayNode.getComponent(UITransform) ?? tutorialOverlayNode.addComponent(UITransform);
+    tutorialOverlayTransform.setContentSize(visibleSize.width, visibleSize.height);
+    this.tutorialOverlay =
+      tutorialOverlayNode.getComponent(VeilTutorialOverlay) ?? tutorialOverlayNode.addComponent(VeilTutorialOverlay);
+    this.tutorialOverlay.configure({
+      onPrimaryAction: () => {
+        void this.advanceTutorialFlow();
+      },
+      onSecondaryAction: () => {
+        void this.skipTutorialFlow();
+      }
+    });
+
     let mapRoot = this.node.getChildByName(MAP_NODE_NAME);
     if (!mapRoot) {
       mapRoot = new Node(MAP_NODE_NAME);
@@ -1173,6 +1201,7 @@ export class VeilRoot extends Component {
     const mapNode = this.node.getChildByName(MAP_NODE_NAME);
     const battleNode = this.node.getChildByName(BATTLE_NODE_NAME);
     const timelineNode = this.node.getChildByName(TIMELINE_NODE_NAME);
+    const tutorialOverlayNode = this.node.getChildByName(TUTORIAL_OVERLAY_NODE_NAME);
     const accountReviewPanelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
     const equipmentPanelNode = this.node.getChildByName(EQUIPMENT_PANEL_NODE_NAME);
     const settingsPanelNode = this.node.getChildByName(SETTINGS_PANEL_NODE_NAME);
@@ -1205,6 +1234,9 @@ export class VeilRoot extends Component {
     }
     if (settingsButtonNode) {
       settingsButtonNode.active = true;
+    }
+    if (tutorialOverlayNode) {
+      tutorialOverlayNode.active = false;
     }
 
     if (this.showLobby) {
@@ -1256,6 +1288,13 @@ export class VeilRoot extends Component {
         shopStatus: this.lobbyShopStatus,
         shopLoading: this.lobbyShopLoading
       });
+      const tutorialOverlayView = this.buildTutorialOverlayView();
+      if (tutorialOverlayView) {
+        tutorialOverlayNode && (tutorialOverlayNode.active = true);
+        this.tutorialOverlay?.render(tutorialOverlayView);
+      } else {
+        this.tutorialOverlay?.render(null);
+      }
       this.renderSettingsOverlay();
       return;
     }
@@ -1316,6 +1355,13 @@ export class VeilRoot extends Component {
       interaction: this.buildHudInteractionState(),
       presentation: this.buildHudPresentationState()
     });
+    const tutorialOverlayView = this.buildTutorialOverlayView();
+    if (tutorialOverlayView) {
+      tutorialOverlayNode && (tutorialOverlayNode.active = true);
+      this.tutorialOverlay?.render(tutorialOverlayView);
+    } else {
+      this.tutorialOverlay?.render(null);
+    }
     this.renderSettingsOverlay();
     this.mapBoard?.render(this.lastUpdate);
     this.battlePanel?.render({
@@ -4192,6 +4238,138 @@ export class VeilRoot extends Component {
         ...(wxRuntime ? { wx: wxRuntime } : {})
       }
     );
+  }
+
+  private buildTutorialOverlayView(): TutorialOverlayView | null {
+    const tutorialStep = normalizeTutorialStep(this.lobbyAccountProfile.tutorialStep);
+    if (tutorialStep === null || this.sessionSource !== "remote") {
+      return null;
+    }
+
+    const inLobby = this.showLobby;
+    const stepLabel = `引导 ${tutorialStep}/3`;
+    const busy = this.tutorialProgressInFlight;
+    if (tutorialStep === 1) {
+      return {
+        badge: "初次登录",
+        stepLabel,
+        title: "欢迎来到 Project Veil",
+        body: "先用一分钟熟悉核心节奏，再进入正式对局。",
+        detailLines: [
+          "世界地图是你的主舞台，侦察、招募、战斗都会在这里展开。",
+          "完成引导后才会解锁每日任务，避免新号同时接收过多系统信息。",
+          "前 5 场 PVP 会启用新手保护，优先避开高强度对局。"
+        ],
+        primaryLabel: busy ? "同步中..." : "开始引导",
+        busy
+      };
+    }
+
+    if (tutorialStep === 2) {
+      return {
+        badge: inLobby ? "出征准备" : "地图导览",
+        stepLabel,
+        title: inLobby ? "先进入你的第一张地图" : "留意地图与 HUD 的反馈",
+        body: inLobby
+          ? "选择一个房间进入世界，前几步只需要专注于移动、招募和第一场战斗。"
+          : "左侧地图、右侧 HUD 和底部时间线会给出下一步决策线索，这就是新手阶段最重要的三个面板。",
+        detailLines: inLobby
+          ? [
+              "房间进入后会直接落在世界地图。",
+              "优先观察可移动格子、附近资源点和可交互建筑。",
+              "如果你已经熟悉流程，现在可以直接跳过剩余引导。"
+            ]
+          : [
+              "先用安全操作熟悉移动反馈，再尝试资源采集或建筑互动。",
+              "PVP 新手保护仍然生效，先把开局节奏跑顺。",
+              "如果你是回流玩家，可以直接跳过剩余引导。"
+            ],
+        primaryLabel: busy ? "同步中..." : "继续",
+        ...(busy ? {} : { secondaryLabel: "跳过引导" }),
+        busy
+      };
+    }
+
+    return {
+      badge: "最终确认",
+      stepLabel,
+      title: "完成引导后解锁每日任务",
+      body: "最后一步会关闭引导遮罩，并按正常账户节奏开放每日任务板。",
+      detailLines: [
+        "每日任务会在账号快照里持续可见，不会因重连丢失。",
+        "如果你愿意，也可以现在跳过并直接开始正常游玩。",
+        "完成后重新进入大厅或刷新资料都会保持已完成状态。"
+      ],
+      primaryLabel: busy ? "同步中..." : "完成引导",
+      ...(busy ? {} : { secondaryLabel: "跳过引导" }),
+      busy
+    };
+  }
+
+  private async submitTutorialProgress(action: TutorialProgressAction): Promise<void> {
+    if (this.tutorialProgressInFlight || !this.authToken) {
+      return;
+    }
+
+    this.tutorialProgressInFlight = true;
+    this.renderView();
+    try {
+      const profile = await resolveVeilRootRuntime().updateTutorialProgress(this.remoteUrl, this.roomId, action, {
+        authSession: {
+          token: this.authToken,
+          playerId: this.playerId,
+          displayName: this.displayName || this.playerId,
+          authMode: this.authMode,
+          ...(this.loginId ? { loginId: this.loginId } : {}),
+          source: "remote"
+        },
+        storage: this.readWebStorage()
+      });
+      this.commitAccountProfile(
+        {
+          ...profile,
+          recentBattleReplays: profile.recentBattleReplays.length > 0
+            ? profile.recentBattleReplays
+            : this.lobbyAccountProfile.recentBattleReplays
+        },
+        false
+      );
+      this.pushLog(
+        action.step == null
+          ? action.reason === "skip"
+            ? "已跳过新手引导。"
+            : "新手引导已完成，每日任务已解锁。"
+          : `新手引导推进至第 ${action.step} 步。`
+      );
+    } finally {
+      this.tutorialProgressInFlight = false;
+      this.renderView();
+    }
+  }
+
+  private async advanceTutorialFlow(): Promise<void> {
+    const tutorialStep = normalizeTutorialStep(this.lobbyAccountProfile.tutorialStep);
+    if (tutorialStep === null) {
+      return;
+    }
+
+    const nextStep = tutorialStep >= 3 ? null : tutorialStep + 1;
+    await this.submitTutorialProgress({
+      step: nextStep,
+      reason: nextStep == null ? "complete" : "advance"
+    });
+  }
+
+  private async skipTutorialFlow(): Promise<void> {
+    const tutorialStep = normalizeTutorialStep(this.lobbyAccountProfile.tutorialStep);
+    if (tutorialStep === null || tutorialStep < 2) {
+      return;
+    }
+
+    await this.submitTutorialProgress({
+      step: null,
+      reason: "skip"
+    });
   }
 
   private buildSettingsView(): CocosSettingsPanelView {

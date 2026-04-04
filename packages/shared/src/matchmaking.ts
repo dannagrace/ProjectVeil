@@ -1,3 +1,8 @@
+import {
+  PROTECTED_MATCHMAKING_MAX_RATING_GAP,
+  STANDARD_MATCHMAKING_MAX_RATING_GAP,
+  TOP_TIER_MATCHMAKING_RATING
+} from "./tutorial.ts";
 import { getBattleBalanceConfig } from "./world-config";
 import type { HeroState } from "./models";
 
@@ -16,6 +21,7 @@ export interface MatchmakingRequest {
   heroSnapshot: MatchmakingHeroSnapshot;
   rating: number;
   enqueuedAt: string;
+  protectedPvpMatchesRemaining?: number;
 }
 
 export interface MatchResult {
@@ -75,8 +81,23 @@ export function normalizeMatchmakingRequest(input: Partial<MatchmakingRequest>):
       armyCount: normalizeFiniteInteger(heroSnapshot.armyCount, 0)
     },
     rating: normalizeEloRating(input.rating),
-    enqueuedAt: Number.isNaN(enqueuedAt.getTime()) ? new Date().toISOString() : enqueuedAt.toISOString()
+    enqueuedAt: Number.isNaN(enqueuedAt.getTime()) ? new Date().toISOString() : enqueuedAt.toISOString(),
+    protectedPvpMatchesRemaining: Math.max(0, Math.floor(input.protectedPvpMatchesRemaining ?? 0))
   };
+}
+
+function resolvePairRatingGapLimit(left: MatchmakingRequest, right: MatchmakingRequest): number {
+  return left.protectedPvpMatchesRemaining || right.protectedPvpMatchesRemaining
+    ? PROTECTED_MATCHMAKING_MAX_RATING_GAP
+    : STANDARD_MATCHMAKING_MAX_RATING_GAP;
+}
+
+function pairsIntoTopTierWhileProtected(left: MatchmakingRequest, right: MatchmakingRequest): boolean {
+  return (
+    (left.protectedPvpMatchesRemaining ?? 0) > 0 && normalizeEloRating(right.rating) >= TOP_TIER_MATCHMAKING_RATING
+  ) || (
+    (right.protectedPvpMatchesRemaining ?? 0) > 0 && normalizeEloRating(left.rating) >= TOP_TIER_MATCHMAKING_RATING
+  );
 }
 
 function waitingMillisFor(request: MatchmakingRequest, referenceTimeMs: number): number {
@@ -105,6 +126,9 @@ export function selectBestMatchPair(
       const left = requests[leftIndex]!;
       const right = requests[rightIndex]!;
       const ratingGap = Math.abs(normalizeEloRating(left.rating) - normalizeEloRating(right.rating));
+      if (ratingGap > resolvePairRatingGapLimit(left, right) || pairsIntoTopTierWhileProtected(left, right)) {
+        continue;
+      }
       const totalWait = waitingMillisFor(left, referenceTimeMs) + waitingMillisFor(right, referenceTimeMs);
       const oldestQueuedAt = Math.min(new Date(left.enqueuedAt).getTime(), new Date(right.enqueuedAt).getTime());
 

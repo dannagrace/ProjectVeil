@@ -13,6 +13,7 @@ import { normalizeDailyQuestBoard, type DailyQuestBoard } from "./daily-quests.t
 import { normalizePlayerBattleReplaySummaries, type PlayerBattleReplaySummary } from "./battle-replay.ts";
 import { normalizeEloRating } from "./matchmaking.ts";
 import type { CampaignProgressState, DailyDungeonState, ResourceLedger } from "./models.ts";
+import { normalizeTutorialStep } from "./tutorial.ts";
 
 export type PlayerBanStatus = "none" | "temporary" | "permanent";
 
@@ -36,6 +37,7 @@ export interface PlayerAccountReadModel {
   dailyQuestBoard?: DailyQuestBoard;
   campaignProgress?: CampaignProgressState;
   dailyDungeonState?: DailyDungeonState;
+  tutorialStep?: number | null;
   loginId?: string;
   credentialBoundAt?: string;
   privacyConsentAt?: string;
@@ -72,6 +74,7 @@ export interface PlayerAccountReadModelInput {
   dailyQuestBoard?: Partial<DailyQuestBoard> | null | undefined;
   campaignProgress?: Partial<CampaignProgressState> | null | undefined;
   dailyDungeonState?: Partial<DailyDungeonState> | null | undefined;
+  tutorialStep?: number | null | undefined;
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
   privacyConsentAt?: string | undefined;
@@ -133,6 +136,7 @@ export function normalizePlayerAccountReadModel(
   const dailyQuestBoard = normalizeDailyQuestBoard(account?.dailyQuestBoard);
   const campaignProgress = normalizeCampaignProgressState(account?.campaignProgress);
   const dailyDungeonState = normalizeDailyDungeonState(account?.dailyDungeonState);
+  const tutorialStep = normalizeTutorialStep(account?.tutorialStep);
 
   return {
     playerId,
@@ -161,6 +165,7 @@ export function normalizePlayerAccountReadModel(
     ...(dailyQuestBoard ? { dailyQuestBoard } : {}),
     ...(campaignProgress ? { campaignProgress } : {}),
     ...(dailyDungeonState ? { dailyDungeonState } : {}),
+    ...(account?.tutorialStep !== undefined ? { tutorialStep } : {}),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
     ...(privacyConsentAt ? { privacyConsentAt } : {}),
