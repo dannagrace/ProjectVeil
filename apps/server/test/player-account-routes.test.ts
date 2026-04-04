@@ -51,6 +51,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
   private readonly eventHistoryByPlayerId = new Map<string, PlayerAccountSnapshot["recentEventLog"]>();
+  private readonly referrals = new Set<string>();
 
   async load(_roomId: string): Promise<RoomPersistenceSnapshot | null> {
     return null;
@@ -241,6 +242,48 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     };
     this.accounts.set(playerId, account);
     return account;
+  }
+
+  async claimPlayerReferral(referrerId: string, newPlayerId: string, rewardGems: number) {
+    const normalizedReferrerId = referrerId.trim();
+    const normalizedNewPlayerId = newPlayerId.trim();
+    const normalizedRewardGems = Math.floor(rewardGems);
+    if (!normalizedReferrerId) {
+      throw new Error("invalid_referrer_id");
+    }
+    if (normalizedReferrerId === normalizedNewPlayerId) {
+      throw new Error("self_referral_forbidden");
+    }
+    if (!Number.isFinite(rewardGems) || normalizedRewardGems <= 0) {
+      throw new Error("rewardGems must be a positive integer");
+    }
+
+    const referralKey = `${normalizedReferrerId}:${normalizedNewPlayerId}`;
+    if (this.referrals.has(referralKey)) {
+      throw new Error("duplicate_referral");
+    }
+
+    const referrer = await this.ensurePlayerAccount({ playerId: normalizedReferrerId });
+    const newPlayer = await this.ensurePlayerAccount({ playerId: normalizedNewPlayerId });
+    this.referrals.add(referralKey);
+
+    this.accounts.set(normalizedReferrerId, {
+      ...referrer,
+      gems: (referrer.gems ?? 0) + normalizedRewardGems,
+      updatedAt: new Date().toISOString()
+    });
+    this.accounts.set(normalizedNewPlayerId, {
+      ...newPlayer,
+      gems: (newPlayer.gems ?? 0) + normalizedRewardGems,
+      updatedAt: new Date().toISOString()
+    });
+
+    return {
+      claimed: true,
+      rewardGems: normalizedRewardGems,
+      referrerId: normalizedReferrerId,
+      newPlayerId: normalizedNewPlayerId
+    };
   }
 
   async listPlayerBanHistory(
@@ -2859,4 +2902,105 @@ test("daily claim rejects duplicate claims on the same day", async (t) => {
   assert.equal(account?.gems, 9);
   assert.equal(account?.globalResources.gold, 18);
   assert.equal(account?.loginStreak, 3);
+});
+
+test("referral endpoint rejects double-claiming for the same referrer and new player", async (t) => {
+  const port = 44940 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "referrer-1",
+    displayName: "先驱旅者"
+  });
+  await store.ensurePlayerAccount({
+    playerId: "new-player-1",
+    displayName: "新雾行者"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "new-player-1",
+    displayName: "新雾行者"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const firstResponse = await fetch(`http://127.0.0.1:${port}/api/player/referral`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      referrerId: "referrer-1"
+    })
+  });
+  assert.equal(firstResponse.status, 200);
+
+  const secondResponse = await fetch(`http://127.0.0.1:${port}/api/player/referral`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      referrerId: "referrer-1"
+    })
+  });
+  const secondPayload = (await secondResponse.json()) as {
+    error: { code: string };
+  };
+
+  assert.equal(secondResponse.status, 409);
+  assert.equal(secondPayload.error.code, "referral_already_claimed");
+});
+
+test("referral endpoint credits both accounts exactly once", async (t) => {
+  const port = 44960 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.savePlayerAccountProgress("referrer-2", {
+    gems: 11
+  });
+  await store.savePlayerAccountProgress("new-player-2", {
+    gems: 3
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "new-player-2",
+    displayName: "新雾行者"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/player/referral`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      referrerId: "referrer-2"
+    })
+  });
+  const payload = (await response.json()) as {
+    claimed: boolean;
+    rewardGems: number;
+    referrerId: string;
+    newPlayerId: string;
+  };
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(payload, {
+    claimed: true,
+    rewardGems: 20,
+    referrerId: "referrer-2",
+    newPlayerId: "new-player-2"
+  });
+
+  const referrer = await store.loadPlayerAccount("referrer-2");
+  const newPlayer = await store.loadPlayerAccount("new-player-2");
+  assert.equal(referrer?.gems, 31);
+  assert.equal(newPlayer?.gems, 23);
 });

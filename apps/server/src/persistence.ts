@@ -45,6 +45,13 @@ export interface SeasonCloseSummary {
   totalGemsGranted: number;
 }
 
+export interface PlayerReferralClaimResult {
+  claimed: boolean;
+  rewardGems: number;
+  referrerId: string;
+  newPlayerId: string;
+}
+
 export interface RoomSnapshotStore {
   load(roomId: string): Promise<RoomPersistenceSnapshot | null>;
   loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
@@ -72,6 +79,7 @@ export interface RoomSnapshotStore {
   completePaymentOrder?(orderId: string, input: PaymentOrderCompleteInput): Promise<PaymentOrderSettlement>;
   creditGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   debitGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
+  claimPlayerReferral?(referrerId: string, newPlayerId: string, rewardGems: number): Promise<PlayerReferralClaimResult>;
   purchaseShopProduct?(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult>;
   savePlayerAccountPrivacyConsent(
     playerId: string,
@@ -604,6 +612,8 @@ export const MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX = "uidx_player_accounts_w
 export const MYSQL_PLAYER_ACCOUNT_WECHAT_IDP_OPEN_ID_INDEX = "uidx_player_accounts_wechat_idp_open_id";
 export const MYSQL_GEM_LEDGER_TABLE = "gem_ledger";
 export const MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX = "idx_gem_ledger_player_created";
+export const MYSQL_PLAYER_REFERRAL_TABLE = "referrals";
+export const MYSQL_PLAYER_REFERRAL_REFERRER_CREATED_INDEX = "idx_referrals_referrer_created";
 export const MYSQL_SHOP_PURCHASE_TABLE = "shop_purchases";
 export const MYSQL_PAYMENT_ORDER_TABLE = "orders";
 export const MYSQL_PAYMENT_ORDER_PLAYER_CREATED_INDEX = "idx_orders_player_created";
@@ -1459,6 +1469,16 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_GEM_LEDGER_TABLE}\` (
   PRIMARY KEY (entry_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_REFERRAL_TABLE}\` (
+  id VARCHAR(191) NOT NULL,
+  referrer_id VARCHAR(191) NOT NULL,
+  new_player_id VARCHAR(191) NOT NULL,
+  reward_gems INT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY \`uidx_referrals_referrer_new_player\` (referrer_id, new_player_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS \`${MYSQL_SHOP_PURCHASE_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   purchase_id VARCHAR(191) NOT NULL,
@@ -1590,6 +1610,24 @@ SET @veil_player_reports_idx_sql := IF(
 PREPARE veil_player_reports_idx_stmt FROM @veil_player_reports_idx_sql;
 EXECUTE veil_player_reports_idx_stmt;
 DEALLOCATE PREPARE veil_player_reports_idx_stmt;
+
+SET @veil_player_referrals_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_REFERRAL_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_REFERRAL_REFERRER_CREATED_INDEX}'
+);
+
+SET @veil_player_referrals_idx_sql := IF(
+  @veil_player_referrals_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PLAYER_REFERRAL_REFERRER_CREATED_INDEX}\` ON \`${MYSQL_PLAYER_REFERRAL_TABLE}\` (referrer_id, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_referrals_idx_stmt FROM @veil_player_referrals_idx_sql;
+EXECUTE veil_player_referrals_idx_stmt;
+DEALLOCATE PREPARE veil_player_referrals_idx_stmt;
 
 SET @veil_player_accounts_achievements_exists := (
   SELECT COUNT(*)
@@ -3613,6 +3651,91 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     }
 
     return this.mutateGems(playerId, -normalizePositiveGemDelta(amount), normalizedReason, refId);
+  }
+
+  async claimPlayerReferral(
+    referrerId: string,
+    newPlayerId: string,
+    rewardGems: number
+  ): Promise<PlayerReferralClaimResult> {
+    const normalizedReferrerId = normalizePlayerId(referrerId);
+    const normalizedNewPlayerId = normalizePlayerId(newPlayerId);
+    const normalizedRewardGems = normalizePositiveGemDelta(rewardGems);
+    if (normalizedReferrerId === normalizedNewPlayerId) {
+      throw new Error("self_referral_forbidden");
+    }
+
+    await this.ensurePlayerAccount({ playerId: normalizedReferrerId });
+    await this.ensurePlayerAccount({ playerId: normalizedNewPlayerId });
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      await connection.query<RowDataPacket[]>(
+        `SELECT player_id
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id IN (?, ?)
+         FOR UPDATE`,
+        [normalizedReferrerId, normalizedNewPlayerId]
+      );
+
+      const referralId = randomUUID();
+      try {
+        await connection.query(
+          `INSERT INTO \`${MYSQL_PLAYER_REFERRAL_TABLE}\`
+             (id, referrer_id, new_player_id, reward_gems)
+           VALUES (?, ?, ?, ?)`,
+          [referralId, normalizedReferrerId, normalizedNewPlayerId, normalizedRewardGems]
+        );
+      } catch (error) {
+        if (isMySqlDuplicateEntryError(error)) {
+          throw new Error("duplicate_referral");
+        }
+        throw error;
+      }
+
+      const rewardedPlayers = [
+        {
+          playerId: normalizedReferrerId,
+          refId: `referral:${referralId}:referrer`
+        },
+        {
+          playerId: normalizedNewPlayerId,
+          refId: `referral:${referralId}:new-player`
+        }
+      ];
+
+      for (const player of rewardedPlayers) {
+        await connection.query(
+          `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+           SET gems = gems + ?,
+               version = version + 1
+           WHERE player_id = ?`,
+          [normalizedRewardGems, player.playerId]
+        );
+        await appendGemLedgerEntry(connection, {
+          entryId: randomUUID(),
+          playerId: player.playerId,
+          delta: normalizedRewardGems,
+          reason: "reward",
+          refId: player.refId
+        });
+      }
+
+      await connection.commit();
+      return {
+        claimed: true,
+        rewardGems: normalizedRewardGems,
+        referrerId: normalizedReferrerId,
+        newPlayerId: normalizedNewPlayerId
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   async createPaymentOrder(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot> {

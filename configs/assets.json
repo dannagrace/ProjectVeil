@@ -615,5 +615,8 @@
   "showcaseBuildings": {
     "forge_hall": "/assets/pixel/buildings/forge-hall.png",
     "watchtower": "/assets/pixel/buildings/forge-hall.png"
+  },
+  "shareCard": {
+    "battleVictory": "https://cdn.example.com/assets/share-card/battle-victory.png"
   }
 }

@@ -711,6 +711,69 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.post("/api/player/referral", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store?.claimPlayerReferral) {
+      sendJson(response, 200, {
+        claimed: false,
+        reason: "persistence_unavailable"
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        referrerId?: string;
+      };
+      const referrerId = body.referrerId?.trim() ?? "";
+      if (!referrerId) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_referrer_id",
+            message: "referrerId must not be empty"
+          }
+        });
+        return;
+      }
+
+      const result = await store.claimPlayerReferral(referrerId, authSession.playerId, 20);
+      sendJson(response, 200, result);
+    } catch (error) {
+      if (error instanceof Error && error.message === "duplicate_referral") {
+        sendJson(response, 409, {
+          error: {
+            code: "referral_already_claimed",
+            message: "Referral rewards were already claimed for this pair"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "self_referral_forbidden") {
+        sendJson(response, 400, {
+          error: {
+            code: "self_referral_forbidden",
+            message: "referrerId must be different from the current player"
+          }
+        });
+        return;
+      }
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, {
+          error: {
+            code: error.name,
+            message: error.message
+          }
+        });
+        return;
+      }
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
   app.get("/api/player-accounts/me/sessions", async (request, response) => {
     const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {

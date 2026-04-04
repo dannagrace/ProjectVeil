@@ -110,6 +110,13 @@ interface DailyClaimApiPayload {
   };
 }
 
+interface PlayerReferralApiPayload {
+  claimed: boolean;
+  rewardGems: number;
+  referrerId: string;
+  newPlayerId: string;
+}
+
 interface LobbyRoomsApiPayload {
   items?: CocosLobbyRoomSummary[];
 }
@@ -465,6 +472,35 @@ async function claimCocosDailyLoginReward(
   } catch {
     return null;
   }
+}
+
+export async function postCocosPlayerReferral(
+  remoteUrl: string,
+  input: { referrerId: string },
+  options: {
+    authSession: CocosStoredAuthSession;
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "removeItem"> | null;
+  }
+): Promise<PlayerReferralApiPayload> {
+  return (await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/player/referral`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        referrerId: input.referrerId
+      })
+    },
+    options.authSession,
+    {
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.storage !== undefined ? { storage: options.storage } : {})
+    }
+  )) as PlayerReferralApiPayload;
 }
 
 function applyDailyClaimToProfile(

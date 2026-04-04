@@ -116,6 +116,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly shopPurchases = new Map<string, ShopPurchaseResult>();
   private readonly reports = new Map<string, PlayerReportRecord>();
   private readonly seasons = new Map<string, SeasonSnapshot>();
+  private readonly referrals = new Set<string>();
   private nextReportId = 1;
 
   async load(roomId: string): Promise<RoomPersistenceSnapshot | null> {
@@ -359,6 +360,45 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     };
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
     return cloneAccount(nextAccount);
+  }
+
+  async claimPlayerReferral(referrerId: string, newPlayerId: string, rewardGems: number) {
+    const normalizedReferrerId = normalizePlayerId(referrerId);
+    const normalizedNewPlayerId = normalizePlayerId(newPlayerId);
+    const normalizedRewardGems = Math.floor(rewardGems);
+    if (!Number.isFinite(rewardGems) || normalizedRewardGems <= 0) {
+      throw new Error("rewardGems must be a positive integer");
+    }
+    if (normalizedReferrerId === normalizedNewPlayerId) {
+      throw new Error("self_referral_forbidden");
+    }
+
+    const referralKey = `${normalizedReferrerId}:${normalizedNewPlayerId}`;
+    if (this.referrals.has(referralKey)) {
+      throw new Error("duplicate_referral");
+    }
+
+    const referrer = await this.ensurePlayerAccount({ playerId: normalizedReferrerId });
+    const newPlayer = await this.ensurePlayerAccount({ playerId: normalizedNewPlayerId });
+    this.referrals.add(referralKey);
+
+    this.accounts.set(normalizedReferrerId, {
+      ...referrer,
+      gems: (referrer.gems ?? 0) + normalizedRewardGems,
+      updatedAt: new Date().toISOString()
+    });
+    this.accounts.set(normalizedNewPlayerId, {
+      ...newPlayer,
+      gems: (newPlayer.gems ?? 0) + normalizedRewardGems,
+      updatedAt: new Date().toISOString()
+    });
+
+    return {
+      claimed: true,
+      rewardGems: normalizedRewardGems,
+      referrerId: normalizedReferrerId,
+      newPlayerId: normalizedNewPlayerId
+    };
   }
 
   async createPaymentOrder(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot> {
