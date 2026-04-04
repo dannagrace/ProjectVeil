@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS `player_accounts` (
   recent_event_log_json LONGTEXT NULL,
   recent_battle_replays_json LONGTEXT NULL,
   daily_dungeon_state_json LONGTEXT NULL,
+  tutorial_step INT NULL DEFAULT NULL,
   last_room_id VARCHAR(191) NULL,
   last_seen_at DATETIME NULL DEFAULT NULL,
   login_id VARCHAR(40) NULL,

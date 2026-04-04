@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  countRemainingProtectedPvpMatches,
   createMatchmakingHeroSnapshot,
   estimateMatchmakingWaitSeconds,
   normalizeEloRating,
@@ -793,7 +794,8 @@ export function registerMatchmakingRoutes(
         playerId: authSession.playerId,
         heroSnapshot: createMatchmakingHeroSnapshot(hero),
         rating: normalizeEloRating(account.eloRating),
-        enqueuedAt: new Date().toISOString()
+        enqueuedAt: new Date().toISOString(),
+        protectedPvpMatchesRemaining: countRemainingProtectedPvpMatches(account.recentBattleReplays)
       }));
       sendJson(response, 200, queued);
     } catch (error) {

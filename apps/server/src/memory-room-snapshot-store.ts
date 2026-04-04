@@ -1,5 +1,6 @@
 import {
   appendEventLogEntries,
+  DEFAULT_TUTORIAL_STEP,
   getEquipmentDefinition,
   normalizeEloRating,
   normalizeEventLogEntries,
@@ -299,6 +300,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       recentEventLog: existing?.recentEventLog ?? [],
       recentBattleReplays: existing?.recentBattleReplays ?? [],
       ...(existing?.dailyDungeonState ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) } : {}),
+      ...(existing?.tutorialStep !== undefined ? { tutorialStep: existing.tutorialStep } : { tutorialStep: DEFAULT_TUTORIAL_STEP }),
       ...(input.lastRoomId?.trim()
         ? { lastRoomId: input.lastRoomId.trim() }
         : existing?.lastRoomId
@@ -1070,6 +1072,11 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
           : {}
         : existing.dailyDungeonState
           ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) }
+          : {}),
+      ...(patch.tutorialStep !== undefined
+        ? { tutorialStep: patch.tutorialStep }
+        : existing.tutorialStep !== undefined
+          ? { tutorialStep: existing.tutorialStep }
           : {}),
       ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
       ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),

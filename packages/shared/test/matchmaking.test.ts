@@ -88,3 +88,38 @@ test("elo result applies symmetric rating changes using configured-style K facto
   assert.equal(result.loserRating, 984);
   assert.equal(estimateMatchmakingWaitSeconds(3), 30);
 });
+
+test("matchmaking rejects large rating gaps once players leave protected onboarding matches", () => {
+  const requests = [
+    createRequest("player-1", 1000, "2026-03-28T08:00:00.000Z"),
+    createRequest("player-2", 1305, "2026-03-28T08:01:00.000Z")
+  ];
+
+  assert.equal(selectBestMatchPair(requests, new Date("2026-03-28T08:20:00.000Z")), null);
+});
+
+test("matchmaking allows a wider gap during the first protected pvp matches", () => {
+  const requests = [
+    {
+      ...createRequest("player-1", 1000, "2026-03-28T08:00:00.000Z"),
+      protectedPvpMatchesRemaining: 5
+    },
+    createRequest("player-2", 1305, "2026-03-28T08:01:00.000Z")
+  ];
+
+  const selection = selectBestMatchPair(requests, new Date("2026-03-28T08:20:00.000Z"));
+  assert.ok(selection);
+  assert.equal(selection?.ratingGap, 305);
+});
+
+test("matchmaking keeps protected onboarding players out of top-tier pairings", () => {
+  const requests = [
+    {
+      ...createRequest("player-1", 1200, "2026-03-28T08:00:00.000Z"),
+      protectedPvpMatchesRemaining: 4
+    },
+    createRequest("player-2", 1520, "2026-03-28T08:01:00.000Z")
+  ];
+
+  assert.equal(selectBestMatchPair(requests, new Date("2026-03-28T08:20:00.000Z")), null);
+});

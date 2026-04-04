@@ -532,6 +532,46 @@ test("VeilRoot cancelLobbyMatchmaking stops polling and clears the queue state",
   assert.match(String(root.lobbyStatus), /已取消当前匹配队列/);
 });
 
+test("VeilRoot persists tutorial progression through the remote account profile flow", async () => {
+  const root = createVeilRootHarness();
+  root.sessionSource = "remote";
+  root.authMode = "account";
+  root.authToken = "tutorial.token";
+  root.playerId = "tutorial-player";
+  root.displayName = "雾幕新兵";
+  root.lobbyAccountProfile = {
+    ...root.lobbyAccountProfile,
+    playerId: "tutorial-player",
+    displayName: "雾幕新兵",
+    recentBattleReplays: [],
+    source: "remote",
+    tutorialStep: 1
+  };
+
+  const actions: Array<{ step: number | null; reason?: string }> = [];
+  installVeilRootRuntime({
+    updateTutorialProgress: async (_remoteUrl, _roomId, action) => {
+      actions.push(action);
+      return {
+        ...root.lobbyAccountProfile,
+        recentBattleReplays: [],
+        source: "remote",
+        tutorialStep: action.step
+      };
+    }
+  });
+
+  assert.ok(root.buildTutorialOverlayView());
+  await root.advanceTutorialFlow();
+  assert.deepEqual(actions[0], { step: 2, reason: "advance" });
+  assert.equal(root.lobbyAccountProfile.tutorialStep, 2);
+
+  await root.skipTutorialFlow();
+  assert.deepEqual(actions[1], { step: null, reason: "skip" });
+  assert.equal(root.lobbyAccountProfile.tutorialStep ?? null, null);
+  assert.equal(root.buildTutorialOverlayView(), null);
+});
+
 test("VeilRoot onDestroy stops matchmaking polling to avoid timer leaks", () => {
   const root = createVeilRootHarness();
   let pollStops = 0;

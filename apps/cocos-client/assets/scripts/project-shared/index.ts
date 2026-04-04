@@ -15,4 +15,5 @@ export * from "./map-sync.ts";
 export * from "./models.ts";
 export * from "./protocol.ts";
 export * from "./player-account.ts";
+export * from "./tutorial.ts";
 export * from "./world-config.ts";

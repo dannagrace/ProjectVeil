@@ -28,6 +28,7 @@ import type {
 } from "../src/persistence";
 import type { RoomPersistenceSnapshot } from "../src/index";
 import {
+  DEFAULT_TUTORIAL_STEP,
   createDefaultHeroLoadout,
   createDefaultHeroProgression,
   queryEventLogEntries,
@@ -180,6 +181,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       recentBattleReplays: structuredClone(existing?.recentBattleReplays ?? []),
       ...(existing?.campaignProgress ? { campaignProgress: structuredClone(existing.campaignProgress) } : {}),
       ...(existing?.dailyDungeonState ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) } : {}),
+      ...(existing?.tutorialStep !== undefined ? { tutorialStep: existing.tutorialStep } : { tutorialStep: DEFAULT_TUTORIAL_STEP }),
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
@@ -559,6 +561,11 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
           : {}
         : existing.dailyDungeonState
           ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) }
+          : {}),
+      ...(patch.tutorialStep !== undefined
+        ? { tutorialStep: patch.tutorialStep }
+        : existing.tutorialStep !== undefined
+          ? { tutorialStep: existing.tutorialStep }
           : {}),
       ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
       ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
@@ -2944,6 +2951,9 @@ test("daily quest board derives same-day progress and ignores prior-day events",
     playerId: "daily-quest-player",
     displayName: "界碑斥候"
   });
+  await store.savePlayerAccountProgress("daily-quest-player", {
+    tutorialStep: null
+  });
   store.seedEventHistory("daily-quest-player", [
     {
       id: `daily-quest-player:${yesterdayStart}:hero.moved:1`,
@@ -3023,6 +3033,93 @@ test("daily quest board derives same-day progress and ignores prior-day events",
   );
 });
 
+test("tutorial progress gates daily quests until the player completes or skips onboarding", async (t) => {
+  const port = 44931 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  process.env.VEIL_DAILY_QUESTS_ENABLED = "true";
+  t.after(() => {
+    delete process.env.VEIL_DAILY_QUESTS_ENABLED;
+  });
+  await store.ensurePlayerAccount({
+    playerId: "tutorial-player",
+    displayName: "雾幕新兵"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "tutorial-player",
+    displayName: "雾幕新兵"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const initialResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const initialPayload = (await initialResponse.json()) as {
+    account: {
+      tutorialStep?: number | null;
+      dailyQuestBoard?: { enabled: boolean };
+    };
+  };
+  assert.equal(initialResponse.status, 200);
+  assert.equal(initialPayload.account.tutorialStep, 1);
+  assert.equal(initialPayload.account.dailyQuestBoard?.enabled, false);
+
+  const lockedSkipResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/tutorial-progress`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      step: null,
+      reason: "skip"
+    })
+  });
+  assert.equal(lockedSkipResponse.status, 409);
+
+  const advanceResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/tutorial-progress`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      step: 2,
+      reason: "advance"
+    })
+  });
+  assert.equal(advanceResponse.status, 200);
+
+  const completeResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/tutorial-progress`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      step: null,
+      reason: "skip"
+    })
+  });
+  const completePayload = (await completeResponse.json()) as {
+    account: {
+      tutorialStep?: number | null;
+      dailyQuestBoard?: { enabled: boolean };
+    };
+  };
+  assert.equal(completeResponse.status, 200);
+  assert.equal(completePayload.account.tutorialStep ?? null, null);
+  assert.equal(completePayload.account.dailyQuestBoard?.enabled, true);
+
+  const account = await store.loadPlayerAccount("tutorial-player");
+  assert.equal(account?.tutorialStep ?? null, null);
+});
+
 test("daily quest claim grants rewards once and returns already_claimed on repeat", async (t) => {
   const port = 44932 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
@@ -3034,6 +3131,9 @@ test("daily quest claim grants rewards once and returns already_claimed on repea
   await store.ensurePlayerAccount({
     playerId: "daily-quest-claim",
     displayName: "白塔军需官"
+  });
+  await store.savePlayerAccountProgress("daily-quest-claim", {
+    tutorialStep: null
   });
   store.seedEventHistory("daily-quest-claim", [
     {

@@ -2,6 +2,10 @@ import type { BattleAction, BattleState, MovementPlan, Vec2, WorldAction, WorldE
 import type { PlayerWorldViewPayload } from "./map-sync.ts";
 
 export type SessionStateReason = "surrender" | "afk_forfeit" | "normal" | (string & {});
+export interface TutorialProgressAction {
+  step: number | null;
+  reason?: "advance" | "skip" | "complete";
+}
 export interface FeatureFlags {
   quest_system_enabled: boolean;
   battle_pass_enabled: boolean;
@@ -59,6 +63,11 @@ export type ClientMessage =
       targetPlayerId: string;
       reason: PlayerReportReason;
       description?: string;
+    }
+  | {
+      type: "tutorial.progress";
+      requestId: string;
+      action: TutorialProgressAction;
     };
 
 export type ServerMessage =

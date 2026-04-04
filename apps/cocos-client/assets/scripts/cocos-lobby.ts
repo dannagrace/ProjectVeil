@@ -23,7 +23,8 @@ import {
   type PlayerProgressionSnapshot,
   type PlayerBattleReplayQuery,
   type PlayerBattleReplaySummary,
-  type PlayerAchievementProgress
+  type PlayerAchievementProgress,
+  type TutorialProgressAction
 } from "./project-shared/index.ts";
 import { detectCocosRuntimePlatform } from "./cocos-runtime-platform.ts";
 
@@ -97,6 +98,8 @@ interface PlayerAccountApiPayload extends AuthSessionApiPayload {
     achievements?: Partial<PlayerAchievementProgress>[];
     recentEventLog?: Partial<EventLogEntry>[];
     recentBattleReplays?: Partial<PlayerBattleReplaySummary>[];
+    tutorialStep?: number | null;
+    dailyQuestBoard?: PlayerAccountReadModel["dailyQuestBoard"];
     loginId?: string;
     credentialBoundAt?: string;
     lastRoomId?: string;
@@ -425,6 +428,8 @@ function asCocosPlayerAccountProfile(
     achievements: account?.achievements,
     recentEventLog: account?.recentEventLog,
     recentBattleReplays: account?.recentBattleReplays,
+    tutorialStep: account?.tutorialStep,
+    dailyQuestBoard: account?.dailyQuestBoard,
     ...(battleReportCenter ? { battleReportCenter } : {}),
     loginId: normalizeLoginId(account?.loginId),
     credentialBoundAt: account?.credentialBoundAt,
@@ -520,6 +525,42 @@ export async function postCocosPlayerReferral(
       ...(options.storage !== undefined ? { storage: options.storage } : {})
     }
   )) as PlayerReferralApiPayload;
+}
+
+export async function updateCocosTutorialProgress(
+  remoteUrl: string,
+  roomId: string,
+  action: TutorialProgressAction,
+  options: {
+    authSession: CocosStoredAuthSession;
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "removeItem"> | null;
+  }
+): Promise<CocosPlayerAccountProfile> {
+  const payload = (await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/tutorial-progress`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(action)
+    },
+    options.authSession,
+    {
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.storage !== undefined ? { storage: options.storage } : {})
+    }
+  )) as PlayerAccountApiPayload;
+
+  return asCocosPlayerAccountProfile(
+    payload.account?.playerId?.trim() || options.authSession.playerId,
+    roomId,
+    "remote",
+    payload.account,
+    options.authSession.displayName
+  );
 }
 
 function applyDailyClaimToProfile(

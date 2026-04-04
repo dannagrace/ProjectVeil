@@ -233,6 +233,78 @@ test("matchmaking routes enqueue, match, report status, and dequeue cleanly", as
   assert.equal(dequeueOnePayload.status, "idle");
 });
 
+test("matchmaking keeps protected new players out of top-tier opponents", async (t) => {
+  const store = createMemoryRoomSnapshotStore();
+  await store.save(
+    "room-alpha",
+    createSnapshot("room-alpha", [createHero("player-1", "hero-1"), createHero("player-2", "hero-2")])
+  );
+  await store.savePlayerAccountProgress("player-1", {
+    lastRoomId: "room-alpha",
+    recentBattleReplays: []
+  });
+  await store.savePlayerAccountProgress("player-2", {
+    lastRoomId: "room-alpha",
+    eloRating: 1600,
+    recentBattleReplays: [
+      {
+        id: "pvp-1",
+        roomId: "room-alpha",
+        playerId: "player-2",
+        battleId: "battle-1",
+        battleKind: "hero",
+        playerCamp: "attacker",
+        heroId: "hero-2",
+        opponentHeroId: "hero-1",
+        startedAt: "2026-03-28T08:00:00.000Z",
+        completedAt: "2026-03-28T08:05:00.000Z",
+        initialState: {
+          id: "battle-1",
+          round: 1,
+          lanes: 1,
+          activeUnitId: "u-1",
+          turnOrder: ["u-1"],
+          units: {},
+          environment: [],
+          log: [],
+          rng: { seed: 1, cursor: 0 }
+        },
+        steps: [],
+        result: "attacker_victory"
+      }
+    ]
+  });
+
+  const port = 43100 + Math.floor(Math.random() * 1000);
+  const server = await startMatchmakingServer(store, port);
+  const protectedSession = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
+  const topTierSession = issueGuestAuthSession({ playerId: "player-2", displayName: "Two" });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    resetMatchmakingService();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${protectedSession.token}` }
+  });
+  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${topTierSession.token}` }
+  });
+
+  const statusResponse = await fetch(`http://127.0.0.1:${port}/api/matchmaking/status`, {
+    headers: { Authorization: `Bearer ${protectedSession.token}` }
+  });
+  const statusPayload = (await statusResponse.json()) as { status: string };
+
+  assert.equal(statusResponse.status, 200);
+  assert.equal(statusPayload.status, "queued");
+});
+
 test("matchmaking enqueue prunes stale queue entries before adding new players", async (t) => {
   const store = createMemoryRoomSnapshotStore();
   await store.save(

@@ -5,6 +5,11 @@ import type { RuntimeConfigBundle } from "./world-config.ts";
 
 export type SessionStateReason = "surrender" | "afk_forfeit" | "normal" | (string & {});
 
+export interface TutorialProgressAction {
+  step: number | null;
+  reason?: "advance" | "skip" | "complete";
+}
+
 export interface SessionStatePayload {
   world: PlayerWorldViewPayload;
   battle: BattleState | null;
@@ -55,6 +60,11 @@ export type ClientMessage =
       targetPlayerId: string;
       reason: PlayerReportReason;
       description?: string;
+    }
+  | {
+      type: "tutorial.progress";
+      requestId: string;
+      action: TutorialProgressAction;
     };
 
 export type ServerMessage =
