@@ -1,18 +1,16 @@
-import shopConfigDocument from "../../../configs/shop-config.json";
-import { DEFAULT_ELO_RATING, getTierForRating, normalizeEloRating, type PlayerTier, type SeasonRewardConfig } from "../../../packages/shared/src/index";
-
-interface ShopConfigDocument {
-  seasonRewards?: Partial<SeasonRewardConfig> | null;
-}
-
-const PLAYER_TIERS: PlayerTier[] = ["bronze", "silver", "gold", "platinum", "diamond"];
+import seasonRewardsDocument from "../../../configs/season-rewards.json";
+import { type SeasonRewardBracket, type SeasonRewardConfig } from "../../../packages/shared/src/index";
 
 export interface ResolvedSeasonRewardConfig extends SeasonRewardConfig {}
 
+export interface SeasonRewardBracketAssignment extends SeasonRewardBracket {
+  rankPosition: number;
+}
+
 export interface SeasonRewardComputation {
-  tier: PlayerTier;
   gems: number;
-  resetEloRating: number;
+  badge: string;
+  rankPosition: number;
 }
 
 function normalizeNonNegativeInteger(value: number, field: string): number {
@@ -24,35 +22,90 @@ function normalizeNonNegativeInteger(value: number, field: string): number {
   return normalized;
 }
 
-export function normalizeSeasonRewardConfig(rawConfig?: Partial<SeasonRewardConfig> | null): ResolvedSeasonRewardConfig {
-  const config = rawConfig ?? {};
+function normalizePositivePercentile(value: number, field: string): number {
+  if (!Number.isFinite(value) || value <= 0 || value > 100) {
+    throw new Error(`${field} must be within 0-100`);
+  }
+
+  return value;
+}
+
+function normalizeSeasonRewardBracket(
+  bracket: Partial<SeasonRewardBracket> | null | undefined,
+  index: number
+): SeasonRewardBracket {
+  const badge = bracket?.badge?.trim();
+  if (!badge) {
+    throw new Error(`seasonRewards.brackets[${index}].badge is required`);
+  }
 
   return {
-    bronze: normalizeNonNegativeInteger(config.bronze ?? 0, "seasonRewards.bronze"),
-    silver: normalizeNonNegativeInteger(config.silver ?? 0, "seasonRewards.silver"),
-    gold: normalizeNonNegativeInteger(config.gold ?? 0, "seasonRewards.gold"),
-    platinum: normalizeNonNegativeInteger(config.platinum ?? 0, "seasonRewards.platinum"),
-    diamond: normalizeNonNegativeInteger(config.diamond ?? 0, "seasonRewards.diamond")
+    topPercentile: normalizePositivePercentile(
+      bracket?.topPercentile ?? Number.NaN,
+      `seasonRewards.brackets[${index}].topPercentile`
+    ),
+    gems: normalizeNonNegativeInteger(bracket?.gems ?? 0, `seasonRewards.brackets[${index}].gems`),
+    badge
+  };
+}
+
+export function normalizeSeasonRewardConfig(rawConfig?: Partial<SeasonRewardConfig> | null): ResolvedSeasonRewardConfig {
+  const brackets = (rawConfig?.brackets ?? []).map((bracket, index) => normalizeSeasonRewardBracket(bracket, index));
+  if (brackets.length === 0) {
+    throw new Error("seasonRewards.brackets must define at least one reward bracket");
+  }
+
+  const sortedBrackets = [...brackets].sort((left, right) => left.topPercentile - right.topPercentile);
+  for (let index = 1; index < sortedBrackets.length; index += 1) {
+    if (sortedBrackets[index]!.topPercentile === sortedBrackets[index - 1]!.topPercentile) {
+      throw new Error("seasonRewards.brackets topPercentile values must be unique");
+    }
+  }
+
+  return {
+    brackets: sortedBrackets
   };
 }
 
 export function resolveSeasonRewardConfig(): ResolvedSeasonRewardConfig {
-  return normalizeSeasonRewardConfig((shopConfigDocument as ShopConfigDocument).seasonRewards);
+  return normalizeSeasonRewardConfig(seasonRewardsDocument as SeasonRewardConfig);
 }
 
-export function computeSeasonResetEloRating(rating: number): number {
-  const normalizedRating = normalizeEloRating(rating);
-  return DEFAULT_ELO_RATING + Math.floor((normalizedRating - DEFAULT_ELO_RATING) * 0.5);
+export function resolveSeasonRewardBracket(
+  rankPosition: number,
+  rankedPlayerCount: number,
+  rewardConfig = resolveSeasonRewardConfig()
+): SeasonRewardBracketAssignment | null {
+  if (!Number.isInteger(rankPosition) || rankPosition <= 0 || rankedPlayerCount <= 0) {
+    return null;
+  }
+
+  for (const bracket of rewardConfig.brackets) {
+    const maxRank = Math.max(1, Math.ceil((rankedPlayerCount * bracket.topPercentile) / 100));
+    if (rankPosition <= maxRank) {
+      return {
+        ...bracket,
+        rankPosition
+      };
+    }
+  }
+
+  return null;
 }
 
-export function computeSeasonReward(rating: number, rewardConfig = resolveSeasonRewardConfig()): SeasonRewardComputation {
-  const tier = getTierForRating(rating);
+export function computeSeasonReward(
+  rankPosition: number,
+  rankedPlayerCount: number,
+  rewardConfig = resolveSeasonRewardConfig()
+): SeasonRewardComputation | null {
+  const bracket = resolveSeasonRewardBracket(rankPosition, rankedPlayerCount, rewardConfig);
+  if (!bracket) {
+    return null;
+  }
 
   return {
-    tier,
-    gems: rewardConfig[tier],
-    resetEloRating: computeSeasonResetEloRating(rating)
+    gems: bracket.gems,
+    badge: bracket.badge,
+    rankPosition
   };
 }
-
-export { PLAYER_TIERS };

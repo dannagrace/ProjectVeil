@@ -1,0 +1,7 @@
+{
+  "brackets": [
+    { "topPercentile": 1, "gems": 200, "badge": "diamond_champion" },
+    { "topPercentile": 10, "gems": 100, "badge": "platinum_rival" },
+    { "topPercentile": 25, "gems": 50, "badge": "gold_contender" }
+  ]
+}

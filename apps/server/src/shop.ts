@@ -1,9 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import shopConfigDocument from "../../../configs/shop-config.json";
-import { getEquipmentDefinition, type ResourceLedger, type SeasonRewardConfig } from "../../../packages/shared/src/index";
+import { getEquipmentDefinition, type ResourceLedger } from "../../../packages/shared/src/index";
 import { validateAuthSessionFromRequest } from "./auth";
 import type { RoomSnapshotStore } from "./persistence";
-import { normalizeSeasonRewardConfig, type ResolvedSeasonRewardConfig } from "./season-rewards";
 
 export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle";
 
@@ -25,7 +24,6 @@ export interface ShopProduct {
 
 interface ShopConfigDocument {
   products?: Partial<ShopProduct>[] | null;
-  seasonRewards?: Partial<SeasonRewardConfig> | null;
 }
 
 export interface RegisterShopRoutesOptions {
@@ -163,10 +161,6 @@ function normalizeShopProducts(rawProducts?: Partial<ShopProduct>[] | null): Sho
 export function resolveShopProducts(options?: RegisterShopRoutesOptions): ShopProduct[] {
   const configuredProducts = options?.products ?? (shopConfigDocument as ShopConfigDocument).products;
   return normalizeShopProducts(configuredProducts);
-}
-
-export function resolveSeasonRewardsConfig(): ResolvedSeasonRewardConfig {
-  return normalizeSeasonRewardConfig((shopConfigDocument as ShopConfigDocument).seasonRewards);
 }
 
 function sendUnauthorized(

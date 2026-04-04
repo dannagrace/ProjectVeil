@@ -126,12 +126,14 @@ export interface BattleBalanceConfig {
   };
 }
 
+export interface SeasonRewardBracket {
+  topPercentile: number;
+  gems: number;
+  badge: string;
+}
+
 export interface SeasonRewardConfig {
-  bronze: number;
-  silver: number;
-  gold: number;
-  platinum: number;
-  diamond: number;
+  brackets: SeasonRewardBracket[];
 }
 
 export interface MovePoints {
