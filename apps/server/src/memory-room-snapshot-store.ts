@@ -1,5 +1,7 @@
 import {
+  DEFAULT_ELO_RATING,
   appendEventLogEntries,
+  getTierForRating,
   getEquipmentDefinition,
   normalizeEloRating,
   normalizeEventLogEntries,
@@ -40,12 +42,14 @@ import {
   type PlayerEventHistoryQuery,
   type PlayerEventHistorySnapshot
   ,
+  type SeasonCloseSummary,
   type SeasonListOptions,
   type SeasonSnapshot,
   type ShopPurchaseMutationInput,
   type ShopPurchaseResult
 } from "./persistence";
 import type { RoomPersistenceSnapshot } from "./index";
+import { computeSeasonResetEloRating, resolveSeasonRewardConfig } from "./season-rewards";
 
 function cloneAccount(account: PlayerAccountSnapshot): PlayerAccountSnapshot {
   return structuredClone(account);
@@ -1080,11 +1084,38 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     return structuredClone(season);
   }
 
-  async closeSeason(seasonId: string): Promise<void> {
+  async closeSeason(seasonId: string): Promise<SeasonCloseSummary> {
     const normalizedSeasonId = seasonId.trim();
     const existing = this.seasons.get(normalizedSeasonId);
-    if (!existing) {
-      return;
+    if (!existing || existing.status === "closed") {
+      return {
+        seasonId: normalizedSeasonId,
+        playersRewarded: 0,
+        totalGemsGranted: 0
+      };
+    }
+
+    const rewardConfig = resolveSeasonRewardConfig();
+    const rankedAccounts = Array.from(this.accounts.values())
+      .filter((account) => account.eloRating != null)
+      .sort(
+        (left, right) =>
+          normalizeEloRating(right.eloRating ?? DEFAULT_ELO_RATING) - normalizeEloRating(left.eloRating ?? DEFAULT_ELO_RATING) ||
+          left.playerId.localeCompare(right.playerId)
+      );
+
+    let totalGemsGranted = 0;
+    for (const account of rankedAccounts) {
+      const rating = normalizeEloRating(account.eloRating ?? DEFAULT_ELO_RATING);
+      const tier = getTierForRating(rating);
+      const rewardAmount = rewardConfig[tier];
+      totalGemsGranted += rewardAmount;
+      if (rewardAmount > 0) {
+        await this.creditGems(account.playerId, rewardAmount, "reward", `season:${normalizedSeasonId}`);
+      }
+      await this.savePlayerAccountProgress(account.playerId, {
+        eloRating: computeSeasonResetEloRating(rating)
+      });
     }
 
     this.seasons.set(normalizedSeasonId, {
@@ -1092,6 +1123,12 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       status: "closed",
       endedAt: new Date().toISOString()
     });
+
+    return {
+      seasonId: normalizedSeasonId,
+      playersRewarded: rankedAccounts.length,
+      totalGemsGranted
+    };
   }
 
   async close(): Promise<void> {}

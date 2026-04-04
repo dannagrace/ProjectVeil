@@ -123,6 +123,14 @@ export interface BattleBalanceConfig {
   };
 }
 
+export interface SeasonRewardConfig {
+  bronze: number;
+  silver: number;
+  gold: number;
+  platinum: number;
+  diamond: number;
+}
+
 export interface MovePoints {
   total: number;
   remaining: number;

@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import {
   appendEventLogEntries,
+  DEFAULT_ELO_RATING,
   getEquipmentDefinition,
+  getTierForRating,
   appendPlayerBattleReplaySummaries,
   normalizeEloRating,
   normalizeEventLogQuery,
@@ -23,6 +25,7 @@ import {
   type WorldState
 } from "../../../packages/shared/src/index";
 import type { RoomPersistenceSnapshot } from "./index";
+import { computeSeasonResetEloRating, resolveSeasonRewardConfig } from "./season-rewards";
 
 export interface SeasonSnapshot {
   seasonId: string;
@@ -34,6 +37,12 @@ export interface SeasonSnapshot {
 export interface SeasonListOptions {
   status?: "active" | "closed" | "all";
   limit?: number;
+}
+
+export interface SeasonCloseSummary {
+  seasonId: string;
+  playersRewarded: number;
+  totalGemsGranted: number;
 }
 
 export interface RoomSnapshotStore {
@@ -98,7 +107,7 @@ export interface RoomSnapshotStore {
   getCurrentSeason(): Promise<SeasonSnapshot | null>;
   listSeasons?(options?: SeasonListOptions): Promise<SeasonSnapshot[]>;
   createSeason(seasonId: string): Promise<SeasonSnapshot>;
-  closeSeason(seasonId: string): Promise<void>;
+  closeSeason(seasonId: string): Promise<SeasonCloseSummary>;
   save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void>;
   delete(roomId: string): Promise<void>;
   pruneExpired(referenceTime?: Date): Promise<number>;
@@ -4779,29 +4788,108 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     };
   }
 
-  async closeSeason(seasonId: string): Promise<void> {
+  async closeSeason(seasonId: string): Promise<SeasonCloseSummary> {
     const normalizedId = seasonId.trim();
-    // Archive top 100 player ratings
-    const [accounts] = await this.pool.query<RowDataPacket[]>(
-      `SELECT player_id, elo_rating FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ORDER BY elo_rating DESC LIMIT 100`
-    );
-    const now = new Date();
-    if (accounts.length > 0) {
-      const values = accounts.map((a, idx) => [normalizedId, String(a.player_id), Number(a.elo_rating), "bronze", idx + 1, now]);
-      await this.pool.query(
-        `INSERT IGNORE INTO \`veil_season_rankings\` (season_id, player_id, final_rating, tier, rank_position, archived_at) VALUES ?`,
-        [values]
-      );
+    if (!normalizedId) {
+      throw new Error("seasonId must not be empty");
     }
-    // Soft reset ELO ratings
-    await this.pool.query(
-      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` SET elo_rating = 1000 + FLOOR((elo_rating - 1000) * 0.5)`
-    );
-    // Close the season
-    await this.pool.query(
-      `UPDATE \`veil_seasons\` SET status = 'closed', ended_at = ? WHERE season_id = ?`,
-      [now, normalizedId]
-    );
+
+    const rewardConfig = resolveSeasonRewardConfig();
+    const now = new Date();
+    const connection = await this.pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      const [seasonRows] = await connection.query<RowDataPacket[]>(
+        `SELECT season_id, status
+         FROM \`veil_seasons\`
+         WHERE season_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedId]
+      );
+      const seasonRow = seasonRows[0] as { season_id: string; status: "active" | "closed" } | undefined;
+      if (!seasonRow || seasonRow.status === "closed") {
+        await connection.rollback();
+        return {
+          seasonId: normalizedId,
+          playersRewarded: 0,
+          totalGemsGranted: 0
+        };
+      }
+
+      const [accountRows] = await connection.query<RowDataPacket[]>(
+        `SELECT player_id, elo_rating, gems
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE elo_rating IS NOT NULL
+         ORDER BY elo_rating DESC, player_id ASC
+         FOR UPDATE`
+      );
+
+      let playersRewarded = 0;
+      let totalGemsGranted = 0;
+      const rankingValues: Array<[string, string, number, string, number, Date]> = [];
+
+      for (const [index, row] of accountRows.entries()) {
+        const playerId = String(row.player_id);
+        const rating = normalizeEloRating(Number(row.elo_rating));
+        const currentGems = normalizeGemAmount((row as { gems?: number | null }).gems);
+        const tier = getTierForRating(rating);
+        const rewardAmount = rewardConfig[tier];
+        const resetEloRating = computeSeasonResetEloRating(rating);
+
+        rankingValues.push([normalizedId, playerId, rating, tier, index + 1, now]);
+        playersRewarded += 1;
+        totalGemsGranted += rewardAmount;
+
+        await connection.query(
+          `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+           SET gems = ?,
+               elo_rating = ?,
+               version = version + 1
+           WHERE player_id = ?`,
+          [currentGems + rewardAmount, resetEloRating, playerId]
+        );
+
+        if (rewardAmount > 0) {
+          await appendGemLedgerEntry(connection, {
+            entryId: randomUUID(),
+            playerId,
+            delta: rewardAmount,
+            reason: "reward",
+            refId: `season:${normalizedId}`
+          });
+        }
+      }
+
+      if (rankingValues.length > 0) {
+        await connection.query(
+          `INSERT INTO \`veil_season_rankings\` (season_id, player_id, final_rating, tier, rank_position, archived_at) VALUES ?`,
+          [rankingValues]
+        );
+      }
+
+      await connection.query(
+        `UPDATE \`veil_seasons\`
+         SET status = 'closed',
+             ended_at = ?
+         WHERE season_id = ?`,
+        [now, normalizedId]
+      );
+
+      await connection.commit();
+      return {
+        seasonId: normalizedId,
+        playersRewarded,
+        totalGemsGranted
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   async close(): Promise<void> {

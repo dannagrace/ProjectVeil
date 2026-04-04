@@ -294,6 +294,99 @@ test("listSeasons supports status=all without a status filter", async () => {
   assert.deepEqual(queries[0].params, [5]);
 });
 
+test("closeSeason grants tier rewards, soft-resets elo, and is idempotent", async () => {
+  const seasonState = { seasonId: "season-live", status: "active" as "active" | "closed" };
+  const accounts = new Map([
+    ["diamond-player", { eloRating: 1820, gems: 10 }],
+    ["gold-player", { eloRating: 1380, gems: 5 }],
+    ["bronze-player", { eloRating: 1040, gems: 0 }]
+  ]);
+  const rankingRows: Array<{ seasonId: string; playerId: string; finalRating: number; tier: string; rankPosition: number }> = [];
+  const gemLedgerEntries: Array<{ playerId: string; delta: number; refId: string }> = [];
+
+  const connection = {
+    async beginTransaction() {},
+    async query(sql: string, params: unknown[] = []) {
+      if (/FROM `veil_seasons`/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return [[{ season_id: seasonState.seasonId, status: seasonState.status }]];
+      }
+      if (/FROM `player_accounts`/.test(sql) && /ORDER BY elo_rating DESC/.test(sql)) {
+        const rows = [...accounts.entries()]
+          .sort((left, right) => right[1].eloRating - left[1].eloRating || left[0].localeCompare(right[0]))
+          .map(([playerId, account]) => ({
+            player_id: playerId,
+            elo_rating: account.eloRating,
+            gems: account.gems
+          }));
+        return [rows];
+      }
+      if (/INSERT INTO `veil_season_rankings`/.test(sql)) {
+        const values = params[0] as Array<[string, string, number, string, number]>;
+        for (const [seasonId, playerId, finalRating, tier, rankPosition] of values) {
+          rankingRows.push({ seasonId, playerId, finalRating, tier, rankPosition });
+        }
+        return [{ affectedRows: values.length }];
+      }
+      if (/UPDATE `player_accounts`/.test(sql) && /SET gems = \?,\s+elo_rating = \?/.test(sql)) {
+        const [gems, eloRating, playerId] = params as [number, number, string];
+        accounts.set(playerId, { gems, eloRating });
+        return [{ affectedRows: 1 }];
+      }
+      if (/INSERT INTO `gem_ledger`/.test(sql)) {
+        const [, playerId, delta, , refId] = params as [string, string, number, string, string];
+        gemLedgerEntries.push({ playerId, delta, refId });
+        return [{ affectedRows: 1 }];
+      }
+      if (/UPDATE `veil_seasons`/.test(sql) && /status = 'closed'/.test(sql)) {
+        seasonState.status = "closed";
+        return [{ affectedRows: 1 }];
+      }
+
+      throw new Error(`Unexpected SQL in closeSeason test: ${sql}`);
+    },
+    async commit() {},
+    async rollback() {},
+    release() {}
+  };
+
+  const store = new MySqlRoomSnapshotStore({
+    getConnection: async () => connection,
+    query: async () => {
+      throw new Error("pool.query should not be used by closeSeason");
+    }
+  } as never);
+
+  const firstClose = await store.closeSeason("season-live");
+  const secondClose = await store.closeSeason("season-live");
+
+  assert.deepEqual(firstClose, {
+    seasonId: "season-live",
+    playersRewarded: 3,
+    totalGemsGranted: 375
+  });
+  assert.deepEqual(secondClose, {
+    seasonId: "season-live",
+    playersRewarded: 0,
+    totalGemsGranted: 0
+  });
+  assert.deepEqual(accounts.get("diamond-player"), { eloRating: 1410, gems: 260 });
+  assert.deepEqual(accounts.get("gold-player"), { eloRating: 1190, gems: 105 });
+  assert.deepEqual(accounts.get("bronze-player"), { eloRating: 1020, gems: 25 });
+  assert.deepEqual(
+    rankingRows.map((row) => ({ playerId: row.playerId, tier: row.tier, rankPosition: row.rankPosition, finalRating: row.finalRating })),
+    [
+      { playerId: "diamond-player", tier: "diamond", rankPosition: 1, finalRating: 1820 },
+      { playerId: "gold-player", tier: "gold", rankPosition: 2, finalRating: 1380 },
+      { playerId: "bronze-player", tier: "bronze", rankPosition: 3, finalRating: 1040 }
+    ]
+  );
+  assert.deepEqual(gemLedgerEntries, [
+    { playerId: "diamond-player", delta: 250, refId: "season:season-live" },
+    { playerId: "gold-player", delta: 100, refId: "season:season-live" },
+    { playerId: "bronze-player", delta: 25, refId: "season:season-live" }
+  ]);
+});
+
 test("mysql player event history query applies inclusive timestamp filters", async () => {
   const queries: Array<{ sql: string; params: unknown[] | undefined }> = [];
   const store = new MySqlRoomSnapshotStore({
