@@ -605,7 +605,19 @@ export interface HeroEquipmentSlotView {
 
 export interface HeroEquipmentLoadoutView {
   slots: HeroEquipmentSlotView[];
+  setBonuses: HeroEquipmentSetProgressView[];
   summary: HeroEquipmentBonusSummary;
+}
+
+export interface HeroEquipmentSetProgressView {
+  setId: string;
+  name: string;
+  piecesRequired: number;
+  equippedPieces: number;
+  active: boolean;
+  description: string;
+  bonusSummary: string;
+  specialEffectSummary: string | null;
 }
 
 export interface RolledEquipmentDrop {
@@ -632,7 +644,13 @@ function resolveEquipmentDefinition(id: string | undefined): EquipmentDefinition
 }
 
 function resolveActiveSetBonuses(resolvedItems: EquipmentDefinition[]): EquipmentSetBonusConfig[] {
-  const countsBySetId = resolvedItems.reduce<Record<string, number>>((counts, item) => {
+  const countsBySetId = countEquippedSetPieces(resolvedItems);
+
+  return SET_BONUSES.filter((entry) => (countsBySetId[entry.setId] ?? 0) >= entry.piecesRequired);
+}
+
+function countEquippedSetPieces(resolvedItems: EquipmentDefinition[]): Record<string, number> {
+  return resolvedItems.reduce<Record<string, number>>((counts, item) => {
     if (!item.setId) {
       return counts;
     }
@@ -640,8 +658,6 @@ function resolveActiveSetBonuses(resolvedItems: EquipmentDefinition[]): Equipmen
     counts[item.setId] = (counts[item.setId] ?? 0) + 1;
     return counts;
   }, {});
-
-  return SET_BONUSES.filter((entry) => (countsBySetId[entry.setId] ?? 0) >= entry.piecesRequired);
 }
 
 function percentageDelta(base: number, percent: number): number {
@@ -873,6 +889,13 @@ export function createHeroEquipmentBonusSummary(
 export function createHeroEquipmentLoadoutView(
   hero: Pick<HeroState, "stats" | "loadout">
 ): HeroEquipmentLoadoutView {
+  const resolvedItems = [
+    resolveEquipmentDefinition(hero.loadout.equipment.weaponId),
+    resolveEquipmentDefinition(hero.loadout.equipment.armorId),
+    resolveEquipmentDefinition(hero.loadout.equipment.accessoryId)
+  ].filter((entry): entry is EquipmentDefinition => Boolean(entry));
+  const countsBySetId = countEquippedSetPieces(resolvedItems);
+
   return {
     slots: EQUIPMENT_SLOT_META.map(({ slot, label, key }) => {
       const itemId = hero.loadout.equipment[key];
@@ -917,6 +940,18 @@ export function createHeroEquipmentLoadoutView(
         specialEffectSummary: item.specialEffect ? `${item.specialEffect.name}: ${item.specialEffect.description}` : null
       };
     }),
+    setBonuses: SET_BONUSES.map((setBonus) => ({
+      setId: setBonus.setId,
+      name: setBonus.name,
+      piecesRequired: setBonus.piecesRequired,
+      equippedPieces: countsBySetId[setBonus.setId] ?? 0,
+      active: (countsBySetId[setBonus.setId] ?? 0) >= setBonus.piecesRequired,
+      description: setBonus.description,
+      bonusSummary: formatEquipmentBonusSummary(setBonus.bonuses),
+      specialEffectSummary: setBonus.specialEffect
+        ? `${setBonus.specialEffect.name}: ${setBonus.specialEffect.description}`
+        : null
+    })),
     summary: createHeroEquipmentBonusSummary(hero)
   };
 }

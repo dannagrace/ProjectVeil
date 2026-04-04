@@ -1,4 +1,5 @@
 import type {
+  HeroAttributeBonuses,
   BattleSkillId,
   HeroSkillBranchConfig,
   HeroSkillConfig,
@@ -18,6 +19,7 @@ export interface HeroSkillView {
   id: string;
   branchId: string;
   branchName: string;
+  tier: number;
   name: string;
   description: string;
   requiredLevel: number;
@@ -29,7 +31,15 @@ export interface HeroSkillView {
   reason?: string;
   grantedBattleSkillIds: BattleSkillId[];
   nextGrantedBattleSkillIds: BattleSkillId[];
+  grantedStatBonuses: HeroAttributeBonuses;
+  nextGrantedStatBonuses: HeroAttributeBonuses;
   ranks: HeroSkillRankView[];
+}
+
+export interface HeroSkillTierView {
+  tier: number;
+  requiredLevel: number;
+  skills: HeroSkillView[];
 }
 
 export interface HeroSkillBranchView {
@@ -37,6 +47,7 @@ export interface HeroSkillBranchView {
   name: string;
   description: string;
   skills: HeroSkillView[];
+  tiers: HeroSkillTierView[];
 }
 
 export interface HeroSkillTreeView {
@@ -62,6 +73,68 @@ function rankConfigFor(skill: HeroSkillConfig, rank: number): HeroSkillRankConfi
 
 function battleSkillIdsGrantedAtRank(skill: HeroSkillConfig, rank: number): BattleSkillId[] {
   return [...new Set(rankConfigFor(skill, rank)?.battleSkillIds ?? [])];
+}
+
+function createEmptyHeroAttributeBonuses(): HeroAttributeBonuses {
+  return {
+    attack: 0,
+    defense: 0,
+    power: 0,
+    knowledge: 0,
+    maxHp: 0
+  };
+}
+
+function numericBonus(value: number | undefined): number {
+  return Number.isFinite(value) ? Number(value) : 0;
+}
+
+function statBonusesGrantedAtRank(skill: HeroSkillConfig, rank: number): HeroAttributeBonuses {
+  const bonuses = rankConfigFor(skill, rank)?.statBonuses;
+  return {
+    attack: numericBonus(bonuses?.attack),
+    defense: numericBonus(bonuses?.defense),
+    power: numericBonus(bonuses?.power),
+    knowledge: numericBonus(bonuses?.knowledge),
+    maxHp: numericBonus(bonuses?.maxHp)
+  };
+}
+
+function addHeroAttributeBonuses(
+  base: HeroAttributeBonuses,
+  delta: HeroAttributeBonuses
+): HeroAttributeBonuses {
+  return {
+    attack: base.attack + delta.attack,
+    defense: base.defense + delta.defense,
+    power: base.power + delta.power,
+    knowledge: base.knowledge + delta.knowledge,
+    maxHp: base.maxHp + delta.maxHp
+  };
+}
+
+function subtractHeroAttributeBonuses(
+  left: HeroAttributeBonuses,
+  right: HeroAttributeBonuses
+): HeroAttributeBonuses {
+  return {
+    attack: left.attack - right.attack,
+    defense: left.defense - right.defense,
+    power: left.power - right.power,
+    knowledge: left.knowledge - right.knowledge,
+    maxHp: left.maxHp - right.maxHp
+  };
+}
+
+function accumulatedStatBonuses(skill: HeroSkillConfig, rank: number): HeroAttributeBonuses {
+  let bonuses = createEmptyHeroAttributeBonuses();
+  const clampedRank = clampRank(skill, rank);
+
+  for (let currentRank = 1; currentRank <= clampedRank; currentRank += 1) {
+    bonuses = addHeroAttributeBonuses(bonuses, statBonusesGrantedAtRank(skill, currentRank));
+  }
+
+  return bonuses;
 }
 
 function accumulatedBattleSkillIds(skill: HeroSkillConfig, rank: number): BattleSkillId[] {
@@ -148,9 +221,21 @@ export function applyHeroSkillSelection(
   const newRank = currentRank + 1;
   const previousBattleSkillIds = new Set(accumulatedBattleSkillIds(skill, currentRank));
   const nextBattleSkillIds = accumulatedBattleSkillIds(skill, newRank);
+  const previousStatBonuses = accumulatedStatBonuses(skill, currentRank);
+  const nextStatBonuses = accumulatedStatBonuses(skill, newRank);
+  const gainedStatBonuses = subtractHeroAttributeBonuses(nextStatBonuses, previousStatBonuses);
 
   const heroWithSkill = normalizeHeroState({
     ...hero,
+    stats: {
+      ...hero.stats,
+      attack: hero.stats.attack + gainedStatBonuses.attack,
+      defense: hero.stats.defense + gainedStatBonuses.defense,
+      power: hero.stats.power + gainedStatBonuses.power,
+      knowledge: hero.stats.knowledge + gainedStatBonuses.knowledge,
+      maxHp: hero.stats.maxHp + gainedStatBonuses.maxHp,
+      hp: Math.min(hero.stats.maxHp + gainedStatBonuses.maxHp, hero.stats.hp + gainedStatBonuses.maxHp)
+    },
     progression: {
       ...hero.progression,
       skillPoints: Math.max(0, (hero.progression.skillPoints ?? 0) - 1)
@@ -193,6 +278,25 @@ export function grantedHeroBattleSkillIds(
   return [...grantedSkillIds];
 }
 
+export function createHeroSkillBonusSummary(
+  hero: Pick<HeroState, "learnedSkills">,
+  config: HeroSkillTreeConfig = getDefaultHeroSkillTreeConfig()
+): HeroAttributeBonuses {
+  const { skillById } = indexHeroSkillTree(config);
+  let totals = createEmptyHeroAttributeBonuses();
+
+  for (const learnedSkill of hero.learnedSkills ?? []) {
+    const skill = skillById.get(learnedSkill.skillId);
+    if (!skill) {
+      continue;
+    }
+
+    totals = addHeroAttributeBonuses(totals, accumulatedStatBonuses(skill, learnedSkill.rank));
+  }
+
+  return totals;
+}
+
 export function createHeroSkillTreeView(
   hero: HeroState,
   config: HeroSkillTreeConfig = getDefaultHeroSkillTreeConfig()
@@ -201,38 +305,50 @@ export function createHeroSkillTreeView(
 
   return {
     availableSkillPoints: hero.progression.skillPoints ?? 0,
-    branches: config.branches.map((branch) => ({
-      ...branch,
-      skills: config.skills
-        .filter((skill) => skill.branchId === branch.id)
-        .map((skill) => {
-          const validation = validateHeroSkillSelection(hero, skill.id, config);
-          const currentRank = heroSkillRankFor(hero, skill.id);
-          const nextRank = currentRank < skill.maxRank ? currentRank + 1 : null;
-          return {
-            id: skill.id,
-            branchId: skill.branchId,
-            branchName: branchById.get(skill.branchId)?.name ?? skill.branchId,
-            name: skill.name,
-            description: skill.description,
-            requiredLevel: skill.requiredLevel,
-            prerequisites: [...(skill.prerequisites ?? [])],
-            currentRank,
-            maxRank: skill.maxRank,
-            nextRank,
-            canLearn: validation.valid,
-            ...(validation.reason ? { reason: validation.reason } : {}),
-            grantedBattleSkillIds: accumulatedBattleSkillIds(skill, currentRank),
-            nextGrantedBattleSkillIds: nextRank ? battleSkillIdsGrantedAtRank(skill, nextRank) : [],
-            ranks: skill.ranks
-              .slice()
-              .sort((left, right) => left.rank - right.rank)
-              .map((rank) => ({
-                ...rank,
-                unlocked: currentRank >= rank.rank
-              }))
-          };
-        })
-    }))
+    branches: config.branches.map((branch) => {
+      const branchSkills = config.skills.filter((skill) => skill.branchId === branch.id);
+      const tierLevels = [...new Set(branchSkills.map((skill) => skill.requiredLevel))].sort((left, right) => left - right);
+      const skills = branchSkills.map((skill) => {
+        const validation = validateHeroSkillSelection(hero, skill.id, config);
+        const currentRank = heroSkillRankFor(hero, skill.id);
+        const nextRank = currentRank < skill.maxRank ? currentRank + 1 : null;
+        return {
+          id: skill.id,
+          branchId: skill.branchId,
+          branchName: branchById.get(skill.branchId)?.name ?? skill.branchId,
+          tier: Math.max(1, tierLevels.indexOf(skill.requiredLevel) + 1),
+          name: skill.name,
+          description: skill.description,
+          requiredLevel: skill.requiredLevel,
+          prerequisites: [...(skill.prerequisites ?? [])],
+          currentRank,
+          maxRank: skill.maxRank,
+          nextRank,
+          canLearn: validation.valid,
+          ...(validation.reason ? { reason: validation.reason } : {}),
+          grantedBattleSkillIds: accumulatedBattleSkillIds(skill, currentRank),
+          nextGrantedBattleSkillIds: nextRank ? battleSkillIdsGrantedAtRank(skill, nextRank) : [],
+          grantedStatBonuses: accumulatedStatBonuses(skill, currentRank),
+          nextGrantedStatBonuses: nextRank ? statBonusesGrantedAtRank(skill, nextRank) : createEmptyHeroAttributeBonuses(),
+          ranks: skill.ranks
+            .slice()
+            .sort((left, right) => left.rank - right.rank)
+            .map((rank) => ({
+              ...rank,
+              unlocked: currentRank >= rank.rank
+            }))
+        };
+      });
+
+      return {
+        ...branch,
+        skills,
+        tiers: tierLevels.map((requiredLevel, index) => ({
+          tier: index + 1,
+          requiredLevel,
+          skills: skills.filter((skill) => skill.requiredLevel === requiredLevel)
+        }))
+      };
+    })
   };
 }
