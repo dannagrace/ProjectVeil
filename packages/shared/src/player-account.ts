@@ -21,6 +21,7 @@ export interface PlayerAccountReadModel {
   avatarUrl?: string;
   eloRating?: number;
   gems?: number;
+  loginStreak?: number;
   globalResources: ResourceLedger;
   achievements: PlayerAchievementProgress[];
   recentEventLog: EventLogEntry[];
@@ -48,6 +49,7 @@ export interface PlayerAccountReadModelInput {
   avatarUrl?: string | undefined;
   eloRating?: number | undefined;
   gems?: number | undefined;
+  loginStreak?: number | undefined;
   globalResources?: Partial<ResourceLedger> | null | undefined;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -83,6 +85,7 @@ export function normalizePlayerAccountReadModel(
   const ageVerified = account?.ageVerified === true;
   const isMinor = account?.isMinor === true;
   const dailyPlayMinutes = Math.max(0, Math.floor(account?.dailyPlayMinutes ?? 0));
+  const loginStreak = Math.max(0, Math.floor(account?.loginStreak ?? 0));
   const lastPlayDate = /^\d{4}-\d{2}-\d{2}$/.test(account?.lastPlayDate?.trim() ?? "")
     ? account?.lastPlayDate?.trim()
     : undefined;
@@ -100,6 +103,7 @@ export function normalizePlayerAccountReadModel(
     ...(avatarUrl ? { avatarUrl } : {}),
     eloRating: normalizeEloRating(account?.eloRating),
     gems: Math.max(0, Math.floor(account?.gems ?? 0)),
+    ...(loginStreak > 0 ? { loginStreak } : {}),
     globalResources: {
       gold: Math.max(0, Math.floor(account?.globalResources?.gold ?? 0)),
       wood: Math.max(0, Math.floor(account?.globalResources?.wood ?? 0)),

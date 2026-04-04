@@ -23,6 +23,7 @@ export interface CocosAchievementUnlockNotice {
 }
 
 const ACHIEVEMENT_UNLOCK_PREFIX = "解锁成就：";
+const DAILY_LOGIN_REWARD_PREFIX = "每日签到奖励：";
 const GAMEPLAY_ACCOUNT_REFRESH_EVENT_TYPES = new Set([
   "battle.started",
   "battle.resolved",
@@ -75,6 +76,34 @@ export function buildCocosAchievementUnlockNotice(
 
 export function collectAchievementUnlockEventIds(recentEventLog: EventLogEntry[]): string[] {
   return recentEventLog.filter(isAchievementUnlockedEventLogEntry).map((entry) => entry.id);
+}
+
+export function isDailyLoginRewardEventLogEntry(entry: EventLogEntry): boolean {
+  return entry.category === "account" && entry.description.startsWith(DAILY_LOGIN_REWARD_PREFIX);
+}
+
+export function buildCocosProfileNotice(
+  recentEventLog: EventLogEntry[],
+  seenEntryIds: ReadonlySet<string>
+): CocosAchievementUnlockNotice | null {
+  const dailyRewardEntry = recentEventLog.find(
+    (entry) => isDailyLoginRewardEventLogEntry(entry) && !seenEntryIds.has(entry.id)
+  );
+  if (dailyRewardEntry) {
+    return {
+      eventId: dailyRewardEntry.id,
+      title: "每日签到",
+      detail: dailyRewardEntry.description.slice(DAILY_LOGIN_REWARD_PREFIX.length).trim()
+    };
+  }
+
+  return buildCocosAchievementUnlockNotice(recentEventLog, seenEntryIds);
+}
+
+export function collectProfileNoticeEventIds(recentEventLog: EventLogEntry[]): string[] {
+  return recentEventLog
+    .filter((entry) => isDailyLoginRewardEventLogEntry(entry) || isAchievementUnlockedEventLogEntry(entry))
+    .map((entry) => entry.id);
 }
 
 export function shouldRefreshGameplayAccountProfileForEvents(eventTypes: string[]): boolean {

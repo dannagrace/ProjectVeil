@@ -98,8 +98,8 @@ import {
   triggerCocosRuntimeGc
 } from "./cocos-runtime-memory.ts";
 import {
-  buildCocosAchievementUnlockNotice,
-  collectAchievementUnlockEventIds,
+  buildCocosProfileNotice,
+  collectProfileNoticeEventIds,
   shouldRefreshGameplayAccountProfileForEvents
 } from "./cocos-achievements.ts";
 import {
@@ -320,7 +320,7 @@ export class VeilRoot extends Component {
   private loginProviders: CocosLoginProviderDescriptor[] = [];
   private audioRuntime = createCocosAudioRuntime(cocosPresentationConfig.audio);
   private pendingPixelSpriteGroups = new Set<"boot" | "battle">();
-  private seenAchievementUnlockEventIds = new Set<string>();
+  private seenProfileNoticeEventIds = new Set<string>();
   private wechatShareStatus = "分享功能仅在微信小游戏可用。";
   private wechatShareAvailable = false;
   private runtimeMemoryNotice = "";
@@ -3791,11 +3791,11 @@ export class VeilRoot extends Component {
 
   private commitAccountProfile(profile: CocosPlayerAccountProfile, allowAchievementNotice: boolean): void {
     if (profile.playerId !== this.lobbyAccountProfile.playerId) {
-      this.seenAchievementUnlockEventIds.clear();
+      this.seenProfileNoticeEventIds.clear();
     }
 
     if (allowAchievementNotice) {
-      const notice = buildCocosAchievementUnlockNotice(profile.recentEventLog, this.seenAchievementUnlockEventIds);
+      const notice = buildCocosProfileNotice(profile.recentEventLog, this.seenProfileNoticeEventIds);
       if (notice) {
         this.achievementNotice = {
           ...notice,
@@ -3805,8 +3805,8 @@ export class VeilRoot extends Component {
       }
     }
 
-    for (const eventId of collectAchievementUnlockEventIds(profile.recentEventLog)) {
-      this.seenAchievementUnlockEventIds.add(eventId);
+    for (const eventId of collectProfileNoticeEventIds(profile.recentEventLog)) {
+      this.seenProfileNoticeEventIds.add(eventId);
     }
 
     this.lobbyAccountProfile = profile;

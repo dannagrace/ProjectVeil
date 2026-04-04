@@ -3,6 +3,7 @@ import { createCipheriv, createHash } from "node:crypto";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
 import { issueAccountAuthSession, issueGuestAuthSession, issueWechatMiniGameAuthSession, hashAccountPassword } from "../src/auth";
+import { getDailyRewardDateKey, getPreviousDailyRewardDateKey } from "../src/daily-rewards";
 import { applyPlayerEventLogAndAchievements } from "../src/player-achievements";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "../src/wechat-session-key";
@@ -36,6 +37,12 @@ import {
   type PlayerBattleReplaySummary,
   type WorldState
 } from "../../../packages/shared/src/index";
+
+function getRelativeDailyRewardDateKey(baseDateKey: string, deltaDays: number): string {
+  const parsed = new Date(`${baseDateKey}T00:00:00.000Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + deltaDays);
+  return parsed.toISOString().slice(0, 10);
+}
 
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
@@ -177,6 +184,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ...(existing?.isMinor ? { isMinor: existing.isMinor } : {}),
       ...(existing?.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
       ...(existing?.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
+      ...(existing?.loginStreak ? { loginStreak: existing.loginStreak } : {}),
       ...(existing?.banStatus ? { banStatus: existing.banStatus } : {}),
       ...(existing?.banExpiry ? { banExpiry: existing.banExpiry } : {}),
       ...(existing?.banReason ? { banReason: existing.banReason } : {}),
@@ -483,6 +491,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     const existing = await this.ensurePlayerAccount({ playerId });
     const account: PlayerAccountSnapshot = {
       ...existing,
+      ...(patch.gems !== undefined ? { gems: Math.max(0, Math.floor(patch.gems ?? 0)) } : {}),
       globalResources: structuredClone(
         (patch.globalResources as PlayerAccountSnapshot["globalResources"] | undefined) ?? existing.globalResources
       ),
@@ -493,6 +502,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ),
       ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
       ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
+      ...(patch.loginStreak !== undefined ? { loginStreak: Math.max(0, Math.floor(patch.loginStreak ?? 0)) } : existing.loginStreak ? { loginStreak: existing.loginStreak } : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -2662,4 +2672,191 @@ test("player deletion anonymizes personal data, clears wechat bindings, and revo
   };
   assert.equal(meResponse.status, 401);
   assert.equal(mePayload.error.code, "session_revoked");
+});
+
+test("daily claim increments streak and grants the configured consecutive-day reward", async (t) => {
+  const port = 44860 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  const today = getDailyRewardDateKey();
+  const yesterday = getPreviousDailyRewardDateKey(today);
+  await store.ensurePlayerAccount({
+    playerId: "daily-streak",
+    displayName: "晨星巡游者"
+  });
+  await store.savePlayerAccountProgress("daily-streak", {
+    gems: 20,
+    globalResources: { gold: 100, wood: 0, ore: 0 },
+    lastPlayDate: yesterday,
+    loginStreak: 1,
+    dailyPlayMinutes: 33
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "daily-streak",
+    displayName: "晨星巡游者"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const claimResponse = await fetch(`http://127.0.0.1:${port}/api/player/daily-claim`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const claimPayload = (await claimResponse.json()) as {
+    claimed: boolean;
+    streak: number;
+    reward: { gems: number; gold: number };
+  };
+
+  assert.equal(claimResponse.status, 200);
+  assert.equal(claimPayload.claimed, true);
+  assert.equal(claimPayload.streak, 2);
+  assert.deepEqual(claimPayload.reward, { gems: 5, gold: 75 });
+
+  const account = await store.loadPlayerAccount("daily-streak");
+  assert.equal(account?.gems, 25);
+  assert.equal(account?.globalResources.gold, 175);
+  assert.equal(account?.loginStreak, 2);
+  assert.equal(account?.lastPlayDate, today);
+  assert.equal(account?.dailyPlayMinutes, 0);
+  assert.match(account?.recentEventLog[0]?.description ?? "", /^每日签到奖励：连签第 2 天/);
+});
+
+test("daily claim resets the streak after a gap", async (t) => {
+  const port = 44880 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  const today = getDailyRewardDateKey();
+  const twoDaysAgo = getRelativeDailyRewardDateKey(today, -2);
+  await store.ensurePlayerAccount({
+    playerId: "daily-reset",
+    displayName: "断潮旅者"
+  });
+  await store.savePlayerAccountProgress("daily-reset", {
+    gems: 40,
+    globalResources: { gold: 10, wood: 0, ore: 0 },
+    lastPlayDate: twoDaysAgo,
+    loginStreak: 6
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "daily-reset",
+    displayName: "断潮旅者"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const claimResponse = await fetch(`http://127.0.0.1:${port}/api/player/daily-claim`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const claimPayload = (await claimResponse.json()) as {
+    claimed: boolean;
+    streak: number;
+    reward: { gems: number; gold: number };
+  };
+
+  assert.equal(claimPayload.claimed, true);
+  assert.equal(claimPayload.streak, 1);
+  assert.deepEqual(claimPayload.reward, { gems: 5, gold: 50 });
+
+  const account = await store.loadPlayerAccount("daily-reset");
+  assert.equal(account?.loginStreak, 1);
+  assert.equal(account?.gems, 45);
+  assert.equal(account?.globalResources.gold, 60);
+});
+
+test("daily claim cycles reward tiers after day seven", async (t) => {
+  const port = 44900 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  const yesterday = getPreviousDailyRewardDateKey(getDailyRewardDateKey());
+  await store.ensurePlayerAccount({
+    playerId: "daily-cycle",
+    displayName: "七曜守门人"
+  });
+  await store.savePlayerAccountProgress("daily-cycle", {
+    gems: 0,
+    globalResources: { gold: 0, wood: 0, ore: 0 },
+    lastPlayDate: yesterday,
+    loginStreak: 7
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "daily-cycle",
+    displayName: "七曜守门人"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const claimResponse = await fetch(`http://127.0.0.1:${port}/api/player/daily-claim`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const claimPayload = (await claimResponse.json()) as {
+    claimed: boolean;
+    streak: number;
+    reward: { gems: number; gold: number };
+  };
+
+  assert.equal(claimPayload.claimed, true);
+  assert.equal(claimPayload.streak, 8);
+  assert.deepEqual(claimPayload.reward, { gems: 5, gold: 50 });
+});
+
+test("daily claim rejects duplicate claims on the same day", async (t) => {
+  const port = 44920 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  const today = getDailyRewardDateKey();
+  await store.ensurePlayerAccount({
+    playerId: "daily-claimed",
+    displayName: "雾港登记员"
+  });
+  await store.savePlayerAccountProgress("daily-claimed", {
+    gems: 9,
+    globalResources: { gold: 18, wood: 0, ore: 0 },
+    lastPlayDate: today,
+    loginStreak: 3
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "daily-claimed",
+    displayName: "雾港登记员"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const claimResponse = await fetch(`http://127.0.0.1:${port}/api/player/daily-claim`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const claimPayload = (await claimResponse.json()) as {
+    claimed: boolean;
+    reason: string;
+  };
+
+  assert.equal(claimResponse.status, 200);
+  assert.deepEqual(claimPayload, {
+    claimed: false,
+    reason: "already_claimed_today"
+  });
+
+  const account = await store.loadPlayerAccount("daily-claimed");
+  assert.equal(account?.gems, 9);
+  assert.equal(account?.globalResources.gold, 18);
+  assert.equal(account?.loginStreak, 3);
 });

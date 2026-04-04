@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  appendEventLogEntries,
   applyBattleReplayPlaybackCommand,
   buildPlayerBattleReportCenter,
   buildPlayerProgressionSnapshot,
@@ -28,6 +29,7 @@ import type {
   PlayerEventHistoryQuery,
   RoomSnapshotStore
 } from "./persistence";
+import { getDailyRewardDateKey, getPreviousDailyRewardDateKey, resolveDailyRewardForStreak } from "./daily-rewards";
 import { decryptWechatPhoneNumber, validateWechatSignature } from "./wechat-session-key";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -467,6 +469,33 @@ function sendForbidden(response: ServerResponse): void {
   });
 }
 
+function createDailyRewardEventLogEntry(
+  playerId: string,
+  streak: number,
+  reward: { gems: number; gold: number },
+  timestamp = new Date().toISOString()
+) {
+  const rewardSummary = [
+    reward.gems > 0 ? `宝石 x${reward.gems}` : null,
+    reward.gold > 0 ? `金币 x${reward.gold}` : null
+  ]
+    .filter((entry): entry is string => Boolean(entry))
+    .join("、");
+
+  return {
+    id: `${playerId}:${timestamp}:daily-login:${streak}`,
+    timestamp,
+    roomId: "daily-login",
+    playerId,
+    category: "account" as const,
+    description: `每日签到奖励：连签第 ${streak} 天，获得 ${rewardSummary || "奖励已发放"}。`,
+    rewards: [
+      ...(reward.gems > 0 ? [{ type: "resource" as const, label: "gems", amount: reward.gems }] : []),
+      ...(reward.gold > 0 ? [{ type: "resource" as const, label: "gold", amount: reward.gold }] : [])
+    ]
+  };
+}
+
 async function requireAuthSession(
   request: IncomingMessage,
   response: ServerResponse,
@@ -620,6 +649,62 @@ export function registerPlayerAccountRoutes(
       sendJson(response, 200, {
         account: withBattleReportCenter(account),
         session: issueNextAuthSession(account, authSession)
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player/daily-claim", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, {
+        claimed: false,
+        reason: "persistence_unavailable"
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const today = getDailyRewardDateKey();
+      if (account.lastPlayDate === today) {
+        sendJson(response, 200, {
+          claimed: false,
+          reason: "already_claimed_today"
+        });
+        return;
+      }
+
+      const streak = account.lastPlayDate === getPreviousDailyRewardDateKey(today) ? Math.max(0, account.loginStreak ?? 0) + 1 : 1;
+      const reward = resolveDailyRewardForStreak(streak);
+      const eventEntry = createDailyRewardEventLogEntry(account.playerId, streak, reward);
+
+      await store.savePlayerAccountProgress(account.playerId, {
+        gems: (account.gems ?? 0) + reward.gems,
+        globalResources: {
+          ...account.globalResources,
+          gold: (account.globalResources.gold ?? 0) + reward.gold
+        },
+        recentEventLog: appendEventLogEntries(account.recentEventLog, [eventEntry]),
+        lastPlayDate: today,
+        dailyPlayMinutes: 0,
+        loginStreak: streak
+      });
+
+      sendJson(response, 200, {
+        claimed: true,
+        streak,
+        reward
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
