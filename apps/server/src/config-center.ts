@@ -782,7 +782,7 @@ const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
     type: "object",
     title: "Battle Balance Config",
     description: "战斗公式、环境生成阈值和 PVP 参数。",
-    required: ["damage", "environment", "pvp"],
+    required: ["damage", "environment", "turnTimerSeconds", "afkStrikesBeforeForfeit", "pvp"],
     properties: {
       damage: {
         type: "object",
@@ -821,6 +821,8 @@ const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
           trapGrantedStatusId: { type: "string", description: "伤害型陷阱附加的状态 id，可选。" }
         }
       },
+      turnTimerSeconds: { type: "integer", minimum: 1, description: "PVP 回合倒计时秒数。" },
+      afkStrikesBeforeForfeit: { type: "integer", minimum: 1, description: "同一局内累计几次挂机后直接判负。" },
       pvp: {
         type: "object",
         description: "PVP 匹配与结算参数。",
@@ -1578,7 +1580,7 @@ function buildSummary(id: ConfigDocumentId, parsed: unknown): string {
   }
 
   const config = parsed as BattleBalanceConfig;
-  return `damage/env/pvp · K=${config.pvp.eloK} · trap=${config.environment.trapDamage}`;
+  return `damage/env/timer/pvp · ${config.turnTimerSeconds}s/${config.afkStrikesBeforeForfeit} AFK · K=${config.pvp.eloK} · trap=${config.environment.trapDamage}`;
 }
 
 function normalizeJsonContent(
@@ -1782,6 +1784,8 @@ function applyBattleBalancePreset(
         ? { trapGrantedStatusId: config.environment.trapGrantedStatusId }
         : {})
     },
+    turnTimerSeconds: config.turnTimerSeconds,
+    afkStrikesBeforeForfeit: config.afkStrikesBeforeForfeit,
     pvp: {
       eloK: Math.max(1, config.pvp.eloK + (easier ? -4 : 4))
     }

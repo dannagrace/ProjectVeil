@@ -63,6 +63,13 @@ export type ServerMessage =
       payload: SessionStatePayload;
     }
   | {
+      type: "turn.timer";
+      requestId: "push";
+      delivery: "push";
+      remainingMs: number;
+      turnOwnerPlayerId: string;
+    }
+  | {
       type: "world.preview";
       requestId: string;
       movementPlan: MovementPlan | null;

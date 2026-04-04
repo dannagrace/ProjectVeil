@@ -14,6 +14,8 @@
     "trapCharges": 1,
     "trapGrantedStatusId": "weakened"
   },
+  "turnTimerSeconds": 90,
+  "afkStrikesBeforeForfeit": 2,
   "pvp": {
     "eloK": 32
   }

@@ -111,6 +111,7 @@ export interface PlayerWorldView {
     seed: number;
     day: number;
   };
+  turnDeadlineAt?: string;
   map: {
     width: number;
     height: number;
@@ -572,6 +573,10 @@ export type BattleAction =
       unitId: string;
     }
   | {
+      type: "battle.pass";
+      unitId: string;
+    }
+  | {
       type: "battle.skill";
       unitId: string;
       skillId: BattleSkillId;
@@ -625,6 +630,13 @@ type ServerMessage =
       requestId: string;
       delivery?: "reply" | "push";
       payload: SessionStatePayload;
+    }
+  | {
+      type: "turn.timer";
+      requestId: "push";
+      delivery: "push";
+      remainingMs: number;
+      turnOwnerPlayerId: string;
     }
   | {
       type: "world.reachable";

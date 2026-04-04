@@ -127,6 +127,7 @@ function createContractWorldState(): WorldState {
       "player-1": { gold: 180, wood: 12, ore: 5 },
       "player-2": { gold: 90, wood: 4, ore: 3 }
     },
+    turnDeadlineAt: "2026-03-29T07:01:30.000Z",
     visibilityByPlayer: {
       "player-1": ["visible", "visible", "explored", "visible", "visible", "visible"]
     }
@@ -492,6 +493,13 @@ export function createServerMessageFixtures(): ServerMessage[] {
       requestId: "req-session-state-001",
       delivery: "push",
       payload: sessionStatePayload
+    },
+    {
+      type: "turn.timer",
+      requestId: "push",
+      delivery: "push",
+      remainingMs: 90_000,
+      turnOwnerPlayerId: "player-1"
     },
     {
       type: "world.preview",

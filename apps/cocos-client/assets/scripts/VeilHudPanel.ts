@@ -44,6 +44,8 @@ const HUD_INNER = new Color(39, 53, 74, 88);
 const HUD_BORDER = new Color(238, 244, 252, 78);
 export const HUD_ACCENT = new Color(214, 184, 124, 255);
 const HUD_ACCENT_SOFT = new Color(244, 225, 179, 96);
+const HUD_TIMER_WARNING = new Color(228, 78, 78, 255);
+const HUD_TIMER_WARNING_SOFT = new Color(255, 198, 198, 255);
 const HUD_CARD_RESOURCE = new Color(84, 118, 160, 176);
 const HUD_CARD_HERO = new Color(132, 112, 176, 172);
 const HUD_CARD_STATUS = new Color(204, 170, 106, 182);
@@ -54,6 +56,7 @@ const EQUIPMENT_NODE_NAME = "HudEquipment";
 const SKILLS_NODE_NAME = "HudSkills";
 const STATUS_NODE_NAME = "HudStatus";
 const DEBUG_NODE_NAME = "HudDebug";
+const TURN_TIMER_NODE_NAME = "HudTurnTimer";
 const HEADER_ICON_NODE_NAME = "HudHeaderIcon";
 const WATERMARK_NODE_NAME = "HudWatermark";
 const ACTIONS_NODE_NAME = "HudActions";
@@ -329,6 +332,7 @@ export class VeilHudPanel extends Component {
   private skillLabel: Label | null = null;
   private statusLabel: Label | null = null;
   private debugLabel: Label | null = null;
+  private turnTimerLabel: Label | null = null;
   private headerIconSprite: Sprite | null = null;
   private headerIconOpacity: UIOpacity | null = null;
   private currentState: VeilHudRenderState | null = null;
@@ -385,6 +389,7 @@ export class VeilHudPanel extends Component {
     this.syncHeaderIcon();
     this.syncActionButtons();
     this.ensureSectionLabels();
+    this.turnTimerLabel = this.ensureTurnTimerLabel();
     const hero = state.update?.world.ownHeroes[0] ?? null;
     const world = state.update?.world;
     const resources = world?.resources;
@@ -603,6 +608,11 @@ export class VeilHudPanel extends Component {
     if (debugCard) {
       debugCard.active = showDebug;
     }
+    this.refreshTurnTimerLabel();
+  }
+
+  update(): void {
+    this.refreshTurnTimerLabel();
   }
 
   dispatchPointerUp(localX: number, localY: number): string | null {
@@ -759,6 +769,52 @@ export class VeilHudPanel extends Component {
     this.skillLabel = this.ensureLabelNode(SKILLS_NODE_NAME, 16, 22, 92);
     this.statusLabel = this.ensureLabelNode(STATUS_NODE_NAME, 17, 22, 70);
     this.debugLabel = this.ensureLabelNode(DEBUG_NODE_NAME, 14, 18, 50);
+  }
+
+  private ensureTurnTimerLabel(): Label {
+    const existingNode = this.node.getChildByName(TURN_TIMER_NODE_NAME);
+    const node = existingNode ?? new Node(TURN_TIMER_NODE_NAME);
+    if (!existingNode) {
+      node.parent = this.node;
+    }
+    assignUiLayer(node);
+
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(132, 28);
+    const label = node.getComponent(Label) ?? node.addComponent(Label);
+    label.fontSize = 16;
+    label.lineHeight = 20;
+    label.horizontalAlign = H_ALIGN_CENTER;
+    label.verticalAlign = V_ALIGN_MIDDLE;
+    label.enableWrapText = false;
+    label.string = "";
+    return label;
+  }
+
+  private refreshTurnTimerLabel(): void {
+    const label = this.turnTimerLabel ?? this.ensureTurnTimerLabel();
+    const deadlineAt = this.currentState?.update?.world.turnDeadlineAt ?? null;
+    if (!deadlineAt) {
+      label.node.active = false;
+      return;
+    }
+
+    const deadlineMs = Date.parse(deadlineAt);
+    if (Number.isNaN(deadlineMs)) {
+      label.node.active = false;
+      return;
+    }
+
+    const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
+    const remainingMs = Math.max(0, deadlineMs - Date.now());
+    const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1_000));
+    const minutes = Math.floor(remainingSeconds / 60);
+    const seconds = remainingSeconds % 60;
+    const inWarningWindow = remainingMs <= 10_000;
+    label.node.active = true;
+    label.node.setPosition(transform.width / 2 - 82, transform.height / 2 - 62, 3);
+    label.string = `倒计时 ${minutes}:${seconds.toString().padStart(2, "0")}`;
+    label.color = inWarningWindow && Math.floor(Date.now() / 250) % 2 === 0 ? HUD_TIMER_WARNING : inWarningWindow ? HUD_TIMER_WARNING_SOFT : HUD_ACCENT;
   }
 
   private ensureLabelNode(name: string, fontSize: number, lineHeight: number, height: number): Label {

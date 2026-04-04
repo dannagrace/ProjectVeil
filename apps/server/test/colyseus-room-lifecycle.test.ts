@@ -6,9 +6,11 @@ import { applyEloMatchResult } from "../../../packages/shared/src/index";
 import type { BattleState, ServerMessage, WorldEvent } from "../../../packages/shared/src/index";
 import {
   VeilColyseusRoom,
+  configureRoomRuntimeDependencies,
   configureRoomSnapshotStore,
   getActiveRoomInstances,
   listLobbyRooms,
+  resetRoomRuntimeDependencies,
   resetLobbyRoomRegistry
 } from "../src/colyseus-room";
 import { createRoom, type RoomPersistenceSnapshot } from "../src/index";
@@ -72,6 +74,39 @@ function createFakeClient(sessionId: string): FakeClient {
 async function flushAsyncWork(): Promise<void> {
   await Promise.resolve();
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+function createManualRoomTimer(startAtMs = 0): {
+  nowMs: number;
+  tick(): Promise<void>;
+} {
+  let nowMs = startAtMs;
+  let callback: (() => void | Promise<void>) | null = null;
+
+  configureRoomRuntimeDependencies({
+    setInterval: (handler) => {
+      callback = handler;
+      return {};
+    },
+    clearInterval: () => {
+      callback = null;
+    },
+    isMySqlSnapshotStore: () => true,
+    now: () => nowMs
+  });
+
+  return {
+    get nowMs() {
+      return nowMs;
+    },
+    set nowMs(value: number) {
+      nowMs = value;
+    },
+    async tick() {
+      await callback?.();
+      await flushAsyncWork();
+    }
+  };
 }
 
 async function createTestRoom(logicalRoomId: string, seed = 1001): Promise<VeilColyseusRoom> {
@@ -262,6 +297,15 @@ function lastSessionState(client: FakeClient, delivery?: "reply" | "push"): Extr
   );
   const latest = states.at(-1);
   assert.ok(latest, "expected a session.state message");
+  return latest;
+}
+
+function lastTurnTimer(client: FakeClient): Extract<ServerMessage, { type: "turn.timer" }> {
+  const timers = client.sent.filter(
+    (message): message is Extract<ServerMessage, { type: "turn.timer" }> => message.type === "turn.timer"
+  );
+  const latest = timers.at(-1);
+  assert.ok(latest, "expected a turn.timer message");
   return latest;
 }
 
@@ -1085,6 +1129,90 @@ test("pvp replay persistence captures both attacker and defender accounts from r
     replaySaves.map((entry) => entry.playerId).sort(),
     ["player-1", "player-2"]
   );
+});
+
+test("turn timer auto-applies end day on expiry and pushes countdown state", async (t) => {
+  resetLobbyRoomRegistry();
+  const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-turn-timer-${Date.now()}`);
+  const attackerClient = createFakeClient("session-turn-timer-attacker");
+  const defenderClient = createFakeClient("session-turn-timer-defender");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+    resetRoomRuntimeDependencies();
+  });
+
+  await connectPlayer(room, attackerClient, "player-1", "connect-turn-timer-attacker");
+  await connectPlayer(room, defenderClient, "player-2", "connect-turn-timer-defender");
+
+  const initialTimer = lastTurnTimer(attackerClient);
+  assert.equal(initialTimer.turnOwnerPlayerId, "player-1");
+  assert.equal(initialTimer.remainingMs, 90_000);
+
+  timer.nowMs += 90_001;
+  await timer.tick();
+
+  const attackerPush = lastSessionState(attackerClient, "push");
+  const defenderPush = lastSessionState(defenderClient, "push");
+  const timerAfterExpiry = lastTurnTimer(defenderClient);
+
+  assert.equal(attackerPush.payload.world.meta.day, 2);
+  assert.equal(defenderPush.payload.world.meta.day, 2);
+  assert.deepEqual(attackerPush.payload.events.map((event) => event.type), ["turn.advanced"]);
+  assert.equal(attackerPush.payload.world.turnDeadlineAt, "2026-04-04T00:03:00.001Z");
+  assert.equal(timerAfterExpiry.turnOwnerPlayerId, "player-2");
+  assert.equal(timerAfterExpiry.remainingMs, 90_000);
+});
+
+test("two consecutive AFK strikes trigger afk_forfeit and persist surrender-path ELO deltas", async (t) => {
+  resetLobbyRoomRegistry();
+  const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-afk-forfeit-${Date.now()}`);
+  const attackerClient = createFakeClient("session-afk-forfeit-attacker");
+  const defenderClient = createFakeClient("session-afk-forfeit-defender");
+  const expectedRatings = applyEloMatchResult(1000, 1000);
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+    resetRoomRuntimeDependencies();
+  });
+
+  await connectPlayer(room, attackerClient, "player-1", "connect-afk-forfeit-attacker");
+  await connectPlayer(room, defenderClient, "player-2", "connect-afk-forfeit-defender");
+
+  timer.nowMs += 90_001;
+  await timer.tick();
+
+  await emitRoomMessage(room, "world.action", defenderClient, {
+    type: "world.action",
+    requestId: "manual-end-day-after-first-timeout",
+    action: {
+      type: "turn.endDay"
+    }
+  });
+
+  timer.nowMs += 90_001;
+  await timer.tick();
+
+  const attackerPush = lastSessionState(attackerClient, "push");
+  const defenderPush = lastSessionState(defenderClient, "push");
+  const loserAccount = await store.loadPlayerAccount("player-1");
+  const winnerAccount = await store.loadPlayerAccount("player-2");
+
+  assert.equal(attackerPush.payload.reason, "afk_forfeit");
+  assert.equal(defenderPush.payload.reason, "afk_forfeit");
+  assert.equal(loserAccount?.eloRating, expectedRatings.loserRating);
+  assert.equal(winnerAccount?.eloRating, expectedRatings.winnerRating);
+  assert.equal(await store.load(room.roomId), null);
 });
 
 test("surrender settles the room with the surrendering player as loser and persists ELO deltas", async (t) => {
