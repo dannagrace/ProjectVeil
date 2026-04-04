@@ -116,6 +116,10 @@ test("battle replay center view exposes controls and a loaded replay snapshot fo
       ["pause", false],
       ["step-back", false],
       ["step-forward", true],
+      ["turn-back", false],
+      ["turn-forward", false],
+      ["speed-down", true],
+      ["speed-up", true],
       ["reset", false]
     ]
   );
@@ -176,7 +180,7 @@ test("VeilLobbyPanel renders a playback-aware replay timeline card alongside the
   component.render(state);
 
   assert.match(readCardLabel(node, "LobbyBattleReplayCenter"), /战报回放中心/);
-  assert.match(readCardLabel(node, "LobbyBattleReplayTimeline"), /播放游标 0\/2/);
+  assert.match(readCardLabel(node, "LobbyBattleReplayTimeline"), /播放游标 0\/2 .*倍率 1x/);
   assert.match(readCardLabel(node, "LobbyBattleReplayTimeline"), /当前 · 第 1 步/);
 
   (statefulComponent.applyReplayControl as (action: "step-forward") => void)("step-forward");

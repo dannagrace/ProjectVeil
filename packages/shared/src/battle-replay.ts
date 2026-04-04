@@ -45,10 +45,12 @@ export interface PlayerBattleReplayQuery {
 
 export type BattleReplayPlaybackStatus = "paused" | "playing" | "completed";
 export type BattleReplayPlaybackAction = "play" | "pause" | "step" | "tick" | "reset" | "step-back";
+export type BattleReplayPlaybackSpeed = 0.5 | 1 | 2 | 4;
 
 export interface BattleReplayPlaybackState {
   replay: PlayerBattleReplaySummary;
   status: BattleReplayPlaybackStatus;
+  speed: BattleReplayPlaybackSpeed;
   currentStepIndex: number;
   totalSteps: number;
   currentState: BattleState;
@@ -58,7 +60,9 @@ export interface BattleReplayPlaybackState {
 
 export interface BattleReplayPlaybackCommand {
   currentStepIndex?: number | undefined;
+  targetTurn?: number | undefined;
   status?: Exclude<BattleReplayPlaybackStatus, "completed"> | undefined;
+  speed?: number | undefined;
   action?: BattleReplayPlaybackAction | undefined;
   repeat?: number | undefined;
 }
@@ -162,17 +166,39 @@ function resolvePlaybackStatus(
   return currentStepIndex >= totalSteps ? "completed" : requestedStatus;
 }
 
+function normalizePlaybackSpeed(speed?: number | null): BattleReplayPlaybackSpeed {
+  if (speed === 0.5 || speed === 1 || speed === 2 || speed === 4) {
+    return speed;
+  }
+
+  if (speed != null && Number.isFinite(speed)) {
+    if (speed <= 0.75) {
+      return 0.5;
+    }
+    if (speed <= 1.5) {
+      return 1;
+    }
+    if (speed <= 3) {
+      return 2;
+    }
+  }
+
+  return 4;
+}
+
 function buildPlaybackState(
   replay: PlayerBattleReplaySummary,
   currentState: BattleState,
   currentStepIndex: number,
-  status: Exclude<BattleReplayPlaybackStatus, "completed">
+  status: Exclude<BattleReplayPlaybackStatus, "completed">,
+  speed: BattleReplayPlaybackSpeed
 ): BattleReplayPlaybackState {
   const totalSteps = replay.steps.length;
   const boundedStepIndex = Math.max(0, Math.min(totalSteps, Math.floor(currentStepIndex)));
   return {
     replay,
     status: resolvePlaybackStatus(status, boundedStepIndex, totalSteps),
+    speed,
     currentStepIndex: boundedStepIndex,
     totalSteps,
     currentState: cloneBattleState(currentState),
@@ -182,13 +208,14 @@ function buildPlaybackState(
 }
 
 export function createBattleReplayPlaybackState(replay: PlayerBattleReplaySummary): BattleReplayPlaybackState {
-  return buildPlaybackState(replay, replay.initialState, 0, "paused");
+  return buildPlaybackState(replay, replay.initialState, 0, "paused", 1);
 }
 
 export function restoreBattleReplayPlaybackState(
   replay: PlayerBattleReplaySummary,
   currentStepIndex = 0,
-  status: Exclude<BattleReplayPlaybackStatus, "completed"> = "paused"
+  status: Exclude<BattleReplayPlaybackStatus, "completed"> = "paused",
+  speed: number = 1
 ): BattleReplayPlaybackState {
   const safeStepIndex = Math.max(0, Math.min(replay.steps.length, Math.floor(currentStepIndex)));
   let currentState = cloneBattleState(replay.initialState);
@@ -202,7 +229,7 @@ export function restoreBattleReplayPlaybackState(
     currentState = applyBattleAction(currentState, step.action);
   }
 
-  return buildPlaybackState(replay, currentState, safeStepIndex, status);
+  return buildPlaybackState(replay, currentState, safeStepIndex, status, normalizePlaybackSpeed(speed));
 }
 
 export function playBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
@@ -231,7 +258,7 @@ export function pauseBattleReplayPlayback(playback: BattleReplayPlaybackState): 
 }
 
 export function resetBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
-  return buildPlaybackState(playback.replay, playback.replay.initialState, 0, "paused");
+  return buildPlaybackState(playback.replay, playback.replay.initialState, 0, "paused", playback.speed);
 }
 
 export function stepBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
@@ -246,7 +273,7 @@ export function stepBattleReplayPlayback(playback: BattleReplayPlaybackState): B
   const nextState = applyBattleAction(playback.currentState, nextStep.action);
   const nextStepIndex = playback.currentStepIndex + 1;
   const nextStatus = playback.status === "playing" ? "playing" : "paused";
-  return buildPlaybackState(playback.replay, nextState, nextStepIndex, nextStatus);
+  return buildPlaybackState(playback.replay, nextState, nextStepIndex, nextStatus, playback.speed);
 }
 
 export function stepBackBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
@@ -254,7 +281,7 @@ export function stepBackBattleReplayPlayback(playback: BattleReplayPlaybackState
     return resetBattleReplayPlayback(playback);
   }
 
-  return restoreBattleReplayPlaybackState(playback.replay, playback.currentStepIndex - 1, "paused");
+  return restoreBattleReplayPlaybackState(playback.replay, playback.currentStepIndex - 1, "paused", playback.speed);
 }
 
 export function tickBattleReplayPlayback(playback: BattleReplayPlaybackState): BattleReplayPlaybackState {
@@ -265,12 +292,54 @@ export function tickBattleReplayPlayback(playback: BattleReplayPlaybackState): B
   return stepBattleReplayPlayback(playback);
 }
 
+export function setBattleReplayPlaybackSpeed(
+  playback: BattleReplayPlaybackState,
+  speed: number
+): BattleReplayPlaybackState {
+  return {
+    ...playback,
+    speed: normalizePlaybackSpeed(speed)
+  };
+}
+
+export function seekBattleReplayPlayback(
+  playback: BattleReplayPlaybackState,
+  currentStepIndex: number,
+  status: Exclude<BattleReplayPlaybackStatus, "completed"> = "paused"
+): BattleReplayPlaybackState {
+  return restoreBattleReplayPlaybackState(playback.replay, currentStepIndex, status, playback.speed);
+}
+
+export function seekBattleReplayPlaybackToTurn(
+  playback: BattleReplayPlaybackState,
+  targetTurn: number,
+  status: Exclude<BattleReplayPlaybackStatus, "completed"> = "paused"
+): BattleReplayPlaybackState {
+  const safeTurn = Math.max(1, Math.floor(targetTurn));
+  const initialTurn = Math.max(1, Math.floor(playback.replay.initialState.round || 1));
+  if (safeTurn <= initialTurn) {
+    return seekBattleReplayPlayback(playback, 0, status);
+  }
+
+  const timeline = buildBattleReplayTimeline(playback.replay);
+  const matchingEntry = timeline.find((entry) => entry.resultingRound >= safeTurn);
+  return seekBattleReplayPlayback(playback, matchingEntry?.step.index ?? playback.replay.steps.length, status);
+}
+
 export function applyBattleReplayPlaybackCommand(
   replay: PlayerBattleReplaySummary,
   command: BattleReplayPlaybackCommand = {}
 ): BattleReplayPlaybackState {
   const repeat = Math.max(1, Math.floor(command.repeat ?? 1));
-  let playback = restoreBattleReplayPlaybackState(replay, command.currentStepIndex, command.status ?? "paused");
+  let playback = restoreBattleReplayPlaybackState(
+    replay,
+    command.currentStepIndex,
+    command.status ?? "paused",
+    command.speed ?? 1
+  );
+  if (command.targetTurn != null) {
+    playback = seekBattleReplayPlaybackToTurn(playback, command.targetTurn, command.status ?? "paused");
+  }
 
   switch (command.action) {
     case "play":

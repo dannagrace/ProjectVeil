@@ -6,9 +6,19 @@ import type {
   BattleReplayStep,
   PlayerBattleReplaySummary
 } from "./project-shared/battle-replay.ts";
+import { buildBattleReplayTimeline } from "./project-shared/battle-replay.ts";
 import type { SessionUpdate, TerrainType } from "./VeilCocosSession.ts";
 
-export type CocosBattleReplayCenterControlAction = "play" | "pause" | "step-back" | "step-forward" | "reset";
+export type CocosBattleReplayCenterControlAction =
+  | "play"
+  | "pause"
+  | "step-back"
+  | "step-forward"
+  | "turn-back"
+  | "turn-forward"
+  | "speed-down"
+  | "speed-up"
+  | "reset";
 
 export interface CocosBattleReplayCenterControlView {
   action: CocosBattleReplayCenterControlAction;
@@ -93,6 +103,7 @@ export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterI
 
   const playback = input.playback;
   const timeline = buildCocosBattleReplayTimelineView(replay, { limit: 2 });
+  const turnSummary = buildReplayTurnSummary(replay, playback);
   const battlePanel = buildBattlePanelViewModel({
     update: buildReplaySessionUpdate(replay, playback),
     timelineEntries: [],
@@ -112,6 +123,8 @@ export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterI
     badge: `${playback.currentStepIndex}/${playback.totalSteps}`,
     detailLines: [
       `${formatReplayTimestamp(replay.completedAt)} · ${formatReplayCampLabel(replay.playerCamp)} · 房间 ${replay.roomId}`,
+      `回合定位：${turnSummary.currentTurn}/${turnSummary.totalTurns} · ${turnSummary.progressBar}`,
+      `播放倍率：${playback.speed}x`,
       `当前动作：${formatReplayAction(playback.currentStep)}`,
       `下一动作：${formatReplayAction(playback.nextStep)}`,
       `战场：${battlePanel.stage?.title ?? "未知战场"}${battlePanel.stage?.subtitle ? ` · ${battlePanel.stage.subtitle}` : ""}`,
@@ -126,6 +139,10 @@ export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterI
       { action: "pause", label: "暂停", enabled: playback.status === "playing" },
       { action: "step-back", label: "后退", enabled: playback.currentStepIndex > 0 },
       { action: "step-forward", label: "前进", enabled: playback.currentStepIndex < playback.totalSteps },
+      { action: "turn-back", label: "上一回", enabled: turnSummary.currentTurn > 1 },
+      { action: "turn-forward", label: "下一回", enabled: turnSummary.currentTurn < turnSummary.totalTurns },
+      { action: "speed-down", label: "减速", enabled: playback.speed > 0.5 },
+      { action: "speed-up", label: "加速", enabled: playback.speed < 4 },
       { action: "reset", label: "重置", enabled: playback.currentStepIndex > 0 || playback.status === "completed" }
     ]
   };
@@ -137,8 +154,33 @@ function createDisabledControls(): CocosBattleReplayCenterControlView[] {
     { action: "pause", label: "暂停", enabled: false },
     { action: "step-back", label: "后退", enabled: false },
     { action: "step-forward", label: "前进", enabled: false },
+    { action: "turn-back", label: "上一回", enabled: false },
+    { action: "turn-forward", label: "下一回", enabled: false },
+    { action: "speed-down", label: "减速", enabled: false },
+    { action: "speed-up", label: "加速", enabled: false },
     { action: "reset", label: "重置", enabled: false }
   ];
+}
+
+function buildReplayTurnSummary(
+  replay: PlayerBattleReplaySummary,
+  playback: BattleReplayPlaybackState
+): { currentTurn: number; totalTurns: number; progressBar: string } {
+  const initialTurn = Math.max(1, Math.floor(replay.initialState.round || 1));
+  const timeline = buildBattleReplayTimeline(replay);
+  const totalTurns = Math.max(initialTurn, timeline.at(-1)?.resultingRound ?? initialTurn);
+  const currentTurn = Math.max(
+    initialTurn,
+    playback.currentStep?.index != null
+      ? (timeline[playback.currentStep.index - 1]?.resultingRound ?? initialTurn)
+      : initialTurn
+  );
+  const filled = Math.max(1, Math.min(8, Math.round((currentTurn / totalTurns) * 8)));
+  return {
+    currentTurn,
+    totalTurns,
+    progressBar: `${"=".repeat(filled)}${"-".repeat(Math.max(0, 8 - filled))}`
+  };
 }
 
 function buildReplaySessionUpdate(replay: PlayerBattleReplaySummary, playback: BattleReplayPlaybackState): SessionUpdate {
