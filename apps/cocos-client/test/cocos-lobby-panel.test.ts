@@ -10,12 +10,20 @@ import {
   createLobbyPanelTestAccount,
   summarizeLobbyShowcaseInventory
 } from "../assets/scripts/cocos-lobby-panel-model";
+import {
+  buildLobbySkillPanelView,
+  toLobbySkillPanelHeroState
+} from "../assets/scripts/cocos-lobby-skill-panel.ts";
+import { getRuntimeConfigBundleForRoom } from "../assets/scripts/project-shared/index.ts";
 import type { VeilLobbyRenderState } from "../assets/scripts/VeilLobbyPanel";
 import {
   createBattleReplaySummary,
+  createWorldUpdate,
   createComponentHarness,
   createErroredBattleReplayReviewState,
   createLobbyState,
+  findNode,
+  pressNode,
   createReplayReadyLobbyState,
   readCardLabel
 } from "./helpers/cocos-panel-harness.ts";
@@ -220,5 +228,33 @@ test("VeilLobbyPanel renders leaderboard rows and highlights the current player 
   assert.match(readCardLabel(node, "LobbyLeaderboardList"), /#2 Bravo · 我 · ELO 1524 · 铂金/);
   assert.match(readCardLabel(node, "LobbyLeaderboardMyRank"), /我的排名/);
   assert.match(readCardLabel(node, "LobbyLeaderboardMyRank"), /#2 Bravo/);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel opens the lobby skill modal and wires skill selections", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const update = createWorldUpdate();
+  const hero = update.world.ownHeroes[0]!;
+  const selectedSkillIds: string[] = [];
+
+  component.configure({
+    onLearnLobbySkill: (skillId) => {
+      selectedSkillIds.push(skillId);
+    }
+  });
+  component.scheduleOnce = () => undefined;
+  component.render(createLobbyState({
+    activeHero: hero,
+    lobbySkillPanel: buildLobbySkillPanelView(
+      toLobbySkillPanelHeroState(hero),
+      getRuntimeConfigBundleForRoom(update.world.meta.roomId, update.world.meta.seed)
+    )
+  }));
+
+  pressNode(findNode(node, "LobbyHeroSkillButton"));
+  assert.match(readCardLabel(node, "LobbySkillPanelHeader"), /技能规划/);
+
+  pressNode(findNode(node, "LobbySkillPanelAction-0"));
+  assert.deepEqual(selectedSkillIds, ["war_banner"]);
   component.onDestroy();
 });
