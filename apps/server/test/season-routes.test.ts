@@ -1,0 +1,254 @@
+import assert from "node:assert/strict";
+import test, { type TestContext } from "node:test";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { registerSeasonRoutes } from "../src/seasons";
+import type { RoomSnapshotStore, SeasonListOptions, SeasonSnapshot } from "../src/persistence";
+
+type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
+
+function createTestApp() {
+  const gets = new Map<string, RouteHandler>();
+
+  return {
+    app: {
+      use(_handler: unknown) {},
+      get(path: string, handler: RouteHandler) {
+        gets.set(path, handler);
+      },
+      post(_path: string, _handler: RouteHandler) {}
+    },
+    gets
+  };
+}
+
+function createRequest(options: {
+  method?: string;
+  headers?: Record<string, string | undefined>;
+  url?: string;
+} = {}): IncomingMessage {
+  const request = {} as IncomingMessage;
+  Object.assign(request, {
+    method: options.method ?? "GET",
+    headers: options.headers ?? {},
+    url: options.url ?? "/"
+  });
+  return request;
+}
+
+function createResponse(): ServerResponse & { body: string; headers: Record<string, string> } {
+  const headers: Record<string, string> = {};
+  let body = "";
+
+  return {
+    statusCode: 200,
+    setHeader(name: string, value: string) {
+      headers[name] = value;
+      return this;
+    },
+    end(chunk?: string | Buffer) {
+      body = chunk === undefined ? "" : Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
+      return this;
+    },
+    get body() {
+      return body;
+    },
+    headers
+  } as ServerResponse & { body: string; headers: Record<string, string> };
+}
+
+function createSeasonStore(seasons: SeasonSnapshot[], calls: SeasonListOptions[]): RoomSnapshotStore {
+  return {
+    async listSeasons(options: SeasonListOptions = {}) {
+      calls.push(options);
+      const status = options.status ?? "closed";
+      const limit = options.limit ?? 20;
+      return seasons
+        .filter((season) => status === "all" || season.status === status)
+        .slice(0, limit);
+    },
+    async getCurrentSeason() {
+      return seasons.find((season) => season.status === "active") ?? null;
+    },
+    async createSeason(seasonId: string) {
+      return {
+        seasonId,
+        status: "active",
+        startedAt: new Date().toISOString()
+      };
+    },
+    async closeSeason() {},
+    async load() {
+      return null;
+    },
+    async loadPlayerAccount() {
+      return null;
+    },
+    async loadPlayerAccountByLoginId() {
+      return null;
+    },
+    async loadPlayerAccountByWechatMiniGameOpenId() {
+      return null;
+    },
+    async loadPlayerEventHistory() {
+      return { items: [], total: 0 };
+    },
+    async loadPlayerAccounts() {
+      return [];
+    },
+    async loadPlayerAccountAuthByLoginId() {
+      return null;
+    },
+    async loadPlayerAccountAuthByPlayerId() {
+      return null;
+    },
+    async loadPlayerHeroArchives() {
+      return [];
+    },
+    async ensurePlayerAccount() {
+      throw new Error("not implemented");
+    },
+    async bindPlayerAccountCredentials() {
+      throw new Error("not implemented");
+    },
+    async creditGems() {
+      throw new Error("not implemented");
+    },
+    async debitGems() {
+      throw new Error("not implemented");
+    },
+    async savePlayerAccountPrivacyConsent() {
+      throw new Error("not implemented");
+    },
+    async savePlayerAccountAuthSession() {
+      return null;
+    },
+    async loadPlayerAccountAuthSession() {
+      return null;
+    },
+    async listPlayerAccountAuthSessions() {
+      return [];
+    },
+    async touchPlayerAccountAuthSession() {},
+    async revokePlayerAccountAuthSession() {
+      return false;
+    },
+    async revokePlayerAccountAuthSessions() {
+      return null;
+    },
+    async bindPlayerAccountWechatMiniGameIdentity() {
+      throw new Error("not implemented");
+    },
+    async deletePlayerAccount() {
+      return null;
+    },
+    async savePlayerAccountProfile() {
+      throw new Error("not implemented");
+    },
+    async savePlayerAccountProgress() {
+      throw new Error("not implemented");
+    },
+    async listPlayerAccounts() {
+      return [];
+    },
+    async save() {},
+    async delete() {},
+    async pruneExpired() {
+      return 0;
+    },
+    async close() {}
+  } as RoomSnapshotStore;
+}
+
+function withAdminToken(t: TestContext, token = "season-admin-token"): string {
+  const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
+  process.env.VEIL_ADMIN_TOKEN = token;
+  t.after(() => {
+    if (originalAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+      return;
+    }
+    process.env.VEIL_ADMIN_TOKEN = originalAdminToken;
+  });
+  return token;
+}
+
+function registerRoutes(store: RoomSnapshotStore | null) {
+  const { app, gets } = createTestApp();
+  registerSeasonRoutes(app, store);
+  return { gets };
+}
+
+test("GET /api/seasons returns closed seasons and caps limit at 100", async () => {
+  const calls: SeasonListOptions[] = [];
+  const store = createSeasonStore([
+    { seasonId: "season-3", status: "closed", startedAt: "2026-03-03T00:00:00.000Z", endedAt: "2026-03-04T00:00:00.000Z" },
+    { seasonId: "season-2", status: "closed", startedAt: "2026-02-03T00:00:00.000Z", endedAt: "2026-02-04T00:00:00.000Z" },
+    { seasonId: "season-1", status: "active", startedAt: "2026-01-03T00:00:00.000Z" }
+  ], calls);
+  const { gets } = registerRoutes(store);
+  const handler = gets.get("/api/seasons");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(createRequest({ url: "/api/seasons?limit=999" }), response);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(calls, [{ status: "closed", limit: 100 }]);
+  assert.deepEqual(JSON.parse(response.body), {
+    seasons: [
+      { seasonId: "season-3", status: "closed", startedAt: "2026-03-03T00:00:00.000Z", endedAt: "2026-03-04T00:00:00.000Z" },
+      { seasonId: "season-2", status: "closed", startedAt: "2026-02-03T00:00:00.000Z", endedAt: "2026-02-04T00:00:00.000Z" }
+    ]
+  });
+});
+
+test("GET /api/admin/seasons requires the admin token", async (t) => {
+  const token = withAdminToken(t);
+  const calls: SeasonListOptions[] = [];
+  const store = createSeasonStore([], calls);
+  const { gets } = registerRoutes(store);
+  const handler = gets.get("/api/admin/seasons");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({ url: "/api/admin/seasons", headers: { "x-veil-admin-token": `${token}-wrong` } }),
+    response
+  );
+
+  assert.equal(response.statusCode, 403);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: { code: "forbidden", message: "Invalid admin token" }
+  });
+  assert.deepEqual(calls, []);
+});
+
+test("GET /api/admin/seasons supports status=all and caps limit at 100", async (t) => {
+  const token = withAdminToken(t);
+  const calls: SeasonListOptions[] = [];
+  const store = createSeasonStore([
+    { seasonId: "season-4", status: "active", startedAt: "2026-04-01T00:00:00.000Z" },
+    { seasonId: "season-3", status: "closed", startedAt: "2026-03-01T00:00:00.000Z", endedAt: "2026-03-15T00:00:00.000Z" }
+  ], calls);
+  const { gets } = registerRoutes(store);
+  const handler = gets.get("/api/admin/seasons");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      url: "/api/admin/seasons?status=all&limit=500",
+      headers: { "x-veil-admin-token": token }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(calls, [{ status: "all", limit: 100 }]);
+  assert.deepEqual(JSON.parse(response.body), {
+    seasons: [
+      { seasonId: "season-4", status: "active", startedAt: "2026-04-01T00:00:00.000Z" },
+      { seasonId: "season-3", status: "closed", startedAt: "2026-03-01T00:00:00.000Z", endedAt: "2026-03-15T00:00:00.000Z" }
+    ]
+  });
+});

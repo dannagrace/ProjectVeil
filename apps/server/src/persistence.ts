@@ -31,6 +31,11 @@ export interface SeasonSnapshot {
   endedAt?: string;
 }
 
+export interface SeasonListOptions {
+  status?: "active" | "closed" | "all";
+  limit?: number;
+}
+
 export interface RoomSnapshotStore {
   load(roomId: string): Promise<RoomPersistenceSnapshot | null>;
   loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
@@ -91,6 +96,7 @@ export interface RoomSnapshotStore {
   savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot>;
   listPlayerAccounts(options?: PlayerAccountListOptions): Promise<PlayerAccountSnapshot[]>;
   getCurrentSeason(): Promise<SeasonSnapshot | null>;
+  listSeasons?(options?: SeasonListOptions): Promise<SeasonSnapshot[]>;
   createSeason(seasonId: string): Promise<SeasonSnapshot>;
   closeSeason(seasonId: string): Promise<void>;
   save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void>;
@@ -4730,6 +4736,32 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       startedAt: formatTimestamp(row.started_at as Date | string) ?? new Date().toISOString()
     };
     return endedAtTimestamp ? { ...base, endedAt: endedAtTimestamp } : base;
+  }
+
+  async listSeasons(options: SeasonListOptions = {}): Promise<SeasonSnapshot[]> {
+    const status = options.status ?? "closed";
+    const rawLimit = options.limit ?? 20;
+    const limit = Math.min(100, Math.max(1, Math.floor(rawLimit)));
+    const clauses = status === "all" ? "" : "WHERE status = ?";
+    const params = status === "all" ? [limit] : [status, limit];
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT season_id, status, started_at, ended_at
+       FROM \`veil_seasons\`
+       ${clauses}
+       ORDER BY started_at DESC
+       LIMIT ?`,
+      params
+    );
+
+    return rows.map((row) => {
+      const endedAtTimestamp = row.ended_at ? formatTimestamp(row.ended_at as Date | string) : undefined;
+      const season: SeasonSnapshot = {
+        seasonId: String(row.season_id),
+        status: row.status as "active" | "closed",
+        startedAt: formatTimestamp(row.started_at as Date | string) ?? new Date().toISOString()
+      };
+      return endedAtTimestamp ? { ...season, endedAt: endedAtTimestamp } : season;
+    });
   }
 
   async createSeason(seasonId: string): Promise<SeasonSnapshot> {

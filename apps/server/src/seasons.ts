@@ -40,6 +40,28 @@ function readJsonBody(request: IncomingMessage): Promise<unknown> {
   });
 }
 
+function readLimit(request: IncomingMessage, fallback = 20): number {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const rawLimit = Number(url.searchParams.get("limit"));
+  if (!Number.isFinite(rawLimit)) {
+    return fallback;
+  }
+
+  return Math.min(100, Math.max(1, Math.floor(rawLimit)));
+}
+
+function readAdminSeasonStatus(request: IncomingMessage): "closed" | "all" {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const status = url.searchParams.get("status");
+  if (!status || status === "closed") {
+    return "closed";
+  }
+  if (status === "all") {
+    return "all";
+  }
+  throw new Error('status must be "closed" or "all"');
+}
+
 export function registerSeasonRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
@@ -70,6 +92,57 @@ export function registerSeasonRoutes(
       }
       const season = await store.getCurrentSeason();
       sendJson(response, 200, { season });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/seasons", async (request, response) => {
+    try {
+      if (!store) {
+        sendJson(response, 200, { seasons: [] });
+        return;
+      }
+      if (!store.listSeasons) {
+        sendJson(response, 200, { seasons: [] });
+        return;
+      }
+
+      const seasons = await store.listSeasons({
+        status: "closed",
+        limit: readLimit(request)
+      });
+      sendJson(response, 200, { seasons });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/admin/seasons", async (request, response) => {
+    try {
+      const adminToken = process.env.VEIL_ADMIN_TOKEN;
+      if (!adminToken) {
+        sendJson(response, 503, { error: { code: "not_configured", message: "Admin token not configured" } });
+        return;
+      }
+      if (!isAdminAuthorized(request)) {
+        sendJson(response, 403, { error: { code: "forbidden", message: "Invalid admin token" } });
+        return;
+      }
+      if (!store) {
+        sendJson(response, 503, { error: { code: "no_store", message: "No persistence store available" } });
+        return;
+      }
+      if (!store.listSeasons) {
+        sendJson(response, 503, { error: { code: "no_store", message: "No season history store available" } });
+        return;
+      }
+
+      const seasons = await store.listSeasons({
+        status: readAdminSeasonStatus(request),
+        limit: readLimit(request)
+      });
+      sendJson(response, 200, { seasons });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
