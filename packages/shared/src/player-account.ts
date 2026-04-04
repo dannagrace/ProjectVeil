@@ -12,7 +12,7 @@ import {
 import { normalizeDailyQuestBoard, type DailyQuestBoard } from "./daily-quests.ts";
 import { normalizePlayerBattleReplaySummaries, type PlayerBattleReplaySummary } from "./battle-replay.ts";
 import { normalizeEloRating } from "./matchmaking.ts";
-import type { ResourceLedger } from "./models.ts";
+import type { CampaignProgressState, DailyDungeonState, ResourceLedger } from "./models.ts";
 
 export type PlayerBanStatus = "none" | "temporary" | "permanent";
 
@@ -34,6 +34,8 @@ export interface PlayerAccountReadModel {
   recentBattleReplays?: PlayerBattleReplaySummary[];
   battleReportCenter?: PlayerBattleReportCenter;
   dailyQuestBoard?: DailyQuestBoard;
+  campaignProgress?: CampaignProgressState;
+  dailyDungeonState?: DailyDungeonState;
   loginId?: string;
   credentialBoundAt?: string;
   privacyConsentAt?: string;
@@ -68,6 +70,8 @@ export interface PlayerAccountReadModelInput {
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null | undefined;
   battleReportCenter?: Partial<PlayerBattleReportCenter> | null | undefined;
   dailyQuestBoard?: Partial<DailyQuestBoard> | null | undefined;
+  campaignProgress?: Partial<CampaignProgressState> | null | undefined;
+  dailyDungeonState?: Partial<DailyDungeonState> | null | undefined;
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
   privacyConsentAt?: string | undefined;
@@ -127,6 +131,8 @@ export function normalizePlayerAccountReadModel(
   const recentEventLog = normalizeEventLogEntries(account?.recentEventLog);
   const recentBattleReplays = normalizePlayerBattleReplaySummaries(account?.recentBattleReplays);
   const dailyQuestBoard = normalizeDailyQuestBoard(account?.dailyQuestBoard);
+  const campaignProgress = normalizeCampaignProgressState(account?.campaignProgress);
+  const dailyDungeonState = normalizeDailyDungeonState(account?.dailyDungeonState);
 
   return {
     playerId,
@@ -153,6 +159,8 @@ export function normalizePlayerAccountReadModel(
       eventLog: recentEventLog
     }),
     ...(dailyQuestBoard ? { dailyQuestBoard } : {}),
+    ...(campaignProgress ? { campaignProgress } : {}),
+    ...(dailyDungeonState ? { dailyDungeonState } : {}),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
     ...(privacyConsentAt ? { privacyConsentAt } : {}),
@@ -168,4 +176,104 @@ export function normalizePlayerAccountReadModel(
     ...(lastRoomId ? { lastRoomId } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {})
   };
+}
+
+function normalizeTimestamp(value?: string | null): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+}
+
+function normalizeDateKey(value?: string | null): string | undefined {
+  const normalized = value?.trim();
+  return normalized && /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : undefined;
+}
+
+function normalizeCampaignProgressState(
+  campaignProgress?: Partial<CampaignProgressState> | null
+): CampaignProgressState | undefined {
+  const missions = Array.from(
+    new Map(
+      (campaignProgress?.missions ?? [])
+        .map((mission) => {
+          const missionId = mission.missionId?.trim();
+          if (!missionId) {
+            return null;
+          }
+
+          return [
+            missionId,
+            {
+              missionId,
+              attempts: Math.max(0, Math.floor(mission.attempts ?? 0)),
+              ...(normalizeTimestamp(mission.completedAt) ? { completedAt: normalizeTimestamp(mission.completedAt) } : {})
+            }
+          ] as const;
+        })
+        .filter((entry): entry is readonly [string, CampaignProgressState["missions"][number]] => Boolean(entry))
+    ).values()
+  ).sort((left, right) => left.missionId.localeCompare(right.missionId));
+
+  return missions.length > 0 ? { missions } : undefined;
+}
+
+function normalizeDailyDungeonState(
+  dailyDungeonState?: Partial<DailyDungeonState> | null
+): DailyDungeonState | undefined {
+  const dateKey = normalizeDateKey(dailyDungeonState?.dateKey);
+  const claimedRunIds = Array.from(
+    new Set(
+      (dailyDungeonState?.claimedRunIds ?? [])
+        .map((runId) => runId?.trim())
+        .filter((runId): runId is string => Boolean(runId))
+    )
+  ).sort((left, right) => left.localeCompare(right));
+  const runs = Array.from(
+    new Map(
+      (dailyDungeonState?.runs ?? [])
+        .map((run) => {
+          const runId = run.runId?.trim();
+          const dungeonId = run.dungeonId?.trim();
+          const startedAt = normalizeTimestamp(run.startedAt);
+          if (!runId || !dungeonId || !startedAt) {
+            return null;
+          }
+
+          return [
+            runId,
+            {
+              runId,
+              dungeonId,
+              floor: Math.max(1, Math.floor(run.floor ?? 1)),
+              startedAt,
+              ...(normalizeTimestamp(run.rewardClaimedAt)
+                ? { rewardClaimedAt: normalizeTimestamp(run.rewardClaimedAt) }
+                : {})
+            }
+          ] as const;
+        })
+        .filter((entry): entry is readonly [string, DailyDungeonState["runs"][number]] => Boolean(entry))
+    ).values()
+  ).sort((left, right) => right.startedAt.localeCompare(left.startedAt) || left.runId.localeCompare(right.runId));
+
+  const attemptsUsed = Math.max(
+    0,
+    Math.max(
+      Math.floor(dailyDungeonState?.attemptsUsed ?? 0),
+      runs.length
+    )
+  );
+
+  return dateKey
+    ? {
+        dateKey,
+        attemptsUsed,
+        claimedRunIds,
+        runs
+      }
+    : undefined;
 }

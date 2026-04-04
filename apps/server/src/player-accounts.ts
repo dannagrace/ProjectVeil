@@ -38,6 +38,15 @@ import type {
 } from "./persistence";
 import { getDailyRewardDateKey, getPreviousDailyRewardDateKey, resolveDailyRewardForStreak } from "./daily-rewards";
 import { resolveFeatureFlagsForPlayer } from "./feature-flags";
+import {
+  buildCampaignMissionStates,
+  buildDailyDungeonSummary,
+  claimDailyDungeonRunReward,
+  completeCampaignMission,
+  resolveCampaignConfig,
+  resolveDailyDungeonConfig,
+  startDailyDungeonRun
+} from "./pve-content";
 import { decryptWechatPhoneNumber, validateWechatSignature } from "./wechat-session-key";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -400,6 +409,47 @@ function toProgressionResponse(
   limit?: number
 ): ReturnType<typeof buildPlayerProgressionSnapshot> {
   return buildPlayerProgressionSnapshot(account.achievements, account.recentEventLog, limit);
+}
+
+function toCampaignResponse(account: PlayerAccountSnapshot) {
+  const missionStates = buildCampaignMissionStates(resolveCampaignConfig(), account.campaignProgress);
+  const completedCount = missionStates.filter((mission) => mission.status === "completed").length;
+
+  return {
+    missions: missionStates,
+    completedCount,
+    totalMissions: missionStates.length,
+    nextMissionId: missionStates.find((mission) => mission.status === "available")?.id ?? null,
+    completionPercent: missionStates.length === 0 ? 0 : Math.round((completedCount / missionStates.length) * 100)
+  };
+}
+
+function resolvePrimaryDailyDungeon() {
+  const [dungeon] = resolveDailyDungeonConfig();
+  if (!dungeon) {
+    throw new Error("daily_dungeon_not_configured");
+  }
+  return dungeon;
+}
+
+function toDailyDungeonResponse(account: PlayerAccountSnapshot, now = new Date()) {
+  return buildDailyDungeonSummary(resolvePrimaryDailyDungeon(), account.dailyDungeonState, now);
+}
+
+function toRewardMutation(account: PlayerAccountSnapshot, reward?: { gems?: number; resources?: Partial<PlayerAccountSnapshot["globalResources"]> }) {
+  const gems = Math.max(0, Math.floor(reward?.gems ?? 0));
+  const gold = Math.max(0, Math.floor(reward?.resources?.gold ?? 0));
+  const wood = Math.max(0, Math.floor(reward?.resources?.wood ?? 0));
+  const ore = Math.max(0, Math.floor(reward?.resources?.ore ?? 0));
+
+  return {
+    gems: (account.gems ?? 0) + gems,
+    globalResources: {
+      gold: (account.globalResources.gold ?? 0) + gold,
+      wood: (account.globalResources.wood ?? 0) + wood,
+      ore: (account.globalResources.ore ?? 0) + ore
+    }
+  };
 }
 
 function normalizePlayerId(playerId?: string | null): string {
@@ -963,6 +1013,273 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.get("/api/player-accounts/me/campaign", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    try {
+      const account = store
+        ? ((await store.loadPlayerAccount(authSession.playerId)) ??
+          (await store.ensurePlayerAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName
+          })))
+        : createLocalModeAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            ...(authSession.loginId ? { loginId: authSession.loginId } : {})
+          });
+
+      sendJson(response, 200, {
+        campaign: toCampaignResponse(account)
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player-accounts/me/campaign/:missionId/complete", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    const missionId = request.params.missionId?.trim();
+    if (!missionId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 503, {
+        error: {
+          code: "campaign_persistence_unavailable",
+          message: "Campaign progression requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const result = completeCampaignMission(resolveCampaignConfig(), account.campaignProgress, missionId);
+      const rewardMutation = toRewardMutation(account, result.reward);
+      const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
+        campaignProgress: result.campaignProgress,
+        gems: rewardMutation.gems,
+        globalResources: rewardMutation.globalResources
+      });
+
+      sendJson(response, 200, {
+        completed: true,
+        mission: result.mission,
+        reward: result.reward,
+        campaign: toCampaignResponse(nextAccount)
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "campaign_mission_not_found") {
+        sendJson(response, 404, {
+          error: {
+            code: "campaign_mission_not_found",
+            message: "Campaign mission was not found"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "campaign_mission_locked") {
+        sendJson(response, 409, {
+          error: {
+            code: "campaign_mission_locked",
+            message: "Campaign mission is not unlocked yet"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "campaign_mission_already_completed") {
+        sendJson(response, 409, {
+          error: {
+            code: "campaign_mission_already_completed",
+            message: "Campaign mission has already been completed"
+          }
+        });
+        return;
+      }
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/me/daily-dungeon", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    try {
+      const account = store
+        ? ((await store.loadPlayerAccount(authSession.playerId)) ??
+          (await store.ensurePlayerAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName
+          })))
+        : createLocalModeAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            ...(authSession.loginId ? { loginId: authSession.loginId } : {})
+          });
+      sendJson(response, 200, {
+        dailyDungeon: toDailyDungeonResponse(account)
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player-accounts/me/daily-dungeon/attempt", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 503, {
+        error: {
+          code: "daily_dungeon_persistence_unavailable",
+          message: "Daily dungeon progression requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { floor?: number | null };
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const dungeon = resolvePrimaryDailyDungeon();
+      const result = startDailyDungeonRun(dungeon, account.dailyDungeonState, body.floor ?? undefined);
+      const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
+        dailyDungeonState: result.dailyDungeonState
+      });
+
+      sendJson(response, 200, {
+        started: true,
+        run: result.run,
+        floor: result.floor,
+        dailyDungeon: toDailyDungeonResponse(nextAccount)
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      if (error instanceof SyntaxError) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_json",
+            message: "Request body must be valid JSON"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "daily_dungeon_floor_not_found") {
+        sendJson(response, 404, {
+          error: {
+            code: "daily_dungeon_floor_not_found",
+            message: "Daily dungeon floor was not found"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "daily_dungeon_attempt_limit_reached") {
+        sendJson(response, 409, {
+          error: {
+            code: "daily_dungeon_attempt_limit_reached",
+            message: "Daily dungeon attempt limit has been reached for today"
+          }
+        });
+        return;
+      }
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player-accounts/me/daily-dungeon/runs/:runId/claim", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    const runId = request.params.runId?.trim();
+    if (!runId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 503, {
+        error: {
+          code: "daily_dungeon_persistence_unavailable",
+          message: "Daily dungeon progression requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const dungeon = resolvePrimaryDailyDungeon();
+      const result = claimDailyDungeonRunReward(dungeon, account.dailyDungeonState, runId);
+      const rewardMutation = toRewardMutation(account, result.floor.reward);
+      const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
+        dailyDungeonState: result.dailyDungeonState,
+        gems: rewardMutation.gems,
+        globalResources: rewardMutation.globalResources
+      });
+
+      sendJson(response, 200, {
+        claimed: true,
+        run: result.run,
+        reward: result.floor.reward,
+        dailyDungeon: toDailyDungeonResponse(nextAccount)
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "daily_dungeon_run_not_found") {
+        sendJson(response, 404, {
+          error: {
+            code: "daily_dungeon_run_not_found",
+            message: "Daily dungeon run was not found"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "daily_dungeon_reward_already_claimed") {
+        sendJson(response, 409, {
+          error: {
+            code: "daily_dungeon_reward_already_claimed",
+            message: "Daily dungeon reward has already been claimed"
+          }
+        });
+        return;
+      }
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
   app.post("/api/player/referral", async (request, response) => {
     const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
@@ -1474,7 +1791,9 @@ export function registerPlayerAccountRoutes(
         }));
       sendJson(response, 200, {
         ...toProgressionResponse(account, parseLimit(request)),
-        dailyQuestBoard: await loadDailyQuestBoard(store, account, new Date(), featureFlags.quest_system_enabled)
+        dailyQuestBoard: await loadDailyQuestBoard(store, account, new Date(), featureFlags.quest_system_enabled),
+        campaign: toCampaignResponse(account),
+        dailyDungeon: toDailyDungeonResponse(account)
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });

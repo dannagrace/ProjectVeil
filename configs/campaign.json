@@ -1,0 +1,133 @@
+{
+  "missions": [
+    {
+      "id": "campaign_tutorial_1",
+      "chapterId": "onboarding",
+      "order": 1,
+      "name": "First Patrol",
+      "description": "Meet a small neutral patrol and learn the basic battle loop.",
+      "recommendedHeroLevel": 1,
+      "enemyArmyTemplateId": "wolf_pack",
+      "enemyArmyCount": 8,
+      "enemyStatMultiplier": 1,
+      "reward": { "gems": 10, "resources": { "gold": 120 } }
+    },
+    {
+      "id": "campaign_tutorial_2",
+      "chapterId": "onboarding",
+      "order": 2,
+      "name": "Secure The Road",
+      "description": "Push deeper and clear a heavier neutral screen.",
+      "recommendedHeroLevel": 1,
+      "enemyArmyTemplateId": "wolf_pack",
+      "enemyArmyCount": 10,
+      "enemyStatMultiplier": 1.1,
+      "unlockMissionId": "campaign_tutorial_1",
+      "reward": { "gems": 10, "resources": { "gold": 140 } }
+    },
+    {
+      "id": "campaign_tutorial_3",
+      "chapterId": "onboarding",
+      "order": 3,
+      "name": "Field Lesson",
+      "description": "Teach reinforcement pacing before PvP pressure starts.",
+      "recommendedHeroLevel": 2,
+      "enemyArmyTemplateId": "hero_guard_basic",
+      "enemyArmyCount": 12,
+      "enemyStatMultiplier": 1.15,
+      "unlockMissionId": "campaign_tutorial_2",
+      "reward": { "gems": 15, "resources": { "gold": 180 } }
+    },
+    {
+      "id": "campaign_frontier_1",
+      "chapterId": "frontier",
+      "order": 4,
+      "name": "Broken Watchtower",
+      "description": "Hold the line against a stronger frontier force.",
+      "recommendedHeroLevel": 2,
+      "enemyArmyTemplateId": "hero_guard_basic",
+      "enemyArmyCount": 14,
+      "enemyStatMultiplier": 1.2,
+      "unlockMissionId": "campaign_tutorial_3",
+      "reward": { "gems": 15, "resources": { "gold": 220 } }
+    },
+    {
+      "id": "campaign_frontier_2",
+      "chapterId": "frontier",
+      "order": 5,
+      "name": "Amber Supply Raid",
+      "description": "Fight through a resource convoy screen.",
+      "recommendedHeroLevel": 3,
+      "enemyArmyTemplateId": "wolf_pack",
+      "enemyArmyCount": 16,
+      "enemyStatMultiplier": 1.3,
+      "unlockMissionId": "campaign_frontier_1",
+      "reward": { "gems": 20, "resources": { "gold": 260, "wood": 20 } }
+    },
+    {
+      "id": "campaign_frontier_3",
+      "chapterId": "frontier",
+      "order": 6,
+      "name": "Ashpeak Scouts",
+      "description": "Introduce mixed attrition pressure and a longer clear.",
+      "recommendedHeroLevel": 3,
+      "enemyArmyTemplateId": "hero_guard_basic",
+      "enemyArmyCount": 18,
+      "enemyStatMultiplier": 1.4,
+      "unlockMissionId": "campaign_frontier_2",
+      "reward": { "gems": 20, "resources": { "gold": 300, "ore": 15 } }
+    },
+    {
+      "id": "campaign_frontier_4",
+      "chapterId": "frontier",
+      "order": 7,
+      "name": "Ironpass Ambush",
+      "description": "Step into higher-density neutral content.",
+      "recommendedHeroLevel": 4,
+      "enemyArmyTemplateId": "hero_guard_basic",
+      "enemyArmyCount": 20,
+      "enemyStatMultiplier": 1.5,
+      "unlockMissionId": "campaign_frontier_3",
+      "reward": { "gems": 25, "resources": { "gold": 340 } }
+    },
+    {
+      "id": "campaign_shadow_1",
+      "chapterId": "shadow",
+      "order": 8,
+      "name": "Veil Breach",
+      "description": "Transition from tutorial pacing into higher-stakes solo content.",
+      "recommendedHeroLevel": 4,
+      "enemyArmyTemplateId": "wolf_pack",
+      "enemyArmyCount": 22,
+      "enemyStatMultiplier": 1.6,
+      "unlockMissionId": "campaign_frontier_4",
+      "reward": { "gems": 25, "resources": { "gold": 380, "wood": 25 } }
+    },
+    {
+      "id": "campaign_shadow_2",
+      "chapterId": "shadow",
+      "order": 9,
+      "name": "Nightfall Engine",
+      "description": "A boss-lite encounter that previews later dungeon pressure.",
+      "recommendedHeroLevel": 5,
+      "enemyArmyTemplateId": "hero_guard_basic",
+      "enemyArmyCount": 24,
+      "enemyStatMultiplier": 1.75,
+      "unlockMissionId": "campaign_shadow_1",
+      "reward": { "gems": 30, "resources": { "gold": 420, "ore": 20 } }
+    },
+    {
+      "id": "campaign_shadow_3",
+      "chapterId": "shadow",
+      "order": 10,
+      "name": "Gate Of Embers",
+      "description": "Finish the initial campaign track and unlock the full solo loop.",
+      "recommendedHeroLevel": 5,
+      "enemyArmyTemplateId": "hero_guard_basic",
+      "enemyArmyCount": 26,
+      "enemyStatMultiplier": 1.9,
+      "unlockMissionId": "campaign_shadow_2",
+      "reward": { "gems": 40, "resources": { "gold": 500 } }
+    }
+  ]
+}

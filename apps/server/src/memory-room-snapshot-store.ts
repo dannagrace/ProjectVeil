@@ -292,10 +292,13 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       seasonPassTier: Math.max(1, Math.floor(existing?.seasonPassTier ?? 1)),
       ...(existing?.seasonPassPremium ? { seasonPassPremium: true } : {}),
       ...(existing?.seasonPassClaimedTiers?.length ? { seasonPassClaimedTiers: [...existing.seasonPassClaimedTiers] } : {}),
+      ...(existing?.seasonBadges?.length ? { seasonBadges: [...existing.seasonBadges] } : {}),
+      ...(existing?.campaignProgress ? { campaignProgress: structuredClone(existing.campaignProgress) } : {}),
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
       achievements: existing?.achievements ?? [],
       recentEventLog: existing?.recentEventLog ?? [],
       recentBattleReplays: existing?.recentBattleReplays ?? [],
+      ...(existing?.dailyDungeonState ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) } : {}),
       ...(input.lastRoomId?.trim()
         ? { lastRoomId: input.lastRoomId.trim() }
         : existing?.lastRoomId
@@ -1044,6 +1047,13 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         (patch.seasonPassClaimedTiers as number[] | undefined) ?? existing.seasonPassClaimedTiers ?? []
       ),
       seasonBadges: structuredClone((patch.seasonBadges as string[] | undefined) ?? existing.seasonBadges ?? []),
+      ...(patch.campaignProgress !== undefined
+        ? patch.campaignProgress
+          ? { campaignProgress: structuredClone(patch.campaignProgress) }
+          : {}
+        : existing.campaignProgress
+          ? { campaignProgress: structuredClone(existing.campaignProgress) }
+          : {}),
       globalResources: structuredClone(
         (patch.globalResources as PlayerAccountSnapshot["globalResources"] | undefined) ?? existing.globalResources
       ),
@@ -1054,6 +1064,13 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
           existing.recentBattleReplays ??
           []
       ),
+      ...(patch.dailyDungeonState !== undefined
+        ? patch.dailyDungeonState
+          ? { dailyDungeonState: structuredClone(patch.dailyDungeonState) }
+          : {}
+        : existing.dailyDungeonState
+          ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) }
+          : {}),
       ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
       ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(patch.eloRating !== undefined ? { eloRating: patch.eloRating } : {}),

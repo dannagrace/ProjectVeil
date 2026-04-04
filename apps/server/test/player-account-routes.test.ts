@@ -178,6 +178,8 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       achievements: structuredClone(existing?.achievements ?? []),
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
       recentBattleReplays: structuredClone(existing?.recentBattleReplays ?? []),
+      ...(existing?.campaignProgress ? { campaignProgress: structuredClone(existing.campaignProgress) } : {}),
+      ...(existing?.dailyDungeonState ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) } : {}),
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
@@ -536,6 +538,13 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     const account: PlayerAccountSnapshot = {
       ...existing,
       ...(patch.gems !== undefined ? { gems: Math.max(0, Math.floor(patch.gems ?? 0)) } : {}),
+      ...(patch.campaignProgress !== undefined
+        ? patch.campaignProgress
+          ? { campaignProgress: structuredClone(patch.campaignProgress) }
+          : {}
+        : existing.campaignProgress
+          ? { campaignProgress: structuredClone(existing.campaignProgress) }
+          : {}),
       globalResources: structuredClone(
         (patch.globalResources as PlayerAccountSnapshot["globalResources"] | undefined) ?? existing.globalResources
       ),
@@ -544,6 +553,13 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       recentBattleReplays: structuredClone(
         (patch.recentBattleReplays as PlayerAccountSnapshot["recentBattleReplays"] | undefined) ?? existing.recentBattleReplays
       ),
+      ...(patch.dailyDungeonState !== undefined
+        ? patch.dailyDungeonState
+          ? { dailyDungeonState: structuredClone(patch.dailyDungeonState) }
+          : {}
+        : existing.dailyDungeonState
+          ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) }
+          : {}),
       ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
       ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(patch.loginStreak !== undefined ? { loginStreak: Math.max(0, Math.floor(patch.loginStreak ?? 0)) } : existing.loginStreak ? { loginStreak: existing.loginStreak } : {}),
@@ -3196,4 +3212,167 @@ test("referral endpoint credits both accounts exactly once", async (t) => {
   const newPlayer = await store.loadPlayerAccount("new-player-2");
   assert.equal(referrer?.gems, 31);
   assert.equal(newPlayer?.gems, 23);
+});
+
+test("campaign mission completion unlocks the next scaffold mission and grants rewards", async (t) => {
+  const port = 44980 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "campaign-player",
+    displayName: "Campaign Hero"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueAccountAuthSession({
+    playerId: "campaign-player",
+    displayName: "Campaign Hero",
+    loginId: "campaign-player"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const initialResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/campaign`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const initialPayload = (await initialResponse.json()) as {
+    campaign: {
+      totalMissions: number;
+      nextMissionId: string | null;
+      missions: Array<{ id: string; status: string }>;
+    };
+  };
+
+  assert.equal(initialResponse.status, 200);
+  assert.equal(initialPayload.campaign.totalMissions, 10);
+  assert.equal(initialPayload.campaign.nextMissionId, "campaign_tutorial_1");
+  assert.equal(initialPayload.campaign.missions[0]?.status, "available");
+  assert.equal(initialPayload.campaign.missions[1]?.status, "locked");
+
+  const completeResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/campaign/campaign_tutorial_1/complete`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const completePayload = (await completeResponse.json()) as {
+    completed: boolean;
+    reward: { gems: number; resources: { gold: number } };
+    campaign: {
+      completedCount: number;
+      nextMissionId: string | null;
+      missions: Array<{ id: string; status: string }>;
+    };
+  };
+
+  assert.equal(completeResponse.status, 200);
+  assert.equal(completePayload.completed, true);
+  assert.equal(completePayload.reward.gems, 10);
+  assert.equal(completePayload.reward.resources.gold, 120);
+  assert.equal(completePayload.campaign.completedCount, 1);
+  assert.equal(completePayload.campaign.nextMissionId, "campaign_tutorial_2");
+  assert.equal(
+    completePayload.campaign.missions.find((mission) => mission.id === "campaign_tutorial_2")?.status,
+    "available"
+  );
+
+  const account = await store.loadPlayerAccount("campaign-player");
+  assert.equal(account?.gems, 10);
+  assert.equal(account?.globalResources.gold, 120);
+  assert.equal(account?.campaignProgress?.missions[0]?.missionId, "campaign_tutorial_1");
+});
+
+test("daily dungeon attempts are capped per day and rewards can only be claimed once per run", async (t) => {
+  const port = 45000 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "dungeon-player",
+    displayName: "Dungeon Hero"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueAccountAuthSession({
+    playerId: "dungeon-player",
+    displayName: "Dungeon Hero",
+    loginId: "dungeon-player"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const startRun = async (floor: number) =>
+    fetch(`http://127.0.0.1:${port}/api/player-accounts/me/daily-dungeon/attempt`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ floor })
+    });
+
+  const firstRunResponse = await startRun(2);
+  const secondRunResponse = await startRun(1);
+  const thirdRunResponse = await startRun(3);
+  const fourthRunResponse = await startRun(1);
+
+  const firstRunPayload = (await firstRunResponse.json()) as {
+    run: { runId: string };
+    floor: { floor: number };
+    dailyDungeon: { attemptsUsed: number; attemptsRemaining: number };
+  };
+  const fourthRunPayload = (await fourthRunResponse.json()) as { error: { code: string } };
+
+  assert.equal(firstRunResponse.status, 200);
+  assert.equal(firstRunPayload.floor.floor, 2);
+  assert.equal(firstRunPayload.dailyDungeon.attemptsUsed, 1);
+  assert.equal(secondRunResponse.status, 200);
+  assert.equal(thirdRunResponse.status, 200);
+  assert.equal(fourthRunResponse.status, 409);
+  assert.equal(fourthRunPayload.error.code, "daily_dungeon_attempt_limit_reached");
+
+  const claimResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/daily-dungeon/runs/${firstRunPayload.run.runId}/claim`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const claimAgainResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/daily-dungeon/runs/${firstRunPayload.run.runId}/claim`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const claimPayload = (await claimResponse.json()) as {
+    claimed: boolean;
+    reward: { gems: number; resources: { gold: number; ore: number } };
+    dailyDungeon: { attemptsRemaining: number };
+  };
+  const claimAgainPayload = (await claimAgainResponse.json()) as { error: { code: string } };
+
+  assert.equal(claimResponse.status, 200);
+  assert.equal(claimPayload.claimed, true);
+  assert.equal(claimPayload.reward.gems, 15);
+  assert.equal(claimPayload.reward.resources.gold, 220);
+  assert.equal(claimPayload.reward.resources.ore, 10);
+  assert.equal(claimPayload.dailyDungeon.attemptsRemaining, 0);
+  assert.equal(claimAgainResponse.status, 409);
+  assert.equal(claimAgainPayload.error.code, "daily_dungeon_reward_already_claimed");
+
+  const account = await store.loadPlayerAccount("dungeon-player");
+  assert.equal(account?.gems, 15);
+  assert.equal(account?.globalResources.gold, 220);
+  assert.equal(account?.globalResources.ore, 10);
+  assert.equal(account?.dailyDungeonState?.attemptsUsed, 3);
+  assert.equal(account?.dailyDungeonState?.claimedRunIds.includes(firstRunPayload.run.runId), true);
 });
