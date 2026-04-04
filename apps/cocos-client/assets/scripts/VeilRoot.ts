@@ -128,6 +128,7 @@ import {
   resolveCocosLaunchIdentity,
   type CocosAuthProvider
 } from "./cocos-session-launch.ts";
+import { buildCocosShopPanelView, type ShopProduct } from "./cocos-shop-panel.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { VeilProgressionPanel } from "./VeilProgressionPanel.ts";
 import { VeilEquipmentPanel } from "./VeilEquipmentPanel.ts";
@@ -168,6 +169,11 @@ import {
   validateAccountPassword,
   validatePrivacyConsentAccepted
 } from "../../../../packages/shared/src/index.ts";
+import {
+  createCocosWechatPaymentOrder,
+  requestCocosWechatPayment,
+  type CocosWechatPaymentRuntimeLike
+} from "./cocos-wechat-payment.ts";
 
 const { ccclass, property } = _decorator;
 
@@ -212,6 +218,8 @@ interface VeilRootRuntime {
   postPlayerReferral: typeof postCocosPlayerReferral;
   logoutAuthSession: typeof logoutCurrentCocosAuthSession;
   deletePlayerAccount: typeof deleteCurrentCocosPlayerAccount;
+  loadShopProducts: typeof VeilCocosSession.fetchShopProducts;
+  purchaseShopProduct: typeof VeilCocosSession.purchaseShopProduct;
 }
 
 const defaultVeilRootRuntime: VeilRootRuntime = {
@@ -232,7 +240,9 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   loginGuestAuthSession: (...args) => loginCocosGuestAuthSession(...args),
   postPlayerReferral: (...args) => postCocosPlayerReferral(...args),
   logoutAuthSession: (...args) => logoutCurrentCocosAuthSession(...args),
-  deletePlayerAccount: (...args) => deleteCurrentCocosPlayerAccount(...args)
+  deletePlayerAccount: (...args) => deleteCurrentCocosPlayerAccount(...args),
+  loadShopProducts: (...args) => VeilCocosSession.fetchShopProducts(...args),
+  purchaseShopProduct: (...args) => VeilCocosSession.purchaseShopProduct(...args)
 };
 
 let testVeilRootRuntimeOverrides: Partial<VeilRootRuntime> | null = null;
@@ -332,6 +342,10 @@ export class VeilRoot extends Component {
   private lobbyLeaderboardStatus: "idle" | "loading" | "ready" | "error" = "idle";
   private lobbyLeaderboardError: string | null = null;
   private lobbyAccountProfile: CocosPlayerAccountProfile = createFallbackCocosPlayerAccountProfile("player-1", "test-room");
+  private lobbyShopProducts: ShopProduct[] = [];
+  private lobbyShopLoading = false;
+  private lobbyShopStatus = "可用商品会在这里显示。";
+  private pendingShopProductId: string | null = null;
   private lobbyAccountReviewState: CocosAccountReviewState = createCocosAccountReviewState(this.lobbyAccountProfile);
   private lobbyAccountEpoch = 0;
   private gameplayAccountRefreshInFlight = false;
@@ -943,6 +957,9 @@ export class VeilRoot extends Component {
       },
       onLearnLobbySkill: (skillId) => {
         void this.learnHeroSkill(skillId);
+      },
+      onPurchaseShopProduct: (productId) => {
+        void this.purchaseLobbyShopProduct(productId);
       }
     });
 
@@ -1229,7 +1246,14 @@ export class VeilRoot extends Component {
           ? buildLobbySkillPanelView(toLobbySkillPanelHeroState(activeHero), runtimeBundle)
           : null,
         battleActive: Boolean(this.lastUpdate?.battle),
-        skillPanelBusy: this.moveInFlight || this.battleActionInFlight
+        skillPanelBusy: this.moveInFlight || this.battleActionInFlight,
+        shop: buildCocosShopPanelView({
+          products: this.lobbyShopProducts,
+          gemBalance: this.lobbyAccountProfile.gems ?? 0,
+          pendingProductId: this.pendingShopProductId
+        }),
+        shopStatus: this.lobbyShopStatus,
+        shopLoading: this.lobbyShopLoading
       });
       this.renderSettingsOverlay();
       return;
@@ -1351,7 +1375,7 @@ export class VeilRoot extends Component {
 
   private formatLobbyVaultSummary(): string {
     const resources = this.lobbyAccountProfile.globalResources;
-    return `全局仓库 金币 ${resources.gold} / 木材 ${resources.wood} / 矿石 ${resources.ore}`;
+    return `全局仓库 金币 ${resources.gold} / 木材 ${resources.wood} / 矿石 ${resources.ore} / 宝石 ${this.lobbyAccountProfile.gems ?? 0}`;
   }
 
   private ensurePixelSpriteGroup(group: "boot" | "battle"): void {
@@ -1399,6 +1423,8 @@ export class VeilRoot extends Component {
     const requestEpoch = this.bumpLobbyAccountEpoch();
     this.lobbyLeaderboardStatus = "loading";
     this.lobbyLeaderboardError = null;
+    this.lobbyShopLoading = true;
+    this.lobbyShopStatus = "正在同步商店商品...";
     this.renderView();
     const storedSession = readStoredCocosAuthSession(storage);
     const activeSession = storedSession?.playerId === this.playerId ? storedSession : null;
@@ -1427,7 +1453,7 @@ export class VeilRoot extends Component {
       this.sessionSource = "none";
     }
 
-    const [profile, leaderboardResult] = await Promise.all([
+    const [profile, leaderboardResult, shopProductsResult] = await Promise.all([
       resolveVeilRootRuntime().loadAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
         storage,
         authSession: syncedSession
@@ -1435,6 +1461,10 @@ export class VeilRoot extends Component {
       resolveVeilRootRuntime()
         .loadLeaderboard(this.remoteUrl, 50)
         .then((entries) => ({ ok: true as const, entries }))
+        .catch((error: unknown) => ({ ok: false as const, error })),
+      resolveVeilRootRuntime()
+        .loadShopProducts(this.remoteUrl)
+        .then((products) => ({ ok: true as const, products }))
         .catch((error: unknown) => ({ ok: false as const, error }))
     ]);
     if (!this.isActiveLobbyAccountEpoch(requestEpoch)) {
@@ -1452,12 +1482,96 @@ export class VeilRoot extends Component {
       this.lobbyLeaderboardError =
         leaderboardResult.error instanceof Error ? leaderboardResult.error.message : "leaderboard_unavailable";
     }
+    if (shopProductsResult.ok) {
+      this.lobbyShopProducts = shopProductsResult.products;
+      this.lobbyShopStatus =
+        shopProductsResult.products.length > 0
+          ? "点击商品卡片即可购买；微信商品会在小游戏环境拉起支付。"
+          : "当前没有上架商品。";
+    } else {
+      this.lobbyShopProducts = [];
+      this.lobbyShopStatus =
+        shopProductsResult.error instanceof Error ? shopProductsResult.error.message : "shop_unavailable";
+    }
+    this.lobbyShopLoading = false;
     if (profile.source === "remote") {
       this.displayName = profile.displayName;
       this.loginId = profile.loginId ?? this.loginId;
     }
     this.syncWechatShareBridge();
     this.renderView();
+  }
+
+  private describeShopError(error: unknown): string {
+    if (!(error instanceof Error)) {
+      return "商品购买失败，请稍后重试。";
+    }
+
+    switch (error.message) {
+      case "cocos_request_failed:401:unauthorized":
+      case "cocos_request_failed:401:token_expired":
+        return "购买需要有效账号会话，请重新登录后再试。";
+      case "cocos_request_failed:409:insufficient_gems":
+        return "宝石不足，无法完成本次购买。";
+      case "cocos_request_failed:409:product_not_available":
+        return "该商品当前未上架。";
+      case "cocos_request_failed:409:equipment_inventory_full":
+        return "背包已满，暂时无法领取该装备。";
+      case "cocos_request_failed:400:wechat_open_id_required":
+        return "微信支付需要先绑定小游戏身份。";
+      case "cocos_request_failed:503:wechat_pay_not_configured":
+        return "服务器尚未配置微信支付。";
+      default:
+        return error.message.startsWith("cocos_request_failed:")
+          ? "商品购买失败，请稍后重试。"
+          : error.message;
+    }
+  }
+
+  private async purchaseLobbyShopProduct(productId: string): Promise<void> {
+    if (this.pendingShopProductId || this.lobbyEntering) {
+      return;
+    }
+
+    const product = this.lobbyShopProducts.find((entry) => entry.productId === productId);
+    if (!product) {
+      this.lobbyShopStatus = "未找到要购买的商品。";
+      this.renderView();
+      return;
+    }
+    if (!this.authToken) {
+      this.lobbyShopStatus = "购买需要有效会话，请先重新进入大厅。";
+      this.renderView();
+      return;
+    }
+
+    this.pendingShopProductId = productId;
+    this.lobbyShopStatus = product.wechatPriceFen ? `正在创建微信订单 ${product.name}...` : `正在购买 ${product.name}...`;
+    this.renderView();
+
+    try {
+      if (product.wechatPriceFen) {
+        const order = await createCocosWechatPaymentOrder(this.remoteUrl, productId, {
+          authToken: this.authToken
+        });
+        const paymentResult = await requestCocosWechatPayment(
+          (globalThis as { wx?: CocosWechatPaymentRuntimeLike | null }).wx,
+          order
+        );
+        this.lobbyShopStatus = paymentResult.message;
+      } else {
+        const result = await resolveVeilRootRuntime().purchaseShopProduct(this.remoteUrl, productId, {
+          getAuthToken: () => this.authToken
+        });
+        this.lobbyShopStatus = `${product.name} 购买成功，当前宝石 ${result.gemsBalance}。`;
+        await this.refreshLobbyAccountProfile();
+      }
+    } catch (error) {
+      this.lobbyShopStatus = this.describeShopError(error);
+    } finally {
+      this.pendingShopProductId = null;
+      this.renderView();
+    }
   }
 
   private async refreshActiveAccountReviewSection(section = this.lobbyAccountReviewState.activeSection): Promise<void> {

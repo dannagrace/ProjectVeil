@@ -575,7 +575,7 @@ export class VeilHudPanel extends Component {
     );
 
     if (resources) {
-      this.renderResourceChips(`${CARD_PREFIX}-resources`, resources.gold, resources.wood, resources.ore);
+      this.renderResourceChips(`${CARD_PREFIX}-resources`, resources.gold, resources.wood, resources.ore, state.account.gems ?? 0);
     } else {
       this.hideCardDecorations(`${CARD_PREFIX}-resources`, CHIP_PREFIX);
     }
@@ -1002,7 +1002,7 @@ export class VeilHudPanel extends Component {
     label.color = new Color(255, 247, 228, 255);
   }
 
-  private renderResourceChips(cardName: string, gold: number, wood: number, ore: number): void {
+  private renderResourceChips(cardName: string, gold: number, wood: number, ore: number, gems: number): void {
     const cardNode = this.node.getChildByName(cardName);
     if (!cardNode) {
       return;
@@ -1011,15 +1011,16 @@ export class VeilHudPanel extends Component {
     const frameSet = getPixelSpriteAssets()?.icons;
     const cardTransform = cardNode.getComponent(UITransform) ?? cardNode.addComponent(UITransform);
     const gap = 6;
-    const chipWidth = Math.max(46, Math.floor((cardTransform.width - 22 - gap * 2) / 3));
+    const chipWidth = Math.max(46, Math.floor((cardTransform.width - 28 - gap * 3) / 4));
     const chipHeight = 30;
-    const totalWidth = chipWidth * 3 + gap * 2;
+    const totalWidth = chipWidth * 4 + gap * 3;
     const startX = -totalWidth / 2 + chipWidth / 2;
     const y = -10;
 
     this.renderMetricChip(cardNode, "gold", startX, y, chipWidth, chipHeight, frameSet?.gold ?? null, "金币", `${gold}`, new Color(183, 142, 72, 236));
     this.renderMetricChip(cardNode, "wood", startX + chipWidth + gap, y, chipWidth, chipHeight, frameSet?.wood ?? null, "木材", `${wood}`, new Color(90, 128, 92, 236));
     this.renderMetricChip(cardNode, "ore", startX + (chipWidth + gap) * 2, y, chipWidth, chipHeight, frameSet?.ore ?? null, "矿石", `${ore}`, new Color(96, 118, 144, 236));
+    this.renderMetricChip(cardNode, "gems", startX + (chipWidth + gap) * 3, y, chipWidth, chipHeight, null, "宝石", `${Math.max(0, Math.floor(gems))}`, new Color(126, 178, 222, 236));
   }
 
   private renderMetricChip(

@@ -1,5 +1,6 @@
 import { sys } from "cc";
 import type { EquipmentType } from "./project-shared/index.ts";
+import { buildCocosAuthHeaders, resolveCocosApiBaseUrl } from "./cocos-lobby.ts";
 import {
   cancelCocosMatchmaking,
   enqueueCocosMatchmaking,
@@ -16,6 +17,40 @@ export interface ResourceLedger {
   gold: number;
   wood: number;
   ore: number;
+}
+
+export interface ShopProductGrant {
+  gems?: number;
+  resources?: Partial<ResourceLedger>;
+  equipmentIds?: string[];
+}
+
+export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle";
+
+export interface ShopProduct {
+  productId: string;
+  name: string;
+  type: ShopProductType;
+  price: number;
+  wechatPriceFen?: number;
+  enabled: boolean;
+  grant: ShopProductGrant;
+}
+
+export interface ShopPurchaseResult {
+  purchaseId: string;
+  productId: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  granted: {
+    gems: number;
+    resources: ResourceLedger;
+    equipmentIds: string[];
+    heroId?: string;
+  };
+  gemsBalance: number;
+  processedAt: string;
 }
 
 export type LeaderboardTier = "bronze" | "silver" | "gold" | "platinum" | "diamond";
@@ -865,6 +900,26 @@ function getLeaderboardFetch(): typeof fetch {
   return testFetchOverride ?? fetch;
 }
 
+function getApiFetch(): typeof fetch {
+  return testFetchOverride ?? fetch;
+}
+
+async function fetchApiJson(url: string, init?: RequestInit): Promise<unknown> {
+  const response = await getApiFetch()(url, init);
+  if (!response.ok) {
+    let errorCode = "unknown";
+    try {
+      const payload = (await response.json()) as { error?: { code?: string } };
+      errorCode = payload.error?.code?.trim() || errorCode;
+    } catch {
+      errorCode = "unknown";
+    }
+    throw new Error(`cocos_request_failed:${response.status}:${errorCode}`);
+  }
+
+  return (await response.json()) as unknown;
+}
+
 function normalizeLeaderboardTier(value: unknown): LeaderboardTier {
   switch (value) {
     case "silver":
@@ -900,6 +955,73 @@ async function fetchLeaderboardEntries(remoteUrl?: string, limit = 50): Promise<
       tier: normalizeLeaderboardTier(player.tier)
     };
   });
+}
+
+function normalizeShopProductGrant(value: unknown): ShopProductGrant {
+  const raw = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  const resources = typeof raw.resources === "object" && raw.resources !== null
+    ? (raw.resources as Record<string, unknown>)
+    : null;
+  const equipmentIds = Array.isArray(raw.equipmentIds)
+    ? raw.equipmentIds.map((entry) => String(entry).trim()).filter(Boolean)
+    : [];
+
+  return {
+    ...(typeof raw.gems === "number" && Number.isFinite(raw.gems) ? { gems: Math.max(0, Math.floor(raw.gems)) } : {}),
+    ...(resources
+      ? {
+          resources: {
+            gold: typeof resources.gold === "number" && Number.isFinite(resources.gold) ? Math.max(0, Math.floor(resources.gold)) : 0,
+            wood: typeof resources.wood === "number" && Number.isFinite(resources.wood) ? Math.max(0, Math.floor(resources.wood)) : 0,
+            ore: typeof resources.ore === "number" && Number.isFinite(resources.ore) ? Math.max(0, Math.floor(resources.ore)) : 0
+          }
+        }
+      : {}),
+    ...(equipmentIds.length > 0 ? { equipmentIds } : {})
+  };
+}
+
+function normalizeShopProduct(raw: unknown, index: number): ShopProduct {
+  const value = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  return {
+    productId: typeof value.productId === "string" && value.productId.trim() ? value.productId.trim() : `shop-product-${index + 1}`,
+    name: typeof value.name === "string" && value.name.trim() ? value.name.trim() : `Shop Product ${index + 1}`,
+    type: value.type === "equipment" || value.type === "resource_bundle" ? value.type : "gem_pack",
+    price: typeof value.price === "number" && Number.isFinite(value.price) ? Math.max(0, Math.floor(value.price)) : 0,
+    ...(typeof value.wechatPriceFen === "number" && Number.isFinite(value.wechatPriceFen)
+      ? { wechatPriceFen: Math.max(0, Math.floor(value.wechatPriceFen)) }
+      : {}),
+    enabled: value.enabled !== false,
+    grant: normalizeShopProductGrant(value.grant)
+  };
+}
+
+async function fetchShopProducts(remoteUrl?: string): Promise<ShopProduct[]> {
+  const payload = (await fetchApiJson(`${resolveCocosApiBaseUrl(remoteUrl ?? "")}/api/shop/products`)) as {
+    items?: unknown[];
+  };
+  return (payload.items ?? []).map((item, index) => normalizeShopProduct(item, index));
+}
+
+async function purchaseShopProduct(
+  remoteUrl: string | undefined,
+  productId: string,
+  getAuthToken?: (() => string | null) | undefined
+): Promise<ShopPurchaseResult> {
+  const token = getAuthToken?.()?.trim() ?? "";
+  const purchaseId = `cocos-${productId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return (await fetchApiJson(`${resolveCocosApiBaseUrl(remoteUrl ?? "")}/api/shop/purchase`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildCocosAuthHeaders(token)
+    },
+    body: JSON.stringify({
+      productId,
+      quantity: 1,
+      purchaseId
+    })
+  })) as ShopPurchaseResult;
 }
 
 function wait(ms: number): Promise<void> {
@@ -1704,6 +1826,20 @@ export class VeilCocosSession {
     return fetchLeaderboardEntries(remoteUrl, limit);
   }
 
+  static async fetchShopProducts(remoteUrl?: string): Promise<ShopProduct[]> {
+    return fetchShopProducts(remoteUrl);
+  }
+
+  static async purchaseShopProduct(
+    remoteUrl: string,
+    productId: string,
+    options?: {
+      getAuthToken?: (() => string | null) | undefined;
+    }
+  ): Promise<ShopPurchaseResult> {
+    return purchaseShopProduct(remoteUrl, productId, options?.getAuthToken);
+  }
+
   static async enqueueForMatchmaking(
     remoteUrl: string,
     playerId: string,
@@ -1827,6 +1963,14 @@ export class VeilCocosSession {
 
   async fetchLeaderboard(limit = 50): Promise<LeaderboardEntry[]> {
     return fetchLeaderboardEntries(this.remoteUrl, limit);
+  }
+
+  async fetchShopProducts(): Promise<ShopProduct[]> {
+    return fetchShopProducts(this.remoteUrl);
+  }
+
+  async purchaseShopProduct(productId: string): Promise<ShopPurchaseResult> {
+    return purchaseShopProduct(this.remoteUrl, productId, this.getAuthToken);
   }
 
   async enqueueForMatchmaking(rating: number): Promise<MatchmakingStatusResponse> {
