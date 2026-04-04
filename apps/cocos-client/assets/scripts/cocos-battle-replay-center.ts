@@ -1,6 +1,7 @@
 import type { CocosAccountReviewSectionStatus } from "./cocos-account-review.ts";
 import { buildBattlePanelViewModel } from "./cocos-battle-panel-model.ts";
 import { buildCocosBattleReplayTimelineView } from "./cocos-battle-replay-timeline.ts";
+import type { PlayerBattleReportCenter, PlayerBattleReportSummary } from "./project-shared/index.ts";
 import type {
   BattleReplayPlaybackState,
   BattleReplayStep,
@@ -37,6 +38,7 @@ export interface CocosBattleReplayCenterView {
 
 export interface CocosBattleReplayCenterInput {
   replays: PlayerBattleReplaySummary[];
+  battleReports?: PlayerBattleReportCenter | null | undefined;
   selectedReplayId: string | null;
   playback: BattleReplayPlaybackState | null;
   status: CocosAccountReviewSectionStatus;
@@ -44,6 +46,7 @@ export interface CocosBattleReplayCenterInput {
 }
 
 export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterInput): CocosBattleReplayCenterView {
+  const selectedReport = resolveSelectedReport(input.battleReports, input.selectedReplayId);
   if (input.status === "loading" && input.replays.length === 0) {
     return {
       state: "loading",
@@ -67,6 +70,27 @@ export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterI
       detailLines: [
         input.errorMessage?.trim() || "本次未能加载战斗回放，请稍后重试。",
         "可先保留在当前页，重新同步后会恢复最近战报列表。"
+      ],
+      controls: createDisabledControls()
+    };
+  }
+
+  if (!input.replays.length && selectedReport) {
+    return {
+      state: "ready",
+      title: `战报回放中心 · ${selectedReport.result === "victory" ? "胜利" : "失利"}`,
+      subtitle: `${selectedReport.battleKind === "hero" ? "PVP" : "PVE"} · ${formatReplayEncounterLabel(selectedReport)} · 摘要模式`,
+      badge: `${selectedReport.turnCount}T/${selectedReport.actionCount}A`,
+      detailLines: [
+        `${formatReplayTimestamp(selectedReport.completedAt)} · ${formatReplayCampLabel(selectedReport.playerCamp)} · 房间 ${selectedReport.roomId}`,
+        `英雄：${selectedReport.heroId}`,
+        `回放证据：${selectedReport.evidence.replay === "available" ? "可用" : "缺失"} · 收益证据：${selectedReport.evidence.rewards === "available" ? "可用" : "缺失"}`,
+        selectedReport.rewards.length > 0
+          ? `战后收益：${selectedReport.rewards
+              .map((reward) => reward.amount != null ? `${reward.label}+${reward.amount}` : reward.label)
+              .join(" / ")}`
+          : `战后收益：${selectedReport.evidence.rewards === "available" ? "收益同步中" : "暂无额外奖励记录"}`,
+        input.errorMessage?.trim() || "当前仅同步到战报摘要，完整回放暂不可用。"
       ],
       controls: createDisabledControls()
     };
@@ -146,6 +170,23 @@ export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterI
       { action: "reset", label: "重置", enabled: playback.currentStepIndex > 0 || playback.status === "completed" }
     ]
   };
+}
+
+function resolveSelectedReport(
+  battleReports: PlayerBattleReportCenter | null | undefined,
+  selectedReplayId: string | null
+): PlayerBattleReportSummary | null {
+  const reports = battleReports?.items ?? [];
+  if (selectedReplayId) {
+    const selected = reports.find((report) => report.id === selectedReplayId);
+    if (selected) {
+      return selected;
+    }
+  }
+
+  return battleReports?.latestReportId
+    ? reports.find((report) => report.id === battleReports.latestReportId) ?? reports[0] ?? null
+    : reports[0] ?? null;
 }
 
 function createDisabledControls(): CocosBattleReplayCenterControlView[] {
@@ -294,7 +335,9 @@ function formatBattleKindLabel(replay: PlayerBattleReplaySummary): string {
   return replay.battleKind === "hero" ? "PVP" : "PVE";
 }
 
-function formatReplayEncounterLabel(replay: PlayerBattleReplaySummary): string {
+function formatReplayEncounterLabel(
+  replay: Pick<PlayerBattleReplaySummary, "battleKind" | "opponentHeroId" | "neutralArmyId">
+): string {
   if (replay.battleKind === "hero") {
     return replay.opponentHeroId ? `英雄 ${replay.opponentHeroId}` : "敌方英雄";
   }

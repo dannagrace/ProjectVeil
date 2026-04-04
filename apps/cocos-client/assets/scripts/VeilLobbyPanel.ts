@@ -1535,6 +1535,7 @@ export class VeilLobbyPanel extends Component {
   private renderBattleReplayCenter(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
     const view = buildCocosBattleReplayCenterView({
       replays: state.battleReplayItems,
+      battleReports: state.account.battleReportCenter,
       selectedReplayId: state.selectedBattleReplayId,
       playback: this.replayPlayback,
       status: state.battleReplaySectionStatus,
@@ -1622,7 +1623,9 @@ export class VeilLobbyPanel extends Component {
           ? "正在同步最近战斗..."
           : state.battleReplaySectionStatus === "error"
             ? (state.battleReplaySectionError?.trim() || "回放同步失败。")
-            : "选择一场最近战斗，即可查看逐步回放。";
+            : state.account.battleReportCenter?.items.some((report) => report.id === state.selectedBattleReplayId)
+              ? "当前仅同步到战报摘要，完整回放暂不可用。"
+              : "选择一场最近战斗，即可查看逐步回放。";
       return;
     }
 
