@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildRuntimeDiagnosticsErrorEvent,
   renderRuntimeDiagnosticsSnapshotText,
   serializeRuntimeDiagnosticsSnapshot,
   type PlayerBattleReplaySummary
@@ -66,6 +67,7 @@ function createAccountProfile(): PlayerAccountProfile {
 test("buildH5RuntimeDiagnosticsSnapshot creates a stable export payload for dev workflows", () => {
   const snapshot = buildH5RuntimeDiagnosticsSnapshot({
     exportedAt: "2026-03-29T06:09:00.000Z",
+    candidateRevision: "abc1234",
     devOnly: true,
     mode: "world",
     room: {
@@ -233,7 +235,31 @@ test("buildH5RuntimeDiagnosticsSnapshot creates a stable export payload for dev 
         status: "paused",
         currentStepIndex: 0,
         totalSteps: 3
-      }
+      },
+      errorEvents: [
+        buildRuntimeDiagnosticsErrorEvent({
+          id: "client-auth-1",
+          recordedAt: "2026-03-29T06:08:30.000Z",
+          source: "client",
+          surface: "h5",
+          candidateRevision: null,
+          featureArea: "login",
+          ownerArea: "account",
+          severity: "error",
+          errorCode: "auth_request_failed",
+          message: "Login refresh failed with 401.",
+          context: {
+            roomId: "room-alpha",
+            playerId: "player-1",
+            requestId: "request-1",
+            route: "/api/auth/refresh",
+            action: "session.refresh",
+            statusCode: 401,
+            crash: false,
+            detail: "refresh token expired"
+          }
+        })
+      ]
     }
   });
 
@@ -250,6 +276,9 @@ test("buildH5RuntimeDiagnosticsSnapshot creates a stable export payload for dev 
   assert.equal(snapshot.diagnostics.recoverySummary, "权威房间状态已恢复，战后结果与地图状态已经重新对齐。");
   assert.equal(snapshot.diagnostics.predictionStatus, null);
   assert.equal(snapshot.diagnostics.replay?.totalSteps, 3);
+  assert.equal(snapshot.diagnostics.errorEvents[0]?.candidateRevision, "abc1234");
+  assert.equal(snapshot.diagnostics.errorSummary.totalEvents, 1);
+  assert.equal(snapshot.diagnostics.errorSummary.topFingerprints[0]?.featureArea, "login");
 
   const serialized = serializeRuntimeDiagnosticsSnapshot(snapshot);
   assert.match(serialized, /"schemaVersion": 1/);
@@ -257,8 +286,11 @@ test("buildH5RuntimeDiagnosticsSnapshot creates a stable export payload for dev 
   assert.match(serialized, /"reachableTileCount": 2/);
   assert.match(serialized, /"recoverySummary": "权威房间状态已恢复，战后结果与地图状态已经重新对齐。"/);
   assert.match(serialized, /"predictionStatus": null/);
+  assert.match(serialized, /"errorCode": "auth_request_failed"/);
 
   const summary = renderRuntimeDiagnosticsSnapshotText(snapshot);
+  assert.match(summary, /Errors 1 \/ fingerprints 1 \/ fatal 0 \/ crashes 0/);
+  assert.match(summary, /Error login\/auth_request_failed 1x on h5 \(account\)/);
   assert.match(summary, /Room room-alpha \/ Player player-1 \/ Sync connected/);
   assert.match(summary, /Resources gold=150 wood=10 ore=4/);
   assert.match(summary, /Events battle.started, battle.resolved/);

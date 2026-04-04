@@ -431,6 +431,16 @@ export function createRuntimeDiagnosticsSnapshotFixture(): RuntimeDiagnosticsSna
           itemCount: 2
         }
       ],
+      errorEvents: [],
+      errorSummary: {
+        totalEvents: 0,
+        uniqueFingerprints: 0,
+        fatalCount: 0,
+        crashCount: 0,
+        latestRecordedAt: null,
+        byFeatureArea: [],
+        topFingerprints: []
+      },
       pendingUiTasks: 1,
       replay: {
         replayId: "room-contract:battle-demo:player-1",

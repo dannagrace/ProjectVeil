@@ -1,9 +1,11 @@
-import type {
+import {
   BattleState,
   PlayerWorldView,
   RuntimeDiagnosticsConnectionStatus,
+  RuntimeDiagnosticsErrorEvent,
   RuntimeDiagnosticsMode,
-  RuntimeDiagnosticsSnapshot
+  RuntimeDiagnosticsSnapshot,
+  summarizeRuntimeDiagnosticsErrors
 } from "../../../packages/shared/src/index";
 import type { PlayerAccountProfile } from "./player-account";
 
@@ -26,6 +28,7 @@ interface ReplaySnapshotInput {
 
 export interface H5RuntimeDiagnosticsSnapshotInput {
   exportedAt?: string;
+  candidateRevision?: string | null;
   devOnly: boolean;
   mode: RuntimeDiagnosticsMode;
   room: {
@@ -58,6 +61,7 @@ export interface H5RuntimeDiagnosticsSnapshotInput {
     predictionStatus: string;
     pendingUiTasks: number;
     replay: ReplaySnapshotInput | null;
+    errorEvents?: RuntimeDiagnosticsErrorEvent[];
   };
 }
 
@@ -116,6 +120,11 @@ function buildBattleSnapshot(input: NonNullable<H5RuntimeDiagnosticsSnapshotInpu
 export function buildH5RuntimeDiagnosticsSnapshot(
   input: H5RuntimeDiagnosticsSnapshotInput
 ): RuntimeDiagnosticsSnapshot {
+  const errorEvents = (input.diagnostics.errorEvents ?? []).map((event) => ({
+    ...event,
+    candidateRevision: event.candidateRevision ?? input.candidateRevision ?? null
+  }));
+
   return {
     schemaVersion: 1,
     exportedAt: input.exportedAt ?? new Date().toISOString(),
@@ -157,7 +166,9 @@ export function buildH5RuntimeDiagnosticsSnapshot(
       predictionStatus: input.diagnostics.predictionStatus || null,
       pendingUiTasks: input.diagnostics.pendingUiTasks,
       replay: input.diagnostics.replay ? { ...input.diagnostics.replay } : null,
-      primaryClientTelemetry: []
+      primaryClientTelemetry: [],
+      errorEvents,
+      errorSummary: summarizeRuntimeDiagnosticsErrors(errorEvents)
     }
   };
 }
