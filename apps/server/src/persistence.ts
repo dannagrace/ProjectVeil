@@ -24,6 +24,13 @@ import {
   type WorldState
 } from "../../../packages/shared/src/index";
 import type { RoomPersistenceSnapshot } from "./index";
+import {
+  applyBattlePassXp,
+  resolveBattlePassConfig,
+  resolveBattlePassTier,
+  toBattlePassRewardGrant,
+  type BattlePassRewardGrant
+} from "./battle-pass";
 import { computeSeasonReward, resolveSeasonRewardConfig } from "./season-rewards";
 
 export interface SeasonSnapshot {
@@ -50,6 +57,13 @@ export interface PlayerReferralClaimResult {
   rewardGems: number;
   referrerId: string;
   newPlayerId: string;
+}
+
+export interface BattlePassClaimResult {
+  tier: number;
+  granted: BattlePassRewardGrant;
+  seasonPassPremiumApplied: boolean;
+  account: PlayerAccountSnapshot;
 }
 
 export interface RoomSnapshotStore {
@@ -80,6 +94,7 @@ export interface RoomSnapshotStore {
   creditGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   debitGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   claimPlayerReferral?(referrerId: string, newPlayerId: string, rewardGems: number): Promise<PlayerReferralClaimResult>;
+  claimBattlePassTier?(playerId: string, tier: number): Promise<BattlePassClaimResult>;
   purchaseShopProduct?(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult>;
   savePlayerAccountPrivacyConsent(
     playerId: string,
@@ -175,6 +190,10 @@ interface PlayerAccountRow extends RowDataPacket {
   avatar_url: string | null;
   elo_rating: number | null;
   gems: number | null;
+  season_xp: number | null;
+  season_pass_tier: number | null;
+  season_pass_premium: number | boolean | null;
+  season_pass_claimed_tiers_json: string | number[] | null;
   season_badges_json: string | string[] | null;
   global_resources_json: string | ResourceLedger;
   achievements_json: string | PlayerAchievementProgress[] | null;
@@ -384,6 +403,7 @@ export interface ShopPurchaseGrant {
   gems?: number;
   resources?: Partial<ResourceLedger>;
   equipmentIds?: EquipmentId[];
+  seasonPassPremium?: boolean;
 }
 
 export interface ShopPurchaseMutationInput {
@@ -406,6 +426,7 @@ export interface ShopPurchaseResult {
     resources: ResourceLedger;
     equipmentIds: EquipmentId[];
     heroId?: string;
+    seasonPassPremium?: boolean;
   };
   gemsBalance: number;
   processedAt: string;
@@ -499,6 +520,9 @@ export interface PlayerAccountProfilePatch {
 
 export interface PlayerAccountProgressPatch {
   gems?: number;
+  seasonXpDelta?: number;
+  seasonPassPremium?: boolean;
+  seasonPassClaimedTiers?: number[] | null;
   seasonBadges?: string[] | null;
   globalResources?: Partial<ResourceLedger> | null;
   achievements?: Partial<PlayerAchievementProgress>[] | null;
@@ -772,7 +796,12 @@ function normalizeShopPurchaseQuantity(quantity: number): number {
   return normalized;
 }
 
-function normalizeShopPurchaseGrant(grant: ShopPurchaseGrant): { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] } {
+function normalizeShopPurchaseGrant(grant: ShopPurchaseGrant): {
+  gems: number;
+  resources: ResourceLedger;
+  equipmentIds: EquipmentId[];
+  seasonPassPremium: boolean;
+} {
   const equipmentIds = (grant.equipmentIds ?? []).map((equipmentId) => equipmentId.trim()).filter(Boolean);
   for (const equipmentId of equipmentIds) {
     if (!getEquipmentDefinition(equipmentId)) {
@@ -783,14 +812,15 @@ function normalizeShopPurchaseGrant(grant: ShopPurchaseGrant): { gems: number; r
   return {
     gems: grant.gems != null ? normalizeGemAmount(grant.gems) : 0,
     resources: normalizeResourceLedger(grant.resources),
-    equipmentIds
+    equipmentIds,
+    seasonPassPremium: grant.seasonPassPremium === true
   };
 }
 
 function multiplyShopPurchaseGrant(
-  grant: { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] },
+  grant: { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[]; seasonPassPremium: boolean },
   quantity: number
-): { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] } {
+): { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[]; seasonPassPremium: boolean } {
   return {
     gems: grant.gems * quantity,
     resources: {
@@ -798,7 +828,8 @@ function multiplyShopPurchaseGrant(
       wood: grant.resources.wood * quantity,
       ore: grant.resources.ore * quantity
     },
-    equipmentIds: Array.from({ length: quantity }, () => grant.equipmentIds).flat()
+    equipmentIds: Array.from({ length: quantity }, () => grant.equipmentIds).flat(),
+    seasonPassPremium: grant.seasonPassPremium
   };
 }
 
@@ -823,6 +854,27 @@ function createShopPurchaseEventLogEntry(playerId: string, input: {
     category: "account",
     description: `Purchased ${input.productName} x${input.quantity}.`,
     rewards: resourceRewards
+  };
+}
+
+function createBattlePassClaimEventLogEntry(playerId: string, input: {
+  tier: number;
+  granted: BattlePassRewardGrant;
+  processedAt: string;
+}): EventLogEntry {
+  const rewards = [
+    input.granted.gems > 0 ? { type: "resource" as const, label: "gems", amount: input.granted.gems } : null,
+    input.granted.resources.gold > 0 ? { type: "resource" as const, label: "gold", amount: input.granted.resources.gold } : null
+  ].filter((reward): reward is NonNullable<typeof reward> => Boolean(reward));
+
+  return {
+    id: `${playerId}:${input.processedAt}:battle-pass:${input.tier}`,
+    timestamp: input.processedAt,
+    roomId: "battle-pass",
+    playerId,
+    category: "account",
+    description: `Claimed battle pass tier ${input.tier}.`,
+    rewards
   };
 }
 
@@ -1099,6 +1151,10 @@ function normalizePlayerAccountSnapshot(account: {
   avatarUrl?: string | null | undefined;
   eloRating?: number | null | undefined;
   gems?: number | null | undefined;
+  seasonXp?: number | null | undefined;
+  seasonPassTier?: number | null | undefined;
+  seasonPassPremium?: boolean | number | null | undefined;
+  seasonPassClaimedTiers?: number[] | null | undefined;
   seasonBadges?: string[] | null | undefined;
   globalResources?: Partial<ResourceLedger>;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
@@ -1141,6 +1197,10 @@ function normalizePlayerAccountSnapshot(account: {
       avatarUrl: normalizePlayerAvatarUrl(account.avatarUrl),
       eloRating: normalizeEloRating(account.eloRating),
       gems: normalizeGemAmount(account.gems),
+      seasonXp: Math.max(0, Math.floor(account.seasonXp ?? 0)),
+      seasonPassTier: Math.max(1, Math.floor(account.seasonPassTier ?? 1)),
+      seasonPassPremium: account.seasonPassPremium === true || account.seasonPassPremium === 1,
+      seasonPassClaimedTiers: account.seasonPassClaimedTiers ?? [],
       seasonBadges: account.seasonBadges,
       globalResources: normalizeResourceLedger(account.globalResources),
       achievements: account.achievements,
@@ -1435,6 +1495,10 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   avatar_url VARCHAR(512) NULL,
   elo_rating INT NOT NULL DEFAULT 1000,
   gems INT NOT NULL DEFAULT 0,
+  season_xp INT NOT NULL DEFAULT 0,
+  season_pass_tier INT NOT NULL DEFAULT 1,
+  season_pass_premium TINYINT(1) NOT NULL DEFAULT 0,
+  season_pass_claimed_tiers_json LONGTEXT NULL,
   season_badges_json LONGTEXT NULL,
   global_resources_json LONGTEXT NOT NULL,
   achievements_json LONGTEXT NULL,
@@ -2567,6 +2631,13 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(row.avatar_url ? { avatarUrl: row.avatar_url } : {}),
     ...(row.elo_rating != null ? { eloRating: row.elo_rating } : {}),
     gems: normalizeGemAmount(row.gems),
+    seasonXp: Math.max(0, Math.floor(row.season_xp ?? 0)),
+    seasonPassTier: Math.max(1, Math.floor(row.season_pass_tier ?? 1)),
+    seasonPassPremium: row.season_pass_premium === true || row.season_pass_premium === 1,
+    seasonPassClaimedTiers:
+      row.season_pass_claimed_tiers_json != null
+        ? parseJsonColumn<number[]>(row.season_pass_claimed_tiers_json)
+        : [],
     seasonBadges:
       row.season_badges_json != null
         ? parseJsonColumn<string[]>(row.season_badges_json)
@@ -2853,6 +2924,10 @@ async function savePlayerAccounts(
          display_name,
          elo_rating,
          gems,
+         season_xp,
+         season_pass_tier,
+         season_pass_premium,
+         season_pass_claimed_tiers_json,
          season_badges_json,
          global_resources_json,
          achievements_json,
@@ -2861,11 +2936,15 @@ async function savePlayerAccounts(
          recent_battle_replays_json,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
          gems = VALUES(gems),
+         season_xp = VALUES(season_xp),
+         season_pass_tier = VALUES(season_pass_tier),
+         season_pass_premium = VALUES(season_pass_premium),
+         season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
          season_badges_json = COALESCE(season_badges_json, VALUES(season_badges_json)),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
@@ -2878,6 +2957,10 @@ async function savePlayerAccounts(
         normalizedAccount.displayName,
         normalizedAccount.eloRating,
         normalizedAccount.gems,
+        Math.max(0, Math.floor(normalizedAccount.seasonXp ?? 0)),
+        Math.max(1, Math.floor(normalizedAccount.seasonPassTier ?? 1)),
+        normalizedAccount.seasonPassPremium === true ? 1 : 0,
+        JSON.stringify(normalizedAccount.seasonPassClaimedTiers ?? []),
         JSON.stringify(normalizedAccount.seasonBadges ?? []),
         JSON.stringify(normalizedAccount.globalResources),
         JSON.stringify(normalizedAccount.achievements),
@@ -3112,6 +3195,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          avatar_url,
          elo_rating,
          gems,
+         season_xp,
+         season_pass_tier,
+         season_pass_premium,
+         season_pass_claimed_tiers_json,
          season_badges_json,
          global_resources_json,
          achievements_json,
@@ -3162,6 +3249,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          avatar_url,
          elo_rating,
          gems,
+         season_xp,
+         season_pass_tier,
+         season_pass_premium,
+         season_pass_claimed_tiers_json,
          season_badges_json,
          global_resources_json,
          achievements_json,
@@ -3296,6 +3387,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          avatar_url,
          elo_rating,
          gems,
+         season_xp,
+         season_pass_tier,
+         season_pass_premium,
+         season_pass_claimed_tiers_json,
          season_badges_json,
          global_resources_json,
          achievements_json,
@@ -3448,7 +3543,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(?, display_name),
          last_room_id = COALESCE(?, last_room_id),
@@ -3459,6 +3554,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         insertDisplayName,
         normalizeEloRating(undefined),
         0,
+        0,
+        1,
+        0,
+        JSON.stringify([]),
         JSON.stringify([]),
         JSON.stringify(normalizeResourceLedger()),
         JSON.stringify(normalizeAchievementProgress()),
@@ -3477,6 +3576,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         playerId,
         displayName: insertDisplayName,
         eloRating: normalizeEloRating(undefined),
+        seasonXp: 0,
+        seasonPassTier: 1,
         seasonBadges: [],
         globalResources: normalizeResourceLedger(),
         achievements: normalizeAchievementProgress(),
@@ -4069,15 +4170,23 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       );
       const nextGlobalResources = addResourceLedgers(currentAccount.globalResources, normalizedGrant.resources);
       const nextGems = currentGems - totalPrice + normalizedGrant.gems;
+      const nextSeasonPassPremium = currentAccount.seasonPassPremium === true || normalizedGrant.seasonPassPremium;
 
       await connection.query(
         `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
          SET gems = ?,
+             season_pass_premium = ?,
              global_resources_json = ?,
              recent_event_log_json = ?,
              version = version + 1
          WHERE player_id = ?`,
-        [nextGems, JSON.stringify(nextGlobalResources), JSON.stringify(nextRecentEventLog), normalizedPlayerId]
+        [
+          nextGems,
+          nextSeasonPassPremium ? 1 : 0,
+          JSON.stringify(nextGlobalResources),
+          JSON.stringify(nextRecentEventLog),
+          normalizedPlayerId
+        ]
       );
       await appendGemLedgerEntry(connection, {
         entryId: randomUUID(),
@@ -4132,7 +4241,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           gems: normalizedGrant.gems,
           resources: normalizedGrant.resources,
           equipmentIds: normalizedGrant.equipmentIds,
-          ...(grantedHeroId ? { heroId: grantedHeroId } : {})
+          ...(grantedHeroId ? { heroId: grantedHeroId } : {}),
+          ...(normalizedGrant.seasonPassPremium ? { seasonPassPremium: true } : {})
         },
         gemsBalance: nextGems,
         processedAt
@@ -4156,6 +4266,182 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
       await connection.commit();
       return result;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async claimBattlePassTier(playerId: string, tier: number): Promise<BattlePassClaimResult> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedTier = Math.max(1, Math.floor(tier));
+    const battlePassConfig = resolveBattlePassConfig();
+    const tierConfig = resolveBattlePassTier(battlePassConfig, normalizedTier);
+    if (!tierConfig) {
+      throw new Error("battle_pass_tier_not_found");
+    }
+
+    await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [accountRows] = await connection.query<PlayerAccountRow[]>(
+        `SELECT *
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedPlayerId]
+      );
+      const currentAccount =
+        accountRows[0] != null
+          ? toPlayerAccountSnapshot(accountRows[0])
+          : normalizePlayerAccountSnapshot({
+              playerId: normalizedPlayerId,
+              displayName: normalizedPlayerId,
+              globalResources: normalizeResourceLedger()
+            });
+
+      if ((currentAccount.seasonPassTier ?? 1) < normalizedTier) {
+        throw new Error("battle_pass_tier_locked");
+      }
+      if ((currentAccount.seasonPassClaimedTiers ?? []).includes(normalizedTier)) {
+        throw new Error("battle_pass_tier_already_claimed");
+      }
+
+      const granted = toBattlePassRewardGrant(
+        tierConfig.freeReward,
+        currentAccount.seasonPassPremium ? tierConfig.premiumReward : undefined
+      );
+
+      let grantedHeroId: string | undefined;
+      let nextHeroArchive: PlayerHeroArchiveSnapshot | null = null;
+      if (granted.equipmentIds.length > 0) {
+        const [heroArchiveRows] = await connection.query<PlayerHeroArchiveRow[]>(
+          `SELECT player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json, updated_at
+           FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+           WHERE player_id = ?
+           ORDER BY updated_at DESC, hero_id ASC
+           LIMIT 1
+           FOR UPDATE`,
+          [normalizedPlayerId]
+        );
+        const currentArchive = heroArchiveRows[0] ? toPlayerHeroArchiveSnapshot(heroArchiveRows[0]) : null;
+        if (!currentArchive) {
+          throw new Error("player hero archive not found");
+        }
+
+        let nextInventory = [...currentArchive.hero.loadout.inventory];
+        for (const equipmentId of granted.equipmentIds) {
+          const inventoryUpdate = tryAddEquipmentToInventory(nextInventory, equipmentId);
+          if (!inventoryUpdate.stored) {
+            throw new Error("equipment inventory full");
+          }
+          nextInventory = inventoryUpdate.inventory;
+        }
+
+        grantedHeroId = currentArchive.heroId;
+        nextHeroArchive = {
+          ...currentArchive,
+          hero: normalizeHeroState({
+            ...currentArchive.hero,
+            loadout: {
+              ...currentArchive.hero.loadout,
+              inventory: nextInventory
+            }
+          })
+        };
+      }
+
+      const processedAt = new Date().toISOString();
+      const nextRecentEventLog = appendEventLogEntries(currentAccount.recentEventLog, [
+        createBattlePassClaimEventLogEntry(normalizedPlayerId, {
+          tier: normalizedTier,
+          granted,
+          processedAt
+        })
+      ]);
+      const nextGlobalResources = addResourceLedgers(currentAccount.globalResources, granted.resources);
+      const nextGems = normalizeGemAmount(currentAccount.gems) + granted.gems;
+      const nextClaimedTiers = [...(currentAccount.seasonPassClaimedTiers ?? []), normalizedTier].sort((a, b) => a - b);
+
+      await connection.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET gems = ?,
+             season_pass_claimed_tiers_json = ?,
+             global_resources_json = ?,
+             recent_event_log_json = ?,
+             version = version + 1
+         WHERE player_id = ?`,
+        [
+          nextGems,
+          JSON.stringify(nextClaimedTiers),
+          JSON.stringify(nextGlobalResources),
+          JSON.stringify(nextRecentEventLog),
+          normalizedPlayerId
+        ]
+      );
+      if (granted.gems > 0) {
+        await appendGemLedgerEntry(connection, {
+          entryId: randomUUID(),
+          playerId: normalizedPlayerId,
+          delta: granted.gems,
+          reason: "reward",
+          refId: `battle-pass:${normalizedTier}`
+        });
+      }
+
+      if (nextHeroArchive) {
+        await connection.query(
+          `INSERT INTO \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+             (player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             hero_json = VALUES(hero_json),
+             army_template_id = VALUES(army_template_id),
+             army_count = VALUES(army_count),
+             learned_skills_json = VALUES(learned_skills_json),
+             equipment_json = VALUES(equipment_json),
+             inventory_json = VALUES(inventory_json),
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            nextHeroArchive.playerId,
+            nextHeroArchive.heroId,
+            JSON.stringify(nextHeroArchive.hero),
+            nextHeroArchive.hero.armyTemplateId,
+            nextHeroArchive.hero.armyCount,
+            JSON.stringify(nextHeroArchive.hero.loadout.learnedSkills),
+            JSON.stringify(nextHeroArchive.hero.loadout.equipment),
+            JSON.stringify(nextHeroArchive.hero.loadout.inventory)
+          ]
+        );
+      }
+
+      await appendPlayerEventHistoryEntries(connection, normalizedPlayerId, nextRecentEventLog.slice(0, 1));
+      await connection.commit();
+
+      return {
+        tier: normalizedTier,
+        granted: {
+          ...granted,
+          equipmentIds: [...granted.equipmentIds]
+        },
+        seasonPassPremiumApplied: currentAccount.seasonPassPremium === true,
+        account:
+          (await this.loadPlayerAccount(normalizedPlayerId)) ??
+          normalizePlayerAccountSnapshot({
+            ...currentAccount,
+            gems: nextGems,
+            seasonPassClaimedTiers: nextClaimedTiers,
+            globalResources: nextGlobalResources,
+            recentEventLog: nextRecentEventLog,
+            ...(grantedHeroId ? {} : {})
+          })
+      };
     } catch (error) {
       await connection.rollback();
       throw error;
@@ -4593,6 +4879,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          avatar_url,
          elo_rating,
          gems,
+         season_xp,
+         season_pass_tier,
+         season_pass_premium,
+         season_pass_claimed_tiers_json,
          season_badges_json,
          global_resources_json,
          achievements_json,
@@ -4647,6 +4937,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
   async savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot> {
     const normalizedPlayerId = normalizePlayerId(playerId);
+    const battlePassConfig = resolveBattlePassConfig();
     const existing =
       (await this.loadPlayerAccount(normalizedPlayerId)) ??
       normalizePlayerAccountSnapshot({
@@ -4654,11 +4945,16 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         displayName: normalizedPlayerId,
         globalResources: normalizeResourceLedger()
       });
+    const battlePassProgress = applyBattlePassXp(battlePassConfig, existing, patch.seasonXpDelta ?? 0);
 
     const nextAccount = normalizePlayerAccountSnapshot({
       ...existing,
       playerId: normalizedPlayerId,
       ...(patch.gems !== undefined ? { gems: patch.gems } : {}),
+      seasonXp: battlePassProgress.seasonXp,
+      seasonPassTier: battlePassProgress.seasonPassTier,
+      seasonPassPremium: patch.seasonPassPremium ?? existing.seasonPassPremium,
+      seasonPassClaimedTiers: patch.seasonPassClaimedTiers ?? existing.seasonPassClaimedTiers,
       seasonBadges: patch.seasonBadges ?? existing.seasonBadges,
       globalResources: patch.globalResources ?? existing.globalResources,
       achievements: patch.achievements ?? existing.achievements,
@@ -4687,6 +4983,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          avatar_url,
          elo_rating,
          gems,
+         season_xp,
+         season_pass_tier,
+         season_pass_premium,
+         season_pass_claimed_tiers_json,
          season_badges_json,
          global_resources_json,
          achievements_json,
@@ -4700,11 +5000,15 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_play_date,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
          gems = VALUES(gems),
+         season_xp = VALUES(season_xp),
+         season_pass_tier = VALUES(season_pass_tier),
+         season_pass_premium = VALUES(season_pass_premium),
+         season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
          season_badges_json = VALUES(season_badges_json),
          elo_rating = VALUES(elo_rating),
          global_resources_json = VALUES(global_resources_json),
@@ -4725,6 +5029,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.avatarUrl ?? null,
         nextAccount.eloRating,
         nextAccount.gems,
+        Math.max(0, Math.floor(nextAccount.seasonXp ?? 0)),
+        Math.max(1, Math.floor(nextAccount.seasonPassTier ?? 1)),
+        nextAccount.seasonPassPremium === true ? 1 : 0,
+        JSON.stringify(nextAccount.seasonPassClaimedTiers ?? []),
         JSON.stringify(nextAccount.seasonBadges ?? []),
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
@@ -4769,6 +5077,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          avatar_url,
          elo_rating,
          gems,
+         season_xp,
+         season_pass_tier,
+         season_pass_premium,
+         season_pass_claimed_tiers_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,

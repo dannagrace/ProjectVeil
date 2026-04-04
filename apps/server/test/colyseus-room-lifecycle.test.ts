@@ -4,6 +4,7 @@ import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
 import { applyEloMatchResult } from "../../../packages/shared/src/index";
 import type { BattleState, ServerMessage, WorldEvent } from "../../../packages/shared/src/index";
+import { resolveBattlePassConfig } from "../src/battle-pass";
 import {
   VeilColyseusRoom,
   configureRoomRuntimeDependencies,
@@ -890,6 +891,47 @@ test("battle replay persistence runs once at settlement and is drained from the 
   assert.equal(replaySaves.length, 1);
   assert.equal(replaySaves[0]?.patch.recentBattleReplays?.[0]?.id, replay?.id);
   assert.deepEqual(internalRoom.worldRoom.consumeCompletedBattleReplays(), []);
+});
+
+test("battle settlement grants configured season XP to the settled player account", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-battle-pass-${Date.now()}`);
+  const client = createFakeClient("session-battle-pass");
+  const battlePassConfig = resolveBattlePassConfig();
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-battle-pass");
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: "move-battle-pass",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 5, y: 4 }
+    }
+  });
+
+  await resolveBattleThroughRoom(room, client, "player-1");
+
+  const account = await store.loadPlayerAccount("player-1");
+  const replay = account?.recentBattleReplays?.[0];
+  const expectedXp =
+    replay?.playerCamp === "attacker" && replay.result === "attacker_victory"
+      ? battlePassConfig.seasonXpPerWin
+      : replay?.playerCamp === "defender" && replay.result === "defender_victory"
+        ? battlePassConfig.seasonXpPerWin
+        : battlePassConfig.seasonXpPerLoss;
+
+  assert.ok(replay);
+  assert.equal(account?.seasonXp, expectedXp);
+  assert.equal(account?.seasonPassTier, 1);
 });
 
 test("battle replay patches are not re-emitted on later non-replay progress saves", async (t) => {
