@@ -101,6 +101,21 @@ function createSnapshot(): RoomPersistenceSnapshot {
   };
 }
 
+function seedSeasonRewardAccounts(store: ReturnType<typeof createMemoryRoomSnapshotStore>, count = 100) {
+  return Promise.all(
+    Array.from({ length: count }, async (_, index) => {
+      const playerNumber = index + 1;
+      const playerId = `player-${String(playerNumber).padStart(3, "0")}`;
+      await store.ensurePlayerAccount({ playerId, displayName: playerId });
+      await store.savePlayerAccountProgress(playerId, {
+        gems: playerNumber,
+        eloRating: 2000 - index,
+        ...(playerNumber === 1 ? { seasonBadges: ["founder"] } : {})
+      });
+    })
+  );
+}
+
 test("memory room snapshot store persists room-derived accounts and later battle replay progress", async () => {
   const store = createMemoryRoomSnapshotStore();
   await store.save("room-memory", createSnapshot());
@@ -189,37 +204,35 @@ test("memory room snapshot store lists closed seasons and retains active season 
   assert.ok(allSeasons?.find((season) => season.seasonId === "season-1")?.endedAt);
 });
 
-test("memory room snapshot store grants season rewards, soft-resets elo, and prevents double grant", async () => {
+test("memory room snapshot store matches season reward bracket distribution and prevents double grant", async () => {
   const store = createMemoryRoomSnapshotStore();
-  await store.ensurePlayerAccount({ playerId: "diamond-player", displayName: "Diamond" });
-  await store.ensurePlayerAccount({ playerId: "gold-player", displayName: "Gold" });
-  await store.ensurePlayerAccount({ playerId: "bronze-player", displayName: "Bronze" });
-  await store.savePlayerAccountProgress("diamond-player", { eloRating: 1820 });
-  await store.savePlayerAccountProgress("gold-player", { eloRating: 1380 });
-  await store.savePlayerAccountProgress("bronze-player", { eloRating: 1040 });
+  await seedSeasonRewardAccounts(store);
   await store.createSeason("season-rewards");
 
   const firstClose = await store.closeSeason("season-rewards");
   const secondClose = await store.closeSeason("season-rewards");
-  const diamond = await store.loadPlayerAccount("diamond-player");
-  const gold = await store.loadPlayerAccount("gold-player");
-  const bronze = await store.loadPlayerAccount("bronze-player");
+  const first = await store.loadPlayerAccount("player-001");
+  const tenth = await store.loadPlayerAccount("player-010");
+  const twentyFifth = await store.loadPlayerAccount("player-025");
+  const twentySixth = await store.loadPlayerAccount("player-026");
 
   assert.deepEqual(firstClose, {
     seasonId: "season-rewards",
-    playersRewarded: 3,
-    totalGemsGranted: 375
+    playersRewarded: 25,
+    totalGemsGranted: 1850
   });
-  assert.equal(diamond?.gems, 250);
-  assert.equal(gold?.gems, 100);
-  assert.equal(bronze?.gems, 25);
-  assert.equal(diamond?.eloRating, 1410);
-  assert.equal(gold?.eloRating, 1190);
-  assert.equal(bronze?.eloRating, 1020);
+  assert.equal(first?.gems, 201);
+  assert.deepEqual(first?.seasonBadges, ["founder", "diamond_champion"]);
+  assert.equal(tenth?.gems, 110);
+  assert.deepEqual(tenth?.seasonBadges, ["platinum_rival"]);
+  assert.equal(twentyFifth?.gems, 75);
+  assert.deepEqual(twentyFifth?.seasonBadges, ["gold_contender"]);
+  assert.equal(twentySixth?.gems, 26);
+  assert.deepEqual(twentySixth?.seasonBadges, []);
   assert.deepEqual(secondClose, {
     seasonId: "season-rewards",
     playersRewarded: 0,
     totalGemsGranted: 0
   });
-  assert.equal((await store.loadPlayerAccount("diamond-player"))?.gems, 250);
+  assert.equal((await store.loadPlayerAccount("player-001"))?.gems, 201);
 });

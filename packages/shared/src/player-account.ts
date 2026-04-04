@@ -22,6 +22,7 @@ export interface PlayerAccountReadModel {
   eloRating?: number;
   gems?: number;
   loginStreak?: number;
+  seasonBadges?: string[];
   globalResources: ResourceLedger;
   achievements: PlayerAchievementProgress[];
   recentEventLog: EventLogEntry[];
@@ -50,6 +51,7 @@ export interface PlayerAccountReadModelInput {
   eloRating?: number | undefined;
   gems?: number | undefined;
   loginStreak?: number | undefined;
+  seasonBadges?: string[] | null | undefined;
   globalResources?: Partial<ResourceLedger> | null | undefined;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -86,6 +88,13 @@ export function normalizePlayerAccountReadModel(
   const isMinor = account?.isMinor === true;
   const dailyPlayMinutes = Math.max(0, Math.floor(account?.dailyPlayMinutes ?? 0));
   const loginStreak = Math.max(0, Math.floor(account?.loginStreak ?? 0));
+  const seasonBadges = Array.from(
+    new Set(
+      (account?.seasonBadges ?? [])
+        .map((badge) => badge?.trim())
+        .filter((badge): badge is string => Boolean(badge))
+    )
+  );
   const lastPlayDate = /^\d{4}-\d{2}-\d{2}$/.test(account?.lastPlayDate?.trim() ?? "")
     ? account?.lastPlayDate?.trim()
     : undefined;
@@ -104,6 +113,7 @@ export function normalizePlayerAccountReadModel(
     eloRating: normalizeEloRating(account?.eloRating),
     gems: Math.max(0, Math.floor(account?.gems ?? 0)),
     ...(loginStreak > 0 ? { loginStreak } : {}),
+    ...(seasonBadges.length > 0 ? { seasonBadges } : {}),
     globalResources: {
       gold: Math.max(0, Math.floor(account?.globalResources?.gold ?? 0)),
       wood: Math.max(0, Math.floor(account?.globalResources?.wood ?? 0)),

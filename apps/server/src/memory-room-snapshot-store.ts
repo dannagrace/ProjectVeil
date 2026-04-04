@@ -1,7 +1,5 @@
 import {
-  DEFAULT_ELO_RATING,
   appendEventLogEntries,
-  getTierForRating,
   getEquipmentDefinition,
   normalizeEloRating,
   normalizeEventLogEntries,
@@ -40,8 +38,7 @@ import {
   type PlayerReportResolveInput,
   type PlayerHeroArchiveSnapshot,
   type PlayerEventHistoryQuery,
-  type PlayerEventHistorySnapshot
-  ,
+  type PlayerEventHistorySnapshot,
   type SeasonCloseSummary,
   type SeasonListOptions,
   type SeasonSnapshot,
@@ -49,7 +46,7 @@ import {
   type ShopPurchaseResult
 } from "./persistence";
 import type { RoomPersistenceSnapshot } from "./index";
-import { computeSeasonResetEloRating, resolveSeasonRewardConfig } from "./season-rewards";
+import { computeSeasonReward, resolveSeasonRewardConfig } from "./season-rewards";
 
 function cloneAccount(account: PlayerAccountSnapshot): PlayerAccountSnapshot {
   return structuredClone(account);
@@ -116,6 +113,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly shopPurchases = new Map<string, ShopPurchaseResult>();
   private readonly reports = new Map<string, PlayerReportRecord>();
   private readonly seasons = new Map<string, SeasonSnapshot>();
+  private readonly seasonRewardLog = new Map<string, { gems: number; badge: string; distributedAt: string }>();
   private readonly referrals = new Set<string>();
   private nextReportId = 1;
 
@@ -1019,6 +1017,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
     const nextAccount: PlayerAccountSnapshot = {
       ...existing,
+      ...(patch.gems !== undefined ? { gems: Math.max(0, Math.floor(patch.gems)) } : {}),
+      seasonBadges: structuredClone((patch.seasonBadges as string[] | undefined) ?? existing.seasonBadges ?? []),
       globalResources: structuredClone(
         (patch.globalResources as PlayerAccountSnapshot["globalResources"] | undefined) ?? existing.globalResources
       ),
@@ -1065,6 +1065,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         displayName: previous?.displayName ?? account.displayName,
         ...(previous?.avatarUrl ? { avatarUrl: previous.avatarUrl } : {}),
         eloRating: normalizeEloRating(previous?.eloRating ?? account.eloRating),
+        seasonBadges: structuredClone(previous?.seasonBadges ?? account.seasonBadges ?? []),
         achievements: structuredClone(previous?.achievements ?? account.achievements),
         recentEventLog: structuredClone(previous?.recentEventLog ?? account.recentEventLog),
         recentBattleReplays: structuredClone(previous?.recentBattleReplays ?? account.recentBattleReplays ?? []),
@@ -1127,7 +1128,14 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async closeSeason(seasonId: string): Promise<SeasonCloseSummary> {
     const normalizedSeasonId = seasonId.trim();
     const existing = this.seasons.get(normalizedSeasonId);
-    if (!existing || existing.status === "closed") {
+    if (!existing) {
+      return {
+        seasonId: normalizedSeasonId,
+        playersRewarded: 0,
+        totalGemsGranted: 0
+      };
+    }
+    if (existing.status === "closed" && existing.rewardDistributedAt) {
       return {
         seasonId: normalizedSeasonId,
         playersRewarded: 0,
@@ -1140,33 +1148,45 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       .filter((account) => account.eloRating != null)
       .sort(
         (left, right) =>
-          normalizeEloRating(right.eloRating ?? DEFAULT_ELO_RATING) - normalizeEloRating(left.eloRating ?? DEFAULT_ELO_RATING) ||
+          normalizeEloRating(right.eloRating) - normalizeEloRating(left.eloRating) ||
           left.playerId.localeCompare(right.playerId)
       );
 
+    const distributedAt = new Date().toISOString();
+    let playersRewarded = 0;
     let totalGemsGranted = 0;
-    for (const account of rankedAccounts) {
-      const rating = normalizeEloRating(account.eloRating ?? DEFAULT_ELO_RATING);
-      const tier = getTierForRating(rating);
-      const rewardAmount = rewardConfig[tier];
-      totalGemsGranted += rewardAmount;
-      if (rewardAmount > 0) {
-        await this.creditGems(account.playerId, rewardAmount, "reward", `season:${normalizedSeasonId}`);
+    for (const [index, account] of rankedAccounts.entries()) {
+      const reward = computeSeasonReward(index + 1, rankedAccounts.length, rewardConfig);
+      if (!reward) {
+        continue;
       }
-      await this.savePlayerAccountProgress(account.playerId, {
-        eloRating: computeSeasonResetEloRating(rating)
+      const rewardLogKey = `${normalizedSeasonId}:${account.playerId}`;
+      if (this.seasonRewardLog.has(rewardLogKey)) {
+        continue;
+      }
+      this.seasonRewardLog.set(rewardLogKey, {
+        gems: reward.gems,
+        badge: reward.badge,
+        distributedAt
       });
+      await this.savePlayerAccountProgress(account.playerId, {
+        gems: (account.gems ?? 0) + reward.gems,
+        seasonBadges: Array.from(new Set([...(account.seasonBadges ?? []), reward.badge]))
+      });
+      playersRewarded += 1;
+      totalGemsGranted += reward.gems;
     }
 
     this.seasons.set(normalizedSeasonId, {
       ...existing,
       status: "closed",
-      endedAt: new Date().toISOString()
+      endedAt: existing.endedAt ?? distributedAt,
+      rewardDistributedAt: existing.rewardDistributedAt ?? distributedAt
     });
 
     return {
       seasonId: normalizedSeasonId,
-      playersRewarded: rankedAccounts.length,
+      playersRewarded,
       totalGemsGranted
     };
   }
@@ -1183,6 +1203,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     this.heroArchives.clear();
     this.shopPurchases.clear();
     this.seasons.clear();
+    this.seasonRewardLog.clear();
   }
 
   private selectSeasons(options: SeasonListOptions): SeasonSnapshot[] {

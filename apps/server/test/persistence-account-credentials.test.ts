@@ -39,6 +39,23 @@ function createStoreHarness() {
   };
 }
 
+function createSeasonRewardAccounts(count = 100) {
+  return new Map(
+    Array.from({ length: count }, (_, index) => {
+      const playerNumber = index + 1;
+      const playerId = `player-${String(playerNumber).padStart(3, "0")}`;
+      return [
+        playerId,
+        {
+          eloRating: 2000 - index,
+          gems: playerNumber,
+          seasonBadges: playerNumber === 1 ? ["founder"] : []
+        }
+      ];
+    })
+  );
+}
+
 test("bindPlayerAccountCredentials translates MySQL duplicate-key failures into a taken error", async () => {
   const existingAccount = createExistingAccount();
   const store = createStoreHarness();
@@ -294,29 +311,39 @@ test("listSeasons supports status=all without a status filter", async () => {
   assert.deepEqual(queries[0].params, [5]);
 });
 
-test("closeSeason grants tier rewards, soft-resets elo, and is idempotent", async () => {
-  const seasonState = { seasonId: "season-live", status: "active" as "active" | "closed" };
-  const accounts = new Map([
-    ["diamond-player", { eloRating: 1820, gems: 10 }],
-    ["gold-player", { eloRating: 1380, gems: 5 }],
-    ["bronze-player", { eloRating: 1040, gems: 0 }]
-  ]);
+test("closeSeason distributes bracket rewards once and records badges in the reward log", async () => {
+  const seasonState = {
+    seasonId: "season-live",
+    status: "active" as "active" | "closed",
+    rewardDistributedAt: null as Date | null
+  };
+  const accounts = createSeasonRewardAccounts();
   const rankingRows: Array<{ seasonId: string; playerId: string; finalRating: number; tier: string; rankPosition: number }> = [];
-  const gemLedgerEntries: Array<{ playerId: string; delta: number; refId: string }> = [];
+  const rewardLog = new Map<string, { gems: number; badge: string }>();
 
   const connection = {
     async beginTransaction() {},
     async query(sql: string, params: unknown[] = []) {
       if (/FROM `veil_seasons`/.test(sql) && /FOR UPDATE/.test(sql)) {
-        return [[{ season_id: seasonState.seasonId, status: seasonState.status }]];
+        return [[{
+          season_id: seasonState.seasonId,
+          status: seasonState.status,
+          reward_distributed_at: seasonState.rewardDistributedAt
+        }]];
+      }
+      if (/FROM `veil_season_rankings`/.test(sql) && /ORDER BY final_rating DESC/.test(sql)) {
+        return [rankingRows.map((row) => ({
+          player_id: row.playerId,
+          final_rating: row.finalRating,
+          rank_position: row.rankPosition
+        }))];
       }
       if (/FROM `player_accounts`/.test(sql) && /ORDER BY elo_rating DESC/.test(sql)) {
         const rows = [...accounts.entries()]
           .sort((left, right) => right[1].eloRating - left[1].eloRating || left[0].localeCompare(right[0]))
           .map(([playerId, account]) => ({
             player_id: playerId,
-            elo_rating: account.eloRating,
-            gems: account.gems
+            elo_rating: account.eloRating
           }));
         return [rows];
       }
@@ -327,18 +354,73 @@ test("closeSeason grants tier rewards, soft-resets elo, and is idempotent", asyn
         }
         return [{ affectedRows: values.length }];
       }
-      if (/UPDATE `player_accounts`/.test(sql) && /SET gems = \?,\s+elo_rating = \?/.test(sql)) {
-        const [gems, eloRating, playerId] = params as [number, number, string];
-        accounts.set(playerId, { gems, eloRating });
+      if (/INSERT IGNORE INTO `season_reward_log`/.test(sql)) {
+        const [seasonId, playerId, gems, badge] = params as [string, string, number, string];
+        const rewardKey = `${seasonId}:${playerId}`;
+        if (rewardLog.has(rewardKey)) {
+          return [{ affectedRows: 0 }];
+        }
+        rewardLog.set(rewardKey, { gems, badge });
         return [{ affectedRows: 1 }];
       }
-      if (/INSERT INTO `gem_ledger`/.test(sql)) {
-        const [, playerId, delta, , refId] = params as [string, string, number, string, string];
-        gemLedgerEntries.push({ playerId, delta, refId });
+      if (/SELECT \*/.test(sql) && /FROM `player_accounts`/.test(sql) && /FOR UPDATE/.test(sql)) {
+        const [playerId] = params as [string];
+        const account = accounts.get(playerId);
+        return [[account
+          ? {
+              player_id: playerId,
+              display_name: playerId,
+              avatar_url: null,
+              elo_rating: account.eloRating,
+              gems: account.gems,
+              season_badges_json: JSON.stringify(account.seasonBadges),
+              global_resources_json: JSON.stringify({ gold: 0, wood: 0, ore: 0 }),
+              achievements_json: JSON.stringify([]),
+              recent_event_log_json: JSON.stringify([]),
+              recent_battle_replays_json: JSON.stringify([]),
+              last_room_id: null,
+              last_seen_at: null,
+              login_id: null,
+              age_verified: 0,
+              is_minor: 0,
+              daily_play_minutes: 0,
+              last_play_date: null,
+              login_streak: 0,
+              ban_status: "none",
+              ban_expiry: null,
+              ban_reason: null,
+              account_session_version: 0,
+              refresh_session_id: null,
+              refresh_token_hash: null,
+              refresh_token_expires_at: null,
+              wechat_open_id: null,
+              wechat_union_id: null,
+              wechat_mini_game_open_id: null,
+              wechat_mini_game_union_id: null,
+              wechat_mini_game_bound_at: null,
+              credential_bound_at: null,
+              privacy_consent_at: null,
+              phone_number: null,
+              phone_number_bound_at: null,
+              created_at: "2026-03-20T00:00:00.000Z",
+              updated_at: "2026-03-20T00:00:00.000Z"
+            }
+          : undefined]];
+      }
+      if (/UPDATE `player_accounts`/.test(sql) && /season_badges_json = \?/.test(sql)) {
+        const [gems, seasonBadgesJson, playerId] = params as [number, string, string];
+        const account = accounts.get(playerId);
+        assert.ok(account);
+        accounts.set(playerId, {
+          ...account,
+          gems,
+          seasonBadges: JSON.parse(seasonBadgesJson)
+        });
         return [{ affectedRows: 1 }];
       }
-      if (/UPDATE `veil_seasons`/.test(sql) && /status = 'closed'/.test(sql)) {
+      if (/UPDATE `veil_seasons`/.test(sql) && /reward_distributed_at/.test(sql)) {
         seasonState.status = "closed";
+        seasonState.rewardDistributedAt = params[1] as Date;
         return [{ affectedRows: 1 }];
       }
 
@@ -361,30 +443,36 @@ test("closeSeason grants tier rewards, soft-resets elo, and is idempotent", asyn
 
   assert.deepEqual(firstClose, {
     seasonId: "season-live",
-    playersRewarded: 3,
-    totalGemsGranted: 375
+    playersRewarded: 25,
+    totalGemsGranted: 1850
   });
   assert.deepEqual(secondClose, {
     seasonId: "season-live",
     playersRewarded: 0,
     totalGemsGranted: 0
   });
-  assert.deepEqual(accounts.get("diamond-player"), { eloRating: 1410, gems: 260 });
-  assert.deepEqual(accounts.get("gold-player"), { eloRating: 1190, gems: 105 });
-  assert.deepEqual(accounts.get("bronze-player"), { eloRating: 1020, gems: 25 });
-  assert.deepEqual(
-    rankingRows.map((row) => ({ playerId: row.playerId, tier: row.tier, rankPosition: row.rankPosition, finalRating: row.finalRating })),
-    [
-      { playerId: "diamond-player", tier: "diamond", rankPosition: 1, finalRating: 1820 },
-      { playerId: "gold-player", tier: "gold", rankPosition: 2, finalRating: 1380 },
-      { playerId: "bronze-player", tier: "bronze", rankPosition: 3, finalRating: 1040 }
-    ]
-  );
-  assert.deepEqual(gemLedgerEntries, [
-    { playerId: "diamond-player", delta: 250, refId: "season:season-live" },
-    { playerId: "gold-player", delta: 100, refId: "season:season-live" },
-    { playerId: "bronze-player", delta: 25, refId: "season:season-live" }
-  ]);
+  assert.equal(accounts.get("player-001")?.gems, 201);
+  assert.deepEqual(accounts.get("player-001")?.seasonBadges, ["founder", "diamond_champion"]);
+  assert.equal(accounts.get("player-010")?.gems, 110);
+  assert.deepEqual(accounts.get("player-010")?.seasonBadges, ["platinum_rival"]);
+  assert.equal(accounts.get("player-025")?.gems, 75);
+  assert.deepEqual(accounts.get("player-025")?.seasonBadges, ["gold_contender"]);
+  assert.equal(accounts.get("player-026")?.gems, 26);
+  assert.deepEqual(accounts.get("player-026")?.seasonBadges, []);
+  assert.equal(rankingRows.length, 100);
+  assert.equal(rewardLog.size, 25);
+  assert.deepEqual(rewardLog.get("season-live:player-001"), {
+    gems: 200,
+    badge: "diamond_champion"
+  });
+  assert.deepEqual(rewardLog.get("season-live:player-010"), {
+    gems: 100,
+    badge: "platinum_rival"
+  });
+  assert.deepEqual(rewardLog.get("season-live:player-025"), {
+    gems: 50,
+    badge: "gold_contender"
+  });
 });
 
 test("mysql player event history query applies inclusive timestamp filters", async () => {

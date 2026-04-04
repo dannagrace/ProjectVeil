@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import {
   appendEventLogEntries,
-  DEFAULT_ELO_RATING,
   getEquipmentDefinition,
   getTierForRating,
   appendPlayerBattleReplaySummaries,
@@ -25,13 +24,14 @@ import {
   type WorldState
 } from "../../../packages/shared/src/index";
 import type { RoomPersistenceSnapshot } from "./index";
-import { computeSeasonResetEloRating, resolveSeasonRewardConfig } from "./season-rewards";
+import { computeSeasonReward, resolveSeasonRewardConfig } from "./season-rewards";
 
 export interface SeasonSnapshot {
   seasonId: string;
   status: "active" | "closed";
   startedAt: string;
   endedAt?: string;
+  rewardDistributedAt?: string;
 }
 
 export interface SeasonListOptions {
@@ -175,6 +175,7 @@ interface PlayerAccountRow extends RowDataPacket {
   avatar_url: string | null;
   elo_rating: number | null;
   gems: number | null;
+  season_badges_json: string | string[] | null;
   global_resources_json: string | ResourceLedger;
   achievements_json: string | PlayerAchievementProgress[] | null;
   recent_event_log_json: string | EventLogEntry[] | null;
@@ -498,6 +499,7 @@ export interface PlayerAccountProfilePatch {
 
 export interface PlayerAccountProgressPatch {
   gems?: number;
+  seasonBadges?: string[] | null;
   globalResources?: Partial<ResourceLedger> | null;
   achievements?: Partial<PlayerAchievementProgress>[] | null;
   recentEventLog?: Partial<EventLogEntry>[] | null;
@@ -631,6 +633,9 @@ export const MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX = "idx_player_reports_stat
 export const MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX = "uidx_player_reports_room_reporter_target";
 export const MYSQL_CONFIG_DOCUMENT_TABLE = "config_documents";
 export const MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX = "idx_config_documents_updated_at";
+export const MYSQL_SEASON_TABLE = "veil_seasons";
+export const MYSQL_SEASON_RANKINGS_TABLE = "veil_season_rankings";
+export const MYSQL_SEASON_REWARD_LOG_TABLE = "season_reward_log";
 export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
 export const DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES = 30;
 export const MAX_PLAYER_DISPLAY_NAME_LENGTH = 40;
@@ -1094,6 +1099,7 @@ function normalizePlayerAccountSnapshot(account: {
   avatarUrl?: string | null | undefined;
   eloRating?: number | null | undefined;
   gems?: number | null | undefined;
+  seasonBadges?: string[] | null | undefined;
   globalResources?: Partial<ResourceLedger>;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -1135,6 +1141,7 @@ function normalizePlayerAccountSnapshot(account: {
       avatarUrl: normalizePlayerAvatarUrl(account.avatarUrl),
       eloRating: normalizeEloRating(account.eloRating),
       gems: normalizeGemAmount(account.gems),
+      seasonBadges: account.seasonBadges,
       globalResources: normalizeResourceLedger(account.globalResources),
       achievements: account.achievements,
       recentEventLog: account.recentEventLog,
@@ -1428,6 +1435,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   avatar_url VARCHAR(512) NULL,
   elo_rating INT NOT NULL DEFAULT 1000,
   gems INT NOT NULL DEFAULT 0,
+  season_badges_json LONGTEXT NULL,
   global_resources_json LONGTEXT NOT NULL,
   achievements_json LONGTEXT NULL,
   recent_event_log_json LONGTEXT NULL,
@@ -1467,6 +1475,15 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_GEM_LEDGER_TABLE}\` (
   ref_id VARCHAR(191) NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (entry_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS \`${MYSQL_SEASON_REWARD_LOG_TABLE}\` (
+  season_id VARCHAR(64) NOT NULL,
+  player_id VARCHAR(64) NOT NULL,
+  gems INT NOT NULL,
+  badge VARCHAR(64) NOT NULL,
+  distributed_at DATETIME NOT NULL,
+  PRIMARY KEY (season_id, player_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_REFERRAL_TABLE}\` (
@@ -1700,6 +1717,24 @@ SET @veil_player_accounts_gems_sql := IF(
 PREPARE veil_player_accounts_gems_stmt FROM @veil_player_accounts_gems_sql;
 EXECUTE veil_player_accounts_gems_stmt;
 DEALLOCATE PREPARE veil_player_accounts_gems_stmt;
+
+SET @veil_player_accounts_season_badges_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'season_badges_json'
+);
+
+SET @veil_player_accounts_season_badges_sql := IF(
+  @veil_player_accounts_season_badges_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`season_badges_json\` LONGTEXT NULL AFTER \`gems\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_season_badges_stmt FROM @veil_player_accounts_season_badges_sql;
+EXECUTE veil_player_accounts_season_badges_stmt;
+DEALLOCATE PREPARE veil_player_accounts_season_badges_stmt;
 
 SET @veil_player_accounts_event_log_exists := (
   SELECT COUNT(*)
@@ -2410,22 +2445,50 @@ PREPARE veil_config_documents_idx_stmt FROM @veil_config_documents_idx_sql;
 EXECUTE veil_config_documents_idx_stmt;
 DEALLOCATE PREPARE veil_config_documents_idx_stmt;
 
-CREATE TABLE IF NOT EXISTS \`veil_seasons\` (
+CREATE TABLE IF NOT EXISTS \`${MYSQL_SEASON_TABLE}\` (
   \`season_id\` VARCHAR(64) NOT NULL,
   \`status\` ENUM('active','closed') NOT NULL DEFAULT 'active',
   \`started_at\` DATETIME NOT NULL,
   \`ended_at\` DATETIME NULL,
+  \`reward_distributed_at\` DATETIME NULL,
   \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (\`season_id\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS \`veil_season_rankings\` (
+CREATE TABLE IF NOT EXISTS \`${MYSQL_SEASON_RANKINGS_TABLE}\` (
   \`season_id\` VARCHAR(64) NOT NULL,
   \`player_id\` VARCHAR(64) NOT NULL,
   \`final_rating\` INT NOT NULL,
   \`tier\` VARCHAR(32) NOT NULL,
   \`rank_position\` INT NOT NULL,
   \`archived_at\` DATETIME NOT NULL,
+  PRIMARY KEY (\`season_id\`, \`player_id\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+SET @veil_seasons_reward_distributed_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_SEASON_TABLE}'
+    AND COLUMN_NAME = 'reward_distributed_at'
+);
+
+SET @veil_seasons_reward_distributed_sql := IF(
+  @veil_seasons_reward_distributed_exists = 0,
+  'ALTER TABLE \`${MYSQL_SEASON_TABLE}\` ADD COLUMN \`reward_distributed_at\` DATETIME NULL AFTER \`ended_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_seasons_reward_distributed_stmt FROM @veil_seasons_reward_distributed_sql;
+EXECUTE veil_seasons_reward_distributed_stmt;
+DEALLOCATE PREPARE veil_seasons_reward_distributed_stmt;
+
+CREATE TABLE IF NOT EXISTS \`${MYSQL_SEASON_REWARD_LOG_TABLE}\` (
+  \`season_id\` VARCHAR(64) NOT NULL,
+  \`player_id\` VARCHAR(64) NOT NULL,
+  \`gems\` INT NOT NULL,
+  \`badge\` VARCHAR(64) NOT NULL,
+  \`distributed_at\` DATETIME NOT NULL,
   PRIMARY KEY (\`season_id\`, \`player_id\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 `.trim();
@@ -2504,6 +2567,10 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(row.avatar_url ? { avatarUrl: row.avatar_url } : {}),
     ...(row.elo_rating != null ? { eloRating: row.elo_rating } : {}),
     gems: normalizeGemAmount(row.gems),
+    seasonBadges:
+      row.season_badges_json != null
+        ? parseJsonColumn<string[]>(row.season_badges_json)
+        : [],
     globalResources: parseJsonColumn<ResourceLedger>(row.global_resources_json),
     achievements:
       row.achievements_json != null
@@ -2786,6 +2853,7 @@ async function savePlayerAccounts(
          display_name,
          elo_rating,
          gems,
+         season_badges_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json
@@ -2793,11 +2861,12 @@ async function savePlayerAccounts(
          recent_battle_replays_json,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
          gems = VALUES(gems),
+         season_badges_json = COALESCE(season_badges_json, VALUES(season_badges_json)),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
          recent_event_log_json = COALESCE(recent_event_log_json, VALUES(recent_event_log_json)),
@@ -2809,6 +2878,7 @@ async function savePlayerAccounts(
         normalizedAccount.displayName,
         normalizedAccount.eloRating,
         normalizedAccount.gems,
+        JSON.stringify(normalizedAccount.seasonBadges ?? []),
         JSON.stringify(normalizedAccount.globalResources),
         JSON.stringify(normalizedAccount.achievements),
         JSON.stringify(normalizedAccount.recentEventLog),
@@ -3042,6 +3112,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          avatar_url,
          elo_rating,
          gems,
+         season_badges_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -3091,6 +3162,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          avatar_url,
          elo_rating,
          gems,
+         season_badges_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -3224,6 +3296,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          avatar_url,
          elo_rating,
          gems,
+         season_badges_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -3367,6 +3440,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          elo_rating,
          gems,
+         season_badges_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -3374,7 +3448,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(?, display_name),
          last_room_id = COALESCE(?, last_room_id),
@@ -3385,6 +3459,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         insertDisplayName,
         normalizeEloRating(undefined),
         0,
+        JSON.stringify([]),
         JSON.stringify(normalizeResourceLedger()),
         JSON.stringify(normalizeAchievementProgress()),
         JSON.stringify(normalizeEventLogEntries()),
@@ -3402,6 +3477,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         playerId,
         displayName: insertDisplayName,
         eloRating: normalizeEloRating(undefined),
+        seasonBadges: [],
         globalResources: normalizeResourceLedger(),
         achievements: normalizeAchievementProgress(),
         recentEventLog: normalizeEventLogEntries(),
@@ -4517,6 +4593,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          avatar_url,
          elo_rating,
          gems,
+         season_badges_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -4526,11 +4603,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
          elo_rating = VALUES(elo_rating),
+         season_badges_json = COALESCE(season_badges_json, VALUES(season_badges_json)),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
          recent_event_log_json = VALUES(recent_event_log_json),
@@ -4546,6 +4624,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.avatarUrl ?? null,
         nextAccount.eloRating,
         nextAccount.gems,
+        JSON.stringify(nextAccount.seasonBadges ?? []),
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
@@ -4580,6 +4659,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       ...existing,
       playerId: normalizedPlayerId,
       ...(patch.gems !== undefined ? { gems: patch.gems } : {}),
+      seasonBadges: patch.seasonBadges ?? existing.seasonBadges,
       globalResources: patch.globalResources ?? existing.globalResources,
       achievements: patch.achievements ?? existing.achievements,
       recentEventLog: patch.recentEventLog ?? existing.recentEventLog,
@@ -4607,6 +4687,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          avatar_url,
          elo_rating,
          gems,
+         season_badges_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -4619,11 +4700,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_play_date,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
          gems = VALUES(gems),
+         season_badges_json = VALUES(season_badges_json),
          elo_rating = VALUES(elo_rating),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
@@ -4643,6 +4725,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.avatarUrl ?? null,
         nextAccount.eloRating,
         nextAccount.gems,
+        JSON.stringify(nextAccount.seasonBadges ?? []),
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
@@ -4899,15 +4982,21 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
   async getCurrentSeason(): Promise<SeasonSnapshot | null> {
     const [rows] = await this.pool.query<RowDataPacket[]>(
-      `SELECT season_id, status, started_at, ended_at FROM \`veil_seasons\` WHERE status = 'active' ORDER BY started_at DESC LIMIT 1`
+      `SELECT season_id, status, started_at, ended_at, reward_distributed_at
+       FROM \`${MYSQL_SEASON_TABLE}\`
+       WHERE status = 'active'
+       ORDER BY started_at DESC
+       LIMIT 1`
     );
     const row = rows[0];
     if (!row) return null;
     const endedAtTimestamp = row.ended_at ? formatTimestamp(row.ended_at as Date | string) : undefined;
+    const rewardDistributedAt = row.reward_distributed_at ? formatTimestamp(row.reward_distributed_at as Date | string) : undefined;
     const base: SeasonSnapshot = {
       seasonId: String(row.season_id),
       status: row.status as "active" | "closed",
-      startedAt: formatTimestamp(row.started_at as Date | string) ?? new Date().toISOString()
+      startedAt: formatTimestamp(row.started_at as Date | string) ?? new Date().toISOString(),
+      ...(rewardDistributedAt ? { rewardDistributedAt } : {})
     };
     return endedAtTimestamp ? { ...base, endedAt: endedAtTimestamp } : base;
   }
@@ -4919,8 +5008,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     const clauses = status === "all" ? "" : "WHERE status = ?";
     const params = status === "all" ? [limit] : [status, limit];
     const [rows] = await this.pool.query<RowDataPacket[]>(
-      `SELECT season_id, status, started_at, ended_at
-       FROM \`veil_seasons\`
+      `SELECT season_id, status, started_at, ended_at, reward_distributed_at
+       FROM \`${MYSQL_SEASON_TABLE}\`
        ${clauses}
        ORDER BY started_at DESC
        LIMIT ?`,
@@ -4929,10 +5018,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     return rows.map((row) => {
       const endedAtTimestamp = row.ended_at ? formatTimestamp(row.ended_at as Date | string) : undefined;
+      const rewardDistributedAt = row.reward_distributed_at ? formatTimestamp(row.reward_distributed_at as Date | string) : undefined;
       const season: SeasonSnapshot = {
         seasonId: String(row.season_id),
         status: row.status as "active" | "closed",
-        startedAt: formatTimestamp(row.started_at as Date | string) ?? new Date().toISOString()
+        startedAt: formatTimestamp(row.started_at as Date | string) ?? new Date().toISOString(),
+        ...(rewardDistributedAt ? { rewardDistributedAt } : {})
       };
       return endedAtTimestamp ? { ...season, endedAt: endedAtTimestamp } : season;
     });
@@ -4943,7 +5034,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     if (!normalizedId) throw new Error("seasonId must not be empty");
     const startedAt = new Date();
     await this.pool.query(
-      `INSERT INTO \`veil_seasons\` (season_id, status, started_at) VALUES (?, 'active', ?)`,
+      `INSERT INTO \`${MYSQL_SEASON_TABLE}\` (season_id, status, started_at) VALUES (?, 'active', ?)`,
       [normalizedId, startedAt]
     );
     return {
@@ -4967,15 +5058,25 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       await connection.beginTransaction();
 
       const [seasonRows] = await connection.query<RowDataPacket[]>(
-        `SELECT season_id, status
-         FROM \`veil_seasons\`
+        `SELECT season_id, status, reward_distributed_at
+         FROM \`${MYSQL_SEASON_TABLE}\`
          WHERE season_id = ?
          LIMIT 1
          FOR UPDATE`,
         [normalizedId]
       );
-      const seasonRow = seasonRows[0] as { season_id: string; status: "active" | "closed" } | undefined;
-      if (!seasonRow || seasonRow.status === "closed") {
+      const seasonRow = seasonRows[0] as
+        | { season_id: string; status: "active" | "closed"; reward_distributed_at?: Date | string | null }
+        | undefined;
+      if (!seasonRow) {
+        await connection.rollback();
+        return {
+          seasonId: normalizedId,
+          playersRewarded: 0,
+          totalGemsGranted: 0
+        };
+      }
+      if (seasonRow.status === "closed" && seasonRow.reward_distributed_at) {
         await connection.rollback();
         return {
           seasonId: normalizedId,
@@ -4984,63 +5085,109 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         };
       }
 
-      const [accountRows] = await connection.query<RowDataPacket[]>(
-        `SELECT player_id, elo_rating, gems
-         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
-         WHERE elo_rating IS NOT NULL
-         ORDER BY elo_rating DESC, player_id ASC
-         FOR UPDATE`
+      const [existingRankingRows] = await connection.query<RowDataPacket[]>(
+        `SELECT player_id, final_rating, rank_position
+         FROM \`${MYSQL_SEASON_RANKINGS_TABLE}\`
+         WHERE season_id = ?
+         ORDER BY final_rating DESC, rank_position ASC, player_id ASC`,
+        [normalizedId]
       );
+
+      let rankedPlayers = existingRankingRows.map((row) => ({
+        playerId: String(row.player_id),
+        finalRating: normalizeEloRating(Number(row.final_rating)),
+        rankPosition: Math.max(1, Math.floor(Number(row.rank_position) || 0))
+      }));
+
+      if (rankedPlayers.length === 0) {
+        const [accountRows] = await connection.query<RowDataPacket[]>(
+          `SELECT player_id, elo_rating
+           FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+           WHERE elo_rating IS NOT NULL
+           ORDER BY elo_rating DESC, player_id ASC
+           FOR UPDATE`
+        );
+        const rankingValues: Array<[string, string, number, string, number, Date]> = [];
+        rankedPlayers = accountRows.map((row, index) => {
+          const playerId = String(row.player_id);
+          const finalRating = normalizeEloRating(Number(row.elo_rating));
+          rankingValues.push([normalizedId, playerId, finalRating, getTierForRating(finalRating), index + 1, now]);
+          return {
+            playerId,
+            finalRating,
+            rankPosition: index + 1
+          };
+        });
+
+        if (rankingValues.length > 0) {
+          await connection.query(
+            `INSERT INTO \`${MYSQL_SEASON_RANKINGS_TABLE}\` (season_id, player_id, final_rating, tier, rank_position, archived_at) VALUES ?`,
+            [rankingValues]
+          );
+        }
+      }
 
       let playersRewarded = 0;
       let totalGemsGranted = 0;
-      const rankingValues: Array<[string, string, number, string, number, Date]> = [];
+      for (const rankedPlayer of rankedPlayers) {
+        const reward = computeSeasonReward(rankedPlayer.rankPosition, rankedPlayers.length, rewardConfig);
+        if (!reward) {
+          continue;
+        }
 
-      for (const [index, row] of accountRows.entries()) {
-        const playerId = String(row.player_id);
-        const rating = normalizeEloRating(Number(row.elo_rating));
-        const currentGems = normalizeGemAmount((row as { gems?: number | null }).gems);
-        const tier = getTierForRating(rating);
-        const rewardAmount = rewardConfig[tier];
-        const resetEloRating = computeSeasonResetEloRating(rating);
+        const [rewardLogResult] = await connection.query<ResultSetHeader>(
+          `INSERT IGNORE INTO \`${MYSQL_SEASON_REWARD_LOG_TABLE}\` (
+             season_id,
+             player_id,
+             gems,
+             badge,
+             distributed_at
+           )
+           VALUES (?, ?, ?, ?, ?)`,
+          [normalizedId, rankedPlayer.playerId, reward.gems, reward.badge, now]
+        );
+        if (rewardLogResult.affectedRows === 0) {
+          continue;
+        }
 
-        rankingValues.push([normalizedId, playerId, rating, tier, index + 1, now]);
-        playersRewarded += 1;
-        totalGemsGranted += rewardAmount;
+        const [accountRows] = await connection.query<PlayerAccountRow[]>(
+          `SELECT *
+           FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+           WHERE player_id = ?
+           LIMIT 1
+           FOR UPDATE`,
+          [rankedPlayer.playerId]
+        );
+        const currentAccount =
+          accountRows[0] != null
+            ? toPlayerAccountSnapshot(accountRows[0])
+            : normalizePlayerAccountSnapshot({
+                playerId: rankedPlayer.playerId,
+                displayName: rankedPlayer.playerId,
+                globalResources: normalizeResourceLedger()
+              });
+        const seasonBadges = Array.from(new Set([...(currentAccount.seasonBadges ?? []), reward.badge]));
 
         await connection.query(
           `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
            SET gems = ?,
-               elo_rating = ?,
+               season_badges_json = ?,
                version = version + 1
            WHERE player_id = ?`,
-          [currentGems + rewardAmount, resetEloRating, playerId]
+          [normalizeGemAmount(currentAccount.gems) + reward.gems, JSON.stringify(seasonBadges), rankedPlayer.playerId]
         );
 
-        if (rewardAmount > 0) {
-          await appendGemLedgerEntry(connection, {
-            entryId: randomUUID(),
-            playerId,
-            delta: rewardAmount,
-            reason: "reward",
-            refId: `season:${normalizedId}`
-          });
-        }
-      }
-
-      if (rankingValues.length > 0) {
-        await connection.query(
-          `INSERT INTO \`veil_season_rankings\` (season_id, player_id, final_rating, tier, rank_position, archived_at) VALUES ?`,
-          [rankingValues]
-        );
+        playersRewarded += 1;
+        totalGemsGranted += reward.gems;
       }
 
       await connection.query(
-        `UPDATE \`veil_seasons\`
+        `UPDATE \`${MYSQL_SEASON_TABLE}\`
          SET status = 'closed',
-             ended_at = ?
+             ended_at = COALESCE(ended_at, ?),
+             reward_distributed_at = COALESCE(reward_distributed_at, ?)
          WHERE season_id = ?`,
-        [now, normalizedId]
+        [now, now, normalizedId]
       );
 
       await connection.commit();
