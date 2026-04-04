@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { sys } from "cc";
 import { VeilRoot } from "../assets/scripts/VeilRoot.ts";
-import type { SessionUpdate } from "../assets/scripts/VeilCocosSession.ts";
+import type { MatchmakingStatusResponse, SessionUpdate } from "../assets/scripts/VeilCocosSession.ts";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
 
@@ -424,4 +424,125 @@ test("VeilRoot refreshes WeChat share metadata after a battle resolves back to w
   assert.match(payload.title, /第 4 天 探索房间 room-recover/);
   assert.match(payload.query, /shareScene=world/);
   assert.match(payload.query, /day=4/);
+});
+
+test("VeilRoot enters a matched room from lobby matchmaking and stops polling", async () => {
+  const root = createVeilRootHarness();
+  root.showLobby = true;
+  root.privacyConsentAccepted = true;
+  root.playerId = "player-1";
+  root.displayName = "One";
+  root.roomId = "room-alpha";
+
+  let pollUpdate: ((status: MatchmakingStatusResponse) => void) | null = null;
+  let pollStops = 0;
+  const joinedUpdate = createSessionUpdate(1, "pvp-match-7", "player-1");
+
+  installVeilRootRuntime({
+    loginGuestAuthSession: async () => ({
+      token: "guest.token",
+      playerId: "player-1",
+      displayName: "One",
+      authMode: "guest",
+      provider: "guest",
+      source: "remote"
+    }),
+    enqueueMatchmaking: async () => ({
+      status: "queued",
+      position: 2,
+      estimatedWaitSeconds: 18
+    }),
+    startMatchmakingPolling: (_remoteUrl, onUpdate) => {
+      pollUpdate = onUpdate;
+      return {
+        stop() {
+          pollStops += 1;
+        }
+      };
+    },
+    createSession: async () =>
+      ({
+        async snapshot() {
+          return joinedUpdate;
+        },
+        async dispose() {}
+      }) as never
+  });
+
+  await root.enterLobbyMatchmaking();
+  assert.equal(root.matchmakingStatus.status, "queued");
+  assert.ok(pollUpdate);
+
+  await pollUpdate?.({
+    status: "matched",
+    roomId: "pvp-match-7",
+    playerIds: ["player-1", "player-2"],
+    seedOverride: 2007
+  });
+  await flushMicrotasks();
+
+  assert.equal(pollStops, 1);
+  assert.equal(root.showLobby, false);
+  assert.equal(root.roomId, "pvp-match-7");
+  assert.equal(root.seed, 2007);
+  assert.equal(root.matchmakingStatus.status, "idle");
+  assert.equal(root.lastUpdate?.world.meta.roomId, "pvp-match-7");
+});
+
+test("VeilRoot cancelLobbyMatchmaking stops polling and clears the queue state", async () => {
+  const root = createVeilRootHarness();
+  root.showLobby = true;
+  root.playerId = "player-1";
+  root.displayName = "One";
+  root.authToken = "guest.token";
+  root.matchmakingStatus = {
+    status: "queued",
+    position: 3,
+    estimatedWaitSeconds: 21
+  };
+  root.matchmakingView = {
+    statusLabel: "正在匹配…",
+    queuePositionLabel: "位置 #3",
+    waitEstimateLabel: "预计 21s",
+    matchedLabel: "",
+    canCancel: true,
+    isMatched: false
+  };
+
+  let cancelCalls = 0;
+  let pollStops = 0;
+  root.matchmakingPollController = {
+    stop() {
+      pollStops += 1;
+    }
+  };
+
+  installVeilRootRuntime({
+    cancelMatchmaking: async () => {
+      cancelCalls += 1;
+      return "dequeued";
+    }
+  });
+
+  await root.cancelLobbyMatchmaking();
+
+  assert.equal(cancelCalls, 1);
+  assert.equal(pollStops, 1);
+  assert.deepEqual(root.matchmakingStatus, { status: "idle" });
+  assert.match(String(root.lobbyStatus), /已取消当前匹配队列/);
+});
+
+test("VeilRoot onDestroy stops matchmaking polling to avoid timer leaks", () => {
+  const root = createVeilRootHarness();
+  let pollStops = 0;
+  root.matchmakingPollController = {
+    stop() {
+      pollStops += 1;
+    }
+  };
+
+  root.onDestroy();
+
+  assert.equal(pollStops, 1);
+  assert.equal(root.matchmakingPollController, null);
 });

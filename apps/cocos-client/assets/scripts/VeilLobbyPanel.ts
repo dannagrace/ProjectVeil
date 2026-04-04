@@ -48,6 +48,7 @@ import {
   type BattleReplayPlaybackState,
   type PlayerBattleReplaySummary
 } from "./project-shared/battle-replay.ts";
+import type { MatchmakingStatusView } from "./cocos-matchmaking-status.ts";
 
 const { ccclass } = _decorator;
 const H_ALIGN_LEFT = 0;
@@ -121,6 +122,9 @@ export interface VeilLobbyRenderState {
   loading: boolean;
   entering: boolean;
   status: string;
+  matchmaking?: MatchmakingStatusView;
+  matchmakingSearching?: boolean;
+  matchmakingBusy?: boolean;
   rooms: CocosLobbyRoomSummary[];
   accountFlow: CocosAccountLifecyclePanelView | null;
   presentationReadiness: CocosPresentationReadiness;
@@ -134,6 +138,8 @@ export interface VeilLobbyPanelOptions {
   onTogglePrivacyConsent?: () => void;
   onRefresh?: () => void;
   onEnterRoom?: () => void;
+  onEnterMatchmaking?: () => void;
+  onCancelMatchmaking?: () => void;
   onLoginAccount?: () => void;
   onRegisterAccount?: () => void;
   onRecoverAccount?: () => void;
@@ -171,6 +177,8 @@ export class VeilLobbyPanel extends Component {
   private onTogglePrivacyConsent: (() => void) | undefined;
   private onRefresh: (() => void) | undefined;
   private onEnterRoom: (() => void) | undefined;
+  private onEnterMatchmaking: (() => void) | undefined;
+  private onCancelMatchmaking: (() => void) | undefined;
   private onLoginAccount: (() => void) | undefined;
   private onRegisterAccount: (() => void) | undefined;
   private onRecoverAccount: (() => void) | undefined;
@@ -204,6 +212,8 @@ export class VeilLobbyPanel extends Component {
     this.onTogglePrivacyConsent = options.onTogglePrivacyConsent;
     this.onRefresh = options.onRefresh;
     this.onEnterRoom = options.onEnterRoom;
+    this.onEnterMatchmaking = options.onEnterMatchmaking;
+    this.onCancelMatchmaking = options.onCancelMatchmaking;
     this.onLoginAccount = options.onLoginAccount;
     this.onRegisterAccount = options.onRegisterAccount;
     this.onRecoverAccount = options.onRecoverAccount;
@@ -225,6 +235,16 @@ export class VeilLobbyPanel extends Component {
     this.currentState = state;
     this.syncReplayPlaybackState(state);
     this.ensureShowcaseTicker();
+    const matchmaking = state.matchmaking ?? {
+      statusLabel: "未在匹配",
+      queuePositionLabel: "位置 -",
+      waitEstimateLabel: "预计 --",
+      matchedLabel: "",
+      canCancel: false,
+      isMatched: false
+    };
+    const matchmakingSearching = state.matchmakingSearching ?? false;
+    const matchmakingBusy = state.matchmakingBusy ?? false;
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const width = transform.width || 760;
     const height = transform.height || 620;
@@ -376,6 +396,29 @@ export class VeilLobbyPanel extends Component {
       16
     );
 
+    leftCursorY = this.renderCard(
+      "LobbyMatchmakingStatus",
+      leftX,
+      leftCursorY,
+      leftWidth,
+      96,
+      [
+        "PVP 匹配",
+        matchmaking.statusLabel,
+        matchmaking.queuePositionLabel,
+        matchmaking.waitEstimateLabel,
+        matchmaking.matchedLabel || "等待进入队列"
+      ],
+      {
+        fill: new Color(46, 56, 88, 186),
+        stroke: new Color(214, 226, 244, 70),
+        accent: new Color(122, 172, 228, 202)
+      },
+      null,
+      13,
+      16
+    );
+
     this.renderActionButton(
       "LobbyRefresh",
       leftX,
@@ -402,12 +445,40 @@ export class VeilLobbyPanel extends Component {
         stroke: new Color(228, 244, 229, 124),
         accent: new Color(226, 244, 230, 116)
       },
-      state.entering ? null : this.onEnterRoom ?? null
+      state.entering || matchmakingSearching ? null : this.onEnterRoom ?? null
+    );
+    this.renderActionButton(
+      "LobbyMatchmakingEnter",
+      leftX,
+      leftCursorY - 86,
+      leftWidth,
+      28,
+      matchmakingBusy ? "匹配处理中..." : matchmakingSearching ? "匹配中..." : "PVP 匹配",
+      {
+        fill: ACTION_ACCOUNT_REVIEW_ACTIVE,
+        stroke: new Color(228, 244, 229, 124),
+        accent: new Color(226, 244, 230, 116)
+      },
+      state.entering || matchmakingSearching ? null : this.onEnterMatchmaking ?? null
+    );
+    this.renderActionButton(
+      "LobbyMatchmakingCancel",
+      leftX,
+      leftCursorY - 120,
+      leftWidth,
+      28,
+      matchmakingBusy ? "处理中..." : "取消匹配",
+      {
+        fill: ACTION_LOGOUT,
+        stroke: new Color(247, 232, 226, 118),
+        accent: new Color(250, 234, 228, 110)
+      },
+      matchmaking.canCancel && !matchmakingBusy ? this.onCancelMatchmaking ?? null : null
     );
     this.renderActionButton(
       "LobbyAccountEnter",
       leftX,
-      leftCursorY - 86,
+      leftCursorY - 154,
       leftWidth,
       28,
       state.entering ? "登录中..." : state.loginActionLabel || (state.authMode === "account" ? "账号进入" : "账号登录并进入"),
@@ -416,12 +487,12 @@ export class VeilLobbyPanel extends Component {
         stroke: new Color(228, 236, 248, 120),
         accent: new Color(220, 230, 244, 112)
       },
-      state.entering ? null : this.onLoginAccount ?? null
+      state.entering || matchmakingSearching ? null : this.onLoginAccount ?? null
     );
     this.renderActionButton(
       "LobbyRegisterAccount",
       leftX,
-      leftCursorY - 120,
+      leftCursorY - 188,
       leftWidth,
       28,
       "正式注册",
@@ -430,12 +501,12 @@ export class VeilLobbyPanel extends Component {
         stroke: new Color(228, 236, 248, 120),
         accent: new Color(220, 230, 244, 112)
       },
-      state.entering ? null : this.onRegisterAccount ?? null
+      state.entering || matchmakingSearching ? null : this.onRegisterAccount ?? null
     );
     this.renderActionButton(
       "LobbyRecoverAccount",
       leftX,
-      leftCursorY - 154,
+      leftCursorY - 222,
       leftWidth,
       28,
       "密码找回",
@@ -444,12 +515,12 @@ export class VeilLobbyPanel extends Component {
         stroke: new Color(228, 236, 248, 120),
         accent: new Color(220, 230, 244, 112)
       },
-      state.entering ? null : this.onRecoverAccount ?? null
+      state.entering || matchmakingSearching ? null : this.onRecoverAccount ?? null
     );
     this.renderActionButton(
       "LobbyConfigCenter",
       leftX,
-      leftCursorY - 188,
+      leftCursorY - 256,
       leftWidth,
       28,
       "打开配置台",
@@ -458,12 +529,12 @@ export class VeilLobbyPanel extends Component {
         stroke: new Color(234, 240, 228, 116),
         accent: new Color(226, 236, 220, 108)
       },
-      state.entering ? null : this.onOpenConfigCenter ?? null
+      state.entering || matchmakingSearching ? null : this.onOpenConfigCenter ?? null
     );
     this.renderActionButton(
       "LobbyLogout",
       leftX,
-      leftCursorY - 222,
+      leftCursorY - 290,
       leftWidth,
       28,
       state.authMode === "account" ? "退出账号会话" : "退出游客会话",
@@ -472,12 +543,12 @@ export class VeilLobbyPanel extends Component {
         stroke: new Color(247, 232, 226, 118),
         accent: new Color(250, 234, 228, 110)
       },
-      state.entering || state.sessionSource === "none" ? null : this.onLogout ?? null
+      state.entering || state.sessionSource === "none" || matchmakingSearching ? null : this.onLogout ?? null
     );
     this.renderActionButton(
       "LobbyAccountReview",
       leftX,
-      leftCursorY - 256,
+      leftCursorY - 324,
       leftWidth,
       28,
       this.showAccountReview ? "收起资料回顾" : "资料回顾 · 战报 / 事件 / 成就",

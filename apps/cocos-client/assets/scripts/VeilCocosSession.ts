@@ -1,5 +1,11 @@
 import { sys } from "cc";
 import type { EquipmentType } from "./project-shared/index.ts";
+import {
+  cancelCocosMatchmaking,
+  enqueueCocosMatchmaking,
+  readCocosMatchmakingStatus,
+  type CocosMatchmakingStatus
+} from "./cocos-matchmaking.ts";
 
 export interface Vec2 {
   x: number;
@@ -452,6 +458,7 @@ export interface SessionUpdate {
 }
 
 export type ConnectionEvent = "reconnecting" | "reconnected" | "reconnect_failed";
+export type MatchmakingStatusResponse = CocosMatchmakingStatus;
 
 export interface VeilCocosSessionOptions {
   remoteUrl?: string;
@@ -1582,7 +1589,10 @@ class RecoverableRemoteGameSession {
 export class VeilCocosSession {
   private constructor(
     private readonly remoteSession: RecoverableRemoteGameSession,
-    private readonly remoteUrl?: string
+    private readonly playerId: string,
+    private readonly remoteUrl?: string,
+    private readonly getDisplayName?: (() => string | null) | undefined,
+    private readonly getAuthToken?: (() => string | null) | undefined
   ) {}
 
   static readStoredReplay(roomId: string, playerId: string): SessionUpdate | null {
@@ -1596,11 +1606,72 @@ export class VeilCocosSession {
     options?: VeilCocosSessionOptions
   ): Promise<VeilCocosSession> {
     const remoteSession = await RecoverableRemoteGameSession.create(roomId, playerId, seed, options);
-    return new VeilCocosSession(remoteSession, options?.remoteUrl);
+    return new VeilCocosSession(remoteSession, playerId, options?.remoteUrl, options?.getDisplayName, options?.getAuthToken);
   }
 
   static async fetchLeaderboard(remoteUrl?: string, limit = 50): Promise<LeaderboardEntry[]> {
     return fetchLeaderboardEntries(remoteUrl, limit);
+  }
+
+  static async enqueueForMatchmaking(
+    remoteUrl: string,
+    playerId: string,
+    rating: number,
+    options?: {
+      getDisplayName?: (() => string | null) | undefined;
+      getAuthToken?: (() => string | null) | undefined;
+    }
+  ): Promise<MatchmakingStatusResponse> {
+    const token = options?.getAuthToken?.() ?? null;
+    return enqueueCocosMatchmaking(remoteUrl, {
+      authSession: {
+        playerId,
+        displayName: options?.getDisplayName?.() ?? playerId,
+        authMode: "guest",
+        ...(token ? { token } : {}),
+        source: "remote"
+      }
+    });
+  }
+
+  static async getMatchmakingStatus(
+    remoteUrl: string,
+    playerId: string,
+    options?: {
+      getDisplayName?: (() => string | null) | undefined;
+      getAuthToken?: (() => string | null) | undefined;
+    }
+  ): Promise<MatchmakingStatusResponse> {
+    const token = options?.getAuthToken?.() ?? null;
+    return readCocosMatchmakingStatus(remoteUrl, {
+      authSession: {
+        playerId,
+        displayName: options?.getDisplayName?.() ?? playerId,
+        authMode: "guest",
+        ...(token ? { token } : {}),
+        source: "remote"
+      }
+    });
+  }
+
+  static async cancelMatchmaking(
+    remoteUrl: string,
+    playerId: string,
+    options?: {
+      getDisplayName?: (() => string | null) | undefined;
+      getAuthToken?: (() => string | null) | undefined;
+    }
+  ): Promise<"dequeued" | "idle"> {
+    const token = options?.getAuthToken?.() ?? null;
+    return cancelCocosMatchmaking(remoteUrl, {
+      authSession: {
+        playerId,
+        displayName: options?.getDisplayName?.() ?? playerId,
+        authMode: "guest",
+        ...(token ? { token } : {}),
+        source: "remote"
+      }
+    });
   }
 
   async snapshot(reason?: string): Promise<SessionUpdate> {
@@ -1657,6 +1728,27 @@ export class VeilCocosSession {
 
   async fetchLeaderboard(limit = 50): Promise<LeaderboardEntry[]> {
     return fetchLeaderboardEntries(this.remoteUrl, limit);
+  }
+
+  async enqueueForMatchmaking(rating: number): Promise<MatchmakingStatusResponse> {
+    return VeilCocosSession.enqueueForMatchmaking(this.remoteUrl ?? "", this.playerId, rating, {
+      getDisplayName: this.getDisplayName,
+      getAuthToken: this.getAuthToken
+    });
+  }
+
+  async getMatchmakingStatus(): Promise<MatchmakingStatusResponse> {
+    return VeilCocosSession.getMatchmakingStatus(this.remoteUrl ?? "", this.playerId, {
+      getDisplayName: this.getDisplayName,
+      getAuthToken: this.getAuthToken
+    });
+  }
+
+  async cancelMatchmaking(): Promise<"dequeued" | "idle"> {
+    return VeilCocosSession.cancelMatchmaking(this.remoteUrl ?? "", this.playerId, {
+      getDisplayName: this.getDisplayName,
+      getAuthToken: this.getAuthToken
+    });
   }
 
   async dispose(): Promise<void> {
