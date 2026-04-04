@@ -188,3 +188,38 @@ test("memory room snapshot store lists closed seasons and retains active season 
   assert.equal(allSeasons?.find((season) => season.seasonId === "season-1")?.status, "closed");
   assert.ok(allSeasons?.find((season) => season.seasonId === "season-1")?.endedAt);
 });
+
+test("memory room snapshot store grants season rewards, soft-resets elo, and prevents double grant", async () => {
+  const store = createMemoryRoomSnapshotStore();
+  await store.ensurePlayerAccount({ playerId: "diamond-player", displayName: "Diamond" });
+  await store.ensurePlayerAccount({ playerId: "gold-player", displayName: "Gold" });
+  await store.ensurePlayerAccount({ playerId: "bronze-player", displayName: "Bronze" });
+  await store.savePlayerAccountProgress("diamond-player", { eloRating: 1820 });
+  await store.savePlayerAccountProgress("gold-player", { eloRating: 1380 });
+  await store.savePlayerAccountProgress("bronze-player", { eloRating: 1040 });
+  await store.createSeason("season-rewards");
+
+  const firstClose = await store.closeSeason("season-rewards");
+  const secondClose = await store.closeSeason("season-rewards");
+  const diamond = await store.loadPlayerAccount("diamond-player");
+  const gold = await store.loadPlayerAccount("gold-player");
+  const bronze = await store.loadPlayerAccount("bronze-player");
+
+  assert.deepEqual(firstClose, {
+    seasonId: "season-rewards",
+    playersRewarded: 3,
+    totalGemsGranted: 375
+  });
+  assert.equal(diamond?.gems, 250);
+  assert.equal(gold?.gems, 100);
+  assert.equal(bronze?.gems, 25);
+  assert.equal(diamond?.eloRating, 1410);
+  assert.equal(gold?.eloRating, 1190);
+  assert.equal(bronze?.eloRating, 1020);
+  assert.deepEqual(secondClose, {
+    seasonId: "season-rewards",
+    playersRewarded: 0,
+    totalGemsGranted: 0
+  });
+  assert.equal((await store.loadPlayerAccount("diamond-player"))?.gems, 250);
+});

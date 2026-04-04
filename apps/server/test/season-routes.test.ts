@@ -8,6 +8,7 @@ type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void
 
 function createTestApp() {
   const gets = new Map<string, RouteHandler>();
+  const posts = new Map<string, RouteHandler>();
 
   return {
     app: {
@@ -15,9 +16,12 @@ function createTestApp() {
       get(path: string, handler: RouteHandler) {
         gets.set(path, handler);
       },
-      post(_path: string, _handler: RouteHandler) {}
+      post(path: string, handler: RouteHandler) {
+        posts.set(path, handler);
+      }
     },
-    gets
+    gets,
+    posts
   };
 }
 
@@ -76,7 +80,13 @@ function createSeasonStore(seasons: SeasonSnapshot[], calls: SeasonListOptions[]
         startedAt: new Date().toISOString()
       };
     },
-    async closeSeason() {},
+    async closeSeason(seasonId: string) {
+      return {
+        seasonId,
+        playersRewarded: 2,
+        totalGemsGranted: 75
+      };
+    },
     async load() {
       return null;
     },
@@ -173,9 +183,9 @@ function withAdminToken(t: TestContext, token = "season-admin-token"): string {
 }
 
 function registerRoutes(store: RoomSnapshotStore | null) {
-  const { app, gets } = createTestApp();
+  const { app, gets, posts } = createTestApp();
   registerSeasonRoutes(app, store);
-  return { gets };
+  return { gets, posts };
 }
 
 test("GET /api/seasons returns closed seasons and caps limit at 100", async () => {
@@ -250,5 +260,33 @@ test("GET /api/admin/seasons supports status=all and caps limit at 100", async (
       { seasonId: "season-4", status: "active", startedAt: "2026-04-01T00:00:00.000Z" },
       { seasonId: "season-3", status: "closed", startedAt: "2026-03-01T00:00:00.000Z", endedAt: "2026-03-15T00:00:00.000Z" }
     ]
+  });
+});
+
+test("POST /api/admin/seasons/close returns the reward distribution summary", async (t) => {
+  const token = withAdminToken(t);
+  const store = createSeasonStore([
+    { seasonId: "season-9", status: "active", startedAt: "2026-04-01T00:00:00.000Z" }
+  ], []);
+  const { posts } = registerRoutes(store);
+  const handler = posts.get("/api/admin/seasons/close");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      url: "/api/admin/seasons/close",
+      headers: { "x-veil-admin-token": token }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    closed: true,
+    seasonId: "season-9",
+    playersRewarded: 2,
+    totalGemsGranted: 75
   });
 });

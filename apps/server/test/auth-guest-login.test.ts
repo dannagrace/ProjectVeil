@@ -134,7 +134,9 @@ class MemoryAuthStore implements RoomSnapshotStore {
     };
   }
 
-  async closeSeason(): Promise<void> {}
+  async closeSeason() {
+    return { seasonId: "", playersRewarded: 0, totalGemsGranted: 0 };
+  }
 
   async touchPlayerAccountAuthSession(playerId: string, sessionId: string, lastUsedAt?: string): Promise<void> {
     const sessions = this.authSessionsByPlayerId.get(playerId.trim());

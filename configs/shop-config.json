@@ -1,4 +1,11 @@
 {
+  "seasonRewards": {
+    "bronze": 25,
+    "silver": 50,
+    "gold": 100,
+    "platinum": 150,
+    "diamond": 250
+  },
   "products": [
     {
       "productId": "resource-bundle-starter",

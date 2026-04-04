@@ -194,8 +194,8 @@ export function registerSeasonRoutes(
         sendJson(response, 404, { error: { code: "no_active_season", message: "No active season found" } });
         return;
       }
-      await store.closeSeason(currentSeason.seasonId);
-      sendJson(response, 200, { closed: true, seasonId: currentSeason.seasonId });
+      const summary = await store.closeSeason(currentSeason.seasonId);
+      sendJson(response, 200, { closed: true, ...summary });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

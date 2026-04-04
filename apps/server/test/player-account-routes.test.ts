@@ -155,7 +155,9 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     };
   }
 
-  async closeSeason(): Promise<void> {}
+  async closeSeason() {
+    return { seasonId: "", playersRewarded: 0, totalGemsGranted: 0 };
+  }
 
   async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
     const existing = this.accounts.get(input.playerId);
