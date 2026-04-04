@@ -234,6 +234,44 @@ test("VeilRoot toggles a dedicated gameplay equipment panel from the HUD flow", 
   assert.equal(root.gameplayEquipmentPanelOpen, false);
 });
 
+test("VeilRoot settings logout routes through the auth revoke path", async () => {
+  const storage = createMemoryStorage();
+  (sys as unknown as { localStorage: Storage }).localStorage = storage;
+
+  const root = createVeilRootHarness();
+  root.remoteUrl = "http://127.0.0.1:2567";
+  root.playerId = "player-settings";
+  root.displayName = "雾港旅人";
+  root.authToken = "signed.token";
+  root.authMode = "account";
+  root.loginId = "veil-ranger";
+  root.settingsView = {
+    ...root.settingsView,
+    open: true
+  };
+
+  const logoutCalls: Array<{ remoteUrl: string; hasStorage: boolean }> = [];
+  installVeilRootRuntime({
+    logoutAuthSession: async (remoteUrl, options) => {
+      logoutCalls.push({
+        remoteUrl,
+        hasStorage: Boolean(options?.storage)
+      });
+    }
+  });
+
+  await root.handleSettingsLogout();
+
+  assert.deepEqual(logoutCalls, [
+    {
+      remoteUrl: "http://127.0.0.1:2567",
+      hasStorage: true
+    }
+  ]);
+  assert.equal(root.authToken, null);
+  assert.equal(root.authMode, "guest");
+});
+
 test("VeilRoot emits primary-client telemetry for progression, inventory, and combat checkpoints", async () => {
   const root = createVeilRootHarness();
   root.roomId = "room-telemetry";
@@ -436,6 +474,7 @@ test("VeilRoot gameplay account refresh skips remote profile loads for local ses
 
 test("VeilRoot account lifecycle flow switches panels and surfaces validation feedback", async () => {
   const root = createVeilRootHarness();
+  root.privacyConsentAccepted = true;
 
   await root.registerLobbyAccount();
   assert.equal(root.activeAccountFlow, "registration");
@@ -846,6 +885,7 @@ test("VeilRoot lobby handoff enters a room with the authenticated session and li
   root.roomId = "room-bravo";
   root.playerId = "guest-7";
   root.displayName = "Guest 7";
+  root.privacyConsentAccepted = true;
 
   const liveUpdate = createSessionUpdate(4, "room-bravo", "guest-7");
   const fakeSession = {
@@ -908,6 +948,7 @@ test("VeilRoot keeps the lobby visible and explains when an account session has 
   root.authProvider = "account-password";
   root.loginId = "veil-ranger";
   root.sessionSource = "remote";
+  root.privacyConsentAccepted = true;
 
   installVeilRootRuntime({
     syncAuthSession: async () => null
@@ -1090,7 +1131,9 @@ test("VeilRoot battle flow switches transition state and fallback audio scenes t
     lastCue: null,
     cueCount: 0,
     musicMode: "synth",
-    cueMode: "idle"
+    cueMode: "idle",
+    bgmVolume: 100,
+    sfxVolume: 100
   });
   assert.equal(root.battlePresentation.getState().phase, "enter");
 
@@ -1106,7 +1149,9 @@ test("VeilRoot battle flow switches transition state and fallback audio scenes t
     lastCue: "victory",
     cueCount: 1,
     musicMode: "synth",
-    cueMode: "idle"
+    cueMode: "idle",
+    bgmVolume: 100,
+    sfxVolume: 100
   });
   assert.equal(root.battlePresentation.getState().phase, "resolution");
   root.audioRuntime.dispose();

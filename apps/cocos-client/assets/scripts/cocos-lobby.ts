@@ -918,6 +918,41 @@ export async function logoutCurrentCocosAuthSession(
   }
 }
 
+export async function deleteCurrentCocosPlayerAccount(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+  }
+): Promise<{ playerId: string; displayName: string; deletedAt?: string } | null> {
+  const storage = options?.storage ?? getCocosStorage();
+  const currentSession = readStoredCocosAuthSession(storage);
+  if (!currentSession?.token) {
+    throw new Error("auth_session_required");
+  }
+
+  const payload = (await fetchJson(
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/players/me/delete`,
+    {
+      method: "POST",
+      headers: buildCocosAuthHeaders(currentSession.token)
+    },
+    options?.fetchImpl
+  )) as {
+    deleted?: {
+      playerId: string;
+      displayName: string;
+      deletedAt?: string;
+    } | null;
+  };
+
+  if (storage) {
+    clearStoredCocosAuthSession(storage);
+  }
+
+  return payload.deleted ?? null;
+}
+
 export function resolveCocosApiBaseUrl(
   remoteUrl: string,
   locationLike: Pick<Location, "protocol" | "hostname"> | null | undefined = globalThis.location

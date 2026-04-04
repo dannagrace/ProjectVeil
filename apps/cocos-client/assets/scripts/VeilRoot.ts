@@ -24,6 +24,7 @@ import {
   confirmCocosAccountRegistration,
   confirmCocosPasswordRecovery,
   createFallbackCocosPlayerAccountProfile,
+  deleteCurrentCocosPlayerAccount,
   createCocosGuestPlayerId,
   loadCocosBattleReplayHistoryPage,
   createCocosLobbyPreferences,
@@ -124,6 +125,16 @@ import {
 } from "./cocos-battle-presentation-controller.ts";
 import { createCocosAudioRuntime } from "./cocos-audio-runtime.ts";
 import { createCocosAudioAssetBridge } from "./cocos-audio-resources.ts";
+import {
+  applySettingsUpdate,
+  CocosSettingsPanel,
+  createDefaultCocosSettingsView,
+  readPersistedCocosSettings,
+  resolveCocosPrivacyPolicyUrl,
+  writePersistedCocosSettings,
+  type CocosSettingsPanelUpdate,
+  type CocosSettingsPanelView
+} from "./cocos-settings-panel.ts";
 import { buildCocosRuntimeTriageSummaryLines } from "./cocos-runtime-diagnostics.ts";
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
 import { cocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
@@ -152,6 +163,8 @@ const TIMELINE_NODE_NAME = "ProjectVeilTimelinePanel";
 const LOBBY_NODE_NAME = "ProjectVeilLobbyPanel";
 const ACCOUNT_REVIEW_PANEL_NODE_NAME = "ProjectVeilAccountReviewPanel";
 const EQUIPMENT_PANEL_NODE_NAME = "ProjectVeilEquipmentPanel";
+const SETTINGS_PANEL_NODE_NAME = "ProjectVeilSettingsPanel";
+const SETTINGS_BUTTON_NODE_NAME = "ProjectVeilSettingsButton";
 const DEFAULT_MAP_WIDTH_TILES = 8;
 const DEFAULT_MAP_HEIGHT_TILES = 8;
 const BATTLE_FEEDBACK_DURATION_MS = 2600;
@@ -181,6 +194,8 @@ interface VeilRootRuntime {
   loadEventHistory: typeof loadCocosPlayerEventHistory;
   loadBattleReplayHistoryPage: typeof loadCocosBattleReplayHistoryPage;
   loginGuestAuthSession: typeof loginCocosGuestAuthSession;
+  logoutAuthSession: typeof logoutCurrentCocosAuthSession;
+  deletePlayerAccount: typeof deleteCurrentCocosPlayerAccount;
 }
 
 const defaultVeilRootRuntime: VeilRootRuntime = {
@@ -198,7 +213,9 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   loadAchievementProgress: (...args) => loadCocosPlayerAchievementProgress(...args),
   loadEventHistory: (...args) => loadCocosPlayerEventHistory(...args),
   loadBattleReplayHistoryPage: (...args) => loadCocosBattleReplayHistoryPage(...args),
-  loginGuestAuthSession: (...args) => loginCocosGuestAuthSession(...args)
+  loginGuestAuthSession: (...args) => loginCocosGuestAuthSession(...args),
+  logoutAuthSession: (...args) => logoutCurrentCocosAuthSession(...args),
+  deletePlayerAccount: (...args) => deleteCurrentCocosPlayerAccount(...args)
 };
 
 let testVeilRootRuntimeOverrides: Partial<VeilRootRuntime> | null = null;
@@ -304,6 +321,8 @@ export class VeilRoot extends Component {
   private gameplayAccountReviewPanelOpen = false;
   private gameplayEquipmentPanel: VeilEquipmentPanel | null = null;
   private gameplayEquipmentPanelOpen = false;
+  private settingsPanel: CocosSettingsPanel | null = null;
+  private settingsView: CocosSettingsPanelView = createDefaultCocosSettingsView();
   private activeAccountFlow: CocosAccountLifecycleKind | null = null;
   private registrationDisplayName = "";
   private registrationToken = "";
@@ -350,6 +369,7 @@ export class VeilRoot extends Component {
     this.hydrateRuntimePlatform();
     this.bindRuntimeMemoryWarnings();
     this.hydrateLaunchIdentity();
+    this.hydrateSettings();
     this.syncWechatShareBridge();
     this.ensureUiCameraVisibility();
     this.ensureViewNodes();
@@ -756,6 +776,9 @@ export class VeilRoot extends Component {
       onRefresh: () => {
         void this.refreshSnapshot();
       },
+      onToggleSettings: () => {
+        this.toggleSettingsPanel();
+      },
       onToggleInventory: () => {
         this.toggleGameplayEquipmentPanel();
       },
@@ -1008,6 +1031,45 @@ export class VeilRoot extends Component {
       }
     });
 
+    let settingsPanelNode = this.node.getChildByName(SETTINGS_PANEL_NODE_NAME);
+    if (!settingsPanelNode) {
+      settingsPanelNode = new Node(SETTINGS_PANEL_NODE_NAME);
+      settingsPanelNode.parent = this.node;
+    }
+    assignUiLayer(settingsPanelNode);
+    const settingsPanelTransform = settingsPanelNode.getComponent(UITransform) ?? settingsPanelNode.addComponent(UITransform);
+    settingsPanelTransform.setContentSize(Math.max(360, Math.min(460, visibleSize.width - 64)), Math.max(440, visibleSize.height - 96));
+    this.settingsPanel = settingsPanelNode.getComponent(CocosSettingsPanel) ?? settingsPanelNode.addComponent(CocosSettingsPanel);
+    this.settingsPanel.configure({
+      onClose: () => {
+        this.toggleSettingsPanel(false);
+      },
+      onUpdate: (update) => {
+        this.updateSettings(update);
+      },
+      onLogout: () => {
+        void this.handleSettingsLogout();
+      },
+      onDeleteAccount: () => {
+        void this.handleSettingsDeleteAccount();
+      },
+      onWithdrawConsent: () => {
+        void this.handleSettingsWithdrawConsent();
+      },
+      onOpenPrivacyPolicy: () => {
+        this.openSettingsPrivacyPolicy();
+      }
+    });
+
+    let settingsButtonNode = this.node.getChildByName(SETTINGS_BUTTON_NODE_NAME);
+    if (!settingsButtonNode) {
+      settingsButtonNode = new Node(SETTINGS_BUTTON_NODE_NAME);
+      settingsButtonNode.parent = this.node;
+    }
+    assignUiLayer(settingsButtonNode);
+    const settingsButtonTransform = settingsButtonNode.getComponent(UITransform) ?? settingsButtonNode.addComponent(UITransform);
+    settingsButtonTransform.setContentSize(58, 58);
+
     this.battleTransition = this.node.getComponent(VeilBattleTransition) ?? this.node.addComponent(VeilBattleTransition);
     this.updateLayout();
   }
@@ -1069,6 +1131,8 @@ export class VeilRoot extends Component {
     const timelineNode = this.node.getChildByName(TIMELINE_NODE_NAME);
     const accountReviewPanelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
     const equipmentPanelNode = this.node.getChildByName(EQUIPMENT_PANEL_NODE_NAME);
+    const settingsPanelNode = this.node.getChildByName(SETTINGS_PANEL_NODE_NAME);
+    const settingsButtonNode = this.node.getChildByName(SETTINGS_BUTTON_NODE_NAME);
     const showingGame = !this.showLobby;
 
     if (lobbyNode) {
@@ -1091,6 +1155,12 @@ export class VeilRoot extends Component {
     }
     if (equipmentPanelNode) {
       equipmentPanelNode.active = showingGame && this.gameplayEquipmentPanelOpen;
+    }
+    if (settingsPanelNode) {
+      settingsPanelNode.active = this.settingsView.open;
+    }
+    if (settingsButtonNode) {
+      settingsButtonNode.active = true;
     }
 
     if (this.showLobby) {
@@ -1125,6 +1195,7 @@ export class VeilRoot extends Component {
         accountFlow: this.buildActiveAccountFlowPanelView(),
         presentationReadiness: cocosPresentationReadiness
       });
+      this.renderSettingsOverlay();
       return;
     }
 
@@ -1180,6 +1251,7 @@ export class VeilRoot extends Component {
       },
       presentation: this.buildHudPresentationState()
     });
+    this.renderSettingsOverlay();
     this.mapBoard?.render(this.lastUpdate);
     this.battlePanel?.render({
       update: this.lastUpdate,
@@ -1779,6 +1851,8 @@ export class VeilRoot extends Component {
     const lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
     const accountReviewPanelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
     const equipmentPanelNode = this.node.getChildByName(EQUIPMENT_PANEL_NODE_NAME);
+    const settingsPanelNode = this.node.getChildByName(SETTINGS_PANEL_NODE_NAME);
+    const settingsButtonNode = this.node.getChildByName(SETTINGS_BUTTON_NODE_NAME);
 
     this.mapBoard?.configure({
       tileSize: effectiveTileSize,
@@ -1801,6 +1875,9 @@ export class VeilRoot extends Component {
         },
         onRefresh: () => {
           void this.refreshSnapshot();
+        },
+        onToggleSettings: () => {
+          this.toggleSettingsPanel();
         },
         onToggleInventory: () => {
           this.toggleGameplayEquipmentPanel();
@@ -1890,14 +1967,24 @@ export class VeilRoot extends Component {
       equipmentPanelTransform.setContentSize(Math.max(360, Math.min(460, visibleSize.width - 56)), Math.max(420, visibleSize.height - 96));
       equipmentPanelNode.setPosition(0, 0, 4);
     }
+
+    if (settingsPanelNode) {
+      const settingsPanelTransform =
+        settingsPanelNode.getComponent(UITransform) ?? settingsPanelNode.addComponent(UITransform);
+      settingsPanelTransform.setContentSize(Math.max(360, Math.min(460, visibleSize.width - 64)), Math.max(440, visibleSize.height - 96));
+      settingsPanelNode.setPosition(0, 0, 6);
+    }
+
+    if (settingsButtonNode) {
+      const buttonTransform = settingsButtonNode.getComponent(UITransform) ?? settingsButtonNode.addComponent(UITransform);
+      buttonTransform.setContentSize(58, 58);
+      settingsButtonNode.setPosition(visibleSize.width / 2 - margin - 34, visibleSize.height / 2 - margin - 34, 7);
+      this.renderSettingsButton();
+    }
   }
 
   private handleHudActionInput(...args: unknown[]): void {
     this.audioRuntime.unlock();
-    if (this.showLobby) {
-      return;
-    }
-
     const event = args[0] as EventTouch | EventMouse | undefined;
     if (!event) {
       return;
@@ -1906,6 +1993,36 @@ export class VeilRoot extends Component {
     const visibleSize = view.getVisibleSize();
     const centeredX = event.getUILocation().x - visibleSize.width / 2;
     const centeredY = event.getUILocation().y - visibleSize.height / 2;
+    const settingsButtonNode = this.node.getChildByName(SETTINGS_BUTTON_NODE_NAME);
+    if (this.pointInRootNode(centeredX, centeredY, settingsButtonNode)) {
+      this.toggleSettingsPanel();
+      this.inputDebug = "button settings-fab";
+      return;
+    }
+
+    const settingsPanelNode = this.node.getChildByName(SETTINGS_PANEL_NODE_NAME);
+    const settingsPanelTransform = settingsPanelNode?.getComponent(UITransform) ?? null;
+    if (this.settingsView.open && settingsPanelNode && settingsPanelTransform) {
+      const settingsLocalX = centeredX - settingsPanelNode.position.x;
+      const settingsLocalY = centeredY - settingsPanelNode.position.y;
+      if (
+        settingsLocalX >= -settingsPanelTransform.width / 2
+        && settingsLocalX <= settingsPanelTransform.width / 2
+        && settingsLocalY >= -settingsPanelTransform.height / 2
+        && settingsLocalY <= settingsPanelTransform.height / 2
+      ) {
+        const action = this.settingsPanel?.dispatchPointerUp(settingsLocalX, settingsLocalY) ?? null;
+        if (action) {
+          this.inputDebug = `button ${action}`;
+        }
+        return;
+      }
+    }
+
+    if (this.showLobby) {
+      return;
+    }
+
     const hudNode = this.node.getChildByName(HUD_NODE_NAME);
     const hudTransform = hudNode?.getComponent(UITransform) ?? null;
     if (!hudNode || !hudTransform) {
@@ -2915,10 +3032,112 @@ export class VeilRoot extends Component {
     await this.syncLobbyBootstrap();
   }
 
+  private toggleSettingsPanel(open = !this.settingsView.open): void {
+    this.settingsView = applySettingsUpdate(this.settingsView, {
+      open,
+      deleteAccountPending: false,
+      withdrawConsentPending: false,
+      statusMessage: open ? null : this.settingsView.statusMessage
+    });
+    this.renderView();
+  }
+
+  private updateSettings(update: CocosSettingsPanelUpdate): void {
+    const resetPending = update.bgmVolume !== undefined || update.sfxVolume !== undefined || update.frameRateCap !== undefined;
+    this.settingsView = applySettingsUpdate(this.settingsView, {
+      ...update,
+      ...(resetPending ? { deleteAccountPending: false, withdrawConsentPending: false } : {})
+    });
+    this.persistSettings();
+    this.applyRuntimeSettings();
+    this.renderView();
+  }
+
+  private openSettingsPrivacyPolicy(): void {
+    const wxRuntime = (globalThis as {
+      wx?: {
+        openPrivacyContract?: (options?: { success?: () => void; fail?: (error?: unknown) => void }) => void;
+      } | null;
+    }).wx;
+    if (wxRuntime?.openPrivacyContract) {
+      wxRuntime.openPrivacyContract({
+        success: () => {
+          this.updateSettings({ statusMessage: "已打开微信隐私说明。" });
+        },
+        fail: () => {
+          this.updateSettings({ statusMessage: `隐私说明入口 ${this.settingsView.privacyPolicyUrl}` });
+        }
+      });
+      return;
+    }
+
+    const open = (globalThis as { open?: (url: string, target?: string) => void }).open;
+    if (typeof open === "function") {
+      open(this.settingsView.privacyPolicyUrl, "_blank");
+      this.updateSettings({ statusMessage: `已打开隐私说明 ${this.settingsView.privacyPolicyUrl}` });
+      return;
+    }
+
+    this.updateSettings({ statusMessage: `隐私说明 ${this.settingsView.privacyPolicyUrl}` });
+  }
+
+  private async handleSettingsLogout(): Promise<void> {
+    this.updateSettings({ statusMessage: "正在退出当前会话..." });
+    await this.logoutAuthSession();
+    this.settingsView = applySettingsUpdate(this.settingsView, {
+      open: false,
+      deleteAccountPending: false,
+      withdrawConsentPending: false,
+      statusMessage: "已退出当前会话。"
+    });
+    this.renderView();
+  }
+
+  private async handleSettingsDeleteAccount(): Promise<void> {
+    if (!this.settingsView.deleteAccountPending) {
+      this.updateSettings({
+        deleteAccountPending: true,
+        withdrawConsentPending: false,
+        statusMessage: "再次点击“删除账号”确认删除当前账号。"
+      });
+      return;
+    }
+
+    this.updateSettings({
+      statusMessage: "正在删除当前账号并撤销会话...",
+      deleteAccountPending: false
+    });
+
+    await this.deleteCurrentPlayerAccount();
+  }
+
+  private async handleSettingsWithdrawConsent(): Promise<void> {
+    if (!this.settingsView.withdrawConsentPending) {
+      this.updateSettings({
+        withdrawConsentPending: true,
+        deleteAccountPending: false,
+        statusMessage: "再次点击“撤回同意”以清除本地同意状态并退出当前会话。"
+      });
+      return;
+    }
+
+    this.privacyConsentAccepted = false;
+    this.updateSettings({
+      withdrawConsentPending: false,
+      statusMessage: "已撤回本地隐私同意，正在退出当前会话..."
+    });
+    await this.logoutAuthSession();
+    this.settingsView = applySettingsUpdate(this.settingsView, {
+      open: false,
+      statusMessage: "已撤回本地隐私同意；下次进入前请重新确认隐私说明。"
+    });
+    this.renderView();
+  }
+
   private async logoutAuthSession(): Promise<void> {
     this.stopMatchmakingPolling();
     this.updateMatchmakingStatus({ status: "idle" });
-    await logoutCurrentCocosAuthSession(this.remoteUrl, {
+    await resolveVeilRootRuntime().logoutAuthSession(this.remoteUrl, {
       storage: this.readWebStorage()
     });
     this.authToken = null;
@@ -2931,6 +3150,35 @@ export class VeilRoot extends Component {
     this.syncWechatShareBridge();
     this.lobbyStatus = "已退出当前会话，请重新选择游客身份或使用正式账号进入。";
     this.renderView();
+  }
+
+  private async deleteCurrentPlayerAccount(): Promise<void> {
+    this.stopMatchmakingPolling();
+    this.updateMatchmakingStatus({ status: "idle" });
+    await resolveVeilRootRuntime().deletePlayerAccount(this.remoteUrl, {
+      storage: this.readWebStorage()
+    });
+    this.authToken = null;
+    this.authMode = "guest";
+    this.authProvider = "guest";
+    this.loginId = "";
+    this.sessionSource = "none";
+    this.privacyConsentAccepted = false;
+    this.displayName = readPreferredCocosDisplayName(this.playerId, this.readWebStorage());
+    this.commitAccountProfile(createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName), false);
+    await this.disposeCurrentSession();
+    this.resetSessionViewport("账号已删除。");
+    this.showLobby = true;
+    this.lobbyStatus = "账号已删除，原会话已撤销。请重新确认隐私说明后再创建新档。";
+    this.syncBrowserRoomQuery(null);
+    this.settingsView = applySettingsUpdate(this.settingsView, {
+      open: false,
+      deleteAccountPending: false,
+      withdrawConsentPending: false,
+      statusMessage: "账号已删除。"
+    });
+    this.renderView();
+    await this.syncLobbyBootstrap();
   }
 
   private buildActiveAccountFlowPanelView() {
@@ -3540,6 +3788,105 @@ export class VeilRoot extends Component {
     return `分享：${this.wechatShareStatus}`;
   }
 
+  private hydrateSettings(): void {
+    const wxRuntime = (globalThis as { wx?: unknown }).wx as { getStorageSync?: (key: string) => unknown } | null | undefined;
+    const persisted = readPersistedCocosSettings({
+      localStorage: this.readWebStorage(),
+      ...(wxRuntime ? { wx: wxRuntime } : {})
+    });
+    this.settingsView = applySettingsUpdate(this.settingsView, {
+      ...persisted,
+      privacyPolicyUrl: resolveCocosPrivacyPolicyUrl(globalThis.location)
+    });
+    this.applyRuntimeSettings();
+  }
+
+  private applyRuntimeSettings(): void {
+    this.audioRuntime.setBgmVolume(this.settingsView.bgmVolume);
+    this.audioRuntime.setSfxVolume(this.settingsView.sfxVolume);
+    const gameRuntime = (globalThis as {
+      game?: {
+        frameRate?: number;
+        setFrameRate?: (value: number) => void;
+      };
+    }).game;
+    if (typeof gameRuntime?.setFrameRate === "function") {
+      gameRuntime.setFrameRate(this.settingsView.frameRateCap);
+    } else {
+      const fallbackRuntime = (gameRuntime ?? (globalThis as { frameRate?: number })) as { frameRate?: number };
+      fallbackRuntime.frameRate = this.settingsView.frameRateCap;
+    }
+  }
+
+  private persistSettings(): void {
+    const wxRuntime = (globalThis as { wx?: unknown }).wx as { setStorageSync?: (key: string, value: string) => void } | null | undefined;
+    writePersistedCocosSettings(
+      {
+        bgmVolume: this.settingsView.bgmVolume,
+        sfxVolume: this.settingsView.sfxVolume,
+        frameRateCap: this.settingsView.frameRateCap
+      },
+      {
+        localStorage: this.readWebStorage(),
+        ...(wxRuntime ? { wx: wxRuntime } : {})
+      }
+    );
+  }
+
+  private buildSettingsView(): CocosSettingsPanelView {
+    return applySettingsUpdate(this.settingsView, {
+      displayName: this.displayName || this.playerId,
+      loginId: this.loginId,
+      authMode: this.authMode,
+      privacyConsentAccepted: this.privacyConsentAccepted,
+      privacyPolicyUrl: resolveCocosPrivacyPolicyUrl(globalThis.location)
+    });
+  }
+
+  private renderSettingsOverlay(): void {
+    this.settingsView = this.buildSettingsView();
+    this.settingsPanel?.render(this.settingsView);
+    this.renderSettingsButton();
+  }
+
+  private renderSettingsButton(): void {
+    const buttonNode = this.node.getChildByName(SETTINGS_BUTTON_NODE_NAME);
+    if (!buttonNode) {
+      return;
+    }
+
+    assignUiLayer(buttonNode);
+    const transform = buttonNode.getComponent(UITransform) ?? buttonNode.addComponent(UITransform);
+    const width = transform.width || 58;
+    const height = transform.height || 58;
+    const graphics = buttonNode.getComponent(Graphics) ?? buttonNode.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = this.settingsView.open ? new Color(108, 88, 54, 244) : new Color(52, 68, 92, 236);
+    graphics.strokeColor = this.settingsView.open ? new Color(244, 225, 180, 164) : new Color(226, 236, 248, 96);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 16);
+    graphics.fill();
+    graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, 18);
+    graphics.roundRect(-width / 2 + 10, height / 2 - 14, width - 20, 4, 2);
+    graphics.fill();
+
+    const labelNode = buttonNode.getChildByName("Label") ?? new Node("Label");
+    labelNode.parent = buttonNode;
+    assignUiLayer(labelNode);
+    const labelTransform = labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform);
+    labelTransform.setContentSize(width - 8, height - 8);
+    labelNode.setPosition(0, 0, 1);
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label);
+    label.string = "⚙";
+    label.fontSize = 26;
+    label.lineHeight = 28;
+    label.horizontalAlign = 1;
+    label.verticalAlign = 1;
+    label.enableWrapText = false;
+    label.color = new Color(244, 247, 252, 255);
+  }
+
   private syncWechatShareBridge(immediate = false) {
     const payload = buildCocosWechatSharePayload({
       roomId: this.roomId,
@@ -3577,6 +3924,24 @@ export class VeilRoot extends Component {
   private readWebStorage(): Storage | null {
     const webStorage = (sys as unknown as { localStorage?: Storage }).localStorage;
     return webStorage ?? null;
+  }
+
+  private pointInRootNode(centeredX: number, centeredY: number, node: Node | null): boolean {
+    if (!node || !node.active) {
+      return false;
+    }
+
+    const transform = node.getComponent(UITransform) ?? null;
+    if (!transform) {
+      return false;
+    }
+
+    return (
+      centeredX >= node.position.x - transform.width / 2
+      && centeredX <= node.position.x + transform.width / 2
+      && centeredY >= node.position.y - transform.height / 2
+      && centeredY <= node.position.y + transform.height / 2
+    );
   }
 
   private syncBrowserRoomQuery(roomId: string | null): void {

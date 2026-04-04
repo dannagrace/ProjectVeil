@@ -66,12 +66,16 @@ export interface CocosAudioRuntimeState {
   cueCount: number;
   musicMode: CocosAudioPlaybackMode;
   cueMode: Exclude<CocosAudioPlaybackMode, "pending">;
+  bgmVolume: number;
+  sfxVolume: number;
 }
 
 export interface CocosAudioRuntime {
   unlock(): void;
   setScene(scene: CocosMusicScene | null): void;
   playCue(cue: CocosAudioCue): void;
+  setBgmVolume(volume: number): void;
+  setSfxVolume(volume: number): void;
   dispose(): void;
   getState(): CocosAudioRuntimeState;
 }
@@ -96,7 +100,21 @@ export function createCocosAudioRuntime(
   let cueCount = 0;
   let musicMode: CocosAudioPlaybackMode = "idle";
   let cueMode: Exclude<CocosAudioPlaybackMode, "pending"> = "idle";
+  let bgmVolume = 100;
+  let sfxVolume = 100;
   const assetClipCache = new Map<string, Promise<CocosAudioAssetClip | null>>();
+
+  function clampPercent(volume: number): number {
+    if (!Number.isFinite(volume)) {
+      return 100;
+    }
+
+    return Math.min(100, Math.max(0, Math.round(volume)));
+  }
+
+  function resolveScaledVolume(baseVolume: number, percent: number): number {
+    return baseVolume * (clampPercent(percent) / 100);
+  }
 
   function ensureContext(): AudioContextLike | null {
     if (!AudioContextCtor) {
@@ -220,7 +238,7 @@ export function createCocosAudioRuntime(
       if (clip) {
         clearLoop();
         assetBridge.stopMusic();
-        assetBridge.playMusic(clip, sequence.assetVolume);
+        assetBridge.playMusic(clip, resolveScaledVolume(sequence.assetVolume, bgmVolume));
         musicMode = "asset";
         notifyStateChange();
         return;
@@ -281,7 +299,7 @@ export function createCocosAudioRuntime(
       if (assetBridge && unlocked && sequence.assetPath) {
         void loadAssetClip(sequence.assetPath).then((clip) => {
           if (clip) {
-            assetBridge.playCue(clip, sequence.assetVolume);
+            assetBridge.playCue(clip, resolveScaledVolume(sequence.assetVolume, sfxVolume));
             cueMode = "asset";
             notifyStateChange();
             return;
@@ -296,6 +314,31 @@ export function createCocosAudioRuntime(
       cueMode = unlocked && AudioContextCtor ? "synth" : "idle";
       notifyStateChange();
       playSequence(sequence);
+    },
+    setBgmVolume(volume) {
+      const nextVolume = clampPercent(volume);
+      if (nextVolume === bgmVolume) {
+        return;
+      }
+
+      bgmVolume = nextVolume;
+      if (currentScene) {
+        activeToken += 1;
+        stopMusicPlayback();
+        if (unlocked || !supportsAnyPlayback()) {
+          void playSceneWithBestPath(currentScene, activeToken);
+        }
+      }
+      notifyStateChange();
+    },
+    setSfxVolume(volume) {
+      const nextVolume = clampPercent(volume);
+      if (nextVolume === sfxVolume) {
+        return;
+      }
+
+      sfxVolume = nextVolume;
+      notifyStateChange();
     },
     dispose() {
       stopMusicPlayback();
@@ -318,7 +361,9 @@ export function createCocosAudioRuntime(
         lastCue,
         cueCount,
         musicMode,
-        cueMode
+        cueMode,
+        bgmVolume,
+        sfxVolume
       };
     }
   };
