@@ -158,7 +158,8 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 终端逻辑演示：`npm run demo:flow`
 - 主客户端入口说明：`npm run client:primary`
 - Cocos 主客户端类型检查：`npm run typecheck:client`
-- Cocos canonical journey smoke：`npm run smoke:cocos:canonical-journey`（输出 `artifacts/release-readiness/` 下的结构化 JSON / Markdown / milestone diagnostics，并在失败时打印具体 stage）
+- Cocos canonical journey smoke：`npm run smoke:cocos:canonical-journey`（输出 `artifacts/release-readiness/` 下的结构化 JSON / Markdown / milestone diagnostics，并记录 stage pass/fail、timing 与 failure diagnostics；失败时打印具体 stage）
+- Cocos primary-client RC canonical evidence：`npm run release:cocos:primary-journey-evidence -- --candidate <candidate-name>`（Cocos 主客户端 release gate / RC review 的 canonical source，生成 candidate+revision 命名的 JSON / Markdown main-path evidence）
 - 微信小游戏模板刷新：`npm run prepare:wechat-build`
 - 微信小游戏 CI 同款校验：`npm run check:wechat-build`
 - 发布就绪快照：`npm run release:readiness:snapshot`

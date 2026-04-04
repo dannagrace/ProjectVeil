@@ -151,7 +151,7 @@ function isBattleSkillKind(value: unknown): value is BattleSkillKind {
 }
 
 function isBattleSkillTarget(value: unknown): value is BattleSkillTarget {
-  return value === "enemy" || value === "self";
+  return value === "enemy" || value === "self" || value === "ally";
 }
 
 function isFiniteNumber(value: unknown): value is number {

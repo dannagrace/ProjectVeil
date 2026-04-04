@@ -62,6 +62,11 @@ interface JourneyStepSummary {
   title: string;
   status: StepStatus;
   summary: string;
+  timing?: {
+    startedAt: string;
+    completedAt: string;
+    durationMs: number;
+  };
   evidence: string[];
 }
 
@@ -85,6 +90,7 @@ interface PrimaryJourneyEvidenceArtifact {
     owner: string;
     startedAt: string;
     completedAt: string;
+    durationMs: number;
     overallStatus: "passed" | "failed";
     summary: string;
     failure?: FailureSummary;
@@ -550,13 +556,19 @@ function renderMarkdown(artifact: PrimaryJourneyEvidenceArtifact): string {
   lines.push(`- Owner: ${artifact.execution.owner || "_unassigned_"}`);
   lines.push(`- Server: \`${artifact.environment.server}\``);
   lines.push(`- Evidence mode: \`${artifact.environment.evidenceMode}\``);
+  lines.push(`- Duration: \`${artifact.execution.durationMs}ms\``);
   lines.push("");
   lines.push("## Journey");
   lines.push("");
-  lines.push("| Step | Status | Evidence |");
-  lines.push("| --- | --- | --- |");
+  lines.push("| Step | Status | Timing | Evidence |");
+  lines.push("| --- | --- | --- | --- |");
   for (const step of artifact.journey) {
-    lines.push(`| ${step.title} | \`${step.status}\` | ${step.evidence.map((entry) => `\`${entry}\``).join("<br>") || "_none_"} |`);
+    const timing = step.timing
+      ? `\`${step.timing.durationMs}ms\`<br><sub>${step.timing.startedAt} -> ${step.timing.completedAt}</sub>`
+      : "_n/a_";
+    lines.push(
+      `| ${step.title} | \`${step.status}\` | ${timing} | ${step.evidence.map((entry) => `\`${entry}\``).join("<br>") || "_none_"} |`
+    );
   }
   lines.push("");
   lines.push("## Required Evidence");
@@ -607,6 +619,14 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
   const stepArtifacts = new Map<JourneyStepId, string[]>();
   const artifactSummaries = new Map<JourneyStepId, string>();
   const stepStatus = new Map<JourneyStepId, StepStatus>(STEP_METADATA.map((entry) => [entry.id, "pending"]));
+  const stepTimings = new Map<
+    JourneyStepId,
+    {
+      startedAt: string;
+      completedAt: string;
+      durationMs: number;
+    }
+  >();
   const roomId = "room-primary-journey";
   const playerId = "player-account";
   const syncedAuthSession = {
@@ -629,7 +649,15 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
   );
   const recoveredRoom = new FakeColyseusRoom([createJourneyReconnectRecoveryUpdate(roomId, playerId)], "journey-recovered-token");
   let currentStep: JourneyStepId = "lobby-entry";
+  let currentStepStartedAt = startedAt;
+  let currentStepStartedAtMs = Date.now();
   let root: RootState | null = null;
+
+  const beginStep = (stepId: JourneyStepId) => {
+    currentStep = stepId;
+    currentStepStartedAtMs = Date.now();
+    currentStepStartedAt = new Date(currentStepStartedAtMs).toISOString();
+  };
 
   const setRequiredEvidence = (fieldId: CanonicalEvidenceId, value: string, evidence: string[]) => {
     const field = requiredEvidence.find((entry) => entry.id === fieldId);
@@ -644,6 +672,8 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
     if (!root) {
       fail("Cannot record a journey step before the runtime is initialized.");
     }
+    const completedAtMs = Date.now();
+    const completedAt = new Date(completedAtMs).toISOString();
     const index = STEP_METADATA.findIndex((entry) => entry.id === stepId);
     const artifactPath = path.join(milestoneDir, `${String(index + 1).padStart(2, "0")}-${stepId}.json`);
     writeJson(
@@ -658,6 +688,11 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
     stepArtifacts.set(stepId, [toRepoRelative(artifactPath)]);
     stepStatus.set(stepId, "passed");
     artifactSummaries.set(stepId, summary);
+    stepTimings.set(stepId, {
+      startedAt: currentStepStartedAt,
+      completedAt,
+      durationMs: completedAtMs - currentStepStartedAtMs
+    });
     return toRepoRelative(artifactPath);
   };
 
@@ -707,14 +742,15 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
     root.onLoad();
     root.start();
 
-    currentStep = "lobby-entry";
+    beginStep("lobby-entry");
     await waitFor(
       () => root!.showLobby === true && root!.lobbyRooms.length === 1 && root!.sessionSource === "remote",
       () => captureJourneyArtifact({ root: root!, phase: "lobby-bootstrap", joinedOptions, room: initialRoom })
     );
     recordStep("lobby-entry", "Cold start reused the account session and reached the lobby room list.", initialRoom, "lobby-bootstrap");
+    root.privacyConsentAccepted = true;
 
-    currentStep = "room-join";
+    beginStep("room-join");
     await root.enterLobbyRoom(roomId);
     await waitFor(
       () => root!.showLobby === false && root!.lastUpdate?.world.meta.roomId === roomId,
@@ -728,7 +764,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
     );
     setRequiredEvidence("roomId", roomId, [roomJoinArtifact]);
 
-    currentStep = "map-explore";
+    beginStep("map-explore");
     await root.moveHeroToTile(root.lastUpdate.world.map.tiles[1]);
     await waitFor(
       () => root!.lastUpdate?.reason === "journey.world.explore" && root!.lastUpdate.world.ownHeroes[0]?.position.x === 1,
@@ -741,7 +777,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
       "world-explore"
     );
 
-    currentStep = "first-battle";
+    beginStep("first-battle");
     await root.moveHeroToTile(root.lastUpdate.world.map.tiles[3]);
     await waitFor(
       () => root!.lastUpdate?.battle?.id === "battle-neutral-journey",
@@ -754,7 +790,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
       "battle-start"
     );
 
-    currentStep = "battle-settlement";
+    beginStep("battle-settlement");
     await root.actInBattle({
       type: "battle.attack",
       attackerId: "hero-1-stack",
@@ -772,7 +808,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
     );
     setRequiredEvidence("firstBattleResult", "attacker_victory; gold +12; experience +25", [settlementArtifact]);
 
-    currentStep = "reconnect-restore";
+    beginStep("reconnect-restore");
     initialRoom.emitLeave(4002);
     await waitFor(
       () => root!.lastUpdate?.reason === "journey.reconnect.restore" && root!.lastUpdate.world.meta.day === 5,
@@ -792,7 +828,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
       [reconnectArtifact]
     );
 
-    currentStep = "return-to-world";
+    beginStep("return-to-world");
     recordStep(
       "return-to-world",
       "Recovered world HUD remained in the room with preserved resources, hero position, and progression.",
@@ -811,6 +847,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
     }
 
     const completedAt = new Date().toISOString();
+    const durationMs = Date.now() - Date.parse(startedAt);
     const artifact: PrimaryJourneyEvidenceArtifact = {
       schemaVersion: 1,
       candidate: {
@@ -824,6 +861,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
         owner: args.owner || "",
         startedAt,
         completedAt,
+        durationMs,
         overallStatus: "passed",
         summary:
           "Headless primary-client journey evidence passed for lobby entry, room join, world explore, first battle, settlement, reconnect recovery, and restored world state."
@@ -842,6 +880,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
         title: entry.title,
         status: stepStatus.get(entry.id) ?? "pending",
         summary: artifactSummaries.get(entry.id) ?? "",
+        ...(stepTimings.get(entry.id) ? { timing: stepTimings.get(entry.id) } : {}),
         evidence: stepArtifacts.get(entry.id) ?? []
       })),
       requiredEvidence
@@ -852,6 +891,8 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
     return artifact;
   } catch (error) {
     const completedAt = new Date().toISOString();
+    const completedAtMs = Date.now();
+    const durationMs = completedAtMs - Date.parse(startedAt);
     let failedArtifactPath: string | undefined;
     if (root) {
       const index = STEP_METADATA.findIndex((entry) => entry.id === currentStep);
@@ -870,6 +911,11 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
     stepStatus.set(currentStep, "failed");
     const failureMessage = error instanceof Error ? error.message : String(error);
     artifactSummaries.set(currentStep, failureMessage);
+    stepTimings.set(currentStep, {
+      startedAt: currentStepStartedAt,
+      completedAt,
+      durationMs: completedAtMs - currentStepStartedAtMs
+    });
 
     const artifact: PrimaryJourneyEvidenceArtifact = {
       schemaVersion: 1,
@@ -884,6 +930,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
         owner: args.owner || "",
         startedAt,
         completedAt,
+        durationMs,
         overallStatus: "failed",
         summary: `Primary-client journey evidence failed during ${currentStep}.`,
         failure: {
@@ -907,6 +954,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
         title: entry.title,
         status: stepStatus.get(entry.id) ?? "pending",
         summary: artifactSummaries.get(entry.id) ?? "",
+        ...(stepTimings.get(entry.id) ? { timing: stepTimings.get(entry.id) } : {}),
         evidence: stepArtifacts.get(entry.id) ?? []
       })),
       requiredEvidence
