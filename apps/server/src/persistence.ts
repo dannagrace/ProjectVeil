@@ -178,6 +178,7 @@ interface PlayerAccountRow extends RowDataPacket {
   is_minor: number | boolean | null;
   daily_play_minutes: number | null;
   last_play_date: Date | string | null;
+  login_streak: number | null;
   ban_status: string | null;
   ban_expiry: Date | string | null;
   ban_reason: string | null;
@@ -488,12 +489,14 @@ export interface PlayerAccountProfilePatch {
 }
 
 export interface PlayerAccountProgressPatch {
+  gems?: number;
   globalResources?: Partial<ResourceLedger> | null;
   achievements?: Partial<PlayerAchievementProgress>[] | null;
   recentEventLog?: Partial<EventLogEntry>[] | null;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null;
   dailyPlayMinutes?: number | null;
   lastPlayDate?: string | null;
+  loginStreak?: number | null;
   lastRoomId?: string | null;
   eloRating?: number;
 }
@@ -950,6 +953,10 @@ function normalizeDailyPlayMinutes(minutes?: number | null): number {
   return Math.max(0, Math.floor(minutes ?? 0));
 }
 
+function normalizeLoginStreak(streak?: number | null): number {
+  return Math.max(0, Math.floor(streak ?? 0));
+}
+
 function normalizeGemAmount(amount?: number | null): number {
   return Math.max(0, Math.floor(amount ?? 0));
 }
@@ -1088,6 +1095,7 @@ function normalizePlayerAccountSnapshot(account: {
   isMinor?: boolean | number | null | undefined;
   dailyPlayMinutes?: number | null | undefined;
   lastPlayDate?: string | Date | null | undefined;
+  loginStreak?: number | null | undefined;
   banStatus?: PlayerBanStatus | null | undefined;
   banExpiry?: string | undefined;
   banReason?: string | null | undefined;
@@ -1132,6 +1140,7 @@ function normalizePlayerAccountSnapshot(account: {
       isMinor: normalizePlayerIsMinor(account.isMinor),
       dailyPlayMinutes: normalizeDailyPlayMinutes(account.dailyPlayMinutes),
       lastPlayDate: normalizeLastPlayDate(account.lastPlayDate),
+      loginStreak: normalizeLoginStreak(account.loginStreak),
       banStatus: normalizePlayerBanStatus(account.banStatus),
       banExpiry: normalizePlayerBanExpiry(account.banExpiry),
       banReason: normalizePlayerBanReason(account.banReason)
@@ -1420,6 +1429,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   is_minor TINYINT(1) NOT NULL DEFAULT 0,
   daily_play_minutes INT NOT NULL DEFAULT 0,
   last_play_date DATE NULL DEFAULT NULL,
+  login_streak INT NOT NULL DEFAULT 0,
   ban_status VARCHAR(16) NOT NULL DEFAULT 'none',
   ban_expiry DATETIME NULL DEFAULT NULL,
   ban_reason VARCHAR(512) NULL,
@@ -1814,6 +1824,24 @@ SET @veil_player_accounts_last_play_date_sql := IF(
 PREPARE veil_player_accounts_last_play_date_stmt FROM @veil_player_accounts_last_play_date_sql;
 EXECUTE veil_player_accounts_last_play_date_stmt;
 DEALLOCATE PREPARE veil_player_accounts_last_play_date_stmt;
+
+SET @veil_player_accounts_login_streak_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'login_streak'
+);
+
+SET @veil_player_accounts_login_streak_sql := IF(
+  @veil_player_accounts_login_streak_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`login_streak\` INT NOT NULL DEFAULT 0 AFTER \`last_play_date\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_login_streak_stmt FROM @veil_player_accounts_login_streak_sql;
+EXECUTE veil_player_accounts_login_streak_stmt;
+DEALLOCATE PREPARE veil_player_accounts_login_streak_stmt;
 
 SET @veil_player_accounts_ban_status_exists := (
   SELECT COUNT(*)
@@ -2462,6 +2490,7 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
       ? { dailyPlayMinutes: normalizeDailyPlayMinutes(row.daily_play_minutes) }
       : {}),
     ...(normalizeLastPlayDate(row.last_play_date) ? { lastPlayDate: normalizeLastPlayDate(row.last_play_date) } : {}),
+    ...(normalizeLoginStreak(row.login_streak) > 0 ? { loginStreak: normalizeLoginStreak(row.login_streak) } : {}),
     banStatus: normalizePlayerBanStatus(row.ban_status),
     ...(banExpiry ? { banExpiry } : {}),
     ...(row.ban_reason ? { banReason: row.ban_reason } : {}),
@@ -2723,9 +2752,10 @@ async function savePlayerAccounts(
          achievements_json,
          recent_event_log_json
          ,
-         recent_battle_replays_json
+         recent_battle_replays_json,
+         login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
@@ -2734,6 +2764,7 @@ async function savePlayerAccounts(
          achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
          recent_event_log_json = COALESCE(recent_event_log_json, VALUES(recent_event_log_json)),
          recent_battle_replays_json = COALESCE(recent_battle_replays_json, VALUES(recent_battle_replays_json)),
+         login_streak = VALUES(login_streak),
          version = version + 1`,
       [
         normalizedAccount.playerId,
@@ -2743,7 +2774,8 @@ async function savePlayerAccounts(
         JSON.stringify(normalizedAccount.globalResources),
         JSON.stringify(normalizedAccount.achievements),
         JSON.stringify(normalizedAccount.recentEventLog),
-        JSON.stringify(normalizedAccount.recentBattleReplays)
+        JSON.stringify(normalizedAccount.recentBattleReplays),
+        normalizeLoginStreak(normalizedAccount.loginStreak)
       ]
     );
     await appendPlayerEventHistoryEntries(connection, normalizedAccount.playerId, normalizedAccount.recentEventLog);
@@ -2983,6 +3015,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          is_minor,
          daily_play_minutes,
          last_play_date,
+         login_streak,
          ban_status,
          ban_expiry,
          ban_reason,
@@ -3031,6 +3064,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          is_minor,
          daily_play_minutes,
          last_play_date,
+         login_streak,
          ban_status,
          ban_expiry,
          ban_reason,
@@ -3163,6 +3197,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          is_minor,
          daily_play_minutes,
          last_play_date,
+         login_streak,
          ban_status,
          ban_expiry,
          ban_reason,
@@ -4230,6 +4265,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
            is_minor = 0,
            daily_play_minutes = 0,
            last_play_date = NULL,
+           login_streak = 0,
            ban_status = 'none',
            ban_expiry = NULL,
            ban_reason = NULL,
@@ -4420,6 +4456,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     const nextAccount = normalizePlayerAccountSnapshot({
       ...existing,
       playerId: normalizedPlayerId,
+      ...(patch.gems !== undefined ? { gems: patch.gems } : {}),
       globalResources: patch.globalResources ?? existing.globalResources,
       achievements: patch.achievements ?? existing.achievements,
       recentEventLog: patch.recentEventLog ?? existing.recentEventLog,
@@ -4428,6 +4465,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         patch.dailyPlayMinutes !== undefined ? normalizeDailyPlayMinutes(patch.dailyPlayMinutes) : existing.dailyPlayMinutes,
       lastPlayDate:
         patch.lastPlayDate !== undefined ? normalizeLastPlayDate(patch.lastPlayDate) : existing.lastPlayDate,
+      loginStreak: patch.loginStreak !== undefined ? normalizeLoginStreak(patch.loginStreak) : existing.loginStreak,
       ...(patch.eloRating !== undefined ? { eloRating: patch.eloRating } : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId
@@ -4455,12 +4493,14 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          age_verified,
          is_minor,
          daily_play_minutes,
-         last_play_date
+         last_play_date,
+         login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
+         gems = VALUES(gems),
          elo_rating = VALUES(elo_rating),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
@@ -4472,6 +4512,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          is_minor = VALUES(is_minor),
          daily_play_minutes = VALUES(daily_play_minutes),
          last_play_date = VALUES(last_play_date),
+         login_streak = VALUES(login_streak),
          version = version + 1`,
       [
         nextAccount.playerId,
@@ -4488,7 +4529,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.ageVerified === true ? 1 : 0,
         nextAccount.isMinor === true ? 1 : 0,
         normalizeDailyPlayMinutes(nextAccount.dailyPlayMinutes),
-        nextAccount.lastPlayDate ? new Date(nextAccount.lastPlayDate) : null
+        nextAccount.lastPlayDate ? new Date(nextAccount.lastPlayDate) : null,
+        normalizeLoginStreak(nextAccount.loginStreak)
       ]
     );
     await appendPlayerEventHistoryEntries(this.pool, normalizedPlayerId, newHistoryEntries);

@@ -6,6 +6,7 @@ import {
   writeStoredCocosAuthSession
 } from "./cocos-session-launch.ts";
 import {
+  appendEventLogEntries,
   normalizePlayerBattleReportCenter,
   normalizePlayerBattleReplaySummaries,
   normalizePlayerAccountReadModel,
@@ -82,6 +83,8 @@ interface PlayerAccountApiPayload extends AuthSessionApiPayload {
     displayName?: string;
     avatarUrl?: string;
     eloRating?: number;
+    gems?: number;
+    loginStreak?: number;
     globalResources?: {
       gold?: number;
       wood?: number;
@@ -94,6 +97,16 @@ interface PlayerAccountApiPayload extends AuthSessionApiPayload {
     credentialBoundAt?: string;
     lastRoomId?: string;
     lastSeenAt?: string;
+  };
+}
+
+interface DailyClaimApiPayload {
+  claimed?: boolean;
+  reason?: string;
+  streak?: number;
+  reward?: {
+    gems?: number;
+    gold?: number;
   };
 }
 
@@ -379,6 +392,8 @@ function asCocosPlayerAccountProfile(
   const accountProfile = normalizePlayerAccountReadModel({
     playerId,
     displayName: normalizeDisplayName(playerId, account?.displayName ?? fallbackDisplayName),
+    gems: account?.gems,
+    loginStreak: account?.loginStreak,
     globalResources: account?.globalResources,
     eloRating: account?.eloRating,
     achievements: account?.achievements,
@@ -395,6 +410,93 @@ function asCocosPlayerAccountProfile(
     ...accountProfile,
     recentBattleReplays: accountProfile.recentBattleReplays ?? [],
     source
+  };
+}
+
+function createCocosDailyRewardEventLogEntry(
+  playerId: string,
+  roomId: string,
+  streak: number,
+  reward: { gems: number; gold: number },
+  timestamp = new Date().toISOString()
+): EventLogEntry {
+  const rewardSummary = [
+    reward.gems > 0 ? `宝石 x${reward.gems}` : null,
+    reward.gold > 0 ? `金币 x${reward.gold}` : null
+  ]
+    .filter((entry): entry is string => Boolean(entry))
+    .join("、");
+
+  return {
+    id: `${playerId}:${timestamp}:daily-login:${streak}:client`,
+    timestamp,
+    roomId,
+    playerId,
+    category: "account",
+    description: `每日签到奖励：连签第 ${streak} 天，获得 ${rewardSummary || "奖励已发放"}。`,
+    rewards: [
+      ...(reward.gems > 0 ? [{ type: "resource" as const, label: "gems", amount: reward.gems }] : []),
+      ...(reward.gold > 0 ? [{ type: "resource" as const, label: "gold", amount: reward.gold }] : [])
+    ]
+  };
+}
+
+async function claimCocosDailyLoginReward(
+  remoteUrl: string,
+  authSession: CocosStoredAuthSession,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "setItem" | "removeItem"> | null;
+  }
+): Promise<DailyClaimApiPayload | null> {
+  try {
+    return (await fetchCocosAuthJson(
+      remoteUrl,
+      `${resolveCocosApiBaseUrl(remoteUrl)}/api/player/daily-claim`,
+      {
+        method: "POST"
+      },
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(options?.storage !== undefined ? { storage: options.storage } : {})
+      }
+    )) as DailyClaimApiPayload;
+  } catch {
+    return null;
+  }
+}
+
+function applyDailyClaimToProfile(
+  profile: CocosPlayerAccountProfile,
+  claim: DailyClaimApiPayload | null
+): CocosPlayerAccountProfile {
+  if (!claim?.claimed || !claim.reward) {
+    return profile;
+  }
+
+  const reward = {
+    gems: Math.max(0, Math.floor(claim.reward.gems ?? 0)),
+    gold: Math.max(0, Math.floor(claim.reward.gold ?? 0))
+  };
+  const streak = Math.max(1, Math.floor(claim.streak ?? 1));
+  const eventEntry = createCocosDailyRewardEventLogEntry(
+    profile.playerId,
+    profile.lastRoomId ?? "daily-login",
+    streak,
+    reward,
+    profile.recentEventLog[0]?.timestamp ?? new Date().toISOString()
+  );
+
+  return {
+    ...profile,
+    gems: (profile.gems ?? 0) + reward.gems,
+    loginStreak: streak,
+    globalResources: {
+      ...profile.globalResources,
+      gold: profile.globalResources.gold + reward.gold
+    },
+    recentEventLog: appendEventLogEntries(profile.recentEventLog, [eventEntry])
   };
 }
 
@@ -1300,8 +1402,19 @@ export async function loadCocosPlayerAccountProfile(
       battleReportCenter
     );
 
+    const profileWithDailyClaim =
+      authSession?.token && authSession
+        ? applyDailyClaimToProfile(
+            profile,
+            await claimCocosDailyLoginReward(remoteUrl, authSession, {
+              ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+              storage
+            })
+          )
+        : profile;
+
     if (storage?.setItem) {
-      storage.setItem(getCocosPlayerAccountStorageKey(profile.playerId), profile.displayName);
+      storage.setItem(getCocosPlayerAccountStorageKey(profileWithDailyClaim.playerId), profileWithDailyClaim.displayName);
     }
 
     if (authSession?.token && payload.session && storage) {
@@ -1309,7 +1422,7 @@ export async function loadCocosPlayerAccountProfile(
     }
 
     return {
-      ...profile,
+      ...profileWithDailyClaim,
       recentBattleReplays
     };
   } catch (error) {

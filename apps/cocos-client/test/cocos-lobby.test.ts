@@ -573,6 +573,8 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
             account: {
               playerId: "account-player",
               displayName: "暮潮守望",
+              gems: 12,
+              loginStreak: 4,
               loginId: "veil-ranger",
               lastRoomId: "room-beta",
               achievements: [
@@ -656,6 +658,25 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
         );
       }
 
+      if (url.endsWith("/api/player/daily-claim")) {
+        return new Response(
+          JSON.stringify({
+            claimed: true,
+            streak: 5,
+            reward: {
+              gems: 5,
+              gold: 75
+            }
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        );
+      }
+
       return new Response(
         JSON.stringify({
           items: [
@@ -717,14 +738,17 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
   assert.deepEqual(requestedUrls, [
     "http://127.0.0.1:2567/api/player-accounts/me",
     "http://127.0.0.1:2567/api/player-accounts/me/battle-replays",
-    "http://127.0.0.1:2567/api/player-accounts/me/battle-reports"
+    "http://127.0.0.1:2567/api/player-accounts/me/battle-reports",
+    "http://127.0.0.1:2567/api/player/daily-claim"
   ]);
   assert.deepEqual(profile, {
     playerId: "account-player",
     displayName: "暮潮守望",
     eloRating: 1000,
+    gems: 17,
+    loginStreak: 5,
     globalResources: {
-      gold: 320,
+      gold: 395,
       wood: 5,
       ore: 2
     },
@@ -789,6 +813,18 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
         description: "解锁成就：初次交锋",
         achievementId: "first_battle",
         rewards: [{ type: "badge", label: "初次交锋" }]
+      },
+      {
+        id: "account-player:2026-03-25T13:00:00.000Z:daily-login:5:client",
+        timestamp: "2026-03-25T13:00:00.000Z",
+        roomId: "room-beta",
+        playerId: "account-player",
+        category: "account",
+        description: "每日签到奖励：连签第 5 天，获得 宝石 x5、金币 x75。",
+        rewards: [
+          { type: "resource", label: "gems", amount: 5 },
+          { type: "resource", label: "gold", amount: 75 }
+        ]
       }
     ],
     recentBattleReplays: [

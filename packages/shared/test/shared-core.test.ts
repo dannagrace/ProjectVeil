@@ -1410,13 +1410,15 @@ test("player account read model helper normalizes minor protection fields", () =
     ageVerified: true,
     isMinor: true,
     dailyPlayMinutes: 91.8,
-    lastPlayDate: " 2026-04-03 "
+    lastPlayDate: " 2026-04-03 ",
+    loginStreak: 4.9
   });
 
   assert.equal(account.ageVerified, true);
   assert.equal(account.isMinor, true);
   assert.equal(account.dailyPlayMinutes, 91);
   assert.equal(account.lastPlayDate, "2026-04-03");
+  assert.equal(account.loginStreak, 4);
 });
 
 test("player account read model helper falls back to empty progression collections", () => {
