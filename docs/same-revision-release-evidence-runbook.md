@@ -2,6 +2,8 @@
 
 Use this maintainer runbook when one release decision must be backed by one candidate revision, not by the newest mix of artifacts in `artifacts/`.
 
+For the automated candidate-scoped assembly path, start with [`docs/phase1-same-revision-evidence-bundle.md`](./phase1-same-revision-evidence-bundle.md) and `npm run release:phase1:same-revision-evidence-bundle`. The rest of this runbook remains the detailed operator sequence and review checklist behind that command.
+
 It does not redefine release gates. It sequences the existing commands and artifacts already described in:
 
 - [`docs/phase1-maturity-scorecard.md`](./phase1-maturity-scorecard.md)
