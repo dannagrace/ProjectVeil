@@ -23,6 +23,10 @@ export interface PlayerAccountReadModel {
   eloRating?: number;
   gems?: number;
   loginStreak?: number;
+  seasonXp?: number;
+  seasonPassTier?: number;
+  seasonPassPremium?: boolean;
+  seasonPassClaimedTiers?: number[];
   seasonBadges?: string[];
   globalResources: ResourceLedger;
   achievements: PlayerAchievementProgress[];
@@ -53,6 +57,10 @@ export interface PlayerAccountReadModelInput {
   eloRating?: number | undefined;
   gems?: number | undefined;
   loginStreak?: number | undefined;
+  seasonXp?: number | undefined;
+  seasonPassTier?: number | undefined;
+  seasonPassPremium?: boolean | undefined;
+  seasonPassClaimedTiers?: number[] | null | undefined;
   seasonBadges?: string[] | null | undefined;
   globalResources?: Partial<ResourceLedger> | null | undefined;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
@@ -91,6 +99,16 @@ export function normalizePlayerAccountReadModel(
   const isMinor = account?.isMinor === true;
   const dailyPlayMinutes = Math.max(0, Math.floor(account?.dailyPlayMinutes ?? 0));
   const loginStreak = Math.max(0, Math.floor(account?.loginStreak ?? 0));
+  const seasonXp = Math.max(0, Math.floor(account?.seasonXp ?? 0));
+  const seasonPassTier = Math.max(1, Math.floor(account?.seasonPassTier ?? 1));
+  const seasonPassPremium = account?.seasonPassPremium === true;
+  const seasonPassClaimedTiers = Array.from(
+    new Set(
+      (account?.seasonPassClaimedTiers ?? [])
+        .map((tier) => Math.floor(tier))
+        .filter((tier) => Number.isFinite(tier) && tier > 0)
+    )
+  ).sort((left, right) => left - right);
   const seasonBadges = Array.from(
     new Set(
       (account?.seasonBadges ?? [])
@@ -117,6 +135,10 @@ export function normalizePlayerAccountReadModel(
     eloRating: normalizeEloRating(account?.eloRating),
     gems: Math.max(0, Math.floor(account?.gems ?? 0)),
     ...(loginStreak > 0 ? { loginStreak } : {}),
+    ...(seasonXp > 0 ? { seasonXp } : {}),
+    ...(seasonPassTier > 1 ? { seasonPassTier } : {}),
+    ...(seasonPassPremium ? { seasonPassPremium } : {}),
+    ...(seasonPassClaimedTiers.length > 0 ? { seasonPassClaimedTiers } : {}),
     ...(seasonBadges.length > 0 ? { seasonBadges } : {}),
     globalResources: {
       gold: Math.max(0, Math.floor(account?.globalResources?.gold ?? 0)),

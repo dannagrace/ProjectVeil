@@ -29,6 +29,7 @@ import {
   buildPlayerBattleReplaySummariesForPlayer,
   type CompletedBattleReplayCapture
 } from "./battle-replays";
+import { didPlayerWinBattle, resolveBattlePassConfig } from "./battle-pass";
 import {
   applyPlayerAccountsToWorldState,
   applyPlayerHeroArchivesToWorldState,
@@ -1194,6 +1195,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     const internalState = this.worldRoom.getInternalState();
     const playerIds = Array.from(new Set(internalState.heroes.map((hero) => hero.playerId)));
     const accounts = await store.loadPlayerAccounts(playerIds);
+    const battlePassConfig = resolveBattlePassConfig();
 
     // Compute ELO updates for PVP (hero vs hero) battles
     const eloUpdates = new Map<string, number>();
@@ -1234,11 +1236,22 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             playerReplays
           );
           const eloRating = eloUpdates.get(playerId);
+          const seasonXpDelta = completedReplays
+            .filter((replay) => replay.attackerPlayerId === playerId || replay.defenderPlayerId === playerId)
+            .reduce(
+              (total, replay) =>
+                total +
+                (didPlayerWinBattle(replay, playerId)
+                  ? battlePassConfig.seasonXpPerWin
+                  : battlePassConfig.seasonXpPerLoss),
+              0
+            );
           await store.savePlayerAccountProgress(playerId, {
             achievements: nextAccount.achievements,
             recentEventLog: nextAccount.recentEventLog,
             ...(playerReplays.length > 0 ? { recentBattleReplays: nextAccount.recentBattleReplays } : {}),
             ...(eloRating !== undefined ? { eloRating } : {}),
+            ...(seasonXpDelta > 0 ? { seasonXpDelta } : {}),
             lastRoomId: this.metadata.logicalRoomId
           });
         })

@@ -18,6 +18,7 @@ import {
   findDailyQuestDefinition,
   loadDailyQuestBoard
 } from "./daily-quests";
+import { resolveBattlePassConfig } from "./battle-pass";
 import { emitAnalyticsEvent } from "./analytics";
 import {
   cachePlayerAccountAuthState,
@@ -714,6 +715,7 @@ export function registerPlayerAccountRoutes(
 
       await store.savePlayerAccountProgress(account.playerId, {
         gems: (account.gems ?? 0) + reward.gems,
+        seasonXpDelta: resolveBattlePassConfig().seasonXpDailyLoginBonus,
         globalResources: {
           ...account.globalResources,
           gold: (account.globalResources.gold ?? 0) + reward.gold
@@ -730,6 +732,91 @@ export function registerPlayerAccountRoutes(
         reward
       });
     } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player/battle-pass/claim", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store?.claimBattlePassTier) {
+      sendJson(response, 503, {
+        error: {
+          code: "battle_pass_persistence_unavailable",
+          message: "Battle pass claims require configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { tier?: number | null };
+      const tier = Math.floor(body.tier ?? Number.NaN);
+      if (!Number.isFinite(tier) || tier <= 0) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_battle_pass_tier",
+            message: "tier must be a positive integer"
+          }
+        });
+        return;
+      }
+
+      const result = await store.claimBattlePassTier(authSession.playerId, tier);
+      sendJson(response, 200, result);
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      if (error instanceof SyntaxError) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_json",
+            message: "Request body must be valid JSON"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "battle_pass_tier_not_found") {
+        sendJson(response, 404, {
+          error: {
+            code: "battle_pass_tier_not_found",
+            message: "Battle pass tier was not found"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "battle_pass_tier_locked") {
+        sendJson(response, 409, {
+          error: {
+            code: "battle_pass_tier_locked",
+            message: "Battle pass tier is not unlocked yet"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "battle_pass_tier_already_claimed") {
+        sendJson(response, 409, {
+          error: {
+            code: "battle_pass_tier_already_claimed",
+            message: "Battle pass tier has already been claimed"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "equipment_inventory_full") {
+        sendJson(response, 409, {
+          error: {
+            code: "equipment_inventory_full",
+            message: error.message
+          }
+        });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });

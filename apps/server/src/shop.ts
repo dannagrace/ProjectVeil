@@ -5,12 +5,13 @@ import { emitAnalyticsEvent } from "./analytics";
 import { validateAuthSessionFromRequest } from "./auth";
 import type { RoomSnapshotStore } from "./persistence";
 
-export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle";
+export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle" | "season_pass_premium";
 
 export interface ShopProductGrant {
   gems?: number;
   resources?: Partial<ResourceLedger>;
   equipmentIds?: string[];
+  seasonPassPremium?: boolean;
 }
 
 export interface ShopProduct {
@@ -106,7 +107,8 @@ function normalizeGrant(rawGrant?: ShopProductGrant | null): ShopProductGrant {
   return {
     ...(rawGrant?.gems != null ? { gems: normalizePositiveInteger(rawGrant.gems, "grant.gems", true) } : {}),
     ...(equipmentIds.length > 0 ? { equipmentIds } : {}),
-    ...(rawGrant?.resources ? { resources: normalizeResourceLedger(rawGrant.resources) } : {})
+    ...(rawGrant?.resources ? { resources: normalizeResourceLedger(rawGrant.resources) } : {}),
+    ...(rawGrant?.seasonPassPremium === true ? { seasonPassPremium: true } : {})
   };
 }
 
@@ -122,15 +124,21 @@ function normalizeShopProducts(rawProducts?: Partial<ShopProduct>[] | null): Sho
       throw new Error(`shop product ${productId} name is required`);
     }
 
-    if (rawProduct.type !== "gem_pack" && rawProduct.type !== "equipment" && rawProduct.type !== "resource_bundle") {
-      throw new Error(`shop product ${productId} type must be gem_pack, equipment, or resource_bundle`);
+    if (
+      rawProduct.type !== "gem_pack" &&
+      rawProduct.type !== "equipment" &&
+      rawProduct.type !== "resource_bundle" &&
+      rawProduct.type !== "season_pass_premium"
+    ) {
+      throw new Error(`shop product ${productId} type must be gem_pack, equipment, resource_bundle, or season_pass_premium`);
     }
 
     const grant = normalizeGrant(rawProduct.grant);
     const hasGrant =
       (grant.gems ?? 0) > 0 ||
       (grant.equipmentIds?.length ?? 0) > 0 ||
-      ((grant.resources?.gold ?? 0) > 0 || (grant.resources?.wood ?? 0) > 0 || (grant.resources?.ore ?? 0) > 0);
+      ((grant.resources?.gold ?? 0) > 0 || (grant.resources?.wood ?? 0) > 0 || (grant.resources?.ore ?? 0) > 0) ||
+      grant.seasonPassPremium === true;
     if (!hasGrant) {
       throw new Error(`shop product ${productId} grant must not be empty`);
     }
@@ -143,6 +151,9 @@ function normalizeShopProducts(rawProducts?: Partial<ShopProduct>[] | null): Sho
     }
     if (rawProduct.type === "gem_pack" && (grant.gems ?? 0) <= 0) {
       throw new Error(`shop product ${productId} gem packs must include gems`);
+    }
+    if (rawProduct.type === "season_pass_premium" && grant.seasonPassPremium !== true) {
+      throw new Error(`shop product ${productId} season pass premium grants must set seasonPassPremium`);
     }
 
     return {

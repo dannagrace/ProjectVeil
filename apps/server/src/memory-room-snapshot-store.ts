@@ -46,6 +46,12 @@ import {
   type ShopPurchaseResult
 } from "./persistence";
 import type { RoomPersistenceSnapshot } from "./index";
+import {
+  applyBattlePassXp,
+  resolveBattlePassConfig,
+  resolveBattlePassTier,
+  toBattlePassRewardGrant
+} from "./battle-pass";
 import { computeSeasonReward, resolveSeasonRewardConfig } from "./season-rewards";
 
 function cloneAccount(account: PlayerAccountSnapshot): PlayerAccountSnapshot {
@@ -282,6 +288,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       eloRating: normalizeEloRating(existing?.eloRating),
       gems: existing?.gems ?? 0,
+      seasonXp: Math.max(0, Math.floor(existing?.seasonXp ?? 0)),
+      seasonPassTier: Math.max(1, Math.floor(existing?.seasonPassTier ?? 1)),
+      ...(existing?.seasonPassPremium ? { seasonPassPremium: true } : {}),
+      ...(existing?.seasonPassClaimedTiers?.length ? { seasonPassClaimedTiers: [...existing.seasonPassClaimedTiers] } : {}),
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
       achievements: existing?.achievements ?? [],
       recentEventLog: existing?.recentEventLog ?? [],
@@ -515,6 +525,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         wood: Math.max(0, Math.floor(input.grant.resources?.wood ?? 0)) * quantity,
         ore: Math.max(0, Math.floor(input.grant.resources?.ore ?? 0)) * quantity
       },
+      seasonPassPremium: input.grant.seasonPassPremium === true,
       equipmentIds: Array.from({ length: quantity }, () => input.grant.equipmentIds ?? []).flat().map((equipmentId) => {
         const normalizedEquipmentId = equipmentId.trim();
         if (!normalizedEquipmentId || !getEquipmentDefinition(normalizedEquipmentId)) {
@@ -564,6 +575,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const nextAccount: PlayerAccountSnapshot = {
       ...existingAccount,
       gems: (existingAccount.gems ?? 0) - totalPrice + normalizedGrant.gems,
+      seasonPassPremium: existingAccount.seasonPassPremium === true || normalizedGrant.seasonPassPremium,
       globalResources: normalizeResourceLedger({
         gold: (existingAccount.globalResources.gold ?? 0) + normalizedGrant.resources.gold,
         wood: (existingAccount.globalResources.wood ?? 0) + normalizedGrant.resources.wood,
@@ -595,11 +607,12 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       unitPrice,
       totalPrice,
       granted: {
-        gems: normalizedGrant.gems,
-        resources: normalizedGrant.resources,
-        equipmentIds: normalizedGrant.equipmentIds,
-        ...(heroId ? { heroId } : {})
-      },
+          gems: normalizedGrant.gems,
+          resources: normalizedGrant.resources,
+          equipmentIds: normalizedGrant.equipmentIds,
+          ...(heroId ? { heroId } : {}),
+          ...(normalizedGrant.seasonPassPremium ? { seasonPassPremium: true } : {})
+        },
       gemsBalance: nextAccount.gems ?? 0,
       processedAt
     };
@@ -1014,10 +1027,22 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
   async savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot> {
     const normalizedPlayerId = normalizePlayerId(playerId);
+    const battlePassConfig = resolveBattlePassConfig();
     const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const battlePassProgress = applyBattlePassXp(battlePassConfig, existing, patch.seasonXpDelta ?? 0);
     const nextAccount: PlayerAccountSnapshot = {
       ...existing,
       ...(patch.gems !== undefined ? { gems: Math.max(0, Math.floor(patch.gems)) } : {}),
+      seasonXp: battlePassProgress.seasonXp,
+      seasonPassTier: battlePassProgress.seasonPassTier,
+      ...(patch.seasonPassPremium !== undefined
+        ? { seasonPassPremium: patch.seasonPassPremium === true }
+        : existing.seasonPassPremium
+          ? { seasonPassPremium: true }
+          : {}),
+      seasonPassClaimedTiers: structuredClone(
+        (patch.seasonPassClaimedTiers as number[] | undefined) ?? existing.seasonPassClaimedTiers ?? []
+      ),
       seasonBadges: structuredClone((patch.seasonBadges as string[] | undefined) ?? existing.seasonBadges ?? []),
       globalResources: structuredClone(
         (patch.globalResources as PlayerAccountSnapshot["globalResources"] | undefined) ?? existing.globalResources
@@ -1045,6 +1070,84 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     return cloneAccount(nextAccount);
   }
 
+  async claimBattlePassTier(playerId: string, tier: number) {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedTier = Math.max(1, Math.floor(tier));
+    const config = resolveBattlePassConfig();
+    const tierConfig = resolveBattlePassTier(config, normalizedTier);
+    if (!tierConfig) {
+      throw new Error("battle_pass_tier_not_found");
+    }
+
+    const account = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    if ((account.seasonPassTier ?? 1) < normalizedTier) {
+      throw new Error("battle_pass_tier_locked");
+    }
+    if ((account.seasonPassClaimedTiers ?? []).includes(normalizedTier)) {
+      throw new Error("battle_pass_tier_already_claimed");
+    }
+
+    const granted = toBattlePassRewardGrant(
+      tierConfig.freeReward,
+      account.seasonPassPremium ? tierConfig.premiumReward : undefined
+    );
+
+    let heroId: string | undefined;
+    if (granted.equipmentIds.length > 0) {
+      const currentArchive = Array.from(this.heroArchives.values())
+        .filter((archive) => archive.playerId === normalizedPlayerId)
+        .sort((left, right) => left.heroId.localeCompare(right.heroId))[0];
+      if (!currentArchive) {
+        throw new Error("player hero archive not found");
+      }
+
+      let nextInventory = [...currentArchive.hero.loadout.inventory];
+      for (const equipmentId of granted.equipmentIds) {
+        const inventoryUpdate = tryAddEquipmentToInventory(nextInventory, equipmentId);
+        if (!inventoryUpdate.stored) {
+          throw new Error("equipment inventory full");
+        }
+        nextInventory = inventoryUpdate.inventory;
+      }
+
+      heroId = currentArchive.heroId;
+      this.heroArchives.set(`${currentArchive.playerId}:${currentArchive.heroId}`, {
+        ...cloneArchive(currentArchive),
+        hero: {
+          ...cloneArchive(currentArchive).hero,
+          loadout: {
+            ...cloneArchive(currentArchive).hero.loadout,
+            inventory: nextInventory
+          }
+        }
+      });
+    }
+
+    const nextAccount: PlayerAccountSnapshot = {
+      ...account,
+      gems: (account.gems ?? 0) + granted.gems,
+      seasonPassClaimedTiers: [...(account.seasonPassClaimedTiers ?? []), normalizedTier].sort((a, b) => a - b),
+      globalResources: normalizeResourceLedger({
+        gold: (account.globalResources.gold ?? 0) + granted.resources.gold,
+        wood: account.globalResources.wood ?? 0,
+        ore: account.globalResources.ore ?? 0
+      }),
+      updatedAt: new Date().toISOString()
+    };
+    this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
+
+    return {
+      tier: normalizedTier,
+      granted: {
+        ...granted,
+        equipmentIds: [...granted.equipmentIds]
+      },
+      seasonPassPremiumApplied: account.seasonPassPremium === true,
+      account: cloneAccount(this.accounts.get(normalizedPlayerId) ?? nextAccount),
+      ...(heroId ? { heroId } : {})
+    };
+  }
+
   async listPlayerAccounts(options: PlayerAccountListOptions = {}): Promise<PlayerAccountSnapshot[]> {
     const filtered = Array.from(this.accounts.values())
       .filter((account) => (options.playerId ? account.playerId === options.playerId : true))
@@ -1065,6 +1168,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         displayName: previous?.displayName ?? account.displayName,
         ...(previous?.avatarUrl ? { avatarUrl: previous.avatarUrl } : {}),
         eloRating: normalizeEloRating(previous?.eloRating ?? account.eloRating),
+        seasonXp: Math.max(0, Math.floor(previous?.seasonXp ?? account.seasonXp ?? 0)),
+        seasonPassTier: Math.max(1, Math.floor(previous?.seasonPassTier ?? account.seasonPassTier ?? 1)),
+        ...(previous?.seasonPassPremium ? { seasonPassPremium: true } : {}),
+        seasonPassClaimedTiers: structuredClone(previous?.seasonPassClaimedTiers ?? account.seasonPassClaimedTiers ?? []),
         seasonBadges: structuredClone(previous?.seasonBadges ?? account.seasonBadges ?? []),
         achievements: structuredClone(previous?.achievements ?? account.achievements),
         recentEventLog: structuredClone(previous?.recentEventLog ?? account.recentEventLog),
