@@ -96,8 +96,16 @@ interface AuthObservabilityState {
   sessionFailureReasons: Record<AuthSessionFailureReason, number>;
   tokenDeliveryQueueCount: number;
   tokenDeliveryDeadLetterCount: number;
+  tokenDeliveryOldestQueuedLatencyMs: number | null;
+  tokenDeliveryNextAttemptDelayMs: number | null;
   tokenDeliveryFailureReasons: Record<AuthTokenDeliveryFailureReason, number>;
   tokenDeliveryRecentAttempts: AuthTokenDeliveryAttemptLogEntry[];
+}
+
+interface ReconnectObservabilityCounters {
+  attemptsTotal: number;
+  successesTotal: number;
+  failuresTotal: number;
 }
 
 interface RuntimeObservabilityState {
@@ -110,6 +118,10 @@ interface RuntimeObservabilityState {
     actionValidationFailuresTotal: Map<string, number>;
   };
   auth: AuthObservabilityState;
+  reconnect: {
+    pendingWindowCount: number;
+    counters: ReconnectObservabilityCounters;
+  };
   matchmaking: {
     counters: MatchmakingObservabilityCounters;
   };
@@ -135,6 +147,10 @@ interface RuntimeHealthPayload {
         websocketActionKickTotal: number;
       };
     auth: {
+      reconnect: {
+        pendingWindowCount: number;
+        counters: ReconnectObservabilityCounters;
+      };
       activeGuestSessionCount: number;
       activeAccountSessionCount: number;
       activeAccountSessionByProvider: Record<string, number>;
@@ -146,6 +162,8 @@ interface RuntimeHealthPayload {
       tokenDelivery: {
         queueCount: number;
         deadLetterCount: number;
+        oldestQueuedLatencyMs: number | null;
+        nextAttemptDelayMs: number | null;
         counters: Pick<
           AuthObservabilityCounters,
           | "tokenDeliveryRequestsTotal"
@@ -248,6 +266,8 @@ const runtimeObservability: RuntimeObservabilityState = {
     },
     tokenDeliveryQueueCount: 0,
     tokenDeliveryDeadLetterCount: 0,
+    tokenDeliveryOldestQueuedLatencyMs: null,
+    tokenDeliveryNextAttemptDelayMs: null,
     tokenDeliveryFailureReasons: {
       misconfigured: 0,
       timeout: 0,
@@ -260,6 +280,14 @@ const runtimeObservability: RuntimeObservabilityState = {
       webhook_5xx: 0
     },
     tokenDeliveryRecentAttempts: []
+  },
+  reconnect: {
+    pendingWindowCount: 0,
+    counters: {
+      attemptsTotal: 0,
+      successesTotal: 0,
+      failuresTotal: 0
+    }
   },
   matchmaking: {
     counters: {
@@ -362,6 +390,10 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
         websocketActionKickTotal: runtimeObservability.counters.websocketActionKickTotal
       },
       auth: {
+        reconnect: {
+          pendingWindowCount: runtimeObservability.reconnect.pendingWindowCount,
+          counters: { ...runtimeObservability.reconnect.counters }
+        },
         activeGuestSessionCount: runtimeObservability.auth.activeGuestSessionCount,
         activeAccountSessionCount: runtimeObservability.auth.activeAccountSessions.size,
         activeAccountSessionByProvider,
@@ -373,6 +405,8 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
         tokenDelivery: {
           queueCount: runtimeObservability.auth.tokenDeliveryQueueCount,
           deadLetterCount: runtimeObservability.auth.tokenDeliveryDeadLetterCount,
+          oldestQueuedLatencyMs: runtimeObservability.auth.tokenDeliveryOldestQueuedLatencyMs,
+          nextAttemptDelayMs: runtimeObservability.auth.tokenDeliveryNextAttemptDelayMs,
           counters: {
             tokenDeliveryRequestsTotal: runtimeObservability.auth.counters.tokenDeliveryRequestsTotal,
             tokenDeliverySuccessesTotal: runtimeObservability.auth.counters.tokenDeliverySuccessesTotal,
@@ -623,6 +657,18 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_ws_action_kicks_total Total client disconnects triggered by WebSocket action rate-limit violations.",
     "# TYPE veil_ws_action_kicks_total counter",
     `veil_ws_action_kicks_total ${health.runtime.gameplayTraffic.websocketActionKickTotal}`,
+    "# HELP veil_reconnect_backlog_count Players currently waiting inside the Colyseus reconnection window.",
+    "# TYPE veil_reconnect_backlog_count gauge",
+    `veil_reconnect_backlog_count ${health.runtime.auth.reconnect.pendingWindowCount}`,
+    "# HELP veil_reconnect_attempts_total Total reconnect windows opened after a drop.",
+    "# TYPE veil_reconnect_attempts_total counter",
+    `veil_reconnect_attempts_total ${health.runtime.auth.reconnect.counters.attemptsTotal}`,
+    "# HELP veil_reconnect_successes_total Total reconnect windows resolved successfully.",
+    "# TYPE veil_reconnect_successes_total counter",
+    `veil_reconnect_successes_total ${health.runtime.auth.reconnect.counters.successesTotal}`,
+    "# HELP veil_reconnect_failures_total Total reconnect windows that expired or failed.",
+    "# TYPE veil_reconnect_failures_total counter",
+    `veil_reconnect_failures_total ${health.runtime.auth.reconnect.counters.failuresTotal}`,
     "# HELP veil_auth_guest_sessions Active guest auth sessions tracked by this process.",
     "# TYPE veil_auth_guest_sessions gauge",
     `veil_auth_guest_sessions ${health.runtime.auth.activeGuestSessionCount}`,
@@ -677,6 +723,12 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_token_delivery_dead_letter_count Account token deliveries currently held in the dead-letter set.",
     "# TYPE veil_auth_token_delivery_dead_letter_count gauge",
     `veil_auth_token_delivery_dead_letter_count ${health.runtime.auth.tokenDelivery.deadLetterCount}`,
+    "# HELP veil_auth_token_delivery_oldest_queued_latency_ms Oldest queued token delivery age in milliseconds.",
+    "# TYPE veil_auth_token_delivery_oldest_queued_latency_ms gauge",
+    `veil_auth_token_delivery_oldest_queued_latency_ms ${health.runtime.auth.tokenDelivery.oldestQueuedLatencyMs ?? 0}`,
+    "# HELP veil_auth_token_delivery_next_attempt_delay_ms Delay until the next queued token delivery retry attempt in milliseconds.",
+    "# TYPE veil_auth_token_delivery_next_attempt_delay_ms gauge",
+    `veil_auth_token_delivery_next_attempt_delay_ms ${health.runtime.auth.tokenDelivery.nextAttemptDelayMs ?? 0}`,
     "# HELP veil_auth_token_delivery_requests_total Total account token delivery requests.",
     "# TYPE veil_auth_token_delivery_requests_total counter",
     `veil_auth_token_delivery_requests_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliveryRequestsTotal}`,
@@ -731,6 +783,332 @@ export function buildPrometheusMetricsDocument(): string {
   );
 
   return lines.join("\n");
+}
+
+export type RuntimeSloStatus = "pass" | "warn" | "fail";
+export type RuntimeSloProfileId = "local_smoke" | "pr_diagnostics" | "candidate_gate";
+
+export interface RuntimeSloCheck {
+  id:
+    | "room_count"
+    | "reconnect_backlog"
+    | "queue_latency"
+    | "action_throughput"
+    | "gameplay_error_rate"
+    | "reconnect_error_rate"
+    | "token_delivery_error_rate";
+  label: string;
+  unit: "rooms" | "count" | "ms" | "actions_per_second" | "ratio";
+  operator: "min" | "max";
+  actual: number | null;
+  passThreshold: number;
+  warnThreshold: number;
+  status: RuntimeSloStatus;
+  summary: string;
+}
+
+export interface RuntimeSloProfileReport {
+  id: RuntimeSloProfileId;
+  label: string;
+  status: RuntimeSloStatus;
+  headline: string;
+  checks: RuntimeSloCheck[];
+}
+
+export interface RuntimeSloSummaryPayload {
+  schemaVersion: 1;
+  checkedAt: string;
+  service: string;
+  status: RuntimeSloStatus;
+  headline: string;
+  snapshot: {
+    uptimeSeconds: number;
+    roomCount: number;
+    reconnectBacklog: number;
+    queueLatencyMs: number | null;
+    queueNextAttemptDelayMs: number | null;
+    actionThroughputPerSecond: number;
+    gameplayErrorRate: number | null;
+    reconnectErrorRate: number | null;
+    tokenDeliveryErrorRate: number | null;
+    totals: {
+      actionMessagesTotal: number;
+      gameplayErrorCount: number;
+      reconnectAttemptsTotal: number;
+      reconnectFailuresTotal: number;
+      tokenDeliveryRequestsTotal: number;
+      tokenDeliveryFailuresTotal: number;
+    };
+  };
+  profiles: RuntimeSloProfileReport[];
+  alerts: string[];
+}
+
+const RUNTIME_SLO_THRESHOLDS: Record<
+  RuntimeSloProfileId,
+  {
+    label: string;
+    checks: Record<RuntimeSloCheck["id"], { operator: RuntimeSloCheck["operator"]; pass: number; warn: number }>;
+  }
+> = {
+  local_smoke: {
+    label: "Local smoke",
+    checks: {
+      room_count: { operator: "min", pass: 1, warn: 1 },
+      reconnect_backlog: { operator: "max", pass: 0, warn: 1 },
+      queue_latency: { operator: "max", pass: 1000, warn: 5000 },
+      action_throughput: { operator: "min", pass: 1, warn: 0.25 },
+      gameplay_error_rate: { operator: "max", pass: 0.05, warn: 0.1 },
+      reconnect_error_rate: { operator: "max", pass: 0.02, warn: 0.05 },
+      token_delivery_error_rate: { operator: "max", pass: 0.05, warn: 0.1 }
+    }
+  },
+  pr_diagnostics: {
+    label: "PR diagnostics",
+    checks: {
+      room_count: { operator: "min", pass: 12, warn: 8 },
+      reconnect_backlog: { operator: "max", pass: 0, warn: 1 },
+      queue_latency: { operator: "max", pass: 500, warn: 2000 },
+      action_throughput: { operator: "min", pass: 25, warn: 15 },
+      gameplay_error_rate: { operator: "max", pass: 0.02, warn: 0.05 },
+      reconnect_error_rate: { operator: "max", pass: 0.01, warn: 0.02 },
+      token_delivery_error_rate: { operator: "max", pass: 0.02, warn: 0.05 }
+    }
+  },
+  candidate_gate: {
+    label: "Candidate gate",
+    checks: {
+      room_count: { operator: "min", pass: 48, warn: 32 },
+      reconnect_backlog: { operator: "max", pass: 0, warn: 1 },
+      queue_latency: { operator: "max", pass: 250, warn: 1000 },
+      action_throughput: { operator: "min", pass: 150, warn: 120 },
+      gameplay_error_rate: { operator: "max", pass: 0.01, warn: 0.03 },
+      reconnect_error_rate: { operator: "max", pass: 0, warn: 0.01 },
+      token_delivery_error_rate: { operator: "max", pass: 0.01, warn: 0.03 }
+    }
+  }
+};
+
+function sumActionValidationFailures(): number {
+  return Array.from(runtimeObservability.prometheus.actionValidationFailuresTotal.values()).reduce((total, value) => total + value, 0);
+}
+
+function roundMetric(value: number, digits = 3): number {
+  return Number(value.toFixed(digits));
+}
+
+function formatSloValue(value: number | null, unit: RuntimeSloCheck["unit"]): string {
+  if (value == null) {
+    return "missing";
+  }
+  if (unit === "ratio") {
+    return `${(value * 100).toFixed(2)}%`;
+  }
+  if (unit === "actions_per_second") {
+    return `${value.toFixed(2)}/s`;
+  }
+  if (unit === "ms") {
+    return `${Math.round(value)}ms`;
+  }
+  return `${value}`;
+}
+
+function classifySloCheck(
+  id: RuntimeSloCheck["id"],
+  label: string,
+  unit: RuntimeSloCheck["unit"],
+  actual: number | null,
+  thresholds: { operator: RuntimeSloCheck["operator"]; pass: number; warn: number }
+): RuntimeSloCheck {
+  let status: RuntimeSloStatus = "fail";
+  if (actual != null) {
+    if (thresholds.operator === "min") {
+      status = actual >= thresholds.pass ? "pass" : actual >= thresholds.warn ? "warn" : "fail";
+    } else {
+      status = actual <= thresholds.pass ? "pass" : actual <= thresholds.warn ? "warn" : "fail";
+    }
+  }
+
+  return {
+    id,
+    label,
+    unit,
+    operator: thresholds.operator,
+    actual,
+    passThreshold: thresholds.pass,
+    warnThreshold: thresholds.warn,
+    status,
+    summary:
+      actual == null
+        ? `${label} is missing.`
+        : thresholds.operator === "min"
+          ? `${label} ${formatSloValue(actual, unit)} against min ${formatSloValue(thresholds.pass, unit)} (warn ${formatSloValue(thresholds.warn, unit)}).`
+          : `${label} ${formatSloValue(actual, unit)} against max ${formatSloValue(thresholds.pass, unit)} (warn ${formatSloValue(thresholds.warn, unit)}).`
+  };
+}
+
+function buildSloProfileReport(
+  id: RuntimeSloProfileId,
+  snapshot: RuntimeSloSummaryPayload["snapshot"]
+): RuntimeSloProfileReport {
+  const config = RUNTIME_SLO_THRESHOLDS[id];
+  const checks: RuntimeSloCheck[] = [
+    classifySloCheck("room_count", "Room count", "rooms", snapshot.roomCount, config.checks.room_count),
+    classifySloCheck("reconnect_backlog", "Reconnect backlog", "count", snapshot.reconnectBacklog, config.checks.reconnect_backlog),
+    classifySloCheck("queue_latency", "Queue latency", "ms", snapshot.queueLatencyMs, config.checks.queue_latency),
+    classifySloCheck(
+      "action_throughput",
+      "Action throughput",
+      "actions_per_second",
+      snapshot.actionThroughputPerSecond,
+      config.checks.action_throughput
+    ),
+    classifySloCheck(
+      "gameplay_error_rate",
+      "Gameplay error rate",
+      "ratio",
+      snapshot.gameplayErrorRate,
+      config.checks.gameplay_error_rate
+    ),
+    classifySloCheck(
+      "reconnect_error_rate",
+      "Reconnect error rate",
+      "ratio",
+      snapshot.reconnectErrorRate,
+      config.checks.reconnect_error_rate
+    ),
+    classifySloCheck(
+      "token_delivery_error_rate",
+      "Token delivery error rate",
+      "ratio",
+      snapshot.tokenDeliveryErrorRate,
+      config.checks.token_delivery_error_rate
+    )
+  ];
+
+  const status = checks.some((check) => check.status === "fail")
+    ? "fail"
+    : checks.some((check) => check.status === "warn")
+      ? "warn"
+      : "pass";
+  const failingChecks = checks.filter((check) => check.status !== "pass");
+
+  return {
+    id,
+    label: config.label,
+    status,
+    headline:
+      failingChecks.length === 0
+        ? `${config.label} thresholds passed.`
+        : `${config.label} ${status === "fail" ? "failed" : "warned"} on ${failingChecks.map((check) => check.label).join(", ")}.`,
+    checks
+  };
+}
+
+export function buildRuntimeSloSummaryPayload(service = "project-veil-server"): RuntimeSloSummaryPayload {
+  const health = buildHealthPayload(service);
+  const gameplayErrorCount =
+    sumActionValidationFailures() + health.runtime.gameplayTraffic.websocketActionRateLimitedTotal;
+  const actionMessagesTotal = health.runtime.gameplayTraffic.actionMessagesTotal;
+  const reconnectAttemptsTotal = health.runtime.auth.reconnect.counters.attemptsTotal;
+  const reconnectFailuresTotal = health.runtime.auth.reconnect.counters.failuresTotal;
+  const tokenDeliveryRequestsTotal = health.runtime.auth.tokenDelivery.counters.tokenDeliveryRequestsTotal;
+  const tokenDeliveryFailuresTotal = health.runtime.auth.tokenDelivery.counters.tokenDeliveryFailuresTotal;
+  const snapshot: RuntimeSloSummaryPayload["snapshot"] = {
+    uptimeSeconds: health.uptimeSeconds,
+    roomCount: health.runtime.activeRoomCount,
+    reconnectBacklog: health.runtime.auth.reconnect.pendingWindowCount,
+    queueLatencyMs: health.runtime.auth.tokenDelivery.oldestQueuedLatencyMs,
+    queueNextAttemptDelayMs: health.runtime.auth.tokenDelivery.nextAttemptDelayMs,
+    actionThroughputPerSecond:
+      health.uptimeSeconds > 0 ? roundMetric(actionMessagesTotal / Math.max(health.uptimeSeconds, 0.001)) : 0,
+    gameplayErrorRate: actionMessagesTotal > 0 ? roundMetric(gameplayErrorCount / actionMessagesTotal, 6) : 0,
+    reconnectErrorRate: reconnectAttemptsTotal > 0 ? roundMetric(reconnectFailuresTotal / reconnectAttemptsTotal, 6) : 0,
+    tokenDeliveryErrorRate:
+      tokenDeliveryRequestsTotal > 0 ? roundMetric(tokenDeliveryFailuresTotal / tokenDeliveryRequestsTotal, 6) : 0,
+    totals: {
+      actionMessagesTotal,
+      gameplayErrorCount,
+      reconnectAttemptsTotal,
+      reconnectFailuresTotal,
+      tokenDeliveryRequestsTotal,
+      tokenDeliveryFailuresTotal
+    }
+  };
+  const profiles = (Object.keys(RUNTIME_SLO_THRESHOLDS) as RuntimeSloProfileId[]).map((profileId) =>
+    buildSloProfileReport(profileId, snapshot)
+  );
+  const status = profiles.some((profile) => profile.status === "fail")
+    ? "fail"
+    : profiles.some((profile) => profile.status === "warn")
+      ? "warn"
+      : "pass";
+  const alerts = profiles
+    .flatMap((profile) =>
+      profile.checks
+        .filter((check) => check.status !== "pass")
+        .map((check) => `${profile.label}: ${check.summary}`)
+    );
+
+  return {
+    schemaVersion: 1,
+    checkedAt: health.checkedAt,
+    service,
+    status,
+    headline:
+      status === "pass"
+        ? "Runtime SLO summary passed local smoke, PR diagnostics, and candidate gate recommendations."
+        : status === "warn"
+          ? "Runtime SLO summary is warning on at least one recommended threshold."
+          : "Runtime SLO summary failed at least one recommended threshold.",
+    snapshot,
+    profiles,
+    alerts
+  };
+}
+
+export function renderRuntimeSloSummaryMarkdown(report: RuntimeSloSummaryPayload): string {
+  const lines = [
+    "# Runtime SLO Summary",
+    "",
+    `Overall status: **${report.status.toUpperCase()}**`,
+    "",
+    `Snapshot: rooms=${report.snapshot.roomCount} | reconnect backlog=${report.snapshot.reconnectBacklog} | queue latency=${formatSloValue(report.snapshot.queueLatencyMs, "ms")} | throughput=${formatSloValue(report.snapshot.actionThroughputPerSecond, "actions_per_second")} | gameplay error=${formatSloValue(report.snapshot.gameplayErrorRate, "ratio")} | reconnect error=${formatSloValue(report.snapshot.reconnectErrorRate, "ratio")} | token delivery error=${formatSloValue(report.snapshot.tokenDeliveryErrorRate, "ratio")}`,
+    "",
+    "## Threshold Recommendations",
+    "",
+    "| Profile | Status | Headline |",
+    "| --- | --- | --- |"
+  ];
+
+  for (const profile of report.profiles) {
+    lines.push(`| ${profile.label} | ${profile.status.toUpperCase()} | ${profile.headline} |`);
+  }
+
+  lines.push("", "## Alert-Friendly Diagnostics", "");
+  if (report.alerts.length === 0) {
+    lines.push("- No warning or failing SLO diagnostics.");
+  } else {
+    for (const alert of report.alerts) {
+      lines.push(`- ${alert}`);
+    }
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+export function renderRuntimeSloSummaryText(report: RuntimeSloSummaryPayload): string {
+  const parts = [
+    `runtime_slo status=${report.status}`,
+    `rooms=${report.snapshot.roomCount}`,
+    `reconnect_backlog=${report.snapshot.reconnectBacklog}`,
+    `queue_latency=${formatSloValue(report.snapshot.queueLatencyMs, "ms")}`,
+    `throughput=${formatSloValue(report.snapshot.actionThroughputPerSecond, "actions_per_second")}`,
+    `gameplay_error=${formatSloValue(report.snapshot.gameplayErrorRate, "ratio")}`,
+    `reconnect_error=${formatSloValue(report.snapshot.reconnectErrorRate, "ratio")}`,
+    `token_delivery_error=${formatSloValue(report.snapshot.tokenDeliveryErrorRate, "ratio")}`
+  ];
+  return `${parts.join(" | ")}\n`;
 }
 
 export function recordRuntimeRoom(snapshot: RuntimeRoomSnapshot): void {
@@ -882,6 +1260,16 @@ export function setAuthTokenDeliveryDeadLetterCount(count: number): void {
   runtimeObservability.auth.tokenDeliveryDeadLetterCount = Math.max(0, Math.floor(count));
 }
 
+export function setAuthTokenDeliveryQueueLatency(metrics: {
+  oldestQueuedLatencyMs: number | null;
+  nextAttemptDelayMs: number | null;
+}): void {
+  runtimeObservability.auth.tokenDeliveryOldestQueuedLatencyMs =
+    metrics.oldestQueuedLatencyMs != null ? Math.max(0, Math.floor(metrics.oldestQueuedLatencyMs)) : null;
+  runtimeObservability.auth.tokenDeliveryNextAttemptDelayMs =
+    metrics.nextAttemptDelayMs != null ? Math.max(0, Math.floor(metrics.nextAttemptDelayMs)) : null;
+}
+
 export function recordAuthTokenDeliveryRequest(): void {
   runtimeObservability.auth.counters.tokenDeliveryRequestsTotal += 1;
 }
@@ -925,6 +1313,20 @@ export function recordAuthTokenDeliveryAttempt(entry: {
   }
 }
 
+export function recordReconnectWindowOpened(): void {
+  runtimeObservability.reconnect.pendingWindowCount += 1;
+  runtimeObservability.reconnect.counters.attemptsTotal += 1;
+}
+
+export function recordReconnectWindowResolved(outcome: "success" | "failure"): void {
+  runtimeObservability.reconnect.pendingWindowCount = Math.max(0, runtimeObservability.reconnect.pendingWindowCount - 1);
+  if (outcome === "success") {
+    runtimeObservability.reconnect.counters.successesTotal += 1;
+    return;
+  }
+  runtimeObservability.reconnect.counters.failuresTotal += 1;
+}
+
 export function resetRuntimeObservability(): void {
   runtimeObservability.startedAt = Date.now();
   runtimeObservability.rooms.clear();
@@ -962,6 +1364,8 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.sessionFailureReasons.session_revoked = 0;
   runtimeObservability.auth.tokenDeliveryQueueCount = 0;
   runtimeObservability.auth.tokenDeliveryDeadLetterCount = 0;
+  runtimeObservability.auth.tokenDeliveryOldestQueuedLatencyMs = null;
+  runtimeObservability.auth.tokenDeliveryNextAttemptDelayMs = null;
   runtimeObservability.auth.tokenDeliveryFailureReasons.misconfigured = 0;
   runtimeObservability.auth.tokenDeliveryFailureReasons.timeout = 0;
   runtimeObservability.auth.tokenDeliveryFailureReasons.network = 0;
@@ -972,6 +1376,10 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_429 = 0;
   runtimeObservability.auth.tokenDeliveryFailureReasons.webhook_5xx = 0;
   runtimeObservability.auth.tokenDeliveryRecentAttempts.length = 0;
+  runtimeObservability.reconnect.pendingWindowCount = 0;
+  runtimeObservability.reconnect.counters.attemptsTotal = 0;
+  runtimeObservability.reconnect.counters.successesTotal = 0;
+  runtimeObservability.reconnect.counters.failuresTotal = 0;
   runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
 }
 
@@ -1050,6 +1458,31 @@ export function registerRuntimeObservabilityRoutes(
   app.get("/api/runtime/account-token-delivery", async (_request, response) => {
     try {
       sendJson(response, 200, buildAuthTokenDeliveryPayload(serviceName));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/runtime/slo-summary", async (request, response) => {
+    try {
+      const summary = buildRuntimeSloSummaryPayload(serviceName);
+      const url = new URL(request.url ?? "/api/runtime/slo-summary", "http://runtime.local");
+
+      if (url.searchParams.get("format") === "markdown") {
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "text/markdown; charset=utf-8");
+        response.end(renderRuntimeSloSummaryMarkdown(summary));
+        return;
+      }
+
+      if (url.searchParams.get("format") === "text") {
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "text/plain; charset=utf-8");
+        response.end(renderRuntimeSloSummaryText(summary));
+        return;
+      }
+
+      sendJson(response, 200, summary);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
