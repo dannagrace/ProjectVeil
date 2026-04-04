@@ -583,6 +583,10 @@ export type WorldAction =
       slot: EquipmentType;
     }
   | {
+      type: "world.surrender";
+      heroId: string;
+    }
+  | {
       type: "turn.endDay";
     };
 

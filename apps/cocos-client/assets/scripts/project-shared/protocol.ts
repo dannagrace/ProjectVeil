@@ -1,13 +1,15 @@
 import type { BattleAction, BattleState, MovementPlan, Vec2, WorldAction, WorldEvent } from "./models.ts";
 import type { PlayerWorldViewPayload } from "./map-sync.ts";
 
+export type SessionStateReason = "surrender" | "afk_forfeit" | "normal" | (string & {});
+
 export interface SessionStatePayload {
   world: PlayerWorldViewPayload;
   battle: BattleState | null;
   events: WorldEvent[];
   movementPlan: MovementPlan | null;
   reachableTiles: Vec2[];
-  reason?: string;
+  reason?: SessionStateReason;
 }
 
 export type PlayerReportReason = "cheating" | "harassment" | "afk";

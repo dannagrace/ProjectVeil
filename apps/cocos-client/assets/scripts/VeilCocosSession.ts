@@ -550,6 +550,10 @@ type WorldAction =
       slot: EquipmentType;
     }
   | {
+      type: "world.surrender";
+      heroId: string;
+    }
+  | {
       type: "turn.endDay";
     };
 
@@ -612,7 +616,7 @@ interface SessionStatePayload {
   events: WorldEvent[];
   movementPlan: MovementPlan | null;
   reachableTiles: Vec2[];
-  reason?: string;
+  reason?: "surrender" | "afk_forfeit" | "normal" | (string & {});
 }
 
 type ServerMessage =
@@ -1333,6 +1337,25 @@ class RemoteGameSession {
     };
   }
 
+  async surrender(heroId: string): Promise<SessionUpdate> {
+    const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
+      {
+        type: "world.action",
+        requestId: this.nextRequestId(),
+        action: {
+          type: "world.surrender",
+          heroId
+        }
+      },
+      "session.state"
+    );
+
+    const update = fromPayload(response.payload, this.latestWorld);
+    this.latestWorld = update.world;
+    writeSessionReplay(this.roomId, this.playerId, update);
+    return update;
+  }
+
   private persistReconnectionToken(): void {
     if (this.room.reconnectionToken) {
       writeReconnectionToken(this.roomId, this.playerId, this.room.reconnectionToken);
@@ -1499,6 +1522,10 @@ class RecoverableRemoteGameSession {
 
   async reportPlayer(targetPlayerId: string, reason: PlayerReportReason, description?: string): Promise<PlayerReportReceipt> {
     return this.runWithSession((session) => session.reportPlayer(targetPlayerId, reason, description));
+  }
+
+  async surrender(heroId: string): Promise<SessionUpdate> {
+    return this.runWithSession((session) => session.surrender(heroId));
   }
 
   async actInBattle(action: BattleAction): Promise<SessionUpdate> {
@@ -1716,6 +1743,10 @@ export class VeilCocosSession {
 
   async reportPlayer(targetPlayerId: string, reason: PlayerReportReason, description?: string): Promise<PlayerReportReceipt> {
     return this.remoteSession.reportPlayer(targetPlayerId, reason, description);
+  }
+
+  async surrender(heroId: string): Promise<SessionUpdate> {
+    return this.remoteSession.surrender(heroId);
   }
 
   async actInBattle(action: BattleAction): Promise<SessionUpdate> {

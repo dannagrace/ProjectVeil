@@ -329,7 +329,7 @@ export class AuthoritativeWorldRoom {
       }
     }
 
-    const validation = validateWorldAction(this.state, action);
+    const validation = validateWorldAction(this.state, action, playerId);
     if (!validation.valid) {
       recordActionValidationFailure("world", validation.reason ?? "world_action_invalid");
       return {

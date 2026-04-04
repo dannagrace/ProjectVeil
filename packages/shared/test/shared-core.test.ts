@@ -4759,6 +4759,48 @@ test("swamp tiles stay traversable but cost extra movement in world and player v
   );
 });
 
+test("validateWorldAction allows surrender only for the requesting player's hero", () => {
+  const heroOne = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 0 }
+  });
+  const heroTwo = createHero({
+    id: "hero-2",
+    playerId: "player-2",
+    name: "维恩",
+    position: { x: 1, y: 0 }
+  });
+  const state = createWorldState({
+    width: 2,
+    height: 2,
+    heroes: [heroOne, heroTwo],
+    tiles: [
+      createTile(0, 0, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(1, 0, { occupant: { kind: "hero", refId: "hero-2" } }),
+      createTile(0, 1),
+      createTile(1, 1)
+    ],
+    visibilityByPlayer: {
+      "player-1": ["visible", "visible", "visible", "visible"],
+      "player-2": ["visible", "visible", "visible", "visible"]
+    }
+  });
+
+  assert.deepEqual(validateWorldAction(state, { type: "world.surrender", heroId: "hero-1" }, "player-1"), {
+    valid: true
+  });
+  assert.deepEqual(validateWorldAction(state, { type: "world.surrender", heroId: "hero-1" }, "player-2"), {
+    valid: false,
+    reason: "hero_not_owned_by_player"
+  });
+  assert.deepEqual(validateWorldAction(state, { type: "world.surrender", heroId: "missing-hero" }, "player-1"), {
+    valid: false,
+    reason: "hero_not_found"
+  });
+});
+
 test("predictPlayerWorldAction updates the player view immediately for move and collect", () => {
   const hero = createHero({
     id: "hero-1",

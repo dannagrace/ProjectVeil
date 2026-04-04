@@ -36,6 +36,20 @@ function createHudState(): VeilHudRenderState {
     triageSummaryLines: [],
     levelUpNotice: null,
     achievementNotice: null,
+    reporting: {
+      open: false,
+      available: false,
+      targetLabel: null,
+      status: null,
+      submitting: false
+    },
+    surrendering: {
+      open: false,
+      available: false,
+      targetLabel: null,
+      status: null,
+      submitting: false
+    },
     presentation: {
       audio: {
         supported: false,
@@ -137,6 +151,39 @@ test("VeilHudPanel dispatchPointerUp routes the inventory chrome button", () => 
 
   assert.equal(action, "inventory");
   assert.equal(opened, 1);
+});
+
+test("VeilHudPanel shows the surrender action only when available and routes confirmation clicks", () => {
+  const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
+  const state = createHudState();
+  state.surrendering = {
+    open: true,
+    available: true,
+    targetLabel: "维恩 · player-2",
+    status: "确认后将直接判负。",
+    submitting: false
+  };
+
+  let confirmed = 0;
+  component.configure({
+    onToggleSurrender: () => undefined,
+    onConfirmSurrender: () => {
+      confirmed += 1;
+    }
+  });
+  component.render(state);
+
+  const surrenderButton = findNode(node, "HudSurrender");
+  assert.ok(surrenderButton);
+  assert.equal(surrenderButton.active, true);
+
+  const confirmButton = findNode(node, "HudSurrenderConfirm");
+  assert.ok(confirmButton);
+  const confirmCenter = toHudLocalPosition(node, confirmButton);
+  const action = component.dispatchPointerUp(confirmCenter.x, confirmCenter.y);
+
+  assert.equal(action, "surrender-confirm");
+  assert.equal(confirmed, 1);
 });
 
 test("VeilHudPanel surfaces reconnect, replay, resync, and degraded session indicators in the status card", () => {

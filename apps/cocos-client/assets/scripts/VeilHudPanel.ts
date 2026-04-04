@@ -66,11 +66,13 @@ const SKILL_BUTTON_PREFIX = "HudSkillButton";
 const EQUIPMENT_BUTTON_PREFIX = "HudEquipButton";
 const ACHIEVEMENT_NOTICE_NODE_NAME = "HudAchievementNotice";
 const REPORT_DIALOG_NODE_NAME = "HudReportDialog";
+const SURRENDER_DIALOG_NODE_NAME = "HudSurrenderDialog";
 
 interface HudActionButtonState {
   name: string;
   label: string;
   callback: (() => void) | null;
+  visible?: boolean;
 }
 
 interface HudEquipmentButtonState {
@@ -188,6 +190,13 @@ export interface VeilHudRenderState {
     status: string | null;
     submitting: boolean;
   };
+  surrendering: {
+    open: boolean;
+    available: boolean;
+    targetLabel: string | null;
+    status: string | null;
+    submitting: boolean;
+  };
   presentation: {
     audio: CocosAudioRuntimeState;
     pixelAssets: PixelSpriteLoadStatus;
@@ -221,8 +230,11 @@ export interface VeilHudPanelOptions {
   onToggleInventory?: () => void;
   onToggleAchievements?: () => void;
   onToggleReport?: () => void;
+  onToggleSurrender?: () => void;
   onSubmitReport?: (reason: PlayerReportReason) => void;
   onCancelReport?: () => void;
+  onConfirmSurrender?: () => void;
+  onCancelSurrender?: () => void;
   onLearnSkill?: (skillId: string) => void;
   onEquipItem?: (slot: EquipmentType, equipmentId: string) => void;
   onUnequipItem?: (slot: EquipmentType) => void;
@@ -326,8 +338,11 @@ export class VeilHudPanel extends Component {
   private onToggleInventory: (() => void) | undefined;
   private onToggleAchievements: (() => void) | undefined;
   private onToggleReport: (() => void) | undefined;
+  private onToggleSurrender: (() => void) | undefined;
   private onSubmitReport: ((reason: PlayerReportReason) => void) | undefined;
   private onCancelReport: (() => void) | undefined;
+  private onConfirmSurrender: (() => void) | undefined;
+  private onCancelSurrender: (() => void) | undefined;
   private onLearnSkill: ((skillId: string) => void) | undefined;
   private onEquipItem: ((slot: EquipmentType, equipmentId: string) => void) | undefined;
   private onUnequipItem: ((slot: EquipmentType) => void) | undefined;
@@ -341,8 +356,11 @@ export class VeilHudPanel extends Component {
     this.onToggleInventory = options.onToggleInventory;
     this.onToggleAchievements = options.onToggleAchievements;
     this.onToggleReport = options.onToggleReport;
+    this.onToggleSurrender = options.onToggleSurrender;
     this.onSubmitReport = options.onSubmitReport;
     this.onCancelReport = options.onCancelReport;
+    this.onConfirmSurrender = options.onConfirmSurrender;
+    this.onCancelSurrender = options.onCancelSurrender;
     this.onLearnSkill = options.onLearnSkill;
     this.onEquipItem = options.onEquipItem;
     this.onUnequipItem = options.onUnequipItem;
@@ -562,6 +580,7 @@ export class VeilHudPanel extends Component {
     this.renderStatusBadge(`${CARD_PREFIX}-status`, statusBadge);
     this.renderAchievementNotice(state.achievementNotice);
     this.renderReportDialog(state.reporting);
+    this.renderSurrenderDialog(state.surrendering);
 
     const showDebug = false;
     if (showDebug) {
@@ -626,6 +645,7 @@ export class VeilHudPanel extends Component {
       { nodeName: "HudInventory", debugLabel: "inventory", callback: this.onToggleInventory ?? null },
       { nodeName: "HudAchievements", debugLabel: "achievements", callback: this.onToggleAchievements ?? null },
       { nodeName: "HudReportPlayer", debugLabel: "report-player", callback: this.onToggleReport ?? null },
+      { nodeName: "HudSurrender", debugLabel: "surrender", callback: this.onToggleSurrender ?? null },
       { nodeName: "HudEndDay", debugLabel: "end-day", callback: this.onEndDay ?? null },
       { nodeName: "HudReturnLobby", debugLabel: "return-lobby", callback: this.onReturnLobby ?? null }
     ];
@@ -639,6 +659,21 @@ export class VeilHudPanel extends Component {
     const reportDialogNode = this.node.getChildByName(REPORT_DIALOG_NODE_NAME);
     for (const action of reportDialogActions) {
       const node = reportDialogNode?.getChildByName(action.nodeName) ?? null;
+      if (this.pointInNode(localX, localY, node)) {
+        return {
+          debugLabel: action.debugLabel,
+          callback: action.callback
+        };
+      }
+    }
+
+    const surrenderDialogActions: Array<{ nodeName: string; debugLabel: string; callback: (() => void) | null }> = [
+      { nodeName: "HudSurrenderConfirm", debugLabel: "surrender-confirm", callback: this.onConfirmSurrender ?? null },
+      { nodeName: "HudSurrenderCancel", debugLabel: "surrender-cancel", callback: this.onCancelSurrender ?? null }
+    ];
+    const surrenderDialogNode = this.node.getChildByName(SURRENDER_DIALOG_NODE_NAME);
+    for (const action of surrenderDialogActions) {
+      const node = surrenderDialogNode?.getChildByName(action.nodeName) ?? null;
       if (this.pointInNode(localX, localY, node)) {
         return {
           debugLabel: action.debugLabel,
@@ -1475,6 +1510,7 @@ export class VeilHudPanel extends Component {
       WATERMARK_NODE_NAME,
       ACTIONS_NODE_NAME,
       REPORT_DIALOG_NODE_NAME,
+      SURRENDER_DIALOG_NODE_NAME,
       `${CARD_PREFIX}-title`,
       `${CARD_PREFIX}-resources`,
       `${CARD_PREFIX}-hero`,
@@ -1504,6 +1540,7 @@ export class VeilHudPanel extends Component {
     this.ensureActionButton(actionsNode, "HudInventory", "装备背包");
     this.ensureActionButton(actionsNode, "HudAchievements", "战报中心");
     this.ensureActionButton(actionsNode, "HudReportPlayer", "举报玩家");
+    this.ensureActionButton(actionsNode, "HudSurrender", "认输");
     this.ensureActionButton(actionsNode, "HudEndDay", "推进一天");
     this.ensureActionButton(actionsNode, "HudReturnLobby", "返回大厅");
   }
@@ -1516,25 +1553,32 @@ export class VeilHudPanel extends Component {
       return;
     }
 
-    const actionsTransform = actionsNode.getComponent(UITransform) ?? actionsNode.addComponent(UITransform);
-    actionsTransform.setContentSize(Math.max(164, transform.width - 28), 246);
-    actionsNode.setPosition(0, transform.height / 2 - 118, 1);
-
     const buttons: HudActionButtonState[] = [
       { name: "HudNewRun", label: "新开一局", callback: this.onNewRun ?? null },
       { name: "HudRefresh", label: "刷新状态", callback: this.onRefresh ?? null },
       { name: "HudInventory", label: "装备背包", callback: this.onToggleInventory ?? null },
       { name: "HudAchievements", label: "战报中心", callback: this.onToggleAchievements ?? null },
       { name: "HudReportPlayer", label: "举报玩家", callback: this.onToggleReport ?? null },
+      {
+        name: "HudSurrender",
+        label: "认输",
+        callback: this.onToggleSurrender ?? null,
+        visible: this.currentState?.surrendering.available ?? false
+      },
       { name: "HudEndDay", label: "推进一天", callback: this.onEndDay ?? null },
       { name: "HudReturnLobby", label: "返回大厅", callback: this.onReturnLobby ?? null }
     ];
+    const visibleButtons = buttons.filter((button) => button.visible !== false);
+    const actionsTransform = actionsNode.getComponent(UITransform) ?? actionsNode.addComponent(UITransform);
+    actionsTransform.setContentSize(Math.max(164, transform.width - 28), Math.max(246, 66 + visibleButtons.length * 30));
+    actionsNode.setPosition(0, transform.height / 2 - 118, 1);
 
-    buttons.forEach((button, index) => {
+    visibleButtons.forEach((button, index) => {
       const node = actionsNode.getChildByName(button.name);
       if (!node) {
         return;
       }
+      node.active = true;
 
       const buttonTransform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
       const buttonWidth = Math.floor(actionsTransform.width - 8);
@@ -1611,6 +1655,13 @@ export class VeilHudPanel extends Component {
         });
       }
     });
+
+    for (const button of buttons.filter((candidate) => candidate.visible === false)) {
+      const hiddenNode = actionsNode.getChildByName(button.name);
+      if (hiddenNode) {
+        hiddenNode.active = false;
+      }
+    }
   }
 
   private ensureActionButton(parent: Node, name: string, labelText: string): void {
@@ -1688,6 +1739,58 @@ export class VeilHudPanel extends Component {
     buttons.forEach((button, index) => {
       this.renderDialogButton(dialogNode!, button.name, button.label, 14 - index * 30, button.enabled);
     });
+  }
+
+  private renderSurrenderDialog(state: VeilHudRenderState["surrendering"]): void {
+    let dialogNode = this.node.getChildByName(SURRENDER_DIALOG_NODE_NAME);
+    if (!state.open) {
+      if (dialogNode) {
+        dialogNode.active = false;
+      }
+      return;
+    }
+
+    if (!dialogNode) {
+      dialogNode = new Node(SURRENDER_DIALOG_NODE_NAME);
+      dialogNode.parent = this.node;
+    }
+    assignUiLayer(dialogNode);
+    dialogNode.active = true;
+
+    const rootTransform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
+    const dialogTransform = dialogNode.getComponent(UITransform) ?? dialogNode.addComponent(UITransform);
+    const width = Math.max(176, rootTransform.width - 38);
+    const height = 156;
+    dialogTransform.setContentSize(width, height);
+    dialogNode.setPosition(0, 8, 6);
+
+    const graphics = dialogNode.getComponent(Graphics) ?? dialogNode.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(34, 30, 30, 238);
+    graphics.strokeColor = new Color(244, 203, 173, 148);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 16);
+    graphics.fill();
+    graphics.stroke();
+
+    const titleNode = dialogNode.getChildByName("Label") ?? new Node("Label");
+    titleNode.parent = dialogNode;
+    assignUiLayer(titleNode);
+    const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform);
+    titleTransform.setContentSize(width - 24, 70);
+    titleNode.setPosition(0, 34, 1);
+    const title = titleNode.getComponent(Label) ?? titleNode.addComponent(Label);
+    title.string = `确认认输\n${state.targetLabel ?? "当前没有可结算的对手"}${state.status ? `\n${state.status}` : ""}`;
+    title.fontSize = 13;
+    title.lineHeight = 16;
+    title.horizontalAlign = H_ALIGN_CENTER;
+    title.verticalAlign = V_ALIGN_MIDDLE;
+    title.overflow = OVERFLOW_RESIZE_HEIGHT;
+    title.enableWrapText = true;
+    title.color = new Color(248, 244, 233, 255);
+
+    this.renderDialogButton(dialogNode, "HudSurrenderConfirm", "确认认输", -18, state.available && !state.submitting);
+    this.renderDialogButton(dialogNode, "HudSurrenderCancel", "取消", -48, !state.submitting);
   }
 
   private renderDialogButton(parent: Node, name: string, labelText: string, y: number, enabled: boolean): void {

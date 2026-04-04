@@ -29,9 +29,29 @@ function formatNeutralMoveReason(reason: string): string {
   return reason === "chase" ? "主动追击" : reason === "return" ? "返回守位" : "沿巡逻路线移动";
 }
 
+export function isSessionSettlementReason(reason?: string | null): reason is "surrender" | "afk_forfeit" | "normal" {
+  return reason === "surrender" || reason === "afk_forfeit" || reason === "normal";
+}
+
+export function formatSessionSettlementReason(reason: "surrender" | "afk_forfeit" | "normal", didWin: boolean): string {
+  if (reason === "surrender") {
+    return didWin ? "对手已认输，本局结算完成。" : "你已认输，本局结算完成。";
+  }
+
+  if (reason === "afk_forfeit") {
+    return didWin ? "对手因挂机判负，本局结算完成。" : "你因挂机判负，本局结算完成。";
+  }
+
+  return didWin ? "对局已正常结算。" : "对局已结束。";
+}
+
 export function formatSessionActionReason(reason: string): string {
   if (!reason) {
     return "未知原因";
+  }
+
+  if (isSessionSettlementReason(reason)) {
+    return reason === "surrender" ? "对局已按认输结算" : reason === "afk_forfeit" ? "对局已按挂机判负结算" : "对局已正常结算";
   }
 
   if (reason.startsWith("equipment_")) {
@@ -41,6 +61,10 @@ export function formatSessionActionReason(reason: string): string {
   switch (reason) {
     case "hero_not_found":
       return "当前英雄不存在";
+    case "hero_not_owned_by_player":
+      return "当前英雄不属于你";
+    case "hero_in_battle":
+      return "战斗结算前不能认输";
     case "hero_not_on_building":
       return "英雄没有站在目标建筑上";
     case "hero_not_on_tile":
@@ -73,6 +97,8 @@ export function formatSessionActionReason(reason: string): string {
       return "当前找不到可行路径";
     case "not_enough_move_points":
       return "移动力不足";
+    case "surrender_opponent_not_found":
+      return "当前没有可结算的对手";
     case "unit_not_active":
     case "attacker_not_active":
       return "当前还没轮到这个单位行动";
@@ -121,6 +147,13 @@ export function describeSessionActionOutcome(
     return {
       accepted: true,
       message: options.successMessage
+    };
+  }
+
+  if (isSessionSettlementReason(update.reason)) {
+    return {
+      accepted: true,
+      message: formatSessionSettlementReason(update.reason, false)
     };
   }
 
@@ -259,7 +292,11 @@ export function buildTimelineEntriesFromUpdate(update: SessionUpdate): string[] 
   const entries: string[] = [];
 
   if (update.reason) {
-    entries.push(`系统：操作被拒绝，原因是 ${formatSessionActionReason(update.reason)}`);
+    entries.push(
+      isSessionSettlementReason(update.reason)
+        ? `系统：${formatSessionActionReason(update.reason)}。`
+        : `系统：操作被拒绝，原因是 ${formatSessionActionReason(update.reason)}`
+    );
   }
 
   if (update.movementPlan && update.movementPlan.travelPath.length > 1) {

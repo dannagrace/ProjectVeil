@@ -1882,6 +1882,15 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
     };
   }
 
+  if (action.type !== "hero.collect") {
+    return {
+      world: view,
+      movementPlan: null,
+      reachableTiles: listReachableTilesInPlayerView(view, hero.id),
+      reason: "prediction_not_supported"
+    };
+  }
+
   const tile = findPlayerTile(view, action.position);
   if (!tile) {
     return {
@@ -1938,7 +1947,11 @@ export function predictPlayerWorldAction(view: PlayerWorldView, action: WorldAct
   };
 }
 
-export function validateWorldAction(state: WorldState, action: WorldAction): ValidationResult {
+export function validateWorldAction(
+  state: WorldState,
+  action: WorldAction,
+  requestingPlayerId?: string
+): ValidationResult {
   if (action.type === "turn.endDay") {
     return { valid: true };
   }
@@ -1946,6 +1959,14 @@ export function validateWorldAction(state: WorldState, action: WorldAction): Val
   const hero = state.heroes.find((item) => item.id === action.heroId);
   if (!hero) {
     return { valid: false, reason: "hero_not_found" };
+  }
+
+  if (requestingPlayerId && hero.playerId !== requestingPlayerId) {
+    return { valid: false, reason: "hero_not_owned_by_player" };
+  }
+
+  if (action.type === "world.surrender") {
+    return { valid: true };
   }
 
   if (action.type === "hero.move") {
@@ -2502,6 +2523,10 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
         }
       ]
     };
+  }
+
+  if (action.type !== "hero.collect") {
+    return { state, events: [] };
   }
 
   const hero = state.heroes.find((item) => item.id === action.heroId);
