@@ -19,7 +19,6 @@ import {
 } from "../../../packages/shared/src/index";
 import {
   createDailyQuestClaimEventLogEntry,
-  findDailyQuestDefinition,
   loadDailyQuestBoard
 } from "./daily-quests";
 import { resolveBattlePassConfig } from "./battle-pass";
@@ -926,17 +925,6 @@ export function registerPlayerAccountRoutes(
       return;
     }
 
-    const definition = findDailyQuestDefinition(request.params.questId);
-    if (!definition) {
-      sendJson(response, 404, {
-        error: {
-          code: "daily_quest_not_found",
-          message: "Daily quest was not found"
-        }
-      });
-      return;
-    }
-
     try {
       const account =
         (await store.loadPlayerAccount(authSession.playerId)) ??
@@ -948,7 +936,10 @@ export function registerPlayerAccountRoutes(
         store,
         account,
         new Date(),
-        featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep)
+        {
+          enabled: featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep),
+          featureFlags
+        }
       );
       if (!board.enabled) {
         sendJson(response, 409, {
@@ -958,7 +949,7 @@ export function registerPlayerAccountRoutes(
         });
         return;
       }
-      const quest = board.quests.find((item) => item.id === definition.id);
+      const quest = board.quests.find((item) => item.id === request.params.questId);
 
       if (!quest) {
         sendJson(response, 404, {
@@ -992,14 +983,14 @@ export function registerPlayerAccountRoutes(
       const claimEntry = createDailyQuestClaimEventLogEntry(
         account.playerId,
         account.lastRoomId ?? "daily-quests",
-        definition,
+        quest,
         timestamp
       );
       const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
-        gems: (account.gems ?? 0) + definition.reward.gems,
+        gems: (account.gems ?? 0) + quest.reward.gems,
         globalResources: {
           ...account.globalResources,
-          gold: (account.globalResources.gold ?? 0) + definition.reward.gold
+          gold: (account.globalResources.gold ?? 0) + quest.reward.gold
         },
         recentEventLog: appendEventLogEntries(account.recentEventLog, [claimEntry])
       });
@@ -1008,20 +999,23 @@ export function registerPlayerAccountRoutes(
         roomId: account.lastRoomId ?? "daily-quests",
         payload: {
           roomId: account.lastRoomId ?? "daily-quests",
-          questId: definition.id,
-          reward: definition.reward
+          questId: quest.id,
+          reward: quest.reward
         }
       });
 
       sendJson(response, 200, {
         claimed: true,
-        questId: definition.id,
-        reward: definition.reward,
+        questId: quest.id,
+        reward: quest.reward,
         dailyQuestBoard: await loadDailyQuestBoard(
           store,
           nextAccount,
           new Date(),
-          featureFlags.quest_system_enabled && isTutorialComplete(nextAccount.tutorialStep)
+          {
+            enabled: featureFlags.quest_system_enabled && isTutorialComplete(nextAccount.tutorialStep),
+            featureFlags
+          }
         )
       });
     } catch (error) {

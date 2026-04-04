@@ -27,6 +27,7 @@
     "ops:codex-branches": "node --import tsx ./scripts/audit-codex-automation-branches.ts",
     "plan:validation:minimal": "node --import tsx ./scripts/minimal-validation-plan.ts",
     "demo:flow": "node --import tsx ./scripts/demo.ts",
+    "preview:daily-quest-rotation": "node --import tsx ./scripts/daily-quest-rotation-preview.ts",
     "validate:quickstart": "node ./scripts/validate-local-dev-quickstart.mjs",
     "validate:redis-scaling": "node --import tsx ./scripts/validate-redis-scaling.ts",
     "validate:e2e:fixtures": "node --import tsx ./scripts/validate-e2e-config-fixtures.ts",

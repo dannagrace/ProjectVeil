@@ -1,15 +1,13 @@
 import {
   buildDailyQuestBoard,
   createEmptyDailyQuestReward,
-  getDailyQuestDefinitions,
   type DailyQuestBoard,
   type DailyQuestDefinition,
-  type DailyQuestId,
-  type EventLogEntry
+  type EventLogEntry,
+  type FeatureFlags
 } from "../../../packages/shared/src/index";
 import type { PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
-
-const DAILY_QUEST_ID_SET = new Set(getDailyQuestDefinitions().map((definition) => definition.id));
+import { resolveDailyQuestRotation } from "./daily-quest-rotations";
 
 export function readDailyQuestFeatureEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const normalized = env.VEIL_DAILY_QUESTS_ENABLED?.trim().toLowerCase();
@@ -27,7 +25,7 @@ export function getDailyQuestResetAt(cycleKey = getDailyQuestCycleKey()): string
 export function createDailyQuestClaimEventLogEntry(
   playerId: string,
   roomId: string,
-  definition: DailyQuestDefinition,
+  definition: Pick<DailyQuestDefinition, "id" | "title" | "reward">,
   timestamp: string,
   sequence = 1
 ): EventLogEntry {
@@ -49,8 +47,14 @@ export async function loadDailyQuestBoard(
   store: RoomSnapshotStore,
   account: PlayerAccountSnapshot,
   now = new Date(),
-  enabled = readDailyQuestFeatureEnabled()
+  options:
+    | boolean
+    | {
+        enabled: boolean;
+        featureFlags?: Partial<FeatureFlags>;
+      } = readDailyQuestFeatureEnabled()
 ): Promise<DailyQuestBoard> {
+  const enabled = typeof options === "boolean" ? options : options.enabled;
   if (!enabled) {
     return {
       enabled: false,
@@ -64,19 +68,13 @@ export async function loadDailyQuestBoard(
   const history = await store.loadPlayerEventHistory(account.playerId, {
     since: `${cycleKey}T00:00:00.000Z`
   });
+  const activeRotation =
+    resolveDailyQuestRotation(now, typeof options === "boolean" ? undefined : options.featureFlags) ?? null;
 
   return buildDailyQuestBoard(history.items, {
     enabled: true,
     cycleKey,
-    resetAt: getDailyQuestResetAt(cycleKey)
+    resetAt: getDailyQuestResetAt(cycleKey),
+    ...(activeRotation ? { definitions: activeRotation.quests } : {})
   });
-}
-
-export function findDailyQuestDefinition(questId?: string | null): DailyQuestDefinition | null {
-  const normalizedQuestId = questId?.trim() as DailyQuestId | undefined;
-  if (!normalizedQuestId || !DAILY_QUEST_ID_SET.has(normalizedQuestId)) {
-    return null;
-  }
-
-  return getDailyQuestDefinitions().find((definition) => definition.id === normalizedQuestId) ?? null;
 }

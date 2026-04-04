@@ -8,6 +8,7 @@ export * from "./battle-replay.ts";
 export * from "./analytics-events.ts";
 export * from "./content-pack-validation.ts";
 export * from "./daily-quests.ts";
+export * from "./daily-quest-rotation.ts";
 export * from "./deterministic-rng.ts";
 export * from "./equipment.ts";
 export * from "./event-log.ts";
