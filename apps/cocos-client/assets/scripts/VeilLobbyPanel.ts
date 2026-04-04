@@ -1,5 +1,6 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Sprite, SpriteFrame, UITransform } from "cc";
 import { buildCocosLeaderboardPanelView } from "./cocos-leaderboard-panel.ts";
+import type { LobbySkillPanelView } from "./cocos-lobby-skill-panel.ts";
 import {
   type CocosAccountReviewItem,
   type CocosAccountReviewPage,
@@ -31,6 +32,7 @@ import {
 } from "./cocos-showcase-gallery.ts";
 import type { CocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import { HUD_ACCENT } from "./VeilHudPanel.ts";
+import type { HeroView } from "./VeilCocosSession.ts";
 import type {
   CocosAccountLifecycleFieldView,
   CocosAccountLifecyclePanelView,
@@ -128,6 +130,10 @@ export interface VeilLobbyRenderState {
   rooms: CocosLobbyRoomSummary[];
   accountFlow: CocosAccountLifecyclePanelView | null;
   presentationReadiness: CocosPresentationReadiness;
+  activeHero: HeroView | null;
+  lobbySkillPanel: LobbySkillPanelView | null;
+  battleActive: boolean;
+  skillPanelBusy?: boolean;
 }
 
 export interface VeilLobbyPanelOptions {
@@ -155,6 +161,9 @@ export interface VeilLobbyPanelOptions {
   onSelectAccountReviewPage?: (section: "battle-replays" | "event-history", page: number) => void;
   onRetryAccountReviewSection?: (section: CocosAccountReviewSection) => void;
   onSelectBattleReplayReview?: (replayId: string) => void;
+  onOpenLobbySkillPanel?: () => void;
+  onCloseLobbySkillPanel?: () => void;
+  onLearnLobbySkill?: (skillId: string) => void;
 }
 
 interface PanelCardTone {
@@ -194,10 +203,14 @@ export class VeilLobbyPanel extends Component {
   private onSelectAccountReviewPage: ((section: "battle-replays" | "event-history", page: number) => void) | undefined;
   private onRetryAccountReviewSection: ((section: CocosAccountReviewSection) => void) | undefined;
   private onSelectBattleReplayReview: ((replayId: string) => void) | undefined;
+  private onOpenLobbySkillPanel: (() => void) | undefined;
+  private onCloseLobbySkillPanel: (() => void) | undefined;
+  private onLearnLobbySkill: ((skillId: string) => void) | undefined;
   private replayPlayback: BattleReplayPlaybackState | null = null;
   private replayPlaybackReplayId: string | null = null;
   private replayPlaybackStatus = "选择一场最近战斗，即可查看逐步回放。";
   private replayPlaybackTimer: ReturnType<typeof setInterval> | null = null;
+  private showSkillPanel = false;
 
   onDestroy(): void {
     this.stopReplayPlaybackLoop();
@@ -229,6 +242,9 @@ export class VeilLobbyPanel extends Component {
     this.onSelectAccountReviewPage = options.onSelectAccountReviewPage;
     this.onRetryAccountReviewSection = options.onRetryAccountReviewSection;
     this.onSelectBattleReplayReview = options.onSelectBattleReplayReview;
+    this.onOpenLobbySkillPanel = options.onOpenLobbySkillPanel;
+    this.onCloseLobbySkillPanel = options.onCloseLobbySkillPanel;
+    this.onLearnLobbySkill = options.onLearnLobbySkill;
   }
 
   render(state: VeilLobbyRenderState): void {
@@ -245,6 +261,7 @@ export class VeilLobbyPanel extends Component {
     };
     const matchmakingSearching = state.matchmakingSearching ?? false;
     const matchmakingBusy = state.matchmakingBusy ?? false;
+    const skillPanelBusy = state.skillPanelBusy ?? false;
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const width = transform.width || 760;
     const height = transform.height || 620;
@@ -567,7 +584,10 @@ export class VeilLobbyPanel extends Component {
     );
 
     if (this.showAccountReview) {
+      this.showSkillPanel = false;
       this.hideAccountFlowPanel();
+      this.hideHeroSection();
+      this.hideSkillPanelModal();
       const review = state.accountReview;
       const hasBattleReplays = state.battleReplayItems.length > 0;
       const unlockedCount = state.account.achievements.filter((achievement) => achievement.unlocked).length;
@@ -703,15 +723,19 @@ export class VeilLobbyPanel extends Component {
       this.hideLobbyRooms();
       this.hideLeaderboardCards();
     } else if (state.accountFlow) {
+      this.showSkillPanel = false;
       this.hideAccountReviewCards();
       this.hideBattleReplayTimelineCard();
       this.hideLobbyRooms();
       this.hideLeaderboardCards();
+      this.hideHeroSection();
+      this.hideSkillPanelModal();
       this.renderAccountFlowPanel(rightX, rightCursorY, rightWidth, state.accountFlow, state.entering);
     } else {
       this.hideAccountFlowPanel();
       this.hideAccountReviewCards();
       this.hideBattleReplayTimelineCard();
+      rightCursorY = this.renderHeroSection(rightX, rightCursorY, rightWidth, state, skillPanelBusy);
       rightCursorY = this.renderLeaderboardSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderCard(
         "LobbyRoomsHeader",
@@ -791,6 +815,12 @@ export class VeilLobbyPanel extends Component {
       }
 
       this.renderPixelShowcase(rightX, showcaseTopY, rightWidth);
+    }
+
+    if (this.showSkillPanel && state.lobbySkillPanel && state.activeHero) {
+      this.renderSkillPanelModal(width, height, state, skillPanelBusy);
+    } else {
+      this.hideSkillPanelModal();
     }
   }
 
@@ -895,6 +925,76 @@ export class VeilLobbyPanel extends Component {
     }
   }
 
+  private renderHeroSection(
+    centerX: number,
+    topY: number,
+    width: number,
+    state: VeilLobbyRenderState,
+    skillPanelBusy: boolean
+  ): number {
+    const hero = state.activeHero;
+    if (!hero || !state.lobbySkillPanel) {
+      this.hideHeroSection();
+      this.showSkillPanel = false;
+      return topY;
+    }
+
+    const nextTopY = this.renderCard(
+      "LobbyHeroSummary",
+      centerX,
+      topY,
+      width,
+      84,
+      [
+        "当前英雄",
+        `${hero.name} · Lv ${hero.progression.level} · 兵力 ${hero.armyCount}`,
+        `技能点 ${state.lobbySkillPanel.availableSkillPoints} · ${state.battleActive ? "战斗中无法分配" : "房间空闲时可立即分配"}`
+      ],
+      {
+        fill: new Color(52, 66, 94, 190),
+        stroke: new Color(222, 232, 246, 64),
+        accent: new Color(128, 176, 226, 204)
+      },
+      null,
+      14,
+      18
+    );
+
+    this.renderActionButton(
+      "LobbyHeroSkillButton",
+      centerX,
+      nextTopY - 16,
+      width,
+      28,
+      skillPanelBusy ? "技能同步中..." : "技能",
+      {
+        fill: ACTION_ACCOUNT_REVIEW_ACTIVE,
+        stroke: new Color(228, 244, 229, 124),
+        accent: new Color(226, 244, 230, 116)
+      },
+      skillPanelBusy || state.entering
+        ? null
+        : () => {
+            this.showSkillPanel = true;
+            this.onOpenLobbySkillPanel?.();
+            if (this.currentState) {
+              this.render(this.currentState);
+            }
+          }
+    );
+
+    return nextTopY - 50;
+  }
+
+  private hideHeroSection(): void {
+    for (const name of ["LobbyHeroSummary", "LobbyHeroSkillButton"]) {
+      const node = this.node.getChildByName(name);
+      if (node) {
+        node.active = false;
+      }
+    }
+  }
+
   private ensureShowcaseTicker(): void {
     if (this.showcaseTickerStarted) {
       return;
@@ -930,6 +1030,173 @@ export class VeilLobbyPanel extends Component {
     graphics.fillColor = PANEL_INNER;
     graphics.roundRect(-width / 2 + 14, height / 2 - 24, width - 28, 10, 6);
     graphics.fill();
+  }
+
+  private renderSkillPanelModal(
+    width: number,
+    height: number,
+    state: VeilLobbyRenderState,
+    skillPanelBusy: boolean
+  ): void {
+    const view = state.lobbySkillPanel;
+    if (!view) {
+      this.hideSkillPanelModal();
+      return;
+    }
+
+    const modalWidth = Math.min(620, width - 48);
+    const modalCenterX = 0;
+    let topY = height / 2 - 54;
+
+    this.renderBackdrop("LobbySkillPanelBackdrop", width, height);
+    topY = this.renderCard(
+      "LobbySkillPanelHeader",
+      modalCenterX,
+      topY,
+      modalWidth,
+      96,
+      [
+        `技能规划 · ${view.heroName}`,
+        `等级 ${view.level} · 可用技能点 ${view.availableSkillPoints}`,
+        state.battleActive ? "战斗中无法分配" : "房间空闲时可直接分配技能点并即时写回房间状态。"
+      ],
+      {
+        fill: TITLE_FILL,
+        stroke: new Color(236, 228, 198, 72),
+        accent: new Color(214, 175, 112, 194)
+      },
+      null,
+      13,
+      17
+    );
+
+    view.branches.forEach((branch, index) => {
+      const lines = [
+        branch.name,
+        ...branch.skills.map((skill) => `${skill.name} ${skill.currentRank}/${skill.maxRank} · ${skill.summary}`)
+      ];
+      topY = this.renderCard(
+        `LobbySkillPanelBranch-${index}`,
+        modalCenterX,
+        topY,
+        modalWidth,
+        40 + lines.length * 16,
+        lines,
+        {
+          fill: ROOM_FILL,
+          stroke: new Color(220, 232, 244, 52),
+          accent: new Color(132, 186, 142, 186)
+        },
+        null,
+        12,
+        16
+      );
+    });
+    this.hideExtraSkillBranchCards(view.branches.length);
+
+    const buttonWidth = Math.floor((modalWidth - 10) / 2);
+    const buttonStartX = modalCenterX - modalWidth / 2 + buttonWidth / 2;
+    const actionCenterY = topY - 16;
+    view.actions.forEach((action, index) => {
+      const row = Math.floor(index / 2);
+      const col = index % 2;
+      this.renderActionButton(
+        `LobbySkillPanelAction-${index}`,
+        buttonStartX + col * (buttonWidth + 10),
+        actionCenterY - row * 34,
+        buttonWidth,
+        28,
+        `${action.label} · ${action.cost} 点`,
+        {
+          fill: ACTION_ENTER,
+          stroke: new Color(228, 244, 229, 124),
+          accent: new Color(226, 244, 230, 116)
+        },
+        state.battleActive || !action.canLearn || skillPanelBusy
+          ? null
+          : () => {
+              this.onLearnLobbySkill?.(action.skillId);
+            }
+      );
+    });
+    this.hideExtraSkillActionButtons(view.actions.length);
+
+    const actionRows = Math.ceil(view.actions.length / 2);
+    const closeCenterY = actionCenterY - actionRows * 34;
+    this.renderActionButton(
+      "LobbySkillPanelClose",
+      modalCenterX,
+      closeCenterY,
+      modalWidth,
+      28,
+      "收起技能面板",
+      {
+        fill: ACTION_LOGOUT,
+        stroke: new Color(247, 232, 226, 118),
+        accent: new Color(250, 234, 228, 110)
+      },
+      () => {
+        this.showSkillPanel = false;
+        this.onCloseLobbySkillPanel?.();
+        if (this.currentState) {
+          this.render(this.currentState);
+        }
+      }
+    );
+  }
+
+  private renderBackdrop(name: string, width: number, height: number): void {
+    let backdrop = this.node.getChildByName(name);
+    if (!backdrop) {
+      backdrop = new Node(name);
+      backdrop.parent = this.node;
+    }
+    assignUiLayer(backdrop);
+    backdrop.active = true;
+    const transform = backdrop.getComponent(UITransform) ?? backdrop.addComponent(UITransform);
+    transform.setContentSize(width, height);
+    backdrop.setPosition(0, 0, 2);
+    const graphics = backdrop.getComponent(Graphics) ?? backdrop.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(4, 7, 12, 184);
+    graphics.rect(-width / 2, -height / 2, width, height);
+    graphics.fill();
+    this.bindPress(backdrop, () => {
+      this.showSkillPanel = false;
+      this.onCloseLobbySkillPanel?.();
+      if (this.currentState) {
+        this.render(this.currentState);
+      }
+    });
+  }
+
+  private hideExtraSkillBranchCards(visibleCount: number): void {
+    for (let index = visibleCount; index < 8; index += 1) {
+      const node = this.node.getChildByName(`LobbySkillPanelBranch-${index}`);
+      if (node) {
+        node.active = false;
+      }
+    }
+  }
+
+  private hideExtraSkillActionButtons(visibleCount: number): void {
+    for (let index = visibleCount; index < 16; index += 1) {
+      const node = this.node.getChildByName(`LobbySkillPanelAction-${index}`);
+      if (node) {
+        node.active = false;
+      }
+    }
+  }
+
+  private hideSkillPanelModal(): void {
+    for (const name of ["LobbySkillPanelBackdrop", "LobbySkillPanelHeader", "LobbySkillPanelClose"]) {
+      const node = this.node.getChildByName(name);
+      if (node) {
+        node.active = false;
+      }
+    }
+    this.hideExtraSkillBranchCards(0);
+    this.hideExtraSkillActionButtons(0);
   }
 
   private renderCard(

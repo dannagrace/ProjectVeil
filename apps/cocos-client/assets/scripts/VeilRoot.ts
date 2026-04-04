@@ -1,5 +1,10 @@
 import { _decorator, Camera, Canvas, Color, Component, EventMouse, EventTouch, Graphics, input, Input, Label, Layers, Node, sys, UITransform, view } from "cc";
-import { getBuildingUpgradeConfig, getEquipmentDefinition, type EquipmentType } from "./project-shared/index.ts";
+import {
+  getBuildingUpgradeConfig,
+  getEquipmentDefinition,
+  getRuntimeConfigBundleForRoom,
+  type EquipmentType
+} from "./project-shared/index.ts";
 import {
   type BattleAction,
   type LeaderboardEntry,
@@ -128,6 +133,7 @@ import { VeilProgressionPanel } from "./VeilProgressionPanel.ts";
 import { VeilEquipmentPanel } from "./VeilEquipmentPanel.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
 import { type CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
+import { buildLobbySkillPanelView, toLobbySkillPanelHeroState } from "./cocos-lobby-skill-panel.ts";
 import {
   createCocosBattlePresentationController,
   type CocosBattlePresentationState
@@ -934,6 +940,9 @@ export class VeilRoot extends Component {
           replayId
         });
         this.renderView();
+      },
+      onLearnLobbySkill: (skillId) => {
+        void this.learnHeroSkill(skillId);
       }
     });
 
@@ -1181,6 +1190,10 @@ export class VeilRoot extends Component {
     }
 
     if (this.showLobby) {
+      const activeHero = this.activeHero();
+      const runtimeBundle = this.lastUpdate
+        ? getRuntimeConfigBundleForRoom(this.lastUpdate.world.meta.roomId, this.lastUpdate.world.meta.seed)
+        : null;
       this.lobbyPanel?.render({
         playerId: this.playerId,
         displayName: this.displayName || this.playerId,
@@ -1210,7 +1223,13 @@ export class VeilRoot extends Component {
         matchmakingBusy: this.lobbyEntering || this.matchmakingJoinInFlight,
         rooms: this.lobbyRooms,
         accountFlow: this.buildActiveAccountFlowPanelView(),
-        presentationReadiness: cocosPresentationReadiness
+        presentationReadiness: cocosPresentationReadiness,
+        activeHero,
+        lobbySkillPanel: activeHero && runtimeBundle
+          ? buildLobbySkillPanelView(toLobbySkillPanelHeroState(activeHero), runtimeBundle)
+          : null,
+        battleActive: Boolean(this.lastUpdate?.battle),
+        skillPanelBusy: this.moveInFlight || this.battleActionInFlight
       });
       this.renderSettingsOverlay();
       return;

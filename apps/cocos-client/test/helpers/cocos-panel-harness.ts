@@ -287,6 +287,10 @@ export function createLobbyState(overrides: Partial<VeilLobbyRenderState> = {}):
       summary: "等待表现资源",
       nextStep: "等待资源包"
     },
+    activeHero: null,
+    lobbySkillPanel: null,
+    battleActive: false,
+    skillPanelBusy: false,
     ...overrides
   };
 }
