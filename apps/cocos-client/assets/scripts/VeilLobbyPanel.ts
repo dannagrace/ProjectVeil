@@ -154,6 +154,8 @@ export interface VeilLobbyRenderState {
   shop: CocosShopPanelView;
   shopStatus: string;
   shopLoading?: boolean;
+  mailboxClaimingMessageId?: string | null;
+  mailboxClaimAllBusy?: boolean;
 }
 
 export interface VeilLobbyPanelOptions {
@@ -185,6 +187,8 @@ export interface VeilLobbyPanelOptions {
   onCloseLobbySkillPanel?: () => void;
   onLearnLobbySkill?: (skillId: string) => void;
   onPurchaseShopProduct?: (productId: string) => void;
+  onClaimMailboxMessage?: (messageId: string) => void;
+  onClaimAllMailbox?: () => void;
 }
 
 interface PanelCardTone {
@@ -228,6 +232,8 @@ export class VeilLobbyPanel extends Component {
   private onCloseLobbySkillPanel: (() => void) | undefined;
   private onLearnLobbySkill: ((skillId: string) => void) | undefined;
   private onPurchaseShopProduct: ((productId: string) => void) | undefined;
+  private onClaimMailboxMessage: ((messageId: string) => void) | undefined;
+  private onClaimAllMailbox: (() => void) | undefined;
   private replayPlayback: BattleReplayPlaybackState | null = null;
   private replayPlaybackReplayId: string | null = null;
   private replayPlaybackStatus = "选择一场最近战斗，即可查看逐步回放。";
@@ -268,6 +274,8 @@ export class VeilLobbyPanel extends Component {
     this.onCloseLobbySkillPanel = options.onCloseLobbySkillPanel;
     this.onLearnLobbySkill = options.onLearnLobbySkill;
     this.onPurchaseShopProduct = options.onPurchaseShopProduct;
+    this.onClaimMailboxMessage = options.onClaimMailboxMessage;
+    this.onClaimAllMailbox = options.onClaimAllMailbox;
   }
 
   render(state: VeilLobbyRenderState): void {
@@ -759,6 +767,7 @@ export class VeilLobbyPanel extends Component {
       this.hideAccountReviewCards();
       this.hideBattleReplayTimelineCard();
       rightCursorY = this.renderHeroSection(rightX, rightCursorY, rightWidth, state, skillPanelBusy);
+      rightCursorY = this.renderMailboxSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderLeaderboardSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderShopSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderCard(
@@ -923,6 +932,76 @@ export class VeilLobbyPanel extends Component {
 
     this.hideExtraCards("LobbyShop-", Math.min(4, shop.rows.length));
     return cursorY;
+  }
+
+  private renderMailboxSection(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
+    const mailbox = state.account.mailbox ?? [];
+    const summary = state.account.mailboxSummary ?? { totalCount: mailbox.length, unreadCount: 0, claimableCount: 0, expiredCount: 0 };
+    const activeMessages = mailbox.filter((message) => !message.claimedAt).slice(0, 2);
+    const lines = [
+      `系统邮箱 · 未读 ${summary.unreadCount}`,
+      `可领取 ${summary.claimableCount} · 已过期 ${summary.expiredCount}`,
+      ...(activeMessages.length > 0
+        ? activeMessages.flatMap((message, index) => [
+            `${index + 1}. ${message.title}`,
+            message.body,
+            `${message.grant?.gems ? `宝石 x${message.grant.gems}` : ""}${message.grant?.resources?.gold ? `${message.grant?.gems ? " · " : ""}金币 x${message.grant.resources.gold}` : ""}${message.expiresAt ? ` · ${message.expiresAt.slice(0, 10)} 到期` : ""}` ||
+              "无附件"
+          ])
+        : ["当前没有待处理系统邮件。"])
+    ];
+    const cardHeight = 100 + activeMessages.length * 74;
+    const nextY = this.renderCard(
+      "LobbyMailbox",
+      centerX,
+      topY,
+      width,
+      cardHeight,
+      lines,
+      {
+        fill: new Color(52, 68, 96, 188),
+        stroke: new Color(231, 240, 252, 76),
+        accent: summary.unreadCount > 0 ? new Color(238, 184, 94, 220) : new Color(124, 176, 226, 204)
+      },
+      null,
+      13,
+      16
+    );
+
+    this.renderActionButton(
+      "LobbyMailboxClaimAll",
+      centerX,
+      nextY - 18,
+      width,
+      28,
+      state.mailboxClaimAllBusy ? "领取中..." : summary.claimableCount > 0 ? "领取全部附件" : "邮箱已同步",
+      {
+        fill: summary.claimableCount > 0 ? ACTION_ACCOUNT_REVIEW_ACTIVE : MUTED_FILL,
+        stroke: new Color(234, 240, 228, 110),
+        accent: new Color(226, 236, 220, 102)
+      },
+      summary.claimableCount > 0 && !state.mailboxClaimAllBusy ? this.onClaimAllMailbox ?? null : null
+    );
+
+    activeMessages.forEach((message, index) => {
+      const claimable = !message.claimedAt && Boolean(message.grant);
+      this.renderActionButton(
+        `LobbyMailboxClaim-${index}`,
+        centerX,
+        nextY - 52 - index * 34,
+        width,
+        28,
+        state.mailboxClaimingMessageId === message.id ? "领取中..." : claimable ? `领取: ${message.title}` : `${message.title} · 无附件`,
+        {
+          fill: claimable ? ACTION_ACCOUNT : MUTED_FILL,
+          stroke: new Color(228, 236, 248, 108),
+          accent: new Color(220, 230, 244, 96)
+        },
+        claimable && state.mailboxClaimingMessageId !== message.id ? () => this.onClaimMailboxMessage?.(message.id) : null
+      );
+    });
+
+    return nextY - 60 - activeMessages.length * 34;
   }
 
   private hideExtraCards(prefix: string, visibleCount: number): void {

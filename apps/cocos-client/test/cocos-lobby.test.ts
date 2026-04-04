@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  claimAllCocosMailboxMessages,
+  claimCocosMailboxMessage,
   confirmCocosAccountRegistration,
   confirmCocosPasswordRecovery,
   clearCurrentCocosAuthSession,
@@ -902,6 +904,103 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
   });
   assert.ok(values.get("project-veil:auth-session")?.includes("\"loginId\":\"veil-ranger\""));
   assert.equal(values.get(getCocosPlayerAccountStorageKey("account-player")), "暮潮守望");
+});
+
+test("loadCocosPlayerAccountProfile preserves mailbox payload and summary from /me", async () => {
+  const profile = await loadCocosPlayerAccountProfile("http://127.0.0.1:2567", "account-player", "room-beta", {
+    authSession: {
+      token: "account.token",
+      playerId: "account-player",
+      displayName: "暮潮守望",
+      authMode: "account",
+      source: "remote"
+    },
+    fetchImpl: async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/player-accounts/me")) {
+        return new Response(
+          JSON.stringify({
+            account: {
+              playerId: "account-player",
+              displayName: "暮潮守望",
+              globalResources: { gold: 10, wood: 0, ore: 0 },
+              achievements: [],
+              recentEventLog: [],
+              mailbox: [
+                {
+                  id: "comp-1",
+                  kind: "compensation",
+                  title: "停机补偿",
+                  body: "补发资源。",
+                  sentAt: "2026-04-05T00:00:00.000Z",
+                  expiresAt: "2026-04-12T00:00:00.000Z",
+                  grant: {
+                    gems: 30,
+                    resources: { gold: 120 }
+                  }
+                }
+              ],
+              mailboxSummary: {
+                totalCount: 1,
+                unreadCount: 1,
+                claimableCount: 1,
+                expiredCount: 0
+              }
+            }
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  });
+
+  assert.equal(profile.mailbox?.[0]?.id, "comp-1");
+  assert.equal(profile.mailboxSummary?.claimableCount, 1);
+});
+
+test("mailbox claim helpers target the authenticated /me endpoints", async () => {
+  const requestedUrls: string[] = [];
+  const authSession = {
+    token: "account.token",
+    playerId: "account-player",
+    displayName: "暮潮守望",
+    authMode: "account" as const,
+    source: "remote" as const
+  };
+
+  const claimPayload = await claimCocosMailboxMessage("http://127.0.0.1:2567", "comp-1", {
+    authSession,
+    fetchImpl: async (input) => {
+      requestedUrls.push(String(input));
+      return new Response(JSON.stringify({ claimed: true, items: [], summary: { totalCount: 1, unreadCount: 0, claimableCount: 0, expiredCount: 0 } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  });
+
+  const claimAllPayload = await claimAllCocosMailboxMessages("http://127.0.0.1:2567", {
+    authSession,
+    fetchImpl: async (input) => {
+      requestedUrls.push(String(input));
+      return new Response(JSON.stringify({ claimed: true, claimedMessageIds: ["comp-1"], items: [], summary: { totalCount: 1, unreadCount: 0, claimableCount: 0, expiredCount: 0 } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  });
+
+  assert.equal(claimPayload.claimed, true);
+  assert.equal(claimAllPayload.claimed, true);
+  assert.deepEqual(requestedUrls, [
+    "http://127.0.0.1:2567/api/player-accounts/me/mailbox/comp-1/claim",
+    "http://127.0.0.1:2567/api/player-accounts/me/mailbox/claim-all"
+  ]);
 });
 
 test("loadCocosPlayerEventLog sends shared filters through the public query route", async () => {
