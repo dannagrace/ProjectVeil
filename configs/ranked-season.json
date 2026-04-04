@@ -1,0 +1,30 @@
+{
+  "divisionThresholds": {
+    "bronze_i": 0,
+    "bronze_ii": 350,
+    "bronze_iii": 725,
+    "silver_i": 1100,
+    "silver_ii": 1175,
+    "silver_iii": 1235,
+    "gold_i": 1300,
+    "gold_ii": 1375,
+    "gold_iii": 1435,
+    "platinum_i": 1500,
+    "platinum_ii": 1600,
+    "platinum_iii": 1700,
+    "diamond_i": 1800,
+    "diamond_ii": 1900,
+    "diamond_iii": 2000
+  },
+  "promotionSeries": {
+    "winsRequired": 3,
+    "lossesAllowed": 2
+  },
+  "demotionShield": {
+    "games": 3
+  },
+  "softDecay": {
+    "diamond": "platinum_i",
+    "platinum": "gold_i"
+  }
+}
