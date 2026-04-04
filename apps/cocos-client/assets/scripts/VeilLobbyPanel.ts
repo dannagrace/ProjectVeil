@@ -1,4 +1,5 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Sprite, SpriteFrame, UITransform } from "cc";
+import { buildCocosLeaderboardPanelView } from "./cocos-leaderboard-panel.ts";
 import {
   type CocosAccountReviewItem,
   type CocosAccountReviewPage,
@@ -29,6 +30,7 @@ import {
   type LobbyShowcasePhase
 } from "./cocos-showcase-gallery.ts";
 import type { CocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
+import { HUD_ACCENT } from "./VeilHudPanel.ts";
 import type {
   CocosAccountLifecycleFieldView,
   CocosAccountLifecyclePanelView,
@@ -106,6 +108,15 @@ export interface VeilLobbyRenderState {
   battleReplaySectionStatus: CocosAccountReviewSectionStatus;
   battleReplaySectionError: string | null;
   selectedBattleReplayId: string | null;
+  leaderboardEntries?: Array<{
+    playerId: string;
+    rank: number;
+    displayName: string;
+    eloRating: number;
+    tier: "bronze" | "silver" | "gold" | "platinum" | "diamond";
+  }>;
+  leaderboardStatus?: "idle" | "loading" | "ready" | "error";
+  leaderboardError?: string | null;
   sessionSource: "remote" | "local" | "manual" | "none";
   loading: boolean;
   entering: boolean;
@@ -619,15 +630,18 @@ export class VeilLobbyPanel extends Component {
         });
       }
       this.hideLobbyRooms();
+      this.hideLeaderboardCards();
     } else if (state.accountFlow) {
       this.hideAccountReviewCards();
       this.hideBattleReplayTimelineCard();
       this.hideLobbyRooms();
+      this.hideLeaderboardCards();
       this.renderAccountFlowPanel(rightX, rightCursorY, rightWidth, state.accountFlow, state.entering);
     } else {
       this.hideAccountFlowPanel();
       this.hideAccountReviewCards();
       this.hideBattleReplayTimelineCard();
+      rightCursorY = this.renderLeaderboardSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderCard(
         "LobbyRoomsHeader",
         rightX,
@@ -706,6 +720,107 @@ export class VeilLobbyPanel extends Component {
       }
 
       this.renderPixelShowcase(rightX, showcaseTopY, rightWidth);
+    }
+  }
+
+  private renderLeaderboardSection(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
+    const leaderboardEntries = state.leaderboardEntries ?? [];
+    const leaderboardStatus = state.leaderboardStatus ?? "idle";
+    const leaderboardError = state.leaderboardError ?? null;
+    const leaderboardView = buildCocosLeaderboardPanelView({
+      entries: leaderboardEntries,
+      myPlayerId: state.playerId
+    });
+    const statusLines =
+      leaderboardStatus === "loading"
+        ? ["排行榜", "正在同步最新天梯...", "读取前 50 名与当前账号排位。"]
+        : leaderboardStatus === "error"
+          ? ["排行榜", "同步失败", leaderboardError?.trim() || "暂时无法读取排行榜，请稍后重试。"]
+          : leaderboardView.rows.length === 0
+            ? ["排行榜", "暂时没有已结算的排名数据", "完成对局并结算后，这里会显示最新天梯名次。"]
+            : ["排行榜", `当前徽记 ${leaderboardView.tierBadge}`, `已同步 ${leaderboardView.rows.length} 名玩家 · 使用 HUD 强调当前账号。`];
+
+    let nextTopY = this.renderCard(
+      "LobbyLeaderboardStatus",
+      centerX,
+      topY,
+      width,
+      82,
+      statusLines,
+      {
+        fill: TITLE_FILL,
+        stroke: new Color(236, 228, 198, 62),
+        accent: new Color(HUD_ACCENT.r, HUD_ACCENT.g, HUD_ACCENT.b, 214)
+      },
+      null,
+      14,
+      18
+    );
+
+    if (leaderboardStatus === "loading" || leaderboardStatus === "error" || leaderboardView.rows.length === 0) {
+      const listNode = this.node.getChildByName("LobbyLeaderboardList");
+      if (listNode) {
+        listNode.active = false;
+      }
+      const myRankNode = this.node.getChildByName("LobbyLeaderboardMyRank");
+      if (myRankNode) {
+        myRankNode.active = false;
+      }
+      return nextTopY;
+    }
+
+    const rows = leaderboardView.rows.slice(0, 5).map((row) =>
+      `${row.rankLabel} ${row.displayName}${row.isCurrentPlayer ? " · 我" : ""} · ${row.ratingLabel} · ${row.tierLabel}`
+    );
+    nextTopY = this.renderCard(
+      "LobbyLeaderboardList",
+      centerX,
+      nextTopY,
+      width,
+      48 + rows.length * 18,
+      ["前列排名", ...rows],
+      {
+        fill: ROOM_FILL,
+        stroke: new Color(220, 232, 244, 52),
+        accent: new Color(132, 186, 142, 186)
+      },
+      null,
+      13,
+      18
+    );
+
+    const myRankLines = leaderboardView.myRankRow
+      ? [
+          "我的排名",
+          `${leaderboardView.myRankRow.rankLabel} ${leaderboardView.myRankRow.displayName}`,
+          `${leaderboardView.myRankRow.ratingLabel} · ${leaderboardView.myRankRow.tierLabel}`
+        ]
+      : ["我的排名", "当前未进入前 50", "继续完成排位对局即可冲榜。"];
+
+    return this.renderCard(
+      "LobbyLeaderboardMyRank",
+      centerX,
+      nextTopY,
+      width,
+      82,
+      myRankLines,
+      {
+        fill: new Color(HUD_ACCENT.r, HUD_ACCENT.g, HUD_ACCENT.b, 72),
+        stroke: new Color(HUD_ACCENT.r, HUD_ACCENT.g, HUD_ACCENT.b, 168),
+        accent: new Color(HUD_ACCENT.r, HUD_ACCENT.g, HUD_ACCENT.b, 255)
+      },
+      null,
+      14,
+      18
+    );
+  }
+
+  private hideLeaderboardCards(): void {
+    for (const name of ["LobbyLeaderboardStatus", "LobbyLeaderboardList", "LobbyLeaderboardMyRank"]) {
+      const node = this.node.getChildByName(name);
+      if (node) {
+        node.active = false;
+      }
     }
   }
 

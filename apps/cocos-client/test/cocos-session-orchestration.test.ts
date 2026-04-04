@@ -125,6 +125,39 @@ test("VeilCocosSession persists local snapshot replay data from live snapshots a
   await session.dispose();
 });
 
+test("VeilCocosSession fetches leaderboard entries over the HTTP API and computes ranks", async () => {
+  const requestedUrls: string[] = [];
+
+  setVeilCocosSessionRuntimeForTests({
+    fetchImpl: async (input) => {
+      requestedUrls.push(String(input));
+      return new Response(
+        JSON.stringify({
+          players: [
+            { playerId: "player-7", displayName: "North", eloRating: 1722, tier: "platinum" },
+            { playerId: "player-3", displayName: "South", eloRating: 1610, tier: "platinum" }
+          ]
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
+  });
+
+  const entries = await VeilCocosSession.fetchLeaderboard("ws://127.0.0.1:2567", 2);
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.rank, entry.playerId, entry.displayName, entry.eloRating, entry.tier]),
+    [
+      [1, "player-7", "North", 1722, "platinum"],
+      [2, "player-3", "South", 1610, "platinum"]
+    ]
+  );
+  assert.deepEqual(requestedUrls, ["http://127.0.0.1:2567/api/leaderboard?limit=2"]);
+});
+
 test("VeilCocosSession reports reconnect lifecycle transitions from the active room", async () => {
   const storage = createMemoryStorage();
   const room = new FakeColyseusRoom([createSessionUpdate(3)], "reconnect-token");
