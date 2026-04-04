@@ -1,4 +1,13 @@
-import type { BattleAction, BattleState, MovementPlan, Vec2, WorldAction, WorldEvent } from "./models.ts";
+import type {
+  BattleAction,
+  BattleState,
+  CosmeticId,
+  EquippedCosmetics,
+  MovementPlan,
+  Vec2,
+  WorldAction,
+  WorldEvent
+} from "./models.ts";
 import type { FeatureFlags } from "./feature-flags.ts";
 import type { GuildRosterView, GuildSummaryView } from "./guilds.ts";
 import type { PlayerWorldViewPayload } from "./map-sync.ts";
@@ -132,6 +141,21 @@ export type ClientMessage =
       type: "guild.roster";
       requestId: string;
       action: GuildGetAction;
+    }
+  | {
+      type: "BUY_COSMETIC";
+      requestId: string;
+      cosmeticId: CosmeticId;
+    }
+  | {
+      type: "EQUIP_COSMETIC";
+      requestId: string;
+      cosmeticId: CosmeticId;
+    }
+  | {
+      type: "USE_EMOTE";
+      requestId: string;
+      emoteId: CosmeticId;
     };
 
 export type ServerMessage =
@@ -198,4 +222,13 @@ export type ServerMessage =
       type: "guild.roster";
       requestId: string;
       roster: GuildRosterView;
+    }
+  | {
+      type: "COSMETIC_APPLIED";
+      requestId: string;
+      delivery: "reply" | "push";
+      playerId: string;
+      cosmeticId: CosmeticId;
+      action: "purchased" | "equipped" | "emote";
+      equippedCosmetics?: EquippedCosmetics;
     };

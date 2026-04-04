@@ -11,10 +11,15 @@ import {
   normalizeEloRating,
   normalizeEventLogQuery,
   normalizeAchievementProgress,
+  normalizeCosmeticInventory,
   normalizeEventLogEntries,
+  normalizeEquippedCosmetics,
   normalizePlayerAccountReadModel,
+  resolveCosmeticCatalog,
+  resolveWeeklyShopRotation,
   tryAddEquipmentToInventory,
   type EventLogQuery,
+  type CosmeticId,
   normalizeHeroState,
   type EventLogEntry,
   type EquipmentId,
@@ -218,6 +223,8 @@ interface PlayerAccountRow extends RowDataPacket {
   seasonal_event_states_json: string | PlayerAccountSnapshot["seasonalEventStates"] | null;
   global_resources_json: string | ResourceLedger;
   achievements_json: string | PlayerAchievementProgress[] | null;
+  cosmetic_inventory_json: string | PlayerAccountSnapshot["cosmeticInventory"] | null;
+  equipped_cosmetics_json: string | PlayerAccountSnapshot["equippedCosmetics"] | null;
   recent_event_log_json: string | EventLogEntry[] | null;
   recent_battle_replays_json: string | PlayerBattleReplaySummary[] | null;
   daily_dungeon_state_json: string | PlayerAccountSnapshot["dailyDungeonState"] | null;
@@ -443,6 +450,7 @@ export interface ShopPurchaseGrant {
   gems?: number;
   resources?: Partial<ResourceLedger>;
   equipmentIds?: EquipmentId[];
+  cosmeticIds?: CosmeticId[];
   seasonPassPremium?: boolean;
 }
 
@@ -465,6 +473,7 @@ export interface ShopPurchaseResult {
     gems: number;
     resources: ResourceLedger;
     equipmentIds: EquipmentId[];
+    cosmeticIds: CosmeticId[];
     heroId?: string;
     seasonPassPremium?: boolean;
   };
@@ -562,6 +571,8 @@ export interface PlayerAccountProgressPatch {
   gems?: number;
   seasonXpDelta?: number;
   seasonPassPremium?: boolean;
+  cosmeticInventory?: PlayerAccountSnapshot["cosmeticInventory"] | null;
+  equippedCosmetics?: PlayerAccountSnapshot["equippedCosmetics"] | null;
   seasonPassClaimedTiers?: number[] | null;
   seasonBadges?: string[] | null;
   rankDivision?: PlayerAccountSnapshot["rankDivision"];
@@ -877,6 +888,7 @@ function normalizeShopPurchaseGrant(grant: ShopPurchaseGrant): {
   gems: number;
   resources: ResourceLedger;
   equipmentIds: EquipmentId[];
+  cosmeticIds: CosmeticId[];
   seasonPassPremium: boolean;
 } {
   const equipmentIds = (grant.equipmentIds ?? []).map((equipmentId) => equipmentId.trim()).filter(Boolean);
@@ -885,19 +897,27 @@ function normalizeShopPurchaseGrant(grant: ShopPurchaseGrant): {
       throw new Error(`unknown equipment grant: ${equipmentId}`);
     }
   }
+  const cosmeticCatalogIds = new Set(resolveCosmeticCatalog().map((entry) => entry.id));
+  const cosmeticIds = (grant.cosmeticIds ?? []).map((cosmeticId) => cosmeticId.trim()).filter(Boolean);
+  for (const cosmeticId of cosmeticIds) {
+    if (!cosmeticCatalogIds.has(cosmeticId)) {
+      throw new Error(`unknown cosmetic grant: ${cosmeticId}`);
+    }
+  }
 
   return {
     gems: grant.gems != null ? normalizeGemAmount(grant.gems) : 0,
     resources: normalizeResourceLedger(grant.resources),
     equipmentIds,
+    cosmeticIds,
     seasonPassPremium: grant.seasonPassPremium === true
   };
 }
 
 function multiplyShopPurchaseGrant(
-  grant: { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[]; seasonPassPremium: boolean },
+  grant: { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[]; cosmeticIds: CosmeticId[]; seasonPassPremium: boolean },
   quantity: number
-): { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[]; seasonPassPremium: boolean } {
+): { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[]; cosmeticIds: CosmeticId[]; seasonPassPremium: boolean } {
   return {
     gems: grant.gems * quantity,
     resources: {
@@ -906,6 +926,7 @@ function multiplyShopPurchaseGrant(
       ore: grant.resources.ore * quantity
     },
     equipmentIds: Array.from({ length: quantity }, () => grant.equipmentIds).flat(),
+    cosmeticIds: Array.from({ length: quantity }, () => grant.cosmeticIds).flat(),
     seasonPassPremium: grant.seasonPassPremium
   };
 }
@@ -914,7 +935,7 @@ function createShopPurchaseEventLogEntry(playerId: string, input: {
   productId: string;
   productName: string;
   quantity: number;
-  granted: { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[] };
+  granted: { gems: number; resources: ResourceLedger; equipmentIds: EquipmentId[]; cosmeticIds: CosmeticId[] };
   processedAt: string;
 }): EventLogEntry {
   const resourceRewards = [
@@ -929,7 +950,10 @@ function createShopPurchaseEventLogEntry(playerId: string, input: {
     roomId: "shop",
     playerId,
     category: "account",
-    description: `Purchased ${input.productName} x${input.quantity}.`,
+    description:
+      input.granted.cosmeticIds.length > 0
+        ? `Purchased ${input.productName} x${input.quantity} and unlocked ${input.granted.cosmeticIds.length} cosmetic item(s).`
+        : `Purchased ${input.productName} x${input.quantity}.`,
     rewards: resourceRewards
   };
 }
@@ -953,6 +977,40 @@ function createBattlePassClaimEventLogEntry(playerId: string, input: {
     description: `Claimed battle pass tier ${input.tier}.`,
     rewards
   };
+}
+
+function applyOwnedCosmetics(
+  current: PlayerAccountSnapshot["cosmeticInventory"],
+  grantedIds: CosmeticId[]
+): PlayerAccountSnapshot["cosmeticInventory"] {
+  return normalizeCosmeticInventory({
+    ownedIds: [...(current?.ownedIds ?? []), ...grantedIds]
+  });
+}
+
+export function equipOwnedCosmetic(
+  currentAccount: Pick<PlayerAccountSnapshot, "cosmeticInventory" | "equippedCosmetics">,
+  cosmeticId: CosmeticId
+): PlayerAccountSnapshot["equippedCosmetics"] {
+  const definition = resolveCosmeticCatalog().find((entry) => entry.id === cosmeticId);
+  if (!definition) {
+    throw new Error("cosmetic_not_found");
+  }
+  if (!(currentAccount.cosmeticInventory?.ownedIds ?? []).includes(cosmeticId)) {
+    throw new Error("cosmetic_not_owned");
+  }
+
+  const nextEquipped = normalizeEquippedCosmetics(currentAccount.equippedCosmetics);
+  if (definition.category === "hero_skin") {
+    nextEquipped.heroSkinId = cosmeticId;
+  } else if (definition.category === "unit_recolor") {
+    nextEquipped.unitRecolorId = cosmeticId;
+  } else if (definition.category === "profile_border") {
+    nextEquipped.profileBorderId = cosmeticId;
+  } else {
+    nextEquipped.battleEmoteId = cosmeticId;
+  }
+  return nextEquipped;
 }
 
 function normalizePlayerBanStatus(status?: string | null): PlayerBanStatus {
@@ -1237,6 +1295,9 @@ function normalizePlayerAccountSnapshot(account: {
   seasonXp?: number | null | undefined;
   seasonPassTier?: number | null | undefined;
   seasonPassPremium?: boolean | number | null | undefined;
+  cosmeticInventory?: PlayerAccountSnapshot["cosmeticInventory"] | null | undefined;
+  equippedCosmetics?: PlayerAccountSnapshot["equippedCosmetics"] | null | undefined;
+  currentShopRotation?: PlayerAccountSnapshot["currentShopRotation"] | null | undefined;
   seasonPassClaimedTiers?: number[] | null | undefined;
   seasonBadges?: string[] | null | undefined;
   campaignProgress?: PlayerAccountSnapshot["campaignProgress"] | null | undefined;
@@ -1296,6 +1357,9 @@ function normalizePlayerAccountSnapshot(account: {
       seasonXp: Math.max(0, Math.floor(account.seasonXp ?? 0)),
       seasonPassTier: Math.max(1, Math.floor(account.seasonPassTier ?? 1)),
       seasonPassPremium: account.seasonPassPremium === true || account.seasonPassPremium === 1,
+      cosmeticInventory: normalizeCosmeticInventory(account.cosmeticInventory),
+      equippedCosmetics: normalizeEquippedCosmetics(account.equippedCosmetics),
+      currentShopRotation: account.currentShopRotation ?? resolveWeeklyShopRotation(),
       seasonPassClaimedTiers: account.seasonPassClaimedTiers ?? [],
       seasonBadges: account.seasonBadges,
       campaignProgress: account.campaignProgress,
@@ -2894,6 +2958,7 @@ function toShopPurchaseResult(row: ShopPurchaseRow): ShopPurchaseResult {
       gems: normalizeGemAmount(result.granted?.gems),
       resources: normalizeResourceLedger(result.granted?.resources),
       equipmentIds: (result.granted?.equipmentIds ?? []).map((equipmentId) => equipmentId.trim()).filter(Boolean),
+      cosmeticIds: (result.granted?.cosmeticIds ?? []).map((cosmeticId) => cosmeticId.trim()).filter(Boolean),
       ...(result.granted?.heroId?.trim() ? { heroId: result.granted.heroId.trim() } : {})
     },
     gemsBalance: normalizeGemAmount(result.gemsBalance),
@@ -2955,6 +3020,13 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     seasonalEventStates:
       row.seasonal_event_states_json != null
         ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["seasonalEventStates"]>>(row.seasonal_event_states_json)
+    cosmeticInventory:
+      row.cosmetic_inventory_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["cosmeticInventory"]>>(row.cosmetic_inventory_json)
+        : undefined,
+    equippedCosmetics:
+      row.equipped_cosmetics_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["equippedCosmetics"]>>(row.equipped_cosmetics_json)
         : undefined,
     globalResources: parseJsonColumn<ResourceLedger>(row.global_resources_json),
     achievements:
@@ -3256,6 +3328,8 @@ async function savePlayerAccounts(
          season_badges_json,
          campaign_progress_json,
          seasonal_event_states_json,
+         cosmetic_inventory_json,
+         equipped_cosmetics_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json
@@ -3265,7 +3339,7 @@ async function savePlayerAccounts(
          tutorial_step,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
@@ -3282,8 +3356,10 @@ async function savePlayerAccounts(
          season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
          season_badges_json = COALESCE(season_badges_json, VALUES(season_badges_json)),
          campaign_progress_json = COALESCE(campaign_progress_json, VALUES(campaign_progress_json)),
-         seasonal_event_states_json = COALESCE(seasonal_event_states_json, VALUES(seasonal_event_states_json)),
-         global_resources_json = VALUES(global_resources_json),
+        seasonal_event_states_json = COALESCE(seasonal_event_states_json, VALUES(seasonal_event_states_json)),
+        cosmetic_inventory_json = COALESCE(cosmetic_inventory_json, VALUES(cosmetic_inventory_json)),
+        equipped_cosmetics_json = COALESCE(equipped_cosmetics_json, VALUES(equipped_cosmetics_json)),
+        global_resources_json = VALUES(global_resources_json),
          achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
          recent_event_log_json = COALESCE(recent_event_log_json, VALUES(recent_event_log_json)),
          recent_battle_replays_json = COALESCE(recent_battle_replays_json, VALUES(recent_battle_replays_json)),
@@ -3309,6 +3385,8 @@ async function savePlayerAccounts(
         JSON.stringify(normalizedAccount.seasonBadges ?? []),
         JSON.stringify(normalizedAccount.campaignProgress ?? null),
         JSON.stringify(normalizedAccount.seasonalEventStates ?? null),
+        JSON.stringify(normalizedAccount.cosmeticInventory ?? { ownedIds: [] }),
+        JSON.stringify(normalizedAccount.equippedCosmetics ?? {}),
         JSON.stringify(normalizedAccount.globalResources),
         JSON.stringify(normalizedAccount.achievements),
         JSON.stringify(normalizedAccount.recentEventLog),
@@ -4659,11 +4737,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       const nextGlobalResources = addResourceLedgers(currentAccount.globalResources, normalizedGrant.resources);
       const nextGems = currentGems - totalPrice + normalizedGrant.gems;
       const nextSeasonPassPremium = currentAccount.seasonPassPremium === true || normalizedGrant.seasonPassPremium;
+      const nextCosmeticInventory = applyOwnedCosmetics(currentAccount.cosmeticInventory, normalizedGrant.cosmeticIds);
 
       await connection.query(
         `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
          SET gems = ?,
              season_pass_premium = ?,
+             cosmetic_inventory_json = ?,
              global_resources_json = ?,
              recent_event_log_json = ?,
              version = version + 1
@@ -4671,6 +4751,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         [
           nextGems,
           nextSeasonPassPremium ? 1 : 0,
+          JSON.stringify(nextCosmeticInventory),
           JSON.stringify(nextGlobalResources),
           JSON.stringify(nextRecentEventLog),
           normalizedPlayerId
@@ -4729,6 +4810,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           gems: normalizedGrant.gems,
           resources: normalizedGrant.resources,
           equipmentIds: normalizedGrant.equipmentIds,
+          cosmeticIds: normalizedGrant.cosmeticIds,
           ...(grantedHeroId ? { heroId: grantedHeroId } : {}),
           ...(normalizedGrant.seasonPassPremium ? { seasonPassPremium: true } : {})
         },
@@ -5486,6 +5568,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       seasonXp: battlePassProgress.seasonXp,
       seasonPassTier: battlePassProgress.seasonPassTier,
       seasonPassPremium: patch.seasonPassPremium ?? existing.seasonPassPremium,
+      cosmeticInventory: patch.cosmeticInventory ?? existing.cosmeticInventory,
+      equippedCosmetics: patch.equippedCosmetics ?? existing.equippedCosmetics,
       seasonPassClaimedTiers: patch.seasonPassClaimedTiers ?? existing.seasonPassClaimedTiers,
       seasonBadges: patch.seasonBadges ?? existing.seasonBadges,
       campaignProgress: patch.campaignProgress ?? existing.campaignProgress,
@@ -5538,6 +5622,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_badges_json,
          campaign_progress_json,
          seasonal_event_states_json,
+         cosmetic_inventory_json,
+         equipped_cosmetics_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -5552,7 +5638,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_play_date,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
@@ -5563,6 +5649,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
          season_badges_json = VALUES(season_badges_json),
          campaign_progress_json = VALUES(campaign_progress_json),
+         cosmetic_inventory_json = VALUES(cosmetic_inventory_json),
+         equipped_cosmetics_json = VALUES(equipped_cosmetics_json),
          seasonal_event_states_json = VALUES(seasonal_event_states_json),
          elo_rating = VALUES(elo_rating),
          rank_division = VALUES(rank_division),
@@ -5604,6 +5692,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(nextAccount.seasonBadges ?? []),
         JSON.stringify(nextAccount.campaignProgress ?? null),
         JSON.stringify(nextAccount.seasonalEventStates ?? null),
+        JSON.stringify(nextAccount.cosmeticInventory ?? { ownedIds: [] }),
+        JSON.stringify(nextAccount.equippedCosmetics ?? {}),
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
