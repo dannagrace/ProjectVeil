@@ -41,6 +41,8 @@ import { deriveMinorProtectionState, readMinorProtectionConfig } from "./minor-p
 import {
   recordBattleActionMessage,
   recordConnectMessage,
+  recordReconnectWindowOpened,
+  recordReconnectWindowResolved,
   recordRuntimeRoom,
   recordWebSocketActionKick,
   recordWebSocketActionRateLimited,
@@ -629,9 +631,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     this.disconnectedAtByPlayerId.set(playerId, new Date(roomRuntimeDependencies.now()).toISOString());
+    let reconnectWindowOpen = false;
 
     try {
+      recordReconnectWindowOpened();
+      reconnectWindowOpen = true;
       const reconnectedClient = await this.allowReconnection(client, RECONNECTION_WINDOW_SECONDS);
+      recordReconnectWindowResolved("success");
+      reconnectWindowOpen = false;
       if (configuredRoomSnapshotStore?.loadPlayerBan) {
         const ban = await configuredRoomSnapshotStore.loadPlayerBan(playerId);
         if (isPlayerBanActive(ban)) {
@@ -658,6 +665,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         payload: this.buildStatePayload(playerId)
       });
     } catch {
+      if (reconnectWindowOpen) {
+        recordReconnectWindowResolved("failure");
+      }
       this.playerIdBySessionId.delete(client.sessionId);
       this.ensureTurnTimerState();
       this.publishLobbyRoomSummary();

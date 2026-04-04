@@ -8,7 +8,8 @@ import {
   recordAuthTokenDeliveryRetry,
   recordAuthTokenDeliverySuccess,
   setAuthTokenDeliveryDeadLetterCount,
-  setAuthTokenDeliveryQueueCount
+  setAuthTokenDeliveryQueueCount,
+  setAuthTokenDeliveryQueueLatency
 } from "./observability";
 
 export type AccountTokenDeliveryKind = "account-registration" | "password-recovery";
@@ -69,6 +70,7 @@ interface QueuedDeliveryEntry {
   config: TransportDeliveryConfig;
   attemptCount: number;
   maxAttempts: number;
+  queuedAt: number;
   nextAttemptAt: number;
   lastError?: {
     message: string;
@@ -283,6 +285,22 @@ function toIsoTimestamp(timestamp: number): string {
 function syncQueueTelemetry(): void {
   setAuthTokenDeliveryQueueCount(queuedDeliveries.size);
   setAuthTokenDeliveryDeadLetterCount(deadLetterDeliveries.size);
+  if (queuedDeliveries.size === 0) {
+    setAuthTokenDeliveryQueueLatency({
+      oldestQueuedLatencyMs: null,
+      nextAttemptDelayMs: null
+    });
+    return;
+  }
+
+  const now = Date.now();
+  const queuedEntries = Array.from(queuedDeliveries.values());
+  const oldestQueuedAt = Math.min(...queuedEntries.map((entry) => entry.queuedAt));
+  const nextAttemptAt = Math.min(...queuedEntries.map((entry) => entry.nextAttemptAt));
+  setAuthTokenDeliveryQueueLatency({
+    oldestQueuedLatencyMs: now - oldestQueuedAt,
+    nextAttemptDelayMs: Math.max(0, nextAttemptAt - now)
+  });
 }
 
 function computeRetryDelayMs(attemptCount: number, config: TransportDeliveryConfig): number {
@@ -747,6 +765,7 @@ async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> 
     queuedDeliveries.set(entry.key, {
       ...entry,
       attemptCount: attemptNumber,
+      queuedAt: entry.queuedAt,
       nextAttemptAt,
       lastError: {
         message: error.message,
@@ -819,6 +838,7 @@ function queueRetry(
     config,
     attemptCount: 1,
     maxAttempts: config.maxAttempts,
+    queuedAt: Date.now(),
     nextAttemptAt,
     lastError: {
       message: error.message,
@@ -973,6 +993,7 @@ export async function deliverAccountToken(
       attemptCount: 1,
       maxAttempts: config.maxAttempts,
       nextAttemptAt: Date.now(),
+      queuedAt: Date.now(),
       lastError: {
         message: error.message,
         failureReason: error.failureReason,
