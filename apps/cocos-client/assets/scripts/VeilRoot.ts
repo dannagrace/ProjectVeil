@@ -35,6 +35,7 @@ import {
   loadCocosPlayerProgressionSnapshot,
   loginCocosGuestAuthSession,
   logoutCurrentCocosAuthSession,
+  postCocosPlayerReferral,
   readPreferredCocosDisplayName,
   rememberPreferredCocosDisplayName,
   requestCocosAccountRegistration,
@@ -103,6 +104,14 @@ import {
   collectProfileNoticeEventIds,
   shouldRefreshGameplayAccountProfileForEvents
 } from "./cocos-achievements.ts";
+import {
+  buildBattleResultShareSummary,
+  buildShareCardPayload,
+  copyTextToClipboard,
+  readLaunchReferrerId,
+  shouldOfferBattleResultShare,
+  type WechatSharePayload
+} from "./cocos-share-card.ts";
 import {
   buildCocosWechatSharePayload,
   syncCocosWechatShareBridge,
@@ -194,6 +203,7 @@ interface VeilRootRuntime {
   loadEventHistory: typeof loadCocosPlayerEventHistory;
   loadBattleReplayHistoryPage: typeof loadCocosBattleReplayHistoryPage;
   loginGuestAuthSession: typeof loginCocosGuestAuthSession;
+  postPlayerReferral: typeof postCocosPlayerReferral;
   logoutAuthSession: typeof logoutCurrentCocosAuthSession;
   deletePlayerAccount: typeof deleteCurrentCocosPlayerAccount;
 }
@@ -214,6 +224,7 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   loadEventHistory: (...args) => loadCocosPlayerEventHistory(...args),
   loadBattleReplayHistoryPage: (...args) => loadCocosBattleReplayHistoryPage(...args),
   loginGuestAuthSession: (...args) => loginCocosGuestAuthSession(...args),
+  postPlayerReferral: (...args) => postCocosPlayerReferral(...args),
   logoutAuthSession: (...args) => logoutCurrentCocosAuthSession(...args),
   deletePlayerAccount: (...args) => deleteCurrentCocosPlayerAccount(...args)
 };
@@ -357,6 +368,8 @@ export class VeilRoot extends Component {
   private surrenderDialogOpen = false;
   private surrenderSubmitting = false;
   private surrenderStatusMessage: string | null = null;
+  private launchReferrerId: string | null = null;
+  private lastReferralClaimKey: string | null = null;
 
   onLoad(): void {
     this.audioRuntime.dispose();
@@ -790,6 +803,9 @@ export class VeilRoot extends Component {
       },
       onToggleSurrender: () => {
         this.toggleSurrenderDialog();
+      },
+      onShareBattleResult: () => {
+        void this.handleBattleResultShare();
       },
       onSubmitReport: (reason) => {
         void this.submitPlayerReport(reason);
@@ -1249,6 +1265,9 @@ export class VeilRoot extends Component {
         status: this.surrenderStatusMessage,
         submitting: this.surrenderSubmitting
       },
+      sharing: {
+        available: this.canShareLatestBattleResult()
+      },
       presentation: this.buildHudPresentationState()
     });
     this.renderSettingsOverlay();
@@ -1378,6 +1397,7 @@ export class VeilRoot extends Component {
       this.sessionSource = syncedSession.source;
       this.playerId = syncedSession.playerId;
       this.displayName = syncedSession.displayName;
+      await this.maybeClaimLaunchReferral(syncedSession);
     } else if (this.sessionSource !== "manual") {
       this.authToken = null;
       this.authMode = "guest";
@@ -2519,6 +2539,7 @@ export class VeilRoot extends Component {
       this.authProvider = authSession.provider ?? "guest";
       this.loginId = authSession.loginId ?? "";
       this.sessionSource = authSession.source;
+      await this.maybeClaimLaunchReferral(authSession);
       saveCocosLobbyPreferences(authSession.playerId, preferences.roomId, undefined, storage);
       this.resetSessionViewport(`正在进入房间 ${preferences.roomId} ...`);
       this.showLobby = false;
@@ -2635,6 +2656,7 @@ export class VeilRoot extends Component {
       this.authProvider = syncedSession.provider ?? "account-password";
       this.loginId = syncedSession.loginId ?? "";
       this.sessionSource = syncedSession.source;
+      await this.maybeClaimLaunchReferral(syncedSession);
       return;
     }
 
@@ -2654,6 +2676,7 @@ export class VeilRoot extends Component {
     this.authProvider = authSession.provider ?? "guest";
     this.loginId = authSession.loginId ?? "";
     this.sessionSource = authSession.source;
+    await this.maybeClaimLaunchReferral(authSession);
   }
 
   private async enterLobbyMatchmaking(): Promise<void> {
@@ -3721,6 +3744,7 @@ export class VeilRoot extends Component {
       search: this.readLaunchSearch(),
       storedSession: readStoredCocosAuthSession(storage)
     });
+    this.launchReferrerId = readLaunchReferrerId(this.readLaunchSearch());
 
     if (launchIdentity.shouldOpenLobby) {
       const storedSession = readStoredCocosAuthSession(storage);
@@ -3774,6 +3798,100 @@ export class VeilRoot extends Component {
 
     if (launchIdentity.roomId !== "test-room") {
       this.pushLog(`已从启动参数载入房间 ${launchIdentity.roomId}。`);
+    }
+  }
+
+  private latestShareableBattleReplay() {
+    const replay = this.lobbyAccountProfile?.recentBattleReplays?.[0] ?? null;
+    if (!shouldOfferBattleResultShare(replay)) {
+      return null;
+    }
+    if (!this.lastBattleSettlementSnapshot || this.lastBattleSettlementSnapshot.tone !== "victory") {
+      return null;
+    }
+    return replay;
+  }
+
+  private canShareLatestBattleResult(): boolean {
+    return Boolean(this.latestShareableBattleReplay());
+  }
+
+  private async handleBattleResultShare(): Promise<void> {
+    const replay = this.latestShareableBattleReplay();
+    if (!replay) {
+      this.predictionStatus = "当前没有可分享的 PVP 胜利战报。";
+      this.renderView();
+      return;
+    }
+
+    if (this.runtimePlatform === "wechat-game") {
+      const payload = buildShareCardPayload(replay, this.displayName || this.playerId);
+      const wxRuntime = (globalThis as {
+        wx?: {
+          shareAppMessage?: (sharePayload: WechatSharePayload) => void;
+        } | null;
+      }).wx;
+      if (typeof wxRuntime?.shareAppMessage === "function") {
+        wxRuntime.shareAppMessage(payload);
+        this.predictionStatus = "已拉起微信分享面板。";
+      } else {
+        this.predictionStatus = "当前微信小游戏环境未提供 shareAppMessage。";
+      }
+      this.renderView();
+      return;
+    }
+
+    const copied = await copyTextToClipboard(buildBattleResultShareSummary(replay, this.displayName || this.playerId));
+    this.predictionStatus = copied ? "已复制战绩摘要，可直接粘贴分享。" : "当前 H5 运行环境不支持剪贴板复制。";
+    this.renderView();
+  }
+
+  private async maybeClaimLaunchReferral(authSession: {
+    playerId: string;
+    displayName: string;
+    authMode: "guest" | "account";
+    provider?: string;
+    loginId?: string;
+    token?: string;
+    source: "remote" | "local";
+  }): Promise<void> {
+    const referrerId = this.launchReferrerId?.trim() ?? "";
+    if (!referrerId || authSession.source !== "remote" || !authSession.token) {
+      return;
+    }
+
+    const claimKey = `${referrerId}:${authSession.playerId}`;
+    if (this.lastReferralClaimKey === claimKey) {
+      return;
+    }
+
+    try {
+      const result = await resolveVeilRootRuntime().postPlayerReferral(
+        this.remoteUrl,
+        { referrerId },
+        {
+          storage: this.readWebStorage(),
+          authSession: {
+            token: authSession.token,
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            authMode: authSession.authMode,
+            ...(authSession.provider ? { provider: authSession.provider as never } : {}),
+            ...(authSession.loginId ? { loginId: authSession.loginId } : {}),
+            source: "remote"
+          }
+        }
+      );
+      this.lastReferralClaimKey = claimKey;
+      if (result.claimed) {
+        this.pushLog(`已完成推荐奖励绑定：邀请人 ${referrerId} 与新玩家 ${authSession.playerId} 各获得 20 宝石。`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === "cocos_request_failed:409:referral_already_claimed") {
+        this.lastReferralClaimKey = claimKey;
+        return;
+      }
+      throw error;
     }
   }
 

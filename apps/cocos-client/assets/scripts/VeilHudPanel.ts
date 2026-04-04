@@ -200,6 +200,9 @@ export interface VeilHudRenderState {
     status: string | null;
     submitting: boolean;
   };
+  sharing: {
+    available: boolean;
+  };
   presentation: {
     audio: CocosAudioRuntimeState;
     pixelAssets: PixelSpriteLoadStatus;
@@ -235,6 +238,7 @@ export interface VeilHudPanelOptions {
   onToggleAchievements?: () => void;
   onToggleReport?: () => void;
   onToggleSurrender?: () => void;
+  onShareBattleResult?: () => void;
   onSubmitReport?: (reason: PlayerReportReason) => void;
   onCancelReport?: () => void;
   onConfirmSurrender?: () => void;
@@ -345,6 +349,7 @@ export class VeilHudPanel extends Component {
   private onToggleAchievements: (() => void) | undefined;
   private onToggleReport: (() => void) | undefined;
   private onToggleSurrender: (() => void) | undefined;
+  private onShareBattleResult: (() => void) | undefined;
   private onSubmitReport: ((reason: PlayerReportReason) => void) | undefined;
   private onCancelReport: (() => void) | undefined;
   private onConfirmSurrender: (() => void) | undefined;
@@ -364,6 +369,7 @@ export class VeilHudPanel extends Component {
     this.onToggleAchievements = options.onToggleAchievements;
     this.onToggleReport = options.onToggleReport;
     this.onToggleSurrender = options.onToggleSurrender;
+    this.onShareBattleResult = options.onShareBattleResult;
     this.onSubmitReport = options.onSubmitReport;
     this.onCancelReport = options.onCancelReport;
     this.onConfirmSurrender = options.onConfirmSurrender;
@@ -660,6 +666,7 @@ export class VeilHudPanel extends Component {
       { nodeName: "HudAchievements", debugLabel: "achievements", callback: this.onToggleAchievements ?? null },
       { nodeName: "HudReportPlayer", debugLabel: "report-player", callback: this.onToggleReport ?? null },
       { nodeName: "HudSurrender", debugLabel: "surrender", callback: this.onToggleSurrender ?? null },
+      { nodeName: "HudShareBattleResult", debugLabel: "share-battle-result", callback: this.onShareBattleResult ?? null },
       { nodeName: "HudEndDay", debugLabel: "end-day", callback: this.onEndDay ?? null },
       { nodeName: "HudReturnLobby", debugLabel: "return-lobby", callback: this.onReturnLobby ?? null }
     ];
@@ -1602,6 +1609,7 @@ export class VeilHudPanel extends Component {
     this.ensureActionButton(actionsNode, "HudAchievements", "战报中心");
     this.ensureActionButton(actionsNode, "HudReportPlayer", "举报玩家");
     this.ensureActionButton(actionsNode, "HudSurrender", "认输");
+    this.ensureActionButton(actionsNode, "HudShareBattleResult", "分享战绩");
     this.ensureActionButton(actionsNode, "HudEndDay", "推进一天");
     this.ensureActionButton(actionsNode, "HudReturnLobby", "返回大厅");
   }
@@ -1626,6 +1634,12 @@ export class VeilHudPanel extends Component {
         label: "认输",
         callback: this.onToggleSurrender ?? null,
         visible: this.currentState?.surrendering.available ?? false
+      },
+      {
+        name: "HudShareBattleResult",
+        label: "分享战绩",
+        callback: this.onShareBattleResult ?? null,
+        visible: this.currentState?.sharing.available ?? false
       },
       { name: "HudEndDay", label: "推进一天", callback: this.onEndDay ?? null },
       { name: "HudReturnLobby", label: "返回大厅", callback: this.onReturnLobby ?? null }
