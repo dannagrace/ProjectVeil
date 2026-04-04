@@ -13,26 +13,21 @@ import { registerConfigViewerRoutes } from "./config-viewer";
 import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
 import { registerMatchmakingRoutes } from "./matchmaking";
-import { registerMinorProtectionPreviewRoutes } from "./minor-protection-preview";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
+import { registerMinorProtectionPreviewRoutes } from "./minor-protection-preview";
 import {
   buildPrometheusMetricsDocument,
   recordHttpRequestDuration,
   registerRuntimeObservabilityRoutes
 } from "./observability";
-import {
-  MySqlRoomSnapshotStore,
-  readMySqlPersistenceConfig,
-  type MySqlPersistenceConfig,
-  type RoomSnapshotStore,
-  type SnapshotRetentionPolicy
-} from "./persistence";
+import { type MySqlPersistenceConfig, MySqlRoomSnapshotStore, type RoomSnapshotStore, readMySqlPersistenceConfig, type SnapshotRetentionPolicy } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
-import { registerSeasonRoutes } from "./seasons";
-import { registerAdminRoutes } from "./admin-console";
-import { registerShopRoutes } from "./shop";
-import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
 import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "./redis";
+import { registerRetentionSummaryRoute } from "./retention-summary";
+import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
+import { registerAdminRoutes } from "./admin-console";
+import { registerSeasonRoutes } from "./seasons";
+import { registerShopRoutes } from "./shop";
 import { registerWechatPayRoutes } from "./wechat-pay";
 
 loadEnv();
@@ -122,6 +117,7 @@ export interface DevServerBootstrapDependencies {
   registerLeaderboardRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerSeasonRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerRuntimeObservabilityRoutes(app: unknown, options?: { store?: DevServerRoomSnapshotStore }): void;
+  registerRetentionSummaryRoute(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerPrometheusMetricsMiddleware(app: unknown): void;
   registerPrometheusMetricsRoute(app: unknown): void;
   registerAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore, gameServer: DevServerGameServer): void;
@@ -190,6 +186,8 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerLeaderboardRoutes: (app, store) => registerLeaderboardRoutes(app as never, store as RoomSnapshotStore | null),
     registerSeasonRoutes: (app, store) => registerSeasonRoutes(app as never, store as RoomSnapshotStore | null),
     registerRuntimeObservabilityRoutes: (app, options) => registerRuntimeObservabilityRoutes(app as never, options),
+    registerRetentionSummaryRoute: (app, store) =>
+      registerRetentionSummaryRoute(app as never, store as RoomSnapshotStore | null),
     registerPrometheusMetricsMiddleware: (app) => registerPrometheusMetricsMiddleware(app as DevServerHttpApp),
     registerPrometheusMetricsRoute: (app) => registerPrometheusMetricsRoute(app as DevServerHttpApp),
     registerAdminRoutes: (app, store, gameServer) =>
@@ -255,6 +253,9 @@ export async function startDevServer(
   deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore);
   deps.registerSeasonRoutes(expressApp, effectiveSnapshotStore);
   deps.registerRuntimeObservabilityRoutes(expressApp, { store: effectiveSnapshotStore });
+  if ("get" in (expressApp as object)) {
+    deps.registerRetentionSummaryRoute(expressApp, effectiveSnapshotStore);
+  }
 
   const gameServer = deps.createGameServer(transport, {
     driver: redisDriver ?? undefined,
@@ -278,6 +279,7 @@ export async function startDevServer(
   deps.logger.log(`Runtime diagnostic snapshot available at http://${host}:${port}/api/runtime/diagnostic-snapshot`);
   deps.logger.log(`Prometheus metrics available at http://${host}:${port}/metrics`);
   deps.logger.log(`Runtime metrics available at http://${host}:${port}/api/runtime/metrics`);
+  deps.logger.log(`Retention summary available at http://${host}:${port}/ops/retention-summary`);
   deps.logger.log(`Config center storage: ${configCenterStore.mode}`);
   if (redisUrl) {
     deps.logger.log("Redis-backed Colyseus presence/driver enabled via REDIS_URL");
@@ -368,7 +370,7 @@ export async function startDevServer(
 
 if (import.meta.main) {
   void startDevServer();
-  // Keep the process alive — the Colyseus WebSocket transport may unref its
+  // Keep the process alive - the Colyseus WebSocket transport may unref its
   // handles under tsx, causing Node to exit once the event loop drains.
   setInterval(() => {}, 30_000);
 }

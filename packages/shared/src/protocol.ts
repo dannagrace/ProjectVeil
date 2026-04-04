@@ -1,4 +1,5 @@
 import type { BattleAction, BattleState, MovementPlan, Vec2, WorldAction, WorldEvent } from "./models.ts";
+import type { FeatureFlags } from "./feature-flags.ts";
 import type { PlayerWorldViewPayload } from "./map-sync.ts";
 import type { RuntimeConfigBundle } from "./world-config.ts";
 
@@ -10,6 +11,7 @@ export interface SessionStatePayload {
   events: WorldEvent[];
   movementPlan: MovementPlan | null;
   reachableTiles: Vec2[];
+  featureFlags: FeatureFlags;
   reason?: SessionStateReason;
 }
 

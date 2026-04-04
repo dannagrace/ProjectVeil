@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "flags": {
+    "quest_system_enabled": {
+      "type": "boolean",
+      "value": false,
+      "defaultValue": false,
+      "enabled": true,
+      "rollout": 1
+    },
+    "battle_pass_enabled": {
+      "type": "boolean",
+      "value": false,
+      "defaultValue": false,
+      "enabled": true,
+      "rollout": 1
+    },
+    "pve_enabled": {
+      "type": "boolean",
+      "value": false,
+      "defaultValue": false,
+      "enabled": true,
+      "rollout": 1
+    },
+    "tutorial_enabled": {
+      "type": "boolean",
+      "value": true,
+      "defaultValue": true,
+      "enabled": true,
+      "rollout": 1
+    }
+  }
+}

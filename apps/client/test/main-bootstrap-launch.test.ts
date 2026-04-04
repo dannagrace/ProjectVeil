@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DEFAULT_FEATURE_FLAGS } from "../../../packages/shared/src/index";
 import type { SessionUpdate } from "../src/local-session";
 import type { StoredAuthSession } from "../src/auth-session";
 import { launchMainH5App } from "../src/main-bootstrap-launch";
@@ -31,6 +32,7 @@ function createSessionUpdate(reason: string): SessionUpdate {
     events: [],
     movementPlan: null,
     reachableTiles: [{ x: 0, y: 0 }],
+    featureFlags: DEFAULT_FEATURE_FLAGS,
     reason
   };
 }

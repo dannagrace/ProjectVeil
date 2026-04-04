@@ -329,6 +329,12 @@
           "y": 1
         }
       ],
+      "featureFlags": {
+        "quest_system_enabled": false,
+        "battle_pass_enabled": false,
+        "pve_enabled": false,
+        "tutorial_enabled": true
+      },
       "reason": "battle.started"
     }
   },

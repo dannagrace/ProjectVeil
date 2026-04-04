@@ -13,6 +13,7 @@ import {
   type PlayerWorldView,
   type PlayerBattleReplaySummary,
   type ClientMessage,
+  type FeatureFlags,
   type MovementPlan,
   type SessionStateReason,
   type ServerMessage,
@@ -21,6 +22,7 @@ import {
   type WorldAction,
   type BattleAction
 } from "../../../packages/shared/src/index";
+import { emitAnalyticsEvent } from "./analytics";
 import { createRoom, type AuthoritativeWorldRoom, type RoomPersistenceSnapshot } from "./index";
 import {
   appendCompletedBattleReplaysToAccount,
@@ -50,6 +52,7 @@ import {
   removeRuntimeRoom
 } from "./observability";
 import { sendWechatSubscribeMessage, type WechatSubscribeTemplateKey } from "./wechat-subscribe";
+import { resolveFeatureFlagsForPlayer } from "./feature-flags";
 
 type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;
 
@@ -418,6 +421,15 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         delivery: "reply",
         payload: this.buildStatePayload(playerId)
       });
+      emitAnalyticsEvent("session_start", {
+        playerId,
+        roomId: logicalRoomId,
+        payload: {
+          roomId: logicalRoomId,
+          authMode: authSession?.authMode ?? "guest",
+          platform: "colyseus"
+        }
+      });
     });
 
     this.onMessage("world.preview", (client, message: Extract<ClientMessage, { type: "world.preview" }>) => {
@@ -486,6 +498,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
       await this.persistPlayerAccountProgress(result.events ?? [], this.worldRoom.consumeCompletedBattleReplays());
+      this.emitAnalyticsForWorldEvents(playerId, result.events ?? []);
 
       this.publishLobbyRoomSummary();
       sendMessage(client, "session.state", {
@@ -536,6 +549,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
       await this.persistPlayerAccountProgress(result.events ?? [], this.worldRoom.consumeCompletedBattleReplays());
+      this.emitAnalyticsForWorldEvents(playerId, result.events ?? []);
 
       this.publishLobbyRoomSummary();
       sendMessage(client, "session.state", {
@@ -1565,8 +1579,44 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       events,
       movementPlan: extras?.movementPlan ?? null,
       reachableTiles: heroId && !battle ? listReachableTiles(this.worldRoom.getInternalState(), heroId) : [],
+      featureFlags: this.resolvePlayerFeatureFlags(playerId),
       ...(extras?.reason ? { reason: extras.reason } : {})
     };
+  }
+
+  private resolvePlayerFeatureFlags(playerId: string): FeatureFlags {
+    return resolveFeatureFlagsForPlayer(playerId);
+  }
+
+  private emitAnalyticsForWorldEvents(playerId: string, events: WorldEvent[]): void {
+    for (const event of events) {
+      if (event.type === "battle.started") {
+        emitAnalyticsEvent("battle_start", {
+          playerId,
+          roomId: this.metadata.logicalRoomId,
+          payload: {
+            roomId: this.metadata.logicalRoomId,
+            battleId: event.battleId,
+            encounterKind: event.encounterKind,
+            heroId: event.heroId
+          }
+        });
+      }
+
+      if (event.type === "battle.resolved") {
+        emitAnalyticsEvent("battle_end", {
+          playerId,
+          roomId: this.metadata.logicalRoomId,
+          payload: {
+            roomId: this.metadata.logicalRoomId,
+            battleId: event.battleId,
+            result: event.result,
+            heroId: event.heroId,
+            battleKind: "battleKind" in event && typeof event.battleKind === "string" ? event.battleKind : "unknown"
+          }
+        });
+      }
+    }
   }
 
   private broadcastState(

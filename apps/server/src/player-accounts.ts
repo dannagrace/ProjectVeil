@@ -16,9 +16,9 @@ import {
 import {
   createDailyQuestClaimEventLogEntry,
   findDailyQuestDefinition,
-  loadDailyQuestBoard,
-  readDailyQuestFeatureEnabled
+  loadDailyQuestBoard
 } from "./daily-quests";
+import { emitAnalyticsEvent } from "./analytics";
 import {
   cachePlayerAccountAuthState,
   hashAccountPassword,
@@ -36,6 +36,7 @@ import type {
   RoomSnapshotStore
 } from "./persistence";
 import { getDailyRewardDateKey, getPreviousDailyRewardDateKey, resolveDailyRewardForStreak } from "./daily-rewards";
+import { resolveFeatureFlagsForPlayer } from "./feature-flags";
 import { decryptWechatPhoneNumber, validateWechatSignature } from "./wechat-session-key";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -290,7 +291,8 @@ function withBattleReportCenter(account: PlayerAccountSnapshot): PlayerAccountSn
 
 async function withDailyQuestBoard(
   account: PlayerAccountSnapshot,
-  store: RoomSnapshotStore | null
+  store: RoomSnapshotStore | null,
+  enabled = false
 ): Promise<PlayerAccountSnapshot> {
   if (!store) {
     return account;
@@ -298,7 +300,7 @@ async function withDailyQuestBoard(
 
   return {
     ...account,
-    dailyQuestBoard: await loadDailyQuestBoard(store, account)
+    dailyQuestBoard: await loadDailyQuestBoard(store, account, new Date(), enabled)
   };
 }
 
@@ -660,6 +662,7 @@ export function registerPlayerAccountRoutes(
     }
 
     try {
+      const featureFlags = resolveFeatureFlagsForPlayer(authSession.playerId);
       const account =
         (await store.loadPlayerAccount(authSession.playerId)) ??
         (await store.ensurePlayerAccount({
@@ -667,7 +670,7 @@ export function registerPlayerAccountRoutes(
           displayName: authSession.displayName
         }));
       sendJson(response, 200, {
-        account: await withDailyQuestBoard(withBattleReportCenter(account), store),
+        account: await withDailyQuestBoard(withBattleReportCenter(account), store, featureFlags.quest_system_enabled),
         session: issueNextAuthSession(account, authSession)
       });
     } catch (error) {
@@ -745,7 +748,8 @@ export function registerPlayerAccountRoutes(
       return;
     }
 
-    if (!readDailyQuestFeatureEnabled()) {
+    const featureFlags = resolveFeatureFlagsForPlayer(authSession.playerId);
+    if (!featureFlags.quest_system_enabled) {
       sendJson(response, 200, {
         claimed: false,
         reason: "daily_quests_disabled"
@@ -771,7 +775,7 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
-      const board = await loadDailyQuestBoard(store, account);
+      const board = await loadDailyQuestBoard(store, account, new Date(), featureFlags.quest_system_enabled);
       const quest = board.quests.find((item) => item.id === definition.id);
 
       if (!quest) {
@@ -817,12 +821,21 @@ export function registerPlayerAccountRoutes(
         },
         recentEventLog: appendEventLogEntries(account.recentEventLog, [claimEntry])
       });
+      emitAnalyticsEvent("quest_complete", {
+        playerId: account.playerId,
+        roomId: account.lastRoomId ?? "daily-quests",
+        payload: {
+          roomId: account.lastRoomId ?? "daily-quests",
+          questId: definition.id,
+          reward: definition.reward
+        }
+      });
 
       sendJson(response, 200, {
         claimed: true,
         questId: definition.id,
         reward: definition.reward,
-        dailyQuestBoard: await loadDailyQuestBoard(store, nextAccount)
+        dailyQuestBoard: await loadDailyQuestBoard(store, nextAccount, new Date(), featureFlags.quest_system_enabled)
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -848,6 +861,7 @@ export function registerPlayerAccountRoutes(
     }
 
     try {
+      const featureFlags = resolveFeatureFlagsForPlayer(authSession.playerId);
       const account =
         (await store.loadPlayerAccount(authSession.playerId)) ??
         (await store.ensurePlayerAccount({
@@ -855,7 +869,7 @@ export function registerPlayerAccountRoutes(
           displayName: authSession.displayName
         }));
       sendJson(response, 200, {
-        dailyQuestBoard: await loadDailyQuestBoard(store, account)
+        dailyQuestBoard: await loadDailyQuestBoard(store, account, new Date(), featureFlags.quest_system_enabled)
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -1364,6 +1378,7 @@ export function registerPlayerAccountRoutes(
     }
 
     try {
+      const featureFlags = resolveFeatureFlagsForPlayer(authSession.playerId);
       const account =
         (await store.loadPlayerAccount(authSession.playerId)) ??
         (await store.ensurePlayerAccount({
@@ -1372,7 +1387,7 @@ export function registerPlayerAccountRoutes(
         }));
       sendJson(response, 200, {
         ...toProgressionResponse(account, parseLimit(request)),
-        dailyQuestBoard: await loadDailyQuestBoard(store, account)
+        dailyQuestBoard: await loadDailyQuestBoard(store, account, new Date(), featureFlags.quest_system_enabled)
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });

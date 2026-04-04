@@ -1660,13 +1660,13 @@ export class VeilHudPanel extends Component {
         name: "HudSurrender",
         label: "认输",
         callback: this.onToggleSurrender ?? null,
-        visible: this.currentState?.surrendering.available ?? false
+        visible: this.currentState?.surrendering?.available ?? false
       },
       {
         name: "HudShareBattleResult",
         label: "分享战绩",
         callback: this.onShareBattleResult ?? null,
-        visible: this.currentState?.sharing.available ?? false
+        visible: this.currentState?.sharing?.available ?? false
       },
       { name: "HudEndDay", label: "推进一天", callback: this.onEndDay ?? null },
       { name: "HudReturnLobby", label: "返回大厅", callback: this.onReturnLobby ?? null }

@@ -1,4 +1,5 @@
 import {
+  DEFAULT_FEATURE_FLAGS,
   buildAchievementUiItems,
   groupAchievementUiItems,
   buildRuntimeDiagnosticsTriageView,
@@ -35,6 +36,7 @@ import {
   type RuntimeDiagnosticsConnectionStatus,
   type RuntimeDiagnosticsTriageSection,
   type DailyQuestBoard,
+  type FeatureFlags,
   validateAccountLifecycleConfirm,
   validateAccountLifecycleRequest,
   validateAccountPassword,
@@ -220,6 +222,7 @@ interface BattleReportComposerState {
 interface AppState {
   world: PlayerWorldView;
   battle: BattleState | null;
+  featureFlags: FeatureFlags;
   account: ClientPlayerAccountProfile;
   lobby: LobbyViewState;
   accountDraftName: string;
@@ -323,6 +326,7 @@ const state: AppState = {
     playerId
   },
   battle: null,
+  featureFlags: DEFAULT_FEATURE_FLAGS,
   account: createLocalAccountProfile(playerId, roomId, initialAccountDisplayName),
   lobby: {
     playerId: initialLobbyPreferences.playerId,
@@ -2966,6 +2970,7 @@ function applyUpdate(update: SessionUpdate, source: TimelineEntry["source"] = "l
   state.diagnostics.lastEventTypes = update.events.map((event) => event.type).slice(0, 8);
   state.world = update.world;
   state.battle = update.battle;
+  state.featureFlags = update.featureFlags ?? DEFAULT_FEATURE_FLAGS;
   state.previewPlan = null;
   const heroId = state.selectedHeroId ?? update.world.ownHeroes[0]?.id ?? "hero-1";
   state.reachableTiles = update.reachableTiles;
@@ -3092,7 +3097,11 @@ async function refreshAccountProfileFromServer(): Promise<void> {
   accountRefreshPromise = (async () => {
     const account = await loadAccountProfileWithProgression(playerId, roomId);
     state.account = account;
-    await syncDailyQuestBoard();
+    if (state.featureFlags.quest_system_enabled) {
+      await syncDailyQuestBoard();
+    } else {
+      delete state.account.dailyQuestBoard;
+    }
     syncAchievementToastFeed(account, hasHydratedAchievementFeed);
     hasHydratedAchievementFeed = true;
     if (state.achievementPanel.open) {
@@ -3111,6 +3120,10 @@ async function refreshAccountProfileFromServer(): Promise<void> {
 }
 
 async function loadDailyQuestBoardFromServer(): Promise<DailyQuestBoard | undefined> {
+  if (!state.featureFlags.quest_system_enabled) {
+    return undefined;
+  }
+
   const authSession = readStoredAuthSession();
   if (!authSession?.token) {
     return undefined;
@@ -3135,6 +3148,11 @@ async function loadDailyQuestBoardFromServer(): Promise<DailyQuestBoard | undefi
 }
 
 async function syncDailyQuestBoard(): Promise<void> {
+  if (!state.featureFlags.quest_system_enabled) {
+    delete state.account.dailyQuestBoard;
+    return;
+  }
+
   const board = await loadDailyQuestBoardFromServer();
   if (board) {
     state.account.dailyQuestBoard = board;
@@ -4887,9 +4905,11 @@ function render(): void {
           <p class="account-meta">${escapeHtml(formatCredentialBinding(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
-          ${renderDailyQuestBoard(state.account, {
-            claimingQuestId: state.dailyQuestClaimingId
-          })}
+          ${state.featureFlags.quest_system_enabled
+            ? renderDailyQuestBoard(state.account, {
+                claimingQuestId: state.dailyQuestClaimingId
+              })
+            : ""}
           ${renderAchievementProgress(state.account)}
           ${renderBattleReportReplayCenter({
             account: state.account,

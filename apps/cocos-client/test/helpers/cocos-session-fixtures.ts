@@ -1,3 +1,4 @@
+import { DEFAULT_FEATURE_FLAGS } from "../../../../packages/shared/src/index.ts";
 import type { SessionUpdate } from "../../assets/scripts/VeilCocosSession.ts";
 
 type FakeRoomReply =
@@ -148,7 +149,8 @@ export function createSessionUpdate(day = 1, roomId = "room-alpha", playerId = "
     battle: null,
     events: [],
     movementPlan: null,
-    reachableTiles: [{ x: 0, y: 0 }, { x: 1, y: 0 }]
+    reachableTiles: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+    featureFlags: DEFAULT_FEATURE_FLAGS
   };
 }
 
@@ -166,6 +168,7 @@ export function toSessionStatePayload(update: SessionUpdate) {
     events: update.events,
     movementPlan: update.movementPlan,
     reachableTiles: update.reachableTiles,
+    featureFlags: update.featureFlags ?? DEFAULT_FEATURE_FLAGS,
     ...(update.reason ? { reason: update.reason } : {})
   };
 }

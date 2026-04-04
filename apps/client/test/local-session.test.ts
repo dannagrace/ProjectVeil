@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CloseCode, type Room as ColyseusRoom } from "@colyseus/sdk";
-import type { ServerMessage } from "../../../packages/shared/src/index";
+import { DEFAULT_FEATURE_FLAGS, type ServerMessage } from "../../../packages/shared/src/index";
 import {
   getReconnectionStorageKey,
   getSessionReplayStorageKey,
@@ -85,6 +85,7 @@ function createSessionUpdate(reason = "snapshot", day = 2): SessionUpdate {
     events: [],
     movementPlan: null,
     reachableTiles: [{ x: 0, y: 0 }],
+    featureFlags: DEFAULT_FEATURE_FLAGS,
     reason
   };
 }
@@ -104,6 +105,7 @@ function toServerMessage(
       events: update.events,
       movementPlan: update.movementPlan,
       reachableTiles: update.reachableTiles,
+      featureFlags: update.featureFlags ?? DEFAULT_FEATURE_FLAGS,
       ...(update.reason ? { reason: update.reason } : {})
     }
   };
