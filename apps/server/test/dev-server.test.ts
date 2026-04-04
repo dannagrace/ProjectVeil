@@ -164,6 +164,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   const memoryStore = createMemoryStore();
   let configuredStore: unknown;
   let authStore: unknown;
+  let guildStore: unknown;
   let playerAccountStore: unknown;
   let matchmakingStore: unknown;
   let lobbyListRooms: unknown;
@@ -197,6 +198,11 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       assert.equal(app, base.expressApp);
       assert.equal(store, configCenterStore);
       base.routeCalls.push("config-viewer");
+    },
+    registerGuildRoutes: (app, store) => {
+      assert.equal(app, base.expressApp);
+      guildStore = store;
+      base.routeCalls.push("guilds");
     },
     registerPlayerAccountRoutes: (app, store) => {
       assert.equal(app, base.expressApp);
@@ -271,6 +277,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
 
   assert.equal(configuredStore, memoryStore);
   assert.equal(authStore, memoryStore);
+  assert.equal(guildStore, memoryStore);
   assert.equal(playerAccountStore, memoryStore);
   assert.equal(matchmakingStore, memoryStore);
   assert.equal(lobbyListRooms, listLobbyRooms);
@@ -280,6 +287,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     "auth",
     "config-center",
     "config-viewer",
+    "guilds",
     "player-accounts",
     "shop",
     "wechat-pay",
@@ -300,6 +308,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.equal(base.logger.errors.length, 0);
   assertStartupLogIncludes(base.logger, [
     /Project Veil Colyseus dev server listening on ws:\/\/0\.0\.0\.0:3101/,
+    /Guild API available at http:\/\/0\.0\.0\.0:3101\/api\/guilds/,
     /WeChat Pay API available at http:\/\/0\.0\.0\.0:3101\/api\/payments\/wechat\/create/,
     /Runtime health available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/health/,
     /Auth readiness available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/auth-readiness/,
@@ -345,6 +354,7 @@ test("dev server logs process-level failures, closes stores, and exits non-zero"
     registerAuthRoutes: () => undefined,
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
+    registerGuildRoutes: () => undefined,
     registerPlayerAccountRoutes: () => undefined,
     registerShopRoutes: () => undefined,
     registerWechatPayRoutes: () => undefined,
@@ -408,6 +418,7 @@ test("dev server logs uncaught exceptions, closes stores, and exits non-zero", a
     registerAuthRoutes: () => undefined,
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
+    registerGuildRoutes: () => undefined,
     registerPlayerAccountRoutes: () => undefined,
     registerShopRoutes: () => undefined,
     registerWechatPayRoutes: () => undefined,
@@ -493,6 +504,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     registerAuthRoutes: () => undefined,
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
+    registerGuildRoutes: () => undefined,
     registerPlayerAccountRoutes: () => undefined,
     registerShopRoutes: () => undefined,
     registerWechatPayRoutes: () => undefined,
@@ -564,6 +576,7 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
     registerAuthRoutes: () => undefined,
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
+    registerGuildRoutes: () => undefined,
     registerPlayerAccountRoutes: () => undefined,
     registerShopRoutes: () => undefined,
     registerWechatPayRoutes: () => undefined,
@@ -654,6 +667,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     registerAuthRoutes: () => undefined,
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
+    registerGuildRoutes: () => undefined,
     registerPlayerAccountRoutes: () => undefined,
     registerShopRoutes: () => undefined,
     registerWechatPayRoutes: () => undefined,

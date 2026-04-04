@@ -3,14 +3,17 @@ import {
   DEFAULT_TUTORIAL_STEP,
   getEquipmentDefinition,
   getTierForDivision,
+  normalizeGuildState,
   normalizeEloRating,
   normalizeEventLogEntries,
   normalizeEventLogQuery,
   tryAddEquipmentToInventory,
-  type EventLogEntry
+  type EventLogEntry,
+  type GuildState
 } from "../../../packages/shared/src/index";
 import {
   createPlayerAccountsFromWorldState,
+  type GuildListOptions,
   MAX_PLAYER_AVATAR_URL_LENGTH,
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
   type PaymentOrderCompleteInput,
@@ -113,6 +116,8 @@ function normalizeResourceLedger(resources?: PlayerAccountSnapshot["globalResour
 export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
+  private readonly guilds = new Map<string, GuildState>();
+  private readonly guildIdByPlayerId = new Map<string, string>();
   private readonly paymentOrders = new Map<string, PaymentOrderSnapshot>();
   private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
@@ -134,6 +139,20 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
     const account = this.accounts.get(normalizePlayerId(playerId));
     return account ? cloneAccount(account) : null;
+  }
+
+  async loadGuild(guildId: string): Promise<GuildState | null> {
+    const guild = this.guilds.get(guildId.trim());
+    return guild ? normalizeGuildState(structuredClone(guild)) : null;
+  }
+
+  async loadGuildByMemberPlayerId(playerId: string): Promise<GuildState | null> {
+    const guildId = this.guildIdByPlayerId.get(normalizePlayerId(playerId));
+    if (!guildId) {
+      return null;
+    }
+
+    return this.loadGuild(guildId);
   }
 
   async loadPaymentOrder(orderId: string): Promise<PaymentOrderSnapshot | null> {
@@ -250,6 +269,20 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       .map((playerId) => this.accounts.get(normalizePlayerId(playerId)))
       .filter((account): account is PlayerAccountSnapshot => Boolean(account))
       .map((account) => cloneAccount(account));
+  }
+
+  async listGuilds(options: GuildListOptions = {}): Promise<GuildState[]> {
+    const safeLimit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 50)));
+    return Array.from(this.guilds.values())
+      .filter((guild) => !options.playerId || guild.members.some((member) => member.playerId === options.playerId))
+      .sort(
+        (left, right) =>
+          right.members.length - left.members.length ||
+          right.updatedAt.localeCompare(left.updatedAt) ||
+          left.id.localeCompare(right.id)
+      )
+      .slice(0, safeLimit)
+      .map((guild) => normalizeGuildState(structuredClone(guild)));
   }
 
   async listPlayerReports(options: PlayerReportListOptions = {}): Promise<PlayerReportRecord[]> {
@@ -1265,8 +1298,38 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     }
   }
 
+  async saveGuild(guildInput: GuildState): Promise<GuildState> {
+    const guild = normalizeGuildState(guildInput);
+    const existing = this.guilds.get(guild.id);
+    if (existing) {
+      for (const member of existing.members) {
+        this.guildIdByPlayerId.delete(member.playerId);
+      }
+    }
+
+    this.guilds.set(guild.id, normalizeGuildState(structuredClone(guild)));
+    for (const member of guild.members) {
+      this.guildIdByPlayerId.set(member.playerId, guild.id);
+    }
+
+    return normalizeGuildState(structuredClone(guild));
+  }
+
   async delete(roomId: string): Promise<void> {
     this.snapshots.delete(roomId);
+  }
+
+  async deleteGuild(guildId: string): Promise<void> {
+    const normalizedGuildId = guildId.trim();
+    const existing = this.guilds.get(normalizedGuildId);
+    if (!existing) {
+      return;
+    }
+
+    for (const member of existing.members) {
+      this.guildIdByPlayerId.delete(member.playerId);
+    }
+    this.guilds.delete(normalizedGuildId);
   }
 
   async pruneExpired(): Promise<number> {
