@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildRuntimeDiagnosticsErrorEvent } from "../../../packages/shared/src/index.ts";
 import { buildCocosRuntimeDiagnosticsSnapshot, buildCocosRuntimeTriageSummaryLines } from "../assets/scripts/cocos-runtime-diagnostics.ts";
 import { createFallbackCocosPlayerAccountProfile } from "../assets/scripts/cocos-lobby.ts";
 import { createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
@@ -47,6 +48,30 @@ test("Cocos runtime diagnostics reuse the shared snapshot shape for HUD triage",
         battleId: "battle-1",
         battleKind: "neutral"
       }
+    ],
+    errorEvents: [
+      buildRuntimeDiagnosticsErrorEvent({
+        id: "cocos-room-sync-1",
+        recordedAt: "2026-03-29T08:59:43.000Z",
+        source: "client",
+        surface: "cocos",
+        candidateRevision: "abc1234",
+        featureArea: "room_sync",
+        ownerArea: "multiplayer",
+        severity: "error",
+        errorCode: "reconnect_failed",
+        message: "Cocos runtime fell back to cached snapshot after reconnect failed.",
+        context: {
+          roomId: "room-alpha",
+          playerId: "player-1",
+          requestId: null,
+          route: null,
+          action: "room.reconnect",
+          statusCode: null,
+          crash: false,
+          detail: "cached snapshot replay"
+        }
+      })
     ]
   });
 
@@ -55,6 +80,7 @@ test("Cocos runtime diagnostics reuse the shared snapshot shape for HUD triage",
   assert.equal(snapshot.world?.hero?.id, "hero-1");
   assert.equal(snapshot.world?.visibleHeroes[0]?.playerId, "player-2");
   assert.equal(snapshot.diagnostics.recoverySummary, "已回放缓存状态，等待房间同步...");
+  assert.equal(snapshot.diagnostics.errorSummary.totalEvents, 1);
   assert.equal(snapshot.account?.accountReadiness?.status, "missing");
   assert.match(snapshot.account?.accountReadiness?.detail ?? "", /缺少正式账号登录态/);
 
@@ -76,7 +102,8 @@ test("Cocos runtime diagnostics reuse the shared snapshot shape for HUD triage",
       logLines: ["连接已中断，正在尝试重连...", "已回放缓存状态，等待房间同步..."],
       predictionStatus: "已回放缓存状态，等待房间同步...",
       recoverySummary: "已回放缓存状态，等待房间同步...",
-      primaryClientTelemetry: []
+      primaryClientTelemetry: [],
+      errorEvents: []
     },
     "2026-03-29T09:00:20.000Z"
   );

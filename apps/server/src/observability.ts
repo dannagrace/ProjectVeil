@@ -1,6 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  buildRuntimeDiagnosticsErrorEvent,
   renderRuntimeDiagnosticsSnapshotText,
+  summarizeRuntimeDiagnosticsErrors,
+  type RuntimeDiagnosticsErrorEvent,
   type RuntimeDiagnosticsSnapshot
 } from "../../../packages/shared/src/index";
 import { resetGuestAuthSessions } from "./auth";
@@ -111,6 +114,7 @@ interface ReconnectObservabilityCounters {
 interface RuntimeObservabilityState {
   startedAt: number;
   rooms: Map<string, RuntimeRoomSnapshot>;
+  errorEvents: RuntimeDiagnosticsErrorEvent[];
   counters: RuntimeObservabilityCounters;
   prometheus: {
     battleDurationSeconds: HistogramMetricState;
@@ -222,6 +226,7 @@ function createHistogramMetricState(buckets: number[]): HistogramMetricState {
 const runtimeObservability: RuntimeObservabilityState = {
   startedAt: Date.now(),
   rooms: new Map<string, RuntimeRoomSnapshot>(),
+  errorEvents: [],
   counters: {
     connectMessagesTotal: 0,
     worldActionsTotal: 0,
@@ -516,6 +521,7 @@ function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): Runtim
     (left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.roomId.localeCompare(right.roomId)
   );
   const checkedAt = new Date().toISOString();
+  const errorEvents = runtimeObservability.errorEvents.map((event) => ({ ...event }));
 
   return {
     schemaVersion: 1,
@@ -572,7 +578,9 @@ function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): Runtim
       predictionStatus: "server-observability",
       pendingUiTasks: 0,
       replay: null,
-      primaryClientTelemetry: []
+      primaryClientTelemetry: [],
+      errorEvents,
+      errorSummary: summarizeRuntimeDiagnosticsErrors(errorEvents)
     }
   };
 }
@@ -1115,6 +1123,15 @@ export function recordRuntimeRoom(snapshot: RuntimeRoomSnapshot): void {
   runtimeObservability.rooms.set(snapshot.roomId, { ...snapshot });
 }
 
+export function recordRuntimeErrorEvent(
+  input: Omit<RuntimeDiagnosticsErrorEvent, "fingerprint" | "tags"> & { fingerprint?: string; tags?: string[] }
+): void {
+  runtimeObservability.errorEvents.unshift(buildRuntimeDiagnosticsErrorEvent(input));
+  if (runtimeObservability.errorEvents.length > 100) {
+    runtimeObservability.errorEvents.length = 100;
+  }
+}
+
 export function removeRuntimeRoom(roomId: string): void {
   runtimeObservability.rooms.delete(roomId);
 }
@@ -1330,6 +1347,7 @@ export function recordReconnectWindowResolved(outcome: "success" | "failure"): v
 export function resetRuntimeObservability(): void {
   runtimeObservability.startedAt = Date.now();
   runtimeObservability.rooms.clear();
+  runtimeObservability.errorEvents.length = 0;
   runtimeObservability.counters.connectMessagesTotal = 0;
   runtimeObservability.counters.worldActionsTotal = 0;
   runtimeObservability.counters.battleActionsTotal = 0;

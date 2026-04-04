@@ -131,6 +131,79 @@ export interface RuntimeDiagnosticsReplaySnapshot {
   totalSteps: number;
 }
 
+export type RuntimeDiagnosticsErrorSource = "server" | "client";
+
+export type RuntimeDiagnosticsErrorSeverity = "warn" | "error" | "fatal";
+
+export type RuntimeDiagnosticsFeatureArea =
+  | "login"
+  | "payment"
+  | "room_sync"
+  | "rewards"
+  | "share"
+  | "runtime"
+  | "battle"
+  | "guild"
+  | "shop"
+  | "season"
+  | "quests"
+  | "unknown";
+
+export interface RuntimeDiagnosticsErrorEvent {
+  id: string;
+  recordedAt: string;
+  source: RuntimeDiagnosticsErrorSource;
+  surface: string;
+  candidateRevision: string | null;
+  featureArea: RuntimeDiagnosticsFeatureArea;
+  ownerArea: string;
+  severity: RuntimeDiagnosticsErrorSeverity;
+  errorCode: string;
+  fingerprint: string;
+  message: string;
+  tags: string[];
+  context: {
+    roomId: string | null;
+    playerId: string | null;
+    requestId: string | null;
+    route: string | null;
+    action: string | null;
+    statusCode: number | null;
+    crash: boolean;
+    detail: string | null;
+  };
+}
+
+export interface RuntimeDiagnosticsErrorFingerprintSummary {
+  fingerprint: string;
+  errorCode: string;
+  featureArea: RuntimeDiagnosticsFeatureArea;
+  ownerArea: string;
+  source: RuntimeDiagnosticsErrorSource;
+  surface: string;
+  severity: RuntimeDiagnosticsErrorSeverity;
+  candidateRevision: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  count: number;
+  crashCount: number;
+  latestMessage: string;
+  sampleContext: RuntimeDiagnosticsErrorEvent["context"];
+}
+
+export interface RuntimeDiagnosticsErrorSummary {
+  totalEvents: number;
+  uniqueFingerprints: number;
+  fatalCount: number;
+  crashCount: number;
+  latestRecordedAt: string | null;
+  byFeatureArea: Array<{
+    featureArea: RuntimeDiagnosticsFeatureArea;
+    count: number;
+  }>;
+  topFingerprints: RuntimeDiagnosticsErrorFingerprintSummary[];
+}
+
 export type PrimaryClientTelemetryCategory = "progression" | "inventory" | "combat";
 
 export type PrimaryClientTelemetryStatus = "info" | "success" | "failure" | "blocked";
@@ -181,6 +254,8 @@ export interface RuntimeDiagnosticsSnapshot {
     pendingUiTasks: number;
     replay: RuntimeDiagnosticsReplaySnapshot | null;
     primaryClientTelemetry: PrimaryClientTelemetryEvent[];
+    errorEvents: RuntimeDiagnosticsErrorEvent[];
+    errorSummary: RuntimeDiagnosticsErrorSummary;
   };
 }
 
@@ -207,6 +282,131 @@ export interface RuntimeDiagnosticsTriageSection {
 export interface RuntimeDiagnosticsTriageView {
   alerts: RuntimeDiagnosticsTriageAlert[];
   sections: RuntimeDiagnosticsTriageSection[];
+}
+
+function normalizeTimestamp(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function compareStrings(left: string, right: string): number {
+  return left.localeCompare(right);
+}
+
+export function buildRuntimeErrorFingerprint(input: {
+  source: RuntimeDiagnosticsErrorSource;
+  surface: string;
+  featureArea: RuntimeDiagnosticsFeatureArea;
+  errorCode: string;
+  route?: string | null;
+  action?: string | null;
+  statusCode?: number | null;
+}): string {
+  return [
+    input.source.trim() || "unknown",
+    input.surface.trim() || "unknown",
+    input.featureArea,
+    input.errorCode.trim() || "unknown_error",
+    input.route?.trim() || "no-route",
+    input.action?.trim() || "no-action",
+    input.statusCode == null ? "na" : String(input.statusCode)
+  ].join("|");
+}
+
+export function buildRuntimeDiagnosticsErrorEvent(
+  input: Omit<RuntimeDiagnosticsErrorEvent, "fingerprint" | "tags"> & { fingerprint?: string; tags?: string[] }
+): RuntimeDiagnosticsErrorEvent {
+  const fingerprint =
+    input.fingerprint?.trim() ||
+    buildRuntimeErrorFingerprint({
+      source: input.source,
+      surface: input.surface,
+      featureArea: input.featureArea,
+      errorCode: input.errorCode,
+      route: input.context.route,
+      action: input.context.action,
+      statusCode: input.context.statusCode
+    });
+
+  return {
+    ...input,
+    fingerprint,
+    tags: [...(input.tags ?? [])].map((tag) => tag.trim()).filter((tag) => tag.length > 0)
+  };
+}
+
+export function summarizeRuntimeDiagnosticsErrors(
+  events: RuntimeDiagnosticsErrorEvent[]
+): RuntimeDiagnosticsErrorSummary {
+  const fingerprintMap = new Map<string, RuntimeDiagnosticsErrorFingerprintSummary>();
+  const featureAreaCounts = new Map<RuntimeDiagnosticsFeatureArea, number>();
+  let fatalCount = 0;
+  let crashCount = 0;
+  let latestRecordedAt: string | null = null;
+
+  for (const event of events) {
+    featureAreaCounts.set(event.featureArea, (featureAreaCounts.get(event.featureArea) ?? 0) + 1);
+    if (event.severity === "fatal") {
+      fatalCount += 1;
+    }
+    if (event.context.crash) {
+      crashCount += 1;
+    }
+    if (latestRecordedAt == null || normalizeTimestamp(event.recordedAt) > normalizeTimestamp(latestRecordedAt)) {
+      latestRecordedAt = event.recordedAt;
+    }
+
+    const existing = fingerprintMap.get(event.fingerprint);
+    if (existing) {
+      existing.count += 1;
+      existing.crashCount += event.context.crash ? 1 : 0;
+      if (normalizeTimestamp(event.recordedAt) < normalizeTimestamp(existing.firstSeenAt)) {
+        existing.firstSeenAt = event.recordedAt;
+      }
+      if (normalizeTimestamp(event.recordedAt) >= normalizeTimestamp(existing.lastSeenAt)) {
+        existing.lastSeenAt = event.recordedAt;
+        existing.latestMessage = event.message;
+        existing.sampleContext = { ...event.context };
+      }
+      continue;
+    }
+
+    fingerprintMap.set(event.fingerprint, {
+      fingerprint: event.fingerprint,
+      errorCode: event.errorCode,
+      featureArea: event.featureArea,
+      ownerArea: event.ownerArea,
+      source: event.source,
+      surface: event.surface,
+      severity: event.severity,
+      candidateRevision: event.candidateRevision,
+      firstSeenAt: event.recordedAt,
+      lastSeenAt: event.recordedAt,
+      count: 1,
+      crashCount: event.context.crash ? 1 : 0,
+      latestMessage: event.message,
+      sampleContext: { ...event.context }
+    });
+  }
+
+  return {
+    totalEvents: events.length,
+    uniqueFingerprints: fingerprintMap.size,
+    fatalCount,
+    crashCount,
+    latestRecordedAt,
+    byFeatureArea: Array.from(featureAreaCounts.entries())
+      .map(([featureArea, count]) => ({ featureArea, count }))
+      .sort((left, right) => right.count - left.count || compareStrings(left.featureArea, right.featureArea)),
+    topFingerprints: Array.from(fingerprintMap.values())
+      .sort(
+        (left, right) =>
+          right.count - left.count ||
+          normalizeTimestamp(right.lastSeenAt) - normalizeTimestamp(left.lastSeenAt) ||
+          compareStrings(left.fingerprint, right.fingerprint)
+      )
+      .slice(0, 5)
+  };
 }
 
 function formatSyncAge(ms: number): string {
@@ -449,6 +649,13 @@ export function buildRuntimeDiagnosticsTriageView(
       title: "最近事件",
       items: [
         {
+          label: "错误摘要",
+          value:
+            snapshot.diagnostics.errorSummary.totalEvents > 0
+              ? `${snapshot.diagnostics.errorSummary.totalEvents} 条错误 / ${snapshot.diagnostics.errorSummary.uniqueFingerprints} 个指纹`
+              : "无"
+        },
+        {
           label: "时间线",
           value:
             snapshot.diagnostics.timelineTail.length > 0
@@ -562,6 +769,18 @@ export function buildRuntimeDiagnosticsSummaryLines(snapshot: RuntimeDiagnostics
 
   for (const entry of snapshot.diagnostics.primaryClientTelemetry.slice(0, 2)) {
     lines.push(`Telemetry ${entry.category}/${entry.checkpoint} (${entry.status}) ${entry.detail}`);
+  }
+
+  if (snapshot.diagnostics.errorSummary.totalEvents > 0) {
+    lines.push(
+      `Errors ${snapshot.diagnostics.errorSummary.totalEvents} / fingerprints ${snapshot.diagnostics.errorSummary.uniqueFingerprints} / fatal ${snapshot.diagnostics.errorSummary.fatalCount} / crashes ${snapshot.diagnostics.errorSummary.crashCount}`
+    );
+  }
+
+  for (const entry of snapshot.diagnostics.errorSummary.topFingerprints.slice(0, 2)) {
+    lines.push(
+      `Error ${entry.featureArea}/${entry.errorCode} ${entry.count}x on ${entry.surface} (${entry.ownerArea}) last=${entry.lastSeenAt}`
+    );
   }
 
   lines.push(`Pending UI tasks ${snapshot.diagnostics.pendingUiTasks}`);
