@@ -1169,6 +1169,104 @@ test("turn timer auto-applies end day on expiry and pushes countdown state", asy
   assert.equal(timerAfterExpiry.remainingMs, 90_000);
 });
 
+test("turn reminder subscribe message is skipped while the next player is still connected", async (t) => {
+  resetLobbyRoomRegistry();
+  const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));
+  const store = new InstrumentedRoomSnapshotStore();
+  const subscribeCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
+  configureRoomSnapshotStore(store);
+  configureRoomRuntimeDependencies({
+    sendWechatSubscribeMessage: async (playerId, templateKey, data) => {
+      subscribeCalls.push({ playerId, templateKey, data });
+      return true;
+    }
+  });
+
+  const room = await createTestRoom(`lifecycle-turn-reminder-connected-${Date.now()}`);
+  const attackerClient = createFakeClient("session-turn-reminder-connected-attacker");
+  const defenderClient = createFakeClient("session-turn-reminder-connected-defender");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+    resetRoomRuntimeDependencies();
+  });
+
+  await connectPlayer(room, attackerClient, "player-1", "connect-turn-reminder-connected-attacker");
+  await connectPlayer(room, defenderClient, "player-2", "connect-turn-reminder-connected-defender");
+  await store.bindPlayerAccountWechatMiniGameIdentity("player-2", {
+    openId: "wx-open-id-player-2",
+    displayName: "Player Two"
+  });
+
+  await emitRoomMessage(room, "world.action", attackerClient, {
+    type: "world.action",
+    requestId: "turn-reminder-connected-end-day",
+    action: {
+      type: "turn.endDay"
+    }
+  });
+
+  assert.deepEqual(subscribeCalls, []);
+  assert.equal(lastSessionState(defenderClient, "push").payload.world.meta.day, 2);
+  assert.equal(timer.nowMs, Date.parse("2026-04-04T00:00:00.000Z"));
+});
+
+test("turn reminder subscribe message is sent after the next player has been disconnected for over 30 seconds", async (t) => {
+  resetLobbyRoomRegistry();
+  const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));
+  const store = new InstrumentedRoomSnapshotStore();
+  const subscribeCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
+  configureRoomSnapshotStore(store);
+  configureRoomRuntimeDependencies({
+    sendWechatSubscribeMessage: async (playerId, templateKey, data) => {
+      subscribeCalls.push({ playerId, templateKey, data });
+      return true;
+    }
+  });
+
+  const room = await createTestRoom(`lifecycle-turn-reminder-disconnected-${Date.now()}`);
+  const attackerClient = createFakeClient("session-turn-reminder-disconnected-attacker");
+  const defenderClient = createFakeClient("session-turn-reminder-disconnected-defender");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+    resetRoomRuntimeDependencies();
+  });
+
+  await connectPlayer(room, attackerClient, "player-1", "connect-turn-reminder-disconnected-attacker");
+  await connectPlayer(room, defenderClient, "player-2", "connect-turn-reminder-disconnected-defender");
+  await store.bindPlayerAccountWechatMiniGameIdentity("player-2", {
+    openId: "wx-open-id-player-2",
+    displayName: "Player Two"
+  });
+
+  room.onLeave(defenderClient);
+  timer.nowMs += 31_000;
+
+  await emitRoomMessage(room, "world.action", attackerClient, {
+    type: "world.action",
+    requestId: "turn-reminder-disconnected-end-day",
+    action: {
+      type: "turn.endDay"
+    }
+  });
+
+  assert.deepEqual(subscribeCalls, [
+    {
+      playerId: "player-2",
+      templateKey: "turn_reminder",
+      data: {
+        roomId: room.roomId,
+        turnNumber: 2
+      }
+    }
+  ]);
+});
+
 test("two consecutive AFK strikes trigger afk_forfeit and persist surrender-path ELO deltas", async (t) => {
   resetLobbyRoomRegistry();
   const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));

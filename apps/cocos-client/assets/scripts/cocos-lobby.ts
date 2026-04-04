@@ -1,3 +1,4 @@
+import { sys } from "cc";
 import {
   clearStoredCocosAuthSession,
   readStoredCocosAuthSession,
@@ -24,12 +25,15 @@ import {
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress
 } from "./project-shared/index.ts";
+import { detectCocosRuntimePlatform } from "./cocos-runtime-platform.ts";
 
 const LOBBY_PREFERENCES_STORAGE_KEY = "project-veil:lobby-preferences";
 const PLAYER_ACCOUNT_PREFIX = "project-veil:player-account";
+const WECHAT_SUBSCRIBE_CONSENT_STORAGE_KEY = "project-veil:wechat-subscribe-consent";
 const DEFAULT_LOBBY_ROOM_ID = "room-alpha";
 const COCOS_REQUEST_TIMEOUT_MS = 1200;
 const DEFAULT_HISTORY_PAGE_SIZE = 3;
+let wechatSubscribeConsentRequestedThisSession = false;
 
 export interface CocosLobbyPreferences {
   playerId: string;
@@ -192,6 +196,21 @@ type WechatMiniGameUserProfileLike = (options: {
   success?: (result: { userInfo?: { nickName?: string; avatarUrl?: string } }) => void;
   fail?: (error: { errMsg?: string }) => void;
 }) => void;
+type WechatMiniGameSubscribeMessageLike = (options: {
+  tmplIds: string[];
+  success?: (result: Record<string, unknown>) => void;
+  fail?: (error: { errMsg?: string }) => void;
+}) => void;
+
+interface CocosWechatSubscribeEnvironmentLike {
+  process?: {
+    env?: Record<string, string | undefined>;
+  };
+  wx?: {
+    getLaunchOptionsSync?: (() => { query?: Record<string, unknown> | null } | null | undefined) | undefined;
+    requestSubscribeMessage?: WechatMiniGameSubscribeMessageLike | undefined;
+  } | null;
+}
 
 function isStorageLike(value: unknown): value is Storage {
   return (
@@ -887,6 +906,84 @@ export function rememberPreferredCocosDisplayName(
   const normalizedDisplayName = normalizeDisplayName(playerId, displayName);
   storage?.setItem(getCocosPlayerAccountStorageKey(playerId), normalizedDisplayName);
   return normalizedDisplayName;
+}
+
+export function resetCocosWechatSubscribeConsentForTests(): void {
+  wechatSubscribeConsentRequestedThisSession = false;
+}
+
+export function resolveCocosWechatSubscribeTemplateIds(
+  environment: CocosWechatSubscribeEnvironmentLike = globalThis as CocosWechatSubscribeEnvironmentLike
+): string[] {
+  const env = environment.process?.env ?? {};
+  return [
+    env.VEIL_WECHAT_MATCH_FOUND_TMPL_ID?.trim() ?? "",
+    env.VEIL_WECHAT_TURN_REMINDER_TMPL_ID?.trim() ?? ""
+  ].filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
+}
+
+export async function requestCocosWechatSubscribeConsent(
+  options?: {
+    storage?: Pick<Storage, "setItem"> | null;
+    environment?: CocosWechatSubscribeEnvironmentLike;
+  }
+): Promise<boolean> {
+  if (wechatSubscribeConsentRequestedThisSession) {
+    return false;
+  }
+
+  const environment = options?.environment ?? (globalThis as CocosWechatSubscribeEnvironmentLike);
+  const wxRuntime = environment.wx ?? null;
+  if (detectCocosRuntimePlatform({ wx: wxRuntime }) !== "wechat-game") {
+    return false;
+  }
+
+  const platformRuntime = sys as unknown as { platform?: string; Platform?: { WECHAT_GAME?: string } };
+  if (platformRuntime.platform !== platformRuntime.Platform?.WECHAT_GAME) {
+    return false;
+  }
+
+  if (typeof wxRuntime?.requestSubscribeMessage !== "function") {
+    return false;
+  }
+
+  const templateIds = resolveCocosWechatSubscribeTemplateIds(environment);
+  if (templateIds.length === 0) {
+    return false;
+  }
+
+  wechatSubscribeConsentRequestedThisSession = true;
+  const storage = options?.storage ?? getCocosStorage();
+
+  return new Promise((resolve) => {
+    try {
+      wxRuntime.requestSubscribeMessage?.({
+        tmplIds: templateIds,
+        success: (result) => {
+          storage?.setItem(
+            WECHAT_SUBSCRIBE_CONSENT_STORAGE_KEY,
+            JSON.stringify({
+              requested: true,
+              result
+            })
+          );
+          resolve(true);
+        },
+        fail: (error) => {
+          storage?.setItem(
+            WECHAT_SUBSCRIBE_CONSENT_STORAGE_KEY,
+            JSON.stringify({
+              requested: true,
+              error: error.errMsg?.trim() || "wechat_subscribe_message_failed"
+            })
+          );
+          resolve(false);
+        }
+      });
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 export function createFallbackCocosPlayerAccountProfile(
