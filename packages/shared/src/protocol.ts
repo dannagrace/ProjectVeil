@@ -65,6 +65,18 @@ export type ClientMessage =
       type: "tutorial.progress";
       requestId: string;
       action: TutorialProgressAction;
+    }
+  | {
+      type: "SHARE_ACTIVITY";
+      requestId: string;
+      activity: "battle_victory" | "group_challenge";
+      roomId?: string;
+      challengeToken?: string;
+    }
+  | {
+      type: "FRIEND_LEADERBOARD_REQUEST";
+      requestId: string;
+      friendIds?: string[];
     };
 
 export type ServerMessage =

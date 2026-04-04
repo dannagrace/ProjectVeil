@@ -118,3 +118,47 @@ test("sendWechatSubscribeMessage logs API errors and resolves without throwing",
   assert.equal(errors.length, 1);
   assert.match(errors[0]!.message, /Failed to send WeChat subscribe message/);
 });
+
+test("sendWechatSubscribeMessage respects stored notification preferences", async () => {
+  resetWechatSubscribeRuntimeForTests();
+  const store = new MemoryRoomSnapshotStore();
+  await store.bindPlayerAccountWechatMiniGameIdentity("player-3", {
+    openId: "wx-open-id-3",
+    displayName: "Player Three"
+  });
+  await store.savePlayerAccountProfile("player-3", {
+    notificationPreferences: {
+      matchFound: false,
+      turnReminder: true,
+      groupChallenge: true,
+      friendLeaderboard: true,
+      updatedAt: "2026-04-04T10:00:00.000Z"
+    }
+  });
+
+  let requestCount = 0;
+  const sent = await sendWechatSubscribeMessage(
+    "player-3",
+    "match_found",
+    { roomId: "room-social" },
+    {
+      store,
+      env: {
+        WECHAT_APP_ID: "wx-app-id",
+        WECHAT_APP_SECRET: "wx-app-secret",
+        VEIL_WECHAT_MATCH_FOUND_TMPL_ID: "tmpl-match-found",
+        VEIL_WECHAT_TURN_REMINDER_TMPL_ID: "tmpl-turn-reminder"
+      },
+      fetchImpl: async () => {
+        requestCount += 1;
+        return new Response(JSON.stringify({ access_token: "unused", expires_in: 7200 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+  );
+
+  assert.equal(sent, false);
+  assert.equal(requestCount, 0);
+});

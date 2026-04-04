@@ -51,6 +51,13 @@ import {
   startDailyDungeonRun
 } from "./pve-content";
 import { decryptWechatPhoneNumber, validateWechatSignature } from "./wechat-session-key";
+import {
+  buildFriendLeaderboard,
+  createGroupChallenge,
+  encodeGroupChallengeToken,
+  normalizeNotificationPreferences,
+  validateGroupChallengeToken
+} from "./wechat-social";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -89,6 +96,10 @@ interface WechatSignatureEnvelope {
 function readExpectedWechatAppId(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const appId = env.WECHAT_APP_ID?.trim();
   return appId ? appId : undefined;
+}
+
+function readGroupChallengeSecret(env: NodeJS.ProcessEnv = process.env): string {
+  return env.VEIL_WECHAT_GROUP_CHALLENGE_SECRET?.trim() || "project-veil-local-group-challenge-secret";
 }
 
 function logWechatValidationFailure(playerId: string, operation: string, reason: string): void {
@@ -757,6 +768,126 @@ export function registerPlayerAccountRoutes(
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/social/friend-leaderboard", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, {
+        items: [],
+        friendCount: 0
+      });
+      return;
+    }
+
+    try {
+      const friendIds = (parseOptionalQueryParam(request, "friendIds") ?? "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      const accounts = await store.loadPlayerAccounts(Array.from(new Set([authSession.playerId, ...friendIds])));
+      sendJson(response, 200, {
+        items: buildFriendLeaderboard(authSession.playerId, accounts),
+        friendCount: friendIds.length
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/social/group-challenge", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        action?: "create" | "redeem";
+        token?: string;
+        roomId?: string;
+        challengeType?: "elo" | "victory";
+        scoreTarget?: number;
+      };
+
+      if (body.action === "redeem") {
+        const result = validateGroupChallengeToken(body.token?.trim() ?? "", readGroupChallengeSecret());
+        if (!result.ok) {
+          sendJson(response, result.reason === "expired" ? 410 : 400, {
+            error: {
+              code: result.reason === "expired" ? "group_challenge_expired" : "group_challenge_invalid",
+              message: result.reason === "expired" ? "Group challenge token has expired" : "Group challenge token is invalid"
+            }
+          });
+          return;
+        }
+
+        sendJson(response, 200, {
+          challenge: result.challenge
+        });
+        return;
+      }
+
+      const challenge = createGroupChallenge({
+        creatorPlayerId: authSession.playerId,
+        creatorDisplayName: authSession.displayName,
+        roomId: body.roomId?.trim() || parseOptionalQueryParam(request, "roomId") || "room-alpha",
+        ...(body.challengeType ? { challengeType: body.challengeType } : {}),
+        ...(typeof body.scoreTarget === "number" && Number.isFinite(body.scoreTarget)
+          ? { scoreTarget: body.scoreTarget }
+          : {})
+      });
+      sendJson(response, 200, {
+        challenge,
+        token: encodeGroupChallengeToken(challenge, readGroupChallengeSecret())
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.put("/api/account/notification-prefs", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        matchFound?: boolean;
+        turnReminder?: boolean;
+        groupChallenge?: boolean;
+        friendLeaderboard?: boolean;
+      };
+      const notificationPreferences = normalizeNotificationPreferences(body);
+
+      if (!store) {
+        sendJson(response, 200, { notificationPreferences });
+        return;
+      }
+
+      const account = await store.savePlayerAccountProfile(authSession.playerId, {
+        notificationPreferences
+      });
+      sendJson(response, 200, {
+        notificationPreferences: account.notificationPreferences ?? notificationPreferences,
+        account: withBattleReportCenter(account)
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
     }
   });
 

@@ -21,6 +21,7 @@ import {
   type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress,
+  type NotificationPreferences,
   type ResourceLedger,
   type WorldState
 } from "../../../packages/shared/src/index";
@@ -227,6 +228,7 @@ interface PlayerAccountRow extends RowDataPacket {
   privacy_consent_at: Date | string | null;
   phone_number: string | null;
   phone_number_bound_at: Date | string | null;
+  notification_preferences_json: string | NotificationPreferences | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -520,6 +522,7 @@ export interface PlayerAccountProfilePatch {
   lastRoomId?: string | null;
   phoneNumber?: string | null;
   phoneNumberBoundAt?: string | null;
+  notificationPreferences?: NotificationPreferences | null;
 }
 
 export interface PlayerAccountProgressPatch {
@@ -1188,6 +1191,7 @@ function normalizePlayerAccountSnapshot(account: {
   privacyConsentAt?: string | Date | null | undefined;
   phoneNumber?: string | null | undefined;
   phoneNumberBoundAt?: string | Date | null | undefined;
+  notificationPreferences?: NotificationPreferences | null | undefined;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 }): PlayerAccountSnapshot {
@@ -1225,6 +1229,7 @@ function normalizePlayerAccountSnapshot(account: {
       credentialBoundAt: account.credentialBoundAt,
       privacyConsentAt: normalizePrivacyConsentAt(account.privacyConsentAt),
       phoneNumber: account.phoneNumber?.trim() || undefined,
+      notificationPreferences: account.notificationPreferences ?? undefined,
       ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
       ageVerified: normalizePlayerAgeVerified(account.ageVerified),
       isMinor: normalizePlayerIsMinor(account.isMinor),
@@ -1541,6 +1546,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   privacy_consent_at DATETIME NULL DEFAULT NULL,
   phone_number VARCHAR(32) NULL,
   phone_number_bound_at DATETIME NULL DEFAULT NULL,
+  notification_preferences_json LONGTEXT NULL,
   version BIGINT UNSIGNED NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -2760,6 +2766,9 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(privacyConsentAt ? { privacyConsentAt } : {}),
     ...(row.phone_number ? { phoneNumber: row.phone_number } : {}),
     ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
+    ...(row.notification_preferences_json != null
+      ? { notificationPreferences: parseJsonColumn<NotificationPreferences>(row.notification_preferences_json) }
+      : {}),
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {})
   });
@@ -3319,6 +3328,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          privacy_consent_at,
          phone_number,
          phone_number_bound_at,
+         notification_preferences_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -3376,6 +3386,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          privacy_consent_at,
          phone_number,
          phone_number_bound_at,
+         notification_preferences_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -3517,6 +3528,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          privacy_consent_at,
          phone_number,
          phone_number_bound_at,
+         notification_preferences_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -4977,6 +4989,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           : {}
         : existing.phoneNumberBoundAt
           ? { phoneNumberBoundAt: existing.phoneNumberBoundAt }
+          : {}),
+      ...(patch.notificationPreferences !== undefined
+        ? patch.notificationPreferences
+          ? { notificationPreferences: patch.notificationPreferences }
+          : {}
+        : existing.notificationPreferences
+          ? { notificationPreferences: existing.notificationPreferences }
           : {})
     });
 
@@ -5002,9 +5021,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at,
          phone_number,
-         phone_number_bound_at
+         phone_number_bound_at,
+         notification_preferences_json
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
@@ -5024,6 +5044,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id = VALUES(last_room_id),
          phone_number = VALUES(phone_number),
          phone_number_bound_at = VALUES(phone_number_bound_at),
+         notification_preferences_json = COALESCE(VALUES(notification_preferences_json), notification_preferences_json),
          last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
          version = version + 1`,
       [
@@ -5047,7 +5068,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.lastRoomId ?? null,
         existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
         nextAccount.phoneNumber ?? null,
-        nextAccount.phoneNumberBoundAt ? new Date(nextAccount.phoneNumberBoundAt) : null
+        nextAccount.phoneNumberBoundAt ? new Date(nextAccount.phoneNumberBoundAt) : null,
+        JSON.stringify(nextAccount.notificationPreferences ?? null)
       ]
     );
 
@@ -5245,6 +5267,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          privacy_consent_at,
          phone_number,
          phone_number_bound_at,
+         notification_preferences_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`

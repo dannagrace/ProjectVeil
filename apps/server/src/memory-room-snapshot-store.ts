@@ -323,6 +323,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
       ...(existing?.privacyConsentAt ? { privacyConsentAt: existing.privacyConsentAt } : {}),
+      ...(existing?.notificationPreferences
+        ? { notificationPreferences: structuredClone(existing.notificationPreferences) }
+        : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -1014,6 +1017,13 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
           : {}
         : existing.lastRoomId
           ? { lastRoomId: existing.lastRoomId }
+          : {}),
+      ...(patch.notificationPreferences !== undefined
+        ? patch.notificationPreferences
+          ? { notificationPreferences: structuredClone(patch.notificationPreferences) }
+          : {}
+        : existing.notificationPreferences
+          ? { notificationPreferences: structuredClone(existing.notificationPreferences) }
           : {}),
       updatedAt: new Date().toISOString()
     };

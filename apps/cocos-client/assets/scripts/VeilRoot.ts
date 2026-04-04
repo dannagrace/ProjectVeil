@@ -125,6 +125,10 @@ import {
   type CocosWechatShareRuntimeLike
 } from "./cocos-wechat-share.ts";
 import {
+  readCocosWechatFriendCloudEntries,
+  syncCocosWechatFriendCloudStorage
+} from "./cocos-wechat-social.ts";
+import {
   clearStoredCocosAuthSession,
   readStoredCocosAuthSession,
   resolveCocosLaunchIdentity,
@@ -208,6 +212,7 @@ interface BattleSettlementSnapshot {
 interface VeilRootRuntime {
   createSession: typeof VeilCocosSession.create;
   loadLeaderboard: typeof VeilCocosSession.fetchLeaderboard;
+  loadFriendLeaderboard: typeof VeilCocosSession.fetchFriendLeaderboard;
   enqueueMatchmaking: typeof VeilCocosSession.enqueueForMatchmaking;
   getMatchmakingStatus: typeof VeilCocosSession.getMatchmakingStatus;
   cancelMatchmaking: typeof VeilCocosSession.cancelMatchmaking;
@@ -232,6 +237,7 @@ interface VeilRootRuntime {
 const defaultVeilRootRuntime: VeilRootRuntime = {
   createSession: (...args) => VeilCocosSession.create(...args),
   loadLeaderboard: (...args) => VeilCocosSession.fetchLeaderboard(...args),
+  loadFriendLeaderboard: (...args) => VeilCocosSession.fetchFriendLeaderboard(...args),
   enqueueMatchmaking: (...args) => VeilCocosSession.enqueueForMatchmaking(...args),
   getMatchmakingStatus: (...args) => VeilCocosSession.getMatchmakingStatus(...args),
   cancelMatchmaking: (...args) => VeilCocosSession.cancelMatchmaking(...args),
@@ -1505,9 +1511,23 @@ export class VeilRoot extends Component {
         storage,
         authSession: syncedSession
       }),
-      resolveVeilRootRuntime()
-        .loadLeaderboard(this.remoteUrl, 50)
-        .then((entries) => ({ ok: true as const, entries }))
+      (this.runtimePlatform === "wechat-game"
+        ? (async () => {
+            const wxRuntime = (globalThis as { wx?: unknown }).wx ?? null;
+            const friendEntries = await readCocosWechatFriendCloudEntries(wxRuntime);
+            const friendIds = friendEntries.map((entry) => entry.playerId);
+            if (friendIds.length === 0) {
+              return { ok: true as const, entries: [] };
+            }
+
+            return {
+              ok: true as const,
+              entries: await resolveVeilRootRuntime().loadFriendLeaderboard(this.remoteUrl, friendIds, {
+                getAuthToken: () => this.authToken
+              })
+            };
+          })()
+        : resolveVeilRootRuntime().loadLeaderboard(this.remoteUrl, 50).then((entries) => ({ ok: true as const, entries })))
         .catch((error: unknown) => ({ ok: false as const, error })),
       resolveVeilRootRuntime()
         .loadShopProducts(this.remoteUrl)
@@ -1519,6 +1539,13 @@ export class VeilRoot extends Component {
     }
 
     this.commitAccountProfile(profile, false);
+    if (this.runtimePlatform === "wechat-game") {
+      const wxRuntime = (globalThis as { wx?: unknown }).wx ?? null;
+      void syncCocosWechatFriendCloudStorage(wxRuntime, {
+        playerId: profile.playerId,
+        eloRating: profile.eloRating ?? 1000
+      });
+    }
     if (leaderboardResult.ok) {
       this.lobbyLeaderboardEntries = leaderboardResult.entries;
       this.lobbyLeaderboardStatus = "ready";

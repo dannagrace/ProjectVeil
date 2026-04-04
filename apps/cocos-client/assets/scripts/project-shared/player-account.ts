@@ -10,7 +10,7 @@ import {
 } from "./event-log.ts";
 import { normalizeDailyQuestBoard, type DailyQuestBoard } from "./daily-quests.ts";
 import { normalizePlayerBattleReplaySummaries, type PlayerBattleReplaySummary } from "./battle-replay.ts";
-import type { ResourceLedger } from "./models.ts";
+import type { NotificationPreferences, ResourceLedger } from "./models.ts";
 import { normalizeTutorialStep } from "./tutorial.ts";
 
 const DEFAULT_ELO_RATING = 1000;
@@ -36,6 +36,7 @@ export interface PlayerAccountReadModel {
   loginId?: string;
   credentialBoundAt?: string;
   privacyConsentAt?: string;
+  notificationPreferences?: NotificationPreferences;
   lastRoomId?: string;
   lastSeenAt?: string;
 }
@@ -57,6 +58,7 @@ export interface PlayerAccountReadModelInput {
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
   privacyConsentAt?: string | undefined;
+  notificationPreferences?: Partial<NotificationPreferences> | null | undefined;
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
 }
@@ -70,6 +72,7 @@ export function normalizePlayerAccountReadModel(
   const loginId = account?.loginId?.trim().toLowerCase();
   const credentialBoundAt = account?.credentialBoundAt?.trim();
   const privacyConsentAt = account?.privacyConsentAt?.trim();
+  const notificationPreferences = normalizeNotificationPreferences(account?.notificationPreferences);
   const loginStreak = Math.max(0, Math.floor(account?.loginStreak ?? 0));
   const lastRoomId = account?.lastRoomId?.trim();
   const lastSeenAt = account?.lastSeenAt?.trim();
@@ -102,7 +105,25 @@ export function normalizePlayerAccountReadModel(
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
     ...(privacyConsentAt ? { privacyConsentAt } : {}),
+    ...(notificationPreferences ? { notificationPreferences } : {}),
     ...(lastRoomId ? { lastRoomId } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {})
+  };
+}
+
+function normalizeNotificationPreferences(
+  preferences?: Partial<NotificationPreferences> | null
+): NotificationPreferences | undefined {
+  if (!preferences || typeof preferences !== "object") {
+    return undefined;
+  }
+
+  const updatedAt = preferences.updatedAt?.trim();
+  return {
+    matchFound: preferences.matchFound !== false,
+    turnReminder: preferences.turnReminder !== false,
+    groupChallenge: preferences.groupChallenge !== false,
+    friendLeaderboard: preferences.friendLeaderboard !== false,
+    ...(updatedAt ? { updatedAt } : {})
   };
 }

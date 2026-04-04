@@ -976,6 +976,46 @@ async function fetchLeaderboardEntries(remoteUrl?: string, limit = 50): Promise<
   });
 }
 
+async function fetchFriendLeaderboardEntries(
+  remoteUrl: string | undefined,
+  friendIds: string[],
+  getAuthToken?: (() => string | null) | undefined
+): Promise<LeaderboardEntry[]> {
+  const normalizedFriendIds = Array.from(new Set(friendIds.map((entry) => entry.trim()).filter(Boolean)));
+  if (normalizedFriendIds.length === 0) {
+    return [];
+  }
+
+  const payload = (await fetchApiJson(
+    `${resolveCocosApiBaseUrl(remoteUrl ?? "")}/api/social/friend-leaderboard?friendIds=${encodeURIComponent(
+      normalizedFriendIds.join(",")
+    )}`,
+    {
+      headers: {
+        ...buildCocosAuthHeaders(getAuthToken?.() ?? null)
+      }
+    }
+  )) as {
+    items?: Array<{
+      playerId?: string;
+      rank?: number;
+      displayName?: string;
+      eloRating?: number;
+    }>;
+  };
+
+  return (payload.items ?? []).map((player, index) => ({
+    playerId: player.playerId?.trim() || `friend-${index + 1}`,
+    rank: typeof player.rank === "number" && Number.isFinite(player.rank) ? Math.max(1, Math.floor(player.rank)) : index + 1,
+    displayName: player.displayName?.trim() || player.playerId?.trim() || `好友 ${index + 1}`,
+    eloRating:
+      typeof player.eloRating === "number" && Number.isFinite(player.eloRating)
+        ? Math.max(0, Math.floor(player.eloRating))
+        : 1000,
+    tier: normalizeLeaderboardTier(undefined)
+  }));
+}
+
 function normalizeShopProductGrant(value: unknown): ShopProductGrant {
   const raw = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
   const resources = typeof raw.resources === "object" && raw.resources !== null
@@ -1845,6 +1885,14 @@ export class VeilCocosSession {
     return fetchLeaderboardEntries(remoteUrl, limit);
   }
 
+  static async fetchFriendLeaderboard(
+    remoteUrl: string | undefined,
+    friendIds: string[],
+    options?: { getAuthToken?: (() => string | null) | undefined }
+  ): Promise<LeaderboardEntry[]> {
+    return fetchFriendLeaderboardEntries(remoteUrl, friendIds, options?.getAuthToken);
+  }
+
   static async fetchShopProducts(remoteUrl?: string): Promise<ShopProduct[]> {
     return fetchShopProducts(remoteUrl);
   }
@@ -1982,6 +2030,10 @@ export class VeilCocosSession {
 
   async fetchLeaderboard(limit = 50): Promise<LeaderboardEntry[]> {
     return fetchLeaderboardEntries(this.remoteUrl, limit);
+  }
+
+  async fetchFriendLeaderboard(friendIds: string[]): Promise<LeaderboardEntry[]> {
+    return fetchFriendLeaderboardEntries(this.remoteUrl, friendIds, this.getAuthToken);
   }
 
   async fetchShopProducts(): Promise<ShopProduct[]> {

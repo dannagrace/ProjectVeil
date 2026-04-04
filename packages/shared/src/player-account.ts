@@ -12,7 +12,12 @@ import {
 import { normalizeDailyQuestBoard, type DailyQuestBoard } from "./daily-quests.ts";
 import { normalizePlayerBattleReplaySummaries, type PlayerBattleReplaySummary } from "./battle-replay.ts";
 import { normalizeEloRating } from "./matchmaking.ts";
-import type { CampaignProgressState, DailyDungeonState, ResourceLedger } from "./models.ts";
+import type {
+  CampaignProgressState,
+  DailyDungeonState,
+  NotificationPreferences,
+  ResourceLedger
+} from "./models.ts";
 import { normalizeTutorialStep } from "./tutorial.ts";
 
 export type PlayerBanStatus = "none" | "temporary" | "permanent";
@@ -43,6 +48,7 @@ export interface PlayerAccountReadModel {
   privacyConsentAt?: string;
   phoneNumber?: string;
   phoneNumberBoundAt?: string;
+  notificationPreferences?: NotificationPreferences;
   ageVerified?: boolean;
   isMinor?: boolean;
   dailyPlayMinutes?: number;
@@ -80,6 +86,7 @@ export interface PlayerAccountReadModelInput {
   privacyConsentAt?: string | undefined;
   phoneNumber?: string | undefined;
   phoneNumberBoundAt?: string | undefined;
+  notificationPreferences?: Partial<NotificationPreferences> | null | undefined;
   ageVerified?: boolean | undefined;
   isMinor?: boolean | undefined;
   dailyPlayMinutes?: number | undefined;
@@ -102,6 +109,7 @@ export function normalizePlayerAccountReadModel(
   const privacyConsentAt = account?.privacyConsentAt?.trim();
   const phoneNumber = account?.phoneNumber?.trim();
   const phoneNumberBoundAt = account?.phoneNumberBoundAt?.trim();
+  const notificationPreferences = normalizeNotificationPreferences(account?.notificationPreferences);
   const ageVerified = account?.ageVerified === true;
   const isMinor = account?.isMinor === true;
   const dailyPlayMinutes = Math.max(0, Math.floor(account?.dailyPlayMinutes ?? 0));
@@ -171,6 +179,7 @@ export function normalizePlayerAccountReadModel(
     ...(privacyConsentAt ? { privacyConsentAt } : {}),
     ...(phoneNumber ? { phoneNumber } : {}),
     ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
+    ...(notificationPreferences ? { notificationPreferences } : {}),
     ...(ageVerified ? { ageVerified } : {}),
     ...(isMinor ? { isMinor } : {}),
     ...(dailyPlayMinutes > 0 ? { dailyPlayMinutes } : {}),
@@ -180,6 +189,23 @@ export function normalizePlayerAccountReadModel(
     ...(banReason ? { banReason } : {}),
     ...(lastRoomId ? { lastRoomId } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {})
+  };
+}
+
+function normalizeNotificationPreferences(
+  preferences?: Partial<NotificationPreferences> | null
+): NotificationPreferences | undefined {
+  if (!preferences || typeof preferences !== "object") {
+    return undefined;
+  }
+
+  const updatedAt = preferences.updatedAt?.trim();
+  return {
+    matchFound: preferences.matchFound !== false,
+    turnReminder: preferences.turnReminder !== false,
+    groupChallenge: preferences.groupChallenge !== false,
+    friendLeaderboard: preferences.friendLeaderboard !== false,
+    ...(updatedAt ? { updatedAt } : {})
   };
 }
 

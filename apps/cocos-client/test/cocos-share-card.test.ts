@@ -42,7 +42,8 @@ test("buildShareCardPayload generates the battle result title and referral path"
 
   assert.equal(payload.title, "雾林司灯 赢得了天梯对战！");
   assert.equal(payload.path, "?roomId=ranked-room&referrer=player-7");
-  assert.match(payload.imageUrl, /^https:\/\/cdn\.example\.com\/assets\/share-card\/battle-victory\.png$/);
+  assert.match(payload.imageUrl, /^data:image\/svg\+xml/);
+  assert.match(decodeURIComponent(payload.imageUrl), /Project Veil Victory/);
 });
 
 test("shouldOfferBattleResultShare only enables attacker PVP victories", () => {
