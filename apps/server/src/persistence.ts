@@ -6,6 +6,7 @@ import {
   getEquipmentDefinition,
   getTierForRating,
   appendPlayerBattleReplaySummaries,
+  getRankDivisionForRating,
   normalizeEloRating,
   normalizeEventLogQuery,
   normalizeAchievementProgress,
@@ -21,7 +22,9 @@ import {
   type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress,
+  type RankedWeeklyProgress,
   type ResourceLedger,
+  type SeasonArchiveEntry,
   type WorldState
 } from "../../../packages/shared/src/index";
 import type { RoomPersistenceSnapshot } from "./index";
@@ -32,6 +35,7 @@ import {
   toBattlePassRewardGrant,
   type BattlePassRewardGrant
 } from "./battle-pass";
+import { applySeasonSoftDecay, decayDivisionToRating, resolveCompetitiveProgression } from "./competitive-season";
 import { computeSeasonReward, resolveSeasonRewardConfig } from "./season-rewards";
 
 export interface SeasonSnapshot {
@@ -190,6 +194,12 @@ interface PlayerAccountRow extends RowDataPacket {
   display_name: string | null;
   avatar_url: string | null;
   elo_rating: number | null;
+  rank_division: string | null;
+  peak_rank_division: string | null;
+  promotion_series_json: string | PlayerAccountSnapshot["promotionSeries"] | null;
+  demotion_shield_json: string | PlayerAccountSnapshot["demotionShield"] | null;
+  season_history_json: string | SeasonArchiveEntry[] | null;
+  ranked_weekly_progress_json: string | RankedWeeklyProgress | null;
   gems: number | null;
   season_xp: number | null;
   season_pass_tier: number | null;
@@ -528,6 +538,12 @@ export interface PlayerAccountProgressPatch {
   seasonPassPremium?: boolean;
   seasonPassClaimedTiers?: number[] | null;
   seasonBadges?: string[] | null;
+  rankDivision?: PlayerAccountSnapshot["rankDivision"];
+  peakRankDivision?: PlayerAccountSnapshot["peakRankDivision"];
+  promotionSeries?: PlayerAccountSnapshot["promotionSeries"] | null;
+  demotionShield?: PlayerAccountSnapshot["demotionShield"] | null;
+  seasonHistory?: PlayerAccountSnapshot["seasonHistory"] | null;
+  rankedWeeklyProgress?: PlayerAccountSnapshot["rankedWeeklyProgress"] | null;
   campaignProgress?: PlayerAccountSnapshot["campaignProgress"] | null;
   globalResources?: Partial<ResourceLedger> | null;
   achievements?: Partial<PlayerAchievementProgress>[] | null;
@@ -1157,6 +1173,12 @@ function normalizePlayerAccountSnapshot(account: {
   displayName?: string | null | undefined;
   avatarUrl?: string | null | undefined;
   eloRating?: number | null | undefined;
+  rankDivision?: PlayerAccountSnapshot["rankDivision"] | null | undefined;
+  peakRankDivision?: PlayerAccountSnapshot["peakRankDivision"] | null | undefined;
+  promotionSeries?: PlayerAccountSnapshot["promotionSeries"] | null | undefined;
+  demotionShield?: PlayerAccountSnapshot["demotionShield"] | null | undefined;
+  seasonHistory?: PlayerAccountSnapshot["seasonHistory"] | null | undefined;
+  rankedWeeklyProgress?: PlayerAccountSnapshot["rankedWeeklyProgress"] | null | undefined;
   gems?: number | null | undefined;
   seasonXp?: number | null | undefined;
   seasonPassTier?: number | null | undefined;
@@ -1206,6 +1228,15 @@ function normalizePlayerAccountSnapshot(account: {
       displayName: normalizePlayerDisplayName(playerId, account.displayName),
       avatarUrl: normalizePlayerAvatarUrl(account.avatarUrl),
       eloRating: normalizeEloRating(account.eloRating),
+      rankDivision: account.rankDivision ?? getRankDivisionForRating(account.eloRating ?? 1000),
+      peakRankDivision:
+        account.peakRankDivision ??
+        account.rankDivision ??
+        getRankDivisionForRating(account.eloRating ?? 1000),
+      promotionSeries: account.promotionSeries ?? undefined,
+      demotionShield: account.demotionShield ?? undefined,
+      seasonHistory: account.seasonHistory ?? undefined,
+      rankedWeeklyProgress: account.rankedWeeklyProgress ?? undefined,
       gems: normalizeGemAmount(account.gems),
       seasonXp: Math.max(0, Math.floor(account.seasonXp ?? 0)),
       seasonPassTier: Math.max(1, Math.floor(account.seasonPassTier ?? 1)),
@@ -1507,6 +1538,12 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   display_name VARCHAR(80) NULL,
   avatar_url VARCHAR(512) NULL,
   elo_rating INT NOT NULL DEFAULT 1000,
+  rank_division VARCHAR(32) NULL,
+  peak_rank_division VARCHAR(32) NULL,
+  promotion_series_json LONGTEXT NULL,
+  demotion_shield_json LONGTEXT NULL,
+  season_history_json LONGTEXT NULL,
+  ranked_weekly_progress_json LONGTEXT NULL,
   gems INT NOT NULL DEFAULT 0,
   season_xp INT NOT NULL DEFAULT 0,
   season_pass_tier INT NOT NULL DEFAULT 1,
@@ -1779,6 +1816,114 @@ SET @veil_player_accounts_elo_rating_sql := IF(
 PREPARE veil_player_accounts_elo_rating_stmt FROM @veil_player_accounts_elo_rating_sql;
 EXECUTE veil_player_accounts_elo_rating_stmt;
 DEALLOCATE PREPARE veil_player_accounts_elo_rating_stmt;
+
+SET @veil_player_accounts_rank_division_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'rank_division'
+);
+
+SET @veil_player_accounts_rank_division_sql := IF(
+  @veil_player_accounts_rank_division_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`rank_division\` VARCHAR(32) NULL AFTER \`elo_rating\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_rank_division_stmt FROM @veil_player_accounts_rank_division_sql;
+EXECUTE veil_player_accounts_rank_division_stmt;
+DEALLOCATE PREPARE veil_player_accounts_rank_division_stmt;
+
+SET @veil_player_accounts_peak_rank_division_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'peak_rank_division'
+);
+
+SET @veil_player_accounts_peak_rank_division_sql := IF(
+  @veil_player_accounts_peak_rank_division_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`peak_rank_division\` VARCHAR(32) NULL AFTER \`rank_division\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_peak_rank_division_stmt FROM @veil_player_accounts_peak_rank_division_sql;
+EXECUTE veil_player_accounts_peak_rank_division_stmt;
+DEALLOCATE PREPARE veil_player_accounts_peak_rank_division_stmt;
+
+SET @veil_player_accounts_promotion_series_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'promotion_series_json'
+);
+
+SET @veil_player_accounts_promotion_series_sql := IF(
+  @veil_player_accounts_promotion_series_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`promotion_series_json\` LONGTEXT NULL AFTER \`peak_rank_division\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_promotion_series_stmt FROM @veil_player_accounts_promotion_series_sql;
+EXECUTE veil_player_accounts_promotion_series_stmt;
+DEALLOCATE PREPARE veil_player_accounts_promotion_series_stmt;
+
+SET @veil_player_accounts_demotion_shield_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'demotion_shield_json'
+);
+
+SET @veil_player_accounts_demotion_shield_sql := IF(
+  @veil_player_accounts_demotion_shield_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`demotion_shield_json\` LONGTEXT NULL AFTER \`promotion_series_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_demotion_shield_stmt FROM @veil_player_accounts_demotion_shield_sql;
+EXECUTE veil_player_accounts_demotion_shield_stmt;
+DEALLOCATE PREPARE veil_player_accounts_demotion_shield_stmt;
+
+SET @veil_player_accounts_season_history_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'season_history_json'
+);
+
+SET @veil_player_accounts_season_history_sql := IF(
+  @veil_player_accounts_season_history_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`season_history_json\` LONGTEXT NULL AFTER \`demotion_shield_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_season_history_stmt FROM @veil_player_accounts_season_history_sql;
+EXECUTE veil_player_accounts_season_history_stmt;
+DEALLOCATE PREPARE veil_player_accounts_season_history_stmt;
+
+SET @veil_player_accounts_ranked_weekly_progress_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'ranked_weekly_progress_json'
+);
+
+SET @veil_player_accounts_ranked_weekly_progress_sql := IF(
+  @veil_player_accounts_ranked_weekly_progress_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`ranked_weekly_progress_json\` LONGTEXT NULL AFTER \`season_history_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_ranked_weekly_progress_stmt FROM @veil_player_accounts_ranked_weekly_progress_sql;
+EXECUTE veil_player_accounts_ranked_weekly_progress_stmt;
+DEALLOCATE PREPARE veil_player_accounts_ranked_weekly_progress_stmt;
 
 SET @veil_player_accounts_gems_exists := (
   SELECT COUNT(*)
@@ -2700,6 +2845,24 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     playerId: row.player_id,
     ...(row.avatar_url ? { avatarUrl: row.avatar_url } : {}),
     ...(row.elo_rating != null ? { eloRating: row.elo_rating } : {}),
+    ...(row.rank_division ? { rankDivision: row.rank_division as PlayerAccountSnapshot["rankDivision"] } : {}),
+    ...(row.peak_rank_division ? { peakRankDivision: row.peak_rank_division as PlayerAccountSnapshot["peakRankDivision"] } : {}),
+    promotionSeries:
+      row.promotion_series_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["promotionSeries"]>>(row.promotion_series_json)
+        : undefined,
+    demotionShield:
+      row.demotion_shield_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["demotionShield"]>>(row.demotion_shield_json)
+        : undefined,
+    seasonHistory:
+      row.season_history_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["seasonHistory"]>>(row.season_history_json)
+        : undefined,
+    rankedWeeklyProgress:
+      row.ranked_weekly_progress_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["rankedWeeklyProgress"]>>(row.ranked_weekly_progress_json)
+        : undefined,
     gems: normalizeGemAmount(row.gems),
     seasonXp: Math.max(0, Math.floor(row.season_xp ?? 0)),
     seasonPassTier: Math.max(1, Math.floor(row.season_pass_tier ?? 1)),
@@ -3002,6 +3165,12 @@ async function savePlayerAccounts(
          player_id,
          display_name,
          elo_rating,
+         rank_division,
+         peak_rank_division,
+         promotion_series_json,
+         demotion_shield_json,
+         season_history_json,
+         ranked_weekly_progress_json,
          gems,
          season_xp,
          season_pass_tier,
@@ -3018,10 +3187,16 @@ async function savePlayerAccounts(
          tutorial_step,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
+         rank_division = COALESCE(rank_division, VALUES(rank_division)),
+         peak_rank_division = COALESCE(peak_rank_division, VALUES(peak_rank_division)),
+         promotion_series_json = COALESCE(promotion_series_json, VALUES(promotion_series_json)),
+         demotion_shield_json = COALESCE(demotion_shield_json, VALUES(demotion_shield_json)),
+         season_history_json = COALESCE(season_history_json, VALUES(season_history_json)),
+         ranked_weekly_progress_json = COALESCE(ranked_weekly_progress_json, VALUES(ranked_weekly_progress_json)),
          gems = VALUES(gems),
          season_xp = VALUES(season_xp),
          season_pass_tier = VALUES(season_pass_tier),
@@ -3041,6 +3216,12 @@ async function savePlayerAccounts(
         normalizedAccount.playerId,
         normalizedAccount.displayName,
         normalizedAccount.eloRating,
+        normalizedAccount.rankDivision ?? null,
+        normalizedAccount.peakRankDivision ?? null,
+        JSON.stringify(normalizedAccount.promotionSeries ?? null),
+        JSON.stringify(normalizedAccount.demotionShield ?? null),
+        JSON.stringify(normalizedAccount.seasonHistory ?? []),
+        JSON.stringify(normalizedAccount.rankedWeeklyProgress ?? null),
         normalizedAccount.gems,
         Math.max(0, Math.floor(normalizedAccount.seasonXp ?? 0)),
         Math.max(1, Math.floor(normalizedAccount.seasonPassTier ?? 1)),
@@ -3282,6 +3463,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         rank_division,
+         peak_rank_division,
+         promotion_series_json,
+         demotion_shield_json,
+         season_history_json,
+         ranked_weekly_progress_json,
          gems,
          season_xp,
          season_pass_tier,
@@ -3339,6 +3526,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         rank_division,
+         peak_rank_division,
+         promotion_series_json,
+         demotion_shield_json,
+         season_history_json,
+         ranked_weekly_progress_json,
          gems,
          season_xp,
          season_pass_tier,
@@ -3480,6 +3673,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         rank_division,
+         peak_rank_division,
+         promotion_series_json,
+         demotion_shield_json,
+         season_history_json,
+         ranked_weekly_progress_json,
          gems,
          season_xp,
          season_pass_tier,
@@ -3631,6 +3830,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          player_id,
          display_name,
          elo_rating,
+         rank_division,
+         peak_rank_division,
+         promotion_series_json,
+         demotion_shield_json,
+         season_history_json,
+         ranked_weekly_progress_json,
          gems,
          season_xp,
          season_pass_tier,
@@ -3647,7 +3852,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_room_id,
          last_seen_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(?, display_name),
          last_room_id = COALESCE(?, last_room_id),
@@ -3657,12 +3862,16 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         playerId,
         insertDisplayName,
         normalizeEloRating(undefined),
+        getRankDivisionForRating(undefined),
+        getRankDivisionForRating(undefined),
+        JSON.stringify(null),
+        JSON.stringify(null),
+        JSON.stringify([]),
+        JSON.stringify(null),
         0,
         0,
         1,
         0,
-        JSON.stringify([]),
-        JSON.stringify([]),
         JSON.stringify(null),
         JSON.stringify(normalizeResourceLedger()),
         JSON.stringify(normalizeAchievementProgress()),
@@ -4986,6 +5195,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         rank_division,
+         peak_rank_division,
+         promotion_series_json,
+         demotion_shield_json,
+         season_history_json,
+         ranked_weekly_progress_json,
          gems,
          season_xp,
          season_pass_tier,
@@ -5004,11 +5219,17 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
          elo_rating = VALUES(elo_rating),
+         rank_division = VALUES(rank_division),
+         peak_rank_division = VALUES(peak_rank_division),
+         promotion_series_json = VALUES(promotion_series_json),
+         demotion_shield_json = VALUES(demotion_shield_json),
+         season_history_json = VALUES(season_history_json),
+         ranked_weekly_progress_json = VALUES(ranked_weekly_progress_json),
          season_xp = VALUES(season_xp),
          season_pass_tier = VALUES(season_pass_tier),
          season_pass_premium = VALUES(season_pass_premium),
@@ -5031,6 +5252,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.displayName,
         nextAccount.avatarUrl ?? null,
         nextAccount.eloRating,
+        nextAccount.rankDivision ?? null,
+        nextAccount.peakRankDivision ?? null,
+        JSON.stringify(nextAccount.promotionSeries ?? null),
+        JSON.stringify(nextAccount.demotionShield ?? null),
+        JSON.stringify(nextAccount.seasonHistory ?? []),
+        JSON.stringify(nextAccount.rankedWeeklyProgress ?? null),
         nextAccount.gems,
         Math.max(0, Math.floor(nextAccount.seasonXp ?? 0)),
         Math.max(1, Math.floor(nextAccount.seasonPassTier ?? 1)),
@@ -5071,6 +5298,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         globalResources: normalizeResourceLedger()
       });
     const battlePassProgress = applyBattlePassXp(battlePassConfig, existing, patch.seasonXpDelta ?? 0);
+    const mergedReplays = appendPlayerBattleReplaySummaries([], patch.recentBattleReplays ?? existing.recentBattleReplays);
+    const competitiveProgression = resolveCompetitiveProgression(
+      existing,
+      patch,
+      mergedReplays,
+      patch.eloRating ?? existing.eloRating ?? 1000
+    );
 
     const nextAccount = normalizePlayerAccountSnapshot({
       ...existing,
@@ -5085,7 +5319,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       globalResources: patch.globalResources ?? existing.globalResources,
       achievements: patch.achievements ?? existing.achievements,
       recentEventLog: patch.recentEventLog ?? existing.recentEventLog,
-      recentBattleReplays: patch.recentBattleReplays ?? existing.recentBattleReplays,
+      recentBattleReplays: mergedReplays,
+      rankDivision: patch.rankDivision ?? competitiveProgression.rankDivision,
+      peakRankDivision: patch.peakRankDivision ?? competitiveProgression.peakRankDivision,
+      promotionSeries: patch.promotionSeries ?? competitiveProgression.promotionSeries,
+      demotionShield: patch.demotionShield ?? competitiveProgression.demotionShield,
+      seasonHistory: patch.seasonHistory ?? existing.seasonHistory,
+      rankedWeeklyProgress: patch.rankedWeeklyProgress ?? competitiveProgression.rankedWeeklyProgress,
       dailyDungeonState: patch.dailyDungeonState ?? existing.dailyDungeonState,
       tutorialStep: patch.tutorialStep !== undefined ? patch.tutorialStep : existing.tutorialStep,
       dailyPlayMinutes:
@@ -5110,6 +5350,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         rank_division,
+         peak_rank_division,
+         promotion_series_json,
+         demotion_shield_json,
+         season_history_json,
+         ranked_weekly_progress_json,
          gems,
          season_xp,
          season_pass_tier,
@@ -5131,7 +5377,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_play_date,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
@@ -5143,6 +5389,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_badges_json = VALUES(season_badges_json),
          campaign_progress_json = VALUES(campaign_progress_json),
          elo_rating = VALUES(elo_rating),
+         rank_division = VALUES(rank_division),
+         peak_rank_division = VALUES(peak_rank_division),
+         promotion_series_json = VALUES(promotion_series_json),
+         demotion_shield_json = VALUES(demotion_shield_json),
+         season_history_json = VALUES(season_history_json),
+         ranked_weekly_progress_json = VALUES(ranked_weekly_progress_json),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
          recent_event_log_json = VALUES(recent_event_log_json),
@@ -5162,6 +5414,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         nextAccount.displayName,
         nextAccount.avatarUrl ?? null,
         nextAccount.eloRating,
+        nextAccount.rankDivision ?? null,
+        nextAccount.peakRankDivision ?? null,
+        JSON.stringify(nextAccount.promotionSeries ?? null),
+        JSON.stringify(nextAccount.demotionShield ?? null),
+        JSON.stringify(nextAccount.seasonHistory ?? []),
+        JSON.stringify(nextAccount.rankedWeeklyProgress ?? null),
         nextAccount.gems,
         Math.max(0, Math.floor(nextAccount.seasonXp ?? 0)),
         Math.max(1, Math.floor(nextAccount.seasonPassTier ?? 1)),
@@ -5213,6 +5471,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          display_name,
          avatar_url,
          elo_rating,
+         rank_division,
+         peak_rank_division,
+         promotion_series_json,
+         demotion_shield_json,
+         season_history_json,
+         ranked_weekly_progress_json,
          gems,
          season_xp,
          season_pass_tier,
@@ -5582,6 +5846,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
       let playersRewarded = 0;
       let totalGemsGranted = 0;
+      const rewardedPlayerIds = new Set<string>();
       for (const rankedPlayer of rankedPlayers) {
         const reward = computeSeasonReward(rankedPlayer.rankPosition, rankedPlayers.length, rewardConfig);
         if (!reward) {
@@ -5632,6 +5897,61 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
         playersRewarded += 1;
         totalGemsGranted += reward.gems;
+        rewardedPlayerIds.add(rankedPlayer.playerId);
+      }
+
+      for (const rankedPlayer of rankedPlayers) {
+        const [accountRows] = await connection.query<PlayerAccountRow[]>(
+          `SELECT *
+           FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+           WHERE player_id = ?
+           LIMIT 1
+           FOR UPDATE`,
+          [rankedPlayer.playerId]
+        );
+        const currentAccount =
+          accountRows[0] != null
+            ? toPlayerAccountSnapshot(accountRows[0])
+            : normalizePlayerAccountSnapshot({
+                playerId: rankedPlayer.playerId,
+                displayName: rankedPlayer.playerId,
+                globalResources: normalizeResourceLedger()
+              });
+        const currentDivision = currentAccount.rankDivision ?? getRankDivisionForRating(currentAccount.eloRating ?? rankedPlayer.finalRating);
+        const peakDivision = currentAccount.peakRankDivision ?? currentDivision;
+        const decay = applySeasonSoftDecay(currentAccount);
+        const seasonHistory = [
+          {
+            seasonId: normalizedId,
+            peakDivision,
+            finalDivision: currentDivision,
+            rewardTier: getTierForRating(rankedPlayer.finalRating),
+            rewardClaimed: rewardedPlayerIds.has(rankedPlayer.playerId),
+            archivedAt: now.toISOString()
+          },
+          ...(currentAccount.seasonHistory ?? [])
+        ].slice(0, 20);
+
+        await connection.query(
+          `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+           SET elo_rating = ?,
+               rank_division = ?,
+               peak_rank_division = ?,
+               promotion_series_json = ?,
+               demotion_shield_json = ?,
+               season_history_json = ?,
+               version = version + 1
+           WHERE player_id = ?`,
+          [
+            decayDivisionToRating(decay.rankDivision ?? currentDivision),
+            decay.rankDivision ?? currentDivision,
+            decay.peakRankDivision ?? decay.rankDivision ?? currentDivision,
+            JSON.stringify(null),
+            JSON.stringify(null),
+            JSON.stringify(seasonHistory),
+            rankedPlayer.playerId
+          ]
+        );
       }
 
       await connection.query(

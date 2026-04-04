@@ -11,8 +11,23 @@ import {
 } from "./event-log.ts";
 import { normalizeDailyQuestBoard, type DailyQuestBoard } from "./daily-quests.ts";
 import { normalizePlayerBattleReplaySummaries, type PlayerBattleReplaySummary } from "./battle-replay.ts";
-import { normalizeEloRating } from "./matchmaking.ts";
-import type { CampaignProgressState, DailyDungeonState, ResourceLedger } from "./models.ts";
+import {
+  getRankDivisionForRating,
+  getUtcWeekStart
+} from "./competitive-season.ts";
+import {
+  normalizeEloRating,
+  type DemotionShieldState,
+  type PromotionSeriesState,
+  type RankDivisionId
+} from "./matchmaking.ts";
+import type {
+  CampaignProgressState,
+  DailyDungeonState,
+  RankedWeeklyProgress,
+  ResourceLedger,
+  SeasonArchiveEntry
+} from "./models.ts";
 import { normalizeTutorialStep } from "./tutorial.ts";
 
 export type PlayerBanStatus = "none" | "temporary" | "permanent";
@@ -22,6 +37,12 @@ export interface PlayerAccountReadModel {
   displayName: string;
   avatarUrl?: string;
   eloRating?: number;
+  rankDivision?: RankDivisionId;
+  peakRankDivision?: RankDivisionId;
+  promotionSeries?: PromotionSeriesState;
+  demotionShield?: DemotionShieldState;
+  seasonHistory?: SeasonArchiveEntry[];
+  rankedWeeklyProgress?: RankedWeeklyProgress;
   gems?: number;
   loginStreak?: number;
   seasonXp?: number;
@@ -59,6 +80,12 @@ export interface PlayerAccountReadModelInput {
   displayName?: string | undefined;
   avatarUrl?: string | undefined;
   eloRating?: number | undefined;
+  rankDivision?: RankDivisionId | undefined;
+  peakRankDivision?: RankDivisionId | undefined;
+  promotionSeries?: PromotionSeriesState | null | undefined;
+  demotionShield?: DemotionShieldState | null | undefined;
+  seasonHistory?: SeasonArchiveEntry[] | null | undefined;
+  rankedWeeklyProgress?: RankedWeeklyProgress | null | undefined;
   gems?: number | undefined;
   loginStreak?: number | undefined;
   seasonXp?: number | undefined;
@@ -133,6 +160,54 @@ export function normalizePlayerAccountReadModel(
   const lastSeenAt = account?.lastSeenAt?.trim();
   const recentEventLog = normalizeEventLogEntries(account?.recentEventLog);
   const recentBattleReplays = normalizePlayerBattleReplaySummaries(account?.recentBattleReplays);
+  const rankDivision = account?.rankDivision ?? getRankDivisionForRating(account?.eloRating);
+  const peakRankDivision = account?.peakRankDivision ?? rankDivision;
+  const promotionSeries =
+    account?.promotionSeries &&
+    account.promotionSeries.targetDivision &&
+    Number.isFinite(account.promotionSeries.wins) &&
+    Number.isFinite(account.promotionSeries.losses)
+      ? {
+          targetDivision: account.promotionSeries.targetDivision,
+          wins: Math.max(0, Math.floor(account.promotionSeries.wins)),
+          losses: Math.max(0, Math.floor(account.promotionSeries.losses)),
+          winsRequired: Math.max(1, Math.floor(account.promotionSeries.winsRequired ?? 3)),
+          lossesAllowed: Math.max(1, Math.floor(account.promotionSeries.lossesAllowed ?? 2))
+        }
+      : undefined;
+  const demotionShield =
+    account?.demotionShield && account.demotionShield.remainingMatches > 0 && account.demotionShield.tier
+      ? {
+          tier: account.demotionShield.tier,
+          remainingMatches: Math.max(0, Math.floor(account.demotionShield.remainingMatches))
+        }
+      : undefined;
+  const seasonHistory = (account?.seasonHistory ?? [])
+    .filter((entry): entry is SeasonArchiveEntry => Boolean(entry?.seasonId && entry?.peakDivision && entry?.finalDivision))
+    .map((entry) => ({
+      seasonId: entry.seasonId.trim(),
+      peakDivision: entry.peakDivision,
+      finalDivision: entry.finalDivision,
+      rewardTier: entry.rewardTier,
+      rewardClaimed: entry.rewardClaimed === true,
+      archivedAt: normalizeTimestamp(entry.archivedAt) ?? new Date(0).toISOString()
+    }))
+    .sort((left, right) => right.archivedAt.localeCompare(left.archivedAt) || left.seasonId.localeCompare(right.seasonId));
+  let rankedWeeklyProgress: RankedWeeklyProgress | undefined;
+  if (account?.rankedWeeklyProgress?.currentWeekStartsAt) {
+    rankedWeeklyProgress = {
+      currentWeekStartsAt: normalizeTimestamp(account.rankedWeeklyProgress.currentWeekStartsAt) ?? getUtcWeekStart(),
+      currentWeekWins: Math.max(0, Math.floor(account.rankedWeeklyProgress.currentWeekWins ?? 0))
+    };
+    const previousWeekStartsAt = normalizeTimestamp(account.rankedWeeklyProgress.previousWeekStartsAt);
+    if (previousWeekStartsAt) {
+      rankedWeeklyProgress.previousWeekStartsAt = previousWeekStartsAt;
+    }
+    const previousWeekWins = Math.max(0, Math.floor(account.rankedWeeklyProgress.previousWeekWins ?? 0));
+    if (previousWeekWins > 0) {
+      rankedWeeklyProgress.previousWeekWins = previousWeekWins;
+    }
+  }
   const dailyQuestBoard = normalizeDailyQuestBoard(account?.dailyQuestBoard);
   const campaignProgress = normalizeCampaignProgressState(account?.campaignProgress);
   const dailyDungeonState = normalizeDailyDungeonState(account?.dailyDungeonState);
@@ -143,6 +218,12 @@ export function normalizePlayerAccountReadModel(
     displayName: displayName || playerId || "player",
     ...(avatarUrl ? { avatarUrl } : {}),
     eloRating: normalizeEloRating(account?.eloRating),
+    rankDivision,
+    peakRankDivision,
+    ...(promotionSeries ? { promotionSeries } : {}),
+    ...(demotionShield ? { demotionShield } : {}),
+    ...(seasonHistory.length > 0 ? { seasonHistory } : {}),
+    ...(rankedWeeklyProgress ? { rankedWeeklyProgress } : {}),
     gems: Math.max(0, Math.floor(account?.gems ?? 0)),
     ...(loginStreak > 0 ? { loginStreak } : {}),
     ...(seasonXp > 0 ? { seasonXp } : {}),

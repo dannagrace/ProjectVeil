@@ -68,6 +68,16 @@ export interface LeaderboardEntry {
   displayName: string;
   eloRating: number;
   tier: LeaderboardTier;
+  division?: string;
+  promotionSeries?: {
+    wins: number;
+    losses: number;
+    winsRequired: number;
+    lossesAllowed: number;
+  } | null;
+  demotionShield?: {
+    remainingMatches: number;
+  } | null;
 }
 
 export type FogState = "hidden" | "explored" | "visible";
@@ -541,6 +551,16 @@ interface LeaderboardApiPayload {
     displayName?: string;
     eloRating?: number;
     tier?: LeaderboardTier;
+    division?: string;
+    promotionSeries?: {
+      wins?: number;
+      losses?: number;
+      winsRequired?: number;
+      lossesAllowed?: number;
+    } | null;
+    demotionShield?: {
+      remainingMatches?: number;
+    } | null;
   }>;
 }
 
@@ -971,7 +991,25 @@ async function fetchLeaderboardEntries(remoteUrl?: string, limit = 50): Promise<
       rank: index + 1,
       displayName: player.displayName?.trim() || player.playerId?.trim() || `玩家 ${index + 1}`,
       eloRating,
-      tier: normalizeLeaderboardTier(player.tier)
+      tier: normalizeLeaderboardTier(player.tier),
+      ...(player.division?.trim() ? { division: player.division.trim() } : {}),
+      ...(player.promotionSeries
+        ? {
+            promotionSeries: {
+              wins: Math.max(0, Math.floor(player.promotionSeries.wins ?? 0)),
+              losses: Math.max(0, Math.floor(player.promotionSeries.losses ?? 0)),
+              winsRequired: Math.max(1, Math.floor(player.promotionSeries.winsRequired ?? 3)),
+              lossesAllowed: Math.max(1, Math.floor(player.promotionSeries.lossesAllowed ?? 2))
+            }
+          }
+        : {}),
+      ...(player.demotionShield
+        ? {
+            demotionShield: {
+              remainingMatches: Math.max(0, Math.floor(player.demotionShield.remainingMatches ?? 0))
+            }
+          }
+        : {})
     };
   });
 }

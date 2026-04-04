@@ -1,3 +1,5 @@
+import type { PlayerTier, RankDivisionId } from "./matchmaking.ts";
+
 export type TerrainType = "grass" | "dirt" | "sand" | "water" | "swamp";
 export type FogState = "hidden" | "explored" | "visible";
 export type ResourceKind = "gold" | "wood" | "ore";
@@ -182,6 +184,31 @@ export interface SeasonRewardBracket {
 
 export interface SeasonRewardConfig {
   brackets: SeasonRewardBracket[];
+}
+
+export interface SeasonArchiveEntry {
+  seasonId: string;
+  peakDivision: RankDivisionId;
+  finalDivision: RankDivisionId;
+  rewardTier: PlayerTier;
+  rewardClaimed: boolean;
+  archivedAt: string;
+}
+
+export interface WeeklyLeaderboardEntry {
+  playerId: string;
+  displayName: string;
+  wins: number;
+  weekStartsAt: string;
+  weekEndsAt: string;
+  rankDivision: RankDivisionId;
+}
+
+export interface RankedWeeklyProgress {
+  currentWeekStartsAt: string;
+  currentWeekWins: number;
+  previousWeekStartsAt?: string;
+  previousWeekWins?: number;
 }
 
 export interface MovePoints {
