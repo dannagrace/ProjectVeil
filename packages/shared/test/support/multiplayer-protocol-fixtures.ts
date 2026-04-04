@@ -1,4 +1,5 @@
 import {
+  DEFAULT_FEATURE_FLAGS,
   buildPlayerBattleReportCenter,
   buildPlayerProgressionSnapshot,
   createDefaultHeroLoadout,
@@ -187,6 +188,7 @@ export function createSessionStatePayloadFixture(): SessionStatePayload {
       { x: 0, y: 1 },
       { x: 1, y: 1 }
     ],
+    featureFlags: DEFAULT_FEATURE_FLAGS,
     reason: "battle.started"
   };
 }

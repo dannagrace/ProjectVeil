@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DEFAULT_FEATURE_FLAGS } from "../../../packages/shared/src/index";
 import type { SessionUpdate } from "../src/local-session";
 import { createMainSessionRuntime } from "../src/main-session-runtime";
 
@@ -29,6 +30,7 @@ function createSessionUpdate(reason = "push-sync", day = 2): SessionUpdate {
     events: [],
     movementPlan: null,
     reachableTiles: [{ x: 0, y: 0 }],
+    featureFlags: DEFAULT_FEATURE_FLAGS,
     reason
   };
 }

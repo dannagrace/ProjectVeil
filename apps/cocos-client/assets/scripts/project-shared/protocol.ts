@@ -2,6 +2,12 @@ import type { BattleAction, BattleState, MovementPlan, Vec2, WorldAction, WorldE
 import type { PlayerWorldViewPayload } from "./map-sync.ts";
 
 export type SessionStateReason = "surrender" | "afk_forfeit" | "normal" | (string & {});
+export interface FeatureFlags {
+  quest_system_enabled: boolean;
+  battle_pass_enabled: boolean;
+  pve_enabled: boolean;
+  tutorial_enabled: boolean;
+}
 
 export interface SessionStatePayload {
   world: PlayerWorldViewPayload;
@@ -9,6 +15,7 @@ export interface SessionStatePayload {
   events: WorldEvent[];
   movementPlan: MovementPlan | null;
   reachableTiles: Vec2[];
+  featureFlags: FeatureFlags;
   reason?: SessionStateReason;
 }
 

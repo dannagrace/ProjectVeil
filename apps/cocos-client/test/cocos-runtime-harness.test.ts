@@ -60,7 +60,8 @@ function createEncodedStatePayload(day: number, roomId: string, playerId: string
     battle: null,
     events: update.events,
     movementPlan: update.movementPlan,
-    reachableTiles: update.reachableTiles
+    reachableTiles: update.reachableTiles,
+    featureFlags: update.featureFlags
   };
 }
 

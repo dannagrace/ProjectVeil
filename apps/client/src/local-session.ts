@@ -3,6 +3,7 @@ import { Client as ColyseusClient, CloseCode, type Room as ColyseusRoom } from "
 import {
   decodePlayerWorldView,
   listReachableTiles,
+  normalizeFeatureFlags,
   planHeroMovement,
   replaceRuntimeConfigs
 } from "../../../packages/shared/src/index";
@@ -11,6 +12,7 @@ import type {
   BattleState,
   ClientMessage,
   EquipmentType,
+  FeatureFlags,
   MovementPlan,
   PlayerReportReason,
   PlayerWorldView,
@@ -27,6 +29,7 @@ export interface SessionUpdate {
   events: WorldEvent[];
   movementPlan: MovementPlan | null;
   reachableTiles: Vec2[];
+  featureFlags?: FeatureFlags;
   reason?: string;
 }
 
@@ -86,6 +89,7 @@ function fromPayload(payload: SessionStatePayload, previousWorld?: PlayerWorldVi
     events: payload.events,
     movementPlan: payload.movementPlan,
     reachableTiles: payload.reachableTiles,
+    featureFlags: normalizeFeatureFlags(payload.featureFlags),
     ...(payload.reason ? { reason: payload.reason } : {})
   };
 }

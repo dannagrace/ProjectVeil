@@ -127,6 +127,8 @@ const BATTLE_BALANCE_CONFIG = {
     varianceBase: 0.9,
     varianceRange: 0.2
   },
+  turnTimerSeconds: 45,
+  afkStrikesBeforeForfeit: 2,
   environment: {
     blockerSpawnThreshold: 0.62,
     blockerDurability: 1,

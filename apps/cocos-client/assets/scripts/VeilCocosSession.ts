@@ -19,6 +19,13 @@ export interface ResourceLedger {
   ore: number;
 }
 
+export interface FeatureFlags {
+  quest_system_enabled: boolean;
+  battle_pass_enabled: boolean;
+  pve_enabled: boolean;
+  tutorial_enabled: boolean;
+}
+
 export interface ShopProductGrant {
   gems?: number;
   resources?: Partial<ResourceLedger>;
@@ -513,6 +520,7 @@ export interface SessionUpdate {
   events: WorldEvent[];
   movementPlan: MovementPlan | null;
   reachableTiles: Vec2[];
+  featureFlags?: FeatureFlags;
   reason?: string;
 }
 
@@ -684,6 +692,7 @@ interface SessionStatePayload {
   events: WorldEvent[];
   movementPlan: MovementPlan | null;
   reachableTiles: Vec2[];
+  featureFlags: FeatureFlags;
   reason?: "surrender" | "afk_forfeit" | "normal" | (string & {});
 }
 
@@ -848,7 +857,17 @@ function fromPayload(payload: SessionStatePayload, previousWorld?: PlayerWorldVi
     events: payload.events,
     movementPlan: payload.movementPlan,
     reachableTiles: payload.reachableTiles,
+    featureFlags: normalizeFeatureFlags(payload.featureFlags),
     ...(payload.reason ? { reason: payload.reason } : {})
+  };
+}
+
+function normalizeFeatureFlags(input?: Partial<FeatureFlags> | null): FeatureFlags {
+  return {
+    quest_system_enabled: input?.quest_system_enabled === true,
+    battle_pass_enabled: input?.battle_pass_enabled === true,
+    pve_enabled: input?.pve_enabled === true,
+    tutorial_enabled: input?.tutorial_enabled !== false
   };
 }
 

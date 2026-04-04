@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import shopConfigDocument from "../../../configs/shop-config.json";
 import { getEquipmentDefinition, type ResourceLedger } from "../../../packages/shared/src/index";
+import { emitAnalyticsEvent } from "./analytics";
 import { validateAuthSessionFromRequest } from "./auth";
 import type { RoomSnapshotStore } from "./persistence";
 
@@ -314,6 +315,15 @@ export function registerShopRoutes(
         quantity,
         unitPrice: product.price,
         grant: product.grant
+      });
+      emitAnalyticsEvent("purchase", {
+        playerId: authSession.playerId,
+        payload: {
+          purchaseId: result.purchaseId,
+          productId: result.productId,
+          quantity: result.quantity,
+          totalPrice: result.totalPrice
+        }
       });
       sendJson(response, 200, result);
     } catch (error) {
