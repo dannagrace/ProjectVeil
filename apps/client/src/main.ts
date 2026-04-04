@@ -14,6 +14,7 @@ import {
   formatEquipmentRarityLabel,
   getDefaultBattleSkillCatalog,
   getEquipmentDefinition,
+  normalizeDailyQuestBoard,
   pauseBattleReplayPlayback,
   predictPlayerWorldAction,
   playBattleReplayPlayback,
@@ -33,6 +34,7 @@ import {
   type PlayerWorldView,
   type RuntimeDiagnosticsConnectionStatus,
   type RuntimeDiagnosticsTriageSection,
+  type DailyQuestBoard,
   validateAccountLifecycleConfirm,
   validateAccountLifecycleRequest,
   validateAccountPassword,
@@ -56,6 +58,7 @@ import {
   confirmAccountRegistration,
   confirmPasswordRecovery,
   deleteCurrentPlayerAccount,
+  buildAuthHeaders,
   loginGuestAuthSession,
   loginPasswordAuthSession,
   logoutCurrentAuthSession,
@@ -88,6 +91,7 @@ import {
 import {
   renderAchievementProgress,
   renderBattleReportReplayCenter,
+  renderDailyQuestBoard,
   renderRecentAccountEvents
 } from "./account-history";
 import {
@@ -224,6 +228,7 @@ interface AppState {
   accountSaving: boolean;
   accountBinding: boolean;
   accountStatus: string;
+  dailyQuestClaimingId: string | null;
   accountSessions: PlayerAccountSessionDevice[];
   accountSessionsLoading: boolean;
   accountSessionRevokingId: string | null;
@@ -343,6 +348,7 @@ const state: AppState = {
   accountSaving: false,
   accountBinding: false,
   accountStatus: "游客账号资料将在连接后自动同步。",
+  dailyQuestClaimingId: null,
   accountSessions: [],
   accountSessionsLoading: false,
   accountSessionRevokingId: null,
@@ -3086,6 +3092,7 @@ async function refreshAccountProfileFromServer(): Promise<void> {
   accountRefreshPromise = (async () => {
     const account = await loadAccountProfileWithProgression(playerId, roomId);
     state.account = account;
+    await syncDailyQuestBoard();
     syncAchievementToastFeed(account, hasHydratedAchievementFeed);
     hasHydratedAchievementFeed = true;
     if (state.achievementPanel.open) {
@@ -3101,6 +3108,37 @@ async function refreshAccountProfileFromServer(): Promise<void> {
   });
 
   return accountRefreshPromise;
+}
+
+async function loadDailyQuestBoardFromServer(): Promise<DailyQuestBoard | undefined> {
+  const authSession = readStoredAuthSession();
+  if (!authSession?.token) {
+    return undefined;
+  }
+  const httpProtocol = window.location.protocol === "https:" ? "https" : "http";
+
+  try {
+    const response = await fetch(`${httpProtocol}://${window.location.hostname || "127.0.0.1"}:2567/api/player-accounts/me/daily-quests`, {
+      headers: buildAuthHeaders(authSession.token)
+    });
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const payload = (await response.json()) as {
+      dailyQuestBoard?: Partial<DailyQuestBoard>;
+    };
+    return normalizeDailyQuestBoard(payload.dailyQuestBoard);
+  } catch {
+    return undefined;
+  }
+}
+
+async function syncDailyQuestBoard(): Promise<void> {
+  const board = await loadDailyQuestBoardFromServer();
+  if (board) {
+    state.account.dailyQuestBoard = board;
+  }
 }
 
 async function previewTile(x: number, y: number): Promise<void> {
@@ -4849,6 +4887,9 @@ function render(): void {
           <p class="account-meta">${escapeHtml(formatCredentialBinding(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
           <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
+          ${renderDailyQuestBoard(state.account, {
+            claimingQuestId: state.dailyQuestClaimingId
+          })}
           ${renderAchievementProgress(state.account)}
           ${renderBattleReportReplayCenter({
             account: state.account,
@@ -5248,6 +5289,15 @@ function render(): void {
     });
   }
 
+  for (const claimDailyQuestButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-claim-daily-quest]"))) {
+    claimDailyQuestButton.addEventListener("click", () => {
+      const questId = claimDailyQuestButton.dataset.claimDailyQuest;
+      if (questId) {
+        void onClaimDailyQuestReward(questId);
+      }
+    });
+  }
+
   for (const bindAccountButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-bind-account]"))) {
     bindAccountButton.addEventListener("click", () => {
       void onBindAccountProfile();
@@ -5323,6 +5373,68 @@ async function onRevokeAccountSession(sessionId: string): Promise<void> {
   } catch (error) {
     state.accountSessionRevokingId = null;
     state.accountStatus = error instanceof Error ? error.message : "account_session_revoke_failed";
+    render();
+  }
+}
+
+async function onClaimDailyQuestReward(questId: string): Promise<void> {
+  const authSession = readStoredAuthSession();
+  if (!authSession?.token) {
+    state.accountStatus = "每日任务领取需要已登录的远端账号会话。";
+    render();
+    return;
+  }
+
+  state.dailyQuestClaimingId = questId;
+  state.accountStatus = "正在领取每日任务奖励...";
+  render();
+  const httpProtocol = window.location.protocol === "https:" ? "https" : "http";
+
+  try {
+    const response = await fetch(
+      `${httpProtocol}://${window.location.hostname || "127.0.0.1"}:2567/api/player-accounts/me/daily-quests/${encodeURIComponent(questId)}/claim`,
+      {
+      method: "POST",
+      headers: buildAuthHeaders(authSession.token)
+      }
+    );
+    const payload = (await response.json()) as {
+      claimed?: boolean;
+      reason?: string;
+      reward?: { gems?: number; gold?: number };
+      dailyQuestBoard?: Partial<DailyQuestBoard>;
+      error?: { message?: string };
+    };
+
+    if (!response.ok) {
+      throw new Error(payload.error?.message ?? "daily_quest_claim_failed");
+    }
+
+    const board = normalizeDailyQuestBoard(payload.dailyQuestBoard);
+    if (board) {
+      state.account.dailyQuestBoard = board;
+    }
+
+    if (payload.claimed) {
+      await refreshAccountProfileFromServer();
+      state.accountStatus = `每日任务奖励已入账：宝石 +${Math.max(0, Math.floor(payload.reward?.gems ?? 0))} · 金币 +${Math.max(
+        0,
+        Math.floor(payload.reward?.gold ?? 0)
+      )}`;
+    } else {
+      state.accountStatus =
+        payload.reason === "already_claimed"
+          ? "该每日任务奖励已领取。"
+          : payload.reason === "quest_incomplete"
+            ? "当前每日任务尚未完成。"
+            : payload.reason === "daily_quests_disabled"
+              ? "每日任务当前未启用。"
+              : "每日任务奖励暂时无法领取。";
+    }
+  } catch (error) {
+    state.accountStatus = error instanceof Error ? error.message : "daily_quest_claim_failed";
+  } finally {
+    state.dailyQuestClaimingId = null;
     render();
   }
 }
@@ -5460,6 +5572,9 @@ export function startMainH5Boot(overrides: StartMainH5BootOverrides = {}): void 
         syncAchievementToastFeed(runtimeState.account, false);
         hasHydratedAchievementFeed = true;
         runtimeState.achievementPanel.items = runtimeState.account.achievements;
+        void syncDailyQuestBoard().then(() => {
+          render();
+        });
       }),
     window: overrides.window ?? window,
     devDiagnosticsEnabled: overrides.devDiagnosticsEnabled ?? DEV_DIAGNOSTICS_ENABLED,

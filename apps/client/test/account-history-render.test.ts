@@ -4,6 +4,7 @@ import {
   renderAchievementProgress,
   renderBattleReportReplayCenter,
   renderBattleReplayInspector,
+  renderDailyQuestBoard,
   renderRecentAccountEvents,
   renderRecentBattleReplays
 } from "../src/account-history";
@@ -33,6 +34,44 @@ function createProfile(): PlayerAccountProfile {
       gold: 12,
       wood: 4,
       ore: 2
+    },
+    dailyQuestBoard: {
+      enabled: true,
+      cycleKey: "2026-03-27",
+      resetAt: "2026-03-27T23:59:59.999Z",
+      availableClaims: 1,
+      pendingRewards: {
+        gems: 5,
+        gold: 60
+      },
+      quests: [
+        {
+          id: "daily_explore_frontier",
+          title: "侦察前线",
+          description: "完成 3 次探索移动。",
+          current: 3,
+          target: 3,
+          completed: true,
+          claimed: false,
+          reward: {
+            gems: 3,
+            gold: 40
+          }
+        },
+        {
+          id: "daily_battle_victory",
+          title: "凯旋号角",
+          description: "取得 1 场战斗胜利。",
+          current: 0,
+          target: 1,
+          completed: false,
+          claimed: false,
+          reward: {
+            gems: 5,
+            gold: 60
+          }
+        }
+      ]
     },
     achievements: [
       {
@@ -154,6 +193,19 @@ test("account history renderer shows unlocked achievement state and footnotes", 
   assert.match(html, /解锁于/);
   assert.match(html, /最近推进/);
   assert.match(html, /还差 1 点进度/);
+});
+
+test("account history renderer shows daily quest progress and claim action", () => {
+  const html = renderDailyQuestBoard(createProfile(), {
+    claimingQuestId: "daily_explore_frontier"
+  });
+
+  assert.match(html, /每日任务/);
+  assert.match(html, /可领取 1 项/);
+  assert.match(html, /侦察前线/);
+  assert.match(html, /领取中\.\.\./);
+  assert.match(html, /凯旋号角/);
+  assert.match(html, /还差 1 步/);
 });
 
 test("account history renderer shows readable event metadata, category summary, and reward chips", () => {

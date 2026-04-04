@@ -532,6 +532,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   async savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot> {
     const existing = await this.ensurePlayerAccount({ playerId });
+    const previousHistory = this.eventHistoryByPlayerId.get(playerId) ?? [];
     const account: PlayerAccountSnapshot = {
       ...existing,
       ...(patch.gems !== undefined ? { gems: Math.max(0, Math.floor(patch.gems ?? 0)) } : {}),
@@ -556,6 +557,14 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(playerId, account);
+    this.eventHistoryByPlayerId.set(
+      playerId,
+      structuredClone([
+        ...((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? [])
+          .filter((entry) => !previousHistory.some((existingEntry) => existingEntry.id === entry.id)),
+        ...previousHistory
+      ])
+    );
     return account;
   }
 
@@ -2902,6 +2911,190 @@ test("daily claim rejects duplicate claims on the same day", async (t) => {
   assert.equal(account?.gems, 9);
   assert.equal(account?.globalResources.gold, 18);
   assert.equal(account?.loginStreak, 3);
+});
+
+test("daily quest board derives same-day progress and ignores prior-day events", async (t) => {
+  const port = 44930 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  const today = getDailyRewardDateKey();
+  const yesterday = getPreviousDailyRewardDateKey(today);
+  const todayStart = `${today}T09:00:00.000Z`;
+  const yesterdayStart = `${yesterday}T09:00:00.000Z`;
+  process.env.VEIL_DAILY_QUESTS_ENABLED = "true";
+  t.after(() => {
+    delete process.env.VEIL_DAILY_QUESTS_ENABLED;
+  });
+  await store.ensurePlayerAccount({
+    playerId: "daily-quest-player",
+    displayName: "界碑斥候"
+  });
+  store.seedEventHistory("daily-quest-player", [
+    {
+      id: `daily-quest-player:${yesterdayStart}:hero.moved:1`,
+      timestamp: yesterdayStart,
+      roomId: "room-alpha",
+      playerId: "daily-quest-player",
+      category: "movement",
+      description: "昨天的探索移动。",
+      worldEventType: "hero.moved",
+      rewards: []
+    },
+    {
+      id: `daily-quest-player:${todayStart}:hero.moved:1`,
+      timestamp: todayStart,
+      roomId: "room-alpha",
+      playerId: "daily-quest-player",
+      category: "movement",
+      description: "今日探索移动。",
+      worldEventType: "hero.moved",
+      rewards: []
+    },
+    {
+      id: `daily-quest-player:${today}T09:03:00.000Z:hero.moved:2`,
+      timestamp: `${today}T09:03:00.000Z`,
+      roomId: "room-alpha",
+      playerId: "daily-quest-player",
+      category: "movement",
+      description: "今日探索移动。",
+      worldEventType: "hero.moved",
+      rewards: []
+    },
+    {
+      id: `daily-quest-player:${today}T09:06:00.000Z:hero.collected:3`,
+      timestamp: `${today}T09:06:00.000Z`,
+      roomId: "room-alpha",
+      playerId: "daily-quest-player",
+      category: "building",
+      description: "今日收集资源。",
+      worldEventType: "hero.collected",
+      rewards: [{ type: "resource", label: "gold", amount: 20 }]
+    }
+  ]);
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "daily-quest-player",
+    displayName: "界碑斥候"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const boardResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/daily-quests`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const boardPayload = (await boardResponse.json()) as {
+    dailyQuestBoard: {
+      enabled: boolean;
+      cycleKey: string;
+      availableClaims: number;
+      quests: Array<{ id: string; current: number; completed: boolean }>;
+    };
+  };
+
+  assert.equal(boardResponse.status, 200);
+  assert.equal(boardPayload.dailyQuestBoard.enabled, true);
+  assert.equal(boardPayload.dailyQuestBoard.cycleKey, today);
+  assert.deepEqual(
+    boardPayload.dailyQuestBoard.quests.map((quest) => ({ id: quest.id, current: quest.current, completed: quest.completed })),
+    [
+      { id: "daily_explore_frontier", current: 2, completed: false },
+      { id: "daily_battle_victory", current: 0, completed: false },
+      { id: "daily_resource_run", current: 1, completed: false }
+    ]
+  );
+});
+
+test("daily quest claim grants rewards once and returns already_claimed on repeat", async (t) => {
+  const port = 44932 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  const today = getDailyRewardDateKey();
+  process.env.VEIL_DAILY_QUESTS_ENABLED = "true";
+  t.after(() => {
+    delete process.env.VEIL_DAILY_QUESTS_ENABLED;
+  });
+  await store.ensurePlayerAccount({
+    playerId: "daily-quest-claim",
+    displayName: "白塔军需官"
+  });
+  store.seedEventHistory("daily-quest-claim", [
+    {
+      id: `daily-quest-claim:${today}T08:00:00.000Z:hero.collected:1`,
+      timestamp: `${today}T08:00:00.000Z`,
+      roomId: "room-alpha",
+      playerId: "daily-quest-claim",
+      category: "building",
+      description: "今日收集资源。",
+      worldEventType: "hero.collected",
+      rewards: [{ type: "resource", label: "gold", amount: 15 }]
+    },
+    {
+      id: `daily-quest-claim:${today}T08:05:00.000Z:hero.collected:2`,
+      timestamp: `${today}T08:05:00.000Z`,
+      roomId: "room-alpha",
+      playerId: "daily-quest-claim",
+      category: "building",
+      description: "今日收集资源。",
+      worldEventType: "hero.collected",
+      rewards: [{ type: "resource", label: "gold", amount: 25 }]
+    }
+  ]);
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "daily-quest-claim",
+    displayName: "白塔军需官"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const claimResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/daily-quests/daily_resource_run/claim`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const claimPayload = (await claimResponse.json()) as {
+    claimed: boolean;
+    reward: { gems: number; gold: number };
+    dailyQuestBoard: { availableClaims: number };
+  };
+
+  assert.equal(claimResponse.status, 200);
+  assert.equal(claimPayload.claimed, true);
+  assert.deepEqual(claimPayload.reward, { gems: 2, gold: 35 });
+  assert.equal(claimPayload.dailyQuestBoard.availableClaims, 0);
+
+  const repeatResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/daily-quests/daily_resource_run/claim`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const repeatPayload = (await repeatResponse.json()) as {
+    claimed: boolean;
+    reason: string;
+    dailyQuestBoard: { availableClaims: number };
+  };
+
+  assert.equal(repeatResponse.status, 200);
+  assert.equal(repeatPayload.claimed, false);
+  assert.equal(repeatPayload.reason, "already_claimed");
+  assert.equal(repeatPayload.dailyQuestBoard.availableClaims, 0);
+
+  const account = await store.loadPlayerAccount("daily-quest-claim");
+  assert.equal(account?.gems, 2);
+  assert.equal(account?.globalResources.gold, 35);
+  assert.match(account?.recentEventLog[0]?.description ?? "", /领取每日任务：补给回收/);
 });
 
 test("referral endpoint rejects double-claiming for the same referrer and new player", async (t) => {
