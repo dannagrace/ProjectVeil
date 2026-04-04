@@ -11,6 +11,7 @@ interface Args {
   h5SmokePath?: string;
   reconnectSoakPath?: string;
   runtimeReportPath?: string;
+  serverUrl?: string;
   wechatArtifactsDir?: string;
   validateStatus?: string;
   wechatBuildStatus?: string;
@@ -47,6 +48,8 @@ interface RehearsalArtifacts {
   stableH5SmokePath?: string;
   stableReconnectSoakPath?: string;
   stableRuntimeReportPath?: string;
+  runtimeObservabilityGatePath?: string;
+  runtimeObservabilityGateMarkdownPath?: string;
   stableWechatArtifactsDir?: string;
   releaseReadinessSnapshotPath?: string;
   wechatCandidateSummaryPath?: string;
@@ -103,6 +106,7 @@ function parseArgs(argv: string[]): Args {
   let h5SmokePath: string | undefined;
   let reconnectSoakPath: string | undefined;
   let runtimeReportPath: string | undefined;
+  let serverUrl: string | undefined;
   let wechatArtifactsDir: string | undefined;
   let validateStatus: string | undefined;
   let wechatBuildStatus: string | undefined;
@@ -136,6 +140,11 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--runtime-report" && next) {
       runtimeReportPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--server-url" && next) {
+      serverUrl = next.trim();
       index += 1;
       continue;
     }
@@ -182,6 +191,7 @@ function parseArgs(argv: string[]): Args {
     ...(h5SmokePath ? { h5SmokePath } : {}),
     ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
     ...(runtimeReportPath ? { runtimeReportPath } : {}),
+    ...(serverUrl ? { serverUrl } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(validateStatus ? { validateStatus } : {}),
     ...(wechatBuildStatus ? { wechatBuildStatus } : {}),
@@ -408,6 +418,8 @@ function main(): void {
   const stableH5SmokePath = path.join(outputDir, `client-release-candidate-smoke-${candidateSlug}-${revision.shortCommit}.json`);
   const stableReconnectSoakPath = path.join(outputDir, `colyseus-reconnect-soak-summary-${candidateSlug}-${revision.shortCommit}.json`);
   const stableRuntimeReportPath = path.join(outputDir, `runtime-regression-report-${candidateSlug}-${revision.shortCommit}.json`);
+  const runtimeObservabilityGatePath = path.join(outputDir, `runtime-observability-gate-${candidateSlug}-${revision.shortCommit}.json`);
+  const runtimeObservabilityGateMarkdownPath = path.join(outputDir, `runtime-observability-gate-${candidateSlug}-${revision.shortCommit}.md`);
   const stableWechatArtifactsDir = path.join(outputDir, `wechat-release-${candidateSlug}-${revision.shortCommit}`);
   const releaseReadinessSnapshotPath = path.join(outputDir, `release-readiness-${candidateSlug}-${revision.shortCommit}.json`);
   const persistencePath = path.join(outputDir, `phase1-release-persistence-regression-${candidateSlug}-${revision.shortCommit}.json`);
@@ -424,6 +436,8 @@ function main(): void {
 
   artifacts.releaseReadinessSnapshotPath = toRelative(releaseReadinessSnapshotPath);
   artifacts.persistencePath = toRelative(persistencePath);
+  artifacts.runtimeObservabilityGatePath = toRelative(runtimeObservabilityGatePath);
+  artifacts.runtimeObservabilityGateMarkdownPath = toRelative(runtimeObservabilityGateMarkdownPath);
   artifacts.releaseGateSummaryPath = toRelative(releaseGateSummaryPath);
   artifacts.releaseGateMarkdownPath = toRelative(releaseGateMarkdownPath);
   artifacts.ciTrendSummaryPath = toRelative(ciTrendSummaryPath);
@@ -568,6 +582,41 @@ function main(): void {
       }
     },
     {
+      id: "runtime-observability-gate",
+      title: "Build runtime observability gate",
+      run: () => {
+        if (!args.serverUrl) {
+          return {
+            id: "runtime-observability-gate",
+            title: "Build runtime observability gate",
+            status: "skipped",
+            summary: "No --server-url was provided, so the target-environment runtime gate was skipped."
+          };
+        }
+
+        return runCommandStage("runtime-observability-gate", "Build runtime observability gate", [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/runtime-observability-gate.ts",
+          "--candidate",
+          args.candidate,
+          "--candidate-revision",
+          revision.commit,
+          "--target-surface",
+          args.targetSurface,
+          "--target-environment",
+          args.targetSurface,
+          "--server-url",
+          args.serverUrl,
+          "--output",
+          runtimeObservabilityGatePath,
+          "--markdown-output",
+          runtimeObservabilityGateMarkdownPath
+        ], [runtimeObservabilityGatePath, runtimeObservabilityGateMarkdownPath]);
+      }
+    },
+    {
       id: "release-gate-summary",
       title: "Build release gate summary",
       run: () => {
@@ -682,6 +731,12 @@ function main(): void {
         if (artifacts.stableWechatArtifactsDir) {
           command.push("--wechat-artifacts-dir", stableWechatArtifactsDir);
         }
+        if (args.serverUrl) {
+          command.push("--server-url", args.serverUrl);
+        }
+        if (fs.existsSync(runtimeObservabilityGatePath)) {
+          command.push("--runtime-observability-gate", runtimeObservabilityGatePath);
+        }
         return runCommandStage("phase1-candidate-dossier", "Build Phase 1 candidate dossier", command, [
           phase1CandidateDossierPath,
           phase1CandidateDossierMarkdownPath
@@ -719,6 +774,9 @@ function main(): void {
     phase1CandidateDossierPath,
     phase1CandidateDossierMarkdownPath
   ];
+  if (args.serverUrl) {
+    requiredArtifacts.push(runtimeObservabilityGatePath, runtimeObservabilityGateMarkdownPath);
+  }
   if (artifacts.stableH5SmokePath) {
     requiredArtifacts.push(stableH5SmokePath);
   }

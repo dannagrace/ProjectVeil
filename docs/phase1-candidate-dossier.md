@@ -6,6 +6,8 @@ It now also emits one explicit candidate-level `Phase 1 exit evidence gate` so r
 
 The same run also emits a smaller runtime observability dossier that keeps the target-environment runtime probes and reconnect/session-recovery evidence in one reviewer-facing artifact for the same candidate revision.
 
+For release-time target-environment enforcement, use `npm run release:runtime-observability:gate`. The dossier can either sample the live endpoints directly with `--server-url` or reuse a previously written gate report with `--runtime-observability-gate`.
+
 The Markdown artifact is the canonical reviewer-facing attachment for one candidate revision: it records the candidate metadata, selected evidence inputs, the single Phase 1 exit gate decision, and the per-section drill-down in one place.
 
 The command stays intentionally thin and reuses the existing evidence producers:
@@ -30,6 +32,22 @@ npm run release:phase1:candidate-dossier -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
   --server-url http://127.0.0.1:2567
+```
+
+Reuse a stable runtime gate artifact instead of probing the environment a second time:
+
+```bash
+npm run release:runtime-observability:gate -- \
+  --candidate phase1-wechat-rc \
+  --candidate-revision abc1234 \
+  --target-surface wechat \
+  --target-environment release-staging \
+  --server-url https://veil-staging.example.com
+
+npm run release:phase1:candidate-dossier -- \
+  --candidate phase1-wechat-rc \
+  --candidate-revision abc1234 \
+  --runtime-observability-gate artifacts/release-readiness/runtime-observability-gate-phase1-wechat-rc-abc1234.json
 ```
 
 Pin explicit artifact paths when CI already produced stable filenames:
@@ -87,6 +105,7 @@ The dossier surfaces:
 - generated timestamp plus candidate branch/dirty metadata
 - one candidate revision and target surface
 - one `Selected Inputs` block so reviewers can see the exact artifact paths and runtime URL that were used
+- optional reuse of a stable runtime observability gate artifact so release rehearsal and manual review can point at the same endpoint sample
 - one `Generated Bundle` block so PR/release巡检 reviewers can stay inside the dossier directory
 - one runtime observability companion dossier that ties `/api/runtime/health`, `/api/runtime/auth-readiness`, `/api/runtime/metrics`, and reconnect soak evidence to the same candidate revision
 - one `phase1ExitEvidenceGate` result with blocking/pending/accepted-risk section lists
