@@ -168,3 +168,44 @@ export function applyEloMatchResult(
     loserDelta
   };
 }
+
+export type PlayerTier = "bronze" | "silver" | "gold" | "platinum" | "diamond";
+
+export function getTierForRating(rating: number): PlayerTier {
+  const normalized = normalizeEloRating(rating);
+  if (normalized >= 1800) return "diamond";
+  if (normalized >= 1500) return "platinum";
+  if (normalized >= 1300) return "gold";
+  if (normalized >= 1100) return "silver";
+  return "bronze";
+}
+
+export interface TierInfo {
+  tier: PlayerTier;
+  rating: number;
+  nextTierRating: number | null;
+  progressPercent: number;
+}
+
+export function getTierInfo(rating: number): TierInfo {
+  const normalized = normalizeEloRating(rating);
+  const tier = getTierForRating(normalized);
+  const thresholds: Record<PlayerTier, number> = {
+    bronze: 0,
+    silver: 1100,
+    gold: 1300,
+    platinum: 1500,
+    diamond: 1800
+  };
+  const nextThresholds: Record<PlayerTier, number | null> = {
+    bronze: 1100,
+    silver: 1300,
+    gold: 1500,
+    platinum: 1800,
+    diamond: null
+  };
+  const current = thresholds[tier];
+  const next = nextThresholds[tier];
+  const progressPercent = next === null ? 100 : Math.min(100, Math.round(((normalized - current) / (next - current)) * 100));
+  return { tier, rating: normalized, nextTierRating: next, progressPercent };
+}

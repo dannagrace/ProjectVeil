@@ -13,6 +13,28 @@ import {
 
 export const HERO_EQUIPMENT_INVENTORY_CAPACITY = 6;
 
+export interface EquipmentSetDefinition {
+  setId: string;
+  name: string;
+  requiredCount: 2;
+  bonus: Partial<EquipmentStatBonuses>;
+}
+
+export const EQUIPMENT_SET_DEFINITIONS: EquipmentSetDefinition[] = [
+  {
+    setId: "warlord",
+    name: "战魁套装",
+    requiredCount: 2,
+    bonus: { attackPercent: 8, maxHp: 5 }
+  },
+  {
+    setId: "guardian",
+    name: "守护套装",
+    requiredCount: 2,
+    bonus: { defensePercent: 10, maxHp: 6 }
+  }
+];
+
 const DEFAULT_EQUIPMENT_CATALOG: EquipmentCatalogConfig = {
   entries: [
     {

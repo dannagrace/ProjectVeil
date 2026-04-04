@@ -24,6 +24,13 @@ import {
 } from "../../../packages/shared/src/index";
 import type { RoomPersistenceSnapshot } from "./index";
 
+export interface SeasonSnapshot {
+  seasonId: string;
+  status: "active" | "closed";
+  startedAt: string;
+  endedAt?: string;
+}
+
 export interface RoomSnapshotStore {
   load(roomId: string): Promise<RoomPersistenceSnapshot | null>;
   loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
@@ -83,6 +90,9 @@ export interface RoomSnapshotStore {
   savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot>;
   savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot>;
   listPlayerAccounts(options?: PlayerAccountListOptions): Promise<PlayerAccountSnapshot[]>;
+  getCurrentSeason(): Promise<SeasonSnapshot | null>;
+  createSeason(seasonId: string): Promise<SeasonSnapshot>;
+  closeSeason(seasonId: string): Promise<void>;
   save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void>;
   delete(roomId: string): Promise<void>;
   pruneExpired(referenceTime?: Date): Promise<number>;
@@ -470,6 +480,7 @@ export interface PlayerAccountProgressPatch {
   dailyPlayMinutes?: number | null;
   lastPlayDate?: string | null;
   lastRoomId?: string | null;
+  eloRating?: number;
 }
 
 export interface PlayerAccountCredentialInput {
@@ -511,6 +522,7 @@ export interface PlayerAccountDeleteInput {
 export interface PlayerAccountListOptions {
   limit?: number;
   playerId?: string;
+  orderBy?: "eloRating";
 }
 
 export interface PlayerRoomProfileSummary {
@@ -2316,6 +2328,25 @@ SET @veil_config_documents_idx_sql := IF(
 PREPARE veil_config_documents_idx_stmt FROM @veil_config_documents_idx_sql;
 EXECUTE veil_config_documents_idx_stmt;
 DEALLOCATE PREPARE veil_config_documents_idx_stmt;
+
+CREATE TABLE IF NOT EXISTS \`veil_seasons\` (
+  \`season_id\` VARCHAR(64) NOT NULL,
+  \`status\` ENUM('active','closed') NOT NULL DEFAULT 'active',
+  \`started_at\` DATETIME NOT NULL,
+  \`ended_at\` DATETIME NULL,
+  \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (\`season_id\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS \`veil_season_rankings\` (
+  \`season_id\` VARCHAR(64) NOT NULL,
+  \`player_id\` VARCHAR(64) NOT NULL,
+  \`final_rating\` INT NOT NULL,
+  \`tier\` VARCHAR(32) NOT NULL,
+  \`rank_position\` INT NOT NULL,
+  \`archived_at\` DATETIME NOT NULL,
+  PRIMARY KEY (\`season_id\`, \`player_id\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 `.trim();
 }
 
@@ -4382,6 +4413,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         patch.dailyPlayMinutes !== undefined ? normalizeDailyPlayMinutes(patch.dailyPlayMinutes) : existing.dailyPlayMinutes,
       lastPlayDate:
         patch.lastPlayDate !== undefined ? normalizeLastPlayDate(patch.lastPlayDate) : existing.lastPlayDate,
+      ...(patch.eloRating !== undefined ? { eloRating: patch.eloRating } : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -4466,6 +4498,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     }
 
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const orderByClause = options.orderBy === "eloRating" ? "ORDER BY elo_rating DESC" : "ORDER BY updated_at DESC";
     const [rows] = await this.pool.query<PlayerAccountRow[]>(
       `SELECT
          player_id,
@@ -4500,7 +4533,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
        ${whereClause}
-       ORDER BY updated_at DESC
+       ${orderByClause}
        LIMIT ?`,
       [...params, safeLimit]
     );
@@ -4682,6 +4715,61 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return result.affectedRows;
+  }
+
+  async getCurrentSeason(): Promise<SeasonSnapshot | null> {
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT season_id, status, started_at, ended_at FROM \`veil_seasons\` WHERE status = 'active' ORDER BY started_at DESC LIMIT 1`
+    );
+    const row = rows[0];
+    if (!row) return null;
+    const endedAtTimestamp = row.ended_at ? formatTimestamp(row.ended_at as Date | string) : undefined;
+    const base: SeasonSnapshot = {
+      seasonId: String(row.season_id),
+      status: row.status as "active" | "closed",
+      startedAt: formatTimestamp(row.started_at as Date | string) ?? new Date().toISOString()
+    };
+    return endedAtTimestamp ? { ...base, endedAt: endedAtTimestamp } : base;
+  }
+
+  async createSeason(seasonId: string): Promise<SeasonSnapshot> {
+    const normalizedId = seasonId.trim();
+    if (!normalizedId) throw new Error("seasonId must not be empty");
+    const startedAt = new Date();
+    await this.pool.query(
+      `INSERT INTO \`veil_seasons\` (season_id, status, started_at) VALUES (?, 'active', ?)`,
+      [normalizedId, startedAt]
+    );
+    return {
+      seasonId: normalizedId,
+      status: "active",
+      startedAt: startedAt.toISOString()
+    };
+  }
+
+  async closeSeason(seasonId: string): Promise<void> {
+    const normalizedId = seasonId.trim();
+    // Archive top 100 player ratings
+    const [accounts] = await this.pool.query<RowDataPacket[]>(
+      `SELECT player_id, elo_rating FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ORDER BY elo_rating DESC LIMIT 100`
+    );
+    const now = new Date();
+    if (accounts.length > 0) {
+      const values = accounts.map((a, idx) => [normalizedId, String(a.player_id), Number(a.elo_rating), "bronze", idx + 1, now]);
+      await this.pool.query(
+        `INSERT IGNORE INTO \`veil_season_rankings\` (season_id, player_id, final_rating, tier, rank_position, archived_at) VALUES ?`,
+        [values]
+      );
+    }
+    // Soft reset ELO ratings
+    await this.pool.query(
+      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` SET elo_rating = 1000 + FLOOR((elo_rating - 1000) * 0.5)`
+    );
+    // Close the season
+    await this.pool.query(
+      `UPDATE \`veil_seasons\` SET status = 'closed', ended_at = ? WHERE season_id = ?`,
+      [now, normalizedId]
+    );
   }
 
   async close(): Promise<void> {

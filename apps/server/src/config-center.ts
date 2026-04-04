@@ -1947,7 +1947,8 @@ function createTerrainCountRecord(): Record<TerrainType, number> {
     grass: 0,
     dirt: 0,
     sand: 0,
-    water: 0
+    water: 0,
+    swamp: 0
   };
 }
 

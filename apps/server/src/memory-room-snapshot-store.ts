@@ -984,6 +984,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ),
       ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
       ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
+      ...(patch.eloRating !== undefined ? { eloRating: patch.eloRating } : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -1000,7 +1001,11 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async listPlayerAccounts(options: PlayerAccountListOptions = {}): Promise<PlayerAccountSnapshot[]> {
     const filtered = Array.from(this.accounts.values())
       .filter((account) => (options.playerId ? account.playerId === options.playerId : true))
-      .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
+      .sort((left, right) =>
+        options.orderBy === "eloRating"
+          ? (right.eloRating ?? 0) - (left.eloRating ?? 0)
+          : String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
+      );
     return filtered.slice(0, Math.max(1, Math.floor(options.limit ?? 20))).map((account) => cloneAccount(account));
   }
 
@@ -1053,6 +1058,20 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async pruneExpired(): Promise<number> {
     return 0;
   }
+
+  async getCurrentSeason(): Promise<import("./persistence").SeasonSnapshot | null> {
+    return null;
+  }
+
+  async createSeason(seasonId: string): Promise<import("./persistence").SeasonSnapshot> {
+    return {
+      seasonId: seasonId.trim(),
+      status: "active",
+      startedAt: new Date().toISOString()
+    };
+  }
+
+  async closeSeason(_seasonId: string): Promise<void> {}
 
   async close(): Promise<void> {}
 

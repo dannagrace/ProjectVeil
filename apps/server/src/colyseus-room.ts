@@ -1,10 +1,12 @@
 import { CloseCode } from "@colyseus/shared-types";
 import { Room, type Client as ColyseusClient } from "colyseus";
 import {
+  applyEloMatchResult,
   createInitialWorldState,
   encodePlayerWorldView,
   filterWorldEventsForPlayer,
   listReachableTiles,
+  normalizeEloRating,
   planHeroMovement,
   type PlayerWorldView,
   type PlayerBattleReplaySummary,
@@ -745,12 +747,31 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     const playerIds = Array.from(new Set(internalState.heroes.map((hero) => hero.playerId)));
     const accounts = await store.loadPlayerAccounts(playerIds);
 
+    // Compute ELO updates for PVP (hero vs hero) battles
+    const eloUpdates = new Map<string, number>();
+    for (const replay of completedReplays) {
+      if (!replay.defenderPlayerId) continue;
+      const attackerPlayerId = replay.attackerPlayerId;
+      const defenderPlayerId = replay.defenderPlayerId;
+      const attackerAccount = accounts.find((a) => a.playerId === attackerPlayerId);
+      const defenderAccount = accounts.find((a) => a.playerId === defenderPlayerId);
+      const attackerRating = normalizeEloRating(attackerAccount?.eloRating);
+      const defenderRating = normalizeEloRating(defenderAccount?.eloRating);
+      const attackerWon = replay.result === "attacker_victory";
+      const { winnerRating, loserRating } = applyEloMatchResult(
+        attackerWon ? attackerRating : defenderRating,
+        attackerWon ? defenderRating : attackerRating
+      );
+      eloUpdates.set(attackerPlayerId, attackerWon ? winnerRating : loserRating);
+      eloUpdates.set(defenderPlayerId, attackerWon ? loserRating : winnerRating);
+    }
+
     try {
       await Promise.all(
         playerIds.map(async (playerId) => {
           const playerEvents = filterWorldEventsForPlayer(internalState, playerId, events);
           const playerReplays = completedReplays.flatMap((replay) => this.buildPlayerBattleReplaysForAccount(replay, playerId));
-          if (playerEvents.length === 0 && playerReplays.length === 0) {
+          if (playerEvents.length === 0 && playerReplays.length === 0 && !eloUpdates.has(playerId)) {
             return;
           }
 
@@ -764,10 +785,12 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             applyPlayerEventLogAndAchievements(existingAccount, internalState, playerEvents),
             playerReplays
           );
+          const eloRating = eloUpdates.get(playerId);
           await store.savePlayerAccountProgress(playerId, {
             achievements: nextAccount.achievements,
             recentEventLog: nextAccount.recentEventLog,
             ...(playerReplays.length > 0 ? { recentBattleReplays: nextAccount.recentBattleReplays } : {}),
+            ...(eloRating !== undefined ? { eloRating } : {}),
             lastRoomId: this.metadata.logicalRoomId
           });
         })

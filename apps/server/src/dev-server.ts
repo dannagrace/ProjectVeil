@@ -10,6 +10,7 @@ import {
 } from "./config-center";
 import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./colyseus-room";
 import { registerConfigViewerRoutes } from "./config-viewer";
+import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
 import { registerMatchmakingRoutes } from "./matchmaking";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
@@ -26,6 +27,7 @@ import {
   type SnapshotRetentionPolicy
 } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
+import { registerSeasonRoutes } from "./seasons";
 import { registerAdminRoutes } from "./admin-console";
 import { registerShopRoutes } from "./shop";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
@@ -115,6 +117,8 @@ export interface DevServerBootstrapDependencies {
   registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
+  registerLeaderboardRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
+  registerSeasonRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerRuntimeObservabilityRoutes(app: unknown, options?: { store?: DevServerRoomSnapshotStore }): void;
   registerPrometheusMetricsMiddleware(app: unknown): void;
   registerPrometheusMetricsRoute(app: unknown): void;
@@ -179,6 +183,8 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
+    registerLeaderboardRoutes: (app, store) => registerLeaderboardRoutes(app as never, store as RoomSnapshotStore | null),
+    registerSeasonRoutes: (app, store) => registerSeasonRoutes(app as never, store as RoomSnapshotStore | null),
     registerRuntimeObservabilityRoutes: (app, options) => registerRuntimeObservabilityRoutes(app as never, options),
     registerPrometheusMetricsMiddleware: (app) => registerPrometheusMetricsMiddleware(app as DevServerHttpApp),
     registerPrometheusMetricsRoute: (app) => registerPrometheusMetricsRoute(app as DevServerHttpApp),
@@ -241,6 +247,8 @@ export async function startDevServer(
   deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
+  deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerSeasonRoutes(expressApp, effectiveSnapshotStore);
   deps.registerRuntimeObservabilityRoutes(expressApp, { store: effectiveSnapshotStore });
 
   const gameServer = deps.createGameServer(transport, {
