@@ -11,6 +11,7 @@ import {
 import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./colyseus-room";
 import { registerConfigViewerRoutes } from "./config-viewer";
 import { registerEventRoutes } from "./event-engine";
+import { registerGuildRoutes } from "./guilds";
 import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
 import { registerMatchmakingRoutes } from "./matchmaking";
@@ -110,6 +111,7 @@ export interface DevServerBootstrapDependencies {
   registerConfigCenterRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerConfigViewerRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerEventRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
+  registerGuildRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerPlayerAccountRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerShopRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
@@ -178,6 +180,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerConfigCenterRoutes: (app, store) => registerConfigCenterRoutes(app as never, store as ConfigCenterStore),
     registerConfigViewerRoutes: (app, store) => registerConfigViewerRoutes(app as never, store as ConfigCenterStore),
     registerEventRoutes: (app, store) => registerEventRoutes(app as never, store as RoomSnapshotStore | null),
+    registerGuildRoutes: (app, store) => registerGuildRoutes(app as never, store as RoomSnapshotStore),
     registerPlayerAccountRoutes: (app, store) => registerPlayerAccountRoutes(app as never, store as RoomSnapshotStore),
     registerShopRoutes: (app, store) => registerShopRoutes(app as never, store as RoomSnapshotStore),
     registerWechatPayRoutes: (app, store) => registerWechatPayRoutes(app as never, store as RoomSnapshotStore),
@@ -250,6 +253,7 @@ export async function startDevServer(
   if ("use" in (expressApp as object) && "get" in (expressApp as object)) {
     deps.registerEventRoutes(expressApp, effectiveSnapshotStore);
   }
+  deps.registerGuildRoutes(expressApp, effectiveSnapshotStore);
   deps.registerPlayerAccountRoutes(expressApp, effectiveSnapshotStore);
   deps.registerShopRoutes(expressApp, effectiveSnapshotStore);
   deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);
@@ -275,6 +279,7 @@ export async function startDevServer(
   deps.logger.log(`Config center API available at http://${host}:${port}/api/config-center/configs`);
   deps.logger.log(`Config viewer available at http://${host}:${port}/config-viewer`);
   deps.logger.log(`Player account API available at http://${host}:${port}/api/player-accounts`);
+  deps.logger.log(`Guild API available at http://${host}:${port}/api/guilds`);
   deps.logger.log(`Guest auth API available at http://${host}:${port}/api/auth/guest-login`);
   deps.logger.log(`WeChat auth API available at http://${host}:${port}/api/auth/wechat-login`);
   deps.logger.log(`WeChat Pay API available at http://${host}:${port}/api/payments/wechat/create`);

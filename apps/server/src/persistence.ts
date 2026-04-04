@@ -6,6 +6,7 @@ import {
   getEquipmentDefinition,
   getTierForRating,
   appendPlayerBattleReplaySummaries,
+  normalizeGuildState,
   getRankDivisionForRating,
   normalizeEloRating,
   normalizeEventLogQuery,
@@ -17,6 +18,7 @@ import {
   normalizeHeroState,
   type EventLogEntry,
   type EquipmentId,
+  type GuildState,
   type HeroState,
   type PlayerBanStatus,
   type PlayerAccountReadModel,
@@ -75,6 +77,8 @@ export interface BattlePassClaimResult {
 export interface RoomSnapshotStore {
   load(roomId: string): Promise<RoomPersistenceSnapshot | null>;
   loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
+  loadGuild?(guildId: string): Promise<GuildState | null>;
+  loadGuildByMemberPlayerId?(playerId: string): Promise<GuildState | null>;
   loadPaymentOrder?(orderId: string): Promise<PaymentOrderSnapshot | null>;
   loadPlayerReport?(reportId: string): Promise<PlayerReportRecord | null>;
   loadPlayerBan?(playerId: string): Promise<PlayerAccountBanSnapshot | null>;
@@ -88,7 +92,9 @@ export interface RoomSnapshotStore {
   loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]>;
+  listGuilds?(options?: GuildListOptions): Promise<GuildState[]>;
   ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot>;
+  saveGuild?(guild: GuildState): Promise<GuildState>;
   savePlayerBan?(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot>;
   clearPlayerBan?(playerId: string, input?: PlayerAccountUnbanInput): Promise<PlayerAccountSnapshot>;
   bindPlayerAccountCredentials(
@@ -138,6 +144,7 @@ export interface RoomSnapshotStore {
   createSeason(seasonId: string): Promise<SeasonSnapshot>;
   closeSeason(seasonId: string): Promise<SeasonCloseSummary>;
   save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void>;
+  deleteGuild?(guildId: string): Promise<void>;
   delete(roomId: string): Promise<void>;
   pruneExpired(referenceTime?: Date): Promise<number>;
   close(): Promise<void>;
@@ -329,6 +336,18 @@ interface PaymentOrderRow extends RowDataPacket {
   updated_at: Date | string;
 }
 
+interface GuildRow extends RowDataPacket {
+  guild_id: string;
+  name: string;
+  tag: string;
+  description: string | null;
+  owner_player_id: string | null;
+  member_count: number;
+  state_json: string | GuildState;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
 interface PlayerReportRow extends RowDataPacket {
   report_id: string | number;
   reporter_id: string;
@@ -411,6 +430,11 @@ export interface PlayerAccountEnsureInput {
   playerId: string;
   displayName?: string;
   lastRoomId?: string;
+}
+
+export interface GuildListOptions {
+  limit?: number;
+  playerId?: string;
 }
 
 export type GemLedgerReason = "purchase" | "reward" | "spend";
@@ -681,6 +705,11 @@ export const MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX = "idx_player_hero_archi
 export const MYSQL_PLAYER_REPORT_TABLE = "player_reports";
 export const MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX = "idx_player_reports_status_created";
 export const MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX = "uidx_player_reports_room_reporter_target";
+export const MYSQL_GUILD_TABLE = "guilds";
+export const MYSQL_GUILD_UPDATED_AT_INDEX = "idx_guilds_updated_at";
+export const MYSQL_GUILD_TAG_INDEX = "uidx_guilds_tag";
+export const MYSQL_GUILD_MEMBERSHIP_TABLE = "guild_memberships";
+export const MYSQL_GUILD_MEMBERSHIP_PLAYER_INDEX = "uidx_guild_memberships_player";
 export const MYSQL_CONFIG_DOCUMENT_TABLE = "config_documents";
 export const MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX = "idx_config_documents_updated_at";
 export const MYSQL_SEASON_TABLE = "veil_seasons";
@@ -802,6 +831,28 @@ function normalizeShopProductId(productId: string): string {
   }
 
   return normalized.slice(0, 191);
+}
+
+function normalizeGuildId(guildId: string): string {
+  const normalized = guildId.trim();
+  if (!normalized) {
+    throw new Error("guildId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function toGuildState(row: GuildRow): GuildState {
+  const parsed = normalizeGuildState(parseJsonColumn<GuildState>(row.state_json));
+  return {
+    ...parsed,
+    id: normalizeGuildId(row.guild_id),
+    name: row.name.trim() || parsed.name,
+    tag: row.tag.trim().toUpperCase() || parsed.tag,
+    ...(row.description?.trim() ? { description: row.description.trim() } : {}),
+    createdAt: formatTimestamp(row.created_at) ?? parsed.createdAt,
+    updatedAt: formatTimestamp(row.updated_at) ?? parsed.updatedAt
+  };
 }
 
 function normalizeShopProductName(productName: string): string {
@@ -3377,6 +3428,54 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     };
   }
 
+  async loadGuild(guildId: string): Promise<GuildState | null> {
+    const normalizedGuildId = normalizeGuildId(guildId);
+    const [rows] = await this.pool.query<GuildRow[]>(
+      `SELECT
+         guild_id,
+         name,
+         tag,
+         description,
+         owner_player_id,
+         member_count,
+         state_json,
+         created_at,
+         updated_at
+       FROM \`${MYSQL_GUILD_TABLE}\`
+       WHERE guild_id = ?
+       LIMIT 1`,
+      [normalizedGuildId]
+    );
+
+    const row = rows[0];
+    return row ? toGuildState(row) : null;
+  }
+
+  async loadGuildByMemberPlayerId(playerId: string): Promise<GuildState | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const [rows] = await this.pool.query<GuildRow[]>(
+      `SELECT
+         guild.guild_id,
+         guild.name,
+         guild.tag,
+         guild.description,
+         guild.owner_player_id,
+         guild.member_count,
+         guild.state_json,
+         guild.created_at,
+         guild.updated_at
+       FROM \`${MYSQL_GUILD_TABLE}\` guild
+       INNER JOIN \`${MYSQL_GUILD_MEMBERSHIP_TABLE}\` membership
+         ON membership.guild_id = guild.guild_id
+       WHERE membership.player_id = ?
+       LIMIT 1`,
+      [normalizedPlayerId]
+    );
+
+    const row = rows[0];
+    return row ? toGuildState(row) : null;
+  }
+
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
     const normalizedPlayerId = normalizePlayerId(playerId);
     const accounts = await this.loadPlayerAccounts([normalizedPlayerId]);
@@ -3756,6 +3855,45 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return rows.map((row) => toPlayerAccountSnapshot(row));
+  }
+
+  async listGuilds(options: GuildListOptions = {}): Promise<GuildState[]> {
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+    const safeLimit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 50)));
+
+    if (options.playerId?.trim()) {
+      clauses.push(
+        `EXISTS (
+          SELECT 1
+          FROM \`${MYSQL_GUILD_MEMBERSHIP_TABLE}\` membership
+          WHERE membership.guild_id = guild.guild_id
+            AND membership.player_id = ?
+        )`
+      );
+      params.push(normalizePlayerId(options.playerId));
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const [rows] = await this.pool.query<GuildRow[]>(
+      `SELECT
+         guild.guild_id,
+         guild.name,
+         guild.tag,
+         guild.description,
+         guild.owner_player_id,
+         guild.member_count,
+         guild.state_json,
+         guild.created_at,
+         guild.updated_at
+       FROM \`${MYSQL_GUILD_TABLE}\` guild
+       ${whereClause}
+       ORDER BY guild.member_count DESC, guild.updated_at DESC, guild.guild_id ASC
+       LIMIT ?`,
+      [...params, safeLimit]
+    );
+
+    return rows.map((row) => toGuildState(row));
   }
 
   async listPlayerReports(options: PlayerReportListOptions = {}): Promise<PlayerReportRecord[]> {
@@ -5578,6 +5716,61 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     return rows.map((row) => toPlayerHeroArchiveSnapshot(row));
   }
 
+  async saveGuild(guildInput: GuildState): Promise<GuildState> {
+    const guild = normalizeGuildState(guildInput);
+    const guildId = normalizeGuildId(guild.id);
+    const owner = guild.members.find((member) => member.role === "owner");
+    const connection = await this.pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+      await connection.query(
+        `INSERT INTO \`${MYSQL_GUILD_TABLE}\` (
+           guild_id,
+           name,
+           tag,
+           description,
+           owner_player_id,
+           member_count,
+           state_json
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           tag = VALUES(tag),
+           description = VALUES(description),
+           owner_player_id = VALUES(owner_player_id),
+           member_count = VALUES(member_count),
+           state_json = VALUES(state_json)`,
+        [
+          guildId,
+          guild.name,
+          guild.tag,
+          guild.description ?? null,
+          owner?.playerId ?? null,
+          guild.members.length,
+          JSON.stringify(guild)
+        ]
+      );
+      await connection.query(`DELETE FROM \`${MYSQL_GUILD_MEMBERSHIP_TABLE}\` WHERE guild_id = ?`, [guildId]);
+      if (guild.members.length > 0) {
+        await connection.query(
+          `INSERT INTO \`${MYSQL_GUILD_MEMBERSHIP_TABLE}\` (guild_id, player_id, role)
+           VALUES ${guild.members.map(() => "(?, ?, ?)").join(", ")}`,
+          guild.members.flatMap((member) => [guildId, normalizePlayerId(member.playerId), member.role])
+        );
+      }
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    return (await this.loadGuild(guildId)) ?? guild;
+  }
+
   async save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void> {
     const connection = await this.pool.getConnection();
 
@@ -5611,6 +5804,23 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       await connection.beginTransaction();
       await connection.query(`DELETE FROM \`${MYSQL_ROOM_SNAPSHOT_TABLE}\` WHERE room_id = ?`, [roomId]);
       await deletePlayerProfilesForRoom(connection, roomId);
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async deleteGuild(guildId: string): Promise<void> {
+    const normalizedGuildId = normalizeGuildId(guildId);
+    const connection = await this.pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+      await connection.query(`DELETE FROM \`${MYSQL_GUILD_MEMBERSHIP_TABLE}\` WHERE guild_id = ?`, [normalizedGuildId]);
+      await connection.query(`DELETE FROM \`${MYSQL_GUILD_TABLE}\` WHERE guild_id = ?`, [normalizedGuildId]);
       await connection.commit();
     } catch (error) {
       await connection.rollback();

@@ -1,5 +1,6 @@
 import type { BattleAction, BattleState, MovementPlan, Vec2, WorldAction, WorldEvent } from "./models.ts";
 import type { FeatureFlags } from "./feature-flags.ts";
+import type { GuildRosterView, GuildSummaryView } from "./guilds.ts";
 import type { PlayerWorldViewPayload } from "./map-sync.ts";
 import type { RuntimeConfigBundle } from "./world-config.ts";
 
@@ -35,6 +36,25 @@ export interface SessionStatePayload {
 
 export type PlayerReportReason = "cheating" | "harassment" | "afk";
 export type PlayerReportStatus = "pending" | "dismissed" | "warned" | "banned";
+
+export interface GuildCreateAction {
+  name: string;
+  tag: string;
+  description?: string;
+  memberLimit?: number;
+}
+
+export interface GuildJoinAction {
+  guildId: string;
+}
+
+export interface GuildLeaveAction {
+  guildId: string;
+}
+
+export interface GuildGetAction {
+  guildId: string;
+}
 
 export type ClientMessage =
   | {
@@ -83,6 +103,35 @@ export type ClientMessage =
       type: "campaign.dialogue.ack";
       requestId: string;
       action: CampaignDialogueAckAction;
+    }
+  | {
+      type: "guild.create";
+      requestId: string;
+      action: GuildCreateAction;
+    }
+  | {
+      type: "guild.join";
+      requestId: string;
+      action: GuildJoinAction;
+    }
+  | {
+      type: "guild.leave";
+      requestId: string;
+      action: GuildLeaveAction;
+    }
+  | {
+      type: "guild.list";
+      requestId: string;
+    }
+  | {
+      type: "guild.get";
+      requestId: string;
+      action: GuildGetAction;
+    }
+  | {
+      type: "guild.roster";
+      requestId: string;
+      action: GuildGetAction;
     };
 
 export type ServerMessage =
@@ -134,4 +183,19 @@ export type ServerMessage =
       requestId: "push";
       delivery: "push";
       payload: EventProgressUpdatePayload;
+    }
+  | {
+      type: "guild.list";
+      requestId: string;
+      items: GuildSummaryView[];
+    }
+  | {
+      type: "guild.get";
+      requestId: string;
+      guild: GuildSummaryView;
+    }
+  | {
+      type: "guild.roster";
+      requestId: string;
+      roster: GuildRosterView;
     };

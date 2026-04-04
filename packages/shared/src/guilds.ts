@@ -54,8 +54,28 @@ export interface GuildRosterView {
   pendingJoinRequests: GuildJoinRequestView[];
 }
 
+export interface GuildSummaryView {
+  guildId: string;
+  name: string;
+  tag: string;
+  description?: string;
+  level: number;
+  xp: number;
+  memberCount: number;
+  memberLimit: number;
+  availableSeats: number;
+  ownerPlayerId?: string;
+  ownerDisplayName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface GuildMembershipEvent {
   type:
+    | "guild.created"
+    | "guild.disbanded"
+    | "guild.member.joined"
+    | "guild.member.left"
     | "guild.member.join_requested"
     | "guild.member.join_approved"
     | "guild.member.join_rejected"
@@ -74,6 +94,23 @@ export interface GuildMembershipEvent {
 export interface GuildMutationResult {
   guild: GuildState;
   events: GuildMembershipEvent[];
+}
+
+export interface GuildCreateInput {
+  ownerPlayerId: string;
+  ownerDisplayName: string;
+  name: string;
+  tag: string;
+  guildId?: string;
+  description?: string;
+  memberLimit?: number;
+  createdAt?: string;
+}
+
+export interface GuildDirectJoinInput {
+  playerId: string;
+  displayName: string;
+  joinedAt?: string;
 }
 
 export interface GuildJoinRequestInput {
@@ -112,6 +149,15 @@ export interface GuildRoleAssignmentInput {
   changedAt?: string;
 }
 
+export interface GuildLeaveInput {
+  playerId: string;
+  leftAt?: string;
+}
+
+export interface GuildLeaveResult extends GuildMutationResult {
+  deleted: boolean;
+}
+
 function normalizeTimestamp(value?: string | null, fallback = new Date().toISOString()): string {
   const normalized = value?.trim();
   if (!normalized) {
@@ -125,6 +171,24 @@ function normalizeTimestamp(value?: string | null, fallback = new Date().toISOSt
 function normalizeDisplayName(value: string | undefined, fallback: string): string {
   const normalized = value?.trim();
   return normalized ? normalized.slice(0, 40) : fallback;
+}
+
+function normalizeGuildName(name: string): string {
+  const normalized = name.trim();
+  if (!normalized) {
+    throw new Error("guild_create_name_required");
+  }
+
+  return normalized.slice(0, 40);
+}
+
+function normalizeGuildTag(tag: string): string {
+  const normalized = tag.trim().toUpperCase();
+  if (!normalized) {
+    throw new Error("guild_create_tag_required");
+  }
+
+  return normalized.slice(0, 4);
 }
 
 function ensureGuildMemberLimit(value?: number | null): number {
@@ -321,6 +385,39 @@ function addMember(guild: GuildState, member: GuildMemberState): void {
     });
 }
 
+function removeMember(guild: GuildState, playerId: string): GuildMemberState | null {
+  const target = getGuildMember(guild, playerId);
+  if (!target) {
+    return null;
+  }
+
+  guild.members = guild.members.filter((member) => member.playerId !== playerId);
+  return target;
+}
+
+function findSuccessorOwner(guild: GuildState): GuildMemberState | undefined {
+  return guild.members.find((member) => member.role === "officer") ?? guild.members[0];
+}
+
+export function createGuildSummaryView(guildInput: GuildState): GuildSummaryView {
+  const guild = normalizeGuildState(guildInput);
+  const owner = guild.members.find((member) => member.role === "owner");
+  return {
+    guildId: guild.id,
+    name: guild.name,
+    tag: guild.tag,
+    ...(guild.description ? { description: guild.description } : {}),
+    level: guild.level,
+    xp: guild.xp,
+    memberCount: guild.members.length,
+    memberLimit: guild.memberLimit,
+    availableSeats: Math.max(0, guild.memberLimit - guild.members.length),
+    ...(owner ? { ownerPlayerId: owner.playerId, ownerDisplayName: owner.displayName } : {}),
+    createdAt: guild.createdAt,
+    updatedAt: guild.updatedAt
+  };
+}
+
 export function createGuildRosterView(guildInput: GuildState): GuildRosterView {
   const guild = normalizeGuildState(guildInput);
   return {
@@ -351,6 +448,164 @@ export function createGuildRosterView(guildInput: GuildState): GuildRosterView {
         requestedAt: request.requestedAt,
         status: request.status
       }))
+  };
+}
+
+export function createGuild(input: GuildCreateInput): GuildMutationResult {
+  const ownerPlayerId = input.ownerPlayerId.trim();
+  if (!ownerPlayerId) {
+    throw new Error("guild_create_owner_required");
+  }
+
+  const occurredAt = normalizeTimestamp(input.createdAt);
+  const guild = normalizeGuildState({
+    id: input.guildId?.trim() || `guild-${ownerPlayerId}-${occurredAt.slice(0, 10)}`,
+    name: normalizeGuildName(input.name),
+    tag: normalizeGuildTag(input.tag),
+    ...(input.description?.trim() ? { description: input.description.trim().slice(0, 160) } : {}),
+    memberLimit: ensureGuildMemberLimit(input.memberLimit),
+    level: 1,
+    xp: 0,
+    createdAt: occurredAt,
+    updatedAt: occurredAt,
+    members: [
+      {
+        playerId: ownerPlayerId,
+        displayName: normalizeDisplayName(input.ownerDisplayName, ownerPlayerId),
+        role: "owner",
+        joinedAt: occurredAt
+      }
+    ],
+    joinRequests: [],
+    invites: []
+  });
+
+  return {
+    guild,
+    events: [
+      {
+        type: "guild.created",
+        guildId: guild.id,
+        actorPlayerId: ownerPlayerId,
+        subjectPlayerId: ownerPlayerId,
+        occurredAt,
+        metadata: {
+          name: guild.name,
+          tag: guild.tag
+        }
+      }
+    ]
+  };
+}
+
+export function joinGuild(guildInput: GuildState, input: GuildDirectJoinInput): GuildMutationResult {
+  const guild = cloneGuild(guildInput);
+  const playerId = input.playerId.trim();
+  if (!playerId) {
+    throw new Error("guild_join_player_required");
+  }
+  if (getGuildMember(guild, playerId)) {
+    throw new Error("guild_join_already_member");
+  }
+
+  assertGuildHasCapacity(guild);
+  const occurredAt = normalizeTimestamp(input.joinedAt);
+  addMember(guild, {
+    playerId,
+    displayName: normalizeDisplayName(input.displayName, playerId),
+    role: "member",
+    joinedAt: occurredAt
+  });
+  settleMatchingPendingInvite(guild, playerId, "accepted", occurredAt);
+  guild.updatedAt = occurredAt;
+
+  return {
+    guild: normalizeGuildState(guild),
+    events: [
+      {
+        type: "guild.member.joined",
+        guildId: guild.id,
+        actorPlayerId: playerId,
+        subjectPlayerId: playerId,
+        occurredAt
+      }
+    ]
+  };
+}
+
+export function leaveGuild(guildInput: GuildState, input: GuildLeaveInput): GuildLeaveResult {
+  const guild = cloneGuild(guildInput);
+  const playerId = input.playerId.trim();
+  if (!playerId) {
+    throw new Error("guild_leave_player_required");
+  }
+
+  const removed = removeMember(guild, playerId);
+  if (!removed) {
+    throw new Error("guild_leave_member_not_found");
+  }
+
+  const occurredAt = normalizeTimestamp(input.leftAt);
+  guild.joinRequests = guild.joinRequests.filter((request) => request.playerId !== playerId);
+  guild.invites = guild.invites.filter((invite) => invite.playerId !== playerId);
+  guild.updatedAt = occurredAt;
+
+  const events: GuildMembershipEvent[] = [];
+  if (removed.role === "owner" && guild.members.length > 0) {
+    const successor = findSuccessorOwner(guild);
+    if (successor) {
+      successor.role = "owner";
+      appendEvent(
+        events,
+        {
+          type: "guild.member.owner_transferred",
+          actorPlayerId: removed.playerId,
+          subjectPlayerId: successor.playerId,
+          metadata: {
+            previousOwnerPlayerId: removed.playerId,
+            newOwnerPlayerId: successor.playerId
+          }
+        },
+        guild.id,
+        occurredAt
+      );
+    }
+  }
+
+  appendEvent(
+    events,
+    {
+      type: "guild.member.left",
+      actorPlayerId: removed.playerId,
+      subjectPlayerId: removed.playerId
+    },
+    guild.id,
+    occurredAt
+  );
+
+  const deleted = guild.members.length === 0;
+  if (deleted) {
+    appendEvent(
+      events,
+      {
+        type: "guild.disbanded",
+        actorPlayerId: removed.playerId,
+        subjectPlayerId: removed.playerId
+      },
+      guild.id,
+      occurredAt
+    );
+  }
+
+  guild.members.sort((left, right) => {
+    const roleOrder = GUILD_ROLE_ORDER[left.role] - GUILD_ROLE_ORDER[right.role];
+    return roleOrder || left.joinedAt.localeCompare(right.joinedAt) || left.playerId.localeCompare(right.playerId);
+  });
+
+  return {
+    guild: normalizeGuildState(guild),
+    events,
+    deleted
   };
 }
 

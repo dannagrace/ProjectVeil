@@ -177,6 +177,81 @@ PREPARE veil_player_event_history_idx_stmt FROM @veil_player_event_history_idx_s
 EXECUTE veil_player_event_history_idx_stmt;
 DEALLOCATE PREPARE veil_player_event_history_idx_stmt;
 
+CREATE TABLE IF NOT EXISTS `guilds` (
+  guild_id VARCHAR(191) NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  tag VARCHAR(8) NOT NULL,
+  description VARCHAR(160) NULL,
+  owner_player_id VARCHAR(191) NULL,
+  member_count INT NOT NULL DEFAULT 0,
+  state_json LONGTEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (guild_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET @veil_guilds_updated_at_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'guilds'
+    AND INDEX_NAME = 'idx_guilds_updated_at'
+);
+
+SET @veil_guilds_updated_at_idx_sql := IF(
+  @veil_guilds_updated_at_idx_exists = 0,
+  'CREATE INDEX `idx_guilds_updated_at` ON `guilds` (updated_at)',
+  'SELECT 1'
+);
+
+PREPARE veil_guilds_updated_at_idx_stmt FROM @veil_guilds_updated_at_idx_sql;
+EXECUTE veil_guilds_updated_at_idx_stmt;
+DEALLOCATE PREPARE veil_guilds_updated_at_idx_stmt;
+
+SET @veil_guilds_tag_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'guilds'
+    AND INDEX_NAME = 'uidx_guilds_tag'
+);
+
+SET @veil_guilds_tag_idx_sql := IF(
+  @veil_guilds_tag_idx_exists = 0,
+  'CREATE UNIQUE INDEX `uidx_guilds_tag` ON `guilds` (tag)',
+  'SELECT 1'
+);
+
+PREPARE veil_guilds_tag_idx_stmt FROM @veil_guilds_tag_idx_sql;
+EXECUTE veil_guilds_tag_idx_stmt;
+DEALLOCATE PREPARE veil_guilds_tag_idx_stmt;
+
+CREATE TABLE IF NOT EXISTS `guild_memberships` (
+  guild_id VARCHAR(191) NOT NULL,
+  player_id VARCHAR(191) NOT NULL,
+  role VARCHAR(16) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (guild_id, player_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET @veil_guild_memberships_player_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'guild_memberships'
+    AND INDEX_NAME = 'uidx_guild_memberships_player'
+);
+
+SET @veil_guild_memberships_player_idx_sql := IF(
+  @veil_guild_memberships_player_idx_exists = 0,
+  'CREATE UNIQUE INDEX `uidx_guild_memberships_player` ON `guild_memberships` (player_id)',
+  'SELECT 1'
+);
+
+PREPARE veil_guild_memberships_player_idx_stmt FROM @veil_guild_memberships_player_idx_sql;
+EXECUTE veil_guild_memberships_player_idx_stmt;
+DEALLOCATE PREPARE veil_guild_memberships_player_idx_stmt;
+
 CREATE TABLE IF NOT EXISTS `config_documents` (
   document_id VARCHAR(64) NOT NULL,
   content_json LONGTEXT NOT NULL,
