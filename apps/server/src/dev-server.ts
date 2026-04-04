@@ -13,6 +13,7 @@ import { registerConfigViewerRoutes } from "./config-viewer";
 import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
 import { registerMatchmakingRoutes } from "./matchmaking";
+import { registerMinorProtectionPreviewRoutes } from "./minor-protection-preview";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
 import {
   buildPrometheusMetricsDocument,
@@ -117,6 +118,7 @@ export interface DevServerBootstrapDependencies {
   registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
+  registerMinorProtectionPreviewRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerLeaderboardRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerSeasonRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerRuntimeObservabilityRoutes(app: unknown, options?: { store?: DevServerRoomSnapshotStore }): void;
@@ -183,6 +185,8 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
+    registerMinorProtectionPreviewRoutes: (app, store) =>
+      registerMinorProtectionPreviewRoutes(app as never, store as RoomSnapshotStore | null),
     registerLeaderboardRoutes: (app, store) => registerLeaderboardRoutes(app as never, store as RoomSnapshotStore | null),
     registerSeasonRoutes: (app, store) => registerSeasonRoutes(app as never, store as RoomSnapshotStore | null),
     registerRuntimeObservabilityRoutes: (app, options) => registerRuntimeObservabilityRoutes(app as never, options),
@@ -247,6 +251,7 @@ export async function startDevServer(
   deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
+  deps.registerMinorProtectionPreviewRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore);
   deps.registerSeasonRoutes(expressApp, effectiveSnapshotStore);
   deps.registerRuntimeObservabilityRoutes(expressApp, { store: effectiveSnapshotStore });
