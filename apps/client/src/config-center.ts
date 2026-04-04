@@ -54,6 +54,8 @@ interface BattleBalanceConfig {
     trapCharges: number;
     trapGrantedStatusId?: string;
   };
+  turnTimerSeconds: number;
+  afkStrikesBeforeForfeit: number;
   pvp: {
     eloK: number;
   };
@@ -1526,6 +1528,14 @@ function renderBattleBalanceEditorSection(): string {
               <span>ELO K 因子</span>
               <input type="number" min="1" step="1" value="${config.pvp.eloK}" data-role="battle-balance-field" data-section="pvp" data-field="eloK" />
             </label>
+            <label>
+              <span>回合计时 秒数</span>
+              <input type="number" min="1" step="1" value="${config.turnTimerSeconds}" data-role="battle-balance-field" data-section="root" data-field="turnTimerSeconds" />
+            </label>
+            <label>
+              <span>挂机判负阈值</span>
+              <input type="number" min="1" step="1" value="${config.afkStrikesBeforeForfeit}" data-role="battle-balance-field" data-section="root" data-field="afkStrikesBeforeForfeit" />
+            </label>
           </div>
         </article>
       </div>
@@ -1997,7 +2007,7 @@ function bindSkillEditorControls(): void {
 function bindBattleBalanceEditorControls(): void {
   document.querySelectorAll<HTMLInputElement>("[data-role='battle-balance-field']").forEach((field) => {
     field.onchange = () => {
-      const section = field.dataset.section as "damage" | "environment" | "pvp" | undefined;
+      const section = field.dataset.section as "damage" | "environment" | "pvp" | "root" | undefined;
       const key = field.dataset.field;
       if (!section || !key) {
         return;
@@ -2006,7 +2016,12 @@ function bindBattleBalanceEditorControls(): void {
       updateBattleBalanceDraft((config) => {
         const numericValue = Number(field.value);
         const nextValue =
-          key === "blockerDurability" || key === "trapDamage" || key === "trapCharges" || key === "eloK"
+          key === "blockerDurability" ||
+          key === "trapDamage" ||
+          key === "trapCharges" ||
+          key === "eloK" ||
+          key === "turnTimerSeconds" ||
+          key === "afkStrikesBeforeForfeit"
             ? Math.floor(Number.isFinite(numericValue) ? numericValue : 0)
             : Number.isFinite(numericValue)
               ? numericValue
@@ -2016,6 +2031,8 @@ function bindBattleBalanceEditorControls(): void {
           config.damage[key as keyof BattleBalanceConfig["damage"]] = nextValue;
         } else if (section === "environment") {
           config.environment[key as Exclude<keyof BattleBalanceConfig["environment"], "trapGrantedStatusId">] = nextValue;
+        } else if (section === "root") {
+          config[key as "turnTimerSeconds" | "afkStrikesBeforeForfeit"] = nextValue;
         } else {
           config.pvp[key as keyof BattleBalanceConfig["pvp"]] = nextValue;
         }

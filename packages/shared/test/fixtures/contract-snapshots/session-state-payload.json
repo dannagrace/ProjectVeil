@@ -6,6 +6,7 @@
       "day": 7,
       "mapVariantId": "frontier-basin"
     },
+    "turnDeadlineAt": "2026-03-29T07:01:30.000Z",
     "map": {
       "width": 3,
       "height": 2,
@@ -231,7 +232,8 @@
     "rng": {
       "seed": 4242,
       "cursor": 0
-    }
+    },
+    "battlefieldTerrain": "grass"
   },
   "events": [
     {

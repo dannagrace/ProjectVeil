@@ -5,6 +5,7 @@ import {
   createInitialWorldState,
   encodePlayerWorldView,
   filterWorldEventsForPlayer,
+  getBattleBalanceConfig,
   listReachableTiles,
   normalizeEloRating,
   planHeroMovement,
@@ -16,7 +17,9 @@ import {
   type SessionStateReason,
   type ServerMessage,
   type SessionStatePayload,
-  type WorldEvent
+  type WorldEvent,
+  type WorldAction,
+  type BattleAction
 } from "../../../packages/shared/src/index";
 import { createRoom, type AuthoritativeWorldRoom, type RoomPersistenceSnapshot } from "./index";
 import {
@@ -28,8 +31,8 @@ import {
   applyPlayerAccountsToWorldState,
   applyPlayerHeroArchivesToWorldState,
   isPlayerBanActive,
+  type RoomSnapshotStore,
   type PlayerAccountSnapshot,
-  type RoomSnapshotStore
 } from "./persistence";
 import { registerConfigUpdateListener } from "./config-center";
 import { applyPlayerEventLogAndAchievements } from "./player-achievements";
@@ -68,11 +71,32 @@ const DEFAULT_WS_ACTION_RATE_LIMIT_WINDOW_MS = 1_000;
 const DEFAULT_WS_ACTION_RATE_LIMIT_MAX = 8;
 const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
 const MINOR_PROTECTION_TICK_MS = 60_000;
+const TURN_TIMER_TICK_MS = 5_000;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
 const lobbyRoomOwnerTokens = new Map<string, number>();
 const activeRoomInstances = new Map<string, VeilColyseusRoom>();
 let nextLobbyRoomOwnerToken = 1;
+
+interface RoomTimerHandle {
+  unref?(): void;
+}
+
+interface RoomRuntimeDependencies {
+  setInterval(handler: () => void, delayMs: number): RoomTimerHandle;
+  clearInterval(handle: RoomTimerHandle): void;
+  isMySqlSnapshotStore(store: RoomSnapshotStore | null): boolean;
+  now(): number;
+}
+
+const defaultRoomRuntimeDependencies: RoomRuntimeDependencies = {
+  setInterval: (handler, delayMs) => globalThis.setInterval(handler, delayMs),
+  clearInterval: (handle) => globalThis.clearInterval(handle as ReturnType<typeof globalThis.setInterval>),
+  isMySqlSnapshotStore: (store) => Boolean(store && "getRetentionPolicy" in store),
+  now: () => Date.now()
+};
+
+let roomRuntimeDependencies: RoomRuntimeDependencies = defaultRoomRuntimeDependencies;
 
 interface WebSocketActionRateLimitConfig {
   windowMs: number;
@@ -97,6 +121,17 @@ export interface LobbyRoomSummary {
 
 export function configureRoomSnapshotStore(store: RoomSnapshotStore | null): void {
   configuredRoomSnapshotStore = store;
+}
+
+export function configureRoomRuntimeDependencies(overrides: Partial<RoomRuntimeDependencies>): void {
+  roomRuntimeDependencies = {
+    ...roomRuntimeDependencies,
+    ...overrides
+  };
+}
+
+export function resetRoomRuntimeDependencies(): void {
+  roomRuntimeDependencies = defaultRoomRuntimeDependencies;
 }
 
 export function listLobbyRooms(): LobbyRoomSummary[] {
@@ -207,11 +242,18 @@ function rebindWorldStatePlayerId(
     delete nextVisibilityByPlayer[previousPlayerId];
   }
 
+  const nextAfkStrikes = state.afkStrikes ? { ...state.afkStrikes } : undefined;
+  if (nextAfkStrikes?.[previousPlayerId] != null) {
+    nextAfkStrikes[nextPlayerId] = nextAfkStrikes[previousPlayerId]!;
+    delete nextAfkStrikes[previousPlayerId];
+  }
+
   return {
     ...state,
     heroes: nextHeroes,
     resources: nextResources,
-    visibilityByPlayer: nextVisibilityByPlayer
+    visibilityByPlayer: nextVisibilityByPlayer,
+    ...(nextAfkStrikes ? { afkStrikes: nextAfkStrikes } : {})
   };
 }
 
@@ -255,6 +297,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   private readonly reconnectedAtByPlayerId = new Map<string, string>();
   private readonly wsActionTimestampsByPlayerId = new Map<string, number[]>();
   private unsubscribeConfigUpdate: (() => void) | null = null;
+  private turnTimerHandle: RoomTimerHandle | null = null;
+  private turnOwnerPlayerId: string | null = null;
+  private turnTimerTickInFlight = false;
 
   async onCreate(options: JoinOptions): Promise<void> {
     const logicalRoomId = options.logicalRoomId ?? "room-alpha";
@@ -290,6 +335,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
     await this.persistRoomState();
     this.publishLobbyRoomSummary();
+    this.ensureTurnTimerLoop();
 
     this.unsubscribeConfigUpdate = registerConfigUpdateListener((bundle) => {
       for (const client of this.clients) {
@@ -347,6 +393,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
       await this.ensurePlayerWorldSlot(playerId, ensuredAccount);
+      if (this.shouldRunTurnTimer()) {
+        this.ensureTurnTimerState();
+        await this.persistRoomState();
+      }
       this.publishLobbyRoomSummary();
 
       sendMessage(client, "session.state", {
@@ -408,10 +458,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
       const result = this.worldRoom.dispatch(playerId, message.action);
+      if (result.ok) {
+        this.afterSuccessfulWorldAction(playerId, message.action);
+      }
       try {
         await this.persistRoomState();
       } catch {
         this.restoreWorldRoom(previousSnapshot);
+        this.ensureTurnTimerState();
         this.publishLobbyRoomSummary();
         sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
         return;
@@ -452,10 +506,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       recordBattleActionMessage();
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
       const result = this.worldRoom.dispatchBattle(playerId, message.action);
+      if (result.ok) {
+        this.afterSuccessfulBattleAction(playerId);
+      }
       try {
         await this.persistRoomState();
       } catch {
         this.restoreWorldRoom(previousSnapshot);
+        this.ensureTurnTimerState();
         this.publishLobbyRoomSummary();
         sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
         return;
@@ -511,6 +569,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
           status: report.status,
           createdAt: report.createdAt
         });
+        sendMessage(client, "session.state", {
+          requestId: message.requestId,
+          delivery: "reply",
+          payload: this.buildStatePayload(playerId, {
+            movementPlan: null,
+            reason: "report_submitted"
+          })
+        });
       } catch (error) {
         const reason =
           error instanceof Error && error.message === "duplicate_player_report"
@@ -565,6 +631,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       this.playerIdBySessionId.delete(client.sessionId);
       this.playerIdBySessionId.set(reconnectedClient.sessionId, playerId);
       this.reconnectedAtByPlayerId.set(playerId, new Date().toISOString());
+      this.ensureTurnTimerState();
       this.publishLobbyRoomSummary();
       sendMessage(reconnectedClient, "session.state", {
         requestId: "push",
@@ -573,12 +640,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       });
     } catch {
       this.playerIdBySessionId.delete(client.sessionId);
+      this.ensureTurnTimerState();
       this.publishLobbyRoomSummary();
     }
   }
 
   onLeave(client: ColyseusClient): void {
     this.playerIdBySessionId.delete(client.sessionId);
+    this.ensureTurnTimerState();
     this.publishLobbyRoomSummary();
   }
 
@@ -586,6 +655,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     this.unsubscribeConfigUpdate?.();
     this.unsubscribeConfigUpdate = null;
     this.wsActionTimestampsByPlayerId.clear();
+    if (this.turnTimerHandle) {
+      roomRuntimeDependencies.clearInterval(this.turnTimerHandle);
+      this.turnTimerHandle = null;
+    }
 
     if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) !== this.lobbyRoomOwnerToken) {
       return;
@@ -619,6 +692,317 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     return Array.from(new Set(this.playerIdBySessionId.values()));
   }
 
+  private getTurnTimerSettings(): { turnTimerMs: number; afkStrikesBeforeForfeit: number } {
+    const config = getBattleBalanceConfig();
+    return {
+      turnTimerMs: config.turnTimerSeconds * 1_000,
+      afkStrikesBeforeForfeit: config.afkStrikesBeforeForfeit
+    };
+  }
+
+  private shouldRunTurnTimer(): boolean {
+    return roomRuntimeDependencies.isMySqlSnapshotStore(configuredRoomSnapshotStore);
+  }
+
+  private ensureTurnTimerLoop(): void {
+    if (!this.shouldRunTurnTimer() || this.turnTimerHandle) {
+      return;
+    }
+
+    this.turnTimerHandle = roomRuntimeDependencies.setInterval(() => {
+      void this.tickTurnTimer();
+    }, TURN_TIMER_TICK_MS);
+    this.turnTimerHandle.unref?.();
+  }
+
+  private listMatchPlayerIds(): string[] {
+    return Array.from(new Set(this.worldRoom.getInternalState().heroes.map((hero) => hero.playerId))).sort();
+  }
+
+  private findNextMatchPlayerId(playerId: string): string | null {
+    const playerIds = this.listMatchPlayerIds();
+    if (playerIds.length === 0) {
+      return null;
+    }
+
+    const currentIndex = playerIds.indexOf(playerId);
+    if (currentIndex < 0) {
+      return playerIds[0] ?? null;
+    }
+
+    return playerIds[(currentIndex + 1) % playerIds.length] ?? null;
+  }
+
+  private resolvePvPBattleTurnOwnerPlayerId(): string | null {
+    const battle = this.worldRoom.getActiveBattles().find((candidate) => candidate.defenderHeroId);
+    if (!battle?.activeUnitId) {
+      return null;
+    }
+
+    const activeUnit = battle.units[battle.activeUnitId];
+    if (!activeUnit) {
+      return null;
+    }
+
+    const internalState = this.worldRoom.getInternalState();
+    if (activeUnit.camp === "attacker") {
+      return battle.worldHeroId
+        ? internalState.heroes.find((hero) => hero.id === battle.worldHeroId)?.playerId ?? null
+        : null;
+    }
+
+    return battle.defenderHeroId
+      ? internalState.heroes.find((hero) => hero.id === battle.defenderHeroId)?.playerId ?? null
+      : null;
+  }
+
+  private resolveTurnContext(): { mode: "world" | "battle"; playerId: string } | null {
+    const battleOwnerPlayerId = this.resolvePvPBattleTurnOwnerPlayerId();
+    if (battleOwnerPlayerId) {
+      this.turnOwnerPlayerId = battleOwnerPlayerId;
+      return {
+        mode: "battle",
+        playerId: battleOwnerPlayerId
+      };
+    }
+
+    const playerIds = this.listMatchPlayerIds();
+    if (playerIds.length !== 2) {
+      return null;
+    }
+
+    const ownerPlayerId =
+      this.turnOwnerPlayerId && playerIds.includes(this.turnOwnerPlayerId) ? this.turnOwnerPlayerId : playerIds[0] ?? null;
+    if (!ownerPlayerId) {
+      return null;
+    }
+
+    this.turnOwnerPlayerId = ownerPlayerId;
+    return {
+      mode: "world",
+      playerId: ownerPlayerId
+    };
+  }
+
+  private setTurnDeadlineFor(playerId: string | null): void {
+    const state = this.worldRoom.getInternalState();
+    if (!playerId) {
+      this.turnOwnerPlayerId = null;
+      delete state.turnDeadlineAt;
+      return;
+    }
+
+    this.turnOwnerPlayerId = playerId;
+    state.turnDeadlineAt = new Date(roomRuntimeDependencies.now() + this.getTurnTimerSettings().turnTimerMs).toISOString();
+  }
+
+  private getAfkStrikeCount(playerId: string): number {
+    const current = this.worldRoom.getInternalState().afkStrikes?.[playerId];
+    return typeof current === "number" && Number.isFinite(current) ? current : 0;
+  }
+
+  private setAfkStrikeCount(playerId: string, nextValue: number): void {
+    const state = this.worldRoom.getInternalState();
+    const next = { ...(state.afkStrikes ?? {}) };
+    if (nextValue > 0) {
+      next[playerId] = nextValue;
+    } else {
+      delete next[playerId];
+    }
+
+    if (Object.keys(next).length > 0) {
+      state.afkStrikes = next;
+    } else {
+      delete state.afkStrikes;
+    }
+  }
+
+  private ensureTurnTimerState(): void {
+    if (!this.shouldRunTurnTimer()) {
+      this.setTurnDeadlineFor(null);
+      return;
+    }
+
+    const context = this.resolveTurnContext();
+    if (!context) {
+      this.setTurnDeadlineFor(null);
+      return;
+    }
+
+    const deadlineAt = this.worldRoom.getInternalState().turnDeadlineAt;
+    if (!deadlineAt || Number.isNaN(Date.parse(deadlineAt))) {
+      this.setTurnDeadlineFor(context.playerId);
+    } else {
+      this.turnOwnerPlayerId = context.playerId;
+    }
+
+    this.pushTurnTimerUpdate();
+  }
+
+  private pushTurnTimerUpdate(): void {
+    const context = this.resolveTurnContext();
+    const deadlineAt = this.worldRoom.getInternalState().turnDeadlineAt;
+    if (!context || !deadlineAt) {
+      return;
+    }
+
+    const remainingMs = Math.max(0, Date.parse(deadlineAt) - roomRuntimeDependencies.now());
+    for (const client of this.clients) {
+      sendMessage(client, "turn.timer", {
+        requestId: "push",
+        delivery: "push",
+        remainingMs,
+        turnOwnerPlayerId: context.playerId
+      });
+    }
+  }
+
+  private afterSuccessfulWorldAction(playerId: string, action: WorldAction): void {
+    if (!this.shouldRunTurnTimer()) {
+      return;
+    }
+
+    this.setAfkStrikeCount(playerId, 0);
+    const nextOwnerPlayerId = action.type === "turn.endDay" ? this.findNextMatchPlayerId(playerId) ?? playerId : playerId;
+    this.setTurnDeadlineFor(nextOwnerPlayerId);
+  }
+
+  private afterSuccessfulBattleAction(playerId: string): void {
+    if (!this.shouldRunTurnTimer()) {
+      return;
+    }
+
+    this.setAfkStrikeCount(playerId, 0);
+    this.setTurnDeadlineFor(this.resolvePvPBattleTurnOwnerPlayerId() ?? playerId);
+  }
+
+  private async tickTurnTimer(): Promise<void> {
+    if (!this.shouldRunTurnTimer() || this.turnTimerTickInFlight) {
+      return;
+    }
+
+    const deadlineAt = this.worldRoom.getInternalState().turnDeadlineAt;
+    if (!deadlineAt) {
+      this.ensureTurnTimerState();
+      return;
+    }
+
+    const context = this.resolveTurnContext();
+    if (!context) {
+      this.setTurnDeadlineFor(null);
+      return;
+    }
+
+    const remainingMs = Date.parse(deadlineAt) - roomRuntimeDependencies.now();
+    if (remainingMs > 0) {
+      this.pushTurnTimerUpdate();
+      return;
+    }
+
+    this.turnTimerTickInFlight = true;
+    try {
+      await this.handleTurnTimeout(context);
+    } finally {
+      this.turnTimerTickInFlight = false;
+    }
+  }
+
+  private async handleTurnTimeout(context: { mode: "world" | "battle"; playerId: string }): Promise<void> {
+    const nextStrikeCount = this.getAfkStrikeCount(context.playerId) + 1;
+    this.setAfkStrikeCount(context.playerId, nextStrikeCount);
+
+    if (nextStrikeCount >= this.getTurnTimerSettings().afkStrikesBeforeForfeit) {
+      await this.applyAfkForfeit(context.playerId);
+      return;
+    }
+
+    if (context.mode === "battle") {
+      await this.applyAutoBattlePass(context.playerId);
+      return;
+    }
+
+    await this.applyAutoEndDay(context.playerId);
+  }
+
+  private async applyAutoEndDay(playerId: string): Promise<void> {
+    const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
+    const result = this.worldRoom.dispatch(playerId, { type: "turn.endDay" });
+    if (!result.ok) {
+      this.ensureTurnTimerState();
+      return;
+    }
+
+    this.setTurnDeadlineFor(this.findNextMatchPlayerId(playerId) ?? playerId);
+    try {
+      await this.persistRoomState();
+    } catch {
+      this.restoreWorldRoom(previousSnapshot);
+      this.ensureTurnTimerState();
+      this.publishLobbyRoomSummary();
+      return;
+    }
+
+    await this.persistPlayerAccountProgress(result.events ?? [], this.worldRoom.consumeCompletedBattleReplays());
+    this.publishLobbyRoomSummary();
+    this.pushSessionStateToAll({
+      events: result.events ?? [],
+      movementPlan: result.movementPlan ?? null
+    });
+    this.pushTurnTimerUpdate();
+  }
+
+  private async applyAutoBattlePass(playerId: string): Promise<void> {
+    const battle = this.worldRoom.getBattleForPlayer(playerId);
+    const activeUnitId = battle?.activeUnitId ?? null;
+    if (!battle || !activeUnitId) {
+      this.ensureTurnTimerState();
+      return;
+    }
+
+    const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
+    const result = this.worldRoom.dispatchBattle(playerId, {
+      type: "battle.pass",
+      unitId: activeUnitId
+    });
+    if (!result.ok) {
+      this.ensureTurnTimerState();
+      return;
+    }
+
+    this.setTurnDeadlineFor(this.resolvePvPBattleTurnOwnerPlayerId() ?? playerId);
+    try {
+      await this.persistRoomState();
+    } catch {
+      this.restoreWorldRoom(previousSnapshot);
+      this.ensureTurnTimerState();
+      this.publishLobbyRoomSummary();
+      return;
+    }
+
+    await this.persistPlayerAccountProgress(result.events ?? [], this.worldRoom.consumeCompletedBattleReplays());
+    this.publishLobbyRoomSummary();
+    this.pushSessionStateToAll({
+      events: result.events ?? [],
+      movementPlan: null
+    });
+    this.pushTurnTimerUpdate();
+  }
+
+  private async applyAfkForfeit(loserPlayerId: string): Promise<void> {
+    const winnerPlayerId = this.listMatchPlayerIds().find((candidatePlayerId) => candidatePlayerId !== loserPlayerId);
+    if (!winnerPlayerId) {
+      this.ensureTurnTimerState();
+      return;
+    }
+
+    if (!(await this.applySurrenderEloResult(winnerPlayerId, loserPlayerId))) {
+      this.ensureTurnTimerState();
+      return;
+    }
+
+    await this.broadcastSettlementAndCloseRoom(null, "afk_forfeit", "push");
+  }
+
   private async syncMinorProtectionAccount(
     playerId: string,
     account: PlayerAccountSnapshot
@@ -650,14 +1034,17 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     requestId: string
   ): Promise<boolean> {
     const store = configuredRoomSnapshotStore;
-    const account =
-      ensuredAccount ??
-      (store
-        ? await store.ensurePlayerAccount({
-            playerId,
-            lastRoomId: this.metadata.logicalRoomId
-          })
-        : null);
+    let account = ensuredAccount;
+    if (!account && store) {
+      try {
+        account = await store.ensurePlayerAccount({
+          playerId,
+          lastRoomId: this.metadata.logicalRoomId
+        });
+      } catch {
+        account = null;
+      }
+    }
 
     if (!account || account.isMinor !== true) {
       return false;
@@ -906,7 +1293,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   }
 
   private async broadcastSettlementAndCloseRoom(
-    sourceClient: ColyseusClient,
+    sourceClient: ColyseusClient | null,
     reason: SessionStateReason,
     requestId: string
   ): Promise<void> {
@@ -956,6 +1343,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       return null;
     }
 
+    if (this.getConnectedPlayerIds().includes(targetPlayerId)) {
+      return targetPlayerId;
+    }
+
     const battle = this.worldRoom.getBattleForPlayer(playerId);
     if (!battle?.worldHeroId || !battle.defenderHeroId) {
       return null;
@@ -997,6 +1388,25 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     return playerId;
+  }
+
+  private pushSessionStateToAll(extras?: {
+    events?: WorldEvent[];
+    movementPlan?: MovementPlan | null;
+    reason?: string;
+  }): void {
+    for (const client of this.clients) {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        continue;
+      }
+
+      sendMessage(client, "session.state", {
+        requestId: "push",
+        delivery: "push",
+        payload: this.buildStatePayload(playerId, extras)
+      });
+    }
   }
 
   private async ensurePlayerWorldSlot(

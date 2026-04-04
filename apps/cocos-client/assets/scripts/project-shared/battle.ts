@@ -1413,7 +1413,7 @@ export function executeBattleSkill(
 }
 
 export function validateBattleAction(state: BattleState, action: BattleAction): ValidationResult {
-  if (action.type === "battle.wait" || action.type === "battle.defend") {
+  if (action.type === "battle.wait" || action.type === "battle.defend" || action.type === "battle.pass") {
     if (state.activeUnitId !== action.unitId) {
       return { valid: false, reason: "unit_not_active" };
     }
@@ -1883,6 +1883,17 @@ export function applyBattleAction(state: BattleState, action: BattleAction): Bat
           }
         },
         log: normalizedState.log.concat(`${action.unitId} 进入防御`)
+      },
+      action.unitId,
+      false
+    );
+  }
+
+  if (action.type === "battle.pass") {
+    return advanceTurn(
+      {
+        ...normalizedState,
+        log: normalizedState.log.concat(`${action.unitId} 选择跳过`)
       },
       action.unitId,
       false

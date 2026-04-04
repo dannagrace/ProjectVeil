@@ -118,6 +118,8 @@ export interface BattleEnvironmentBalanceConfig {
 export interface BattleBalanceConfig {
   damage: BattleDamageBalanceConfig;
   environment: BattleEnvironmentBalanceConfig;
+  turnTimerSeconds: number;
+  afkStrikesBeforeForfeit: number;
   pvp: {
     eloK: number;
   };
@@ -340,6 +342,8 @@ export interface WorldState {
   buildings: Record<string, MapBuildingState>;
   resources: WorldResourceLedger;
   visibilityByPlayer: Record<string, FogState[]>;
+  turnDeadlineAt?: string;
+  afkStrikes?: Record<string, number>;
 }
 
 export interface NeutralArmyStack {
@@ -394,6 +398,7 @@ export interface PlayerTileView {
 
 export interface PlayerWorldView {
   meta: WorldMetaState;
+  turnDeadlineAt?: string;
   map: {
     width: number;
     height: number;
@@ -594,6 +599,10 @@ export type BattleAction =
     }
   | {
       type: "battle.defend";
+      unitId: string;
+    }
+  | {
+      type: "battle.pass";
       unitId: string;
     }
   | {

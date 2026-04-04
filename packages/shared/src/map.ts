@@ -2135,6 +2135,7 @@ export function createPlayerWorldView(state: WorldState, playerId: string): Play
 
   return {
     meta: state.meta,
+    ...(state.turnDeadlineAt ? { turnDeadlineAt: state.turnDeadlineAt } : {}),
     map: {
       width: state.map.width,
       height: state.map.height,
@@ -2221,6 +2222,8 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
           ...state.meta,
           day: state.meta.day + 1
         },
+        ...(state.turnDeadlineAt ? { turnDeadlineAt: state.turnDeadlineAt } : {}),
+        ...(state.afkStrikes ? { afkStrikes: state.afkStrikes } : {}),
         resources: state.resources
       },
       heroes,

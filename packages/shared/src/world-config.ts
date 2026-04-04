@@ -196,6 +196,12 @@ export function validateBattleBalanceConfig(
   if (typeof config.environment !== "object" || config.environment === null) {
     throw new Error("Battle balance config must define environment");
   }
+  if (!Number.isInteger(config.turnTimerSeconds) || config.turnTimerSeconds <= 0) {
+    throw new Error("Battle balance turnTimerSeconds must be a positive integer");
+  }
+  if (!Number.isInteger(config.afkStrikesBeforeForfeit) || config.afkStrikesBeforeForfeit <= 0) {
+    throw new Error("Battle balance afkStrikesBeforeForfeit must be a positive integer");
+  }
   if (typeof config.pvp !== "object" || config.pvp === null) {
     throw new Error("Battle balance config must define pvp");
   }

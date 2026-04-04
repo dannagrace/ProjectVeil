@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Label } from "cc";
 import { VeilHudPanel, type VeilHudRenderState } from "../assets/scripts/VeilHudPanel.ts";
 import { createLobbyPanelTestAccount } from "../assets/scripts/cocos-lobby-panel-model.ts";
 import { createComponentHarness, findNode, readLabelString } from "./helpers/cocos-panel-harness.ts";
@@ -253,4 +254,21 @@ test("VeilHudPanel renders equipment-adjusted hero totals and immediate session 
   assert.match(heroText, /生命上限 14 = 基础 12 装备 \+2/);
   assert.match(equipmentText, /战利品 最近 1 条/);
   assert.match(equipmentText, /凯琳 在战斗后发现了史诗装备 守誓圣铠，但背包已满，未能拾取。/);
+});
+
+test("VeilHudPanel renders a live turn timer label and flashes it red in the final 10 seconds", () => {
+  const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
+  const state = createHudState();
+  state.update!.world.turnDeadlineAt = new Date(Date.now() + 9_500).toISOString();
+
+  component.render(state);
+
+  const timerNode = findNode(node, "HudTurnTimer");
+  const timerLabel = timerNode?.getComponent(Label) ?? null;
+
+  assert.ok(timerNode);
+  assert.equal(timerNode.active, true);
+  assert.match(readLabelString(timerNode), /^倒计时 0:(0\d|10)$/);
+  assert.ok(timerLabel);
+  assert.ok(timerLabel.color.r > timerLabel.color.g, "expected warning tint in the final 10 seconds");
 });
