@@ -121,7 +121,18 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
       status: "ready"
     },
     evidence: {
+      package: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.package.json")
+      },
+      validation: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: wechatRcValidationPath
+      },
       smoke: {
+        summary: "ok",
         status: "passed",
         artifactPath: path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json")
       },
@@ -265,6 +276,9 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(renderMarkdown(report), /### Manual Evidence Ownership/);
   assert.match(renderMarkdown(report), /owner=release-oncall/);
   assert.match(renderMarkdown(report), /artifact=artifacts\/wechat-release\/device-runtime-review\.json/);
+  assert.match(renderMarkdown(report), /WeChat package evidence: ok \[required=yes status=passed/);
+  assert.match(renderMarkdown(report), /WeChat verify evidence: ok \[required=yes status=passed/);
+  assert.match(renderMarkdown(report), /WeChat smoke evidence: ok \[required=yes status=passed/);
   assert.match(renderMarkdown(report), /Config Change Risk Summary/);
   assert.match(renderMarkdown(report), /Recommend rehearsal: yes/);
 });
@@ -498,20 +512,124 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
   );
 
   assert.equal(report.summary.status, "failed");
-  assert.deepEqual(report.summary.failedGateIds, ["release-readiness", "wechat-release"]);
+  assert.deepEqual(report.summary.failedGateIds, ["release-readiness", "wechat-release", "phase1-evidence-consistency"]);
   assert.deepEqual(
     report.triage.blockers.map((entry) => entry.gateId),
-    ["release-readiness", "wechat-release"]
+    ["release-readiness", "wechat-release", "phase1-evidence-consistency"]
   );
   assert.match(report.triage.blockers[0]?.nextStep ?? "", /release:gate:summary -- --target-surface wechat/);
   assert.match(report.triage.blockers[1]?.summary ?? "", /blocked wechat/i);
   assert.match(report.gates[0]?.summary ?? "", /not release-ready/);
   assert.match(report.gates[3]?.summary ?? "", /blocked/i);
   assert.match(report.gates[3]?.failures.join("\n") ?? "", /blocked pending device evidence|WeChat smoke case is blocked/);
-  assert.match(renderMarkdown(report), /### Blockers \(2\)/);
+  assert.match(renderMarkdown(report), /### Blockers \(3\)/);
   assert.match(renderMarkdown(report), /Release readiness snapshot blocked wechat/);
   assert.match(renderMarkdown(report), /### Manual Evidence Ownership/);
   assert.match(renderMarkdown(report), /No required manual evidence items are attached to the target surface/);
+});
+
+test("buildReleaseGateSummaryReport marks pending candidate-level WeChat evidence before sign-off", () => {
+  const workspace = createTempWorkspace();
+  const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
+  const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
+  const wechatArtifactsDir = path.join(workspace, "artifacts", "wechat-release");
+  const wechatRcValidationPath = path.join(wechatArtifactsDir, "codex.wechat.rc-validation-report.json");
+  const wechatCandidateSummaryPath = path.join(wechatArtifactsDir, "codex.wechat.release-candidate-summary.json");
+
+  writeJson(snapshotPath, {
+    generatedAt: "2026-04-02T08:30:00.000Z",
+    revision: { commit: "abc123", shortCommit: "abc123", branch: "test-branch", dirty: false },
+    summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
+    checks: [{ id: "e2e-smoke", required: true, status: "passed" }]
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: "2026-04-02T08:32:00.000Z",
+    revision: { commit: "abc123", shortCommit: "abc123", branch: "test-branch", dirty: false },
+    execution: { status: "passed", exitCode: 0 },
+    summary: { total: 2, passed: 2, failed: 0 }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-04-02T08:33:00.000Z",
+    revision: { commit: "abc123", shortCommit: "abc123" },
+    status: "passed",
+    summary: { failedScenarios: 0, scenarioNames: ["reconnect_soak"] },
+    soakSummary: { reconnectAttempts: 384, invariantChecks: 2304 },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: { activeRoomCount: 0, connectionCount: 0, activeBattleCount: 0, heroCount: 0 }
+      }
+    ]
+  });
+  writeJson(wechatRcValidationPath, {
+    generatedAt: "2026-04-02T08:35:00.000Z",
+    commit: "abc123",
+    summary: { status: "passed", failedChecks: 0, failureSummary: [] }
+  });
+  writeJson(wechatCandidateSummaryPath, {
+    generatedAt: "2026-04-02T08:40:00.000Z",
+    candidate: { revision: "abc123", status: "blocked" },
+    evidence: {
+      package: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.package.json")
+      },
+      validation: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: wechatRcValidationPath
+      },
+      smoke: {
+        status: "skipped",
+        summary: "Smoke report not present.",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json")
+      },
+      manualReview: {
+        status: "blocked",
+        requiredPendingChecks: 1,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: [
+          {
+            id: "wechat-devtools-export-review",
+            title: "Real WeChat export imported and launched in Developer Tools",
+            required: true,
+            status: "pending",
+            artifactPath: "artifacts/wechat-release/devtools-export-review.json"
+          }
+        ]
+      }
+    },
+    blockers: [{ id: "manual:wechat-devtools-export-review", summary: "Manual review pending: Real WeChat export imported and launched in Developer Tools." }]
+  });
+
+  const report = buildReleaseGateSummaryReport(
+    {
+      snapshotPath,
+      h5SmokePath,
+      reconnectSoakPath,
+      wechatArtifactsDir,
+      targetSurface: "wechat"
+    },
+    {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    }
+  );
+
+  assert.equal(report.summary.status, "failed");
+  assert.equal(report.releaseSurface.status, "failed");
+  assert.equal(report.releaseSurface.evidence.find((entry) => entry.id === "wechat-candidate-summary")?.status, "pending");
+  assert.equal(report.releaseSurface.evidence.find((entry) => entry.id === "wechat-smoke-evidence")?.status, "pending");
+  assert.equal(report.releaseSurface.evidence.find((entry) => entry.id === "manual:wechat-devtools-export-review")?.status, "pending");
+  assert.match(renderMarkdown(report), /WeChat candidate summary is blocked pending required candidate-level package\/verify\/smoke\/manual evidence/);
+  assert.match(renderMarkdown(report), /WeChat smoke evidence: Smoke report not present\. \[required=yes status=pending/);
+  assert.match(renderMarkdown(report), /Real WeChat export imported and launched in Developer Tools: "pending"/);
 });
 
 test("evaluateWechatGate prefers RC validation and falls back to smoke report", () => {

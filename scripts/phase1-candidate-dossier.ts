@@ -1162,6 +1162,14 @@ function buildWechatSection(
     const summary = readJsonFile<WechatCandidateSummary>(candidateSummaryPath);
     const freshness = evaluateFreshness(summary.generatedAt, maxAgeMs);
     const manualReview = summary.evidence?.manualReview;
+    const packageStatus = summary.evidence?.package?.status ?? "skipped";
+    const validationStatus = summary.evidence?.validation?.status ?? "skipped";
+    const smokeStatus = summary.evidence?.smoke?.status ?? "skipped";
+    const pendingCandidateEvidence =
+      packageStatus !== "passed" ||
+      validationStatus !== "passed" ||
+      smokeStatus !== "passed" ||
+      (manualReview?.requiredPendingChecks ?? 0) > 0;
     const details = [...(summary.blockers ?? []).map((blocker) => blocker.summary?.trim()).filter((value): value is string => Boolean(value))];
     const acceptedRisks = (manualReview?.checks ?? [])
       .filter((check) => check.waiver?.reason?.trim())
@@ -1178,6 +1186,9 @@ function buildWechatSection(
         )
       );
 
+    details.push(`package status=${packageStatus}`);
+    details.push(`verify status=${validationStatus}`);
+    details.push(`smoke status=${smokeStatus}`);
     if ((manualReview?.requiredPendingChecks ?? 0) > 0) {
       details.push(`manual review pending=${manualReview?.requiredPendingChecks}`);
     }
@@ -1197,16 +1208,15 @@ function buildWechatSection(
     let result: DossierResult = "passed";
     if (
       summary.candidate?.status === "blocked" &&
-      ((manualReview?.requiredFailedChecks ?? 0) > 0 ||
+      (pendingCandidateEvidence ||
+        (manualReview?.requiredFailedChecks ?? 0) > 0 ||
         (manualReview?.requiredMetadataFailures ?? 0) > 0 ||
-        summary.evidence?.smoke?.status === "failed" ||
+        smokeStatus === "failed" ||
         !commitsMatch(summary.candidate?.revision ?? undefined, candidateRevision))
     ) {
       result = "failed";
     } else if (
       summary.candidate?.status !== "ready" ||
-      (manualReview?.requiredPendingChecks ?? 0) > 0 ||
-      summary.evidence?.smoke?.status === "skipped" ||
       freshness !== "fresh"
     ) {
       result = "pending";
@@ -1221,6 +1231,30 @@ function buildWechatSection(
         summary: `candidate=${summary.candidate?.status ?? "missing"}`,
         observedAt: summary.generatedAt,
         freshness,
+        revision: summary.candidate?.revision ?? undefined
+      },
+      {
+        label: "WeChat package evidence",
+        path: summary.evidence?.package?.artifactPath ?? candidateSummaryPath,
+        summary: `status=${packageStatus}`,
+        observedAt: summary.generatedAt,
+        freshness,
+        revision: summary.candidate?.revision ?? undefined
+      },
+      {
+        label: "WeChat verify evidence",
+        path: summary.artifacts?.validationReportPath ?? candidateSummaryPath,
+        summary: `status=${validationStatus}`,
+        observedAt: summary.generatedAt,
+        freshness,
+        revision: summary.candidate?.revision ?? undefined
+      },
+      {
+        label: "WeChat smoke evidence",
+        path: summary.evidence?.smoke?.artifactPath ?? summary.artifacts?.smokeReportPath ?? candidateSummaryPath,
+        summary: `status=${smokeStatus}`,
+        observedAt: summary.generatedAt,
+        freshness: summary.evidence?.deviceRuntime?.freshness ?? freshness,
         revision: summary.candidate?.revision ?? undefined
       }
     ];
@@ -1245,7 +1279,7 @@ function buildWechatSection(
       result,
       summary:
         result === "failed"
-          ? "WeChat candidate summary is blocked by failed or mismatched required evidence."
+          ? "WeChat candidate summary is blocked by missing, failed, or mismatched candidate-level package/verify/smoke/manual evidence."
           : result === "pending"
             ? "WeChat candidate summary exists, but required smoke/manual review evidence is still pending."
             : acceptedRisks.length > 0
