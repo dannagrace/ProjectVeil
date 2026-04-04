@@ -11,6 +11,7 @@ import type { CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-l
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildCocosBattleReplayTimelineView } from "./cocos-battle-replay-timeline.ts";
+import { buildCocosShopPanelView, type CocosShopPanelView } from "./cocos-shop-panel.ts";
 import {
   buildCocosBattleReplayCenterView,
   type CocosBattleReplayCenterControlAction
@@ -134,6 +135,9 @@ export interface VeilLobbyRenderState {
   lobbySkillPanel: LobbySkillPanelView | null;
   battleActive: boolean;
   skillPanelBusy?: boolean;
+  shop: CocosShopPanelView;
+  shopStatus: string;
+  shopLoading?: boolean;
 }
 
 export interface VeilLobbyPanelOptions {
@@ -164,6 +168,7 @@ export interface VeilLobbyPanelOptions {
   onOpenLobbySkillPanel?: () => void;
   onCloseLobbySkillPanel?: () => void;
   onLearnLobbySkill?: (skillId: string) => void;
+  onPurchaseShopProduct?: (productId: string) => void;
 }
 
 interface PanelCardTone {
@@ -206,6 +211,7 @@ export class VeilLobbyPanel extends Component {
   private onOpenLobbySkillPanel: (() => void) | undefined;
   private onCloseLobbySkillPanel: (() => void) | undefined;
   private onLearnLobbySkill: ((skillId: string) => void) | undefined;
+  private onPurchaseShopProduct: ((productId: string) => void) | undefined;
   private replayPlayback: BattleReplayPlaybackState | null = null;
   private replayPlaybackReplayId: string | null = null;
   private replayPlaybackStatus = "选择一场最近战斗，即可查看逐步回放。";
@@ -245,6 +251,7 @@ export class VeilLobbyPanel extends Component {
     this.onOpenLobbySkillPanel = options.onOpenLobbySkillPanel;
     this.onCloseLobbySkillPanel = options.onCloseLobbySkillPanel;
     this.onLearnLobbySkill = options.onLearnLobbySkill;
+    this.onPurchaseShopProduct = options.onPurchaseShopProduct;
   }
 
   render(state: VeilLobbyRenderState): void {
@@ -737,6 +744,7 @@ export class VeilLobbyPanel extends Component {
       this.hideBattleReplayTimelineCard();
       rightCursorY = this.renderHeroSection(rightX, rightCursorY, rightWidth, state, skillPanelBusy);
       rightCursorY = this.renderLeaderboardSection(rightX, rightCursorY, rightWidth, state);
+      rightCursorY = this.renderShopSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderCard(
         "LobbyRoomsHeader",
         rightX,
@@ -821,6 +829,92 @@ export class VeilLobbyPanel extends Component {
       this.renderSkillPanelModal(width, height, state, skillPanelBusy);
     } else {
       this.hideSkillPanelModal();
+    }
+  }
+
+  private renderShopSection(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
+    const shop = state.shop ?? buildCocosShopPanelView({
+      products: [],
+      gemBalance: state.account.gems ?? 0,
+      pendingProductId: null
+    });
+    let cursorY = this.renderCard(
+      "LobbyShopHeader",
+      centerX,
+      topY,
+      width,
+      84,
+      [
+        "商店",
+        shop.gemBalanceLabel,
+        state.shopLoading ? "正在同步商品..." : state.shopStatus || "可购买资源包、装备与宝石。"
+      ],
+      {
+        fill: new Color(46, 64, 82, 188),
+        stroke: new Color(220, 232, 244, 56),
+        accent: new Color(104, 182, 210, 206)
+      },
+      null,
+      14,
+      18
+    );
+
+    if (shop.emptyLabel) {
+      this.hideExtraCards("LobbyShop-", 0);
+      return this.renderCard(
+        "LobbyShopEmpty",
+        centerX,
+        cursorY,
+        width,
+        74,
+        ["商店暂空", shop.emptyLabel, "刷新大厅可重新拉取商品目录。"],
+        {
+          fill: MUTED_FILL,
+          stroke: new Color(214, 224, 238, 42),
+          accent: new Color(128, 146, 170, 156)
+        },
+        null,
+        13,
+        18
+      );
+    }
+
+    const emptyNode = this.node.getChildByName("LobbyShopEmpty");
+    if (emptyNode) {
+      emptyNode.active = false;
+    }
+
+    shop.rows.slice(0, 4).forEach((row, index) => {
+      cursorY = this.renderCard(
+        `LobbyShop-${index}`,
+        centerX,
+        cursorY,
+        width,
+        72,
+        [row.name, row.grantLabel, `${row.priceLabel} · ${row.affordabilityLabel}`],
+        {
+          fill: row.enabled ? new Color(42, 70, 76, 188) : MUTED_FILL,
+          stroke: new Color(214, 226, 244, 52),
+          accent: row.usesWechatPayment ? new Color(114, 194, 168, 196) : new Color(218, 187, 122, 194)
+        },
+        row.enabled && !state.entering ? () => {
+          this.onPurchaseShopProduct?.(row.productId);
+        } : null,
+        13,
+        18
+      );
+    });
+
+    this.hideExtraCards("LobbyShop-", Math.min(4, shop.rows.length));
+    return cursorY;
+  }
+
+  private hideExtraCards(prefix: string, visibleCount: number): void {
+    for (let index = visibleCount; index < 6; index += 1) {
+      const node = this.node.getChildByName(`${prefix}${index}`);
+      if (node) {
+        node.active = false;
+      }
     }
   }
 
