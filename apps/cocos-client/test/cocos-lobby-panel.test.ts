@@ -304,3 +304,62 @@ test("VeilLobbyPanel opens the lobby skill modal and wires skill selections", ()
   assert.deepEqual(selectedSkillIds, ["war_banner"]);
   component.onDestroy();
 });
+
+test("VeilLobbyPanel renders mailbox compensation copy and wires claim actions", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const claimedMessageIds: string[] = [];
+  let claimAllCount = 0;
+
+  component.configure({
+    onClaimMailboxMessage: (messageId) => {
+      claimedMessageIds.push(messageId);
+    },
+    onClaimAllMailbox: () => {
+      claimAllCount += 1;
+    }
+  });
+  component.scheduleOnce = () => undefined;
+  component.render(
+    createLobbyState({
+      account: createLobbyPanelTestAccount({
+        mailbox: [
+          {
+            id: "comp-1",
+            kind: "compensation",
+            title: "停机补偿",
+            body: "补发资源。",
+            sentAt: "2026-04-05T00:00:00.000Z",
+            expiresAt: "2026-04-12T00:00:00.000Z",
+            grant: {
+              gems: 30,
+              resources: {
+                gold: 120,
+                wood: 0,
+                ore: 0
+              }
+            }
+          }
+        ],
+        mailboxSummary: {
+          totalCount: 1,
+          unreadCount: 1,
+          claimableCount: 1,
+          expiredCount: 0
+        }
+      })
+    })
+  );
+
+  assert.match(readCardLabel(node, "LobbyMailbox"), /系统邮箱 · 未读 1/);
+  assert.match(readCardLabel(node, "LobbyMailbox"), /停机补偿/);
+  assert.match(readCardLabel(node, "LobbyMailbox"), /宝石 x30 · 金币 x120 · 2026-04-12 到期/);
+  assert.match(readCardLabel(node, "LobbyMailboxClaimAll"), /领取全部附件/);
+  assert.match(readCardLabel(node, "LobbyMailboxClaim-0"), /领取: 停机补偿/);
+
+  pressNode(findNode(node, "LobbyMailboxClaimAll"));
+  pressNode(findNode(node, "LobbyMailboxClaim-0"));
+
+  assert.equal(claimAllCount, 1);
+  assert.deepEqual(claimedMessageIds, ["comp-1"]);
+  component.onDestroy();
+});
