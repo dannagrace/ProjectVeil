@@ -12,6 +12,7 @@ For detailed release sequencing, keep [`docs/same-revision-release-evidence-runb
 | Pick the smallest sufficient PR verification | [`docs/verification-matrix.md`](./verification-matrix.md) | [`docs/verification-matrix.md`](./verification-matrix.md) |
 | Turn changed paths into a minimal validation plan | `npm run plan:validation:minimal -- --branch origin/main` | [`docs/verification-matrix.md`](./verification-matrix.md) |
 | Confirm the current primary client surface | `npm run client:primary` | [`README.md`](../README.md), [`docs/cocos-primary-client-delivery.md`](./cocos-primary-client-delivery.md) |
+| Confirm the runtime boundary between the primary client and the H5 shell | [`docs/runtime-contract-cocos-h5.md`](./runtime-contract-cocos-h5.md) | [`docs/runtime-contract-cocos-h5.md`](./runtime-contract-cocos-h5.md), [`README.md`](../README.md) |
 | Audit Codex automation branches | `npm run ops:codex-branches` | [`docs/codex-automation-branch-maintenance.md`](./codex-automation-branch-maintenance.md) |
 
 ## Common Artifact Homes
