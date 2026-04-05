@@ -28,12 +28,14 @@
         {
           "rank": 1,
           "description": "解锁主动技能“号令突进”。",
-          "battleSkillIds": ["commanding_shout"]
+          "battleSkillIds": ["commanding_shout"],
+          "statBonuses": { "attack": 1 }
         },
         {
           "rank": 2,
           "description": "追加被动技能“裂甲追击”。",
-          "battleSkillIds": ["rending_mark"]
+          "battleSkillIds": ["rending_mark"],
+          "statBonuses": { "attack": 1 }
         }
       ]
     },
@@ -112,12 +114,14 @@
         {
           "rank": 1,
           "description": "解锁主动技能“持盾列阵”。",
-          "battleSkillIds": ["phalanx_command"]
+          "battleSkillIds": ["phalanx_command"],
+          "statBonuses": { "defense": 1, "maxHp": 2 }
         },
         {
           "rank": 2,
           "description": "追加主动技能“钉锁投枪”。",
-          "battleSkillIds": ["pinning_javelin"]
+          "battleSkillIds": ["pinning_javelin"],
+          "statBonuses": { "defense": 1, "maxHp": 2 }
         }
       ]
     },
@@ -149,7 +153,8 @@
         {
           "rank": 1,
           "description": "解锁主动技能“护甲术”。",
-          "battleSkillIds": ["armor_spell"]
+          "battleSkillIds": ["armor_spell"],
+          "statBonuses": { "power": 1, "knowledge": 1 }
         }
       ]
     },

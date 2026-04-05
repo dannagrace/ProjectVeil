@@ -1,0 +1,305 @@
+{
+  "missions": [
+    {
+      "id": "chapter1-ember-watch",
+      "chapterId": "chapter1",
+      "order": 1,
+      "mapId": "amber-fields",
+      "name": "Ash At First Light",
+      "description": "Scout the burned farmlands and learn why the frontier beacons went dark.",
+      "recommendedHeroLevel": 1,
+      "enemyArmyTemplateId": "wolf_pack",
+      "enemyArmyCount": 10,
+      "enemyStatMultiplier": 1,
+      "introDialogue": [
+        {
+          "id": "c1m1-intro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "The smoke is fresh. Something pushed through Ember Watch before dawn.",
+          "mood": "grim"
+        },
+        {
+          "id": "c1m1-intro-2",
+          "speakerId": "serin",
+          "speakerName": "Scout Serin",
+          "text": "Tracks split toward the river. If we do not move now, the whole road opens.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c1m1-outro-1",
+          "speakerId": "serin",
+          "speakerName": "Scout Serin",
+          "text": "These raiders were screening for a larger force. The bridge is their real target.",
+          "mood": "grim"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c1m1-clear-patrol",
+          "description": "Break the screening patrol",
+          "kind": "defeat",
+          "gate": "start"
+        },
+        {
+          "id": "c1m1-secure-flare",
+          "description": "Secure the signal flare cache",
+          "kind": "secure",
+          "gate": "end",
+          "optional": true
+        }
+      ],
+      "reward": { "gems": 12, "resources": { "gold": 140 } }
+    },
+    {
+      "id": "chapter1-thornwall-road",
+      "chapterId": "chapter1",
+      "order": 2,
+      "mapId": "thornwall-divide",
+      "name": "Signals In The Mist",
+      "description": "Fight uphill through the divide and relight the road lanterns before dusk.",
+      "recommendedHeroLevel": 2,
+      "enemyArmyTemplateId": "wolf_pack",
+      "enemyArmyCount": 12,
+      "enemyStatMultiplier": 1.12,
+      "unlockMissionId": "chapter1-ember-watch",
+      "introDialogue": [
+        {
+          "id": "c1m2-intro-1",
+          "speakerId": "bridge-warden",
+          "speakerName": "Warden Hale",
+          "text": "No lanterns means no reinforcements. Relight the road and the garrison can hold.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c1m2-outro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Good. Now the bridge wardens know the attack is coming.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c1m2-light-lanterns",
+          "description": "Relight the thornwall lantern chain",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 3,
+          "unlocksObjectiveIds": ["c1m2-break-blockade"]
+        },
+        {
+          "id": "c1m2-break-blockade",
+          "description": "Break the raider blockade at the pass",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 14, "resources": { "gold": 170, "wood": 12 } }
+    },
+    {
+      "id": "chapter1-stonewatch",
+      "chapterId": "chapter1",
+      "order": 3,
+      "mapId": "stonewatch-fork",
+      "name": "Stonewatch Fork",
+      "description": "Retake the fork tower and free the trapped scouts before the enemy scouts escape.",
+      "recommendedHeroLevel": 2,
+      "enemyArmyTemplateId": "hero_guard_basic",
+      "enemyArmyCount": 14,
+      "enemyStatMultiplier": 1.22,
+      "unlockMissionId": "chapter1-thornwall-road",
+      "introDialogue": [
+        {
+          "id": "c1m3-intro-1",
+          "speakerId": "scout-serin",
+          "speakerName": "Scout Serin",
+          "text": "If Stonewatch falls, the enemy owns every crossing from here to the river.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c1m3-outro-1",
+          "speakerId": "rescued-scout",
+          "speakerName": "Rescued Scout",
+          "text": "They kept asking about the bridge supports. They know exactly where to strike.",
+          "mood": "grim"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c1m3-retake-tower",
+          "description": "Retake Stonewatch tower",
+          "kind": "secure",
+          "gate": "start"
+        },
+        {
+          "id": "c1m3-rescue-scouts",
+          "description": "Escort the trapped scouts to safety",
+          "kind": "escort",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 16, "resources": { "gold": 210, "ore": 10 } }
+    },
+    {
+      "id": "chapter1-ridgeway",
+      "chapterId": "chapter1",
+      "order": 4,
+      "mapId": "ridgeway-crossing",
+      "name": "Ridgeway Intercept",
+      "description": "Intercept the enemy engineers before they can seed the bridge charges.",
+      "recommendedHeroLevel": 3,
+      "enemyArmyTemplateId": "hero_guard_basic",
+      "enemyArmyCount": 16,
+      "enemyStatMultiplier": 1.34,
+      "unlockMissionId": "chapter1-stonewatch",
+      "introDialogue": [
+        {
+          "id": "c1m4-intro-1",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "Engineers with black powder crossed Ridgeway an hour ago. Stop them before they reach the piers.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c1m4-outro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "We stopped one team. The main column is still marching for the bridgehead.",
+          "mood": "defiant"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c1m4-kill-engineers",
+          "description": "Eliminate the bridge engineers",
+          "kind": "defeat",
+          "gate": "start"
+        },
+        {
+          "id": "c1m4-hold-slope",
+          "description": "Hold the ridge while charges are dismantled",
+          "kind": "hold",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 18, "resources": { "gold": 250, "wood": 16 } }
+    },
+    {
+      "id": "chapter1-ironpass",
+      "chapterId": "chapter1",
+      "order": 5,
+      "mapId": "ironpass-gorge",
+      "name": "Last Convoy To Ironpass",
+      "description": "Escort the supply convoy through the gorge so the bridge garrison can survive the siege.",
+      "recommendedHeroLevel": 3,
+      "enemyArmyTemplateId": "hero_guard_basic",
+      "enemyArmyCount": 18,
+      "enemyStatMultiplier": 1.46,
+      "unlockMissionId": "chapter1-ridgeway",
+      "introDialogue": [
+        {
+          "id": "c1m5-intro-1",
+          "speakerId": "quartermaster-ren",
+          "speakerName": "Quartermaster Ren",
+          "text": "Food, arrow bundles, brace timber. Lose this convoy and the bridge is finished by morning.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c1m5-outro-1",
+          "speakerId": "quartermaster-ren",
+          "speakerName": "Quartermaster Ren",
+          "text": "The convoy made it. Now all that remains is to survive what comes next.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c1m5-escort-convoy",
+          "description": "Escort the supply convoy through Ironpass",
+          "kind": "escort",
+          "gate": "start"
+        },
+        {
+          "id": "c1m5-clear-ambush",
+          "description": "Clear the gorge ambush nests",
+          "kind": "defeat",
+          "gate": "mid",
+          "targetCount": 2
+        }
+      ],
+      "reward": { "gems": 20, "resources": { "gold": 290, "wood": 20, "ore": 12 } }
+    },
+    {
+      "id": "chapter1-defend-bridge",
+      "chapterId": "chapter1",
+      "order": 6,
+      "mapId": "frontier-basin",
+      "name": "Defend The Bridge",
+      "description": "Hold the bridgehead through the opening assault and deny the enemy a path into the basin.",
+      "recommendedHeroLevel": 4,
+      "enemyArmyTemplateId": "hero_guard_basic",
+      "enemyArmyCount": 22,
+      "enemyStatMultiplier": 1.6,
+      "unlockMissionId": "chapter1-ironpass",
+      "introDialogue": [
+        {
+          "id": "c1m6-intro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "No more retreats. If the bridge falls, the whole frontier burns with it.",
+          "mood": "defiant"
+        },
+        {
+          "id": "c1m6-intro-2",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "Then we hold here. Let the river carry away anyone who tries to cross.",
+          "mood": "defiant"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c1m6-outro-1",
+          "speakerId": "narrator",
+          "speakerName": "Narrator",
+          "text": "The bridge still stands, but the enemy has seen the frontier answer. Chapter 2 begins with the counterstroke.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c1m6-hold-bridge",
+          "description": "Hold the bridge through the opening assault",
+          "kind": "hold",
+          "gate": "start"
+        },
+        {
+          "id": "c1m6-break-vanguard",
+          "description": "Break the enemy vanguard at the bridgehead",
+          "kind": "defeat",
+          "gate": "mid"
+        },
+        {
+          "id": "c1m6-save-sappers",
+          "description": "Keep both sapper teams alive",
+          "kind": "survive",
+          "gate": "end",
+          "optional": true,
+          "targetCount": 2
+        }
+      ],
+      "reward": { "gems": 28, "resources": { "gold": 360, "ore": 18 } }
+    }
+  ]
+}

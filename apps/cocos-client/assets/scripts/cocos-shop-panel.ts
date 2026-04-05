@@ -6,9 +6,10 @@ export interface ShopProductGrant {
     ore?: number;
   };
   equipmentIds?: string[];
+  cosmeticIds?: string[];
 }
 
-export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle";
+export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle" | "cosmetic";
 
 export interface ShopProduct {
   productId: string;
@@ -42,6 +43,13 @@ export interface BuildCocosShopPanelInput {
   products: ShopProduct[];
   gemBalance: number;
   pendingProductId: string | null;
+  ownedCosmeticIds?: string[];
+  equippedCosmetics?: {
+    heroSkinId?: string;
+    unitRecolorId?: string;
+    profileBorderId?: string;
+    battleEmoteId?: string;
+  };
 }
 
 function formatResourceGrant(resources?: ShopProductGrant["resources"]): string | null {
@@ -77,19 +85,43 @@ function formatGrantLabel(product: ShopProduct): string {
   if ((product.grant.equipmentIds?.length ?? 0) > 0) {
     return `装备 ${product.grant.equipmentIds?.length ?? 0} 件`;
   }
+  if ((product.grant.cosmeticIds?.length ?? 0) > 0) {
+    return `外观 ${product.grant.cosmeticIds?.length ?? 0} 件`;
+  }
   if (resources) {
     return resources;
   }
-  return product.type === "equipment" ? "装备奖励" : "奖励待同步";
+  return product.type === "equipment" ? "装备奖励" : product.type === "cosmetic" ? "外观奖励" : "奖励待同步";
 }
 
 export function buildCocosShopPanelView(input: BuildCocosShopPanelInput): CocosShopPanelView {
   const gemBalance = Math.max(0, Math.floor(input.gemBalance ?? 0));
+  const ownedCosmeticIds = new Set((input.ownedCosmeticIds ?? []).map((entry) => entry.trim()).filter(Boolean));
+  const equippedCosmeticIds = new Set(
+    [
+      input.equippedCosmetics?.heroSkinId,
+      input.equippedCosmetics?.unitRecolorId,
+      input.equippedCosmetics?.profileBorderId,
+      input.equippedCosmetics?.battleEmoteId
+    ]
+      .map((entry) => entry?.trim())
+      .filter((entry): entry is string => Boolean(entry))
+  );
   const rows = input.products.map<ShopProductRowView>((product) => {
     const usesWechatPayment = Math.max(0, Math.floor(product.wechatPriceFen ?? 0)) > 0;
     const affordable = usesWechatPayment ? true : gemBalance >= Math.max(0, Math.floor(product.price ?? 0));
     const pending = input.pendingProductId === product.productId;
-    const enabled = product.enabled && !pending && (usesWechatPayment || affordable);
+    const cosmeticId = product.grant.cosmeticIds?.[0];
+    const cosmeticOwned = cosmeticId ? ownedCosmeticIds.has(cosmeticId) : false;
+    const cosmeticEquipped = cosmeticId ? equippedCosmeticIds.has(cosmeticId) : false;
+    const enabled =
+      product.enabled &&
+      !pending &&
+      (product.type === "cosmetic"
+        ? cosmeticEquipped
+          ? false
+          : cosmeticOwned || usesWechatPayment || affordable
+        : usesWechatPayment || affordable);
 
     return {
       productId: product.productId,
@@ -100,12 +132,17 @@ export function buildCocosShopPanelView(input: BuildCocosShopPanelInput): CocosS
         ? "订单处理中..."
         : !product.enabled
           ? "暂未上架"
+          : product.type === "cosmetic" && cosmeticEquipped
+            ? "已装备"
+            : product.type === "cosmetic" && cosmeticOwned
+              ? "已拥有，可点击装备"
           : usesWechatPayment
             ? "需拉起微信支付"
             : affordable
               ? `可购买，余额 ${gemBalance - Math.max(0, Math.floor(product.price ?? 0))} 宝石`
               : `宝石不足，还差 ${Math.max(0, Math.floor(product.price ?? 0)) - gemBalance}`,
-      actionLabel: pending ? "购买中..." : usesWechatPayment ? "微信购买" : "购买",
+      actionLabel:
+        pending ? "购买中..." : product.type === "cosmetic" && cosmeticOwned ? "装备" : usesWechatPayment ? "微信购买" : "购买",
       enabled,
       affordable,
       usesWechatPayment

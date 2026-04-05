@@ -116,9 +116,55 @@ test("battle replay center view exposes controls and a loaded replay snapshot fo
       ["pause", false],
       ["step-back", false],
       ["step-forward", true],
+      ["turn-back", false],
+      ["turn-forward", false],
+      ["speed-down", true],
+      ["speed-up", true],
       ["reset", false]
     ]
   );
+});
+
+test("battle replay center view falls back to battle report detail when replay evidence is unavailable", () => {
+  const view = buildCocosBattleReplayCenterView({
+    replays: [],
+    battleReports: {
+      latestReportId: "report-only",
+      items: [
+        {
+          id: "report-only",
+          replayId: "report-only",
+          roomId: "room-report",
+          playerId: "player-1",
+          battleId: "battle-report",
+          battleKind: "hero",
+          playerCamp: "defender",
+          heroId: "hero-1",
+          opponentHeroId: "hero-9",
+          startedAt: "2026-03-27T12:20:00.000Z",
+          completedAt: "2026-03-27T12:22:00.000Z",
+          result: "defeat",
+          turnCount: 3,
+          actionCount: 5,
+          rewards: [],
+          evidence: {
+            replay: "missing",
+            rewards: "missing"
+          }
+        }
+      ]
+    },
+    selectedReplayId: "report-only",
+    playback: null,
+    status: "ready"
+  });
+
+  assert.equal(view.state, "ready");
+  assert.match(view.title, /失利/);
+  assert.match(view.subtitle, /PVP .*摘要模式/);
+  assert.match(view.detailLines.join("\n"), /完整回放暂不可用/);
+  assert.match(view.detailLines.join("\n"), /回放证据：缺失/);
+  assert.equal(view.controls.every((control) => control.enabled === false), true);
 });
 
 test("VeilLobbyPanel retains the loading lobby snapshot and creates base panel chrome", () => {
@@ -176,7 +222,7 @@ test("VeilLobbyPanel renders a playback-aware replay timeline card alongside the
   component.render(state);
 
   assert.match(readCardLabel(node, "LobbyBattleReplayCenter"), /战报回放中心/);
-  assert.match(readCardLabel(node, "LobbyBattleReplayTimeline"), /播放游标 0\/2/);
+  assert.match(readCardLabel(node, "LobbyBattleReplayTimeline"), /播放游标 0\/2 .*倍率 1x/);
   assert.match(readCardLabel(node, "LobbyBattleReplayTimeline"), /当前 · 第 1 步/);
 
   (statefulComponent.applyReplayControl as (action: "step-forward") => void)("step-forward");

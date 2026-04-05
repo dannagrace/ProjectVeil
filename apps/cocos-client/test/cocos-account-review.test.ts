@@ -239,5 +239,46 @@ test("transitionCocosAccountReviewState keeps replay selection aligned with the 
   const review = buildCocosAccountReviewPage(state);
   assert.equal(state.selectedBattleReplayId, "replay-2");
   assert.equal(review.pageLabel, "2/2");
+  assert.equal(review.items[0]?.title, "胜利 · PVP · 对手 hero-9");
+});
+
+test("createCocosAccountReviewState seeds battle report selection when only report summaries are available", () => {
+  const profile = createProfile();
+  profile.recentBattleReplays = [];
+  profile.battleReportCenter = {
+    latestReportId: "report-only",
+    items: [
+      {
+        id: "report-only",
+        replayId: "report-only",
+        roomId: "room-report",
+        playerId: "player-1",
+        battleId: "battle-report",
+        battleKind: "hero",
+        playerCamp: "defender",
+        heroId: "hero-1",
+        opponentHeroId: "hero-9",
+        startedAt: "2026-03-27T12:20:00.000Z",
+        completedAt: "2026-03-27T12:22:00.000Z",
+        result: "defeat",
+        turnCount: 3,
+        actionCount: 5,
+        rewards: [],
+        evidence: {
+          replay: "missing",
+          rewards: "missing"
+        }
+      }
+    ]
+  };
+
+  const state = createCocosAccountReviewState(profile);
+  const review = buildCocosAccountReviewPage(transitionCocosAccountReviewState(state, {
+    type: "section.selected",
+    section: "battle-replays"
+  }));
+
+  assert.equal(state.selectedBattleReplayId, "report-only");
   assert.equal(review.items[0]?.title, "失利 · PVP · 对手 hero-9");
+  assert.match(review.items[0]?.detail ?? "", /完整回放暂不可用/);
 });

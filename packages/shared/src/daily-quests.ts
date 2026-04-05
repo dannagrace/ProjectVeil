@@ -1,21 +1,12 @@
 import type { EventLogEntry } from "./event-log.ts";
-
-export type DailyQuestId = "daily_explore_frontier" | "daily_battle_victory" | "daily_resource_run";
-export type DailyQuestMetric = "hero_moves" | "battle_wins" | "resource_collections";
-
-export interface DailyQuestReward {
-  gems: number;
-  gold: number;
-}
-
-export interface DailyQuestDefinition {
-  id: DailyQuestId;
-  title: string;
-  description: string;
-  metric: DailyQuestMetric;
-  target: number;
-  reward: DailyQuestReward;
-}
+import {
+  cloneDailyQuestDefinition,
+  getDefaultDailyQuestDefinitions,
+  type DailyQuestDefinition,
+  type DailyQuestId,
+  type DailyQuestMetric,
+  type DailyQuestReward
+} from "./daily-quest-rotation.ts";
 
 export interface DailyQuestProgress {
   id: DailyQuestId;
@@ -37,35 +28,8 @@ export interface DailyQuestBoard {
   quests: DailyQuestProgress[];
 }
 
-const DAILY_QUEST_DEFINITIONS: DailyQuestDefinition[] = [
-  {
-    id: "daily_explore_frontier",
-    title: "侦察前线",
-    description: "完成 3 次探索移动。",
-    metric: "hero_moves",
-    target: 3,
-    reward: { gems: 3, gold: 40 }
-  },
-  {
-    id: "daily_battle_victory",
-    title: "凯旋号角",
-    description: "取得 1 场战斗胜利。",
-    metric: "battle_wins",
-    target: 1,
-    reward: { gems: 5, gold: 60 }
-  },
-  {
-    id: "daily_resource_run",
-    title: "补给回收",
-    description: "完成 2 次资源收集。",
-    metric: "resource_collections",
-    target: 2,
-    reward: { gems: 2, gold: 35 }
-  }
-];
-
 export function getDailyQuestDefinitions(): DailyQuestDefinition[] {
-  return DAILY_QUEST_DEFINITIONS.map((definition) => ({ ...definition, reward: { ...definition.reward } }));
+  return getDefaultDailyQuestDefinitions();
 }
 
 export function createEmptyDailyQuestReward(): DailyQuestReward {
@@ -97,6 +61,7 @@ export function buildDailyQuestBoard(
     enabled: boolean;
     cycleKey?: string;
     resetAt?: string;
+    definitions?: DailyQuestDefinition[];
   }
 ): DailyQuestBoard {
   if (!options.enabled) {
@@ -108,7 +73,8 @@ export function buildDailyQuestBoard(
     };
   }
 
-  const quests = DAILY_QUEST_DEFINITIONS.map((definition) => {
+  const definitions = (options.definitions?.length ? options.definitions : getDefaultDailyQuestDefinitions()).map(cloneDailyQuestDefinition);
+  const quests = definitions.map((definition) => {
     const current = Math.min(definition.target, countQuestMetric(events, definition.metric));
     const completed = current >= definition.target;
     const claimed = events.some((entry) => hasClaimMarker(entry, definition.id));
@@ -152,25 +118,26 @@ export function normalizeDailyQuestBoard(board?: Partial<DailyQuestBoard> | null
     return undefined;
   }
 
-  const definitions = new Map(DAILY_QUEST_DEFINITIONS.map((definition) => [definition.id, definition] as const));
   const quests = (board.quests ?? [])
     .map((quest) => {
-      const definition = quest?.id ? definitions.get(quest.id) : undefined;
-      if (!definition) {
+      if (!quest?.id || typeof quest.title !== "string" || typeof quest.description !== "string") {
         return null;
       }
-
-      const current = Math.max(0, Math.min(definition.target, Math.floor(quest.current ?? 0)));
-      const completed = current >= definition.target || quest.completed === true;
+      const target = Math.max(1, Math.floor(quest.target ?? 0));
+      const current = Math.max(0, Math.min(target, Math.floor(quest.current ?? 0)));
+      const completed = current >= target || quest.completed === true;
       return {
-        id: definition.id,
-        title: definition.title,
-        description: definition.description,
-        target: definition.target,
+        id: String(quest.id),
+        title: quest.title,
+        description: quest.description,
+        target,
         current,
         completed,
         claimed: quest.claimed === true,
-        reward: { ...definition.reward }
+        reward: {
+          gems: Math.max(0, Math.floor(quest.reward?.gems ?? 0)),
+          gold: Math.max(0, Math.floor(quest.reward?.gold ?? 0))
+        }
       } satisfies DailyQuestProgress;
     })
     .filter((quest): quest is DailyQuestProgress => Boolean(quest));

@@ -47,9 +47,24 @@ function formatTierBadge(row: LeaderboardRowView | null, fallbackTier?: Leaderbo
   return fallbackTier ? formatTierLabel(fallbackTier).toUpperCase() : "UNRANKED";
 }
 
+function formatDivisionLabel(entry: LeaderboardEntry): string {
+  return entry.division?.trim() ? entry.division.trim().replace(/_/g, " ").toUpperCase() : formatTierLabel(entry.tier);
+}
+
+function formatPromotionSummary(entry: LeaderboardEntry): string {
+  if (entry.promotionSeries) {
+    return `晋级赛 ${entry.promotionSeries.wins}/${entry.promotionSeries.winsRequired} 胜 · ${entry.promotionSeries.losses}/${entry.promotionSeries.lossesAllowed} 负`;
+  }
+  if (entry.demotionShield && entry.demotionShield.remainingMatches > 0) {
+    return `降级保护 ${entry.demotionShield.remainingMatches} 场`;
+  }
+  return "";
+}
+
 export function buildCocosLeaderboardPanelView(input: CocosLeaderboardPanelInput): CocosLeaderboardPanelView {
   const rows = input.entries.map<LeaderboardRowView>((entry) => {
-    const tierLabel = formatTierLabel(entry.tier);
+    const tierLabel = formatDivisionLabel(entry);
+    const promotionSummary = formatPromotionSummary(entry);
     const isCurrentPlayer = entry.playerId === input.myPlayerId;
     return {
       playerId: entry.playerId,
@@ -58,7 +73,7 @@ export function buildCocosLeaderboardPanelView(input: CocosLeaderboardPanelInput
       displayName: entry.displayName.trim() || entry.playerId,
       ratingLabel: `ELO ${entry.eloRating}`,
       tierLabel,
-      summary: `#${entry.rank} ${entry.displayName.trim() || entry.playerId} · ELO ${entry.eloRating} · ${tierLabel}`,
+      summary: `#${entry.rank} ${entry.displayName.trim() || entry.playerId} · ELO ${entry.eloRating} · ${tierLabel}${promotionSummary ? ` · ${promotionSummary}` : ""}`,
       isCurrentPlayer
     };
   });

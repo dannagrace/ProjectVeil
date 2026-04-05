@@ -194,6 +194,35 @@ export function applyEloMatchResult(
 }
 
 export type PlayerTier = "bronze" | "silver" | "gold" | "platinum" | "diamond";
+export type RankDivisionId =
+  | "bronze_i"
+  | "bronze_ii"
+  | "bronze_iii"
+  | "silver_i"
+  | "silver_ii"
+  | "silver_iii"
+  | "gold_i"
+  | "gold_ii"
+  | "gold_iii"
+  | "platinum_i"
+  | "platinum_ii"
+  | "platinum_iii"
+  | "diamond_i"
+  | "diamond_ii"
+  | "diamond_iii";
+
+export interface PromotionSeriesState {
+  targetDivision: RankDivisionId;
+  wins: number;
+  losses: number;
+  winsRequired: number;
+  lossesAllowed: number;
+}
+
+export interface DemotionShieldState {
+  tier: PlayerTier;
+  remainingMatches: number;
+}
 
 export function getTierForRating(rating: number): PlayerTier {
   const normalized = normalizeEloRating(rating);

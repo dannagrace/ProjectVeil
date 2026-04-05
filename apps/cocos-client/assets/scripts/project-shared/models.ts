@@ -28,6 +28,9 @@ export type HeroSkillBranchId = string;
 export type EquipmentId = string;
 export type EquipmentType = "weapon" | "armor" | "accessory";
 export type EquipmentRarity = "common" | "rare" | "epic";
+export type CosmeticId = string;
+export type CosmeticCategory = "hero_skin" | "unit_recolor" | "profile_border" | "battle_emote";
+export type CosmeticRarity = "common" | "rare" | "epic" | "legendary";
 export type EquipmentSpecialEffectId =
   | "initiative_edge"
   | "brace"
@@ -64,6 +67,53 @@ export interface EquipmentDefinition {
 
 export interface EquipmentCatalogConfig {
   entries: EquipmentDefinition[];
+}
+
+export interface CosmeticDefinition {
+  id: CosmeticId;
+  name: string;
+  category: CosmeticCategory;
+  rarity: CosmeticRarity;
+  description: string;
+  price: number;
+  unlockCondition: string;
+  previewAsset?: string;
+}
+
+export interface CosmeticCatalogConfig {
+  entries: CosmeticDefinition[];
+}
+
+export interface CosmeticInventory {
+  ownedIds: CosmeticId[];
+}
+
+export interface EquippedCosmetics {
+  heroSkinId?: CosmeticId;
+  unitRecolorId?: CosmeticId;
+  profileBorderId?: CosmeticId;
+  battleEmoteId?: CosmeticId;
+}
+
+export interface ShopRotationEntry {
+  slotId: string;
+  label: string;
+  featured: boolean;
+  discountPercent: number;
+  category?: CosmeticCategory;
+  cosmeticId?: CosmeticId;
+}
+
+export interface ShopRotation {
+  seed: string;
+  weekLabel: string;
+  featuredSlots: ShopRotationEntry[];
+  discountSlots: ShopRotationEntry[];
+}
+
+export interface ShopRotationConfig {
+  featuredSlots: ShopRotationEntry[];
+  discountSlots: ShopRotationEntry[];
 }
 
 export interface HeroLearnedSkillState {
@@ -137,6 +187,36 @@ export interface SeasonRewardConfig {
 export interface MovePoints {
   total: number;
   remaining: number;
+}
+
+export interface FriendLeaderboardEntry {
+  playerId: string;
+  displayName: string;
+  eloRating: number;
+  rank: number;
+  delta?: number;
+  isSelf?: boolean;
+}
+
+export type GroupChallengeType = "elo" | "victory";
+
+export interface GroupChallenge {
+  challengeId: string;
+  creatorPlayerId: string;
+  creatorDisplayName: string;
+  roomId: string;
+  challengeType: GroupChallengeType;
+  scoreTarget?: number;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface NotificationPreferences {
+  matchFound: boolean;
+  turnReminder: boolean;
+  groupChallenge: boolean;
+  friendLeaderboard: boolean;
+  updatedAt?: string;
 }
 
 export interface HeroProgression {

@@ -11,8 +11,29 @@ import {
 } from "./event-log.ts";
 import { normalizeDailyQuestBoard, type DailyQuestBoard } from "./daily-quests.ts";
 import { normalizePlayerBattleReplaySummaries, type PlayerBattleReplaySummary } from "./battle-replay.ts";
-import { normalizeEloRating } from "./matchmaking.ts";
-import type { CampaignProgressState, DailyDungeonState, ResourceLedger } from "./models.ts";
+import {
+  getRankDivisionForRating,
+  getUtcWeekStart
+} from "./competitive-season.ts";
+import {
+  normalizeEloRating,
+  type DemotionShieldState,
+  type PromotionSeriesState,
+  type RankDivisionId
+} from "./matchmaking.ts";
+import type {
+  CampaignProgressState,
+  CosmeticInventory,
+  DailyDungeonState,
+  EquippedCosmetics,
+  NotificationPreferences,
+  SeasonalEventState,
+  RankedWeeklyProgress,
+  ResourceLedger,
+  SeasonArchiveEntry,
+  ShopRotation
+} from "./models.ts";
+import { normalizeCosmeticInventory, normalizeEquippedCosmetics } from "./cosmetics.ts";
 import { normalizeTutorialStep } from "./tutorial.ts";
 
 export type PlayerBanStatus = "none" | "temporary" | "permanent";
@@ -22,11 +43,20 @@ export interface PlayerAccountReadModel {
   displayName: string;
   avatarUrl?: string;
   eloRating?: number;
+  rankDivision?: RankDivisionId;
+  peakRankDivision?: RankDivisionId;
+  promotionSeries?: PromotionSeriesState;
+  demotionShield?: DemotionShieldState;
+  seasonHistory?: SeasonArchiveEntry[];
+  rankedWeeklyProgress?: RankedWeeklyProgress;
   gems?: number;
   loginStreak?: number;
   seasonXp?: number;
   seasonPassTier?: number;
   seasonPassPremium?: boolean;
+  cosmeticInventory?: CosmeticInventory;
+  equippedCosmetics?: EquippedCosmetics;
+  currentShopRotation?: ShopRotation;
   seasonPassClaimedTiers?: number[];
   seasonBadges?: string[];
   globalResources: ResourceLedger;
@@ -37,12 +67,14 @@ export interface PlayerAccountReadModel {
   dailyQuestBoard?: DailyQuestBoard;
   campaignProgress?: CampaignProgressState;
   dailyDungeonState?: DailyDungeonState;
+  seasonalEventStates?: SeasonalEventState[];
   tutorialStep?: number | null;
   loginId?: string;
   credentialBoundAt?: string;
   privacyConsentAt?: string;
   phoneNumber?: string;
   phoneNumberBoundAt?: string;
+  notificationPreferences?: NotificationPreferences;
   ageVerified?: boolean;
   isMinor?: boolean;
   dailyPlayMinutes?: number;
@@ -59,11 +91,20 @@ export interface PlayerAccountReadModelInput {
   displayName?: string | undefined;
   avatarUrl?: string | undefined;
   eloRating?: number | undefined;
+  rankDivision?: RankDivisionId | undefined;
+  peakRankDivision?: RankDivisionId | undefined;
+  promotionSeries?: PromotionSeriesState | null | undefined;
+  demotionShield?: DemotionShieldState | null | undefined;
+  seasonHistory?: SeasonArchiveEntry[] | null | undefined;
+  rankedWeeklyProgress?: RankedWeeklyProgress | null | undefined;
   gems?: number | undefined;
   loginStreak?: number | undefined;
   seasonXp?: number | undefined;
   seasonPassTier?: number | undefined;
   seasonPassPremium?: boolean | undefined;
+  cosmeticInventory?: Partial<CosmeticInventory> | null | undefined;
+  equippedCosmetics?: Partial<EquippedCosmetics> | null | undefined;
+  currentShopRotation?: ShopRotation | null | undefined;
   seasonPassClaimedTiers?: number[] | null | undefined;
   seasonBadges?: string[] | null | undefined;
   globalResources?: Partial<ResourceLedger> | null | undefined;
@@ -74,12 +115,14 @@ export interface PlayerAccountReadModelInput {
   dailyQuestBoard?: Partial<DailyQuestBoard> | null | undefined;
   campaignProgress?: Partial<CampaignProgressState> | null | undefined;
   dailyDungeonState?: Partial<DailyDungeonState> | null | undefined;
+  seasonalEventStates?: Partial<SeasonalEventState>[] | null | undefined;
   tutorialStep?: number | null | undefined;
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
   privacyConsentAt?: string | undefined;
   phoneNumber?: string | undefined;
   phoneNumberBoundAt?: string | undefined;
+  notificationPreferences?: Partial<NotificationPreferences> | null | undefined;
   ageVerified?: boolean | undefined;
   isMinor?: boolean | undefined;
   dailyPlayMinutes?: number | undefined;
@@ -102,6 +145,7 @@ export function normalizePlayerAccountReadModel(
   const privacyConsentAt = account?.privacyConsentAt?.trim();
   const phoneNumber = account?.phoneNumber?.trim();
   const phoneNumberBoundAt = account?.phoneNumberBoundAt?.trim();
+  const notificationPreferences = normalizeNotificationPreferences(account?.notificationPreferences);
   const ageVerified = account?.ageVerified === true;
   const isMinor = account?.isMinor === true;
   const dailyPlayMinutes = Math.max(0, Math.floor(account?.dailyPlayMinutes ?? 0));
@@ -109,6 +153,8 @@ export function normalizePlayerAccountReadModel(
   const seasonXp = Math.max(0, Math.floor(account?.seasonXp ?? 0));
   const seasonPassTier = Math.max(1, Math.floor(account?.seasonPassTier ?? 1));
   const seasonPassPremium = account?.seasonPassPremium === true;
+  const cosmeticInventory = normalizeCosmeticInventory(account?.cosmeticInventory);
+  const equippedCosmetics = normalizeEquippedCosmetics(account?.equippedCosmetics);
   const seasonPassClaimedTiers = Array.from(
     new Set(
       (account?.seasonPassClaimedTiers ?? [])
@@ -133,9 +179,58 @@ export function normalizePlayerAccountReadModel(
   const lastSeenAt = account?.lastSeenAt?.trim();
   const recentEventLog = normalizeEventLogEntries(account?.recentEventLog);
   const recentBattleReplays = normalizePlayerBattleReplaySummaries(account?.recentBattleReplays);
+  const rankDivision = account?.rankDivision ?? getRankDivisionForRating(account?.eloRating);
+  const peakRankDivision = account?.peakRankDivision ?? rankDivision;
+  const promotionSeries =
+    account?.promotionSeries &&
+    account.promotionSeries.targetDivision &&
+    Number.isFinite(account.promotionSeries.wins) &&
+    Number.isFinite(account.promotionSeries.losses)
+      ? {
+          targetDivision: account.promotionSeries.targetDivision,
+          wins: Math.max(0, Math.floor(account.promotionSeries.wins)),
+          losses: Math.max(0, Math.floor(account.promotionSeries.losses)),
+          winsRequired: Math.max(1, Math.floor(account.promotionSeries.winsRequired ?? 3)),
+          lossesAllowed: Math.max(1, Math.floor(account.promotionSeries.lossesAllowed ?? 2))
+        }
+      : undefined;
+  const demotionShield =
+    account?.demotionShield && account.demotionShield.remainingMatches > 0 && account.demotionShield.tier
+      ? {
+          tier: account.demotionShield.tier,
+          remainingMatches: Math.max(0, Math.floor(account.demotionShield.remainingMatches))
+        }
+      : undefined;
+  const seasonHistory = (account?.seasonHistory ?? [])
+    .filter((entry): entry is SeasonArchiveEntry => Boolean(entry?.seasonId && entry?.peakDivision && entry?.finalDivision))
+    .map((entry) => ({
+      seasonId: entry.seasonId.trim(),
+      peakDivision: entry.peakDivision,
+      finalDivision: entry.finalDivision,
+      rewardTier: entry.rewardTier,
+      rewardClaimed: entry.rewardClaimed === true,
+      archivedAt: normalizeTimestamp(entry.archivedAt) ?? new Date(0).toISOString()
+    }))
+    .sort((left, right) => right.archivedAt.localeCompare(left.archivedAt) || left.seasonId.localeCompare(right.seasonId));
+  let rankedWeeklyProgress: RankedWeeklyProgress | undefined;
+  if (account?.rankedWeeklyProgress?.currentWeekStartsAt) {
+    rankedWeeklyProgress = {
+      currentWeekStartsAt: normalizeTimestamp(account.rankedWeeklyProgress.currentWeekStartsAt) ?? getUtcWeekStart(),
+      currentWeekWins: Math.max(0, Math.floor(account.rankedWeeklyProgress.currentWeekWins ?? 0))
+    };
+    const previousWeekStartsAt = normalizeTimestamp(account.rankedWeeklyProgress.previousWeekStartsAt);
+    if (previousWeekStartsAt) {
+      rankedWeeklyProgress.previousWeekStartsAt = previousWeekStartsAt;
+    }
+    const previousWeekWins = Math.max(0, Math.floor(account.rankedWeeklyProgress.previousWeekWins ?? 0));
+    if (previousWeekWins > 0) {
+      rankedWeeklyProgress.previousWeekWins = previousWeekWins;
+    }
+  }
   const dailyQuestBoard = normalizeDailyQuestBoard(account?.dailyQuestBoard);
   const campaignProgress = normalizeCampaignProgressState(account?.campaignProgress);
   const dailyDungeonState = normalizeDailyDungeonState(account?.dailyDungeonState);
+  const seasonalEventStates = normalizeSeasonalEventStates(account?.seasonalEventStates);
   const tutorialStep = normalizeTutorialStep(account?.tutorialStep);
 
   return {
@@ -143,11 +238,20 @@ export function normalizePlayerAccountReadModel(
     displayName: displayName || playerId || "player",
     ...(avatarUrl ? { avatarUrl } : {}),
     eloRating: normalizeEloRating(account?.eloRating),
+    rankDivision,
+    peakRankDivision,
+    ...(promotionSeries ? { promotionSeries } : {}),
+    ...(demotionShield ? { demotionShield } : {}),
+    ...(seasonHistory.length > 0 ? { seasonHistory } : {}),
+    ...(rankedWeeklyProgress ? { rankedWeeklyProgress } : {}),
     gems: Math.max(0, Math.floor(account?.gems ?? 0)),
     ...(loginStreak > 0 ? { loginStreak } : {}),
     ...(seasonXp > 0 ? { seasonXp } : {}),
     ...(seasonPassTier > 1 ? { seasonPassTier } : {}),
     ...(seasonPassPremium ? { seasonPassPremium } : {}),
+    ...(cosmeticInventory.ownedIds.length > 0 ? { cosmeticInventory } : {}),
+    ...(Object.keys(equippedCosmetics).length > 0 ? { equippedCosmetics } : {}),
+    ...(account?.currentShopRotation ? { currentShopRotation: account.currentShopRotation } : {}),
     ...(seasonPassClaimedTiers.length > 0 ? { seasonPassClaimedTiers } : {}),
     ...(seasonBadges.length > 0 ? { seasonBadges } : {}),
     globalResources: {
@@ -165,12 +269,14 @@ export function normalizePlayerAccountReadModel(
     ...(dailyQuestBoard ? { dailyQuestBoard } : {}),
     ...(campaignProgress ? { campaignProgress } : {}),
     ...(dailyDungeonState ? { dailyDungeonState } : {}),
+    ...(seasonalEventStates ? { seasonalEventStates } : {}),
     ...(account?.tutorialStep !== undefined ? { tutorialStep } : {}),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
     ...(privacyConsentAt ? { privacyConsentAt } : {}),
     ...(phoneNumber ? { phoneNumber } : {}),
     ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
+    ...(notificationPreferences ? { notificationPreferences } : {}),
     ...(ageVerified ? { ageVerified } : {}),
     ...(isMinor ? { isMinor } : {}),
     ...(dailyPlayMinutes > 0 ? { dailyPlayMinutes } : {}),
@@ -180,6 +286,23 @@ export function normalizePlayerAccountReadModel(
     ...(banReason ? { banReason } : {}),
     ...(lastRoomId ? { lastRoomId } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {})
+  };
+}
+
+function normalizeNotificationPreferences(
+  preferences?: Partial<NotificationPreferences> | null
+): NotificationPreferences | undefined {
+  if (!preferences || typeof preferences !== "object") {
+    return undefined;
+  }
+
+  const updatedAt = preferences.updatedAt?.trim();
+  return {
+    matchFound: preferences.matchFound !== false,
+    turnReminder: preferences.turnReminder !== false,
+    groupChallenge: preferences.groupChallenge !== false,
+    friendLeaderboard: preferences.friendLeaderboard !== false,
+    ...(updatedAt ? { updatedAt } : {})
   };
 }
 
@@ -281,4 +404,47 @@ function normalizeDailyDungeonState(
         runs
       }
     : undefined;
+}
+
+function normalizeSeasonalEventStates(
+  seasonalEventStates?: Partial<SeasonalEventState>[] | null
+): SeasonalEventState[] | undefined {
+  const states = Array.from(
+    new Map(
+      (seasonalEventStates ?? [])
+        .map((state) => {
+          const eventId = state.eventId?.trim();
+          const lastUpdatedAt = normalizeTimestamp(state.lastUpdatedAt);
+          if (!eventId || !lastUpdatedAt) {
+            return null;
+          }
+
+          return [
+            eventId,
+            {
+              eventId,
+              points: Math.max(0, Math.floor(state.points ?? 0)),
+              claimedRewardIds: Array.from(
+                new Set(
+                  (state.claimedRewardIds ?? [])
+                    .map((rewardId) => rewardId?.trim())
+                    .filter((rewardId): rewardId is string => Boolean(rewardId))
+                )
+              ).sort((left, right) => left.localeCompare(right)),
+              appliedActionIds: Array.from(
+                new Set(
+                  (state.appliedActionIds ?? [])
+                    .map((actionId) => actionId?.trim())
+                    .filter((actionId): actionId is string => Boolean(actionId))
+                )
+              ).sort((left, right) => left.localeCompare(right)),
+              lastUpdatedAt
+            }
+          ] as const;
+        })
+        .filter((entry): entry is readonly [string, SeasonalEventState] => Boolean(entry))
+    ).values()
+  ).sort((left, right) => left.eventId.localeCompare(right.eventId));
+
+  return states.length > 0 ? states : undefined;
 }

@@ -14,12 +14,12 @@ import {
   queryPlayerBattleReplaySummaries,
   queryAchievementProgress,
   queryEventLogEntries,
-  type TutorialProgressAction,
-  type PlayerBattleReplaySummary
+  type PlayerBattleReplaySummary,
+  type SeasonalEventState,
+  type TutorialProgressAction
 } from "../../../packages/shared/src/index";
 import {
   createDailyQuestClaimEventLogEntry,
-  findDailyQuestDefinition,
   loadDailyQuestBoard
 } from "./daily-quests";
 import { resolveBattlePassConfig } from "./battle-pass";
@@ -41,6 +41,12 @@ import type {
   RoomSnapshotStore
 } from "./persistence";
 import { getDailyRewardDateKey, getPreviousDailyRewardDateKey, resolveDailyRewardForStreak } from "./daily-rewards";
+import {
+  applySeasonalEventProgress,
+  findSeasonalEventState,
+  getActiveSeasonalEvents,
+  resolveSeasonalEvents
+} from "./event-engine";
 import { resolveFeatureFlagsForPlayer } from "./feature-flags";
 import {
   buildCampaignMissionStates,
@@ -52,6 +58,13 @@ import {
   startDailyDungeonRun
 } from "./pve-content";
 import { decryptWechatPhoneNumber, validateWechatSignature } from "./wechat-session-key";
+import {
+  buildFriendLeaderboard,
+  createGroupChallenge,
+  encodeGroupChallengeToken,
+  normalizeNotificationPreferences,
+  validateGroupChallengeToken
+} from "./wechat-social";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -90,6 +103,10 @@ interface WechatSignatureEnvelope {
 function readExpectedWechatAppId(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const appId = env.WECHAT_APP_ID?.trim();
   return appId ? appId : undefined;
+}
+
+function readGroupChallengeSecret(env: NodeJS.ProcessEnv = process.env): string {
+  return env.VEIL_WECHAT_GROUP_CHALLENGE_SECRET?.trim() || "project-veil-local-group-challenge-secret";
 }
 
 function logWechatValidationFailure(playerId: string, operation: string, reason: string): void {
@@ -483,6 +500,45 @@ function toRewardMutation(account: PlayerAccountSnapshot, reward?: { gems?: numb
   };
 }
 
+function upsertSeasonalEventState(
+  seasonalEventStates: SeasonalEventState[] | undefined,
+  nextState: SeasonalEventState
+): SeasonalEventState[] {
+  return [...(seasonalEventStates ?? []).filter((state) => state.eventId !== nextState.eventId), nextState].sort((left, right) =>
+    left.eventId.localeCompare(right.eventId)
+  );
+}
+
+function applyActiveSeasonalEventProgress(
+  account: PlayerAccountSnapshot,
+  action: Parameters<typeof applySeasonalEventProgress>[2],
+  now = new Date()
+): {
+  seasonalEventStates: SeasonalEventState[] | undefined;
+  eventProgress: Array<{ eventId: string; delta: number; points: number; objectiveId: string }>;
+} {
+  const activeEvents = getActiveSeasonalEvents(resolveSeasonalEvents(), now);
+  let seasonalEventStates = account.seasonalEventStates;
+  const eventProgress: Array<{ eventId: string; delta: number; points: number; objectiveId: string }> = [];
+
+  for (const event of activeEvents) {
+    const progress = applySeasonalEventProgress(event, findSeasonalEventState(seasonalEventStates, event.id), action, now);
+    if (!progress) {
+      continue;
+    }
+
+    seasonalEventStates = upsertSeasonalEventState(seasonalEventStates, progress.state);
+    eventProgress.push({
+      eventId: event.id,
+      delta: progress.delta,
+      points: progress.state.points,
+      objectiveId: progress.objective.id
+    });
+  }
+
+  return { seasonalEventStates, eventProgress };
+}
+
 function normalizePlayerId(playerId?: string | null): string {
   const normalized = playerId?.trim();
   return normalized && normalized.length > 0 ? normalized : "player";
@@ -761,6 +817,126 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.get("/api/social/friend-leaderboard", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, {
+        items: [],
+        friendCount: 0
+      });
+      return;
+    }
+
+    try {
+      const friendIds = (parseOptionalQueryParam(request, "friendIds") ?? "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      const accounts = await store.loadPlayerAccounts(Array.from(new Set([authSession.playerId, ...friendIds])));
+      sendJson(response, 200, {
+        items: buildFriendLeaderboard(authSession.playerId, accounts),
+        friendCount: friendIds.length
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/social/group-challenge", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        action?: "create" | "redeem";
+        token?: string;
+        roomId?: string;
+        challengeType?: "elo" | "victory";
+        scoreTarget?: number;
+      };
+
+      if (body.action === "redeem") {
+        const result = validateGroupChallengeToken(body.token?.trim() ?? "", readGroupChallengeSecret());
+        if (!result.ok) {
+          sendJson(response, result.reason === "expired" ? 410 : 400, {
+            error: {
+              code: result.reason === "expired" ? "group_challenge_expired" : "group_challenge_invalid",
+              message: result.reason === "expired" ? "Group challenge token has expired" : "Group challenge token is invalid"
+            }
+          });
+          return;
+        }
+
+        sendJson(response, 200, {
+          challenge: result.challenge
+        });
+        return;
+      }
+
+      const challenge = createGroupChallenge({
+        creatorPlayerId: authSession.playerId,
+        creatorDisplayName: authSession.displayName,
+        roomId: body.roomId?.trim() || parseOptionalQueryParam(request, "roomId") || "room-alpha",
+        ...(body.challengeType ? { challengeType: body.challengeType } : {}),
+        ...(typeof body.scoreTarget === "number" && Number.isFinite(body.scoreTarget)
+          ? { scoreTarget: body.scoreTarget }
+          : {})
+      });
+      sendJson(response, 200, {
+        challenge,
+        token: encodeGroupChallengeToken(challenge, readGroupChallengeSecret())
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.put("/api/account/notification-prefs", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        matchFound?: boolean;
+        turnReminder?: boolean;
+        groupChallenge?: boolean;
+        friendLeaderboard?: boolean;
+      };
+      const notificationPreferences = normalizeNotificationPreferences(body);
+
+      if (!store) {
+        sendJson(response, 200, { notificationPreferences });
+        return;
+      }
+
+      const account = await store.savePlayerAccountProfile(authSession.playerId, {
+        notificationPreferences
+      });
+      sendJson(response, 200, {
+        notificationPreferences: account.notificationPreferences ?? notificationPreferences,
+        account: withBattleReportCenter(account)
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
   app.post("/api/player/daily-claim", async (request, response) => {
     const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
@@ -926,17 +1102,6 @@ export function registerPlayerAccountRoutes(
       return;
     }
 
-    const definition = findDailyQuestDefinition(request.params.questId);
-    if (!definition) {
-      sendJson(response, 404, {
-        error: {
-          code: "daily_quest_not_found",
-          message: "Daily quest was not found"
-        }
-      });
-      return;
-    }
-
     try {
       const account =
         (await store.loadPlayerAccount(authSession.playerId)) ??
@@ -948,7 +1113,10 @@ export function registerPlayerAccountRoutes(
         store,
         account,
         new Date(),
-        featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep)
+        {
+          enabled: featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep),
+          featureFlags
+        }
       );
       if (!board.enabled) {
         sendJson(response, 409, {
@@ -958,7 +1126,7 @@ export function registerPlayerAccountRoutes(
         });
         return;
       }
-      const quest = board.quests.find((item) => item.id === definition.id);
+      const quest = board.quests.find((item) => item.id === request.params.questId);
 
       if (!quest) {
         sendJson(response, 404, {
@@ -992,14 +1160,14 @@ export function registerPlayerAccountRoutes(
       const claimEntry = createDailyQuestClaimEventLogEntry(
         account.playerId,
         account.lastRoomId ?? "daily-quests",
-        definition,
+        quest,
         timestamp
       );
       const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
-        gems: (account.gems ?? 0) + definition.reward.gems,
+        gems: (account.gems ?? 0) + quest.reward.gems,
         globalResources: {
           ...account.globalResources,
-          gold: (account.globalResources.gold ?? 0) + definition.reward.gold
+          gold: (account.globalResources.gold ?? 0) + quest.reward.gold
         },
         recentEventLog: appendEventLogEntries(account.recentEventLog, [claimEntry])
       });
@@ -1008,20 +1176,23 @@ export function registerPlayerAccountRoutes(
         roomId: account.lastRoomId ?? "daily-quests",
         payload: {
           roomId: account.lastRoomId ?? "daily-quests",
-          questId: definition.id,
-          reward: definition.reward
+          questId: quest.id,
+          reward: quest.reward
         }
       });
 
       sendJson(response, 200, {
         claimed: true,
-        questId: definition.id,
-        reward: definition.reward,
+        questId: quest.id,
+        reward: quest.reward,
         dailyQuestBoard: await loadDailyQuestBoard(
           store,
           nextAccount,
           new Date(),
-          featureFlags.quest_system_enabled && isTutorialComplete(nextAccount.tutorialStep)
+          {
+            enabled: featureFlags.quest_system_enabled && isTutorialComplete(nextAccount.tutorialStep),
+            featureFlags
+          }
         )
       });
     } catch (error) {
@@ -1376,17 +1547,29 @@ export function registerPlayerAccountRoutes(
       const dungeon = resolvePrimaryDailyDungeon();
       const result = claimDailyDungeonRunReward(dungeon, account.dailyDungeonState, runId);
       const rewardMutation = toRewardMutation(account, result.floor.reward);
+      const eventMutation = applyActiveSeasonalEventProgress(
+        account,
+        {
+          actionId: result.run.runId,
+          actionType: "daily_dungeon_reward_claimed",
+          dungeonId: result.run.dungeonId,
+          ...(result.run.rewardClaimedAt ? { occurredAt: result.run.rewardClaimedAt } : {})
+        },
+        new Date(result.run.rewardClaimedAt ?? new Date().toISOString())
+      );
       const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
         dailyDungeonState: result.dailyDungeonState,
         gems: rewardMutation.gems,
-        globalResources: rewardMutation.globalResources
+        globalResources: rewardMutation.globalResources,
+        ...(eventMutation.seasonalEventStates ? { seasonalEventStates: eventMutation.seasonalEventStates } : {})
       });
 
       sendJson(response, 200, {
         claimed: true,
         run: result.run,
         reward: result.floor.reward,
-        dailyDungeon: toDailyDungeonResponse(nextAccount)
+        dailyDungeon: toDailyDungeonResponse(nextAccount),
+        ...(eventMutation.eventProgress.length > 0 ? { eventProgress: eventMutation.eventProgress } : {})
       });
     } catch (error) {
       if (error instanceof Error && error.message === "daily_dungeon_run_not_found") {

@@ -7,6 +7,7 @@ import { resetAccountTokenDeliveryState } from "../src/account-token-delivery";
 import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../src/colyseus-room";
 import { registerPrometheusMetricsMiddleware, registerPrometheusMetricsRoute } from "../src/dev-server";
 import {
+  recordRuntimeErrorEvent,
   recordMatchmakingRateLimited,
   registerRuntimeObservabilityRoutes,
   resetRuntimeObservability
@@ -122,6 +123,28 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   await wait(100);
   recordMatchmakingRateLimited();
   recordMatchmakingRateLimited();
+  recordRuntimeErrorEvent({
+    id: "server-payment-1",
+    recordedAt: "2026-04-03T08:35:00.000Z",
+    source: "server",
+    surface: "server",
+    candidateRevision: "abc1234",
+    featureArea: "payment",
+    ownerArea: "commerce",
+    severity: "error",
+    errorCode: "wechat_pay_timeout",
+    message: "WeChat payment confirmation timed out.",
+    context: {
+      roomId: "room-observability-alpha",
+      playerId: "player-1",
+      requestId: "pay-1",
+      route: "/api/wechat/pay/confirm",
+      action: "payment.confirm",
+      statusCode: 504,
+      crash: false,
+      detail: "upstream timeout"
+    }
+  });
 
   const healthResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/health`);
   const healthPayload = (await healthResponse.json()) as {
@@ -194,6 +217,13 @@ test("runtime observability routes expose live room counts and gameplay traffic"
     diagnostics: {
       predictionStatus: string | null;
       logTail: string[];
+      errorSummary: {
+        totalEvents: number;
+        topFingerprints: Array<{
+          errorCode: string;
+          featureArea: string;
+        }>;
+      };
     };
   };
 
@@ -207,6 +237,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(diagnosticPayload.overview.roomSummaries[0]?.day, 1);
   assert.equal(diagnosticPayload.overview.roomSummaries[0]?.connectedPlayers, 1);
   assert.equal(diagnosticPayload.diagnostics.predictionStatus, "server-observability");
+  assert.equal(diagnosticPayload.diagnostics.errorSummary.totalEvents, 1);
+  assert.equal(diagnosticPayload.diagnostics.errorSummary.topFingerprints[0]?.errorCode, "wechat_pay_timeout");
+  assert.equal(diagnosticPayload.diagnostics.errorSummary.topFingerprints[0]?.featureArea, "payment");
   assert.match(diagnosticPayload.diagnostics.logTail[0] ?? "", /rooms=1 connections=1/);
 
   const diagnosticTextResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/diagnostic-snapshot?format=text`);
@@ -216,6 +249,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(diagnosticTextResponse.headers.get("content-type") ?? "", /^text\/plain/);
   assert.match(diagnosticText, /Mode server \(server-observability\)/);
   assert.match(diagnosticText, /Runtime rooms 1 \/ connections 1 \/ battles 0/);
+  assert.match(diagnosticText, /Errors 1 \/ fingerprints 1 \/ fatal 0 \/ crashes 0/);
   assert.match(diagnosticText, /Room summary room-observability-alpha \/ day 1 \/ players 1/);
 
   const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`);

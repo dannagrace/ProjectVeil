@@ -1,5 +1,15 @@
-import type { BattleAction, BattleState, MovementPlan, Vec2, WorldAction, WorldEvent } from "./models.ts";
+import type {
+  BattleAction,
+  BattleState,
+  CosmeticId,
+  EquippedCosmetics,
+  MovementPlan,
+  Vec2,
+  WorldAction,
+  WorldEvent
+} from "./models.ts";
 import type { FeatureFlags } from "./feature-flags.ts";
+import type { GuildRosterView, GuildSummaryView } from "./guilds.ts";
 import type { PlayerWorldViewPayload } from "./map-sync.ts";
 import type { RuntimeConfigBundle } from "./world-config.ts";
 
@@ -8,6 +18,19 @@ export type SessionStateReason = "surrender" | "afk_forfeit" | "normal" | (strin
 export interface TutorialProgressAction {
   step: number | null;
   reason?: "advance" | "skip" | "complete";
+}
+
+export interface CampaignDialogueAckAction {
+  missionId: string;
+  sequence: "intro" | "outro";
+  dialogueLineId: string;
+}
+
+export interface EventProgressUpdatePayload {
+  eventId: string;
+  points: number;
+  delta: number;
+  objectiveId: string;
 }
 
 export interface SessionStatePayload {
@@ -22,6 +45,25 @@ export interface SessionStatePayload {
 
 export type PlayerReportReason = "cheating" | "harassment" | "afk";
 export type PlayerReportStatus = "pending" | "dismissed" | "warned" | "banned";
+
+export interface GuildCreateAction {
+  name: string;
+  tag: string;
+  description?: string;
+  memberLimit?: number;
+}
+
+export interface GuildJoinAction {
+  guildId: string;
+}
+
+export interface GuildLeaveAction {
+  guildId: string;
+}
+
+export interface GuildGetAction {
+  guildId: string;
+}
 
 export type ClientMessage =
   | {
@@ -65,6 +107,67 @@ export type ClientMessage =
       type: "tutorial.progress";
       requestId: string;
       action: TutorialProgressAction;
+    }
+  | {
+      type: "SHARE_ACTIVITY";
+      requestId: string;
+      activity: "battle_victory" | "group_challenge";
+      roomId?: string;
+      challengeToken?: string;
+    }
+  | {
+      type: "FRIEND_LEADERBOARD_REQUEST";
+      requestId: string;
+      friendIds?: string[];
+    }
+  | {
+      type: "campaign.dialogue.ack";
+      requestId: string;
+      action: CampaignDialogueAckAction;
+    }
+  | {
+      type: "guild.create";
+      requestId: string;
+      action: GuildCreateAction;
+    }
+  | {
+      type: "guild.join";
+      requestId: string;
+      action: GuildJoinAction;
+    }
+  | {
+      type: "guild.leave";
+      requestId: string;
+      action: GuildLeaveAction;
+    }
+  | {
+      type: "guild.list";
+      requestId: string;
+    }
+  | {
+      type: "guild.get";
+      requestId: string;
+      action: GuildGetAction;
+    }
+  | {
+      type: "guild.roster";
+      requestId: string;
+      action: GuildGetAction;
+    }
+  | {
+      type: "BUY_COSMETIC";
+      requestId: string;
+      cosmeticId: CosmeticId;
+    }
+  | {
+      type: "EQUIP_COSMETIC";
+      requestId: string;
+      cosmeticId: CosmeticId;
+    }
+  | {
+      type: "USE_EMOTE";
+      requestId: string;
+      emoteId: CosmeticId;
     };
 
 export type ServerMessage =
@@ -110,4 +213,34 @@ export type ServerMessage =
       requestId: "push";
       delivery: "push";
       payload: { bundle: RuntimeConfigBundle };
+    }
+  | {
+      type: "event.progress.update";
+      requestId: "push";
+      delivery: "push";
+      payload: EventProgressUpdatePayload;
+    }
+  | {
+      type: "guild.list";
+      requestId: string;
+      items: GuildSummaryView[];
+    }
+  | {
+      type: "guild.get";
+      requestId: string;
+      guild: GuildSummaryView;
+    }
+  | {
+      type: "guild.roster";
+      requestId: string;
+      roster: GuildRosterView;
+    }
+  | {
+      type: "COSMETIC_APPLIED";
+      requestId: string;
+      delivery: "reply" | "push";
+      playerId: string;
+      cosmeticId: CosmeticId;
+      action: "purchased" | "equipped" | "emote";
+      equippedCosmetics?: EquippedCosmetics;
     };
