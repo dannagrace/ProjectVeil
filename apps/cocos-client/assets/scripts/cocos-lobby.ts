@@ -230,6 +230,10 @@ interface PlayerSeasonProgressApiPayload {
 interface DailyDungeonApiPayload {
   dailyDungeon?: {
     dungeon?: Partial<DailyDungeonDefinition> & {
+      activeWindow?: {
+        startDate?: string;
+        endDate?: string;
+      };
       floors?: Array<{
         floor?: number;
         recommendedHeroLevel?: number;
@@ -449,6 +453,9 @@ function normalizeDailyDungeonSummary(
   const dungeonId = payload?.dungeon?.id?.trim();
   const dungeonName = payload?.dungeon?.name?.trim();
   const dungeonDescription = payload?.dungeon?.description?.trim();
+  const dateKey = payload?.dateKey?.trim() || new Date().toISOString().slice(0, 10);
+  const activeWindowStartDate = payload?.dungeon?.activeWindow?.startDate?.trim() || dateKey;
+  const activeWindowEndDate = payload?.dungeon?.activeWindow?.endDate?.trim() || activeWindowStartDate;
   const rawFloors = payload?.dungeon?.floors ?? [];
   if (!dungeonId || !dungeonName || !dungeonDescription || rawFloors.length === 0) {
     return null;
@@ -482,9 +489,13 @@ function normalizeDailyDungeonSummary(
       name: dungeonName,
       description: dungeonDescription,
       attemptLimit: Math.max(1, Math.floor(payload?.dungeon?.attemptLimit ?? floors.length)),
+      activeWindow: {
+        startDate: activeWindowStartDate,
+        endDate: activeWindowEndDate
+      },
       floors
     },
-    dateKey: payload?.dateKey?.trim() || new Date().toISOString().slice(0, 10),
+    dateKey,
     attemptsUsed: Math.max(0, Math.floor(payload?.attemptsUsed ?? 0)),
     attemptsRemaining: Math.max(0, Math.floor(payload?.attemptsRemaining ?? 0)),
     runs: normalizeDailyDungeonRuns(payload?.runs)

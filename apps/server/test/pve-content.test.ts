@@ -5,6 +5,7 @@ import {
   buildDailyDungeonSummary,
   claimDailyDungeonRunReward,
   getCurrentDailyDungeonState,
+  resolveActiveDailyDungeon,
   resolveCampaignConfig,
   resolveDailyDungeonConfig,
   startDailyDungeonRun
@@ -78,7 +79,7 @@ test("campaign chapter gates require prior chapter clears, hero level 15, and si
 });
 
 test("daily dungeon state resets by date key and enforces one-time reward claims per run", () => {
-  const [dungeon] = resolveDailyDungeonConfig();
+  const dungeon = resolveActiveDailyDungeon(new Date("2026-04-06T02:00:00.000Z"));
   assert.ok(dungeon);
 
   const started = startDailyDungeonRun(dungeon, undefined, 2, new Date("2026-04-04T02:00:00.000Z"));
@@ -96,4 +97,113 @@ test("daily dungeon state resets by date key and enforces one-time reward claims
   assert.equal(reset.dateKey, "2026-04-05");
   assert.equal(reset.attemptsUsed, 0);
   assert.deepEqual(reset.runs, []);
+});
+
+test("daily dungeon config includes weekly windows and resolves the active rotation by date", () => {
+  const dungeons = resolveDailyDungeonConfig();
+
+  assert.equal(dungeons.length, 5);
+  assert.deepEqual(
+    dungeons.map((dungeon) => dungeon.id),
+    ["shadow-archives", "ember-forge", "tideworn-sanctum", "verdant-maze", "stormglass-spire"]
+  );
+  assert.deepEqual(
+    dungeons.map((dungeon) => dungeon.activeWindow.startDate),
+    ["2026-04-06", "2026-04-13", "2026-04-20", "2026-04-27", "2026-05-04"]
+  );
+  assert.equal(resolveActiveDailyDungeon(new Date("2026-04-08T12:00:00.000Z")).id, "shadow-archives");
+  assert.equal(resolveActiveDailyDungeon(new Date("2026-04-15T12:00:00.000Z")).id, "ember-forge");
+  assert.equal(resolveActiveDailyDungeon(new Date("2026-04-22T12:00:00.000Z")).id, "tideworn-sanctum");
+  assert.equal(resolveActiveDailyDungeon(new Date("2026-04-29T12:00:00.000Z")).id, "verdant-maze");
+  assert.equal(resolveActiveDailyDungeon(new Date("2026-05-06T12:00:00.000Z")).id, "stormglass-spire");
+});
+
+test("daily dungeon config validation rejects malformed weekly windows", () => {
+  assert.throws(
+    () =>
+      resolveDailyDungeonConfig({
+        dungeons: [
+          {
+            id: "broken-rotation",
+            name: "Broken Rotation",
+            description: "Invalid authored window",
+            attemptLimit: 3,
+            activeWindow: {
+              startDate: "2026-04-06",
+              endDate: "2026-04-10"
+            },
+            floors: [
+              {
+                floor: 1,
+                recommendedHeroLevel: 1,
+                enemyArmyTemplateId: "wolf_pack",
+                enemyArmyCount: 10,
+                enemyStatMultiplier: 1.1,
+                reward: { gems: 5 }
+              }
+            ]
+          }
+        ]
+      }),
+    /activeWindow must span exactly 7 calendar days/
+  );
+});
+
+test("daily dungeon rotation rejects gaps and overlapping active windows", () => {
+  assert.throws(
+    () => resolveActiveDailyDungeon(new Date("2026-04-05T12:00:00.000Z")),
+    /daily_dungeon_not_active_for_2026-04-05/
+  );
+
+  assert.throws(
+    () =>
+      resolveActiveDailyDungeon(
+        new Date("2026-04-08T12:00:00.000Z"),
+        {
+          dungeons: [
+            {
+              id: "shadow-archives",
+              name: "Shadow Archives",
+              description: "Baseline window",
+              attemptLimit: 3,
+              activeWindow: {
+                startDate: "2026-04-06",
+                endDate: "2026-04-12"
+              },
+              floors: [
+                {
+                  floor: 1,
+                  recommendedHeroLevel: 1,
+                  enemyArmyTemplateId: "wolf_pack",
+                  enemyArmyCount: 10,
+                  enemyStatMultiplier: 1.1,
+                  reward: { gems: 5 }
+                }
+              ]
+            },
+            {
+              id: "ember-forge",
+              name: "Ember Forge",
+              description: "Overlapping window",
+              attemptLimit: 3,
+              activeWindow: {
+                startDate: "2026-04-08",
+                endDate: "2026-04-14"
+              },
+              floors: [
+                {
+                  floor: 1,
+                  recommendedHeroLevel: 1,
+                  enemyArmyTemplateId: "hero_guard_basic",
+                  enemyArmyCount: 10,
+                  enemyStatMultiplier: 1.1,
+                  reward: { gems: 5 }
+                }
+              ]
+            }
+          ]
+        }
+      ),
+    /activeWindow overlaps with dungeon "shadow-archives"/
+  );
 });

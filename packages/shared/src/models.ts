@@ -1339,11 +1339,17 @@ export interface DailyDungeonFloor {
   reward: DailyDungeonReward;
 }
 
+export interface DailyDungeonActiveWindow {
+  startDate: string;
+  endDate: string;
+}
+
 export interface DailyDungeonDefinition {
   id: string;
   name: string;
   description: string;
   attemptLimit: number;
+  activeWindow: DailyDungeonActiveWindow;
   floors: DailyDungeonFloor[];
 }
 

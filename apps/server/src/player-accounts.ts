@@ -59,7 +59,7 @@ import {
   claimDailyDungeonRunReward,
   completeCampaignMission,
   resolveCampaignConfig,
-  resolveDailyDungeonConfig,
+  resolveActiveDailyDungeon,
   startDailyDungeonRun
 } from "./pve-content";
 import { decryptWechatPhoneNumber, validateWechatSignature } from "./wechat-session-key";
@@ -528,8 +528,8 @@ function toCampaignResponse(account: PlayerAccountSnapshot, accessContext?: Camp
   };
 }
 
-function resolvePrimaryDailyDungeon() {
-  const [dungeon] = resolveDailyDungeonConfig();
+function resolvePrimaryDailyDungeon(now = new Date()) {
+  const dungeon = resolveActiveDailyDungeon(now);
   if (!dungeon) {
     throw new Error("daily_dungeon_not_configured");
   }
@@ -537,7 +537,7 @@ function resolvePrimaryDailyDungeon() {
 }
 
 function toDailyDungeonResponse(account: PlayerAccountSnapshot, now = new Date()) {
-  return buildDailyDungeonSummary(resolvePrimaryDailyDungeon(), account.dailyDungeonState, now);
+  return buildDailyDungeonSummary(resolvePrimaryDailyDungeon(now), account.dailyDungeonState, now);
 }
 
 function toRewardMutation(

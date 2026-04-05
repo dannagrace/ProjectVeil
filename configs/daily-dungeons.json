@@ -3,15 +3,19 @@
     {
       "id": "shadow-archives",
       "name": "Shadow Archives",
-      "description": "A rotating solo dungeon with limited daily entries and floor rewards.",
+      "description": "Dust-clogged shelves and sealed scriptoria where scouting parties disappear between lantern pools.",
       "attemptLimit": 3,
+      "activeWindow": {
+        "startDate": "2026-04-06",
+        "endDate": "2026-04-12"
+      },
       "floors": [
         {
           "floor": 1,
           "recommendedHeroLevel": 2,
           "enemyArmyTemplateId": "wolf_pack",
           "enemyArmyCount": 14,
-          "enemyStatMultiplier": 1.2,
+          "enemyStatMultiplier": 1.15,
           "reward": { "gems": 10, "resources": { "gold": 160 } }
         },
         {
@@ -19,16 +23,160 @@
           "recommendedHeroLevel": 3,
           "enemyArmyTemplateId": "hero_guard_basic",
           "enemyArmyCount": 18,
-          "enemyStatMultiplier": 1.45,
-          "reward": { "gems": 15, "resources": { "gold": 220, "ore": 10 } }
+          "enemyStatMultiplier": 1.4,
+          "reward": { "gems": 14, "resources": { "gold": 220, "ore": 10 } }
         },
         {
           "floor": 3,
           "recommendedHeroLevel": 4,
-          "enemyArmyTemplateId": "hero_guard_basic",
+          "enemyArmyTemplateId": "shadow_hexer",
           "enemyArmyCount": 22,
           "enemyStatMultiplier": 1.7,
           "reward": { "gems": 20, "resources": { "gold": 300, "wood": 15 } }
+        }
+      ]
+    },
+    {
+      "id": "ember-forge",
+      "name": "Ember Forge",
+      "description": "Collapsed smelting halls packed with heat blooms, armored sentries, and punishing attrition.",
+      "attemptLimit": 3,
+      "activeWindow": {
+        "startDate": "2026-04-13",
+        "endDate": "2026-04-19"
+      },
+      "floors": [
+        {
+          "floor": 1,
+          "recommendedHeroLevel": 4,
+          "enemyArmyTemplateId": "crown_crossbowman",
+          "enemyArmyCount": 20,
+          "enemyStatMultiplier": 1.35,
+          "reward": { "gems": 12, "resources": { "gold": 200, "ore": 12 } }
+        },
+        {
+          "floor": 2,
+          "recommendedHeroLevel": 5,
+          "enemyArmyTemplateId": "iron_walker",
+          "enemyArmyCount": 24,
+          "enemyStatMultiplier": 1.7,
+          "reward": { "gems": 18, "resources": { "gold": 280, "ore": 20 } }
+        },
+        {
+          "floor": 3,
+          "recommendedHeroLevel": 7,
+          "enemyArmyTemplateId": "crown_heavy_cavalry",
+          "enemyArmyCount": 26,
+          "enemyStatMultiplier": 2.05,
+          "reward": { "gems": 24, "resources": { "gold": 360, "wood": 18, "ore": 24 } }
+        }
+      ]
+    },
+    {
+      "id": "tideworn-sanctum",
+      "name": "Tideworn Sanctum",
+      "description": "A drowned shrine where each descent trades simple skirmishes for higher-count swarming pressure.",
+      "attemptLimit": 3,
+      "activeWindow": {
+        "startDate": "2026-04-20",
+        "endDate": "2026-04-26"
+      },
+      "floors": [
+        {
+          "floor": 1,
+          "recommendedHeroLevel": 5,
+          "enemyArmyTemplateId": "moss_stalker",
+          "enemyArmyCount": 18,
+          "enemyStatMultiplier": 1.3,
+          "reward": { "gems": 12, "resources": { "gold": 210, "wood": 14 } }
+        },
+        {
+          "floor": 2,
+          "recommendedHeroLevel": 6,
+          "enemyArmyTemplateId": "wild_serpent",
+          "enemyArmyCount": 25,
+          "enemyStatMultiplier": 1.55,
+          "reward": { "gems": 16, "resources": { "gold": 260, "wood": 22 } }
+        },
+        {
+          "floor": 3,
+          "recommendedHeroLevel": 8,
+          "enemyArmyTemplateId": "shadow_wraith",
+          "enemyArmyCount": 32,
+          "enemyStatMultiplier": 1.8,
+          "reward": { "gems": 22, "resources": { "gold": 340, "wood": 30, "ore": 12 } }
+        }
+      ]
+    },
+    {
+      "id": "verdant-maze",
+      "name": "Verdant Maze",
+      "description": "Overgrown battlements where the route stays manageable early, then spikes sharply at the canopy heart.",
+      "attemptLimit": 3,
+      "activeWindow": {
+        "startDate": "2026-04-27",
+        "endDate": "2026-05-03"
+      },
+      "floors": [
+        {
+          "floor": 1,
+          "recommendedHeroLevel": 3,
+          "enemyArmyTemplateId": "wild_hawk_rider",
+          "enemyArmyCount": 16,
+          "enemyStatMultiplier": 1.25,
+          "reward": { "gems": 11, "resources": { "gold": 180, "wood": 12 } }
+        },
+        {
+          "floor": 2,
+          "recommendedHeroLevel": 4,
+          "enemyArmyTemplateId": "moss_stalker",
+          "enemyArmyCount": 21,
+          "enemyStatMultiplier": 1.45,
+          "reward": { "gems": 15, "resources": { "gold": 240, "wood": 18, "ore": 8 } }
+        },
+        {
+          "floor": 3,
+          "recommendedHeroLevel": 7,
+          "enemyArmyTemplateId": "wild_cave_troll",
+          "enemyArmyCount": 23,
+          "enemyStatMultiplier": 2.15,
+          "reward": { "gems": 23, "resources": { "gold": 330, "wood": 26, "ore": 16 } }
+        }
+      ]
+    },
+    {
+      "id": "stormglass-spire",
+      "name": "Stormglass Spire",
+      "description": "A lightning-raked tower tuned as the hardest rotation, with every floor demanding stronger burst and sustain.",
+      "attemptLimit": 3,
+      "activeWindow": {
+        "startDate": "2026-05-04",
+        "endDate": "2026-05-10"
+      },
+      "floors": [
+        {
+          "floor": 1,
+          "recommendedHeroLevel": 6,
+          "enemyArmyTemplateId": "crown_field_chaplain",
+          "enemyArmyCount": 22,
+          "enemyStatMultiplier": 1.6,
+          "reward": { "gems": 14, "resources": { "gold": 230, "ore": 14 } }
+        },
+        {
+          "floor": 2,
+          "recommendedHeroLevel": 8,
+          "enemyArmyTemplateId": "shadow_wraith",
+          "enemyArmyCount": 27,
+          "enemyStatMultiplier": 1.95,
+          "reward": { "gems": 20, "resources": { "gold": 310, "wood": 18, "ore": 18 } }
+        },
+        {
+          "floor": 3,
+          "recommendedHeroLevel": 10,
+          "enemyArmyTemplateId": "shadow_death_knight",
+          "enemyArmyCount": 30,
+          "enemyStatMultiplier": 2.35,
+          "reward": { "gems": 28, "resources": { "gold": 420, "wood": 24, "ore": 30 } }
         }
       ]
     }

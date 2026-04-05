@@ -6,6 +6,7 @@ import {
   getDefaultBattleBalanceConfig,
   validateBattleBalanceConfig,
   validateBattleSkillCatalog,
+  validateDailyDungeonConfigDocument,
   validateContentPackConsistency,
   validateEquipmentCatalog,
   validateHeroSkillTreeConfig,
@@ -16,6 +17,7 @@ import {
   type BattleSkillCatalogConfig,
   type ContentPackDocumentId,
   type ContentPackValidationIssue,
+  type DailyDungeonConfigDocument,
   type HeroSkillTreeConfig,
   type MapObjectsConfig,
   type RuntimeConfigBundle,
@@ -28,7 +30,7 @@ import {
   type ContentPackMapPackDefinition
 } from "./content-pack-map-packs.ts";
 
-type ValidationDocumentId = ContentPackDocumentId | "heroSkills" | "equipment";
+type ValidationDocumentId = ContentPackDocumentId | "heroSkills" | "equipment" | "dailyDungeons";
 
 interface DocumentValidationIssue {
   bundleId: string;
@@ -203,14 +205,22 @@ async function validateAuthoringConfigs(
     }
   };
 
-  const [compactHeroSkills, fullHeroSkills] = await Promise.all([
+  const [compactHeroSkills, fullHeroSkills, dailyDungeons] = await Promise.all([
     readJsonConfig<HeroSkillTreeConfig>(rootDir, "hero-skills.json"),
-    readJsonConfig<HeroSkillTreeConfig>(rootDir, "hero-skill-trees-full.json")
+    readJsonConfig<HeroSkillTreeConfig>(rootDir, "hero-skill-trees-full.json"),
+    readJsonConfig<DailyDungeonConfigDocument>(rootDir, "daily-dungeons.json")
   ]);
 
   capture("heroSkills", "hero-skills.json", () => validateHeroSkillTreeConfig(compactHeroSkills, battleSkills));
   capture("heroSkills", "hero-skill-trees-full.json", () => validateHeroSkillTreeConfig(fullHeroSkills, battleSkills));
   capture("equipment", "packages/shared/src/equipment.ts", () => validateEquipmentCatalog(getDefaultEquipmentCatalog()));
+  capture("dailyDungeons", "daily-dungeons.json", () => {
+    const issues = validateDailyDungeonConfigDocument(dailyDungeons);
+    if (issues.length > 0) {
+      const [firstIssue] = issues;
+      throw new Error(`${firstIssue?.path}: ${firstIssue?.message}`);
+    }
+  });
 
   return issues;
 }
