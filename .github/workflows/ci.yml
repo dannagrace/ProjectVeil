@@ -153,6 +153,9 @@ jobs:
       - name: Validate all shipped content-pack variants
         run: npm run validate:content-pack:all
 
+      - name: Validate release script inventory stays in sync
+        run: npm run test:release-script-inventory
+
       - name: Test With V8 Coverage
         run: npm run test:coverage:ci
 
