@@ -116,9 +116,10 @@ WeChat checklist / blockers 至少要覆盖以下证据面：
    - `reconnect-recovery` 必须复用 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 的 canonical scenario、最小成功信号和失败诊断口径。
 11. 按 [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md) 与 [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md) 为同一 candidate revision 回填 runtime observability sign-off，确认 release 环境的 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics` 都已有可追溯证据，并记录 reviewer 与 `recordedAt`。
 12. 运行 `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json [--release-readiness-snapshot artifacts/release-readiness/<candidate>.json]`，脚本会先自动生成 candidate+revision 命名的 `cocos-primary-journey-evidence` JSON / Markdown 与 milestone diagnostics，再一次性输出 bundle manifest、Markdown 摘要、RC snapshot、checklist 与 blockers，并把微信 smoke 的 Lobby / 进房 / 重连证据并入统一的 Cocos RC 快照；若设备 evidence 缺失，会在快照和摘要里显式标成 `partial` 或 `blocked`，而不是默认为通过。
-13. 直接回填同一 bundle 里的 checklist / blockers 文件，仅补充自动化未覆盖的设备、observability 结论和 blocker；不要再额外复制模板或在 PR 里发明另一套字段。
-14. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
-15. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
+13. 紧接着运行 `node --import tsx ./scripts/cocos-rc-evidence-consistency-check.ts --candidate <candidate-name> --expected-revision <git-sha>`，确认 release-readiness snapshot、gate summary、primary journey evidence、RC snapshot、main-journey manifest 与 bundle manifest 仍指向同一 candidate revision，且都在 freshness window 内；若任何 artifact 缺失、revision 漂移或引用了旧快照，这一步会直接失败并写出 JSON / Markdown 摘要。
+14. 直接回填同一 bundle 里的 checklist / blockers 文件，仅补充自动化未覆盖的设备、observability 结论和 blocker；不要再额外复制模板或在 PR 里发明另一套字段。
+15. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
+16. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
 
 ## 发布彩排摘要
 

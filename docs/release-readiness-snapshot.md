@@ -65,6 +65,16 @@ npm run release:same-candidate:evidence-audit -- \
 
 The audit writes both JSON and Markdown under `artifacts/release-readiness/`, links back to the underlying artifact paths, fails closed on revision drift, and now also flags pending ledger rows plus stale or blocked WeChat/runtime-observability evidence when `artifacts/wechat-release/codex.wechat.release-candidate-summary.json` is present.
 
+If reviewers only need the lightweight Cocos RC packet check before manual checklist or blocker review, run:
+
+```bash
+node --import tsx ./scripts/cocos-rc-evidence-consistency-check.ts \
+  --candidate <candidate-name> \
+  --expected-revision <git-sha>
+```
+
+That check stays intentionally narrow: it only reads the latest release-readiness snapshot, release gate summary, primary-journey evidence, Cocos RC snapshot, main-journey manifest, and Cocos RC bundle for the candidate, then flags candidate drift, revision drift, stale timestamps, or linked-artifact mismatches in one JSON + Markdown summary.
+
 ## Usage
 
 Run the full automated snapshot and write the result under `artifacts/release-readiness/`:
