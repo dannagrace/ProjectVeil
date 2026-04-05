@@ -133,6 +133,8 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - `apps/cocos-client`
   - Cocos Creator 3.x 主客户端运行时。
   - 当前已覆盖 Lobby、地图探索、战斗、账号会话恢复和配置中心跳转的主流程。
+- `docs/runtime-contract-cocos-h5.md`
+  - 约定 `apps/cocos-client` 主运行时与 `apps/client` H5 调试壳的 ownership、旅程边界，以及验证 / 发布门禁如何按该分工收口。
 - `docs/phase1-design.md`
   - 更细的产品、技术与小程序部署方案。
 - `docs/test-coverage-audit-issue-199.md`
@@ -215,6 +217,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - GitHub Actions `readme-script-gate` 会阻塞 `npm run validate:quickstart`、`npm run test:client:config-center` 与 `npm run test:contracts` 的回归；若其中任一 README 命令失效，失败日志会直接标出对应命令
 - 并发房间压测会按 `world_progression / battle_settlement / reconnect` 三种场景分开跑数，并输出 CPU、内存、房间吞吐、动作吞吐等指标；可通过 `--scenarios=world_progression,reconnect` 等参数缩小范围
 - 当前客户端边界：`apps/cocos-client` 负责主玩法运行时；`apps/client` 只保留浏览器调试、配置联调和回归验证。
+- 主运行时 / H5 调试壳 contract：`docs/runtime-contract-cocos-h5.md`
 - 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
 - 微信小游戏 runtime observability 签核：`docs/wechat-runtime-observability-signoff.md`
 - 微信小游戏 runtime observability 签核模板：`docs/release-evidence/wechat-runtime-observability-signoff.template.md`
