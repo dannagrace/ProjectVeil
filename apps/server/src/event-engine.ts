@@ -10,7 +10,8 @@ import type {
   SeasonalEventState
 } from "../../../packages/shared/src/index";
 import { validateAuthSessionFromRequest } from "./auth";
-import type { PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
+import type { DailyQuestConfigDefinition } from "./daily-quest-config";
+import type { PlayerAccountSnapshot, PlayerQuestRotationHistoryEntry, PlayerQuestState, RoomSnapshotStore } from "./persistence";
 
 interface SeasonalEventSummaryDocument {
   id?: string | null;
@@ -56,6 +57,170 @@ export interface SeasonalEventActionInput {
   actionType: SeasonalEventObjective["actionType"];
   dungeonId?: string;
   occurredAt?: string;
+}
+
+export interface RotateDailyQuestsInput {
+  playerId: string;
+  dateKey: string;
+  questPool: DailyQuestConfigDefinition[];
+  questState?: PlayerQuestState | null;
+}
+
+export interface RotateDailyQuestsResult {
+  quests: DailyQuestConfigDefinition[];
+  state: PlayerQuestState;
+  rotated: boolean;
+}
+
+const DAILY_QUEST_SELECTION_SIZE = 3;
+const DAILY_QUEST_NO_REPEAT_WINDOW_DAYS = 7;
+const DAILY_QUEST_TIER_WEIGHTS: Record<DailyQuestConfigDefinition["tier"], number> = {
+  common: 0.6,
+  rare: 0.3,
+  epic: 0.1
+};
+
+function isValidDateKey(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`));
+}
+
+function toUtcDayIndex(dateKey: string): number {
+  return Math.floor(Date.parse(`${dateKey}T00:00:00.000Z`) / 86_400_000);
+}
+
+function createSeededRandom(seed: string): () => number {
+  let state = 2166136261;
+  for (let index = 0; index < seed.length; index += 1) {
+    state ^= seed.charCodeAt(index);
+    state = Math.imul(state, 16777619);
+  }
+
+  return () => {
+    state += 0x6d2b79f5;
+    let next = Math.imul(state ^ (state >>> 15), state | 1);
+    next ^= next + Math.imul(next ^ (next >>> 7), next | 61);
+    return ((next ^ (next >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function normalizeQuestIds(questIds: string[] | undefined): string[] {
+  return Array.from(new Set((questIds ?? []).map((questId) => questId?.trim()).filter((questId): questId is string => Boolean(questId))));
+}
+
+function normalizeQuestRotationEntry(entry: PlayerQuestRotationHistoryEntry): PlayerQuestRotationHistoryEntry {
+  return {
+    dateKey: entry.dateKey,
+    questIds: normalizeQuestIds(entry.questIds),
+    completedQuestIds: normalizeQuestIds(entry.completedQuestIds),
+    claimedQuestIds: normalizeQuestIds(entry.claimedQuestIds)
+  };
+}
+
+function trimQuestRotations(rotations: PlayerQuestRotationHistoryEntry[], dateKey: string): PlayerQuestRotationHistoryEntry[] {
+  const currentDayIndex = toUtcDayIndex(dateKey);
+  return rotations
+    .filter((entry) => isValidDateKey(entry.dateKey) && currentDayIndex - toUtcDayIndex(entry.dateKey) < DAILY_QUEST_NO_REPEAT_WINDOW_DAYS)
+    .map(normalizeQuestRotationEntry)
+    .sort((left, right) => left.dateKey.localeCompare(right.dateKey));
+}
+
+function pickWeightedQuest(
+  available: DailyQuestConfigDefinition[],
+  random: () => number
+): DailyQuestConfigDefinition {
+  const totalWeight = available.reduce((sum, quest) => sum + DAILY_QUEST_TIER_WEIGHTS[quest.tier], 0);
+  let cursor = random() * totalWeight;
+  for (const quest of available) {
+    cursor -= DAILY_QUEST_TIER_WEIGHTS[quest.tier];
+    if (cursor <= 0) {
+      return quest;
+    }
+  }
+
+  return available[available.length - 1]!;
+}
+
+function selectWeightedQuestSet(
+  questPool: DailyQuestConfigDefinition[],
+  random: () => number,
+  excludedQuestIds: Set<string>
+): DailyQuestConfigDefinition[] {
+  const selected: DailyQuestConfigDefinition[] = [];
+  let available = questPool.filter((quest) => !excludedQuestIds.has(quest.id)).sort((left, right) => left.id.localeCompare(right.id));
+  if (available.length < DAILY_QUEST_SELECTION_SIZE) {
+    available = questPool.slice().sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  while (selected.length < DAILY_QUEST_SELECTION_SIZE && available.length > 0) {
+    const choice = pickWeightedQuest(available, random);
+    selected.push(choice);
+    available = available.filter((quest) => quest.id !== choice.id);
+  }
+
+  return selected;
+}
+
+export function rotateDailyQuests(input: RotateDailyQuestsInput): RotateDailyQuestsResult {
+  if (!isValidDateKey(input.dateKey)) {
+    throw new Error(`rotateDailyQuests received invalid dateKey "${input.dateKey}"`);
+  }
+  if (input.questPool.length < DAILY_QUEST_SELECTION_SIZE) {
+    throw new Error("rotateDailyQuests requires at least three quest definitions");
+  }
+
+  const questPool = input.questPool.slice().sort((left, right) => left.id.localeCompare(right.id));
+  const existingState = input.questState ?? null;
+  const trimmedRotations = trimQuestRotations(existingState?.rotations ?? [], input.dateKey);
+  const currentRotation = trimmedRotations.find((entry) => entry.dateKey === input.dateKey);
+
+  if (currentRotation) {
+    const questById = new Map(questPool.map((quest) => [quest.id, quest]));
+    const quests = currentRotation.questIds
+      .map((questId) => questById.get(questId))
+      .filter((quest): quest is DailyQuestConfigDefinition => Boolean(quest));
+
+    return {
+      quests,
+      rotated: false,
+      state: {
+        playerId: input.playerId,
+        currentDateKey: input.dateKey,
+        activeQuestIds: currentRotation.questIds,
+        rotations: trimmedRotations,
+        updatedAt: existingState?.updatedAt ?? new Date().toISOString()
+      }
+    };
+  }
+
+  const excludedQuestIds = new Set(
+    trimmedRotations
+      .filter((entry) => entry.dateKey !== input.dateKey)
+      .flatMap((entry) => entry.questIds)
+  );
+  const selectedQuests = selectWeightedQuestSet(
+    questPool,
+    createSeededRandom(`${input.playerId}:${input.dateKey}`),
+    excludedQuestIds
+  );
+  const nextEntry: PlayerQuestRotationHistoryEntry = {
+    dateKey: input.dateKey,
+    questIds: selectedQuests.map((quest) => quest.id),
+    completedQuestIds: [],
+    claimedQuestIds: []
+  };
+  const nextRotations = trimQuestRotations([...trimmedRotations.filter((entry) => entry.dateKey !== input.dateKey), nextEntry], input.dateKey);
+
+  return {
+    quests: selectedQuests,
+    rotated: true,
+    state: {
+      playerId: input.playerId,
+      currentDateKey: input.dateKey,
+      activeQuestIds: nextEntry.questIds,
+      rotations: nextRotations,
+      updatedAt: new Date().toISOString()
+    }
+  };
 }
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {

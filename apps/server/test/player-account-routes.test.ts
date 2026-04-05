@@ -13,6 +13,8 @@ import {
   normalizePlayerMailboxMessage
 } from "../src/player-mailbox";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
+import { loadDailyQuestConfig } from "../src/daily-quest-config";
+import { rotateDailyQuests } from "../src/event-engine";
 import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "../src/wechat-session-key";
 import type {
   PlayerAccountBanHistoryListOptions,
@@ -31,6 +33,7 @@ import type {
   PlayerAccountProfilePatch,
   PlayerAccountSnapshot,
   PlayerHeroArchiveSnapshot,
+  PlayerQuestState,
   RoomSnapshotStore
 } from "../src/persistence";
 import type { RoomPersistenceSnapshot } from "../src/index";
@@ -60,6 +63,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
   private readonly eventHistoryByPlayerId = new Map<string, PlayerAccountSnapshot["recentEventLog"]>();
+  private readonly playerQuestStates = new Map<string, PlayerQuestState>();
   private readonly referrals = new Set<string>();
 
   async load(_roomId: string): Promise<RoomPersistenceSnapshot | null> {
@@ -110,6 +114,10 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       items,
       total
     };
+  }
+
+  async loadPlayerQuestState(playerId: string): Promise<PlayerQuestState | null> {
+    return structuredClone(this.playerQuestStates.get(playerId.trim()) ?? null);
   }
 
   async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {
@@ -735,6 +743,16 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ])
     );
     return account;
+  }
+
+  async savePlayerQuestState(playerId: string, state: PlayerQuestState): Promise<PlayerQuestState> {
+    const normalizedPlayerId = playerId.trim();
+    const nextState: PlayerQuestState = {
+      ...structuredClone(state),
+      playerId: normalizedPlayerId
+    };
+    this.playerQuestStates.set(normalizedPlayerId, nextState);
+    return structuredClone(nextState);
   }
 
   async claimBattlePassTier(playerId: string, tier: number) {
@@ -3358,14 +3376,24 @@ test("daily quest board derives same-day progress and ignores prior-day events",
 
   assert.equal(boardResponse.status, 200);
   assert.equal(boardPayload.dailyQuestBoard.enabled, true);
-  assert.equal(boardPayload.dailyQuestBoard.cycleKey, today);
+  const expectedRotation = rotateDailyQuests({
+    playerId: "daily-quest-player",
+    dateKey: boardPayload.dailyQuestBoard.cycleKey,
+    questPool: loadDailyQuestConfig().quests
+  });
+  assert.equal(boardPayload.dailyQuestBoard.cycleKey, expectedRotation.state.currentDateKey);
+  const expectedProgressByMetric = {
+    hero_moves: 2,
+    battle_wins: 0,
+    resource_collections: 1
+  } as const;
   assert.deepEqual(
     boardPayload.dailyQuestBoard.quests.map((quest) => ({ id: quest.id, current: quest.current, completed: quest.completed })),
-    [
-      { id: "daily_explore_frontier", current: 2, completed: false },
-      { id: "daily_battle_victory", current: 0, completed: false },
-      { id: "daily_resource_run", current: 1, completed: false }
-    ]
+    expectedRotation.quests.map((quest) => ({
+      id: quest.id,
+      current: Math.min(quest.target, expectedProgressByMetric[quest.metric]),
+      completed: expectedProgressByMetric[quest.metric] >= quest.target
+    }))
   );
 });
 
@@ -3472,26 +3500,36 @@ test("daily quest claim grants rewards once and returns already_claimed on repea
     tutorialStep: null
   });
   store.seedEventHistory("daily-quest-claim", [
-    {
-      id: `daily-quest-claim:${today}T08:00:00.000Z:hero.collected:1`,
-      timestamp: `${today}T08:00:00.000Z`,
+    ...Array.from({ length: 9 }, (_, index) => ({
+      id: `daily-quest-claim:${today}T08:${String(index).padStart(2, "0")}:00.000Z:hero.moved:${index + 1}`,
+      timestamp: `${today}T08:${String(index).padStart(2, "0")}:00.000Z`,
       roomId: "room-alpha",
       playerId: "daily-quest-claim",
-      category: "building",
-      description: "今日收集资源。",
-      worldEventType: "hero.collected",
-      rewards: [{ type: "resource", label: "gold", amount: 15 }]
-    },
-    {
-      id: `daily-quest-claim:${today}T08:05:00.000Z:hero.collected:2`,
-      timestamp: `${today}T08:05:00.000Z`,
+      category: "movement" as const,
+      description: "今日探索移动。",
+      worldEventType: "hero.moved" as const,
+      rewards: []
+    })),
+    ...Array.from({ length: 8 }, (_, index) => ({
+      id: `daily-quest-claim:${today}T09:${String(index).padStart(2, "0")}:00.000Z:hero.collected:${index + 1}`,
+      timestamp: `${today}T09:${String(index).padStart(2, "0")}:00.000Z`,
       roomId: "room-alpha",
       playerId: "daily-quest-claim",
-      category: "building",
+      category: "building" as const,
       description: "今日收集资源。",
-      worldEventType: "hero.collected",
-      rewards: [{ type: "resource", label: "gold", amount: 25 }]
-    }
+      worldEventType: "hero.collected" as const,
+      rewards: [{ type: "resource" as const, label: "gold", amount: 15 + index }]
+    })),
+    ...Array.from({ length: 5 }, (_, index) => ({
+      id: `daily-quest-claim:${today}T10:${String(index).padStart(2, "0")}:00.000Z:battle.resolved:${index + 1}`,
+      timestamp: `${today}T10:${String(index).padStart(2, "0")}:00.000Z`,
+      roomId: "room-alpha",
+      playerId: "daily-quest-claim",
+      category: "battle" as const,
+      description: "战斗胜利。",
+      worldEventType: "battle.resolved" as const,
+      rewards: []
+    }))
   ]);
   const server = await startAccountRouteServer(port, store);
   const session = issueGuestAuthSession({
@@ -3503,8 +3541,22 @@ test("daily quest claim grants rewards once and returns already_claimed on repea
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
+  const boardResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/daily-quests`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const boardPayload = (await boardResponse.json()) as {
+    dailyQuestBoard: {
+      availableClaims: number;
+      quests: Array<{ id: string; reward: { gems: number; gold: number }; completed: boolean; claimed: boolean }>;
+    };
+  };
+  const claimableQuest = boardPayload.dailyQuestBoard.quests.find((quest) => quest.completed && !quest.claimed);
+  assert.ok(claimableQuest);
+
   const claimResponse = await fetch(
-    `http://127.0.0.1:${port}/api/player-accounts/me/daily-quests/daily_resource_run/claim`,
+    `http://127.0.0.1:${port}/api/player-accounts/me/daily-quests/${claimableQuest.id}/claim`,
     {
       method: "POST",
       headers: {
@@ -3520,11 +3572,11 @@ test("daily quest claim grants rewards once and returns already_claimed on repea
 
   assert.equal(claimResponse.status, 200);
   assert.equal(claimPayload.claimed, true);
-  assert.deepEqual(claimPayload.reward, { gems: 2, gold: 35 });
-  assert.equal(claimPayload.dailyQuestBoard.availableClaims, 0);
+  assert.deepEqual(claimPayload.reward, claimableQuest.reward);
+  assert.equal(claimPayload.dailyQuestBoard.availableClaims, boardPayload.dailyQuestBoard.availableClaims - 1);
 
   const repeatResponse = await fetch(
-    `http://127.0.0.1:${port}/api/player-accounts/me/daily-quests/daily_resource_run/claim`,
+    `http://127.0.0.1:${port}/api/player-accounts/me/daily-quests/${claimableQuest.id}/claim`,
     {
       method: "POST",
       headers: {
@@ -3541,12 +3593,21 @@ test("daily quest claim grants rewards once and returns already_claimed on repea
   assert.equal(repeatResponse.status, 200);
   assert.equal(repeatPayload.claimed, false);
   assert.equal(repeatPayload.reason, "already_claimed");
-  assert.equal(repeatPayload.dailyQuestBoard.availableClaims, 0);
+  assert.equal(repeatPayload.dailyQuestBoard.availableClaims, claimPayload.dailyQuestBoard.availableClaims);
 
   const account = await store.loadPlayerAccount("daily-quest-claim");
-  assert.equal(account?.gems, 2);
-  assert.equal(account?.globalResources.gold, 35);
-  assert.match(account?.recentEventLog[0]?.description ?? "", /领取每日任务：补给回收/);
+  const questState = await store.loadPlayerQuestState("daily-quest-claim");
+  assert.equal(account?.gems, claimableQuest.reward.gems);
+  assert.equal(account?.globalResources.gold, claimableQuest.reward.gold);
+  assert.match(account?.recentEventLog[0]?.description ?? "", /领取每日任务：/);
+  assert.deepEqual(
+    questState?.rotations.find((entry) => entry.dateKey === questState?.currentDateKey)?.completedQuestIds.includes(claimableQuest.id),
+    true
+  );
+  assert.deepEqual(
+    questState?.rotations.find((entry) => entry.dateKey === questState?.currentDateKey)?.claimedQuestIds.includes(claimableQuest.id),
+    true
+  );
 });
 
 test("mailbox routes list delivered compensation and repeated claims stay idempotent", async (t) => {

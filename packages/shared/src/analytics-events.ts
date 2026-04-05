@@ -48,6 +48,16 @@ export const ANALYTICS_EVENT_CATALOG = {
       gold: 50
     }
   }),
+  QuestRotated: defineAnalyticsEvent("QuestRotated", 1, "Server rotated a new daily quest slate for the player.", {
+    roomId: "daily-quests",
+    dateKey: "2026-04-06",
+    questIds: ["daily_scouting_sweep", "daily_dual_conquest", "daily_warpath"],
+    tierCounts: {
+      common: 1,
+      rare: 1,
+      epic: 1
+    }
+  }),
   shop_open: defineAnalyticsEvent("shop_open", 1, "Player opened the shop surface.", {
     roomId: "room-contract",
     surface: "lobby"

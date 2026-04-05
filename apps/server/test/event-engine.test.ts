@@ -5,9 +5,11 @@ import {
   buildEventLeaderboard,
   claimSeasonalEventReward,
   getActiveSeasonalEvents,
+  rotateDailyQuests,
   resolveSeasonalEvents
 } from "../src/event-engine";
-import type { PlayerAccountSnapshot } from "../src/persistence";
+import { loadDailyQuestConfig } from "../src/daily-quest-config";
+import type { PlayerAccountSnapshot, PlayerQuestState } from "../src/persistence";
 
 test("seasonal events resolve the active defend-the-bridge window", () => {
   const events = resolveSeasonalEvents();
@@ -119,4 +121,82 @@ test("event leaderboard sorts players by points then oldest update time", () => 
   assert.equal(leaderboard[1]?.playerId, "player-3");
   assert.equal(leaderboard[2]?.playerId, "player-1");
   assert.equal(leaderboard[0]?.rewardPreview, "Bridge Champion");
+});
+
+test("rotateDailyQuests is deterministic for a player and date seed", () => {
+  const config = loadDailyQuestConfig();
+  const first = rotateDailyQuests({
+    playerId: "quest-player",
+    dateKey: "2026-04-06",
+    questPool: config.quests
+  });
+  const second = rotateDailyQuests({
+    playerId: "quest-player",
+    dateKey: "2026-04-06",
+    questPool: config.quests
+  });
+
+  assert.deepEqual(
+    first.quests.map((quest) => quest.id),
+    second.quests.map((quest) => quest.id)
+  );
+  assert.equal(first.rotated, true);
+  assert.equal(second.rotated, true);
+});
+
+test("rotateDailyQuests enforces a 7-day no-repeat window per player", () => {
+  const config = loadDailyQuestConfig();
+  let state: PlayerQuestState | undefined;
+  const seenQuestIds = new Set<string>();
+
+  for (let day = 0; day < 7; day += 1) {
+    const date = new Date("2026-04-06T00:00:00.000Z");
+    date.setUTCDate(date.getUTCDate() + day);
+    const rotation = rotateDailyQuests({
+      playerId: "quest-player",
+      dateKey: date.toISOString().slice(0, 10),
+      questPool: config.quests,
+      questState: state
+    });
+
+    assert.equal(rotation.quests.length, 3);
+    for (const quest of rotation.quests) {
+      assert.equal(seenQuestIds.has(quest.id), false);
+      seenQuestIds.add(quest.id);
+    }
+    state = rotation.state;
+  }
+
+  assert.equal(seenQuestIds.size, 21);
+});
+
+test("rotateDailyQuests weighted selection favors common quests over rare and epic quests", () => {
+  const config = loadDailyQuestConfig();
+  const tierCounts = {
+    common: 0,
+    rare: 0,
+    epic: 0
+  };
+
+  for (let index = 0; index < 300; index += 1) {
+    const rotation = rotateDailyQuests({
+      playerId: `player-${index}`,
+      dateKey: "2026-04-06",
+      questPool: config.quests
+    });
+    for (const quest of rotation.quests) {
+      tierCounts[quest.tier] += 1;
+    }
+  }
+
+  assert.equal(tierCounts.common > tierCounts.rare, true);
+  assert.equal(tierCounts.rare > tierCounts.epic, true);
+});
+
+test("daily quest config ships at least 15 quests across common, rare, and epic tiers", () => {
+  const config = loadDailyQuestConfig();
+  const tiers = new Set(config.quests.map((quest) => quest.tier));
+
+  assert.equal(config.quests.length >= 15, true);
+  assert.deepEqual(Array.from(tiers).sort(), ["common", "epic", "rare"]);
 });

@@ -41,6 +41,7 @@ import {
   type PlayerAccountProfilePatch,
   type PlayerAccountProgressPatch,
   type PlayerAccountSnapshot,
+  type PlayerQuestState,
   type PlayerReportCreateInput,
   type PlayerReportListOptions,
   type PlayerReportRecord,
@@ -138,6 +139,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
   private readonly heroArchives = new Map<string, PlayerHeroArchiveSnapshot>();
+  private readonly playerQuestStates = new Map<string, PlayerQuestState>();
   private readonly shopPurchases = new Map<string, ShopPurchaseResult>();
   private readonly reports = new Map<string, PlayerReportRecord>();
   private readonly seasons = new Map<string, SeasonSnapshot>();
@@ -298,6 +300,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       total,
       items: structuredClone(sliced)
     };
+  }
+
+  async loadPlayerQuestState(playerId: string): Promise<PlayerQuestState | null> {
+    return structuredClone(this.playerQuestStates.get(normalizePlayerId(playerId)) ?? null);
   }
 
   async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {
@@ -1400,6 +1406,16 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     };
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
     return cloneAccount(nextAccount);
+  }
+
+  async savePlayerQuestState(playerId: string, state: PlayerQuestState): Promise<PlayerQuestState> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const nextState: PlayerQuestState = {
+      ...structuredClone(state),
+      playerId: normalizedPlayerId
+    };
+    this.playerQuestStates.set(normalizedPlayerId, nextState);
+    return structuredClone(nextState);
   }
 
   async claimBattlePassTier(playerId: string, tier: number) {
