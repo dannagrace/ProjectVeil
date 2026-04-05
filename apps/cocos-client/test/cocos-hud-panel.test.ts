@@ -161,6 +161,27 @@ test("VeilHudPanel dispatchPointerUp routes the inventory chrome button", () => 
   assert.equal(opened, 1);
 });
 
+test("VeilHudPanel dispatchPointerUp routes the campaign chrome button", () => {
+  const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
+  const state = createHudState();
+  let opened = 0;
+
+  component.configure({
+    onToggleCampaign: () => {
+      opened += 1;
+    }
+  });
+  component.render(state);
+
+  const button = findNode(node, "HudCampaign");
+  assert.ok(button);
+  const buttonCenter = toHudLocalPosition(node, button);
+  const action = component.dispatchPointerUp(buttonCenter.x, buttonCenter.y);
+
+  assert.equal(action, "campaign");
+  assert.equal(opened, 1);
+});
+
 test("VeilHudPanel shows the surrender action only when available and routes confirmation clicks", () => {
   const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
   const state = createHudState();
