@@ -109,6 +109,7 @@ export interface RoomSnapshotStore {
   loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerEventHistory(playerId: string, query?: PlayerEventHistoryQuery): Promise<PlayerEventHistorySnapshot>;
+  loadPlayerQuestState?(playerId: string): Promise<PlayerQuestState | null>;
   loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]>;
   listPlayerReports?(options?: PlayerReportListOptions): Promise<PlayerReportRecord[]>;
   listPlayerBanHistory?(playerId: string, options?: PlayerAccountBanHistoryListOptions): Promise<PlayerBanHistoryRecord[]>;
@@ -164,6 +165,7 @@ export interface RoomSnapshotStore {
   resolvePlayerReport?(reportId: string, input: PlayerReportResolveInput): Promise<PlayerReportRecord | null>;
   savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot>;
   savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot>;
+  savePlayerQuestState?(playerId: string, state: PlayerQuestState): Promise<PlayerQuestState>;
   listPlayerAccounts(options?: PlayerAccountListOptions): Promise<PlayerAccountSnapshot[]>;
   getCurrentSeason(): Promise<SeasonSnapshot | null>;
   listSeasons?(options?: SeasonListOptions): Promise<SeasonSnapshot[]>;
@@ -307,6 +309,14 @@ interface PlayerEventHistoryRow extends RowDataPacket {
 
 interface PlayerEventHistoryCountRow extends RowDataPacket {
   total: number;
+}
+
+interface PlayerQuestStateRow extends RowDataPacket {
+  player_id: string;
+  current_date_key: string | null;
+  active_quest_ids_json: string | string[] | null;
+  rotations_json: string | PlayerQuestRotationHistoryEntry[] | null;
+  updated_at: Date | string;
 }
 
 interface PlayerBanHistoryRow extends RowDataPacket {
@@ -705,6 +715,21 @@ export interface PlayerEventHistorySnapshot {
   total: number;
 }
 
+export interface PlayerQuestRotationHistoryEntry {
+  dateKey: string;
+  questIds: string[];
+  completedQuestIds: string[];
+  claimedQuestIds: string[];
+}
+
+export interface PlayerQuestState {
+  playerId: string;
+  currentDateKey?: string;
+  activeQuestIds: string[];
+  rotations: PlayerQuestRotationHistoryEntry[];
+  updatedAt: string;
+}
+
 export interface PlayerAccountBanInput {
   banStatus: Exclude<PlayerBanStatus, "none">;
   banExpiry?: string;
@@ -762,6 +787,8 @@ export const MYSQL_PLAYER_BAN_HISTORY_TABLE = "player_ban_history";
 export const MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX = "idx_player_ban_history_player_created";
 export const MYSQL_PLAYER_EVENT_HISTORY_TABLE = "player_event_history";
 export const MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX = "idx_player_event_history_player_time";
+export const MYSQL_PLAYER_QUEST_STATE_TABLE = "player_quest_states";
+export const MYSQL_PLAYER_QUEST_STATE_UPDATED_AT_INDEX = "idx_player_quest_states_updated_at";
 export const MYSQL_PLAYER_HERO_ARCHIVE_TABLE = "player_hero_archives";
 export const MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX = "idx_player_hero_archives_updated_at";
 export const MYSQL_PLAYER_REPORT_TABLE = "player_reports";
@@ -1748,6 +1775,59 @@ function normalizePlayerEventHistoryQuery(query: PlayerEventHistoryQuery = {}): 
   Pick<PlayerEventHistoryQuery, "category" | "heroId" | "achievementId" | "worldEventType" | "since" | "until"> &
   { limit?: number } {
   return normalizeEventLogQuery(query);
+}
+
+function normalizePlayerQuestState(state: Partial<PlayerQuestState> & Pick<PlayerQuestState, "playerId">): PlayerQuestState {
+  const playerId = normalizePlayerId(state.playerId);
+  const currentDateKey = /^\d{4}-\d{2}-\d{2}$/.test(state.currentDateKey?.trim() ?? "")
+    ? state.currentDateKey?.trim()
+    : undefined;
+  const activeQuestIds = Array.from(
+    new Set(
+      (state.activeQuestIds ?? [])
+        .map((questId) => questId?.trim())
+        .filter((questId): questId is string => Boolean(questId))
+    )
+  );
+  const rotations = (state.rotations ?? [])
+    .map((entry) => {
+      const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(entry?.dateKey?.trim() ?? "") ? entry.dateKey.trim() : null;
+      if (!dateKey) {
+        return null;
+      }
+
+      const normalizeQuestIds = (questIds?: string[] | null) =>
+        Array.from(new Set((questIds ?? []).map((questId) => questId?.trim()).filter((questId): questId is string => Boolean(questId))));
+
+      return {
+        dateKey,
+        questIds: normalizeQuestIds(entry.questIds),
+        completedQuestIds: normalizeQuestIds(entry.completedQuestIds),
+        claimedQuestIds: normalizeQuestIds(entry.claimedQuestIds)
+      } satisfies PlayerQuestRotationHistoryEntry;
+    })
+    .filter((entry): entry is PlayerQuestRotationHistoryEntry => Boolean(entry))
+    .sort((left, right) => left.dateKey.localeCompare(right.dateKey));
+
+  return {
+    playerId,
+    ...(currentDateKey ? { currentDateKey } : {}),
+    activeQuestIds,
+    rotations,
+    updatedAt: formatTimestamp(state.updatedAt) ?? new Date().toISOString()
+  };
+}
+
+function toPlayerQuestState(row: PlayerQuestStateRow): PlayerQuestState {
+  const updatedAt = formatTimestamp(row.updated_at);
+  return normalizePlayerQuestState({
+    playerId: row.player_id,
+    ...(row.current_date_key ? { currentDateKey: row.current_date_key } : {}),
+    activeQuestIds:
+      row.active_quest_ids_json != null ? parseJsonColumn<string[]>(row.active_quest_ids_json) : [],
+    rotations: row.rotations_json != null ? parseJsonColumn<PlayerQuestRotationHistoryEntry[]>(row.rotations_json) : [],
+    ...(updatedAt ? { updatedAt } : {})
+  });
 }
 
 function extractNewPlayerEventHistoryEntries(
@@ -4316,6 +4396,25 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     };
   }
 
+  async loadPlayerQuestState(playerId: string): Promise<PlayerQuestState | null> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const [rows] = await this.pool.query<PlayerQuestStateRow[]>(
+      `SELECT
+         player_id,
+         current_date_key,
+         active_quest_ids_json,
+         rotations_json,
+         updated_at
+       FROM \`${MYSQL_PLAYER_QUEST_STATE_TABLE}\`
+       WHERE player_id = ?
+       LIMIT 1`,
+      [normalizedPlayerId]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerQuestState(row) : null;
+  }
+
   async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {
     const safePlayerIds = Array.from(new Set(playerIds.map((playerId) => playerId.trim()).filter(Boolean)));
     if (safePlayerIds.length === 0) {
@@ -6380,6 +6479,37 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         ...(existing.lastSeenAt ? { lastSeenAt: existing.lastSeenAt } : {})
       })
     );
+  }
+
+  async savePlayerQuestState(playerId: string, state: PlayerQuestState): Promise<PlayerQuestState> {
+    const nextState = normalizePlayerQuestState({
+      ...state,
+      playerId
+    });
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_PLAYER_QUEST_STATE_TABLE}\` (
+         player_id,
+         current_date_key,
+         active_quest_ids_json,
+         rotations_json,
+         updated_at
+       ) VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         current_date_key = VALUES(current_date_key),
+         active_quest_ids_json = VALUES(active_quest_ids_json),
+         rotations_json = VALUES(rotations_json),
+         updated_at = VALUES(updated_at)`,
+      [
+        nextState.playerId,
+        nextState.currentDateKey ?? null,
+        JSON.stringify(nextState.activeQuestIds),
+        JSON.stringify(nextState.rotations),
+        nextState.updatedAt
+      ]
+    );
+
+    return nextState;
   }
 
   async listPlayerAccounts(options: PlayerAccountListOptions = {}): Promise<PlayerAccountSnapshot[]> {

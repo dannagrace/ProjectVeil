@@ -6,8 +6,10 @@ import {
   type EventLogEntry,
   type FeatureFlags
 } from "../../../packages/shared/src/index";
-import type { PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
-import { resolveDailyQuestRotation } from "./daily-quest-rotations";
+import { emitAnalyticsEvent } from "./analytics";
+import { loadDailyQuestConfig, type DailyQuestConfigDefinition } from "./daily-quest-config";
+import { rotateDailyQuests } from "./event-engine";
+import type { PlayerAccountSnapshot, PlayerQuestState, RoomSnapshotStore } from "./persistence";
 
 export function readDailyQuestFeatureEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const normalized = env.VEIL_DAILY_QUESTS_ENABLED?.trim().toLowerCase();
@@ -43,6 +45,70 @@ export function createDailyQuestClaimEventLogEntry(
   };
 }
 
+function createDisabledBoard(): DailyQuestBoard {
+  return {
+    enabled: false,
+    availableClaims: 0,
+    pendingRewards: createEmptyDailyQuestReward(),
+    quests: []
+  };
+}
+
+function updateCompletionTracking(state: PlayerQuestState, board: DailyQuestBoard): PlayerQuestState {
+  const completedQuestIds = board.quests.filter((quest) => quest.completed).map((quest) => quest.id);
+  const claimedQuestIds = board.quests.filter((quest) => quest.claimed).map((quest) => quest.id);
+
+  return {
+    ...state,
+    rotations: state.rotations.map((entry) =>
+      entry.dateKey === board.cycleKey
+        ? {
+            ...entry,
+            completedQuestIds: Array.from(new Set(completedQuestIds)),
+            claimedQuestIds: Array.from(new Set(claimedQuestIds))
+          }
+        : entry
+    ),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+async function resolveDailyQuestDefinitions(
+  store: RoomSnapshotStore,
+  playerId: string,
+  cycleKey: string
+): Promise<DailyQuestConfigDefinition[]> {
+  const rotation = rotateDailyQuests({
+    playerId,
+    dateKey: cycleKey,
+    questPool: loadDailyQuestConfig().quests,
+    questState: (await store.loadPlayerQuestState?.(playerId)) ?? null
+  });
+
+  if (rotation.rotated) {
+    await store.savePlayerQuestState?.(playerId, rotation.state);
+    const tierCounts = rotation.quests.reduce(
+      (counts, quest) => {
+        counts[quest.tier] += 1;
+        return counts;
+      },
+      { common: 0, rare: 0, epic: 0 }
+    );
+    emitAnalyticsEvent("QuestRotated", {
+      playerId,
+      roomId: "daily-quests",
+      payload: {
+        roomId: "daily-quests",
+        dateKey: cycleKey,
+        questIds: rotation.quests.map((quest) => quest.id),
+        tierCounts
+      }
+    });
+  }
+
+  return rotation.quests;
+}
+
 export async function loadDailyQuestBoard(
   store: RoomSnapshotStore,
   account: PlayerAccountSnapshot,
@@ -56,25 +122,33 @@ export async function loadDailyQuestBoard(
 ): Promise<DailyQuestBoard> {
   const enabled = typeof options === "boolean" ? options : options.enabled;
   if (!enabled) {
-    return {
-      enabled: false,
-      availableClaims: 0,
-      pendingRewards: createEmptyDailyQuestReward(),
-      quests: []
-    };
+    return createDisabledBoard();
   }
 
   const cycleKey = getDailyQuestCycleKey(now);
   const history = await store.loadPlayerEventHistory(account.playerId, {
     since: `${cycleKey}T00:00:00.000Z`
   });
-  const activeRotation =
-    resolveDailyQuestRotation(now, typeof options === "boolean" ? undefined : options.featureFlags) ?? null;
-
-  return buildDailyQuestBoard(history.items, {
+  const definitions = await resolveDailyQuestDefinitions(store, account.playerId, cycleKey);
+  const board = buildDailyQuestBoard(history.items, {
     enabled: true,
     cycleKey,
     resetAt: getDailyQuestResetAt(cycleKey),
-    ...(activeRotation ? { definitions: activeRotation.quests } : {})
+    definitions: definitions as DailyQuestDefinition[]
   });
+
+  const questState = await store.loadPlayerQuestState?.(account.playerId);
+  if (questState && board.cycleKey) {
+    const nextState = updateCompletionTracking(questState, board);
+    const currentEntry = questState.rotations.find((entry) => entry.dateKey === board.cycleKey);
+    const nextEntry = nextState.rotations.find((entry) => entry.dateKey === board.cycleKey);
+    if (
+      JSON.stringify(currentEntry?.completedQuestIds ?? []) !== JSON.stringify(nextEntry?.completedQuestIds ?? []) ||
+      JSON.stringify(currentEntry?.claimedQuestIds ?? []) !== JSON.stringify(nextEntry?.claimedQuestIds ?? [])
+    ) {
+      await store.savePlayerQuestState?.(account.playerId, nextState);
+    }
+  }
+
+  return board;
 }

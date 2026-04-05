@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 1,
+  "quests": [
+    {
+      "id": "daily_scouting_sweep",
+      "title": "侦察巡线",
+      "description": "完成 3 次探索移动。",
+      "metric": "hero_moves",
+      "target": 3,
+      "tier": "common",
+      "reward": { "gems": 2, "gold": 30 }
+    },
+    {
+      "id": "daily_supply_pickup",
+      "title": "补给拾取",
+      "description": "完成 2 次资源收集。",
+      "metric": "resource_collections",
+      "target": 2,
+      "tier": "common",
+      "reward": { "gems": 2, "gold": 35 }
+    },
+    {
+      "id": "daily_first_victory",
+      "title": "先声夺阵",
+      "description": "取得 1 场战斗胜利。",
+      "metric": "battle_wins",
+      "target": 1,
+      "tier": "common",
+      "reward": { "gems": 3, "gold": 40 }
+    },
+    {
+      "id": "daily_frontier_stride",
+      "title": "前线疾行",
+      "description": "完成 4 次探索移动。",
+      "metric": "hero_moves",
+      "target": 4,
+      "tier": "common",
+      "reward": { "gems": 3, "gold": 42 }
+    },
+    {
+      "id": "daily_salvage_route",
+      "title": "回收路线",
+      "description": "完成 3 次资源收集。",
+      "metric": "resource_collections",
+      "target": 3,
+      "tier": "common",
+      "reward": { "gems": 3, "gold": 45 }
+    },
+    {
+      "id": "daily_skirmish_secure",
+      "title": "小规模压制",
+      "description": "取得 1 场战斗胜利并稳住阵线。",
+      "metric": "battle_wins",
+      "target": 1,
+      "tier": "common",
+      "reward": { "gems": 3, "gold": 44 }
+    },
+    {
+      "id": "daily_pathfinder_push",
+      "title": "开路先锋",
+      "description": "完成 5 次探索移动。",
+      "metric": "hero_moves",
+      "target": 5,
+      "tier": "common",
+      "reward": { "gems": 4, "gold": 50 }
+    },
+    {
+      "id": "daily_cache_retrieval",
+      "title": "物资回收",
+      "description": "完成 4 次资源收集。",
+      "metric": "resource_collections",
+      "target": 4,
+      "tier": "common",
+      "reward": { "gems": 4, "gold": 52 }
+    },
+    {
+      "id": "daily_guard_break",
+      "title": "破阵突围",
+      "description": "取得 2 场战斗胜利。",
+      "metric": "battle_wins",
+      "target": 2,
+      "tier": "common",
+      "reward": { "gems": 4, "gold": 55 }
+    },
+    {
+      "id": "daily_fog_runner",
+      "title": "雾境急行",
+      "description": "完成 6 次探索移动。",
+      "metric": "hero_moves",
+      "target": 6,
+      "tier": "rare",
+      "reward": { "gems": 6, "gold": 75 }
+    },
+    {
+      "id": "daily_salvage_master",
+      "title": "资材老手",
+      "description": "完成 5 次资源收集。",
+      "metric": "resource_collections",
+      "target": 5,
+      "tier": "rare",
+      "reward": { "gems": 6, "gold": 78 }
+    },
+    {
+      "id": "daily_dual_conquest",
+      "title": "双线告捷",
+      "description": "取得 2 场战斗胜利。",
+      "metric": "battle_wins",
+      "target": 2,
+      "tier": "rare",
+      "reward": { "gems": 7, "gold": 82 }
+    },
+    {
+      "id": "daily_long_march",
+      "title": "远征长驱",
+      "description": "完成 7 次探索移动。",
+      "metric": "hero_moves",
+      "target": 7,
+      "tier": "rare",
+      "reward": { "gems": 7, "gold": 85 }
+    },
+    {
+      "id": "daily_convoy_guard",
+      "title": "护送补给",
+      "description": "完成 6 次资源收集。",
+      "metric": "resource_collections",
+      "target": 6,
+      "tier": "rare",
+      "reward": { "gems": 7, "gold": 88 }
+    },
+    {
+      "id": "daily_battle_chain",
+      "title": "连战连捷",
+      "description": "取得 3 场战斗胜利。",
+      "metric": "battle_wins",
+      "target": 3,
+      "tier": "rare",
+      "reward": { "gems": 8, "gold": 92 }
+    },
+    {
+      "id": "daily_horizon_breaker",
+      "title": "地平线突破",
+      "description": "完成 8 次探索移动。",
+      "metric": "hero_moves",
+      "target": 8,
+      "tier": "epic",
+      "reward": { "gems": 10, "gold": 120 }
+    },
+    {
+      "id": "daily_grand_salvage",
+      "title": "大规模回收",
+      "description": "完成 7 次资源收集。",
+      "metric": "resource_collections",
+      "target": 7,
+      "tier": "epic",
+      "reward": { "gems": 10, "gold": 125 }
+    },
+    {
+      "id": "daily_warpath",
+      "title": "战痕征途",
+      "description": "取得 4 场战斗胜利。",
+      "metric": "battle_wins",
+      "target": 4,
+      "tier": "epic",
+      "reward": { "gems": 11, "gold": 130 }
+    },
+    {
+      "id": "daily_void_scout",
+      "title": "裂隙探测",
+      "description": "完成 9 次探索移动。",
+      "metric": "hero_moves",
+      "target": 9,
+      "tier": "epic",
+      "reward": { "gems": 11, "gold": 134 }
+    },
+    {
+      "id": "daily_emergency_stockpile",
+      "title": "紧急储备",
+      "description": "完成 8 次资源收集。",
+      "metric": "resource_collections",
+      "target": 8,
+      "tier": "epic",
+      "reward": { "gems": 11, "gold": 138 }
+    },
+    {
+      "id": "daily_iron_vanguard",
+      "title": "钢铁先锋",
+      "description": "取得 5 场战斗胜利。",
+      "metric": "battle_wins",
+      "target": 5,
+      "tier": "epic",
+      "reward": { "gems": 12, "gold": 145 }
+    }
+  ]
+}
