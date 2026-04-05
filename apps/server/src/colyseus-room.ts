@@ -10,6 +10,7 @@ import {
   normalizeEloRating,
   planHeroMovement,
   validateWorldAction,
+  resolveCosmeticCatalog,
   type PlayerWorldView,
   type PlayerBattleReplaySummary,
   type ClientMessage,
@@ -617,6 +618,50 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             : "report_submit_failed";
         sendMessage(client, "error", { requestId: message.requestId, reason });
       }
+    });
+
+    this.onMessage("USE_EMOTE", async (client, message: Extract<ClientMessage, { type: "USE_EMOTE" }>) => {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+      if (!configuredRoomSnapshotStore?.loadPlayerAccount) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "cosmetics_unavailable" });
+        return;
+      }
+
+      const account = await configuredRoomSnapshotStore.loadPlayerAccount(playerId);
+      if (!account) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "player_account_not_found" });
+        return;
+      }
+
+      const emoteId = message.emoteId.trim();
+      const definition = resolveCosmeticCatalog().find((entry) => entry.id === emoteId && entry.category === "battle_emote");
+      if (!definition) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "cosmetic_not_found" });
+        return;
+      }
+      if (!(account.cosmeticInventory?.ownedIds ?? []).includes(emoteId)) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "cosmetic_not_owned" });
+        return;
+      }
+
+      sendMessage(client, "COSMETIC_APPLIED", {
+        requestId: message.requestId,
+        delivery: "reply",
+        playerId,
+        cosmeticId: emoteId,
+        action: "emote",
+        ...(account.equippedCosmetics ? { equippedCosmetics: account.equippedCosmetics } : {})
+      });
+      this.broadcastCosmeticApplied(client, {
+        playerId,
+        cosmeticId: emoteId,
+        action: "emote",
+        ...(account.equippedCosmetics ? { equippedCosmetics: account.equippedCosmetics } : {})
+      });
     });
   }
 
@@ -1667,6 +1712,23 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             snapshot
           }
         )
+      });
+    }
+  }
+
+  private broadcastCosmeticApplied(
+    source: ColyseusClient | null,
+    message: Omit<Extract<ServerMessage, { type: "COSMETIC_APPLIED" }>, "type" | "requestId" | "delivery">
+  ): void {
+    for (const client of this.clients) {
+      if (client === source) {
+        continue;
+      }
+
+      sendMessage(client, "COSMETIC_APPLIED", {
+        requestId: "push",
+        delivery: "push",
+        ...message
       });
     }
   }

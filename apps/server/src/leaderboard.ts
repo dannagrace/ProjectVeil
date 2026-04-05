@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { getTierForRating } from "../../../packages/shared/src/index";
+import { getRankDivisionForRating, getTierForRating } from "../../../packages/shared/src/index";
+import { getCurrentAndPreviousWeeklyEntries } from "./competitive-season";
 import type { RoomSnapshotStore } from "./persistence";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -62,10 +63,47 @@ export function registerLeaderboardRoutes(
         playerId: account.playerId,
         displayName: account.displayName,
         eloRating: account.eloRating,
-        tier: getTierForRating(account.eloRating ?? 1000)
+        tier: getTierForRating(account.eloRating ?? 1000),
+        division: account.rankDivision ?? getRankDivisionForRating(account.eloRating ?? 1000),
+        promotionSeries: account.promotionSeries ?? null,
+        demotionShield: account.demotionShield ?? null
       }));
 
       sendJson(response, 200, { players });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/leaderboard/weekly", async (_request, response) => {
+    try {
+      if (!store) {
+        sendJson(response, 200, { current: [], previous: [] });
+        return;
+      }
+      const accounts = await store.listPlayerAccounts({ limit: 500, orderBy: "eloRating" });
+      const { current, previous } = getCurrentAndPreviousWeeklyEntries(accounts);
+      sendJson(response, 200, { current, previous });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player/:id/season-history", async (request, response) => {
+    try {
+      if (!store) {
+        sendJson(response, 200, { history: [] });
+        return;
+      }
+      const url = request.url ?? "/";
+      const match = url.match(/\/api\/player\/([^/]+)\/season-history/);
+      const playerId = match?.[1] ? decodeURIComponent(match[1]) : "";
+      if (!playerId) {
+        sendJson(response, 400, { error: { code: "invalid_player_id", message: "Player id is required" } });
+        return;
+      }
+      const account = await store.loadPlayerAccount(playerId);
+      sendJson(response, 200, { history: account?.seasonHistory ?? [] });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

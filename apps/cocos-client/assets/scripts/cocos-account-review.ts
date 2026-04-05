@@ -1,10 +1,13 @@
 import {
+  buildPlayerBattleReportCenter,
   buildPlayerProgressionSnapshot,
   formatAchievementLabel,
   formatWorldEventTypeLabel,
   getLatestProgressedAchievement,
   getLatestUnlockedAchievement,
   type EventLogEntry,
+  type PlayerBattleReportCenter,
+  type PlayerBattleReportSummary,
   type PlayerAchievementProgress,
   type PlayerBattleReplaySummary,
   type PlayerProgressionSnapshot
@@ -68,6 +71,7 @@ interface CocosAccountProgressionReviewState {
 export interface CocosAccountReviewState {
   activeSection: CocosAccountReviewSection;
   selectedBattleReplayId: string | null;
+  battleReports: PlayerBattleReportCenter;
   progression: CocosAccountProgressionReviewState;
   achievements: CocosAccountReviewCollectionState<PlayerAchievementProgress>;
   eventHistory: CocosAccountReviewCollectionState<EventLogEntry>;
@@ -124,19 +128,32 @@ function seedCollectionState<T>(items: T[], pageSize = DEFAULT_PAGE_SIZE): Cocos
 
 function seedBattleReplaySelection(
   previousReplayId: string | null,
-  items: readonly PlayerBattleReplaySummary[]
+  items: readonly PlayerBattleReplaySummary[],
+  battleReports: PlayerBattleReportCenter
 ): string | null {
-  if (previousReplayId && items.some((replay) => replay.id === previousReplayId)) {
+  if (
+    previousReplayId &&
+    (items.some((replay) => replay.id === previousReplayId) ||
+      battleReports.items.some((report) => report.id === previousReplayId))
+  ) {
     return previousReplayId;
   }
 
-  return items[0]?.id ?? null;
+  return battleReports.latestReportId ?? items[0]?.id ?? null;
+}
+
+function resolveBattleReportCenter(account: CocosPlayerAccountProfile): PlayerBattleReportCenter {
+  return account.battleReportCenter && account.battleReportCenter.items.length > 0
+    ? account.battleReportCenter
+    : buildPlayerBattleReportCenter(account.recentBattleReplays, account.recentEventLog);
 }
 
 export function createCocosAccountReviewState(account: CocosPlayerAccountProfile): CocosAccountReviewState {
+  const battleReports = resolveBattleReportCenter(account);
   return {
     activeSection: "progression",
-    selectedBattleReplayId: account.recentBattleReplays[0]?.id ?? null,
+    selectedBattleReplayId: battleReports.latestReportId ?? account.recentBattleReplays[0]?.id ?? null,
+    battleReports,
     progression: {
       status: "ready",
       snapshot: deriveProgressionSnapshot(account),
@@ -154,11 +171,19 @@ export function transitionCocosAccountReviewState(
 ): CocosAccountReviewState {
   switch (action.type) {
     case "account.synced":
+      {
+        const battleReports = resolveBattleReportCenter(action.account);
       return {
         ...createCocosAccountReviewState(action.account),
         activeSection: state.activeSection,
-        selectedBattleReplayId: seedBattleReplaySelection(state.selectedBattleReplayId, action.account.recentBattleReplays)
+        battleReports,
+        selectedBattleReplayId: seedBattleReplaySelection(
+          state.selectedBattleReplayId,
+          action.account.recentBattleReplays,
+          battleReports
+        )
       };
+      }
     case "section.selected":
       return {
         ...state,
@@ -249,7 +274,8 @@ export function transitionCocosAccountReviewState(
     case "battle-replays.loaded":
       return {
         ...state,
-        selectedBattleReplayId: seedBattleReplaySelection(state.selectedBattleReplayId, action.items),
+        selectedBattleReplayId:
+          action.items[0]?.id ?? seedBattleReplaySelection(state.selectedBattleReplayId, action.items, state.battleReports),
         battleReplays: {
           status: "ready",
           items: action.items,
@@ -403,13 +429,50 @@ function formatBattleReplayFootnote(replay: PlayerBattleReplaySummary): string {
   return `${formatReviewTimestamp(replay.completedAt)} · ${campLabel} · 房间 ${replay.roomId}`;
 }
 
-function buildBattleReplayItems(items: readonly PlayerBattleReplaySummary[]): CocosAccountReviewItem[] {
-  return items.map((replay) => ({
-    title: formatBattleReplayTitle(replay),
-    detail: `英雄 ${replay.heroId} · ${replay.steps.length} 步文本回顾`,
-    footnote: formatBattleReplayFootnote(replay),
-    emphasis: replay.result === "attacker_victory" ? "positive" : "neutral",
-    replayId: replay.id
+function formatBattleReportTitle(report: PlayerBattleReportSummary): string {
+  const resultLabel = report.result === "victory" ? "胜利" : "失利";
+  const battleKindLabel = report.battleKind === "hero" ? "PVP" : "PVE";
+  const encounterLabel = report.battleKind === "hero"
+    ? report.opponentHeroId
+      ? `对手 ${report.opponentHeroId}`
+      : "对手英雄"
+    : report.neutralArmyId
+      ? `守军 ${report.neutralArmyId}`
+      : "中立守军";
+  return `${resultLabel} · ${battleKindLabel} · ${encounterLabel}`;
+}
+
+function formatBattleReportFootnote(report: PlayerBattleReportSummary): string {
+  const campLabel = report.playerCamp === "attacker" ? "攻方" : "守方";
+  const evidenceLabel = report.evidence.replay === "available" ? "可回放" : "仅摘要";
+  return `${formatReviewTimestamp(report.completedAt)} · ${campLabel} · 房间 ${report.roomId} · ${evidenceLabel}`;
+}
+
+function buildBattleReplayItems(
+  reports: readonly PlayerBattleReportSummary[],
+  replays: readonly PlayerBattleReplaySummary[]
+): CocosAccountReviewItem[] {
+  if (replays.length > 0) {
+    return replays.map((replay) => {
+      const report = reports.find((candidate) => candidate.id === replay.id) ?? null;
+      return {
+        title: report ? formatBattleReportTitle(report) : formatBattleReplayTitle(replay),
+        detail: report
+          ? `英雄 ${report.heroId} · ${report.actionCount} 步文本回顾`
+          : `英雄 ${replay.heroId} · ${replay.steps.length} 步文本回顾`,
+        footnote: report ? formatBattleReportFootnote(report) : formatBattleReplayFootnote(replay),
+        emphasis: report ? (report.result === "victory" ? "positive" : "neutral") : replay.result === "attacker_victory" ? "positive" : "neutral",
+        replayId: replay.id
+      };
+    });
+  }
+
+  return reports.map((report) => ({
+    title: formatBattleReportTitle(report),
+    detail: `英雄 ${report.heroId} · ${report.turnCount} 回合/${report.actionCount} 步 · 完整回放暂不可用`,
+    footnote: formatBattleReportFootnote(report),
+    emphasis: report.result === "victory" ? "positive" : "neutral",
+    replayId: report.id
   }));
 }
 
@@ -452,7 +515,10 @@ function buildTabs(state: CocosAccountReviewState): CocosAccountReviewTab[] {
     {
       section: "battle-replays",
       label: "战报",
-      count: state.battleReplays.total ?? state.battleReplays.items.length
+      count: Math.max(
+        state.battleReports.items.length,
+        state.battleReplays.total ?? state.battleReplays.items.length
+      )
     },
     {
       section: "event-history",
@@ -534,7 +600,7 @@ export function buildCocosAccountReviewPage(state: CocosAccountReviewState): Coc
   }
 
   if (state.activeSection === "battle-replays") {
-    const items = buildBattleReplayItems(state.battleReplays.items);
+    const items = buildBattleReplayItems(state.battleReports.items, state.battleReplays.items);
     return {
       section: "battle-replays",
       title: "账号战报",
@@ -543,7 +609,7 @@ export function buildCocosAccountReviewPage(state: CocosAccountReviewState): Coc
       page: state.battleReplays.page,
       pageLabel: buildPageLabel(
         state.battleReplays.page,
-        state.battleReplays.total,
+        Math.max(state.battleReports.items.length, state.battleReplays.total ?? 0),
         state.battleReplays.pageSize,
         state.battleReplays.hasMore
       ),

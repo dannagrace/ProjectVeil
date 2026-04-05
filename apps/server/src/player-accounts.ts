@@ -14,8 +14,9 @@ import {
   queryPlayerBattleReplaySummaries,
   queryAchievementProgress,
   queryEventLogEntries,
-  type TutorialProgressAction,
-  type PlayerBattleReplaySummary
+  type PlayerBattleReplaySummary,
+  type SeasonalEventState,
+  type TutorialProgressAction
 } from "../../../packages/shared/src/index";
 import {
   createDailyQuestClaimEventLogEntry,
@@ -40,6 +41,12 @@ import type {
   RoomSnapshotStore
 } from "./persistence";
 import { getDailyRewardDateKey, getPreviousDailyRewardDateKey, resolveDailyRewardForStreak } from "./daily-rewards";
+import {
+  applySeasonalEventProgress,
+  findSeasonalEventState,
+  getActiveSeasonalEvents,
+  resolveSeasonalEvents
+} from "./event-engine";
 import { resolveFeatureFlagsForPlayer } from "./feature-flags";
 import {
   buildCampaignMissionStates,
@@ -491,6 +498,45 @@ function toRewardMutation(account: PlayerAccountSnapshot, reward?: { gems?: numb
       ore: (account.globalResources.ore ?? 0) + ore
     }
   };
+}
+
+function upsertSeasonalEventState(
+  seasonalEventStates: SeasonalEventState[] | undefined,
+  nextState: SeasonalEventState
+): SeasonalEventState[] {
+  return [...(seasonalEventStates ?? []).filter((state) => state.eventId !== nextState.eventId), nextState].sort((left, right) =>
+    left.eventId.localeCompare(right.eventId)
+  );
+}
+
+function applyActiveSeasonalEventProgress(
+  account: PlayerAccountSnapshot,
+  action: Parameters<typeof applySeasonalEventProgress>[2],
+  now = new Date()
+): {
+  seasonalEventStates: SeasonalEventState[] | undefined;
+  eventProgress: Array<{ eventId: string; delta: number; points: number; objectiveId: string }>;
+} {
+  const activeEvents = getActiveSeasonalEvents(resolveSeasonalEvents(), now);
+  let seasonalEventStates = account.seasonalEventStates;
+  const eventProgress: Array<{ eventId: string; delta: number; points: number; objectiveId: string }> = [];
+
+  for (const event of activeEvents) {
+    const progress = applySeasonalEventProgress(event, findSeasonalEventState(seasonalEventStates, event.id), action, now);
+    if (!progress) {
+      continue;
+    }
+
+    seasonalEventStates = upsertSeasonalEventState(seasonalEventStates, progress.state);
+    eventProgress.push({
+      eventId: event.id,
+      delta: progress.delta,
+      points: progress.state.points,
+      objectiveId: progress.objective.id
+    });
+  }
+
+  return { seasonalEventStates, eventProgress };
 }
 
 function normalizePlayerId(playerId?: string | null): string {
@@ -1501,17 +1547,29 @@ export function registerPlayerAccountRoutes(
       const dungeon = resolvePrimaryDailyDungeon();
       const result = claimDailyDungeonRunReward(dungeon, account.dailyDungeonState, runId);
       const rewardMutation = toRewardMutation(account, result.floor.reward);
+      const eventMutation = applyActiveSeasonalEventProgress(
+        account,
+        {
+          actionId: result.run.runId,
+          actionType: "daily_dungeon_reward_claimed",
+          dungeonId: result.run.dungeonId,
+          ...(result.run.rewardClaimedAt ? { occurredAt: result.run.rewardClaimedAt } : {})
+        },
+        new Date(result.run.rewardClaimedAt ?? new Date().toISOString())
+      );
       const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
         dailyDungeonState: result.dailyDungeonState,
         gems: rewardMutation.gems,
-        globalResources: rewardMutation.globalResources
+        globalResources: rewardMutation.globalResources,
+        ...(eventMutation.seasonalEventStates ? { seasonalEventStates: eventMutation.seasonalEventStates } : {})
       });
 
       sendJson(response, 200, {
         claimed: true,
         run: result.run,
         reward: result.floor.reward,
-        dailyDungeon: toDailyDungeonResponse(nextAccount)
+        dailyDungeon: toDailyDungeonResponse(nextAccount),
+        ...(eventMutation.eventProgress.length > 0 ? { eventProgress: eventMutation.eventProgress } : {})
       });
     } catch (error) {
       if (error instanceof Error && error.message === "daily_dungeon_run_not_found") {

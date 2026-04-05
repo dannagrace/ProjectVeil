@@ -232,6 +232,7 @@ interface VeilRootRuntime {
   deletePlayerAccount: typeof deleteCurrentCocosPlayerAccount;
   loadShopProducts: typeof VeilCocosSession.fetchShopProducts;
   purchaseShopProduct: typeof VeilCocosSession.purchaseShopProduct;
+  equipShopCosmetic: typeof VeilCocosSession.equipShopCosmetic;
 }
 
 const defaultVeilRootRuntime: VeilRootRuntime = {
@@ -256,7 +257,8 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   logoutAuthSession: (...args) => logoutCurrentCocosAuthSession(...args),
   deletePlayerAccount: (...args) => deleteCurrentCocosPlayerAccount(...args),
   loadShopProducts: (...args) => VeilCocosSession.fetchShopProducts(...args),
-  purchaseShopProduct: (...args) => VeilCocosSession.purchaseShopProduct(...args)
+  purchaseShopProduct: (...args) => VeilCocosSession.purchaseShopProduct(...args),
+  equipShopCosmetic: (...args) => VeilCocosSession.equipShopCosmetic(...args)
 };
 
 let testVeilRootRuntimeOverrides: Partial<VeilRootRuntime> | null = null;
@@ -1289,7 +1291,9 @@ export class VeilRoot extends Component {
         shop: buildCocosShopPanelView({
           products: this.lobbyShopProducts,
           gemBalance: this.lobbyAccountProfile.gems ?? 0,
-          pendingProductId: this.pendingShopProductId
+          pendingProductId: this.pendingShopProductId,
+          ownedCosmeticIds: this.lobbyAccountProfile.cosmeticInventory?.ownedIds ?? [],
+          ...(this.lobbyAccountProfile.equippedCosmetics ? { equippedCosmetics: this.lobbyAccountProfile.equippedCosmetics } : {})
         }),
         shopStatus: this.lobbyShopStatus,
         shopLoading: this.lobbyShopLoading
@@ -1428,7 +1432,9 @@ export class VeilRoot extends Component {
 
   private formatLobbyVaultSummary(): string {
     const resources = this.lobbyAccountProfile.globalResources;
-    return `全局仓库 金币 ${resources.gold} / 木材 ${resources.wood} / 矿石 ${resources.ore} / 宝石 ${this.lobbyAccountProfile.gems ?? 0}`;
+    const ownedCosmetics = this.lobbyAccountProfile.cosmeticInventory?.ownedIds.length ?? 0;
+    const equippedBorder = this.lobbyAccountProfile.equippedCosmetics?.profileBorderId ?? "未装备";
+    return `全局仓库 金币 ${resources.gold} / 木材 ${resources.wood} / 矿石 ${resources.ore} / 宝石 ${this.lobbyAccountProfile.gems ?? 0} / 外观 ${ownedCosmetics} 件 / 边框 ${equippedBorder}`;
   }
 
   private ensurePixelSpriteGroup(group: "boot" | "battle"): void {
@@ -1591,6 +1597,10 @@ export class VeilRoot extends Component {
         return "该商品当前未上架。";
       case "cocos_request_failed:409:equipment_inventory_full":
         return "背包已满，暂时无法领取该装备。";
+      case "cocos_request_failed:409:cosmetic_not_owned":
+        return "尚未拥有该外观，无法装备。";
+      case "cocos_request_failed:409:cosmetic_not_found":
+        return "该外观已下架或不存在。";
       case "cocos_request_failed:400:wechat_open_id_required":
         return "微信支付需要先绑定小游戏身份。";
       case "cocos_request_failed:503:wechat_pay_not_configured":
@@ -1620,11 +1630,24 @@ export class VeilRoot extends Component {
     }
 
     this.pendingShopProductId = productId;
-    this.lobbyShopStatus = product.wechatPriceFen ? `正在创建微信订单 ${product.name}...` : `正在购买 ${product.name}...`;
+    const cosmeticId = product.grant.cosmeticIds?.[0];
+    const alreadyOwned = cosmeticId ? (this.lobbyAccountProfile.cosmeticInventory?.ownedIds ?? []).includes(cosmeticId) : false;
+    this.lobbyShopStatus =
+      product.type === "cosmetic" && alreadyOwned
+        ? `正在装备 ${product.name}...`
+        : product.wechatPriceFen
+          ? `正在创建微信订单 ${product.name}...`
+          : `正在购买 ${product.name}...`;
     this.renderView();
 
     try {
-      if (product.wechatPriceFen) {
+      if (product.type === "cosmetic" && alreadyOwned && cosmeticId) {
+        await resolveVeilRootRuntime().equipShopCosmetic(this.remoteUrl, cosmeticId, {
+          getAuthToken: () => this.authToken
+        });
+        this.lobbyShopStatus = `${product.name} 已装备。`;
+        await this.refreshLobbyAccountProfile();
+      } else if (product.wechatPriceFen) {
         const order = await createCocosWechatPaymentOrder(this.remoteUrl, productId, {
           authToken: this.authToken
         });
@@ -3992,6 +4015,29 @@ export class VeilRoot extends Component {
 
         this.pushLog("已收到房间推送更新。");
         void this.applySessionUpdate(update);
+      },
+      onServerMessage: (message) => {
+        if (!this.isActiveSessionEpoch(epoch)) {
+          return;
+        }
+
+        if (message.type === "COSMETIC_APPLIED") {
+          this.pushLog(
+            message.action === "emote"
+              ? `战斗表情：${message.playerId} 使用了 ${message.cosmeticId}`
+              : `外观同步：${message.playerId} ${message.action === "equipped" ? "装备" : "解锁"} ${message.cosmeticId}`
+          );
+          if (message.playerId === this.playerId && message.equippedCosmetics) {
+            this.lobbyAccountProfile = {
+              ...this.lobbyAccountProfile,
+              equippedCosmetics: {
+                ...this.lobbyAccountProfile.equippedCosmetics,
+                ...message.equippedCosmetics
+              }
+            };
+          }
+          this.renderView();
+        }
       },
       onConnectionEvent: (event) => {
         if (!this.isActiveSessionEpoch(epoch)) {

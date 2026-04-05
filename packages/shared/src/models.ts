@@ -1,3 +1,7 @@
+import type { PlayerTier, RankDivisionId } from "./matchmaking.ts";
+
+import type { DialogueLine, MissionObjective } from "./campaign.ts";
+
 export type TerrainType = "grass" | "dirt" | "sand" | "water" | "swamp";
 export type FogState = "hidden" | "explored" | "visible";
 export type ResourceKind = "gold" | "wood" | "ore";
@@ -75,6 +79,9 @@ export type HeroSkillBranchId = string;
 export type EquipmentId = string;
 export type EquipmentType = "weapon" | "armor" | "accessory";
 export type EquipmentRarity = "common" | "rare" | "epic";
+export type CosmeticId = string;
+export type CosmeticCategory = "hero_skin" | "unit_recolor" | "profile_border" | "battle_emote";
+export type CosmeticRarity = "common" | "rare" | "epic" | "legendary";
 export type EquipmentSpecialEffectId =
   | "initiative_edge"
   | "brace"
@@ -111,6 +118,53 @@ export interface EquipmentDefinition {
 
 export interface EquipmentCatalogConfig {
   entries: EquipmentDefinition[];
+}
+
+export interface CosmeticDefinition {
+  id: CosmeticId;
+  name: string;
+  category: CosmeticCategory;
+  rarity: CosmeticRarity;
+  description: string;
+  price: number;
+  unlockCondition: string;
+  previewAsset?: string;
+}
+
+export interface CosmeticCatalogConfig {
+  entries: CosmeticDefinition[];
+}
+
+export interface CosmeticInventory {
+  ownedIds: CosmeticId[];
+}
+
+export interface EquippedCosmetics {
+  heroSkinId?: CosmeticId;
+  unitRecolorId?: CosmeticId;
+  profileBorderId?: CosmeticId;
+  battleEmoteId?: CosmeticId;
+}
+
+export interface ShopRotationEntry {
+  slotId: string;
+  label: string;
+  featured: boolean;
+  discountPercent: number;
+  category?: CosmeticCategory;
+  cosmeticId?: CosmeticId;
+}
+
+export interface ShopRotation {
+  seed: string;
+  weekLabel: string;
+  featuredSlots: ShopRotationEntry[];
+  discountSlots: ShopRotationEntry[];
+}
+
+export interface ShopRotationConfig {
+  featuredSlots: ShopRotationEntry[];
+  discountSlots: ShopRotationEntry[];
 }
 
 export interface HeroLearnedSkillState {
@@ -182,6 +236,31 @@ export interface SeasonRewardBracket {
 
 export interface SeasonRewardConfig {
   brackets: SeasonRewardBracket[];
+}
+
+export interface SeasonArchiveEntry {
+  seasonId: string;
+  peakDivision: RankDivisionId;
+  finalDivision: RankDivisionId;
+  rewardTier: PlayerTier;
+  rewardClaimed: boolean;
+  archivedAt: string;
+}
+
+export interface WeeklyLeaderboardEntry {
+  playerId: string;
+  displayName: string;
+  wins: number;
+  weekStartsAt: string;
+  weekEndsAt: string;
+  rankDivision: RankDivisionId;
+}
+
+export interface RankedWeeklyProgress {
+  currentWeekStartsAt: string;
+  currentWeekWins: number;
+  previousWeekStartsAt?: string;
+  previousWeekWins?: number;
 }
 
 export interface MovePoints {
@@ -1200,6 +1279,7 @@ export interface CampaignMission {
   id: string;
   chapterId: string;
   order: number;
+  mapId: string;
   name: string;
   description: string;
   recommendedHeroLevel: number;
@@ -1207,6 +1287,9 @@ export interface CampaignMission {
   enemyArmyCount: number;
   enemyStatMultiplier: number;
   unlockMissionId?: string;
+  introDialogue?: DialogueLine[];
+  outroDialogue?: DialogueLine[];
+  objectives: MissionObjective[];
   reward: CampaignReward;
 }
 
@@ -1261,4 +1344,67 @@ export interface DailyDungeonState {
   attemptsUsed: number;
   claimedRunIds: string[];
   runs: DailyDungeonRunRecord[];
+}
+
+export type SeasonalEventActionType = "daily_dungeon_reward_claimed" | (string & {});
+export type SeasonalEventRewardKind = "gems" | "resources" | "badge" | "cosmetic";
+
+export interface SeasonalEventObjective {
+  id: string;
+  description: string;
+  actionType: SeasonalEventActionType;
+  points: number;
+  dungeonId?: string;
+}
+
+export interface SeasonalEventReward {
+  id: string;
+  name: string;
+  pointsRequired: number;
+  kind: SeasonalEventRewardKind;
+  gems?: number;
+  resources?: Partial<ResourceLedger>;
+  badge?: string;
+  cosmeticId?: string;
+}
+
+export interface SeasonalEventLeaderboardRewardTier {
+  rankStart: number;
+  rankEnd: number;
+  title: string;
+  badge?: string;
+  cosmeticId?: string;
+}
+
+export interface SeasonalEventDefinition {
+  id: string;
+  name: string;
+  description: string;
+  startsAt: string;
+  endsAt: string;
+  durationDays: number;
+  bannerText: string;
+  objectives: SeasonalEventObjective[];
+  rewards: SeasonalEventReward[];
+  leaderboard: {
+    size: number;
+    rewardTiers: SeasonalEventLeaderboardRewardTier[];
+  };
+}
+
+export interface SeasonalEventState {
+  eventId: string;
+  points: number;
+  claimedRewardIds: string[];
+  appliedActionIds: string[];
+  lastUpdatedAt: string;
+}
+
+export interface EventLeaderboardEntry {
+  rank: number;
+  playerId: string;
+  displayName: string;
+  points: number;
+  lastUpdatedAt: string;
+  rewardPreview?: string;
 }

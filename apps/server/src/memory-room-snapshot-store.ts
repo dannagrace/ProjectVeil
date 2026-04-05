@@ -2,14 +2,21 @@ import {
   appendEventLogEntries,
   DEFAULT_TUTORIAL_STEP,
   getEquipmentDefinition,
+  getTierForDivision,
+  normalizeGuildState,
+  normalizeCosmeticInventory,
   normalizeEloRating,
   normalizeEventLogEntries,
   normalizeEventLogQuery,
+  resolveCosmeticCatalog,
   tryAddEquipmentToInventory,
-  type EventLogEntry
+  type EventLogEntry,
+  type CosmeticId,
+  type GuildState
 } from "../../../packages/shared/src/index";
 import {
   createPlayerAccountsFromWorldState,
+  type GuildListOptions,
   MAX_PLAYER_AVATAR_URL_LENGTH,
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
   type PaymentOrderCompleteInput,
@@ -53,6 +60,7 @@ import {
   resolveBattlePassTier,
   toBattlePassRewardGrant
 } from "./battle-pass";
+import { applySeasonSoftDecay, decayDivisionToRating, getCurrentAndPreviousWeeklyEntries, resolveCompetitiveProgression } from "./competitive-season";
 import { computeSeasonReward, resolveSeasonRewardConfig } from "./season-rewards";
 
 function cloneAccount(account: PlayerAccountSnapshot): PlayerAccountSnapshot {
@@ -111,6 +119,8 @@ function normalizeResourceLedger(resources?: PlayerAccountSnapshot["globalResour
 export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
+  private readonly guilds = new Map<string, GuildState>();
+  private readonly guildIdByPlayerId = new Map<string, string>();
   private readonly paymentOrders = new Map<string, PaymentOrderSnapshot>();
   private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
@@ -132,6 +142,20 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
     const account = this.accounts.get(normalizePlayerId(playerId));
     return account ? cloneAccount(account) : null;
+  }
+
+  async loadGuild(guildId: string): Promise<GuildState | null> {
+    const guild = this.guilds.get(guildId.trim());
+    return guild ? normalizeGuildState(structuredClone(guild)) : null;
+  }
+
+  async loadGuildByMemberPlayerId(playerId: string): Promise<GuildState | null> {
+    const guildId = this.guildIdByPlayerId.get(normalizePlayerId(playerId));
+    if (!guildId) {
+      return null;
+    }
+
+    return this.loadGuild(guildId);
   }
 
   async loadPaymentOrder(orderId: string): Promise<PaymentOrderSnapshot | null> {
@@ -248,6 +272,20 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       .map((playerId) => this.accounts.get(normalizePlayerId(playerId)))
       .filter((account): account is PlayerAccountSnapshot => Boolean(account))
       .map((account) => cloneAccount(account));
+  }
+
+  async listGuilds(options: GuildListOptions = {}): Promise<GuildState[]> {
+    const safeLimit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 50)));
+    return Array.from(this.guilds.values())
+      .filter((guild) => !options.playerId || guild.members.some((member) => member.playerId === options.playerId))
+      .sort(
+        (left, right) =>
+          right.members.length - left.members.length ||
+          right.updatedAt.localeCompare(left.updatedAt) ||
+          left.id.localeCompare(right.id)
+      )
+      .slice(0, safeLimit)
+      .map((guild) => normalizeGuildState(structuredClone(guild)));
   }
 
   async listPlayerReports(options: PlayerReportListOptions = {}): Promise<PlayerReportRecord[]> {
@@ -534,6 +572,13 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         ore: Math.max(0, Math.floor(input.grant.resources?.ore ?? 0)) * quantity
       },
       seasonPassPremium: input.grant.seasonPassPremium === true,
+      cosmeticIds: Array.from({ length: quantity }, () => input.grant.cosmeticIds ?? []).flat().map((cosmeticId) => {
+        const normalizedCosmeticId = cosmeticId.trim();
+        if (!normalizedCosmeticId || !resolveCosmeticCatalog().some((entry) => entry.id === normalizedCosmeticId)) {
+          throw new Error(`unknown cosmetic grant: ${cosmeticId}`);
+        }
+        return normalizedCosmeticId;
+      }),
       equipmentIds: Array.from({ length: quantity }, () => input.grant.equipmentIds ?? []).flat().map((equipmentId) => {
         const normalizedEquipmentId = equipmentId.trim();
         if (!normalizedEquipmentId || !getEquipmentDefinition(normalizedEquipmentId)) {
@@ -584,6 +629,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...existingAccount,
       gems: (existingAccount.gems ?? 0) - totalPrice + normalizedGrant.gems,
       seasonPassPremium: existingAccount.seasonPassPremium === true || normalizedGrant.seasonPassPremium,
+      cosmeticInventory: normalizeCosmeticInventory({
+        ownedIds: [...(existingAccount.cosmeticInventory?.ownedIds ?? []), ...normalizedGrant.cosmeticIds]
+      }),
       globalResources: normalizeResourceLedger({
         gold: (existingAccount.globalResources.gold ?? 0) + normalizedGrant.resources.gold,
         wood: (existingAccount.globalResources.wood ?? 0) + normalizedGrant.resources.wood,
@@ -614,10 +662,11 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       quantity,
       unitPrice,
       totalPrice,
-      granted: {
+        granted: {
           gems: normalizedGrant.gems,
           resources: normalizedGrant.resources,
           equipmentIds: normalizedGrant.equipmentIds,
+          cosmeticIds: normalizedGrant.cosmeticIds,
           ...(heroId ? { heroId } : {}),
           ...(normalizedGrant.seasonPassPremium ? { seasonPassPremium: true } : {})
         },
@@ -1045,6 +1094,17 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const battlePassConfig = resolveBattlePassConfig();
     const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
     const battlePassProgress = applyBattlePassXp(battlePassConfig, existing, patch.seasonXpDelta ?? 0);
+    const mergedReplays = structuredClone(
+      (patch.recentBattleReplays as PlayerAccountSnapshot["recentBattleReplays"] | undefined) ??
+        existing.recentBattleReplays ??
+        []
+    );
+    const competitiveProgression = resolveCompetitiveProgression(
+      existing,
+      patch,
+      mergedReplays,
+      patch.eloRating ?? existing.eloRating ?? 1000
+    );
     const nextAccount: PlayerAccountSnapshot = {
       ...existing,
       ...(patch.gems !== undefined ? { gems: Math.max(0, Math.floor(patch.gems)) } : {}),
@@ -1055,6 +1115,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         : existing.seasonPassPremium
           ? { seasonPassPremium: true }
           : {}),
+      cosmeticInventory: structuredClone((patch.cosmeticInventory as PlayerAccountSnapshot["cosmeticInventory"]) ?? existing.cosmeticInventory ?? { ownedIds: [] }),
+      equippedCosmetics: structuredClone((patch.equippedCosmetics as PlayerAccountSnapshot["equippedCosmetics"]) ?? existing.equippedCosmetics ?? {}),
       seasonPassClaimedTiers: structuredClone(
         (patch.seasonPassClaimedTiers as number[] | undefined) ?? existing.seasonPassClaimedTiers ?? []
       ),
@@ -1071,11 +1133,33 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ),
       achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
       recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
-      recentBattleReplays: structuredClone(
-        (patch.recentBattleReplays as PlayerAccountSnapshot["recentBattleReplays"] | undefined) ??
-          existing.recentBattleReplays ??
-          []
-      ),
+      recentBattleReplays: mergedReplays,
+      ...((patch.rankDivision ?? competitiveProgression.rankDivision)
+        ? { rankDivision: (patch.rankDivision ?? competitiveProgression.rankDivision)! }
+        : {}),
+      ...((patch.peakRankDivision ?? competitiveProgression.peakRankDivision)
+        ? { peakRankDivision: (patch.peakRankDivision ?? competitiveProgression.peakRankDivision)! }
+        : {}),
+      ...(patch.promotionSeries !== undefined
+        ? patch.promotionSeries
+          ? { promotionSeries: structuredClone(patch.promotionSeries) }
+          : {}
+        : competitiveProgression.promotionSeries
+          ? { promotionSeries: structuredClone(competitiveProgression.promotionSeries) }
+          : {}),
+      ...(patch.demotionShield !== undefined
+        ? patch.demotionShield
+          ? { demotionShield: structuredClone(patch.demotionShield) }
+          : {}
+        : competitiveProgression.demotionShield
+          ? { demotionShield: structuredClone(competitiveProgression.demotionShield) }
+          : {}),
+      seasonHistory: structuredClone((patch.seasonHistory as PlayerAccountSnapshot["seasonHistory"] | undefined) ?? existing.seasonHistory ?? []),
+      ...(patch.rankedWeeklyProgress !== undefined
+        ? patch.rankedWeeklyProgress
+          ? { rankedWeeklyProgress: structuredClone(patch.rankedWeeklyProgress) }
+          : {}
+        : { rankedWeeklyProgress: structuredClone(competitiveProgression.rankedWeeklyProgress) }),
       ...(patch.dailyDungeonState !== undefined
         ? patch.dailyDungeonState
           ? { dailyDungeonState: structuredClone(patch.dailyDungeonState) }
@@ -1240,8 +1324,38 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     }
   }
 
+  async saveGuild(guildInput: GuildState): Promise<GuildState> {
+    const guild = normalizeGuildState(guildInput);
+    const existing = this.guilds.get(guild.id);
+    if (existing) {
+      for (const member of existing.members) {
+        this.guildIdByPlayerId.delete(member.playerId);
+      }
+    }
+
+    this.guilds.set(guild.id, normalizeGuildState(structuredClone(guild)));
+    for (const member of guild.members) {
+      this.guildIdByPlayerId.set(member.playerId, guild.id);
+    }
+
+    return normalizeGuildState(structuredClone(guild));
+  }
+
   async delete(roomId: string): Promise<void> {
     this.snapshots.delete(roomId);
+  }
+
+  async deleteGuild(guildId: string): Promise<void> {
+    const normalizedGuildId = guildId.trim();
+    const existing = this.guilds.get(normalizedGuildId);
+    if (!existing) {
+      return;
+    }
+
+    for (const member of existing.members) {
+      this.guildIdByPlayerId.delete(member.playerId);
+    }
+    this.guilds.delete(normalizedGuildId);
   }
 
   async pruneExpired(): Promise<number> {
@@ -1296,6 +1410,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const distributedAt = new Date().toISOString();
     let playersRewarded = 0;
     let totalGemsGranted = 0;
+    const rewardedPlayerIds = new Set<string>();
     for (const [index, account] of rankedAccounts.entries()) {
       const reward = computeSeasonReward(index + 1, rankedAccounts.length, rewardConfig);
       if (!reward) {
@@ -1316,6 +1431,30 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       });
       playersRewarded += 1;
       totalGemsGranted += reward.gems;
+      rewardedPlayerIds.add(account.playerId);
+    }
+
+    for (const account of rankedAccounts) {
+      const current = this.accounts.get(account.playerId) ?? account;
+      const decay = applySeasonSoftDecay(current);
+      await this.savePlayerAccountProgress(account.playerId, {
+        eloRating: decayDivisionToRating(decay.rankDivision ?? current.rankDivision ?? "bronze_i"),
+        rankDivision: decay.rankDivision,
+        peakRankDivision: decay.peakRankDivision,
+        promotionSeries: null,
+        demotionShield: null,
+        seasonHistory: [
+          {
+            seasonId: normalizedSeasonId,
+            peakDivision: current.peakRankDivision ?? current.rankDivision ?? "bronze_i",
+            finalDivision: current.rankDivision ?? "bronze_i",
+            rewardTier: getTierForDivision(current.rankDivision ?? "bronze_i"),
+            rewardClaimed: rewardedPlayerIds.has(account.playerId),
+            archivedAt: distributedAt
+          },
+          ...(current.seasonHistory ?? [])
+        ].slice(0, 20)
+      });
     }
 
     this.seasons.set(normalizedSeasonId, {

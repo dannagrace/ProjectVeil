@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildRuntimeDiagnosticsErrorEvent,
   buildRuntimeDiagnosticsTriageView,
   buildRuntimeDiagnosticsSummaryLines,
   getRuntimeDiagnosticsLastSyncAgeMs,
@@ -110,6 +111,65 @@ function createRuntimeDiagnosticsSnapshot(): RuntimeDiagnosticsSnapshot {
           result: "attacker_victory"
         }
       ],
+      errorEvents: [
+        buildRuntimeDiagnosticsErrorEvent({
+          id: "client-room-sync-1",
+          recordedAt: "2026-03-29T07:09:08.000Z",
+          source: "client",
+          surface: "h5",
+          candidateRevision: "abc1234",
+          featureArea: "room_sync",
+          ownerArea: "multiplayer",
+          severity: "error",
+          errorCode: "reconnect_failed",
+          message: "Reconnect window expired while replay sync was still pending.",
+          context: {
+            roomId: "room-alpha",
+            playerId: "player-1",
+            requestId: "sync-1",
+            route: null,
+            action: "room.reconnect",
+            statusCode: null,
+            crash: false,
+            detail: "local fallback engaged"
+          }
+        })
+      ],
+      errorSummary: {
+        totalEvents: 1,
+        uniqueFingerprints: 1,
+        fatalCount: 0,
+        crashCount: 0,
+        latestRecordedAt: "2026-03-29T07:09:08.000Z",
+        byFeatureArea: [{ featureArea: "room_sync", count: 1 }],
+        topFingerprints: [
+          {
+            fingerprint: "client|h5|room_sync|reconnect_failed|no-route|room.reconnect|na",
+            errorCode: "reconnect_failed",
+            featureArea: "room_sync",
+            ownerArea: "multiplayer",
+            source: "client",
+            surface: "h5",
+            severity: "error",
+            candidateRevision: "abc1234",
+            firstSeenAt: "2026-03-29T07:09:08.000Z",
+            lastSeenAt: "2026-03-29T07:09:08.000Z",
+            count: 1,
+            crashCount: 0,
+            latestMessage: "Reconnect window expired while replay sync was still pending.",
+            sampleContext: {
+              roomId: "room-alpha",
+              playerId: "player-1",
+              requestId: "sync-1",
+              route: null,
+              action: "room.reconnect",
+              statusCode: null,
+              crash: false,
+              detail: "local fallback engaged"
+            }
+          }
+        ]
+      },
       pendingUiTasks: 2,
       replay: {
         replayId: "room-alpha:battle-1:player-1",
@@ -140,6 +200,8 @@ test("runtime diagnostics summary text stays stable for panel and automation con
   assert.match(rendered, /Account readiness ready \/ 正式账号会话已绑定/);
   assert.match(rendered, /Recovery 连接已恢复，当前地图与战斗状态来自最新权威快照。/);
   assert.match(rendered, /Telemetry combat\/encounter\.resolved \(success\) Battle battle-1 resolved as attacker_victory\./);
+  assert.match(rendered, /Errors 1 \/ fingerprints 1 \/ fatal 0 \/ crashes 0/);
+  assert.match(rendered, /Error room_sync\/reconnect_failed 1x on h5 \(multiplayer\)/);
   assert.match(rendered, /Replay room-alpha:battle-1:player-1 \/ paused \/ step 1\/3/);
   assert.match(rendered, /Timeline \[push\/battle\] Room room-alpha finished battle battle-1/);
 });
@@ -195,6 +257,16 @@ test("runtime diagnostics summary text supports aggregate server snapshots", () 
       recoverySummary: null,
       predictionStatus: "server-observability",
       primaryClientTelemetry: [],
+      errorEvents: [],
+      errorSummary: {
+        totalEvents: 0,
+        uniqueFingerprints: 0,
+        fatalCount: 0,
+        crashCount: 0,
+        latestRecordedAt: null,
+        byFeatureArea: [],
+        topFingerprints: []
+      },
       pendingUiTasks: 0,
       replay: null
     }

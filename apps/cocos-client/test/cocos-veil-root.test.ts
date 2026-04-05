@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { sys } from "cc";
 import { VeilRoot } from "../assets/scripts/VeilRoot.ts";
+import { createFallbackCocosPlayerAccountProfile } from "../assets/scripts/cocos-lobby.ts";
 import type { MatchmakingStatusResponse, SessionUpdate } from "../assets/scripts/VeilCocosSession.ts";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
@@ -177,6 +178,50 @@ test("VeilRoot warm boot reuses the stored account session and cached replay dur
   assert.equal(capturedOptions?.getAuthToken?.(), "recover.token");
   assert.deepEqual(recoveryOrder, ["replay:2", "live:3"]);
   assert.equal(root.lastUpdate?.world.meta.day, 3);
+});
+
+test("VeilRoot applies cosmetic push messages to lobby profile state and logs battle emotes", () => {
+  const root = createVeilRootHarness();
+  let renderCount = 0;
+  root.renderView = () => {
+    renderCount += 1;
+  };
+  root.playerId = "account-player";
+  root.sessionEpoch = 4;
+  root.lobbyAccountProfile = createFallbackCocosPlayerAccountProfile("account-player", "room-cosmetics", "雾林司灯");
+
+  const options = (root as VeilRoot & {
+    createSessionOptions(epoch: number): {
+      onServerMessage(message: {
+        type: "COSMETIC_APPLIED";
+        playerId: string;
+        cosmeticId: string;
+        action: "purchased" | "equipped" | "emote";
+        equippedCosmetics?: { profileBorderId?: string };
+      }): void;
+    };
+  }).createSessionOptions(4);
+
+  options.onServerMessage({
+    type: "COSMETIC_APPLIED",
+    playerId: "account-player",
+    cosmeticId: "border-shadowcourt",
+    action: "equipped",
+    equippedCosmetics: {
+      profileBorderId: "border-shadowcourt"
+    }
+  });
+  options.onServerMessage({
+    type: "COSMETIC_APPLIED",
+    playerId: "player-2",
+    cosmeticId: "emote-cheer-spark",
+    action: "emote"
+  });
+
+  assert.equal(root.lobbyAccountProfile.equippedCosmetics?.profileBorderId, "border-shadowcourt");
+  assert.equal(renderCount, 2);
+  assert.match(String(root.logLines[0]), /战斗表情：player-2 使用了 emote-cheer-spark/);
+  assert.match(String(root.logLines[1]), /外观同步：account-player 装备 border-shadowcourt/);
 });
 
 test("VeilRoot warm boot keeps direct room resume in auto-connect mode", () => {

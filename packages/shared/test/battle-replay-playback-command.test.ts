@@ -3,9 +3,12 @@ import test from "node:test";
 import {
   applyBattleReplayPlaybackCommand,
   buildBattleReplayTimeline,
+  createBattleReplayPlaybackState,
   createEmptyBattleState,
   queryPlayerBattleReplaySummaries,
   restoreBattleReplayPlaybackState,
+  seekBattleReplayPlaybackToTurn,
+  setBattleReplayPlaybackSpeed,
   stepBackBattleReplayPlayback,
   stepBattleReplayPlayback,
   type PlayerBattleReplaySummary
@@ -54,6 +57,7 @@ test("restoreBattleReplayPlaybackState rebuilds the replay cursor from a step in
 
   assert.equal(playback.currentStepIndex, 1);
   assert.equal(playback.status, "paused");
+  assert.equal(playback.speed, 1);
   assert.equal(playback.currentStep?.index, 1);
   assert.equal(playback.nextStep?.index, 2);
 });
@@ -121,6 +125,43 @@ test("applyBattleReplayPlaybackCommand supports play, pause, and reset from a re
   assert.equal(reset.currentStepIndex, 0);
   assert.equal(reset.currentStep, null);
   assert.equal(reset.nextStep?.index, 1);
+});
+
+test("battle replay playback supports speed presets and turn seeking", () => {
+  const replay = createReplay();
+  replay.initialState.round = 1;
+  replay.steps = [
+    {
+      index: 1,
+      source: "player",
+      action: {
+        type: "battle.wait",
+        unitId: "stack-1"
+      }
+    },
+    {
+      index: 2,
+      source: "automated",
+      action: {
+        type: "battle.wait",
+        unitId: "stack-2"
+      }
+    }
+  ];
+
+  const spedUp = setBattleReplayPlaybackSpeed(createBattleReplayPlaybackState(replay), 3.2);
+  assert.equal(spedUp.speed, 4);
+
+  const sought = seekBattleReplayPlaybackToTurn(spedUp, 2);
+  assert.equal(sought.currentStepIndex, 2);
+  assert.equal(sought.speed, 4);
+
+  const commandSought = applyBattleReplayPlaybackCommand(replay, {
+    targetTurn: 2,
+    speed: 0.5
+  });
+  assert.equal(commandSought.currentStepIndex, 2);
+  assert.equal(commandSought.speed, 0.5);
 });
 
 test("battle replay playback can step backward from partial and completed states", () => {

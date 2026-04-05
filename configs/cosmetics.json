@@ -1,0 +1,84 @@
+{
+  "entries": [
+    {
+      "id": "skin-lyra-starlit",
+      "name": "Starlit Lyra",
+      "category": "hero_skin",
+      "rarity": "epic",
+      "description": "Oracle Lyra in a moon-silver ceremonial palette.",
+      "price": 80,
+      "unlockCondition": "shop",
+      "previewAsset": "heroes/lyra-starlit"
+    },
+    {
+      "id": "skin-borin-emberguard",
+      "name": "Emberguard Borin",
+      "category": "hero_skin",
+      "rarity": "rare",
+      "description": "Forgeguard Borin with ember-lit armor panels.",
+      "price": 60,
+      "unlockCondition": "shop",
+      "previewAsset": "heroes/borin-emberguard"
+    },
+    {
+      "id": "recolor-wolves-ashen",
+      "name": "Ashen Hunt Pack",
+      "category": "unit_recolor",
+      "rarity": "common",
+      "description": "Neutral wolf pack recolor with ash-gray fur.",
+      "price": 35,
+      "unlockCondition": "shop",
+      "previewAsset": "units/wolves-ashen"
+    },
+    {
+      "id": "recolor-guard-sunlance",
+      "name": "Sunlance Guard Trim",
+      "category": "unit_recolor",
+      "rarity": "rare",
+      "description": "Hero guard basic recolor with gold-and-crimson trim.",
+      "price": 45,
+      "unlockCondition": "shop",
+      "previewAsset": "units/guard-sunlance"
+    },
+    {
+      "id": "border-shadowcourt",
+      "name": "Shadowcourt Border",
+      "category": "profile_border",
+      "rarity": "epic",
+      "description": "Animated shadow filigree framing the account card.",
+      "price": 70,
+      "unlockCondition": "shop",
+      "previewAsset": "borders/shadowcourt"
+    },
+    {
+      "id": "border-vanguard",
+      "name": "Vanguard Border",
+      "category": "profile_border",
+      "rarity": "common",
+      "description": "A clean bronze frame for profile presentation.",
+      "price": 30,
+      "unlockCondition": "shop",
+      "previewAsset": "borders/vanguard"
+    },
+    {
+      "id": "emote-cheer-spark",
+      "name": "Spark Cheer",
+      "category": "battle_emote",
+      "rarity": "common",
+      "description": "A fast celebratory burst for mid-fight banter.",
+      "price": 20,
+      "unlockCondition": "shop",
+      "previewAsset": "emotes/cheer-spark"
+    },
+    {
+      "id": "emote-taunt-veil",
+      "name": "Veil Taunt",
+      "category": "battle_emote",
+      "rarity": "rare",
+      "description": "A smug shadow-wave emote for battle finishers.",
+      "price": 40,
+      "unlockCondition": "shop",
+      "previewAsset": "emotes/taunt-veil"
+    }
+  ]
+}

@@ -45,6 +45,8 @@ import {
   pauseBattleReplayPlayback,
   playBattleReplayPlayback,
   resetBattleReplayPlayback,
+  seekBattleReplayPlaybackToTurn,
+  setBattleReplayPlaybackSpeed,
   stepBackBattleReplayPlayback,
   stepBattleReplayPlayback,
   tickBattleReplayPlayback,
@@ -84,6 +86,20 @@ const REVIEW_HIGHLIGHT_STROKE = new Color(234, 246, 255, 120);
 const REVIEW_HIGHLIGHT_ACCENT = new Color(146, 198, 246, 214);
 const REPLAY_CONTROL_FILL = new Color(64, 92, 128, 220);
 const REPLAY_CONTROL_ACTIVE_FILL = new Color(84, 122, 94, 220);
+const REPLAY_PLAYBACK_SPEEDS = [0.5, 1, 2, 4] as const;
+
+function resolveReplayPlaybackIntervalMs(speed: number): number {
+  switch (speed) {
+    case 0.5:
+      return 1400;
+    case 2:
+      return 350;
+    case 4:
+      return 175;
+    default:
+      return 700;
+  }
+}
 
 function formatAccountReadinessStatus(status: CocosAccountReadinessStatus): string {
   if (status === "ready") {
@@ -1493,7 +1509,7 @@ export class VeilLobbyPanel extends Component {
           })
         : [view.emptyMessage ?? "暂无可展示的战报时间线。"];
     const playbackSummary = playback
-      ? `播放游标 ${playback.currentStepIndex}/${playback.totalSteps} · 当前 ${playback.currentStep?.index ?? 0} · 下一步 ${playback.nextStep?.index ?? "无"}`
+      ? `播放游标 ${playback.currentStepIndex}/${playback.totalSteps} · 当前 ${playback.currentStep?.index ?? 0} · 下一步 ${playback.nextStep?.index ?? "无"} · 倍率 ${playback.speed}x`
       : "播放游标待同步";
     const lines = [view.title, `${view.subtitle} · ${view.badge}`, view.summary, playbackSummary, ...timelineLines];
     const height = Math.max(132, 52 + lines.length * 18);
@@ -1519,6 +1535,7 @@ export class VeilLobbyPanel extends Component {
   private renderBattleReplayCenter(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
     const view = buildCocosBattleReplayCenterView({
       replays: state.battleReplayItems,
+      battleReports: state.account.battleReportCenter,
       selectedReplayId: state.selectedBattleReplayId,
       playback: this.replayPlayback,
       status: state.battleReplaySectionStatus,
@@ -1543,13 +1560,16 @@ export class VeilLobbyPanel extends Component {
       18
     );
 
-    const controlWidth = Math.floor((width - 24) / 5);
+    const controlsPerRow = 5;
+    const controlWidth = Math.floor((width - 24) / controlsPerRow);
     const startX = centerX - width / 2 + controlWidth / 2;
     view.controls.forEach((control, index) => {
+      const row = Math.floor(index / controlsPerRow);
+      const column = index % controlsPerRow;
       this.renderActionButton(
         `LobbyReplayControl-${control.action}`,
-        startX + index * (controlWidth + 6),
-        nextTopY - 14,
+        startX + column * (controlWidth + 6),
+        nextTopY - 14 - row * 34,
         controlWidth,
         26,
         control.label,
@@ -1562,7 +1582,7 @@ export class VeilLobbyPanel extends Component {
       );
     });
 
-    return nextTopY - 34;
+    return nextTopY - Math.ceil(view.controls.length / controlsPerRow) * 34;
   }
 
   private hideBattleReplayTimelineCard(): void {
@@ -1574,7 +1594,17 @@ export class VeilLobbyPanel extends Component {
     if (node) {
       node.active = false;
     }
-    (["play", "pause", "step-back", "step-forward", "reset"] as CocosBattleReplayCenterControlAction[]).forEach((action) => {
+    ([
+      "play",
+      "pause",
+      "step-back",
+      "step-forward",
+      "turn-back",
+      "turn-forward",
+      "speed-down",
+      "speed-up",
+      "reset"
+    ] as CocosBattleReplayCenterControlAction[]).forEach((action) => {
       const control = this.node.getChildByName(`LobbyReplayControl-${action}`);
       if (control) {
         control.active = false;
@@ -1593,7 +1623,9 @@ export class VeilLobbyPanel extends Component {
           ? "正在同步最近战斗..."
           : state.battleReplaySectionStatus === "error"
             ? (state.battleReplaySectionError?.trim() || "回放同步失败。")
-            : "选择一场最近战斗，即可查看逐步回放。";
+            : state.account.battleReportCenter?.items.some((report) => report.id === state.selectedBattleReplayId)
+              ? "当前仅同步到战报摘要，完整回放暂不可用。"
+              : "选择一场最近战斗，即可查看逐步回放。";
       return;
     }
 
@@ -1643,6 +1675,41 @@ export class VeilLobbyPanel extends Component {
         this.replayPlayback = stepBattleReplayPlayback(this.replayPlayback);
         this.replayPlaybackStatus = this.replayPlayback.status === "completed" ? "已播放至结算。" : "已前进一步。";
         break;
+      case "turn-back":
+        this.replayPlayback = seekBattleReplayPlaybackToTurn(
+          this.replayPlayback,
+          Math.max(1, Math.floor(this.replayPlayback.currentState.round || 1) - 1)
+        );
+        this.replayPlaybackStatus = "已跳回上一回合。";
+        break;
+      case "turn-forward":
+        this.replayPlayback = seekBattleReplayPlaybackToTurn(
+          this.replayPlayback,
+          Math.max(1, Math.floor(this.replayPlayback.currentState.round || 1) + 1)
+        );
+        this.replayPlaybackStatus =
+          this.replayPlayback.status === "completed" ? "已定位到结算回合。" : "已跳到下一回合。";
+        break;
+      case "speed-down":
+        this.replayPlayback = setBattleReplayPlaybackSpeed(
+          this.replayPlayback,
+          this.shiftReplayPlaybackSpeed(this.replayPlayback.speed, -1)
+        );
+        this.replayPlaybackStatus = `回放倍率已调整为 ${this.replayPlayback.speed}x。`;
+        if (this.replayPlayback.status === "playing") {
+          this.startReplayPlaybackLoop();
+        }
+        break;
+      case "speed-up":
+        this.replayPlayback = setBattleReplayPlaybackSpeed(
+          this.replayPlayback,
+          this.shiftReplayPlaybackSpeed(this.replayPlayback.speed, 1)
+        );
+        this.replayPlaybackStatus = `回放倍率已调整为 ${this.replayPlayback.speed}x。`;
+        if (this.replayPlayback.status === "playing") {
+          this.startReplayPlaybackLoop();
+        }
+        break;
       case "reset":
         this.replayPlayback = resetBattleReplayPlayback(this.replayPlayback);
         this.replayPlaybackStatus = "已回到开场快照。";
@@ -1656,6 +1723,11 @@ export class VeilLobbyPanel extends Component {
 
   private startReplayPlaybackLoop(): void {
     if (this.replayPlaybackTimer) {
+      clearInterval(this.replayPlaybackTimer);
+      this.replayPlaybackTimer = null;
+    }
+
+    if (!this.replayPlayback) {
       return;
     }
 
@@ -1674,7 +1746,7 @@ export class VeilLobbyPanel extends Component {
       if (this.currentState) {
         this.render(this.currentState);
       }
-    }, 700);
+    }, resolveReplayPlaybackIntervalMs(this.replayPlayback.speed));
   }
 
   private stopReplayPlaybackLoop(): void {
@@ -1684,6 +1756,13 @@ export class VeilLobbyPanel extends Component {
 
     clearInterval(this.replayPlaybackTimer);
     this.replayPlaybackTimer = null;
+  }
+
+  private shiftReplayPlaybackSpeed(currentSpeed: number, direction: -1 | 1): number {
+    const currentIndex = REPLAY_PLAYBACK_SPEEDS.findIndex((speed) => speed === currentSpeed);
+    const safeIndex = currentIndex >= 0 ? currentIndex : 1;
+    const nextIndex = Math.max(0, Math.min(REPLAY_PLAYBACK_SPEEDS.length - 1, safeIndex + direction));
+    return REPLAY_PLAYBACK_SPEEDS[nextIndex] ?? 1;
   }
 
   private renderAccountReviewCards(

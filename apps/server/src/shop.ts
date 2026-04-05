@@ -1,16 +1,26 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import shopConfigDocument from "../../../configs/shop-config.json";
-import { getEquipmentDefinition, type ResourceLedger } from "../../../packages/shared/src/index";
+import {
+  getEquipmentDefinition,
+  normalizeCosmeticInventory,
+  resolveCosmeticCatalog,
+  resolveWeeklyShopRotation,
+  type CosmeticId,
+  type EquippedCosmetics,
+  type ResourceLedger,
+  type ShopRotation
+} from "../../../packages/shared/src/index";
 import { emitAnalyticsEvent } from "./analytics";
 import { validateAuthSessionFromRequest } from "./auth";
-import type { RoomSnapshotStore } from "./persistence";
+import { equipOwnedCosmetic, type RoomSnapshotStore } from "./persistence";
 
-export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle" | "season_pass_premium";
+export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle" | "season_pass_premium" | "cosmetic";
 
 export interface ShopProductGrant {
   gems?: number;
   resources?: Partial<ResourceLedger>;
   equipmentIds?: string[];
+  cosmeticIds?: CosmeticId[];
   seasonPassPremium?: boolean;
 }
 
@@ -26,6 +36,11 @@ export interface ShopProduct {
 
 interface ShopConfigDocument {
   products?: Partial<ShopProduct>[] | null;
+}
+
+interface ShopProductsResponse {
+  items: ShopProduct[];
+  rotation: ShopRotation;
 }
 
 export interface RegisterShopRoutesOptions {
@@ -103,10 +118,18 @@ function normalizeGrant(rawGrant?: ShopProductGrant | null): ShopProductGrant {
       throw new Error(`shop product references unknown equipment: ${equipmentId}`);
     }
   }
+  const cosmeticCatalogIds = new Set(resolveCosmeticCatalog().map((entry) => entry.id));
+  const cosmeticIds = (rawGrant?.cosmeticIds ?? []).map((cosmeticId) => cosmeticId?.trim()).filter(Boolean) as string[];
+  for (const cosmeticId of cosmeticIds) {
+    if (!cosmeticCatalogIds.has(cosmeticId)) {
+      throw new Error(`shop product references unknown cosmetic: ${cosmeticId}`);
+    }
+  }
 
   return {
     ...(rawGrant?.gems != null ? { gems: normalizePositiveInteger(rawGrant.gems, "grant.gems", true) } : {}),
     ...(equipmentIds.length > 0 ? { equipmentIds } : {}),
+    ...(cosmeticIds.length > 0 ? { cosmeticIds } : {}),
     ...(rawGrant?.resources ? { resources: normalizeResourceLedger(rawGrant.resources) } : {}),
     ...(rawGrant?.seasonPassPremium === true ? { seasonPassPremium: true } : {})
   };
@@ -128,15 +151,17 @@ function normalizeShopProducts(rawProducts?: Partial<ShopProduct>[] | null): Sho
       rawProduct.type !== "gem_pack" &&
       rawProduct.type !== "equipment" &&
       rawProduct.type !== "resource_bundle" &&
-      rawProduct.type !== "season_pass_premium"
+      rawProduct.type !== "season_pass_premium" &&
+      rawProduct.type !== "cosmetic"
     ) {
-      throw new Error(`shop product ${productId} type must be gem_pack, equipment, resource_bundle, or season_pass_premium`);
+      throw new Error(`shop product ${productId} type must be gem_pack, equipment, resource_bundle, season_pass_premium, or cosmetic`);
     }
 
     const grant = normalizeGrant(rawProduct.grant);
     const hasGrant =
       (grant.gems ?? 0) > 0 ||
       (grant.equipmentIds?.length ?? 0) > 0 ||
+      (grant.cosmeticIds?.length ?? 0) > 0 ||
       ((grant.resources?.gold ?? 0) > 0 || (grant.resources?.wood ?? 0) > 0 || (grant.resources?.ore ?? 0) > 0) ||
       grant.seasonPassPremium === true;
     if (!hasGrant) {
@@ -145,6 +170,9 @@ function normalizeShopProducts(rawProducts?: Partial<ShopProduct>[] | null): Sho
 
     if (rawProduct.type === "equipment" && (grant.equipmentIds?.length ?? 0) === 0) {
       throw new Error(`shop product ${productId} equipment grants must include equipmentIds`);
+    }
+    if (rawProduct.type === "cosmetic" && (grant.cosmeticIds?.length ?? 0) === 0) {
+      throw new Error(`shop product ${productId} cosmetic grants must include cosmeticIds`);
     }
     if (rawProduct.type === "resource_bundle" && !grant.resources) {
       throw new Error(`shop product ${productId} resource bundles must include resources`);
@@ -173,6 +201,29 @@ function normalizeShopProducts(rawProducts?: Partial<ShopProduct>[] | null): Sho
 export function resolveShopProducts(options?: RegisterShopRoutesOptions): ShopProduct[] {
   const configuredProducts = options?.products ?? (shopConfigDocument as ShopConfigDocument).products;
   return normalizeShopProducts(configuredProducts);
+}
+
+function buildRotationProducts(rotation = resolveWeeklyShopRotation()): ShopProduct[] {
+  const catalogById = new Map(resolveCosmeticCatalog().map((entry) => [entry.id, entry] as const));
+  return [...rotation.featuredSlots, ...rotation.discountSlots].flatMap((slot) => {
+    const cosmetic = slot.cosmeticId ? catalogById.get(slot.cosmeticId) : null;
+    if (!cosmetic) {
+      return [];
+    }
+    const discountMultiplier = Math.max(0, 100 - slot.discountPercent) / 100;
+    return [
+      {
+        productId: `cosmetic:${cosmetic.id}`,
+        name: `${cosmetic.name} · ${slot.label}`,
+        type: "cosmetic" as const,
+        price: Math.max(1, Math.floor(cosmetic.price * discountMultiplier)),
+        enabled: true,
+        grant: {
+          cosmeticIds: [cosmetic.id]
+        }
+      }
+    ];
+  });
 }
 
 function sendUnauthorized(
@@ -231,7 +282,7 @@ export function registerShopRoutes(
   store: RoomSnapshotStore | null,
   options: RegisterShopRoutesOptions = {}
 ): void {
-  const products = resolveShopProducts(options);
+  const baseProducts = resolveShopProducts(options);
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -248,9 +299,12 @@ export function registerShopRoutes(
   });
 
   app.get("/api/shop/products", async (_request, response) => {
+    const rotation = resolveWeeklyShopRotation();
+    const items = [...baseProducts.filter((product) => product.enabled), ...buildRotationProducts(rotation)];
     sendJson(response, 200, {
-      items: products.filter((product) => product.enabled)
-    });
+      items,
+      rotation
+    } satisfies ShopProductsResponse);
   });
 
   app.post("/api/shop/purchase", async (request, response) => {
@@ -299,7 +353,8 @@ export function registerShopRoutes(
         return;
       }
 
-      const product = findProductById(products, productId);
+      const rotation = resolveWeeklyShopRotation();
+      const product = findProductById([...baseProducts, ...buildRotationProducts(rotation)], productId);
       if (!product) {
         sendJson(response, 404, {
           error: {
@@ -385,6 +440,96 @@ export function registerShopRoutes(
 
       if (error instanceof Error && /must be/.test(error.message)) {
         sendJson(response, 400, { error: toErrorPayload(error) });
+        return;
+      }
+
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/shop/equip", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+    if (!store?.loadPlayerAccount || !store.savePlayerAccountProgress) {
+      sendJson(response, 503, {
+        error: {
+          code: "shop_persistence_unavailable",
+          message: "Cosmetic equips require configured persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        cosmeticId?: CosmeticId | null;
+      };
+      const cosmeticId = body.cosmeticId?.trim();
+      if (!cosmeticId) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_cosmetic_id",
+            message: "cosmeticId is required"
+          }
+        });
+        return;
+      }
+
+      const account = await store.loadPlayerAccount(authSession.playerId);
+      if (!account) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_account_not_found",
+            message: `Player account not found: ${authSession.playerId}`
+          }
+        });
+        return;
+      }
+
+      const nextEquipped = equipOwnedCosmetic(account, cosmeticId);
+      const nextAccount = await store.savePlayerAccountProgress(authSession.playerId, {
+        cosmeticInventory: normalizeCosmeticInventory(account.cosmeticInventory),
+        equippedCosmetics: nextEquipped
+      });
+
+      emitAnalyticsEvent("purchase", {
+        playerId: authSession.playerId,
+        payload: {
+          purchaseId: `equip:${cosmeticId}`,
+          productId: `equip:${cosmeticId}`,
+          quantity: 1,
+          totalPrice: 0
+        }
+      });
+      sendJson(response, 200, {
+        cosmeticId,
+        equippedCosmetics: (nextAccount.equippedCosmetics ?? {}) as EquippedCosmetics
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+
+      if (error instanceof SyntaxError) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_json",
+            message: "Request body must be valid JSON"
+          }
+        });
+        return;
+      }
+
+      if (error instanceof Error && (error.message === "cosmetic_not_found" || error.message === "cosmetic_not_owned")) {
+        sendJson(response, 409, {
+          error: {
+            code: error.message,
+            message: error.message
+          }
+        });
         return;
       }
 

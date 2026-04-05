@@ -1,0 +1,30 @@
+{
+  "featuredSlots": [
+    {
+      "slotId": "featured-hero",
+      "label": "本周主推英雄外观",
+      "category": "hero_skin",
+      "discountPercent": 0
+    },
+    {
+      "slotId": "featured-profile",
+      "label": "本周主推名片边框",
+      "category": "profile_border",
+      "discountPercent": 10
+    }
+  ],
+  "discountSlots": [
+    {
+      "slotId": "discount-emote",
+      "label": "每日折扣表情",
+      "category": "battle_emote",
+      "discountPercent": 20
+    },
+    {
+      "slotId": "discount-recolor",
+      "label": "每日折扣重涂",
+      "category": "unit_recolor",
+      "discountPercent": 15
+    }
+  ]
+}
