@@ -13,6 +13,19 @@ It does not redefine release gates. It sequences the existing commands and artif
 - [`docs/wechat-minigame-release.md`](./wechat-minigame-release.md)
 - [`docs/cocos-release-evidence-template.md`](./cocos-release-evidence-template.md)
 - [`docs/release-go-no-go-decision-packet.md`](./release-go-no-go-decision-packet.md)
+- [`docs/release-evidence/release-readiness-artifact-index.template.md`](./release-evidence/release-readiness-artifact-index.template.md)
+
+## Artifact Retention And Indexing
+
+Treat `artifacts/release-readiness/` as the working set for the current release call, not as an unbounded archive.
+
+- Keep one current packet for the candidate revision under review.
+- Keep one previous comparable packet for the same target surface so reviewers can answer "what changed since the last release-ready call?" without scanning the whole directory.
+- Keep the candidate-scoped manual evidence ledger and the candidate-scoped artifact index beside the packet while that release call is active.
+- When a newer packet replaces an older one, move the superseded packet out of the working set by attaching it to the release PR / CI artifact record or deleting the local copy after handoff. Do not leave multiple stale "latest" files in place.
+- Do not edit stale artifacts to make them look current. Regenerate the current packet for the pinned revision and update the index instead.
+
+Use [`docs/release-evidence/release-readiness-artifact-index.template.md`](./release-evidence/release-readiness-artifact-index.template.md) as the maintainer-facing catalog. Copy it into `artifacts/release-readiness/release-readiness-artifact-index-<candidate>-<short-sha>.md` for the active release call. The index is where maintainers record which packet is current, which packet is the last comparable baseline, and which exact artifact paths were used for comparison.
 
 ## Same-Revision Rule
 
@@ -84,6 +97,8 @@ Keep the emitted snapshot path. Confirm:
 Copy [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) into `artifacts/release-readiness/` or mirror the same table in the release PR.
 
 Pre-fill one row per required manual evidence item before continuing. This is the handoff tracker for the rest of the run.
+
+In the same pass, copy [`docs/release-evidence/release-readiness-artifact-index.template.md`](./release-evidence/release-readiness-artifact-index.template.md) into `artifacts/release-readiness/` and fill in the candidate header plus the `Current packet` rows you already know. Keep the `Previous comparable packet` section pointed at the last release-call packet for the same target surface.
 
 At minimum, create rows for:
 
@@ -235,6 +250,15 @@ npm run release:go-no-go-packet -- \
 
 Use the packet as the final reviewer attachment. If it still reports blockers, fix the upstream artifact set and rerun the packet instead of editing the packet by hand.
 
+12. Refresh the packet index and comparison notes.
+
+Before closing the release call:
+
+- mark the current packet rows with the exact snapshot, gate summary, audit, dashboard, and decision-packet paths that were approved
+- keep the immediately previous comparable packet in the index until the new packet is accepted
+- record the short comparison outcome, for example `same gates passed`, `wechat evidence refreshed`, or `reconnect soak regressed`
+- once the new packet becomes the accepted baseline, update the index so today's `Current packet` becomes the next release call's `Previous comparable packet`
+
 ## Minimum Artifact Packet
 
 Before calling release `go`, confirm the packet contains these same-revision artifacts:
@@ -249,6 +273,7 @@ Before calling release `go`, confirm the packet contains these same-revision art
 - when persistence or shipped content scope applies: one current persistence/content artifact
 - one final release-readiness dashboard
 - one go/no-go decision packet
+- one candidate-scoped artifact index that points at the current packet and the previous comparable packet
 
 ## Go / No-Go Summary
 
@@ -258,6 +283,7 @@ Release is `go` only when all required evidence for the selected surface is true
 - no required gate-summary dimension is failed, blocked, or stale
 - the same-candidate evidence audit is present and passing for the pinned artifact family
 - the owner ledger has no required row left in `pending` or `in-review`
+- the artifact index points at the exact current packet and the last comparable packet, so a reviewer can reconstruct both the current decision and the previous baseline without guessing from directory timestamps
 - the Cocos RC bundle, checklist, and blockers files match the same candidate revision
 - WeChat release calls also have current smoke, manual-review, and runtime observability evidence
 - any reconnect or persistence evidence required by the release scope is present and current
