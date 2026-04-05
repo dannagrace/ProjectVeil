@@ -100,11 +100,21 @@ interface PlayerAccountApiPayload extends AuthSessionApiPayload {
     recentBattleReplays?: Partial<PlayerBattleReplaySummary>[];
     tutorialStep?: number | null;
     dailyQuestBoard?: PlayerAccountReadModel["dailyQuestBoard"];
+    mailbox?: PlayerAccountReadModel["mailbox"];
+    mailboxSummary?: PlayerAccountReadModel["mailboxSummary"];
     loginId?: string;
     credentialBoundAt?: string;
     lastRoomId?: string;
     lastSeenAt?: string;
   };
+}
+
+interface PlayerMailboxApiPayload {
+  items?: PlayerAccountReadModel["mailbox"];
+  summary?: PlayerAccountReadModel["mailboxSummary"];
+  claimed?: boolean;
+  claimedMessageIds?: string[];
+  reason?: string;
 }
 
 interface DailyClaimApiPayload {
@@ -430,6 +440,8 @@ function asCocosPlayerAccountProfile(
     recentBattleReplays: account?.recentBattleReplays,
     tutorialStep: account?.tutorialStep,
     dailyQuestBoard: account?.dailyQuestBoard,
+    mailbox: account?.mailbox,
+    mailboxSummary: account?.mailboxSummary,
     ...(battleReportCenter ? { battleReportCenter } : {}),
     loginId: normalizeLoginId(account?.loginId),
     credentialBoundAt: account?.credentialBoundAt,
@@ -525,6 +537,51 @@ export async function postCocosPlayerReferral(
       ...(options.storage !== undefined ? { storage: options.storage } : {})
     }
   )) as PlayerReferralApiPayload;
+}
+
+export async function claimCocosMailboxMessage(
+  remoteUrl: string,
+  messageId: string,
+  options: {
+    authSession: CocosStoredAuthSession;
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "removeItem"> | null;
+  }
+): Promise<PlayerMailboxApiPayload> {
+  return (await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/mailbox/${encodeURIComponent(messageId)}/claim`,
+    {
+      method: "POST"
+    },
+    options.authSession,
+    {
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.storage !== undefined ? { storage: options.storage } : {})
+    }
+  )) as PlayerMailboxApiPayload;
+}
+
+export async function claimAllCocosMailboxMessages(
+  remoteUrl: string,
+  options: {
+    authSession: CocosStoredAuthSession;
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "removeItem"> | null;
+  }
+): Promise<PlayerMailboxApiPayload> {
+  return (await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/mailbox/claim-all`,
+    {
+      method: "POST"
+    },
+    options.authSession,
+    {
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.storage !== undefined ? { storage: options.storage } : {})
+    }
+  )) as PlayerMailboxApiPayload;
 }
 
 export async function updateCocosTutorialProgress(

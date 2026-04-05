@@ -5,6 +5,13 @@ import { Server, WebSocketTransport } from "colyseus";
 import { issueAccountAuthSession, issueGuestAuthSession, issueWechatMiniGameAuthSession, hashAccountPassword } from "../src/auth";
 import { getDailyRewardDateKey, getPreviousDailyRewardDateKey } from "../src/daily-rewards";
 import { applyPlayerEventLogAndAchievements } from "../src/player-achievements";
+import {
+  claimAllPlayerMailboxMessages,
+  claimPlayerMailboxMessage,
+  createMailboxClaimEventLogEntry,
+  deliverPlayerMailboxMessage,
+  normalizePlayerMailboxMessage
+} from "../src/player-mailbox";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "../src/wechat-session-key";
 import type {
@@ -181,6 +188,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       recentBattleReplays: structuredClone(existing?.recentBattleReplays ?? []),
       ...(existing?.campaignProgress ? { campaignProgress: structuredClone(existing.campaignProgress) } : {}),
       ...(existing?.seasonalEventStates ? { seasonalEventStates: structuredClone(existing.seasonalEventStates) } : {}),
+      ...(existing?.mailbox ? { mailbox: structuredClone(existing.mailbox) } : {}),
       ...(existing?.dailyDungeonState ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) } : {}),
       ...(existing?.tutorialStep !== undefined ? { tutorialStep: existing.tutorialStep } : { tutorialStep: DEFAULT_TUTORIAL_STEP }),
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
@@ -289,6 +297,94 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       referrerId: normalizedReferrerId,
       newPlayerId: normalizedNewPlayerId
     };
+  }
+
+  async deliverPlayerMailbox(input: import("../src/player-mailbox").PlayerMailboxDeliveryInput) {
+    const message = normalizePlayerMailboxMessage(input.message);
+    const deliveredPlayerIds: string[] = [];
+    const skippedPlayerIds: string[] = [];
+
+    for (const playerId of Array.from(new Set(input.playerIds.map((entry) => entry.trim()).filter(Boolean)))) {
+      const account = await this.ensurePlayerAccount({ playerId });
+      const result = deliverPlayerMailboxMessage(account.mailbox, message);
+      if (!result.delivered) {
+        skippedPlayerIds.push(playerId);
+        continue;
+      }
+      this.accounts.set(playerId, {
+        ...account,
+        mailbox: structuredClone(result.mailbox),
+        updatedAt: new Date().toISOString()
+      });
+      deliveredPlayerIds.push(playerId);
+    }
+
+    return { deliveredPlayerIds, skippedPlayerIds, message };
+  }
+
+  async claimPlayerMailboxMessage(playerId: string, messageId: string, claimedAt?: string) {
+    const account = await this.ensurePlayerAccount({ playerId });
+    const now = claimedAt ? new Date(claimedAt) : new Date();
+    const result = claimPlayerMailboxMessage(account.mailbox, messageId, now);
+    if (!result.claimed || !result.message || !result.granted) {
+      return result;
+    }
+
+    const eventEntry = createMailboxClaimEventLogEntry(playerId, result.message, result.granted, result.message.claimedAt ?? now.toISOString());
+    this.accounts.set(playerId, {
+      ...account,
+      gems: (account.gems ?? 0) + result.granted.gems,
+      mailbox: structuredClone(result.mailbox),
+      globalResources: {
+        gold: (account.globalResources.gold ?? 0) + result.granted.resources.gold,
+        wood: (account.globalResources.wood ?? 0) + result.granted.resources.wood,
+        ore: (account.globalResources.ore ?? 0) + result.granted.resources.ore
+      },
+      recentEventLog: [...account.recentEventLog, eventEntry],
+      updatedAt: now.toISOString()
+    });
+    return result;
+  }
+
+  async claimAllPlayerMailboxMessages(playerId: string, claimedAt?: string) {
+    const account = await this.ensurePlayerAccount({ playerId });
+    const now = claimedAt ? new Date(claimedAt) : new Date();
+    const result = claimAllPlayerMailboxMessages(account.mailbox, now);
+    if (!result.claimed) {
+      return result;
+    }
+
+    const totalGrant = result.granted.reduce(
+      (accumulator, grant) => ({
+        gems: accumulator.gems + grant.gems,
+        gold: accumulator.gold + grant.resources.gold,
+        wood: accumulator.wood + grant.resources.wood,
+        ore: accumulator.ore + grant.resources.ore
+      }),
+      { gems: 0, gold: 0, wood: 0, ore: 0 }
+    );
+    const eventEntries = result.claimedMessageIds
+      .map((messageId, index) => {
+        const message = result.mailbox.find((entry) => entry.id === messageId);
+        const granted = result.granted[index];
+        return message && granted
+          ? createMailboxClaimEventLogEntry(playerId, message, granted, message.claimedAt ?? now.toISOString())
+          : null;
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+    this.accounts.set(playerId, {
+      ...account,
+      gems: (account.gems ?? 0) + totalGrant.gems,
+      mailbox: structuredClone(result.mailbox),
+      globalResources: {
+        gold: (account.globalResources.gold ?? 0) + totalGrant.gold,
+        wood: (account.globalResources.wood ?? 0) + totalGrant.wood,
+        ore: (account.globalResources.ore ?? 0) + totalGrant.ore
+      },
+      recentEventLog: [...account.recentEventLog, ...eventEntries],
+      updatedAt: now.toISOString()
+    });
+    return result;
   }
 
   async listPlayerBanHistory(
@@ -554,6 +650,13 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
           : {}
         : existing.seasonalEventStates
           ? { seasonalEventStates: structuredClone(existing.seasonalEventStates) }
+          : {}),
+      ...(patch.mailbox !== undefined
+        ? patch.mailbox
+          ? { mailbox: structuredClone(patch.mailbox) }
+          : {}
+        : existing.mailbox
+          ? { mailbox: structuredClone(existing.mailbox) }
           : {}),
       globalResources: structuredClone(
         (patch.globalResources as PlayerAccountSnapshot["globalResources"] | undefined) ?? existing.globalResources
@@ -3219,6 +3322,152 @@ test("daily quest claim grants rewards once and returns already_claimed on repea
   assert.equal(account?.gems, 2);
   assert.equal(account?.globalResources.gold, 35);
   assert.match(account?.recentEventLog[0]?.description ?? "", /领取每日任务：补给回收/);
+});
+
+test("mailbox routes list delivered compensation and repeated claims stay idempotent", async (t) => {
+  const port = 44940 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "mailbox-player",
+    displayName: "Mailbox Player"
+  });
+  await store.deliverPlayerMailbox({
+    playerIds: ["mailbox-player"],
+    message: {
+      id: "comp-2026-04-05-restart",
+      kind: "compensation",
+      title: "停机补偿",
+      body: "补发宝石和金币。",
+      sentAt: "2026-04-05T00:00:00.000Z",
+      expiresAt: "2026-04-12T00:00:00.000Z",
+      grant: {
+        gems: 40,
+        resources: {
+          gold: 180
+        }
+      }
+    }
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "mailbox-player",
+    displayName: "Mailbox Player"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const listResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/mailbox`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const listPayload = (await listResponse.json()) as {
+    items: Array<{ id: string }>;
+    summary: { claimableCount: number; unreadCount: number };
+  };
+
+  assert.equal(listResponse.status, 200);
+  assert.equal(listPayload.items[0]?.id, "comp-2026-04-05-restart");
+  assert.equal(listPayload.summary.claimableCount, 1);
+  assert.equal(listPayload.summary.unreadCount, 1);
+
+  const claimResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/mailbox/comp-2026-04-05-restart/claim`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const claimPayload = (await claimResponse.json()) as {
+    claimed: boolean;
+    summary: { claimableCount: number; unreadCount: number };
+  };
+
+  assert.equal(claimResponse.status, 200);
+  assert.equal(claimPayload.claimed, true);
+  assert.equal(claimPayload.summary.claimableCount, 0);
+  assert.equal(claimPayload.summary.unreadCount, 0);
+
+  const repeatClaimResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/mailbox/comp-2026-04-05-restart/claim`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const repeatClaimPayload = (await repeatClaimResponse.json()) as {
+    claimed: boolean;
+    reason: string;
+  };
+
+  assert.equal(repeatClaimResponse.status, 200);
+  assert.equal(repeatClaimPayload.claimed, false);
+  assert.equal(repeatClaimPayload.reason, "already_claimed");
+
+  const account = await store.loadPlayerAccount("mailbox-player");
+  assert.equal(account?.gems, 40);
+  assert.equal(account?.globalResources.gold, 180);
+});
+
+test("admin mailbox delivery route skips duplicate message ids for the same player", async (t) => {
+  process.env.VEIL_ADMIN_TOKEN = "test-admin-token";
+  t.after(() => {
+    delete process.env.VEIL_ADMIN_TOKEN;
+  });
+
+  const port = 44940 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "ops-player",
+    displayName: "Ops Player"
+  });
+  const server = await startAccountRouteServer(port, store);
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const requestBody = {
+    playerIds: ["ops-player"],
+    message: {
+      id: "ops-comp-001",
+      kind: "compensation",
+      title: "运营补偿",
+      body: "测试补发。",
+      sentAt: "2026-04-05T00:00:00.000Z",
+      grant: {
+        gems: 20
+      }
+    }
+  };
+
+  const firstResponse = await fetch(`http://127.0.0.1:${port}/api/admin/player-mailbox/deliver`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-veil-admin-token": "test-admin-token"
+    },
+    body: JSON.stringify(requestBody)
+  });
+  const firstPayload = (await firstResponse.json()) as { delivered: number; skipped: number };
+
+  assert.equal(firstResponse.status, 200);
+  assert.equal(firstPayload.delivered, 1);
+  assert.equal(firstPayload.skipped, 0);
+
+  const secondResponse = await fetch(`http://127.0.0.1:${port}/api/admin/player-mailbox/deliver`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-veil-admin-token": "test-admin-token"
+    },
+    body: JSON.stringify(requestBody)
+  });
+  const secondPayload = (await secondResponse.json()) as { delivered: number; skipped: number };
+
+  assert.equal(secondResponse.status, 200);
+  assert.equal(secondPayload.delivered, 0);
+  assert.equal(secondPayload.skipped, 1);
 });
 
 test("referral endpoint rejects double-claiming for the same referrer and new player", async (t) => {

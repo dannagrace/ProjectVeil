@@ -14,6 +14,7 @@ import {
   queryPlayerBattleReplaySummaries,
   queryAchievementProgress,
   queryEventLogEntries,
+  summarizePlayerMailbox,
   type PlayerBattleReplaySummary,
   type SeasonalEventState,
   type TutorialProgressAction
@@ -65,6 +66,7 @@ import {
   normalizeNotificationPreferences,
   validateGroupChallengeToken
 } from "./wechat-social";
+import { normalizePlayerMailboxMessage } from "./player-mailbox";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -120,6 +122,11 @@ function sendWechatValidationForbidden(response: ServerResponse, message = "WeCh
       message
     }
   });
+}
+
+function isAdminAuthorized(request: IncomingMessage): boolean {
+  const adminToken = process.env.VEIL_ADMIN_TOKEN?.trim();
+  return Boolean(adminToken) && request.headers["x-veil-admin-token"] === adminToken;
 }
 
 function validateWechatSignatureEnvelope(
@@ -500,6 +507,14 @@ function toRewardMutation(account: PlayerAccountSnapshot, reward?: { gems?: numb
   };
 }
 
+function toMailboxResponse(account: PlayerAccountSnapshot, now = new Date()) {
+  const mailbox = account.mailbox ?? [];
+  return {
+    items: mailbox,
+    summary: summarizePlayerMailbox(mailbox, now)
+  };
+}
+
 function upsertSeasonalEventState(
   seasonalEventStates: SeasonalEventState[] | undefined,
   nextState: SeasonalEventState
@@ -713,6 +728,8 @@ function toPublicPlayerAccount(
   | "banStatus"
   | "banExpiry"
   | "banReason"
+  | "mailbox"
+  | "mailboxSummary"
 > {
   const {
     loginId: _loginId,
@@ -724,6 +741,8 @@ function toPublicPlayerAccount(
     banStatus: _banStatus,
     banExpiry: _banExpiry,
     banReason: _banReason,
+    mailbox: _mailbox,
+    mailboxSummary: _mailboxSummary,
     ...publicAccount
   } = account;
   return publicAccount;
@@ -742,7 +761,7 @@ export function registerPlayerAccountRoutes(
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
     response.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-    response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Veil-Auth");
+    response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Veil-Auth, X-Veil-Admin-Token");
 
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
@@ -846,6 +865,76 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.get("/api/player-accounts/me/mailbox", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 200, { items: [], summary: { totalCount: 0, unreadCount: 0, claimableCount: 0, expiredCount: 0 } });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      sendJson(response, 200, toMailboxResponse(account));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player-accounts/me/mailbox/:messageId/claim", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    const messageId = request.params.messageId?.trim();
+    if (!messageId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store?.claimPlayerMailboxMessage) {
+      sendJson(response, 503, {
+        error: {
+          code: "mailbox_persistence_unavailable",
+          message: "Mailbox claims require configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const result = await store.claimPlayerMailboxMessage(authSession.playerId, messageId, new Date().toISOString());
+      if (result.reason === "not_found") {
+        sendJson(response, 404, {
+          error: {
+            code: "mailbox_message_not_found",
+            message: "Mailbox message was not found"
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, {
+        claimed: result.claimed,
+        ...(result.reason ? { reason: result.reason } : {}),
+        ...(result.message ? { message: result.message } : {}),
+        summary: result.summary,
+        items: result.mailbox
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
   app.post("/api/social/group-challenge", async (request, response) => {
     const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
@@ -895,6 +984,125 @@ export function registerPlayerAccountRoutes(
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
         sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player-accounts/me/mailbox/claim-all", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store?.claimAllPlayerMailboxMessages) {
+      sendJson(response, 503, {
+        error: {
+          code: "mailbox_persistence_unavailable",
+          message: "Mailbox claims require configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const result = await store.claimAllPlayerMailboxMessages(authSession.playerId, new Date().toISOString());
+      sendJson(response, 200, {
+        claimed: result.claimed,
+        claimedMessageIds: result.claimedMessageIds,
+        summary: result.summary,
+        items: result.mailbox
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/admin/player-mailbox/deliver", async (request, response) => {
+    const adminToken = process.env.VEIL_ADMIN_TOKEN?.trim();
+    if (!adminToken) {
+      sendJson(response, 503, {
+        error: {
+          code: "not_configured",
+          message: "Admin token not configured"
+        }
+      });
+      return;
+    }
+
+    if (!isAdminAuthorized(request)) {
+      sendJson(response, 403, {
+        error: {
+          code: "forbidden",
+          message: "Invalid admin token"
+        }
+      });
+      return;
+    }
+
+    if (!store?.deliverPlayerMailbox) {
+      sendJson(response, 503, {
+        error: {
+          code: "mailbox_persistence_unavailable",
+          message: "Mailbox delivery requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        playerIds?: string[];
+        message?: {
+          id?: string;
+          kind?: "system" | "compensation" | "announcement";
+          title?: string;
+          body?: string;
+          sentAt?: string;
+          expiresAt?: string;
+          grant?: PlayerAccountSnapshot["mailbox"] extends Array<infer T> ? T extends { grant?: infer G } ? G : never : never;
+        };
+      };
+      const playerIds = (body.playerIds ?? []).map((playerId) => playerId?.trim()).filter((playerId): playerId is string => Boolean(playerId));
+      if (playerIds.length === 0) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_player_ids",
+            message: "playerIds must not be empty"
+          }
+        });
+        return;
+      }
+
+      const message = normalizePlayerMailboxMessage({
+        id: body.message?.id ?? "",
+        title: body.message?.title ?? "",
+        body: body.message?.body ?? "",
+        ...(body.message?.kind ? { kind: body.message.kind } : {}),
+        ...(body.message?.sentAt ? { sentAt: body.message.sentAt } : {}),
+        ...(body.message?.expiresAt ? { expiresAt: body.message.expiresAt } : {}),
+        ...(body.message?.grant ? { grant: body.message.grant } : {})
+      });
+      const result = await store.deliverPlayerMailbox({
+        playerIds,
+        message
+      });
+      sendJson(response, 200, {
+        delivered: result.deliveredPlayerIds.length,
+        skipped: result.skippedPlayerIds.length,
+        deliveredPlayerIds: result.deliveredPlayerIds,
+        skippedPlayerIds: result.skippedPlayerIds,
+        message: result.message
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, {
+          error: {
+            code: error.name,
+            message: error.message
+          }
+        });
         return;
       }
       sendJson(response, 400, { error: toErrorPayload(error) });
