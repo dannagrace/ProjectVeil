@@ -1,4 +1,5 @@
 import assetConfigJson from "../../../../configs/assets.json";
+import type { CocosRuntimePlatform } from "./cocos-runtime-platform.ts";
 import type { PlayerBattleReplaySummary } from "./project-shared/battle-replay.ts";
 
 export interface WechatSharePayload {
@@ -35,6 +36,18 @@ interface ClipboardEnvironmentLike {
     };
     execCommand?: (command: string) => boolean;
   };
+}
+
+interface WechatBattleShareRuntimeLike {
+  shareAppMessage?: ((payload: WechatSharePayload) => void) | undefined;
+}
+
+export interface BattleResultShareExecutionResult {
+  channel: "wechat" | "h5-stub" | "unavailable";
+  copied: boolean;
+  payload: WechatSharePayload;
+  summary: string;
+  message: string;
 }
 
 function normalizeString(value?: string | null): string {
@@ -103,6 +116,49 @@ export function buildBattleResultShareSummary(
 ): string {
   const payload = buildShareCardPayload(result, playerDisplayName);
   return `${payload.title}\n房间 ${result.roomId}\n邀请链接 ${payload.path}`;
+}
+
+export async function shareBattleResultForRuntime(
+  result: PlayerBattleReplaySummary,
+  playerDisplayName: string,
+  options?: {
+    runtimePlatform?: CocosRuntimePlatform;
+    wechatRuntime?: WechatBattleShareRuntimeLike | null;
+    clipboardEnvironment?: ClipboardEnvironmentLike;
+  }
+): Promise<BattleResultShareExecutionResult> {
+  const payload = buildShareCardPayload(result, playerDisplayName);
+  const summary = buildBattleResultShareSummary(result, playerDisplayName);
+
+  if (options?.runtimePlatform === "wechat-game") {
+    if (typeof options.wechatRuntime?.shareAppMessage === "function") {
+      options.wechatRuntime.shareAppMessage(payload);
+      return {
+        channel: "wechat",
+        copied: false,
+        payload,
+        summary,
+        message: "已拉起微信分享面板。"
+      };
+    }
+
+    return {
+      channel: "unavailable",
+      copied: false,
+      payload,
+      summary,
+      message: "当前微信小游戏环境未提供 shareAppMessage。"
+    };
+  }
+
+  const copied = await copyTextToClipboard(summary, options?.clipboardEnvironment);
+  return {
+    channel: copied ? "h5-stub" : "unavailable",
+    copied,
+    payload,
+    summary,
+    message: copied ? "已复制战绩摘要，可直接粘贴分享。" : "当前 H5 运行环境不支持剪贴板复制。"
+  };
 }
 
 export function readLaunchReferrerId(search?: string | null): string | null {

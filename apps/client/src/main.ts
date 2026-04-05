@@ -90,6 +90,7 @@ import {
   type PlayerAccountProfile as ClientPlayerAccountProfile,
   type PlayerAccountSessionDevice
 } from "./player-account";
+import { shareBattleResultForRuntime } from "../../cocos-client/assets/scripts/cocos-share-card.ts";
 import {
   renderAchievementProgress,
   renderBattleReportReplayCenter,
@@ -147,12 +148,55 @@ declare global {
     export_diagnostic_snapshot?: () => string;
     render_diagnostic_snapshot_to_text?: () => string;
     advanceTime?: (ms: number) => Promise<void>;
+    run_h5_share_stub_smoke?: () => Promise<{ copied: boolean; message: string; summary: string }>;
   }
 
   var __PROJECT_VEIL_MAIN_SKIP_AUTO_BOOT__: boolean | undefined;
 }
 
 const DEV_DIAGNOSTICS_ENABLED = Boolean(import.meta.env?.DEV);
+const H5_SHARE_STUB_SMOKE_REPLAY: PlayerBattleReplaySummary = {
+  id: "h5-share-smoke-replay",
+  roomId: "h5-share-room",
+  playerId: "h5-share-player",
+  battleId: "h5-share-battle",
+  battleKind: "hero",
+  playerCamp: "attacker",
+  heroId: "hero-1",
+  opponentHeroId: "hero-2",
+  startedAt: "2026-04-05T00:00:00.000Z",
+  completedAt: "2026-04-05T00:03:00.000Z",
+  initialState: {
+    id: "h5-share-battle",
+    round: 1,
+    lanes: 7,
+    activeUnitId: "unit-1",
+    turnOrder: [],
+    units: {},
+    unitCooldowns: {},
+    environment: [],
+    log: [],
+    rng: {
+      seed: 1,
+      cursor: 0
+    },
+    worldHeroId: "hero-1",
+    defenderHeroId: "hero-2"
+  },
+  steps: [],
+  result: "attacker_victory"
+};
+
+window.run_h5_share_stub_smoke = async () => {
+  const result = await shareBattleResultForRuntime(H5_SHARE_STUB_SMOKE_REPLAY, "H5 Smoke", {
+    runtimePlatform: "browser"
+  });
+  return {
+    copied: result.copied,
+    message: result.message,
+    summary: result.summary
+  };
+};
 
 interface BattleModalState {
   visible: boolean;
