@@ -1,6 +1,6 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform } from "cc";
 import { type CocosAccountReviewPage, type CocosAccountReviewSection } from "./cocos-account-review.ts";
-import { type CocosBattlePassPanelView } from "./cocos-progression-panel.ts";
+import { type CocosBattlePassPanelView, type CocosDailyDungeonPanelView } from "./cocos-progression-panel.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 
 const { ccclass } = _decorator;
@@ -28,6 +28,9 @@ export type VeilProgressionPanelRenderState =
     }
   | {
       battlePass: CocosBattlePassPanelView;
+    }
+  | {
+      dailyDungeon: CocosDailyDungeonPanelView;
     };
 
 export interface VeilProgressionPanelOptions {
@@ -37,6 +40,9 @@ export interface VeilProgressionPanelOptions {
   onRetrySection?: (section: CocosAccountReviewSection) => void;
   onClaimTier?: (tier: number) => void;
   onPurchasePremium?: () => void;
+  onAttemptDailyDungeonFloor?: (floor: number) => void;
+  onClaimDailyDungeonRun?: (runId: string) => void;
+  onRefreshDailyDungeon?: () => void;
 }
 
 interface PanelButtonTone {
@@ -57,6 +63,9 @@ export class VeilProgressionPanel extends Component {
   private onRetrySection: ((section: CocosAccountReviewSection) => void) | undefined;
   private onClaimTier: ((tier: number) => void) | undefined;
   private onPurchasePremium: (() => void) | undefined;
+  private onAttemptDailyDungeonFloor: ((floor: number) => void) | undefined;
+  private onClaimDailyDungeonRun: ((runId: string) => void) | undefined;
+  private onRefreshDailyDungeon: (() => void) | undefined;
 
   configure(options: VeilProgressionPanelOptions): void {
     this.onClose = options.onClose;
@@ -65,6 +74,9 @@ export class VeilProgressionPanel extends Component {
     this.onRetrySection = options.onRetrySection;
     this.onClaimTier = options.onClaimTier;
     this.onPurchasePremium = options.onPurchasePremium;
+    this.onAttemptDailyDungeonFloor = options.onAttemptDailyDungeonFloor;
+    this.onClaimDailyDungeonRun = options.onClaimDailyDungeonRun;
+    this.onRefreshDailyDungeon = options.onRefreshDailyDungeon;
   }
 
   render(state: VeilProgressionPanelRenderState): void {
@@ -73,9 +85,14 @@ export class VeilProgressionPanel extends Component {
       this.renderBattlePass(state.battlePass);
       return;
     }
+    if ("dailyDungeon" in state) {
+      this.renderDailyDungeon(state.dailyDungeon);
+      return;
+    }
 
     this.node.active = true;
     this.hideBattlePassNodes();
+    this.hideDailyDungeonNodes();
     this.renderAccountReview(state.page);
   }
 
@@ -258,6 +275,7 @@ export class VeilProgressionPanel extends Component {
 
     this.node.active = true;
     this.hideAccountReviewNodes();
+    this.hideDailyDungeonNodes();
 
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const width = transform.width || 380;
@@ -384,6 +402,158 @@ export class VeilProgressionPanel extends Component {
     });
 
     this.hideExtraBattlePassItems(view.tiers.length);
+  }
+
+  private renderDailyDungeon(view: CocosDailyDungeonPanelView): void {
+    if (!view.visible) {
+      this.node.active = false;
+      return;
+    }
+
+    this.node.active = true;
+    this.hideAccountReviewNodes();
+    this.hideBattlePassNodes();
+
+    const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
+    const width = transform.width || 380;
+    const height = transform.height || 440;
+    const contentWidth = width - 30;
+    let cursorY = height / 2 - 16;
+
+    this.syncChrome(width, height);
+
+    this.renderButton(
+      "DailyDungeonClose",
+      contentWidth / 2 - 12,
+      height / 2 - 18,
+      72,
+      24,
+      "关闭",
+      {
+        fill: NEGATIVE_FILL,
+        stroke: new Color(244, 226, 214, 114)
+      },
+      this.onClose ?? null
+    );
+
+    cursorY = this.renderCard(
+      "DailyDungeonHeader",
+      0,
+      cursorY,
+      contentWidth,
+      84,
+      [view.title, view.subtitle, view.attemptSummaryLabel],
+      {
+        fill: CARD_HIGHLIGHT_FILL,
+        stroke: new Color(244, 236, 208, 82)
+      },
+      null,
+      15,
+      18
+    );
+
+    cursorY = this.renderCard(
+      "DailyDungeonEvent",
+      0,
+      cursorY,
+      contentWidth,
+      64,
+      [view.eventTitle, view.eventSummaryLabel, view.statusLabel],
+      {
+        fill: CARD_FILL,
+        stroke: new Color(220, 230, 244, 56)
+      },
+      null,
+      12,
+      15
+    );
+
+    this.renderButton(
+      "DailyDungeonRefresh",
+      0,
+      cursorY - 12,
+      contentWidth,
+      24,
+      "重新同步每日地城",
+      {
+        fill: ACTION_FILL,
+        stroke: new Color(224, 236, 248, 108)
+      },
+      this.onRefreshDailyDungeon ?? null
+    );
+    cursorY -= 34;
+
+    view.floors.forEach((floorView, index) => {
+      cursorY = this.renderCard(
+        `DailyDungeonFloor-${index}`,
+        0,
+        cursorY,
+        contentWidth,
+        56,
+        [floorView.title, floorView.detail, floorView.actionLabel],
+        floorView.actionKind === "claim"
+          ? {
+              fill: PREMIUM_TRACK_FILL,
+              stroke: new Color(248, 230, 184, 96)
+            }
+          : floorView.actionEnabled
+            ? {
+                fill: FREE_TRACK_FILL,
+                stroke: new Color(220, 242, 226, 82)
+              }
+            : {
+                fill: MUTED_FILL,
+                stroke: new Color(220, 230, 244, 56)
+              },
+        floorView.actionKind === "claim"
+          ? floorView.runId
+            ? () => this.onClaimDailyDungeonRun?.(floorView.runId!)
+            : null
+          : floorView.actionKind === "attempt"
+            ? () => this.onAttemptDailyDungeonFloor?.(floorView.floor)
+            : null,
+        12,
+        15
+      );
+    });
+
+    const leaderboardLines =
+      view.leaderboardRows.length > 0
+        ? view.leaderboardRows.map((row) => row.summary)
+        : ["排行榜待同步", "当前没有可展示的活动排名。"];
+    cursorY = this.renderCard(
+      "DailyDungeonLeaderboard",
+      0,
+      cursorY,
+      contentWidth,
+      64,
+      ["活动排行榜", ...leaderboardLines],
+      {
+        fill: CARD_FILL,
+        stroke: new Color(220, 230, 244, 56)
+      },
+      null,
+      12,
+      15
+    );
+
+    this.renderCard(
+      "DailyDungeonMyRank",
+      0,
+      cursorY,
+      contentWidth,
+      44,
+      ["我的进度", view.myRankSummary],
+      {
+        fill: MUTED_FILL,
+        stroke: new Color(220, 230, 244, 56)
+      },
+      null,
+      12,
+      15
+    );
+
+    this.hideExtraDailyDungeonItems(view.floors.length);
   }
 
   private syncChrome(width: number, height: number): void {
@@ -577,12 +747,25 @@ export class VeilProgressionPanel extends Component {
     }
   }
 
+  private hideExtraDailyDungeonItems(visibleCount: number): void {
+    for (let index = visibleCount; index < 6; index += 1) {
+      const floorNode = this.node.getChildByName(`DailyDungeonFloor-${index}`);
+      if (floorNode) {
+        floorNode.active = false;
+      }
+    }
+  }
+
   private hideAccountReviewNodes(): void {
     this.hideNodesByPrefix(["ProgressionHeader", "ProgressionBanner", "ProgressionClose", "ProgressionPrev", "ProgressionNext", "ProgressionRetry", "ProgressionTab-", "ProgressionItem-"]);
   }
 
   private hideBattlePassNodes(): void {
     this.hideNodesByPrefix(["BattlePassHeader", "BattlePassNextReward", "BattlePassMeter", "BattlePassPremiumAction", "BattlePassClose", "BattlePassTier-", "BattlePassTrack-"]);
+  }
+
+  private hideDailyDungeonNodes(): void {
+    this.hideNodesByPrefix(["DailyDungeonHeader", "DailyDungeonEvent", "DailyDungeonRefresh", "DailyDungeonClose", "DailyDungeonFloor-", "DailyDungeonLeaderboard", "DailyDungeonMyRank"]);
   }
 
   private hideNodesByPrefix(prefixes: string[]): void {

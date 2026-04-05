@@ -26,7 +26,20 @@ import {
   type PlayerAchievementProgress,
   type TutorialProgressAction
 } from "./project-shared/index.ts";
-import type { CocosSeasonProgress } from "./cocos-progression-panel.ts";
+import type {
+  CocosDailyDungeonEvent,
+  CocosDailyDungeonEventLeaderboardState,
+  CocosDailyDungeonEventObjective,
+  CocosDailyDungeonEventPlayerState,
+  CocosDailyDungeonSummary,
+  CocosSeasonProgress
+} from "./cocos-progression-panel.ts";
+import type {
+  DailyDungeonDefinition,
+  DailyDungeonRunRecord,
+  EventLeaderboardEntry,
+  SeasonalEventReward
+} from "../../../../packages/shared/src/index.ts";
 import { detectCocosRuntimePlatform } from "./cocos-runtime-platform.ts";
 
 const LOBBY_PREFERENCES_STORAGE_KEY = "project-veil:lobby-preferences";
@@ -177,6 +190,49 @@ interface PlayerSeasonProgressApiPayload {
   seasonPassClaimedTiers?: number[];
 }
 
+interface DailyDungeonApiPayload {
+  dailyDungeon?: {
+    dungeon?: Partial<DailyDungeonDefinition> & {
+      floors?: Array<{
+        floor?: number;
+        recommendedHeroLevel?: number;
+        enemyArmyTemplateId?: string;
+        enemyArmyCount?: number;
+        enemyStatMultiplier?: number;
+        reward?: {
+          gems?: number;
+          resources?: {
+            gold?: number;
+            wood?: number;
+            ore?: number;
+          };
+        };
+      }> | null;
+    };
+    dateKey?: string;
+    attemptsUsed?: number;
+    attemptsRemaining?: number;
+    runs?: Partial<DailyDungeonRunRecord>[] | null;
+  };
+}
+
+interface ActiveEventsApiPayload {
+  events?: Array<{
+    id?: string;
+    name?: string;
+    description?: string;
+    bannerText?: string;
+    remainingMs?: number;
+    objectives?: Partial<CocosDailyDungeonEventObjective>[] | null;
+    rewards?: Partial<SeasonalEventReward>[] | null;
+    player?: Partial<CocosDailyDungeonEventPlayerState> | null;
+    leaderboard?: {
+      entries?: Partial<EventLeaderboardEntry>[] | null;
+      topThree?: Partial<EventLeaderboardEntry>[] | null;
+    } | null;
+  }> | null;
+}
+
 export interface CocosAccountRegistrationRequestResult {
   status: string;
   expiresAt?: string;
@@ -220,6 +276,137 @@ function normalizeSeasonProgress(payload?: PlayerSeasonProgressApiPayload | null
     seasonPassPremium: payload?.seasonPassPremium === true,
     seasonPassClaimedTiers
   };
+}
+
+function normalizeDailyDungeonRuns(runs?: Partial<DailyDungeonRunRecord>[] | null): DailyDungeonRunRecord[] {
+  return (runs ?? [])
+    .filter((run): run is Partial<DailyDungeonRunRecord> => Boolean(run?.runId && run?.dungeonId && run?.startedAt))
+    .map((run) => ({
+      runId: String(run.runId).trim(),
+      dungeonId: String(run.dungeonId).trim(),
+      floor: Math.max(1, Math.floor(run.floor ?? 1)),
+      startedAt: String(run.startedAt).trim(),
+      ...(run.rewardClaimedAt?.trim() ? { rewardClaimedAt: run.rewardClaimedAt.trim() } : {})
+    }))
+    .sort((left, right) => right.startedAt.localeCompare(left.startedAt) || right.floor - left.floor);
+}
+
+function normalizeDailyDungeonSummary(
+  payload?: DailyDungeonApiPayload["dailyDungeon"] | null
+): CocosDailyDungeonSummary | null {
+  const dungeonId = payload?.dungeon?.id?.trim();
+  const dungeonName = payload?.dungeon?.name?.trim();
+  const dungeonDescription = payload?.dungeon?.description?.trim();
+  const rawFloors = payload?.dungeon?.floors ?? [];
+  if (!dungeonId || !dungeonName || !dungeonDescription || rawFloors.length === 0) {
+    return null;
+  }
+
+  const floors = rawFloors
+    .filter((floor) => floor && floor.floor != null)
+    .map((floor) => ({
+      floor: Math.max(1, Math.floor(floor.floor ?? 1)),
+      recommendedHeroLevel: Math.max(1, Math.floor(floor.recommendedHeroLevel ?? 1)),
+      enemyArmyTemplateId: floor.enemyArmyTemplateId?.trim() || "unknown_army",
+      enemyArmyCount: Math.max(1, Math.floor(floor.enemyArmyCount ?? 1)),
+      enemyStatMultiplier: Math.max(0.1, Number(floor.enemyStatMultiplier ?? 1)),
+      reward: {
+        ...(Math.max(0, Math.floor(floor.reward?.gems ?? 0)) > 0 ? { gems: Math.max(0, Math.floor(floor.reward?.gems ?? 0)) } : {}),
+        resources: {
+          gold: Math.max(0, Math.floor(floor.reward?.resources?.gold ?? 0)),
+          wood: Math.max(0, Math.floor(floor.reward?.resources?.wood ?? 0)),
+          ore: Math.max(0, Math.floor(floor.reward?.resources?.ore ?? 0))
+        }
+      }
+    }))
+    .sort((left, right) => left.floor - right.floor);
+  if (floors.length === 0) {
+    return null;
+  }
+
+  return {
+    dungeon: {
+      id: dungeonId,
+      name: dungeonName,
+      description: dungeonDescription,
+      attemptLimit: Math.max(1, Math.floor(payload?.dungeon?.attemptLimit ?? floors.length)),
+      floors
+    },
+    dateKey: payload?.dateKey?.trim() || new Date().toISOString().slice(0, 10),
+    attemptsUsed: Math.max(0, Math.floor(payload?.attemptsUsed ?? 0)),
+    attemptsRemaining: Math.max(0, Math.floor(payload?.attemptsRemaining ?? 0)),
+    runs: normalizeDailyDungeonRuns(payload?.runs)
+  };
+}
+
+function normalizeEventLeaderboardEntries(entries?: Partial<EventLeaderboardEntry>[] | null): EventLeaderboardEntry[] {
+  return (entries ?? [])
+    .filter((entry): entry is Partial<EventLeaderboardEntry> => Boolean(entry?.playerId && entry?.rank != null))
+    .map((entry) => ({
+      rank: Math.max(1, Math.floor(entry.rank ?? 1)),
+      playerId: String(entry.playerId).trim(),
+      displayName: entry.displayName?.trim() || String(entry.playerId).trim(),
+      points: Math.max(0, Math.floor(entry.points ?? 0)),
+      lastUpdatedAt: entry.lastUpdatedAt?.trim() || new Date(0).toISOString(),
+      ...(entry.rewardPreview?.trim() ? { rewardPreview: entry.rewardPreview.trim() } : {})
+    }))
+    .sort((left, right) => left.rank - right.rank);
+}
+
+function normalizeSeasonalEventRewards(rewards?: Partial<SeasonalEventReward>[] | null): SeasonalEventReward[] {
+  return (rewards ?? [])
+    .filter((reward): reward is Partial<SeasonalEventReward> => Boolean(reward?.id && reward?.name))
+    .map((reward) => ({
+      id: String(reward.id).trim(),
+      name: String(reward.name).trim(),
+      pointsRequired: Math.max(0, Math.floor(reward.pointsRequired ?? 0)),
+      kind: (reward.kind ?? "resources") as SeasonalEventReward["kind"],
+      ...(Math.max(0, Math.floor(reward.gems ?? 0)) > 0 ? { gems: Math.max(0, Math.floor(reward.gems ?? 0)) } : {}),
+      ...(reward.resources
+        ? {
+            resources: {
+              gold: Math.max(0, Math.floor(reward.resources.gold ?? 0)),
+              wood: Math.max(0, Math.floor(reward.resources.wood ?? 0)),
+              ore: Math.max(0, Math.floor(reward.resources.ore ?? 0))
+            }
+          }
+        : {}),
+      ...(reward.badge?.trim() ? { badge: reward.badge.trim() } : {}),
+      ...(reward.cosmeticId?.trim() ? { cosmeticId: reward.cosmeticId.trim() } : {})
+    }));
+}
+
+function normalizeActiveSeasonalEvents(payload?: ActiveEventsApiPayload | null): CocosDailyDungeonEvent[] {
+  return (payload?.events ?? [])
+    .filter((event): event is NonNullable<NonNullable<ActiveEventsApiPayload["events"]>[number]> => Boolean(event?.id && event?.name))
+    .map((event) => {
+      const entries = normalizeEventLeaderboardEntries(event.leaderboard?.entries);
+      const topThree = normalizeEventLeaderboardEntries(event.leaderboard?.topThree);
+      return {
+        id: event.id!.trim(),
+        name: event.name!.trim(),
+        description: event.description?.trim() || event.name!.trim(),
+        bannerText: event.bannerText?.trim() || event.description?.trim() || event.name!.trim(),
+        remainingMs: Math.max(0, Math.floor(event.remainingMs ?? 0)),
+        objectives: (event.objectives ?? [])
+          .filter((objective): objective is Partial<CocosDailyDungeonEventObjective> => Boolean(objective?.id && objective?.actionType))
+          .map((objective) => ({
+            id: String(objective.id).trim(),
+            actionType: String(objective.actionType).trim(),
+            ...(objective.dungeonId?.trim() ? { dungeonId: objective.dungeonId.trim() } : {})
+          })),
+        rewards: normalizeSeasonalEventRewards(event.rewards),
+        player: {
+          points: Math.max(0, Math.floor(event.player?.points ?? 0)),
+          claimedRewardIds: Array.from(new Set((event.player?.claimedRewardIds ?? []).map((id) => String(id).trim()).filter(Boolean))),
+          claimableRewardIds: Array.from(new Set((event.player?.claimableRewardIds ?? []).map((id) => String(id).trim()).filter(Boolean)))
+        },
+        leaderboard: {
+          entries,
+          topThree: topThree.length > 0 ? topThree : entries.slice(0, 3)
+        } satisfies CocosDailyDungeonEventLeaderboardState
+      } satisfies CocosDailyDungeonEvent;
+    });
 }
 
 type PlayerProgressionApiPayload = Partial<PlayerProgressionSnapshot>;
@@ -1985,4 +2172,148 @@ export async function claimCocosSeasonTier(
       ...(storage !== undefined ? { storage } : {})
     }
   );
+}
+
+export async function loadCocosDailyDungeon(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+    throwOnError?: boolean;
+  }
+): Promise<CocosDailyDungeonSummary | null> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+
+  try {
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
+      `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/daily-dungeon`,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
+      }
+    )) as DailyDungeonApiPayload;
+    return normalizeDailyDungeonSummary(payload.dailyDungeon);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
+      clearStoredCocosAuthSession(storage);
+    }
+    if (options?.throwOnError) {
+      throw error;
+    }
+    return null;
+  }
+}
+
+export async function loadCocosActiveSeasonalEvents(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+    throwOnError?: boolean;
+  }
+): Promise<CocosDailyDungeonEvent[]> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+
+  try {
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
+      `${resolveCocosApiBaseUrl(remoteUrl)}/api/events/active`,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
+      }
+    )) as ActiveEventsApiPayload;
+    return normalizeActiveSeasonalEvents(payload);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
+      clearStoredCocosAuthSession(storage);
+    }
+    if (options?.throwOnError) {
+      throw error;
+    }
+    return [];
+  }
+}
+
+export async function attemptCocosDailyDungeonFloor(
+  remoteUrl: string,
+  floor: number,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+  }
+): Promise<CocosDailyDungeonSummary | null> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+
+  const payload = (await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/daily-dungeon/attempt`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(authSession?.token ? buildCocosAuthHeaders(authSession.token) : {})
+      },
+      body: JSON.stringify({
+        floor: Math.max(1, Math.floor(floor))
+      })
+    },
+    authSession,
+    {
+      ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(storage !== undefined ? { storage } : {})
+    }
+  )) as DailyDungeonApiPayload;
+
+  return normalizeDailyDungeonSummary(payload.dailyDungeon);
+}
+
+export async function claimCocosDailyDungeonRunReward(
+  remoteUrl: string,
+  runId: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+  }
+): Promise<CocosDailyDungeonSummary | null> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+
+  const payload = (await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/daily-dungeon/runs/${encodeURIComponent(runId)}/claim`,
+    {
+      method: "POST",
+      headers: {
+        ...(authSession?.token ? buildCocosAuthHeaders(authSession.token) : {})
+      }
+    },
+    authSession,
+    {
+      ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(storage !== undefined ? { storage } : {})
+    }
+  )) as DailyDungeonApiPayload;
+
+  return normalizeDailyDungeonSummary(payload.dailyDungeon);
 }
