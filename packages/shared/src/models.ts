@@ -258,8 +258,10 @@ export interface WeeklyLeaderboardEntry {
 
 export interface RankedWeeklyProgress {
   currentWeekStartsAt: string;
+  currentWeekBattles: number;
   currentWeekWins: number;
   previousWeekStartsAt?: string;
+  previousWeekBattles?: number;
   previousWeekWins?: number;
 }
 

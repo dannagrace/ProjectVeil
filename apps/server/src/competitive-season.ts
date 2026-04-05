@@ -3,12 +3,15 @@ import {
   didPlayerWinReplay,
   getRankDivisionForRating,
   getRankDivisionIndex,
+  getPreviousRankDivision,
+  getPromotionSeriesTargetDivision,
   getSoftDecayDivision,
   getTierForDivision,
   getTierFloorDivision,
   getUtcWeekStart,
-  isPromotionSeriesBoundary,
+  rollRankedWeeklyProgress,
   resolveRankedSeasonConfig,
+  shouldApplyWeeklyDivisionDecay,
   type PlayerBattleReplaySummary,
   type RankDivisionId
 } from "../../../packages/shared/src/index";
@@ -34,48 +37,52 @@ function updateWeeklyProgress(
   referenceTime = new Date()
 ): NonNullable<PlayerAccountSnapshot["rankedWeeklyProgress"]> {
   const currentWeekStartsAt = getUtcWeekStart(referenceTime);
-  const existing = account.rankedWeeklyProgress;
   const previousWeekStartsAt = addUtcDays(currentWeekStartsAt, -7);
-  const next = {
-    currentWeekStartsAt,
-    currentWeekWins: 0,
-    ...(existing?.currentWeekStartsAt === previousWeekStartsAt
-      ? {
-          previousWeekStartsAt: existing.currentWeekStartsAt,
-          previousWeekWins: existing.currentWeekWins
-        }
-      : existing?.previousWeekStartsAt === previousWeekStartsAt
-        ? {
-            previousWeekStartsAt,
-            previousWeekWins: existing.previousWeekWins ?? 0
-          }
-        : {})
-  };
-
-  if (existing?.currentWeekStartsAt === currentWeekStartsAt) {
-    next.currentWeekWins = existing.currentWeekWins;
-    if (existing.previousWeekStartsAt === previousWeekStartsAt) {
-      next.previousWeekStartsAt = existing.previousWeekStartsAt;
-      next.previousWeekWins = existing.previousWeekWins ?? 0;
-    }
-  }
+  const next = rollRankedWeeklyProgress(account.rankedWeeklyProgress, referenceTime);
 
   for (const replay of toHeroPvpReplays(newReplays)) {
-    if (!didPlayerWinReplay(replay)) {
-      continue;
-    }
     const replayWeekStartsAt = getUtcWeekStart(replay.completedAt);
     if (replayWeekStartsAt === next.currentWeekStartsAt) {
-      next.currentWeekWins += 1;
+      next.currentWeekBattles += 1;
+      if (didPlayerWinReplay(replay)) {
+        next.currentWeekWins += 1;
+      }
       continue;
     }
     if (replayWeekStartsAt === previousWeekStartsAt) {
       next.previousWeekStartsAt = previousWeekStartsAt;
-      next.previousWeekWins = (next.previousWeekWins ?? 0) + 1;
+      next.previousWeekBattles = (next.previousWeekBattles ?? 0) + 1;
+      if (didPlayerWinReplay(replay)) {
+        next.previousWeekWins = (next.previousWeekWins ?? 0) + 1;
+      }
     }
   }
 
   return next;
+}
+
+function applyWeeklyDivisionDecay(
+  account: PlayerAccountSnapshot,
+  rankDivision: RankDivisionId,
+  peakRankDivision: RankDivisionId,
+  referenceTime = new Date()
+): Pick<PlayerAccountSnapshot, "rankDivision" | "peakRankDivision" | "promotionSeries" | "demotionShield" | "rankedWeeklyProgress"> {
+  const rankedWeeklyProgress = rollRankedWeeklyProgress(account.rankedWeeklyProgress, referenceTime);
+  if (!shouldApplyWeeklyDivisionDecay(rankDivision, account.rankedWeeklyProgress, referenceTime)) {
+    return {
+      rankDivision,
+      peakRankDivision,
+      ...(account.promotionSeries ? { promotionSeries: account.promotionSeries } : {}),
+      ...(account.demotionShield ? { demotionShield: account.demotionShield } : {}),
+      rankedWeeklyProgress
+    };
+  }
+
+  return {
+    rankDivision: getPreviousRankDivision(rankDivision) ?? rankDivision,
+    peakRankDivision,
+    rankedWeeklyProgress
+  };
 }
 
 export function resolveCompetitiveProgression(
@@ -95,22 +102,14 @@ export function resolveCompetitiveProgression(
   let peakRankDivision = existing.peakRankDivision ?? rankDivision;
   let promotionSeries = existing.promotionSeries;
   let demotionShield = existing.demotionShield;
+  const weeklyDecay = applyWeeklyDivisionDecay(existing, rankDivision, peakRankDivision, referenceTime);
+  rankDivision = weeklyDecay.rankDivision ?? rankDivision;
+  peakRankDivision = weeklyDecay.peakRankDivision ?? peakRankDivision;
+  promotionSeries = weeklyDecay.promotionSeries;
+  demotionShield = weeklyDecay.demotionShield;
   const targetDivision = patch.eloRating !== undefined ? getRankDivisionForRating(nextRating) : rankDivision;
 
-  if (patch.eloRating !== undefined && isPromotionSeriesBoundary(rankDivision, targetDivision)) {
-    if (!promotionSeries || promotionSeries.targetDivision !== targetDivision) {
-      promotionSeries = {
-        targetDivision,
-        wins: 0,
-        losses: 0,
-        winsRequired: config.promotionSeries.winsRequired,
-        lossesAllowed: config.promotionSeries.lossesAllowed
-      };
-    }
-  } else if (patch.eloRating !== undefined && getTierForDivision(targetDivision) === getTierForDivision(rankDivision)) {
-    rankDivision = targetDivision;
-    promotionSeries = undefined;
-  } else if (patch.eloRating !== undefined && getRankDivisionIndex(targetDivision) < getRankDivisionIndex(rankDivision)) {
+  if (patch.eloRating !== undefined && getRankDivisionIndex(targetDivision) < getRankDivisionIndex(rankDivision)) {
     if (demotionShield && demotionShield.remainingMatches > 0 && demotionShield.tier === getTierForDivision(rankDivision)) {
       demotionShield = {
         ...demotionShield,
@@ -124,6 +123,19 @@ export function resolveCompetitiveProgression(
       rankDivision = targetDivision;
     }
     promotionSeries = undefined;
+  } else if (patch.eloRating !== undefined) {
+    const promotionTarget = getPromotionSeriesTargetDivision(rankDivision, nextRating);
+    if (promotionTarget && (!promotionSeries || promotionSeries.targetDivision !== promotionTarget)) {
+      promotionSeries = {
+        targetDivision: promotionTarget,
+        wins: 0,
+        losses: 0,
+        winsRequired: config.promotionSeries.winsRequired,
+        lossesAllowed: config.promotionSeries.lossesAllowed
+      };
+    } else if (!promotionTarget && getRankDivisionIndex(targetDivision) === getRankDivisionIndex(rankDivision)) {
+      promotionSeries = undefined;
+    }
   }
 
   for (const replay of heroPvpReplays) {
@@ -175,7 +187,18 @@ export function resolveCompetitiveProgression(
     peakRankDivision,
     ...(promotionSeries ? { promotionSeries } : {}),
     ...(demotionShield ? { demotionShield } : {}),
-    rankedWeeklyProgress: updateWeeklyProgress(existing, newReplays, referenceTime)
+    rankedWeeklyProgress: updateWeeklyProgress(
+      {
+        ...existing,
+        rankDivision,
+        peakRankDivision,
+        ...(promotionSeries ? { promotionSeries } : {}),
+        ...(demotionShield ? { demotionShield } : {}),
+        ...(weeklyDecay.rankedWeeklyProgress ? { rankedWeeklyProgress: weeklyDecay.rankedWeeklyProgress } : {})
+      },
+      newReplays,
+      referenceTime
+    )
   };
 }
 
