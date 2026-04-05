@@ -26,9 +26,11 @@ import {
   type CocosAccountReviewState
 } from "./cocos-account-review.ts";
 import {
+  attemptCocosDailyDungeonFloor,
   completeCocosCampaignMission,
   loadCocosCampaignSummary,
   claimCocosSeasonTier,
+  claimCocosDailyDungeonRunReward,
   claimAllCocosMailboxMessages,
   claimCocosMailboxMessage,
   type CocosCampaignMissionCompleteResult,
@@ -40,13 +42,14 @@ import {
   deleteCurrentCocosPlayerAccount,
   createCocosGuestPlayerId,
   loadCocosBattleReplayHistoryPage,
+  loadCocosActiveSeasonalEvents,
+  loadCocosDailyDungeon,
   createCocosLobbyPreferences,
   loadCocosLobbyRooms,
   loadCocosPlayerAccountProfile,
   loadCocosPlayerAchievementProgress,
   loadCocosPlayerEventHistory,
   loadCocosPlayerProgressionSnapshot,
-  loadCocosActiveSeasonalEvents,
   loadCocosSeasonProgress,
   loginCocosGuestAuthSession,
   logoutCurrentCocosAuthSession,
@@ -147,7 +150,12 @@ import {
 } from "./cocos-session-launch.ts";
 import { buildCocosShopPanelView, type ShopProduct } from "./cocos-shop-panel.ts";
 import { buildCocosEventLeaderboardPanelView } from "./cocos-event-leaderboard-panel.ts";
-import { buildCocosBattlePassPanelView, type CocosSeasonProgress } from "./cocos-progression-panel.ts";
+import {
+  buildCocosBattlePassPanelView,
+  buildCocosDailyDungeonPanelView,
+  type CocosDailyDungeonSummary,
+  type CocosSeasonProgress
+} from "./cocos-progression-panel.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { VeilProgressionPanel } from "./VeilProgressionPanel.ts";
 import { VeilEquipmentPanel } from "./VeilEquipmentPanel.ts";
@@ -252,9 +260,12 @@ interface VeilRootRuntime {
   loadEventHistory: typeof loadCocosPlayerEventHistory;
   loadBattleReplayHistoryPage: typeof loadCocosBattleReplayHistoryPage;
   loadSeasonProgress: typeof loadCocosSeasonProgress;
+  loadDailyDungeon: typeof loadCocosDailyDungeon;
   loadActiveSeasonalEvents: typeof loadCocosActiveSeasonalEvents;
   submitSeasonalEventProgress: typeof submitCocosSeasonalEventProgress;
   claimSeasonTier: typeof claimCocosSeasonTier;
+  attemptDailyDungeonFloor: typeof attemptCocosDailyDungeonFloor;
+  claimDailyDungeonRunReward: typeof claimCocosDailyDungeonRunReward;
   loginGuestAuthSession: typeof loginCocosGuestAuthSession;
   postPlayerReferral: typeof postCocosPlayerReferral;
   logoutAuthSession: typeof logoutCurrentCocosAuthSession;
@@ -285,9 +296,12 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   loadEventHistory: (...args) => loadCocosPlayerEventHistory(...args),
   loadBattleReplayHistoryPage: (...args) => loadCocosBattleReplayHistoryPage(...args),
   loadSeasonProgress: (...args) => loadCocosSeasonProgress(...args),
+  loadDailyDungeon: (...args) => loadCocosDailyDungeon(...args),
   loadActiveSeasonalEvents: (...args) => loadCocosActiveSeasonalEvents(...args),
   submitSeasonalEventProgress: (...args) => submitCocosSeasonalEventProgress(...args),
   claimSeasonTier: (...args) => claimCocosSeasonTier(...args),
+  attemptDailyDungeonFloor: (...args) => attemptCocosDailyDungeonFloor(...args),
+  claimDailyDungeonRunReward: (...args) => claimCocosDailyDungeonRunReward(...args),
   loginGuestAuthSession: (...args) => loginCocosGuestAuthSession(...args),
   postPlayerReferral: (...args) => postCocosPlayerReferral(...args),
   logoutAuthSession: (...args) => logoutCurrentCocosAuthSession(...args),
@@ -402,6 +416,10 @@ export class VeilRoot extends Component {
   private pendingShopProductId: string | null = null;
   private seasonProgress: CocosSeasonProgress | null = null;
   private seasonProgressStatus = "赛季进度待同步。";
+  private dailyDungeonSummary: CocosDailyDungeonSummary | null = null;
+  private dailyDungeonStatus = "每日地城待同步。";
+  private pendingDailyDungeonFloor: number | null = null;
+  private pendingDailyDungeonClaimRunId: string | null = null;
   private activeSeasonalEvent: CocosSeasonalEvent | null = null;
   private seasonalEventStatus = "赛季活动待同步。";
   private gameplaySeasonalEventPanelOpen = false;
@@ -416,6 +434,7 @@ export class VeilRoot extends Component {
   private gameplayAccountReviewPanel: VeilProgressionPanel | null = null;
   private gameplayAccountReviewPanelOpen = false;
   private gameplayBattlePassPanelOpen = false;
+  private gameplayDailyDungeonPanelOpen = false;
   private gameplayEquipmentPanel: VeilEquipmentPanel | null = null;
   private gameplayEquipmentPanelOpen = false;
   private gameplayCampaignPanel: VeilCampaignPanel | null = null;
@@ -907,6 +926,9 @@ export class VeilRoot extends Component {
       onToggleAchievements: () => {
         void this.openGameplayBattleReportCenter();
       },
+      onToggleDailyDungeon: () => {
+        void this.toggleGameplayDailyDungeonPanel();
+      },
       onToggleProgression: () => {
         void this.toggleGameplayBattlePassPanel();
       },
@@ -1151,6 +1173,10 @@ export class VeilRoot extends Component {
       accountReviewPanelNode.getComponent(VeilProgressionPanel) ?? accountReviewPanelNode.addComponent(VeilProgressionPanel);
     this.gameplayAccountReviewPanel.configure({
       onClose: () => {
+        if (this.gameplayDailyDungeonPanelOpen) {
+          void this.toggleGameplayDailyDungeonPanel(false);
+          return;
+        }
         if (this.gameplayBattlePassPanelOpen) {
           void this.toggleGameplayBattlePassPanel(false);
           return;
@@ -1185,6 +1211,15 @@ export class VeilRoot extends Component {
       },
       onPurchasePremium: () => {
         void this.purchaseGameplaySeasonPremium();
+      },
+      onAttemptDailyDungeonFloor: (floor) => {
+        void this.attemptGameplayDailyDungeonFloor(floor);
+      },
+      onClaimDailyDungeonRun: (runId) => {
+        void this.claimGameplayDailyDungeonRun(runId);
+      },
+      onRefreshDailyDungeon: () => {
+        void this.refreshDailyDungeonPanel();
       }
     });
 
@@ -1370,7 +1405,7 @@ export class VeilRoot extends Component {
     }
     if (accountReviewPanelNode) {
       accountReviewPanelNode.active =
-        showingGame && (this.gameplayAccountReviewPanelOpen || this.gameplayBattlePassPanelOpen || this.gameplaySeasonalEventPanelOpen);
+        showingGame && (this.gameplayAccountReviewPanelOpen || this.gameplayBattlePassPanelOpen || this.gameplayDailyDungeonPanelOpen || this.gameplaySeasonalEventPanelOpen);
     }
     if (equipmentPanelNode) {
       equipmentPanelNode.active = showingGame && this.gameplayEquipmentPanelOpen;
@@ -1589,12 +1624,25 @@ export class VeilRoot extends Component {
       return;
     }
 
-    if (!this.gameplayAccountReviewPanelOpen && !this.gameplayBattlePassPanelOpen && !this.gameplaySeasonalEventPanelOpen) {
+    if (!this.gameplayAccountReviewPanelOpen && !this.gameplayBattlePassPanelOpen && !this.gameplayDailyDungeonPanelOpen && !this.gameplaySeasonalEventPanelOpen) {
       panelNode.active = false;
       return;
     }
 
     panelNode.active = true;
+    if (this.gameplayDailyDungeonPanelOpen) {
+      this.gameplayAccountReviewPanel?.render({
+        dailyDungeon: buildCocosDailyDungeonPanelView({
+          dailyDungeon: this.dailyDungeonSummary,
+          activeEvent: null,
+          currentPlayerId: this.playerId,
+          pendingFloor: this.pendingDailyDungeonFloor,
+          pendingClaimRunId: this.pendingDailyDungeonClaimRunId,
+          statusLabel: this.dailyDungeonStatus
+        })
+      });
+      return;
+    }
     if (this.gameplayBattlePassPanelOpen) {
       this.gameplayAccountReviewPanel?.render({
         battlePass: buildCocosBattlePassPanelView({
@@ -2052,6 +2100,7 @@ export class VeilRoot extends Component {
   private async toggleGameplayAccountReviewPanel(forceOpen?: boolean): Promise<void> {
     const nextOpen = forceOpen ?? !this.gameplayAccountReviewPanelOpen;
     this.gameplayBattlePassPanelOpen = false;
+    this.gameplayDailyDungeonPanelOpen = false;
     this.gameplaySeasonalEventPanelOpen = false;
     this.gameplayCampaignPanelOpen = false;
     this.gameplayAccountReviewPanelOpen = nextOpen;
@@ -2074,6 +2123,7 @@ export class VeilRoot extends Component {
 
     const nextOpen = forceOpen ?? !this.gameplayBattlePassPanelOpen;
     this.gameplayAccountReviewPanelOpen = false;
+    this.gameplayDailyDungeonPanelOpen = false;
     this.gameplaySeasonalEventPanelOpen = false;
     this.gameplayCampaignPanelOpen = false;
     this.gameplayBattlePassPanelOpen = nextOpen;
@@ -2087,10 +2137,66 @@ export class VeilRoot extends Component {
     await this.refreshSeasonProgress();
   }
 
+  private async toggleGameplayDailyDungeonPanel(forceOpen?: boolean): Promise<void> {
+    const nextOpen = forceOpen ?? !this.gameplayDailyDungeonPanelOpen;
+    this.gameplayAccountReviewPanelOpen = false;
+    this.gameplayBattlePassPanelOpen = false;
+    this.gameplaySeasonalEventPanelOpen = false;
+    this.gameplayCampaignPanelOpen = false;
+    this.gameplayDailyDungeonPanelOpen = nextOpen;
+    if (!nextOpen) {
+      this.renderView();
+      return;
+    }
+
+    this.renderView();
+    await this.refreshDailyDungeonPanel();
+  }
+
+  private async refreshDailyDungeonPanel(successStatus?: string): Promise<void> {
+    const storage = this.readWebStorage();
+    const authSession = this.currentLobbyAuthSession();
+    if (!authSession?.token) {
+      this.dailyDungeonSummary = null;
+
+      this.dailyDungeonStatus = "每日地城需要有效账号会话。";
+      this.renderView();
+      return;
+    }
+
+    this.dailyDungeonStatus = "正在同步每日地城...";
+    this.renderView();
+    let dailyDungeon: CocosDailyDungeonSummary | null = null;
+    try {
+      dailyDungeon = await resolveVeilRootRuntime().loadDailyDungeon(this.remoteUrl, {
+        storage,
+        authSession,
+        throwOnError: true
+      });
+    } catch (error) {
+      this.dailyDungeonSummary = null;
+
+      this.dailyDungeonStatus = error instanceof Error ? error.message : "daily_dungeon_unavailable";
+      this.renderView();
+      return;
+    }
+
+    this.dailyDungeonSummary = dailyDungeon;
+    if (successStatus?.trim()) {
+      this.dailyDungeonStatus = successStatus.trim();
+    } else if (!dailyDungeon) {
+      this.dailyDungeonStatus = "当前无法读取每日地城配置。";
+    } else {
+      this.dailyDungeonStatus = `剩余 ${dailyDungeon.attemptsRemaining} 次挑战。`;
+    }
+    this.renderView();
+  }
+
   private async toggleGameplaySeasonalEventPanel(forceOpen?: boolean): Promise<void> {
     const nextOpen = forceOpen ?? !this.gameplaySeasonalEventPanelOpen;
     this.gameplayAccountReviewPanelOpen = false;
     this.gameplayBattlePassPanelOpen = false;
+    this.gameplayDailyDungeonPanelOpen = false;
     this.gameplayCampaignPanelOpen = false;
     this.gameplaySeasonalEventPanelOpen = nextOpen;
     if (!nextOpen) {
@@ -2352,6 +2458,57 @@ export class VeilRoot extends Component {
     } finally {
       this.seasonPremiumPurchaseInFlight = false;
       this.pendingShopProductId = null;
+      this.renderView();
+    }
+  }
+
+  private async attemptGameplayDailyDungeonFloor(floor: number): Promise<void> {
+    const storage = this.readWebStorage();
+    const authSession = this.currentLobbyAuthSession();
+    if (!authSession?.token || this.pendingDailyDungeonFloor != null || this.pendingDailyDungeonClaimRunId != null) {
+      return;
+    }
+
+    this.pendingDailyDungeonFloor = Math.max(1, Math.floor(floor));
+    this.dailyDungeonStatus = `正在记录第 ${this.pendingDailyDungeonFloor} 层挑战...`;
+    this.renderView();
+    try {
+      await resolveVeilRootRuntime().attemptDailyDungeonFloor(this.remoteUrl, this.pendingDailyDungeonFloor, {
+        storage,
+        authSession
+      });
+      await this.refreshLobbyAccountProfile();
+      await this.refreshDailyDungeonPanel(`第 ${this.pendingDailyDungeonFloor} 层挑战已记录，可领取对应奖励。`);
+    } catch (error) {
+      this.dailyDungeonStatus = error instanceof Error ? error.message : "daily_dungeon_attempt_failed";
+    } finally {
+      this.pendingDailyDungeonFloor = null;
+      this.renderView();
+    }
+  }
+
+  private async claimGameplayDailyDungeonRun(runId: string): Promise<void> {
+    const storage = this.readWebStorage();
+    const authSession = this.currentLobbyAuthSession();
+    const normalizedRunId = runId.trim();
+    if (!authSession?.token || !normalizedRunId || this.pendingDailyDungeonFloor != null || this.pendingDailyDungeonClaimRunId != null) {
+      return;
+    }
+
+    this.pendingDailyDungeonClaimRunId = normalizedRunId;
+    this.dailyDungeonStatus = "正在领取每日地城奖励...";
+    this.renderView();
+    try {
+      await resolveVeilRootRuntime().claimDailyDungeonRunReward(this.remoteUrl, normalizedRunId, {
+        storage,
+        authSession
+      });
+      await this.refreshLobbyAccountProfile();
+      await this.refreshDailyDungeonPanel("每日地城奖励已领取，活动积分已刷新。");
+    } catch (error) {
+      this.dailyDungeonStatus = error instanceof Error ? error.message : "daily_dungeon_claim_failed";
+    } finally {
+      this.pendingDailyDungeonClaimRunId = null;
       this.renderView();
     }
   }
@@ -3017,6 +3174,9 @@ export class VeilRoot extends Component {
         },
         onToggleAchievements: () => {
           void this.openGameplayBattleReportCenter();
+        },
+        onToggleDailyDungeon: () => {
+          void this.toggleGameplayDailyDungeonPanel();
         },
         onToggleProgression: () => {
           void this.toggleGameplayBattlePassPanel();
@@ -4394,6 +4554,7 @@ export class VeilRoot extends Component {
     this.resetSessionViewport("已返回 Cocos Lobby。");
     this.gameplayAccountReviewPanelOpen = false;
     this.gameplayBattlePassPanelOpen = false;
+    this.gameplayDailyDungeonPanelOpen = false;
     this.gameplaySeasonalEventPanelOpen = false;
     this.gameplayEquipmentPanelOpen = false;
     this.gameplayCampaignPanelOpen = false;

@@ -249,6 +249,7 @@ export interface VeilHudPanelOptions {
   onToggleCampaign?: () => void;
   onToggleInventory?: () => void;
   onToggleAchievements?: () => void;
+  onToggleDailyDungeon?: () => void;
   onToggleProgression?: () => void;
   onToggleSeasonalEvent?: () => void;
   onToggleReport?: () => void;
@@ -364,6 +365,7 @@ export class VeilHudPanel extends Component {
   private onToggleCampaign: (() => void) | undefined;
   private onToggleInventory: (() => void) | undefined;
   private onToggleAchievements: (() => void) | undefined;
+  private onToggleDailyDungeon: (() => void) | undefined;
   private onToggleProgression: (() => void) | undefined;
   private onToggleSeasonalEvent: (() => void) | undefined;
   private onToggleReport: (() => void) | undefined;
@@ -388,6 +390,7 @@ export class VeilHudPanel extends Component {
     this.onToggleCampaign = options.onToggleCampaign;
     this.onToggleInventory = options.onToggleInventory;
     this.onToggleAchievements = options.onToggleAchievements;
+    this.onToggleDailyDungeon = options.onToggleDailyDungeon;
     this.onToggleProgression = options.onToggleProgression;
     this.onToggleSeasonalEvent = options.onToggleSeasonalEvent;
     this.onToggleReport = options.onToggleReport;
@@ -691,6 +694,7 @@ export class VeilHudPanel extends Component {
       { nodeName: "HudCampaign", debugLabel: "campaign", callback: this.onToggleCampaign ?? null },
       { nodeName: "HudInventory", debugLabel: "inventory", callback: this.onToggleInventory ?? null },
       { nodeName: "HudAchievements", debugLabel: "achievements", callback: this.onToggleAchievements ?? null },
+      { nodeName: "HudDailyDungeon", debugLabel: "daily-dungeon", callback: this.onToggleDailyDungeon ?? null },
       { nodeName: "HudBattlePass", debugLabel: "battle-pass", callback: this.onToggleProgression ?? null },
       { nodeName: "HudSeasonalEvent", debugLabel: "seasonal-event", callback: this.onToggleSeasonalEvent ?? null },
       { nodeName: "HudReportPlayer", debugLabel: "report-player", callback: this.onToggleReport ?? null },
@@ -1643,6 +1647,7 @@ export class VeilHudPanel extends Component {
     this.ensureActionButton(actionsNode, "HudCampaign", "战役任务");
     this.ensureActionButton(actionsNode, "HudInventory", "装备背包");
     this.ensureActionButton(actionsNode, "HudAchievements", "战报中心");
+    this.ensureActionButton(actionsNode, "HudDailyDungeon", "每日地城");
     this.ensureActionButton(actionsNode, "HudBattlePass", "赛季通行证");
     this.ensureActionButton(actionsNode, "HudSeasonalEvent", "赛季活动");
     this.ensureActionButton(actionsNode, "HudReportPlayer", "举报玩家");
@@ -1673,6 +1678,7 @@ export class VeilHudPanel extends Component {
       { name: "HudCampaign", label: "战役任务", callback: this.onToggleCampaign ?? null },
       { name: "HudInventory", label: "装备背包", callback: this.onToggleInventory ?? null },
       { name: "HudAchievements", label: "战报中心", callback: this.onToggleAchievements ?? null },
+      { name: "HudDailyDungeon", label: "每日地城", callback: this.onToggleDailyDungeon ?? null },
       {
         name: "HudBattlePass",
         label: "赛季通行证",
