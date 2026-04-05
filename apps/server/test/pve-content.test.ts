@@ -26,6 +26,7 @@ test("campaign config exposes a 6-mission chapter 1 arc with dialogue and sequen
   assert.equal(chapter4.length, 7);
   assert.equal(missions[0]?.introDialogue?.length, 2);
   assert.equal(chapter2.at(-1)?.bossEncounterName, "Captain Veyr, Ringbreaker");
+  assert.equal(chapter2.at(-1)?.bossTemplateId, "boss-shadow-warden");
   assert.equal(chapter3.at(-1)?.midDialogue?.length, 3);
   assert.equal(chapter4.at(-1)?.reward.cosmeticId, "border-veilfall-throne");
   assert.equal(missions[0]?.objectives[0]?.id, "c1m1-clear-patrol");

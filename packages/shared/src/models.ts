@@ -720,6 +720,69 @@ export interface BattleTrapState {
 
 export type BattleHazardState = BattleBlockerState | BattleTrapState;
 
+export interface BossEncounterPhaseSkillOverrides {
+  replaceSkillIds?: BattleSkillId[];
+  addSkillIds?: BattleSkillId[];
+  removeSkillIds?: BattleSkillId[];
+}
+
+export interface BossEncounterScriptedAbilityConfig {
+  id: string;
+  timing: "pre_turn" | "post_turn";
+  skillId: BattleSkillId;
+  target: "self" | "first_enemy" | "lowest_hp_enemy" | "lowest_hp_ally";
+  oncePerRound?: boolean;
+}
+
+export type BossEncounterEnvironmentalEffectConfig =
+  | {
+      kind: "blocker";
+      lane: number;
+      name: string;
+      description: string;
+      durability: number;
+      maxDurability?: number;
+    }
+  | {
+      kind: "trap";
+      lane: number;
+      effect: "damage" | "slow" | "silence";
+      name: string;
+      description: string;
+      damage: number;
+      charges: number;
+      grantedStatusId?: BattleStatusEffectId;
+      triggeredByCamp?: "attacker" | "defender" | "both";
+      revealed?: boolean;
+    };
+
+export interface BossEncounterPhaseConfig {
+  id: string;
+  hpThreshold: number;
+  skillOverrides?: BossEncounterPhaseSkillOverrides;
+  scriptedAbilities?: BossEncounterScriptedAbilityConfig[];
+  environmentalEffects?: BossEncounterEnvironmentalEffectConfig[];
+}
+
+export interface BossEncounterTemplate {
+  id: string;
+  name: string;
+  bossUnitTemplateId?: string;
+  phases: BossEncounterPhaseConfig[];
+}
+
+export interface BossEncounterTemplateCatalogConfig {
+  templates: BossEncounterTemplate[];
+}
+
+export interface BossEncounterState {
+  templateId: string;
+  bossUnitId: string;
+  activePhaseId: string;
+  maxBossHp: number;
+  triggeredAbilityKeys: string[];
+}
+
 export interface DeterministicRngState {
   seed: number;
   cursor: number;
@@ -741,6 +804,7 @@ export interface BattleState {
   defenderHeroId?: string;
   encounterPosition?: Vec2;
   battlefieldTerrain?: TerrainType;
+  bossEncounter?: BossEncounterState;
 }
 
 export type WorldAction =
@@ -1302,6 +1366,7 @@ export interface CampaignMission {
   enemyArmyCount: number;
   enemyStatMultiplier: number;
   bossEncounterName?: string;
+  bossTemplateId?: string;
   unlockMissionId?: string;
   introDialogue?: DialogueLine[];
   midDialogue?: DialogueLine[];
@@ -1338,6 +1403,7 @@ export interface DailyDungeonFloor {
   enemyArmyTemplateId: string;
   enemyArmyCount: number;
   enemyStatMultiplier: number;
+  bossTemplateId?: string;
   reward: DailyDungeonReward;
 }
 
