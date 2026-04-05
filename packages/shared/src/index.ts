@@ -11,6 +11,7 @@ export * from "./analytics-events.ts";
 export * from "./content-pack-validation.ts";
 export * from "./cosmetics.ts";
 export * from "./daily-quests.ts";
+export * from "./daily-dungeons.ts";
 export * from "./daily-quest-rotation.ts";
 export * from "./deterministic-rng.ts";
 export * from "./equipment.ts";

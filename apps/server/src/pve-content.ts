@@ -19,7 +19,11 @@ import type {
   MissionObjective,
   RankDivisionId
 } from "../../../packages/shared/src/index";
-import { getRankDivisionIndex, resolveCosmeticCatalog } from "../../../packages/shared/src/index";
+import {
+  getRankDivisionIndex,
+  resolveCosmeticCatalog,
+  validateDailyDungeonConfigDocument
+} from "../../../packages/shared/src/index";
 import { getDailyRewardDateKey } from "./daily-rewards";
 
 interface CampaignConfigMissionDocument {
@@ -47,7 +51,12 @@ interface CampaignConfigDocument {
 }
 
 interface DailyDungeonConfigDocument {
-  dungeons?: Array<Partial<DailyDungeonDefinition> & { floors?: Partial<DailyDungeonFloor>[] | null }> | null;
+  dungeons?: Array<
+    Partial<DailyDungeonDefinition> & {
+      activeWindow?: Partial<DailyDungeonDefinition["activeWindow"]> | null;
+      floors?: Partial<DailyDungeonFloor>[] | null;
+    }
+  > | null;
 }
 
 export interface CampaignAccessContext {
@@ -425,12 +434,18 @@ export function resolveDailyDungeonConfig(
     throw new Error("daily dungeon config must define at least one dungeon");
   }
 
-  return rawDungeons.map((rawDungeon, dungeonIndex) => {
+  const dungeons = rawDungeons.map((rawDungeon, dungeonIndex) => {
     const id = rawDungeon.id?.trim();
     const name = rawDungeon.name?.trim();
     const description = rawDungeon.description?.trim();
     if (!id || !name || !description) {
       throw new Error(`daily dungeon[${dungeonIndex}] must define id, name, and description`);
+    }
+
+    const startDate = rawDungeon.activeWindow?.startDate?.trim();
+    const endDate = rawDungeon.activeWindow?.endDate?.trim();
+    if (!startDate || !endDate) {
+      throw new Error(`daily dungeon ${id} must define activeWindow.startDate and activeWindow.endDate`);
     }
 
     const floors = (rawDungeon.floors ?? []).map((rawFloor, floorIndex) => {
@@ -469,9 +484,47 @@ export function resolveDailyDungeonConfig(
       name,
       description,
       attemptLimit: normalizeNonNegativeInteger(rawDungeon.attemptLimit, `daily dungeon ${id} attemptLimit`, 1),
+      activeWindow: {
+        startDate,
+        endDate
+      },
       floors: floors.sort((left, right) => left.floor - right.floor)
     } satisfies DailyDungeonDefinition;
   });
+
+  const issues = validateDailyDungeonConfigDocument({ dungeons });
+  if (issues.length > 0) {
+    const [firstIssue] = issues;
+    throw new Error(`daily dungeon config invalid at ${firstIssue?.path}: ${firstIssue?.message}`);
+  }
+
+  return dungeons.sort(
+    (left, right) =>
+      left.activeWindow.startDate.localeCompare(right.activeWindow.startDate) || left.id.localeCompare(right.id)
+  );
+}
+
+export function resolveActiveDailyDungeon(
+  now = new Date(),
+  document: DailyDungeonConfigDocument = dailyDungeonsDocument as DailyDungeonConfigDocument
+): DailyDungeonDefinition {
+  const dateKey = getDailyRewardDateKey(now);
+  const activeDungeons = resolveDailyDungeonConfig(document).filter(
+    (dungeon) => dateKey >= dungeon.activeWindow.startDate && dateKey <= dungeon.activeWindow.endDate
+  );
+  if (activeDungeons.length === 0) {
+    throw new Error(`daily_dungeon_not_active_for_${dateKey}`);
+  }
+  if (activeDungeons.length > 1) {
+    throw new Error(`daily_dungeon_rotation_overlap_for_${dateKey}`);
+  }
+
+  const [activeDungeon] = activeDungeons;
+  if (!activeDungeon) {
+    throw new Error(`daily_dungeon_not_active_for_${dateKey}`);
+  }
+
+  return activeDungeon;
 }
 
 export function getCurrentDailyDungeonState(state?: DailyDungeonState | null, now = new Date()): DailyDungeonState {
