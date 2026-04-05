@@ -26,9 +26,14 @@ import {
   type CocosAccountReviewState
 } from "./cocos-account-review.ts";
 import {
+  completeCocosCampaignMission,
+  loadCocosCampaignSummary,
   claimCocosSeasonTier,
   claimAllCocosMailboxMessages,
   claimCocosMailboxMessage,
+  type CocosCampaignMissionCompleteResult,
+  type CocosCampaignMissionStartResult,
+  type CocosCampaignSummary,
   confirmCocosAccountRegistration,
   confirmCocosPasswordRecovery,
   createFallbackCocosPlayerAccountProfile,
@@ -53,6 +58,7 @@ import {
   requestCocosPasswordRecovery,
   resolveCocosConfigCenterUrl,
   saveCocosLobbyPreferences,
+  startCocosCampaignMission,
   submitCocosSeasonalEventProgress,
   syncCurrentCocosAuthSession,
   updateCocosTutorialProgress,
@@ -147,6 +153,7 @@ import { buildCocosBattlePassPanelView, type CocosSeasonProgress } from "./cocos
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { VeilProgressionPanel } from "./VeilProgressionPanel.ts";
 import { VeilEquipmentPanel } from "./VeilEquipmentPanel.ts";
+import { VeilCampaignPanel } from "./VeilCampaignPanel.ts";
 import { VeilTutorialOverlay, type TutorialOverlayView } from "./VeilTutorialOverlay.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
 import { type CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
@@ -171,6 +178,10 @@ import { buildCocosRuntimeTriageSummaryLines } from "./cocos-runtime-diagnostics
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
 import { cocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
+import {
+  type CocosCampaignDialogueState,
+  resolveCampaignPanelMission
+} from "./cocos-campaign-panel.ts";
 import {
   appendPrimaryClientTelemetry,
   buildPrimaryClientTelemetryFromUpdate,
@@ -206,6 +217,7 @@ const LOBBY_NODE_NAME = "ProjectVeilLobbyPanel";
 const TUTORIAL_OVERLAY_NODE_NAME = "ProjectVeilTutorialOverlay";
 const ACCOUNT_REVIEW_PANEL_NODE_NAME = "ProjectVeilAccountReviewPanel";
 const EQUIPMENT_PANEL_NODE_NAME = "ProjectVeilEquipmentPanel";
+const CAMPAIGN_PANEL_NODE_NAME = "ProjectVeilCampaignPanel";
 const SETTINGS_PANEL_NODE_NAME = "ProjectVeilSettingsPanel";
 const SETTINGS_BUTTON_NODE_NAME = "ProjectVeilSettingsButton";
 const DEFAULT_MAP_WIDTH_TILES = 8;
@@ -235,6 +247,9 @@ interface VeilRootRuntime {
   loadAccountProfile: typeof loadCocosPlayerAccountProfile;
   updateTutorialProgress: typeof updateCocosTutorialProgress;
   loadProgressionSnapshot: typeof loadCocosPlayerProgressionSnapshot;
+  loadCampaignSummary: typeof loadCocosCampaignSummary;
+  startCampaignMission: typeof startCocosCampaignMission;
+  completeCampaignMission: typeof completeCocosCampaignMission;
   loadAchievementProgress: typeof loadCocosPlayerAchievementProgress;
   loadEventHistory: typeof loadCocosPlayerEventHistory;
   loadBattleReplayHistoryPage: typeof loadCocosBattleReplayHistoryPage;
@@ -265,6 +280,9 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   loadAccountProfile: (...args) => loadCocosPlayerAccountProfile(...args),
   updateTutorialProgress: (...args) => updateCocosTutorialProgress(...args),
   loadProgressionSnapshot: (...args) => loadCocosPlayerProgressionSnapshot(...args),
+  loadCampaignSummary: (...args) => loadCocosCampaignSummary(...args),
+  startCampaignMission: (...args) => startCocosCampaignMission(...args),
+  completeCampaignMission: (...args) => completeCocosCampaignMission(...args),
   loadAchievementProgress: (...args) => loadCocosPlayerAchievementProgress(...args),
   loadEventHistory: (...args) => loadCocosPlayerEventHistory(...args),
   loadBattleReplayHistoryPage: (...args) => loadCocosBattleReplayHistoryPage(...args),
@@ -402,6 +420,15 @@ export class VeilRoot extends Component {
   private gameplayBattlePassPanelOpen = false;
   private gameplayEquipmentPanel: VeilEquipmentPanel | null = null;
   private gameplayEquipmentPanelOpen = false;
+  private gameplayCampaignPanel: VeilCampaignPanel | null = null;
+  private gameplayCampaignPanelOpen = false;
+  private gameplayCampaign: CocosCampaignSummary | null = null;
+  private gameplayCampaignSelectedMissionId: string | null = null;
+  private gameplayCampaignActiveMissionId: string | null = null;
+  private gameplayCampaignDialogue: CocosCampaignDialogueState | null = null;
+  private gameplayCampaignStatus = "战役面板待同步。";
+  private gameplayCampaignLoading = false;
+  private gameplayCampaignPendingAction: "start" | "complete" | null = null;
   private settingsPanel: CocosSettingsPanel | null = null;
   private settingsView: CocosSettingsPanelView = createDefaultCocosSettingsView();
   private activeAccountFlow: CocosAccountLifecycleKind | null = null;
@@ -873,6 +900,9 @@ export class VeilRoot extends Component {
       onToggleSettings: () => {
         this.toggleSettingsPanel();
       },
+      onToggleCampaign: () => {
+        void this.toggleGameplayCampaignPanel();
+      },
       onToggleInventory: () => {
         this.toggleGameplayEquipmentPanel();
       },
@@ -980,6 +1010,9 @@ export class VeilRoot extends Component {
       },
       onCancelAccountFlow: () => {
         this.closeLobbyAccountFlow();
+      },
+      onOpenCampaign: () => {
+        void this.toggleGameplayCampaignPanel(true);
       },
       onOpenConfigCenter: () => {
         this.openConfigCenter();
@@ -1179,6 +1212,43 @@ export class VeilRoot extends Component {
       }
     });
 
+    let campaignPanelNode = this.node.getChildByName(CAMPAIGN_PANEL_NODE_NAME);
+    if (!campaignPanelNode) {
+      campaignPanelNode = new Node(CAMPAIGN_PANEL_NODE_NAME);
+      campaignPanelNode.parent = this.node;
+    }
+    assignUiLayer(campaignPanelNode);
+    const campaignPanelTransform = campaignPanelNode.getComponent(UITransform) ?? campaignPanelNode.addComponent(UITransform);
+    campaignPanelTransform.setContentSize(Math.max(380, Math.min(500, visibleSize.width - 56)), Math.max(480, visibleSize.height - 96));
+    this.gameplayCampaignPanel =
+      campaignPanelNode.getComponent(VeilCampaignPanel) ?? campaignPanelNode.addComponent(VeilCampaignPanel);
+    this.gameplayCampaignPanel.configure({
+      onClose: () => {
+        void this.toggleGameplayCampaignPanel(false);
+      },
+      onRefresh: () => {
+        void this.refreshGameplayCampaign();
+      },
+      onSelectPrevious: () => {
+        this.selectGameplayCampaignMission("previous");
+      },
+      onSelectNext: () => {
+        this.selectGameplayCampaignMission("next");
+      },
+      onFocusNextAvailable: () => {
+        this.selectGameplayCampaignMission("next-available");
+      },
+      onStartMission: () => {
+        void this.startGameplayCampaignMission();
+      },
+      onAdvanceDialogue: () => {
+        this.advanceGameplayCampaignDialogue();
+      },
+      onCompleteMission: () => {
+        void this.completeGameplayCampaignMission();
+      }
+    });
+
     let settingsPanelNode = this.node.getChildByName(SETTINGS_PANEL_NODE_NAME);
     if (!settingsPanelNode) {
       settingsPanelNode = new Node(SETTINGS_PANEL_NODE_NAME);
@@ -1280,6 +1350,7 @@ export class VeilRoot extends Component {
     const tutorialOverlayNode = this.node.getChildByName(TUTORIAL_OVERLAY_NODE_NAME);
     const accountReviewPanelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
     const equipmentPanelNode = this.node.getChildByName(EQUIPMENT_PANEL_NODE_NAME);
+    const campaignPanelNode = this.node.getChildByName(CAMPAIGN_PANEL_NODE_NAME);
     const settingsPanelNode = this.node.getChildByName(SETTINGS_PANEL_NODE_NAME);
     const settingsButtonNode = this.node.getChildByName(SETTINGS_BUTTON_NODE_NAME);
     const showingGame = !this.showLobby;
@@ -1305,6 +1376,9 @@ export class VeilRoot extends Component {
     }
     if (equipmentPanelNode) {
       equipmentPanelNode.active = showingGame && this.gameplayEquipmentPanelOpen;
+    }
+    if (campaignPanelNode) {
+      campaignPanelNode.active = this.gameplayCampaignPanelOpen;
     }
     if (settingsPanelNode) {
       settingsPanelNode.active = this.settingsView.open;
@@ -1462,6 +1536,7 @@ export class VeilRoot extends Component {
       entries: this.timelineEntries
     });
     this.renderGameplayEquipmentPanel();
+    this.renderGameplayCampaignPanel();
     this.renderGameplayAccountReviewPanel();
   }
 
@@ -1484,6 +1559,29 @@ export class VeilRoot extends Component {
         (event): event is Extract<NonNullable<SessionUpdate["events"]>[number], { type: "hero.equipmentFound" }> =>
           event.type === "hero.equipmentFound"
       )
+    });
+  }
+
+  private renderGameplayCampaignPanel(): void {
+    const panelNode = this.node.getChildByName(CAMPAIGN_PANEL_NODE_NAME);
+    if (!panelNode) {
+      return;
+    }
+
+    if (!this.gameplayCampaignPanelOpen) {
+      panelNode.active = false;
+      return;
+    }
+
+    panelNode.active = true;
+    this.gameplayCampaignPanel?.render({
+      campaign: this.gameplayCampaign,
+      selectedMissionId: this.gameplayCampaignSelectedMissionId,
+      activeMissionId: this.gameplayCampaignActiveMissionId,
+      dialogue: this.gameplayCampaignDialogue,
+      statusMessage: this.gameplayCampaignStatus,
+      loading: this.gameplayCampaignLoading,
+      pendingAction: this.gameplayCampaignPendingAction
     });
   }
 
@@ -1957,6 +2055,7 @@ export class VeilRoot extends Component {
     const nextOpen = forceOpen ?? !this.gameplayAccountReviewPanelOpen;
     this.gameplayBattlePassPanelOpen = false;
     this.gameplaySeasonalEventPanelOpen = false;
+    this.gameplayCampaignPanelOpen = false;
     this.gameplayAccountReviewPanelOpen = nextOpen;
     if (!nextOpen) {
       this.renderView();
@@ -1978,6 +2077,7 @@ export class VeilRoot extends Component {
     const nextOpen = forceOpen ?? !this.gameplayBattlePassPanelOpen;
     this.gameplayAccountReviewPanelOpen = false;
     this.gameplaySeasonalEventPanelOpen = false;
+    this.gameplayCampaignPanelOpen = false;
     this.gameplayBattlePassPanelOpen = nextOpen;
     if (!nextOpen) {
       this.renderView();
@@ -1993,6 +2093,7 @@ export class VeilRoot extends Component {
     const nextOpen = forceOpen ?? !this.gameplaySeasonalEventPanelOpen;
     this.gameplayAccountReviewPanelOpen = false;
     this.gameplayBattlePassPanelOpen = false;
+    this.gameplayCampaignPanelOpen = false;
     this.gameplaySeasonalEventPanelOpen = nextOpen;
     if (!nextOpen) {
       this.renderView();
@@ -2259,7 +2360,305 @@ export class VeilRoot extends Component {
 
   private toggleGameplayEquipmentPanel(forceOpen?: boolean): void {
     this.gameplayEquipmentPanelOpen = forceOpen ?? !this.gameplayEquipmentPanelOpen;
+    if (this.gameplayEquipmentPanelOpen) {
+      this.gameplayCampaignPanelOpen = false;
+    }
     this.renderView();
+  }
+
+  private async toggleGameplayCampaignPanel(forceOpen?: boolean): Promise<void> {
+    const nextOpen = forceOpen ?? !this.gameplayCampaignPanelOpen;
+    this.gameplayCampaignPanelOpen = nextOpen;
+    if (!nextOpen) {
+      this.gameplayCampaignDialogue = null;
+      this.gameplayCampaignPendingAction = null;
+      this.renderView();
+      return;
+    }
+
+    this.gameplayAccountReviewPanelOpen = false;
+    this.gameplayBattlePassPanelOpen = false;
+    this.gameplaySeasonalEventPanelOpen = false;
+    this.gameplayEquipmentPanelOpen = false;
+    this.renderView();
+    await this.refreshGameplayCampaign();
+  }
+
+  private resolveSelectedGameplayCampaignMission() {
+    return resolveCampaignPanelMission(
+      this.gameplayCampaign,
+      this.gameplayCampaignSelectedMissionId,
+      this.gameplayCampaignActiveMissionId
+    );
+  }
+
+  private syncGameplayCampaignSelection(preferredMissionId?: string | null): void {
+    const missions = this.gameplayCampaign?.missions ?? [];
+    const preferredId = preferredMissionId?.trim() || null;
+    const campaignNextMissionId = this.gameplayCampaign?.nextMissionId ?? null;
+    const nextMissionId =
+      (preferredId && missions.find((mission) => mission.id === preferredId)?.id)
+      ?? (this.gameplayCampaignActiveMissionId && missions.find((mission) => mission.id === this.gameplayCampaignActiveMissionId)?.id)
+      ?? (campaignNextMissionId && missions.find((mission) => mission.id === campaignNextMissionId)?.id)
+      ?? missions[0]?.id
+      ?? null;
+    this.gameplayCampaignSelectedMissionId = nextMissionId;
+  }
+
+  private selectGameplayCampaignMission(direction: "previous" | "next" | "next-available"): void {
+    const missions = this.gameplayCampaign?.missions ?? [];
+    if (missions.length === 0) {
+      return;
+    }
+
+    if (direction === "next-available") {
+      const nextAvailableMissionId = this.gameplayCampaign?.nextMissionId;
+      if (nextAvailableMissionId) {
+        this.gameplayCampaignSelectedMissionId = nextAvailableMissionId;
+        this.gameplayCampaignDialogue = null;
+        this.renderView();
+      }
+      return;
+    }
+
+    const selectedMission = this.resolveSelectedGameplayCampaignMission();
+    const currentIndex = selectedMission ? missions.findIndex((mission) => mission.id === selectedMission.id) : 0;
+    if (currentIndex < 0) {
+      return;
+    }
+
+    const nextIndex = direction === "previous" ? Math.max(0, currentIndex - 1) : Math.min(missions.length - 1, currentIndex + 1);
+    this.gameplayCampaignSelectedMissionId = missions[nextIndex]?.id ?? this.gameplayCampaignSelectedMissionId;
+    this.gameplayCampaignDialogue = null;
+    this.renderView();
+  }
+
+  private async refreshGameplayCampaign(preferredMissionId?: string | null): Promise<void> {
+    if (!this.authToken || this.authMode !== "account") {
+      this.gameplayCampaign = null;
+      this.gameplayCampaignSelectedMissionId = null;
+      this.gameplayCampaignActiveMissionId = null;
+      this.gameplayCampaignDialogue = null;
+      this.gameplayCampaignStatus = "战役模式需要正式账号会话。";
+      this.renderView();
+      return;
+    }
+
+    this.gameplayCampaignLoading = true;
+    this.gameplayCampaignStatus = "正在同步战役任务...";
+    this.renderView();
+    try {
+      this.gameplayCampaign = await resolveVeilRootRuntime().loadCampaignSummary(this.remoteUrl, {
+        authSession: this.authToken
+          ? {
+              token: this.authToken,
+              playerId: this.playerId,
+              displayName: this.displayName || this.playerId,
+              authMode: this.authMode,
+              provider: this.authProvider,
+              ...(this.loginId ? { loginId: this.loginId } : {}),
+              source: "remote"
+            }
+          : null
+      });
+      if (this.gameplayCampaignActiveMissionId) {
+        const activeMission = this.gameplayCampaign.missions.find((mission) => mission.id === this.gameplayCampaignActiveMissionId) ?? null;
+        if (!activeMission || activeMission.status === "completed") {
+          this.gameplayCampaignActiveMissionId = null;
+          this.gameplayCampaignDialogue = null;
+        }
+      }
+      this.syncGameplayCampaignSelection(preferredMissionId);
+      this.gameplayCampaignStatus =
+        this.gameplayCampaign.nextMissionId
+          ? `下一可用任务 ${this.gameplayCampaign.nextMissionId}`
+          : "当前战役线已全部完成。";
+    } catch (error) {
+      this.gameplayCampaignStatus = this.describeCampaignError(error);
+    } finally {
+      this.gameplayCampaignLoading = false;
+      this.renderView();
+    }
+  }
+
+  private startGameplayCampaignDialogue(missionId: string, sequence: "intro" | "outro"): void {
+    this.gameplayCampaignDialogue = {
+      missionId,
+      sequence,
+      lineIndex: 0
+    };
+  }
+
+  private advanceGameplayCampaignDialogue(): void {
+    const dialogue = this.gameplayCampaignDialogue;
+    if (!dialogue) {
+      return;
+    }
+
+    const mission = this.gameplayCampaign?.missions.find((entry) => entry.id === dialogue.missionId) ?? null;
+    const lines = dialogue.sequence === "outro" ? mission?.outroDialogue ?? [] : mission?.introDialogue ?? [];
+    const currentLine = lines[Math.min(Math.max(0, dialogue.lineIndex), lines.length - 1)] ?? null;
+    if (currentLine && this.session) {
+      void this.session.acknowledgeCampaignDialogue(dialogue.missionId, dialogue.sequence, currentLine.id).catch(() => undefined);
+    }
+    if (lines.length === 0 || dialogue.lineIndex >= lines.length - 1) {
+      this.gameplayCampaignDialogue = null;
+      if (dialogue.sequence === "outro") {
+        this.gameplayCampaignActiveMissionId = null;
+        this.syncGameplayCampaignSelection(this.gameplayCampaign?.nextMissionId);
+        this.gameplayCampaignStatus = mission ? `${mission.name} 已完成并结算。` : "任务已完成。";
+      } else {
+        this.gameplayCampaignPanelOpen = false;
+        this.gameplayCampaignStatus = mission ? `${mission.name} 已进入执行阶段。` : "任务已开始。";
+      }
+      this.renderView();
+      return;
+    }
+
+    this.gameplayCampaignDialogue = {
+      ...dialogue,
+      lineIndex: dialogue.lineIndex + 1
+    };
+    this.renderView();
+  }
+
+  private async startGameplayCampaignMission(): Promise<void> {
+    const mission = this.resolveSelectedGameplayCampaignMission();
+    if (!mission || !this.authToken || this.authMode !== "account") {
+      return;
+    }
+
+    this.gameplayCampaignPendingAction = "start";
+    this.gameplayCampaignStatus = `正在启动 ${mission.name}...`;
+    this.renderView();
+    try {
+      const result: CocosCampaignMissionStartResult = await resolveVeilRootRuntime().startCampaignMission(
+        this.remoteUrl,
+        mission.chapterId,
+        mission.id,
+        {
+          authSession: {
+            token: this.authToken,
+            playerId: this.playerId,
+            displayName: this.displayName || this.playerId,
+            authMode: this.authMode,
+            provider: this.authProvider,
+            ...(this.loginId ? { loginId: this.loginId } : {}),
+            source: "remote"
+          }
+        }
+      );
+      this.gameplayCampaignActiveMissionId = result.mission.id;
+      this.gameplayCampaignSelectedMissionId = result.mission.id;
+      if ((result.mission.introDialogue?.length ?? 0) > 0) {
+        this.startGameplayCampaignDialogue(result.mission.id, "intro");
+      } else {
+        this.gameplayCampaignDialogue = null;
+        this.gameplayCampaignPanelOpen = false;
+      }
+      await this.refreshGameplayCampaign(result.mission.id);
+      this.gameplayCampaignStatus =
+        (result.mission.introDialogue?.length ?? 0) > 0
+          ? `${result.mission.name} 开场对话已载入。`
+          : `${result.mission.name} 已开始。`;
+    } catch (error) {
+      this.gameplayCampaignStatus = this.describeCampaignError(error);
+    } finally {
+      this.gameplayCampaignPendingAction = null;
+      this.renderView();
+    }
+  }
+
+  private async completeGameplayCampaignMission(): Promise<void> {
+    const mission = this.resolveSelectedGameplayCampaignMission();
+    if (!mission || !this.authToken || this.authMode !== "account" || this.gameplayCampaignActiveMissionId !== mission.id) {
+      return;
+    }
+
+    this.gameplayCampaignPendingAction = "complete";
+    this.gameplayCampaignStatus = `正在提交 ${mission.name} 结算...`;
+    this.renderView();
+    try {
+      const result: CocosCampaignMissionCompleteResult = await resolveVeilRootRuntime().completeCampaignMission(this.remoteUrl, mission.id, {
+        authSession: {
+          token: this.authToken,
+          playerId: this.playerId,
+          displayName: this.displayName || this.playerId,
+          authMode: this.authMode,
+          provider: this.authProvider,
+          ...(this.loginId ? { loginId: this.loginId } : {}),
+          source: "remote"
+        }
+      });
+      this.gameplayCampaign = result.campaign;
+      this.gameplayCampaignSelectedMissionId = result.mission.id;
+      if ((result.mission.outroDialogue?.length ?? 0) > 0) {
+        this.startGameplayCampaignDialogue(result.mission.id, "outro");
+        this.gameplayCampaignStatus = `${result.mission.name} 结算完成，进入收尾对话。`;
+      } else {
+        this.gameplayCampaignActiveMissionId = null;
+        this.syncGameplayCampaignSelection(result.campaign.nextMissionId);
+        this.gameplayCampaignStatus = `${result.mission.name} 已完成。`;
+      }
+    } catch (error) {
+      this.gameplayCampaignStatus = this.describeCampaignError(error);
+    } finally {
+      this.gameplayCampaignPendingAction = null;
+      this.renderView();
+    }
+  }
+
+  private describeCampaignError(error: unknown): string {
+    if (!(error instanceof Error)) {
+      return "战役请求失败。";
+    }
+    if (error.message.includes("campaign_mission_locked")) {
+      return "任务尚未解锁，请先满足章节条件。";
+    }
+    if (error.message.includes("campaign_mission_already_completed")) {
+      return "任务已完成，无需重复结算。";
+    }
+    if (error.message.includes("campaign_persistence_unavailable")) {
+      return "服务端未启用战役持久化。";
+    }
+    if (error.message.includes("cocos_request_failed:401:")) {
+      return "战役会话已过期，请重新登录正式账号。";
+    }
+    return error.message || "战役请求失败。";
+  }
+
+  private syncGameplayCampaignBattleOutcome(update: SessionUpdate): void {
+    if (this.gameplayCampaignPendingAction !== null || this.gameplayCampaignDialogue || !this.gameplayCampaignActiveMissionId) {
+      return;
+    }
+
+    const resolution = update.events.find(
+      (event): event is Extract<SessionUpdate["events"][number], { type: "battle.resolved" }> =>
+        event.type === "battle.resolved" && update.world.ownHeroes.some((hero) => hero.id === event.heroId)
+    );
+    if (!resolution) {
+      return;
+    }
+
+    const activeMission =
+      this.gameplayCampaign?.missions.find((mission) => mission.id === this.gameplayCampaignActiveMissionId) ?? null;
+    if (!activeMission) {
+      return;
+    }
+
+    this.gameplayCampaignPanelOpen = true;
+    this.gameplayCampaignSelectedMissionId = activeMission.id;
+    const victory = resolution.result === "attacker_victory" || resolution.result === "defender_victory";
+    if (!victory) {
+      this.gameplayCampaignActiveMissionId = null;
+      this.gameplayCampaignStatus = `${activeMission.name} 未完成，可重新发起挑战。`;
+      this.renderView();
+      return;
+    }
+
+    this.gameplayCampaignStatus = `${activeMission.name} 战斗胜利，正在同步战役结算...`;
+    this.renderView();
+    void this.completeGameplayCampaignMission();
   }
 
   private resolveReportTarget(): { playerId: string; name: string } | null {
@@ -2583,6 +2982,7 @@ export class VeilRoot extends Component {
     const lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
     const accountReviewPanelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
     const equipmentPanelNode = this.node.getChildByName(EQUIPMENT_PANEL_NODE_NAME);
+    const campaignPanelNode = this.node.getChildByName(CAMPAIGN_PANEL_NODE_NAME);
     const settingsPanelNode = this.node.getChildByName(SETTINGS_PANEL_NODE_NAME);
     const settingsButtonNode = this.node.getChildByName(SETTINGS_BUTTON_NODE_NAME);
 
@@ -2610,6 +3010,9 @@ export class VeilRoot extends Component {
         },
         onToggleSettings: () => {
           this.toggleSettingsPanel();
+        },
+        onToggleCampaign: () => {
+          void this.toggleGameplayCampaignPanel();
         },
         onToggleInventory: () => {
           this.toggleGameplayEquipmentPanel();
@@ -2710,6 +3113,13 @@ export class VeilRoot extends Component {
         equipmentPanelNode.getComponent(UITransform) ?? equipmentPanelNode.addComponent(UITransform);
       equipmentPanelTransform.setContentSize(Math.max(360, Math.min(460, visibleSize.width - 56)), Math.max(420, visibleSize.height - 96));
       equipmentPanelNode.setPosition(0, 0, 4);
+    }
+
+    if (campaignPanelNode) {
+      const campaignPanelTransform =
+        campaignPanelNode.getComponent(UITransform) ?? campaignPanelNode.addComponent(UITransform);
+      campaignPanelTransform.setContentSize(Math.max(380, Math.min(500, visibleSize.width - 56)), Math.max(480, visibleSize.height - 96));
+      campaignPanelNode.setPosition(0, 0, 5);
     }
 
     if (settingsPanelNode) {
@@ -3988,6 +4398,13 @@ export class VeilRoot extends Component {
     this.gameplayBattlePassPanelOpen = false;
     this.gameplaySeasonalEventPanelOpen = false;
     this.gameplayEquipmentPanelOpen = false;
+    this.gameplayCampaignPanelOpen = false;
+    this.gameplayCampaign = null;
+    this.gameplayCampaignSelectedMissionId = null;
+    this.gameplayCampaignActiveMissionId = null;
+    this.gameplayCampaignDialogue = null;
+    this.gameplayCampaignPendingAction = null;
+    this.gameplayCampaignStatus = "战役面板待同步。";
     this.seasonProgress = null;
     this.showLobby = true;
     this.syncWechatShareBridge();
@@ -5345,6 +5762,7 @@ export class VeilRoot extends Component {
       }
     }
     if (update.events.some((event) => event.type === "battle.resolved")) {
+      this.syncGameplayCampaignBattleOutcome(update);
       void this.submitBattleProgressForActiveEvents(update);
     }
     if (shouldRefreshGameplayAccountProfileForEvents(update.events.map((event) => event.type))) {

@@ -26,6 +26,11 @@ import {
   type PlayerAchievementProgress,
   type TutorialProgressAction
 } from "./project-shared/index.ts";
+import type {
+  CampaignMissionState,
+  CampaignReward,
+  CampaignUnlockRequirement
+} from "../../../../packages/shared/src/index.ts";
 import type { CocosSeasonProgress } from "./cocos-progression-panel.ts";
 import { detectCocosRuntimePlatform } from "./cocos-runtime-platform.ts";
 
@@ -55,6 +60,30 @@ export interface CocosLobbyRoomSummary {
 export interface CocosPlayerAccountProfile extends PlayerAccountReadModel {
   recentBattleReplays: PlayerBattleReplaySummary[];
   source: "remote" | "local";
+}
+
+export interface CocosCampaignSummary {
+  missions: CampaignMissionState[];
+  completedCount: number;
+  totalMissions: number;
+  nextMissionId: string | null;
+  completionPercent: number;
+}
+
+export interface CocosCampaignMissionStartResult {
+  started: boolean;
+  mission: CampaignMissionState;
+}
+
+export interface CocosCampaignMissionCompleteResult {
+  completed: boolean;
+  mission: CampaignMissionState;
+  reward: CampaignReward;
+  campaign: CocosCampaignSummary;
+}
+
+export interface CocosCampaignMissionLockedError extends Error {
+  unlockRequirements?: CampaignUnlockRequirement[];
 }
 
 interface AuthSessionApiPayload {
@@ -137,6 +166,22 @@ interface PlayerReferralApiPayload {
 
 interface LobbyRoomsApiPayload {
   items?: CocosLobbyRoomSummary[];
+}
+
+interface CampaignApiPayload {
+  campaign?: Partial<CocosCampaignSummary>;
+}
+
+interface CampaignMissionStartApiPayload {
+  started?: boolean;
+  mission?: Partial<CampaignMissionState>;
+}
+
+interface CampaignMissionCompleteApiPayload {
+  completed?: boolean;
+  mission?: Partial<CampaignMissionState>;
+  reward?: Partial<CampaignReward>;
+  campaign?: Partial<CocosCampaignSummary>;
 }
 
 interface PlayerBattleReplayListApiPayload {
@@ -730,6 +775,81 @@ function asCocosPlayerAccountProfile(
     ...accountProfile,
     recentBattleReplays: accountProfile.recentBattleReplays ?? [],
     source
+  };
+}
+
+function normalizeCampaignMissionState(rawMission?: Partial<CampaignMissionState>): CampaignMissionState | null {
+  const id = rawMission?.id?.trim();
+  const chapterId = rawMission?.chapterId?.trim();
+  const mapId = rawMission?.mapId?.trim();
+  const name = rawMission?.name?.trim();
+  const description = rawMission?.description?.trim();
+  const enemyArmyTemplateId = rawMission?.enemyArmyTemplateId?.trim();
+  if (!id || !chapterId || !mapId || !name || !description || !enemyArmyTemplateId) {
+    return null;
+  }
+
+  return {
+    ...rawMission,
+    id,
+    missionId: rawMission?.missionId?.trim() || id,
+    chapterId,
+    mapId,
+    name,
+    description,
+    enemyArmyTemplateId,
+    order: Math.max(1, Math.floor(rawMission?.order ?? 1)),
+    recommendedHeroLevel: Math.max(1, Math.floor(rawMission?.recommendedHeroLevel ?? 1)),
+    enemyArmyCount: Math.max(1, Math.floor(rawMission?.enemyArmyCount ?? 1)),
+    enemyStatMultiplier: Number.isFinite(rawMission?.enemyStatMultiplier) ? Math.max(0.1, Number(rawMission?.enemyStatMultiplier)) : 1,
+    attempts: Math.max(0, Math.floor(rawMission?.attempts ?? 0)),
+    objectives: Array.isArray(rawMission?.objectives) ? rawMission.objectives : [],
+    reward: rawMission?.reward ?? {},
+    status:
+      rawMission?.status === "completed" || rawMission?.status === "locked" || rawMission?.status === "available"
+        ? rawMission.status
+        : "locked",
+    ...(rawMission?.bossEncounterName?.trim() ? { bossEncounterName: rawMission.bossEncounterName.trim() } : {}),
+    ...(rawMission?.unlockMissionId?.trim() ? { unlockMissionId: rawMission.unlockMissionId.trim() } : {}),
+    ...(Array.isArray(rawMission?.introDialogue) ? { introDialogue: rawMission.introDialogue } : {}),
+    ...(Array.isArray(rawMission?.midDialogue) ? { midDialogue: rawMission.midDialogue } : {}),
+    ...(Array.isArray(rawMission?.outroDialogue) ? { outroDialogue: rawMission.outroDialogue } : {}),
+    ...(Array.isArray(rawMission?.unlockRequirements) ? { unlockRequirements: rawMission.unlockRequirements } : {}),
+    ...(rawMission?.completedAt ? { completedAt: rawMission.completedAt } : {})
+  };
+}
+
+function normalizeCocosCampaignSummary(rawCampaign?: Partial<CocosCampaignSummary>): CocosCampaignSummary {
+  const missions = Array.isArray(rawCampaign?.missions)
+    ? rawCampaign.missions
+        .map((mission) => normalizeCampaignMissionState(mission))
+        .filter((mission): mission is CampaignMissionState => Boolean(mission))
+        .sort((left, right) => {
+          if (left.chapterId !== right.chapterId) {
+            return left.chapterId.localeCompare(right.chapterId);
+          }
+          if (left.order !== right.order) {
+            return left.order - right.order;
+          }
+          return left.id.localeCompare(right.id);
+        })
+    : [];
+  const completedCount = Math.max(
+    0,
+    Math.floor(rawCampaign?.completedCount ?? missions.filter((mission) => mission.status === "completed").length)
+  );
+
+  return {
+    missions,
+    completedCount,
+    totalMissions: Math.max(missions.length, Math.floor(rawCampaign?.totalMissions ?? missions.length)),
+    nextMissionId: rawCampaign?.nextMissionId?.trim() || missions.find((mission) => mission.status === "available")?.id || null,
+    completionPercent:
+      rawCampaign?.completionPercent != null
+        ? Math.max(0, Math.min(100, Math.floor(rawCampaign.completionPercent)))
+        : missions.length === 0
+          ? 0
+          : Math.round((completedCount / missions.length) * 100)
   };
 }
 
@@ -2163,6 +2283,114 @@ export async function loadCocosPlayerProgressionSnapshot(
     }
     return normalizePlayerProgressionSnapshot();
   }
+}
+
+export async function loadCocosCampaignSummary(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+    throwOnError?: boolean;
+  }
+): Promise<CocosCampaignSummary> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+
+  try {
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
+      `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/campaign`,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
+      }
+    )) as CampaignApiPayload;
+    return normalizeCocosCampaignSummary(payload.campaign);
+  } catch (error) {
+    if (options?.throwOnError) {
+      throw error;
+    }
+    return normalizeCocosCampaignSummary();
+  }
+}
+
+export async function startCocosCampaignMission(
+  remoteUrl: string,
+  campaignId: string,
+  missionId: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+  }
+): Promise<CocosCampaignMissionStartResult> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+  const payload = (await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/campaigns/${encodeURIComponent(campaignId)}/missions/${encodeURIComponent(missionId)}/start`,
+    {
+      method: "POST",
+      ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+    },
+    authSession,
+    {
+      ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(storage !== undefined ? { storage } : {})
+    }
+  )) as CampaignMissionStartApiPayload;
+  const mission = normalizeCampaignMissionState(payload.mission);
+  if (!mission) {
+    throw new Error("campaign_mission_start_invalid");
+  }
+  return {
+    started: payload.started !== false,
+    mission
+  };
+}
+
+export async function completeCocosCampaignMission(
+  remoteUrl: string,
+  missionId: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+  }
+): Promise<CocosCampaignMissionCompleteResult> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+  const payload = (await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/campaign/${encodeURIComponent(missionId)}/complete`,
+    {
+      method: "POST",
+      ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+    },
+    authSession,
+    {
+      ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(storage !== undefined ? { storage } : {})
+    }
+  )) as CampaignMissionCompleteApiPayload;
+  const mission = normalizeCampaignMissionState(payload.mission);
+  if (!mission) {
+    throw new Error("campaign_mission_complete_invalid");
+  }
+  return {
+    completed: payload.completed !== false,
+    mission,
+    reward: payload.reward ?? {},
+    campaign: normalizeCocosCampaignSummary(payload.campaign)
+  };
 }
 
 export async function loadCocosSeasonProgress(

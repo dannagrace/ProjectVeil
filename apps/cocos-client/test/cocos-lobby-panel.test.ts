@@ -195,6 +195,24 @@ test("VeilLobbyPanel retains the loading lobby snapshot and creates base panel c
   component.onDestroy();
 });
 
+test("VeilLobbyPanel renders and wires the lobby campaign action", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  let opened = 0;
+
+  component.configure({
+    onOpenCampaign: () => {
+      opened += 1;
+    }
+  });
+  component.scheduleOnce = () => undefined;
+  component.render(createLobbyState());
+
+  pressNode(findNode(node, "LobbyCampaign"));
+
+  assert.equal(opened, 1);
+  component.onDestroy();
+});
+
 test("VeilLobbyPanel advances replay playback when the replay control state transitions", () => {
   const { component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
   const state = createReplayReadyLobbyState();
