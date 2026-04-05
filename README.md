@@ -205,6 +205,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 并发房间压测启动后，也可直接查看同进程观测面：`/api/runtime/health`、`/api/runtime/auth-readiness` 与 `/api/runtime/metrics`
 - 战斗平衡验证：`npm run validate:battle -- --count=1000 --scenario=all --skill-config=configs/battle-skills-v1.1.json`
 - 内容包一致性验证：`npm run validate:content-pack:all -- --report-path artifacts/content-pack-validation-report.json`（覆盖 `phase1`、`frontier-basin`、`stonewatch-fork`、`ridgeway-crossing`、`phase2`）
+- Boss encounter 模板作者指南：`docs/boss-encounter-template-authoring.md`
 - Phase 1 持久化 + shipped content 回归：`npm run test:phase1-release-persistence`
 - Frontier Basin Phase 1 内容包专项回归：`npm run test:phase1-release-persistence:frontier`
 - Stonewatch Fork Phase 1 内容包专项回归：`npm run test:phase1-release-persistence:stonewatch`
