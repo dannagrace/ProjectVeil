@@ -11,6 +11,15 @@ export interface CocosWechatPaymentOrder {
   paySign: string;
 }
 
+export interface CocosWechatPaymentVerification {
+  orderId: string;
+  status: string;
+  credited: boolean;
+  paidAt?: string;
+  gemsBalance: number;
+  seasonPassPremium: boolean;
+}
+
 export interface CocosWechatPaymentRuntimeLike {
   requestPayment?: ((options: {
     timeStamp: string;
@@ -93,4 +102,37 @@ export async function requestCocosWechatPayment(
       }
     });
   });
+}
+
+export async function verifyCocosWechatPayment(
+  remoteUrl: string,
+  orderId: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    authToken?: string | null;
+  }
+): Promise<CocosWechatPaymentVerification> {
+  const response = await getFetchImpl(options?.fetchImpl)(`${resolveCocosApiBaseUrl(remoteUrl)}/api/payments/wechat/verify`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildCocosAuthHeaders(options?.authToken)
+    },
+    body: JSON.stringify({
+      orderId
+    })
+  });
+
+  if (!response.ok) {
+    let errorCode = "unknown";
+    try {
+      const payload = (await readJsonResponse(response)) as { error?: { code?: string } };
+      errorCode = payload.error?.code?.trim() || errorCode;
+    } catch {
+      errorCode = "unknown";
+    }
+    throw new Error(`cocos_request_failed:${response.status}:${errorCode}`);
+  }
+
+  return (await readJsonResponse(response)) as CocosWechatPaymentVerification;
 }

@@ -65,6 +65,11 @@ export const ANALYTICS_EVENT_CATALOG = {
     quantity: 1,
     totalPrice: 100
   }),
+  payment_fraud_signal: defineAnalyticsEvent("payment_fraud_signal", 1, "Potential payment fraud or integrity anomaly detected.", {
+    signal: "duplicate_out_trade_no",
+    orderId: "wechat-order-1",
+    productId: "gem_pack_small"
+  }),
   tutorial_step: defineAnalyticsEvent("tutorial_step", 1, "Tutorial milestone advanced by the player.", {
     stepId: "movement_intro",
     status: "completed"
