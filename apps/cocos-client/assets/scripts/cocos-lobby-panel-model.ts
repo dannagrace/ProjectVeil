@@ -88,6 +88,8 @@ export function createLobbyPanelTestAccount(
     source: overrides.source ?? "local",
     ...(overrides.battleReportCenter ? { battleReportCenter: overrides.battleReportCenter } : {}),
     ...(overrides.avatarUrl ? { avatarUrl: overrides.avatarUrl } : {}),
+    ...(overrides.mailbox ? { mailbox: overrides.mailbox } : {}),
+    ...(overrides.mailboxSummary ? { mailboxSummary: overrides.mailboxSummary } : {}),
     ...(overrides.loginId ? { loginId: overrides.loginId } : {}),
     ...(overrides.credentialBoundAt ? { credentialBoundAt: overrides.credentialBoundAt } : {}),
     ...(overrides.lastRoomId ? { lastRoomId: overrides.lastRoomId } : {}),
