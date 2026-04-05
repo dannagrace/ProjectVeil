@@ -41,6 +41,7 @@ import {
   loadCocosPlayerAchievementProgress,
   loadCocosPlayerEventHistory,
   loadCocosPlayerProgressionSnapshot,
+  loadCocosActiveSeasonalEvents,
   loadCocosSeasonProgress,
   loginCocosGuestAuthSession,
   logoutCurrentCocosAuthSession,
@@ -52,10 +53,12 @@ import {
   requestCocosPasswordRecovery,
   resolveCocosConfigCenterUrl,
   saveCocosLobbyPreferences,
+  submitCocosSeasonalEventProgress,
   syncCurrentCocosAuthSession,
   updateCocosTutorialProgress,
   type CocosLobbyRoomSummary,
-  type CocosPlayerAccountProfile
+  type CocosPlayerAccountProfile,
+  type CocosSeasonalEvent
 } from "./cocos-lobby.ts";
 import {
   loginWithCocosProvider,
@@ -139,6 +142,7 @@ import {
   type CocosAuthProvider
 } from "./cocos-session-launch.ts";
 import { buildCocosShopPanelView, type ShopProduct } from "./cocos-shop-panel.ts";
+import { buildCocosEventLeaderboardPanelView } from "./cocos-event-leaderboard-panel.ts";
 import { buildCocosBattlePassPanelView, type CocosSeasonProgress } from "./cocos-progression-panel.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { VeilProgressionPanel } from "./VeilProgressionPanel.ts";
@@ -234,6 +238,8 @@ interface VeilRootRuntime {
   loadEventHistory: typeof loadCocosPlayerEventHistory;
   loadBattleReplayHistoryPage: typeof loadCocosBattleReplayHistoryPage;
   loadSeasonProgress: typeof loadCocosSeasonProgress;
+  loadActiveSeasonalEvents: typeof loadCocosActiveSeasonalEvents;
+  submitSeasonalEventProgress: typeof submitCocosSeasonalEventProgress;
   claimSeasonTier: typeof claimCocosSeasonTier;
   loginGuestAuthSession: typeof loginCocosGuestAuthSession;
   postPlayerReferral: typeof postCocosPlayerReferral;
@@ -262,6 +268,8 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   loadEventHistory: (...args) => loadCocosPlayerEventHistory(...args),
   loadBattleReplayHistoryPage: (...args) => loadCocosBattleReplayHistoryPage(...args),
   loadSeasonProgress: (...args) => loadCocosSeasonProgress(...args),
+  loadActiveSeasonalEvents: (...args) => loadCocosActiveSeasonalEvents(...args),
+  submitSeasonalEventProgress: (...args) => submitCocosSeasonalEventProgress(...args),
   claimSeasonTier: (...args) => claimCocosSeasonTier(...args),
   loginGuestAuthSession: (...args) => loginCocosGuestAuthSession(...args),
   postPlayerReferral: (...args) => postCocosPlayerReferral(...args),
@@ -377,6 +385,10 @@ export class VeilRoot extends Component {
   private pendingShopProductId: string | null = null;
   private seasonProgress: CocosSeasonProgress | null = null;
   private seasonProgressStatus = "赛季进度待同步。";
+  private activeSeasonalEvent: CocosSeasonalEvent | null = null;
+  private seasonalEventStatus = "赛季活动待同步。";
+  private gameplaySeasonalEventPanelOpen = false;
+  private pendingSeasonalEventBattleIds = new Set<string>();
   private pendingSeasonClaimTier: number | null = null;
   private seasonPremiumPurchaseInFlight = false;
   private mailboxClaimingMessageId: string | null = null;
@@ -528,6 +540,9 @@ export class VeilRoot extends Component {
 
       this.pushLog("房间快照已加载，点击地块即可移动。");
       await this.applySessionUpdate(this.lastUpdate);
+      if (this.sessionSource === "remote") {
+        void this.refreshGameplayAccountProfile();
+      }
     } catch (error) {
       if (!this.isActiveSessionEpoch(sessionEpoch)) {
         if (nextSession) {
@@ -866,6 +881,9 @@ export class VeilRoot extends Component {
       onToggleProgression: () => {
         void this.toggleGameplayBattlePassPanel();
       },
+      onToggleSeasonalEvent: () => {
+        void this.toggleGameplaySeasonalEventPanel();
+      },
       onToggleReport: () => {
         this.toggleReportDialog();
       },
@@ -1105,6 +1123,10 @@ export class VeilRoot extends Component {
           void this.toggleGameplayBattlePassPanel(false);
           return;
         }
+        if (this.gameplaySeasonalEventPanelOpen) {
+          void this.toggleGameplaySeasonalEventPanel(false);
+          return;
+        }
         void this.toggleGameplayAccountReviewPanel(false);
       },
       onSelectSection: (section) => {
@@ -1277,7 +1299,8 @@ export class VeilRoot extends Component {
       timelineNode.active = showingGame;
     }
     if (accountReviewPanelNode) {
-      accountReviewPanelNode.active = showingGame && (this.gameplayAccountReviewPanelOpen || this.gameplayBattlePassPanelOpen);
+      accountReviewPanelNode.active =
+        showingGame && (this.gameplayAccountReviewPanelOpen || this.gameplayBattlePassPanelOpen || this.gameplaySeasonalEventPanelOpen);
     }
     if (equipmentPanelNode) {
       equipmentPanelNode.active = showingGame && this.gameplayEquipmentPanelOpen;
@@ -1411,6 +1434,7 @@ export class VeilRoot extends Component {
         available: this.canShareLatestBattleResult()
       },
       battlePassEnabled: this.lastUpdate?.featureFlags?.battle_pass_enabled === true,
+      seasonalEventAvailable: this.activeSeasonalEvent != null,
       interaction: this.buildHudInteractionState(),
       presentation: this.buildHudPresentationState()
     });
@@ -1468,7 +1492,7 @@ export class VeilRoot extends Component {
       return;
     }
 
-    if (!this.gameplayAccountReviewPanelOpen && !this.gameplayBattlePassPanelOpen) {
+    if (!this.gameplayAccountReviewPanelOpen && !this.gameplayBattlePassPanelOpen && !this.gameplaySeasonalEventPanelOpen) {
       panelNode.active = false;
       return;
     }
@@ -1481,6 +1505,17 @@ export class VeilRoot extends Component {
           pendingClaimTier: this.pendingSeasonClaimTier,
           pendingPremiumPurchase: this.seasonPremiumPurchaseInFlight,
           statusLabel: this.seasonProgressStatus
+        })
+      });
+      return;
+    }
+
+    if (this.gameplaySeasonalEventPanelOpen) {
+      this.gameplayAccountReviewPanel?.render({
+        eventLeaderboard: buildCocosEventLeaderboardPanelView({
+          event: this.activeSeasonalEvent,
+          playerId: this.playerId,
+          statusLabel: this.seasonalEventStatus
         })
       });
       return;
@@ -1573,7 +1608,7 @@ export class VeilRoot extends Component {
       this.sessionSource = "none";
     }
 
-    const [profile, leaderboardResult, shopProductsResult] = await Promise.all([
+    const [profile, leaderboardResult, shopProductsResult, activeEventsResult] = await Promise.all([
       resolveVeilRootRuntime().loadAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
         storage,
         authSession: syncedSession
@@ -1599,7 +1634,16 @@ export class VeilRoot extends Component {
       resolveVeilRootRuntime()
         .loadShopProducts(this.remoteUrl)
         .then((products) => ({ ok: true as const, products }))
-        .catch((error: unknown) => ({ ok: false as const, error }))
+        .catch((error: unknown) => ({ ok: false as const, error })),
+      syncedSession?.token
+        ? resolveVeilRootRuntime()
+            .loadActiveSeasonalEvents(this.remoteUrl, {
+              storage,
+              authSession: syncedSession
+            })
+            .then((events) => ({ ok: true as const, events }))
+            .catch((error: unknown) => ({ ok: false as const, error }))
+        : Promise.resolve({ ok: true as const, events: [] as CocosSeasonalEvent[] })
     ]);
     if (!this.isActiveLobbyAccountEpoch(requestEpoch)) {
       return;
@@ -1634,6 +1678,16 @@ export class VeilRoot extends Component {
       this.lobbyShopProducts = [];
       this.lobbyShopStatus =
         shopProductsResult.error instanceof Error ? shopProductsResult.error.message : "shop_unavailable";
+    }
+    if (activeEventsResult.ok) {
+      this.activeSeasonalEvent = activeEventsResult.events[0] ?? null;
+      this.seasonalEventStatus = this.activeSeasonalEvent
+        ? `已同步 ${this.activeSeasonalEvent.name} · 当前积分 ${this.activeSeasonalEvent.player.points}`
+        : "当前没有进行中的赛季活动。";
+    } else {
+      this.activeSeasonalEvent = null;
+      this.seasonalEventStatus =
+        activeEventsResult.error instanceof Error ? activeEventsResult.error.message : "seasonal_event_unavailable";
     }
     this.lobbyShopLoading = false;
     if (profile.source === "remote") {
@@ -1892,6 +1946,7 @@ export class VeilRoot extends Component {
   private async toggleGameplayAccountReviewPanel(forceOpen?: boolean): Promise<void> {
     const nextOpen = forceOpen ?? !this.gameplayAccountReviewPanelOpen;
     this.gameplayBattlePassPanelOpen = false;
+    this.gameplaySeasonalEventPanelOpen = false;
     this.gameplayAccountReviewPanelOpen = nextOpen;
     if (!nextOpen) {
       this.renderView();
@@ -1912,6 +1967,7 @@ export class VeilRoot extends Component {
 
     const nextOpen = forceOpen ?? !this.gameplayBattlePassPanelOpen;
     this.gameplayAccountReviewPanelOpen = false;
+    this.gameplaySeasonalEventPanelOpen = false;
     this.gameplayBattlePassPanelOpen = nextOpen;
     if (!nextOpen) {
       this.renderView();
@@ -1921,6 +1977,20 @@ export class VeilRoot extends Component {
     this.seasonProgress = this.snapshotSeasonProgressFromProfile();
     this.renderView();
     await this.refreshSeasonProgress();
+  }
+
+  private async toggleGameplaySeasonalEventPanel(forceOpen?: boolean): Promise<void> {
+    const nextOpen = forceOpen ?? !this.gameplaySeasonalEventPanelOpen;
+    this.gameplayAccountReviewPanelOpen = false;
+    this.gameplayBattlePassPanelOpen = false;
+    this.gameplaySeasonalEventPanelOpen = nextOpen;
+    if (!nextOpen) {
+      this.renderView();
+      return;
+    }
+
+    this.renderView();
+    await this.refreshActiveSeasonalEvent();
   }
 
   private snapshotSeasonProgressFromProfile(): CocosSeasonProgress {
@@ -1955,6 +2025,163 @@ export class VeilRoot extends Component {
         : "点击金色按钮可购买高级通行证。";
     } catch (error) {
       this.seasonProgressStatus = error instanceof Error ? error.message : "season_progress_unavailable";
+    }
+    this.renderView();
+  }
+
+  private async refreshActiveSeasonalEvent(): Promise<void> {
+    if (!this.remoteUrl?.trim()) {
+      this.activeSeasonalEvent = null;
+      this.seasonalEventStatus = "赛季活动服务地址未配置。";
+      this.renderView();
+      return;
+    }
+
+    const storage = this.readWebStorage();
+    const authSession = this.currentLobbyAuthSession();
+    if (!authSession?.token) {
+      this.activeSeasonalEvent = null;
+      this.seasonalEventStatus = "赛季活动需要有效账号会话。";
+      this.renderView();
+      return;
+    }
+
+    this.seasonalEventStatus = "正在同步赛季活动...";
+    this.renderView();
+    try {
+      const [event] = await resolveVeilRootRuntime().loadActiveSeasonalEvents(this.remoteUrl, {
+        storage,
+        authSession,
+        throwOnError: true
+      });
+      this.activeSeasonalEvent = event ?? null;
+      this.seasonalEventStatus = event
+        ? `已同步 ${event.name} · 当前积分 ${event.player.points}`
+        : "当前没有进行中的赛季活动。";
+    } catch (error) {
+      this.seasonalEventStatus = error instanceof Error ? error.message : "seasonal_event_unavailable";
+    }
+    this.renderView();
+  }
+
+  private async submitBattleProgressForActiveEvents(update: SessionUpdate): Promise<void> {
+    if (this.sessionSource !== "remote" || !this.authToken) {
+      return;
+    }
+
+    const authSession = this.currentLobbyAuthSession();
+    if (!authSession?.token) {
+      return;
+    }
+
+    const resolvedBattles = update.events.filter(
+      (event): event is Extract<SessionUpdate["events"][number], { type: "battle.resolved" }> => event.type === "battle.resolved"
+    );
+    const ownResolvedBattle = resolvedBattles.find((event) => update.world.ownHeroes.some((hero) => hero.id === event.heroId)) ?? null;
+    if (!ownResolvedBattle) {
+      return;
+    }
+
+    const actionId = `${update.world.playerId}:${ownResolvedBattle.battleId}`;
+    if (this.pendingSeasonalEventBattleIds.has(actionId)) {
+      return;
+    }
+
+    this.pendingSeasonalEventBattleIds.add(actionId);
+    try {
+      const events =
+        this.activeSeasonalEvent ? [this.activeSeasonalEvent] : await resolveVeilRootRuntime().loadActiveSeasonalEvents(this.remoteUrl, {
+          storage: this.readWebStorage(),
+          authSession,
+          throwOnError: false
+        });
+      if (events.length === 0) {
+        if (!this.activeSeasonalEvent) {
+          this.seasonalEventStatus = "当前没有进行中的赛季活动。";
+          this.renderView();
+        }
+        return;
+      }
+
+      for (const seasonalEvent of events) {
+        const result = await resolveVeilRootRuntime().submitSeasonalEventProgress(
+          this.remoteUrl,
+          seasonalEvent.id,
+          {
+            actionId,
+            actionType: "battle_resolved",
+            battleId: ownResolvedBattle.battleId,
+            occurredAt: new Date().toISOString()
+          },
+          {
+            storage: this.readWebStorage(),
+            authSession
+          }
+        );
+        if (result.event) {
+          this.activeSeasonalEvent = result.event;
+        }
+        if (result.eventProgress) {
+          this.seasonalEventStatus = `${seasonalEvent.name} +${result.eventProgress.delta} 分 · 当前 ${result.eventProgress.points} 分`;
+        }
+      }
+      this.renderView();
+    } catch (error) {
+      this.seasonalEventStatus = error instanceof Error ? error.message : "seasonal_event_progress_failed";
+      this.renderView();
+    } finally {
+      this.pendingSeasonalEventBattleIds.delete(actionId);
+    }
+  }
+
+  private handleSeasonalEventProgressPush(message: {
+    payload: {
+      eventId: string;
+      points: number;
+      delta: number;
+      objectiveId: string;
+    };
+  }): void {
+    const eventId = message.payload.eventId.trim();
+    if (!eventId) {
+      return;
+    }
+
+    if (this.activeSeasonalEvent?.id === eventId) {
+      const previousRank =
+        this.activeSeasonalEvent.leaderboard.entries.find((entry) => entry.playerId === this.playerId)?.rank ?? null;
+      const currentEntries = this.activeSeasonalEvent.leaderboard.entries.filter((entry) => entry.playerId !== this.playerId);
+      currentEntries.push({
+        rank: previousRank ?? currentEntries.length + 1,
+        playerId: this.playerId,
+        displayName: this.displayName || this.playerId,
+        points: Math.max(0, Math.floor(message.payload.points)),
+        lastUpdatedAt: new Date().toISOString()
+      });
+      currentEntries.sort(
+        (left, right) =>
+          right.points - left.points || left.lastUpdatedAt.localeCompare(right.lastUpdatedAt) || left.playerId.localeCompare(right.playerId)
+      );
+
+      this.activeSeasonalEvent = {
+        ...this.activeSeasonalEvent,
+        player: {
+          ...this.activeSeasonalEvent.player,
+          points: Math.max(0, Math.floor(message.payload.points))
+        },
+        leaderboard: {
+          ...this.activeSeasonalEvent.leaderboard,
+          entries: currentEntries.map((entry, index) => ({
+            ...entry,
+            rank: index + 1
+          }))
+        }
+      };
+    }
+
+    this.seasonalEventStatus = `赛季活动推进：${message.payload.objectiveId} +${message.payload.delta} 分`;
+    if (this.gameplaySeasonalEventPanelOpen) {
+      void this.refreshActiveSeasonalEvent();
     }
     this.renderView();
   }
@@ -3749,6 +3976,7 @@ export class VeilRoot extends Component {
     this.resetSessionViewport("已返回 Cocos Lobby。");
     this.gameplayAccountReviewPanelOpen = false;
     this.gameplayBattlePassPanelOpen = false;
+    this.gameplaySeasonalEventPanelOpen = false;
     this.gameplayEquipmentPanelOpen = false;
     this.seasonProgress = null;
     this.showLobby = true;
@@ -4402,6 +4630,12 @@ export class VeilRoot extends Component {
             };
           }
           this.renderView();
+          return;
+        }
+
+        if (message.type === "event.progress.update") {
+          this.pushLog(`赛季活动推进：${message.payload.objectiveId} +${message.payload.delta} 分`);
+          this.handleSeasonalEventProgressPush(message);
         }
       },
       onConnectionEvent: (event) => {
@@ -5100,6 +5334,9 @@ export class VeilRoot extends Component {
         }, update.world.meta.roomId);
       }
     }
+    if (update.events.some((event) => event.type === "battle.resolved")) {
+      void this.submitBattleProgressForActiveEvents(update);
+    }
     if (shouldRefreshGameplayAccountProfileForEvents(update.events.map((event) => event.type))) {
       void this.refreshGameplayAccountProfile();
     }
@@ -5135,22 +5372,39 @@ export class VeilRoot extends Component {
       return;
     }
 
+    if (!this.remoteUrl?.trim()) {
+      return;
+    }
+
     this.gameplayAccountRefreshInFlight = true;
     try {
-      const profile = await resolveVeilRootRuntime().loadAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
-        storage: this.readWebStorage(),
-        authSession: this.authToken
-          ? {
-              token: this.authToken,
-              playerId: this.playerId,
-              displayName: this.displayName || this.playerId,
-              authMode: this.authMode,
-              ...(this.loginId ? { loginId: this.loginId } : {}),
-              source: "remote"
-            }
-          : null
-      });
+      const authSession = this.authToken
+        ? {
+            token: this.authToken,
+            playerId: this.playerId,
+            displayName: this.displayName || this.playerId,
+            authMode: this.authMode,
+            ...(this.loginId ? { loginId: this.loginId } : {}),
+            source: "remote" as const
+          }
+        : null;
+      const [profile, activeEvents] = await Promise.all([
+        resolveVeilRootRuntime().loadAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
+          storage: this.readWebStorage(),
+          authSession
+        }),
+        authSession?.token
+          ? resolveVeilRootRuntime().loadActiveSeasonalEvents(this.remoteUrl, {
+              storage: this.readWebStorage(),
+              authSession
+            })
+          : Promise.resolve([])
+      ]);
       this.commitAccountProfile(profile, true);
+      this.activeSeasonalEvent = activeEvents[0] ?? null;
+      if (this.activeSeasonalEvent) {
+        this.seasonalEventStatus = `已同步 ${this.activeSeasonalEvent.name} · 当前积分 ${this.activeSeasonalEvent.player.points}`;
+      }
       this.renderView();
     } finally {
       this.gameplayAccountRefreshInFlight = false;

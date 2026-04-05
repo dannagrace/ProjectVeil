@@ -1,5 +1,6 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform } from "cc";
 import { type CocosAccountReviewPage, type CocosAccountReviewSection } from "./cocos-account-review.ts";
+import { type CocosEventLeaderboardPanelView } from "./cocos-event-leaderboard-panel.ts";
 import { type CocosBattlePassPanelView } from "./cocos-progression-panel.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 
@@ -28,6 +29,9 @@ export type VeilProgressionPanelRenderState =
     }
   | {
       battlePass: CocosBattlePassPanelView;
+    }
+  | {
+      eventLeaderboard: CocosEventLeaderboardPanelView;
     };
 
 export interface VeilProgressionPanelOptions {
@@ -69,6 +73,10 @@ export class VeilProgressionPanel extends Component {
 
   render(state: VeilProgressionPanelRenderState): void {
     this.currentState = state;
+    if ("eventLeaderboard" in state) {
+      this.renderEventLeaderboard(state.eventLeaderboard);
+      return;
+    }
     if ("battlePass" in state) {
       this.renderBattlePass(state.battlePass);
       return;
@@ -76,6 +84,7 @@ export class VeilProgressionPanel extends Component {
 
     this.node.active = true;
     this.hideBattlePassNodes();
+    this.hideEventLeaderboardNodes();
     this.renderAccountReview(state.page);
   }
 
@@ -258,6 +267,7 @@ export class VeilProgressionPanel extends Component {
 
     this.node.active = true;
     this.hideAccountReviewNodes();
+    this.hideEventLeaderboardNodes();
 
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const width = transform.width || 380;
@@ -384,6 +394,110 @@ export class VeilProgressionPanel extends Component {
     });
 
     this.hideExtraBattlePassItems(view.tiers.length);
+  }
+
+  private renderEventLeaderboard(view: CocosEventLeaderboardPanelView): void {
+    if (!view.visible) {
+      this.node.active = false;
+      return;
+    }
+
+    this.node.active = true;
+    this.hideAccountReviewNodes();
+    this.hideBattlePassNodes();
+
+    const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
+    const width = transform.width || 380;
+    const height = transform.height || 440;
+    const contentWidth = width - 30;
+    let cursorY = height / 2 - 16;
+
+    this.syncChrome(width, height);
+
+    this.renderButton(
+      "EventLeaderboardClose",
+      contentWidth / 2 - 12,
+      height / 2 - 18,
+      72,
+      24,
+      "关闭",
+      {
+        fill: NEGATIVE_FILL,
+        stroke: new Color(244, 226, 214, 114)
+      },
+      this.onClose ?? null
+    );
+
+    cursorY = this.renderCard(
+      "EventLeaderboardHeader",
+      0,
+      cursorY,
+      contentWidth,
+      92,
+      [view.title, view.subtitle, `${view.countdownLabel} · ${view.playerScoreLabel} · ${view.playerRankLabel}`],
+      {
+        fill: CARD_HIGHLIGHT_FILL,
+        stroke: new Color(244, 236, 208, 82)
+      },
+      null,
+      14,
+      17
+    );
+
+    cursorY = this.renderCard(
+      "EventLeaderboardStatus",
+      0,
+      cursorY,
+      contentWidth,
+      56,
+      [view.leaderboardTitle, view.statusLabel],
+      {
+        fill: CARD_FILL,
+        stroke: new Color(220, 230, 244, 56)
+      },
+      null,
+      13,
+      16
+    );
+
+    view.topRows.forEach((row, index) => {
+      cursorY = this.renderCard(
+        `EventLeaderboardRow-${index}`,
+        0,
+        cursorY,
+        contentWidth,
+        56,
+        [row.summary, `${row.scoreLabel} · ${row.rewardPreviewLabel}${row.isCurrentPlayer ? " · 你" : ""}`],
+        {
+          fill: row.isCurrentPlayer ? CARD_HIGHLIGHT_FILL : CARD_FILL,
+          stroke: row.isCurrentPlayer ? new Color(236, 244, 216, 96) : new Color(220, 230, 244, 56)
+        },
+        null,
+        12,
+        15
+      );
+    });
+
+    view.rewardTiers.forEach((tier, index) => {
+      this.renderCard(
+        `EventRewardTier-${index}`,
+        0,
+        cursorY,
+        contentWidth,
+        60,
+        [tier.title, `${tier.rankLabel} · ${tier.rewardLabel}`, tier.stateLabel],
+        {
+          fill: tier.unlocked ? FREE_TRACK_FILL : MUTED_FILL,
+          stroke: tier.unlocked ? new Color(220, 242, 226, 82) : new Color(220, 230, 244, 56)
+        },
+        null,
+        12,
+        15
+      );
+      cursorY -= Math.max(60, 24 + 3 * 15) + 8;
+    });
+
+    this.hideExtraEventLeaderboardItems(view.topRows.length, view.rewardTiers.length);
   }
 
   private syncChrome(width: number, height: number): void {
@@ -577,12 +691,32 @@ export class VeilProgressionPanel extends Component {
     }
   }
 
+  private hideExtraEventLeaderboardItems(visibleRows: number, visibleRewardTiers: number): void {
+    for (let index = visibleRows; index < 10; index += 1) {
+      const rowNode = this.node.getChildByName(`EventLeaderboardRow-${index}`);
+      if (rowNode) {
+        rowNode.active = false;
+      }
+    }
+
+    for (let index = visibleRewardTiers; index < 6; index += 1) {
+      const rewardNode = this.node.getChildByName(`EventRewardTier-${index}`);
+      if (rewardNode) {
+        rewardNode.active = false;
+      }
+    }
+  }
+
   private hideAccountReviewNodes(): void {
     this.hideNodesByPrefix(["ProgressionHeader", "ProgressionBanner", "ProgressionClose", "ProgressionPrev", "ProgressionNext", "ProgressionRetry", "ProgressionTab-", "ProgressionItem-"]);
   }
 
   private hideBattlePassNodes(): void {
     this.hideNodesByPrefix(["BattlePassHeader", "BattlePassNextReward", "BattlePassMeter", "BattlePassPremiumAction", "BattlePassClose", "BattlePassTier-", "BattlePassTrack-"]);
+  }
+
+  private hideEventLeaderboardNodes(): void {
+    this.hideNodesByPrefix(["EventLeaderboardHeader", "EventLeaderboardStatus", "EventLeaderboardClose", "EventLeaderboardRow-", "EventRewardTier-"]);
   }
 
   private hideNodesByPrefix(prefixes: string[]): void {
