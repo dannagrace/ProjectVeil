@@ -125,10 +125,8 @@ import {
   shouldRefreshGameplayAccountProfileForEvents
 } from "./cocos-achievements.ts";
 import {
-  buildBattleResultShareSummary,
-  buildShareCardPayload,
-  copyTextToClipboard,
   readLaunchReferrerId,
+  shareBattleResultForRuntime,
   shouldOfferBattleResultShare,
   type WechatSharePayload
 } from "./cocos-share-card.ts";
@@ -5212,25 +5210,16 @@ export class VeilRoot extends Component {
       return;
     }
 
-    if (this.runtimePlatform === "wechat-game") {
-      const payload = buildShareCardPayload(replay, this.displayName || this.playerId);
-      const wxRuntime = (globalThis as {
-        wx?: {
-          shareAppMessage?: (sharePayload: WechatSharePayload) => void;
-        } | null;
-      }).wx;
-      if (typeof wxRuntime?.shareAppMessage === "function") {
-        wxRuntime.shareAppMessage(payload);
-        this.predictionStatus = "已拉起微信分享面板。";
-      } else {
-        this.predictionStatus = "当前微信小游戏环境未提供 shareAppMessage。";
-      }
-      this.renderView();
-      return;
-    }
-
-    const copied = await copyTextToClipboard(buildBattleResultShareSummary(replay, this.displayName || this.playerId));
-    this.predictionStatus = copied ? "已复制战绩摘要，可直接粘贴分享。" : "当前 H5 运行环境不支持剪贴板复制。";
+    const wxRuntime = (globalThis as {
+      wx?: {
+        shareAppMessage?: (sharePayload: WechatSharePayload) => void;
+      } | null;
+    }).wx;
+    const shareResult = await shareBattleResultForRuntime(replay, this.displayName || this.playerId, {
+      runtimePlatform: this.runtimePlatform,
+      ...(wxRuntime !== undefined ? { wechatRuntime: wxRuntime } : {})
+    });
+    this.predictionStatus = shareResult.message;
     this.renderView();
   }
 

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildShareCardPayload,
   readLaunchReferrerId,
+  shareBattleResultForRuntime,
   shouldOfferBattleResultShare
 } from "../assets/scripts/cocos-share-card.ts";
 import type { PlayerBattleReplaySummary } from "../assets/scripts/project-shared/battle-replay.ts";
@@ -56,4 +57,37 @@ test("shouldOfferBattleResultShare only enables attacker PVP victories", () => {
 test("readLaunchReferrerId reads the referral query parameter", () => {
   assert.equal(readLaunchReferrerId("?roomId=ranked-room&referrer=player-9"), "player-9");
   assert.equal(readLaunchReferrerId("?roomId=ranked-room"), null);
+});
+
+test("shareBattleResultForRuntime uses the H5 share stub outside WeChat", async () => {
+  let copiedText = "";
+
+  const result = await shareBattleResultForRuntime(createReplay(), "雾林司灯", {
+    runtimePlatform: "browser",
+    clipboardEnvironment: {
+      navigator: {
+        clipboard: {
+          writeText: async (text: string) => {
+            copiedText = text;
+          }
+        }
+      }
+    }
+  });
+
+  assert.equal(result.channel, "h5-stub");
+  assert.equal(result.copied, true);
+  assert.match(copiedText, /雾林司灯 赢得了天梯对战/);
+  assert.match(result.message, /已复制战绩摘要/);
+});
+
+test("shareBattleResultForRuntime reports unsupported WeChat runtimes cleanly", async () => {
+  const result = await shareBattleResultForRuntime(createReplay(), "雾林司灯", {
+    runtimePlatform: "wechat-game",
+    wechatRuntime: {}
+  });
+
+  assert.equal(result.channel, "unavailable");
+  assert.equal(result.copied, false);
+  assert.match(result.message, /未提供 shareAppMessage/);
 });

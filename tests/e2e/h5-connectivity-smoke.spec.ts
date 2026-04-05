@@ -71,3 +71,45 @@ test("h5 smoke reaches lobby http path and room websocket path", async ({ page }
     });
   });
 });
+
+test("h5 smoke exposes the battle share stub when WeChat APIs are unavailable", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    let copiedText = "";
+    Object.defineProperty(window, "__COPIED_H5_SHARE_TEXT__", {
+      configurable: true,
+      get: () => copiedText,
+      set: (value: string) => {
+        copiedText = value;
+      }
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          copiedText = text;
+        }
+      }
+    });
+  });
+
+  await withSmokeDiagnostics(testInfo, [page], async () => {
+    await waitForLobbyReady(page);
+
+    const result = await page.evaluate(async () => {
+      if (typeof window.run_h5_share_stub_smoke !== "function") {
+        throw new Error("missing_h5_share_stub_smoke");
+      }
+
+      const shareResult = await window.run_h5_share_stub_smoke();
+      return {
+        ...shareResult,
+        copiedText: (window as typeof window & { __COPIED_H5_SHARE_TEXT__?: string }).__COPIED_H5_SHARE_TEXT__ ?? ""
+      };
+    });
+
+    expect(result.copied).toBe(true);
+    expect(result.message).toContain("已复制战绩摘要");
+    expect(result.summary).toContain("房间 h5-share-room");
+    expect(result.copiedText).toContain("邀请链接");
+  });
+});
