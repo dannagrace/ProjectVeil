@@ -1011,6 +1011,9 @@ export class VeilRoot extends Component {
       onCancelAccountFlow: () => {
         this.closeLobbyAccountFlow();
       },
+      onOpenCampaign: () => {
+        void this.toggleGameplayCampaignPanel(true);
+      },
       onOpenConfigCenter: () => {
         this.openConfigCenter();
       },
@@ -1375,7 +1378,7 @@ export class VeilRoot extends Component {
       equipmentPanelNode.active = showingGame && this.gameplayEquipmentPanelOpen;
     }
     if (campaignPanelNode) {
-      campaignPanelNode.active = showingGame && this.gameplayCampaignPanelOpen;
+      campaignPanelNode.active = this.gameplayCampaignPanelOpen;
     }
     if (settingsPanelNode) {
       settingsPanelNode.active = this.settingsView.open;
@@ -2500,6 +2503,7 @@ export class VeilRoot extends Component {
         this.syncGameplayCampaignSelection(this.gameplayCampaign?.nextMissionId);
         this.gameplayCampaignStatus = mission ? `${mission.name} 已完成并结算。` : "任务已完成。";
       } else {
+        this.gameplayCampaignPanelOpen = false;
         this.gameplayCampaignStatus = mission ? `${mission.name} 已进入执行阶段。` : "任务已开始。";
       }
       this.renderView();
@@ -2545,6 +2549,7 @@ export class VeilRoot extends Component {
         this.startGameplayCampaignDialogue(result.mission.id, "intro");
       } else {
         this.gameplayCampaignDialogue = null;
+        this.gameplayCampaignPanelOpen = false;
       }
       await this.refreshGameplayCampaign(result.mission.id);
       this.gameplayCampaignStatus =
@@ -2615,6 +2620,40 @@ export class VeilRoot extends Component {
       return "战役会话已过期，请重新登录正式账号。";
     }
     return error.message || "战役请求失败。";
+  }
+
+  private syncGameplayCampaignBattleOutcome(update: SessionUpdate): void {
+    if (this.gameplayCampaignPendingAction !== null || this.gameplayCampaignDialogue || !this.gameplayCampaignActiveMissionId) {
+      return;
+    }
+
+    const resolution = update.events.find(
+      (event): event is Extract<SessionUpdate["events"][number], { type: "battle.resolved" }> =>
+        event.type === "battle.resolved" && update.world.ownHeroes.some((hero) => hero.id === event.heroId)
+    );
+    if (!resolution) {
+      return;
+    }
+
+    const activeMission =
+      this.gameplayCampaign?.missions.find((mission) => mission.id === this.gameplayCampaignActiveMissionId) ?? null;
+    if (!activeMission) {
+      return;
+    }
+
+    this.gameplayCampaignPanelOpen = true;
+    this.gameplayCampaignSelectedMissionId = activeMission.id;
+    const victory = resolution.result === "attacker_victory" || resolution.result === "defender_victory";
+    if (!victory) {
+      this.gameplayCampaignActiveMissionId = null;
+      this.gameplayCampaignStatus = `${activeMission.name} 未完成，可重新发起挑战。`;
+      this.renderView();
+      return;
+    }
+
+    this.gameplayCampaignStatus = `${activeMission.name} 战斗胜利，正在同步战役结算...`;
+    this.renderView();
+    void this.completeGameplayCampaignMission();
   }
 
   private resolveReportTarget(): { playerId: string; name: string } | null {
@@ -5718,6 +5757,7 @@ export class VeilRoot extends Component {
       }
     }
     if (update.events.some((event) => event.type === "battle.resolved")) {
+      this.syncGameplayCampaignBattleOutcome(update);
       void this.submitBattleProgressForActiveEvents(update);
     }
     if (shouldRefreshGameplayAccountProfileForEvents(update.events.map((event) => event.type))) {
