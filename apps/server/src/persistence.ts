@@ -101,6 +101,8 @@ export interface RoomSnapshotStore {
   loadGuild?(guildId: string): Promise<GuildState | null>;
   loadGuildByMemberPlayerId?(playerId: string): Promise<GuildState | null>;
   loadPaymentOrder?(orderId: string): Promise<PaymentOrderSnapshot | null>;
+  loadPaymentReceiptByOrderId?(orderId: string): Promise<PaymentReceiptSnapshot | null>;
+  countVerifiedPaymentReceiptsSince?(playerId: string, since: string): Promise<number>;
   loadPlayerReport?(reportId: string): Promise<PlayerReportRecord | null>;
   loadPlayerBan?(playerId: string): Promise<PlayerAccountBanSnapshot | null>;
   createPlayerReport?(input: PlayerReportCreateInput): Promise<PlayerReportRecord>;
@@ -364,6 +366,15 @@ interface PaymentOrderRow extends RowDataPacket {
   updated_at: Date | string;
 }
 
+interface PaymentReceiptRow extends RowDataPacket {
+  transaction_id: string;
+  order_id: string;
+  player_id: string;
+  product_id: string;
+  amount: number;
+  verified_at: Date | string;
+}
+
 interface GuildRow extends RowDataPacket {
   guild_id: string;
   name: string;
@@ -529,12 +540,25 @@ export interface PaymentOrderCreateInput {
 export interface PaymentOrderCompleteInput {
   wechatOrderId: string;
   paidAt?: string;
+  verifiedAt?: string;
+  productName: string;
+  grant: ShopPurchaseGrant;
 }
 
 export interface PaymentOrderSettlement {
   order: PaymentOrderSnapshot;
   account: PlayerAccountSnapshot;
   credited: boolean;
+  receipt?: PaymentReceiptSnapshot;
+}
+
+export interface PaymentReceiptSnapshot {
+  transactionId: string;
+  orderId: string;
+  playerId: string;
+  productId: string;
+  amount: number;
+  verifiedAt: string;
 }
 
 export interface GemLedgerEntry {
@@ -729,6 +753,9 @@ export const MYSQL_SHOP_PURCHASE_TABLE = "shop_purchases";
 export const MYSQL_PAYMENT_ORDER_TABLE = "orders";
 export const MYSQL_PAYMENT_ORDER_PLAYER_CREATED_INDEX = "idx_orders_player_created";
 export const MYSQL_PAYMENT_ORDER_WECHAT_ORDER_ID_INDEX = "uidx_orders_wechat_order_id";
+export const MYSQL_PAYMENT_RECEIPT_TABLE = "payment_receipts";
+export const MYSQL_PAYMENT_RECEIPT_ORDER_ID_INDEX = "uidx_payment_receipts_order_id";
+export const MYSQL_PAYMENT_RECEIPT_PLAYER_VERIFIED_INDEX = "idx_payment_receipts_player_verified";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_TABLE = "player_account_sessions";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX = "idx_player_account_sessions_player_last_used";
 export const MYSQL_PLAYER_BAN_HISTORY_TABLE = "player_ban_history";
@@ -859,6 +886,17 @@ function toPaymentOrderSnapshot(row: PaymentOrderRow): PaymentOrderSnapshot {
   };
 }
 
+function toPaymentReceiptSnapshot(row: PaymentReceiptRow): PaymentReceiptSnapshot {
+  return {
+    transactionId: normalizeWechatOrderId(row.transaction_id),
+    orderId: normalizePaymentOrderId(row.order_id),
+    playerId: normalizePlayerId(row.player_id),
+    productId: normalizeShopProductId(row.product_id),
+    amount: normalizePaymentAmount(row.amount),
+    verifiedAt: formatTimestamp(row.verified_at) ?? new Date(0).toISOString()
+  };
+}
+
 function normalizeShopProductId(productId: string): string {
   const normalized = productId.trim();
   if (!normalized) {
@@ -980,6 +1018,139 @@ function createShopPurchaseEventLogEntry(playerId: string, input: {
         : `Purchased ${input.productName} x${input.quantity}.`,
     rewards: resourceRewards
   };
+}
+
+async function applyVerifiedPaymentGrantToAccount(
+  connection: PoolConnection,
+  currentAccount: PlayerAccountSnapshot,
+  input: {
+    playerId: string;
+    productId: string;
+    productName: string;
+    grant: ShopPurchaseGrant;
+    refId: string;
+    processedAt: string;
+  }
+): Promise<PlayerAccountSnapshot> {
+  const normalizedGrant = normalizeShopPurchaseGrant(input.grant);
+
+  let nextHeroArchive: PlayerHeroArchiveSnapshot | null = null;
+  if (normalizedGrant.equipmentIds.length > 0) {
+    const [heroArchiveRows] = await connection.query<PlayerHeroArchiveRow[]>(
+      `SELECT player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json, updated_at
+       FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+       WHERE player_id = ?
+       ORDER BY updated_at DESC, hero_id ASC
+       LIMIT 1
+       FOR UPDATE`,
+      [input.playerId]
+    );
+    const currentArchive = heroArchiveRows[0] ? toPlayerHeroArchiveSnapshot(heroArchiveRows[0]) : null;
+    if (!currentArchive) {
+      throw new Error("player hero archive not found");
+    }
+
+    let nextInventory = [...currentArchive.hero.loadout.inventory];
+    for (const equipmentId of normalizedGrant.equipmentIds) {
+      const inventoryUpdate = tryAddEquipmentToInventory(nextInventory, equipmentId);
+      if (!inventoryUpdate.stored) {
+        throw new Error("equipment inventory full");
+      }
+      nextInventory = inventoryUpdate.inventory;
+    }
+
+    nextHeroArchive = {
+      ...currentArchive,
+      hero: normalizeHeroState({
+        ...currentArchive.hero,
+        loadout: {
+          ...currentArchive.hero.loadout,
+          inventory: nextInventory
+        }
+      })
+    };
+  }
+
+  const nextRecentEventLog = appendEventLogEntries(currentAccount.recentEventLog, [
+    createShopPurchaseEventLogEntry(input.playerId, {
+      productId: input.productId,
+      productName: input.productName,
+      quantity: 1,
+      granted: normalizedGrant,
+      processedAt: input.processedAt
+    })
+  ]);
+  const nextGlobalResources = addResourceLedgers(currentAccount.globalResources, normalizedGrant.resources);
+  const nextGems = normalizeGemAmount(currentAccount.gems) + normalizedGrant.gems;
+  const nextSeasonPassPremium = currentAccount.seasonPassPremium === true || normalizedGrant.seasonPassPremium;
+  const nextCosmeticInventory = applyOwnedCosmetics(currentAccount.cosmeticInventory, normalizedGrant.cosmeticIds);
+
+  await connection.query(
+    `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+     SET gems = ?,
+         season_pass_premium = ?,
+         cosmetic_inventory_json = ?,
+         global_resources_json = ?,
+         recent_event_log_json = ?,
+         version = version + 1
+     WHERE player_id = ?`,
+    [
+      nextGems,
+      nextSeasonPassPremium ? 1 : 0,
+      JSON.stringify(nextCosmeticInventory),
+      JSON.stringify(nextGlobalResources),
+      JSON.stringify(nextRecentEventLog),
+      input.playerId
+    ]
+  );
+
+  if (normalizedGrant.gems > 0) {
+    await appendGemLedgerEntry(connection, {
+      entryId: randomUUID(),
+      playerId: input.playerId,
+      delta: normalizedGrant.gems,
+      reason: "purchase",
+      refId: input.refId
+    });
+  }
+
+  if (nextHeroArchive) {
+    await connection.query(
+      `INSERT INTO \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+         (player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         hero_json = VALUES(hero_json),
+         army_template_id = VALUES(army_template_id),
+         army_count = VALUES(army_count),
+         learned_skills_json = VALUES(learned_skills_json),
+         equipment_json = VALUES(equipment_json),
+         inventory_json = VALUES(inventory_json),
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        nextHeroArchive.playerId,
+        nextHeroArchive.heroId,
+        JSON.stringify(nextHeroArchive.hero),
+        nextHeroArchive.hero.armyTemplateId,
+        nextHeroArchive.hero.armyCount,
+        JSON.stringify(nextHeroArchive.hero.loadout.learnedSkills),
+        JSON.stringify(nextHeroArchive.hero.loadout.equipment),
+        JSON.stringify(nextHeroArchive.hero.loadout.inventory)
+      ]
+    );
+  }
+
+  await appendPlayerEventHistoryEntries(connection, input.playerId, nextRecentEventLog.slice(0, 1));
+
+  return normalizePlayerAccountSnapshot({
+    ...currentAccount,
+    gems: nextGems,
+    seasonPassPremium: nextSeasonPassPremium,
+    cosmeticInventory: nextCosmeticInventory,
+    globalResources: nextGlobalResources,
+    recentEventLog: nextRecentEventLog,
+    updatedAt: input.processedAt
+  });
 }
 
 function createBattlePassClaimEventLogEntry(playerId: string, input: {
@@ -1939,6 +2110,17 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PAYMENT_ORDER_TABLE}\` (
   PRIMARY KEY (order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PAYMENT_RECEIPT_TABLE}\` (
+  transaction_id VARCHAR(191) NOT NULL,
+  order_id VARCHAR(191) NOT NULL,
+  player_id VARCHAR(191) NOT NULL,
+  product_id VARCHAR(191) NOT NULL,
+  amount INT NOT NULL,
+  verified_at DATETIME NOT NULL,
+  PRIMARY KEY (transaction_id),
+  UNIQUE KEY \`${MYSQL_PAYMENT_RECEIPT_ORDER_ID_INDEX}\` (order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   session_id VARCHAR(64) NOT NULL,
@@ -2887,6 +3069,24 @@ PREPARE veil_payment_orders_wechat_order_idx_stmt FROM @veil_payment_orders_wech
 EXECUTE veil_payment_orders_wechat_order_idx_stmt;
 DEALLOCATE PREPARE veil_payment_orders_wechat_order_idx_stmt;
 
+SET @veil_payment_receipts_player_verified_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_RECEIPT_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PAYMENT_RECEIPT_PLAYER_VERIFIED_INDEX}'
+);
+
+SET @veil_payment_receipts_player_verified_idx_sql := IF(
+  @veil_payment_receipts_player_verified_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PAYMENT_RECEIPT_PLAYER_VERIFIED_INDEX}\` ON \`${MYSQL_PAYMENT_RECEIPT_TABLE}\` (player_id, verified_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_receipts_player_verified_idx_stmt FROM @veil_payment_receipts_player_verified_idx_sql;
+EXECUTE veil_payment_receipts_player_verified_idx_stmt;
+DEALLOCATE PREPARE veil_payment_receipts_player_verified_idx_stmt;
+
 SET @veil_player_ban_history_idx_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.STATISTICS
@@ -3788,6 +3988,44 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     const row = rows[0];
     return row ? toPaymentOrderSnapshot(row) : null;
+  }
+
+  async loadPaymentReceiptByOrderId(orderId: string): Promise<PaymentReceiptSnapshot | null> {
+    const normalizedOrderId = normalizePaymentOrderId(orderId);
+    const [rows] = await this.pool.query<PaymentReceiptRow[]>(
+      `SELECT
+         transaction_id,
+         order_id,
+         player_id,
+         product_id,
+         amount,
+         verified_at
+       FROM \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`
+       WHERE order_id = ?
+       LIMIT 1`,
+      [normalizedOrderId]
+    );
+
+    const row = rows[0];
+    return row ? toPaymentReceiptSnapshot(row) : null;
+  }
+
+  async countVerifiedPaymentReceiptsSince(playerId: string, since: string): Promise<number> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const sinceDate = new Date(since);
+    if (Number.isNaN(sinceDate.getTime())) {
+      throw new Error("since must be a valid ISO timestamp");
+    }
+
+    const [rows] = await this.pool.query<Array<RowDataPacket & { total: number }>>(
+      `SELECT COUNT(*) AS total
+       FROM \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`
+       WHERE player_id = ?
+         AND verified_at >= ?`,
+      [normalizedPlayerId, sinceDate]
+    );
+
+    return Math.max(0, Math.floor(rows[0]?.total ?? 0));
   }
 
   async loadPlayerBan(playerId: string): Promise<PlayerAccountBanSnapshot | null> {
@@ -4840,7 +5078,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     const playerId = normalizePlayerId(input.playerId);
     const productId = normalizeShopProductId(input.productId);
     const amount = normalizePaymentAmount(input.amount);
-    const gemAmount = normalizePositiveGemDelta(input.gemAmount);
+    const gemAmount = normalizeGemAmount(input.gemAmount);
 
     await this.ensurePlayerAccount({ playerId });
 
@@ -4867,8 +5105,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     const normalizedOrderId = normalizePaymentOrderId(orderId);
     const normalizedWechatOrderId = normalizeWechatOrderId(input.wechatOrderId);
     const paidAt = input.paidAt ? new Date(input.paidAt) : new Date();
+    const verifiedAt = input.verifiedAt ? new Date(input.verifiedAt) : paidAt;
+    const normalizedProductName = normalizeShopProductName(input.productName);
     if (Number.isNaN(paidAt.getTime())) {
       throw new Error("paidAt must be a valid ISO timestamp");
+    }
+    if (Number.isNaN(verifiedAt.getTime())) {
+      throw new Error("verifiedAt must be a valid ISO timestamp");
     }
 
     const connection = await this.pool.getConnection();
@@ -4917,6 +5160,19 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
             });
 
       if (currentOrder.status === "paid") {
+        const [receiptRows] = await connection.query<PaymentReceiptRow[]>(
+          `SELECT
+             transaction_id,
+             order_id,
+             player_id,
+             product_id,
+             amount,
+             verified_at
+           FROM \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`
+           WHERE order_id = ?
+           LIMIT 1`,
+          [currentOrder.orderId]
+        );
         await connection.commit();
         return {
           order: {
@@ -4925,24 +5181,63 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
             ...(currentOrder.paidAt ? { paidAt: currentOrder.paidAt } : { paidAt: paidAt.toISOString() })
           },
           account: currentAccount,
-          credited: false
+          credited: false,
+          ...(receiptRows[0] ? { receipt: toPaymentReceiptSnapshot(receiptRows[0]) } : {})
         };
       }
 
-      const nextGems = normalizeGemAmount(currentAccount.gems) + currentOrder.gemAmount;
-      await connection.query(
-        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
-         SET gems = ?,
-             version = version + 1
-         WHERE player_id = ?`,
-        [nextGems, currentOrder.playerId]
-      );
-      await appendGemLedgerEntry(connection, {
-        entryId: randomUUID(),
+      let receipt: PaymentReceiptSnapshot;
+      try {
+        await connection.query(
+          `INSERT INTO \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`
+             (transaction_id, order_id, player_id, product_id, amount, verified_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [normalizedWechatOrderId, currentOrder.orderId, currentOrder.playerId, currentOrder.productId, currentOrder.amount, verifiedAt]
+        );
+        receipt = {
+          transactionId: normalizedWechatOrderId,
+          orderId: currentOrder.orderId,
+          playerId: currentOrder.playerId,
+          productId: currentOrder.productId,
+          amount: currentOrder.amount,
+          verifiedAt: verifiedAt.toISOString()
+        };
+      } catch (error) {
+        if (!isMySqlDuplicateEntryError(error)) {
+          throw error;
+        }
+
+        const [receiptRows] = await connection.query<PaymentReceiptRow[]>(
+          `SELECT
+             transaction_id,
+             order_id,
+             player_id,
+             product_id,
+             amount,
+             verified_at
+           FROM \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`
+           WHERE order_id = ?
+              OR transaction_id = ?
+           LIMIT 1`,
+          [currentOrder.orderId, normalizedWechatOrderId]
+        );
+        const existingReceipt = receiptRows[0];
+        await connection.commit();
+        return {
+          order: currentOrder,
+          account: currentAccount,
+          credited: false,
+          ...(existingReceipt ? { receipt: toPaymentReceiptSnapshot(existingReceipt) } : {})
+        };
+      }
+
+      const nextAccount = await applyVerifiedPaymentGrantToAccount(connection, currentAccount, {
         playerId: currentOrder.playerId,
-        delta: currentOrder.gemAmount,
-        reason: "purchase",
-        refId: currentOrder.orderId
+        productId: currentOrder.productId,
+        productName: normalizedProductName,
+        grant: input.grant,
+        refId: currentOrder.orderId,
+        processedAt: paidAt.toISOString()
       });
       await connection.query(
         `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
@@ -4955,12 +5250,6 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
       await connection.commit();
 
-      const nextAccount =
-        (await this.loadPlayerAccount(currentOrder.playerId)) ??
-        normalizePlayerAccountSnapshot({
-          ...currentAccount,
-          gems: nextGems
-        });
       const nextOrder =
         (await this.loadPaymentOrder(currentOrder.orderId)) ??
         ({
@@ -4974,7 +5263,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       return {
         order: nextOrder,
         account: nextAccount,
-        credited: true
+        credited: true,
+        receipt
       };
     } catch (error) {
       await connection.rollback();

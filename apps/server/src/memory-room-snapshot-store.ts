@@ -21,6 +21,7 @@ import {
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
   type PaymentOrderCompleteInput,
   type PaymentOrderCreateInput,
+  type PaymentReceiptSnapshot,
   type PaymentOrderSettlement,
   type PaymentOrderSnapshot,
   type RoomSnapshotStore,
@@ -130,6 +131,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly guilds = new Map<string, GuildState>();
   private readonly guildIdByPlayerId = new Map<string, string>();
   private readonly paymentOrders = new Map<string, PaymentOrderSnapshot>();
+  private readonly paymentReceiptsByOrderId = new Map<string, PaymentReceiptSnapshot>();
+  private readonly paymentReceiptOrderIdByTransactionId = new Map<string, string>();
   private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
@@ -174,6 +177,28 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
     const order = this.paymentOrders.get(normalizedOrderId);
     return order ? structuredClone(order) : null;
+  }
+
+  async loadPaymentReceiptByOrderId(orderId: string): Promise<PaymentReceiptSnapshot | null> {
+    const normalizedOrderId = orderId.trim();
+    if (!normalizedOrderId) {
+      throw new Error("orderId must not be empty");
+    }
+
+    const receipt = this.paymentReceiptsByOrderId.get(normalizedOrderId);
+    return receipt ? structuredClone(receipt) : null;
+  }
+
+  async countVerifiedPaymentReceiptsSince(playerId: string, since: string): Promise<number> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const sinceDate = new Date(since);
+    if (Number.isNaN(sinceDate.getTime())) {
+      throw new Error("since must be a valid ISO timestamp");
+    }
+
+    return Array.from(this.paymentReceiptsByOrderId.values()).filter(
+      (receipt) => receipt.playerId === normalizedPlayerId && new Date(receipt.verifiedAt).getTime() >= sinceDate.getTime()
+    ).length;
   }
 
   async loadPlayerBan(playerId: string): Promise<PlayerAccountBanSnapshot | null> {
@@ -592,8 +617,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     if (!Number.isFinite(input.amount) || amount <= 0) {
       throw new Error("amount must be a positive integer");
     }
-    if (!Number.isFinite(input.gemAmount) || gemAmount <= 0) {
-      throw new Error("gemAmount must be a positive integer");
+    if (!Number.isFinite(input.gemAmount) || gemAmount < 0) {
+      throw new Error("gemAmount must be a non-negative integer");
     }
 
     await this.ensurePlayerAccount({ playerId });
@@ -615,11 +640,15 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async completePaymentOrder(orderId: string, input: PaymentOrderCompleteInput): Promise<PaymentOrderSettlement> {
     const normalizedOrderId = orderId.trim();
     const normalizedWechatOrderId = input.wechatOrderId.trim();
+    const normalizedProductName = input.productName.trim();
     if (!normalizedOrderId) {
       throw new Error("orderId must not be empty");
     }
     if (!normalizedWechatOrderId) {
       throw new Error("wechatOrderId must not be empty");
+    }
+    if (!normalizedProductName) {
+      throw new Error("productName must not be empty");
     }
 
     const existingOrder = this.paymentOrders.get(normalizedOrderId);
@@ -628,15 +657,40 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     }
 
     const account = await this.ensurePlayerAccount({ playerId: existingOrder.playerId });
-    if (existingOrder.status === "paid") {
+    const existingReceipt = this.paymentReceiptsByOrderId.get(normalizedOrderId);
+    if (existingOrder.status === "paid" || existingReceipt) {
       return {
         order: structuredClone(existingOrder),
         account,
-        credited: false
+        credited: false,
+        ...(existingReceipt ? { receipt: structuredClone(existingReceipt) } : {})
+      };
+    }
+    const duplicateOrderId = this.paymentReceiptOrderIdByTransactionId.get(normalizedWechatOrderId);
+    if (duplicateOrderId && duplicateOrderId !== normalizedOrderId) {
+      return {
+        order: structuredClone(existingOrder),
+        account,
+        credited: false,
+        ...(this.paymentReceiptsByOrderId.get(duplicateOrderId)
+          ? { receipt: structuredClone(this.paymentReceiptsByOrderId.get(duplicateOrderId)!) }
+          : {})
       };
     }
 
     const paidAt = new Date(input.paidAt ?? Date.now()).toISOString();
+    const verifiedAt = new Date(input.verifiedAt ?? paidAt).toISOString();
+    const normalizedGrant = {
+      gems: Math.max(0, Math.floor(input.grant.gems ?? existingOrder.gemAmount ?? 0)),
+      resources: {
+        gold: Math.max(0, Math.floor(input.grant.resources?.gold ?? 0)),
+        wood: Math.max(0, Math.floor(input.grant.resources?.wood ?? 0)),
+        ore: Math.max(0, Math.floor(input.grant.resources?.ore ?? 0))
+      },
+      seasonPassPremium: input.grant.seasonPassPremium === true,
+      cosmeticIds: (input.grant.cosmeticIds ?? []).map((cosmeticId) => cosmeticId.trim()).filter(Boolean),
+      equipmentIds: (input.grant.equipmentIds ?? []).map((equipmentId) => equipmentId.trim()).filter(Boolean)
+    };
     const nextOrder: PaymentOrderSnapshot = {
       ...structuredClone(existingOrder),
       status: "paid",
@@ -646,16 +700,47 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     };
     const nextAccount: PlayerAccountSnapshot = {
       ...account,
-      gems: (account.gems ?? 0) + existingOrder.gemAmount,
+      gems: (account.gems ?? 0) + normalizedGrant.gems,
+      seasonPassPremium: account.seasonPassPremium === true || normalizedGrant.seasonPassPremium,
+      cosmeticInventory: normalizeCosmeticInventory({
+        ownedIds: [...(account.cosmeticInventory?.ownedIds ?? []), ...normalizedGrant.cosmeticIds]
+      }),
+      globalResources: normalizeResourceLedger({
+        gold: (account.globalResources.gold ?? 0) + normalizedGrant.resources.gold,
+        wood: (account.globalResources.wood ?? 0) + normalizedGrant.resources.wood,
+        ore: (account.globalResources.ore ?? 0) + normalizedGrant.resources.ore
+      }),
+      recentEventLog: appendEventLogEntries(account.recentEventLog, [
+        {
+          id: `${existingOrder.playerId}:${paidAt}:shop:${existingOrder.productId}:1`,
+          timestamp: paidAt,
+          roomId: "shop",
+          playerId: existingOrder.playerId,
+          category: "account",
+          description: `Purchased ${normalizedProductName} x1.`,
+          rewards: []
+        }
+      ]),
       updatedAt: paidAt
     };
+    const receipt: PaymentReceiptSnapshot = {
+      transactionId: normalizedWechatOrderId,
+      orderId: normalizedOrderId,
+      playerId: existingOrder.playerId,
+      productId: existingOrder.productId,
+      amount: existingOrder.amount,
+      verifiedAt
+    };
     this.paymentOrders.set(normalizedOrderId, structuredClone(nextOrder));
+    this.paymentReceiptsByOrderId.set(normalizedOrderId, structuredClone(receipt));
+    this.paymentReceiptOrderIdByTransactionId.set(normalizedWechatOrderId, normalizedOrderId);
     this.accounts.set(existingOrder.playerId, cloneAccount(nextAccount));
 
     return {
       order: structuredClone(nextOrder),
       account: cloneAccount(nextAccount),
-      credited: true
+      credited: true,
+      receipt: structuredClone(receipt)
     };
   }
 

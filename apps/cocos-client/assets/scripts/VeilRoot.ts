@@ -192,6 +192,7 @@ import {
 import {
   createCocosWechatPaymentOrder,
   requestCocosWechatPayment,
+  verifyCocosWechatPayment,
   type CocosWechatPaymentRuntimeLike
 } from "./cocos-wechat-payment.ts";
 
@@ -1833,7 +1834,16 @@ export class VeilRoot extends Component {
           (globalThis as { wx?: CocosWechatPaymentRuntimeLike | null }).wx,
           order
         );
-        this.lobbyShopStatus = paymentResult.message;
+        const verification = await verifyCocosWechatPayment(this.remoteUrl, order.orderId, {
+          authToken: this.authToken
+        });
+        this.lobbyShopStatus =
+          verification.seasonPassPremium
+            ? `${product.name} 购买成功，赛季高级通行证已解锁。`
+            : `${product.name} 购买成功，当前宝石 ${verification.gemsBalance}。`;
+        if (paymentResult.available) {
+          await this.refreshLobbyAccountProfile();
+        }
       } else {
         const result = await resolveVeilRootRuntime().purchaseShopProduct(this.remoteUrl, productId, {
           getAuthToken: () => this.authToken
