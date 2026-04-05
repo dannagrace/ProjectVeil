@@ -62,6 +62,14 @@ import {
 } from "./battle-pass";
 import { applySeasonSoftDecay, decayDivisionToRating, getCurrentAndPreviousWeeklyEntries, resolveCompetitiveProgression } from "./competitive-season";
 import { computeSeasonReward, resolveSeasonRewardConfig } from "./season-rewards";
+import {
+  claimAllPlayerMailboxMessages,
+  claimPlayerMailboxMessage,
+  createMailboxClaimEventLogEntry,
+  deliverPlayerMailboxMessage,
+  normalizePlayerMailboxMessage,
+  pruneExpiredPlayerMailboxMessages
+} from "./player-mailbox";
 
 function cloneAccount(account: PlayerAccountSnapshot): PlayerAccountSnapshot {
   return structuredClone(account);
@@ -333,6 +341,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...(existing?.seasonPassClaimedTiers?.length ? { seasonPassClaimedTiers: [...existing.seasonPassClaimedTiers] } : {}),
       ...(existing?.seasonBadges?.length ? { seasonBadges: [...existing.seasonBadges] } : {}),
       ...(existing?.campaignProgress ? { campaignProgress: structuredClone(existing.campaignProgress) } : {}),
+      ...(existing?.seasonalEventStates ? { seasonalEventStates: structuredClone(existing.seasonalEventStates) } : {}),
+      ...(existing?.mailbox ? { mailbox: structuredClone(existing.mailbox) } : {}),
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
       achievements: existing?.achievements ?? [],
       recentEventLog: existing?.recentEventLog ?? [],
@@ -361,6 +371,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
       ...(existing?.privacyConsentAt ? { privacyConsentAt: existing.privacyConsentAt } : {}),
+      ...(existing?.notificationPreferences
+        ? { notificationPreferences: structuredClone(existing.notificationPreferences) }
+        : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -450,6 +463,118 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       referrerId: normalizedReferrerId,
       newPlayerId: normalizedNewPlayerId
     };
+  }
+
+  async deliverPlayerMailbox(input: import("./player-mailbox").PlayerMailboxDeliveryInput) {
+    const message = normalizePlayerMailboxMessage(input.message);
+    const deliveredPlayerIds: string[] = [];
+    const skippedPlayerIds: string[] = [];
+
+    for (const playerId of Array.from(new Set(input.playerIds.map((entry) => normalizePlayerId(entry))))) {
+      const account = await this.ensurePlayerAccount({ playerId });
+      const result = deliverPlayerMailboxMessage(account.mailbox, message);
+      if (!result.delivered) {
+        skippedPlayerIds.push(playerId);
+        continue;
+      }
+
+      this.accounts.set(
+        playerId,
+        cloneAccount({
+          ...account,
+          mailbox: structuredClone(result.mailbox),
+          updatedAt: new Date().toISOString()
+        })
+      );
+      deliveredPlayerIds.push(playerId);
+    }
+
+    return { deliveredPlayerIds, skippedPlayerIds, message };
+  }
+
+  async claimPlayerMailboxMessage(playerId: string, messageId: string, claimedAt?: string) {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const account = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const now = claimedAt ? new Date(claimedAt) : new Date();
+    if (Number.isNaN(now.getTime())) {
+      throw new Error("claimedAt must be a valid ISO timestamp");
+    }
+
+    const result = claimPlayerMailboxMessage(account.mailbox, messageId, now);
+    if (!result.claimed || !result.message || !result.granted) {
+      return result;
+    }
+
+    const eventEntry = createMailboxClaimEventLogEntry(normalizedPlayerId, result.message, result.granted, result.message.claimedAt ?? now.toISOString());
+    this.accounts.set(
+      normalizedPlayerId,
+      cloneAccount({
+        ...account,
+        gems: (account.gems ?? 0) + result.granted.gems,
+        seasonPassPremium: account.seasonPassPremium === true || result.granted.seasonPassPremium,
+        mailbox: structuredClone(result.mailbox),
+        globalResources: {
+          gold: (account.globalResources.gold ?? 0) + result.granted.resources.gold,
+          wood: (account.globalResources.wood ?? 0) + result.granted.resources.wood,
+          ore: (account.globalResources.ore ?? 0) + result.granted.resources.ore
+        },
+        recentEventLog: appendEventLogEntries(account.recentEventLog, [eventEntry]),
+        updatedAt: now.toISOString()
+      })
+    );
+    return result;
+  }
+
+  async claimAllPlayerMailboxMessages(playerId: string, claimedAt?: string) {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const account = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const now = claimedAt ? new Date(claimedAt) : new Date();
+    if (Number.isNaN(now.getTime())) {
+      throw new Error("claimedAt must be a valid ISO timestamp");
+    }
+
+    const result = claimAllPlayerMailboxMessages(account.mailbox, now);
+    if (!result.claimed) {
+      return result;
+    }
+
+    const eventEntries = result.claimedMessageIds
+      .map((messageId, index) => {
+        const message = result.mailbox.find((entry) => entry.id === messageId);
+        const granted = result.granted[index];
+        return message && granted
+          ? createMailboxClaimEventLogEntry(normalizedPlayerId, message, granted, message.claimedAt ?? now.toISOString())
+          : null;
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+    const totalGrant = result.granted.reduce(
+      (accumulator, grant) => ({
+        gems: accumulator.gems + grant.gems,
+        gold: accumulator.gold + grant.resources.gold,
+        wood: accumulator.wood + grant.resources.wood,
+        ore: accumulator.ore + grant.resources.ore,
+        seasonPassPremium: accumulator.seasonPassPremium || grant.seasonPassPremium
+      }),
+      { gems: 0, gold: 0, wood: 0, ore: 0, seasonPassPremium: false }
+    );
+
+    this.accounts.set(
+      normalizedPlayerId,
+      cloneAccount({
+        ...account,
+        gems: (account.gems ?? 0) + totalGrant.gems,
+        seasonPassPremium: account.seasonPassPremium === true || totalGrant.seasonPassPremium,
+        mailbox: structuredClone(result.mailbox),
+        globalResources: {
+          gold: (account.globalResources.gold ?? 0) + totalGrant.gold,
+          wood: (account.globalResources.wood ?? 0) + totalGrant.wood,
+          ore: (account.globalResources.ore ?? 0) + totalGrant.ore
+        },
+        recentEventLog: appendEventLogEntries(account.recentEventLog, eventEntries),
+        updatedAt: now.toISOString()
+      })
+    );
+    return result;
   }
 
   async createPaymentOrder(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot> {
@@ -1064,6 +1189,13 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         : existing.lastRoomId
           ? { lastRoomId: existing.lastRoomId }
           : {}),
+      ...(patch.notificationPreferences !== undefined
+        ? patch.notificationPreferences
+          ? { notificationPreferences: structuredClone(patch.notificationPreferences) }
+          : {}
+        : existing.notificationPreferences
+          ? { notificationPreferences: structuredClone(existing.notificationPreferences) }
+          : {}),
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
@@ -1117,6 +1249,13 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
           : {}
         : existing.campaignProgress
           ? { campaignProgress: structuredClone(existing.campaignProgress) }
+          : {}),
+      ...(patch.mailbox !== undefined
+        ? patch.mailbox
+          ? { mailbox: structuredClone(patch.mailbox) }
+          : {}
+        : existing.mailbox
+          ? { mailbox: structuredClone(existing.mailbox) }
           : {}),
       globalResources: structuredClone(
         (patch.globalResources as PlayerAccountSnapshot["globalResources"] | undefined) ?? existing.globalResources
@@ -1349,7 +1488,24 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   }
 
   async pruneExpired(): Promise<number> {
-    return 0;
+    let removedCount = 0;
+    const now = new Date();
+    for (const [playerId, account] of this.accounts.entries()) {
+      const pruned = pruneExpiredPlayerMailboxMessages(account.mailbox, now);
+      if (pruned.removedCount === 0) {
+        continue;
+      }
+      removedCount += pruned.removedCount;
+      this.accounts.set(
+        playerId,
+        cloneAccount({
+          ...account,
+          mailbox: pruned.mailbox,
+          updatedAt: now.toISOString()
+        })
+      );
+    }
+    return removedCount;
   }
 
   async getCurrentSeason(): Promise<import("./persistence").SeasonSnapshot | null> {

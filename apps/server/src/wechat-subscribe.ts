@@ -1,4 +1,5 @@
 import type { RoomSnapshotStore } from "./persistence";
+import { getNotificationPreferenceValue } from "./wechat-social";
 
 export type WechatSubscribeTemplateKey = "match_found" | "turn_reminder";
 
@@ -138,8 +139,12 @@ export async function sendWechatSubscribeMessage(
   }
 
   const account = await store.loadPlayerAccount(playerId);
-  const openId = account?.wechatMiniGameOpenId?.trim();
-  if (!openId) {
+  if (!account?.wechatMiniGameOpenId?.trim()) {
+    return false;
+  }
+
+  const preferenceKey = templateKey === "match_found" ? "matchFound" : "turnReminder";
+  if (!getNotificationPreferenceValue(account.notificationPreferences, preferenceKey)) {
     return false;
   }
 
@@ -155,7 +160,7 @@ export async function sendWechatSubscribeMessage(
   const requestUrl = new URL(config.sendUrl);
   requestUrl.searchParams.set("access_token", accessToken);
   const requestBody = {
-    touser: openId,
+    touser: account.wechatMiniGameOpenId!.trim(),
     template_id: getTemplateId(config, templateKey),
     data: normalizeSubscribeMessageData(data)
   };

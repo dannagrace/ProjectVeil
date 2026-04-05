@@ -24,9 +24,12 @@ import {
 } from "./matchmaking.ts";
 import type {
   CampaignProgressState,
+  CosmeticId,
   CosmeticInventory,
   DailyDungeonState,
+  EquipmentId,
   EquippedCosmetics,
+  NotificationPreferences,
   SeasonalEventState,
   RankedWeeklyProgress,
   ResourceLedger,
@@ -37,6 +40,33 @@ import { normalizeCosmeticInventory, normalizeEquippedCosmetics } from "./cosmet
 import { normalizeTutorialStep } from "./tutorial.ts";
 
 export type PlayerBanStatus = "none" | "temporary" | "permanent";
+
+export interface PlayerMailboxGrant {
+  gems?: number;
+  resources?: Partial<ResourceLedger>;
+  equipmentIds?: EquipmentId[];
+  cosmeticIds?: CosmeticId[];
+  seasonPassPremium?: boolean;
+}
+
+export interface PlayerMailboxMessage {
+  id: string;
+  kind: "system" | "compensation" | "announcement";
+  title: string;
+  body: string;
+  sentAt: string;
+  expiresAt?: string;
+  readAt?: string;
+  claimedAt?: string;
+  grant?: PlayerMailboxGrant;
+}
+
+export interface PlayerMailboxSummary {
+  totalCount: number;
+  unreadCount: number;
+  claimableCount: number;
+  expiredCount: number;
+}
 
 export interface PlayerAccountReadModel {
   playerId: string;
@@ -68,12 +98,15 @@ export interface PlayerAccountReadModel {
   campaignProgress?: CampaignProgressState;
   dailyDungeonState?: DailyDungeonState;
   seasonalEventStates?: SeasonalEventState[];
+  mailbox?: PlayerMailboxMessage[];
+  mailboxSummary?: PlayerMailboxSummary;
   tutorialStep?: number | null;
   loginId?: string;
   credentialBoundAt?: string;
   privacyConsentAt?: string;
   phoneNumber?: string;
   phoneNumberBoundAt?: string;
+  notificationPreferences?: NotificationPreferences;
   ageVerified?: boolean;
   isMinor?: boolean;
   dailyPlayMinutes?: number;
@@ -116,12 +149,15 @@ export interface PlayerAccountReadModelInput {
   campaignProgress?: Partial<CampaignProgressState> | null | undefined;
   dailyDungeonState?: Partial<DailyDungeonState> | null | undefined;
   seasonalEventStates?: Partial<SeasonalEventState>[] | null | undefined;
+  mailbox?: Partial<PlayerMailboxMessage>[] | null | undefined;
+  mailboxSummary?: Partial<PlayerMailboxSummary> | null | undefined;
   tutorialStep?: number | null | undefined;
   loginId?: string | undefined;
   credentialBoundAt?: string | undefined;
   privacyConsentAt?: string | undefined;
   phoneNumber?: string | undefined;
   phoneNumberBoundAt?: string | undefined;
+  notificationPreferences?: Partial<NotificationPreferences> | null | undefined;
   ageVerified?: boolean | undefined;
   isMinor?: boolean | undefined;
   dailyPlayMinutes?: number | undefined;
@@ -145,6 +181,7 @@ export function normalizePlayerAccountReadModel(
   const privacyConsentAt = account?.privacyConsentAt?.trim();
   const phoneNumber = account?.phoneNumber?.trim();
   const phoneNumberBoundAt = account?.phoneNumberBoundAt?.trim();
+  const notificationPreferences = normalizeNotificationPreferences(account?.notificationPreferences);
   const ageVerified = account?.ageVerified === true;
   const isMinor = account?.isMinor === true;
   const dailyPlayMinutes = Math.max(0, Math.floor(account?.dailyPlayMinutes ?? 0));
@@ -231,6 +268,8 @@ export function normalizePlayerAccountReadModel(
   const campaignProgress = normalizeCampaignProgressState(account?.campaignProgress);
   const dailyDungeonState = normalizeDailyDungeonState(account?.dailyDungeonState);
   const seasonalEventStates = normalizeSeasonalEventStates(account?.seasonalEventStates);
+  const mailbox = normalizePlayerMailboxMessages(account?.mailbox);
+  const mailboxSummary = normalizePlayerMailboxSummary(account?.mailboxSummary, mailbox);
   const tutorialStep = normalizeTutorialStep(account?.tutorialStep);
 
   return {
@@ -270,12 +309,15 @@ export function normalizePlayerAccountReadModel(
     ...(campaignProgress ? { campaignProgress } : {}),
     ...(dailyDungeonState ? { dailyDungeonState } : {}),
     ...(seasonalEventStates ? { seasonalEventStates } : {}),
+    ...(mailbox.length > 0 ? { mailbox } : {}),
+    ...(mailboxSummary.totalCount > 0 ? { mailboxSummary } : {}),
     ...(account?.tutorialStep !== undefined ? { tutorialStep } : {}),
     ...(loginId ? { loginId } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
     ...(privacyConsentAt ? { privacyConsentAt } : {}),
     ...(phoneNumber ? { phoneNumber } : {}),
     ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
+    ...(notificationPreferences ? { notificationPreferences } : {}),
     ...(ageVerified ? { ageVerified } : {}),
     ...(isMinor ? { isMinor } : {}),
     ...(dailyPlayMinutes > 0 ? { dailyPlayMinutes } : {}),
@@ -286,6 +328,139 @@ export function normalizePlayerAccountReadModel(
     ...(lastRoomId ? { lastRoomId } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {}),
     ...(experiments.length > 0 ? { experiments } : {})
+  };
+}
+
+function normalizeNotificationPreferences(
+  preferences?: Partial<NotificationPreferences> | null
+): NotificationPreferences | undefined {
+  if (!preferences || typeof preferences !== "object") {
+    return undefined;
+  }
+
+  const updatedAt = preferences.updatedAt?.trim();
+  return {
+    matchFound: preferences.matchFound !== false,
+    turnReminder: preferences.turnReminder !== false,
+    groupChallenge: preferences.groupChallenge !== false,
+    friendLeaderboard: preferences.friendLeaderboard !== false,
+    ...(updatedAt ? { updatedAt } : {})
+  };
+}
+
+function normalizePlayerMailboxGrant(grant?: Partial<PlayerMailboxGrant> | null): PlayerMailboxGrant | undefined {
+  if (!grant) {
+    return undefined;
+  }
+
+  const equipmentIds = Array.from(
+    new Set(
+      (grant.equipmentIds ?? [])
+        .map((equipmentId) => equipmentId?.trim())
+        .filter((equipmentId): equipmentId is EquipmentId => Boolean(equipmentId))
+    )
+  );
+  const cosmeticIds = Array.from(
+    new Set(
+      (grant.cosmeticIds ?? [])
+        .map((cosmeticId) => cosmeticId?.trim())
+        .filter((cosmeticId): cosmeticId is CosmeticId => Boolean(cosmeticId))
+    )
+  );
+  const normalizedResources = {
+    gold: Math.max(0, Math.floor(grant.resources?.gold ?? 0)),
+    wood: Math.max(0, Math.floor(grant.resources?.wood ?? 0)),
+    ore: Math.max(0, Math.floor(grant.resources?.ore ?? 0))
+  };
+  const normalized: PlayerMailboxGrant = {
+    ...(Math.max(0, Math.floor(grant.gems ?? 0)) > 0 ? { gems: Math.max(0, Math.floor(grant.gems ?? 0)) } : {}),
+    ...(normalizedResources.gold > 0 || normalizedResources.wood > 0 || normalizedResources.ore > 0
+      ? { resources: normalizedResources }
+      : {}),
+    ...(equipmentIds.length > 0 ? { equipmentIds } : {}),
+    ...(cosmeticIds.length > 0 ? { cosmeticIds } : {}),
+    ...(grant.seasonPassPremium === true ? { seasonPassPremium: true } : {})
+  };
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizePlayerMailboxMessages(mailbox?: Partial<PlayerMailboxMessage>[] | null): PlayerMailboxMessage[] {
+  return (mailbox ?? [])
+    .map((entry) => {
+      const id = entry?.id?.trim();
+      const title = entry?.title?.trim();
+      const body = entry?.body?.trim();
+      const sentAt = normalizeTimestamp(entry?.sentAt);
+      if (!id || !title || !body || !sentAt) {
+        return null;
+      }
+
+      return {
+        id,
+        kind: entry.kind === "compensation" || entry.kind === "announcement" ? entry.kind : "system",
+        title,
+        body,
+        sentAt,
+        ...(normalizeTimestamp(entry.expiresAt) ? { expiresAt: normalizeTimestamp(entry.expiresAt)! } : {}),
+        ...(normalizeTimestamp(entry.readAt) ? { readAt: normalizeTimestamp(entry.readAt)! } : {}),
+        ...(normalizeTimestamp(entry.claimedAt) ? { claimedAt: normalizeTimestamp(entry.claimedAt)! } : {}),
+        ...(normalizePlayerMailboxGrant(entry.grant) ? { grant: normalizePlayerMailboxGrant(entry.grant)! } : {})
+      } satisfies PlayerMailboxMessage;
+    })
+    .filter((entry): entry is PlayerMailboxMessage => Boolean(entry))
+    .sort((left, right) => right.sentAt.localeCompare(left.sentAt) || left.id.localeCompare(right.id));
+}
+
+export function isPlayerMailboxMessageExpired(message: Pick<PlayerMailboxMessage, "expiresAt">, now = new Date()): boolean {
+  if (!message.expiresAt) {
+    return false;
+  }
+
+  const expiresAt = new Date(message.expiresAt);
+  return !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= now.getTime();
+}
+
+export function summarizePlayerMailbox(
+  mailbox?: Partial<PlayerMailboxMessage>[] | null,
+  now = new Date()
+): PlayerMailboxSummary {
+  const normalizedMailbox = normalizePlayerMailboxMessages(mailbox);
+  let unreadCount = 0;
+  let claimableCount = 0;
+  let expiredCount = 0;
+
+  for (const entry of normalizedMailbox) {
+    const expired = isPlayerMailboxMessageExpired(entry, now);
+    if (expired) {
+      expiredCount += 1;
+    }
+    if (!entry.readAt && !entry.claimedAt && !expired) {
+      unreadCount += 1;
+    }
+    if (!entry.claimedAt && !expired && entry.grant) {
+      claimableCount += 1;
+    }
+  }
+
+  return {
+    totalCount: normalizedMailbox.length,
+    unreadCount,
+    claimableCount,
+    expiredCount
+  };
+}
+
+function normalizePlayerMailboxSummary(
+  summary?: Partial<PlayerMailboxSummary> | null,
+  mailbox?: Partial<PlayerMailboxMessage>[] | null
+): PlayerMailboxSummary {
+  const fallback = summarizePlayerMailbox(mailbox);
+  return {
+    totalCount: Math.max(0, Math.floor(summary?.totalCount ?? fallback.totalCount)),
+    unreadCount: Math.max(0, Math.floor(summary?.unreadCount ?? fallback.unreadCount)),
+    claimableCount: Math.max(0, Math.floor(summary?.claimableCount ?? fallback.claimableCount)),
+    expiredCount: Math.max(0, Math.floor(summary?.expiredCount ?? fallback.expiredCount))
   };
 }
 

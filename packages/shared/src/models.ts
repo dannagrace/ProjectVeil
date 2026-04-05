@@ -268,6 +268,36 @@ export interface MovePoints {
   remaining: number;
 }
 
+export interface FriendLeaderboardEntry {
+  playerId: string;
+  displayName: string;
+  eloRating: number;
+  rank: number;
+  delta?: number;
+  isSelf?: boolean;
+}
+
+export type GroupChallengeType = "elo" | "victory";
+
+export interface GroupChallenge {
+  challengeId: string;
+  creatorPlayerId: string;
+  creatorDisplayName: string;
+  roomId: string;
+  challengeType: GroupChallengeType;
+  scoreTarget?: number;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface NotificationPreferences {
+  matchFound: boolean;
+  turnReminder: boolean;
+  groupChallenge: boolean;
+  friendLeaderboard: boolean;
+  updatedAt?: string;
+}
+
 export interface HeroProgression {
   level: number;
   experience: number;

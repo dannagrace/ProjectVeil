@@ -3,9 +3,11 @@ import {
   type CocosAccountLifecycleDraft
 } from "./cocos-account-lifecycle.ts";
 import {
+  summarizeRuntimeDiagnosticsErrors,
   type PrimaryClientTelemetryEvent,
   buildRuntimeDiagnosticsTriageView,
   type RuntimeDiagnosticsConnectionStatus,
+  type RuntimeDiagnosticsErrorEvent,
   type RuntimeDiagnosticsMode,
   type RuntimeDiagnosticsSnapshot
 } from "../../../../packages/shared/src/index.ts";
@@ -38,6 +40,7 @@ export interface CocosRuntimeDiagnosticsSnapshotInput {
   predictionStatus: string;
   recoverySummary: string | null;
   primaryClientTelemetry: PrimaryClientTelemetryEvent[];
+  errorEvents?: RuntimeDiagnosticsErrorEvent[];
   accountLifecycleDraft?: CocosAccountLifecycleDraft | null;
 }
 
@@ -84,6 +87,7 @@ export function buildCocosRuntimeDiagnosticsSnapshot(
 ): RuntimeDiagnosticsSnapshot {
   const update = input.update;
   const hero = update?.world.ownHeroes[0] ?? null;
+  const errorEvents = input.errorEvents ?? [];
 
   return {
     schemaVersion: 1,
@@ -162,7 +166,9 @@ export function buildCocosRuntimeDiagnosticsSnapshot(
       predictionStatus: input.predictionStatus || null,
       pendingUiTasks: 0,
       replay: null,
-      primaryClientTelemetry: input.primaryClientTelemetry.slice(0, 8)
+      primaryClientTelemetry: input.primaryClientTelemetry.slice(0, 8),
+      errorEvents,
+      errorSummary: summarizeRuntimeDiagnosticsErrors(errorEvents)
     }
   };
 }

@@ -109,6 +109,18 @@ export type ClientMessage =
       action: TutorialProgressAction;
     }
   | {
+      type: "SHARE_ACTIVITY";
+      requestId: string;
+      activity: "battle_victory" | "group_challenge";
+      roomId?: string;
+      challengeToken?: string;
+    }
+  | {
+      type: "FRIEND_LEADERBOARD_REQUEST";
+      requestId: string;
+      friendIds?: string[];
+    }
+  | {
       type: "campaign.dialogue.ack";
       requestId: string;
       action: CampaignDialogueAckAction;

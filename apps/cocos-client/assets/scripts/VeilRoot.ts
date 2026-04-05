@@ -26,6 +26,8 @@ import {
   type CocosAccountReviewState
 } from "./cocos-account-review.ts";
 import {
+  claimAllCocosMailboxMessages,
+  claimCocosMailboxMessage,
   confirmCocosAccountRegistration,
   confirmCocosPasswordRecovery,
   createFallbackCocosPlayerAccountProfile,
@@ -125,6 +127,10 @@ import {
   type CocosWechatShareRuntimeLike
 } from "./cocos-wechat-share.ts";
 import {
+  readCocosWechatFriendCloudEntries,
+  syncCocosWechatFriendCloudStorage
+} from "./cocos-wechat-social.ts";
+import {
   clearStoredCocosAuthSession,
   readStoredCocosAuthSession,
   resolveCocosLaunchIdentity,
@@ -208,6 +214,7 @@ interface BattleSettlementSnapshot {
 interface VeilRootRuntime {
   createSession: typeof VeilCocosSession.create;
   loadLeaderboard: typeof VeilCocosSession.fetchLeaderboard;
+  loadFriendLeaderboard: typeof VeilCocosSession.fetchFriendLeaderboard;
   enqueueMatchmaking: typeof VeilCocosSession.enqueueForMatchmaking;
   getMatchmakingStatus: typeof VeilCocosSession.getMatchmakingStatus;
   cancelMatchmaking: typeof VeilCocosSession.cancelMatchmaking;
@@ -233,6 +240,7 @@ interface VeilRootRuntime {
 const defaultVeilRootRuntime: VeilRootRuntime = {
   createSession: (...args) => VeilCocosSession.create(...args),
   loadLeaderboard: (...args) => VeilCocosSession.fetchLeaderboard(...args),
+  loadFriendLeaderboard: (...args) => VeilCocosSession.fetchFriendLeaderboard(...args),
   enqueueMatchmaking: (...args) => VeilCocosSession.enqueueForMatchmaking(...args),
   getMatchmakingStatus: (...args) => VeilCocosSession.getMatchmakingStatus(...args),
   cancelMatchmaking: (...args) => VeilCocosSession.cancelMatchmaking(...args),
@@ -358,6 +366,8 @@ export class VeilRoot extends Component {
   private lobbyShopLoading = false;
   private lobbyShopStatus = "可用商品会在这里显示。";
   private pendingShopProductId: string | null = null;
+  private mailboxClaimingMessageId: string | null = null;
+  private mailboxClaimAllInFlight = false;
   private lobbyAccountReviewState: CocosAccountReviewState = createCocosAccountReviewState(this.lobbyAccountProfile);
   private lobbyAccountEpoch = 0;
   private gameplayAccountRefreshInFlight = false;
@@ -972,6 +982,12 @@ export class VeilRoot extends Component {
       },
       onPurchaseShopProduct: (productId) => {
         void this.purchaseLobbyShopProduct(productId);
+      },
+      onClaimMailboxMessage: (messageId) => {
+        void this.claimLobbyMailboxMessage(messageId);
+      },
+      onClaimAllMailbox: () => {
+        void this.claimAllLobbyMailboxMessages();
       }
     });
 
@@ -1290,7 +1306,9 @@ export class VeilRoot extends Component {
           ...(this.lobbyAccountProfile.equippedCosmetics ? { equippedCosmetics: this.lobbyAccountProfile.equippedCosmetics } : {})
         }),
         shopStatus: this.lobbyShopStatus,
-        shopLoading: this.lobbyShopLoading
+        shopLoading: this.lobbyShopLoading,
+        mailboxClaimingMessageId: this.mailboxClaimingMessageId,
+        mailboxClaimAllBusy: this.mailboxClaimAllInFlight
       });
       const tutorialOverlayView = this.buildTutorialOverlayView();
       if (tutorialOverlayView) {
@@ -1511,9 +1529,23 @@ export class VeilRoot extends Component {
         storage,
         authSession: syncedSession
       }),
-      resolveVeilRootRuntime()
-        .loadLeaderboard(this.remoteUrl, 50)
-        .then((entries) => ({ ok: true as const, entries }))
+      (this.runtimePlatform === "wechat-game"
+        ? (async () => {
+            const wxRuntime = (globalThis as { wx?: unknown }).wx ?? null;
+            const friendEntries = await readCocosWechatFriendCloudEntries(wxRuntime);
+            const friendIds = friendEntries.map((entry) => entry.playerId);
+            if (friendIds.length === 0) {
+              return { ok: true as const, entries: [] };
+            }
+
+            return {
+              ok: true as const,
+              entries: await resolveVeilRootRuntime().loadFriendLeaderboard(this.remoteUrl, friendIds, {
+                getAuthToken: () => this.authToken
+              })
+            };
+          })()
+        : resolveVeilRootRuntime().loadLeaderboard(this.remoteUrl, 50).then((entries) => ({ ok: true as const, entries })))
         .catch((error: unknown) => ({ ok: false as const, error })),
       resolveVeilRootRuntime()
         .loadShopProducts(this.remoteUrl)
@@ -1525,6 +1557,13 @@ export class VeilRoot extends Component {
     }
 
     this.commitAccountProfile(profile, false);
+    if (this.runtimePlatform === "wechat-game") {
+      const wxRuntime = (globalThis as { wx?: unknown }).wx ?? null;
+      void syncCocosWechatFriendCloudStorage(wxRuntime, {
+        playerId: profile.playerId,
+        eloRating: profile.eloRating ?? 1000
+      });
+    }
     if (leaderboardResult.ok) {
       this.lobbyLeaderboardEntries = leaderboardResult.entries;
       this.lobbyLeaderboardStatus = "ready";
@@ -1582,6 +1621,67 @@ export class VeilRoot extends Component {
         return error.message.startsWith("cocos_request_failed:")
           ? "商品购买失败，请稍后重试。"
           : error.message;
+    }
+  }
+
+  private async claimLobbyMailboxMessage(messageId: string): Promise<void> {
+    const storage = this.readWebStorage();
+    const authSession = readStoredCocosAuthSession(storage);
+    if (!authSession?.token) {
+      this.lobbyStatus = "系统邮箱领取需要先登录云端账号或游客会话。";
+      this.renderView();
+      return;
+    }
+
+    this.mailboxClaimingMessageId = messageId;
+    this.lobbyStatus = "正在领取邮件附件...";
+    this.renderView();
+    try {
+      const payload = await claimCocosMailboxMessage(this.remoteUrl, messageId, {
+        authSession,
+        storage
+      });
+      this.lobbyStatus =
+        payload.claimed
+          ? "邮件附件已领取，正在同步仓库状态。"
+          : payload.reason === "already_claimed"
+            ? "该邮件附件已经领取过。"
+            : payload.reason === "expired"
+              ? "该邮件已经过期。"
+              : "该邮件没有可领取附件。";
+      await this.refreshLobbyAccountProfile();
+    } catch (error) {
+      this.lobbyStatus = error instanceof Error ? error.message : "mailbox_claim_failed";
+    } finally {
+      this.mailboxClaimingMessageId = null;
+      this.renderView();
+    }
+  }
+
+  private async claimAllLobbyMailboxMessages(): Promise<void> {
+    const storage = this.readWebStorage();
+    const authSession = readStoredCocosAuthSession(storage);
+    if (!authSession?.token) {
+      this.lobbyStatus = "系统邮箱领取需要先登录云端账号或游客会话。";
+      this.renderView();
+      return;
+    }
+
+    this.mailboxClaimAllInFlight = true;
+    this.lobbyStatus = "正在领取全部邮件附件...";
+    this.renderView();
+    try {
+      const payload = await claimAllCocosMailboxMessages(this.remoteUrl, {
+        authSession,
+        storage
+      });
+      this.lobbyStatus = payload.claimed ? "邮件附件已全部领取，正在同步仓库状态。" : "当前没有可领取的邮件附件。";
+      await this.refreshLobbyAccountProfile();
+    } catch (error) {
+      this.lobbyStatus = error instanceof Error ? error.message : "mailbox_claim_all_failed";
+    } finally {
+      this.mailboxClaimAllInFlight = false;
+      this.renderView();
     }
   }
 
