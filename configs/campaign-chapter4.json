@@ -1,0 +1,386 @@
+{
+  "missions": [
+    {
+      "id": "chapter4-basin-breach",
+      "chapterId": "chapter4",
+      "order": 21,
+      "mapId": "contested-basin",
+      "name": "Basin Breach",
+      "description": "Lead the ranked vanguard through the first breach into the enemy's inner basin defenses.",
+      "recommendedHeroLevel": 19,
+      "enemyArmyTemplateId": "shadow_skeleton",
+      "enemyArmyCount": 48,
+      "enemyStatMultiplier": 3.86,
+      "introDialogue": [
+        {
+          "id": "c4m1-intro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "No recruits beyond this line. Everyone here has already survived something they should not have.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c4m1-outro-1",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "The breach is open. What waits behind it was built for officers, not scouts.",
+          "mood": "grim"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c4m1-open-breach",
+          "description": "Open the inner basin breach",
+          "kind": "secure",
+          "gate": "start"
+        },
+        {
+          "id": "c4m1-clear-guard",
+          "description": "Clear the skeletal honor guard",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 58, "resources": { "gold": 960, "ore": 32 } }
+    },
+    {
+      "id": "chapter4-shadow-conduit",
+      "chapterId": "chapter4",
+      "order": 22,
+      "mapId": "murkveil-delta",
+      "name": "Shadow Conduit",
+      "description": "Sever the conduit feeding the inner court with harvested veil energy from the delta.",
+      "recommendedHeroLevel": 20,
+      "enemyArmyTemplateId": "shadow_hexer",
+      "enemyArmyCount": 50,
+      "enemyStatMultiplier": 4,
+      "unlockMissionId": "chapter4-basin-breach",
+      "introDialogue": [
+        {
+          "id": "c4m2-intro-1",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "The court below drinks from this conduit. Break it and every defense ahead flickers for a breath.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c4m2-outro-1",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "The conduit snapped. They will feel that loss immediately.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c4m2-break-conduit",
+          "description": "Break the shadow conduit",
+          "kind": "secure",
+          "gate": "start"
+        },
+        {
+          "id": "c4m2-hold-relay",
+          "description": "Hold the relay ground while the conduit burns out",
+          "kind": "hold",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 60, "resources": { "gold": 1000, "wood": 32, "ore": 36 } }
+    },
+    {
+      "id": "chapter4-throne-road",
+      "chapterId": "chapter4",
+      "order": 23,
+      "mapId": "stonewatch-fork",
+      "name": "Throne Road",
+      "description": "Seize the road forts guarding the final march toward the Veilfall court.",
+      "recommendedHeroLevel": 21,
+      "enemyArmyTemplateId": "crown_crossbowman",
+      "enemyArmyCount": 52,
+      "enemyStatMultiplier": 4.14,
+      "unlockMissionId": "chapter4-shadow-conduit",
+      "introDialogue": [
+        {
+          "id": "c4m3-intro-1",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "Road forts, kill lanes, ranked guards. Whoever planned this expected us to come eventually.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c4m3-outro-1",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "Then let the record show their preparations were expensive and ineffective.",
+          "mood": "defiant"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c4m3-take-forts",
+          "description": "Take the throne road forts",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 2
+        },
+        {
+          "id": "c4m3-silence-arches",
+          "description": "Silence the crossbow galleries",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 62, "resources": { "gold": 1040, "ore": 38 } }
+    },
+    {
+      "id": "chapter4-iron-souls",
+      "chapterId": "chapter4",
+      "order": 24,
+      "mapId": "ironpass-gorge",
+      "name": "Iron Souls",
+      "description": "Fight through the gorge foundries where fallen elites are being reforged into the court's last reserve.",
+      "recommendedHeroLevel": 22,
+      "enemyArmyTemplateId": "iron_walker",
+      "enemyArmyCount": 54,
+      "enemyStatMultiplier": 4.28,
+      "unlockMissionId": "chapter4-throne-road",
+      "introDialogue": [
+        {
+          "id": "c4m4-intro-1",
+          "speakerId": "quartermaster-ren",
+          "speakerName": "Quartermaster Ren",
+          "text": "This is where their reserve comes from. Not recruits. Reassembled veterans.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c4m4-outro-1",
+          "speakerId": "quartermaster-ren",
+          "speakerName": "Quartermaster Ren",
+          "text": "Foundries are down. Their reserve just became a shortage.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c4m4-break-foundries",
+          "description": "Break the foundry cores",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 2
+        },
+        {
+          "id": "c4m4-clear-reserve",
+          "description": "Clear the reforged reserve companies",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 64, "resources": { "gold": 1080, "wood": 22, "ore": 42 } }
+    },
+    {
+      "id": "chapter4-veil-steps",
+      "chapterId": "chapter4",
+      "order": 25,
+      "mapId": "ashpeak-ascent",
+      "name": "Veil Steps",
+      "description": "Climb the ceremonial ascent under relentless pressure from the inner court's chosen guard.",
+      "recommendedHeroLevel": 23,
+      "enemyArmyTemplateId": "crown_heavy_cavalry",
+      "enemyArmyCount": 56,
+      "enemyStatMultiplier": 4.42,
+      "unlockMissionId": "chapter4-iron-souls",
+      "introDialogue": [
+        {
+          "id": "c4m5-intro-1",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "These steps were built to make an assault look foolish. Let us be efficient fools.",
+          "mood": "defiant"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c4m5-outro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "The court gate is exposed. One last line remains between us and the throne itself.",
+          "mood": "grim"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c4m5-climb-steps",
+          "description": "Climb the Veil Steps under fire",
+          "kind": "hold",
+          "gate": "start"
+        },
+        {
+          "id": "c4m5-break-chosen",
+          "description": "Break the chosen guard at the gate",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 66, "resources": { "gold": 1120, "ore": 44 } }
+    },
+    {
+      "id": "chapter4-court-of-embers",
+      "chapterId": "chapter4",
+      "order": 26,
+      "mapId": "highland-reach",
+      "name": "Court Of Embers",
+      "description": "Secure the ember courts surrounding the throne so the final duel cannot be drowned in reinforcements.",
+      "recommendedHeroLevel": 24,
+      "enemyArmyTemplateId": "shadow_wraith",
+      "enemyArmyCount": 58,
+      "enemyStatMultiplier": 4.56,
+      "unlockMissionId": "chapter4-veil-steps",
+      "introDialogue": [
+        {
+          "id": "c4m6-intro-1",
+          "speakerId": "scout-serin",
+          "speakerName": "Scout Serin",
+          "text": "Three ember courts, three reinforcement lanes. Leave even one open and the throne room becomes a furnace.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c4m6-outro-1",
+          "speakerId": "scout-serin",
+          "speakerName": "Scout Serin",
+          "text": "The courts are ours. Whatever sits on that throne now stands alone enough for it to matter.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c4m6-secure-courts",
+          "description": "Secure the ember courts",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 3
+        },
+        {
+          "id": "c4m6-cut-reinforcements",
+          "description": "Cut off the reinforcement lanes",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 68, "resources": { "gold": 1160, "wood": 34, "ore": 46 } }
+    },
+    {
+      "id": "chapter4-veilfall-throne",
+      "chapterId": "chapter4",
+      "order": 27,
+      "mapId": "frontier-basin",
+      "name": "Veilfall Throne",
+      "description": "Enter the final chamber and defeat the ruler binding the war together before the court can close around you.",
+      "recommendedHeroLevel": 25,
+      "enemyArmyTemplateId": "shadow_death_knight",
+      "enemyArmyCount": 62,
+      "enemyStatMultiplier": 4.82,
+      "bossEncounterName": "High Regent Severa",
+      "unlockMissionId": "chapter4-court-of-embers",
+      "introDialogue": [
+        {
+          "id": "c4m7-intro-1",
+          "speakerId": "high-regent-severa",
+          "speakerName": "High Regent Severa",
+          "text": "You climbed over soldiers, weather, and ghosts just to arrive tired at my door.",
+          "mood": "defiant"
+        },
+        {
+          "id": "c4m7-intro-2",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Tired is fine. We only need one clean victory.",
+          "mood": "grim"
+        },
+        {
+          "id": "c4m7-intro-3",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "And the door is already open.",
+          "mood": "defiant"
+        }
+      ],
+      "midDialogue": [
+        {
+          "id": "c4m7-mid-1",
+          "speakerId": "high-regent-severa",
+          "speakerName": "High Regent Severa",
+          "text": "Look closely. This throne is not furniture. It is consent, fear, and the habit of losing.",
+          "mood": "grim"
+        },
+        {
+          "id": "c4m7-mid-2",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Then we break the habit first.",
+          "mood": "defiant"
+        },
+        {
+          "id": "c4m7-mid-3",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "The throne seal is failing. End this before it rewrites the room again.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c4m7-outro-1",
+          "speakerId": "narrator",
+          "speakerName": "Narrator",
+          "text": "The Veilfall throne shatters under the final blow, and the court's last command dies with the echo.",
+          "mood": "hopeful"
+        },
+        {
+          "id": "c4m7-outro-2",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "The campaign is won. What comes next is rebuilding a frontier that now knows it can answer.",
+          "mood": "grim"
+        },
+        {
+          "id": "c4m7-outro-3",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "Then let us leave them a better ending than the one we inherited.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c4m7-break-seal",
+          "description": "Break the throne seal around High Regent Severa",
+          "kind": "secure",
+          "gate": "start"
+        },
+        {
+          "id": "c4m7-survive-court",
+          "description": "Survive the court's collapsing counterattack",
+          "kind": "hold",
+          "gate": "mid"
+        },
+        {
+          "id": "c4m7-defeat-severa",
+          "description": "Defeat High Regent Severa",
+          "kind": "defeat",
+          "gate": "end"
+        }
+      ],
+      "reward": { "gems": 84, "resources": { "gold": 1320, "ore": 60 }, "cosmeticId": "border-veilfall-throne" }
+    }
+  ]
+}

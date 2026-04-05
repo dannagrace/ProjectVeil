@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
 import campaignDocument from "../../../configs/campaign-chapter1.json";
+import campaignChapter2Document from "../../../configs/campaign-chapter2.json";
+import campaignChapter3Document from "../../../configs/campaign-chapter3.json";
+import campaignChapter4Document from "../../../configs/campaign-chapter4.json";
 import dailyDungeonsDocument from "../../../configs/daily-dungeons.json";
 import type {
   CampaignMission,
+  CampaignUnlockRequirement,
   CampaignMissionProgress,
   CampaignMissionState,
   CampaignProgressState,
@@ -12,8 +16,10 @@ import type {
   DailyDungeonRunRecord,
   DailyDungeonState,
   DialogueLine,
-  MissionObjective
+  MissionObjective,
+  RankDivisionId
 } from "../../../packages/shared/src/index";
+import { getRankDivisionIndex, resolveCosmeticCatalog } from "../../../packages/shared/src/index";
 import { getDailyRewardDateKey } from "./daily-rewards";
 
 interface CampaignConfigMissionDocument {
@@ -27,9 +33,11 @@ interface CampaignConfigMissionDocument {
   enemyArmyTemplateId?: string | null;
   enemyArmyCount?: number | null;
   enemyStatMultiplier?: number | null;
+  bossEncounterName?: string | null;
   unlockMissionId?: string | null;
-  reward?: DailyDungeonReward | null;
+  reward?: (DailyDungeonReward & { cosmeticId?: string | null }) | null;
   introDialogue?: Partial<DialogueLine>[] | null;
+  midDialogue?: Partial<DialogueLine>[] | null;
   outroDialogue?: Partial<DialogueLine>[] | null;
   objectives?: Partial<MissionObjective>[] | null;
 }
@@ -40,6 +48,33 @@ interface CampaignConfigDocument {
 
 interface DailyDungeonConfigDocument {
   dungeons?: Array<Partial<DailyDungeonDefinition> & { floors?: Partial<DailyDungeonFloor>[] | null }> | null;
+}
+
+export interface CampaignAccessContext {
+  highestHeroLevel?: number | null;
+  rankDivision?: RankDivisionId | null;
+}
+
+const DEFAULT_CAMPAIGN_DOCUMENTS: CampaignConfigDocument[] = [
+  campaignDocument as CampaignConfigDocument,
+  campaignChapter2Document as CampaignConfigDocument,
+  campaignChapter3Document as CampaignConfigDocument,
+  campaignChapter4Document as CampaignConfigDocument
+];
+
+const BASIC_CAMPAIGN_ENEMY_TEMPLATES = new Set(["wolf_pack", "hero_guard_basic"]);
+const CHAPTER_FINAL_MISSION_IDS: Record<string, string> = {
+  chapter1: "chapter1-defend-bridge",
+  chapter2: "chapter2-break-the-ring",
+  chapter3: "chapter3-tempest-crown",
+  chapter4: "chapter4-veilfall-throne"
+};
+const CHAPTER_MINIMUM_RANK: Partial<Record<string, RankDivisionId>> = {
+  chapter4: "silver_i"
+};
+
+function resolveCampaignDocuments(document: CampaignConfigDocument | CampaignConfigDocument[]): CampaignConfigDocument[] {
+  return Array.isArray(document) ? document : [document];
 }
 
 function normalizeNonNegativeInteger(value: number | null | undefined, field: string, minimum = 0): number {
@@ -58,11 +93,18 @@ function normalizePositiveNumber(value: number | null | undefined, field: string
   return normalized;
 }
 
-function normalizeReward(rawReward: DailyDungeonReward | undefined, field: string): DailyDungeonReward {
+function normalizeReward(
+  rawReward: (DailyDungeonReward & { cosmeticId?: string | null }) | undefined,
+  field: string
+): CampaignMission["reward"] {
   const gems = normalizeNonNegativeInteger(rawReward?.gems ?? 0, `${field}.gems`);
   const gold = normalizeNonNegativeInteger(rawReward?.resources?.gold ?? 0, `${field}.resources.gold`);
   const wood = normalizeNonNegativeInteger(rawReward?.resources?.wood ?? 0, `${field}.resources.wood`);
   const ore = normalizeNonNegativeInteger(rawReward?.resources?.ore ?? 0, `${field}.resources.ore`);
+  const cosmeticId = rawReward?.cosmeticId?.trim();
+  if (cosmeticId && !resolveCosmeticCatalog().some((entry) => entry.id === cosmeticId)) {
+    throw new Error(`${field}.cosmeticId references unknown cosmetic ${cosmeticId}`);
+  }
 
   return {
     ...(gems > 0 ? { gems } : {}),
@@ -74,7 +116,8 @@ function normalizeReward(rawReward: DailyDungeonReward | undefined, field: strin
             ...(ore > 0 ? { ore } : {})
           }
         }
-      : {})
+      : {}),
+    ...(cosmeticId ? { cosmeticId } : {})
   };
 }
 
@@ -129,9 +172,9 @@ function normalizeMissionObjective(rawObjective: Partial<MissionObjective> | nul
 }
 
 export function resolveCampaignConfig(
-  document: CampaignConfigDocument = campaignDocument as CampaignConfigDocument
+  document: CampaignConfigDocument | CampaignConfigDocument[] = DEFAULT_CAMPAIGN_DOCUMENTS
 ): CampaignMission[] {
-  const rawMissions = document.missions ?? [];
+  const rawMissions = resolveCampaignDocuments(document).flatMap((entry) => entry.missions ?? []);
   if (rawMissions.length === 0) {
     throw new Error("campaign config must define at least one mission");
   }
@@ -143,6 +186,7 @@ export function resolveCampaignConfig(
     const name = rawMission.name?.trim();
     const description = rawMission.description?.trim();
     const enemyArmyTemplateId = rawMission.enemyArmyTemplateId?.trim();
+    const bossEncounterName = rawMission.bossEncounterName?.trim();
     if (!id || !chapterId || !mapId || !name || !description || !enemyArmyTemplateId) {
       throw new Error(
         `campaign mission[${index}] must define id, chapterId, mapId, name, description, and enemyArmyTemplateId`
@@ -176,6 +220,9 @@ export function resolveCampaignConfig(
     const introDialogue = (rawMission.introDialogue ?? []).map((line, lineIndex) =>
       normalizeDialogueLine(line, `campaign mission ${id} introDialogue[${lineIndex}]`)
     );
+    const midDialogue = (rawMission.midDialogue ?? []).map((line, lineIndex) =>
+      normalizeDialogueLine(line, `campaign mission ${id} midDialogue[${lineIndex}]`)
+    );
     const outroDialogue = (rawMission.outroDialogue ?? []).map((line, lineIndex) =>
       normalizeDialogueLine(line, `campaign mission ${id} outroDialogue[${lineIndex}]`)
     );
@@ -197,8 +244,10 @@ export function resolveCampaignConfig(
         rawMission.enemyStatMultiplier,
         `campaign mission ${id} enemyStatMultiplier`
       ),
+      ...(bossEncounterName ? { bossEncounterName } : {}),
       ...(unlockMissionId ? { unlockMissionId } : {}),
       ...(introDialogue.length > 0 ? { introDialogue } : {}),
+      ...(midDialogue.length > 0 ? { midDialogue } : {}),
       ...(outroDialogue.length > 0 ? { outroDialogue } : {}),
       objectives,
       reward: normalizeReward(rawMission.reward ?? undefined, `campaign mission ${id} reward`)
@@ -213,25 +262,117 @@ export function resolveCampaignConfig(
     ids.add(mission.id);
   }
 
+  const missionsByChapter = new Map<string, CampaignMission[]>();
+  for (const mission of missions) {
+    missionsByChapter.set(mission.chapterId, [...(missionsByChapter.get(mission.chapterId) ?? []), mission]);
+  }
+  for (const chapterId of ["chapter2", "chapter3", "chapter4"]) {
+    const chapterMissions = missionsByChapter.get(chapterId) ?? [];
+    if (chapterMissions.length < 6 || chapterMissions.length > 8) {
+      throw new Error(`${chapterId} must define 6-8 missions`);
+    }
+    const bossMissions = chapterMissions.filter((mission) => mission.bossEncounterName);
+    if (bossMissions.length === 0) {
+      throw new Error(`${chapterId} must define a named boss encounter`);
+    }
+    if (bossMissions.some((mission) => BASIC_CAMPAIGN_ENEMY_TEMPLATES.has(mission.enemyArmyTemplateId))) {
+      throw new Error(`${chapterId} boss encounters must use a distinct unit composition`);
+    }
+    if (!chapterMissions.some((mission) => mission.reward.cosmeticId)) {
+      throw new Error(`${chapterId} must define a unique map cosmetic reward`);
+    }
+  }
+
   return [...missions].sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
+}
+
+function getMissionCompleted(
+  progressByMissionId: Map<string, CampaignMissionProgress>,
+  missionId: string | undefined
+): boolean {
+  return missionId ? Boolean(progressByMissionId.get(missionId)?.completedAt) : true;
+}
+
+function getChapterUnlockRequirements(
+  missions: CampaignMission[],
+  mission: CampaignMission,
+  progressByMissionId: Map<string, CampaignMissionProgress>,
+  accessContext?: CampaignAccessContext | null
+): CampaignUnlockRequirement[] {
+  const requirements: CampaignUnlockRequirement[] = [];
+  const missionsById = new Map(missions.map((entry) => [entry.id, entry] as const));
+
+  if (mission.unlockMissionId) {
+    requirements.push({
+      type: "mission_complete",
+      description: `Complete ${missionsById.get(mission.unlockMissionId)?.name ?? mission.unlockMissionId}.`,
+      satisfied: getMissionCompleted(progressByMissionId, mission.unlockMissionId),
+      missionId: mission.unlockMissionId
+    });
+  }
+
+  const previousChapterFinalMissionId =
+    mission.chapterId === "chapter2"
+      ? CHAPTER_FINAL_MISSION_IDS.chapter1
+      : mission.chapterId === "chapter3"
+        ? CHAPTER_FINAL_MISSION_IDS.chapter2
+        : mission.chapterId === "chapter4"
+          ? CHAPTER_FINAL_MISSION_IDS.chapter3
+          : undefined;
+  if (previousChapterFinalMissionId) {
+    requirements.push({
+      type: "mission_complete",
+      description: `Complete ${missionsById.get(previousChapterFinalMissionId)?.name ?? previousChapterFinalMissionId}.`,
+      satisfied: getMissionCompleted(progressByMissionId, previousChapterFinalMissionId),
+      missionId: previousChapterFinalMissionId,
+      chapterId: mission.chapterId
+    });
+  }
+
+  if (mission.chapterId === "chapter3") {
+    requirements.push({
+      type: "hero_level",
+      description: "Reach hero level 15.",
+      satisfied: Math.max(1, Math.floor(accessContext?.highestHeroLevel ?? 1)) >= 15,
+      minimumHeroLevel: 15,
+      chapterId: mission.chapterId
+    });
+  }
+
+  const minimumRankDivision = CHAPTER_MINIMUM_RANK[mission.chapterId];
+  if (minimumRankDivision) {
+    const currentRankDivision = accessContext?.rankDivision ?? "bronze_i";
+    requirements.push({
+      type: "rank_division",
+      description: "Reach Silver rank or higher.",
+      satisfied: getRankDivisionIndex(currentRankDivision) >= getRankDivisionIndex(minimumRankDivision),
+      minimumRankDivision,
+      chapterId: mission.chapterId
+    });
+  }
+
+  return requirements;
 }
 
 export function buildCampaignMissionStates(
   missions: CampaignMission[],
-  campaignProgress?: CampaignProgressState | null
+  campaignProgress?: CampaignProgressState | null,
+  accessContext?: CampaignAccessContext | null
 ): CampaignMissionState[] {
   const progressByMissionId = new Map((campaignProgress?.missions ?? []).map((progress) => [progress.missionId, progress] as const));
 
   return missions.map((mission) => {
     const progress = progressByMissionId.get(mission.id);
     const completed = Boolean(progress?.completedAt);
-    const unlocked = !mission.unlockMissionId || Boolean(progressByMissionId.get(mission.unlockMissionId)?.completedAt);
+    const unlockRequirements = getChapterUnlockRequirements(missions, mission, progressByMissionId, accessContext);
+    const unlocked = unlockRequirements.every((requirement) => requirement.satisfied === true);
 
     return {
       ...mission,
       missionId: mission.id,
       attempts: Math.max(0, progress?.attempts ?? 0),
       ...(progress?.completedAt ? { completedAt: progress.completedAt } : {}),
+      ...(unlockRequirements.length > 0 ? { unlockRequirements } : {}),
       status: completed ? "completed" : unlocked ? "available" : "locked"
     };
   });
