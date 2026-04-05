@@ -127,6 +127,75 @@ jobs:
         if: steps.ops-tooling.outputs.touched == 'true'
         run: npm run typecheck:ops
 
+  content-smoke-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Detect PRs that touch campaign or boss-template smoke surfaces
+        id: content-smoke
+        if: github.event_name == 'pull_request'
+        run: |
+          changed_paths="${RUNNER_TEMP}/content-smoke/changed-paths-${GITHUB_SHA}.txt"
+          mkdir -p "$(dirname "${changed_paths}")"
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" | tee "${changed_paths}"
+
+          touched=false
+          if rg -n \
+            '^(configs/campaign-chapter[1-4]\.json|configs/boss-encounter-templates\.json|apps/server/src/pve-content\.ts|scripts/content-smoke-gate\.ts|scripts/test/content-smoke-gate\.test\.ts|scripts/validate-content-pack\.ts|\.github/workflows/ci\.yml|package(-lock)?\.json)$' \
+            "${changed_paths}" >/dev/null; then
+            touched=true
+          fi
+
+          echo "touched=${touched}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## Content Smoke Detection"
+            echo
+            echo "- Base ref: \`${{ github.base_ref }}\`"
+            echo "- Qualifying paths touched: \`${touched}\`"
+            echo "- Changed-path report: \`${changed_paths}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Validate campaign and boss-template smoke slice
+        if: github.event_name != 'pull_request' || steps.content-smoke.outputs.touched == 'true'
+        run: npm run validate:content-smoke -- --report-path "${RUNNER_TEMP}/content-smoke-report.json"
+
+      - name: Summarize content smoke gate
+        if: always() && (github.event_name != 'pull_request' || steps.content-smoke.outputs.touched == 'true')
+        run: |
+          node <<'EOF'
+          const fs = require("node:fs");
+          const reportPath = process.env.RUNNER_TEMP + "/content-smoke-report.json";
+          if (!fs.existsSync(reportPath)) {
+            process.exit(0);
+          }
+          const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+          const lines = [
+            "## Content Smoke Gate",
+            "",
+            `- Result: \`${report.valid ? "PASS" : "FAIL"}\``,
+            `- Campaign missions: \`${report.campaign.missionCount}\` across \`${report.campaign.chapterCount}\` chapters`,
+            `- Boss missions: \`${report.campaign.bossMissionCount}\``,
+            `- Representative boss scenario: \`${report.campaign.representativeBossMission.id}\` on \`${report.campaign.representativeBossMission.mapId}\` using \`${report.campaign.representativeBossMission.bossTemplateId}\``,
+            `- Validated bundles: \`${report.contentPack.validatedBundleIds.join(", ")}\``
+          ];
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
+          EOF
+
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
