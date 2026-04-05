@@ -2,9 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   DEFAULT_FEATURE_FLAG_CONFIG,
+  evaluateFeatureEntitlements,
   evaluateFeatureFlags,
   normalizeFeatureFlagConfigDocument,
   type FeatureFlagConfigDocument,
+  type ResolvedFeatureEntitlements,
   type FeatureFlags
 } from "../../../packages/shared/src/index";
 
@@ -105,5 +107,26 @@ export function resolveFeatureFlagsForPlayer(
   return {
     ...flags,
     quest_system_enabled: legacyDailyQuestOverride
+  };
+}
+
+export function resolveFeatureEntitlementsForPlayer(
+  playerId: string,
+  env: NodeJS.ProcessEnv = process.env,
+  now: Date = new Date()
+): ResolvedFeatureEntitlements {
+  const entitlements = evaluateFeatureEntitlements(playerId, loadFeatureFlagConfig(env), now);
+  const legacyDailyQuestOverride = readLegacyBooleanEnv(env.VEIL_DAILY_QUESTS_ENABLED);
+
+  if (legacyDailyQuestOverride == null) {
+    return entitlements;
+  }
+
+  return {
+    ...entitlements,
+    featureFlags: {
+      ...entitlements.featureFlags,
+      quest_system_enabled: legacyDailyQuestOverride
+    }
   };
 }

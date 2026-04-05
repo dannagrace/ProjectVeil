@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { appendEventLogEntries, type EventLogEntry } from "../../../packages/shared/src/index";
+import { emitAnalyticsEvent } from "./analytics";
 import {
   AccountTokenDeliveryConfigurationError,
   AccountTokenDeliveryError,
@@ -35,6 +36,7 @@ import {
   type PlayerAccountSnapshot,
   type RoomSnapshotStore
 } from "./persistence";
+import { resolveFeatureEntitlementsForPlayer } from "./feature-flags";
 import { cacheWechatSessionKey, readWechatSessionKeyTtlSeconds, resetWechatSessionKeyCache } from "./wechat-session-key";
 
 export type AuthMode = "guest" | "account";
@@ -2582,6 +2584,24 @@ export function registerAuthRoutes(
         loginId,
         passwordHash: hashAccountPassword(password)
       });
+      const accountPortalCopyExperiment = resolveFeatureEntitlementsForPlayer(account.playerId).experiments.find(
+        (experiment) => experiment.experimentKey === "account_portal_copy" && experiment.assigned
+      );
+
+      if (accountPortalCopyExperiment) {
+        emitAnalyticsEvent("experiment_conversion", {
+          playerId: account.playerId,
+          roomId: account.lastRoomId ?? "account-bind",
+          payload: {
+            experimentKey: accountPortalCopyExperiment.experimentKey,
+            experimentName: accountPortalCopyExperiment.experimentName,
+            variant: accountPortalCopyExperiment.variant,
+            bucket: accountPortalCopyExperiment.bucket,
+            conversion: "account_bound",
+            owner: accountPortalCopyExperiment.owner
+          }
+        });
+      }
 
       sendJson(response, 200, {
         account,

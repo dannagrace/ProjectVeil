@@ -47,6 +47,9 @@ test("player account helpers can build a local fallback profile", () => {
     playerId: "player-9",
     displayName: "本地访客",
     eloRating: 1000,
+    rankDivision: "bronze_iii",
+    peakRankDivision: "bronze_iii",
+    gems: 0,
     globalResources: {
       gold: 0,
       wood: 0,
@@ -1168,7 +1171,19 @@ test("player account profile loader merges recent battle replays from the dedica
               gold: 320,
               wood: 5,
               ore: 2
-            }
+            },
+            experiments: [
+              {
+                experimentKey: "account_portal_copy",
+                experimentName: "Account Portal Upgrade Copy",
+                owner: "growth",
+                bucket: 18,
+                variant: "upgrade",
+                fallbackVariant: "control",
+                assigned: true,
+                reason: "bucket"
+              }
+            ]
           }
         }),
         {
@@ -1285,6 +1300,8 @@ test("player account profile loader merges recent battle replays from the dedica
     assert.deepEqual(profile.recentBattleReplays.map((replay) => replay.id), ["replay-newer"]);
     assert.equal(profile.battleReportCenter?.latestReportId, "replay-newer");
     assert.equal(profile.battleReportCenter?.items[0]?.evidence.rewards, "missing");
+    assert.equal(profile.experiments?.[0]?.experimentKey, "account_portal_copy");
+    assert.equal(profile.experiments?.[0]?.variant, "upgrade");
   } finally {
     Object.defineProperty(globalThis, "window", {
       configurable: true,

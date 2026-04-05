@@ -1185,6 +1185,77 @@ test("player account routes degrade to local-mode responses when persistence is 
   assert.equal(meProgressPayload.summary.unlockedAchievements, 0);
 });
 
+test("player account profile exposes experiment assignments with stable buckets", async (t) => {
+  const port = 40029 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  process.env.VEIL_FEATURE_FLAGS_JSON = JSON.stringify({
+    schemaVersion: 1,
+    flags: {},
+    experiments: {
+      account_portal_copy: {
+        name: "Account Portal Upgrade Copy",
+        owner: "growth",
+        enabled: true,
+        fallbackVariant: "control",
+        whitelist: {
+          "player-exp": "upgrade"
+        },
+        variants: [{ key: "control", allocation: 100 }]
+      }
+    }
+  });
+  t.after(() => {
+    delete process.env.VEIL_FEATURE_FLAGS_JSON;
+  });
+  await store.ensurePlayerAccount({
+    playerId: "player-exp",
+    displayName: "实验玩家"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-exp",
+    displayName: "实验玩家"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const firstResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const secondResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const firstPayload = (await firstResponse.json()) as {
+    account: {
+      experiments?: Array<{
+        experimentKey: string;
+        experimentName: string;
+        owner: string;
+        bucket: number;
+        variant: string;
+        fallbackVariant: string;
+        assigned: boolean;
+        reason: string;
+      }>;
+    };
+  };
+  const secondPayload = (await secondResponse.json()) as typeof firstPayload;
+
+  assert.equal(firstResponse.status, 200);
+  assert.equal(secondResponse.status, 200);
+  assert.deepEqual(firstPayload.account.experiments, secondPayload.account.experiments);
+  assert.equal(firstPayload.account.experiments?.[0]?.experimentKey, "account_portal_copy");
+  assert.equal(firstPayload.account.experiments?.[0]?.variant, "upgrade");
+  assert.equal(firstPayload.account.experiments?.[0]?.reason, "whitelist");
+  assert.equal(firstPayload.account.experiments?.[0]?.assigned, true);
+});
+
 test("public guest player routes keep only intended public payloads exposed", async (t) => {
   const port = 40045 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();

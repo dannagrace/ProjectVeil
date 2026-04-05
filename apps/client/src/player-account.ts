@@ -17,11 +17,13 @@ import {
   findPlayerBattleReplaySummary,
   normalizePlayerProgressionSnapshot,
   normalizePlayerAccountReadModel,
+  normalizeExperimentAssignments,
   queryPlayerBattleReplaySummaries,
   queryAchievementProgress,
   normalizeEventLogEntries,
   type EventLogQuery,
   type EventLogEntry,
+  type ExperimentAssignment,
   type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress,
@@ -58,6 +60,7 @@ interface PlayerAccountApiPayload {
     achievements?: Partial<PlayerAchievementProgress>[];
     recentEventLog?: Partial<EventLogEntry>[];
     recentBattleReplays?: Partial<PlayerBattleReplaySummary>[];
+    experiments?: Partial<ExperimentAssignment>[];
     loginId?: string;
     credentialBoundAt?: string;
     privacyConsentAt?: string;
@@ -340,6 +343,7 @@ function asPlayerAccountProfile(
     achievements: account?.achievements,
     recentEventLog: account?.recentEventLog,
     recentBattleReplays: account?.recentBattleReplays,
+    experiments: normalizeExperimentAssignments(account?.experiments),
     ...(battleReportCenter ? { battleReportCenter } : {}),
     loginId: normalizeLoginId(account?.loginId),
     credentialBoundAt: account?.credentialBoundAt,
