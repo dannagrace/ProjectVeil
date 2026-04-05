@@ -1,5 +1,6 @@
 import defaultBattleSkillsConfig from "../../../../../configs/battle-skills.json";
 import defaultBattleBalanceConfig from "../../../../../configs/battle-balance.json";
+import defaultBattlePassConfig from "../../../../../configs/battle-pass.json";
 import defaultBuildingUpgradeConfig from "../../../../../configs/building-upgrades.json";
 import defaultHeroSkillTreesConfig from "../../../../../configs/hero-skill-trees-full.json";
 import contestedBasinMapObjectsConfig from "../../../../../configs/phase2-map-objects-contested-basin.json";
@@ -52,8 +53,31 @@ let runtimeMapObjectsConfig: MapObjectsConfig = structuredClone(defaultMapObject
 let runtimeUnitCatalog: UnitCatalogConfig = structuredClone(defaultUnitsConfig as UnitCatalogConfig);
 let runtimeBattleSkillCatalog: BattleSkillCatalogConfig = structuredClone(defaultBattleSkillsConfig as BattleSkillCatalogConfig);
 let runtimeBattleBalanceConfig: BattleBalanceConfig = structuredClone(defaultBattleBalanceConfig as BattleBalanceConfig);
+let runtimeBattlePassConfig: BattlePassConfig = structuredClone(defaultBattlePassConfig as BattlePassConfig);
 let runtimeBuildingUpgradeConfig: BuildingUpgradeConfig = structuredClone(defaultBuildingUpgradeConfig as BuildingUpgradeConfig);
 let runtimeHeroSkillTree: HeroSkillTreeConfig = structuredClone(defaultHeroSkillTreesConfig as HeroSkillTreeConfig);
+
+export interface BattlePassRewardConfig {
+  gold?: number;
+  wood?: number;
+  ore?: number;
+  gems?: number;
+  equipmentId?: string;
+}
+
+export interface BattlePassTierConfig {
+  tier: number;
+  xpRequired: number;
+  freeReward: BattlePassRewardConfig;
+  premiumReward: BattlePassRewardConfig;
+}
+
+export interface BattlePassConfig {
+  seasonXpPerWin: number;
+  seasonXpPerLoss: number;
+  seasonXpDailyLoginBonus: number;
+  tiers: BattlePassTierConfig[];
+}
 
 export const DEFAULT_MAP_VARIANT_ID = "phase1";
 export const FRONTIER_BASIN_MAP_VARIANT_ID = "frontier_basin";
@@ -813,6 +837,10 @@ export function getBattleBalanceConfig(): BattleBalanceConfig {
   return config;
 }
 
+export function getBattlePassConfig(): BattlePassConfig {
+  return structuredClone(runtimeBattlePassConfig);
+}
+
 export function getBuildingUpgradeConfig(): BuildingUpgradeConfig {
   const config = cloneBuildingUpgradeConfig(runtimeBuildingUpgradeConfig);
   validateBuildingUpgradeConfig(config);
@@ -1034,6 +1062,7 @@ export function resetRuntimeConfigs(): void {
   runtimeUnitCatalog = structuredClone(defaultUnitsConfig as UnitCatalogConfig);
   runtimeBattleSkillCatalog = structuredClone(defaultBattleSkillsConfig as BattleSkillCatalogConfig);
   runtimeBattleBalanceConfig = structuredClone(defaultBattleBalanceConfig as BattleBalanceConfig);
+  runtimeBattlePassConfig = structuredClone(defaultBattlePassConfig as BattlePassConfig);
   runtimeBuildingUpgradeConfig = structuredClone(defaultBuildingUpgradeConfig as BuildingUpgradeConfig);
   runtimeHeroSkillTree = structuredClone(defaultHeroSkillTreesConfig as HeroSkillTreeConfig);
 }

@@ -7,9 +7,10 @@ export interface ShopProductGrant {
   };
   equipmentIds?: string[];
   cosmeticIds?: string[];
+  seasonPassPremium?: boolean;
 }
 
-export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle" | "cosmetic";
+export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle" | "season_pass_premium" | "cosmetic";
 
 export interface ShopProduct {
   productId: string;
@@ -50,6 +51,7 @@ export interface BuildCocosShopPanelInput {
     profileBorderId?: string;
     battleEmoteId?: string;
   };
+  seasonPassPremiumOwned?: boolean;
 }
 
 function formatResourceGrant(resources?: ShopProductGrant["resources"]): string | null {
@@ -88,10 +90,19 @@ function formatGrantLabel(product: ShopProduct): string {
   if ((product.grant.cosmeticIds?.length ?? 0) > 0) {
     return `外观 ${product.grant.cosmeticIds?.length ?? 0} 件`;
   }
+  if (product.grant.seasonPassPremium === true) {
+    return "高级通行证";
+  }
   if (resources) {
     return resources;
   }
-  return product.type === "equipment" ? "装备奖励" : product.type === "cosmetic" ? "外观奖励" : "奖励待同步";
+  return product.type === "equipment"
+    ? "装备奖励"
+    : product.type === "cosmetic"
+      ? "外观奖励"
+      : product.type === "season_pass_premium"
+        ? "高级通行证"
+        : "奖励待同步";
 }
 
 export function buildCocosShopPanelView(input: BuildCocosShopPanelInput): CocosShopPanelView {
@@ -114,10 +125,13 @@ export function buildCocosShopPanelView(input: BuildCocosShopPanelInput): CocosS
     const cosmeticId = product.grant.cosmeticIds?.[0];
     const cosmeticOwned = cosmeticId ? ownedCosmeticIds.has(cosmeticId) : false;
     const cosmeticEquipped = cosmeticId ? equippedCosmeticIds.has(cosmeticId) : false;
+    const seasonPassPremiumOwned = product.type === "season_pass_premium" && input.seasonPassPremiumOwned === true;
     const enabled =
       product.enabled &&
       !pending &&
-      (product.type === "cosmetic"
+      (product.type === "season_pass_premium"
+        ? !seasonPassPremiumOwned && (usesWechatPayment || affordable)
+        : product.type === "cosmetic"
         ? cosmeticEquipped
           ? false
           : cosmeticOwned || usesWechatPayment || affordable
@@ -132,6 +146,8 @@ export function buildCocosShopPanelView(input: BuildCocosShopPanelInput): CocosS
         ? "订单处理中..."
         : !product.enabled
           ? "暂未上架"
+          : seasonPassPremiumOwned
+            ? "高级通行证已激活"
           : product.type === "cosmetic" && cosmeticEquipped
             ? "已装备"
             : product.type === "cosmetic" && cosmeticOwned
@@ -142,7 +158,15 @@ export function buildCocosShopPanelView(input: BuildCocosShopPanelInput): CocosS
               ? `可购买，余额 ${gemBalance - Math.max(0, Math.floor(product.price ?? 0))} 宝石`
               : `宝石不足，还差 ${Math.max(0, Math.floor(product.price ?? 0)) - gemBalance}`,
       actionLabel:
-        pending ? "购买中..." : product.type === "cosmetic" && cosmeticOwned ? "装备" : usesWechatPayment ? "微信购买" : "购买",
+        pending
+          ? "购买中..."
+          : seasonPassPremiumOwned
+            ? "已解锁"
+            : product.type === "cosmetic" && cosmeticOwned
+              ? "装备"
+              : usesWechatPayment
+                ? "微信购买"
+                : "购买",
       enabled,
       affordable,
       usesWechatPayment

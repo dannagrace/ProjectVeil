@@ -31,9 +31,10 @@ export interface ShopProductGrant {
   resources?: Partial<ResourceLedger>;
   equipmentIds?: string[];
   cosmeticIds?: string[];
+  seasonPassPremium?: boolean;
 }
 
-export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle" | "cosmetic";
+export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle" | "season_pass_premium" | "cosmetic";
 
 export interface ShopProduct {
   productId: string;
@@ -56,6 +57,7 @@ export interface ShopPurchaseResult {
     resources: ResourceLedger;
     equipmentIds: string[];
     cosmeticIds: string[];
+    seasonPassPremium?: boolean;
     heroId?: string;
   };
   gemsBalance: number;
@@ -1100,7 +1102,8 @@ function normalizeShopProductGrant(value: unknown): ShopProductGrant {
         }
       : {}),
     ...(equipmentIds.length > 0 ? { equipmentIds } : {}),
-    ...(cosmeticIds.length > 0 ? { cosmeticIds } : {})
+    ...(cosmeticIds.length > 0 ? { cosmeticIds } : {}),
+    ...(raw.seasonPassPremium === true ? { seasonPassPremium: true } : {})
   };
 }
 
@@ -1110,7 +1113,10 @@ function normalizeShopProduct(raw: unknown, index: number): ShopProduct {
     productId: typeof value.productId === "string" && value.productId.trim() ? value.productId.trim() : `shop-product-${index + 1}`,
     name: typeof value.name === "string" && value.name.trim() ? value.name.trim() : `Shop Product ${index + 1}`,
     type:
-      value.type === "equipment" || value.type === "resource_bundle" || value.type === "cosmetic"
+      value.type === "equipment" ||
+      value.type === "resource_bundle" ||
+      value.type === "season_pass_premium" ||
+      value.type === "cosmetic"
         ? value.type
         : "gem_pack",
     price: typeof value.price === "number" && Number.isFinite(value.price) ? Math.max(0, Math.floor(value.price)) : 0,

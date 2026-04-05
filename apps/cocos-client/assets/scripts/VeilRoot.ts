@@ -26,6 +26,7 @@ import {
   type CocosAccountReviewState
 } from "./cocos-account-review.ts";
 import {
+  claimCocosSeasonTier,
   claimAllCocosMailboxMessages,
   claimCocosMailboxMessage,
   confirmCocosAccountRegistration,
@@ -40,6 +41,7 @@ import {
   loadCocosPlayerAchievementProgress,
   loadCocosPlayerEventHistory,
   loadCocosPlayerProgressionSnapshot,
+  loadCocosSeasonProgress,
   loginCocosGuestAuthSession,
   logoutCurrentCocosAuthSession,
   postCocosPlayerReferral,
@@ -137,6 +139,7 @@ import {
   type CocosAuthProvider
 } from "./cocos-session-launch.ts";
 import { buildCocosShopPanelView, type ShopProduct } from "./cocos-shop-panel.ts";
+import { buildCocosBattlePassPanelView, type CocosSeasonProgress } from "./cocos-progression-panel.ts";
 import { VeilTimelinePanel } from "./VeilTimelinePanel.ts";
 import { VeilProgressionPanel } from "./VeilProgressionPanel.ts";
 import { VeilEquipmentPanel } from "./VeilEquipmentPanel.ts";
@@ -228,6 +231,8 @@ interface VeilRootRuntime {
   loadAchievementProgress: typeof loadCocosPlayerAchievementProgress;
   loadEventHistory: typeof loadCocosPlayerEventHistory;
   loadBattleReplayHistoryPage: typeof loadCocosBattleReplayHistoryPage;
+  loadSeasonProgress: typeof loadCocosSeasonProgress;
+  claimSeasonTier: typeof claimCocosSeasonTier;
   loginGuestAuthSession: typeof loginCocosGuestAuthSession;
   postPlayerReferral: typeof postCocosPlayerReferral;
   logoutAuthSession: typeof logoutCurrentCocosAuthSession;
@@ -254,6 +259,8 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   loadAchievementProgress: (...args) => loadCocosPlayerAchievementProgress(...args),
   loadEventHistory: (...args) => loadCocosPlayerEventHistory(...args),
   loadBattleReplayHistoryPage: (...args) => loadCocosBattleReplayHistoryPage(...args),
+  loadSeasonProgress: (...args) => loadCocosSeasonProgress(...args),
+  claimSeasonTier: (...args) => claimCocosSeasonTier(...args),
   loginGuestAuthSession: (...args) => loginCocosGuestAuthSession(...args),
   postPlayerReferral: (...args) => postCocosPlayerReferral(...args),
   logoutAuthSession: (...args) => logoutCurrentCocosAuthSession(...args),
@@ -366,6 +373,10 @@ export class VeilRoot extends Component {
   private lobbyShopLoading = false;
   private lobbyShopStatus = "可用商品会在这里显示。";
   private pendingShopProductId: string | null = null;
+  private seasonProgress: CocosSeasonProgress | null = null;
+  private seasonProgressStatus = "赛季进度待同步。";
+  private pendingSeasonClaimTier: number | null = null;
+  private seasonPremiumPurchaseInFlight = false;
   private mailboxClaimingMessageId: string | null = null;
   private mailboxClaimAllInFlight = false;
   private lobbyAccountReviewState: CocosAccountReviewState = createCocosAccountReviewState(this.lobbyAccountProfile);
@@ -373,6 +384,7 @@ export class VeilRoot extends Component {
   private gameplayAccountRefreshInFlight = false;
   private gameplayAccountReviewPanel: VeilProgressionPanel | null = null;
   private gameplayAccountReviewPanelOpen = false;
+  private gameplayBattlePassPanelOpen = false;
   private gameplayEquipmentPanel: VeilEquipmentPanel | null = null;
   private gameplayEquipmentPanelOpen = false;
   private settingsPanel: CocosSettingsPanel | null = null;
@@ -841,6 +853,9 @@ export class VeilRoot extends Component {
       onToggleAchievements: () => {
         void this.openGameplayBattleReportCenter();
       },
+      onToggleProgression: () => {
+        void this.toggleGameplayBattlePassPanel();
+      },
       onToggleReport: () => {
         this.toggleReportDialog();
       },
@@ -1076,6 +1091,10 @@ export class VeilRoot extends Component {
       accountReviewPanelNode.getComponent(VeilProgressionPanel) ?? accountReviewPanelNode.addComponent(VeilProgressionPanel);
     this.gameplayAccountReviewPanel.configure({
       onClose: () => {
+        if (this.gameplayBattlePassPanelOpen) {
+          void this.toggleGameplayBattlePassPanel(false);
+          return;
+        }
         void this.toggleGameplayAccountReviewPanel(false);
       },
       onSelectSection: (section) => {
@@ -1096,6 +1115,12 @@ export class VeilRoot extends Component {
       },
       onRetrySection: (section) => {
         void this.refreshActiveAccountReviewSection(section);
+      },
+      onClaimTier: (tier) => {
+        void this.claimGameplaySeasonTier(tier);
+      },
+      onPurchasePremium: () => {
+        void this.purchaseGameplaySeasonPremium();
       }
     });
 
@@ -1242,7 +1267,7 @@ export class VeilRoot extends Component {
       timelineNode.active = showingGame;
     }
     if (accountReviewPanelNode) {
-      accountReviewPanelNode.active = showingGame && this.gameplayAccountReviewPanelOpen;
+      accountReviewPanelNode.active = showingGame && (this.gameplayAccountReviewPanelOpen || this.gameplayBattlePassPanelOpen);
     }
     if (equipmentPanelNode) {
       equipmentPanelNode.active = showingGame && this.gameplayEquipmentPanelOpen;
@@ -1303,6 +1328,7 @@ export class VeilRoot extends Component {
           gemBalance: this.lobbyAccountProfile.gems ?? 0,
           pendingProductId: this.pendingShopProductId,
           ownedCosmeticIds: this.lobbyAccountProfile.cosmeticInventory?.ownedIds ?? [],
+          seasonPassPremiumOwned: this.lobbyAccountProfile.seasonPassPremium === true,
           ...(this.lobbyAccountProfile.equippedCosmetics ? { equippedCosmetics: this.lobbyAccountProfile.equippedCosmetics } : {})
         }),
         shopStatus: this.lobbyShopStatus,
@@ -1374,6 +1400,7 @@ export class VeilRoot extends Component {
       sharing: {
         available: this.canShareLatestBattleResult()
       },
+      battlePassEnabled: this.lastUpdate?.featureFlags?.battle_pass_enabled === true,
       interaction: this.buildHudInteractionState(),
       presentation: this.buildHudPresentationState()
     });
@@ -1431,12 +1458,24 @@ export class VeilRoot extends Component {
       return;
     }
 
-    if (!this.gameplayAccountReviewPanelOpen) {
+    if (!this.gameplayAccountReviewPanelOpen && !this.gameplayBattlePassPanelOpen) {
       panelNode.active = false;
       return;
     }
 
     panelNode.active = true;
+    if (this.gameplayBattlePassPanelOpen) {
+      this.gameplayAccountReviewPanel?.render({
+        battlePass: buildCocosBattlePassPanelView({
+          progress: this.seasonProgress,
+          pendingClaimTier: this.pendingSeasonClaimTier,
+          pendingPremiumPurchase: this.seasonPremiumPurchaseInFlight,
+          statusLabel: this.seasonProgressStatus
+        })
+      });
+      return;
+    }
+
     this.gameplayAccountReviewPanel?.render({
       page: buildCocosAccountReviewPage(this.lobbyAccountReviewState)
     });
@@ -1840,6 +1879,7 @@ export class VeilRoot extends Component {
 
   private async toggleGameplayAccountReviewPanel(forceOpen?: boolean): Promise<void> {
     const nextOpen = forceOpen ?? !this.gameplayAccountReviewPanelOpen;
+    this.gameplayBattlePassPanelOpen = false;
     this.gameplayAccountReviewPanelOpen = nextOpen;
     if (!nextOpen) {
       this.renderView();
@@ -1848,6 +1888,123 @@ export class VeilRoot extends Component {
 
     this.renderView();
     await this.refreshActiveAccountReviewSection();
+  }
+
+  private async toggleGameplayBattlePassPanel(forceOpen?: boolean): Promise<void> {
+    if (this.lastUpdate?.featureFlags?.battle_pass_enabled !== true) {
+      this.gameplayBattlePassPanelOpen = false;
+      this.seasonProgressStatus = "battle_pass_enabled = false";
+      this.renderView();
+      return;
+    }
+
+    const nextOpen = forceOpen ?? !this.gameplayBattlePassPanelOpen;
+    this.gameplayAccountReviewPanelOpen = false;
+    this.gameplayBattlePassPanelOpen = nextOpen;
+    if (!nextOpen) {
+      this.renderView();
+      return;
+    }
+
+    this.seasonProgress = this.snapshotSeasonProgressFromProfile();
+    this.renderView();
+    await this.refreshSeasonProgress();
+  }
+
+  private snapshotSeasonProgressFromProfile(): CocosSeasonProgress {
+    return {
+      battlePassEnabled: this.lastUpdate?.featureFlags?.battle_pass_enabled === true,
+      seasonXp: Math.max(0, Math.floor(this.lobbyAccountProfile.seasonXp ?? 0)),
+      seasonPassTier: Math.max(1, Math.floor(this.lobbyAccountProfile.seasonPassTier ?? 1)),
+      seasonPassPremium: this.lobbyAccountProfile.seasonPassPremium === true,
+      seasonPassClaimedTiers: this.lobbyAccountProfile.seasonPassClaimedTiers ?? []
+    };
+  }
+
+  private async refreshSeasonProgress(): Promise<void> {
+    const storage = this.readWebStorage();
+    const authSession = this.currentLobbyAuthSession();
+    if (!authSession?.token) {
+      this.seasonProgressStatus = "赛季进度需要有效账号会话。";
+      this.renderView();
+      return;
+    }
+
+    this.seasonProgressStatus = "正在同步赛季进度...";
+    this.renderView();
+    try {
+      this.seasonProgress = await resolveVeilRootRuntime().loadSeasonProgress(this.remoteUrl, {
+        storage,
+        authSession,
+        throwOnError: true
+      });
+      this.seasonProgressStatus = this.seasonProgress.seasonPassPremium
+        ? "高级通行证已激活，可领取高级轨道奖励。"
+        : "点击金色按钮可购买高级通行证。";
+    } catch (error) {
+      this.seasonProgressStatus = error instanceof Error ? error.message : "season_progress_unavailable";
+    }
+    this.renderView();
+  }
+
+  private async claimGameplaySeasonTier(tier: number): Promise<void> {
+    const storage = this.readWebStorage();
+    const authSession = this.currentLobbyAuthSession();
+    if (!authSession?.token || this.pendingSeasonClaimTier != null) {
+      return;
+    }
+
+    this.pendingSeasonClaimTier = Math.max(1, Math.floor(tier));
+    this.seasonProgressStatus = `正在领取 T${this.pendingSeasonClaimTier} 奖励...`;
+    this.renderView();
+    try {
+      await resolveVeilRootRuntime().claimSeasonTier(this.remoteUrl, this.pendingSeasonClaimTier, {
+        storage,
+        authSession
+      });
+      await this.refreshLobbyAccountProfile();
+      await this.refreshSeasonProgress();
+      this.seasonProgressStatus = `T${this.pendingSeasonClaimTier} 奖励已领取。`;
+    } catch (error) {
+      this.seasonProgressStatus = error instanceof Error ? error.message : "season_claim_failed";
+    } finally {
+      this.pendingSeasonClaimTier = null;
+      this.renderView();
+    }
+  }
+
+  private async purchaseGameplaySeasonPremium(): Promise<void> {
+    if (this.seasonPremiumPurchaseInFlight) {
+      return;
+    }
+
+    const premiumProduct =
+      this.lobbyShopProducts.find((entry) => entry.type === "season_pass_premium" && entry.enabled)
+      ?? this.lobbyShopProducts.find((entry) => entry.productId === "season-pass-premium");
+    if (!premiumProduct) {
+      this.seasonProgressStatus = "未找到高级通行证商品配置。";
+      this.renderView();
+      return;
+    }
+
+    this.seasonPremiumPurchaseInFlight = true;
+    this.pendingShopProductId = premiumProduct.productId;
+    this.seasonProgressStatus = `正在购买 ${premiumProduct.name}...`;
+    this.renderView();
+    try {
+      await resolveVeilRootRuntime().purchaseShopProduct(this.remoteUrl, premiumProduct.productId, {
+        getAuthToken: () => this.authToken
+      });
+      await this.refreshLobbyAccountProfile();
+      await this.refreshSeasonProgress();
+      this.seasonProgressStatus = "高级通行证已解锁。";
+    } catch (error) {
+      this.seasonProgressStatus = this.describeShopError(error);
+    } finally {
+      this.seasonPremiumPurchaseInFlight = false;
+      this.pendingShopProductId = null;
+      this.renderView();
+    }
   }
 
   private toggleGameplayEquipmentPanel(forceOpen?: boolean): void {
@@ -2209,6 +2366,9 @@ export class VeilRoot extends Component {
         },
         onToggleAchievements: () => {
           void this.openGameplayBattleReportCenter();
+        },
+        onToggleProgression: () => {
+          void this.toggleGameplayBattlePassPanel();
         },
         onToggleReport: () => {
           this.toggleReportDialog();
@@ -3458,7 +3618,9 @@ export class VeilRoot extends Component {
     await this.disposeCurrentSession();
     this.resetSessionViewport("已返回 Cocos Lobby。");
     this.gameplayAccountReviewPanelOpen = false;
+    this.gameplayBattlePassPanelOpen = false;
     this.gameplayEquipmentPanelOpen = false;
+    this.seasonProgress = null;
     this.showLobby = true;
     this.syncWechatShareBridge();
     this.lobbyStatus = "已返回大厅，可继续选房或创建新实例。";
@@ -4860,6 +5022,9 @@ export class VeilRoot extends Component {
     }
 
     this.lobbyAccountProfile = profile;
+    if (this.gameplayBattlePassPanelOpen || this.seasonProgress) {
+      this.seasonProgress = this.snapshotSeasonProgressFromProfile();
+    }
     this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
       type: "account.synced",
       account: profile
