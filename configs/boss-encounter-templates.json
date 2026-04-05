@@ -1,0 +1,190 @@
+{
+  "templates": [
+    {
+      "id": "boss-lich-king",
+      "name": "Boss Lich King",
+      "bossUnitTemplateId": "shadow_death_knight",
+      "phases": [
+        {
+          "id": "phase-1-command",
+          "hpThreshold": 1,
+          "skillOverrides": {
+            "addSkillIds": ["grave_silence", "battle_focus"]
+          },
+          "scriptedAbilities": [
+            {
+              "id": "open-with-frenzy",
+              "timing": "pre_turn",
+              "skillId": "battle_focus",
+              "target": "self"
+            }
+          ]
+        },
+        {
+          "id": "phase-2-bone-wall",
+          "hpThreshold": 0.66,
+          "skillOverrides": {
+            "replaceSkillIds": ["grave_silence", "stunning_blow", "battle_focus"]
+          },
+          "environmentalEffects": [
+            {
+              "kind": "blocker",
+              "lane": 0,
+              "name": "Bone Rampart",
+              "description": "A ribcage barrier rises to shield the lich.",
+              "durability": 2
+            }
+          ]
+        },
+        {
+          "id": "phase-3-death-surge",
+          "hpThreshold": 0.33,
+          "skillOverrides": {
+            "replaceSkillIds": ["life_drain", "stunning_blow", "grave_silence", "battle_focus"]
+          },
+          "scriptedAbilities": [
+            {
+              "id": "surge-before-strike",
+              "timing": "pre_turn",
+              "skillId": "battle_focus",
+              "target": "self"
+            },
+            {
+              "id": "curse-after-strike",
+              "timing": "post_turn",
+              "skillId": "grave_silence",
+              "target": "first_enemy"
+            }
+          ],
+          "environmentalEffects": [
+            {
+              "kind": "trap",
+              "lane": 0,
+              "effect": "silence",
+              "name": "Grave Sigil",
+              "description": "Shadow sigils pulse around the throne edge.",
+              "damage": 0,
+              "charges": 2,
+              "grantedStatusId": "silenced",
+              "triggeredByCamp": "attacker",
+              "revealed": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "boss-dragon-ancient",
+      "name": "Boss Ancient Dragon",
+      "bossUnitTemplateId": "wild_cave_bear",
+      "phases": [
+        {
+          "id": "phase-1-wingbeat",
+          "hpThreshold": 1,
+          "skillOverrides": {
+            "replaceSkillIds": ["war_cry", "battle_focus"]
+          },
+          "scriptedAbilities": [
+            {
+              "id": "wingbeat-rally",
+              "timing": "pre_turn",
+              "skillId": "battle_focus",
+              "target": "self"
+            }
+          ]
+        },
+        {
+          "id": "phase-2-embers",
+          "hpThreshold": 0.5,
+          "skillOverrides": {
+            "replaceSkillIds": ["war_cry", "stunning_blow", "battle_focus"]
+          },
+          "environmentalEffects": [
+            {
+              "kind": "trap",
+              "lane": 0,
+              "effect": "damage",
+              "name": "Falling Embers",
+              "description": "Scattered flame patches burn advancing attackers.",
+              "damage": 3,
+              "charges": 3,
+              "triggeredByCamp": "attacker"
+            }
+          ]
+        },
+        {
+          "id": "phase-3-collapse",
+          "hpThreshold": 0.25,
+          "skillOverrides": {
+            "replaceSkillIds": ["war_cry", "cave_bear_cleave", "battle_focus"]
+          },
+          "scriptedAbilities": [
+            {
+              "id": "collapse-after-turn",
+              "timing": "post_turn",
+              "skillId": "war_cry",
+              "target": "first_enemy"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "boss-shadow-warden",
+      "name": "Boss Shadow Warden",
+      "bossUnitTemplateId": "shadow_hexer",
+      "phases": [
+        {
+          "id": "phase-1-veil",
+          "hpThreshold": 1,
+          "skillOverrides": {
+            "replaceSkillIds": ["grave_silence", "bog_veil"]
+          },
+          "scriptedAbilities": [
+            {
+              "id": "veil-on-open",
+              "timing": "pre_turn",
+              "skillId": "bog_veil",
+              "target": "self"
+            }
+          ]
+        },
+        {
+          "id": "phase-2-warden-grip",
+          "hpThreshold": 0.55,
+          "skillOverrides": {
+            "replaceSkillIds": ["grave_silence", "taunt_shout", "bog_veil"]
+          },
+          "scriptedAbilities": [
+            {
+              "id": "pin-the-frontline",
+              "timing": "post_turn",
+              "skillId": "taunt_shout",
+              "target": "first_enemy"
+            }
+          ],
+          "environmentalEffects": [
+            {
+              "kind": "trap",
+              "lane": 0,
+              "effect": "slow",
+              "name": "Veil Snare",
+              "description": "Mist-woven chains drag the front line down.",
+              "damage": 0,
+              "charges": 2,
+              "grantedStatusId": "slowed",
+              "triggeredByCamp": "attacker"
+            }
+          ]
+        },
+        {
+          "id": "phase-3-last-watch",
+          "hpThreshold": 0.25,
+          "skillOverrides": {
+            "replaceSkillIds": ["grave_silence", "stunning_blow", "bog_veil"]
+          }
+        }
+      ]
+    }
+  ]
+}

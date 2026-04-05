@@ -1,6 +1,9 @@
 import type {
   BattleAction,
   BattleHazardState,
+  BossEncounterPhaseConfig,
+  BossEncounterScriptedAbilityConfig,
+  BossEncounterTemplate,
   BattleSkillCatalogConfig,
   BattleSkillConfig,
   BattleOutcome,
@@ -23,7 +26,12 @@ import { nextDeterministicRandom } from "./deterministic-rng.ts";
 import { createHeroEquipmentBonusSummary } from "./equipment.ts";
 import { grantedHeroBattleSkillIds } from "./hero-skills.ts";
 import { requireValue, withOptionalProperty } from "./invariant.ts";
-import { getBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultUnitCatalog } from "./world-config.ts";
+import {
+  getBattleBalanceConfig,
+  getDefaultBattleSkillCatalog,
+  getDefaultBossEncounterTemplateCatalog,
+  getDefaultUnitCatalog
+} from "./world-config.ts";
 
 interface ContactResolutionResult {
   state: BattleState;
@@ -172,6 +180,204 @@ function battleCatalogIndexFor(catalog: BattleSkillCatalogConfig): BattleCatalog
 
 function getBattleCatalogIndex(): BattleCatalogIndex {
   return battleCatalogIndexFor(getDefaultBattleSkillCatalog());
+}
+
+function getBossEncounterTemplateById(templateId: string): BossEncounterTemplate {
+  const catalog = getDefaultBossEncounterTemplateCatalog();
+  return requireValue(
+    catalog.templates.find((template) => template.id === templateId),
+    `Missing boss encounter template: ${templateId}`
+  );
+}
+
+function bossHazardIdPrefix(templateId: string): string {
+  return `boss-${templateId}-`;
+}
+
+function isBossHazardForTemplate(hazard: BattleHazardState, templateId: string): boolean {
+  return hazard.id.startsWith(bossHazardIdPrefix(templateId));
+}
+
+function totalUnitHitPoints(unit: UnitStack): number {
+  if (unit.count <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, (unit.count - 1) * unit.maxHp + unit.currentHp);
+}
+
+function resolveBossEncounterPhase(template: BossEncounterTemplate, bossUnit: UnitStack, maxBossHp: number): BossEncounterPhaseConfig {
+  const ratio = maxBossHp > 0 ? totalUnitHitPoints(bossUnit) / maxBossHp : 0;
+  const resolvedPhase = template.phases.find((phase) => ratio >= phase.hpThreshold) ?? template.phases.at(-1);
+  return requireValue(resolvedPhase, `Boss encounter template ${template.id} must define at least one phase`);
+}
+
+function reconcileSkillStateIds(
+  unit: UnitStack,
+  desiredSkillIds: BattleSkillId[],
+  catalogIndex: BattleCatalogIndex = getBattleCatalogIndex()
+): UnitStack {
+  const remainingCooldownBySkillId = new Map(skillsOf(unit).map((skill) => [skill.id, skill.remainingCooldown] as const));
+  return {
+    ...unit,
+    skills: desiredSkillIds.map((skillId) => ({
+      ...createSkillState(skillId, catalogIndex),
+      remainingCooldown: normalizedCooldownValue(remainingCooldownBySkillId.get(skillId) ?? 0)
+    }))
+  };
+}
+
+function resolveBossPhaseSkillIds(
+  unit: UnitStack,
+  phase: BossEncounterPhaseConfig
+): BattleSkillId[] {
+  const templateById = new Map(getDefaultUnitCatalog().templates.map((template) => [template.id, template] as const));
+  const baseSkillIds = templateById.get(unit.templateId)?.battleSkills ?? skillsOf(unit).map((skill) => skill.id);
+  const override = phase.skillOverrides;
+  const nextSkillIds = override?.replaceSkillIds ? [...override.replaceSkillIds] : [...baseSkillIds];
+
+  for (const skillId of override?.addSkillIds ?? []) {
+    if (!nextSkillIds.includes(skillId)) {
+      nextSkillIds.push(skillId);
+    }
+  }
+
+  return nextSkillIds.filter((skillId) => !(override?.removeSkillIds ?? []).includes(skillId));
+}
+
+function buildBossPhaseEnvironment(
+  template: BossEncounterTemplate,
+  phase: BossEncounterPhaseConfig
+): BattleHazardState[] {
+  return (phase.environmentalEffects ?? []).map((effect, index) => {
+    const id = `${bossHazardIdPrefix(template.id)}${phase.id}-${index + 1}`;
+    if (effect.kind === "blocker") {
+      return {
+        id,
+        kind: "blocker",
+        lane: effect.lane,
+        name: effect.name,
+        description: effect.description,
+        durability: effect.durability,
+        maxDurability: effect.maxDurability ?? effect.durability
+      };
+    }
+
+    return {
+      id,
+      kind: "trap",
+      lane: effect.lane,
+      effect: effect.effect,
+      name: effect.name,
+      description: effect.description,
+      damage: effect.damage,
+      charges: effect.charges,
+      revealed: effect.revealed ?? false,
+      triggered: false,
+      ...(effect.grantedStatusId ? { grantedStatusId: effect.grantedStatusId } : {}),
+      ...(effect.triggeredByCamp ? { triggeredByCamp: effect.triggeredByCamp } : {})
+    };
+  });
+}
+
+function resolveBossScriptTarget(
+  state: BattleState,
+  bossUnit: UnitStack,
+  ability: BossEncounterScriptedAbilityConfig
+): string | undefined {
+  if (ability.target === "self") {
+    return bossUnit.id;
+  }
+
+  const candidates = Object.values(state.units)
+    .filter((unit) => unit.count > 0)
+    .filter((unit) => (ability.target === "lowest_hp_ally" ? unit.camp === bossUnit.camp : unit.camp !== bossUnit.camp));
+
+  if (ability.target === "first_enemy") {
+    return candidates
+      .sort((left, right) => left.lane - right.lane || left.id.localeCompare(right.id))[0]
+      ?.id;
+  }
+
+  return candidates
+    .sort((left, right) => totalUnitHitPoints(left) - totalUnitHitPoints(right) || left.id.localeCompare(right.id))[0]
+    ?.id;
+}
+
+export function attachBossEncounterTemplate(
+  state: BattleState,
+  templateId: string,
+  bossUnitId: string
+): BattleState {
+  const bossUnit = requireValue(state.units[bossUnitId], `Missing boss unit ${bossUnitId}`);
+  const template = getBossEncounterTemplateById(templateId);
+  if (template.bossUnitTemplateId && template.bossUnitTemplateId !== bossUnit.templateId) {
+    throw new Error(
+      `Boss encounter template ${templateId} requires unit template ${template.bossUnitTemplateId}, received ${bossUnit.templateId}`
+    );
+  }
+
+  const initialPhase = template.phases[0]!;
+  return resolveBossEncounterState({
+    ...state,
+    bossEncounter: {
+      templateId,
+      bossUnitId,
+      activePhaseId: initialPhase.id,
+      maxBossHp: totalUnitHitPoints(bossUnit),
+      triggeredAbilityKeys: []
+    }
+  });
+}
+
+export function resolveBossEncounterState(state: BattleState): BattleState {
+  if (!state.bossEncounter) {
+    return state;
+  }
+
+  const bossEncounter = state.bossEncounter;
+  const bossUnit = state.units[bossEncounter.bossUnitId];
+  if (!bossUnit) {
+    const { bossEncounter: _bossEncounter, ...nextState } = state;
+    return {
+      ...nextState,
+      environment: hazardsOf(state).filter((hazard) => !isBossHazardForTemplate(hazard, bossEncounter.templateId))
+    };
+  }
+
+  const template = getBossEncounterTemplateById(bossEncounter.templateId);
+  const phase = resolveBossEncounterPhase(template, bossUnit, bossEncounter.maxBossHp);
+  const desiredSkillIds = resolveBossPhaseSkillIds(bossUnit, phase);
+  const nextBossUnit = reconcileSkillStateIds(bossUnit, desiredSkillIds);
+  const phaseChanged = bossEncounter.activePhaseId !== phase.id;
+  const retainedEnvironment = hazardsOf(state).filter(
+    (hazard) => !isBossHazardForTemplate(hazard, bossEncounter.templateId)
+  );
+  const nextEnvironment = phaseChanged
+    ? retainedEnvironment.concat(buildBossPhaseEnvironment(template, phase))
+    : hazardsOf(state);
+  const nextLog =
+    phaseChanged && bossEncounter.activePhaseId
+      ? state.log.concat(`${nextBossUnit.stackName} 进入 ${phase.id}`)
+      : state.log;
+
+  return {
+    ...state,
+    units: {
+      ...state.units,
+      [nextBossUnit.id]: nextBossUnit
+    },
+    unitCooldowns: {
+      ...state.unitCooldowns,
+      [nextBossUnit.id]: buildCooldownStateFromSkills(nextBossUnit)
+    },
+    environment: nextEnvironment,
+    log: nextLog,
+    bossEncounter: {
+      ...bossEncounter,
+      activePhaseId: phase.id
+    }
+  };
 }
 
 function skillDefinitionFor(
@@ -1073,8 +1279,55 @@ function advanceTurnInternal(state: BattleState, actingUnitId: string, waited: b
   };
 }
 
-function prepareStateForActiveUnit(state: BattleState): BattleState {
+function resolveBossEncounterTimedAbilities(
+  state: BattleState,
+  actingUnitId: string,
+  timing: "pre_turn" | "post_turn"
+): BattleState {
+  const bossEncounter = state.bossEncounter;
+  if (!bossEncounter || bossEncounter.bossUnitId !== actingUnitId) {
+    return state;
+  }
+
+  const bossUnit = state.units[actingUnitId];
+  if (!bossUnit || bossUnit.count <= 0) {
+    return state;
+  }
+
+  const template = getBossEncounterTemplateById(bossEncounter.templateId);
+  const phase = template.phases.find((entry) => entry.id === bossEncounter.activePhaseId);
+  if (!phase) {
+    return state;
+  }
+
   let nextState = state;
+  for (const [abilityIndex, ability] of (phase.scriptedAbilities ?? []).entries()) {
+    if (ability.timing !== timing) {
+      continue;
+    }
+
+    const oncePerRound = ability.oncePerRound ?? true;
+    const triggerKey = `${phase.id}:${timing}:${nextState.round}:${ability.id || abilityIndex}`;
+    if (oncePerRound && nextState.bossEncounter?.triggeredAbilityKeys.includes(triggerKey)) {
+      continue;
+    }
+
+    const targetId = resolveBossScriptTarget(nextState, nextState.units[actingUnitId]!, ability);
+    const resolvedState = executeBattleSkillInternal(nextState, actingUnitId, ability.skillId, targetId, false);
+    nextState = {
+      ...resolvedState,
+      bossEncounter: {
+        ...resolvedState.bossEncounter!,
+        triggeredAbilityKeys: resolvedState.bossEncounter!.triggeredAbilityKeys.concat(triggerKey)
+      }
+    };
+  }
+
+  return nextState;
+}
+
+function prepareStateForActiveUnit(state: BattleState): BattleState {
+  let nextState = resolveBossEncounterState(state);
   let remainingIterations = Object.keys(state.units).length + 1;
 
   while (nextState.activeUnitId && remainingIterations > 0) {
@@ -1101,6 +1354,7 @@ function prepareStateForActiveUnit(state: BattleState): BattleState {
     }
 
     if (processed.unit.count > 0) {
+      nextState = resolveBossEncounterTimedAbilities(nextState, processed.unit.id, "pre_turn");
       break;
     }
 
@@ -1111,7 +1365,8 @@ function prepareStateForActiveUnit(state: BattleState): BattleState {
 }
 
 function advanceTurn(state: BattleState, actingUnitId: string, waited: boolean): BattleState {
-  return prepareStateForActiveUnit(advanceTurnInternal(state, actingUnitId, waited));
+  const postTurnState = resolveBossEncounterTimedAbilities(resolveBossEncounterState(state), actingUnitId, "post_turn");
+  return prepareStateForActiveUnit(resolveBossEncounterState(advanceTurnInternal(postTurnState, actingUnitId, waited)));
 }
 
 function triggerTrap(
@@ -1229,6 +1484,7 @@ function applyAttackSequence(
   attackerId: string,
   defenderId: string,
   options?: {
+    advanceTurnAfterAttack?: boolean;
     damageMultiplier?: number;
     allowRetaliation?: boolean;
     delivery?: "contact" | "ranged";
@@ -1376,25 +1632,23 @@ function applyAttackSequence(
     log.push(`${retaliatingDefender.stackName} 反击 ${attacker.stackName}，造成 ${retaliationDamage} 伤害`);
   }
 
-  return advanceTurn(
-    {
-      ...preparedState.state,
-      units: nextUnits,
-      log,
-      rng: nextRngState
-    },
-    attacker.id,
-    false
-  );
+  const nextState = resolveBossEncounterState({
+    ...preparedState.state,
+    units: nextUnits,
+    log,
+    rng: nextRngState
+  });
+  return options?.advanceTurnAfterAttack === false ? nextState : advanceTurn(nextState, attacker.id, false);
 }
 
-export function executeBattleSkill(
+function executeBattleSkillInternal(
   state: BattleState,
   unitId: string,
   skillId: BattleSkillId,
-  targetId?: string
+  targetId: string | undefined,
+  advanceTurnAfterCast: boolean
 ): BattleState {
-  const normalizedState = normalizeBattleState(state);
+  const normalizedState = resolveBossEncounterState(normalizeBattleState(state));
   const action: BattleAction = {
     type: "battle.skill",
     unitId,
@@ -1404,7 +1658,7 @@ export function executeBattleSkill(
   const validation = validateBattleAction(normalizedState, action);
   if (!validation.valid) {
     return {
-      ...normalizedState,
+      ...resolveBossEncounterState(normalizedState),
       log: normalizedState.log.concat(`Action rejected: ${validation.reason}`)
     };
   }
@@ -1438,18 +1692,15 @@ export function executeBattleSkill(
       log.push(`${caster.stackName} 施放 ${skillDefinition.name}`);
     }
 
-    return advanceTurn(
-      {
-        ...withUpdatedUnitCooldowns(stateWithCooldown, casterWithCooldown),
-        units: {
-          ...stateWithCooldown.units,
-          [nextTarget.id]: nextTarget
-        },
-        log
+    const nextState = resolveBossEncounterState({
+      ...withUpdatedUnitCooldowns(stateWithCooldown, casterWithCooldown),
+      units: {
+        ...stateWithCooldown.units,
+        [nextTarget.id]: nextTarget
       },
-      caster.id,
-      false
-    );
+      log
+    });
+    return advanceTurnAfterCast ? advanceTurn(nextState, caster.id, false) : nextState;
   }
 
   if (skillDefinition.target === "enemy" && targetId) {
@@ -1467,6 +1718,7 @@ export function executeBattleSkill(
       caster.id,
       targetId,
       {
+        advanceTurnAfterAttack: advanceTurnAfterCast,
         damageMultiplier:
           skillId === "bog_ambush"
             ? 2
@@ -1488,26 +1740,29 @@ export function executeBattleSkill(
       caster.id,
       catalogIndex
     );
-    return advanceTurn(
-      {
-        ...withUpdatedUnitCooldowns(stateWithCooldown, empoweredCaster),
-        log: normalizedState.log.concat(
-          `${caster.stackName} 施放 ${skillDefinition.name}，获得 ${describeGrantedStatus(grantedStatus)}`
-        )
-      },
-      caster.id,
-      false
-    );
+    const nextState = resolveBossEncounterState({
+      ...withUpdatedUnitCooldowns(stateWithCooldown, empoweredCaster),
+      log: normalizedState.log.concat(
+        `${caster.stackName} 施放 ${skillDefinition.name}，获得 ${describeGrantedStatus(grantedStatus)}`
+      )
+    });
+    return advanceTurnAfterCast ? advanceTurn(nextState, caster.id, false) : nextState;
   }
 
-  return advanceTurn(
-    {
-      ...stateWithCooldown,
-      log: normalizedState.log.concat(`${caster.stackName} 施放 ${skillDefinition.name}`)
-    },
-    caster.id,
-    false
-  );
+  const nextState = resolveBossEncounterState({
+    ...stateWithCooldown,
+    log: normalizedState.log.concat(`${caster.stackName} 施放 ${skillDefinition.name}`)
+  });
+  return advanceTurnAfterCast ? advanceTurn(nextState, caster.id, false) : nextState;
+}
+
+export function executeBattleSkill(
+  state: BattleState,
+  unitId: string,
+  skillId: BattleSkillId,
+  targetId?: string
+): BattleState {
+  return executeBattleSkillInternal(state, unitId, skillId, targetId, true);
 }
 
 export function validateBattleAction(state: BattleState, action: BattleAction): ValidationResult {
@@ -1728,7 +1983,11 @@ export function createNeutralBattleState(
   hero: HeroState,
   neutralArmy: NeutralArmyState,
   seed: number,
-  world?: WorldState
+  world?: WorldState,
+  options?: {
+    bossTemplateId?: string;
+    bossUnitId?: string;
+  }
 ): BattleState {
   const units: Record<string, UnitStack> = {};
   const catalog = getDefaultUnitCatalog();
@@ -1799,7 +2058,7 @@ export function createNeutralBattleState(
 
   const turnOrder = sortTurnOrder(units);
   const environment = createBattleEnvironmentState(lanes, seed);
-  return {
+  const baseState: BattleState = {
     id: `battle-${neutralArmy.id}`,
     round: 1,
     lanes,
@@ -1818,6 +2077,22 @@ export function createNeutralBattleState(
     encounterPosition: neutralArmy.position,
     battlefieldTerrain: terrainAtPosition(world, neutralArmy.position)
   };
+
+  if (!options?.bossTemplateId) {
+    return baseState;
+  }
+
+  const bossUnitId =
+    options.bossUnitId ??
+    Object.values(baseState.units)
+      .filter((unit) => unit.camp === "defender")
+      .sort((left, right) => totalUnitHitPoints(right) - totalUnitHitPoints(left) || left.id.localeCompare(right.id))[0]
+      ?.id;
+  if (!bossUnitId) {
+    return baseState;
+  }
+
+  return attachBossEncounterTemplate(baseState, options.bossTemplateId, bossUnitId);
 }
 
 export function createHeroBattleState(
@@ -1949,7 +2224,7 @@ export function applyBattleAction(state: BattleState, action: BattleAction): Bat
     state,
     action,
     validateBattleAction,
-    normalizeBattleState
+    (inputState) => resolveBossEncounterState(normalizeBattleState(inputState))
   );
   if (!validation.valid) {
     return {

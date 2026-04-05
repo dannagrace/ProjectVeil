@@ -20,6 +20,7 @@ import type {
   RankDivisionId
 } from "../../../packages/shared/src/index";
 import {
+  getDefaultBossEncounterTemplateCatalog,
   getRankDivisionIndex,
   resolveCosmeticCatalog,
   validateDailyDungeonConfigDocument
@@ -38,6 +39,7 @@ interface CampaignConfigMissionDocument {
   enemyArmyCount?: number | null;
   enemyStatMultiplier?: number | null;
   bossEncounterName?: string | null;
+  bossTemplateId?: string | null;
   unlockMissionId?: string | null;
   reward?: (DailyDungeonReward & { cosmeticId?: string | null }) | null;
   introDialogue?: Partial<DialogueLine>[] | null;
@@ -187,6 +189,7 @@ export function resolveCampaignConfig(
   if (rawMissions.length === 0) {
     throw new Error("campaign config must define at least one mission");
   }
+  const bossTemplateIds = new Set(getDefaultBossEncounterTemplateCatalog().templates.map((template) => template.id));
 
   const missions = rawMissions.map((rawMission, index) => {
     const id = rawMission.id?.trim();
@@ -196,10 +199,14 @@ export function resolveCampaignConfig(
     const description = rawMission.description?.trim();
     const enemyArmyTemplateId = rawMission.enemyArmyTemplateId?.trim();
     const bossEncounterName = rawMission.bossEncounterName?.trim();
+    const bossTemplateId = rawMission.bossTemplateId?.trim();
     if (!id || !chapterId || !mapId || !name || !description || !enemyArmyTemplateId) {
       throw new Error(
         `campaign mission[${index}] must define id, chapterId, mapId, name, description, and enemyArmyTemplateId`
       );
+    }
+    if (bossTemplateId && !bossTemplateIds.has(bossTemplateId)) {
+      throw new Error(`campaign mission ${id} bossTemplateId references unknown template ${bossTemplateId}`);
     }
 
     const unlockMissionId = rawMission.unlockMissionId?.trim();
@@ -254,6 +261,7 @@ export function resolveCampaignConfig(
         `campaign mission ${id} enemyStatMultiplier`
       ),
       ...(bossEncounterName ? { bossEncounterName } : {}),
+      ...(bossTemplateId ? { bossTemplateId } : {}),
       ...(unlockMissionId ? { unlockMissionId } : {}),
       ...(introDialogue.length > 0 ? { introDialogue } : {}),
       ...(midDialogue.length > 0 ? { midDialogue } : {}),

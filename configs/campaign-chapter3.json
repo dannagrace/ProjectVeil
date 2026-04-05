@@ -291,6 +291,7 @@
       "enemyArmyCount": 50,
       "enemyStatMultiplier": 3.7,
       "bossEncounterName": "Mist-Seer Vael",
+      "bossTemplateId": "boss-dragon-ancient",
       "unlockMissionId": "chapter3-ashpeak-conductor",
       "introDialogue": [
         {

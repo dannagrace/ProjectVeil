@@ -5,6 +5,7 @@ import {
   getDefaultEquipmentCatalog,
   getDefaultBattleBalanceConfig,
   validateBattleBalanceConfig,
+  validateBossEncounterTemplateCatalog,
   validateBattleSkillCatalog,
   validateDailyDungeonConfigDocument,
   validateContentPackConsistency,
@@ -15,6 +16,7 @@ import {
   validateWorldConfig,
   type BattleBalanceConfig,
   type BattleSkillCatalogConfig,
+  type BossEncounterTemplateCatalogConfig,
   type ContentPackDocumentId,
   type ContentPackValidationIssue,
   type DailyDungeonConfigDocument,
@@ -30,7 +32,7 @@ import {
   type ContentPackMapPackDefinition
 } from "./content-pack-map-packs.ts";
 
-type ValidationDocumentId = ContentPackDocumentId | "heroSkills" | "equipment" | "dailyDungeons";
+type ValidationDocumentId = ContentPackDocumentId | "heroSkills" | "equipment" | "dailyDungeons" | "bossTemplates";
 
 interface DocumentValidationIssue {
   bundleId: string;
@@ -205,10 +207,11 @@ async function validateAuthoringConfigs(
     }
   };
 
-  const [compactHeroSkills, fullHeroSkills, dailyDungeons] = await Promise.all([
+  const [compactHeroSkills, fullHeroSkills, dailyDungeons, bossTemplates] = await Promise.all([
     readJsonConfig<HeroSkillTreeConfig>(rootDir, "hero-skills.json"),
     readJsonConfig<HeroSkillTreeConfig>(rootDir, "hero-skill-trees-full.json"),
-    readJsonConfig<DailyDungeonConfigDocument>(rootDir, "daily-dungeons.json")
+    readJsonConfig<DailyDungeonConfigDocument>(rootDir, "daily-dungeons.json"),
+    readJsonConfig<BossEncounterTemplateCatalogConfig>(rootDir, "boss-encounter-templates.json")
   ]);
 
   capture("heroSkills", "hero-skills.json", () => validateHeroSkillTreeConfig(compactHeroSkills, battleSkills));
@@ -221,6 +224,9 @@ async function validateAuthoringConfigs(
       throw new Error(`${firstIssue?.path}: ${firstIssue?.message}`);
     }
   });
+  capture("bossTemplates", "boss-encounter-templates.json", () =>
+    validateBossEncounterTemplateCatalog(bossTemplates, battleSkills)
+  );
 
   return issues;
 }

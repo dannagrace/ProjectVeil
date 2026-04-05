@@ -290,6 +290,7 @@
       "enemyArmyCount": 62,
       "enemyStatMultiplier": 4.82,
       "bossEncounterName": "High Regent Severa",
+      "bossTemplateId": "boss-lich-king",
       "unlockMissionId": "chapter4-court-of-embers",
       "introDialogue": [
         {

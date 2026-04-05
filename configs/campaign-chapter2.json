@@ -290,6 +290,7 @@
       "enemyArmyCount": 38,
       "enemyStatMultiplier": 2.64,
       "bossEncounterName": "Captain Veyr, Ringbreaker",
+      "bossTemplateId": "boss-shadow-warden",
       "unlockMissionId": "chapter2-ashpeak-anvil",
       "introDialogue": [
         {
