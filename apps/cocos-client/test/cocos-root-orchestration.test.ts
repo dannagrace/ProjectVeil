@@ -248,6 +248,12 @@ test("VeilRoot loads campaign state and advances the manual campaign dialogue/st
   root.authMode = "account";
   root.authProvider = "account-password";
   root.authToken = "signed.token";
+  const dialogueAcks: Array<{ missionId: string; sequence: "intro" | "outro"; dialogueLineId: string }> = [];
+  root.session = {
+    async acknowledgeCampaignDialogue(missionId, sequence, dialogueLineId) {
+      dialogueAcks.push({ missionId, sequence, dialogueLineId });
+    }
+  } as never;
 
   let campaign = {
     completedCount: 0,
@@ -413,6 +419,18 @@ test("VeilRoot loads campaign state and advances the manual campaign dialogue/st
   root.advanceGameplayCampaignDialogue();
   assert.equal(root.gameplayCampaignActiveMissionId, null);
   assert.equal(root.gameplayCampaignSelectedMissionId, "chapter1-thornwall-road");
+  assert.deepEqual(dialogueAcks, [
+    {
+      missionId: "chapter1-ember-watch",
+      sequence: "intro",
+      dialogueLineId: "intro-1"
+    },
+    {
+      missionId: "chapter1-ember-watch",
+      sequence: "outro",
+      dialogueLineId: "outro-1"
+    }
+  ]);
 });
 
 test("VeilRoot completes an active campaign mission from the owned battle result and reopens the panel", async () => {

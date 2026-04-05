@@ -2395,10 +2395,11 @@ export class VeilRoot extends Component {
   private syncGameplayCampaignSelection(preferredMissionId?: string | null): void {
     const missions = this.gameplayCampaign?.missions ?? [];
     const preferredId = preferredMissionId?.trim() || null;
+    const campaignNextMissionId = this.gameplayCampaign?.nextMissionId ?? null;
     const nextMissionId =
       (preferredId && missions.find((mission) => mission.id === preferredId)?.id)
       ?? (this.gameplayCampaignActiveMissionId && missions.find((mission) => mission.id === this.gameplayCampaignActiveMissionId)?.id)
-      ?? (this.gameplayCampaign?.nextMissionId && missions.find((mission) => mission.id === this.gameplayCampaign.nextMissionId)?.id)
+      ?? (campaignNextMissionId && missions.find((mission) => mission.id === campaignNextMissionId)?.id)
       ?? missions[0]?.id
       ?? null;
     this.gameplayCampaignSelectedMissionId = nextMissionId;
@@ -2496,6 +2497,10 @@ export class VeilRoot extends Component {
 
     const mission = this.gameplayCampaign?.missions.find((entry) => entry.id === dialogue.missionId) ?? null;
     const lines = dialogue.sequence === "outro" ? mission?.outroDialogue ?? [] : mission?.introDialogue ?? [];
+    const currentLine = lines[Math.min(Math.max(0, dialogue.lineIndex), lines.length - 1)] ?? null;
+    if (currentLine && this.session) {
+      void this.session.acknowledgeCampaignDialogue(dialogue.missionId, dialogue.sequence, currentLine.id).catch(() => undefined);
+    }
     if (lines.length === 0 || dialogue.lineIndex >= lines.length - 1) {
       this.gameplayCampaignDialogue = null;
       if (dialogue.sequence === "outro") {

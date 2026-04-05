@@ -1,4 +1,4 @@
-import type { CampaignMissionState, CampaignReward, DialogueLine } from "./project-shared/index.ts";
+import type { CampaignMissionState, CampaignReward, DialogueLine } from "../../../../packages/shared/src/index.ts";
 import type { CocosCampaignSummary } from "./cocos-lobby.ts";
 
 export interface CocosCampaignDialogueState {

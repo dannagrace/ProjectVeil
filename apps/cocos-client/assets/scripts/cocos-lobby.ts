@@ -8,9 +8,6 @@ import {
 } from "./cocos-session-launch.ts";
 import {
   appendEventLogEntries,
-  type CampaignMissionState,
-  type CampaignReward,
-  type CampaignUnlockRequirement,
   normalizePlayerBattleReportCenter,
   normalizePlayerBattleReplaySummaries,
   normalizePlayerAccountReadModel,
@@ -29,6 +26,11 @@ import {
   type PlayerAchievementProgress,
   type TutorialProgressAction
 } from "./project-shared/index.ts";
+import type {
+  CampaignMissionState,
+  CampaignReward,
+  CampaignUnlockRequirement
+} from "../../../../packages/shared/src/index.ts";
 import type { CocosSeasonProgress } from "./cocos-progression-panel.ts";
 import { detectCocosRuntimePlatform } from "./cocos-runtime-platform.ts";
 
