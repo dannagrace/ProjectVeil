@@ -620,4 +620,114 @@ export function registerEventRoutes(
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
+
+  app.post("/api/events/:eventId/progress", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 503, {
+        error: {
+          code: "seasonal_event_persistence_unavailable",
+          message: "Seasonal event progress requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const routeRequest = request as IncomingMessage & { params?: Record<string, string | undefined> };
+      const eventId = routeRequest.params?.eventId?.trim();
+      if (!eventId) {
+        sendJson(response, 400, {
+          error: {
+            code: "seasonal_event_progress_invalid",
+            message: "eventId is required"
+          }
+        });
+        return;
+      }
+
+      const body = (await readJsonBody(request)) as {
+        actionId?: string | null;
+        actionType?: SeasonalEventObjective["actionType"] | null;
+        dungeonId?: string | null;
+        occurredAt?: string | null;
+      };
+      const actionId = body.actionId?.trim();
+      const actionType = body.actionType?.trim();
+      if (!actionId || !actionType) {
+        sendJson(response, 400, {
+          error: {
+            code: "seasonal_event_progress_invalid",
+            message: "actionId and actionType are required"
+          }
+        });
+        return;
+      }
+
+      const now = body.occurredAt ? new Date(normalizeTimestamp(body.occurredAt, "occurredAt")) : nowFactory();
+      const event = getActiveSeasonalEvents(events, now).find((entry) => entry.id === eventId);
+      if (!event) {
+        sendJson(response, 404, {
+          error: {
+            code: "seasonal_event_not_found",
+            message: "Seasonal event was not found or is not active"
+          }
+        });
+        return;
+      }
+
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const progress = applySeasonalEventProgress(
+        event,
+        findSeasonalEventState(account.seasonalEventStates, event.id),
+        {
+          actionId,
+          actionType,
+          ...(body.dungeonId?.trim() ? { dungeonId: body.dungeonId.trim() } : {}),
+          occurredAt: now.toISOString()
+        },
+        now
+      );
+
+      const nextAccount = progress
+        ? await store.savePlayerAccountProgress(account.playerId, {
+            seasonalEventStates: upsertSeasonalEventState(account.seasonalEventStates, progress.state)
+          })
+        : account;
+      sendJson(response, 200, {
+        applied: Boolean(progress),
+        ...(progress
+          ? {
+              eventProgress: {
+                eventId: event.id,
+                delta: progress.delta,
+                points: progress.state.points,
+                objectiveId: progress.objective.id
+              }
+            }
+          : {}),
+        event: toEventResponse(event, nextAccount, buildEventLeaderboard(event, await store.listPlayerAccounts()), now)
+      });
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_json",
+            message: "Request body must be valid JSON"
+          }
+        });
+        return;
+      }
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
 }

@@ -7,8 +7,10 @@ import {
   canSkipTutorial,
   DEFAULT_TUTORIAL_STEP,
   findPlayerBattleReplaySummary,
+  getRankDivisionForRating,
   getAchievementDefinitions,
   isTutorialComplete,
+  normalizeCosmeticInventory,
   normalizeAchievementProgressQuery,
   normalizeEventLogQuery,
   queryPlayerBattleReplaySummaries,
@@ -44,6 +46,7 @@ import type {
 import { getDailyRewardDateKey, getPreviousDailyRewardDateKey, resolveDailyRewardForStreak } from "./daily-rewards";
 import {
   applySeasonalEventProgress,
+  buildEventLeaderboard,
   findSeasonalEventState,
   getActiveSeasonalEvents,
   resolveSeasonalEvents
@@ -51,6 +54,7 @@ import {
 import { resolveFeatureEntitlementsForPlayer, resolveFeatureFlagsForPlayer } from "./feature-flags";
 import {
   buildCampaignMissionStates,
+  type CampaignAccessContext,
   buildDailyDungeonSummary,
   claimDailyDungeonRunReward,
   completeCampaignMission,
@@ -511,8 +515,8 @@ function toSeasonProgressResponse(account: PlayerAccountSnapshot, battlePassEnab
   };
 }
 
-function toCampaignResponse(account: PlayerAccountSnapshot) {
-  const missionStates = buildCampaignMissionStates(resolveCampaignConfig(), account.campaignProgress);
+function toCampaignResponse(account: PlayerAccountSnapshot, accessContext?: CampaignAccessContext | null) {
+  const missionStates = buildCampaignMissionStates(resolveCampaignConfig(), account.campaignProgress, accessContext);
   const completedCount = missionStates.filter((mission) => mission.status === "completed").length;
 
   return {
@@ -536,19 +540,37 @@ function toDailyDungeonResponse(account: PlayerAccountSnapshot, now = new Date()
   return buildDailyDungeonSummary(resolvePrimaryDailyDungeon(), account.dailyDungeonState, now);
 }
 
-function toRewardMutation(account: PlayerAccountSnapshot, reward?: { gems?: number; resources?: Partial<PlayerAccountSnapshot["globalResources"]> }) {
+function toRewardMutation(
+  account: PlayerAccountSnapshot,
+  reward?: { gems?: number; resources?: Partial<PlayerAccountSnapshot["globalResources"]>; cosmeticId?: string }
+) {
   const gems = Math.max(0, Math.floor(reward?.gems ?? 0));
   const gold = Math.max(0, Math.floor(reward?.resources?.gold ?? 0));
   const wood = Math.max(0, Math.floor(reward?.resources?.wood ?? 0));
   const ore = Math.max(0, Math.floor(reward?.resources?.ore ?? 0));
+  const cosmeticId = reward?.cosmeticId?.trim();
 
   return {
     gems: (account.gems ?? 0) + gems,
+    cosmeticInventory: normalizeCosmeticInventory({
+      ownedIds: [...(account.cosmeticInventory?.ownedIds ?? []), ...(cosmeticId ? [cosmeticId] : [])]
+    }),
     globalResources: {
       gold: (account.globalResources.gold ?? 0) + gold,
       wood: (account.globalResources.wood ?? 0) + wood,
       ore: (account.globalResources.ore ?? 0) + ore
     }
+  };
+}
+
+async function loadCampaignAccessContext(
+  store: RoomSnapshotStore | null,
+  account: PlayerAccountSnapshot
+): Promise<CampaignAccessContext> {
+  const heroArchives = store ? await store.loadPlayerHeroArchives([account.playerId]) : [];
+  return {
+    highestHeroLevel: Math.max(1, ...heroArchives.map((archive) => Math.max(1, Math.floor(archive.hero.progression.level ?? 1)))),
+    rankDivision: account.rankDivision ?? getRankDivisionForRating(account.eloRating ?? 1000)
   };
 }
 
@@ -558,6 +580,58 @@ function toMailboxResponse(account: PlayerAccountSnapshot, now = new Date()) {
     items: mailbox,
     summary: summarizePlayerMailbox(mailbox, now)
   };
+}
+
+async function surfaceEndedSeasonalEventRewards(
+  store: RoomSnapshotStore,
+  account: PlayerAccountSnapshot,
+  now = new Date()
+): Promise<PlayerAccountSnapshot> {
+  if (!store.deliverPlayerMailbox) {
+    return account;
+  }
+
+  const endedEvents = resolveSeasonalEvents().filter((event) => new Date(event.endsAt).getTime() <= now.getTime());
+  if (endedEvents.length === 0) {
+    return account;
+  }
+
+  let nextAccount = account;
+  const allAccounts = await store.listPlayerAccounts();
+  for (const event of endedEvents) {
+    const rank = buildEventLeaderboard(event, allAccounts, event.leaderboard.size).find((entry) => entry.playerId === account.playerId)?.rank;
+    if (!rank) {
+      continue;
+    }
+
+    const rewardTier = event.leaderboard.rewardTiers.find((tier) => tier.rankStart <= rank && rank <= tier.rankEnd);
+    if (!rewardTier) {
+      continue;
+    }
+
+    const delivery = await store.deliverPlayerMailbox({
+      playerIds: [account.playerId],
+      message: normalizePlayerMailboxMessage({
+        id: `seasonal-event:${event.id}:leaderboard`,
+        kind: "system",
+        title: `${event.name} 结算奖励`,
+        body: `你在 ${event.name} 中获得 ${rewardTier.title}（排名 #${rank}），奖励已发放到邮箱附件。`,
+        sentAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+        grant: {
+          ...(rewardTier.badge ? { seasonBadges: [rewardTier.badge] } : {}),
+          ...(rewardTier.cosmeticId ? { cosmeticIds: [rewardTier.cosmeticId] } : {})
+        }
+      })
+    });
+    if (delivery.deliveredPlayerIds.includes(account.playerId)) {
+      nextAccount =
+        (await store.loadPlayerAccount(account.playerId)) ??
+        nextAccount;
+    }
+  }
+
+  return nextAccount;
 }
 
 function upsertSeasonalEventState(
@@ -878,18 +952,19 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
+      const hydratedAccount = await surfaceEndedSeasonalEventRewards(store, account);
       emitExperimentExposureForSurface(
-        account.playerId,
-        account.lastRoomId ?? "account-profile",
+        hydratedAccount.playerId,
+        hydratedAccount.lastRoomId ?? "account-profile",
         "player_account_profile",
         entitlements.experiments
       );
       sendJson(response, 200, {
         account: {
-          ...(await withDailyQuestBoard(withBattleReportCenter(account), store, featureFlags.quest_system_enabled)),
+          ...(await withDailyQuestBoard(withBattleReportCenter(hydratedAccount), store, featureFlags.quest_system_enabled)),
           experiments: entitlements.experiments
         },
-        session: issueNextAuthSession(account, authSession)
+        session: issueNextAuthSession(hydratedAccount, authSession)
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -943,7 +1018,8 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
-      sendJson(response, 200, toMailboxResponse(account));
+      const hydratedAccount = await surfaceEndedSeasonalEventRewards(store, account);
+      sendJson(response, 200, toMailboxResponse(hydratedAccount));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
@@ -1686,9 +1762,73 @@ export function registerPlayerAccountRoutes(
             displayName: authSession.displayName,
             ...(authSession.loginId ? { loginId: authSession.loginId } : {})
           });
+      const accessContext = await loadCampaignAccessContext(store, account);
 
       sendJson(response, 200, {
-        campaign: toCampaignResponse(account)
+        campaign: toCampaignResponse(account, accessContext)
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/campaigns/:campaignId/missions/:missionId/start", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    const campaignId = request.params.campaignId?.trim();
+    const missionId = request.params.missionId?.trim();
+    if (!campaignId || !missionId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 503, {
+        error: {
+          code: "campaign_persistence_unavailable",
+          message: "Campaign progression requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const accessContext = await loadCampaignAccessContext(store, account);
+      const mission = buildCampaignMissionStates(resolveCampaignConfig(), account.campaignProgress, accessContext).find(
+        (entry) => entry.id === missionId && entry.chapterId === campaignId
+      );
+      if (!mission) {
+        sendJson(response, 404, {
+          error: {
+            code: "campaign_mission_not_found",
+            message: "Campaign mission was not found"
+          }
+        });
+        return;
+      }
+      if (mission.status === "locked") {
+        sendJson(response, 403, {
+          error: {
+            code: "campaign_mission_locked",
+            message: "Campaign mission is not unlocked yet"
+          },
+          unlock_requirements: (mission.unlockRequirements ?? []).filter((requirement) => requirement.satisfied !== true)
+        });
+        return;
+      }
+
+      sendJson(response, 200, {
+        started: true,
+        mission
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -1729,14 +1869,16 @@ export function registerPlayerAccountRoutes(
       const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
         campaignProgress: result.campaignProgress,
         gems: rewardMutation.gems,
+        cosmeticInventory: rewardMutation.cosmeticInventory,
         globalResources: rewardMutation.globalResources
       });
+      const accessContext = await loadCampaignAccessContext(store, nextAccount);
 
       sendJson(response, 200, {
         completed: true,
         mission: result.mission,
         reward: result.reward,
-        campaign: toCampaignResponse(nextAccount)
+        campaign: toCampaignResponse(nextAccount, accessContext)
       });
     } catch (error) {
       if (error instanceof Error && error.message === "campaign_mission_not_found") {
@@ -2456,6 +2598,7 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
+      const accessContext = await loadCampaignAccessContext(store, account);
       sendJson(response, 200, {
         ...toProgressionResponse(account, parseLimit(request)),
         dailyQuestBoard: await loadDailyQuestBoard(
@@ -2464,7 +2607,7 @@ export function registerPlayerAccountRoutes(
           new Date(),
           featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep)
         ),
-        campaign: toCampaignResponse(account),
+        campaign: toCampaignResponse(account, accessContext),
         dailyDungeon: toDailyDungeonResponse(account)
       });
     } catch (error) {

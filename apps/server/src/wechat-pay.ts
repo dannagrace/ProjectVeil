@@ -1,8 +1,9 @@
 import { createCipheriv, createDecipheriv, createSign, createVerify, randomBytes, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { emitAnalyticsEvent } from "./analytics";
 import { validateAuthSessionFromRequest } from "./auth";
 import type { PaymentOrderSnapshot, RoomSnapshotStore } from "./persistence";
-import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct } from "./shop";
+import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "./shop";
 
 interface HttpApp {
   use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
@@ -19,6 +20,7 @@ interface WechatPayRuntimeConfig {
   apiV3Key: string;
   notifyUrl: string;
   transactionsJsapiUrl: string;
+  transactionsOutTradeNoUrlTemplate: string;
 }
 
 interface RegisterWechatPayRoutesOptions extends RegisterShopRoutesOptions {
@@ -30,6 +32,22 @@ interface RegisterWechatPayRoutesOptions extends RegisterShopRoutesOptions {
 
 interface WechatPayTransactionsJsapiResponse {
   prepay_id?: string;
+}
+
+interface WechatPayTransactionQueryResponse {
+  appid?: string;
+  mchid?: string;
+  out_trade_no?: string;
+  transaction_id?: string;
+  trade_state?: string;
+  success_time?: string;
+  amount?: {
+    total?: number;
+    payer_total?: number;
+  } | null;
+  payer?: {
+    openid?: string;
+  } | null;
 }
 
 interface WechatPayCallbackEnvelope {
@@ -118,7 +136,10 @@ function readWechatPayRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Wecha
     platformPublicKey,
     apiV3Key,
     notifyUrl,
-    transactionsJsapiUrl: env.VEIL_WECHAT_PAY_TRANSACTIONS_JSAPI_URL?.trim() || "https://api.mch.weixin.qq.com/v3/pay/transactions/jsapi"
+    transactionsJsapiUrl: env.VEIL_WECHAT_PAY_TRANSACTIONS_JSAPI_URL?.trim() || "https://api.mch.weixin.qq.com/v3/pay/transactions/jsapi",
+    transactionsOutTradeNoUrlTemplate:
+      env.VEIL_WECHAT_PAY_TRANSACTIONS_OUT_TRADE_NO_URL_TEMPLATE?.trim() ||
+      "https://api.mch.weixin.qq.com/v3/pay/transactions/out-trade-no/{out_trade_no}?mchid={mchid}"
   };
 }
 
@@ -164,21 +185,23 @@ function normalizeProductId(productId?: string | null): string {
   return normalized;
 }
 
-function normalizeWechatPayProduct(product: ShopProduct | undefined): ShopProduct & { wechatPriceFen: number; grant: { gems: number } } {
+function normalizeWechatPayProduct(
+  product: ShopProduct | undefined
+): ShopProduct & { wechatPriceFen: number; grant: ShopProductGrant } {
   if (!product) {
     throw new Error("product_not_found");
   }
-  if (product.type !== "gem_pack") {
-    throw new Error("wechat_pay_requires_gem_pack");
+  if (product.type !== "gem_pack" && product.type !== "season_pass_premium") {
+    throw new Error("wechat_pay_requires_supported_product");
   }
   if (!product.wechatPriceFen || product.wechatPriceFen <= 0) {
     throw new Error("wechat_pay_price_not_configured");
   }
-  if (!product.grant.gems || product.grant.gems <= 0) {
-    throw new Error("wechat_pay_gem_grant_not_configured");
+  if ((product.grant.gems ?? 0) <= 0 && product.grant.seasonPassPremium !== true) {
+    throw new Error("wechat_pay_grant_not_configured");
   }
 
-  return product as ShopProduct & { wechatPriceFen: number; grant: { gems: number } };
+  return product as ShopProduct & { wechatPriceFen: number; grant: ShopProductGrant };
 }
 
 function randomNonce(): string {
@@ -207,6 +230,42 @@ function buildWechatAuthorization(
 
 function buildClientPaySign(config: WechatPayRuntimeConfig, timeStamp: string, nonceStr: string, packageValue: string): string {
   return signWithMerchantKey(config, `${config.appId}\n${timeStamp}\n${nonceStr}\n${packageValue}\n`);
+}
+
+function buildWechatTransactionQueryUrl(config: WechatPayRuntimeConfig, orderId: string): URL {
+  const template = config.transactionsOutTradeNoUrlTemplate
+    .replace("{out_trade_no}", encodeURIComponent(orderId))
+    .replace("{mchid}", encodeURIComponent(config.merchantId));
+  return new URL(template);
+}
+
+function resolveVerifiedPaidAmount(
+  amount: WechatPayCallbackTransaction["amount"] | WechatPayTransactionQueryResponse["amount"]
+): number {
+  const payerTotal = amount && "payer_total" in amount ? amount.payer_total : undefined;
+  return Math.max(0, Math.floor(payerTotal ?? amount?.total ?? 0));
+}
+
+function emitPaymentFraudSignal(
+  playerId: string,
+  signal: string,
+  payload: {
+    orderId: string;
+    productId: string;
+    [key: string]: unknown;
+  }
+): void {
+  try {
+    emitAnalyticsEvent("payment_fraud_signal", {
+      playerId,
+      payload: {
+        signal,
+        ...payload
+      }
+    });
+  } catch {
+    // Fraud logging must not break legitimate payment handling.
+  }
 }
 
 function verifyWechatCallbackSignature(
@@ -298,8 +357,19 @@ function sendCallbackResponse(response: ServerResponse, statusCode: number, payl
 }
 
 function isPaymentStoreReady(store: RoomSnapshotStore | null): store is RoomSnapshotStore &
-  Required<Pick<RoomSnapshotStore, "createPaymentOrder" | "completePaymentOrder" | "loadPaymentOrder">> {
-  return Boolean(store?.createPaymentOrder && store.completePaymentOrder && store.loadPaymentOrder);
+  Required<
+    Pick<
+      RoomSnapshotStore,
+      "createPaymentOrder" | "completePaymentOrder" | "loadPaymentOrder" | "loadPaymentReceiptByOrderId" | "countVerifiedPaymentReceiptsSince"
+    >
+  > {
+  return Boolean(
+    store?.createPaymentOrder &&
+      store.completePaymentOrder &&
+      store.loadPaymentOrder &&
+      store.loadPaymentReceiptByOrderId &&
+      store.countVerifiedPaymentReceiptsSince
+  );
 }
 
 function findProduct(products: ShopProduct[], productId: string): ShopProduct | undefined {
@@ -326,6 +396,73 @@ function normalizeSuccessTimestamp(value?: string): string {
     throw new Error("invalid_wechat_payment_success_time");
   }
   return parsed.toISOString();
+}
+
+async function queryWechatPaymentByOutTradeNo(
+  config: WechatPayRuntimeConfig,
+  fetchImpl: typeof fetch,
+  now: () => Date,
+  orderId: string
+): Promise<WechatPayTransactionQueryResponse> {
+  const requestUrl = buildWechatTransactionQueryUrl(config, orderId);
+  const timestamp = String(Math.floor(now().getTime() / 1000));
+  const nonce = randomNonce();
+  const response = await fetchImpl(requestUrl, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: buildWechatAuthorization(config, "GET", requestUrl, "", timestamp, nonce)
+    }
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "wechat_order_query_failed");
+  }
+
+  return (await response.json()) as WechatPayTransactionQueryResponse;
+}
+
+async function verifyPaymentReceipt(input: {
+  config: WechatPayRuntimeConfig;
+  fetchImpl: typeof fetch;
+  now: () => Date;
+  order: PaymentOrderSnapshot;
+}): Promise<Required<Pick<WechatPayTransactionQueryResponse, "transaction_id" | "success_time">> &
+  WechatPayTransactionQueryResponse & { paidAmount: number; payerOpenId: string }> {
+  const transaction = await queryWechatPaymentByOutTradeNo(input.config, input.fetchImpl, input.now, input.order.orderId);
+  if (transaction.trade_state !== "SUCCESS") {
+    throw new Error("wechat_payment_not_success");
+  }
+  if (
+    transaction.appid?.trim() !== input.config.appId ||
+    transaction.mchid?.trim() !== input.config.merchantId ||
+    transaction.out_trade_no?.trim() !== input.order.orderId
+  ) {
+    throw new Error("wechat_payment_identity_mismatch");
+  }
+
+  const transactionId = transaction.transaction_id?.trim();
+  if (!transactionId) {
+    throw new Error("wechat_payment_transaction_id_missing");
+  }
+
+  const payerOpenId = transaction.payer?.openid?.trim() || "";
+  const paidAmount = resolveVerifiedPaidAmount(transaction.amount);
+  if (paidAmount !== input.order.amount) {
+    throw new Error("wechat_payment_amount_mismatch");
+  }
+  if (!payerOpenId) {
+    throw new Error("wechat_payment_openid_missing");
+  }
+
+  return {
+    ...transaction,
+    transaction_id: transactionId,
+    success_time: normalizeSuccessTimestamp(transaction.success_time),
+    paidAmount,
+    payerOpenId
+  };
 }
 
 export function registerWechatPayRoutes(
@@ -398,7 +535,7 @@ export function registerWechatPayRoutes(
         playerId: authSession.playerId,
         productId: product.productId,
         amount: product.wechatPriceFen,
-        gemAmount: product.grant.gems
+        gemAmount: product.grant.gems ?? 0
       });
 
       const createdAt = now();
@@ -473,6 +610,186 @@ export function registerWechatPayRoutes(
     }
   });
 
+  app.post("/api/payments/wechat/verify", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+    if (!runtimeConfig) {
+      sendJson(response, 503, {
+        error: {
+          code: "wechat_pay_not_configured",
+          message: "WeChat Pay runtime configuration is incomplete"
+        }
+      });
+      return;
+    }
+    if (!isPaymentStoreReady(store)) {
+      sendJson(response, 503, {
+        error: {
+          code: "payment_persistence_unavailable",
+          message: "Payment verification requires configured persistence storage"
+        }
+      });
+      return;
+    }
+
+    let order: PaymentOrderSnapshot | null = null;
+    try {
+      const body = (await readJsonBody(request)) as { orderId?: string | null };
+      const orderId = body.orderId?.trim();
+      if (!orderId) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_order_id",
+            message: "orderId is required"
+          }
+        });
+        return;
+      }
+
+      order = await store.loadPaymentOrder(orderId);
+      if (!order || order.playerId !== authSession.playerId) {
+        sendJson(response, 404, {
+          error: {
+            code: "payment_order_not_found",
+            message: "Payment order was not found"
+          }
+        });
+        return;
+      }
+
+      const existingReceipt = await store.loadPaymentReceiptByOrderId(order.orderId);
+      if (order.status === "paid" || existingReceipt) {
+        emitPaymentFraudSignal(order.playerId, "duplicate_out_trade_no", {
+          orderId: order.orderId,
+          productId: order.productId
+        });
+        sendJson(response, 409, {
+          error: {
+            code: "payment_already_verified",
+            message: "Payment order has already been verified"
+          }
+        });
+        return;
+      }
+
+      const product = normalizeWechatPayProduct(findProduct(products, order.productId));
+      const account = await store.loadPlayerAccount(order.playerId);
+      const expectedOpenId = account?.wechatMiniGameOpenId?.trim();
+      if (!expectedOpenId) {
+        sendJson(response, 400, {
+          error: {
+            code: "wechat_open_id_required",
+            message: "Player must bind a WeChat mini-game identity before verifying a payment order"
+          }
+        });
+        return;
+      }
+
+      const verified = await verifyPaymentReceipt({
+        config: runtimeConfig,
+        fetchImpl,
+        now,
+        order
+      });
+      if (verified.payerOpenId !== expectedOpenId) {
+        emitPaymentFraudSignal(order.playerId, "openid_mismatch", {
+          orderId: order.orderId,
+          productId: order.productId,
+          expectedOpenId,
+          receivedOpenId: verified.payerOpenId,
+          transactionId: verified.transaction_id
+        });
+        sendJson(response, 409, {
+          error: {
+            code: "wechat_payment_openid_mismatch",
+            message: "wechat_payment_openid_mismatch"
+          }
+        });
+        return;
+      }
+
+      const settlement = await store.completePaymentOrder(order.orderId, {
+        wechatOrderId: verified.transaction_id,
+        paidAt: verified.success_time,
+        verifiedAt: now().toISOString(),
+        productName: product.name,
+        grant: product.grant
+      });
+      if (!settlement.credited) {
+        emitPaymentFraudSignal(order.playerId, "duplicate_out_trade_no", {
+          orderId: order.orderId,
+          productId: order.productId,
+          transactionId: verified.transaction_id
+        });
+        sendJson(response, 409, {
+          error: {
+            code: "payment_already_verified",
+            message: "Payment order has already been verified"
+          }
+        });
+        return;
+      }
+
+      emitAnalyticsEvent("purchase", {
+        playerId: order.playerId,
+        payload: {
+          purchaseId: order.orderId,
+          productId: order.productId,
+          quantity: 1,
+          totalPrice: order.amount
+        }
+      });
+
+      const recentVerifiedCount = await store.countVerifiedPaymentReceiptsSince(
+        order.playerId,
+        new Date(now().getTime() - 60_000).toISOString()
+      );
+      if (recentVerifiedCount > 3) {
+        emitPaymentFraudSignal(order.playerId, "high_velocity_purchases", {
+          orderId: order.orderId,
+          productId: order.productId,
+          recentVerifiedCount
+        });
+      }
+
+      sendJson(response, 200, {
+        orderId: settlement.order.orderId,
+        status: settlement.order.status,
+        credited: settlement.credited,
+        paidAt: settlement.order.paidAt,
+        gemsBalance: settlement.account.gems ?? 0,
+        seasonPassPremium: settlement.account.seasonPassPremium === true
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const statusCode =
+        message === "wechat_payment_not_success"
+          ? 409
+          : message === "wechat_payment_amount_mismatch"
+            ? 400
+            : message === "wechat_payment_identity_mismatch" ||
+                message === "wechat_payment_openid_missing" ||
+                message === "wechat_payment_openid_mismatch"
+              ? 400
+              : 502;
+      if (message === "wechat_payment_amount_mismatch" && order) {
+        emitPaymentFraudSignal(order.playerId, "amount_mismatch", {
+          orderId: order.orderId,
+          productId: order.productId,
+          expectedAmount: order.amount
+        });
+      }
+      sendJson(response, statusCode, {
+        error: {
+          code: message,
+          message
+        }
+      });
+    }
+  });
+
   app.post("/api/payments/wechat/callback", async (request, response) => {
     if (!runtimeConfig) {
       sendCallbackResponse(response, 503, {
@@ -519,8 +836,7 @@ export function registerWechatPayRoutes(
       }
 
       const orderId = transaction.out_trade_no?.trim();
-      const wechatOrderId = transaction.transaction_id?.trim();
-      if (!orderId || !wechatOrderId) {
+      if (!orderId) {
         sendCallbackResponse(response, 400, {
           code: "FAIL",
           message: "order identifiers are missing"
@@ -537,16 +853,9 @@ export function registerWechatPayRoutes(
         return;
       }
 
-      if ((transaction.amount?.total ?? 0) !== order.amount) {
-        sendCallbackResponse(response, 400, {
-          code: "FAIL",
-          message: "payment amount mismatch"
-        });
-        return;
-      }
-
       const account = await store.loadPlayerAccount(order.playerId);
-      if (!account?.wechatMiniGameOpenId || transaction.payer?.openid?.trim() !== account.wechatMiniGameOpenId) {
+      const expectedOpenId = account?.wechatMiniGameOpenId?.trim();
+      if (!expectedOpenId) {
         sendCallbackResponse(response, 400, {
           code: "FAIL",
           message: "payer validation failed"
@@ -554,10 +863,62 @@ export function registerWechatPayRoutes(
         return;
       }
 
-      await store.completePaymentOrder(order.orderId, {
-        wechatOrderId,
-        paidAt: normalizeSuccessTimestamp(transaction.success_time)
+      const existingReceipt = await store.loadPaymentReceiptByOrderId(order.orderId);
+      if (order.status === "paid" || existingReceipt) {
+        emitPaymentFraudSignal(order.playerId, "duplicate_out_trade_no", {
+          orderId: order.orderId,
+          productId: order.productId
+        });
+        sendCallbackResponse(response, 200);
+        return;
+      }
+
+      const product = normalizeWechatPayProduct(findProduct(products, order.productId));
+      const verified = await verifyPaymentReceipt({
+        config: runtimeConfig,
+        fetchImpl,
+        now,
+        order
       });
+      if (verified.payerOpenId !== expectedOpenId || transaction.payer?.openid?.trim() !== expectedOpenId) {
+        emitPaymentFraudSignal(order.playerId, "openid_mismatch", {
+          orderId: order.orderId,
+          productId: order.productId,
+          expectedOpenId,
+          callbackOpenId: transaction.payer?.openid?.trim() || "",
+          verifiedOpenId: verified.payerOpenId
+        });
+        sendCallbackResponse(response, 200);
+        return;
+      }
+
+      if (resolveVerifiedPaidAmount(transaction.amount) !== order.amount) {
+        emitPaymentFraudSignal(order.playerId, "amount_mismatch", {
+          orderId: order.orderId,
+          productId: order.productId,
+          expectedAmount: order.amount,
+          receivedAmount: resolveVerifiedPaidAmount(transaction.amount)
+        });
+      }
+
+      const settlement = await store.completePaymentOrder(order.orderId, {
+        wechatOrderId: verified.transaction_id,
+        paidAt: verified.success_time,
+        verifiedAt: now().toISOString(),
+        productName: product.name,
+        grant: product.grant
+      });
+      if (settlement.credited) {
+        emitAnalyticsEvent("purchase", {
+          playerId: order.playerId,
+          payload: {
+            purchaseId: order.orderId,
+            productId: order.productId,
+            quantity: 1,
+            totalPrice: order.amount
+          }
+        });
+      }
       sendCallbackResponse(response, 200);
     } catch (error) {
       sendCallbackResponse(response, 400, {

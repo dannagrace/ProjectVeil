@@ -61,6 +61,26 @@
       "previewAsset": "borders/vanguard"
     },
     {
+      "id": "bridge-champion-border",
+      "name": "Bridge Champion Border",
+      "category": "profile_border",
+      "rarity": "epic",
+      "description": "A commemorative border awarded to the top defender of the bridge season.",
+      "price": 0,
+      "unlockCondition": "event_reward",
+      "previewAsset": "borders/bridge-champion"
+    },
+    {
+      "id": "bridge-warden-banner",
+      "name": "Bridge Warden Banner",
+      "category": "profile_border",
+      "rarity": "rare",
+      "description": "A frontier campaign banner granted to high-ranking bridge defenders.",
+      "price": 0,
+      "unlockCondition": "event_reward",
+      "previewAsset": "borders/bridge-warden"
+    },
+    {
       "id": "emote-cheer-spark",
       "name": "Spark Cheer",
       "category": "battle_emote",
@@ -79,6 +99,36 @@
       "price": 40,
       "unlockCondition": "shop",
       "previewAsset": "emotes/taunt-veil"
+    },
+    {
+      "id": "border-guild-vanguard",
+      "name": "Guild Vanguard Border",
+      "category": "profile_border",
+      "rarity": "rare",
+      "description": "A campaign reward honoring commanders who rallied the frontier guilds.",
+      "price": 0,
+      "unlockCondition": "campaign_reward",
+      "previewAsset": "borders/guild-vanguard"
+    },
+    {
+      "id": "recolor-tempest-legion",
+      "name": "Tempest Legion Trim",
+      "category": "unit_recolor",
+      "rarity": "epic",
+      "description": "Storm-blue armor trim carried by veterans of the hazard line.",
+      "price": 0,
+      "unlockCondition": "campaign_reward",
+      "previewAsset": "units/tempest-legion"
+    },
+    {
+      "id": "border-veilfall-throne",
+      "name": "Veilfall Throne Border",
+      "category": "profile_border",
+      "rarity": "legendary",
+      "description": "An endgame frame awarded for breaking the court behind the Veilfall gate.",
+      "price": 0,
+      "unlockCondition": "campaign_reward",
+      "previewAsset": "borders/veilfall-throne"
     }
   ]
 }

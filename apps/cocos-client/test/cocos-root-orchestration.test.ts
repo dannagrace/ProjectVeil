@@ -8,6 +8,11 @@ import {
 } from "../assets/scripts/cocos-account-review.ts";
 import { createCocosAudioRuntime } from "../assets/scripts/cocos-audio-runtime.ts";
 import { cocosPresentationConfig } from "../assets/scripts/cocos-presentation-config.ts";
+import {
+  configureClientAnalyticsRuntimeDependencies,
+  flushClientAnalyticsEventsForTest,
+  resetClientAnalyticsRuntimeDependencies
+} from "../assets/scripts/cocos-primary-client-telemetry.ts";
 import { VeilRoot } from "../assets/scripts/VeilRoot.ts";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
@@ -15,6 +20,7 @@ import type { BattleAction, BattleState, SessionUpdate, VeilCocosSessionOptions 
 
 afterEach(() => {
   resetVeilRootRuntime();
+  resetClientAnalyticsRuntimeDependencies();
   (sys as unknown as { localStorage: Storage | null }).localStorage = null;
 });
 
@@ -234,6 +240,358 @@ test("VeilRoot toggles a dedicated gameplay equipment panel from the HUD flow", 
   assert.equal(root.gameplayEquipmentPanelOpen, false);
 });
 
+test("VeilRoot loads campaign state and advances the manual campaign dialogue/start/complete slice", async () => {
+  const root = createVeilRootHarness();
+  root.remoteUrl = "http://127.0.0.1:2567";
+  root.playerId = "campaign-player";
+  root.displayName = "余烬守望";
+  root.authMode = "account";
+  root.authProvider = "account-password";
+  root.authToken = "signed.token";
+  const dialogueAcks: Array<{ missionId: string; sequence: "intro" | "outro"; dialogueLineId: string }> = [];
+  root.session = {
+    async acknowledgeCampaignDialogue(missionId, sequence, dialogueLineId) {
+      dialogueAcks.push({ missionId, sequence, dialogueLineId });
+    }
+  } as never;
+
+  let campaign = {
+    completedCount: 0,
+    totalMissions: 2,
+    nextMissionId: "chapter1-ember-watch",
+    completionPercent: 0,
+    missions: [
+      {
+        id: "chapter1-ember-watch",
+        missionId: "chapter1-ember-watch",
+        chapterId: "chapter1",
+        order: 1,
+        mapId: "ember-watch",
+        name: "余烬哨站",
+        description: "夺回哨站。",
+        recommendedHeroLevel: 3,
+        enemyArmyTemplateId: "orc_warrior",
+        enemyArmyCount: 2,
+        enemyStatMultiplier: 1,
+        objectives: [
+          {
+            id: "hold-gate",
+            description: "守住大门",
+            kind: "hold",
+            gate: "start"
+          }
+        ],
+        reward: {
+          gems: 20
+        },
+        introDialogue: [
+          {
+            id: "intro-1",
+            speakerId: "captain",
+            speakerName: "守望队长",
+            text: "守住火线。"
+          }
+        ],
+        outroDialogue: [
+          {
+            id: "outro-1",
+            speakerId: "captain",
+            speakerName: "守望队长",
+            text: "哨站重新亮灯了。"
+          }
+        ],
+        attempts: 0,
+        status: "available"
+      },
+      {
+        id: "chapter1-thornwall-road",
+        missionId: "chapter1-thornwall-road",
+        chapterId: "chapter1",
+        order: 2,
+        mapId: "thornwall-road",
+        name: "荆墙驿路",
+        description: "打通商道。",
+        recommendedHeroLevel: 4,
+        enemyArmyTemplateId: "wolf_rider",
+        enemyArmyCount: 2,
+        enemyStatMultiplier: 1.05,
+        objectives: [
+          {
+            id: "escort",
+            description: "护送补给车",
+            kind: "escort",
+            gate: "end"
+          }
+        ],
+        reward: {},
+        attempts: 0,
+        status: "locked",
+        unlockRequirements: [
+          {
+            type: "mission_complete",
+            description: "Complete 余烬哨站.",
+            missionId: "chapter1-ember-watch",
+            chapterId: "chapter1",
+            satisfied: false
+          }
+        ]
+      }
+    ]
+  };
+
+  let loadCalls = 0;
+  installVeilRootRuntime({
+    loadCampaignSummary: async () => {
+      loadCalls += 1;
+      return structuredClone(campaign);
+    },
+    startCampaignMission: async () => ({
+      started: true,
+      mission: structuredClone(campaign.missions[0]!)
+    }),
+    completeCampaignMission: async () => {
+      campaign = {
+        completedCount: 1,
+        totalMissions: 2,
+        nextMissionId: "chapter1-thornwall-road",
+        completionPercent: 50,
+        missions: [
+          {
+            ...structuredClone(campaign.missions[0]!),
+            status: "completed",
+            attempts: 1,
+            completedAt: "2026-04-05T08:00:00.000Z"
+          },
+          {
+            ...structuredClone(campaign.missions[1]!),
+            status: "available",
+            unlockRequirements: [
+              {
+                type: "mission_complete",
+                description: "Complete 余烬哨站.",
+                missionId: "chapter1-ember-watch",
+                chapterId: "chapter1",
+                satisfied: true
+              }
+            ]
+          }
+        ]
+      };
+      return {
+        completed: true,
+        mission: structuredClone(campaign.missions[0]!),
+        reward: {
+          gems: 20
+        },
+        campaign: structuredClone(campaign)
+      };
+    }
+  });
+
+  await root.toggleGameplayCampaignPanel(true);
+  await flushMicrotasks();
+
+  assert.equal(root.gameplayCampaignPanelOpen, true);
+  assert.equal(root.gameplayCampaignSelectedMissionId, "chapter1-ember-watch");
+  assert.equal(loadCalls, 1);
+
+  await root.startGameplayCampaignMission();
+  assert.equal(root.gameplayCampaignActiveMissionId, "chapter1-ember-watch");
+  assert.deepEqual(root.gameplayCampaignDialogue, {
+    missionId: "chapter1-ember-watch",
+    sequence: "intro",
+    lineIndex: 0
+  });
+
+  root.advanceGameplayCampaignDialogue();
+  assert.equal(root.gameplayCampaignDialogue, null);
+  assert.equal(root.gameplayCampaignPanelOpen, false);
+  assert.match(String(root.gameplayCampaignStatus), /执行阶段|已开始/);
+
+  await root.completeGameplayCampaignMission();
+  assert.deepEqual(root.gameplayCampaignDialogue, {
+    missionId: "chapter1-ember-watch",
+    sequence: "outro",
+    lineIndex: 0
+  });
+  assert.equal(root.gameplayCampaign?.nextMissionId, "chapter1-thornwall-road");
+
+  root.advanceGameplayCampaignDialogue();
+  assert.equal(root.gameplayCampaignActiveMissionId, null);
+  assert.equal(root.gameplayCampaignSelectedMissionId, "chapter1-thornwall-road");
+  assert.deepEqual(dialogueAcks, [
+    {
+      missionId: "chapter1-ember-watch",
+      sequence: "intro",
+      dialogueLineId: "intro-1"
+    },
+    {
+      missionId: "chapter1-ember-watch",
+      sequence: "outro",
+      dialogueLineId: "outro-1"
+    }
+  ]);
+});
+
+test("VeilRoot completes an active campaign mission from the owned battle result and reopens the panel", async () => {
+  const root = createVeilRootHarness();
+  root.remoteUrl = "http://127.0.0.1:2567";
+  root.playerId = "campaign-player";
+  root.displayName = "余烬守望";
+  root.authMode = "account";
+  root.authProvider = "account-password";
+  root.authToken = "signed.token";
+  delete root.applySessionUpdate;
+
+  let campaign = {
+    completedCount: 0,
+    totalMissions: 2,
+    nextMissionId: "chapter1-ember-watch",
+    completionPercent: 0,
+    missions: [
+      {
+        id: "chapter1-ember-watch",
+        missionId: "chapter1-ember-watch",
+        chapterId: "chapter1",
+        order: 1,
+        mapId: "ember-watch",
+        name: "余烬哨站",
+        description: "夺回哨站。",
+        recommendedHeroLevel: 3,
+        enemyArmyTemplateId: "orc_warrior",
+        enemyArmyCount: 2,
+        enemyStatMultiplier: 1,
+        objectives: [
+          {
+            id: "hold-gate",
+            description: "守住大门",
+            kind: "hold",
+            gate: "start"
+          }
+        ],
+        reward: {
+          gems: 20
+        },
+        introDialogue: [
+          {
+            id: "intro-1",
+            speakerId: "captain",
+            speakerName: "守望队长",
+            text: "守住火线。"
+          }
+        ],
+        outroDialogue: [
+          {
+            id: "outro-1",
+            speakerId: "captain",
+            speakerName: "守望队长",
+            text: "哨站重新亮灯了。"
+          }
+        ],
+        attempts: 0,
+        status: "available"
+      },
+      {
+        id: "chapter1-thornwall-road",
+        missionId: "chapter1-thornwall-road",
+        chapterId: "chapter1",
+        order: 2,
+        mapId: "thornwall-road",
+        name: "荆墙驿路",
+        description: "打通商道。",
+        recommendedHeroLevel: 4,
+        enemyArmyTemplateId: "wolf_rider",
+        enemyArmyCount: 2,
+        enemyStatMultiplier: 1.05,
+        objectives: [
+          {
+            id: "escort",
+            description: "护送补给车",
+            kind: "escort",
+            gate: "end"
+          }
+        ],
+        reward: {},
+        attempts: 0,
+        status: "locked",
+        unlockRequirements: [
+          {
+            type: "mission_complete",
+            description: "Complete 余烬哨站.",
+            missionId: "chapter1-ember-watch",
+            chapterId: "chapter1",
+            satisfied: false
+          }
+        ]
+      }
+    ]
+  };
+
+  let completionCalls = 0;
+  installVeilRootRuntime({
+    loadCampaignSummary: async () => structuredClone(campaign),
+    startCampaignMission: async () => ({
+      started: true,
+      mission: structuredClone(campaign.missions[0]!)
+    }),
+    completeCampaignMission: async () => {
+      completionCalls += 1;
+      campaign = {
+        completedCount: 1,
+        totalMissions: 2,
+        nextMissionId: "chapter1-thornwall-road",
+        completionPercent: 50,
+        missions: [
+          {
+            ...structuredClone(campaign.missions[0]!),
+            status: "completed",
+            attempts: 1,
+            completedAt: "2026-04-05T08:00:00.000Z"
+          },
+          {
+            ...structuredClone(campaign.missions[1]!),
+            status: "available",
+            unlockRequirements: [
+              {
+                type: "mission_complete",
+                description: "Complete 余烬哨站.",
+                missionId: "chapter1-ember-watch",
+                chapterId: "chapter1",
+                satisfied: true
+              }
+            ]
+          }
+        ]
+      };
+      return {
+        completed: true,
+        mission: structuredClone(campaign.missions[0]!),
+        reward: {
+          gems: 20
+        },
+        campaign: structuredClone(campaign)
+      };
+    }
+  });
+
+  await root.toggleGameplayCampaignPanel(true);
+  await root.startGameplayCampaignMission();
+  root.advanceGameplayCampaignDialogue();
+  assert.equal(root.gameplayCampaignPanelOpen, false);
+
+  await root.applySessionUpdate(createReturnToWorldUpdate());
+  await flushMicrotasks();
+
+  assert.equal(completionCalls, 1);
+  assert.equal(root.gameplayCampaignPanelOpen, true);
+  assert.equal(root.gameplayCampaign?.nextMissionId, "chapter1-thornwall-road");
+  assert.deepEqual(root.gameplayCampaignDialogue, {
+    missionId: "chapter1-ember-watch",
+    sequence: "outro",
+    lineIndex: 0
+  });
+});
+
 test("VeilRoot settings logout routes through the auth revoke path", async () => {
   const storage = createMemoryStorage();
   (sys as unknown as { localStorage: Storage }).localStorage = storage;
@@ -377,6 +735,209 @@ test("VeilRoot emits primary-client telemetry for progression, inventory, and co
   assert.equal(root.primaryClientTelemetry[1]?.itemCount, 2);
   assert.equal(root.primaryClientTelemetry[4]?.status, "success");
   assert.equal(root.primaryClientTelemetry[5]?.reason, "in_battle");
+});
+
+test("VeilRoot batches client analytics across session and battle lifecycle hooks", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-analytics";
+  root.playerId = "player-1";
+  root.displayName = "暮潮守望";
+  root.remoteUrl = "http://127.0.0.1:2567";
+  root.authMode = "account";
+  root.lastUpdate = createSessionUpdate(1, "room-analytics", "player-1");
+  root.applySessionUpdate = VeilRoot.prototype["applySessionUpdate"].bind(root);
+
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return {
+        ok: true,
+        status: 202
+      };
+    }
+  });
+
+  installVeilRootRuntime({
+    createSession: async () =>
+      ({
+        async snapshot() {
+          return createSessionUpdate(2, "room-analytics", "player-1");
+        },
+        async dispose() {}
+      }) as never
+  });
+
+  await root.connect();
+  await root.applySessionUpdate(createFirstBattleUpdate());
+  await root.applySessionUpdate(createReturnToWorldUpdate());
+  await flushClientAnalyticsEventsForTest();
+
+  assert.equal(fetchCalls.length, 1);
+  const body = String(fetchCalls[0]?.init?.body);
+  assert.match(body, /"name":"session_start"/);
+  assert.match(body, /"name":"battle_start"/);
+  assert.match(body, /"name":"battle_end"/);
+  assert.match(body, /"platform":"wechat"/);
+  assert.match(body, /"sessionId":"cocos-session-/);
+});
+
+test("VeilRoot emits shop, tutorial, quest, and experiment analytics once per session", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-analytics";
+  root.playerId = "player-1";
+  root.displayName = "暮潮守望";
+  root.remoteUrl = "http://127.0.0.1:2567";
+  root.authToken = "account.token";
+  root.authMode = "account";
+  root.showLobby = true;
+  root.lobbyShopProducts = [
+    {
+      productId: "gem-pack-small",
+      name: "Gem Pack Small",
+      type: "gem_pack",
+      price: 60,
+      enabled: true,
+      grant: {
+        gems: 60
+      }
+    }
+  ];
+
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return {
+        ok: true,
+        status: 202
+      };
+    }
+  });
+
+  installVeilRootRuntime({
+    purchaseShopProduct: async () => ({
+      purchaseId: "purchase-1",
+      productId: "gem-pack-small",
+      quantity: 1,
+      unitPrice: 60,
+      totalPrice: 60,
+      granted: {
+        gems: 60,
+        resources: { gold: 0, wood: 0, ore: 0 },
+        equipmentIds: [],
+        cosmeticIds: []
+      },
+      gemsBalance: 120,
+      processedAt: "2026-04-05T00:00:00.000Z"
+    }),
+    updateTutorialProgress: async () => ({
+      ...root.lobbyAccountProfile,
+      playerId: "player-1",
+      displayName: "暮潮守望",
+      source: "remote",
+      tutorialStep: 2,
+      recentBattleReplays: []
+    })
+  });
+
+  root.maybeEmitShopOpenAnalytics();
+  await root.purchaseLobbyShopProduct("gem-pack-small");
+  root.commitAccountProfile(
+    {
+      ...root.lobbyAccountProfile,
+      playerId: "player-1",
+      displayName: "暮潮守望",
+      lastRoomId: "room-analytics",
+      dailyQuestBoard: {
+        enabled: true,
+        availableClaims: 1,
+        pendingRewards: { gems: 10, gold: 50 },
+        quests: [
+          {
+            id: "daily_explore_frontier",
+            title: "Explore",
+            description: "Explore frontier",
+            current: 1,
+            target: 1,
+            completed: true,
+            claimed: false,
+            reward: { gems: 10, gold: 50 }
+          }
+        ]
+      },
+      experiments: [
+        {
+          experimentKey: "account_portal_copy",
+          experimentName: "Account Portal Upgrade Copy",
+          owner: "growth",
+          bucket: 42,
+          variant: "upgrade",
+          fallbackVariant: "control",
+          assigned: true,
+          reason: "bucket"
+        }
+      ]
+    },
+    false
+  );
+  root.commitAccountProfile(
+    {
+      ...root.lobbyAccountProfile,
+      playerId: "player-1",
+      displayName: "暮潮守望",
+      lastRoomId: "room-analytics",
+      dailyQuestBoard: {
+        enabled: true,
+        availableClaims: 0,
+        pendingRewards: { gems: 0, gold: 0 },
+        quests: [
+          {
+            id: "daily_explore_frontier",
+            title: "Explore",
+            description: "Explore frontier",
+            current: 1,
+            target: 1,
+            completed: true,
+            claimed: true,
+            reward: { gems: 10, gold: 50 }
+          }
+        ]
+      },
+      experiments: [
+        {
+          experimentKey: "account_portal_copy",
+          experimentName: "Account Portal Upgrade Copy",
+          owner: "growth",
+          bucket: 42,
+          variant: "upgrade",
+          fallbackVariant: "control",
+          assigned: true,
+          reason: "bucket"
+        }
+      ]
+    },
+    false
+  );
+  root.lobbyAccountProfile = {
+    ...root.lobbyAccountProfile,
+    playerId: "player-1",
+    displayName: "暮潮守望",
+    source: "remote",
+    tutorialStep: 1
+  };
+  await root.advanceTutorialFlow();
+  await flushClientAnalyticsEventsForTest();
+
+  const body = fetchCalls.map((call) => String(call.init?.body)).join("\n");
+  assert.match(body, /"name":"shop_open"/);
+  assert.match(body, /"name":"purchase_initiated"/);
+  assert.match(body, /"name":"experiment_exposure"/);
+  assert.match(body, /"name":"quest_complete"/);
+  assert.match(body, /"name":"tutorial_step"/);
+  assert.equal((body.match(/"name":"experiment_exposure"/g) ?? []).length, 1);
 });
 
 test("VeilRoot gameplay account refresh uses the injected loader for remote equipment and loot updates", async () => {

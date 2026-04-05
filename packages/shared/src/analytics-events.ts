@@ -25,7 +25,7 @@ export const ANALYTICS_EVENT_CATALOG = {
   session_start: defineAnalyticsEvent("session_start", 1, "Player session established through the room transport.", {
     roomId: "room-contract",
     authMode: "guest",
-    platform: "colyseus"
+    platform: "wechat"
   }),
   battle_start: defineAnalyticsEvent("battle_start", 1, "Player entered a battle encounter.", {
     roomId: "room-contract",
@@ -48,11 +48,27 @@ export const ANALYTICS_EVENT_CATALOG = {
       gold: 50
     }
   }),
+  shop_open: defineAnalyticsEvent("shop_open", 1, "Player opened the shop surface.", {
+    roomId: "room-contract",
+    surface: "lobby"
+  }),
+  purchase_initiated: defineAnalyticsEvent("purchase_initiated", 1, "Player initiated a shop purchase from the client.", {
+    roomId: "room-contract",
+    productId: "gem_pack_small",
+    productType: "gem_pack",
+    currency: "wechat_fen",
+    price: 600
+  }),
   purchase: defineAnalyticsEvent("purchase", 1, "Shop purchase completed successfully.", {
     purchaseId: "purchase-1",
     productId: "gem_pack_small",
     quantity: 1,
     totalPrice: 100
+  }),
+  payment_fraud_signal: defineAnalyticsEvent("payment_fraud_signal", 1, "Potential payment fraud or integrity anomaly detected.", {
+    signal: "duplicate_out_trade_no",
+    orderId: "wechat-order-1",
+    productId: "gem_pack_small"
   }),
   tutorial_step: defineAnalyticsEvent("tutorial_step", 1, "Tutorial milestone advanced by the player.", {
     stepId: "movement_intro",
@@ -93,7 +109,9 @@ export type AnalyticsEvent<Name extends AnalyticsEventName = AnalyticsEventName>
   version: (typeof ANALYTICS_EVENT_CATALOG)[Name]["version"];
   at: string;
   playerId: string;
-  source: "server";
+  source: "server" | "cocos-client";
+  sessionId?: string;
+  platform?: string;
   roomId?: string;
   payload: AnalyticsEventPayloadByName[Name];
 };
@@ -103,6 +121,9 @@ export function createAnalyticsEvent<Name extends AnalyticsEventName>(
   input: {
     at?: string;
     playerId: string;
+    source?: AnalyticsEvent<Name>["source"];
+    sessionId?: string;
+    platform?: string;
     roomId?: string;
     payload: AnalyticsEventPayloadByName[Name];
   }
@@ -113,7 +134,9 @@ export function createAnalyticsEvent<Name extends AnalyticsEventName>(
     version: ANALYTICS_EVENT_CATALOG[name].version,
     at: input.at ?? new Date().toISOString(),
     playerId: input.playerId,
-    source: "server",
+    source: input.source ?? "server",
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    ...(input.platform ? { platform: input.platform } : {}),
     ...(input.roomId ? { roomId: input.roomId } : {}),
     payload: input.payload
   };

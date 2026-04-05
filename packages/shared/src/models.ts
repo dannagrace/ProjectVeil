@@ -1273,6 +1273,19 @@ export interface BattleSkillCatalogConfig {
 export interface CampaignReward {
   gems?: number;
   resources?: Partial<ResourceLedger>;
+  cosmeticId?: CosmeticId;
+}
+
+export type CampaignUnlockRequirementType = "mission_complete" | "hero_level" | "rank_division";
+
+export interface CampaignUnlockRequirement {
+  type: CampaignUnlockRequirementType;
+  description: string;
+  satisfied?: boolean;
+  missionId?: string;
+  chapterId?: string;
+  minimumHeroLevel?: number;
+  minimumRankDivision?: RankDivisionId;
 }
 
 export interface CampaignMission {
@@ -1286,8 +1299,10 @@ export interface CampaignMission {
   enemyArmyTemplateId: string;
   enemyArmyCount: number;
   enemyStatMultiplier: number;
+  bossEncounterName?: string;
   unlockMissionId?: string;
   introDialogue?: DialogueLine[];
+  midDialogue?: DialogueLine[];
   outroDialogue?: DialogueLine[];
   objectives: MissionObjective[];
   reward: CampaignReward;
@@ -1307,6 +1322,7 @@ export type CampaignMissionStatus = "locked" | "available" | "completed";
 
 export interface CampaignMissionState extends CampaignMissionProgress, CampaignMission {
   status: CampaignMissionStatus;
+  unlockRequirements?: CampaignUnlockRequirement[];
 }
 
 export interface DailyDungeonReward {

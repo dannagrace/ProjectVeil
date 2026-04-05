@@ -3,6 +3,7 @@ import { afterEach, test } from "node:test";
 import { sys } from "cc";
 import { VeilRoot } from "../assets/scripts/VeilRoot.ts";
 import { createFallbackCocosPlayerAccountProfile } from "../assets/scripts/cocos-lobby.ts";
+import type { CocosSeasonalEvent } from "../assets/scripts/cocos-lobby.ts";
 import type { MatchmakingStatusResponse, SessionUpdate } from "../assets/scripts/VeilCocosSession.ts";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
@@ -92,6 +93,40 @@ function createBattleUpdate(): SessionUpdate {
     encounterPosition: { x: 1, y: 0 }
   };
   return update;
+}
+
+function createSeasonalEvent(overrides: Partial<CocosSeasonalEvent> = {}): CocosSeasonalEvent {
+  return {
+    id: "defend-the-bridge",
+    name: "Defend the Bridge",
+    description: "Bridge defense event",
+    startsAt: "2026-04-01T00:00:00.000Z",
+    endsAt: "2026-04-08T00:00:00.000Z",
+    durationDays: 7,
+    bannerText: "Hold the crossing.",
+    remainingMs: 86_400_000,
+    rewards: [],
+    player: {
+      points: 40,
+      claimedRewardIds: [],
+      claimableRewardIds: []
+    },
+    leaderboard: {
+      size: 100,
+      rewardTiers: [],
+      entries: [
+        {
+          rank: 4,
+          playerId: "account-player",
+          displayName: "雾林司灯",
+          points: 40,
+          lastUpdatedAt: "2026-04-04T09:00:00.000Z"
+        }
+      ],
+      topThree: []
+    },
+    ...overrides
+  };
 }
 
 test("VeilRoot cold boot falls back to a guest lobby identity when no stored session exists", () => {
@@ -222,6 +257,98 @@ test("VeilRoot applies cosmetic push messages to lobby profile state and logs ba
   assert.equal(renderCount, 2);
   assert.match(String(root.logLines[0]), /战斗表情：player-2 使用了 emote-cheer-spark/);
   assert.match(String(root.logLines[1]), /外观同步：account-player 装备 border-shadowcourt/);
+});
+
+test("VeilRoot handles seasonal event progress push updates and refreshes local panel state", () => {
+  const root = createVeilRootHarness();
+  let renderCount = 0;
+  root.renderView = () => {
+    renderCount += 1;
+  };
+  root.playerId = "account-player";
+  root.displayName = "雾林司灯";
+  root.sessionEpoch = 4;
+  root.activeSeasonalEvent = createSeasonalEvent();
+  root.gameplaySeasonalEventPanelOpen = false;
+
+  const options = (root as VeilRoot & {
+    createSessionOptions(epoch: number): {
+      onServerMessage(message: {
+        type: "event.progress.update";
+        payload: { eventId: string; points: number; delta: number; objectiveId: string };
+      }): void;
+    };
+  }).createSessionOptions(4);
+
+  options.onServerMessage({
+    type: "event.progress.update",
+    payload: {
+      eventId: "defend-the-bridge",
+      points: 120,
+      delta: 80,
+      objectiveId: "bridge-dungeon-clear"
+    }
+  });
+
+  assert.equal(root.activeSeasonalEvent?.player.points, 120);
+  assert.equal(root.activeSeasonalEvent?.leaderboard.entries[0]?.rank, 1);
+  assert.match(String(root.seasonalEventStatus), /\+80 分/);
+  assert.equal(renderCount, 1);
+});
+
+test("VeilRoot submits seasonal event progress after an owned battle resolves", async () => {
+  const root = createVeilRootHarness();
+  root.applySessionUpdate = VeilRoot.prototype.applySessionUpdate.bind(root);
+  root.refreshGameplayAccountProfile = async () => undefined;
+  root.playerId = "account-player";
+  root.displayName = "雾林司灯";
+  root.sessionSource = "remote";
+  root.authToken = "auth.token";
+  root.activeSeasonalEvent = createSeasonalEvent();
+
+  const resolvedUpdate = createSessionUpdate(4, "room-recover", "account-player");
+  resolvedUpdate.events = [
+    {
+      type: "battle.resolved",
+      battleId: "battle-42",
+      battleKind: "neutral",
+      heroId: "hero-1",
+      result: "attacker_victory",
+      resourcesGained: { gold: 0, wood: 0, ore: 0 },
+      experienceGained: 10,
+      skillPointsAwarded: 0
+    }
+  ];
+
+  const submissions: string[] = [];
+  installVeilRootRuntime({
+    submitSeasonalEventProgress: async (_remoteUrl, eventId, action) => {
+      submissions.push(`${eventId}:${action.actionId}:${action.actionType}`);
+      return {
+        applied: true,
+        event: createSeasonalEvent({
+          player: {
+            points: 80,
+            claimedRewardIds: [],
+            claimableRewardIds: []
+          }
+        }),
+        eventProgress: {
+          eventId,
+          delta: 40,
+          points: 80,
+          objectiveId: "battle_resolved"
+        }
+      };
+    }
+  });
+
+  await root.applySessionUpdate(resolvedUpdate);
+  await flushMicrotasks();
+
+  assert.deepEqual(submissions, ["defend-the-bridge:account-player:battle-42:battle_resolved"]);
+  assert.equal(root.activeSeasonalEvent?.player.points, 80);
+  assert.match(String(root.seasonalEventStatus), /\+40 分/);
 });
 
 test("VeilRoot warm boot keeps direct room resume in auto-connect mode", () => {

@@ -46,6 +46,7 @@ export interface PlayerMailboxGrant {
   resources?: Partial<ResourceLedger>;
   equipmentIds?: EquipmentId[];
   cosmeticIds?: CosmeticId[];
+  seasonBadges?: string[];
   seasonPassPremium?: boolean;
 }
 
@@ -367,6 +368,13 @@ function normalizePlayerMailboxGrant(grant?: Partial<PlayerMailboxGrant> | null)
         .filter((cosmeticId): cosmeticId is CosmeticId => Boolean(cosmeticId))
     )
   );
+  const seasonBadges = Array.from(
+    new Set(
+      (grant.seasonBadges ?? [])
+        .map((badge) => badge?.trim())
+        .filter((badge): badge is string => Boolean(badge))
+    )
+  );
   const normalizedResources = {
     gold: Math.max(0, Math.floor(grant.resources?.gold ?? 0)),
     wood: Math.max(0, Math.floor(grant.resources?.wood ?? 0)),
@@ -379,6 +387,7 @@ function normalizePlayerMailboxGrant(grant?: Partial<PlayerMailboxGrant> | null)
       : {}),
     ...(equipmentIds.length > 0 ? { equipmentIds } : {}),
     ...(cosmeticIds.length > 0 ? { cosmeticIds } : {}),
+    ...(seasonBadges.length > 0 ? { seasonBadges } : {}),
     ...(grant.seasonPassPremium === true ? { seasonPassPremium: true } : {})
   };
 

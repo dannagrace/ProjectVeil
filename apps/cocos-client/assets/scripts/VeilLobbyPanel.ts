@@ -175,6 +175,7 @@ export interface VeilLobbyPanelOptions {
   onRequestAccountFlow?: () => void;
   onConfirmAccountFlow?: () => void;
   onCancelAccountFlow?: () => void;
+  onOpenCampaign?: () => void;
   onOpenConfigCenter?: () => void;
   onLogout?: () => void;
   onJoinRoom?: (roomId: string) => void;
@@ -220,6 +221,7 @@ export class VeilLobbyPanel extends Component {
   private onRequestAccountFlow: (() => void) | undefined;
   private onConfirmAccountFlow: (() => void) | undefined;
   private onCancelAccountFlow: (() => void) | undefined;
+  private onOpenCampaign: (() => void) | undefined;
   private onOpenConfigCenter: (() => void) | undefined;
   private onLogout: (() => void) | undefined;
   private onJoinRoom: ((roomId: string) => void) | undefined;
@@ -262,6 +264,7 @@ export class VeilLobbyPanel extends Component {
     this.onRequestAccountFlow = options.onRequestAccountFlow;
     this.onConfirmAccountFlow = options.onConfirmAccountFlow;
     this.onCancelAccountFlow = options.onCancelAccountFlow;
+    this.onOpenCampaign = options.onOpenCampaign;
     this.onOpenConfigCenter = options.onOpenConfigCenter;
     this.onLogout = options.onLogout;
     this.onJoinRoom = options.onJoinRoom;
@@ -566,9 +569,23 @@ export class VeilLobbyPanel extends Component {
       state.entering || matchmakingSearching ? null : this.onRecoverAccount ?? null
     );
     this.renderActionButton(
-      "LobbyConfigCenter",
+      "LobbyCampaign",
       leftX,
       leftCursorY - 256,
+      leftWidth,
+      28,
+      "战役任务",
+      {
+        fill: ACTION_ACCOUNT_REVIEW_ACTIVE,
+        stroke: new Color(228, 244, 229, 124),
+        accent: new Color(226, 244, 230, 116)
+      },
+      state.entering || matchmakingSearching ? null : this.onOpenCampaign ?? null
+    );
+    this.renderActionButton(
+      "LobbyConfigCenter",
+      leftX,
+      leftCursorY - 290,
       leftWidth,
       28,
       "打开配置台",
@@ -582,7 +599,7 @@ export class VeilLobbyPanel extends Component {
     this.renderActionButton(
       "LobbyLogout",
       leftX,
-      leftCursorY - 290,
+      leftCursorY - 324,
       leftWidth,
       28,
       state.authMode === "account" ? "退出账号会话" : "退出游客会话",
@@ -596,7 +613,7 @@ export class VeilLobbyPanel extends Component {
     this.renderActionButton(
       "LobbyAccountReview",
       leftX,
-      leftCursorY - 324,
+      leftCursorY - 358,
       leftWidth,
       28,
       this.showAccountReview ? "收起资料回顾" : "资料回顾 · 战报 / 事件 / 成就",

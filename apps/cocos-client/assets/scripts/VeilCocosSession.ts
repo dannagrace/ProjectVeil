@@ -760,6 +760,17 @@ type ServerMessage =
       createdAt: string;
     }
   | {
+      type: "event.progress.update";
+      requestId: "push";
+      delivery: "push";
+      payload: {
+        eventId: string;
+        points: number;
+        delta: number;
+        objectiveId: string;
+      };
+    }
+  | {
       type: "COSMETIC_APPLIED";
       requestId: string;
       delivery?: "reply" | "push";
@@ -1670,6 +1681,23 @@ class RemoteGameSession {
     };
   }
 
+  async acknowledgeCampaignDialogue(
+    missionId: string,
+    sequence: "intro" | "outro",
+    dialogueLineId: string
+  ): Promise<void> {
+    const requestId = this.nextRequestId();
+    this.room.send("campaign.dialogue.ack", {
+      type: "campaign.dialogue.ack",
+      requestId,
+      action: {
+        missionId,
+        sequence,
+        dialogueLineId
+      }
+    });
+  }
+
   async surrender(heroId: string): Promise<SessionUpdate> {
     const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
       {
@@ -1870,6 +1898,14 @@ class RecoverableRemoteGameSession {
 
   async reportPlayer(targetPlayerId: string, reason: PlayerReportReason, description?: string): Promise<PlayerReportReceipt> {
     return this.runWithSession((session) => session.reportPlayer(targetPlayerId, reason, description));
+  }
+
+  async acknowledgeCampaignDialogue(
+    missionId: string,
+    sequence: "intro" | "outro",
+    dialogueLineId: string
+  ): Promise<void> {
+    return this.runWithSession((session) => session.acknowledgeCampaignDialogue(missionId, sequence, dialogueLineId));
   }
 
   async surrender(heroId: string): Promise<SessionUpdate> {
@@ -2132,6 +2168,14 @@ export class VeilCocosSession {
 
   async reportPlayer(targetPlayerId: string, reason: PlayerReportReason, description?: string): Promise<PlayerReportReceipt> {
     return this.remoteSession.reportPlayer(targetPlayerId, reason, description);
+  }
+
+  async acknowledgeCampaignDialogue(
+    missionId: string,
+    sequence: "intro" | "outro",
+    dialogueLineId: string
+  ): Promise<void> {
+    return this.remoteSession.acknowledgeCampaignDialogue(missionId, sequence, dialogueLineId);
   }
 
   async surrender(heroId: string): Promise<SessionUpdate> {
