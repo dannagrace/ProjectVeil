@@ -2,10 +2,13 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  getDefaultEquipmentCatalog,
   getDefaultBattleBalanceConfig,
   validateBattleBalanceConfig,
   validateBattleSkillCatalog,
   validateContentPackConsistency,
+  validateEquipmentCatalog,
+  validateHeroSkillTreeConfig,
   validateMapObjectsConfig,
   validateUnitCatalog,
   validateWorldConfig,
@@ -13,6 +16,7 @@ import {
   type BattleSkillCatalogConfig,
   type ContentPackDocumentId,
   type ContentPackValidationIssue,
+  type HeroSkillTreeConfig,
   type MapObjectsConfig,
   type RuntimeConfigBundle,
   type UnitCatalogConfig,
@@ -24,9 +28,11 @@ import {
   type ContentPackMapPackDefinition
 } from "./content-pack-map-packs.ts";
 
+type ValidationDocumentId = ContentPackDocumentId | "heroSkills" | "equipment";
+
 interface DocumentValidationIssue {
   bundleId: string;
-  documentId: ContentPackDocumentId;
+  documentId: ValidationDocumentId;
   path: string;
   message: string;
 }
@@ -60,6 +66,11 @@ export interface ContentPackCliReport {
   valid: boolean;
   bundleCount: number;
   documentValidation: {
+    valid: boolean;
+    issueCount: number;
+    issues: DocumentValidationIssue[];
+  };
+  authoringValidation: {
     valid: boolean;
     issueCount: number;
     issues: DocumentValidationIssue[];
@@ -174,12 +185,43 @@ async function loadBundle(rootDir: string, definition: ContentPackMapPackDefinit
   };
 }
 
+async function validateAuthoringConfigs(
+  rootDir: string,
+  battleSkills: BattleSkillCatalogConfig
+): Promise<DocumentValidationIssue[]> {
+  const issues: DocumentValidationIssue[] = [];
+  const capture = (documentId: ValidationDocumentId, path: string, callback: () => void) => {
+    try {
+      callback();
+    } catch (error) {
+      issues.push({
+        bundleId: "global",
+        documentId,
+        path,
+        message: error instanceof Error ? error.message : "Unknown validation error"
+      });
+    }
+  };
+
+  const [compactHeroSkills, fullHeroSkills] = await Promise.all([
+    readJsonConfig<HeroSkillTreeConfig>(rootDir, "hero-skills.json"),
+    readJsonConfig<HeroSkillTreeConfig>(rootDir, "hero-skill-trees-full.json")
+  ]);
+
+  capture("heroSkills", "hero-skills.json", () => validateHeroSkillTreeConfig(compactHeroSkills, battleSkills));
+  capture("heroSkills", "hero-skill-trees-full.json", () => validateHeroSkillTreeConfig(fullHeroSkills, battleSkills));
+  capture("equipment", "packages/shared/src/equipment.ts", () => validateEquipmentCatalog(getDefaultEquipmentCatalog()));
+
+  return issues;
+}
+
 export async function buildContentPackCliReport(options: {
   rootDir?: string;
   extraMapPacks?: ContentPackMapPackDefinition[];
 } = {}): Promise<ContentPackCliReport> {
   const rootDir = options.rootDir ?? resolve(process.cwd(), "configs");
   const bundleDefinitions = [DEFAULT_CONTENT_PACK_MAP_PACK, ...(options.extraMapPacks ?? [])];
+  const battleSkills = await readJsonConfig<BattleSkillCatalogConfig>(rootDir, "battle-skills.json");
   const bundles = await Promise.all(
     bundleDefinitions.map(async (definition): Promise<BundleValidationReport> => {
       const bundle = await loadBundle(rootDir, definition);
@@ -210,17 +252,23 @@ export async function buildContentPackCliReport(options: {
   );
 
   const documentIssues = bundles.flatMap((bundle) => bundle.documentValidation.issues);
+  const authoringIssues = await validateAuthoringConfigs(rootDir, battleSkills);
   const contentPackIssues = bundles.flatMap((bundle) => bundle.contentPack.issues);
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     rootDir,
-    valid: bundles.every((bundle) => bundle.valid),
+    valid: bundles.every((bundle) => bundle.valid) && authoringIssues.length === 0,
     bundleCount: bundles.length,
     documentValidation: {
       valid: documentIssues.length === 0,
       issueCount: documentIssues.length,
       issues: documentIssues
+    },
+    authoringValidation: {
+      valid: authoringIssues.length === 0,
+      issueCount: authoringIssues.length,
+      issues: authoringIssues
     },
     contentPack: {
       valid: contentPackIssues.length === 0,
@@ -246,6 +294,7 @@ async function main(): Promise<void> {
   console.log(`Root: ${rootDir}`);
   console.log(`Bundles: ${report.bundleCount}`);
   console.log(`Result: ${report.valid ? "PASS" : "FAIL"}`);
+  printIssues("Authoring config validation", report.authoringValidation.issues);
   for (const bundle of report.bundles) {
     console.log(
       `Bundle: ${bundle.id} (${bundle.worldFileName} + ${bundle.mapObjectsFileName})`

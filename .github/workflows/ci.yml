@@ -150,6 +150,9 @@ jobs:
       - name: Validate content-pack consistency
         run: npm run validate:content-pack -- --report-path "${RUNNER_TEMP}/content-pack-validation-report.json"
 
+      - name: Validate all shipped content-pack variants
+        run: npm run validate:content-pack:all
+
       - name: Test With V8 Coverage
         run: npm run test:coverage:ci
 

@@ -40,7 +40,9 @@ async function seedContentPackRoot(tempDir: string): Promise<void> {
       "phase2-map-objects-contested-basin.json",
       "units.json",
       "battle-skills.json",
-      "battle-balance.json"
+      "battle-balance.json",
+      "hero-skills.json",
+      "hero-skill-trees-full.json"
     ].map((fileName) => copyConfigFixture(tempDir, fileName))
   );
 }
@@ -199,6 +201,30 @@ test("validate-content-pack fails on typed hero progression and equipment author
       assert.match(error.stdout ?? "", /hero_equipment_legacy_trinket_ids/);
       assert.match(error.stdout ?? "", /hero_inventory_capacity_exceeded/);
       assert.match(error.stdout ?? "", /Suggestion:/);
+      return true;
+    }
+  );
+});
+
+test("validate-content-pack fails on unknown hero skill battle-skill references", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "veil-content-pack-"));
+  await seedContentPackRoot(tempDir);
+
+  const heroSkillsPath = join(tempDir, "hero-skill-trees-full.json");
+  const heroSkills = JSON.parse(await readFile(heroSkillsPath, "utf8")) as {
+    skills: Array<{ ranks: Array<{ battleSkillIds?: string[] }> }>;
+  };
+
+  heroSkills.skills[0]!.ranks[0]!.battleSkillIds = ["missing_skill"];
+  await writeFile(heroSkillsPath, `${JSON.stringify(heroSkills, null, 2)}\n`, "utf8");
+
+  await assert.rejects(
+    execFileAsync("node", ["--import", "tsx", scriptPath, "--root-dir", tempDir], { cwd: repoRoot }),
+    (error: NodeJS.ErrnoException & { stdout?: string }) => {
+      assert.equal(error.code, 1);
+      assert.match(error.stdout ?? "", /Authoring config validation: 1 issue\(s\)/);
+      assert.match(error.stdout ?? "", /\[heroSkills\] hero-skill-trees-full\.json/);
+      assert.match(error.stdout ?? "", /references unknown battle skill: missing_skill/);
       return true;
     }
   );

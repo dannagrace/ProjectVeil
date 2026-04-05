@@ -12,6 +12,7 @@ import {
 } from "./models.ts";
 
 export const HERO_EQUIPMENT_INVENTORY_CAPACITY = 6;
+const EQUIPMENT_STAT_KEYS = ["attackPercent", "defensePercent", "power", "knowledge", "maxHp"] as const;
 
 export interface EquipmentSetDefinition {
   setId: string;
@@ -699,8 +700,47 @@ export function formatEquipmentBonusSummary(
   return parts.join(" / ") || "无属性加成";
 }
 
+function validateEquipmentBonusRecord(
+  bonuses: Partial<EquipmentStatBonuses>,
+  context: string
+): void {
+  for (const [key, value] of Object.entries(bonuses)) {
+    if (!EQUIPMENT_STAT_KEYS.includes(key as (typeof EQUIPMENT_STAT_KEYS)[number])) {
+      throw new Error(`${context} has unknown equipment stat bonus: ${key}`);
+    }
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new Error(`${context} bonus ${key} must be a finite number`);
+    }
+  }
+}
+
+export function validateEquipmentCatalog(config: EquipmentCatalogConfig): void {
+  const ids = new Set<string>();
+
+  for (const entry of config.entries) {
+    if (!entry.id.trim()) {
+      throw new Error("Equipment entry id must be a non-empty string");
+    }
+    if (ids.has(entry.id)) {
+      throw new Error(`Duplicate equipment entry id: ${entry.id}`);
+    }
+    if (entry.type !== "weapon" && entry.type !== "armor" && entry.type !== "accessory") {
+      throw new Error(`Equipment entry ${entry.id} has invalid type: ${String(entry.type)}`);
+    }
+    if (entry.rarity !== "common" && entry.rarity !== "rare" && entry.rarity !== "epic") {
+      throw new Error(`Equipment entry ${entry.id} has invalid rarity: ${String(entry.rarity)}`);
+    }
+    validateEquipmentBonusRecord(entry.bonuses, `Equipment entry ${entry.id}`);
+    ids.add(entry.id);
+  }
+
+  for (const setBonus of EQUIPMENT_SET_DEFINITIONS) {
+    validateEquipmentBonusRecord(setBonus.bonus, `Equipment set ${setBonus.setId}`);
+  }
+}
+
 export function getDefaultEquipmentCatalog(): EquipmentCatalogConfig {
-  return {
+  const config = {
     entries: DEFAULT_EQUIPMENT_CATALOG.entries.map((entry) => ({
       ...entry,
       bonuses: { ...entry.bonuses },
@@ -708,6 +748,9 @@ export function getDefaultEquipmentCatalog(): EquipmentCatalogConfig {
       ...(entry.specialEffect ? { specialEffect: { ...entry.specialEffect } } : {})
     }))
   };
+
+  validateEquipmentCatalog(config);
+  return config;
 }
 
 export function getEquipmentDefinition(equipmentId: string): EquipmentDefinition | undefined {
