@@ -36,9 +36,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quickstart:
+  readme-script-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: contributor quickstart
+            command: npm run validate:quickstart
+          - label: config center regression
+            command: npm run test:client:config-center
+          - label: shared contract snapshots
+            command: npm run test:contracts
 
     steps:
       - name: Checkout
@@ -56,8 +66,19 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Validate contributor quickstart
-        run: npm run validate:quickstart
+      - name: Gate README command: ${{ matrix.command }}
+        run: ${{ matrix.command }}
+
+      - name: Summarize README command gate
+        if: always()
+        run: |
+          {
+            echo "## README Script Gate"
+            echo
+            echo "- README command: \`${{ matrix.command }}\`"
+            echo "- Gate label: \`${{ matrix.label }}\`"
+            echo "- Workflow job: \`readme-script-gate\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   ops-tooling-typecheck:
     runs-on: ubuntu-latest

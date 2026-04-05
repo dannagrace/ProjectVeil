@@ -212,6 +212,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - `npm test` 会通过 `git ls-files` 自动发现所有已检入仓库的 `*.test.ts` Node 测试文件并统一执行；新增此类测试时不需要手动维护根脚本列表。
 - 若测试没有被 `npm test` 自动拾取，先检查文件名是否为 `*.test.ts` 且已经 `git add`；`tests/e2e/**/*.spec.ts` 仍由 Playwright 入口负责，不属于根 `node:test` 流程。
 - 共享客户端载荷 contract 快照：`npm run test:contracts`
+- GitHub Actions `readme-script-gate` 会阻塞 `npm run validate:quickstart`、`npm run test:client:config-center` 与 `npm run test:contracts` 的回归；若其中任一 README 命令失效，失败日志会直接标出对应命令
 - 并发房间压测会按 `world_progression / battle_settlement / reconnect` 三种场景分开跑数，并输出 CPU、内存、房间吞吐、动作吞吐等指标；可通过 `--scenarios=world_progression,reconnect` 等参数缩小范围
 - 当前客户端边界：`apps/cocos-client` 负责主玩法运行时；`apps/client` 只保留浏览器调试、配置联调和回归验证。
 - 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
