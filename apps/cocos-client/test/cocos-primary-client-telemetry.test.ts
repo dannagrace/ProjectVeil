@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import {
   appendPrimaryClientTelemetry,
   buildPrimaryClientTelemetryFromUpdate,
-  createPrimaryClientTelemetryEvent
+  configureClientAnalyticsRuntimeDependencies,
+  createPrimaryClientTelemetryEvent,
+  emitClientAnalyticsEvent,
+  flushClientAnalyticsEventsForTest,
+  resetClientAnalyticsRuntimeDependencies
 } from "../assets/scripts/cocos-primary-client-telemetry.ts";
 import type { PrimaryClientTelemetryEvent } from "../../../packages/shared/src/index.ts";
 import { createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
+
+afterEach(() => {
+  resetClientAnalyticsRuntimeDependencies();
+});
 
 function createTelemetryEntry(checkpoint: string): PrimaryClientTelemetryEvent {
   return {
@@ -158,4 +166,73 @@ test("buildPrimaryClientTelemetryFromUpdate maps supported world events with her
   assert.equal(entries[4]?.result, "attacker_victory");
   assert.equal(entries[4]?.battleKind, undefined);
   assert(entries.every((entry) => entry.at === "2026-04-02T12:00:00.000Z"));
+});
+
+test("emitClientAnalyticsEvent batches production client events to the analytics endpoint", async () => {
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return {
+        ok: true,
+        status: 202
+      };
+    }
+  });
+
+  const event = emitClientAnalyticsEvent(
+    "shop_open",
+    {
+      remoteUrl: "http://127.0.0.1:2567",
+      playerId: "player-1",
+      sessionId: "session-1",
+      roomId: "room-telemetry"
+    },
+    {
+      roomId: "room-telemetry",
+      surface: "lobby"
+    }
+  );
+  await flushClientAnalyticsEventsForTest();
+
+  assert.equal(event.source, "cocos-client");
+  assert.equal(event.platform, "wechat");
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.input, "http://127.0.0.1:2567/api/analytics/events");
+  assert.match(String(fetchCalls[0]?.init?.body), /"name":"shop_open"/);
+  assert.match(String(fetchCalls[0]?.init?.body), /"sessionId":"session-1"/);
+});
+
+test("emitClientAnalyticsEvent stays quiet outside production mode", async () => {
+  let fetchCalls = 0;
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "test",
+    fetch: async () => {
+      fetchCalls += 1;
+      return {
+        ok: true,
+        status: 202
+      };
+    }
+  });
+
+  emitClientAnalyticsEvent(
+    "battle_start",
+    {
+      remoteUrl: "http://127.0.0.1:2567",
+      playerId: "player-1",
+      sessionId: "session-1",
+      roomId: "room-telemetry"
+    },
+    {
+      roomId: "room-telemetry",
+      battleId: "battle-1",
+      encounterKind: "neutral",
+      heroId: "hero-1"
+    }
+  );
+  await flushClientAnalyticsEventsForTest();
+
+  assert.equal(fetchCalls, 0);
 });
