@@ -1,8 +1,163 @@
-import type { PrimaryClientTelemetryEvent, PrimaryClientTelemetryStatus } from "../../../../packages/shared/src/index.ts";
+import {
+  createAnalyticsEvent,
+  type AnalyticsEvent,
+  type AnalyticsEventName,
+  type PrimaryClientTelemetryEvent,
+  type PrimaryClientTelemetryStatus
+} from "../../../../packages/shared/src/index.ts";
 import type { SessionUpdate, WorldEvent } from "./VeilCocosSession.ts";
 import type { EquipmentType } from "./project-shared/index.ts";
+import { resolveCocosApiBaseUrl } from "./cocos-lobby.ts";
 
 const PRIMARY_CLIENT_TELEMETRY_LIMIT = 12;
+const CLIENT_ANALYTICS_FLUSH_SIZE = 20;
+const CLIENT_ANALYTICS_FLUSH_DELAY_MS = 250;
+
+export interface ClientAnalyticsContext {
+  remoteUrl: string;
+  playerId: string;
+  sessionId: string;
+  roomId?: string;
+  platform?: string;
+  at?: string;
+}
+
+interface PendingClientAnalyticsEvent {
+  endpoint: string;
+  event: AnalyticsEvent;
+}
+
+interface ClientAnalyticsRuntimeDependencies {
+  fetch(input: string, init?: RequestInit): Promise<{ ok: boolean; status: number }>;
+  error(message: string, error?: unknown): void;
+  getNodeEnv(): string | undefined;
+  setTimeout(handler: () => void, delayMs: number): ReturnType<typeof globalThis.setTimeout>;
+  clearTimeout(handle: ReturnType<typeof globalThis.setTimeout>): void;
+}
+
+const defaultClientAnalyticsRuntimeDependencies: ClientAnalyticsRuntimeDependencies = {
+  fetch: (input, init) => fetch(input, init),
+  error: (message, error) => console.error(message, error),
+  getNodeEnv: () => globalThis.process?.env?.NODE_ENV,
+  setTimeout: (handler, delayMs) => globalThis.setTimeout(handler, delayMs),
+  clearTimeout: (handle) => globalThis.clearTimeout(handle)
+};
+
+let clientAnalyticsRuntimeDependencies = defaultClientAnalyticsRuntimeDependencies;
+let pendingClientAnalyticsEvents: PendingClientAnalyticsEvent[] = [];
+let pendingClientAnalyticsTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+
+export function configureClientAnalyticsRuntimeDependencies(
+  overrides: Partial<ClientAnalyticsRuntimeDependencies>
+): void {
+  clientAnalyticsRuntimeDependencies = {
+    ...clientAnalyticsRuntimeDependencies,
+    ...overrides
+  };
+}
+
+export function resetClientAnalyticsRuntimeDependencies(): void {
+  clientAnalyticsRuntimeDependencies = defaultClientAnalyticsRuntimeDependencies;
+  pendingClientAnalyticsEvents = [];
+  if (pendingClientAnalyticsTimer) {
+    clientAnalyticsRuntimeDependencies.clearTimeout(pendingClientAnalyticsTimer);
+  }
+  pendingClientAnalyticsTimer = null;
+}
+
+function shouldEmitClientAnalytics(): boolean {
+  return clientAnalyticsRuntimeDependencies.getNodeEnv() === "production";
+}
+
+async function flushClientAnalyticsEvents(): Promise<void> {
+  if (pendingClientAnalyticsEvents.length === 0) {
+    return;
+  }
+
+  const batch = pendingClientAnalyticsEvents;
+  pendingClientAnalyticsEvents = [];
+  if (pendingClientAnalyticsTimer) {
+    clientAnalyticsRuntimeDependencies.clearTimeout(pendingClientAnalyticsTimer);
+    pendingClientAnalyticsTimer = null;
+  }
+
+  const batchesByEndpoint = new Map<string, AnalyticsEvent[]>();
+  for (const entry of batch) {
+    const events = batchesByEndpoint.get(entry.endpoint) ?? [];
+    events.push(entry.event);
+    batchesByEndpoint.set(entry.endpoint, events);
+  }
+
+  await Promise.all(
+    Array.from(batchesByEndpoint.entries(), async ([endpoint, events]) => {
+      try {
+        const response = await clientAnalyticsRuntimeDependencies.fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          body: JSON.stringify({
+            schemaVersion: 1,
+            emittedAt: new Date().toISOString(),
+            events
+          })
+        });
+        if (!response.ok) {
+          clientAnalyticsRuntimeDependencies.error(`[Analytics] Failed to flush client analytics batch: ${response.status}`);
+        }
+      } catch (error) {
+        clientAnalyticsRuntimeDependencies.error("[Analytics] Failed to flush client analytics batch", error);
+      }
+    })
+  );
+}
+
+function scheduleClientAnalyticsFlush(): void {
+  if (pendingClientAnalyticsEvents.length >= CLIENT_ANALYTICS_FLUSH_SIZE) {
+    void flushClientAnalyticsEvents();
+    return;
+  }
+
+  if (pendingClientAnalyticsTimer) {
+    return;
+  }
+
+  pendingClientAnalyticsTimer = clientAnalyticsRuntimeDependencies.setTimeout(() => {
+    pendingClientAnalyticsTimer = null;
+    void flushClientAnalyticsEvents();
+  }, CLIENT_ANALYTICS_FLUSH_DELAY_MS);
+}
+
+export function emitClientAnalyticsEvent<Name extends AnalyticsEventName>(
+  name: Name,
+  context: ClientAnalyticsContext,
+  payload: Parameters<typeof createAnalyticsEvent<Name>>[1]["payload"]
+): AnalyticsEvent<Name> {
+  const event = createAnalyticsEvent(name, {
+    ...(context.at ? { at: context.at } : {}),
+    playerId: context.playerId,
+    source: "cocos-client",
+    sessionId: context.sessionId,
+    platform: context.platform ?? "wechat",
+    ...(context.roomId ? { roomId: context.roomId } : {}),
+    payload
+  });
+
+  if (!shouldEmitClientAnalytics()) {
+    return event;
+  }
+
+  pendingClientAnalyticsEvents.push({
+    endpoint: `${resolveCocosApiBaseUrl(context.remoteUrl)}/api/analytics/events`,
+    event
+  });
+  scheduleClientAnalyticsFlush();
+  return event;
+}
+
+export function flushClientAnalyticsEventsForTest(): Promise<void> {
+  return flushClientAnalyticsEvents();
+}
 
 interface PrimaryClientTelemetryContext {
   roomId: string;

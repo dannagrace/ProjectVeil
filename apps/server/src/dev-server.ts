@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
+import { registerAnalyticsRoutes } from "./analytics";
 import {
   FileSystemConfigCenterStore,
   MySqlConfigCenterStore,
@@ -41,6 +42,7 @@ interface DevServerTransport {
 interface DevServerHttpApp {
   use(handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void): void;
   get(path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>): void;
+  post(path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>): void;
 }
 
 interface DevServerDefinitionChain {
@@ -108,6 +110,7 @@ export interface DevServerBootstrapDependencies {
   createRedisPresence(redisUrl: string): { shutdown(): Promise<void> | void };
   createRedisDriver(redisUrl: string): { shutdown(): Promise<void> | void };
   registerAuthRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
+  registerAnalyticsRoutes(app: unknown): void;
   registerConfigCenterRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerConfigViewerRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerEventRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
@@ -177,6 +180,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     createRedisPresence,
     createRedisDriver,
     registerAuthRoutes: (app, store) => registerAuthRoutes(app as never, store as RoomSnapshotStore),
+    registerAnalyticsRoutes: (app) => registerAnalyticsRoutes(app as never),
     registerConfigCenterRoutes: (app, store) => registerConfigCenterRoutes(app as never, store as ConfigCenterStore),
     registerConfigViewerRoutes: (app, store) => registerConfigViewerRoutes(app as never, store as ConfigCenterStore),
     registerEventRoutes: (app, store) => registerEventRoutes(app as never, store as RoomSnapshotStore | null),
@@ -248,6 +252,7 @@ export async function startDevServer(
   deps.registerPrometheusMetricsMiddleware(expressApp);
   deps.registerPrometheusMetricsRoute(expressApp);
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerAnalyticsRoutes(expressApp);
   deps.registerConfigCenterRoutes(expressApp, configCenterStore);
   deps.registerConfigViewerRoutes(expressApp, configCenterStore);
   if ("use" in (expressApp as object) && "get" in (expressApp as object)) {

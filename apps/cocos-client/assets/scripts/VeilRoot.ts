@@ -170,7 +170,9 @@ import { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "./cocos-pixel-s
 import {
   appendPrimaryClientTelemetry,
   buildPrimaryClientTelemetryFromUpdate,
-  createPrimaryClientTelemetryEvent
+  createPrimaryClientTelemetryEvent,
+  emitClientAnalyticsEvent,
+  type ClientAnalyticsContext
 } from "./cocos-primary-client-telemetry.ts";
 import {
   describeAccountAuthFailure,
@@ -414,6 +416,9 @@ export class VeilRoot extends Component {
   private lastRoomUpdateReason: string | null = null;
   private lastRoomUpdateAtMs: number | null = null;
   private primaryClientTelemetry: PrimaryClientTelemetryEvent[] = [];
+  private analyticsSessionId: string | null = null;
+  private emittedExperimentExposureKeys = new Set<string>();
+  private emittedShopOpenSessionId: string | null = null;
   private stopRuntimeMemoryWarnings: (() => void) | null = null;
   private battlePresentation = createCocosBattlePresentationController();
   private lastBattleSettlementSnapshot: BattleSettlementSnapshot | null = null;
@@ -510,6 +515,11 @@ export class VeilRoot extends Component {
       }
 
       this.session = nextSession;
+      this.trackClientAnalyticsEvent("session_start", {
+        roomId: this.roomId,
+        authMode: this.authMode,
+        platform: "wechat"
+      });
       this.lastUpdate = await nextSession.snapshot();
       if (!this.isActiveSessionEpoch(sessionEpoch)) {
         await nextSession.dispose().catch(() => undefined);
@@ -1619,6 +1629,7 @@ export class VeilRoot extends Component {
         shopProductsResult.products.length > 0
           ? "点击商品卡片即可购买；微信商品会在小游戏环境拉起支付。"
           : "当前没有上架商品。";
+      this.maybeEmitShopOpenAnalytics();
     } else {
       this.lobbyShopProducts = [];
       this.lobbyShopStatus =
@@ -1753,6 +1764,7 @@ export class VeilRoot extends Component {
     this.renderView();
 
     try {
+      this.trackPurchaseInitiated(product, "lobby");
       if (product.type === "cosmetic" && alreadyOwned && cosmeticId) {
         await resolveVeilRootRuntime().equipShopCosmetic(this.remoteUrl, cosmeticId, {
           getAuthToken: () => this.authToken
@@ -1992,6 +2004,7 @@ export class VeilRoot extends Component {
     this.seasonProgressStatus = `正在购买 ${premiumProduct.name}...`;
     this.renderView();
     try {
+      this.trackPurchaseInitiated(premiumProduct, "battle_pass");
       await resolveVeilRootRuntime().purchaseShopProduct(this.remoteUrl, premiumProduct.productId, {
         getAuthToken: () => this.authToken
       });
@@ -2566,12 +2579,129 @@ export class VeilRoot extends Component {
     this.primaryClientTelemetry = appendPrimaryClientTelemetry(this.primaryClientTelemetry, event);
   }
 
+  private ensureAnalyticsSessionId(): string {
+    if (!this.analyticsSessionId) {
+      this.analyticsSessionId = `cocos-session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+    return this.analyticsSessionId;
+  }
+
+  private createClientAnalyticsContext(roomId = this.roomId): ClientAnalyticsContext {
+    return {
+      remoteUrl: this.remoteUrl,
+      playerId: this.playerId,
+      sessionId: this.ensureAnalyticsSessionId(),
+      roomId,
+      platform: "wechat"
+    };
+  }
+
+  private trackClientAnalyticsEvent<Name extends
+    | "session_start"
+    | "battle_start"
+    | "battle_end"
+    | "quest_complete"
+    | "tutorial_step"
+    | "experiment_exposure"
+    | "shop_open"
+    | "purchase_initiated"
+  >(
+    name: Name,
+    payload: Record<string, unknown>,
+    roomId = this.roomId
+  ): void {
+    emitClientAnalyticsEvent(name, this.createClientAnalyticsContext(roomId), payload as never);
+  }
+
   private createTelemetryContext(heroId?: string | null): { roomId: string; playerId: string; heroId?: string } {
     return {
       roomId: this.roomId,
       playerId: this.playerId,
       ...(heroId ? { heroId } : {})
     };
+  }
+
+  private maybeEmitShopOpenAnalytics(): void {
+    if (!this.showLobby || this.lobbyShopProducts.length === 0) {
+      return;
+    }
+
+    const sessionId = this.ensureAnalyticsSessionId();
+    if (this.emittedShopOpenSessionId === sessionId) {
+      return;
+    }
+
+    this.emittedShopOpenSessionId = sessionId;
+    this.trackClientAnalyticsEvent("shop_open", {
+      roomId: this.roomId,
+      surface: "lobby"
+    });
+  }
+
+  private maybeEmitExperimentExposureAnalytics(profile: CocosPlayerAccountProfile): void {
+    const experiments = (profile as CocosPlayerAccountProfile & {
+      experiments?: Array<{
+        experimentKey: string;
+        experimentName: string;
+        owner: string;
+        bucket: number;
+        variant: string;
+      }>;
+    }).experiments ?? [];
+
+    for (const experiment of experiments) {
+      if (this.emittedExperimentExposureKeys.has(experiment.experimentKey)) {
+        continue;
+      }
+
+      this.emittedExperimentExposureKeys.add(experiment.experimentKey);
+      this.trackClientAnalyticsEvent(
+        "experiment_exposure",
+        {
+          experimentKey: experiment.experimentKey,
+          experimentName: experiment.experimentName,
+          variant: experiment.variant,
+          bucket: experiment.bucket,
+          surface: "player_account_profile",
+          owner: experiment.owner
+        },
+        profile.lastRoomId ?? this.roomId
+      );
+    }
+  }
+
+  private maybeEmitQuestCompleteAnalytics(previousProfile: CocosPlayerAccountProfile, profile: CocosPlayerAccountProfile): void {
+    const previousClaims = new Map(
+      (previousProfile.dailyQuestBoard?.quests ?? []).map((quest) => [quest.id, quest.claimed === true] as const)
+    );
+
+    for (const quest of profile.dailyQuestBoard?.quests ?? []) {
+      if (quest.claimed !== true || previousClaims.get(quest.id) === true) {
+        continue;
+      }
+
+      this.trackClientAnalyticsEvent(
+        "quest_complete",
+        {
+          roomId: profile.lastRoomId ?? this.roomId,
+          questId: quest.id,
+          reward: quest.reward
+        },
+        profile.lastRoomId ?? this.roomId
+      );
+    }
+  }
+
+  private trackPurchaseInitiated(product: ShopProduct, surface: "lobby" | "battle_pass"): void {
+    const price = Math.max(0, Math.floor(product.wechatPriceFen ?? product.price ?? 0));
+    this.trackClientAnalyticsEvent("purchase_initiated", {
+      roomId: this.roomId,
+      productId: product.productId,
+      productType: product.type,
+      currency: product.wechatPriceFen ? "wechat_fen" : "gems",
+      price,
+      surface
+    });
   }
 
   private setBattleFeedback(feedback: CocosBattleFeedbackView | null, durationMs = BATTLE_FEEDBACK_DURATION_MS): void {
@@ -4649,6 +4779,19 @@ export class VeilRoot extends Component {
             : "新手引导已完成，每日任务已解锁。"
           : `新手引导推进至第 ${action.step} 步。`
       );
+      this.trackClientAnalyticsEvent(
+        "tutorial_step",
+        {
+          stepId:
+            action.step == null
+              ? action.reason === "skip"
+                ? "tutorial_skipped"
+                : "tutorial_completed"
+              : `step_${action.step}`,
+          status: action.reason === "skip" ? "skipped" : action.step == null ? "completed" : "active"
+        },
+        profile.lastRoomId ?? this.roomId
+      );
     } finally {
       this.tutorialProgressInFlight = false;
       this.renderView();
@@ -4928,6 +5071,35 @@ export class VeilRoot extends Component {
     this.emitPrimaryClientTelemetry(
       buildPrimaryClientTelemetryFromUpdate(update, this.createTelemetryContext(heroId))
     );
+    for (const event of update.events) {
+      const ownsEventHero =
+        "heroId" in event && typeof event.heroId === "string"
+          ? update.world.ownHeroes.some((hero) => hero.id === event.heroId)
+          : false;
+
+      if (event.type === "battle.started" && ownsEventHero) {
+        this.trackClientAnalyticsEvent("battle_start", {
+          roomId: update.world.meta.roomId,
+          battleId: event.battleId,
+          encounterKind: event.encounterKind,
+          heroId: event.heroId
+        }, update.world.meta.roomId);
+      }
+
+      if (event.type === "battle.resolved" && ownsEventHero) {
+        this.trackClientAnalyticsEvent("battle_end", {
+          roomId: update.world.meta.roomId,
+          battleId: event.battleId,
+          result: event.result,
+          heroId: event.heroId,
+          battleKind: "battleKind" in event && (event.battleKind === "neutral" || event.battleKind === "hero")
+            ? event.battleKind
+            : previousBattle?.defenderHeroId
+              ? "hero"
+              : "neutral"
+        }, update.world.meta.roomId);
+      }
+    }
     if (shouldRefreshGameplayAccountProfileForEvents(update.events.map((event) => event.type))) {
       void this.refreshGameplayAccountProfile();
     }
@@ -5002,6 +5174,7 @@ export class VeilRoot extends Component {
   }
 
   private commitAccountProfile(profile: CocosPlayerAccountProfile, allowAchievementNotice: boolean): void {
+    const previousProfile = this.lobbyAccountProfile;
     if (profile.playerId !== this.lobbyAccountProfile.playerId) {
       this.seenProfileNoticeEventIds.clear();
     }
@@ -5022,6 +5195,8 @@ export class VeilRoot extends Component {
     }
 
     this.lobbyAccountProfile = profile;
+    this.maybeEmitExperimentExposureAnalytics(profile);
+    this.maybeEmitQuestCompleteAnalytics(previousProfile, profile);
     if (this.gameplayBattlePassPanelOpen || this.seasonProgress) {
       this.seasonProgress = this.snapshotSeasonProgressFromProfile();
     }
