@@ -44,6 +44,7 @@ import type {
 import { getDailyRewardDateKey, getPreviousDailyRewardDateKey, resolveDailyRewardForStreak } from "./daily-rewards";
 import {
   applySeasonalEventProgress,
+  buildEventLeaderboard,
   findSeasonalEventState,
   getActiveSeasonalEvents,
   resolveSeasonalEvents
@@ -560,6 +561,58 @@ function toMailboxResponse(account: PlayerAccountSnapshot, now = new Date()) {
   };
 }
 
+async function surfaceEndedSeasonalEventRewards(
+  store: RoomSnapshotStore,
+  account: PlayerAccountSnapshot,
+  now = new Date()
+): Promise<PlayerAccountSnapshot> {
+  if (!store.deliverPlayerMailbox) {
+    return account;
+  }
+
+  const endedEvents = resolveSeasonalEvents().filter((event) => new Date(event.endsAt).getTime() <= now.getTime());
+  if (endedEvents.length === 0) {
+    return account;
+  }
+
+  let nextAccount = account;
+  const allAccounts = await store.listPlayerAccounts();
+  for (const event of endedEvents) {
+    const rank = buildEventLeaderboard(event, allAccounts, event.leaderboard.size).find((entry) => entry.playerId === account.playerId)?.rank;
+    if (!rank) {
+      continue;
+    }
+
+    const rewardTier = event.leaderboard.rewardTiers.find((tier) => tier.rankStart <= rank && rank <= tier.rankEnd);
+    if (!rewardTier) {
+      continue;
+    }
+
+    const delivery = await store.deliverPlayerMailbox({
+      playerIds: [account.playerId],
+      message: normalizePlayerMailboxMessage({
+        id: `seasonal-event:${event.id}:leaderboard`,
+        kind: "system",
+        title: `${event.name} 结算奖励`,
+        body: `你在 ${event.name} 中获得 ${rewardTier.title}（排名 #${rank}），奖励已发放到邮箱附件。`,
+        sentAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+        grant: {
+          ...(rewardTier.badge ? { seasonBadges: [rewardTier.badge] } : {}),
+          ...(rewardTier.cosmeticId ? { cosmeticIds: [rewardTier.cosmeticId] } : {})
+        }
+      })
+    });
+    if (delivery.deliveredPlayerIds.includes(account.playerId)) {
+      nextAccount =
+        (await store.loadPlayerAccount(account.playerId)) ??
+        nextAccount;
+    }
+  }
+
+  return nextAccount;
+}
+
 function upsertSeasonalEventState(
   seasonalEventStates: SeasonalEventState[] | undefined,
   nextState: SeasonalEventState
@@ -878,18 +931,19 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
+      const hydratedAccount = await surfaceEndedSeasonalEventRewards(store, account);
       emitExperimentExposureForSurface(
-        account.playerId,
-        account.lastRoomId ?? "account-profile",
+        hydratedAccount.playerId,
+        hydratedAccount.lastRoomId ?? "account-profile",
         "player_account_profile",
         entitlements.experiments
       );
       sendJson(response, 200, {
         account: {
-          ...(await withDailyQuestBoard(withBattleReportCenter(account), store, featureFlags.quest_system_enabled)),
+          ...(await withDailyQuestBoard(withBattleReportCenter(hydratedAccount), store, featureFlags.quest_system_enabled)),
           experiments: entitlements.experiments
         },
-        session: issueNextAuthSession(account, authSession)
+        session: issueNextAuthSession(hydratedAccount, authSession)
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -943,7 +997,8 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
-      sendJson(response, 200, toMailboxResponse(account));
+      const hydratedAccount = await surfaceEndedSeasonalEventRewards(store, account);
+      sendJson(response, 200, toMailboxResponse(hydratedAccount));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

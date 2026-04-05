@@ -1026,6 +1026,7 @@ async function applyMailboxClaimsToAccount(
       resources: addResourceLedgers(accumulator.resources, claim.granted.resources),
       equipmentIds: [...accumulator.equipmentIds, ...claim.granted.equipmentIds],
       cosmeticIds: [...accumulator.cosmeticIds, ...claim.granted.cosmeticIds],
+      seasonBadges: [...accumulator.seasonBadges, ...claim.granted.seasonBadges],
       seasonPassPremium: accumulator.seasonPassPremium || claim.granted.seasonPassPremium
     }),
     {
@@ -1033,6 +1034,7 @@ async function applyMailboxClaimsToAccount(
       resources: normalizeResourceLedger(),
       equipmentIds: [] as EquipmentId[],
       cosmeticIds: [] as CosmeticId[],
+      seasonBadges: [] as string[],
       seasonPassPremium: false
     }
   );
@@ -1082,11 +1084,15 @@ async function applyMailboxClaimsToAccount(
   const nextGems = normalizeGemAmount(currentAccount.gems) + totalGrant.gems;
   const nextSeasonPassPremium = currentAccount.seasonPassPremium === true || totalGrant.seasonPassPremium;
   const nextCosmeticInventory = applyOwnedCosmetics(currentAccount.cosmeticInventory, totalGrant.cosmeticIds);
+  const nextSeasonBadges = Array.from(new Set([...(currentAccount.seasonBadges ?? []), ...totalGrant.seasonBadges])).sort((left, right) =>
+    left.localeCompare(right)
+  );
 
   await connection.query(
     `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
      SET gems = ?,
          season_pass_premium = ?,
+         season_badges_json = ?,
          cosmetic_inventory_json = ?,
          global_resources_json = ?,
          recent_event_log_json = ?,
@@ -1096,6 +1102,7 @@ async function applyMailboxClaimsToAccount(
     [
       nextGems,
       nextSeasonPassPremium ? 1 : 0,
+      JSON.stringify(nextSeasonBadges),
       JSON.stringify(nextCosmeticInventory),
       JSON.stringify(nextGlobalResources),
       JSON.stringify(nextRecentEventLog),

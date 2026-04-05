@@ -17,6 +17,7 @@ export interface NormalizedMailboxGrant {
   resources: ResourceLedger;
   equipmentIds: EquipmentId[];
   cosmeticIds: CosmeticId[];
+  seasonBadges: string[];
   seasonPassPremium: boolean;
 }
 
@@ -101,6 +102,7 @@ export function normalizePlayerMailboxGrant(grant?: PlayerMailboxGrant | null): 
       throw new Error(`unknown mailbox cosmetic grant: ${cosmeticId}`);
     }
   }
+  const seasonBadges = Array.from(new Set((grant?.seasonBadges ?? []).map((badge) => badge?.trim()).filter(Boolean)));
 
   return {
     gems: Math.max(0, Math.floor(grant?.gems ?? 0)),
@@ -111,6 +113,7 @@ export function normalizePlayerMailboxGrant(grant?: PlayerMailboxGrant | null): 
     },
     equipmentIds,
     cosmeticIds,
+    seasonBadges,
     seasonPassPremium: grant?.seasonPassPremium === true
   };
 }
@@ -124,6 +127,7 @@ export function hasMailboxGrant(grant?: PlayerMailboxGrant | null): boolean {
     normalized.resources.ore > 0 ||
     normalized.equipmentIds.length > 0 ||
     normalized.cosmeticIds.length > 0 ||
+    normalized.seasonBadges.length > 0 ||
     normalized.seasonPassPremium
   );
 }
@@ -153,6 +157,7 @@ export function normalizePlayerMailboxMessage(
               : {}),
             ...(normalizedGrant.equipmentIds.length > 0 ? { equipmentIds: normalizedGrant.equipmentIds } : {}),
             ...(normalizedGrant.cosmeticIds.length > 0 ? { cosmeticIds: normalizedGrant.cosmeticIds } : {}),
+            ...(normalizedGrant.seasonBadges.length > 0 ? { seasonBadges: normalizedGrant.seasonBadges } : {}),
             ...(normalizedGrant.seasonPassPremium ? { seasonPassPremium: true } : {})
           }
         }
@@ -304,7 +309,8 @@ export function createMailboxClaimEventLogEntry(
     granted.resources.wood > 0 ? { type: "resource" as const, label: "wood", amount: granted.resources.wood } : null,
     granted.resources.ore > 0 ? { type: "resource" as const, label: "ore", amount: granted.resources.ore } : null,
     ...granted.equipmentIds.map((equipmentId) => ({ type: "badge" as const, label: equipmentId })),
-    ...granted.cosmeticIds.map((cosmeticId) => ({ type: "badge" as const, label: cosmeticId }))
+    ...granted.cosmeticIds.map((cosmeticId) => ({ type: "badge" as const, label: cosmeticId })),
+    ...granted.seasonBadges.map((badge) => ({ type: "badge" as const, label: badge }))
   ].filter((reward): reward is NonNullable<typeof reward> => Boolean(reward));
 
   return {

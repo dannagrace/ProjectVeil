@@ -209,6 +209,7 @@ export interface VeilHudRenderState {
     available: boolean;
   };
   battlePassEnabled: boolean;
+  seasonalEventAvailable: boolean;
   interaction: {
     title: string;
     detail: string;
@@ -248,6 +249,7 @@ export interface VeilHudPanelOptions {
   onToggleInventory?: () => void;
   onToggleAchievements?: () => void;
   onToggleProgression?: () => void;
+  onToggleSeasonalEvent?: () => void;
   onToggleReport?: () => void;
   onToggleSurrender?: () => void;
   onShareBattleResult?: () => void;
@@ -361,6 +363,7 @@ export class VeilHudPanel extends Component {
   private onToggleInventory: (() => void) | undefined;
   private onToggleAchievements: (() => void) | undefined;
   private onToggleProgression: (() => void) | undefined;
+  private onToggleSeasonalEvent: (() => void) | undefined;
   private onToggleReport: (() => void) | undefined;
   private onToggleSurrender: (() => void) | undefined;
   private onShareBattleResult: (() => void) | undefined;
@@ -383,6 +386,7 @@ export class VeilHudPanel extends Component {
     this.onToggleInventory = options.onToggleInventory;
     this.onToggleAchievements = options.onToggleAchievements;
     this.onToggleProgression = options.onToggleProgression;
+    this.onToggleSeasonalEvent = options.onToggleSeasonalEvent;
     this.onToggleReport = options.onToggleReport;
     this.onToggleSurrender = options.onToggleSurrender;
     this.onShareBattleResult = options.onShareBattleResult;
@@ -684,6 +688,7 @@ export class VeilHudPanel extends Component {
       { nodeName: "HudInventory", debugLabel: "inventory", callback: this.onToggleInventory ?? null },
       { nodeName: "HudAchievements", debugLabel: "achievements", callback: this.onToggleAchievements ?? null },
       { nodeName: "HudBattlePass", debugLabel: "battle-pass", callback: this.onToggleProgression ?? null },
+      { nodeName: "HudSeasonalEvent", debugLabel: "seasonal-event", callback: this.onToggleSeasonalEvent ?? null },
       { nodeName: "HudReportPlayer", debugLabel: "report-player", callback: this.onToggleReport ?? null },
       { nodeName: "HudSurrender", debugLabel: "surrender", callback: this.onToggleSurrender ?? null },
       { nodeName: "HudShareBattleResult", debugLabel: "share-battle-result", callback: this.onShareBattleResult ?? null },
@@ -1634,6 +1639,7 @@ export class VeilHudPanel extends Component {
     this.ensureActionButton(actionsNode, "HudInventory", "装备背包");
     this.ensureActionButton(actionsNode, "HudAchievements", "战报中心");
     this.ensureActionButton(actionsNode, "HudBattlePass", "赛季通行证");
+    this.ensureActionButton(actionsNode, "HudSeasonalEvent", "赛季活动");
     this.ensureActionButton(actionsNode, "HudReportPlayer", "举报玩家");
     this.ensureActionButton(actionsNode, "HudSurrender", "认输");
     this.ensureActionButton(actionsNode, "HudShareBattleResult", "分享战绩");
@@ -1666,6 +1672,12 @@ export class VeilHudPanel extends Component {
         label: "赛季通行证",
         callback: this.onToggleProgression ?? null,
         visible: this.currentState?.battlePassEnabled ?? false
+      },
+      {
+        name: "HudSeasonalEvent",
+        label: "赛季活动",
+        callback: this.onToggleSeasonalEvent ?? null,
+        visible: this.currentState?.seasonalEventAvailable ?? false
       },
       { name: "HudReportPlayer", label: "举报玩家", callback: this.onToggleReport ?? null },
       {

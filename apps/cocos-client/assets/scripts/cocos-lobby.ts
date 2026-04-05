@@ -177,6 +177,74 @@ interface PlayerSeasonProgressApiPayload {
   seasonPassClaimedTiers?: number[];
 }
 
+interface SeasonalEventLeaderboardEntryApiPayload {
+  rank?: number;
+  playerId?: string;
+  displayName?: string;
+  points?: number;
+  lastUpdatedAt?: string;
+  rewardPreview?: string;
+}
+
+interface SeasonalEventRewardTierApiPayload {
+  rankStart?: number;
+  rankEnd?: number;
+  title?: string;
+  badge?: string;
+  cosmeticId?: string;
+}
+
+interface SeasonalEventRewardApiPayload {
+  id?: string;
+  name?: string;
+  pointsRequired?: number;
+  kind?: "gems" | "resources" | "badge" | "cosmetic";
+  gems?: number;
+  resources?: Partial<PlayerAccountReadModel["globalResources"]>;
+  badge?: string;
+  cosmeticId?: string;
+}
+
+interface SeasonalEventPlayerApiPayload {
+  points?: number;
+  claimedRewardIds?: string[];
+  claimableRewardIds?: string[];
+}
+
+interface SeasonalEventApiPayload {
+  id?: string;
+  name?: string;
+  description?: string;
+  startsAt?: string;
+  endsAt?: string;
+  durationDays?: number;
+  bannerText?: string;
+  remainingMs?: number;
+  rewards?: SeasonalEventRewardApiPayload[];
+  player?: SeasonalEventPlayerApiPayload;
+  leaderboard?: {
+    size?: number;
+    rewardTiers?: SeasonalEventRewardTierApiPayload[];
+    entries?: SeasonalEventLeaderboardEntryApiPayload[];
+    topThree?: SeasonalEventLeaderboardEntryApiPayload[];
+  };
+}
+
+interface SeasonalEventsApiPayload {
+  events?: SeasonalEventApiPayload[];
+}
+
+interface SeasonalEventProgressApiPayload {
+  applied?: boolean;
+  event?: SeasonalEventApiPayload | null;
+  eventProgress?: {
+    eventId?: string;
+    delta?: number;
+    points?: number;
+    objectiveId?: string;
+  } | null;
+}
+
 export interface CocosAccountRegistrationRequestResult {
   status: string;
   expiresAt?: string;
@@ -204,6 +272,70 @@ export interface CocosEventHistoryPage {
   hasMore: boolean;
 }
 
+export interface CocosSeasonalEventLeaderboardEntry {
+  rank: number;
+  playerId: string;
+  displayName: string;
+  points: number;
+  lastUpdatedAt: string;
+  rewardPreview?: string;
+}
+
+export interface CocosSeasonalEventRewardTier {
+  rankStart: number;
+  rankEnd: number;
+  title: string;
+  badge?: string;
+  cosmeticId?: string;
+}
+
+export interface CocosSeasonalEventReward {
+  id: string;
+  name: string;
+  pointsRequired: number;
+  kind: "gems" | "resources" | "badge" | "cosmetic";
+  gems?: number;
+  resources?: PlayerAccountReadModel["globalResources"];
+  badge?: string;
+  cosmeticId?: string;
+}
+
+export interface CocosSeasonalEventPlayerProgress {
+  points: number;
+  claimedRewardIds: string[];
+  claimableRewardIds: string[];
+}
+
+export interface CocosSeasonalEvent {
+  id: string;
+  name: string;
+  description: string;
+  startsAt: string;
+  endsAt: string;
+  durationDays: number;
+  bannerText: string;
+  remainingMs: number;
+  rewards: CocosSeasonalEventReward[];
+  player: CocosSeasonalEventPlayerProgress;
+  leaderboard: {
+    size: number;
+    rewardTiers: CocosSeasonalEventRewardTier[];
+    entries: CocosSeasonalEventLeaderboardEntry[];
+    topThree: CocosSeasonalEventLeaderboardEntry[];
+  };
+}
+
+export interface CocosSeasonalEventProgressResult {
+  applied: boolean;
+  event: CocosSeasonalEvent | null;
+  eventProgress: {
+    eventId: string;
+    delta: number;
+    points: number;
+    objectiveId: string;
+  } | null;
+}
+
 function normalizeSeasonProgress(payload?: PlayerSeasonProgressApiPayload | null): CocosSeasonProgress {
   const seasonPassClaimedTiers = Array.from(
     new Set(
@@ -219,6 +351,124 @@ function normalizeSeasonProgress(payload?: PlayerSeasonProgressApiPayload | null
     seasonPassTier: Math.max(1, Math.floor(payload?.seasonPassTier ?? 1)),
     seasonPassPremium: payload?.seasonPassPremium === true,
     seasonPassClaimedTiers
+  };
+}
+
+function normalizeEventTimestamp(value?: string | null): string {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return new Date(0).toISOString();
+  }
+
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? new Date(0).toISOString() : parsed.toISOString();
+}
+
+function normalizeSeasonalEventLeaderboardEntry(
+  payload?: SeasonalEventLeaderboardEntryApiPayload | null
+): CocosSeasonalEventLeaderboardEntry | null {
+  const playerId = payload?.playerId?.trim();
+  if (!playerId) {
+    return null;
+  }
+
+  const rank = Math.max(1, Math.floor(payload?.rank ?? 1));
+  return {
+    rank,
+    playerId,
+    displayName: normalizeDisplayName(playerId, payload?.displayName),
+    points: Math.max(0, Math.floor(payload?.points ?? 0)),
+    lastUpdatedAt: normalizeEventTimestamp(payload?.lastUpdatedAt),
+    ...(payload?.rewardPreview?.trim() ? { rewardPreview: payload.rewardPreview.trim() } : {})
+  };
+}
+
+function normalizeSeasonalEventRewardTier(payload?: SeasonalEventRewardTierApiPayload | null): CocosSeasonalEventRewardTier | null {
+  const title = payload?.title?.trim();
+  if (!title) {
+    return null;
+  }
+
+  return {
+    rankStart: Math.max(1, Math.floor(payload?.rankStart ?? 1)),
+    rankEnd: Math.max(1, Math.floor(payload?.rankEnd ?? payload?.rankStart ?? 1)),
+    title,
+    ...(payload?.badge?.trim() ? { badge: payload.badge.trim() } : {}),
+    ...(payload?.cosmeticId?.trim() ? { cosmeticId: payload.cosmeticId.trim() } : {})
+  };
+}
+
+function normalizeSeasonalEventReward(payload?: SeasonalEventRewardApiPayload | null): CocosSeasonalEventReward | null {
+  const id = payload?.id?.trim();
+  const name = payload?.name?.trim();
+  if (!id || !name) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    pointsRequired: Math.max(0, Math.floor(payload?.pointsRequired ?? 0)),
+    kind: payload?.kind ?? "gems",
+    ...(Math.max(0, Math.floor(payload?.gems ?? 0)) > 0 ? { gems: Math.max(0, Math.floor(payload?.gems ?? 0)) } : {}),
+    ...((payload?.resources?.gold ?? 0) > 0 || (payload?.resources?.wood ?? 0) > 0 || (payload?.resources?.ore ?? 0) > 0
+      ? {
+          resources: {
+            gold: Math.max(0, Math.floor(payload?.resources?.gold ?? 0)),
+            wood: Math.max(0, Math.floor(payload?.resources?.wood ?? 0)),
+            ore: Math.max(0, Math.floor(payload?.resources?.ore ?? 0))
+          }
+        }
+      : {}),
+    ...(payload?.badge?.trim() ? { badge: payload.badge.trim() } : {}),
+    ...(payload?.cosmeticId?.trim() ? { cosmeticId: payload.cosmeticId.trim() } : {})
+  };
+}
+
+function normalizeSeasonalEvent(payload?: SeasonalEventApiPayload | null): CocosSeasonalEvent | null {
+  const id = payload?.id?.trim();
+  if (!id) {
+    return null;
+  }
+
+  const entries = (payload?.leaderboard?.entries ?? [])
+    .map((entry) => normalizeSeasonalEventLeaderboardEntry(entry))
+    .filter((entry): entry is CocosSeasonalEventLeaderboardEntry => Boolean(entry))
+    .sort((left, right) => left.rank - right.rank || left.playerId.localeCompare(right.playerId));
+  const topThree = (payload?.leaderboard?.topThree ?? [])
+    .map((entry) => normalizeSeasonalEventLeaderboardEntry(entry))
+    .filter((entry): entry is CocosSeasonalEventLeaderboardEntry => Boolean(entry))
+    .sort((left, right) => left.rank - right.rank || left.playerId.localeCompare(right.playerId));
+
+  return {
+    id,
+    name: payload?.name?.trim() || id,
+    description: payload?.description?.trim() || "",
+    startsAt: normalizeEventTimestamp(payload?.startsAt),
+    endsAt: normalizeEventTimestamp(payload?.endsAt),
+    durationDays: Math.max(1, Math.floor(payload?.durationDays ?? 1)),
+    bannerText: payload?.bannerText?.trim() || "",
+    remainingMs: Math.max(0, Math.floor(payload?.remainingMs ?? 0)),
+    rewards: (payload?.rewards ?? [])
+      .map((reward) => normalizeSeasonalEventReward(reward))
+      .filter((reward): reward is CocosSeasonalEventReward => Boolean(reward))
+      .sort((left, right) => left.pointsRequired - right.pointsRequired || left.id.localeCompare(right.id)),
+    player: {
+      points: Math.max(0, Math.floor(payload?.player?.points ?? 0)),
+      claimedRewardIds: Array.from(new Set((payload?.player?.claimedRewardIds ?? []).map((entry) => entry?.trim()).filter(Boolean))),
+      claimableRewardIds: Array.from(
+        new Set((payload?.player?.claimableRewardIds ?? []).map((entry) => entry?.trim()).filter(Boolean))
+      )
+    },
+    leaderboard: {
+      size: Math.max(1, Math.floor(payload?.leaderboard?.size ?? Math.max(entries.length, 10))),
+      rewardTiers: (payload?.leaderboard?.rewardTiers ?? [])
+        .map((tier) => normalizeSeasonalEventRewardTier(tier))
+        .filter((tier): tier is CocosSeasonalEventRewardTier => Boolean(tier))
+        .sort((left, right) => left.rankStart - right.rankStart || left.rankEnd - right.rankEnd),
+      entries,
+      topThree
+    }
   };
 }
 
@@ -1985,4 +2235,103 @@ export async function claimCocosSeasonTier(
       ...(storage !== undefined ? { storage } : {})
     }
   );
+}
+
+export async function loadCocosActiveSeasonalEvents(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+    throwOnError?: boolean;
+  }
+): Promise<CocosSeasonalEvent[]> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+
+  try {
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
+      `${resolveCocosApiBaseUrl(remoteUrl)}/api/events/active`,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
+      }
+    )) as SeasonalEventsApiPayload;
+    return (payload.events ?? [])
+      .map((event) => normalizeSeasonalEvent(event))
+      .filter((event): event is CocosSeasonalEvent => Boolean(event))
+      .sort((left, right) => left.endsAt.localeCompare(right.endsAt) || left.id.localeCompare(right.id));
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
+      clearStoredCocosAuthSession(storage);
+    }
+    if (options?.throwOnError) {
+      throw error;
+    }
+    return [];
+  }
+}
+
+export async function submitCocosSeasonalEventProgress(
+  remoteUrl: string,
+  eventId: string,
+  action: {
+    actionId: string;
+    actionType: string;
+    battleId?: string;
+    dungeonId?: string;
+    occurredAt?: string;
+  },
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+  }
+): Promise<CocosSeasonalEventProgressResult> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+
+  const payload = (await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/events/${encodeURIComponent(eventId)}/progress`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(authSession?.token ? buildCocosAuthHeaders(authSession.token) : {})
+      },
+      body: JSON.stringify({
+        actionId: action.actionId,
+        actionType: action.actionType,
+        ...(action.battleId?.trim() ? { battleId: action.battleId.trim() } : {}),
+        ...(action.dungeonId?.trim() ? { dungeonId: action.dungeonId.trim() } : {}),
+        ...(action.occurredAt?.trim() ? { occurredAt: action.occurredAt.trim() } : {})
+      })
+    },
+    authSession,
+    {
+      ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(storage !== undefined ? { storage } : {})
+    }
+  )) as SeasonalEventProgressApiPayload;
+
+  return {
+    applied: payload.applied === true,
+    event: normalizeSeasonalEvent(payload.event),
+    eventProgress: payload.eventProgress?.eventId?.trim()
+      ? {
+          eventId: payload.eventProgress.eventId.trim(),
+          delta: Math.max(0, Math.floor(payload.eventProgress.delta ?? 0)),
+          points: Math.max(0, Math.floor(payload.eventProgress.points ?? 0)),
+          objectiveId: payload.eventProgress.objectiveId?.trim() || "objective"
+        }
+      : null
+  };
 }

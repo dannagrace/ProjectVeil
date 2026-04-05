@@ -61,6 +61,26 @@
       "previewAsset": "borders/vanguard"
     },
     {
+      "id": "bridge-champion-border",
+      "name": "Bridge Champion Border",
+      "category": "profile_border",
+      "rarity": "epic",
+      "description": "A commemorative border awarded to the top defender of the bridge season.",
+      "price": 0,
+      "unlockCondition": "event_reward",
+      "previewAsset": "borders/bridge-champion"
+    },
+    {
+      "id": "bridge-warden-banner",
+      "name": "Bridge Warden Banner",
+      "category": "profile_border",
+      "rarity": "rare",
+      "description": "A frontier campaign banner granted to high-ranking bridge defenders.",
+      "price": 0,
+      "unlockCondition": "event_reward",
+      "previewAsset": "borders/bridge-warden"
+    },
+    {
       "id": "emote-cheer-spark",
       "name": "Spark Cheer",
       "category": "battle_emote",

@@ -133,6 +133,17 @@ export type ServerMessage =
       createdAt: string;
     }
   | {
+      type: "event.progress.update";
+      requestId: "push";
+      delivery: "push";
+      payload: {
+        eventId: string;
+        points: number;
+        delta: number;
+        objectiveId: string;
+      };
+    }
+  | {
       type: "COSMETIC_APPLIED";
       requestId: string;
       delivery: "reply" | "push";
