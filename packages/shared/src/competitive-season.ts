@@ -1,6 +1,7 @@
 import rankedSeasonConfigDocument from "../../../configs/ranked-season.json";
 import { normalizeEloRating, type PlayerTier, type RankDivisionId } from "./matchmaking.ts";
 import type { PlayerBattleReplaySummary } from "./battle-replay.ts";
+import type { RankedWeeklyProgress } from "./models.ts";
 
 interface RankedSeasonConfigDocument {
   divisionThresholds?: Partial<Record<RankDivisionId, number>> | null;
@@ -99,6 +100,16 @@ export function getRankDivisionIndex(division: RankDivisionId): number {
   return RANK_DIVISION_ORDER.indexOf(division);
 }
 
+export function getNextRankDivision(division: RankDivisionId): RankDivisionId | null {
+  const index = getRankDivisionIndex(division);
+  return index >= 0 && index < RANK_DIVISION_ORDER.length - 1 ? RANK_DIVISION_ORDER[index + 1]! : null;
+}
+
+export function getPreviousRankDivision(division: RankDivisionId): RankDivisionId | null {
+  const index = getRankDivisionIndex(division);
+  return index > 0 ? RANK_DIVISION_ORDER[index - 1]! : null;
+}
+
 export function getRankDivisionForRating(rating: number | undefined | null): RankDivisionId {
   const normalized = normalizeEloRating(rating);
   const config = resolveRankedSeasonConfig();
@@ -133,8 +144,99 @@ export function getSoftDecayDivision(division: RankDivisionId): RankDivisionId {
   return config.softDecay[getTierForDivision(division)] ?? division;
 }
 
+export function getPromotionSeriesTargetDivision(
+  currentDivision: RankDivisionId,
+  rating: number | undefined | null
+): RankDivisionId | null {
+  const nextDivision = getNextRankDivision(currentDivision);
+  if (!nextDivision) {
+    return null;
+  }
+
+  return normalizeEloRating(rating) >= getRankDivisionThreshold(nextDivision) ? nextDivision : null;
+}
+
 export function isPromotionSeriesBoundary(currentDivision: RankDivisionId, nextDivision: RankDivisionId): boolean {
   return getTierForDivision(currentDivision) !== getTierForDivision(nextDivision) && getRankDivisionIndex(nextDivision) > getRankDivisionIndex(currentDivision);
+}
+
+export function rollRankedWeeklyProgress(
+  progress: RankedWeeklyProgress | undefined,
+  referenceTime: Date | string = new Date()
+): RankedWeeklyProgress {
+  const currentWeekStartsAt = getUtcWeekStart(referenceTime);
+  const previousWeekStartsAt = addUtcDays(currentWeekStartsAt, -7);
+  const next: RankedWeeklyProgress = {
+    currentWeekStartsAt,
+    currentWeekBattles: 0,
+    currentWeekWins: 0
+  };
+
+  if (!progress) {
+    return next;
+  }
+
+  if (progress.currentWeekStartsAt === currentWeekStartsAt) {
+    next.currentWeekBattles = Math.max(0, Math.floor(progress.currentWeekBattles ?? 0));
+    next.currentWeekWins = Math.max(0, Math.floor(progress.currentWeekWins ?? 0));
+    if (progress.previousWeekStartsAt === previousWeekStartsAt) {
+      const previousWeekBattles = Math.max(0, Math.floor(progress.previousWeekBattles ?? 0));
+      const previousWeekWins = Math.max(0, Math.floor(progress.previousWeekWins ?? 0));
+      next.previousWeekStartsAt = previousWeekStartsAt;
+      if (previousWeekBattles > 0) {
+        next.previousWeekBattles = previousWeekBattles;
+      }
+      if (previousWeekWins > 0) {
+        next.previousWeekWins = previousWeekWins;
+      }
+    }
+    return next;
+  }
+
+  const previousWeek =
+    progress.currentWeekStartsAt === previousWeekStartsAt
+      ? {
+          battles: Math.max(0, Math.floor(progress.currentWeekBattles ?? 0)),
+          wins: Math.max(0, Math.floor(progress.currentWeekWins ?? 0))
+        }
+      : progress.previousWeekStartsAt === previousWeekStartsAt
+        ? {
+            battles: Math.max(0, Math.floor(progress.previousWeekBattles ?? 0)),
+            wins: Math.max(0, Math.floor(progress.previousWeekWins ?? 0))
+          }
+        : null;
+
+  if (previousWeek) {
+    next.previousWeekStartsAt = previousWeekStartsAt;
+    if (previousWeek.battles > 0) {
+      next.previousWeekBattles = previousWeek.battles;
+    }
+    if (previousWeek.wins > 0) {
+      next.previousWeekWins = previousWeek.wins;
+    }
+  }
+
+  return next;
+}
+
+export function shouldApplyWeeklyDivisionDecay(
+  division: RankDivisionId,
+  progress: RankedWeeklyProgress | undefined,
+  referenceTime: Date | string = new Date()
+): boolean {
+  const currentWeekStartsAt = getUtcWeekStart(referenceTime);
+  if (!progress || progress.currentWeekStartsAt === currentWeekStartsAt || division === "bronze_i") {
+    return false;
+  }
+
+  const previousWeekStartsAt = addUtcDays(currentWeekStartsAt, -7);
+  if (progress.currentWeekStartsAt === previousWeekStartsAt) {
+    return Math.max(0, Math.floor(progress.currentWeekBattles ?? 0)) < 1;
+  }
+  if (progress.previousWeekStartsAt === previousWeekStartsAt) {
+    return Math.max(0, Math.floor(progress.previousWeekBattles ?? 0)) < 1;
+  }
+  return true;
 }
 
 export function didPlayerWinReplay(replay: Pick<PlayerBattleReplaySummary, "playerCamp" | "result">): boolean {

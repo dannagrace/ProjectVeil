@@ -254,11 +254,16 @@ export function normalizePlayerAccountReadModel(
   if (account?.rankedWeeklyProgress?.currentWeekStartsAt) {
     rankedWeeklyProgress = {
       currentWeekStartsAt: normalizeTimestamp(account.rankedWeeklyProgress.currentWeekStartsAt) ?? getUtcWeekStart(),
+      currentWeekBattles: Math.max(0, Math.floor(account.rankedWeeklyProgress.currentWeekBattles ?? 0)),
       currentWeekWins: Math.max(0, Math.floor(account.rankedWeeklyProgress.currentWeekWins ?? 0))
     };
     const previousWeekStartsAt = normalizeTimestamp(account.rankedWeeklyProgress.previousWeekStartsAt);
     if (previousWeekStartsAt) {
       rankedWeeklyProgress.previousWeekStartsAt = previousWeekStartsAt;
+    }
+    const previousWeekBattles = Math.max(0, Math.floor(account.rankedWeeklyProgress.previousWeekBattles ?? 0));
+    if (previousWeekBattles > 0) {
+      rankedWeeklyProgress.previousWeekBattles = previousWeekBattles;
     }
     const previousWeekWins = Math.max(0, Math.floor(account.rankedWeeklyProgress.previousWeekWins ?? 0));
     if (previousWeekWins > 0) {

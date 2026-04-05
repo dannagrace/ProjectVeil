@@ -233,8 +233,10 @@ test("GET /api/leaderboard/weekly returns current and previous weekly standings"
     rankDivision: "gold_i",
     rankedWeeklyProgress: {
       currentWeekStartsAt,
+      currentWeekBattles: 5,
       currentWeekWins: 5,
       previousWeekStartsAt,
+      previousWeekBattles: 1,
       previousWeekWins: 1
     }
   });
@@ -244,8 +246,10 @@ test("GET /api/leaderboard/weekly returns current and previous weekly standings"
     rankDivision: "gold_i",
     rankedWeeklyProgress: {
       currentWeekStartsAt,
+      currentWeekBattles: 1,
       currentWeekWins: 0,
       previousWeekStartsAt,
+      previousWeekBattles: 4,
       previousWeekWins: 4
     }
   });
