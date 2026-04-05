@@ -4,6 +4,8 @@
 
 The validator is intended to fail before runtime when authored config would otherwise be silently normalized or only break after archive hydration, equipment reconciliation, or reward application.
 
+If you are editing boss encounter templates, use [`docs/boss-encounter-template-authoring.md`](./boss-encounter-template-authoring.md) for the template shape, allowed field values, and the authoring workflow that feeds this validator.
+
 ## Local Workflow
 
 Run the default shipped bundle:
@@ -50,6 +52,7 @@ That step uploads the generated report artifact so reviewers can inspect the exa
 - Equipped and inventory items must resolve through the built-in equipment catalog, respect slot typing, and stay within the six-slot backpack limit.
 - Legacy `loadout.equipment.trinketIds` entries are rejected so authors migrate to `accessoryId` plus `inventory` before archive/persistence use.
 - Neutral-army rewards and guaranteed resource payloads must use positive integer amounts.
+- Boss encounter templates must use valid phase ordering, known skill/status/unit references, and valid scripted ability plus environmental effect fields.
 
 ## Common Invalid States
 
