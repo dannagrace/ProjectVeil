@@ -21,6 +21,7 @@ import {
   type EventLogQuery,
   type CosmeticId,
   normalizeHeroState,
+  summarizePlayerMailbox,
   type EventLogEntry,
   type EquipmentId,
   type GuildState,
@@ -29,6 +30,7 @@ import {
   type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
   type PlayerAchievementProgress,
+  type PlayerMailboxMessage,
   type RankedWeeklyProgress,
   type ResourceLedger,
   type SeasonalEventState,
@@ -36,6 +38,19 @@ import {
   type WorldState
 } from "../../../packages/shared/src/index";
 import type { RoomPersistenceSnapshot } from "./index";
+import {
+  claimAllPlayerMailboxMessages,
+  claimPlayerMailboxMessage,
+  createMailboxClaimEventLogEntry,
+  deliverPlayerMailboxMessage,
+  normalizePlayerMailboxGrant,
+  normalizePlayerMailboxMessage,
+  pruneExpiredPlayerMailboxMessages,
+  type PlayerMailboxClaimAllResult,
+  type PlayerMailboxClaimResult,
+  type PlayerMailboxDeliveryInput,
+  type PlayerMailboxDeliveryResult
+} from "./player-mailbox";
 import {
   applyBattlePassXp,
   resolveBattlePassConfig,
@@ -111,6 +126,9 @@ export interface RoomSnapshotStore {
   creditGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   debitGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   claimPlayerReferral?(referrerId: string, newPlayerId: string, rewardGems: number): Promise<PlayerReferralClaimResult>;
+  deliverPlayerMailbox?(input: PlayerMailboxDeliveryInput): Promise<PlayerMailboxDeliveryResult>;
+  claimPlayerMailboxMessage?(playerId: string, messageId: string, claimedAt?: string): Promise<PlayerMailboxClaimResult>;
+  claimAllPlayerMailboxMessages?(playerId: string, claimedAt?: string): Promise<PlayerMailboxClaimAllResult>;
   claimBattlePassTier?(playerId: string, tier: number): Promise<BattlePassClaimResult>;
   purchaseShopProduct?(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult>;
   savePlayerAccountPrivacyConsent(
@@ -221,6 +239,7 @@ interface PlayerAccountRow extends RowDataPacket {
   season_badges_json: string | string[] | null;
   campaign_progress_json: string | PlayerAccountSnapshot["campaignProgress"] | null;
   seasonal_event_states_json: string | PlayerAccountSnapshot["seasonalEventStates"] | null;
+  mailbox_json: string | PlayerAccountSnapshot["mailbox"] | null;
   global_resources_json: string | ResourceLedger;
   achievements_json: string | PlayerAchievementProgress[] | null;
   cosmetic_inventory_json: string | PlayerAccountSnapshot["cosmeticInventory"] | null;
@@ -385,6 +404,7 @@ export interface PlayerRoomProfileSnapshot {
 
 export interface PlayerAccountSnapshot extends PlayerAccountReadModel {
   recentBattleReplays?: PlayerBattleReplaySummary[];
+  mailbox?: PlayerMailboxMessage[];
   accountSessionVersion?: number;
   refreshSessionId?: string;
   refreshTokenExpiresAt?: string;
@@ -588,6 +608,7 @@ export interface PlayerAccountProgressPatch {
   recentEventLog?: Partial<EventLogEntry>[] | null;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null;
   dailyDungeonState?: PlayerAccountSnapshot["dailyDungeonState"] | null;
+  mailbox?: PlayerAccountSnapshot["mailbox"] | null;
   tutorialStep?: number | null;
   dailyPlayMinutes?: number | null;
   lastPlayDate?: string | null;
@@ -979,6 +1000,148 @@ function createBattlePassClaimEventLogEntry(playerId: string, input: {
   };
 }
 
+async function applyMailboxClaimsToAccount(
+  connection: PoolConnection,
+  currentAccount: PlayerAccountSnapshot,
+  input: {
+    playerId: string;
+    mailbox: PlayerMailboxMessage[];
+    claims: Array<{
+      message: PlayerMailboxMessage;
+      granted: ReturnType<typeof normalizePlayerMailboxGrant>;
+    }>;
+  }
+): Promise<void> {
+  if (input.claims.length === 0) {
+    return;
+  }
+
+  const nextMailbox = input.mailbox;
+  const totalGrant = input.claims.reduce(
+    (accumulator, claim) => ({
+      gems: accumulator.gems + claim.granted.gems,
+      resources: addResourceLedgers(accumulator.resources, claim.granted.resources),
+      equipmentIds: [...accumulator.equipmentIds, ...claim.granted.equipmentIds],
+      cosmeticIds: [...accumulator.cosmeticIds, ...claim.granted.cosmeticIds],
+      seasonPassPremium: accumulator.seasonPassPremium || claim.granted.seasonPassPremium
+    }),
+    {
+      gems: 0,
+      resources: normalizeResourceLedger(),
+      equipmentIds: [] as EquipmentId[],
+      cosmeticIds: [] as CosmeticId[],
+      seasonPassPremium: false
+    }
+  );
+
+  let nextHeroArchive: PlayerHeroArchiveSnapshot | null = null;
+  if (totalGrant.equipmentIds.length > 0) {
+    const [heroArchiveRows] = await connection.query<PlayerHeroArchiveRow[]>(
+      `SELECT player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json, updated_at
+       FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+       WHERE player_id = ?
+       ORDER BY updated_at DESC, hero_id ASC
+       LIMIT 1
+       FOR UPDATE`,
+      [input.playerId]
+    );
+    const currentArchive = heroArchiveRows[0] ? toPlayerHeroArchiveSnapshot(heroArchiveRows[0]) : null;
+    if (!currentArchive) {
+      throw new Error("player hero archive not found");
+    }
+
+    let nextInventory = [...currentArchive.hero.loadout.inventory];
+    for (const equipmentId of totalGrant.equipmentIds) {
+      const inventoryUpdate = tryAddEquipmentToInventory(nextInventory, equipmentId);
+      if (!inventoryUpdate.stored) {
+        throw new Error("equipment inventory full");
+      }
+      nextInventory = inventoryUpdate.inventory;
+    }
+
+    nextHeroArchive = {
+      ...currentArchive,
+      hero: normalizeHeroState({
+        ...currentArchive.hero,
+        loadout: {
+          ...currentArchive.hero.loadout,
+          inventory: nextInventory
+        }
+      })
+    };
+  }
+
+  const eventEntries = input.claims.map((claim) =>
+    createMailboxClaimEventLogEntry(input.playerId, claim.message, claim.granted, claim.message.claimedAt ?? new Date().toISOString())
+  );
+  const nextRecentEventLog = appendEventLogEntries(currentAccount.recentEventLog, eventEntries);
+  const nextGlobalResources = addResourceLedgers(currentAccount.globalResources, totalGrant.resources);
+  const nextGems = normalizeGemAmount(currentAccount.gems) + totalGrant.gems;
+  const nextSeasonPassPremium = currentAccount.seasonPassPremium === true || totalGrant.seasonPassPremium;
+  const nextCosmeticInventory = applyOwnedCosmetics(currentAccount.cosmeticInventory, totalGrant.cosmeticIds);
+
+  await connection.query(
+    `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+     SET gems = ?,
+         season_pass_premium = ?,
+         cosmetic_inventory_json = ?,
+         global_resources_json = ?,
+         recent_event_log_json = ?,
+         mailbox_json = ?,
+         version = version + 1
+     WHERE player_id = ?`,
+    [
+      nextGems,
+      nextSeasonPassPremium ? 1 : 0,
+      JSON.stringify(nextCosmeticInventory),
+      JSON.stringify(nextGlobalResources),
+      JSON.stringify(nextRecentEventLog),
+      JSON.stringify(nextMailbox),
+      input.playerId
+    ]
+  );
+
+  for (const claim of input.claims) {
+    if (claim.granted.gems > 0) {
+      await appendGemLedgerEntry(connection, {
+        entryId: randomUUID(),
+        playerId: input.playerId,
+        delta: claim.granted.gems,
+        reason: "reward",
+        refId: `mailbox:${claim.message.id}`
+      });
+    }
+  }
+
+  if (nextHeroArchive) {
+    await connection.query(
+      `INSERT INTO \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+         (player_id, hero_id, hero_json, army_template_id, army_count, learned_skills_json, equipment_json, inventory_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         hero_json = VALUES(hero_json),
+         army_template_id = VALUES(army_template_id),
+         army_count = VALUES(army_count),
+         learned_skills_json = VALUES(learned_skills_json),
+         equipment_json = VALUES(equipment_json),
+         inventory_json = VALUES(inventory_json),
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        nextHeroArchive.playerId,
+        nextHeroArchive.heroId,
+        JSON.stringify(nextHeroArchive.hero),
+        nextHeroArchive.hero.armyTemplateId,
+        nextHeroArchive.hero.armyCount,
+        JSON.stringify(nextHeroArchive.hero.loadout.learnedSkills),
+        JSON.stringify(nextHeroArchive.hero.loadout.equipment),
+        JSON.stringify(nextHeroArchive.hero.loadout.inventory)
+      ]
+    );
+  }
+
+  await appendPlayerEventHistoryEntries(connection, input.playerId, eventEntries);
+}
+
 function applyOwnedCosmetics(
   current: PlayerAccountSnapshot["cosmeticInventory"],
   grantedIds: CosmeticId[]
@@ -1302,6 +1465,7 @@ function normalizePlayerAccountSnapshot(account: {
   seasonBadges?: string[] | null | undefined;
   campaignProgress?: PlayerAccountSnapshot["campaignProgress"] | null | undefined;
   seasonalEventStates?: PlayerAccountSnapshot["seasonalEventStates"] | null | undefined;
+  mailbox?: PlayerAccountSnapshot["mailbox"] | null | undefined;
   globalResources?: Partial<ResourceLedger>;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -1364,6 +1528,7 @@ function normalizePlayerAccountSnapshot(account: {
       seasonBadges: account.seasonBadges,
       campaignProgress: account.campaignProgress,
       seasonalEventStates: account.seasonalEventStates,
+      mailbox: account.mailbox,
       globalResources: normalizeResourceLedger(account.globalResources),
       achievements: account.achievements,
       recentEventLog: account.recentEventLog,
@@ -1672,6 +1837,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   season_badges_json LONGTEXT NULL,
   campaign_progress_json LONGTEXT NULL,
   seasonal_event_states_json LONGTEXT NULL,
+  mailbox_json LONGTEXT NULL,
   global_resources_json LONGTEXT NOT NULL,
   achievements_json LONGTEXT NULL,
   recent_event_log_json LONGTEXT NULL,
@@ -2115,6 +2281,22 @@ SET @veil_player_accounts_seasonal_event_states_sql := IF(
 PREPARE veil_player_accounts_seasonal_event_states_stmt FROM @veil_player_accounts_seasonal_event_states_sql;
 EXECUTE veil_player_accounts_seasonal_event_states_stmt;
 DEALLOCATE PREPARE veil_player_accounts_seasonal_event_states_stmt;
+
+SET @veil_player_accounts_mailbox_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'mailbox_json'
+);
+SET @veil_player_accounts_mailbox_sql := IF(
+  @veil_player_accounts_mailbox_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`mailbox_json\` LONGTEXT NULL AFTER \`seasonal_event_states_json\`',
+  'SELECT 1'
+);
+PREPARE veil_player_accounts_mailbox_stmt FROM @veil_player_accounts_mailbox_sql;
+EXECUTE veil_player_accounts_mailbox_stmt;
+DEALLOCATE PREPARE veil_player_accounts_mailbox_stmt;
 
 SET @veil_player_accounts_event_log_exists := (
   SELECT COUNT(*)
@@ -3021,6 +3203,10 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
       row.seasonal_event_states_json != null
         ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["seasonalEventStates"]>>(row.seasonal_event_states_json)
         : undefined,
+    mailbox:
+      row.mailbox_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["mailbox"]>>(row.mailbox_json)
+        : undefined,
     cosmeticInventory:
       row.cosmetic_inventory_json != null
         ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["cosmeticInventory"]>>(row.cosmetic_inventory_json)
@@ -3329,6 +3515,7 @@ async function savePlayerAccounts(
          season_badges_json,
          campaign_progress_json,
          seasonal_event_states_json,
+         mailbox_json,
          cosmetic_inventory_json,
          equipped_cosmetics_json,
          global_resources_json,
@@ -3340,7 +3527,7 @@ async function savePlayerAccounts(
          tutorial_step,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(display_name, VALUES(display_name)),
          elo_rating = COALESCE(elo_rating, VALUES(elo_rating)),
@@ -3357,8 +3544,9 @@ async function savePlayerAccounts(
          season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
          season_badges_json = COALESCE(season_badges_json, VALUES(season_badges_json)),
          campaign_progress_json = COALESCE(campaign_progress_json, VALUES(campaign_progress_json)),
-        seasonal_event_states_json = COALESCE(seasonal_event_states_json, VALUES(seasonal_event_states_json)),
-        cosmetic_inventory_json = COALESCE(cosmetic_inventory_json, VALUES(cosmetic_inventory_json)),
+         seasonal_event_states_json = COALESCE(seasonal_event_states_json, VALUES(seasonal_event_states_json)),
+         mailbox_json = COALESCE(mailbox_json, VALUES(mailbox_json)),
+         cosmetic_inventory_json = COALESCE(cosmetic_inventory_json, VALUES(cosmetic_inventory_json)),
         equipped_cosmetics_json = COALESCE(equipped_cosmetics_json, VALUES(equipped_cosmetics_json)),
         global_resources_json = VALUES(global_resources_json),
          achievements_json = COALESCE(achievements_json, VALUES(achievements_json)),
@@ -3386,6 +3574,7 @@ async function savePlayerAccounts(
         JSON.stringify(normalizedAccount.seasonBadges ?? []),
         JSON.stringify(normalizedAccount.campaignProgress ?? null),
         JSON.stringify(normalizedAccount.seasonalEventStates ?? null),
+        JSON.stringify(normalizedAccount.mailbox ?? null),
         JSON.stringify(normalizedAccount.cosmeticInventory ?? { ownedIds: [] }),
         JSON.stringify(normalizedAccount.equippedCosmetics ?? {}),
         JSON.stringify(normalizedAccount.globalResources),
@@ -3684,6 +3873,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_badges_json,
          campaign_progress_json,
          seasonal_event_states_json,
+         mailbox_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -3748,6 +3938,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_badges_json,
          campaign_progress_json,
          seasonal_event_states_json,
+         mailbox_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -3896,6 +4087,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_badges_json,
          campaign_progress_json,
          seasonal_event_states_json,
+         mailbox_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -4093,6 +4285,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_badges_json,
          campaign_progress_json,
          seasonal_event_states_json,
+         mailbox_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -4473,6 +4666,147 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         rewardGems: normalizedRewardGems,
         referrerId: normalizedReferrerId,
         newPlayerId: normalizedNewPlayerId
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async deliverPlayerMailbox(input: PlayerMailboxDeliveryInput): Promise<PlayerMailboxDeliveryResult> {
+    const playerIds = Array.from(new Set(input.playerIds.map((playerId) => normalizePlayerId(playerId)).filter(Boolean)));
+    if (playerIds.length === 0) {
+      throw new Error("playerIds must not be empty");
+    }
+
+    const message = normalizePlayerMailboxMessage(input.message);
+    const deliveredPlayerIds: string[] = [];
+    const skippedPlayerIds: string[] = [];
+
+    for (const playerId of playerIds) {
+      const account = await this.ensurePlayerAccount({ playerId });
+      const mailboxResult = deliverPlayerMailboxMessage(account.mailbox, message);
+      if (!mailboxResult.delivered) {
+        skippedPlayerIds.push(playerId);
+        continue;
+      }
+
+      await this.savePlayerAccountProgress(playerId, {
+        mailbox: mailboxResult.mailbox
+      });
+      deliveredPlayerIds.push(playerId);
+    }
+
+    return {
+      deliveredPlayerIds,
+      skippedPlayerIds,
+      message
+    };
+  }
+
+  async claimPlayerMailboxMessage(
+    playerId: string,
+    messageId: string,
+    claimedAt?: string
+  ): Promise<PlayerMailboxClaimResult> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const claimedAtDate = claimedAt ? new Date(claimedAt) : new Date();
+    if (Number.isNaN(claimedAtDate.getTime())) {
+      throw new Error("claimedAt must be a valid ISO timestamp");
+    }
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.query<PlayerAccountRow[]>(
+        `SELECT *
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedPlayerId]
+      );
+      const currentAccount = rows[0] ? toPlayerAccountSnapshot(rows[0]) : null;
+      if (!currentAccount) {
+        throw new Error("player account not found");
+      }
+
+      const result = claimPlayerMailboxMessage(currentAccount.mailbox, messageId, claimedAtDate);
+      if (!result.claimed || !result.message || !result.granted) {
+        await connection.commit();
+        return result;
+      }
+
+      await applyMailboxClaimsToAccount(connection, currentAccount, {
+        playerId: normalizedPlayerId,
+        mailbox: result.mailbox,
+        claims: [{ message: result.message, granted: result.granted }]
+      });
+      await connection.commit();
+      return {
+        ...result,
+        mailbox: (await this.loadPlayerAccount(normalizedPlayerId))?.mailbox ?? result.mailbox,
+        summary: summarizePlayerMailbox((await this.loadPlayerAccount(normalizedPlayerId))?.mailbox ?? result.mailbox)
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async claimAllPlayerMailboxMessages(playerId: string, claimedAt?: string): Promise<PlayerMailboxClaimAllResult> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const claimedAtDate = claimedAt ? new Date(claimedAt) : new Date();
+    if (Number.isNaN(claimedAtDate.getTime())) {
+      throw new Error("claimedAt must be a valid ISO timestamp");
+    }
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.query<PlayerAccountRow[]>(
+        `SELECT *
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedPlayerId]
+      );
+      const currentAccount = rows[0] ? toPlayerAccountSnapshot(rows[0]) : null;
+      if (!currentAccount) {
+        throw new Error("player account not found");
+      }
+
+      const result = claimAllPlayerMailboxMessages(currentAccount.mailbox, claimedAtDate);
+      if (!result.claimed) {
+        await connection.commit();
+        return result;
+      }
+
+      const claimedMessages = result.claimedMessageIds
+        .map((messageId) => result.mailbox.find((entry) => entry.id === messageId))
+        .filter((message): message is PlayerMailboxMessage => Boolean(message))
+        .map((message, index) => ({
+          message,
+          granted: result.granted[index] ?? normalizePlayerMailboxGrant(message.grant)
+        }));
+
+      await applyMailboxClaimsToAccount(connection, currentAccount, {
+        playerId: normalizedPlayerId,
+        mailbox: result.mailbox,
+        claims: claimedMessages
+      });
+      await connection.commit();
+      return {
+        ...result,
+        mailbox: (await this.loadPlayerAccount(normalizedPlayerId))?.mailbox ?? result.mailbox,
+        summary: summarizePlayerMailbox((await this.loadPlayerAccount(normalizedPlayerId))?.mailbox ?? result.mailbox)
       };
     } catch (error) {
       await connection.rollback();
@@ -5462,6 +5796,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_pass_claimed_tiers_json,
          season_badges_json,
          campaign_progress_json,
+         seasonal_event_states_json,
+         mailbox_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -5473,7 +5809,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
@@ -5491,6 +5827,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_badges_json = COALESCE(season_badges_json, VALUES(season_badges_json)),
          campaign_progress_json = COALESCE(campaign_progress_json, VALUES(campaign_progress_json)),
          seasonal_event_states_json = COALESCE(seasonal_event_states_json, VALUES(seasonal_event_states_json)),
+         mailbox_json = COALESCE(mailbox_json, VALUES(mailbox_json)),
          global_resources_json = VALUES(global_resources_json),
          achievements_json = VALUES(achievements_json),
          recent_event_log_json = VALUES(recent_event_log_json),
@@ -5521,6 +5858,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(nextAccount.seasonBadges ?? []),
         JSON.stringify(nextAccount.campaignProgress ?? null),
         JSON.stringify(nextAccount.seasonalEventStates ?? null),
+        JSON.stringify(nextAccount.mailbox ?? null),
         JSON.stringify(nextAccount.globalResources),
         JSON.stringify(nextAccount.achievements),
         JSON.stringify(nextAccount.recentEventLog),
@@ -5575,6 +5913,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       seasonBadges: patch.seasonBadges ?? existing.seasonBadges,
       campaignProgress: patch.campaignProgress ?? existing.campaignProgress,
       seasonalEventStates: patch.seasonalEventStates ?? existing.seasonalEventStates,
+      mailbox: patch.mailbox ?? existing.mailbox,
       globalResources: patch.globalResources ?? existing.globalResources,
       achievements: patch.achievements ?? existing.achievements,
       recentEventLog: patch.recentEventLog ?? existing.recentEventLog,
@@ -5623,6 +5962,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_badges_json,
          campaign_progress_json,
          seasonal_event_states_json,
+         mailbox_json,
          cosmetic_inventory_json,
          equipped_cosmetics_json,
          global_resources_json,
@@ -5639,7 +5979,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_play_date,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
@@ -5653,6 +5993,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          cosmetic_inventory_json = VALUES(cosmetic_inventory_json),
          equipped_cosmetics_json = VALUES(equipped_cosmetics_json),
          seasonal_event_states_json = VALUES(seasonal_event_states_json),
+         mailbox_json = VALUES(mailbox_json),
          elo_rating = VALUES(elo_rating),
          rank_division = VALUES(rank_division),
          peak_rank_division = VALUES(peak_rank_division),
@@ -5693,6 +6034,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(nextAccount.seasonBadges ?? []),
         JSON.stringify(nextAccount.campaignProgress ?? null),
         JSON.stringify(nextAccount.seasonalEventStates ?? null),
+        JSON.stringify(nextAccount.mailbox ?? null),
         JSON.stringify(nextAccount.cosmeticInventory ?? { ownedIds: [] }),
         JSON.stringify(nextAccount.equippedCosmetics ?? {}),
         JSON.stringify(nextAccount.globalResources),
@@ -5753,6 +6095,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          season_badges_json,
          campaign_progress_json,
          seasonal_event_states_json,
+         mailbox_json,
          global_resources_json,
          achievements_json,
          recent_event_log_json,
@@ -5922,12 +6265,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
   }
 
   async pruneExpired(referenceTime = new Date()): Promise<number> {
-    const [roomCount, profileCount] = await Promise.all([
+    const [roomCount, profileCount, mailboxCount] = await Promise.all([
       this.pruneExpiredRoomSnapshots(referenceTime),
-      this.pruneExpiredPlayerProfiles(referenceTime)
+      this.pruneExpiredPlayerProfiles(referenceTime),
+      this.pruneExpiredPlayerMailboxEntries(referenceTime)
     ]);
 
-    return roomCount + profileCount;
+    return roomCount + profileCount + mailboxCount;
   }
 
   async pruneExpiredRoomSnapshots(referenceTime = new Date()): Promise<number> {
@@ -5958,6 +6302,34 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return profileResult.affectedRows;
+  }
+
+  async pruneExpiredPlayerMailboxEntries(referenceTime = new Date()): Promise<number> {
+    const [rows] = await this.pool.query<Array<RowDataPacket & { player_id: string; mailbox_json: string | null }>>(
+      `SELECT player_id, mailbox_json
+       FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       WHERE mailbox_json IS NOT NULL`
+    );
+
+    let removedCount = 0;
+    for (const row of rows) {
+      const mailbox = row.mailbox_json ? parseJsonColumn<PlayerMailboxMessage[]>(row.mailbox_json) : [];
+      const pruned = pruneExpiredPlayerMailboxMessages(mailbox, referenceTime);
+      if (pruned.removedCount === 0) {
+        continue;
+      }
+
+      removedCount += pruned.removedCount;
+      await this.pool.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET mailbox_json = ?,
+             version = version + 1
+         WHERE player_id = ?`,
+        [JSON.stringify(pruned.mailbox), row.player_id]
+      );
+    }
+
+    return removedCount;
   }
 
   async listSnapshots(limit = 20, referenceTime = new Date()): Promise<RoomSnapshotSummary[]> {
