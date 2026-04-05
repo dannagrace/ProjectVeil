@@ -191,6 +191,10 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ...(existing?.mailbox ? { mailbox: structuredClone(existing.mailbox) } : {}),
       ...(existing?.dailyDungeonState ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) } : {}),
       ...(existing?.tutorialStep !== undefined ? { tutorialStep: existing.tutorialStep } : { tutorialStep: DEFAULT_TUTORIAL_STEP }),
+      ...(existing?.seasonXp ? { seasonXp: existing.seasonXp } : {}),
+      ...(existing?.seasonPassTier && existing.seasonPassTier > 1 ? { seasonPassTier: existing.seasonPassTier } : {}),
+      ...(existing?.seasonPassPremium ? { seasonPassPremium: true } : {}),
+      ...(existing?.seasonPassClaimedTiers?.length ? { seasonPassClaimedTiers: structuredClone(existing.seasonPassClaimedTiers) } : {}),
       ...(input.lastRoomId?.trim() ? { lastRoomId: input.lastRoomId.trim() } : existing?.lastRoomId ? { lastRoomId: existing.lastRoomId } : {}),
       lastSeenAt: new Date().toISOString(),
       ...(existing?.loginId ? { loginId: existing.loginId } : {}),
@@ -681,6 +685,36 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
       ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(patch.loginStreak !== undefined ? { loginStreak: Math.max(0, Math.floor(patch.loginStreak ?? 0)) } : existing.loginStreak ? { loginStreak: existing.loginStreak } : {}),
+      ...(patch.seasonXp !== undefined
+        ? { seasonXp: Math.max(0, Math.floor(patch.seasonXp ?? 0)) }
+        : patch.seasonXpDelta !== undefined
+          ? { seasonXp: Math.max(0, Math.floor(existing.seasonXp ?? 0) + Math.max(0, Math.floor(patch.seasonXpDelta ?? 0))) }
+          : existing.seasonXp
+            ? { seasonXp: existing.seasonXp }
+            : {}),
+      ...(patch.seasonPassTier !== undefined
+        ? { seasonPassTier: Math.max(1, Math.floor(patch.seasonPassTier ?? 1)) }
+        : existing.seasonPassTier && existing.seasonPassTier > 1
+          ? { seasonPassTier: existing.seasonPassTier }
+          : {}),
+      ...(patch.seasonPassPremium !== undefined
+        ? { seasonPassPremium: patch.seasonPassPremium === true }
+        : existing.seasonPassPremium
+          ? { seasonPassPremium: true }
+          : {}),
+      ...(patch.seasonPassClaimedTiers !== undefined
+        ? {
+            seasonPassClaimedTiers: Array.from(
+              new Set(
+                (patch.seasonPassClaimedTiers ?? [])
+                  .map((tier) => Math.floor(tier))
+                  .filter((tier) => Number.isFinite(tier) && tier > 0)
+              )
+            ).sort((left, right) => left - right)
+          }
+        : existing.seasonPassClaimedTiers && existing.seasonPassClaimedTiers.length > 0
+          ? { seasonPassClaimedTiers: structuredClone(existing.seasonPassClaimedTiers) }
+          : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
           ? { lastRoomId: patch.lastRoomId.trim() }
@@ -700,6 +734,39 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       ])
     );
     return account;
+  }
+
+  async claimBattlePassTier(playerId: string, tier: number) {
+    const account = await this.ensurePlayerAccount({ playerId });
+    const normalizedTier = Math.max(1, Math.floor(tier));
+    if ((account.seasonPassTier ?? 1) < normalizedTier) {
+      throw new Error("battle_pass_tier_locked");
+    }
+    if ((account.seasonPassClaimedTiers ?? []).includes(normalizedTier)) {
+      throw new Error("battle_pass_tier_already_claimed");
+    }
+
+    const nextClaimedTiers = [...(account.seasonPassClaimedTiers ?? []), normalizedTier].sort((left, right) => left - right);
+    await this.savePlayerAccountProgress(playerId, {
+      seasonPassClaimedTiers: nextClaimedTiers
+    });
+
+    return {
+      tier: normalizedTier,
+      granted: {
+        gems: 0,
+        resources: {
+          gold: 0,
+          wood: 0,
+          ore: 0
+        },
+        equipmentIds: [],
+        cosmeticIds: [],
+        seasonPassPremium: account.seasonPassPremium === true
+      },
+      seasonPassPremiumApplied: account.seasonPassPremium === true,
+      processedAt: new Date().toISOString()
+    };
   }
 
   async deletePlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
@@ -1986,6 +2053,88 @@ test("player account progression routes return a compact achievement and event r
   assert.equal(mePayload.achievements[1]?.id, "enemy_slayer");
   assert.equal(mePayload.achievements[1]?.current, 2);
   assert.equal(mePayload.achievements[1]?.progressUpdatedAt, "2026-03-27T12:02:00.000Z");
+});
+
+test("season progress and claim-tier routes expose battle pass state for the authenticated player", async (t) => {
+  const port = 40029 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "player-season",
+    displayName: "赛季旅者"
+  });
+  await store.savePlayerAccountProgress("player-season", {
+    seasonXpDelta: 2000,
+    seasonPassTier: 5,
+    seasonPassPremium: true,
+    seasonPassClaimedTiers: [2, 3]
+  });
+  const session = issueGuestAuthSession({
+    playerId: "player-season",
+    displayName: "赛季旅者"
+  });
+
+  process.env.VEIL_FEATURE_FLAGS_JSON = JSON.stringify({
+    schemaVersion: 1,
+    flags: {
+      battle_pass_enabled: {
+        type: "boolean",
+        value: true,
+        defaultValue: false,
+        enabled: true,
+        rollout: 1
+      }
+    }
+  });
+  t.after(() => {
+    delete process.env.VEIL_FEATURE_FLAGS_JSON;
+  });
+
+  const server = await startAccountRouteServer(port, store);
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const progressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/season/progress`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const progressPayload = (await progressResponse.json()) as {
+    battlePassEnabled: boolean;
+    seasonXp: number;
+    seasonPassTier: number;
+    seasonPassPremium: boolean;
+    seasonPassClaimedTiers: number[];
+    tiers: Array<{ tier: number }>;
+  };
+  assert.equal(progressResponse.status, 200);
+  assert.equal(progressPayload.battlePassEnabled, true);
+  assert.equal(progressPayload.seasonXp, 2000);
+  assert.equal(progressPayload.seasonPassTier, 5);
+  assert.equal(progressPayload.seasonPassPremium, true);
+  assert.deepEqual(progressPayload.seasonPassClaimedTiers, [2, 3]);
+  assert.equal(progressPayload.tiers[0]?.tier, 1);
+
+  const claimResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/season/claim-tier`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      tier: 5
+    })
+  });
+  const claimPayload = (await claimResponse.json()) as {
+    tier: number;
+    seasonPassPremiumApplied: boolean;
+  };
+  assert.equal(claimResponse.status, 200);
+  assert.equal(claimPayload.tier, 5);
+  assert.equal(claimPayload.seasonPassPremiumApplied, true);
+
+  const updatedAccount = await store.loadPlayerAccount("player-season");
+  assert.deepEqual(updatedAccount?.seasonPassClaimedTiers, [2, 3, 5]);
 });
 
 test("player achievement tracker appends logs and unlocks milestones", () => {

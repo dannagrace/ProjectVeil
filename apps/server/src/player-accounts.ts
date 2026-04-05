@@ -499,6 +499,18 @@ function toProgressionResponse(
   return buildPlayerProgressionSnapshot(account.achievements, account.recentEventLog, limit);
 }
 
+function toSeasonProgressResponse(account: PlayerAccountSnapshot, battlePassEnabled: boolean) {
+  const battlePassConfig = resolveBattlePassConfig();
+  return {
+    battlePassEnabled,
+    seasonXp: Math.max(0, Math.floor(account.seasonXp ?? 0)),
+    seasonPassTier: Math.max(1, Math.floor(account.seasonPassTier ?? 1)),
+    seasonPassPremium: account.seasonPassPremium === true,
+    seasonPassClaimedTiers: account.seasonPassClaimedTiers ?? [],
+    tiers: battlePassConfig.tiers
+  };
+}
+
 function toCampaignResponse(account: PlayerAccountSnapshot) {
   const missionStates = buildCampaignMissionStates(resolveCampaignConfig(), account.campaignProgress);
   const completedCount = missionStates.filter((mission) => mission.status === "completed").length;
@@ -1251,6 +1263,91 @@ export function registerPlayerAccountRoutes(
   });
 
   app.post("/api/player/battle-pass/claim", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store?.claimBattlePassTier) {
+      sendJson(response, 503, {
+        error: {
+          code: "battle_pass_persistence_unavailable",
+          message: "Battle pass claims require configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { tier?: number | null };
+      const tier = Math.floor(body.tier ?? Number.NaN);
+      if (!Number.isFinite(tier) || tier <= 0) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_battle_pass_tier",
+            message: "tier must be a positive integer"
+          }
+        });
+        return;
+      }
+
+      const result = await store.claimBattlePassTier(authSession.playerId, tier);
+      sendJson(response, 200, result);
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      if (error instanceof SyntaxError) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_json",
+            message: "Request body must be valid JSON"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "battle_pass_tier_not_found") {
+        sendJson(response, 404, {
+          error: {
+            code: "battle_pass_tier_not_found",
+            message: "Battle pass tier was not found"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "battle_pass_tier_locked") {
+        sendJson(response, 409, {
+          error: {
+            code: "battle_pass_tier_locked",
+            message: "Battle pass tier is not unlocked yet"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "battle_pass_tier_already_claimed") {
+        sendJson(response, 409, {
+          error: {
+            code: "battle_pass_tier_already_claimed",
+            message: "Battle pass tier has already been claimed"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "equipment_inventory_full") {
+        sendJson(response, 409, {
+          error: {
+            code: "equipment_inventory_full",
+            message: error.message
+          }
+        });
+        return;
+      }
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player-accounts/me/season/claim-tier", async (request, response) => {
     const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
       return;
@@ -2370,6 +2467,42 @@ export function registerPlayerAccountRoutes(
         campaign: toCampaignResponse(account),
         dailyDungeon: toDailyDungeonResponse(account)
       });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/me/season/progress", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    const featureFlags = resolveFeatureFlagsForPlayer(authSession.playerId);
+    if (!store) {
+      sendJson(
+        response,
+        200,
+        toSeasonProgressResponse(
+          createLocalModeAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            ...(authSession.loginId ? { loginId: authSession.loginId } : {})
+          }),
+          featureFlags.battle_pass_enabled
+        )
+      );
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      sendJson(response, 200, toSeasonProgressResponse(account, featureFlags.battle_pass_enabled));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

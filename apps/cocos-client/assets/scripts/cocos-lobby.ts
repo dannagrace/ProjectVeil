@@ -26,6 +26,7 @@ import {
   type PlayerAchievementProgress,
   type TutorialProgressAction
 } from "./project-shared/index.ts";
+import type { CocosSeasonProgress } from "./cocos-progression-panel.ts";
 import { detectCocosRuntimePlatform } from "./cocos-runtime-platform.ts";
 
 const LOBBY_PREFERENCES_STORAGE_KEY = "project-veil:lobby-preferences";
@@ -168,6 +169,14 @@ interface PlayerAchievementListApiPayload {
   items?: Partial<PlayerAchievementProgress>[];
 }
 
+interface PlayerSeasonProgressApiPayload {
+  battlePassEnabled?: boolean;
+  seasonXp?: number;
+  seasonPassTier?: number;
+  seasonPassPremium?: boolean;
+  seasonPassClaimedTiers?: number[];
+}
+
 export interface CocosAccountRegistrationRequestResult {
   status: string;
   expiresAt?: string;
@@ -193,6 +202,24 @@ export interface CocosEventHistoryPage {
   offset: number;
   limit: number;
   hasMore: boolean;
+}
+
+function normalizeSeasonProgress(payload?: PlayerSeasonProgressApiPayload | null): CocosSeasonProgress {
+  const seasonPassClaimedTiers = Array.from(
+    new Set(
+      (payload?.seasonPassClaimedTiers ?? [])
+        .map((tier) => Math.floor(tier))
+        .filter((tier) => Number.isFinite(tier) && tier > 0)
+    )
+  ).sort((left, right) => left - right);
+
+  return {
+    battlePassEnabled: payload?.battlePassEnabled === true,
+    seasonXp: Math.max(0, Math.floor(payload?.seasonXp ?? 0)),
+    seasonPassTier: Math.max(1, Math.floor(payload?.seasonPassTier ?? 1)),
+    seasonPassPremium: payload?.seasonPassPremium === true,
+    seasonPassClaimedTiers
+  };
 }
 
 type PlayerProgressionApiPayload = Partial<PlayerProgressionSnapshot>;
@@ -1886,4 +1913,76 @@ export async function loadCocosPlayerProgressionSnapshot(
     }
     return normalizePlayerProgressionSnapshot();
   }
+}
+
+export async function loadCocosSeasonProgress(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+    throwOnError?: boolean;
+  }
+): Promise<CocosSeasonProgress> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+
+  try {
+    const payload = (await fetchCocosAuthJson(
+      remoteUrl,
+      `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/season/progress`,
+      {
+        ...(authSession?.token ? { headers: buildCocosAuthHeaders(authSession.token) } : {})
+      },
+      authSession,
+      {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(storage !== undefined ? { storage } : {})
+      }
+    )) as PlayerSeasonProgressApiPayload;
+    return normalizeSeasonProgress(payload);
+  } catch (error) {
+    if (authSession?.token && error instanceof Error && error.message.startsWith("cocos_request_failed:401:") && storage) {
+      clearStoredCocosAuthSession(storage);
+    }
+    if (options?.throwOnError) {
+      throw error;
+    }
+    return normalizeSeasonProgress();
+  }
+}
+
+export async function claimCocosSeasonTier(
+  remoteUrl: string,
+  tier: number,
+  options?: {
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "getItem" | "removeItem"> | null;
+    authSession?: CocosStoredAuthSession | null;
+  }
+): Promise<void> {
+  const storage = options?.storage ?? getCocosStorage();
+  const authSession =
+    options && "authSession" in options ? options.authSession ?? null : readStoredCocosAuthSession(storage);
+
+  await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/season/claim-tier`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(authSession?.token ? buildCocosAuthHeaders(authSession.token) : {})
+      },
+      body: JSON.stringify({
+        tier: Math.max(1, Math.floor(tier))
+      })
+    },
+    authSession,
+    {
+      ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(storage !== undefined ? { storage } : {})
+    }
+  );
 }

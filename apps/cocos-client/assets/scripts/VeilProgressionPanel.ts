@@ -1,5 +1,6 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform } from "cc";
 import { type CocosAccountReviewPage, type CocosAccountReviewSection } from "./cocos-account-review.ts";
+import { type CocosBattlePassPanelView } from "./cocos-progression-panel.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 
 const { ccclass } = _decorator;
@@ -18,16 +19,24 @@ const NEGATIVE_FILL = new Color(112, 72, 64, 220);
 const CARD_FILL = new Color(34, 46, 64, 186);
 const CARD_HIGHLIGHT_FILL = new Color(56, 74, 102, 208);
 const MUTED_FILL = new Color(28, 38, 52, 168);
+const FREE_TRACK_FILL = new Color(64, 96, 76, 216);
+const PREMIUM_TRACK_FILL = new Color(132, 104, 44, 226);
 
-export interface VeilProgressionPanelRenderState {
-  page: CocosAccountReviewPage;
-}
+export type VeilProgressionPanelRenderState =
+  | {
+      page: CocosAccountReviewPage;
+    }
+  | {
+      battlePass: CocosBattlePassPanelView;
+    };
 
 export interface VeilProgressionPanelOptions {
   onClose?: () => void;
   onSelectSection?: (section: CocosAccountReviewSection) => void;
   onSelectPage?: (section: "battle-replays" | "event-history", page: number) => void;
   onRetrySection?: (section: CocosAccountReviewSection) => void;
+  onClaimTier?: (tier: number) => void;
+  onPurchasePremium?: () => void;
 }
 
 interface PanelButtonTone {
@@ -46,22 +55,37 @@ export class VeilProgressionPanel extends Component {
   private onSelectSection: ((section: CocosAccountReviewSection) => void) | undefined;
   private onSelectPage: ((section: "battle-replays" | "event-history", page: number) => void) | undefined;
   private onRetrySection: ((section: CocosAccountReviewSection) => void) | undefined;
+  private onClaimTier: ((tier: number) => void) | undefined;
+  private onPurchasePremium: (() => void) | undefined;
 
   configure(options: VeilProgressionPanelOptions): void {
     this.onClose = options.onClose;
     this.onSelectSection = options.onSelectSection;
     this.onSelectPage = options.onSelectPage;
     this.onRetrySection = options.onRetrySection;
+    this.onClaimTier = options.onClaimTier;
+    this.onPurchasePremium = options.onPurchasePremium;
   }
 
   render(state: VeilProgressionPanelRenderState): void {
     this.currentState = state;
+    if ("battlePass" in state) {
+      this.renderBattlePass(state.battlePass);
+      return;
+    }
+
+    this.node.active = true;
+    this.hideBattlePassNodes();
+    this.renderAccountReview(state.page);
+  }
+
+  private renderAccountReview(page: CocosAccountReviewPage): void {
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const width = transform.width || 380;
     const height = transform.height || 440;
     const contentWidth = width - 30;
     const centerX = 0;
-    const pagedSection = isPagedSection(state.page.section) ? state.page.section : null;
+    const pagedSection = isPagedSection(page.section) ? page.section : null;
     let cursorY = height / 2 - 16;
 
     this.syncChrome(width, height);
@@ -72,11 +96,7 @@ export class VeilProgressionPanel extends Component {
       cursorY,
       contentWidth,
       80,
-      [
-        state.page.title,
-        state.page.subtitle,
-        `当前页 ${state.page.pageLabel}`
-      ],
+      [page.title, page.subtitle, `当前页 ${page.pageLabel}`],
       {
         fill: CARD_HIGHLIGHT_FILL,
         stroke: new Color(244, 236, 208, 82)
@@ -86,9 +106,9 @@ export class VeilProgressionPanel extends Component {
       18
     );
 
-    const tabWidth = Math.floor((contentWidth - 18) / Math.max(1, state.page.tabs.length));
+    const tabWidth = Math.floor((contentWidth - 18) / Math.max(1, page.tabs.length));
     const tabStartX = centerX - contentWidth / 2 + tabWidth / 2;
-    state.page.tabs.forEach((tab, index) => {
+    page.tabs.forEach((tab, index) => {
       this.renderButton(
         `ProgressionTab-${tab.section}`,
         tabStartX + index * (tabWidth + 6),
@@ -96,7 +116,7 @@ export class VeilProgressionPanel extends Component {
         tabWidth,
         26,
         `${tab.label} ${tab.count}`,
-        tab.section === state.page.section
+        tab.section === page.section
           ? {
               fill: TAB_ACTIVE_FILL,
               stroke: new Color(230, 244, 222, 116)
@@ -134,9 +154,7 @@ export class VeilProgressionPanel extends Component {
         fill: ACTION_FILL,
         stroke: new Color(224, 236, 248, 108)
       },
-      state.page.hasPreviousPage && pagedSection
-        ? () => this.onSelectPage?.(pagedSection, state.page.page - 1)
-        : null
+      page.hasPreviousPage && pagedSection ? () => this.onSelectPage?.(pagedSection, page.page - 1) : null
     );
 
     this.renderButton(
@@ -150,9 +168,7 @@ export class VeilProgressionPanel extends Component {
         fill: ACTION_FILL,
         stroke: new Color(224, 236, 248, 108)
       },
-      state.page.hasNextPage && pagedSection
-        ? () => this.onSelectPage?.(pagedSection, state.page.page + 1)
-        : null
+      page.hasNextPage && pagedSection ? () => this.onSelectPage?.(pagedSection, page.page + 1) : null
     );
 
     this.renderButton(
@@ -166,19 +182,19 @@ export class VeilProgressionPanel extends Component {
         fill: ACTION_FILL,
         stroke: new Color(224, 236, 248, 108)
       },
-      state.page.showRetry ? () => this.onRetrySection?.(state.page.section) : null
+      page.showRetry ? () => this.onRetrySection?.(page.section) : null
     );
 
     let cardsTop = cursorY - 100;
-    if (state.page.banner) {
+    if (page.banner) {
       cardsTop = this.renderCard(
         "ProgressionBanner",
         centerX,
         cardsTop,
         contentWidth,
         62,
-        [state.page.banner.title, state.page.banner.detail],
-        state.page.banner.tone === "negative"
+        [page.banner.title, page.banner.detail],
+        page.banner.tone === "negative"
           ? {
               fill: NEGATIVE_FILL,
               stroke: new Color(248, 228, 220, 112)
@@ -198,12 +214,12 @@ export class VeilProgressionPanel extends Component {
       }
     }
 
-    const items = state.page.items.length > 0
-      ? state.page.items
+    const items = page.items.length > 0
+      ? page.items
       : [
           {
             title: "当前暂无内容",
-            detail: state.page.subtitle,
+            detail: page.subtitle,
             footnote: "渲染面板已就绪，等待数据同步。",
             emphasis: "neutral" as const
           }
@@ -223,7 +239,7 @@ export class VeilProgressionPanel extends Component {
               stroke: new Color(224, 240, 220, 78)
             }
           : {
-              fill: state.page.items.length > 0 ? CARD_FILL : MUTED_FILL,
+              fill: page.items.length > 0 ? CARD_FILL : MUTED_FILL,
               stroke: new Color(220, 230, 244, 56)
             },
         null,
@@ -232,6 +248,142 @@ export class VeilProgressionPanel extends Component {
       );
     });
     this.hideExtraItems(items.length);
+  }
+
+  private renderBattlePass(view: CocosBattlePassPanelView): void {
+    if (!view.visible) {
+      this.node.active = false;
+      return;
+    }
+
+    this.node.active = true;
+    this.hideAccountReviewNodes();
+
+    const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
+    const width = transform.width || 380;
+    const height = transform.height || 440;
+    const contentWidth = width - 30;
+    let cursorY = height / 2 - 16;
+
+    this.syncChrome(width, height);
+
+    this.renderButton(
+      "BattlePassClose",
+      contentWidth / 2 - 12,
+      height / 2 - 18,
+      72,
+      24,
+      "关闭",
+      {
+        fill: NEGATIVE_FILL,
+        stroke: new Color(244, 226, 214, 114)
+      },
+      this.onClose ?? null
+    );
+
+    cursorY = this.renderCard(
+      "BattlePassHeader",
+      0,
+      cursorY,
+      contentWidth,
+      88,
+      [view.title, view.subtitle, view.progressLabel],
+      {
+        fill: CARD_HIGHLIGHT_FILL,
+        stroke: new Color(244, 236, 208, 82)
+      },
+      null,
+      15,
+      18
+    );
+
+    cursorY = this.renderCard(
+      "BattlePassNextReward",
+      0,
+      cursorY,
+      contentWidth,
+      62,
+      ["奖励预览", view.nextRewardLabel, view.statusLabel],
+      {
+        fill: CARD_FILL,
+        stroke: new Color(220, 230, 244, 56)
+      },
+      null,
+      13,
+      16
+    );
+
+    this.renderProgressBar("BattlePassMeter", 0, cursorY - 18, contentWidth, 16, view.progressRatio);
+    cursorY -= 34;
+
+    this.renderButton(
+      "BattlePassPremiumAction",
+      0,
+      cursorY - 12,
+      contentWidth,
+      26,
+      `${view.premiumActionLabel} · ${view.premiumStatusLabel}`,
+      {
+        fill: PREMIUM_TRACK_FILL,
+        stroke: new Color(248, 230, 184, 118)
+      },
+      view.premiumPurchaseEnabled ? this.onPurchasePremium ?? null : null
+    );
+    cursorY -= 34;
+
+    view.tiers.forEach((tier, index) => {
+      cursorY = this.renderCard(
+        `BattlePassTier-${index}`,
+        0,
+        cursorY,
+        contentWidth,
+        44,
+        [`${tier.tierLabel} · ${tier.xpLabel}`],
+        {
+          fill: MUTED_FILL,
+          stroke: new Color(220, 230, 244, 56)
+        },
+        null,
+        13,
+        16
+      );
+
+      const trackWidth = Math.floor((contentWidth - 8) / 2);
+      const trackY = cursorY - 42;
+      this.renderCard(
+        `BattlePassTrack-${index}-free`,
+        -trackWidth / 2 - 4,
+        trackY,
+        trackWidth,
+        82,
+        [tier.freeTrack.label, tier.freeTrack.detail, tier.freeTrack.claimLabel],
+        {
+          fill: FREE_TRACK_FILL,
+          stroke: new Color(220, 242, 226, 82)
+        },
+        tier.freeTrack.claimable ? () => this.onClaimTier?.(tier.tier) : null,
+        12,
+        15
+      );
+      this.renderCard(
+        `BattlePassTrack-${index}-premium`,
+        trackWidth / 2 + 4,
+        trackY,
+        trackWidth,
+        82,
+        [tier.premiumTrack.label, tier.premiumTrack.detail, tier.premiumTrack.claimLabel],
+        {
+          fill: PREMIUM_TRACK_FILL,
+          stroke: new Color(248, 230, 184, 96)
+        },
+        tier.premiumTrack.claimable ? () => this.onClaimTier?.(tier.tier) : null,
+        12,
+        15
+      );
+      cursorY = trackY - 90;
+    });
+
+    this.hideExtraBattlePassItems(view.tiers.length);
   }
 
   private syncChrome(width: number, height: number): void {
@@ -245,6 +397,35 @@ export class VeilProgressionPanel extends Component {
     graphics.stroke();
     graphics.fillColor = PANEL_INNER;
     graphics.roundRect(-width / 2 + 14, height / 2 - 22, width - 28, 6, 3);
+    graphics.fill();
+  }
+
+  private renderProgressBar(
+    name: string,
+    centerX: number,
+    centerY: number,
+    width: number,
+    height: number,
+    ratio: number
+  ): void {
+    let node = this.node.getChildByName(name);
+    if (!node) {
+      node = new Node(name);
+      node.parent = this.node;
+    }
+    assignUiLayer(node);
+    node.active = true;
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(width, height);
+    node.setPosition(centerX, centerY, 0.2);
+
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(40, 52, 70, 220);
+    graphics.roundRect(-width / 2, -height / 2, width, height, 8);
+    graphics.fill();
+    graphics.fillColor = new Color(214, 184, 124, 232);
+    graphics.roundRect(-width / 2, -height / 2, Math.max(8, width * Math.max(0, Math.min(1, ratio))), height, 8);
     graphics.fill();
   }
 
@@ -375,6 +556,39 @@ export class VeilProgressionPanel extends Component {
       const node = this.node.getChildByName(`ProgressionItem-${index}`);
       if (node) {
         node.active = false;
+      }
+    }
+  }
+
+  private hideExtraBattlePassItems(visibleCount: number): void {
+    for (let index = visibleCount; index < 4; index += 1) {
+      const tierNode = this.node.getChildByName(`BattlePassTier-${index}`);
+      if (tierNode) {
+        tierNode.active = false;
+      }
+      const freeNode = this.node.getChildByName(`BattlePassTrack-${index}-free`);
+      if (freeNode) {
+        freeNode.active = false;
+      }
+      const premiumNode = this.node.getChildByName(`BattlePassTrack-${index}-premium`);
+      if (premiumNode) {
+        premiumNode.active = false;
+      }
+    }
+  }
+
+  private hideAccountReviewNodes(): void {
+    this.hideNodesByPrefix(["ProgressionHeader", "ProgressionBanner", "ProgressionClose", "ProgressionPrev", "ProgressionNext", "ProgressionRetry", "ProgressionTab-", "ProgressionItem-"]);
+  }
+
+  private hideBattlePassNodes(): void {
+    this.hideNodesByPrefix(["BattlePassHeader", "BattlePassNextReward", "BattlePassMeter", "BattlePassPremiumAction", "BattlePassClose", "BattlePassTier-", "BattlePassTrack-"]);
+  }
+
+  private hideNodesByPrefix(prefixes: string[]): void {
+    for (const child of this.node.children) {
+      if (prefixes.some((prefix) => child.name.startsWith(prefix))) {
+        child.active = false;
       }
     }
   }

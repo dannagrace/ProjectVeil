@@ -51,6 +51,11 @@ function createHudState(): VeilHudRenderState {
       status: null,
       submitting: false
     },
+    sharing: {
+      available: false
+    },
+    battlePassEnabled: true,
+    interaction: null,
     presentation: {
       audio: {
         supported: false,

@@ -27,9 +27,13 @@ export interface PlayerAccountReadModel {
   eloRating?: number;
   gems?: number;
   loginStreak?: number;
+  seasonXp?: number;
+  seasonPassTier?: number;
+  seasonPassPremium?: boolean;
   cosmeticInventory?: CosmeticInventory;
   equippedCosmetics?: EquippedCosmetics;
   currentShopRotation?: ShopRotation;
+  seasonPassClaimedTiers?: number[];
   globalResources: ResourceLedger;
   achievements: PlayerAchievementProgress[];
   recentEventLog: EventLogEntry[];
@@ -81,9 +85,13 @@ export interface PlayerAccountReadModelInput {
   eloRating?: number | undefined;
   gems?: number | undefined;
   loginStreak?: number | undefined;
+  seasonXp?: number | undefined;
+  seasonPassTier?: number | undefined;
+  seasonPassPremium?: boolean | undefined;
   cosmeticInventory?: Partial<CosmeticInventory> | null | undefined;
   equippedCosmetics?: Partial<EquippedCosmetics> | null | undefined;
   currentShopRotation?: ShopRotation | null | undefined;
+  seasonPassClaimedTiers?: number[] | null | undefined;
   globalResources?: Partial<ResourceLedger> | null | undefined;
   achievements?: Partial<PlayerAchievementProgress>[] | null | undefined;
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
@@ -112,8 +120,18 @@ export function normalizePlayerAccountReadModel(
   const privacyConsentAt = account?.privacyConsentAt?.trim();
   const notificationPreferences = normalizeNotificationPreferences(account?.notificationPreferences);
   const loginStreak = Math.max(0, Math.floor(account?.loginStreak ?? 0));
+  const seasonXp = Math.max(0, Math.floor(account?.seasonXp ?? 0));
+  const seasonPassTier = Math.max(1, Math.floor(account?.seasonPassTier ?? 1));
+  const seasonPassPremium = account?.seasonPassPremium === true;
   const cosmeticInventory = normalizeCosmeticInventory(account?.cosmeticInventory);
   const equippedCosmetics = normalizeEquippedCosmetics(account?.equippedCosmetics);
+  const seasonPassClaimedTiers = Array.from(
+    new Set(
+      (account?.seasonPassClaimedTiers ?? [])
+        .map((tier) => Math.floor(tier))
+        .filter((tier) => Number.isFinite(tier) && tier > 0)
+    )
+  ).sort((left, right) => left - right);
   const lastRoomId = account?.lastRoomId?.trim();
   const lastSeenAt = account?.lastSeenAt?.trim();
   const recentEventLog = normalizeEventLogEntries(account?.recentEventLog);
@@ -130,9 +148,13 @@ export function normalizePlayerAccountReadModel(
     eloRating: normalizeEloRating(account?.eloRating),
     gems: Math.max(0, Math.floor(account?.gems ?? 0)),
     ...(loginStreak > 0 ? { loginStreak } : {}),
+    ...(seasonXp > 0 ? { seasonXp } : {}),
+    ...(seasonPassTier > 1 ? { seasonPassTier } : {}),
+    ...(seasonPassPremium ? { seasonPassPremium } : {}),
     ...(cosmeticInventory.ownedIds.length > 0 ? { cosmeticInventory } : {}),
     ...(Object.keys(equippedCosmetics).length > 0 ? { equippedCosmetics } : {}),
     ...(account?.currentShopRotation ? { currentShopRotation: account.currentShopRotation } : {}),
+    ...(seasonPassClaimedTiers.length > 0 ? { seasonPassClaimedTiers } : {}),
     globalResources: {
       gold: Math.max(0, Math.floor(account?.globalResources?.gold ?? 0)),
       wood: Math.max(0, Math.floor(account?.globalResources?.wood ?? 0)),
