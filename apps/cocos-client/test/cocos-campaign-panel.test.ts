@@ -158,3 +158,75 @@ test("buildCocosCampaignPanelView exposes complete action once an active mission
   assert.equal(view.actions.find((action) => action.id === "complete")?.enabled, true);
   assert.match(view.rewardLines.join("\n"), /宝石 \+25/);
 });
+
+test("buildCocosCampaignPanelView surfaces loading fallback copy before campaign data is ready", () => {
+  const view = buildCocosCampaignPanelView({
+    campaign: null,
+    selectedMissionId: null,
+    activeMissionId: null,
+    dialogue: null,
+    statusMessage: "",
+    loading: true,
+    pendingAction: null
+  });
+
+  assert.equal(view.subtitle, "正在同步战役面板...");
+  assert.deepEqual(view.progressLines, ["战役数据未加载", "请稍后重试。"]);
+  assert.deepEqual(view.objectiveLines, ["等待任务目标。"]);
+  assert.deepEqual(view.rewardLines, ["等待任务奖励。"]);
+  assert.deepEqual(view.dialogueLines, ["等待任务对话。"]);
+  assert.equal(view.actions.find((action) => action.id === "refresh")?.enabled, false);
+  assert.equal(view.actions.find((action) => action.id === "focus-next")?.enabled, false);
+});
+
+test("buildCocosCampaignPanelView highlights locked missions and clamps outro dialogue to the last line", () => {
+  const input = createInput();
+  input.selectedMissionId = "chapter1-thornwall-road";
+  input.dialogue = {
+    missionId: "chapter1-thornwall-road",
+    sequence: "outro",
+    lineIndex: 99
+  };
+  input.campaign!.missions[1]!.outroDialogue = [
+    {
+      id: "outro-locked",
+      speakerId: "quartermaster",
+      speakerName: "军需官",
+      mood: "冷静",
+      text: "补给线已经重新接通。"
+    }
+  ];
+
+  const view = buildCocosCampaignPanelView(input);
+
+  assert.match(view.missionLines.join("\n"), /荆墙驿路 · 未解锁/);
+  assert.match(view.missionLines.join("\n"), /解锁条件 Complete 余烬哨站\./);
+  assert.match(view.rewardLines.join("\n"), /暂无额外奖励/);
+  assert.match(view.dialogueLines.join("\n"), /结算对话 100\/1/);
+  assert.match(view.dialogueLines.join("\n"), /军需官 · 冷静/);
+  assert.equal(view.actions.find((action) => action.id === "advance-dialogue")?.enabled, true);
+  assert.equal(view.actions.find((action) => action.id === "start")?.enabled, false);
+});
+
+test("buildCocosCampaignPanelView resolves completed active missions and pending completion state", () => {
+  const input = createInput();
+  input.selectedMissionId = "missing";
+  input.activeMissionId = "chapter1-ember-watch";
+  input.pendingAction = "complete";
+  input.campaign!.nextMissionId = null;
+  input.campaign!.missions[0] = {
+    ...input.campaign!.missions[0]!,
+    status: "completed",
+    completedAt: "2026-04-05T10:00:00.000Z"
+  };
+
+  const view = buildCocosCampaignPanelView(input);
+
+  assert.match(view.progressLines.join("\n"), /下一任务 当前战役线已全部完成/);
+  assert.match(view.progressLines.join("\n"), /进行中 余烬哨站/);
+  assert.match(view.missionLines.join("\n"), /完成于 2026-04-05T10:00:00.000Z/);
+  assert.match(view.statusLines.join("\n"), /正在提交任务完成/);
+  assert.equal(view.actions.find((action) => action.id === "next")?.enabled, true);
+  assert.equal(view.actions.find((action) => action.id === "focus-next")?.enabled, false);
+  assert.equal(view.actions.find((action) => action.id === "complete")?.enabled, false);
+});
