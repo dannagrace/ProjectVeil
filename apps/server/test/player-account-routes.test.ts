@@ -54,6 +54,7 @@ function getRelativeDailyRewardDateKey(baseDateKey: string, deltaDays: number): 
 
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
+  private readonly heroArchives = new Map<string, PlayerHeroArchiveSnapshot>();
   private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
@@ -151,8 +152,8 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     return this.authSessionsByPlayerId.get(playerId.trim())?.delete(sessionId.trim()) ?? false;
   }
 
-  async loadPlayerHeroArchives(_playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
-    return [];
+  async loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
+    return Array.from(this.heroArchives.values()).filter((archive) => playerIds.includes(archive.playerId));
   }
 
   async getCurrentSeason() {
@@ -837,6 +838,10 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   seedEventHistory(playerId: string, entries: PlayerAccountSnapshot["recentEventLog"]): void {
     this.eventHistoryByPlayerId.set(playerId, structuredClone(entries));
+  }
+
+  seedHeroArchive(archive: PlayerHeroArchiveSnapshot): void {
+    this.heroArchives.set(`${archive.playerId}:${archive.heroId}`, structuredClone(archive));
   }
 }
 
@@ -3823,7 +3828,7 @@ test("campaign mission completion unlocks the next chapter 1 mission and grants 
   };
 
   assert.equal(initialResponse.status, 200);
-  assert.equal(initialPayload.campaign.totalMissions, 6);
+  assert.equal(initialPayload.campaign.totalMissions, 27);
   assert.equal(initialPayload.campaign.nextMissionId, "chapter1-ember-watch");
   assert.equal(initialPayload.campaign.missions[0]?.status, "available");
   assert.equal(initialPayload.campaign.missions[1]?.status, "locked");
@@ -3862,6 +3867,100 @@ test("campaign mission completion unlocks the next chapter 1 mission and grants 
   assert.equal(account?.gems, 12);
   assert.equal(account?.globalResources.gold, 140);
   assert.equal(account?.campaignProgress?.missions[0]?.missionId, "chapter1-ember-watch");
+});
+
+test("campaign mission start returns 403 unlock requirements until chapter gates are satisfied", async (t) => {
+  const port = 44990 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "gated-campaign-player",
+    displayName: "Ranked Commander",
+    rankDivision: "bronze_iii",
+    gems: 0,
+    globalResources: { gold: 0, wood: 0, ore: 0 },
+    achievements: [],
+    recentEventLog: [],
+    recentBattleReplays: [],
+    campaignProgress: {
+      missions: [{ missionId: "chapter3-tempest-crown", attempts: 1, completedAt: "2026-04-05T00:00:00.000Z" }]
+    },
+    tutorialStep: DEFAULT_TUTORIAL_STEP,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+  store.seedHeroArchive({
+    playerId: "gated-campaign-player",
+    heroId: "hero-ranked",
+    hero: {
+      ...createAccountTrackingWorldState().heroes[0]!,
+      id: "hero-ranked",
+      playerId: "gated-campaign-player",
+      progression: {
+        ...createDefaultHeroProgression(),
+        level: 18
+      }
+    }
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueAccountAuthSession({
+    playerId: "gated-campaign-player",
+    displayName: "Ranked Commander",
+    loginId: "gated-campaign-player"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const lockedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/campaigns/chapter4/missions/chapter4-basin-breach/start`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const lockedPayload = (await lockedResponse.json()) as {
+    error: { code: string };
+    unlock_requirements: Array<{ type: string; minimumRankDivision?: string; description: string }>;
+  };
+
+  assert.equal(lockedResponse.status, 403);
+  assert.equal(lockedPayload.error.code, "campaign_mission_locked");
+  assert.equal(lockedPayload.unlock_requirements.some((requirement) => requirement.type === "rank_division"), true);
+  assert.equal(
+    lockedPayload.unlock_requirements.find((requirement) => requirement.type === "rank_division")?.minimumRankDivision,
+    "silver_i"
+  );
+
+  const unlockedAccount = await store.loadPlayerAccount("gated-campaign-player");
+  assert.ok(unlockedAccount);
+  store.seedAccount({
+    ...unlockedAccount,
+    rankDivision: "silver_i",
+    peakRankDivision: "silver_i",
+    updatedAt: new Date().toISOString()
+  });
+
+  const unlockedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/campaigns/chapter4/missions/chapter4-basin-breach/start`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const unlockedPayload = (await unlockedResponse.json()) as {
+    started: boolean;
+    mission: { id: string; chapterId: string; status: string };
+  };
+
+  assert.equal(unlockedResponse.status, 200);
+  assert.equal(unlockedPayload.started, true);
+  assert.equal(unlockedPayload.mission.id, "chapter4-basin-breach");
+  assert.equal(unlockedPayload.mission.chapterId, "chapter4");
 });
 
 test("daily dungeon attempts are capped per day and rewards can only be claimed once per run", async (t) => {

@@ -1,0 +1,387 @@
+{
+  "missions": [
+    {
+      "id": "chapter3-ridgefire-scouts",
+      "chapterId": "chapter3",
+      "order": 14,
+      "mapId": "frostwatch-ridge",
+      "name": "Ridgefire Scouts",
+      "description": "Probe the storm-split ridge where whiteout winds now turn every skirmish into an endurance test.",
+      "recommendedHeroLevel": 12,
+      "enemyArmyTemplateId": "wild_hawk_rider",
+      "enemyArmyCount": 36,
+      "enemyStatMultiplier": 2.78,
+      "introDialogue": [
+        {
+          "id": "c3m1-intro-1",
+          "speakerId": "scout-serin",
+          "speakerName": "Scout Serin",
+          "text": "The ridge wind strips banners, arrows, and weak plans in the same breath.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c3m1-outro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Good. If we can move here, we can move anywhere in the hazard line.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c3m1-mark-safe-route",
+          "description": "Mark a safe route across the ridgefire line",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 3
+        },
+        {
+          "id": "c3m1-clear-scouts",
+          "description": "Clear the hawk riders harrying the route",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 44, "resources": { "gold": 700, "ore": 26 } }
+    },
+    {
+      "id": "chapter3-sundered-ford",
+      "chapterId": "chapter3",
+      "order": 15,
+      "mapId": "contested-basin",
+      "name": "Sundered Ford",
+      "description": "Cross a basin ford under constant surge water and keep the hazard engineers alive.",
+      "recommendedHeroLevel": 13,
+      "enemyArmyTemplateId": "iron_walker",
+      "enemyArmyCount": 38,
+      "enemyStatMultiplier": 2.92,
+      "unlockMissionId": "chapter3-ridgefire-scouts",
+      "introDialogue": [
+        {
+          "id": "c3m2-intro-1",
+          "speakerId": "engineer-toma",
+          "speakerName": "Engineer Toma",
+          "text": "The ford is passable for minutes at a time. Waste one window and we start counting bodies instead of planks.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c3m2-outro-1",
+          "speakerId": "engineer-toma",
+          "speakerName": "Engineer Toma",
+          "text": "Bridge anchors held. I hate that this counts as a victory now.",
+          "mood": "grim"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c3m2-escort-engineers",
+          "description": "Escort the hazard engineers across the ford",
+          "kind": "escort",
+          "gate": "start"
+        },
+        {
+          "id": "c3m2-secure-anchors",
+          "description": "Secure the basin anchors before the surge returns",
+          "kind": "secure",
+          "gate": "mid",
+          "targetCount": 2
+        }
+      ],
+      "reward": { "gems": 46, "resources": { "gold": 740, "wood": 30, "ore": 28 } }
+    },
+    {
+      "id": "chapter3-murkveil-static",
+      "chapterId": "chapter3",
+      "order": 16,
+      "mapId": "murkveil-delta",
+      "name": "Murkveil Static",
+      "description": "Advance through the delta while veil-charged fog disrupts vision and command relays.",
+      "recommendedHeroLevel": 14,
+      "enemyArmyTemplateId": "shadow_hexer",
+      "enemyArmyCount": 40,
+      "enemyStatMultiplier": 3.06,
+      "unlockMissionId": "chapter3-sundered-ford",
+      "introDialogue": [
+        {
+          "id": "c3m3-intro-1",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "The fog is listening now. Keep your orders short and your courage shorter.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c3m3-outro-1",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "The static thinned where they fell. Someone is feeding the delta from farther inland.",
+          "mood": "urgent"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c3m3-silence-hexers",
+          "description": "Silence the hexers empowering the fog",
+          "kind": "defeat",
+          "gate": "start"
+        },
+        {
+          "id": "c3m3-recover-relays",
+          "description": "Recover the drowned signal relays",
+          "kind": "secure",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 48, "resources": { "gold": 780, "ore": 30 } }
+    },
+    {
+      "id": "chapter3-splitrock-fault",
+      "chapterId": "chapter3",
+      "order": 17,
+      "mapId": "splitrock-canyon",
+      "name": "Splitrock Fault",
+      "description": "Fight through a collapsing canyon lane before the unstable shelves bury your supply line.",
+      "recommendedHeroLevel": 15,
+      "enemyArmyTemplateId": "wild_cave_troll",
+      "enemyArmyCount": 42,
+      "enemyStatMultiplier": 3.2,
+      "unlockMissionId": "chapter3-murkveil-static",
+      "introDialogue": [
+        {
+          "id": "c3m4-intro-1",
+          "speakerId": "quartermaster-ren",
+          "speakerName": "Quartermaster Ren",
+          "text": "Every aftershock costs us carts. Clear the fault or we starve before the enemy ever reaches us.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c3m4-outro-1",
+          "speakerId": "quartermaster-ren",
+          "speakerName": "Quartermaster Ren",
+          "text": "The road still exists. Barely. I will count that as your best work this week.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c3m4-clear-fault",
+          "description": "Clear the canyon fault line",
+          "kind": "defeat",
+          "gate": "start"
+        },
+        {
+          "id": "c3m4-save-convoy",
+          "description": "Keep the supply convoy moving through the slides",
+          "kind": "escort",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 50, "resources": { "gold": 820, "wood": 24, "ore": 34 } }
+    },
+    {
+      "id": "chapter3-bogfen-lightning",
+      "chapterId": "chapter3",
+      "order": 18,
+      "mapId": "bogfen-crossing",
+      "name": "Bogfen Lightning",
+      "description": "Advance through floodglass pools where every strike from above turns the marsh itself against you.",
+      "recommendedHeroLevel": 16,
+      "enemyArmyTemplateId": "wild_serpent",
+      "enemyArmyCount": 44,
+      "enemyStatMultiplier": 3.34,
+      "unlockMissionId": "chapter3-splitrock-fault",
+      "introDialogue": [
+        {
+          "id": "c3m5-intro-1",
+          "speakerId": "fen-warden-isa",
+          "speakerName": "Warden Isa",
+          "text": "Do not step where the water shines. That glow is not moonlight and it does not forgive mistakes.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c3m5-outro-1",
+          "speakerId": "fen-warden-isa",
+          "speakerName": "Warden Isa",
+          "text": "The storm line moved east. Something higher up is calling it onward.",
+          "mood": "urgent"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c3m5-cross-marsh",
+          "description": "Cross the charged marsh without losing the lead cohort",
+          "kind": "escort",
+          "gate": "start"
+        },
+        {
+          "id": "c3m5-break-nests",
+          "description": "Break the serpent nests along the crossing",
+          "kind": "defeat",
+          "gate": "mid",
+          "targetCount": 2
+        }
+      ],
+      "reward": { "gems": 52, "resources": { "gold": 860, "ore": 36 } }
+    },
+    {
+      "id": "chapter3-ashpeak-conductor",
+      "chapterId": "chapter3",
+      "order": 19,
+      "mapId": "ashpeak-ascent",
+      "name": "Ashpeak Conductor",
+      "description": "Seize the storm conductors on Ashpeak before the enemy turns the summit into a killing field.",
+      "recommendedHeroLevel": 17,
+      "enemyArmyTemplateId": "shadow_wraith",
+      "enemyArmyCount": 46,
+      "enemyStatMultiplier": 3.48,
+      "unlockMissionId": "chapter3-bogfen-lightning",
+      "introDialogue": [
+        {
+          "id": "c3m6-intro-1",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "Those conductors are not machines. They are anchors for a weather rite, and someone is very close to finishing it.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c3m6-outro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Then the summit is next. End the rite and the whole hazard front finally breaks in our favor.",
+          "mood": "defiant"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c3m6-capture-conductors",
+          "description": "Capture the Ashpeak storm conductors",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 3
+        },
+        {
+          "id": "c3m6-clear-wraiths",
+          "description": "Clear the wraith honor guard around the summit path",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 54, "resources": { "gold": 900, "wood": 28, "ore": 38 } }
+    },
+    {
+      "id": "chapter3-tempest-crown",
+      "chapterId": "chapter3",
+      "order": 20,
+      "mapId": "highland-reach",
+      "name": "Tempest Crown",
+      "description": "Climb through the heart of the hazard line and defeat the ritual commander binding the storm to the front.",
+      "recommendedHeroLevel": 18,
+      "enemyArmyTemplateId": "shadow_wraith",
+      "enemyArmyCount": 50,
+      "enemyStatMultiplier": 3.7,
+      "bossEncounterName": "Mist-Seer Vael",
+      "unlockMissionId": "chapter3-ashpeak-conductor",
+      "introDialogue": [
+        {
+          "id": "c3m7-intro-1",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "Vael is not commanding the storm. She is wearing it like armor.",
+          "mood": "grim"
+        },
+        {
+          "id": "c3m7-intro-2",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Then strip it away. We did not survive the line just to kneel at the summit.",
+          "mood": "defiant"
+        },
+        {
+          "id": "c3m7-intro-3",
+          "speakerId": "scout-serin",
+          "speakerName": "Scout Serin",
+          "text": "Eyes open. The fog moves when she speaks.",
+          "mood": "urgent"
+        }
+      ],
+      "midDialogue": [
+        {
+          "id": "c3m7-mid-1",
+          "speakerId": "mist-seer-vael",
+          "speakerName": "Mist-Seer Vael",
+          "text": "You learned to endure the weather and mistook that for mastery.",
+          "mood": "defiant"
+        },
+        {
+          "id": "c3m7-mid-2",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "No. We learned to keep walking while it killed better people.",
+          "mood": "grim"
+        },
+        {
+          "id": "c3m7-mid-3",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "Her shield is thinning. Strike the crown marks now.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c3m7-outro-1",
+          "speakerId": "narrator",
+          "speakerName": "Narrator",
+          "text": "The storm crown breaks apart over the ridge, scattering blue fire across the stones and leaving the sky suddenly human again.",
+          "mood": "hopeful"
+        },
+        {
+          "id": "c3m7-outro-2",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Chapter 4 lies beyond this line. From here on, the war belongs to veterans and ranked commanders only.",
+          "mood": "grim"
+        },
+        {
+          "id": "c3m7-outro-3",
+          "speakerId": "scout-serin",
+          "speakerName": "Scout Serin",
+          "text": "Then let us bring veterans.",
+          "mood": "defiant"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c3m7-break-crown",
+          "description": "Break the storm crown around Mist-Seer Vael",
+          "kind": "secure",
+          "gate": "start"
+        },
+        {
+          "id": "c3m7-survive-tempest",
+          "description": "Survive the summit tempest while the rite collapses",
+          "kind": "hold",
+          "gate": "mid"
+        },
+        {
+          "id": "c3m7-defeat-vael",
+          "description": "Defeat Mist-Seer Vael",
+          "kind": "defeat",
+          "gate": "end"
+        }
+      ],
+      "reward": { "gems": 66, "resources": { "gold": 1040, "ore": 44 }, "cosmeticId": "recolor-tempest-legion" }
+    }
+  ]
+}

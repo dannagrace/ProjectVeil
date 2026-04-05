@@ -1,0 +1,386 @@
+{
+  "missions": [
+    {
+      "id": "chapter2-highland-muster",
+      "chapterId": "chapter2",
+      "order": 7,
+      "mapId": "highland-reach",
+      "name": "Highland Muster",
+      "description": "Rally the frontier guild banners and reopen the ridge depots for a counteroffensive.",
+      "recommendedHeroLevel": 5,
+      "enemyArmyTemplateId": "crown_light_outrider",
+      "enemyArmyCount": 24,
+      "enemyStatMultiplier": 1.74,
+      "introDialogue": [
+        {
+          "id": "c2m1-intro-1",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "The bridge held. Now every guild on the ridge wants payback.",
+          "mood": "defiant"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c2m1-outro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Good. A counterstroke needs supply, scouts, and people willing to move first.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c2m1-secure-banners",
+          "description": "Secure the guild rally banners",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 3
+        },
+        {
+          "id": "c2m1-break-pickets",
+          "description": "Break the outrider pickets on the ridge",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 30, "resources": { "gold": 420, "wood": 26 } }
+    },
+    {
+      "id": "chapter2-bogfen-oath",
+      "chapterId": "chapter2",
+      "order": 8,
+      "mapId": "bogfen-crossing",
+      "name": "Bogfen Oath",
+      "description": "Escort allied guild wardens through the fen and swear the river pact in person.",
+      "recommendedHeroLevel": 6,
+      "enemyArmyTemplateId": "moss_stalker",
+      "enemyArmyCount": 26,
+      "enemyStatMultiplier": 1.88,
+      "unlockMissionId": "chapter2-highland-muster",
+      "introDialogue": [
+        {
+          "id": "c2m2-intro-1",
+          "speakerId": "fen-warden-isa",
+          "speakerName": "Warden Isa",
+          "text": "The guild boats will move once the crossing is ours. Until then, we walk through mud and teeth.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c2m2-outro-1",
+          "speakerId": "fen-warden-isa",
+          "speakerName": "Warden Isa",
+          "text": "The river pact stands. Send for arrows, resin, and every healer you can spare.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c2m2-escort-wardens",
+          "description": "Escort the guild wardens to the crossing",
+          "kind": "escort",
+          "gate": "start"
+        },
+        {
+          "id": "c2m2-clear-fen",
+          "description": "Clear the fen ambushers around the ford",
+          "kind": "defeat",
+          "gate": "mid",
+          "targetCount": 2
+        }
+      ],
+      "reward": { "gems": 32, "resources": { "gold": 460, "wood": 30, "ore": 12 } }
+    },
+    {
+      "id": "chapter2-murkveil-conclave",
+      "chapterId": "chapter2",
+      "order": 9,
+      "mapId": "murkveil-delta",
+      "name": "Murkveil Conclave",
+      "description": "Hold the delta long enough for rival guild captains to agree on a shared battle line.",
+      "recommendedHeroLevel": 7,
+      "enemyArmyTemplateId": "crown_crossbowman",
+      "enemyArmyCount": 28,
+      "enemyStatMultiplier": 2.02,
+      "unlockMissionId": "chapter2-bogfen-oath",
+      "introDialogue": [
+        {
+          "id": "c2m3-intro-1",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "Guilds do not agree unless somebody survives long enough to count the cost.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c2m3-outro-1",
+          "speakerId": "quartermaster-ren",
+          "speakerName": "Quartermaster Ren",
+          "text": "They signed. I never thought paperwork would smell this much like swamp water.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c2m3-hold-delta",
+          "description": "Hold the conclave circle",
+          "kind": "hold",
+          "gate": "start"
+        },
+        {
+          "id": "c2m3-cut-bolts",
+          "description": "Silence the crossbow nests on the levee",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 34, "resources": { "gold": 500, "ore": 18 } }
+    },
+    {
+      "id": "chapter2-splitrock-liaison",
+      "chapterId": "chapter2",
+      "order": 10,
+      "mapId": "splitrock-canyon",
+      "name": "Splitrock Liaison",
+      "description": "Link the highland and river guild columns before the enemy can cut the canyon road.",
+      "recommendedHeroLevel": 8,
+      "enemyArmyTemplateId": "iron_walker",
+      "enemyArmyCount": 30,
+      "enemyStatMultiplier": 2.14,
+      "unlockMissionId": "chapter2-murkveil-conclave",
+      "introDialogue": [
+        {
+          "id": "c2m4-intro-1",
+          "speakerId": "scout-serin",
+          "speakerName": "Scout Serin",
+          "text": "If the liaison column dies in Splitrock, every promise we bought in the delta dies with it.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c2m4-outro-1",
+          "speakerId": "scout-serin",
+          "speakerName": "Scout Serin",
+          "text": "Both columns made contact. Now we can hit something bigger than scouts and roadblocks.",
+          "mood": "defiant"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c2m4-reach-liaison",
+          "description": "Reach the liaison column at Splitrock",
+          "kind": "escort",
+          "gate": "start"
+        },
+        {
+          "id": "c2m4-destroy-barricades",
+          "description": "Destroy the canyon barricades",
+          "kind": "secure",
+          "gate": "mid",
+          "targetCount": 2
+        }
+      ],
+      "reward": { "gems": 36, "resources": { "gold": 540, "wood": 24, "ore": 20 } }
+    },
+    {
+      "id": "chapter2-frostwatch-drill",
+      "chapterId": "chapter2",
+      "order": 11,
+      "mapId": "frostwatch-ridge",
+      "name": "Frostwatch Drill",
+      "description": "Run the newly joined guild companies through live-fire positioning before the enemy spearhead arrives.",
+      "recommendedHeroLevel": 9,
+      "enemyArmyTemplateId": "crown_field_chaplain",
+      "enemyArmyCount": 32,
+      "enemyStatMultiplier": 2.28,
+      "unlockMissionId": "chapter2-splitrock-liaison",
+      "introDialogue": [
+        {
+          "id": "c2m5-intro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "If our lines break the first time they take a charge, the guild pact is just a prettier way to lose.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c2m5-outro-1",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "They held formation. That is rarer than courage and twice as useful.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c2m5-hold-line",
+          "description": "Hold the Frostwatch line through repeated assaults",
+          "kind": "hold",
+          "gate": "start"
+        },
+        {
+          "id": "c2m5-save-standard",
+          "description": "Keep the allied standard company alive",
+          "kind": "survive",
+          "gate": "end"
+        }
+      ],
+      "reward": { "gems": 38, "resources": { "gold": 580, "ore": 24 } }
+    },
+    {
+      "id": "chapter2-ashpeak-anvil",
+      "chapterId": "chapter2",
+      "order": 12,
+      "mapId": "ashpeak-ascent",
+      "name": "Ashpeak Anvil",
+      "description": "Pin the crown vanguard against the ascent while the guild cavalry loops for the hammer strike.",
+      "recommendedHeroLevel": 10,
+      "enemyArmyTemplateId": "crown_heavy_cavalry",
+      "enemyArmyCount": 34,
+      "enemyStatMultiplier": 2.42,
+      "unlockMissionId": "chapter2-frostwatch-drill",
+      "introDialogue": [
+        {
+          "id": "c2m6-intro-1",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "Heavy horse on a mountain road. Either they are desperate or they think we are fools.",
+          "mood": "defiant"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c2m6-outro-1",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "Their vanguard cracked. One more push and the whole ring around the basin comes loose.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c2m6-pin-vanguard",
+          "description": "Pin the vanguard on the ascent",
+          "kind": "hold",
+          "gate": "start"
+        },
+        {
+          "id": "c2m6-open-flank",
+          "description": "Open the road for the guild cavalry flank",
+          "kind": "secure",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 40, "resources": { "gold": 620, "wood": 28, "ore": 26 } }
+    },
+    {
+      "id": "chapter2-break-the-ring",
+      "chapterId": "chapter2",
+      "order": 13,
+      "mapId": "frontier-basin",
+      "name": "Break The Ring",
+      "description": "Lead the full guild coalition into the basin and shatter the commander holding the siege ring together.",
+      "recommendedHeroLevel": 11,
+      "enemyArmyTemplateId": "crown_heavy_cavalry",
+      "enemyArmyCount": 38,
+      "enemyStatMultiplier": 2.64,
+      "bossEncounterName": "Captain Veyr, Ringbreaker",
+      "unlockMissionId": "chapter2-ashpeak-anvil",
+      "introDialogue": [
+        {
+          "id": "c2m7-intro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Captain Veyr built the siege ring. Break him and the whole front stops breathing for a day.",
+          "mood": "grim"
+        },
+        {
+          "id": "c2m7-intro-2",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "A day is enough. The guilds can turn a day into a campaign if someone opens the door.",
+          "mood": "defiant"
+        },
+        {
+          "id": "c2m7-intro-3",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "Then open it hard.",
+          "mood": "defiant"
+        }
+      ],
+      "midDialogue": [
+        {
+          "id": "c2m7-mid-1",
+          "speakerId": "captain-veyr",
+          "speakerName": "Captain Veyr",
+          "text": "You brought guild militias against crown steel. That is either bravery or bookkeeping gone mad.",
+          "mood": "defiant"
+        },
+        {
+          "id": "c2m7-mid-2",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "It is a debt call, captain. The frontier has kept receipts.",
+          "mood": "grim"
+        },
+        {
+          "id": "c2m7-mid-3",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Press the center. His reserve is already burning.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c2m7-outro-1",
+          "speakerId": "narrator",
+          "speakerName": "Narrator",
+          "text": "The siege ring splinters under the guild assault, leaving the frontier room to breathe and regroup.",
+          "mood": "hopeful"
+        },
+        {
+          "id": "c2m7-outro-2",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Chapter 3 begins where breathing stops being enough. The hazards ahead will kill the careless faster than any army.",
+          "mood": "grim"
+        },
+        {
+          "id": "c2m7-outro-3",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "Then we send only the commanders who learned something here.",
+          "mood": "defiant"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c2m7-break-screen",
+          "description": "Break Captain Veyr's forward screen",
+          "kind": "defeat",
+          "gate": "start"
+        },
+        {
+          "id": "c2m7-hold-center",
+          "description": "Hold the coalition center while the flank closes",
+          "kind": "hold",
+          "gate": "mid"
+        },
+        {
+          "id": "c2m7-drop-veyr",
+          "description": "Defeat Captain Veyr, Ringbreaker",
+          "kind": "defeat",
+          "gate": "end"
+        }
+      ],
+      "reward": { "gems": 52, "resources": { "gold": 760, "ore": 34 }, "cosmeticId": "border-guild-vanguard" }
+    }
+  ]
+}
