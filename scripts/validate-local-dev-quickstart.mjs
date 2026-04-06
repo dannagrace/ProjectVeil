@@ -1,8 +1,13 @@
 import { spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 const rootDir = new URL("../", import.meta.url);
-const serverUrl = "http://127.0.0.1:2567";
-const healthChecks = ["/api/runtime/health", "/api/runtime/auth-readiness", "/api/lobby/rooms"];
+export const QUICKSTART_DOCTOR_SCRIPT = "doctor";
+export const QUICKSTART_VALIDATE_SCRIPT = "validate:quickstart";
+export const QUICKSTART_H5_BUILD_SCRIPT = "build:client:h5";
+export const QUICKSTART_H5_DEV_SCRIPT = "dev:client:h5";
+export const QUICKSTART_SERVER_URL = "http://127.0.0.1:2567";
+export const QUICKSTART_HEALTH_CHECKS = ["/api/runtime/health", "/api/runtime/auth-readiness", "/api/lobby/rooms"];
 const startupTimeoutMs = 20_000;
 
 function logStep(message) {
@@ -40,7 +45,7 @@ async function waitForServer() {
   const deadline = Date.now() + startupTimeoutMs;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${serverUrl}/api/runtime/health`);
+      const response = await fetch(`${QUICKSTART_SERVER_URL}/api/runtime/health`);
       if (response.ok) {
         return;
       }
@@ -54,8 +59,8 @@ async function waitForServer() {
 }
 
 async function verifyEndpoints() {
-  for (const path of healthChecks) {
-    const response = await fetch(`${serverUrl}${path}`);
+  for (const path of QUICKSTART_HEALTH_CHECKS) {
+    const response = await fetch(`${QUICKSTART_SERVER_URL}${path}`);
     if (!response.ok) {
       throw new Error(`GET ${path} returned HTTP ${response.status}`);
     }
@@ -73,7 +78,7 @@ async function main() {
   logStep("validating e2e config fixtures");
   await runCommand(npmCommand(), ["run", "validate:e2e:fixtures"], "E2E fixture validation");
   logStep("building the H5 debug shell");
-  await runCommand(npmCommand(), ["run", "build:client:h5"], "H5 build");
+  await runCommand(npmCommand(), ["run", QUICKSTART_H5_BUILD_SCRIPT], "H5 build");
 
   logStep("starting the dev server without MySQL env overrides");
   const envWithoutMySql = { ...process.env };
@@ -111,7 +116,9 @@ async function main() {
   logStep("quickstart path validated");
 }
 
-main().catch((error) => {
-  console.error(`\n[quickstart] validation failed: ${error.message}`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(`\n[quickstart] validation failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+}

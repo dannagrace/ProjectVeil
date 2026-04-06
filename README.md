@@ -86,6 +86,8 @@ npm run validate:quickstart
 - 构建 H5 调试壳
 - 以默认内存存储启动本地服务，并校验 `health` / `auth-readiness` / `lobby` 接口
 
+维护者或 CI 如果要审计这条贡献者入口是否仍然可信，可运行 `npm run validate:quickstart:contract`。它会重新执行 `npm run doctor` 和 `npm run validate:quickstart`，同时把 stage 级 pass/fail、失败 remediation、以及对 README / `package.json` / quickstart validator 的对齐检查写到 `artifacts/release-readiness/` 下的 JSON + Markdown artifact。
+
 可以把两者理解为：
 
 - `npm run doctor`：先看本机 prerequisites / 可选服务 / env 提示是否齐全
