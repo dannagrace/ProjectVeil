@@ -7,6 +7,7 @@ import {
   type RuntimeDiagnosticsSnapshot
 } from "../../../packages/shared/src/index";
 import { resetGuestAuthSessions } from "./auth";
+import { configureAuthoritativeRoomTelemetry } from "./index";
 
 export interface RuntimeRoomSnapshot {
   roomId: string;
@@ -1160,6 +1161,11 @@ export function recordActionValidationFailure(scope: ActionValidationScope, reas
     (runtimeObservability.prometheus.actionValidationFailuresTotal.get(key) ?? 0) + 1
   );
 }
+
+configureAuthoritativeRoomTelemetry({
+  recordBattleDuration,
+  recordActionValidationFailure
+});
 
 export function recordHttpRequestDuration(durationSeconds: number): void {
   observeHistogram(runtimeObservability.prometheus.httpRequestDurationSeconds, durationSeconds);
