@@ -28,7 +28,6 @@ import {
   type CompletedBattleReplayCapture,
   type OngoingBattleReplayCapture
 } from "./battle-replays";
-import { recordActionValidationFailure, recordBattleDuration } from "./observability";
 
 export interface RoomSnapshot {
   roomId: string;
@@ -56,6 +55,25 @@ export interface BattleDispatchResult {
 export interface RoomPersistenceSnapshot {
   state: WorldState;
   battles: BattleState[];
+}
+
+interface AuthoritativeRoomTelemetry {
+  recordBattleDuration(durationSeconds: number): void;
+  recordActionValidationFailure(scope: "world" | "battle", reason: string): void;
+}
+
+const defaultAuthoritativeRoomTelemetry: AuthoritativeRoomTelemetry = {
+  recordBattleDuration: () => {},
+  recordActionValidationFailure: () => {}
+};
+
+let authoritativeRoomTelemetry: AuthoritativeRoomTelemetry = defaultAuthoritativeRoomTelemetry;
+
+export function configureAuthoritativeRoomTelemetry(overrides: Partial<AuthoritativeRoomTelemetry>): void {
+  authoritativeRoomTelemetry = {
+    ...defaultAuthoritativeRoomTelemetry,
+    ...overrides
+  };
 }
 
 function hashBattleSeed(value: string): number {
@@ -235,7 +253,7 @@ export class AuthoritativeWorldRoom {
       return;
     }
 
-    recordBattleDuration((Date.now() - startedAt) / 1_000);
+    authoritativeRoomTelemetry.recordBattleDuration((Date.now() - startedAt) / 1_000);
   }
 
   getSnapshot(playerId: string): RoomSnapshot {
@@ -310,7 +328,7 @@ export class AuthoritativeWorldRoom {
     if ("heroId" in action) {
       const hero = this.state.heroes.find((item) => item.id === action.heroId);
       if (!hero || hero.playerId !== playerId) {
-        recordActionValidationFailure("world", "hero_not_owned_by_player");
+        authoritativeRoomTelemetry.recordActionValidationFailure("world", "hero_not_owned_by_player");
         return {
           ok: false,
           reason: "hero_not_owned_by_player",
@@ -319,7 +337,7 @@ export class AuthoritativeWorldRoom {
       }
 
       if (this.getBattleIdForHero(hero.id)) {
-        recordActionValidationFailure("world", "hero_in_battle");
+        authoritativeRoomTelemetry.recordActionValidationFailure("world", "hero_in_battle");
         return {
           ok: false,
           reason: "hero_in_battle",
@@ -331,7 +349,7 @@ export class AuthoritativeWorldRoom {
 
     const validation = validateWorldAction(this.state, action, playerId);
     if (!validation.valid) {
-      recordActionValidationFailure("world", validation.reason ?? "world_action_invalid");
+      authoritativeRoomTelemetry.recordActionValidationFailure("world", validation.reason ?? "world_action_invalid");
       return {
         ok: false,
         ...(validation.reason ? { reason: validation.reason } : {}),
@@ -399,7 +417,7 @@ export class AuthoritativeWorldRoom {
   dispatchBattle(playerId: string, action: BattleAction): BattleDispatchResult {
     const activeBattle = this.getBattleForPlayer(playerId);
     if (!activeBattle) {
-      recordActionValidationFailure("battle", "battle_not_active");
+      authoritativeRoomTelemetry.recordActionValidationFailure("battle", "battle_not_active");
       return {
         ok: false,
         reason: "battle_not_active",
@@ -409,7 +427,7 @@ export class AuthoritativeWorldRoom {
 
     const controllingCamp = this.getControllingCamp(playerId, activeBattle);
     if (!controllingCamp) {
-      recordActionValidationFailure("battle", "battle_not_owned_by_player");
+      authoritativeRoomTelemetry.recordActionValidationFailure("battle", "battle_not_owned_by_player");
       return {
         ok: false,
         reason: "battle_not_owned_by_player",
@@ -420,7 +438,7 @@ export class AuthoritativeWorldRoom {
     const actingUnitId = action.type === "battle.attack" ? action.attackerId : action.unitId;
     const actingUnit = activeBattle.units[actingUnitId];
     if (!actingUnit || actingUnit.camp !== controllingCamp) {
-      recordActionValidationFailure("battle", "unit_not_player_controlled");
+      authoritativeRoomTelemetry.recordActionValidationFailure("battle", "unit_not_player_controlled");
       return {
         ok: false,
         reason: "unit_not_player_controlled",
@@ -431,7 +449,7 @@ export class AuthoritativeWorldRoom {
 
     const validation = validateBattleAction(activeBattle, action);
     if (!validation.valid) {
-      recordActionValidationFailure("battle", validation.reason ?? "battle_action_invalid");
+      authoritativeRoomTelemetry.recordActionValidationFailure("battle", validation.reason ?? "battle_action_invalid");
       return {
         ok: false,
         ...(validation.reason ? { reason: validation.reason } : {}),
