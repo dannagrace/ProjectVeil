@@ -80,25 +80,25 @@ function runAudit(args: string[], cwd: string): { stdout: string; status: number
   }
 }
 
-test("same-candidate evidence audit passes when artifact families align to the same candidate revision", () => {
+test("same-candidate evidence audit passes when required artifact families align to the same candidate revision", () => {
   const workspace = createTempWorkspace();
   const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
   const candidate = "phase1-rc";
   const revision = "abc1234";
-  const snapshotPath = path.join(artifactsDir, "release-readiness-2026-04-02T08-30-00.000Z.json");
+  const snapshotPath = path.join(artifactsDir, "release-readiness-2026-04-05T08-30-00.000Z.json");
   const gateSummaryPath = path.join(artifactsDir, `release-gate-summary-${revision}.json`);
   const bundlePath = path.join(artifactsDir, `cocos-rc-evidence-bundle-${candidate}-${revision}.json`);
   const ledgerPath = path.join(artifactsDir, `manual-release-evidence-owner-ledger-${candidate}-${revision}.md`);
 
   writeJson(snapshotPath, {
-    generatedAt: "2026-04-02T08:30:00.000Z",
+    generatedAt: "2026-04-05T08:30:00.000Z",
     revision: {
       commit: revision,
       shortCommit: revision
     }
   });
   writeJson(gateSummaryPath, {
-    generatedAt: "2026-04-02T08:35:00.000Z",
+    generatedAt: "2026-04-05T08:35:00.000Z",
     revision: {
       commit: revision,
       shortCommit: revision
@@ -109,7 +109,7 @@ test("same-candidate evidence audit passes when artifact families align to the s
   });
   writeJson(bundlePath, {
     bundle: {
-      generatedAt: "2026-04-02T08:40:00.000Z",
+      generatedAt: "2026-04-05T08:40:00.000Z",
       candidate,
       commit: revision,
       shortCommit: revision
@@ -123,7 +123,7 @@ test("same-candidate evidence audit passes when artifact families align to the s
   writeLedger(ledgerPath, {
     candidate,
     targetRevision: revision,
-    lastUpdated: "2026-04-02T08:42:00.000Z",
+    lastUpdated: "2026-04-05T08:42:00.000Z",
     linkedReadinessSnapshot: snapshotPath,
     rows: [
       {
@@ -132,7 +132,7 @@ test("same-candidate evidence audit passes when artifact families align to the s
         revision,
         owner: "oncall-ops",
         status: "done",
-        lastUpdated: "2026-04-02T08:41:00.000Z",
+        lastUpdated: "2026-04-05T08:41:00.000Z",
         artifactPath: path.join(artifactsDir, `runtime-observability-signoff-${revision}.md`),
         notes: "Release runtime endpoints reviewed for this candidate."
       },
@@ -142,7 +142,7 @@ test("same-candidate evidence audit passes when artifact families align to the s
         revision,
         owner: "release-owner",
         status: "done",
-        lastUpdated: "2026-04-02T08:42:00.000Z",
+        lastUpdated: "2026-04-05T08:42:00.000Z",
         artifactPath: path.join(artifactsDir, `cocos-rc-checklist-${revision}.md`),
         notes: "Checklist reviewed for this candidate."
       }
@@ -175,7 +175,7 @@ test("same-candidate evidence audit passes when artifact families align to the s
 
   assert.equal(result.status, 0);
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
-    summary: { status: string; findingCount: number };
+    summary: { status: string; findingCount: number; blockerCount: number; warningCount: number };
     manualEvidenceContract: {
       status: string;
       requiredFamilies: Array<{ id: string; status: string; applicable: boolean; findings: unknown[] }>;
@@ -184,11 +184,13 @@ test("same-candidate evidence audit passes when artifact families align to the s
   };
   assert.equal(report.summary.status, "passed");
   assert.equal(report.summary.findingCount, 0);
+  assert.equal(report.summary.blockerCount, 0);
+  assert.equal(report.summary.warningCount, 0);
   assert.equal(report.manualEvidenceContract.status, "passed");
   assert.equal(report.manualEvidenceContract.requiredFamilies.every((family) => !family.applicable || family.status === "passed"), true);
   assert.equal(report.artifactFamilies.every((family) => family.status === "passed"), true);
   assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Overall status: \*\*PASSED\*\*/);
-  assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /## Manual Evidence Contract/);
+  assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /## Review Triage/);
 });
 
 test("same-candidate evidence audit reports missing, stale, and revision mismatch findings in one summary", () => {
@@ -196,7 +198,7 @@ test("same-candidate evidence audit reports missing, stale, and revision mismatc
   const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
   const candidate = "phase1-rc";
   const revision = "abc1234";
-  const snapshotPath = path.join(artifactsDir, "release-readiness-2026-04-02T08-30-00.000Z.json");
+  const snapshotPath = path.join(artifactsDir, "release-readiness-2026-04-05T08-30-00.000Z.json");
   const gateSummaryPath = path.join(artifactsDir, `release-gate-summary-${revision}.json`);
   const bundlePath = path.join(artifactsDir, `cocos-rc-evidence-bundle-${candidate}-${revision}.json`);
   const ledgerPath = path.join(artifactsDir, `manual-release-evidence-owner-ledger-${candidate}-${revision}.md`);
@@ -209,7 +211,7 @@ test("same-candidate evidence audit reports missing, stale, and revision mismatc
     }
   });
   writeJson(gateSummaryPath, {
-    generatedAt: "2026-04-02T08:35:00.000Z",
+    generatedAt: "2026-04-05T08:35:00.000Z",
     revision: {
       commit: "deadbeef",
       shortCommit: "deadbeef"
@@ -221,7 +223,7 @@ test("same-candidate evidence audit reports missing, stale, and revision mismatc
   writeLedger(ledgerPath, {
     candidate,
     targetRevision: revision,
-    lastUpdated: "2026-04-02T08:42:00.000Z",
+    lastUpdated: "2026-04-05T08:42:00.000Z",
     linkedReadinessSnapshot: snapshotPath,
     rows: [
       {
@@ -230,7 +232,7 @@ test("same-candidate evidence audit reports missing, stale, and revision mismatc
         revision,
         owner: "oncall-ops",
         status: "done",
-        lastUpdated: "2026-04-02T08:41:00.000Z",
+        lastUpdated: "2026-04-05T08:41:00.000Z",
         artifactPath: path.join(artifactsDir, `runtime-observability-signoff-${revision}.md`),
         notes: "Release runtime endpoints reviewed for this candidate."
       }
@@ -262,7 +264,7 @@ test("same-candidate evidence audit reports missing, stale, and revision mismatc
 
   assert.equal(result.status, 1);
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
-    summary: { status: string };
+    summary: { status: string; blockerCount: number; warningCount: number };
     manualEvidenceContract: {
       status: string;
       requiredFamilies: Array<{ id: string; findings: Array<{ code: string }> }>;
@@ -270,6 +272,8 @@ test("same-candidate evidence audit reports missing, stale, and revision mismatc
     artifactFamilies: Array<{ id: string; findings: Array<{ code: string }> }>;
   };
   assert.equal(report.summary.status, "failed");
+  assert.equal(report.summary.blockerCount > 0, true);
+  assert.equal(report.summary.warningCount, 0);
   assert.equal(report.manualEvidenceContract.status, "failed");
   const snapshotFamily = report.artifactFamilies.find((family) => family.id === "release-readiness-snapshot");
   const gateSummaryFamily = report.artifactFamilies.find((family) => family.id === "release-gate-summary");
@@ -287,22 +291,24 @@ test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat
   const wechatArtifactsDir = path.join(workspace, "artifacts", "wechat-release");
   const candidate = "phase1-rc";
   const revision = "abc1234";
-  const snapshotPath = path.join(releaseReadinessDir, "release-readiness-2026-04-02T08-30-00.000Z.json");
+  const snapshotPath = path.join(releaseReadinessDir, "release-readiness-2026-04-05T08-30-00.000Z.json");
   const gateSummaryPath = path.join(releaseReadinessDir, `release-gate-summary-${revision}.json`);
   const bundlePath = path.join(releaseReadinessDir, `cocos-rc-evidence-bundle-${candidate}-${revision}.json`);
   const ledgerPath = path.join(releaseReadinessDir, `manual-release-evidence-owner-ledger-${candidate}-${revision}.md`);
   const wechatSummaryPath = path.join(wechatArtifactsDir, "codex.wechat.release-candidate-summary.json");
+  const runtimeEvidencePath = path.join(releaseReadinessDir, `runtime-observability-evidence-${candidate}-${revision}.json`);
+  const runtimeGatePath = path.join(releaseReadinessDir, `runtime-observability-gate-${candidate}-${revision}.json`);
   const runtimeSignoffPath = path.join(wechatArtifactsDir, `runtime-observability-signoff-${candidate}-${revision}.md`);
 
   writeJson(snapshotPath, {
-    generatedAt: "2026-04-02T08:30:00.000Z",
+    generatedAt: "2026-04-05T08:30:00.000Z",
     revision: {
       commit: revision,
       shortCommit: revision
     }
   });
   writeJson(gateSummaryPath, {
-    generatedAt: "2026-04-02T08:35:00.000Z",
+    generatedAt: "2026-04-05T08:35:00.000Z",
     revision: {
       commit: revision,
       shortCommit: revision
@@ -313,7 +319,7 @@ test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat
   });
   writeJson(bundlePath, {
     bundle: {
-      generatedAt: "2026-04-02T08:40:00.000Z",
+      generatedAt: "2026-04-05T08:40:00.000Z",
       candidate,
       commit: revision,
       shortCommit: revision
@@ -324,10 +330,31 @@ test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat
       }
     }
   });
+  writeJson(runtimeEvidencePath, {
+    generatedAt: "2026-04-05T08:44:00.000Z",
+    candidate: {
+      name: candidate,
+      revision,
+      shortRevision: revision,
+      targetSurface: "wechat"
+    }
+  });
+  writeJson(runtimeGatePath, {
+    generatedAt: "2026-04-05T08:45:00.000Z",
+    candidate: {
+      name: candidate,
+      revision,
+      shortRevision: revision,
+      targetSurface: "wechat"
+    },
+    evidenceSource: {
+      artifactPath: runtimeEvidencePath
+    }
+  });
   writeLedger(ledgerPath, {
     candidate,
     targetRevision: revision,
-    lastUpdated: "2026-04-02T08:42:00.000Z",
+    lastUpdated: "2026-04-05T08:42:00.000Z",
     linkedReadinessSnapshot: snapshotPath,
     rows: [
       {
@@ -336,14 +363,14 @@ test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat
         revision,
         owner: "oncall-ops",
         status: "pending",
-        lastUpdated: "2026-04-02T08:41:00.000Z",
+        lastUpdated: "2026-04-05T08:41:00.000Z",
         artifactPath: runtimeSignoffPath,
         notes: "Still waiting on release-environment captures."
       }
     ]
   });
   writeJson(wechatSummaryPath, {
-    generatedAt: "2026-04-02T08:45:00.000Z",
+    generatedAt: "2026-04-05T08:45:00.000Z",
     candidate: {
       revision,
       status: "blocked"
@@ -388,12 +415,18 @@ test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat
       candidate,
       "--candidate-revision",
       revision,
+      "--target-surface",
+      "wechat",
       "--snapshot",
       snapshotPath,
       "--release-gate-summary",
       gateSummaryPath,
       "--cocos-rc-bundle",
       bundlePath,
+      "--runtime-observability-evidence",
+      runtimeEvidencePath,
+      "--runtime-observability-gate",
+      runtimeGatePath,
       "--manual-evidence-ledger",
       ledgerPath,
       "--wechat-artifacts-dir",
@@ -410,7 +443,11 @@ test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat
 
   assert.equal(result.status, 1);
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
-    summary: { status: string };
+    summary: { status: string; blockerCount: number; warningCount: number };
+    triage: {
+      blockers: Array<{ familyId: string; code: string }>;
+      warnings: Array<{ familyId: string; code: string }>;
+    };
     manualEvidenceContract: {
       status: string;
       requiredFamilies: Array<{ id: string; findings: Array<{ code: string; artifactPath?: string }>; summary: string }>;
@@ -418,6 +455,8 @@ test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat
     artifactFamilies: Array<{ id: string; findings: Array<{ code: string; artifactPath?: string }> }>;
   };
   assert.equal(report.summary.status, "failed");
+  assert.equal(report.summary.blockerCount > 0, true);
+  assert.equal(report.summary.warningCount, 0);
   assert.equal(report.manualEvidenceContract.status, "failed");
 
   const ledgerFamily = report.artifactFamilies.find((family) => family.id === "manual-evidence-ledger");
@@ -429,11 +468,161 @@ test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat
   assert.deepEqual(wechatFamily?.findings.map((finding) => finding.code), ["manual_pending", "manual_pending", "stale", "blocked"]);
   assert.equal(wechatFamily?.findings[1]?.artifactPath, runtimeSignoffPath);
   assert.deepEqual(runtimeContractFamily?.findings.map((finding) => finding.code), ["manual_pending", "manual_pending", "stale"]);
-  assert.match(wechatContractFamily?.summary ?? "", /missing for candidate/);
+  assert.match(wechatContractFamily?.summary ?? "", /missing for candidate|warns for candidate|blocks candidate/);
+  assert.equal(report.triage.warnings.length, 0);
+  assert.equal(report.triage.blockers.some((entry) => entry.familyId === "wechat-release-evidence" && entry.code === "blocked"), true);
 
   const markdown = fs.readFileSync(markdownOutputPath, "utf8");
   assert.match(markdown, /Manual Evidence Contract/);
   assert.match(markdown, /WeChat release evidence summary/);
   assert.match(markdown, /Runtime observability sign-off is still pending/);
   assert.match(markdown, /Smoke report is stale for this candidate/);
+});
+
+test("same-candidate evidence audit treats runtime evidence as advisory for h5 review", () => {
+  const workspace = createTempWorkspace();
+  const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
+  const candidate = "phase1-rc";
+  const revision = "abc1234";
+  const snapshotPath = path.join(artifactsDir, "release-readiness-2026-04-05T08-30-00.000Z.json");
+  const gateSummaryPath = path.join(artifactsDir, `release-gate-summary-${revision}.json`);
+  const bundlePath = path.join(artifactsDir, `cocos-rc-evidence-bundle-${candidate}-${revision}.json`);
+  const ledgerPath = path.join(artifactsDir, `manual-release-evidence-owner-ledger-${candidate}-${revision}.md`);
+  const runtimeEvidencePath = path.join(artifactsDir, `runtime-observability-evidence-${candidate}-${revision}.json`);
+  const runtimeGatePath = path.join(artifactsDir, `runtime-observability-gate-${candidate}-${revision}.json`);
+
+  writeJson(snapshotPath, {
+    generatedAt: "2026-04-05T08:30:00.000Z",
+    revision: {
+      commit: revision,
+      shortCommit: revision
+    }
+  });
+  writeJson(gateSummaryPath, {
+    generatedAt: "2026-04-05T08:35:00.000Z",
+    revision: {
+      commit: revision,
+      shortCommit: revision
+    },
+    inputs: {
+      snapshotPath
+    }
+  });
+  writeJson(bundlePath, {
+    bundle: {
+      generatedAt: "2026-04-05T08:40:00.000Z",
+      candidate,
+      commit: revision,
+      shortCommit: revision
+    },
+    linkedEvidence: {
+      releaseReadinessSnapshot: {
+        path: snapshotPath
+      }
+    }
+  });
+  writeLedger(ledgerPath, {
+    candidate,
+    targetRevision: revision,
+    lastUpdated: "2026-04-05T08:42:00.000Z",
+    linkedReadinessSnapshot: snapshotPath,
+    rows: [
+      {
+        evidenceType: "cocos-rc-checklist-review",
+        candidate,
+        revision,
+        owner: "release-owner",
+        status: "done",
+        lastUpdated: "2026-04-05T08:42:00.000Z",
+        artifactPath: path.join(artifactsDir, `cocos-rc-checklist-${revision}.md`),
+        notes: "Checklist reviewed for this candidate."
+      }
+    ]
+  });
+  writeJson(runtimeEvidencePath, {
+    generatedAt: "2026-03-20T08:44:00.000Z",
+    candidate: {
+      name: candidate,
+      revision,
+      shortRevision: revision,
+      targetSurface: "h5"
+    }
+  });
+  writeJson(runtimeGatePath, {
+    generatedAt: "2026-03-20T08:45:00.000Z",
+    candidate: {
+      name: candidate,
+      revision: "deadbeef",
+      shortRevision: "deadbeef",
+      targetSurface: "h5"
+    },
+    evidenceSource: {
+      artifactPath: path.join(artifactsDir, "runtime-observability-evidence-other.json")
+    }
+  });
+
+  const outputPath = path.join(workspace, "same-candidate-evidence-audit.json");
+  const markdownOutputPath = path.join(workspace, "same-candidate-evidence-audit.md");
+  const result = runAudit(
+    [
+      "--candidate",
+      candidate,
+      "--candidate-revision",
+      revision,
+      "--target-surface",
+      "h5",
+      "--snapshot",
+      snapshotPath,
+      "--release-gate-summary",
+      gateSummaryPath,
+      "--cocos-rc-bundle",
+      bundlePath,
+      "--runtime-observability-evidence",
+      runtimeEvidencePath,
+      "--runtime-observability-gate",
+      runtimeGatePath,
+      "--manual-evidence-ledger",
+      ledgerPath,
+      "--output",
+      outputPath,
+      "--markdown-output",
+      markdownOutputPath,
+      "--max-age-hours",
+      "72"
+    ],
+    REPO_ROOT
+  );
+
+  assert.equal(result.status, 0);
+  const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
+    summary: { status: string; blockerCount: number; warningCount: number };
+    triage: {
+      blockers: Array<{ familyId: string; code: string }>;
+      warnings: Array<{ familyId: string; code: string }>;
+    };
+    artifactFamilies: Array<{ id: string; status: string; findings: Array<{ code: string }> }>;
+  };
+
+  assert.equal(report.summary.status, "warning");
+  assert.equal(report.summary.blockerCount, 0);
+  assert.equal(report.summary.warningCount, 4);
+  assert.equal(report.triage.blockers.length, 0);
+  assert.deepEqual(
+    report.triage.warnings.map((entry) => `${entry.familyId}:${entry.code}`),
+    [
+      "runtime-observability-evidence:stale",
+      "runtime-observability-gate:revision_mismatch",
+      "runtime-observability-gate:stale",
+      "runtime-observability-gate:linked_artifact_mismatch"
+    ]
+  );
+
+  const runtimeEvidenceFamily = report.artifactFamilies.find((family) => family.id === "runtime-observability-evidence");
+  const runtimeGateFamily = report.artifactFamilies.find((family) => family.id === "runtime-observability-gate");
+  assert.equal(runtimeEvidenceFamily?.status, "warning");
+  assert.equal(runtimeGateFamily?.status, "warning");
+
+  const markdown = fs.readFileSync(markdownOutputPath, "utf8");
+  assert.match(markdown, /Overall status: \*\*WARNING\*\*/);
+  assert.match(markdown, /Advisory warnings: 4/);
 });

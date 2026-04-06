@@ -64,19 +64,22 @@ That command writes candidate+revision-scoped JSON and Markdown under `artifacts
 
 When a candidate has more than one manual sign-off in flight, track ownership in [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) and keep the candidate copy under `artifacts/release-readiness/manual-release-evidence-owner-ledger-<candidate>-<short-sha>.md`; [`artifacts/release-readiness/manual-release-evidence-owner-ledger-phase1-rc-abc1234.md`](../artifacts/release-readiness/manual-release-evidence-owner-ledger-phase1-rc-abc1234.md) is the reviewer-facing example.
 
-When reviewers need one candidate-scoped freshness verdict across the snapshot, gate summary, Cocos RC bundle, owner ledger, and any applicable WeChat release evidence, run:
+When reviewers need one candidate-scoped freshness verdict across the snapshot, gate summary, Cocos RC bundle, runtime observability packet, owner ledger, and any applicable WeChat release evidence, run:
 
 ```bash
-npm run release:same-candidate:evidence-audit -- \
+npm run release:candidate:evidence-audit -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
+  --target-surface <auto|h5|wechat> \
   --snapshot <snapshot-json> \
   --release-gate-summary <release-gate-summary-json> \
   --cocos-rc-bundle <cocos-rc-bundle-json> \
+  --runtime-observability-evidence <runtime-evidence-json> \
+  --runtime-observability-gate <runtime-gate-json> \
   --manual-evidence-ledger <owner-ledger-md>
 ```
 
-The audit writes both JSON and Markdown under `artifacts/release-readiness/`, links back to the underlying artifact paths, fails closed on revision drift, and now also flags pending ledger rows plus stale or blocked WeChat/runtime-observability evidence when `artifacts/wechat-release/codex.wechat.release-candidate-summary.json` is present.
+The audit writes both JSON and Markdown under `artifacts/release-readiness/`, links back to the underlying artifact paths, emits one reviewer-facing triage split into `blocking` and `warning`, fails closed on revision drift for required families, and now also flags pending ledger rows plus stale or blocked WeChat/runtime-observability evidence when those surfaces are applicable. Use `--target-surface wechat` when the audit is part of a shipping or RC decision for WeChat; use `--target-surface h5` to keep WeChat/runtime drift advisory instead of blocking. `--target-surface auto` keeps the older inference behavior and only escalates WeChat/runtime checks when their artifacts are already present.
 
 If reviewers only need the lightweight Cocos RC packet check before manual checklist or blocker review, run:
 

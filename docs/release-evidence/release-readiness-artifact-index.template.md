@@ -34,7 +34,7 @@ This file is an index, not proof. The linked JSON / Markdown artifacts remain th
 | Snapshot | `artifacts/release-readiness/release-readiness-<timestamp>.json` | Must match `Current revision`. |
 | Manual evidence ledger | `artifacts/release-readiness/manual-release-evidence-owner-ledger-<candidate>-<short-sha>.md` | Required when manual sign-offs exist. |
 | Gate summary | `artifacts/release-readiness/release-gate-summary-<short-sha>.json` | Use the same target surface recorded above. |
-| Same-candidate evidence audit | `artifacts/release-readiness/same-candidate-evidence-audit-<candidate>-<short-sha>.json` | Must pass for this packet. |
+| Candidate-level evidence audit | `artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.json` | Must pass for this packet or carry only accepted warnings for the selected surface. |
 | Cocos RC bundle | `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.json` | Include paired checklist / blockers paths in notes when relevant. |
 | Reconnect soak | `artifacts/release-readiness/colyseus-reconnect-soak-summary-<candidate>-<short-sha>.json` | Optional unless reconnect scope applies. |
 | Persistence/content artifact | `artifacts/release-readiness/phase1-release-persistence-regression-<scope>.json` | Optional unless persistence or shipped content scope applies. |
@@ -47,7 +47,7 @@ This file is an index, not proof. The linked JSON / Markdown artifacts remain th
 | --- | --- | --- |
 | Snapshot | `artifacts/release-readiness/<previous-snapshot>.json` | Same target surface as the current packet. |
 | Gate summary | `artifacts/release-readiness/<previous-gate-summary>.json` | Prefer the last accepted release-call packet, not an arbitrary older run. |
-| Same-candidate evidence audit | `artifacts/release-readiness/<previous-audit>.json` | Optional when older packets predate the audit workflow. |
+| Candidate-level evidence audit | `artifacts/release-readiness/<previous-audit>.json` | Optional when older packets predate the audit workflow. |
 | Dashboard | `artifacts/release-readiness/<previous-dashboard>.json` | Use the packet reviewers actually referenced. |
 | Go/no-go packet | `artifacts/release-readiness/<previous-decision-packet>.json` | Optional when the previous release call stopped before decision-packet generation. |
 
@@ -64,4 +64,3 @@ This file is an index, not proof. The linked JSON / Markdown artifacts remain th
 - Gate comparison: `<same | improved | regressed>`
 - Scope-specific differences: `<wechat evidence refreshed | reconnect soak added | persistence unchanged>`
 - Follow-up required: `<none | describe blocker>`
-

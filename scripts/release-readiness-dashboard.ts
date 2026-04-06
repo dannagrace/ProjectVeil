@@ -931,16 +931,16 @@ export function summarizeSameCandidateAudit(
     return {
       status,
       detail: candidatePinned
-        ? "Same-candidate evidence audit missing."
-        : "Same-candidate evidence audit not selected; pass --candidate plus --candidate-revision to enforce candidate-level evidence stitching.",
+        ? "Candidate-level evidence audit missing."
+        : "Candidate-level evidence audit not selected; pass --candidate plus --candidate-revision to enforce candidate-level evidence stitching.",
       evidence: createEvidenceItem({
-        label: "Same-candidate evidence audit",
-        path: auditPath ?? "<missing-same-candidate-evidence-audit>",
+        label: "Candidate-level evidence audit",
+        path: auditPath ?? "<missing-candidate-evidence-audit>",
         status,
         availability: "missing",
         summary: candidatePinned
-          ? "Same-candidate evidence audit missing."
-          : "Same-candidate evidence audit not selected.",
+          ? "Candidate-level evidence audit missing."
+          : "Candidate-level evidence audit not selected.",
         reasonCodes: [reasonCode]
       }),
       failReasons: candidatePinned ? [reasonCode] : [],
@@ -1844,21 +1844,33 @@ async function main(): Promise<void> {
       );
   const resolvedSameCandidateAuditPath = args.sameCandidateAuditPath
     ? path.resolve(args.sameCandidateAuditPath)
-    : resolveLatestMatchingJsonFile(
-        DEFAULT_RELEASE_READINESS_DIR,
-        (entry) => entry.startsWith("same-candidate-evidence-audit-") && entry.endsWith(".json"),
-        (entry) => Boolean(candidateSlug && revisionSuffix && entry.includes(candidateSlug) && entry.includes(revisionSuffix))
-      );
+    : candidateSlug && revisionSuffix
+      ? resolveLatestMatchingJsonFile(
+          DEFAULT_RELEASE_READINESS_DIR,
+          (entry) =>
+            entry.endsWith(".json") &&
+            (entry.startsWith("same-candidate-evidence-audit-") || entry.startsWith("candidate-evidence-audit-")),
+          (entry) => Boolean(entry.includes(candidateSlug) && entry.includes(revisionSuffix))
+        )
+      : undefined;
   const wechatArtifacts = resolveWechatArtifacts(args);
 
   const snapshot = readJsonFile<ReleaseReadinessSnapshot>(resolvedSnapshotPath);
   const cocosRcSnapshot = readJsonFile<CocosReleaseCandidateSnapshot>(resolvedCocosRcPath);
-  const primaryClientDiagnostics = readJsonFile<PrimaryClientDiagnosticSnapshotsArtifact>(resolvedPrimaryClientDiagnosticsPath);
+  const primaryClientDiagnostics = resolvedPrimaryClientDiagnosticsPath
+    ? readJsonFile<PrimaryClientDiagnosticSnapshotsArtifact>(resolvedPrimaryClientDiagnosticsPath)
+    : undefined;
   const reconnectSoakArtifact = readJsonFile<ReconnectSoakArtifact>(resolvedReconnectSoakPath);
   const persistenceArtifact = readJsonFile<Phase1PersistenceReleaseReport>(resolvedPersistencePath);
-  const sameCandidateAudit = readJsonFile<SameCandidateEvidenceAuditReport>(resolvedSameCandidateAuditPath);
-  const wechatSmokeReport = readJsonFile<WechatSmokeReport>(wechatArtifacts.smokeReportPath);
-  const wechatPackageMetadata = readJsonFile<WechatPackageMetadata>(wechatArtifacts.packageMetadataPath);
+  const sameCandidateAudit = resolvedSameCandidateAuditPath && fs.existsSync(resolvedSameCandidateAuditPath)
+    ? readJsonFile<SameCandidateEvidenceAuditReport>(resolvedSameCandidateAuditPath)
+    : undefined;
+  const wechatSmokeReport = wechatArtifacts.smokeReportPath
+    ? readJsonFile<WechatSmokeReport>(wechatArtifacts.smokeReportPath)
+    : undefined;
+  const wechatPackageMetadata = wechatArtifacts.packageMetadataPath
+    ? readJsonFile<WechatPackageMetadata>(wechatArtifacts.packageMetadataPath)
+    : undefined;
 
   let healthPayload: RuntimeHealthPayload | undefined;
   let authPayload: AuthReadinessPayload | undefined;
@@ -1981,24 +1993,30 @@ async function main(): Promise<void> {
   writeTextFile(jsonOutputPath, `${JSON.stringify(report, null, 2)}\n`);
   writeTextFile(markdownOutputPath, renderMarkdown(report));
 
-  console.log(`Wrote release-readiness dashboard JSON: ${toRelativePath(jsonOutputPath)}`);
-  console.log(`Wrote release-readiness dashboard Markdown: ${toRelativePath(markdownOutputPath)}`);
-  console.log(`Overall status: ${report.overallStatus}`);
-  console.log(`Go/No-Go decision: ${report.goNoGo.decision}`);
-  console.log(`Required failed: ${report.goNoGo.requiredFailed}`);
-  console.log(`Required pending: ${report.goNoGo.requiredPending}`);
-  console.log(`Candidate revision: ${report.goNoGo.candidateRevision ?? "<unverified>"}`);
+  const terminalLines = [
+    `Wrote release-readiness dashboard JSON: ${toRelativePath(jsonOutputPath)}`,
+    `Wrote release-readiness dashboard Markdown: ${toRelativePath(markdownOutputPath)}`,
+    `Overall status: ${report.overallStatus}`,
+    `Go/No-Go decision: ${report.goNoGo.decision}`,
+    `Required failed: ${report.goNoGo.requiredFailed}`,
+    `Required pending: ${report.goNoGo.requiredPending}`,
+    `Candidate revision: ${report.goNoGo.candidateRevision ?? "<unverified>"}`
+  ];
   for (const finding of report.goNoGo.candidateConsistencyFindings) {
-    console.log(`! Candidate consistency: ${finding.summary} (${toRelativePath(path.resolve(finding.path))})`);
+    terminalLines.push(`! Candidate consistency: ${finding.summary} (${toRelativePath(path.resolve(finding.path))})`);
   }
   for (const gate of report.gates) {
-    console.log(`- ${gate.label}: ${gate.status} (${gate.summary})`);
+    terminalLines.push(`- ${gate.label}: ${gate.status} (${gate.summary})`);
   }
+  process.stdout.write(`${terminalLines.join("\n")}\n`);
   if (report.goNoGo.decision === "blocked") {
     process.exitCode = 1;
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  void main();
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+    process.exitCode = 1;
+  });
 }

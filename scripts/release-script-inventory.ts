@@ -224,14 +224,26 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "`artifacts/release-readiness/runtime-slo-summary-<short-sha>.txt`",
     ],
   },
-  "release:same-candidate:evidence-audit": {
-    purpose: "Audit whether all candidate evidence artifacts refer to the same revision and remain fresh enough for release review.",
+  "release:candidate:evidence-audit": {
+    purpose:
+      "Audit whether all candidate evidence artifacts refer to the same revision, remain fresh enough for release review, and should be treated as blocking vs warning for the selected surface.",
     requiredInputs: [
-      "Release-readiness, release-gate, Cocos bundle, manual-ledger, and WeChat summary artifacts, either discovered from defaults or passed explicitly.",
+      "--candidate, --candidate-revision, and optional --target-surface <auto|h5|wechat>.",
+      "Release-readiness, release-gate, Cocos bundle, runtime-observability, manual-ledger, and WeChat summary artifacts, either discovered from defaults or passed explicitly.",
     ],
     producedArtifacts: [
-      "`artifacts/release-readiness/same-candidate-evidence-audit-<candidate>-<short-sha>.json`",
-      "`artifacts/release-readiness/same-candidate-evidence-audit-<candidate>-<short-sha>.md`",
+      "`artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.json`",
+      "`artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.md`",
+    ],
+  },
+  "release:same-candidate:evidence-audit": {
+    purpose: "Legacy alias for release:candidate:evidence-audit.",
+    requiredInputs: [
+      "Same inputs as release:candidate:evidence-audit.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.json`",
+      "`artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.md`",
     ],
   },
   "release:wechat:rehearsal": {
