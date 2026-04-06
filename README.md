@@ -78,6 +78,8 @@ npm run validate:quickstart
 - 构建 H5 调试壳
 - 以默认内存存储启动本地服务，并校验 `health` / `auth-readiness` / `lobby` 接口
 
+本地 Codex 会话如果把元数据写在仓库内，默认只允许落在仓库根目录的 `.codex`、`.codex-last-*.txt` 和 `.codex-runs/`。这些路径是本机临时产物，已被 `.gitignore` 排除，不应加入提交或作为发布证据目录使用。
+
 验证通过后，常用本地运行命令如下：
 
 ```bash

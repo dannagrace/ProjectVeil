@@ -3,6 +3,9 @@ dist
 .turbo
 coverage
 .coverage
+.codex
+.codex-last-*.txt
+.codex-runs/
 *.log
 .env
 .env.local
