@@ -1834,7 +1834,9 @@ function buildPhase1ExitEvidenceGateSection(sections: DossierSection[], generate
   section: DossierSection;
   gate: Phase1ExitEvidenceGate;
 } {
-  const scopedSections = sections.filter((section) => section.id !== "release-health");
+  const scopedSections = sections.filter(
+    (section) => section.id !== "release-health" && (section.required || section.id === "release-gate")
+  );
   const blockingSections = scopedSections.filter((section) => section.result === "failed").map((section) => section.label);
   const pendingSections = scopedSections.filter((section) => section.result === "pending").map((section) => section.label);
   const acceptedRiskSections = scopedSections.filter((section) => section.result === "accepted_risk").map((section) => section.label);

@@ -25,13 +25,14 @@ function readGit(command: string[]): string {
   return result.stdout.trim();
 }
 
-test.skip("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehearsal outputs", () => {
+test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehearsal outputs", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-phase1-rehearsal-"));
   const buildDir = path.join(workspace, "build");
   const sourceArtifactsDir = path.join(workspace, "source-artifacts");
   const outputDir = path.join(workspace, "rehearsal");
   const revision = readGit(["rev-parse", "HEAD"]);
   const shortRevision = readGit(["rev-parse", "--short", "HEAD"]);
+  const now = new Date().toISOString();
   fs.cpSync(fixtureBuildDir, buildDir, { recursive: true });
 
   execFileSync(
@@ -59,7 +60,7 @@ test.skip("release:phase1:candidate-rehearsal assembles stable candidate-scoped 
 
   const h5SmokePath = path.join(workspace, "client-release-candidate-smoke.json");
   writeJson(h5SmokePath, {
-    generatedAt: "2026-04-02T08:32:00.000Z",
+    generatedAt: now,
     revision: {
       commit: revision,
       shortCommit: shortRevision
@@ -67,7 +68,7 @@ test.skip("release:phase1:candidate-rehearsal assembles stable candidate-scoped 
     execution: {
       status: "passed",
       exitCode: 0,
-      finishedAt: "2026-04-02T08:33:00.000Z"
+      finishedAt: now
     },
     summary: {
       total: 2,
@@ -78,7 +79,7 @@ test.skip("release:phase1:candidate-rehearsal assembles stable candidate-scoped 
 
   const reconnectSoakPath = path.join(workspace, "colyseus-reconnect-soak-summary.json");
   writeJson(reconnectSoakPath, {
-    generatedAt: "2026-04-02T08:33:00.000Z",
+    generatedAt: now,
     revision: {
       commit: revision,
       shortCommit: shortRevision
@@ -161,7 +162,7 @@ test.skip("release:phase1:candidate-rehearsal assembles stable candidate-scoped 
   assert.equal(report.summary.status, "passed");
   assert.equal(report.summary.releaseGateStatus, "passed");
   assert.ok(["healthy", "warning"].includes(report.summary.releaseHealthStatus));
-  assert.equal(report.summary.phase1CandidateStatus, "pending");
+  assert.equal(report.summary.phase1CandidateStatus, "passed");
   assert.deepEqual(report.summary.stageFailures, []);
   assert.deepEqual(report.summary.missingArtifacts, []);
   assert.equal(report.stages.find((stage) => stage.id === "release-readiness-snapshot")?.status, "passed");
@@ -177,5 +178,5 @@ test.skip("release:phase1:candidate-rehearsal assembles stable candidate-scoped 
   const markdown = fs.readFileSync(markdownPath, "utf8");
   assert.match(markdown, /# Phase 1 Candidate Rehearsal/);
   assert.match(markdown, /Release gate summary: `passed`/);
-  assert.match(markdown, /Phase 1 dossier summary: `pending`/);
+  assert.match(markdown, /Phase 1 dossier summary: `passed`/);
 });
