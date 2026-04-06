@@ -183,6 +183,8 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - Same-revision 发布证据组装 runbook：`docs/same-revision-release-evidence-runbook.md`
 - Same-candidate 发布证据一致性审计：`npm run release:same-candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha>`
 - 统一发布门禁汇总：`npm run release:gate:summary`
+- Candidate-scoped runtime observability evidence：`npm run release:runtime-observability:evidence -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>`（抓取 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics` 的同一候选包证据，并在 `artifacts/release-readiness/` 输出 candidate+revision 命名的 JSON / Markdown）
+- Candidate-scoped runtime observability gate：`npm run release:runtime-observability:gate -- --candidate <candidate-name> --candidate-revision <git-sha> --capture-report <runtime-observability-evidence.json>`（基于已捕获的 runtime evidence 生成 pass/fail gate；也可直接传 `--server-url` 让 gate 即时采样）
 - Candidate-level reconnect soak：`npm run release:reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>`（输出 candidate+revision 命名的 reconnect soak JSON / Markdown，并供 release gate / dossier 直接引用）
 - 发布健康度聚合摘要：`npm run release:health:summary`
 - 最近候选包发布健康趋势基线：`npm run release:health:trend-baseline`

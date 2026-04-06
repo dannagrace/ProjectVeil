@@ -20,6 +20,19 @@ Treat this sign-off as candidate-scoped release evidence, not a reusable ops not
 
 Use the dedicated template at [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md) so the output stays aligned with the repo's other release evidence artifacts.
 
+When possible, generate the candidate-scoped probe packet first with:
+
+```bash
+npm run release:runtime-observability:evidence -- \
+  --candidate <candidate-name> \
+  --candidate-revision <git-sha> \
+  --target-surface wechat \
+  --target-environment <env-name> \
+  --server-url <base-url>
+```
+
+That JSON/Markdown pair is the repo-native source artifact for the sign-off. The reviewer sign-off should reference the generated evidence path instead of pasting ad hoc endpoint output into manual notes.
+
 ## Required Evidence
 
 For the same candidate revision, capture and attach:

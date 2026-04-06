@@ -48,6 +48,8 @@ interface RehearsalArtifacts {
   stableH5SmokePath?: string;
   stableReconnectSoakPath?: string;
   stableRuntimeReportPath?: string;
+  runtimeObservabilityEvidencePath?: string;
+  runtimeObservabilityEvidenceMarkdownPath?: string;
   runtimeObservabilityGatePath?: string;
   runtimeObservabilityGateMarkdownPath?: string;
   stableWechatArtifactsDir?: string;
@@ -418,6 +420,8 @@ function main(): void {
   const stableH5SmokePath = path.join(outputDir, `client-release-candidate-smoke-${candidateSlug}-${revision.shortCommit}.json`);
   const stableReconnectSoakPath = path.join(outputDir, `colyseus-reconnect-soak-summary-${candidateSlug}-${revision.shortCommit}.json`);
   const stableRuntimeReportPath = path.join(outputDir, `runtime-regression-report-${candidateSlug}-${revision.shortCommit}.json`);
+  const runtimeObservabilityEvidencePath = path.join(outputDir, `runtime-observability-evidence-${candidateSlug}-${revision.shortCommit}.json`);
+  const runtimeObservabilityEvidenceMarkdownPath = path.join(outputDir, `runtime-observability-evidence-${candidateSlug}-${revision.shortCommit}.md`);
   const runtimeObservabilityGatePath = path.join(outputDir, `runtime-observability-gate-${candidateSlug}-${revision.shortCommit}.json`);
   const runtimeObservabilityGateMarkdownPath = path.join(outputDir, `runtime-observability-gate-${candidateSlug}-${revision.shortCommit}.md`);
   const stableWechatArtifactsDir = path.join(outputDir, `wechat-release-${candidateSlug}-${revision.shortCommit}`);
@@ -436,6 +440,8 @@ function main(): void {
 
   artifacts.releaseReadinessSnapshotPath = toRelative(releaseReadinessSnapshotPath);
   artifacts.persistencePath = toRelative(persistencePath);
+  artifacts.runtimeObservabilityEvidencePath = toRelative(runtimeObservabilityEvidencePath);
+  artifacts.runtimeObservabilityEvidenceMarkdownPath = toRelative(runtimeObservabilityEvidenceMarkdownPath);
   artifacts.runtimeObservabilityGatePath = toRelative(runtimeObservabilityGatePath);
   artifacts.runtimeObservabilityGateMarkdownPath = toRelative(runtimeObservabilityGateMarkdownPath);
   artifacts.releaseGateSummaryPath = toRelative(releaseGateSummaryPath);
@@ -582,6 +588,41 @@ function main(): void {
       }
     },
     {
+      id: "runtime-observability-evidence",
+      title: "Capture runtime observability evidence",
+      run: () => {
+        if (!args.serverUrl) {
+          return {
+            id: "runtime-observability-evidence",
+            title: "Capture runtime observability evidence",
+            status: "skipped",
+            summary: "No --server-url was provided, so target-environment runtime evidence capture was skipped."
+          };
+        }
+
+        return runCommandStage("runtime-observability-evidence", "Capture runtime observability evidence", [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/runtime-observability-evidence.ts",
+          "--candidate",
+          args.candidate,
+          "--candidate-revision",
+          revision.commit,
+          "--target-surface",
+          args.targetSurface,
+          "--target-environment",
+          args.targetSurface,
+          "--server-url",
+          args.serverUrl,
+          "--output",
+          runtimeObservabilityEvidencePath,
+          "--markdown-output",
+          runtimeObservabilityEvidenceMarkdownPath
+        ], [runtimeObservabilityEvidencePath, runtimeObservabilityEvidenceMarkdownPath]);
+      }
+    },
+    {
       id: "runtime-observability-gate",
       title: "Build runtime observability gate",
       run: () => {
@@ -603,12 +644,12 @@ function main(): void {
           args.candidate,
           "--candidate-revision",
           revision.commit,
+          "--capture-report",
+          runtimeObservabilityEvidencePath,
           "--target-surface",
           args.targetSurface,
           "--target-environment",
           args.targetSurface,
-          "--server-url",
-          args.serverUrl,
           "--output",
           runtimeObservabilityGatePath,
           "--markdown-output",
@@ -775,6 +816,7 @@ function main(): void {
     phase1CandidateDossierMarkdownPath
   ];
   if (args.serverUrl) {
+    requiredArtifacts.push(runtimeObservabilityEvidencePath, runtimeObservabilityEvidenceMarkdownPath);
     requiredArtifacts.push(runtimeObservabilityGatePath, runtimeObservabilityGateMarkdownPath);
   }
   if (artifacts.stableH5SmokePath) {

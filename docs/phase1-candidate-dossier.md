@@ -6,7 +6,7 @@ It now also emits one explicit candidate-level `Phase 1 exit evidence gate` so r
 
 The same run also emits a smaller runtime observability dossier that keeps the target-environment runtime probes and reconnect/session-recovery evidence in one reviewer-facing artifact for the same candidate revision.
 
-For release-time target-environment enforcement, use `npm run release:runtime-observability:gate`. The dossier can either sample the live endpoints directly with `--server-url` or reuse a previously written gate report with `--runtime-observability-gate`.
+For release-time target-environment enforcement, first capture `npm run release:runtime-observability:evidence`, then evaluate it with `npm run release:runtime-observability:gate`. The dossier can still sample the live endpoints directly with `--server-url`, but the preferred release-review flow is to reuse a previously written gate report with `--runtime-observability-gate` so the same candidate-scoped runtime evidence is visible to every reviewer.
 
 The Markdown artifact is the canonical reviewer-facing attachment for one candidate revision: it records the candidate metadata, selected evidence inputs, the single Phase 1 exit gate decision, and the per-section drill-down in one place.
 
@@ -37,12 +37,19 @@ npm run release:phase1:candidate-dossier -- \
 Reuse a stable runtime gate artifact instead of probing the environment a second time:
 
 ```bash
-npm run release:runtime-observability:gate -- \
+npm run release:runtime-observability:evidence -- \
   --candidate phase1-wechat-rc \
   --candidate-revision abc1234 \
   --target-surface wechat \
   --target-environment release-staging \
   --server-url https://veil-staging.example.com
+
+npm run release:runtime-observability:gate -- \
+  --candidate phase1-wechat-rc \
+  --candidate-revision abc1234 \
+  --target-surface wechat \
+  --target-environment release-staging \
+  --capture-report artifacts/release-readiness/runtime-observability-evidence-phase1-wechat-rc-abc1234.json
 
 npm run release:phase1:candidate-dossier -- \
   --candidate phase1-wechat-rc \
@@ -105,7 +112,7 @@ The dossier surfaces:
 - generated timestamp plus candidate branch/dirty metadata
 - one candidate revision and target surface
 - one `Selected Inputs` block so reviewers can see the exact artifact paths and runtime URL that were used
-- optional reuse of a stable runtime observability gate artifact so release rehearsal and manual review can point at the same endpoint sample
+- optional reuse of a stable runtime observability evidence + gate artifact pair so release rehearsal, manual review, and the dossier all point at the same endpoint sample
 - one `Generated Bundle` block so PR/release巡检 reviewers can stay inside the dossier directory
 - one runtime observability companion dossier that ties `/api/runtime/health`, `/api/runtime/auth-readiness`, `/api/runtime/metrics`, and reconnect soak evidence to the same candidate revision
 - one `phase1ExitEvidenceGate` result with blocking/pending/accepted-risk section lists

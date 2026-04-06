@@ -1,84 +1,30 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-export type TargetSurface = "h5" | "wechat";
+import {
+  buildRuntimeObservabilityEvidenceReport,
+  commitsMatch,
+  getRevision,
+  type EndpointStatus,
+  type EvidenceFreshness,
+  type RuntimeObservabilityEvidenceReport,
+  type TargetSurface,
+  readRuntimeObservabilityEvidenceReport
+} from "./runtime-observability-evidence.ts";
+
 export type GateStatus = "passed" | "failed";
-export type EndpointStatus = "passed" | "warn" | "failed";
-export type EvidenceFreshness = "fresh" | "stale" | "missing_timestamp" | "invalid_timestamp";
 
 interface Args {
   candidate?: string;
   candidateRevision?: string;
-  serverUrl: string;
+  serverUrl?: string;
   targetSurface: TargetSurface;
   targetEnvironment?: string;
+  captureReportPath?: string;
   outputPath?: string;
   markdownOutputPath?: string;
   maxSampleAgeMinutes: number;
-}
-
-interface GitRevision {
-  commit: string;
-  shortCommit: string;
-  branch: string;
-  dirty: boolean;
-}
-
-interface RuntimeHealthPayload {
-  status?: "ok";
-  checkedAt?: string;
-  service?: string;
-  runtime?: {
-    activeRoomCount?: number;
-    connectionCount?: number;
-    activeBattleCount?: number;
-    heroCount?: number;
-    gameplayTraffic?: {
-      connectMessagesTotal?: number;
-      worldActionsTotal?: number;
-      battleActionsTotal?: number;
-      actionMessagesTotal?: number;
-      websocketActionRateLimitedTotal?: number;
-      websocketActionKickTotal?: number;
-    };
-    auth?: {
-      activeGuestSessionCount?: number;
-      activeAccountSessionCount?: number;
-      activeAccountLockCount?: number;
-      pendingRegistrationCount?: number;
-      pendingRecoveryCount?: number;
-      tokenDelivery?: {
-        queueCount?: number;
-        deadLetterCount?: number;
-      };
-    };
-  };
-}
-
-interface AuthReadinessPayload {
-  status?: "ok" | "warn";
-  checkedAt?: string;
-  service?: string;
-  headline?: string;
-  alerts?: string[];
-  auth?: {
-    activeGuestSessionCount?: number;
-    activeAccountSessionCount?: number;
-    activeAccountLockCount?: number;
-    pendingRegistrationCount?: number;
-    pendingRecoveryCount?: number;
-    tokenDelivery?: {
-      queueCount?: number;
-      deadLetterCount?: number;
-    };
-    wechatLogin?: {
-      mode?: string;
-      credentialsStatus?: string;
-      route?: string;
-    };
-  };
 }
 
 export interface RuntimeObservabilityEndpointReport {
@@ -97,54 +43,22 @@ export interface RuntimeObservabilityEndpointReport {
 export interface RuntimeObservabilityGateReport {
   schemaVersion: 1;
   generatedAt: string;
-  candidate: {
-    name: string;
-    revision: string;
-    shortRevision: string;
-    branch: string;
-    dirty: boolean;
-    targetSurface: TargetSurface;
-  };
-  targetEnvironment: {
-    label?: string;
-    serverUrl: string;
-  };
+  candidate: RuntimeObservabilityEvidenceReport["candidate"];
+  targetEnvironment: RuntimeObservabilityEvidenceReport["targetEnvironment"];
   summary: {
     status: GateStatus;
     headline: string;
     endpointStatuses: Record<RuntimeObservabilityEndpointReport["id"], EndpointStatus>;
   };
-  readiness: {
-    activeRoomCount: number | null;
-    connectionCount: number | null;
-    activeBattleCount: number | null;
-    heroCount: number | null;
-    actionMessagesTotal: number | null;
-    worldActionsTotal: number | null;
-    battleActionsTotal: number | null;
-    activeGuestSessionCount: number | null;
-    activeAccountSessionCount: number | null;
-    activeAccountLockCount: number | null;
-    pendingRegistrationCount: number | null;
-    pendingRecoveryCount: number | null;
-    tokenDeliveryQueueCount: number | null;
-    tokenDeliveryDeadLetterCount: number | null;
-    wechatLoginMode: string | null;
-    wechatCredentialsStatus: string | null;
-    authHeadline: string | null;
+  readiness: RuntimeObservabilityEvidenceReport["readiness"];
+  evidenceSource?: {
+    artifactPath: string;
+    generatedAt?: string;
   };
   endpoints: RuntimeObservabilityEndpointReport[];
 }
 
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
-const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
-const REQUIRED_RUNTIME_METRICS = [
-  "veil_active_room_count",
-  "veil_connection_count",
-  "veil_gameplay_action_messages_total",
-  "veil_auth_account_sessions",
-  "veil_auth_token_delivery_queue_count"
-] as const;
 
 function fail(message: string): never {
   throw new Error(message);
@@ -156,6 +70,7 @@ function parseArgs(argv: string[]): Args {
   let serverUrl: string | undefined;
   let targetSurface: TargetSurface = "wechat";
   let targetEnvironment: string | undefined;
+  let captureReportPath: string | undefined;
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
   let maxSampleAgeMinutes = 30;
@@ -192,6 +107,11 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--capture-report" && next) {
+      captureReportPath = path.resolve(next);
+      index += 1;
+      continue;
+    }
     if (arg === "--output" && next) {
       outputPath = next;
       index += 1;
@@ -215,41 +135,20 @@ function parseArgs(argv: string[]): Args {
     fail(`Unknown argument: ${arg}`);
   }
 
-  if (!serverUrl?.trim()) {
-    fail("Missing required --server-url <base-url>.");
+  if (!captureReportPath && !serverUrl?.trim()) {
+    fail("Missing required runtime evidence input. Pass --server-url <base-url> or --capture-report <path>.");
   }
 
   return {
     ...(candidate ? { candidate } : {}),
     ...(candidateRevision ? { candidateRevision } : {}),
-    serverUrl,
+    ...(serverUrl ? { serverUrl } : {}),
     targetSurface,
     ...(targetEnvironment ? { targetEnvironment } : {}),
+    ...(captureReportPath ? { captureReportPath } : {}),
     ...(outputPath ? { outputPath } : {}),
     ...(markdownOutputPath ? { markdownOutputPath } : {}),
     maxSampleAgeMinutes
-  };
-}
-
-function readGitValue(args: string[]): string {
-  const result = spawnSync("git", args, {
-    cwd: process.cwd(),
-    encoding: "utf8"
-  });
-  if (result.status !== 0) {
-    fail(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
-  }
-  return result.stdout.trim();
-}
-
-function getRevision(candidateRevision?: string): GitRevision {
-  const gitCommit = readGitValue(["rev-parse", "HEAD"]);
-  const commit = candidateRevision?.trim() || gitCommit;
-  return {
-    commit,
-    shortCommit: commit.slice(0, 7),
-    branch: readGitValue(["rev-parse", "--abbrev-ref", "HEAD"]),
-    dirty: readGitValue(["status", "--porcelain"]).length > 0
   };
 }
 
@@ -260,34 +159,6 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return slug || "candidate";
-}
-
-function normalizeCommit(value: string | undefined): string | undefined {
-  const normalized = value?.trim().toLowerCase();
-  if (!normalized || !HEX_REVISION_PATTERN.test(normalized)) {
-    return undefined;
-  }
-  return normalized;
-}
-
-export function commitsMatch(left: string | undefined, right: string | undefined): boolean {
-  const normalizedLeft = normalizeCommit(left);
-  const normalizedRight = normalizeCommit(right);
-  if (!normalizedLeft || !normalizedRight) {
-    return false;
-  }
-  return normalizedLeft === normalizedRight || normalizedLeft.startsWith(normalizedRight) || normalizedRight.startsWith(normalizedLeft);
-}
-
-export function evaluateFreshness(timestamp: string | undefined, maxAgeMs: number): EvidenceFreshness {
-  if (!timestamp?.trim()) {
-    return "missing_timestamp";
-  }
-  const observedAtMs = Date.parse(timestamp);
-  if (Number.isNaN(observedAtMs)) {
-    return "invalid_timestamp";
-  }
-  return Date.now() - observedAtMs > maxAgeMs ? "stale" : "fresh";
 }
 
 function ensureDir(filePath: string): void {
@@ -307,290 +178,79 @@ function toRelativePath(filePath: string): string {
   return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
 }
 
-async function fetchResponse(url: string): Promise<Response> {
-  let response: Response;
-  try {
-    response = await fetch(url);
-  } catch (error) {
-    throw new Error(error instanceof Error ? error.message : String(error));
-  }
-  return response;
-}
-
-async function fetchJsonPayload<T>(url: string): Promise<{ response: Response; payload: T }> {
-  const response = await fetchResponse(url);
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`.trim());
-  }
-  return {
-    response,
-    payload: (await response.json()) as T
-  };
-}
-
-async function fetchTextPayload(url: string): Promise<{ response: Response; payload: string }> {
-  const response = await fetchResponse(url);
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`.trim());
-  }
-  return {
-    response,
-    payload: await response.text()
-  };
-}
-
-function getDefaultOutputPaths(args: Args, revision: GitRevision): { jsonPath: string; markdownPath: string } {
-  const candidateName = args.candidate?.trim() || revision.shortCommit;
-  const baseName = `runtime-observability-gate-${slugify(candidateName)}-${revision.shortCommit}`;
+function getDefaultOutputPaths(args: Args, shortRevision: string): { jsonPath: string; markdownPath: string } {
+  const candidateName = args.candidate?.trim() || shortRevision;
+  const baseName = `runtime-observability-gate-${slugify(candidateName)}-${shortRevision}`;
   return {
     jsonPath: path.resolve(args.outputPath ?? path.join(DEFAULT_RELEASE_READINESS_DIR, `${baseName}.json`)),
     markdownPath: path.resolve(args.markdownOutputPath ?? path.join(DEFAULT_RELEASE_READINESS_DIR, `${baseName}.md`))
   };
 }
 
-export async function buildRuntimeObservabilityGateReport(args: Args): Promise<RuntimeObservabilityGateReport> {
-  const revision = getRevision(args.candidateRevision);
-  const serverUrl = args.serverUrl.replace(/\/$/, "");
-  const maxAgeMs = args.maxSampleAgeMinutes * 60 * 1_000;
-  const candidateName = args.candidate?.trim() || revision.shortCommit;
-  const endpoints: RuntimeObservabilityEndpointReport[] = [];
-
-  const healthUrl = `${serverUrl}/api/runtime/health`;
-  let healthPayload: RuntimeHealthPayload | undefined;
-  try {
-    const { response, payload } = await fetchJsonPayload<RuntimeHealthPayload>(healthUrl);
-    healthPayload = payload;
-    const freshness = evaluateFreshness(payload.checkedAt, maxAgeMs);
-    const status: EndpointStatus =
-      payload.status === "ok" && freshness === "fresh"
-        ? "passed"
-        : freshness === "stale" || freshness === "missing_timestamp" || freshness === "invalid_timestamp"
-          ? "warn"
-          : "failed";
-    const details = [
-      `service=${payload.service ?? "unknown"}`,
-      `activeRooms=${payload.runtime?.activeRoomCount ?? 0}`,
-      `connections=${payload.runtime?.connectionCount ?? 0}`,
-      `battles=${payload.runtime?.activeBattleCount ?? 0}`,
-      `heroes=${payload.runtime?.heroCount ?? 0}`,
-      `actions=${payload.runtime?.gameplayTraffic?.actionMessagesTotal ?? 0}`
-    ];
-    if (payload.status !== "ok") {
-      details.push(`runtime health status reported ${JSON.stringify(payload.status ?? "missing")}`);
-    }
-    if (freshness !== "fresh") {
-      details.push(`runtime health sample freshness is ${freshness}`);
-    }
-    endpoints.push({
-      id: "runtime-health",
-      label: "Runtime health",
-      url: healthUrl,
-      status,
-      httpStatus: response.status,
-      summary:
-        status === "passed"
-          ? "Runtime health responded with an OK payload."
-          : payload.status !== "ok"
-            ? `Runtime health reported ${JSON.stringify(payload.status ?? "missing")}.`
-            : `Runtime health sample is ${freshness}.`,
-      observedAt: payload.checkedAt,
-      freshness,
-      details,
-      keyReadinessFields: {
-        service: payload.service ?? null,
-        activeRoomCount: payload.runtime?.activeRoomCount ?? null,
-        connectionCount: payload.runtime?.connectionCount ?? null,
-        activeBattleCount: payload.runtime?.activeBattleCount ?? null,
-        heroCount: payload.runtime?.heroCount ?? null,
-        actionMessagesTotal: payload.runtime?.gameplayTraffic?.actionMessagesTotal ?? null,
-        worldActionsTotal: payload.runtime?.gameplayTraffic?.worldActionsTotal ?? null,
-        battleActionsTotal: payload.runtime?.gameplayTraffic?.battleActionsTotal ?? null,
-        activeGuestSessionCount: payload.runtime?.auth?.activeGuestSessionCount ?? null,
-        activeAccountSessionCount: payload.runtime?.auth?.activeAccountSessionCount ?? null
-      }
-    });
-  } catch (error) {
-    endpoints.push({
-      id: "runtime-health",
-      label: "Runtime health",
-      url: healthUrl,
-      status: "failed",
-      summary: "Runtime health probe failed.",
-      freshness: "missing_timestamp",
-      details: [error instanceof Error ? error.message : String(error)],
-      keyReadinessFields: {}
-    });
+async function loadEvidence(args: Args): Promise<{ report: RuntimeObservabilityEvidenceReport; artifactPath?: string }> {
+  if (args.captureReportPath) {
+    return {
+      report: readRuntimeObservabilityEvidenceReport(args.captureReportPath),
+      artifactPath: args.captureReportPath
+    };
   }
-
-  const authUrl = `${serverUrl}/api/runtime/auth-readiness`;
-  let authPayload: AuthReadinessPayload | undefined;
-  try {
-    const { response, payload } = await fetchJsonPayload<AuthReadinessPayload>(authUrl);
-    authPayload = payload;
-    const freshness = evaluateFreshness(payload.checkedAt, maxAgeMs);
-    const hasAlerts = (payload.alerts?.length ?? 0) > 0;
-    const status: EndpointStatus =
-      payload.status === "ok" && !hasAlerts && freshness === "fresh"
-        ? "passed"
-        : payload.status === "warn" || hasAlerts || freshness !== "fresh"
-          ? "warn"
-          : "failed";
-    const details = [
-      payload.headline?.trim() || `status=${payload.status ?? "missing"}`,
-      `guestSessions=${payload.auth?.activeGuestSessionCount ?? 0}`,
-      `accountSessions=${payload.auth?.activeAccountSessionCount ?? 0}`,
-      `lockouts=${payload.auth?.activeAccountLockCount ?? 0}`,
-      `pendingRegistrations=${payload.auth?.pendingRegistrationCount ?? 0}`,
-      `pendingRecoveries=${payload.auth?.pendingRecoveryCount ?? 0}`,
-      `tokenQueue=${payload.auth?.tokenDelivery?.queueCount ?? 0}`,
-      `tokenDeadLetters=${payload.auth?.tokenDelivery?.deadLetterCount ?? 0}`,
-      `wechatMode=${payload.auth?.wechatLogin?.mode ?? "unknown"}`,
-      `wechatCredentials=${payload.auth?.wechatLogin?.credentialsStatus ?? "unknown"}`
-    ];
-    for (const alert of payload.alerts ?? []) {
-      details.push(`alert=${alert}`);
-    }
-    if (freshness !== "fresh") {
-      details.push(`auth readiness sample freshness is ${freshness}`);
-    }
-    endpoints.push({
-      id: "auth-readiness",
-      label: "Auth readiness",
-      url: authUrl,
-      status,
-      httpStatus: response.status,
-      summary:
-        status === "passed"
-          ? payload.headline?.trim() || "Auth readiness responded with an OK payload."
-          : payload.headline?.trim() || `Auth readiness reported ${JSON.stringify(payload.status ?? "missing")}.`,
-      observedAt: payload.checkedAt,
-      freshness,
-      details,
-      keyReadinessFields: {
-        status: payload.status ?? null,
-        activeGuestSessionCount: payload.auth?.activeGuestSessionCount ?? null,
-        activeAccountSessionCount: payload.auth?.activeAccountSessionCount ?? null,
-        activeAccountLockCount: payload.auth?.activeAccountLockCount ?? null,
-        pendingRegistrationCount: payload.auth?.pendingRegistrationCount ?? null,
-        pendingRecoveryCount: payload.auth?.pendingRecoveryCount ?? null,
-        tokenDeliveryQueueCount: payload.auth?.tokenDelivery?.queueCount ?? null,
-        tokenDeliveryDeadLetterCount: payload.auth?.tokenDelivery?.deadLetterCount ?? null,
-        wechatLoginMode: payload.auth?.wechatLogin?.mode ?? null,
-        wechatCredentialsStatus: payload.auth?.wechatLogin?.credentialsStatus ?? null
-      }
-    });
-  } catch (error) {
-    endpoints.push({
-      id: "auth-readiness",
-      label: "Auth readiness",
-      url: authUrl,
-      status: "failed",
-      summary: "Auth readiness probe failed.",
-      freshness: "missing_timestamp",
-      details: [error instanceof Error ? error.message : String(error)],
-      keyReadinessFields: {}
-    });
-  }
-
-  const metricsUrl = `${serverUrl}/api/runtime/metrics`;
-  try {
-    const { response, payload } = await fetchTextPayload(metricsUrl);
-    const observedAt = healthPayload?.checkedAt ?? authPayload?.checkedAt;
-    const freshness = evaluateFreshness(observedAt, maxAgeMs);
-    const missingMetrics = REQUIRED_RUNTIME_METRICS.filter((metric) => !payload.includes(metric));
-    const status: EndpointStatus =
-      missingMetrics.length === 0 && freshness === "fresh"
-        ? "passed"
-        : missingMetrics.length === 0
-          ? "warn"
-          : "failed";
-    const details =
-      missingMetrics.length === 0
-        ? ["Required Prometheus metrics are present."]
-        : [`Missing metrics: ${missingMetrics.join(", ")}`];
-    if (freshness !== "fresh") {
-      details.push(`metrics sample freshness is ${freshness}`);
-    }
-    endpoints.push({
-      id: "runtime-metrics",
-      label: "Runtime metrics",
-      url: metricsUrl,
-      status,
-      httpStatus: response.status,
-      summary:
-        missingMetrics.length === 0
-          ? "Runtime metrics exposed the required Prometheus counters."
-          : `Runtime metrics are missing ${missingMetrics.length} required counter(s).`,
-      observedAt,
-      freshness,
-      details,
-      keyReadinessFields: Object.fromEntries(REQUIRED_RUNTIME_METRICS.map((metric) => [metric, !missingMetrics.includes(metric)]))
-    });
-  } catch (error) {
-    endpoints.push({
-      id: "runtime-metrics",
-      label: "Runtime metrics",
-      url: metricsUrl,
-      status: "failed",
-      summary: "Runtime metrics probe failed.",
-      freshness: "missing_timestamp",
-      details: [error instanceof Error ? error.message : String(error)],
-      keyReadinessFields: Object.fromEntries(REQUIRED_RUNTIME_METRICS.map((metric) => [metric, false]))
-    });
-  }
-
-  const endpointStatuses = {
-    "runtime-health": endpoints.find((entry) => entry.id === "runtime-health")?.status ?? "failed",
-    "auth-readiness": endpoints.find((entry) => entry.id === "auth-readiness")?.status ?? "failed",
-    "runtime-metrics": endpoints.find((entry) => entry.id === "runtime-metrics")?.status ?? "failed"
-  } satisfies Record<RuntimeObservabilityEndpointReport["id"], EndpointStatus>;
-  const failingEndpoints = endpoints.filter((entry) => entry.status !== "passed");
-  const summaryStatus: GateStatus = failingEndpoints.length === 0 ? "passed" : "failed";
-  const readiness = {
-    activeRoomCount: healthPayload?.runtime?.activeRoomCount ?? null,
-    connectionCount: healthPayload?.runtime?.connectionCount ?? null,
-    activeBattleCount: healthPayload?.runtime?.activeBattleCount ?? null,
-    heroCount: healthPayload?.runtime?.heroCount ?? null,
-    actionMessagesTotal: healthPayload?.runtime?.gameplayTraffic?.actionMessagesTotal ?? null,
-    worldActionsTotal: healthPayload?.runtime?.gameplayTraffic?.worldActionsTotal ?? null,
-    battleActionsTotal: healthPayload?.runtime?.gameplayTraffic?.battleActionsTotal ?? null,
-    activeGuestSessionCount: authPayload?.auth?.activeGuestSessionCount ?? healthPayload?.runtime?.auth?.activeGuestSessionCount ?? null,
-    activeAccountSessionCount: authPayload?.auth?.activeAccountSessionCount ?? healthPayload?.runtime?.auth?.activeAccountSessionCount ?? null,
-    activeAccountLockCount: authPayload?.auth?.activeAccountLockCount ?? healthPayload?.runtime?.auth?.activeAccountLockCount ?? null,
-    pendingRegistrationCount: authPayload?.auth?.pendingRegistrationCount ?? healthPayload?.runtime?.auth?.pendingRegistrationCount ?? null,
-    pendingRecoveryCount: authPayload?.auth?.pendingRecoveryCount ?? healthPayload?.runtime?.auth?.pendingRecoveryCount ?? null,
-    tokenDeliveryQueueCount: authPayload?.auth?.tokenDelivery?.queueCount ?? healthPayload?.runtime?.auth?.tokenDelivery?.queueCount ?? null,
-    tokenDeliveryDeadLetterCount: authPayload?.auth?.tokenDelivery?.deadLetterCount ?? healthPayload?.runtime?.auth?.tokenDelivery?.deadLetterCount ?? null,
-    wechatLoginMode: authPayload?.auth?.wechatLogin?.mode ?? null,
-    wechatCredentialsStatus: authPayload?.auth?.wechatLogin?.credentialsStatus ?? null,
-    authHeadline: authPayload?.headline ?? null
+  return {
+    report: await buildRuntimeObservabilityEvidenceReport({
+      candidate: args.candidate,
+      candidateRevision: args.candidateRevision,
+      serverUrl: args.serverUrl!,
+      targetSurface: args.targetSurface,
+      targetEnvironment: args.targetEnvironment,
+      maxSampleAgeMinutes: args.maxSampleAgeMinutes
+    })
   };
+}
+
+function validateEvidence(args: Args, evidence: RuntimeObservabilityEvidenceReport): void {
+  if (args.candidate?.trim() && evidence.candidate.name !== args.candidate.trim()) {
+    fail(`Capture report candidate mismatch: expected ${args.candidate.trim()}, received ${evidence.candidate.name}.`);
+  }
+  if (args.candidateRevision?.trim() && !commitsMatch(evidence.candidate.revision, args.candidateRevision)) {
+    fail(`Capture report revision mismatch: expected ${args.candidateRevision}, received ${evidence.candidate.revision}.`);
+  }
+  if (evidence.candidate.targetSurface !== args.targetSurface) {
+    fail(`Capture report target surface mismatch: expected ${args.targetSurface}, received ${evidence.candidate.targetSurface}.`);
+  }
+  if (args.serverUrl?.trim() && evidence.targetEnvironment.serverUrl !== args.serverUrl.replace(/\/$/, "")) {
+    fail(`Capture report server URL mismatch: expected ${args.serverUrl.replace(/\/$/, "")}, received ${evidence.targetEnvironment.serverUrl}.`);
+  }
+  if (args.targetEnvironment?.trim() && evidence.targetEnvironment.label !== args.targetEnvironment.trim()) {
+    fail(`Capture report target environment mismatch: expected ${args.targetEnvironment.trim()}, received ${evidence.targetEnvironment.label ?? "<missing>"}.`);
+  }
+}
+
+export async function buildRuntimeObservabilityGateReport(args: Args): Promise<RuntimeObservabilityGateReport> {
+  const { report: evidence, artifactPath } = await loadEvidence(args);
+  validateEvidence(args, evidence);
 
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
-    candidate: {
-      name: candidateName,
-      revision: revision.commit,
-      shortRevision: revision.shortCommit,
-      branch: revision.branch,
-      dirty: revision.dirty,
-      targetSurface: args.targetSurface
-    },
-    targetEnvironment: {
-      ...(args.targetEnvironment?.trim() ? { label: args.targetEnvironment.trim() } : {}),
-      serverUrl
-    },
+    candidate: evidence.candidate,
+    targetEnvironment: evidence.targetEnvironment,
     summary: {
-      status: summaryStatus,
+      status: evidence.summary.status,
       headline:
-        summaryStatus === "passed"
+        evidence.summary.status === "passed"
           ? "Runtime health, auth readiness, and metrics passed for the target environment."
-          : `Runtime observability gate failed for ${failingEndpoints.map((entry) => entry.label).join(", ")}.`,
-      endpointStatuses
+          : `Runtime observability gate failed for ${evidence.endpoints.filter((entry) => entry.status !== "passed").map((entry) => entry.label).join(", ")}.`,
+      endpointStatuses: evidence.summary.endpointStatuses
     },
-    readiness,
-    endpoints
+    readiness: evidence.readiness,
+    ...(artifactPath
+      ? {
+          evidenceSource: {
+            artifactPath: toRelativePath(artifactPath),
+            generatedAt: evidence.generatedAt
+          }
+        }
+      : {}),
+    endpoints: evidence.endpoints.map(({ capture: _capture, ...endpoint }) => endpoint)
   };
 }
 
@@ -605,6 +265,12 @@ export function renderMarkdown(report: RuntimeObservabilityGateReport): string {
   lines.push(`- Target surface: \`${report.candidate.targetSurface}\``);
   lines.push(`- Target environment: \`${report.targetEnvironment.label ?? report.targetEnvironment.serverUrl}\``);
   lines.push(`- Target base URL: \`${report.targetEnvironment.serverUrl}\``);
+  if (report.evidenceSource) {
+    lines.push(`- Runtime observability evidence: \`${report.evidenceSource.artifactPath}\``);
+    if (report.evidenceSource.generatedAt) {
+      lines.push(`- Evidence captured at: \`${report.evidenceSource.generatedAt}\``);
+    }
+  }
   lines.push(`- Overall status: **${report.summary.status.toUpperCase()}**`);
   lines.push(`- Headline: ${report.summary.headline}`, "");
 
@@ -652,7 +318,9 @@ export function renderMarkdown(report: RuntimeObservabilityGateReport): string {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv);
-  const revision = getRevision(args.candidateRevision);
+  const revision = args.captureReportPath
+    ? readRuntimeObservabilityEvidenceReport(args.captureReportPath).candidate.shortRevision
+    : getRevision(args.candidateRevision).shortCommit;
   const outputPaths = getDefaultOutputPaths(args, revision);
   const report = await buildRuntimeObservabilityGateReport(args);
   writeJsonFile(outputPaths.jsonPath, report);
