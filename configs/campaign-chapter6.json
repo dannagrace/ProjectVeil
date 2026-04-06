@@ -1,0 +1,374 @@
+{
+  "missions": [
+    {
+      "id": "chapter6-glassfront-march",
+      "chapterId": "chapter6",
+      "order": 35,
+      "mapId": "highland-reach",
+      "name": "Glassfront March",
+      "description": "Advance into the sealed districts beyond the court where the war's true archivists are trying to erase the evidence of how it was fed.",
+      "recommendedHeroLevel": 33,
+      "enemyArmyTemplateId": "shadow_skeleton",
+      "enemyArmyCount": 80,
+      "enemyStatMultiplier": 6.18,
+      "introDialogue": [
+        {
+          "id": "c6m1-intro-1",
+          "speakerId": "scout-serin",
+          "speakerName": "Scout Serin",
+          "text": "The streets ahead look abandoned until the glass starts moving. That means the archivists know we are close.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c6m1-outro-1",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "These wards were not built to defend a throne. They were built to preserve a program.",
+          "mood": "urgent"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c6m1-secure-avenues",
+          "description": "Secure the glassfront avenues",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 3
+        },
+        {
+          "id": "c6m1-clear-curators",
+          "description": "Clear the skeletal curators guarding the archive road",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 84, "resources": { "gold": 1440, "wood": 28, "ore": 62 } }
+    },
+    {
+      "id": "chapter6-choir-of-cinders",
+      "chapterId": "chapter6",
+      "order": 36,
+      "mapId": "bogfen-crossing",
+      "name": "Choir Of Cinders",
+      "description": "Silence the cinder choir transmitting old court commands through the marsh beacons to anyone still willing to obey them.",
+      "recommendedHeroLevel": 34,
+      "enemyArmyTemplateId": "shadow_wraith",
+      "enemyArmyCount": 82,
+      "enemyStatMultiplier": 6.34,
+      "unlockMissionId": "chapter6-glassfront-march",
+      "introDialogue": [
+        {
+          "id": "c6m2-intro-1",
+          "speakerId": "fen-warden-isa",
+          "speakerName": "Warden Isa",
+          "text": "The marsh is singing orders in a dead language. I prefer enemies who need lungs for that.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c6m2-outro-1",
+          "speakerId": "fen-warden-isa",
+          "speakerName": "Warden Isa",
+          "text": "Choir quiet. The marsh sounds like weather again, which is all I ever asked of it.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c6m2-break-beacons",
+          "description": "Break the cinder choir beacons",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 2
+        },
+        {
+          "id": "c6m2-hold-marsh",
+          "description": "Hold the marsh crossing while the command echoes fade",
+          "kind": "hold",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 86, "resources": { "gold": 1480, "wood": 34, "ore": 64 } }
+    },
+    {
+      "id": "chapter6-stormvault-breach",
+      "chapterId": "chapter6",
+      "order": 37,
+      "mapId": "frostwatch-ridge",
+      "name": "Stormvault Breach",
+      "description": "Breach the vault ridge where the court stored storm engines capable of turning any ceasefire back into siege weather.",
+      "recommendedHeroLevel": 35,
+      "enemyArmyTemplateId": "wild_hawk_rider",
+      "enemyArmyCount": 84,
+      "enemyStatMultiplier": 6.5,
+      "unlockMissionId": "chapter6-choir-of-cinders",
+      "introDialogue": [
+        {
+          "id": "c6m3-intro-1",
+          "speakerId": "engineer-toma",
+          "speakerName": "Engineer Toma",
+          "text": "Those vault doors are mountain-grade. The only thing worse than opening them is letting the wrong people keep the keys.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c6m3-outro-1",
+          "speakerId": "engineer-toma",
+          "speakerName": "Engineer Toma",
+          "text": "Storm engines disabled. The sky can complain on its own time now.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c6m3-open-vault",
+          "description": "Open the stormvault breach",
+          "kind": "secure",
+          "gate": "start"
+        },
+        {
+          "id": "c6m3-clear-ridge",
+          "description": "Clear the ridge riders covering the vault",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 88, "resources": { "gold": 1520, "ore": 66 } }
+    },
+    {
+      "id": "chapter6-dawnless-ford",
+      "chapterId": "chapter6",
+      "order": 38,
+      "mapId": "contested-basin",
+      "name": "Dawnless Ford",
+      "description": "Cross the blackwater ford into the sealed interior while the archive guard tries to drown the frontier's final witnesses.",
+      "recommendedHeroLevel": 36,
+      "enemyArmyTemplateId": "wild_serpent",
+      "enemyArmyCount": 86,
+      "enemyStatMultiplier": 6.66,
+      "unlockMissionId": "chapter6-stormvault-breach",
+      "introDialogue": [
+        {
+          "id": "c6m4-intro-1",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "No sun reaches this ford. I assume that is policy, not weather.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c6m4-outro-1",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "Ford taken. If the archivists wanted anonymity, they picked the wrong river to defend it.",
+          "mood": "defiant"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c6m4-escort-column",
+          "description": "Escort the witness column across the ford",
+          "kind": "escort",
+          "gate": "start"
+        },
+        {
+          "id": "c6m4-break-dams",
+          "description": "Break the flood dams feeding the crossing",
+          "kind": "secure",
+          "gate": "mid",
+          "targetCount": 2
+        }
+      ],
+      "reward": { "gems": 90, "resources": { "gold": 1560, "wood": 22, "ore": 68 } }
+    },
+    {
+      "id": "chapter6-last-harbor",
+      "chapterId": "chapter6",
+      "order": 39,
+      "mapId": "murkveil-delta",
+      "name": "Last Harbor",
+      "description": "Take the final harbor where the archivists are preparing to flee with sealed witness rolls and command relics.",
+      "recommendedHeroLevel": 37,
+      "enemyArmyTemplateId": "crown_crossbowman",
+      "enemyArmyCount": 88,
+      "enemyStatMultiplier": 6.82,
+      "unlockMissionId": "chapter6-dawnless-ford",
+      "introDialogue": [
+        {
+          "id": "c6m5-intro-1",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "Every war ends with a ship captain who thinks paperwork outruns consequences.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c6m5-outro-1",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "No ships left, no ledgers gone. Consequences remain faster than boats.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c6m5-take-quays",
+          "description": "Take the last harbor quays",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 3
+        },
+        {
+          "id": "c6m5-sink-flight",
+          "description": "Sink the archivists' flight convoy",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 92, "resources": { "gold": 1600, "wood": 30, "ore": 70 } }
+    },
+    {
+      "id": "chapter6-new-banner",
+      "chapterId": "chapter6",
+      "order": 40,
+      "mapId": "stonewatch-fork",
+      "name": "New Banner",
+      "description": "Hold the liberated fork long enough to raise the frontier banner before the last archive legions can retake the road.",
+      "recommendedHeroLevel": 38,
+      "enemyArmyTemplateId": "crown_heavy_cavalry",
+      "enemyArmyCount": 90,
+      "enemyStatMultiplier": 6.98,
+      "unlockMissionId": "chapter6-last-harbor",
+      "introDialogue": [
+        {
+          "id": "c6m6-intro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Winning is not enough. People need to see what replaced the thing that hurt them.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c6m6-outro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Banner raised. Now the last command source has to look at the future before it dies.",
+          "mood": "defiant"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c6m6-raise-banner",
+          "description": "Raise the new frontier banner",
+          "kind": "hold",
+          "gate": "start"
+        },
+        {
+          "id": "c6m6-break-legions",
+          "description": "Break the archive legions on the fork road",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 94, "resources": { "gold": 1640, "ore": 72 } }
+    },
+    {
+      "id": "chapter6-blackgate-dawn",
+      "chapterId": "chapter6",
+      "order": 41,
+      "mapId": "frontier-basin",
+      "name": "Blackgate Dawn",
+      "description": "Defeat the hidden sovereign intelligence behind the court archives and end the system that kept rebuilding the war after every victory.",
+      "recommendedHeroLevel": 39,
+      "enemyArmyTemplateId": "shadow_death_knight",
+      "enemyArmyCount": 94,
+      "enemyStatMultiplier": 7.24,
+      "bossEncounterName": "The Hollow Sovereign",
+      "bossTemplateId": "boss-lich-king",
+      "unlockMissionId": "chapter6-new-banner",
+      "introDialogue": [
+        {
+          "id": "c6m7-intro-1",
+          "speakerId": "hollow-sovereign",
+          "speakerName": "The Hollow Sovereign",
+          "text": "You keep killing masks and calling it peace. I am the hand that taught the masks how to fit.",
+          "mood": "defiant"
+        },
+        {
+          "id": "c6m7-intro-2",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "That voice is everywhere in the gate lattice. Break the source and the whole archive goes quiet.",
+          "mood": "urgent"
+        }
+      ],
+      "midDialogue": [
+        {
+          "id": "c6m7-mid-1",
+          "speakerId": "hollow-sovereign",
+          "speakerName": "The Hollow Sovereign",
+          "text": "Order survives because grief prefers instructions to freedom.",
+          "mood": "grim"
+        },
+        {
+          "id": "c6m7-mid-2",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Then we leave them something harder than instructions. We leave them each other.",
+          "mood": "defiant"
+        },
+        {
+          "id": "c6m7-mid-3",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "Gate core is exposed. Finish this before the basin learns to close again.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c6m7-outro-1",
+          "speakerId": "narrator",
+          "speakerName": "Narrator",
+          "text": "The Blackgate lattice collapses into sunrise-colored dust, and the war's last hidden author finally loses the ability to speak.",
+          "mood": "hopeful"
+        },
+        {
+          "id": "c6m7-outro-2",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "This frontier no longer needs a court to explain itself. Let that be the first law of what comes next.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c6m7-break-blackgate",
+          "description": "Break the Blackgate command lattice",
+          "kind": "secure",
+          "gate": "start"
+        },
+        {
+          "id": "c6m7-survive-collapse",
+          "description": "Survive the collapsing archive defenses",
+          "kind": "hold",
+          "gate": "mid"
+        },
+        {
+          "id": "c6m7-defeat-sovereign",
+          "description": "Defeat the Hollow Sovereign",
+          "kind": "defeat",
+          "gate": "end"
+        }
+      ],
+      "reward": { "gems": 104, "resources": { "gold": 1800, "ore": 80 }, "cosmeticId": "border-dawnwatch-paragon" }
+    }
+  ]
+}
