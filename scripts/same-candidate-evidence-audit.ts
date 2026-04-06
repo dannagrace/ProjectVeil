@@ -10,25 +10,31 @@ type FindingCode =
   | "missing_timestamp"
   | "invalid_timestamp"
   | "linked_snapshot_mismatch"
+  | "linked_artifact_mismatch"
   | "manual_pending"
   | "manual_failed"
   | "metadata_failure"
   | "blocked";
-type FamilyStatus = "passed" | "failed";
-type AuditStatus = "passed" | "failed";
+type TargetSurface = "auto" | "h5" | "wechat";
+type FindingSeverity = "blocking" | "warning";
+type FamilyStatus = "passed" | "warning" | "failed";
+type AuditStatus = FamilyStatus;
+type FreshnessStatus = "fresh" | "stale" | "missing_timestamp" | "invalid_timestamp" | "missing";
 type ManualEvidenceFamilyId =
   | "runtime-observability"
   | "cocos-rc-signoff"
   | "wechat-release-signoff"
   | "reconnect-followup";
-type ManualEvidenceContractStatus = "passed" | "failed";
 
 interface Args {
   candidate: string;
   candidateRevision: string;
+  targetSurface: TargetSurface;
   snapshotPath?: string;
   releaseGateSummaryPath?: string;
   cocosRcBundlePath?: string;
+  runtimeObservabilityEvidencePath?: string;
+  runtimeObservabilityGatePath?: string;
   manualEvidenceLedgerPath?: string;
   wechatArtifactsDir?: string;
   wechatCandidateSummaryPath?: string;
@@ -67,6 +73,29 @@ interface CocosRcBundleManifest {
     releaseReadinessSnapshot?: {
       path?: string;
     };
+  };
+}
+
+interface RuntimeObservabilityEvidenceReport {
+  generatedAt?: string;
+  candidate?: {
+    name?: string;
+    revision?: string;
+    shortRevision?: string;
+    targetSurface?: "h5" | "wechat";
+  };
+}
+
+interface RuntimeObservabilityGateReport {
+  generatedAt?: string;
+  candidate?: {
+    name?: string;
+    revision?: string;
+    shortRevision?: string;
+    targetSurface?: "h5" | "wechat";
+  };
+  evidenceSource?: {
+    artifactPath?: string;
   };
 }
 
@@ -129,6 +158,17 @@ interface WechatCandidateSummary {
 
 interface AuditFinding {
   code: FindingCode;
+  severity: FindingSeverity;
+  summary: string;
+  artifactPath?: string;
+}
+
+interface AuditTriageEntry {
+  scope: "artifact-family" | "manual-contract";
+  familyId: string;
+  familyLabel: string;
+  code: FindingCode;
+  severity: FindingSeverity;
   summary: string;
   artifactPath?: string;
 }
@@ -136,16 +176,17 @@ interface AuditFinding {
 interface ManualEvidenceFamilyReport {
   id: ManualEvidenceFamilyId;
   label: string;
-  required: true;
+  severity: FindingSeverity;
+  required: boolean;
   applicable: boolean;
-  status: ManualEvidenceContractStatus;
+  status: FamilyStatus;
   summary: string;
   artifactPaths: string[];
   findings: AuditFinding[];
 }
 
 interface ManualEvidenceContractReport {
-  status: ManualEvidenceContractStatus;
+  status: AuditStatus;
   summary: string;
   requiredFamilies: ManualEvidenceFamilyReport[];
 }
@@ -155,40 +196,63 @@ interface ArtifactFamilyReport {
     | "release-readiness-snapshot"
     | "release-gate-summary"
     | "cocos-rc-bundle"
+    | "runtime-observability-evidence"
+    | "runtime-observability-gate"
     | "manual-evidence-ledger"
     | "wechat-release-evidence";
   label: string;
-  required: true;
+  severity: FindingSeverity;
+  required: boolean;
+  applicable: boolean;
   status: FamilyStatus;
   artifactPath?: string;
   revision?: string;
   candidate?: string;
   generatedAt?: string;
-  freshness: "fresh" | "stale" | "missing_timestamp" | "invalid_timestamp" | "missing";
+  freshness: FreshnessStatus;
   findings: AuditFinding[];
 }
 
-interface SameCandidateEvidenceAuditReport {
-  schemaVersion: 3;
+interface CandidateEvidenceAuditReport {
+  schemaVersion: 4;
   generatedAt: string;
   candidate: {
     name: string;
     revision: string;
+    targetSurface: Exclude<TargetSurface, "auto"> | "auto";
   };
   summary: {
     status: AuditStatus;
+    blockerCount: number;
+    warningCount: number;
     findingCount: number;
     summary: string;
   };
   inputs: {
+    targetSurface: TargetSurface;
     snapshotPath?: string;
     releaseGateSummaryPath?: string;
     cocosRcBundlePath?: string;
+    runtimeObservabilityEvidencePath?: string;
+    runtimeObservabilityGatePath?: string;
     manualEvidenceLedgerPath?: string;
     wechatCandidateSummaryPath?: string;
   };
+  triage: {
+    blockers: AuditTriageEntry[];
+    warnings: AuditTriageEntry[];
+  };
   manualEvidenceContract: ManualEvidenceContractReport;
   artifactFamilies: ArtifactFamilyReport[];
+}
+
+interface ManualEvidenceSource {
+  label: string;
+  candidate?: string;
+  revision?: string;
+  observedAt?: string;
+  status?: string;
+  artifactPath?: string;
 }
 
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
@@ -228,9 +292,12 @@ function fail(message: string): never {
 function parseArgs(argv: string[]): Args {
   let candidate = "";
   let candidateRevision = "";
+  let targetSurface: TargetSurface = "auto";
   let snapshotPath: string | undefined;
   let releaseGateSummaryPath: string | undefined;
   let cocosRcBundlePath: string | undefined;
+  let runtimeObservabilityEvidencePath: string | undefined;
+  let runtimeObservabilityGatePath: string | undefined;
   let manualEvidenceLedgerPath: string | undefined;
   let wechatArtifactsDir: string | undefined;
   let wechatCandidateSummaryPath: string | undefined;
@@ -252,6 +319,14 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--target-surface" && next) {
+      if (next !== "auto" && next !== "h5" && next !== "wechat") {
+        fail(`Unsupported --target-surface value: ${next}`);
+      }
+      targetSurface = next;
+      index += 1;
+      continue;
+    }
     if (arg === "--snapshot" && next) {
       snapshotPath = next;
       index += 1;
@@ -264,6 +339,16 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--cocos-rc-bundle" && next) {
       cocosRcBundlePath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--runtime-observability-evidence" && next) {
+      runtimeObservabilityEvidencePath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--runtime-observability-gate" && next) {
+      runtimeObservabilityGatePath = next;
       index += 1;
       continue;
     }
@@ -315,9 +400,12 @@ function parseArgs(argv: string[]): Args {
   return {
     candidate,
     candidateRevision,
+    targetSurface,
     ...(snapshotPath ? { snapshotPath } : {}),
     ...(releaseGateSummaryPath ? { releaseGateSummaryPath } : {}),
     ...(cocosRcBundlePath ? { cocosRcBundlePath } : {}),
+    ...(runtimeObservabilityEvidencePath ? { runtimeObservabilityEvidencePath } : {}),
+    ...(runtimeObservabilityGatePath ? { runtimeObservabilityGatePath } : {}),
     ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
@@ -428,6 +516,30 @@ function resolveCocosRcBundlePath(args: Args): string | undefined {
   );
 }
 
+function resolveRuntimeObservabilityEvidencePath(args: Args): string | undefined {
+  if (args.runtimeObservabilityEvidencePath) {
+    return path.resolve(args.runtimeObservabilityEvidencePath);
+  }
+  const candidateSlug = slugifyCandidate(args.candidate);
+  return resolveLatestFile(
+    DEFAULT_RELEASE_READINESS_DIR,
+    (entry) => entry.endsWith(".json") && entry.startsWith("runtime-observability-evidence-"),
+    (entry) => entry.includes(`runtime-observability-evidence-${candidateSlug}-`)
+  );
+}
+
+function resolveRuntimeObservabilityGatePath(args: Args): string | undefined {
+  if (args.runtimeObservabilityGatePath) {
+    return path.resolve(args.runtimeObservabilityGatePath);
+  }
+  const candidateSlug = slugifyCandidate(args.candidate);
+  return resolveLatestFile(
+    DEFAULT_RELEASE_READINESS_DIR,
+    (entry) => entry.endsWith(".json") && entry.startsWith("runtime-observability-gate-"),
+    (entry) => entry.includes(`runtime-observability-gate-${candidateSlug}-`)
+  );
+}
+
 function resolveManualEvidenceLedgerPath(args: Args): string | undefined {
   if (args.manualEvidenceLedgerPath) {
     return path.resolve(args.manualEvidenceLedgerPath);
@@ -449,7 +561,7 @@ function resolveWechatCandidateSummaryPath(args: Args): string | undefined {
   return fs.existsSync(direct) ? direct : undefined;
 }
 
-function evaluateFreshness(timestamp: string | undefined, maxAgeMs: number): ArtifactFamilyReport["freshness"] {
+function evaluateFreshness(timestamp: string | undefined, maxAgeMs: number): FreshnessStatus {
   if (!timestamp?.trim()) {
     return "missing_timestamp";
   }
@@ -505,10 +617,63 @@ function parseManualEvidenceOwnerLedger(filePath: string): ManualEvidenceOwnerLe
   };
 }
 
+function createFinding(
+  severity: FindingSeverity,
+  code: FindingCode,
+  summary: string,
+  artifactPath?: string
+): AuditFinding {
+  return {
+    severity,
+    code,
+    summary,
+    ...(artifactPath ? { artifactPath } : {})
+  };
+}
+
+function getStatusFromCounts(blockerCount: number, warningCount: number): AuditStatus {
+  if (blockerCount > 0) {
+    return "failed";
+  }
+  if (warningCount > 0) {
+    return "warning";
+  }
+  return "passed";
+}
+
+function getFamilyStatus(findings: AuditFinding[], severity: FindingSeverity): FamilyStatus {
+  if (findings.length === 0) {
+    return "passed";
+  }
+  return severity === "blocking" ? "failed" : "warning";
+}
+
+function compareLinkedArtifact(
+  selectedArtifactPath: string | undefined,
+  linkedArtifactPath: string | undefined,
+  label: string,
+  severity: FindingSeverity
+): AuditFinding | undefined {
+  if (!selectedArtifactPath || !linkedArtifactPath?.trim()) {
+    return undefined;
+  }
+  const selectedBase = path.basename(selectedArtifactPath);
+  const linkedBase = path.basename(linkedArtifactPath.trim());
+  if (selectedBase === linkedBase) {
+    return undefined;
+  }
+  return createFinding(
+    severity,
+    "linked_artifact_mismatch",
+    `${label} references ${linkedBase}, but the selected artifact is ${selectedBase}.`
+  );
+}
+
 function compareLinkedSnapshot(
   selectedSnapshotPath: string | undefined,
   linkedSnapshotPath: string | undefined,
-  label: string
+  label: string,
+  severity: FindingSeverity
 ): AuditFinding | undefined {
   if (!selectedSnapshotPath || !linkedSnapshotPath?.trim()) {
     return undefined;
@@ -518,44 +683,44 @@ function compareLinkedSnapshot(
   if (selectedBase === linkedBase) {
     return undefined;
   }
-  return {
-    code: "linked_snapshot_mismatch",
-    summary: `${label} references snapshot ${linkedBase}, but the selected readiness snapshot is ${selectedBase}.`
-  };
+  return createFinding(
+    severity,
+    "linked_snapshot_mismatch",
+    `${label} references snapshot ${linkedBase}, but the selected readiness snapshot is ${selectedBase}.`
+  );
 }
 
 function maybeAddFreshnessFinding(
   findings: AuditFinding[],
-  freshness: ArtifactFamilyReport["freshness"],
+  severity: FindingSeverity,
+  freshness: FreshnessStatus,
   label: string,
   timestamp: string | undefined,
   maxAgeMs: number,
   artifactPath?: string
 ): void {
   if (freshness === "stale") {
-    findings.push({
-      code: "stale",
-      summary: `${label} is older than the ${Math.round(maxAgeMs / (1000 * 60 * 60))}h freshness window.`,
-      ...(artifactPath ? { artifactPath } : {})
-    });
+    findings.push(
+      createFinding(
+        severity,
+        "stale",
+        `${label} is older than the ${Math.round(maxAgeMs / (1000 * 60 * 60))}h freshness window.`,
+        artifactPath
+      )
+    );
   } else if (freshness === "missing_timestamp") {
-    findings.push({
-      code: "missing_timestamp",
-      summary: `${label} is missing its generated timestamp.`,
-      ...(artifactPath ? { artifactPath } : {})
-    });
+    findings.push(createFinding(severity, "missing_timestamp", `${label} is missing its generated timestamp.`, artifactPath));
   } else if (freshness === "invalid_timestamp") {
-    findings.push({
-      code: "invalid_timestamp",
-      summary: `${label} has an invalid generated timestamp (${timestamp ?? "<missing>"}).`,
-      ...(artifactPath ? { artifactPath } : {})
-    });
+    findings.push(
+      createFinding(severity, "invalid_timestamp", `${label} has an invalid generated timestamp (${timestamp ?? "<missing>"}).`, artifactPath)
+    );
   }
 }
 
 function addCommonFindings(
   findings: AuditFinding[],
   input: {
+    severity: FindingSeverity;
     label: string;
     candidate: string | undefined;
     revision: string | undefined | null;
@@ -565,45 +730,58 @@ function addCommonFindings(
     maxAgeMs: number;
     artifactPath?: string;
   }
-): ArtifactFamilyReport["freshness"] {
+): FreshnessStatus {
   const freshness = evaluateFreshness(input.generatedAt, input.maxAgeMs);
 
   if (input.candidate?.trim() && input.candidate.trim() !== input.expectedCandidate) {
-    findings.push({
-      code: "candidate_mismatch",
-      summary: `${input.label} reports candidate ${input.candidate}, expected ${input.expectedCandidate}.`,
-      ...(input.artifactPath ? { artifactPath: input.artifactPath } : {})
-    });
+    findings.push(
+      createFinding(
+        input.severity,
+        "candidate_mismatch",
+        `${input.label} reports candidate ${input.candidate}, expected ${input.expectedCandidate}.`,
+        input.artifactPath
+      )
+    );
   }
   if (!revisionsMatch(input.revision, input.expectedRevision)) {
-    findings.push({
-      code: "revision_mismatch",
-      summary: `${input.label} reports revision ${input.revision ?? "<missing>"}, expected ${input.expectedRevision}.`,
-      ...(input.artifactPath ? { artifactPath: input.artifactPath } : {})
-    });
+    findings.push(
+      createFinding(
+        input.severity,
+        "revision_mismatch",
+        `${input.label} reports revision ${input.revision ?? "<missing>"}, expected ${input.expectedRevision}.`,
+        input.artifactPath
+      )
+    );
   }
 
-  maybeAddFreshnessFinding(findings, freshness, input.label, input.generatedAt, input.maxAgeMs, input.artifactPath);
+  maybeAddFreshnessFinding(findings, input.severity, freshness, input.label, input.generatedAt, input.maxAgeMs, input.artifactPath);
   return freshness;
 }
 
-function buildMissingFamily(id: ArtifactFamilyReport["id"], label: string): ArtifactFamilyReport {
+function buildMissingFamily(
+  id: ArtifactFamilyReport["id"],
+  label: string,
+  severity: FindingSeverity,
+  required: boolean,
+  applicable: boolean
+): ArtifactFamilyReport {
+  const findings = applicable ? [createFinding(severity, "missing", `${label} is missing.`)] : [];
   return {
     id,
     label,
-    required: true,
-    status: "failed",
-    freshness: "missing",
-    findings: [
-      {
-        code: "missing",
-        summary: `${label} is missing.`
-      }
-    ]
+    severity,
+    required,
+    applicable,
+    status: getFamilyStatus(findings, severity),
+    freshness: applicable ? "missing" : "fresh",
+    findings
   };
 }
 
-function isWechatEvidenceApplicable(ledger: ManualEvidenceOwnerLedger | undefined, wechatCandidateSummaryPath: string | undefined): boolean {
+function isWechatEvidenceApplicable(
+  ledger: ManualEvidenceOwnerLedger | undefined,
+  wechatCandidateSummaryPath: string | undefined
+): boolean {
   if (wechatCandidateSummaryPath && fs.existsSync(wechatCandidateSummaryPath)) {
     return true;
   }
@@ -614,6 +792,26 @@ function isWechatEvidenceApplicable(ledger: ManualEvidenceOwnerLedger | undefine
       }
       return (row.status ?? "").toLowerCase() !== "waived";
     }) ?? false
+  );
+}
+
+function isWechatSurfaceRequired(input: {
+  targetSurface: TargetSurface;
+  ledger: ManualEvidenceOwnerLedger | undefined;
+  wechatCandidateSummaryPath: string | undefined;
+  runtimeObservabilityEvidencePath: string | undefined;
+  runtimeObservabilityGatePath: string | undefined;
+}): boolean {
+  if (input.targetSurface === "wechat") {
+    return true;
+  }
+  if (input.targetSurface === "h5") {
+    return false;
+  }
+  return Boolean(
+    isWechatEvidenceApplicable(input.ledger, input.wechatCandidateSummaryPath) ||
+      input.runtimeObservabilityEvidencePath ||
+      input.runtimeObservabilityGatePath
   );
 }
 
@@ -632,15 +830,6 @@ function selectRelevantWechatBlockers(blockers: WechatCandidateSummary["blockers
   return prioritized && prioritized.length > 0 ? prioritized : blockers;
 }
 
-interface ManualEvidenceSource {
-  label: string;
-  candidate?: string;
-  revision?: string;
-  observedAt?: string;
-  status?: string;
-  artifactPath?: string;
-}
-
 function normalizeStatus(value: string | undefined): string {
   return value?.trim().toLowerCase() ?? "";
 }
@@ -649,40 +838,46 @@ function collectManualEvidenceFindings(
   sources: ManualEvidenceSource[],
   expectedCandidate: string,
   expectedRevision: string,
-  maxAgeMs: number
+  maxAgeMs: number,
+  severity: FindingSeverity
 ): AuditFinding[] {
   const findings: AuditFinding[] = [];
   for (const source of sources) {
     const status = normalizeStatus(source.status);
     if (source.candidate?.trim() && source.candidate.trim() !== expectedCandidate) {
-      findings.push({
-        code: "candidate_mismatch",
-        summary: `${source.label} reports candidate ${source.candidate}, expected ${expectedCandidate}.`,
-        ...(source.artifactPath ? { artifactPath: source.artifactPath } : {})
-      });
+      findings.push(
+        createFinding(
+          severity,
+          "candidate_mismatch",
+          `${source.label} reports candidate ${source.candidate}, expected ${expectedCandidate}.`,
+          source.artifactPath
+        )
+      );
     }
     if (!revisionsMatch(source.revision, expectedRevision)) {
-      findings.push({
-        code: "revision_mismatch",
-        summary: `${source.label} reports revision ${source.revision ?? "<missing>"}, expected ${expectedRevision}.`,
-        ...(source.artifactPath ? { artifactPath: source.artifactPath } : {})
-      });
+      findings.push(
+        createFinding(
+          severity,
+          "revision_mismatch",
+          `${source.label} reports revision ${source.revision ?? "<missing>"}, expected ${expectedRevision}.`,
+          source.artifactPath
+        )
+      );
     }
     if (LEDGER_PENDING_STATUSES.has(status) || status === "pending") {
-      findings.push({
-        code: "manual_pending",
-        summary: `${source.label} is still ${source.status ?? "pending"}.`,
-        ...(source.artifactPath ? { artifactPath: source.artifactPath } : {})
-      });
+      findings.push(createFinding(severity, "manual_pending", `${source.label} is still ${source.status ?? "pending"}.`, source.artifactPath));
     } else if (status === "failed" || status === "blocked") {
-      findings.push({
-        code: status === "blocked" ? "blocked" : "manual_failed",
-        summary: `${source.label} is ${source.status ?? "failed"}.`,
-        ...(source.artifactPath ? { artifactPath: source.artifactPath } : {})
-      });
+      findings.push(
+        createFinding(
+          severity,
+          status === "blocked" ? "blocked" : "manual_failed",
+          `${source.label} is ${source.status ?? "failed"}.`,
+          source.artifactPath
+        )
+      );
     }
     const freshness = evaluateFreshness(source.observedAt, maxAgeMs);
-    maybeAddFreshnessFinding(findings, freshness, source.label, source.observedAt, maxAgeMs, source.artifactPath);
+    maybeAddFreshnessFinding(findings, severity, freshness, source.label, source.observedAt, maxAgeMs, source.artifactPath);
   }
   return findings;
 }
@@ -690,6 +885,7 @@ function collectManualEvidenceFindings(
 function buildManualEvidenceFamilyReport(input: {
   id: ManualEvidenceFamilyId;
   label: string;
+  severity: FindingSeverity;
   applicable: boolean;
   sources: ManualEvidenceSource[];
   expectedCandidate: string;
@@ -701,7 +897,8 @@ function buildManualEvidenceFamilyReport(input: {
     return {
       id: input.id,
       label: input.label,
-      required: true,
+      severity: input.severity,
+      required: false,
       applicable: false,
       status: "passed",
       summary: `${input.label} is not required for this candidate.`,
@@ -711,34 +908,38 @@ function buildManualEvidenceFamilyReport(input: {
   }
 
   if (input.sources.length === 0) {
+    const findings = [createFinding(input.severity, "missing", `${input.label} is missing for candidate ${input.expectedRevision}.`)];
     return {
       id: input.id,
       label: input.label,
-      required: true,
+      severity: input.severity,
+      required: input.severity === "blocking",
       applicable: true,
-      status: "failed",
+      status: getFamilyStatus(findings, input.severity),
       summary: `${input.label} is missing for candidate ${input.expectedRevision}.`,
       artifactPaths,
-      findings: [
-        {
-          code: "missing",
-          summary: `${input.label} is missing for candidate ${input.expectedRevision}.`
-        }
-      ]
+      findings
     };
   }
 
-  const findings = collectManualEvidenceFindings(input.sources, input.expectedCandidate, input.expectedRevision, input.maxAgeMs);
+  const findings = collectManualEvidenceFindings(
+    input.sources,
+    input.expectedCandidate,
+    input.expectedRevision,
+    input.maxAgeMs,
+    input.severity
+  );
   return {
     id: input.id,
     label: input.label,
-    required: true,
+    severity: input.severity,
+    required: input.severity === "blocking",
     applicable: true,
-    status: findings.length === 0 ? "passed" : "failed",
+    status: getFamilyStatus(findings, input.severity),
     summary:
       findings.length === 0
         ? `${input.label} is current for candidate ${input.expectedRevision}.`
-        : `${input.label} blocks candidate ${input.expectedRevision}: ${findings[0]?.summary}`,
+        : `${input.label} ${input.severity === "blocking" ? "blocks" : "warns for"} candidate ${input.expectedRevision}: ${findings[0]?.summary}`,
     artifactPaths,
     findings
   };
@@ -748,6 +949,7 @@ function buildManualEvidenceContractReport(input: {
   candidate: string;
   expectedRevision: string;
   maxAgeMs: number;
+  wechatSurfaceRequired: boolean;
   ledger: ManualEvidenceOwnerLedger | undefined;
   wechatSummary: WechatCandidateSummary | undefined;
   wechatCandidateSummaryPath: string | undefined;
@@ -788,7 +990,7 @@ function buildManualEvidenceContractReport(input: {
       artifactPath: row.artifactPath
     }));
 
-  const wechatReleaseApplicable = isWechatEvidenceApplicable(input.ledger, input.wechatCandidateSummaryPath);
+  const wechatReleaseApplicable = input.wechatSurfaceRequired || isWechatEvidenceApplicable(input.ledger, input.wechatCandidateSummaryPath);
   const wechatReleaseSignoffSources: ManualEvidenceSource[] = [
     ...ledgerRows
       .filter((row) => WECHAT_RELEASE_SIGNOFF_LEDGER_EVIDENCE_TYPES.has(row.evidenceType))
@@ -832,7 +1034,8 @@ function buildManualEvidenceContractReport(input: {
     buildManualEvidenceFamilyReport({
       id: "runtime-observability",
       label: "Runtime observability review",
-      applicable: true,
+      severity: input.wechatSurfaceRequired ? "blocking" : "warning",
+      applicable: input.wechatSurfaceRequired || runtimeObservabilitySources.length > 0,
       sources: runtimeObservabilitySources,
       expectedCandidate: input.candidate,
       expectedRevision: input.expectedRevision,
@@ -841,6 +1044,7 @@ function buildManualEvidenceContractReport(input: {
     buildManualEvidenceFamilyReport({
       id: "cocos-rc-signoff",
       label: "Cocos RC sign-off",
+      severity: "blocking",
       applicable: true,
       sources: cocosRcSignoffSources,
       expectedCandidate: input.candidate,
@@ -850,6 +1054,7 @@ function buildManualEvidenceContractReport(input: {
     buildManualEvidenceFamilyReport({
       id: "wechat-release-signoff",
       label: "WeChat release sign-off",
+      severity: input.wechatSurfaceRequired ? "blocking" : "warning",
       applicable: wechatReleaseApplicable,
       sources: wechatReleaseSignoffSources,
       expectedCandidate: input.candidate,
@@ -859,6 +1064,7 @@ function buildManualEvidenceContractReport(input: {
     buildManualEvidenceFamilyReport({
       id: "reconnect-followup",
       label: "Reconnect or persistence follow-up",
+      severity: "warning",
       applicable: reconnectFollowupSources.length > 0,
       sources: reconnectFollowupSources,
       expectedCandidate: input.candidate,
@@ -867,40 +1073,94 @@ function buildManualEvidenceContractReport(input: {
     })
   ];
 
-  const failedFamilies = requiredFamilies.filter((family) => family.applicable && family.status === "failed");
+  const blockerCount = requiredFamilies.reduce(
+    (count, family) => count + family.findings.filter((finding) => finding.severity === "blocking").length,
+    0
+  );
+  const warningCount = requiredFamilies.reduce(
+    (count, family) => count + family.findings.filter((finding) => finding.severity === "warning").length,
+    0
+  );
+  const status = getStatusFromCounts(blockerCount, warningCount);
+  const leadFamily = requiredFamilies.find((family) => family.findings.length > 0);
   return {
-    status: failedFamilies.length === 0 ? "passed" : "failed",
+    status,
     summary:
-      failedFamilies.length === 0
+      status === "passed"
         ? `Required manual evidence families are current for ${input.candidate} at ${input.expectedRevision}.`
-        : `Required manual evidence family blocked: ${failedFamilies[0]?.summary}`,
+        : `${status === "failed" ? "Blocking" : "Advisory"} manual evidence family: ${leadFamily?.summary}`,
     requiredFamilies
   };
 }
 
-export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidateEvidenceAuditReport {
+function collectTriageEntries(
+  artifactFamilies: ArtifactFamilyReport[],
+  manualEvidenceFamilies: ManualEvidenceFamilyReport[]
+): { blockers: AuditTriageEntry[]; warnings: AuditTriageEntry[] } {
+  const entries: AuditTriageEntry[] = [
+    ...artifactFamilies.flatMap((family) =>
+      family.findings.map((finding) => ({
+        scope: "artifact-family" as const,
+        familyId: family.id,
+        familyLabel: family.label,
+        code: finding.code,
+        severity: finding.severity,
+        summary: finding.summary,
+        ...(finding.artifactPath ? { artifactPath: finding.artifactPath } : {})
+      }))
+    ),
+    ...manualEvidenceFamilies.flatMap((family) =>
+      family.findings.map((finding) => ({
+        scope: "manual-contract" as const,
+        familyId: family.id,
+        familyLabel: family.label,
+        code: finding.code,
+        severity: finding.severity,
+        summary: finding.summary,
+        ...(finding.artifactPath ? { artifactPath: finding.artifactPath } : {})
+      }))
+    )
+  ];
+  return {
+    blockers: entries.filter((entry) => entry.severity === "blocking"),
+    warnings: entries.filter((entry) => entry.severity === "warning")
+  };
+}
+
+export function buildSameCandidateEvidenceAuditReport(args: Args): CandidateEvidenceAuditReport {
   const snapshotPath = resolveSnapshotPath(args);
   const releaseGateSummaryPath = resolveReleaseGateSummaryPath(args);
   const cocosRcBundlePath = resolveCocosRcBundlePath(args);
+  const runtimeObservabilityEvidencePath = resolveRuntimeObservabilityEvidencePath(args);
+  const runtimeObservabilityGatePath = resolveRuntimeObservabilityGatePath(args);
   const manualEvidenceLedgerPath = resolveManualEvidenceLedgerPath(args);
   const wechatCandidateSummaryPath = resolveWechatCandidateSummaryPath(args);
   const expectedRevision = args.candidateRevision;
   const maxAgeMs = args.maxAgeHours * 60 * 60 * 1000;
 
-  const artifactFamilies: ArtifactFamilyReport[] = [];
   const parsedLedger =
     manualEvidenceLedgerPath && fs.existsSync(manualEvidenceLedgerPath) ? parseManualEvidenceOwnerLedger(manualEvidenceLedgerPath) : undefined;
   const parsedWechatSummary =
     wechatCandidateSummaryPath && fs.existsSync(wechatCandidateSummaryPath)
       ? readJsonFile<WechatCandidateSummary>(wechatCandidateSummaryPath)
       : undefined;
+  const wechatSurfaceRequired = isWechatSurfaceRequired({
+    targetSurface: args.targetSurface,
+    ledger: parsedLedger,
+    wechatCandidateSummaryPath,
+    runtimeObservabilityEvidencePath,
+    runtimeObservabilityGatePath
+  });
+
+  const artifactFamilies: ArtifactFamilyReport[] = [];
 
   if (!snapshotPath || !fs.existsSync(snapshotPath)) {
-    artifactFamilies.push(buildMissingFamily("release-readiness-snapshot", "Release readiness snapshot"));
+    artifactFamilies.push(buildMissingFamily("release-readiness-snapshot", "Release readiness snapshot", "blocking", true, true));
   } else {
     const snapshot = readJsonFile<ReleaseReadinessSnapshot>(snapshotPath);
     const findings: AuditFinding[] = [];
     const freshness = addCommonFindings(findings, {
+      severity: "blocking",
       label: "Release readiness snapshot",
       candidate: undefined,
       revision: snapshot.revision?.commit ?? snapshot.revision?.shortCommit,
@@ -913,8 +1173,10 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
     artifactFamilies.push({
       id: "release-readiness-snapshot",
       label: "Release readiness snapshot",
+      severity: "blocking",
       required: true,
-      status: findings.length === 0 ? "passed" : "failed",
+      applicable: true,
+      status: getFamilyStatus(findings, "blocking"),
       artifactPath: snapshotPath,
       revision: snapshot.revision?.commit ?? snapshot.revision?.shortCommit,
       generatedAt: snapshot.generatedAt,
@@ -924,11 +1186,12 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
   }
 
   if (!releaseGateSummaryPath || !fs.existsSync(releaseGateSummaryPath)) {
-    artifactFamilies.push(buildMissingFamily("release-gate-summary", "Release gate summary"));
+    artifactFamilies.push(buildMissingFamily("release-gate-summary", "Release gate summary", "blocking", true, true));
   } else {
     const report = readJsonFile<ReleaseGateSummaryReport>(releaseGateSummaryPath);
     const findings: AuditFinding[] = [];
     const freshness = addCommonFindings(findings, {
+      severity: "blocking",
       label: "Release gate summary",
       candidate: undefined,
       revision: report.revision?.commit ?? report.revision?.shortCommit,
@@ -938,15 +1201,17 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
       maxAgeMs,
       artifactPath: releaseGateSummaryPath
     });
-    const linkedSnapshotFinding = compareLinkedSnapshot(snapshotPath, report.inputs?.snapshotPath, "Release gate summary");
+    const linkedSnapshotFinding = compareLinkedSnapshot(snapshotPath, report.inputs?.snapshotPath, "Release gate summary", "blocking");
     if (linkedSnapshotFinding) {
       findings.push(linkedSnapshotFinding);
     }
     artifactFamilies.push({
       id: "release-gate-summary",
       label: "Release gate summary",
+      severity: "blocking",
       required: true,
-      status: findings.length === 0 ? "passed" : "failed",
+      applicable: true,
+      status: getFamilyStatus(findings, "blocking"),
       artifactPath: releaseGateSummaryPath,
       revision: report.revision?.commit ?? report.revision?.shortCommit,
       generatedAt: report.generatedAt,
@@ -956,11 +1221,12 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
   }
 
   if (!cocosRcBundlePath || !fs.existsSync(cocosRcBundlePath)) {
-    artifactFamilies.push(buildMissingFamily("cocos-rc-bundle", "Cocos RC bundle"));
+    artifactFamilies.push(buildMissingFamily("cocos-rc-bundle", "Cocos RC bundle", "blocking", true, true));
   } else {
     const bundle = readJsonFile<CocosRcBundleManifest>(cocosRcBundlePath);
     const findings: AuditFinding[] = [];
     const freshness = addCommonFindings(findings, {
+      severity: "blocking",
       label: "Cocos RC bundle",
       candidate: bundle.bundle?.candidate,
       revision: bundle.bundle?.commit ?? bundle.bundle?.shortCommit,
@@ -973,7 +1239,8 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
     const linkedSnapshotFinding = compareLinkedSnapshot(
       snapshotPath,
       bundle.linkedEvidence?.releaseReadinessSnapshot?.path,
-      "Cocos RC bundle"
+      "Cocos RC bundle",
+      "blocking"
     );
     if (linkedSnapshotFinding) {
       findings.push(linkedSnapshotFinding);
@@ -981,8 +1248,10 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
     artifactFamilies.push({
       id: "cocos-rc-bundle",
       label: "Cocos RC bundle",
+      severity: "blocking",
       required: true,
-      status: findings.length === 0 ? "passed" : "failed",
+      applicable: true,
+      status: getFamilyStatus(findings, "blocking"),
       artifactPath: cocosRcBundlePath,
       revision: bundle.bundle?.commit ?? bundle.bundle?.shortCommit,
       candidate: bundle.bundle?.candidate,
@@ -992,12 +1261,101 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
     });
   }
 
+  const runtimeSeverity: FindingSeverity = wechatSurfaceRequired ? "blocking" : "warning";
+  const runtimeApplicable = wechatSurfaceRequired || Boolean(runtimeObservabilityEvidencePath || runtimeObservabilityGatePath);
+
+  if (runtimeApplicable) {
+    if (!runtimeObservabilityEvidencePath || !fs.existsSync(runtimeObservabilityEvidencePath)) {
+      artifactFamilies.push(
+        buildMissingFamily(
+          "runtime-observability-evidence",
+          "Runtime observability evidence",
+          runtimeSeverity,
+          wechatSurfaceRequired,
+          true
+        )
+      );
+    } else {
+      const runtimeEvidence = readJsonFile<RuntimeObservabilityEvidenceReport>(runtimeObservabilityEvidencePath);
+      const findings: AuditFinding[] = [];
+      const freshness = addCommonFindings(findings, {
+        severity: runtimeSeverity,
+        label: "Runtime observability evidence",
+        candidate: runtimeEvidence.candidate?.name,
+        revision: runtimeEvidence.candidate?.revision ?? runtimeEvidence.candidate?.shortRevision,
+        generatedAt: runtimeEvidence.generatedAt,
+        expectedCandidate: args.candidate,
+        expectedRevision,
+        maxAgeMs,
+        artifactPath: runtimeObservabilityEvidencePath
+      });
+      artifactFamilies.push({
+        id: "runtime-observability-evidence",
+        label: "Runtime observability evidence",
+        severity: runtimeSeverity,
+        required: wechatSurfaceRequired,
+        applicable: true,
+        status: getFamilyStatus(findings, runtimeSeverity),
+        artifactPath: runtimeObservabilityEvidencePath,
+        revision: runtimeEvidence.candidate?.revision ?? runtimeEvidence.candidate?.shortRevision,
+        candidate: runtimeEvidence.candidate?.name,
+        generatedAt: runtimeEvidence.generatedAt,
+        freshness,
+        findings
+      });
+    }
+
+    if (!runtimeObservabilityGatePath || !fs.existsSync(runtimeObservabilityGatePath)) {
+      artifactFamilies.push(
+        buildMissingFamily("runtime-observability-gate", "Runtime observability gate", runtimeSeverity, wechatSurfaceRequired, true)
+      );
+    } else {
+      const runtimeGate = readJsonFile<RuntimeObservabilityGateReport>(runtimeObservabilityGatePath);
+      const findings: AuditFinding[] = [];
+      const freshness = addCommonFindings(findings, {
+        severity: runtimeSeverity,
+        label: "Runtime observability gate",
+        candidate: runtimeGate.candidate?.name,
+        revision: runtimeGate.candidate?.revision ?? runtimeGate.candidate?.shortRevision,
+        generatedAt: runtimeGate.generatedAt,
+        expectedCandidate: args.candidate,
+        expectedRevision,
+        maxAgeMs,
+        artifactPath: runtimeObservabilityGatePath
+      });
+      const linkedEvidenceFinding = compareLinkedArtifact(
+        runtimeObservabilityEvidencePath,
+        runtimeGate.evidenceSource?.artifactPath,
+        "Runtime observability gate",
+        runtimeSeverity
+      );
+      if (linkedEvidenceFinding) {
+        findings.push(linkedEvidenceFinding);
+      }
+      artifactFamilies.push({
+        id: "runtime-observability-gate",
+        label: "Runtime observability gate",
+        severity: runtimeSeverity,
+        required: wechatSurfaceRequired,
+        applicable: true,
+        status: getFamilyStatus(findings, runtimeSeverity),
+        artifactPath: runtimeObservabilityGatePath,
+        revision: runtimeGate.candidate?.revision ?? runtimeGate.candidate?.shortRevision,
+        candidate: runtimeGate.candidate?.name,
+        generatedAt: runtimeGate.generatedAt,
+        freshness,
+        findings
+      });
+    }
+  }
+
   if (!manualEvidenceLedgerPath || !fs.existsSync(manualEvidenceLedgerPath)) {
-    artifactFamilies.push(buildMissingFamily("manual-evidence-ledger", "Manual evidence owner ledger"));
+    artifactFamilies.push(buildMissingFamily("manual-evidence-ledger", "Manual evidence owner ledger", "blocking", true, true));
   } else {
     const ledger = parsedLedger ?? parseManualEvidenceOwnerLedger(manualEvidenceLedgerPath);
     const findings: AuditFinding[] = [];
     const freshness = addCommonFindings(findings, {
+      severity: "blocking",
       label: "Manual evidence owner ledger",
       candidate: ledger.metadata.candidate,
       revision: ledger.metadata.targetRevision,
@@ -1010,7 +1368,8 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
     const linkedSnapshotFinding = compareLinkedSnapshot(
       snapshotPath,
       ledger.metadata.linkedReadinessSnapshot,
-      "Manual evidence owner ledger"
+      "Manual evidence owner ledger",
+      "blocking"
     );
     if (linkedSnapshotFinding) {
       findings.push(linkedSnapshotFinding);
@@ -1020,15 +1379,19 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
         continue;
       }
       if (LEDGER_PENDING_STATUSES.has((row.status ?? "").toLowerCase())) {
-        findings.push({
-          code: "manual_pending",
-          summary: `Manual evidence ledger still lists ${row.evidenceType} as ${row.status}.`,
-          ...(row.artifactPath ? { artifactPath: row.artifactPath } : {})
-        });
+        findings.push(
+          createFinding(
+            "blocking",
+            "manual_pending",
+            `Manual evidence ledger still lists ${row.evidenceType} as ${row.status}.`,
+            row.artifactPath
+          )
+        );
       }
       const rowFreshness = evaluateFreshness(row.lastUpdated, maxAgeMs);
       maybeAddFreshnessFinding(
         findings,
+        "blocking",
         rowFreshness,
         `Manual evidence ledger row ${row.evidenceType}`,
         row.lastUpdated,
@@ -1039,8 +1402,10 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
     artifactFamilies.push({
       id: "manual-evidence-ledger",
       label: "Manual evidence owner ledger",
+      severity: "blocking",
       required: true,
-      status: findings.length === 0 ? "passed" : "failed",
+      applicable: true,
+      status: getFamilyStatus(findings, "blocking"),
       artifactPath: manualEvidenceLedgerPath,
       revision: ledger.metadata.targetRevision,
       candidate: ledger.metadata.candidate,
@@ -1050,13 +1415,18 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
     });
   }
 
-  if (isWechatEvidenceApplicable(parsedLedger, wechatCandidateSummaryPath)) {
+  const wechatSummaryApplicable = wechatSurfaceRequired || isWechatEvidenceApplicable(parsedLedger, wechatCandidateSummaryPath);
+  if (wechatSummaryApplicable) {
+    const wechatSeverity: FindingSeverity = wechatSurfaceRequired ? "blocking" : "warning";
     if (!wechatCandidateSummaryPath || !fs.existsSync(wechatCandidateSummaryPath)) {
-      artifactFamilies.push(buildMissingFamily("wechat-release-evidence", "WeChat release evidence summary"));
+      artifactFamilies.push(
+        buildMissingFamily("wechat-release-evidence", "WeChat release evidence summary", wechatSeverity, wechatSurfaceRequired, true)
+      );
     } else {
       const summary = parsedWechatSummary ?? readJsonFile<WechatCandidateSummary>(wechatCandidateSummaryPath);
       const findings: AuditFinding[] = [];
       const freshness = addCommonFindings(findings, {
+        severity: wechatSeverity,
         label: "WeChat release evidence summary",
         candidate: undefined,
         revision: summary.candidate?.revision,
@@ -1069,59 +1439,85 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
 
       const manualReview = summary.evidence?.manualReview;
       if ((manualReview?.requiredPendingChecks ?? 0) > 0) {
-        findings.push({
-          code: "manual_pending",
-          summary: `WeChat release evidence still has ${manualReview?.requiredPendingChecks} required manual review item(s) pending.`,
-          artifactPath: wechatCandidateSummaryPath
-        });
+        findings.push(
+          createFinding(
+            wechatSeverity,
+            "manual_pending",
+            `WeChat release evidence still has ${manualReview?.requiredPendingChecks} required manual review item(s) pending.`,
+            wechatCandidateSummaryPath
+          )
+        );
       }
       if ((manualReview?.requiredFailedChecks ?? 0) > 0) {
-        findings.push({
-          code: "manual_failed",
-          summary: `WeChat release evidence reports ${manualReview?.requiredFailedChecks} required manual review failure(s).`,
-          artifactPath: wechatCandidateSummaryPath
-        });
+        findings.push(
+          createFinding(
+            wechatSeverity,
+            "manual_failed",
+            `WeChat release evidence reports ${manualReview?.requiredFailedChecks} required manual review failure(s).`,
+            wechatCandidateSummaryPath
+          )
+        );
       }
       if ((manualReview?.requiredMetadataFailures ?? 0) > 0) {
-        findings.push({
-          code: "metadata_failure",
-          summary: `WeChat release evidence reports ${manualReview?.requiredMetadataFailures} manual review metadata failure(s).`,
-          artifactPath: wechatCandidateSummaryPath
-        });
+        findings.push(
+          createFinding(
+            wechatSeverity,
+            "metadata_failure",
+            `WeChat release evidence reports ${manualReview?.requiredMetadataFailures} manual review metadata failure(s).`,
+            wechatCandidateSummaryPath
+          )
+        );
       }
 
       const runtimeObservabilityCheck = findRuntimeObservabilityCheck(manualReview?.checks);
-      if (!runtimeObservabilityCheck) {
-        findings.push({
-          code: "missing",
-          summary: "WeChat release evidence is missing a runtime observability sign-off check.",
-          artifactPath: wechatCandidateSummaryPath
-        });
-      } else {
+      if (!runtimeObservabilityCheck && wechatSurfaceRequired) {
+        findings.push(
+          createFinding(
+            wechatSeverity,
+            "missing",
+            "WeChat release evidence is missing a runtime observability sign-off check.",
+            wechatCandidateSummaryPath
+          )
+        );
+      } else if (runtimeObservabilityCheck) {
         const runtimeArtifactPath = runtimeObservabilityCheck.artifactPath || wechatCandidateSummaryPath;
         if (runtimeObservabilityCheck.status === "pending") {
-          findings.push({
-            code: "manual_pending",
-            summary: `Runtime observability sign-off is still pending: ${runtimeObservabilityCheck.title ?? runtimeObservabilityCheck.id ?? "runtime observability"}.`,
-            artifactPath: runtimeArtifactPath
-          });
+          findings.push(
+            createFinding(
+              wechatSeverity,
+              "manual_pending",
+              `Runtime observability sign-off is still pending: ${
+                runtimeObservabilityCheck.title ?? runtimeObservabilityCheck.id ?? "runtime observability"
+              }.`,
+              runtimeArtifactPath
+            )
+          );
         } else if (runtimeObservabilityCheck.status === "failed") {
-          findings.push({
-            code: "manual_failed",
-            summary: `Runtime observability sign-off failed: ${runtimeObservabilityCheck.title ?? runtimeObservabilityCheck.id ?? "runtime observability"}.`,
-            artifactPath: runtimeArtifactPath
-          });
+          findings.push(
+            createFinding(
+              wechatSeverity,
+              "manual_failed",
+              `Runtime observability sign-off failed: ${
+                runtimeObservabilityCheck.title ?? runtimeObservabilityCheck.id ?? "runtime observability"
+              }.`,
+              runtimeArtifactPath
+            )
+          );
         }
         if (!revisionsMatch(runtimeObservabilityCheck.revision, expectedRevision)) {
-          findings.push({
-            code: "revision_mismatch",
-            summary: `Runtime observability sign-off reports revision ${runtimeObservabilityCheck.revision ?? "<missing>"}, expected ${expectedRevision}.`,
-            artifactPath: runtimeArtifactPath
-          });
+          findings.push(
+            createFinding(
+              wechatSeverity,
+              "revision_mismatch",
+              `Runtime observability sign-off reports revision ${runtimeObservabilityCheck.revision ?? "<missing>"}, expected ${expectedRevision}.`,
+              runtimeArtifactPath
+            )
+          );
         }
         const runtimeFreshness = evaluateFreshness(runtimeObservabilityCheck.recordedAt, maxAgeMs);
         maybeAddFreshnessFinding(
           findings,
+          wechatSeverity,
           runtimeFreshness,
           "Runtime observability sign-off",
           runtimeObservabilityCheck.recordedAt,
@@ -1132,19 +1528,24 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
 
       if (summary.candidate?.status === "blocked" && (summary.blockers?.length ?? 0) > 0) {
         for (const blocker of selectRelevantWechatBlockers(summary.blockers)?.slice(0, 3) ?? []) {
-          findings.push({
-            code: "blocked",
-            summary: `WeChat release evidence is blocked: ${blocker.summary ?? blocker.id ?? "unknown blocker"}.`,
-            artifactPath: blocker.artifactPath ?? wechatCandidateSummaryPath
-          });
+          findings.push(
+            createFinding(
+              wechatSeverity,
+              "blocked",
+              `WeChat release evidence is blocked: ${blocker.summary ?? blocker.id ?? "unknown blocker"}.`,
+              blocker.artifactPath ?? wechatCandidateSummaryPath
+            )
+          );
         }
       }
 
       artifactFamilies.push({
         id: "wechat-release-evidence",
         label: "WeChat release evidence summary",
-        required: true,
-        status: findings.length === 0 ? "passed" : "failed",
+        severity: wechatSeverity,
+        required: wechatSurfaceRequired,
+        applicable: true,
+        status: getFamilyStatus(findings, wechatSeverity),
         artifactPath: wechatCandidateSummaryPath,
         revision: summary.candidate?.revision ?? undefined,
         generatedAt: summary.generatedAt,
@@ -1158,53 +1559,76 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): SameCandidate
     candidate: args.candidate,
     expectedRevision,
     maxAgeMs,
+    wechatSurfaceRequired,
     ledger: parsedLedger,
     wechatSummary: parsedWechatSummary,
     wechatCandidateSummaryPath
   });
-  const findings = artifactFamilies.flatMap((family) => family.findings);
-  const status: AuditStatus = findings.length === 0 && manualEvidenceContract.status === "passed" ? "passed" : "failed";
-  const leadSummary =
-    manualEvidenceContract.status === "failed"
-      ? manualEvidenceContract.summary
-      : findings[0]?.summary;
+  const triage = collectTriageEntries(artifactFamilies, manualEvidenceContract.requiredFamilies);
+  const status = getStatusFromCounts(triage.blockers.length, triage.warnings.length);
+  const leadFinding = triage.blockers[0] ?? triage.warnings[0];
 
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     generatedAt: new Date().toISOString(),
     candidate: {
       name: args.candidate,
-      revision: expectedRevision
+      revision: expectedRevision,
+      targetSurface: args.targetSurface
     },
     summary: {
       status,
-      findingCount: findings.length + manualEvidenceContract.requiredFamilies.reduce((count, family) => count + family.findings.length, 0),
+      blockerCount: triage.blockers.length,
+      warningCount: triage.warnings.length,
+      findingCount: triage.blockers.length + triage.warnings.length,
       summary:
         status === "passed"
-          ? `Same-candidate evidence is current for ${args.candidate} at ${expectedRevision}.`
-          : `Same-candidate evidence drift detected: ${leadSummary ?? findings[0]?.summary}`
+          ? `Candidate-level evidence is current for ${args.candidate} at ${expectedRevision}.`
+          : `${status === "failed" ? "Blocking" : "Advisory"} evidence audit finding: ${leadFinding?.summary}`
     },
     inputs: {
+      targetSurface: args.targetSurface,
       ...(snapshotPath ? { snapshotPath } : {}),
       ...(releaseGateSummaryPath ? { releaseGateSummaryPath } : {}),
       ...(cocosRcBundlePath ? { cocosRcBundlePath } : {}),
+      ...(runtimeObservabilityEvidencePath ? { runtimeObservabilityEvidencePath } : {}),
+      ...(runtimeObservabilityGatePath ? { runtimeObservabilityGatePath } : {}),
       ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
       ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {})
     },
+    triage,
     manualEvidenceContract,
     artifactFamilies
   };
 }
 
-export function renderMarkdown(report: SameCandidateEvidenceAuditReport): string {
+export function renderMarkdown(report: CandidateEvidenceAuditReport): string {
   const lines: string[] = [];
-  lines.push("# Same-Candidate Evidence Audit");
+  lines.push("# Candidate-Level Evidence Audit");
   lines.push("");
   lines.push(`- Generated at: \`${report.generatedAt}\``);
   lines.push(`- Candidate: \`${report.candidate.name}\``);
   lines.push(`- Candidate revision: \`${report.candidate.revision}\``);
+  lines.push(`- Target surface: \`${report.inputs.targetSurface}\``);
   lines.push(`- Overall status: **${report.summary.status.toUpperCase()}**`);
+  lines.push(`- Blocking findings: ${report.summary.blockerCount}`);
+  lines.push(`- Advisory warnings: ${report.summary.warningCount}`);
   lines.push(`- Summary: ${report.summary.summary}`);
+  lines.push("");
+  lines.push("## Review Triage");
+  lines.push("");
+  lines.push(report.triage.blockers.length === 0 ? "- Blocking findings: none." : "- Blocking findings:");
+  for (const entry of report.triage.blockers) {
+    lines.push(
+      `  - [${entry.familyLabel}] \`${entry.code}\` ${entry.summary}${entry.artifactPath ? ` (artifact: \`${toRelativePath(entry.artifactPath)}\`)` : ""}`
+    );
+  }
+  lines.push(report.triage.warnings.length === 0 ? "- Advisory warnings: none." : "- Advisory warnings:");
+  for (const entry of report.triage.warnings) {
+    lines.push(
+      `  - [${entry.familyLabel}] \`${entry.code}\` ${entry.summary}${entry.artifactPath ? ` (artifact: \`${toRelativePath(entry.artifactPath)}\`)` : ""}`
+    );
+  }
   lines.push("");
   lines.push("## Manual Evidence Contract");
   lines.push("");
@@ -1216,16 +1640,19 @@ export function renderMarkdown(report: SameCandidateEvidenceAuditReport): string
     lines.push("");
     lines.push(`- Required: \`${family.required ? "yes" : "no"}\``);
     lines.push(`- Applicable: \`${family.applicable ? "yes" : "no"}\``);
+    lines.push(`- Severity: \`${family.severity}\``);
     lines.push(`- Status: **${family.status.toUpperCase()}**`);
     lines.push(`- Summary: ${family.summary}`);
-    lines.push(`- Artifacts: ${family.artifactPaths.length > 0 ? family.artifactPaths.map((artifactPath) => `\`${toRelativePath(artifactPath)}\``).join(", ") : "<none>"}`);
+    lines.push(
+      `- Artifacts: ${family.artifactPaths.length > 0 ? family.artifactPaths.map((artifactPath) => `\`${toRelativePath(artifactPath)}\``).join(", ") : "<none>"}`
+    );
     if (family.findings.length === 0) {
       lines.push("- Findings: none.");
     } else {
       lines.push("- Findings:");
       for (const finding of family.findings) {
         lines.push(
-          `  - \`${finding.code}\` ${finding.summary}${finding.artifactPath ? ` (artifact: \`${toRelativePath(finding.artifactPath)}\`)` : ""}`
+          `  - [${finding.severity}] \`${finding.code}\` ${finding.summary}${finding.artifactPath ? ` (artifact: \`${toRelativePath(finding.artifactPath)}\`)` : ""}`
         );
       }
     }
@@ -1236,6 +1663,12 @@ export function renderMarkdown(report: SameCandidateEvidenceAuditReport): string
   lines.push(`- Release readiness snapshot: \`${report.inputs.snapshotPath ? toRelativePath(report.inputs.snapshotPath) : "<missing>"}\``);
   lines.push(`- Release gate summary: \`${report.inputs.releaseGateSummaryPath ? toRelativePath(report.inputs.releaseGateSummaryPath) : "<missing>"}\``);
   lines.push(`- Cocos RC bundle: \`${report.inputs.cocosRcBundlePath ? toRelativePath(report.inputs.cocosRcBundlePath) : "<missing>"}\``);
+  lines.push(
+    `- Runtime observability evidence: \`${report.inputs.runtimeObservabilityEvidencePath ? toRelativePath(report.inputs.runtimeObservabilityEvidencePath) : "<not-selected>"}\``
+  );
+  lines.push(
+    `- Runtime observability gate: \`${report.inputs.runtimeObservabilityGatePath ? toRelativePath(report.inputs.runtimeObservabilityGatePath) : "<not-selected>"}\``
+  );
   lines.push(`- Manual evidence owner ledger: \`${report.inputs.manualEvidenceLedgerPath ? toRelativePath(report.inputs.manualEvidenceLedgerPath) : "<missing>"}\``);
   lines.push(
     `- WeChat release evidence summary: \`${report.inputs.wechatCandidateSummaryPath ? toRelativePath(report.inputs.wechatCandidateSummaryPath) : "<not-applicable>"}\``
@@ -1247,6 +1680,9 @@ export function renderMarkdown(report: SameCandidateEvidenceAuditReport): string
   for (const family of report.artifactFamilies) {
     lines.push(`### ${family.label}`);
     lines.push("");
+    lines.push(`- Required: \`${family.required ? "yes" : "no"}\``);
+    lines.push(`- Applicable: \`${family.applicable ? "yes" : "no"}\``);
+    lines.push(`- Severity: \`${family.severity}\``);
     lines.push(`- Status: **${family.status.toUpperCase()}**`);
     lines.push(`- Artifact: \`${family.artifactPath ? toRelativePath(family.artifactPath) : "<missing>"}\``);
     lines.push(`- Revision: \`${family.revision ?? "<missing>"}\``);
@@ -1259,7 +1695,7 @@ export function renderMarkdown(report: SameCandidateEvidenceAuditReport): string
       lines.push("- Findings:");
       for (const finding of family.findings) {
         lines.push(
-          `  - \`${finding.code}\` ${finding.summary}${finding.artifactPath ? ` (artifact: \`${finding.artifactPath}\`)` : ""}`
+          `  - [${finding.severity}] \`${finding.code}\` ${finding.summary}${finding.artifactPath ? ` (artifact: \`${toRelativePath(finding.artifactPath)}\`)` : ""}`
         );
       }
     }
@@ -1275,7 +1711,7 @@ function defaultOutputPath(args: Args): string {
   }
   return path.resolve(
     DEFAULT_RELEASE_READINESS_DIR,
-    `same-candidate-evidence-audit-${slugifyCandidate(args.candidate)}-${args.candidateRevision.slice(0, 12)}.json`
+    `candidate-evidence-audit-${slugifyCandidate(args.candidate)}-${args.candidateRevision.slice(0, 12)}.json`
   );
 }
 
@@ -1285,7 +1721,7 @@ function defaultMarkdownOutputPath(args: Args): string {
   }
   return path.resolve(
     DEFAULT_RELEASE_READINESS_DIR,
-    `same-candidate-evidence-audit-${slugifyCandidate(args.candidate)}-${args.candidateRevision.slice(0, 12)}.md`
+    `candidate-evidence-audit-${slugifyCandidate(args.candidate)}-${args.candidateRevision.slice(0, 12)}.md`
   );
 }
 
@@ -1298,8 +1734,8 @@ function main(): void {
   writeJsonFile(outputPath, report);
   writeFile(markdownOutputPath, renderMarkdown(report));
 
-  console.log(`Wrote same-candidate evidence audit JSON: ${toRelativePath(outputPath)}`);
-  console.log(`Wrote same-candidate evidence audit Markdown: ${toRelativePath(markdownOutputPath)}`);
+  console.log(`Wrote candidate evidence audit JSON: ${toRelativePath(outputPath)}`);
+  console.log(`Wrote candidate evidence audit Markdown: ${toRelativePath(markdownOutputPath)}`);
 
   if (report.summary.status === "failed") {
     process.exitCode = 1;

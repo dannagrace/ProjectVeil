@@ -10,7 +10,7 @@
 - `npm run release:cocos:primary-diagnostics` for checkpointed primary-client runtime diagnostics evidence
 - `npm run stress:rooms:reconnect-soak` for reconnect soak + teardown evidence
 - `npm run test:phase1-release-persistence` for persistence + shipped content evidence
-- `npm run release:same-candidate:evidence-audit` for the candidate-scoped artifact-family consistency check under `artifacts/release-readiness/`
+- `npm run release:candidate:evidence-audit` for the candidate-scoped artifact-family consistency check under `artifacts/release-readiness/`
 
 If you need the faster maintainer-facing index of which command or doc owns each operational task, open [`docs/operational-entry-point-repo-map.md`](./operational-entry-point-repo-map.md).
 
@@ -36,7 +36,7 @@ npm run release:readiness:dashboard -- \
   --primary-client-diagnostics artifacts/release-readiness/cocos-primary-client-diagnostic-snapshots-abc1234-2026-03-29T08-18-00.000Z.json \
   --reconnect-soak artifacts/release-readiness/colyseus-reconnect-soak-summary-phase1-rc-abc1234.json \
   --phase1-persistence artifacts/release-readiness/phase1-release-persistence-regression-abc1234.json \
-  --same-candidate-audit artifacts/release-readiness/same-candidate-evidence-audit-phase1-rc-abc1234.json \
+  --same-candidate-audit artifacts/release-readiness/candidate-evidence-audit-phase1-rc-abc1234.json \
   --wechat-artifacts-dir artifacts/wechat-release \
 ```
 
@@ -97,7 +97,7 @@ After that, the report summarizes seven bounded gates:
   - Fails closed when primary-client diagnostic snapshots are missing or incomplete.
   - Warns when present evidence is older than the configured freshness window.
 - `Same-candidate evidence`
-  - Reuses `same-candidate-evidence-audit-<candidate>-<short-sha>.json` when you run the dashboard as a candidate/revision pair.
+  - Reuses `candidate-evidence-audit-<candidate>-<short-sha>.json` when you run the dashboard as a candidate/revision pair.
   - Fails when the audit is missing or failed for the selected candidate.
   - Warns instead of failing when the dashboard is run without a pinned candidate pair and no audit was selected.
 - `Reconnect soak evidence`
@@ -148,12 +148,13 @@ npm run test:phase1-release-persistence
 npm run dev:server
 ```
 
-7. Run the same-candidate audit for the pinned candidate pair:
+7. Run the candidate-level evidence audit for the pinned candidate pair:
 
 ```bash
-npm run release:same-candidate:evidence-audit -- \
+npm run release:candidate:evidence-audit -- \
   --candidate <candidate-name> \
-  --candidate-revision <git-sha>
+  --candidate-revision <git-sha> \
+  --target-surface <h5|wechat>
 ```
 
 8. Generate the dashboard:

@@ -35,7 +35,8 @@ Relevant scripts: 37
 | `release:runtime-observability:evidence` | release | `artifacts/release-readiness/runtime-observability-evidence-<candidate-or-short-sha>-<short-sha>.json` |
 | `release:runtime-observability:gate` | release | `artifacts/release-readiness/runtime-observability-gate-<candidate-or-short-sha>.json` |
 | `release:runtime:slo-summary` | release | `artifacts/release-readiness/runtime-slo-summary-<short-sha>.json` |
-| `release:same-candidate:evidence-audit` | release | `artifacts/release-readiness/same-candidate-evidence-audit-<candidate>-<short-sha>.json` |
+| `release:candidate:evidence-audit` | release | `artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.json` |
+| `release:same-candidate:evidence-audit` | release | Alias of `release:candidate:evidence-audit` for backwards compatibility. |
 | `release:wechat:rehearsal` | release | Summary files under the selected artifacts dir, typically `artifacts/wechat-release/wechat-release-rehearsal-<candidate>.json` and `.md`, alongside the package, validation, smoke, and upload artifacts it references. |
 | `smoke:client:release-candidate` | smoke | `artifacts/release-readiness/client-release-candidate-smoke-<short-sha>-<timestamp>.json` |
 | `smoke:cocos:canonical-journey` | smoke | `artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.json` |
@@ -277,16 +278,23 @@ Relevant scripts: 37
   - `artifacts/release-readiness/runtime-slo-summary-<short-sha>.md`
   - `artifacts/release-readiness/runtime-slo-summary-<short-sha>.txt`
 
+## `release:candidate:evidence-audit`
+
+- Family: `release`
+- Command: `node --import tsx ./scripts/same-candidate-evidence-audit.ts`
+- Purpose: Audit whether all candidate evidence artifacts refer to the same revision, remain fresh enough for release review, and should be treated as blocking vs warning for the selected release surface.
+- Required inputs:
+  - `--candidate`, `--candidate-revision`, and optional `--target-surface <auto|h5|wechat>`.
+  - Release-readiness, release-gate, Cocos bundle, manual-ledger, runtime-observability, and WeChat summary artifacts, either discovered from defaults or passed explicitly.
+- Produced artifacts:
+  - `artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.json`
+  - `artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.md`
+
 ## `release:same-candidate:evidence-audit`
 
 - Family: `release`
 - Command: `node --import tsx ./scripts/same-candidate-evidence-audit.ts`
-- Purpose: Audit whether all candidate evidence artifacts refer to the same revision and remain fresh enough for release review.
-- Required inputs:
-  - Release-readiness, release-gate, Cocos bundle, manual-ledger, and WeChat summary artifacts, either discovered from defaults or passed explicitly.
-- Produced artifacts:
-  - `artifacts/release-readiness/same-candidate-evidence-audit-<candidate>-<short-sha>.json`
-  - `artifacts/release-readiness/same-candidate-evidence-audit-<candidate>-<short-sha>.md`
+- Purpose: Legacy alias for `release:candidate:evidence-audit`.
 
 ## `release:wechat:rehearsal`
 

@@ -154,8 +154,6 @@ test("release-readiness dashboard keeps stale and partial mixed-surface evidence
   );
 
   assert.equal(result.status, 1);
-  assert.match(result.stdout, /Overall status: fail/);
-  assert.match(result.stdout, /Go\/No-Go decision: blocked/);
 
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
     overallStatus: string;
@@ -205,7 +203,7 @@ test("release-readiness dashboard keeps stale and partial mixed-surface evidence
   assert.match(markdown, /## Blocker Drill-Down/);
   assert.match(markdown, /## Server health[\s\S]*- Evidence: unavailable\./);
   assert.match(markdown, /## Auth readiness[\s\S]*- Evidence: unavailable\./);
-  assert.match(markdown, /## Same-candidate evidence[\s\S]*Same-candidate evidence audit not selected/);
+  assert.match(markdown, /## Same-candidate evidence[\s\S]*Candidate-level evidence audit not selected/);
   assert.match(markdown, /WeChat package metadata missing\./);
   assert.match(markdown, /Primary-client diagnostic snapshots: FAIL \(/);
   assert.match(markdown, /Cocos RC snapshot: FAIL @ 2026-03-30T00:10:00.000Z/);

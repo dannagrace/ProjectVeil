@@ -268,10 +268,12 @@ const EVIDENCE_FAMILY_DEFINITIONS: EvidenceFamilyDefinition[] = [
   },
   {
     id: "same-candidate-evidence-audit",
-    label: "Same-candidate evidence audit",
+    label: "Candidate-level evidence audit",
     directory: "release-readiness",
     required: true,
-    matcher: (entry) => entry.endsWith(".json") && entry.startsWith("same-candidate-evidence-audit-"),
+    matcher: (entry) =>
+      entry.endsWith(".json") &&
+      (entry.startsWith("same-candidate-evidence-audit-") || entry.startsWith("candidate-evidence-audit-")),
     readMetadata: (filePath) =>
       readJsonMetadata(filePath, {
         generatedAt: [["generatedAt"]],

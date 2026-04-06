@@ -181,7 +181,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 微信小游戏 CI 同款校验：`npm run check:wechat-build`
 - 发布就绪快照：`npm run release:readiness:snapshot`
 - Same-revision 发布证据组装 runbook：`docs/same-revision-release-evidence-runbook.md`
-- Same-candidate 发布证据一致性审计：`npm run release:same-candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha>`
+- Candidate-level 发布证据 freshness / consistency audit：`npm run release:candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <auto|h5|wechat>`（输出 candidate-scoped JSON / Markdown 审计，汇总 blocking vs warning 结论，并校验 revision mismatch、artifact staleness、runtime observability evidence / gate、WeChat manual checks、owner ledger freshness；兼容旧别名 `release:same-candidate:evidence-audit`）
 - 统一发布门禁汇总：`npm run release:gate:summary`
 - Candidate-scoped runtime observability evidence：`npm run release:runtime-observability:evidence -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>`（抓取 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics` 的同一候选包证据，并在 `artifacts/release-readiness/` 输出 candidate+revision 命名的 JSON / Markdown）
 - Candidate-scoped runtime observability gate：`npm run release:runtime-observability:gate -- --candidate <candidate-name> --candidate-revision <git-sha> --capture-report <runtime-observability-evidence.json>`（基于已捕获的 runtime evidence 生成 pass/fail gate；也可直接传 `--server-url` 让 gate 即时采样）

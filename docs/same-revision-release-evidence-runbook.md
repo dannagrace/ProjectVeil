@@ -80,7 +80,7 @@ Rule of thumb: automated summaries may reuse lower-level artifacts from the same
 | `npm run release:readiness:snapshot` | Required | Required |
 | Manual evidence owner ledger | Required | Required |
 | `npm run release:gate:summary -- --target-surface <surface>` | Required | Required |
-| `npm run release:same-candidate:evidence-audit -- --candidate <candidate> --candidate-revision <git-sha>` | Required | Required |
+| `npm run release:candidate:evidence-audit -- --candidate <candidate> --candidate-revision <git-sha> --target-surface <auto\|h5\|wechat>` | Required | Required |
 | `npm run release:readiness:dashboard -- --candidate <candidate> --candidate-revision <git-sha>` | Required | Required |
 | `npm run release:cocos-rc:bundle` | Required for the primary Cocos client evidence packet | Required |
 | `npm run validate:wechat-rc` or `npm run release:wechat:rehearsal` | Optional | Required |
@@ -234,19 +234,22 @@ npm run release:gate:summary -- \
 
 Add `--reconnect-soak <path>` when reconnect evidence is part of the packet and you want the summary pinned to the exact soak artifact instead of directory discovery.
 
-9. Run the same-candidate evidence audit against the pinned artifact family.
+9. Run the candidate-level evidence audit against the pinned artifact family.
 
 ```bash
-npm run release:same-candidate:evidence-audit -- \
+npm run release:candidate:evidence-audit -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
+  --target-surface <h5|wechat> \
   --snapshot <snapshot-json> \
   --release-gate-summary <release-gate-summary-json> \
   --cocos-rc-bundle <cocos-rc-bundle-json> \
+  --runtime-observability-evidence <runtime-evidence-json> \
+  --runtime-observability-gate <runtime-gate-json> \
   --manual-evidence-ledger <owner-ledger-md>
 ```
 
-Keep the emitted JSON / Markdown pair with the rest of the packet. This is the explicit same-revision stitch check for the maintainer flow: it should fail closed when the snapshot, gate summary, Cocos RC bundle, or owner ledger drift to another revision, candidate name, linked snapshot path, or freshness window.
+Keep the emitted JSON / Markdown pair with the rest of the packet. This is the explicit same-revision stitch check for the maintainer flow: it should fail closed when required artifacts drift to another revision, candidate name, linked snapshot/evidence path, or freshness window. The report now also separates `blocking` from `warning` findings so H5 review can keep WeChat/runtime drift visible without treating it as a hard stop.
 
 10. Run the candidate-level dashboard as the final reviewer summary.
 
@@ -285,7 +288,7 @@ Before calling release `go`, confirm the packet contains these same-revision art
 - one release readiness snapshot
 - one manual evidence owner ledger
 - one release gate summary for the selected target surface
-- one same-candidate evidence audit report for the pinned candidate/revision pair
+- one candidate-level evidence audit report for the pinned candidate/revision pair
 - one Cocos RC bundle plus paired checklist and blockers files
 - for WeChat releases: one WeChat candidate summary, one RC validation report, one smoke report, and one runtime observability sign-off
 - when reconnect scope applies: one reconnect soak artifact
@@ -300,7 +303,7 @@ Release is `go` only when all required evidence for the selected surface is true
 
 - no required snapshot check is failed or still pending
 - no required gate-summary dimension is failed, blocked, or stale
-- the same-candidate evidence audit is present and passing for the pinned artifact family
+- the candidate-level evidence audit is present and passing for the pinned artifact family, or only carries warnings that are acceptable for the selected surface
 - the owner ledger has no required row left in `pending` or `in-review`
 - the artifact index points at the exact current packet and the last comparable packet, so a reviewer can reconstruct both the current decision and the previous baseline without guessing from directory timestamps
 - the Cocos RC bundle, checklist, and blockers files match the same candidate revision

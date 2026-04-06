@@ -66,6 +66,7 @@
     "release:pr-summary": "node --import tsx ./scripts/release-pr-comment.ts",
     "release:reconnect-soak": "node --import tsx ./scripts/release-candidate-reconnect-soak.ts",
     "release:same-candidate:evidence-audit": "node --import tsx ./scripts/same-candidate-evidence-audit.ts",
+    "release:candidate:evidence-audit": "node --import tsx ./scripts/same-candidate-evidence-audit.ts",
     "release:health:summary": "node --import tsx ./scripts/release-health-summary.ts",
     "release:health:trend-baseline": "node --import tsx ./scripts/release-health-trend-baseline.ts",
     "release:health:trend-compare": "node --import tsx ./scripts/release-health-trend-baseline.ts --compare-current",
