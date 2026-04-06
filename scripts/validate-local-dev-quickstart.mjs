@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertSupportedRuntime } from "./runtime-preflight.mjs";
 
 const rootDir = new URL("../", import.meta.url);
+const rootDirPath = fileURLToPath(rootDir);
 export const QUICKSTART_DOCTOR_SCRIPT = "doctor";
 export const QUICKSTART_VALIDATE_SCRIPT = "validate:quickstart";
 export const QUICKSTART_H5_BUILD_SCRIPT = "build:client:h5";
@@ -68,11 +70,11 @@ async function verifyEndpoints() {
   }
 }
 
-async function main() {
-  const majorNodeVersion = Number(process.versions.node.split(".")[0]);
-  if (Number.isNaN(majorNodeVersion) || majorNodeVersion < 22) {
-    throw new Error(`Node.js 22+ is required; found ${process.version}`);
-  }
+export async function main() {
+  assertSupportedRuntime({
+    commandName: "npm run validate:quickstart",
+    repoRoot: rootDirPath
+  });
 
   logStep(`using Node ${process.version}`);
   logStep("validating e2e config fixtures");

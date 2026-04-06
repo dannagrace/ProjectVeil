@@ -2,6 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  createRuntimePreflightCheckRecords,
+  detectRuntimeVersions,
+  evaluateRuntimePreflight,
+  loadRuntimeContract,
+  parsePackageManagerVersion,
+} from "./runtime-preflight.mjs";
 
 const STATUS_ORDER = ["pass", "info", "warn", "fail"];
 const FLOW_ALIASES = new Map([
@@ -26,40 +33,6 @@ function readJson(filePath) {
 
 function readTextIfExists(filePath) {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
-}
-
-function normalizeVersion(version) {
-  return version.replace(/^v/i, "").trim();
-}
-
-function parseMajor(version) {
-  const match = normalizeVersion(version).match(/^(\d+)/);
-  return match ? Number(match[1]) : null;
-}
-
-function parsePackageManagerVersion(packageManager) {
-  const match = packageManager?.match(/^npm@(.+)$/);
-  return match ? normalizeVersion(match[1]) : null;
-}
-
-function parseRange(range) {
-  const match = range?.match(/^>=\s*(\d+)\s*<\s*(\d+)$/);
-  if (!match) {
-    return null;
-  }
-  return { minInclusive: Number(match[1]), maxExclusive: Number(match[2]) };
-}
-
-function versionSatisfiesMajorRange(version, range) {
-  const major = parseMajor(version);
-  if (major == null) {
-    return false;
-  }
-  const parsedRange = parseRange(range);
-  if (!parsedRange) {
-    return true;
-  }
-  return major >= parsedRange.minInclusive && major < parsedRange.maxExclusive;
 }
 
 function parseArgs(argv) {
@@ -182,96 +155,6 @@ function relativeRepoPath(rootDir, targetPath) {
 
 function createCheck(id, title, status, summary, details = [], remediation = []) {
   return { id, title, status, summary, details, remediation };
-}
-
-function collectNodeAndNpmChecks(pkg, nvmrcValue, npmVersion, nodeVersion) {
-  const checks = [];
-
-  if (!versionSatisfiesMajorRange(nodeVersion, pkg.engines?.node)) {
-    checks.push(
-      createCheck(
-        "node-engine",
-        "Node.js version",
-        "fail",
-        `Current Node ${nodeVersion} does not satisfy package.json engines.node (${pkg.engines?.node ?? "unspecified"}).`,
-        [],
-        ["Install the repo runtime from `.nvmrc` and rerun `nvm use`."]
-      )
-    );
-  } else if (nvmrcValue && parseMajor(nodeVersion) !== parseMajor(nvmrcValue)) {
-    checks.push(
-      createCheck(
-        "node-nvmrc",
-        "Node.js alignment",
-        "warn",
-        `Current Node ${nodeVersion} satisfies engines but differs from .nvmrc (${nvmrcValue}).`,
-        ["CI and the README quickstart both target the .nvmrc runtime."],
-        ["Run `nvm use` to switch to the repo's preferred Node version."]
-      )
-    );
-  } else {
-    checks.push(
-      createCheck(
-        "node-nvmrc",
-        "Node.js alignment",
-        "pass",
-        `Current Node ${nodeVersion} matches the repo runtime target${nvmrcValue ? ` (${nvmrcValue})` : ""}.`
-      )
-    );
-  }
-
-  const expectedNpmVersion = parsePackageManagerVersion(pkg.packageManager);
-  if (!npmVersion) {
-    checks.push(
-      createCheck(
-        "npm-version",
-        "npm availability",
-        "fail",
-        "npm is not available on PATH.",
-        [],
-        ["Install npm and rerun `npm --version`.", "If you use nvm, `nvm use` should restore the bundled npm."]
-      )
-    );
-    return checks;
-  }
-
-  if (!versionSatisfiesMajorRange(npmVersion, pkg.engines?.npm)) {
-    checks.push(
-      createCheck(
-        "npm-version",
-        "npm version",
-        "fail",
-        `Current npm ${npmVersion} does not satisfy package.json engines.npm (${pkg.engines?.npm ?? "unspecified"}).`,
-        [],
-        [`Install npm ${expectedNpmVersion ?? "10.x"} or use the npm bundled with the repo's Node runtime.`]
-      )
-    );
-    return checks;
-  }
-
-  if (expectedNpmVersion && normalizeVersion(npmVersion) !== expectedNpmVersion) {
-    checks.push(
-      createCheck(
-        "npm-version",
-        "npm alignment",
-        "warn",
-        `Current npm ${npmVersion} satisfies engines but differs from packageManager (${pkg.packageManager}).`,
-        ["Exact npm drift can change lockfile/install behavior compared with CI."],
-        [`Use npm ${expectedNpmVersion} for the closest CI match.`]
-      )
-    );
-  } else {
-    checks.push(
-      createCheck(
-        "npm-version",
-        "npm alignment",
-        "pass",
-        `Current npm ${npmVersion} matches the repo expectation${expectedNpmVersion ? ` (${expectedNpmVersion})` : ""}.`
-      )
-    );
-  }
-
-  return checks;
 }
 
 function collectDependencyCheck(context) {
@@ -658,26 +541,43 @@ function collectReleaseChecks(context) {
 }
 
 function createSystemContext(overrides = {}) {
-  const envFile = parseEnvFile(path.join(repoRoot, ".env"));
-  const npmFromUserAgent =
-    process.env.npm_config_user_agent?.match(/\bnpm\/([^\s]+)/)?.[1] ??
-    process.env.npm_package_manager?.match(/^npm@(.+)$/)?.[1] ??
-    null;
-  const npmVersionResult = npmFromUserAgent ? null : runCommand("npm", ["--version"]);
-  const npmVersion = npmVersionResult?.status === 0 ? npmVersionResult.stdout.trim() : null;
+  const resolvedRepoRoot = overrides.repoRoot ?? repoRoot;
+  const envFile = parseEnvFile(path.join(resolvedRepoRoot, ".env"));
+  const runtimeContract =
+    overrides.runtimeContract ??
+    (overrides.packageJson
+      ? {
+          repoRoot: resolvedRepoRoot,
+          packageJsonPath: path.join(resolvedRepoRoot, "package.json"),
+          nvmrcPath: path.join(resolvedRepoRoot, ".nvmrc"),
+          readmePath: path.join(resolvedRepoRoot, "README.md"),
+          packageJson: overrides.packageJson,
+          nvmrcValue: overrides.nvmrcValue ?? null,
+          readmePrerequisites: overrides.readmePrerequisites ?? { node: null, npm: null },
+          nodeEngine: overrides.packageJson.engines?.node ?? null,
+          npmEngine: overrides.packageJson.engines?.npm ?? null,
+          packageManager: overrides.packageJson.packageManager ?? null,
+          expectedNpmVersion: parsePackageManagerVersion(overrides.packageJson.packageManager)
+        }
+      : loadRuntimeContract(resolvedRepoRoot));
+  const detectedRuntime = detectRuntimeVersions({
+    repoRoot: resolvedRepoRoot,
+    env: process.env,
+    runCommandImpl: runCommand
+  });
 
   return {
-    repoRoot,
-    packageJson: readJson(path.join(repoRoot, "package.json")),
-    nvmrcValue: readTextIfExists(path.join(repoRoot, ".nvmrc"))?.trim() ?? null,
+    repoRoot: resolvedRepoRoot,
+    packageJson: runtimeContract.packageJson,
+    runtimeContract,
     envFile,
     env: process.env,
-    nodeVersion: process.version,
-    npmVersion: npmFromUserAgent ?? npmVersion,
+    nodeVersion: detectedRuntime.nodeVersion,
+    npmVersion: detectedRuntime.npmVersion,
     commandExists: (command) => commandExists(command),
-    localBinPath: (name) => resolveLocalBin(repoRoot, name),
-    packageInstalled: (name) => resolvePackageInstalled(repoRoot, name),
-    playwrightCliPath: resolvePlaywrightCli(repoRoot),
+    localBinPath: (name) => resolveLocalBin(resolvedRepoRoot, name),
+    packageInstalled: (name) => resolvePackageInstalled(resolvedRepoRoot, name),
+    playwrightCliPath: resolvePlaywrightCli(resolvedRepoRoot),
     runCommand,
     ...overrides
   };
@@ -686,9 +586,16 @@ function createSystemContext(overrides = {}) {
 export function collectDoctorReport(options = {}, contextOverrides = {}) {
   const parsedArgs = options.flows ? { help: false, flows: options.flows } : parseArgs(process.argv.slice(2));
   const context = createSystemContext(contextOverrides);
+  const runtimeReport = evaluateRuntimePreflight({
+    contract: context.runtimeContract,
+    nodeVersion: context.nodeVersion,
+    npmVersion: context.npmVersion
+  });
 
   const checks = [
-    ...collectNodeAndNpmChecks(context.packageJson, context.nvmrcValue, context.npmVersion, context.nodeVersion),
+    ...createRuntimePreflightCheckRecords(runtimeReport).map((check) =>
+      createCheck(check.id, check.title, check.status, check.summary, check.details, check.remediation)
+    ),
     ...collectDependencyCheck(context),
     ...collectBaselineHintChecks(context)
   ];

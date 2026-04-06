@@ -97,6 +97,38 @@ test("doctor warns on Node and npm drift even when engines still pass", () => {
   assert.match(output, /Doctor result: passed with warnings/);
 });
 
+test("doctor fails with runtime remediation when Node/npm are unsupported", () => {
+  const repoRoot = makeTempRepo();
+  const report = collectDoctorReport(
+    {
+      flows: ["baseline"]
+    },
+    {
+      repoRoot,
+      packageJson: basePackageJson(),
+      nvmrcValue: "22",
+      readmePrerequisites: {
+        node: "Node.js 22 LTS",
+        npm: "npm 10+"
+      },
+      envFile: {},
+      env: { HOME: repoRoot },
+      nodeVersion: "v20.11.1",
+      npmVersion: "9.8.1",
+      packageInstalled: () => true,
+      commandExists: () => false,
+      runCommand: () => ({ status: 1, stdout: "", stderr: "", error: null })
+    }
+  );
+
+  assert.equal(report.counts.fail, 2);
+  assert.equal(report.overallStatus, "fail");
+  const output = renderDoctorReport(report);
+  assert.match(output, /Doctor result: failed/);
+  assert.match(output, /Run `nvm use` from the repo root to switch to Node 22/);
+  assert.match(output, /npm ci --no-audit --no-fund/);
+});
+
 test("doctor prints actionable remediation when optional flow prerequisites are missing", () => {
   const repoRoot = makeTempRepo();
   writeFile(path.join(repoRoot, "apps/cocos-client/wechat-minigame.build.json"), "{}\n");
