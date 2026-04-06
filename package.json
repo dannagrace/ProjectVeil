@@ -55,6 +55,7 @@
     "smoke:wechat-release": "node --import tsx ./scripts/smoke-wechat-minigame-release.ts",
     "ingest:wechat-smoke-evidence": "node --import tsx ./scripts/smoke-wechat-minigame-release.ts",
     "release:readiness:snapshot": "node --import tsx ./scripts/release-readiness-snapshot.ts",
+    "release:evidence:index": "node --import tsx ./scripts/release-evidence-index.ts",
     "release:readiness:dashboard": "node --import tsx ./scripts/release-readiness-dashboard.ts",
     "release:candidate-triage:digest": "node --import tsx ./scripts/candidate-revision-triage-digest.ts",
     "release:runtime-observability:gate": "node --import tsx ./scripts/runtime-observability-gate.ts",

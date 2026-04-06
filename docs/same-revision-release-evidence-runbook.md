@@ -15,6 +15,25 @@ It does not redefine release gates. It sequences the existing commands and artif
 - [`docs/release-go-no-go-decision-packet.md`](./release-go-no-go-decision-packet.md)
 - [`docs/release-evidence/release-readiness-artifact-index.template.md`](./release-evidence/release-readiness-artifact-index.template.md)
 
+## First Stop: Current Evidence Index
+
+Before a reviewer or release owner opens individual packet artifacts, generate the checked-out revision index:
+
+```bash
+npm run release:evidence:index
+```
+
+This command scans the current `artifacts/release-readiness/` and `artifacts/wechat-release/` working set, then writes:
+
+- `artifacts/release-readiness/current-release-evidence-index-<short-sha>.json`
+- `artifacts/release-readiness/current-release-evidence-index-<short-sha>.md`
+
+Use the index as the release-call front door:
+
+- confirm the checked-out revision and inferred candidate before reviewing deeper evidence
+- verify that the required families for the current packet exist in one place
+- stop and refresh any artifact family flagged as missing, stale, or revision-mismatched before relying on downstream summaries
+
 ## Artifact Retention And Indexing
 
 Treat `artifacts/release-readiness/` as the working set for the current release call, not as an unbounded archive.

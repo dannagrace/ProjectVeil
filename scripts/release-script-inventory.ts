@@ -68,6 +68,16 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "`artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.md`",
     ],
   },
+  "release:evidence:index": {
+    purpose: "Scan the current release/readiness artifact directories and emit a single index of the evidence bundle for the checked-out revision.",
+    requiredInputs: [
+      "Current repo revision plus any existing artifacts under `artifacts/release-readiness/` and `artifacts/wechat-release/`; optional directory/output overrides and freshness window flags refine discovery.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/current-release-evidence-index-<short-sha>.json`",
+      "`artifacts/release-readiness/current-release-evidence-index-<short-sha>.md`",
+    ],
+  },
   "release:gate:summary": {
     purpose: "Aggregate readiness, H5, reconnect, WeChat, and config-change evidence into one top-level release gate decision.",
     requiredInputs: [
@@ -295,6 +305,15 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     ],
     producedArtifacts: [
       "Optional JSON report at the requested `--report-path`; otherwise this is an exit-code-only validation step.",
+    ],
+  },
+  "validate:content-smoke": {
+    purpose: "Run the release-facing content smoke gate that checks the currently shipped asset/content surface.",
+    requiredInputs: [
+      "Current repo content definitions and any local assets/config required by the smoke gate; no extra operator flags are required for the default path.",
+    ],
+    producedArtifacts: [
+      "No tracked artifact; exits non-zero when the content smoke gate detects missing or invalid shipped content.",
     ],
   },
   "validate:e2e:fixtures": {
