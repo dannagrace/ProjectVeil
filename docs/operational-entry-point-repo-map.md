@@ -29,6 +29,7 @@ For detailed release sequencing, keep [`docs/same-revision-release-evidence-runb
 | Need | Primary command or entry point | Canonical docs |
 | --- | --- | --- |
 | Generate one candidate readiness snapshot | `npm run release:readiness:snapshot` | [`docs/release-readiness-snapshot.md`](./release-readiness-snapshot.md) |
+| Confirm which gate script or artifact is authoritative for a release question | [`docs/release-ops-ownership-matrix.md`](./release-ops-ownership-matrix.md) | [`docs/release-ops-ownership-matrix.md`](./release-ops-ownership-matrix.md), [`docs/release-script-inventory.md`](./release-script-inventory.md) |
 | Generate the branch-level readiness dashboard | `npm run release:readiness:dashboard` | [`docs/release-readiness-dashboard.md`](./release-readiness-dashboard.md) |
 | Aggregate release gates for one candidate | `npm run release:gate:summary` | [`docs/release-gate-summary.md`](./release-gate-summary.md) |
 | Aggregate top-level release health and triage | `npm run release:health:summary` | [`docs/release-health-summary.md`](./release-health-summary.md), [`docs/release-readiness-trend-troubleshooting.md`](./release-readiness-trend-troubleshooting.md) |
