@@ -1705,41 +1705,53 @@ export function renderMarkdown(report: CandidateEvidenceAuditReport): string {
   return `${lines.join("\n").trim()}\n`;
 }
 
-function defaultOutputPath(args: Args): string {
+function defaultOutputPath(args: Args, outputBaseName = "candidate-evidence-audit"): string {
   if (args.outputPath) {
     return path.resolve(args.outputPath);
   }
   return path.resolve(
     DEFAULT_RELEASE_READINESS_DIR,
-    `candidate-evidence-audit-${slugifyCandidate(args.candidate)}-${args.candidateRevision.slice(0, 12)}.json`
+    `${outputBaseName}-${slugifyCandidate(args.candidate)}-${args.candidateRevision.slice(0, 12)}.json`
   );
 }
 
-function defaultMarkdownOutputPath(args: Args): string {
+function defaultMarkdownOutputPath(args: Args, outputBaseName = "candidate-evidence-audit"): string {
   if (args.markdownOutputPath) {
     return path.resolve(args.markdownOutputPath);
   }
   return path.resolve(
     DEFAULT_RELEASE_READINESS_DIR,
-    `candidate-evidence-audit-${slugifyCandidate(args.candidate)}-${args.candidateRevision.slice(0, 12)}.md`
+    `${outputBaseName}-${slugifyCandidate(args.candidate)}-${args.candidateRevision.slice(0, 12)}.md`
   );
 }
 
-function main(): void {
-  const args = parseArgs(process.argv);
+export function runSameCandidateEvidenceAuditCli(
+  argv = process.argv,
+  options?: {
+    outputBaseName?: string;
+    logLabel?: string;
+  }
+): CandidateEvidenceAuditReport {
+  const args = parseArgs(argv);
   const report = buildSameCandidateEvidenceAuditReport(args);
-  const outputPath = defaultOutputPath(args);
-  const markdownOutputPath = defaultMarkdownOutputPath(args);
+  const outputPath = defaultOutputPath(args, options?.outputBaseName);
+  const markdownOutputPath = defaultMarkdownOutputPath(args, options?.outputBaseName);
+  const logLabel = options?.logLabel ?? "candidate evidence audit";
 
   writeJsonFile(outputPath, report);
   writeFile(markdownOutputPath, renderMarkdown(report));
 
-  console.log(`Wrote candidate evidence audit JSON: ${toRelativePath(outputPath)}`);
-  console.log(`Wrote candidate evidence audit Markdown: ${toRelativePath(markdownOutputPath)}`);
+  console.log(`Wrote ${logLabel} JSON: ${toRelativePath(outputPath)}`);
+  console.log(`Wrote ${logLabel} Markdown: ${toRelativePath(markdownOutputPath)}`);
 
   if (report.summary.status === "failed") {
     process.exitCode = 1;
   }
+  return report;
+}
+
+function main(): void {
+  runSameCandidateEvidenceAuditCli();
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

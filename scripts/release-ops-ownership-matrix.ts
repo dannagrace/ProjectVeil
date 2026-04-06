@@ -113,6 +113,7 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
         reviewTreatment: "release blocker",
       };
     case "release:candidate:evidence-audit":
+    case "release:candidate:evidence:freshness-guard":
     case "release:same-candidate:evidence-audit":
       return {
         owner: "release ops",

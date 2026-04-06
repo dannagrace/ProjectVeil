@@ -246,6 +246,18 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "`artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.md`",
     ],
   },
+  "release:candidate:evidence:freshness-guard": {
+    purpose:
+      "Run the dedicated candidate evidence freshness guard so release reviewers can fail fast on mixed revisions, stale artifacts, or missing required evidence.",
+    requiredInputs: [
+      "--candidate, --candidate-revision, and optional --target-surface <auto|h5|wechat>.",
+      "Release-readiness, release-gate, Cocos bundle, runtime-observability, manual-ledger, and WeChat summary artifacts, either discovered from defaults or passed explicitly.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/candidate-evidence-freshness-guard-<candidate>-<short-sha>.json`",
+      "`artifacts/release-readiness/candidate-evidence-freshness-guard-<candidate>-<short-sha>.md`",
+    ],
+  },
   "release:same-candidate:evidence-audit": {
     purpose: "Legacy alias for release:candidate:evidence-audit.",
     requiredInputs: [
