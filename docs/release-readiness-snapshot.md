@@ -2,6 +2,8 @@
 
 `npm run release:readiness:snapshot` generates a machine-readable snapshot for the current revision and records the release gate results in one place.
 
+If reviewers need the short Phase 1 hardening checklist that maps each remaining gap to its closure command, artifact, or manual sign-off, open [`docs/phase1-hardening-reviewer-checklist.md`](./phase1-hardening-reviewer-checklist.md).
+
 If you want a single human-readable Phase 1 dashboard on top of the snapshot plus runtime/WeChat/Cocos evidence, use `npm run release:readiness:dashboard` and see `docs/release-readiness-dashboard.md`.
 
 If you want a CI-oriented pass/fail summary that also folds in packaged H5 smoke and WeChat release evidence, use `npm run release:gate:summary` and see `docs/release-gate-summary.md`.
