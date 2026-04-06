@@ -78,6 +78,8 @@ The shipped config/content pack validates cleanly, and `npm run test:phase1-rele
 8. `Known Phase 1 blockers are closed or explicitly accepted.`
 Any remaining Cocos presentation fallback, reconnect risk, multiplayer divergence risk, or release-process blocker is either fixed or recorded as a conscious non-blocking acceptance with owner and rationale.
 
+To audit these eight criteria directly for one candidate revision, run [`npm run release:phase1:exit-audit`](../package.json) and see [`docs/phase1-exit-audit.md`](./phase1-exit-audit.md).
+
 ## Battle Presentation Baseline
 
 For the primary Cocos client battle path, the following now count as `production-intent` presentation behavior rather than fallback:

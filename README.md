@@ -187,6 +187,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 发布健康度聚合摘要：`npm run release:health:summary`
 - 最近候选包发布健康趋势基线：`npm run release:health:trend-baseline`
 - 当前候选包对比最近发布健康基线：`npm run release:health:trend-compare`
+- Phase 1 exit audit：`npm run release:phase1:exit-audit -- --candidate <candidate-name> --candidate-revision <git-sha> [--target-surface h5|wechat] [--output-dir artifacts/release-readiness/phase1-exit-audit-<candidate>-<git-sha>]`（把 `docs/phase1-maturity-scorecard.md` 的 8 条显式退出标准映射成一个 candidate-scoped `pass|fail|pending` JSON / Markdown 审计，并附上每条结论引用的源 artifact）
 - Phase 1 candidate dossier + single exit evidence gate：`npm run release:phase1:candidate-dossier -- --candidate <candidate-name> --candidate-revision <git-sha> [--server-url http://127.0.0.1:2567] [--output-dir artifacts/release-dossiers/<candidate>-<git-sha>]`
 - 打包 H5 客户端 RC 冒烟：`npm run smoke:client:release-candidate`
 - 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
@@ -243,6 +244,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 仓库成熟度基线与独立 follow-up slices：`docs/repo-maturity-baseline.md`
 - 核心玩法发布门禁清单：`docs/core-gameplay-release-readiness.md`
 - 发布就绪快照说明：`docs/release-readiness-snapshot.md`
+- Phase 1 exit audit：`docs/phase1-exit-audit.md`
 - Phase 1 candidate dossier：`docs/phase1-candidate-dossier.md`
 - 发布健康度聚合说明：`docs/release-health-summary.md`
 - 最近候选包发布健康趋势基线：`docs/release-health-trend-baseline.md`

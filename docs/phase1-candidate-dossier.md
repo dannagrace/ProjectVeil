@@ -4,6 +4,8 @@
 
 It now also emits one explicit candidate-level `Phase 1 exit evidence gate` so reviewers can make the final pass/pending/fail call from one object instead of re-interpreting each evidence section by hand.
 
+If reviewers need the eight explicit scorecard exit criteria as first-class `pass|fail|pending` rows instead of the dossier's broader section-level gate, use [`docs/phase1-exit-audit.md`](./phase1-exit-audit.md) and `npm run release:phase1:exit-audit`.
+
 The same run also emits a smaller runtime observability dossier that keeps the target-environment runtime probes and reconnect/session-recovery evidence in one reviewer-facing artifact for the same candidate revision.
 
 For release-time target-environment enforcement, use `npm run release:runtime-observability:gate`. The dossier can either sample the live endpoints directly with `--server-url` or reuse a previously written gate report with `--runtime-observability-gate`.
