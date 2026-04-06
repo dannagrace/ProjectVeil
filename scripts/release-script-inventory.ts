@@ -146,6 +146,16 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs and a top-level `SUMMARY.md`.",
     ],
   },
+  "release:phase1:exit-audit": {
+    purpose: "Emit the reviewer-facing Phase 1 exit call that maps explicit scorecard criteria onto one candidate revision.",
+    requiredInputs: [
+      "Pass `--candidate` and `--candidate-revision`; optionally pin snapshot, Cocos bundle, WeChat summary, runtime gate, reconnect soak, and persistence artifacts.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/phase1-exit-audit-<candidate>-<short-sha>.json`",
+      "`artifacts/release-readiness/phase1-exit-audit-<candidate>-<short-sha>.md`",
+    ],
+  },
   "release:phase1:same-revision-evidence-bundle": {
     purpose: "Generate the same-revision Phase 1 evidence bundle for a single candidate revision, including snapshot, dashboard, gate, and ledger scaffolding.",
     requiredInputs: [
