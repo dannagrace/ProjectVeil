@@ -378,6 +378,16 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "No tracked artifact; this is a workflow gate driven by exit status and console output.",
     ],
   },
+  "validate:quickstart:contract": {
+    purpose: "Audit the contributor quickstart contract by checking README/package alignment, then running the documented doctor and quickstart validator commands.",
+    requiredInputs: [
+      "A repo checkout with `README.md`, `package.json`, the quickstart validator script, and a bootable local dev environment unless `--skip-runtime` is used.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/contributor-quickstart-contract-<short-sha>.json`",
+      "`artifacts/release-readiness/contributor-quickstart-contract-<short-sha>.md`",
+    ],
+  },
   "validate:redis-scaling": {
     purpose: "Validate Redis-backed scaling behavior for the multiplayer/runtime release path.",
     requiredInputs: [
