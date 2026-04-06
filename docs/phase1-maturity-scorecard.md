@@ -4,6 +4,8 @@ _Repository snapshot assessed on 2026-03-31._
 
 This scorecard summarizes whether Project Veil is still in Phase 1, how mature the current Phase 1 deliverables are, what gaps remain, and what must be true before the project should be treated as ready to move beyond Phase 1.
 
+If reviewers need one concise closure checklist for the remaining hardening gaps, use [`docs/phase1-hardening-reviewer-checklist.md`](./phase1-hardening-reviewer-checklist.md).
+
 Phase 1 in this repository still means one bounded loop delivered on top of an authoritative TypeScript stack:
 
 - lobby/login into a room

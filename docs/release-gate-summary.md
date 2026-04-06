@@ -2,6 +2,8 @@
 
 `npm run release:gate:summary` aggregates the existing release signals into one CI-friendly JSON file plus a Markdown summary for PR comments, workflow artifacts, or manual review.
 
+For the short reviewer-facing checklist of the remaining Phase 1 hardening gaps, use [`docs/phase1-hardening-reviewer-checklist.md`](./phase1-hardening-reviewer-checklist.md).
+
 It intentionally reuses the current evidence instead of introducing a parallel gate system:
 
 - `npm run release:readiness:snapshot` for the baseline regression/build gate state
