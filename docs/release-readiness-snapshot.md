@@ -49,6 +49,19 @@ That flow rebuilds `apps/client/dist`, serves the packaged artifact instead of t
 
 The snapshot also supports manual gates, so the same file can carry pending or completed human checks such as WeChat Developer Tools export review, reconnect evidence, device smoke acceptance, or RC blocker review.
 
+For candidate-scoped target-environment runtime evidence, capture the endpoints once and keep that artifact attached to the same candidate revision:
+
+```bash
+npm run release:runtime-observability:evidence -- \
+  --candidate <candidate-name> \
+  --candidate-revision <git-sha> \
+  --target-surface <h5|wechat> \
+  --target-environment <env-name> \
+  --server-url <base-url>
+```
+
+That command writes candidate+revision-scoped JSON and Markdown under `artifacts/release-readiness/`, including the raw `/api/runtime/health`, `/api/runtime/auth-readiness`, and `/api/runtime/metrics` captures plus freshness metadata. Feed the resulting JSON into `npm run release:runtime-observability:gate -- --capture-report <json>` when the release gate or candidate dossier needs a pass/fail verdict without re-sampling the environment.
+
 When a candidate has more than one manual sign-off in flight, track ownership in [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) and keep the candidate copy under `artifacts/release-readiness/manual-release-evidence-owner-ledger-<candidate>-<short-sha>.md`; [`artifacts/release-readiness/manual-release-evidence-owner-ledger-phase1-rc-abc1234.md`](../artifacts/release-readiness/manual-release-evidence-owner-ledger-phase1-rc-abc1234.md) is the reviewer-facing example.
 
 When reviewers need one candidate-scoped freshness verdict across the snapshot, gate summary, Cocos RC bundle, owner ledger, and any applicable WeChat release evidence, run:

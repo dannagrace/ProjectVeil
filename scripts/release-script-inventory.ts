@@ -155,6 +155,16 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "Output directory under `artifacts/release-readiness/phase1-same-revision-evidence-bundle-<candidate>-<short-sha>/` containing `phase1-same-revision-evidence-bundle-manifest.json`, `phase1-same-revision-evidence-bundle.md`, and staged evidence artifacts.",
     ],
   },
+  "release:runtime-observability:evidence": {
+    purpose: "Capture candidate-scoped runtime endpoint evidence for one target environment, including raw health, auth-readiness, and metrics payloads.",
+    requiredInputs: [
+      "Pass `--candidate`, `--candidate-revision`, and `--server-url`; optionally set `--target-surface`, `--target-environment`, and explicit output paths.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/runtime-observability-evidence-<candidate-or-short-sha>-<short-sha>.json`",
+      "`artifacts/release-readiness/runtime-observability-evidence-<candidate-or-short-sha>-<short-sha>.md`",
+    ],
+  },
   "release:pr-summary": {
     purpose: "Render the Markdown snippet used for release-oriented PR comments from gate and health artifacts.",
     requiredInputs: [
@@ -194,9 +204,9 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     ],
   },
   "release:runtime-observability:gate": {
-    purpose: "Evaluate candidate runtime observability evidence and produce a pass/fail gate packet.",
+    purpose: "Evaluate candidate runtime observability evidence and produce a pass/fail gate packet without re-sampling when a capture artifact already exists.",
     requiredInputs: [
-      "Candidate or environment details plus any runtime evidence paths required by the selected target surface.",
+      "Pass `--capture-report <json>` or `--server-url <base-url>` together with candidate metadata for the selected target surface.",
     ],
     producedArtifacts: [
       "`artifacts/release-readiness/runtime-observability-gate-<candidate-or-short-sha>.json`",

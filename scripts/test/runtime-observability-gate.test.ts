@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { buildRuntimeObservabilityGateReport, renderMarkdown } from "../runtime-observability-gate.ts";
@@ -215,4 +218,135 @@ veil_auth_token_delivery_queue_count 2
   } finally {
     restoreFetch();
   }
+});
+
+test("runtime observability gate can reuse a captured evidence artifact", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-runtime-gate-"));
+  const capturePath = path.join(workspace, "runtime-observability-evidence.json");
+  fs.writeFileSync(
+    capturePath,
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        generatedAt: "2026-04-06T01:00:00.000Z",
+        candidate: {
+          name: "phase1-rc",
+          revision: "abc1234",
+          shortRevision: "abc1234",
+          branch: "main",
+          dirty: false,
+          targetSurface: "wechat"
+        },
+        targetEnvironment: {
+          label: "staging",
+          serverUrl: "https://veil-staging.example.com"
+        },
+        summary: {
+          status: "passed",
+          headline: "Runtime observability evidence captured cleanly for the target environment.",
+          endpointStatuses: {
+            "runtime-health": "passed",
+            "auth-readiness": "passed",
+            "runtime-metrics": "passed"
+          }
+        },
+        readiness: {
+          activeRoomCount: 4,
+          connectionCount: 12,
+          activeBattleCount: 2,
+          heroCount: 7,
+          actionMessagesTotal: 180,
+          worldActionsTotal: 150,
+          battleActionsTotal: 30,
+          activeGuestSessionCount: 5,
+          activeAccountSessionCount: 7,
+          activeAccountLockCount: 0,
+          pendingRegistrationCount: 0,
+          pendingRecoveryCount: 0,
+          tokenDeliveryQueueCount: 0,
+          tokenDeliveryDeadLetterCount: 0,
+          wechatLoginMode: "production",
+          wechatCredentialsStatus: "configured",
+          authHeadline: "Auth readiness is healthy."
+        },
+        endpoints: [
+          {
+            id: "runtime-health",
+            label: "Runtime health",
+            url: "https://veil-staging.example.com/api/runtime/health",
+            status: "passed",
+            httpStatus: 200,
+            summary: "Runtime health responded with an OK payload.",
+            observedAt: "2026-04-06T01:00:00.000Z",
+            freshness: "fresh",
+            details: ["service=project-veil-runtime"],
+            keyReadinessFields: {
+              activeRoomCount: 4
+            },
+            capture: {
+              kind: "json",
+              body: {
+                status: "ok"
+              }
+            }
+          },
+          {
+            id: "auth-readiness",
+            label: "Auth readiness",
+            url: "https://veil-staging.example.com/api/runtime/auth-readiness",
+            status: "passed",
+            httpStatus: 200,
+            summary: "Auth readiness is healthy.",
+            observedAt: "2026-04-06T01:00:00.000Z",
+            freshness: "fresh",
+            details: ["status=ok"],
+            keyReadinessFields: {
+              activeAccountSessionCount: 7
+            },
+            capture: {
+              kind: "json",
+              body: {
+                status: "ok"
+              }
+            }
+          },
+          {
+            id: "runtime-metrics",
+            label: "Runtime metrics",
+            url: "https://veil-staging.example.com/api/runtime/metrics",
+            status: "passed",
+            httpStatus: 200,
+            summary: "Runtime metrics exposed the required Prometheus counters.",
+            observedAt: "2026-04-06T01:00:00.000Z",
+            freshness: "fresh",
+            details: ["Required Prometheus metrics are present."],
+            keyReadinessFields: {
+              veil_active_room_count: true
+            },
+            capture: {
+              kind: "text",
+              body: "veil_active_room_count 4"
+            }
+          }
+        ]
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  const report = await buildRuntimeObservabilityGateReport({
+    candidate: "phase1-rc",
+    candidateRevision: "abc1234",
+    targetSurface: "wechat",
+    targetEnvironment: "staging",
+    captureReportPath: capturePath,
+    maxSampleAgeMinutes: 30
+  });
+
+  assert.equal(report.summary.status, "passed");
+  assert.equal(report.evidenceSource?.artifactPath, path.relative(process.cwd(), capturePath).replace(/\\/g, "/"));
+  assert.equal(report.endpoints.length, 3);
+  assert.ok(report.endpoints.every((endpoint) => !("capture" in endpoint)));
 });
