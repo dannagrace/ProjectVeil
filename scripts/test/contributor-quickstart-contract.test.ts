@@ -10,6 +10,10 @@ import {
   runContributorQuickstartContract,
   type ContributorQuickstartContractReport
 } from "../contributor-quickstart-contract.ts";
+import {
+  assertSupportedQuickstartRuntime,
+  evaluateQuickstartRuntimeSupport
+} from "../validate-local-dev-quickstart.mjs";
 
 const repoRoot = path.resolve(__dirname, "../..");
 const quickstartValidatorPath = path.join(repoRoot, "scripts", "validate-local-dev-quickstart.mjs");
@@ -81,6 +85,19 @@ npm run dev:client:h5
 - Runtime health: \`http://127.0.0.1:2567/api/runtime/health\`
 `;
 
+function basePackageJson(): {
+  packageManager: string;
+  engines: { node: string; npm: string };
+} {
+  return {
+    packageManager: "npm@10.9.3",
+    engines: {
+      node: ">=22 <25",
+      npm: ">=10"
+    }
+  };
+}
+
 test("quickstart contract reports pass when docs and entry points stay aligned", async () => {
   const fixture = createFixtureWorkspace(README_FIXTURE);
 
@@ -99,6 +116,41 @@ test("quickstart contract reports pass when docs and entry points stay aligned",
   assert.equal(fs.existsSync(fixture.outputPath), true);
   assert.equal(fs.existsSync(fixture.markdownOutputPath), true);
   assert.match(fs.readFileSync(fixture.markdownOutputPath, "utf8"), /Contributor Quickstart Contract Audit/);
+});
+
+test("quickstart runtime support fails fast with actionable remediation for unsupported Node and npm", () => {
+  assert.throws(
+    () =>
+      assertSupportedQuickstartRuntime({
+        packageJson: basePackageJson(),
+        nvmrcValue: "22",
+        nodeVersion: "v25.0.0",
+        npmVersion: "9.9.0"
+      }),
+    (error: unknown) => {
+      assert.match(String(error), /Unsupported quickstart runtime detected/);
+      assert.match(String(error), /engines\.node/);
+      assert.match(String(error), /Install the repo runtime from `.nvmrc` and rerun `nvm use`\./);
+      assert.match(String(error), /engines\.npm/);
+      assert.match(String(error), /Install npm 10\.9\.3 or use the npm bundled with the repo's Node runtime\./);
+      assert.match(String(error), /npm run doctor/);
+      return true;
+    }
+  );
+});
+
+test("quickstart runtime support keeps preferred-version drift as warnings", () => {
+  const runtimeSupport = evaluateQuickstartRuntimeSupport({
+    packageJson: basePackageJson(),
+    nvmrcValue: "22",
+    nodeVersion: "v24.14.0",
+    npmVersion: "11.9.0"
+  });
+
+  assert.equal(runtimeSupport.failures.length, 0);
+  assert.equal(runtimeSupport.warnings.length, 2);
+  assert.match(runtimeSupport.warnings[0]?.summary ?? "", /differs from \.nvmrc/);
+  assert.match(runtimeSupport.warnings[1]?.summary ?? "", /differs from packageManager/);
 });
 
 test("quickstart contract flags README drift with actionable stage failures", async () => {
@@ -196,7 +248,8 @@ test("quickstart contract CLI writes artifacts for the checked-out repo", () => 
   );
 
   assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
-  assert.match(result.stdout, /Wrote quickstart contract JSON:/);
+  assert.equal(fs.existsSync(outputPath), true, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.equal(fs.existsSync(markdownOutputPath), true, `stdout=${result.stdout}\nstderr=${result.stderr}`);
 
   const report = JSON.parse(fs.readFileSync(outputPath, "utf8")) as ContributorQuickstartContractReport;
   assert.equal(report.summary.status, "passed");

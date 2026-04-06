@@ -1,5 +1,8 @@
-import { spawn } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { collectNodeAndNpmChecks } from "./repo-doctor.mjs";
 
 const rootDir = new URL("../", import.meta.url);
 export const QUICKSTART_DOCTOR_SCRIPT = "doctor";
@@ -20,6 +23,64 @@ function npmCommand() {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function readTextIfExists(filePath) {
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
+}
+
+function detectNpmVersion() {
+  const npmFromUserAgent =
+    process.env.npm_config_user_agent?.match(/\bnpm\/([^\s]+)/)?.[1] ??
+    process.env.npm_package_manager?.match(/^npm@(.+)$/)?.[1] ??
+    null;
+  if (npmFromUserAgent) {
+    return npmFromUserAgent;
+  }
+
+  const result = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["--version"], {
+    cwd: fileURLToPath(rootDir),
+    encoding: "utf8"
+  });
+
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+export function evaluateQuickstartRuntimeSupport({
+  packageJson,
+  nvmrcValue,
+  nodeVersion,
+  npmVersion
+}) {
+  const checks = collectNodeAndNpmChecks(packageJson, nvmrcValue, npmVersion, nodeVersion);
+  return {
+    failures: checks.filter((check) => check.status === "fail"),
+    warnings: checks.filter((check) => check.status === "warn")
+  };
+}
+
+export function formatQuickstartRuntimeSupportMessage(failures) {
+  const lines = ["Unsupported quickstart runtime detected."];
+  for (const failure of failures) {
+    lines.push(`- ${failure.summary}`);
+    for (const remediation of failure.remediation ?? []) {
+      lines.push(`  Fix: ${remediation}`);
+    }
+  }
+  lines.push("Run `npm run doctor` after correcting the runtime to confirm the quickstart prerequisites.");
+  return lines.join("\n");
+}
+
+export function assertSupportedQuickstartRuntime(context) {
+  const runtimeSupport = evaluateQuickstartRuntimeSupport(context);
+  if (runtimeSupport.failures.length > 0) {
+    throw new Error(formatQuickstartRuntimeSupportMessage(runtimeSupport.failures));
+  }
+  return runtimeSupport.warnings;
 }
 
 async function runCommand(command, args, label, extraEnv = {}) {
@@ -69,12 +130,25 @@ async function verifyEndpoints() {
 }
 
 async function main() {
-  const majorNodeVersion = Number(process.versions.node.split(".")[0]);
-  if (Number.isNaN(majorNodeVersion) || majorNodeVersion < 22) {
-    throw new Error(`Node.js 22+ is required; found ${process.version}`);
-  }
+  const repoPath = fileURLToPath(rootDir);
+  const packageJson = readJson(path.join(repoPath, "package.json"));
+  const nvmrcValue = readTextIfExists(path.join(repoPath, ".nvmrc"))?.trim() ?? null;
+  const npmVersion = detectNpmVersion();
+  const warnings = assertSupportedQuickstartRuntime({
+    packageJson,
+    nvmrcValue,
+    nodeVersion: process.version,
+    npmVersion
+  });
 
   logStep(`using Node ${process.version}`);
+  logStep(`using npm ${npmVersion ?? "unavailable"}`);
+  for (const warning of warnings) {
+    logStep(`runtime warning: ${warning.summary}`);
+    for (const remediation of warning.remediation ?? []) {
+      logStep(`runtime remediation: ${remediation}`);
+    }
+  }
   logStep("validating e2e config fixtures");
   await runCommand(npmCommand(), ["run", "validate:e2e:fixtures"], "E2E fixture validation");
   logStep("building the H5 debug shell");

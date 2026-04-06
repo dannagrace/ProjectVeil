@@ -97,6 +97,33 @@ test("doctor warns on Node and npm drift even when engines still pass", () => {
   assert.match(output, /Doctor result: passed with warnings/);
 });
 
+test("doctor fails when npm falls below the lower-bound engine range", () => {
+  const repoRoot = makeTempRepo();
+  const report = collectDoctorReport(
+    {
+      flows: ["baseline"]
+    },
+    {
+      repoRoot,
+      packageJson: basePackageJson(),
+      nvmrcValue: "22",
+      envFile: {},
+      env: { HOME: repoRoot },
+      nodeVersion: "v22.11.0",
+      npmVersion: "9.9.0",
+      packageInstalled: () => true,
+      commandExists: () => false,
+      runCommand: () => ({ status: 1, stdout: "", stderr: "", error: null })
+    }
+  );
+
+  assert.equal(report.counts.fail, 1);
+  assert.equal(report.overallStatus, "fail");
+  const output = renderDoctorReport(report);
+  assert.match(output, /does not satisfy package\.json engines\.npm/);
+  assert.match(output, /Install npm 10\.9\.3 or use the npm bundled with the repo's Node runtime/);
+});
+
 test("doctor prints actionable remediation when optional flow prerequisites are missing", () => {
   const repoRoot = makeTempRepo();
   writeFile(path.join(repoRoot, "apps/cocos-client/wechat-minigame.build.json"), "{}\n");

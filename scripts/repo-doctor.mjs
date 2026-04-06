@@ -43,11 +43,26 @@ function parsePackageManagerVersion(packageManager) {
 }
 
 function parseRange(range) {
-  const match = range?.match(/^>=\s*(\d+)\s*<\s*(\d+)$/);
-  if (!match) {
+  const boundedMatch = range?.match(/^>=\s*(\d+)\s*<\s*(\d+)$/);
+  if (boundedMatch) {
+    return { minInclusive: Number(boundedMatch[1]), maxExclusive: Number(boundedMatch[2]) };
+  }
+
+  const lowerBoundMatch = range?.match(/^>=\s*(\d+)$/);
+  if (lowerBoundMatch) {
+    return { minInclusive: Number(lowerBoundMatch[1]), maxExclusive: Number.POSITIVE_INFINITY };
+  }
+
+  const exactMatch = range?.match(/^(\d+)$/);
+  if (exactMatch) {
+    const major = Number(exactMatch[1]);
+    return { minInclusive: major, maxExclusive: major + 1 };
+  }
+
+  if (!range) {
     return null;
   }
-  return { minInclusive: Number(match[1]), maxExclusive: Number(match[2]) };
+  return null;
 }
 
 function versionSatisfiesMajorRange(version, range) {
@@ -184,7 +199,7 @@ function createCheck(id, title, status, summary, details = [], remediation = [])
   return { id, title, status, summary, details, remediation };
 }
 
-function collectNodeAndNpmChecks(pkg, nvmrcValue, npmVersion, nodeVersion) {
+export function collectNodeAndNpmChecks(pkg, nvmrcValue, npmVersion, nodeVersion) {
   const checks = [];
 
   if (!versionSatisfiesMajorRange(nodeVersion, pkg.engines?.node)) {
