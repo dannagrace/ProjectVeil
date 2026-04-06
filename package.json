@@ -146,7 +146,7 @@
     "typecheck:client:h5": "tsc -p apps/client/tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
+    "@playwright/test": "^1.59.1",
     "@types/node": "^24.5.2",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.25.12",
