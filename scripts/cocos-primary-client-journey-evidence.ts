@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Node, sys } from "cc";
 
@@ -71,10 +72,46 @@ interface JourneyStepSummary {
 }
 
 interface FailureSummary {
-  stepId: JourneyStepId;
+  summary: string;
+  regressedJourneySegments: Array<{
+    id: JourneyStepId;
+    title: string;
+    status: "failed";
+    reason: string;
+    artifactPath?: string;
+  }>;
+  blockedJourneySegments: Array<{
+    id: JourneyStepId;
+    title: string;
+    status: "failed";
+    reason: string;
+    artifactPath?: string;
+  }>;
+  lackingJourneyEvidence: Array<{
+    id: JourneyStepId;
+    title: string;
+    status: "pending";
+    reason: string;
+  }>;
+  lackingRequiredEvidence: Array<{
+    id: CanonicalEvidenceId;
+    label: string;
+    reason: string;
+  }>;
+}
+
+interface CheckpointLedgerEntry {
+  id: JourneyStepId;
   title: string;
-  message: string;
-  artifactPath?: string;
+  status: StepStatus;
+  summary: string;
+  artifactPath: string;
+  phase: string;
+  roomId: string;
+  playerId: string;
+  connectionStatus: string;
+  lastUpdateReason: string;
+  telemetryCheckpoints: string[];
 }
 
 interface PrimaryJourneyEvidenceArtifact {
@@ -93,7 +130,12 @@ interface PrimaryJourneyEvidenceArtifact {
     durationMs: number;
     overallStatus: "passed" | "failed";
     summary: string;
-    failure?: FailureSummary;
+    failure?: {
+      stepId: JourneyStepId;
+      title: string;
+      message: string;
+      artifactPath?: string;
+    };
   };
   environment: {
     server: string;
@@ -106,6 +148,13 @@ interface PrimaryJourneyEvidenceArtifact {
   };
   journey: JourneyStepSummary[];
   requiredEvidence: RequiredEvidenceField[];
+  failureSummary: FailureSummary;
+  checkpointLedger: {
+    source: "primary-journey-evidence";
+    milestoneDir: string;
+    entryCount: number;
+    entries: CheckpointLedgerEntry[];
+  };
 }
 
 type RootState = VeilRoot & Record<string, any>;
@@ -546,6 +595,60 @@ function defaultRequiredEvidence(): RequiredEvidenceField[] {
   ];
 }
 
+function buildFailureSummary(
+  journey: JourneyStepSummary[],
+  requiredEvidence: RequiredEvidenceField[],
+  failure: PrimaryJourneyEvidenceArtifact["execution"]["failure"]
+): FailureSummary {
+  const regressedJourneySegments = journey
+    .filter((step) => step.status === "failed")
+    .map((step) => ({
+      id: step.id,
+      title: step.title,
+      status: "failed" as const,
+      reason: step.summary || "Required journey segment regressed.",
+      artifactPath: failure?.stepId === step.id ? failure.artifactPath : step.evidence.find((entry) => entry.endsWith(".json"))
+    }));
+  const blockedJourneySegments: FailureSummary["blockedJourneySegments"] = [];
+  const lackingJourneyEvidence = journey
+    .filter((step) => step.status === "pending")
+    .map((step) => ({
+      id: step.id,
+      title: step.title,
+      status: "pending" as const,
+      reason: step.summary || "Required journey segment lacks evidence."
+    }));
+  const lackingRequiredEvidence = requiredEvidence
+    .filter((field) => field.value.trim().length === 0)
+    .map((field) => ({
+      id: field.id,
+      label: field.label,
+      reason: field.notes || "Required evidence field is still empty."
+    }));
+
+  const parts: string[] = [];
+  if (regressedJourneySegments.length > 0) {
+    parts.push(`Regressed journey segments: ${regressedJourneySegments.map((step) => step.id).join(", ")}`);
+  }
+  if (blockedJourneySegments.length > 0) {
+    parts.push(`Blocked journey segments: ${blockedJourneySegments.map((step) => step.id).join(", ")}`);
+  }
+  if (lackingJourneyEvidence.length > 0) {
+    parts.push(`Journey segments lacking evidence: ${lackingJourneyEvidence.map((step) => step.id).join(", ")}`);
+  }
+  if (lackingRequiredEvidence.length > 0) {
+    parts.push(`Required evidence still empty: ${lackingRequiredEvidence.map((field) => field.id).join(", ")}`);
+  }
+
+  return {
+    summary: parts.length > 0 ? parts.join(". ") : "No regressions or evidence gaps recorded.",
+    regressedJourneySegments,
+    blockedJourneySegments,
+    lackingJourneyEvidence,
+    lackingRequiredEvidence
+  };
+}
+
 function renderMarkdown(artifact: PrimaryJourneyEvidenceArtifact): string {
   const lines: string[] = [];
   lines.push("# Cocos Primary-Client Journey Evidence");
@@ -579,6 +682,50 @@ function renderMarkdown(artifact: PrimaryJourneyEvidenceArtifact): string {
     lines.push(`| \`${field.id}\` | \`${field.value}\` | ${field.evidence.map((entry) => `\`${entry}\``).join("<br>") || "_none_"} |`);
   }
   lines.push("");
+  lines.push("## Checkpoint Ledger");
+  lines.push("");
+  lines.push("| Step | Status | Phase | Artifact | Telemetry checkpoints |");
+  lines.push("| --- | --- | --- | --- | --- |");
+  for (const entry of artifact.checkpointLedger.entries) {
+    lines.push(
+      `| ${entry.title} | \`${entry.status}\` | \`${entry.phase}\` | \`${entry.artifactPath}\` | ${entry.telemetryCheckpoints.map((item) => `\`${item}\``).join("<br>") || "_none_"} |`
+    );
+  }
+  lines.push("");
+  lines.push("## Blocker Drill-Down");
+  lines.push("");
+  lines.push(artifact.failureSummary.summary);
+  if (
+    artifact.failureSummary.regressedJourneySegments.length === 0 &&
+    artifact.failureSummary.blockedJourneySegments.length === 0 &&
+    artifact.failureSummary.lackingJourneyEvidence.length === 0 &&
+    artifact.failureSummary.lackingRequiredEvidence.length === 0
+  ) {
+    lines.push("");
+    lines.push("- No open blocker or evidence gap recorded for the canonical journey.");
+  } else {
+    for (const step of artifact.failureSummary.regressedJourneySegments) {
+      lines.push("");
+      lines.push(
+        `- Regressed: \`${step.id}\` (${step.title})${step.artifactPath ? ` -> \`${step.artifactPath}\`` : ""} ${step.reason}`
+      );
+    }
+    for (const step of artifact.failureSummary.blockedJourneySegments) {
+      lines.push("");
+      lines.push(
+        `- Blocked: \`${step.id}\` (${step.title})${step.artifactPath ? ` -> \`${step.artifactPath}\`` : ""} ${step.reason}`
+      );
+    }
+    for (const step of artifact.failureSummary.lackingJourneyEvidence) {
+      lines.push("");
+      lines.push(`- Missing journey evidence: \`${step.id}\` (${step.title}) ${step.reason}`);
+    }
+    for (const field of artifact.failureSummary.lackingRequiredEvidence) {
+      lines.push("");
+      lines.push(`- Missing required evidence: \`${field.id}\` (${field.label}) ${field.reason}`);
+    }
+  }
+  lines.push("");
   lines.push("## Summary");
   lines.push("");
   lines.push(artifact.execution.summary);
@@ -598,7 +745,7 @@ function renderMarkdown(artifact: PrimaryJourneyEvidenceArtifact): string {
   return `${lines.join("\n")}\n`;
 }
 
-async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact> {
+export async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact> {
   const revision = getRevision();
   const candidateName = args.candidate || `cocos-primary-journey-${revision.shortCommit}`;
   const startedAt = new Date().toISOString();
@@ -618,6 +765,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
   const joinedOptions: Array<{ logicalRoomId: string; playerId: string; seed: number }> = [];
   const stepArtifacts = new Map<JourneyStepId, string[]>();
   const artifactSummaries = new Map<JourneyStepId, string>();
+  const checkpointLedgerEntries = new Map<JourneyStepId, CheckpointLedgerEntry>();
   const stepStatus = new Map<JourneyStepId, StepStatus>(STEP_METADATA.map((entry) => [entry.id, "pending"]));
   const stepTimings = new Map<
     JourneyStepId,
@@ -676,16 +824,15 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
     const completedAt = new Date(completedAtMs).toISOString();
     const index = STEP_METADATA.findIndex((entry) => entry.id === stepId);
     const artifactPath = path.join(milestoneDir, `${String(index + 1).padStart(2, "0")}-${stepId}.json`);
-    writeJson(
-      artifactPath,
-      captureJourneyArtifact({
-        root,
-        phase,
-        joinedOptions,
-        room
-      })
-    );
-    stepArtifacts.set(stepId, [toRepoRelative(artifactPath)]);
+    const milestoneArtifact = captureJourneyArtifact({
+      root,
+      phase,
+      joinedOptions,
+      room
+    });
+    writeJson(artifactPath, milestoneArtifact);
+    const relativeArtifactPath = toRepoRelative(artifactPath);
+    stepArtifacts.set(stepId, [relativeArtifactPath]);
     stepStatus.set(stepId, "passed");
     artifactSummaries.set(stepId, summary);
     stepTimings.set(stepId, {
@@ -693,7 +840,30 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
       completedAt,
       durationMs: completedAtMs - currentStepStartedAtMs
     });
-    return toRepoRelative(artifactPath);
+    const telemetryCheckpoints = Array.isArray(milestoneArtifact.diagnostics?.primaryClientTelemetry)
+      ? [
+          ...new Set(
+            milestoneArtifact.diagnostics.primaryClientTelemetry
+              .map((entry: Record<string, unknown>) => (typeof entry.checkpoint === "string" ? entry.checkpoint.trim() : ""))
+              .filter((entry: string) => entry.length > 0)
+          )
+        ]
+      : [];
+    checkpointLedgerEntries.set(stepId, {
+      id: stepId,
+      title: STEP_METADATA.find((entry) => entry.id === stepId)?.title ?? stepId,
+      status: "passed",
+      summary,
+      artifactPath: relativeArtifactPath,
+      phase,
+      roomId: typeof milestoneArtifact.identity?.roomId === "string" ? milestoneArtifact.identity.roomId : "",
+      playerId: typeof milestoneArtifact.identity?.playerId === "string" ? milestoneArtifact.identity.playerId : "",
+      connectionStatus:
+        typeof milestoneArtifact.room?.diagnosticsConnectionStatus === "string" ? milestoneArtifact.room.diagnosticsConnectionStatus : "",
+      lastUpdateReason: typeof milestoneArtifact.room?.lastUpdateReason === "string" ? milestoneArtifact.room.lastUpdateReason : "",
+      telemetryCheckpoints
+    });
+    return relativeArtifactPath;
   };
 
   try {
@@ -848,6 +1018,22 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
 
     const completedAt = new Date().toISOString();
     const durationMs = Date.now() - Date.parse(startedAt);
+    const journey = STEP_METADATA.map((entry) => ({
+      id: entry.id,
+      title: entry.title,
+      status: stepStatus.get(entry.id) ?? "pending",
+      summary: artifactSummaries.get(entry.id) ?? "",
+      ...(stepTimings.get(entry.id) ? { timing: stepTimings.get(entry.id) } : {}),
+      evidence: stepArtifacts.get(entry.id) ?? []
+    }));
+    const checkpointLedger = {
+      source: "primary-journey-evidence" as const,
+      milestoneDir: toRepoRelative(milestoneDir),
+      entryCount: checkpointLedgerEntries.size,
+      entries: STEP_METADATA.map((entry) => checkpointLedgerEntries.get(entry.id)).filter(
+        (entry): entry is CheckpointLedgerEntry => Boolean(entry)
+      )
+    };
     const artifact: PrimaryJourneyEvidenceArtifact = {
       schemaVersion: 1,
       candidate: {
@@ -875,15 +1061,10 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
         markdownSummary: toRepoRelative(markdownOutputPath),
         milestoneDir: toRepoRelative(milestoneDir)
       },
-      journey: STEP_METADATA.map((entry) => ({
-        id: entry.id,
-        title: entry.title,
-        status: stepStatus.get(entry.id) ?? "pending",
-        summary: artifactSummaries.get(entry.id) ?? "",
-        ...(stepTimings.get(entry.id) ? { timing: stepTimings.get(entry.id) } : {}),
-        evidence: stepArtifacts.get(entry.id) ?? []
-      })),
-      requiredEvidence
+      journey,
+      requiredEvidence,
+      failureSummary: buildFailureSummary(journey, requiredEvidence, undefined),
+      checkpointLedger
     };
 
     writeJson(jsonOutputPath, artifact);
@@ -893,23 +1074,48 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
     const completedAt = new Date().toISOString();
     const completedAtMs = Date.now();
     const durationMs = completedAtMs - Date.parse(startedAt);
+    const failureMessage = error instanceof Error ? error.message : String(error);
     let failedArtifactPath: string | undefined;
     if (root) {
       const index = STEP_METADATA.findIndex((entry) => entry.id === currentStep);
       const artifactPath = path.join(milestoneDir, `${String(index + 1).padStart(2, "0")}-${currentStep}-failed.json`);
-      writeJson(
-        artifactPath,
-        captureJourneyArtifact({
-          root,
-          phase: `${currentStep}-failed`,
-          joinedOptions,
-          room: currentStep === "reconnect-restore" || currentStep === "return-to-world" ? recoveredRoom : initialRoom
-        })
-      );
+      const failedMilestoneArtifact = captureJourneyArtifact({
+        root,
+        phase: `${currentStep}-failed`,
+        joinedOptions,
+        room: currentStep === "reconnect-restore" || currentStep === "return-to-world" ? recoveredRoom : initialRoom
+      });
+      writeJson(artifactPath, failedMilestoneArtifact);
       failedArtifactPath = toRepoRelative(artifactPath);
+      const telemetryCheckpoints = Array.isArray(failedMilestoneArtifact.diagnostics?.primaryClientTelemetry)
+        ? [
+            ...new Set(
+              failedMilestoneArtifact.diagnostics.primaryClientTelemetry
+                .map((entry: Record<string, unknown>) => (typeof entry.checkpoint === "string" ? entry.checkpoint.trim() : ""))
+                .filter((entry: string) => entry.length > 0)
+            )
+          ]
+        : [];
+      checkpointLedgerEntries.set(currentStep, {
+        id: currentStep,
+        title: STEP_METADATA.find((entry) => entry.id === currentStep)?.title ?? currentStep,
+        status: "failed",
+        summary: failureMessage,
+        artifactPath: failedArtifactPath,
+        phase: `${currentStep}-failed`,
+        roomId: typeof failedMilestoneArtifact.identity?.roomId === "string" ? failedMilestoneArtifact.identity.roomId : "",
+        playerId: typeof failedMilestoneArtifact.identity?.playerId === "string" ? failedMilestoneArtifact.identity.playerId : "",
+        connectionStatus:
+          typeof failedMilestoneArtifact.room?.diagnosticsConnectionStatus === "string"
+            ? failedMilestoneArtifact.room.diagnosticsConnectionStatus
+            : "",
+        lastUpdateReason:
+          typeof failedMilestoneArtifact.room?.lastUpdateReason === "string" ? failedMilestoneArtifact.room.lastUpdateReason : "",
+        telemetryCheckpoints
+      });
+      stepArtifacts.set(currentStep, [failedArtifactPath]);
     }
     stepStatus.set(currentStep, "failed");
-    const failureMessage = error instanceof Error ? error.message : String(error);
     artifactSummaries.set(currentStep, failureMessage);
     stepTimings.set(currentStep, {
       startedAt: currentStepStartedAt,
@@ -917,6 +1123,28 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
       durationMs: completedAtMs - currentStepStartedAtMs
     });
 
+    const failure = {
+      stepId: currentStep,
+      title: STEP_METADATA.find((entry) => entry.id === currentStep)?.title || currentStep,
+      message: failureMessage,
+      ...(failedArtifactPath ? { artifactPath: failedArtifactPath } : {})
+    };
+    const journey = STEP_METADATA.map((entry) => ({
+      id: entry.id,
+      title: entry.title,
+      status: stepStatus.get(entry.id) ?? "pending",
+      summary: artifactSummaries.get(entry.id) ?? "",
+      ...(stepTimings.get(entry.id) ? { timing: stepTimings.get(entry.id) } : {}),
+      evidence: stepArtifacts.get(entry.id) ?? []
+    }));
+    const checkpointLedger = {
+      source: "primary-journey-evidence" as const,
+      milestoneDir: toRepoRelative(milestoneDir),
+      entryCount: checkpointLedgerEntries.size,
+      entries: STEP_METADATA.map((entry) => checkpointLedgerEntries.get(entry.id)).filter(
+        (entry): entry is CheckpointLedgerEntry => Boolean(entry)
+      )
+    };
     const artifact: PrimaryJourneyEvidenceArtifact = {
       schemaVersion: 1,
       candidate: {
@@ -933,12 +1161,7 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
         durationMs,
         overallStatus: "failed",
         summary: `Primary-client journey evidence failed during ${currentStep}.`,
-        failure: {
-          stepId: currentStep,
-          title: STEP_METADATA.find((entry) => entry.id === currentStep)?.title || currentStep,
-          message: failureMessage,
-          ...(failedArtifactPath ? { artifactPath: failedArtifactPath } : {})
-        }
+        failure
       },
       environment: {
         server: args.server || "ws://127.0.0.1:2567",
@@ -949,15 +1172,10 @@ async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceArtifact
         markdownSummary: toRepoRelative(markdownOutputPath),
         milestoneDir: toRepoRelative(milestoneDir)
       },
-      journey: STEP_METADATA.map((entry) => ({
-        id: entry.id,
-        title: entry.title,
-        status: stepStatus.get(entry.id) ?? "pending",
-        summary: artifactSummaries.get(entry.id) ?? "",
-        ...(stepTimings.get(entry.id) ? { timing: stepTimings.get(entry.id) } : {}),
-        evidence: stepArtifacts.get(entry.id) ?? []
-      })),
-      requiredEvidence
+      journey,
+      requiredEvidence,
+      failureSummary: buildFailureSummary(journey, requiredEvidence, failure),
+      checkpointLedger
     };
 
     writeJson(jsonOutputPath, artifact);
@@ -992,4 +1210,6 @@ async function main(): Promise<void> {
   console.log(`Status: ${artifact.execution.overallStatus}`);
 }
 
-void main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  void main();
+}

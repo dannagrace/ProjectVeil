@@ -104,6 +104,10 @@ Relevant scripts: 37
 - Produced artifacts:
   - `artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.json`
   - `artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.md`
+  - `artifacts/release-readiness/cocos-primary-journey-<candidate>-<short-sha>/01-*.json` through `07-*.json` milestone diagnostics
+- Output contract notes:
+  - The JSON now carries `failureSummary` and `checkpointLedger`, so release review can see blocker/gap status plus the exact milestone artifact path without rebuilding a separate snapshot first.
+  - The Markdown now includes `Checkpoint Ledger` and `Blocker Drill-Down` sections; reviewers should start there before opening individual milestone JSON files.
 
 ## `release:evidence:index`
 

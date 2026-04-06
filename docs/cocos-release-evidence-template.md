@@ -18,9 +18,9 @@
 每个 Cocos / WeChat release candidate 都固定产出同一组证据，并统一落在 `artifacts/release-readiness/`：
 
 1. `artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.json`
-   - headless primary-client canonical journey 结构化结果，固定带每个 milestone 的 runtime diagnostics JSON，以及 stage pass/fail、timing、failure diagnostics
+   - headless primary-client canonical journey 结构化结果，固定带每个 milestone 的 runtime diagnostics JSON，以及 stage pass/fail、timing、`failureSummary`、`checkpointLedger`
 2. `artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.md`
-   - 同一 primary journey 的 reviewer 摘要，说明当前使用的是 headless runtime diagnostics fallback，并可直接作为 release gate review 的 canonical main-path handoff
+   - 同一 primary journey 的 reviewer 摘要，说明当前使用的是 headless runtime diagnostics fallback，并固定包含 `Checkpoint Ledger` / `Blocker Drill-Down`，可直接作为 release gate review 的 canonical main-path handoff
 3. `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.json`
    - candidate-scoped bundle manifest，适合挂 CI artifact 或 PR 机器人
 4. `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.md`
@@ -33,6 +33,8 @@
    - 从模板复制并预填 candidate / revision 的 blocker 记录
 
 其中 5 是权威 machine-readable RC 记录，1/2 则是自动化 primary journey 的原始证据面，3/4/6/7 是 reviewer / release owner 快速扫读和留档的补充视图。不要为同一个 RC 另外发明独立格式。
+
+在 release review 中，先读 primary journey Markdown 里的 `Blocker Drill-Down`，再按 `Checkpoint Ledger` 打开对应 milestone JSON。只有当 reviewer 需要跨 surface 或同 candidate 聚合视图时，才继续展开 RC bundle / snapshot / checklist / blockers。
 
 ## 标准流程
 
