@@ -240,6 +240,28 @@ test("VeilRoot toggles a dedicated gameplay equipment panel from the HUD flow", 
   assert.equal(root.gameplayEquipmentPanelOpen, false);
 });
 
+test("VeilRoot auto-opens the gameplay equipment panel when owned loot settles into the client", async () => {
+  const root = createVeilRootHarness();
+  const lootUpdate = createSessionUpdate(1, "room-equipment", "player-1");
+  root.showLobby = false;
+  lootUpdate.battle = null;
+  lootUpdate.events = [
+    {
+      type: "hero.equipmentFound",
+      heroId: "hero-1",
+      battleId: "battle-1",
+      battleKind: "neutral",
+      equipmentId: "scout_compass",
+      equipmentName: "斥候罗盘",
+      rarity: "common"
+    }
+  ];
+
+  root.maybeOpenGameplayEquipmentPanelForLoot(lootUpdate);
+
+  assert.equal(root.gameplayEquipmentPanelOpen, true);
+});
+
 test("VeilRoot loads campaign state and advances the manual campaign dialogue/start/complete slice", async () => {
   const root = createVeilRootHarness();
   root.remoteUrl = "http://127.0.0.1:2567";

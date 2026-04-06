@@ -981,15 +981,14 @@ test("primary cocos client journey closes the loot, inventory, and equip loop af
   room.emitPush(createJourneyLootSettlementUpdate(roomId, playerId));
 
   await waitFor(
-    () => root.lastUpdate?.events.some((event) => event.type === "hero.equipmentFound") === true,
+    () =>
+      root.lastUpdate?.events.some((event) => event.type === "hero.equipmentFound") === true
+      && root.gameplayEquipmentPanelOpen === true,
     () => ({
       phase: "loot-settlement",
       ...captureJourneyUiState(rootNode)
     })
   );
-
-  (root as RootState).toggleGameplayEquipmentPanel();
-  root.renderView();
 
   const inventoryTextBeforeEquip = readNodeLabel(findNode(rootNode, "EquipmentPanelInventory")?.getChildByName("Label"));
   const lootTextBeforeEquip = readNodeLabel(findNode(rootNode, "EquipmentPanelLoot")?.getChildByName("Label"));
