@@ -1,42 +1,33 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { buildArtifact } from "../cocos-primary-client-journey-evidence.ts";
+
 function createTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, markdown, and milestone artifacts", () => {
+test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, markdown, checkpoint-ledger, and blocker artifacts", async () => {
   const workspace = createTempDir("veil-primary-journey-");
   const outputPath = path.join(workspace, "primary-journey.json");
   const markdownOutputPath = path.join(workspace, "primary-journey.md");
-
-  const stdout = execFileSync(
-    "node",
-    [
-      "--import",
-      "tsx",
-      "./scripts/cocos-primary-client-journey-evidence.ts",
-      "--candidate",
-      "rc-primary-journey",
-      "--output",
+  const repoRoot = path.resolve(__dirname, "../..");
+  const previousCwd = process.cwd();
+  process.chdir(repoRoot);
+  try {
+    await buildArtifact({
+      candidate: "rc-primary-journey",
       outputPath,
-      "--markdown-output",
       markdownOutputPath,
-      "--owner",
-      "codex"
-    ],
-    {
-      cwd: path.resolve(__dirname, "../.."),
-      encoding: "utf8"
-    }
-  );
+      owner: "codex"
+    });
+  } finally {
+    process.chdir(previousCwd);
+  }
 
-  assert.match(stdout, /Wrote primary-client journey evidence JSON:/);
-  assert.match(stdout, /Milestones: 7/);
   assert.equal(fs.existsSync(outputPath), true);
   assert.equal(fs.existsSync(markdownOutputPath), true);
 
@@ -52,6 +43,18 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
       timing?: { startedAt: string; completedAt: string; durationMs: number };
     }>;
     requiredEvidence: Array<{ id: string; value: string; evidence: string[] }>;
+    failureSummary: {
+      summary: string;
+      regressedJourneySegments: Array<{ id: string }>;
+      blockedJourneySegments: Array<{ id: string }>;
+      lackingJourneyEvidence: Array<{ id: string }>;
+      lackingRequiredEvidence: Array<{ id: string }>;
+    };
+    checkpointLedger: {
+      source: string;
+      entryCount: number;
+      entries: Array<{ id: string; artifactPath: string; phase: string; telemetryCheckpoints: string[] }>;
+    };
   };
 
   assert.equal(artifact.candidate.name, "rc-primary-journey");
@@ -73,6 +76,18 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
     artifact.requiredEvidence.find((field) => field.id === "firstBattleResult")?.value,
     "attacker_victory; gold +12; experience +25"
   );
+  assert.equal(artifact.failureSummary.summary, "No regressions or evidence gaps recorded.");
+  assert.equal(artifact.failureSummary.regressedJourneySegments.length, 0);
+  assert.equal(artifact.failureSummary.blockedJourneySegments.length, 0);
+  assert.equal(artifact.failureSummary.lackingJourneyEvidence.length, 0);
+  assert.equal(artifact.failureSummary.lackingRequiredEvidence.length, 0);
+  assert.equal(artifact.checkpointLedger.source, "primary-journey-evidence");
+  assert.equal(artifact.checkpointLedger.entryCount, 7);
+  assert.equal(artifact.checkpointLedger.entries.find((entry) => entry.id === "room-join")?.phase, "room-join");
+  assert.match(artifact.checkpointLedger.entries.find((entry) => entry.id === "battle-settlement")?.artifactPath ?? "", /05-battle-settlement\.json$/);
+  assert.ok(
+    (artifact.checkpointLedger.entries.find((entry) => entry.id === "battle-settlement")?.telemetryCheckpoints.length ?? -1) >= 0
+  );
 
   const milestoneDir = path.resolve(path.resolve(__dirname, "../.."), artifact.artifacts.milestoneDir);
   const milestoneFiles = fs.readdirSync(milestoneDir).sort();
@@ -92,4 +107,7 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
   assert.match(markdown, /Duration: `\d+ms`/);
   assert.match(markdown, /Timing/);
   assert.match(markdown, /headless-runtime-diagnostics/);
+  assert.match(markdown, /## Checkpoint Ledger/);
+  assert.match(markdown, /## Blocker Drill-Down/);
+  assert.match(markdown, /No open blocker or evidence gap recorded/);
 });
