@@ -1842,7 +1842,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
   const wechatRcValidationPath = resolveWechatRcValidationPath(args, wechatArtifactsDir);
   const wechatCandidateSummaryPath = resolveWechatCandidateSummaryPath(args, wechatArtifactsDir);
   const wechatSmokeReportPath = resolveWechatSmokeReportPath(args, wechatArtifactsDir);
-  const manualEvidenceLedgerPath = resolveManualEvidenceLedgerPath(args);
+  const manualEvidenceLedgerPath = args.manualEvidenceLedgerPath ? resolveManualEvidenceLedgerPath(args) : undefined;
   const configCenterLibraryPath = resolveConfigCenterLibraryPath(args);
   const releaseSurface = buildReleaseSurfaceContract(
     args.targetSurface,

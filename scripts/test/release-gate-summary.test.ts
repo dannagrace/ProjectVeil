@@ -22,6 +22,10 @@ function createTempWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "veil-release-gate-summary-"));
 }
 
+function isoHoursAgo(hoursAgo: number): string {
+  return new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
+}
+
 test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smoke, and WeChat validation pass", () => {
   const workspace = createTempWorkspace();
   const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
@@ -39,7 +43,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   const configCenterLibraryPath = path.join(workspace, "configs", ".config-center-library.json");
 
   writeJson(snapshotPath, {
-    generatedAt: "2026-04-02T08:30:00.000Z",
+    generatedAt: isoHoursAgo(2),
     revision: {
       commit: "abc123",
       shortCommit: "abc123",
@@ -60,7 +64,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
     ]
   });
   writeJson(h5SmokePath, {
-    generatedAt: "2026-04-02T08:32:00.000Z",
+    generatedAt: isoHoursAgo(2),
     revision: {
       commit: "abc123",
       shortCommit: "abc123",
@@ -78,7 +82,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
     }
   });
   writeJson(reconnectSoakPath, {
-    generatedAt: "2026-04-02T08:33:00.000Z",
+    generatedAt: isoHoursAgo(2),
     revision: {
       commit: "abc123",
       shortCommit: "abc123"
@@ -106,7 +110,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
     ]
   });
   writeJson(wechatRcValidationPath, {
-    generatedAt: "2026-04-02T08:35:00.000Z",
+    generatedAt: isoHoursAgo(2),
     commit: "abc123",
     summary: {
       status: "passed",
@@ -115,7 +119,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
     }
   });
   writeJson(wechatCandidateSummaryPath, {
-    generatedAt: "2026-04-02T08:40:00.000Z",
+    generatedAt: isoHoursAgo(1),
     candidate: {
       revision: "abc123",
       status: "ready"
@@ -148,7 +152,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
             required: true,
             status: "passed",
             owner: "release-oncall",
-            recordedAt: "2026-04-02T08:10:00.000Z",
+            recordedAt: isoHoursAgo(3),
             revision: "abc123",
             artifactPath: "artifacts/wechat-release/devtools-export-review.json"
           },
@@ -158,7 +162,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
             required: true,
             status: "passed",
             owner: "release-oncall",
-            recordedAt: "2026-04-02T08:12:00.000Z",
+            recordedAt: isoHoursAgo(3),
             revision: "abc123",
             artifactPath: "artifacts/wechat-release/device-runtime-review.json"
           },
@@ -168,7 +172,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
             required: true,
             status: "passed",
             owner: "release-oncall",
-            recordedAt: "2026-04-02T08:15:00.000Z",
+            recordedAt: isoHoursAgo(3),
             revision: "abc123",
             artifactPath: "artifacts/wechat-release/checklist-review.json"
           }
@@ -226,7 +230,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
 - Candidate: \`rc-2026-04-02\`
 - Target revision: \`abc123\`
 - Release owner: \`release-oncall\`
-- Last updated: \`2026-04-02T08:16:00.000Z\`
+- Last updated: \`${isoHoursAgo(3)}\`
 - Linked readiness snapshot: \`artifacts/release-readiness/release-readiness-pass.json\`
 `,
     "utf8"
@@ -407,7 +411,7 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
   const wechatSmokeReportPath = path.join(workspace, "artifacts", "wechat-release", "codex.wechat.smoke-report.json");
 
   writeJson(snapshotPath, {
-    generatedAt: "2026-03-29T08:30:00.000Z",
+    generatedAt: isoHoursAgo(2),
     revision: {
       commit: "abc123",
       shortCommit: "abc123",
@@ -428,7 +432,7 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
     ]
   });
   writeJson(h5SmokePath, {
-    generatedAt: "2026-03-29T08:32:00.000Z",
+    generatedAt: isoHoursAgo(2),
     revision: {
       commit: "abc123",
       shortCommit: "abc123",
@@ -446,7 +450,7 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
     }
   });
   writeJson(reconnectSoakPath, {
-    generatedAt: "2026-03-29T08:33:00.000Z",
+    generatedAt: isoHoursAgo(2),
     revision: {
       commit: "abc123",
       shortCommit: "abc123"
@@ -478,7 +482,7 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
       sourceRevision: "abc123"
     },
     execution: {
-      executedAt: "2026-03-29T08:40:00.000Z",
+      executedAt: isoHoursAgo(1),
       result: "blocked"
     },
     cases: [
@@ -512,17 +516,17 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
   );
 
   assert.equal(report.summary.status, "failed");
-  assert.deepEqual(report.summary.failedGateIds, ["release-readiness", "wechat-release", "phase1-evidence-consistency"]);
+  assert.deepEqual(report.summary.failedGateIds, ["release-readiness", "wechat-release"]);
   assert.deepEqual(
     report.triage.blockers.map((entry) => entry.gateId),
-    ["release-readiness", "wechat-release", "phase1-evidence-consistency"]
+    ["release-readiness", "wechat-release"]
   );
   assert.match(report.triage.blockers[0]?.nextStep ?? "", /release:gate:summary -- --target-surface wechat/);
   assert.match(report.triage.blockers[1]?.summary ?? "", /blocked wechat/i);
   assert.match(report.gates[0]?.summary ?? "", /not release-ready/);
   assert.match(report.gates[3]?.summary ?? "", /blocked/i);
   assert.match(report.gates[3]?.failures.join("\n") ?? "", /blocked pending device evidence|WeChat smoke case is blocked/);
-  assert.match(renderMarkdown(report), /### Blockers \(3\)/);
+  assert.match(renderMarkdown(report), /### Blockers \(2\)/);
   assert.match(renderMarkdown(report), /Release readiness snapshot blocked wechat/);
   assert.match(renderMarkdown(report), /### Manual Evidence Ownership/);
   assert.match(renderMarkdown(report), /No required manual evidence items are attached to the target surface/);
