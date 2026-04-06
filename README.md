@@ -70,13 +70,26 @@
 ```bash
 nvm use
 npm ci --no-audit --no-fund
+npm run doctor
 npm run validate:quickstart
 ```
+
+`npm run doctor` 用来检查“机器/工具链是否就绪”：
+
+- Node / npm 是否和 `.nvmrc`、`package.json` 对齐
+- `node_modules` 是否已安装完整
+- 按需检查可选流的工具与配置，例如 `npm run doctor -- --flow e2e --flow redis --flow mysql --flow release`
+- 输出下一步 remediation，而不是只报错退出
 
 `npm run validate:quickstart` 会做两件事：
 
 - 构建 H5 调试壳
 - 以默认内存存储启动本地服务，并校验 `health` / `auth-readiness` / `lobby` 接口
+
+可以把两者理解为：
+
+- `npm run doctor`：先看本机 prerequisites / 可选服务 / env 提示是否齐全
+- `npm run validate:quickstart`：在依赖装好后，真正验证仓库的最小 build + boot 路径
 
 本地 Codex 会话如果把元数据写在仓库内，默认只允许落在仓库根目录的 `.codex`、`.codex-last-*.txt` 和 `.codex-runs/`。这些路径是本机临时产物，已被 `.gitignore` 排除，不应加入提交或作为发布证据目录使用。
 
