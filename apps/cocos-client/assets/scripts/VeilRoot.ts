@@ -5875,6 +5875,7 @@ export class VeilRoot extends Component {
     this.lastRoomUpdateReason = update.reason ?? "snapshot";
     this.lastRoomUpdateAtMs = Date.now();
     this.lastUpdate = update;
+    this.maybeOpenGameplayEquipmentPanelForLoot(update);
     const eventEntries = buildTimelineEntriesFromUpdate(update);
     if (eventEntries.length > 0) {
       this.timelineEntries = collapseAdjacentEntries([...eventEntries, ...this.timelineEntries]).slice(0, 12);
@@ -5919,6 +5920,7 @@ export class VeilRoot extends Component {
       void this.refreshGameplayAccountProfile();
     }
     this.syncSelectedBattleTarget();
+    this.renderView();
     this.playMapFeedbackForUpdate(update);
     this.maybeShowHeroProgressNotice(update);
     this.setBattleFeedback(presentation.feedback, presentation.feedbackDurationMs ?? BATTLE_FEEDBACK_DURATION_MS);
@@ -5939,6 +5941,23 @@ export class VeilRoot extends Component {
 
     this.syncWechatShareBridge();
     this.renderView();
+  }
+
+  private maybeOpenGameplayEquipmentPanelForLoot(update: SessionUpdate): void {
+    if (this.showLobby || update.battle) {
+      return;
+    }
+
+    const controlledHeroIds = new Set(update.world.ownHeroes.map((hero) => hero.id));
+    const hasOwnedLoot = update.events.some(
+      (event) => event.type === "hero.equipmentFound" && controlledHeroIds.has(event.heroId)
+    );
+    if (!hasOwnedLoot) {
+      return;
+    }
+
+    this.gameplayEquipmentPanelOpen = true;
+    this.gameplayCampaignPanelOpen = false;
   }
 
   private async refreshGameplayAccountProfile(): Promise<void> {

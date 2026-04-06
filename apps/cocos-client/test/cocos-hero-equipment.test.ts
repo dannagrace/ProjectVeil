@@ -212,6 +212,7 @@ test("formatEquipmentOverviewLines exposes slot metadata and resolved equipment 
       "护甲 厚绗布甲 · 普通 · 防御 +6% / 生命上限 +2",
       "饰品 未装备 · 等待拾取或替换",
       "装备总加成 生命 +2",
+      "战斗影响 提升前线承伤 / 激活特效 抢攻",
       "特效 抢攻",
       "武器 说明 鼓励先手突击的军团佩剑。",
       "护甲 说明 最基础的防护甲衣。"
@@ -270,12 +271,14 @@ test("formatEquipmentInspectLines provides stable item detail copy for the panel
       bonusSummary: "攻击 +10%",
       description: "鼓励先手突击的军团佩剑。",
       count: 1,
+      combatImpactSummary: "强化兵团压制 / 激活特效 抢攻",
       specialEffectSummary: "抢攻: 在开战后的第一轮拥有更强的压制力。"
     }),
     [
       "武器 先锋战刃 · 稀有",
       "来源 当前已穿戴",
       "加成 攻击 +10%",
+      "战斗影响 强化兵团压制 / 激活特效 抢攻",
       "特效 抢攻: 在开战后的第一轮拥有更强的压制力。",
       "说明 鼓励先手突击的军团佩剑。"
     ]

@@ -81,6 +81,7 @@ export class VeilUnitAnimator extends Component {
   private currentState: UnitAnimationState = "idle";
   private lastPixelFallbackReady = false;
   private pixelSequenceToken = 0;
+  private pixelSequenceTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   applyProfile(profile: CocosAnimationProfile, templateId = this.templateId): void {
     const templateChanged = this.templateId !== templateId;
@@ -114,6 +115,7 @@ export class VeilUnitAnimator extends Component {
 
   play(state: UnitAnimationState): void {
     this.unscheduleAllCallbacks();
+    this.clearPixelSequenceTimeout();
     this.currentState = state;
     this.renderCurrentState();
 
@@ -141,6 +143,7 @@ export class VeilUnitAnimator extends Component {
 
   private renderCurrentState(): void {
     this.pixelSequenceToken += 1;
+    this.clearPixelSequenceTimeout();
     if (
       !this.playSpine(this.currentState)
       && !this.playTimeline(this.currentState)
@@ -234,6 +237,10 @@ export class VeilUnitAnimator extends Component {
     }
 
     const token = this.pixelSequenceToken;
+    if (sequence.loop && this.shouldFreezeLoopingPixelSequence()) {
+      return true;
+    }
+
     let frameIndex = 0;
     const advanceFrame = (): void => {
       if (token !== this.pixelSequenceToken) {
@@ -247,12 +254,36 @@ export class VeilUnitAnimator extends Component {
       frameIndex = sequence.loop ? (frameIndex + 1) % sequence.frames.length : Math.min(frameIndex + 1, sequence.frames.length - 1);
       targetSprite.spriteFrame = sequence.frames[frameIndex] ?? null;
       if (sequence.loop || frameIndex < sequence.frames.length - 1) {
-        this.scheduleOnce(advanceFrame, sequence.frameDurationSeconds);
+        this.schedulePixelSequenceFrame(advanceFrame, sequence.frameDurationSeconds);
       }
     };
 
-    this.scheduleOnce(advanceFrame, sequence.frameDurationSeconds);
+    this.schedulePixelSequenceFrame(advanceFrame, sequence.frameDurationSeconds);
     return true;
+  }
+
+  private schedulePixelSequenceFrame(callback: () => void, delaySeconds: number): void {
+    if (this.shouldFreezeLoopingPixelSequence()) {
+      const delayMs = Math.max(1, Math.round(delaySeconds * 1_000));
+      this.pixelSequenceTimeoutId = setTimeout(() => {
+        this.pixelSequenceTimeoutId = null;
+        callback();
+      }, delayMs);
+      return;
+    }
+
+    this.scheduleOnce(callback, delaySeconds);
+  }
+
+  private clearPixelSequenceTimeout(): void {
+    if (this.pixelSequenceTimeoutId !== null) {
+      clearTimeout(this.pixelSequenceTimeoutId);
+      this.pixelSequenceTimeoutId = null;
+    }
+  }
+
+  private shouldFreezeLoopingPixelSequence(): boolean {
+    return typeof window === "undefined";
   }
 
   private resolvePixelFallbackScale(state: UnitAnimationState): number {

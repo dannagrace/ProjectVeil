@@ -47,6 +47,7 @@ export interface CocosEquipmentInspectItem {
   bonusSummary: string;
   description: string;
   count: number;
+  combatImpactSummary: string;
   specialEffectSummary?: string;
 }
 
@@ -56,6 +57,33 @@ interface CocosRecentLootEvent {
   equipmentName: string;
   rarity: EquipmentRarity;
   overflowed?: boolean;
+}
+
+function buildCombatImpactSummary(values: {
+  attack?: number | undefined;
+  defense?: number | undefined;
+  power?: number | undefined;
+  knowledge?: number | undefined;
+  maxHp?: number | undefined;
+  specialEffects?: string[] | undefined;
+}): string {
+  const tags: string[] = [];
+  if ((values.attack ?? 0) > 0) {
+    tags.push("强化兵团压制");
+  }
+  if ((values.defense ?? 0) > 0 || (values.maxHp ?? 0) > 0) {
+    tags.push("提升前线承伤");
+  }
+  if ((values.power ?? 0) > 0) {
+    tags.push("放大技能爆发");
+  }
+  if ((values.knowledge ?? 0) > 0) {
+    tags.push("扩大战术容错");
+  }
+  if ((values.specialEffects?.length ?? 0) > 0) {
+    tags.push(`激活特效 ${values.specialEffects!.join("/")}`);
+  }
+  return tags.length > 0 ? tags.join(" / ") : "当前更偏向基础属性补强";
 }
 
 function toHeroState(hero: HeroView): HeroState {
@@ -184,6 +212,14 @@ export function buildEquipmentInspectItems(hero: HeroView | null): CocosEquipmen
       bonusSummary: slot.bonusSummary,
       description: slot.description ?? "装备目录缺失说明。",
       count: 1,
+      combatImpactSummary: buildCombatImpactSummary({
+        attack: slot.item?.bonuses.attackPercent,
+        defense: slot.item?.bonuses.defensePercent,
+        power: slot.item?.bonuses.power,
+        knowledge: slot.item?.bonuses.knowledge,
+        maxHp: slot.item?.bonuses.maxHp,
+        specialEffects: slot.specialEffectSummary ? [slot.specialEffectSummary] : []
+      }),
       ...(slot.specialEffectSummary ? { specialEffectSummary: slot.specialEffectSummary } : {})
     }));
 
@@ -199,6 +235,14 @@ export function buildEquipmentInspectItems(hero: HeroView | null): CocosEquipmen
       bonusSummary: item.bonusSummary,
       description: item.description,
       count: item.count,
+      combatImpactSummary: buildCombatImpactSummary({
+        attack: definition?.bonuses.attackPercent,
+        defense: definition?.bonuses.defensePercent,
+        power: definition?.bonuses.power,
+        knowledge: definition?.bonuses.knowledge,
+        maxHp: definition?.bonuses.maxHp,
+        specialEffects: definition?.specialEffect ? [definition.specialEffect.name] : []
+      }),
       ...(definition?.specialEffect
         ? { specialEffectSummary: `${definition.specialEffect.name}: ${definition.specialEffect.description}` }
         : {})
@@ -213,10 +257,12 @@ export function formatEquipmentInspectLines(item: CocosEquipmentInspectItem | nu
     return ["当前暂无可查看的装备物品。"];
   }
 
+  const combatImpactSummary = item.combatImpactSummary || "当前更偏向基础属性补强";
   return [
     `${item.slotLabel} ${item.name} · ${item.rarityLabel}`,
     `来源 ${item.source === "equipped" ? "当前已穿戴" : `背包中 ${item.count} 件`}`,
     `加成 ${item.bonusSummary}`,
+    `战斗影响 ${combatImpactSummary}`,
     ...(item.specialEffectSummary ? [`特效 ${item.specialEffectSummary}`] : []),
     `说明 ${item.description}`
   ];
@@ -284,11 +330,19 @@ export function formatEquipmentOverviewLines(hero: HeroView | null): string[] {
   const summaryLine = summary.length > 0
     ? `装备总加成 ${summary.map((entry) => `${entry.label} +${entry.value}`).join("  ·  ")}`
     : "装备总加成 当前无额外属性";
+  const combatImpactLine = `战斗影响 ${buildCombatImpactSummary({
+    attack: summary.find((entry) => entry.label === "攻")?.value,
+    defense: summary.find((entry) => entry.label === "防")?.value,
+    power: summary.find((entry) => entry.label === "力")?.value,
+    knowledge: summary.find((entry) => entry.label === "知")?.value,
+    maxHp: summary.find((entry) => entry.label === "生命")?.value,
+    specialEffects: loadout.summary.specialEffects.map((effect) => effect.name)
+  })}`;
   const effects = loadout.summary.specialEffects.length > 0
     ? [`特效 ${loadout.summary.specialEffects.map((effect) => effect.name).join(" / ")}`]
     : [];
 
-  return [`装备 ${equipped.join("  ·  ")}`, ...detail, summaryLine, ...effects, ...descriptions];
+  return [`装备 ${equipped.join("  ·  ")}`, ...detail, summaryLine, combatImpactLine, ...effects, ...descriptions];
 }
 
 function formatSessionLootDescription(
