@@ -160,10 +160,10 @@
   "dependencies": {
     "@colyseus/redis-driver": "^0.17.7",
     "@colyseus/redis-presence": "^0.17.7",
-    "@colyseus/sdk": "^0.17.35",
+    "@colyseus/sdk": "^0.17.37",
     "cc": "file:packages/cc-runtime-stub",
     "colyseus": "^0.17.8",
-    "dotenv": "^17.3.1",
+    "dotenv": "^17.4.1",
     "ioredis": "^5.10.1",
     "mysql2": "^3.20.0",
     "xlsx": "^0.18.5"
