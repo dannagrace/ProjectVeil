@@ -51,6 +51,7 @@ import {
   createHeroProgressMeterView,
   createBattleEnvironmentState,
   createBattleReplayPlaybackState,
+  createDeterministicRandomGenerator,
   createDemoBattleState,
   nextDeterministicRandom,
   createEmptyBattleState,
@@ -5504,6 +5505,17 @@ test("nextDeterministicRandom is repeatable for the same seed", () => {
     firstRun.map((step) => step.value),
     [0.8800653687212616, 0.04393873084336519, 0.35202502529136837]
   );
+});
+
+test("createDeterministicRandomGenerator advances the same deterministic sequence as manual seed stepping", () => {
+  const generator = createDeterministicRandomGenerator(4242);
+  const generated = [generator(), generator(), generator()];
+
+  const firstStep = nextDeterministicRandom(4242);
+  const secondStep = nextDeterministicRandom(firstStep.nextSeed);
+  const thirdStep = nextDeterministicRandom(secondStep.nextSeed);
+
+  assert.deepEqual(generated, [firstStep.value, secondStep.value, thirdStep.value]);
 });
 
 test("applyBattleAction repeats battle damage variance for the same seed", () => {

@@ -33,6 +33,7 @@ import {
   validateAction,
   type ActionPrecheckResult
 } from "./action-precheck.ts";
+import { createDeterministicRandomGenerator } from "./deterministic-rng.ts";
 import { applyHeroSkillSelection, validateHeroSkillSelection } from "./hero-skills.ts";
 import {
   applyHeroEquipmentChange,
@@ -55,11 +56,7 @@ import {
 export type WorldActionPrecheckResult = ActionPrecheckResult<WorldState>;
 
 function makeRng(seed: number): () => number {
-  let value = seed >>> 0;
-  return () => {
-    value = (value * 1664525 + 1013904223) >>> 0;
-    return value / 0x100000000;
-  };
+  return createDeterministicRandomGenerator(seed);
 }
 
 function hashSeed(base: number, value: string): number {
