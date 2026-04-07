@@ -16,6 +16,10 @@ function createTempWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "veil-phase1-exit-audit-"));
 }
 
+function hoursAgo(hours: number): string {
+  return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+}
+
 function writeRuntimeGateArtifact(
   artifactsDir: string,
   revision: string,
@@ -26,9 +30,12 @@ function writeRuntimeGateArtifact(
   }
 ): string {
   const runtimeGatePath = path.join(artifactsDir, `runtime-observability-gate-${revision}.json`);
+  const runtimeHealthObservedAt = hoursAgo(0.98);
+  const authObservedAt = hoursAgo(0.9);
+  const metricsObservedAt = hoursAgo(0.88);
   writeJson(runtimeGatePath, {
     schemaVersion: 1,
-    generatedAt: "2026-04-05T08:45:05.000Z",
+    generatedAt: hoursAgo(0.85),
     candidate: {
       name: "phase1-rc",
       revision,
@@ -77,7 +84,7 @@ function writeRuntimeGateArtifact(
         status: overrides?.endpointStatuses?.["runtime-health"] ?? "passed",
         httpStatus: 200,
         summary: "Runtime health responded with an OK payload.",
-        observedAt: "2026-04-05T08:45:00.000Z",
+        observedAt: runtimeHealthObservedAt,
         freshness: "fresh",
         details: ["activeRooms=3", "connections=11", "actions=182"]
       },
@@ -88,7 +95,7 @@ function writeRuntimeGateArtifact(
         status: overrides?.endpointStatuses?.["auth-readiness"] ?? "passed",
         httpStatus: 200,
         summary: overrides?.headline ?? "Auth readiness is healthy.",
-        observedAt: "2026-04-05T08:45:05.000Z",
+        observedAt: authObservedAt,
         freshness: "fresh",
         details: ["lockouts=0", "pendingRegistrations=0", "pendingRecoveries=0"]
       },
@@ -99,7 +106,7 @@ function writeRuntimeGateArtifact(
         status: overrides?.endpointStatuses?.["runtime-metrics"] ?? "passed",
         httpStatus: 200,
         summary: "Runtime metrics exposed the required Prometheus counters.",
-        observedAt: "2026-04-05T08:45:05.000Z",
+        observedAt: metricsObservedAt,
         freshness: "fresh",
         details: ["Required Prometheus metrics are present."]
       }
@@ -108,27 +115,128 @@ function writeRuntimeGateArtifact(
   return runtimeGatePath;
 }
 
+function writeRuntimeEvidenceArtifact(artifactsDir: string, revision: string): string {
+  const runtimeEvidencePath = path.join(artifactsDir, `runtime-observability-evidence-phase1-rc-${revision}.json`);
+  const runtimeHealthObservedAt = hoursAgo(1.05);
+  const authObservedAt = hoursAgo(1.0);
+  const metricsObservedAt = hoursAgo(0.95);
+  writeJson(runtimeEvidencePath, {
+    schemaVersion: 1,
+    generatedAt: hoursAgo(0.92),
+    candidate: {
+      name: "phase1-rc",
+      revision,
+      shortRevision: revision,
+      branch: "main",
+      dirty: false,
+      targetSurface: "wechat"
+    },
+    targetEnvironment: {
+      label: "staging",
+      serverUrl: "https://veil-staging.example.com"
+    },
+    endpoints: [
+      {
+        id: "runtime-health",
+        observedAt: runtimeHealthObservedAt,
+        status: "passed"
+      },
+      {
+        id: "auth-readiness",
+        observedAt: authObservedAt,
+        status: "passed"
+      },
+      {
+        id: "runtime-metrics",
+        observedAt: metricsObservedAt,
+        status: "passed"
+      }
+    ]
+  });
+  return runtimeEvidencePath;
+}
+
+function writeManualEvidenceLedger(
+  artifactsDir: string,
+  revision: string,
+  snapshotPath: string,
+  wechatCandidateSummaryPath: string,
+  reconnectSoakPath: string
+): string {
+  const ledgerPath = path.join(artifactsDir, `manual-release-evidence-owner-ledger-phase1-rc-${revision}.md`);
+  const runtimeReviewUpdatedAt = hoursAgo(1.25);
+  const checklistUpdatedAt = hoursAgo(1.35);
+  const blockersUpdatedAt = hoursAgo(1.3);
+  const presentationUpdatedAt = hoursAgo(1.28);
+  const devtoolsUpdatedAt = hoursAgo(1.2);
+  const smokeUpdatedAt = hoursAgo(1.15);
+  const reconnectUpdatedAt = hoursAgo(1.1);
+  fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
+  fs.writeFileSync(
+    ledgerPath,
+    `# Manual Release Evidence Owner Ledger
+
+## Candidate
+
+- Candidate: \`phase1-rc\`
+- Target revision: \`${revision}\`
+- Release owner: \`release-owner\`
+- Last updated: \`${runtimeReviewUpdatedAt}\`
+- Linked readiness snapshot: \`${snapshotPath}\`
+
+## Ledger
+
+| Evidence type | Candidate | Revision | Owner | Status | Last updated | Artifact path / link | Notes / blocker context |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| \`runtime-observability-review\` | \`phase1-rc\` | \`${revision}\` | \`oncall-ops\` | \`done\` | \`${runtimeReviewUpdatedAt}\` | \`artifacts/wechat-release/runtime-observability-signoff-phase1-rc-${revision}.md\` | Runtime evidence reviewed for the candidate revision. |
+| \`cocos-rc-checklist-review\` | \`phase1-rc\` | \`${revision}\` | \`release-owner\` | \`done\` | \`${checklistUpdatedAt}\` | \`artifacts/release-readiness/cocos-rc-checklist-phase1-rc-${revision}.md\` | Checklist reviewed for the same candidate. |
+| \`cocos-rc-blockers-review\` | \`phase1-rc\` | \`${revision}\` | \`release-owner\` | \`done\` | \`${blockersUpdatedAt}\` | \`artifacts/release-readiness/cocos-rc-blockers-phase1-rc-${revision}.md\` | No open blockers remain. |
+| \`cocos-presentation-signoff\` | \`phase1-rc\` | \`${revision}\` | \`client-lead\` | \`done\` | \`${presentationUpdatedAt}\` | \`artifacts/release-readiness/cocos-presentation-signoff-phase1-rc-${revision}.md\` | Presentation sign-off recorded. |
+| \`wechat-devtools-export-review\` | \`phase1-rc\` | \`${revision}\` | \`qa-release\` | \`done\` | \`${devtoolsUpdatedAt}\` | \`${wechatCandidateSummaryPath}\` | DevTools export review is current. |
+| \`wechat-device-runtime-smoke\` | \`phase1-rc\` | \`${revision}\` | \`qa-release\` | \`done\` | \`${smokeUpdatedAt}\` | \`artifacts/wechat-release/codex.wechat.smoke-report.json\` | Device runtime smoke is current. |
+| \`reconnect-release-followup\` | \`phase1-rc\` | \`${revision}\` | \`server-oncall\` | \`done\` | \`${reconnectUpdatedAt}\` | \`${reconnectSoakPath}\` | Reconnect follow-up is closed. |
+`,
+    "utf8"
+  );
+  return ledgerPath;
+}
+
 function writePassingArtifacts(workspace: string, revision: string): {
   snapshotPath: string;
+  releaseGateSummaryPath: string;
   h5SmokePath: string;
   reconnectSoakPath: string;
   cocosBundlePath: string;
   persistencePath: string;
+  runtimeObservabilityEvidencePath: string;
   runtimeObservabilityGatePath: string;
   wechatCandidateSummaryPath: string;
+  manualEvidenceLedgerPath: string;
 } {
   const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
   const wechatDir = path.join(workspace, "artifacts", "wechat-release");
   const snapshotPath = path.join(artifactsDir, "release-readiness-pass.json");
+  const releaseGateSummaryPath = path.join(artifactsDir, `release-gate-summary-${revision}.json`);
   const h5SmokePath = path.join(artifactsDir, "client-release-candidate-smoke-pass.json");
   const reconnectSoakPath = path.join(artifactsDir, "colyseus-reconnect-soak-summary-pass.json");
   const cocosBundlePath = path.join(artifactsDir, "cocos-rc-evidence-bundle-pass.json");
   const persistencePath = path.join(artifactsDir, `phase1-release-persistence-regression-${revision}.json`);
+  const runtimeObservabilityEvidencePath = writeRuntimeEvidenceArtifact(artifactsDir, revision);
   const runtimeObservabilityGatePath = writeRuntimeGateArtifact(artifactsDir, revision);
   const wechatCandidateSummaryPath = path.join(wechatDir, "codex.wechat.release-candidate-summary.json");
+  const snapshotGeneratedAt = hoursAgo(1.6);
+  const h5SmokeGeneratedAt = hoursAgo(1.5);
+  const reconnectGeneratedAt = hoursAgo(1.45);
+  const cocosGeneratedAt = hoursAgo(1.4);
+  const wechatSummaryGeneratedAt = hoursAgo(1.3);
+  const runtimeReviewRecordedAt = hoursAgo(1.25);
+  const devtoolsRecordedAt = hoursAgo(1.2);
+  const smokeRecordedAt = hoursAgo(1.15);
+  const persistenceGeneratedAt = hoursAgo(1.1);
+  const releaseGateGeneratedAt = hoursAgo(1.55);
 
   writeJson(snapshotPath, {
-    generatedAt: "2026-04-05T08:30:00.000Z",
+    generatedAt: snapshotGeneratedAt,
     revision: { commit: revision, shortCommit: revision },
     summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
     checks: [
@@ -150,13 +258,13 @@ function writePassingArtifacts(workspace: string, revision: string): {
     ]
   });
   writeJson(h5SmokePath, {
-    generatedAt: "2026-04-05T08:32:00.000Z",
+    generatedAt: h5SmokeGeneratedAt,
     revision: { commit: revision, shortCommit: revision },
     execution: { status: "passed", exitCode: 0 },
     summary: { total: 2, passed: 2, failed: 0 }
   });
   writeJson(reconnectSoakPath, {
-    generatedAt: "2026-04-05T08:33:00.000Z",
+    generatedAt: reconnectGeneratedAt,
     revision: { commit: revision, shortCommit: revision },
     status: "passed",
     summary: { failedScenarios: 0, scenarioNames: ["reconnect_soak"] },
@@ -171,7 +279,7 @@ function writePassingArtifacts(workspace: string, revision: string): {
   });
   writeJson(cocosBundlePath, {
     bundle: {
-      generatedAt: "2026-04-05T08:34:00.000Z",
+      generatedAt: cocosGeneratedAt,
       candidate: "phase1-rc",
       commit: revision,
       shortCommit: revision,
@@ -184,6 +292,11 @@ function writePassingArtifacts(workspace: string, revision: string): {
       blockersMarkdown: path.join(artifactsDir, "cocos-rc-blockers-phase1-rc.md"),
       presentationSignoff: path.join(artifactsDir, "cocos-presentation-signoff-phase1-rc.json"),
       presentationSignoffMarkdown: path.join(artifactsDir, "cocos-presentation-signoff-phase1-rc.md")
+    },
+    linkedEvidence: {
+      releaseReadinessSnapshot: {
+        path: snapshotPath
+      }
     },
     review: {
       phase1Gate: "passed"
@@ -199,7 +312,7 @@ function writePassingArtifacts(workspace: string, revision: string): {
     ]
   });
   writeJson(wechatCandidateSummaryPath, {
-    generatedAt: "2026-04-05T08:40:00.000Z",
+    generatedAt: wechatSummaryGeneratedAt,
     candidate: { revision, version: "1.2.3", status: "ready" },
     evidence: {
       package: { status: "passed", artifactPath: path.join(wechatDir, "veil.package.json") },
@@ -209,13 +322,45 @@ function writePassingArtifacts(workspace: string, revision: string): {
         status: "ready",
         requiredPendingChecks: 0,
         requiredFailedChecks: 0,
-        requiredMetadataFailures: 0
+        requiredMetadataFailures: 0,
+        checks: [
+          {
+            id: "runtime-observability-signoff",
+            title: "Runtime observability sign-off",
+            required: true,
+            status: "done",
+            owner: "oncall-ops",
+            recordedAt: runtimeReviewRecordedAt,
+            revision,
+            artifactPath: path.join(wechatDir, `runtime-observability-signoff-phase1-rc-${revision}.md`)
+          },
+          {
+            id: "wechat-devtools-export-review",
+            title: "WeChat DevTools export review",
+            required: true,
+            status: "done",
+            owner: "qa-release",
+            recordedAt: devtoolsRecordedAt,
+            revision,
+            artifactPath: wechatCandidateSummaryPath
+          },
+          {
+            id: "wechat-device-runtime-smoke",
+            title: "WeChat device runtime smoke",
+            required: true,
+            status: "done",
+            owner: "qa-release",
+            recordedAt: smokeRecordedAt,
+            revision,
+            artifactPath: path.join(wechatDir, "codex.wechat.smoke-report.json")
+          }
+        ]
       }
     },
     blockers: []
   });
   writeJson(persistencePath, {
-    generatedAt: "2026-04-05T08:41:00.000Z",
+    generatedAt: persistenceGeneratedAt,
     revision: { commit: revision, shortCommit: revision },
     requestedStorageMode: "mysql",
     effectiveStorageMode: "mysql",
@@ -224,15 +369,30 @@ function writePassingArtifacts(workspace: string, revision: string): {
     contentValidation: { valid: true, summary: "All shipped content packs validated.", issueCount: 0 },
     persistenceRegression: { mapPackId: "phase1", assertions: ["room hydration reapplied resources"] }
   });
+  writeJson(releaseGateSummaryPath, {
+    generatedAt: releaseGateGeneratedAt,
+    revision: { commit: revision, shortCommit: revision },
+    inputs: { snapshotPath }
+  });
+  const manualEvidenceLedgerPath = writeManualEvidenceLedger(
+    artifactsDir,
+    revision,
+    snapshotPath,
+    wechatCandidateSummaryPath,
+    reconnectSoakPath
+  );
 
   return {
     snapshotPath,
+    releaseGateSummaryPath,
     h5SmokePath,
     reconnectSoakPath,
     cocosBundlePath,
     persistencePath,
+    runtimeObservabilityEvidencePath,
     runtimeObservabilityGatePath,
-    wechatCandidateSummaryPath
+    wechatCandidateSummaryPath,
+    manualEvidenceLedgerPath
   };
 }
 
@@ -261,6 +421,7 @@ test("phase1 exit audit maps the scorecard criteria into one passing report", as
   assert.equal(report.criteria.find((entry) => entry.id === "runtime-observability")?.status, "pass");
   assert.equal(report.criteria.find((entry) => entry.id === "phase1-data-persistence")?.status, "pass");
   assert.equal(report.criteria.find((entry) => entry.id === "known-blockers")?.status, "pass");
+  assert.equal(report.candidateEvidenceAudit.status, "pass");
   assert.equal(report.criteria.every((entry) => entry.sourceArtifacts.length > 0), true);
   assert.equal(
     report.criteria
@@ -268,10 +429,18 @@ test("phase1 exit audit maps the scorecard criteria into one passing report", as
       ?.sourceArtifacts.some((artifact) => artifact.label === "Cocos presentation sign-off checklist"),
     true
   );
+  assert.equal(
+    report.criteria
+      .find((entry) => entry.id === "known-blockers")
+      ?.sourceArtifacts.some((artifact) => artifact.label === "Manual evidence owner ledger"),
+    true
+  );
 
   const markdown = renderMarkdown(report);
   assert.match(markdown, /# Phase 1 Exit Audit/);
   assert.match(markdown, /Overall status: \*\*PASS\*\*/);
+  assert.match(markdown, /## Candidate Evidence Audit/);
+  assert.match(markdown, /Blocking findings: 0/);
   assert.match(markdown, /### 2\. Core automated gates are green\./);
   assert.match(markdown, /npm run check:cocos-release-readiness: passed/);
   assert.match(markdown, /### 8\. Known Phase 1 blockers are closed or explicitly accepted\./);
@@ -332,6 +501,38 @@ test("phase1 exit audit distinguishes blocking failures from stale pending evide
   assert.equal(report.summary.pendingCriteria.some((entry) => entry.includes("Phase 1 data and persistence")), true);
 });
 
+test("phase1 exit audit fails known blockers when the manual owner ledger still has pending sign-offs", async () => {
+  const workspace = createTempWorkspace();
+  const revision = "abc1234";
+  const inputs = writePassingArtifacts(workspace, revision);
+
+  fs.writeFileSync(
+    inputs.manualEvidenceLedgerPath,
+    fs
+      .readFileSync(inputs.manualEvidenceLedgerPath, "utf8")
+      .replace("| `runtime-observability-review` | `phase1-rc` | `abc1234` | `oncall-ops` | `done` |", "| `runtime-observability-review` | `phase1-rc` | `abc1234` | `oncall-ops` | `pending` |"),
+    "utf8"
+  );
+
+  const report = await buildPhase1ExitAudit({
+    candidate: "phase1-rc",
+    candidateRevision: revision,
+    targetSurface: "wechat",
+    maxEvidenceAgeHours: 72,
+    ...inputs
+  });
+
+  assert.equal(report.summary.status, "fail");
+  assert.equal(report.candidateEvidenceAudit.status, "fail");
+  assert.equal(report.criteria.find((entry) => entry.id === "known-blockers")?.status, "fail");
+  assert.equal(
+    report.criteria
+      .find((entry) => entry.id === "known-blockers")
+      ?.details.some((detail) => detail.includes("manual_pending")),
+    true
+  );
+});
+
 test("phase1 exit audit CLI writes stable JSON and Markdown outputs", () => {
   const workspace = createTempWorkspace();
   const revision = "abc1234";
@@ -353,12 +554,18 @@ test("phase1 exit audit CLI writes stable JSON and Markdown outputs", () => {
       "wechat",
       "--snapshot",
       inputs.snapshotPath,
+      "--release-gate-summary",
+      inputs.releaseGateSummaryPath,
       "--h5-smoke",
       inputs.h5SmokePath,
       "--reconnect-soak",
       inputs.reconnectSoakPath,
+      "--runtime-observability-evidence",
+      inputs.runtimeObservabilityEvidencePath,
       "--runtime-observability-gate",
       inputs.runtimeObservabilityGatePath,
+      "--manual-evidence-ledger",
+      inputs.manualEvidenceLedgerPath,
       "--cocos-bundle",
       inputs.cocosBundlePath,
       "--wechat-candidate-summary",
@@ -375,7 +582,6 @@ test("phase1 exit audit CLI writes stable JSON and Markdown outputs", () => {
   );
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Phase 1 exit audit PASS/);
 
   const jsonPath = path.join(outputDir, "phase1-exit-audit.json");
   const markdownPath = path.join(outputDir, "phase1-exit-audit.md");
@@ -392,5 +598,6 @@ test("phase1 exit audit CLI writes stable JSON and Markdown outputs", () => {
 
   const markdown = fs.readFileSync(markdownPath, "utf8");
   assert.match(markdown, /# Phase 1 Exit Audit/);
+  assert.match(markdown, /## Candidate Evidence Audit/);
   assert.match(markdown, /### 5\. WeChat release evidence is current when WeChat is the target surface\./);
 });

@@ -15,6 +15,8 @@ The command reuses the existing Phase 1 evidence producers and turns the explici
 
 Each row is reported as `pass`, `fail`, or `pending`, and each row links back to the exact source artifacts used for the decision. The JSON artifact is intended for CI/automation, and the Markdown artifact is intended for release review / PR attachment.
 
+The exit audit also folds in the candidate-level evidence contract from `npm run release:candidate:evidence-audit`, so the Phase 1 call now fails closed when the same-candidate packet is inconsistent or when the manual evidence owner ledger still leaves required sign-offs in `pending` or `in-review`.
+
 ## Usage
 
 Use the latest local artifacts:
@@ -33,9 +35,12 @@ npm run release:phase1:exit-audit -- \
   --candidate-revision abc1234 \
   --target-surface wechat \
   --snapshot artifacts/release-readiness/release-readiness-abc1234.json \
+  --release-gate-summary artifacts/release-readiness/release-gate-summary-abc1234.json \
   --cocos-bundle artifacts/release-readiness/cocos-rc-evidence-bundle-phase1-wechat-rc-abc1234.json \
   --wechat-candidate-summary artifacts/wechat-release/codex.wechat.release-candidate-summary.json \
+  --runtime-observability-evidence artifacts/release-readiness/runtime-observability-evidence-phase1-wechat-rc-abc1234.json \
   --runtime-observability-gate artifacts/release-readiness/runtime-observability-gate-phase1-wechat-rc-abc1234.json \
+  --manual-evidence-ledger artifacts/release-readiness/manual-release-evidence-owner-ledger-phase1-wechat-rc-abc1234.md \
   --reconnect-soak artifacts/release-readiness/colyseus-reconnect-soak-summary-phase1-wechat-rc-abc1234.json \
   --phase1-persistence artifacts/release-readiness/phase1-release-persistence-regression-abc1234.json
 ```
@@ -68,6 +73,8 @@ If `--output-dir` is set, the command writes:
 - `pass`: the criterion is currently satisfied for the candidate revision
 
 The audit intentionally treats missing optional WeChat evidence as non-blocking when the target surface is `h5`. When the target surface is `wechat`, the candidate summary, smoke/manual-review state, and linked blocker artifacts become required input for the WeChat criterion.
+
+By default the audit uses a `48h` freshness window so the runtime observability packet and linked manual sign-offs satisfy the Phase 1 reviewer checklist without an extra freshness override. Use `--max-evidence-age-hours` only when a stricter or explicitly approved window is needed.
 
 ## Relationship To Other Reports
 

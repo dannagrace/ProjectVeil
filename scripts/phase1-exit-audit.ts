@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { buildPhase1CandidateDossier } from "./phase1-candidate-dossier.ts";
+import { buildSameCandidateEvidenceAuditReport } from "./same-candidate-evidence-audit.ts";
 
 type TargetSurface = "h5" | "wechat";
 type DossierResult = "passed" | "failed" | "pending" | "accepted_risk";
@@ -14,10 +15,13 @@ interface Args {
   candidate?: string;
   candidateRevision?: string;
   serverUrl?: string;
+  releaseGateSummaryPath?: string;
+  runtimeObservabilityEvidencePath?: string;
   runtimeObservabilityGatePath?: string;
   snapshotPath?: string;
   h5SmokePath?: string;
   reconnectSoakPath?: string;
+  manualEvidenceLedgerPath?: string;
   wechatArtifactsDir?: string;
   wechatCandidateSummaryPath?: string;
   wechatRcValidationPath?: string;
@@ -94,10 +98,13 @@ interface Phase1CandidateDossier {
   };
   inputs: {
     serverUrl?: string;
+    releaseGateSummaryPath?: string;
+    runtimeObservabilityEvidencePath?: string;
     runtimeObservabilityGatePath?: string;
     snapshotPath?: string;
     h5SmokePath?: string;
     reconnectSoakPath?: string;
+    manualEvidenceLedgerPath?: string;
     wechatArtifactsDir?: string;
     wechatCandidateSummaryPath?: string;
     wechatRcValidationPath?: string;
@@ -189,6 +196,50 @@ interface WechatCandidateSummary {
   }>;
 }
 
+interface CandidateEvidenceAuditFinding {
+  code: string;
+  severity: "blocking" | "warning";
+  summary: string;
+  artifactPath?: string;
+}
+
+interface CandidateEvidenceAuditFamily {
+  label: string;
+  artifactPath?: string;
+  findings: CandidateEvidenceAuditFinding[];
+}
+
+interface CandidateEvidenceAuditManualFamily {
+  label: string;
+  artifactPaths: string[];
+  findings: CandidateEvidenceAuditFinding[];
+}
+
+interface CandidateEvidenceAuditReport {
+  summary: {
+    status: "passed" | "warning" | "failed";
+    blockerCount: number;
+    warningCount: number;
+    summary: string;
+  };
+  inputs: {
+    releaseGateSummaryPath?: string;
+    cocosRcBundlePath?: string;
+    runtimeObservabilityEvidencePath?: string;
+    runtimeObservabilityGatePath?: string;
+    manualEvidenceLedgerPath?: string;
+  };
+  triage: {
+    blockers: CandidateEvidenceAuditFinding[];
+    warnings: CandidateEvidenceAuditFinding[];
+  };
+  artifactFamilies: CandidateEvidenceAuditFamily[];
+  manualEvidenceContract: {
+    status: "passed" | "warning" | "failed";
+    requiredFamilies: CandidateEvidenceAuditManualFamily[];
+  };
+}
+
 interface PersistenceReport {
   generatedAt?: string;
   revision?: {
@@ -257,6 +308,12 @@ interface Phase1ExitAuditReport {
   inputs: Phase1CandidateDossier["inputs"];
   phase1ExitEvidenceGate: Phase1CandidateDossier["phase1ExitEvidenceGate"];
   acceptedRisks: DossierAcceptedRisk[];
+  candidateEvidenceAudit: {
+    status: "pass" | "fail" | "pending";
+    blockerCount: number;
+    warningCount: number;
+    summary: string;
+  };
   criteria: ExitCriterionReport[];
 }
 
@@ -303,10 +360,13 @@ function parseArgs(argv: string[]): Args {
   let candidate: string | undefined;
   let candidateRevision: string | undefined;
   let serverUrl: string | undefined;
+  let releaseGateSummaryPath: string | undefined;
+  let runtimeObservabilityEvidencePath: string | undefined;
   let runtimeObservabilityGatePath: string | undefined;
   let snapshotPath: string | undefined;
   let h5SmokePath: string | undefined;
   let reconnectSoakPath: string | undefined;
+  let manualEvidenceLedgerPath: string | undefined;
   let wechatArtifactsDir: string | undefined;
   let wechatCandidateSummaryPath: string | undefined;
   let wechatRcValidationPath: string | undefined;
@@ -321,7 +381,7 @@ function parseArgs(argv: string[]): Args {
   let outputDir: string | undefined;
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
-  let maxEvidenceAgeHours = 72;
+  let maxEvidenceAgeHours = 48;
 
   for (let index = 2; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -342,6 +402,16 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--release-gate-summary" && next) {
+      releaseGateSummaryPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--runtime-observability-evidence" && next) {
+      runtimeObservabilityEvidencePath = next;
+      index += 1;
+      continue;
+    }
     if (arg === "--runtime-observability-gate" && next) {
       runtimeObservabilityGatePath = next;
       index += 1;
@@ -359,6 +429,11 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--reconnect-soak" && next) {
       reconnectSoakPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--manual-evidence-ledger" && next) {
+      manualEvidenceLedgerPath = next;
       index += 1;
       continue;
     }
@@ -452,10 +527,13 @@ function parseArgs(argv: string[]): Args {
     ...(candidate ? { candidate } : {}),
     ...(candidateRevision ? { candidateRevision } : {}),
     ...(serverUrl ? { serverUrl } : {}),
+    ...(releaseGateSummaryPath ? { releaseGateSummaryPath } : {}),
+    ...(runtimeObservabilityEvidencePath ? { runtimeObservabilityEvidencePath } : {}),
     ...(runtimeObservabilityGatePath ? { runtimeObservabilityGatePath } : {}),
     ...(snapshotPath ? { snapshotPath } : {}),
     ...(h5SmokePath ? { h5SmokePath } : {}),
     ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
+    ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
     ...(wechatRcValidationPath ? { wechatRcValidationPath } : {}),
@@ -815,27 +893,60 @@ function buildPersistenceCriterion(section: DossierSection, report: PersistenceR
   };
 }
 
-function buildKnownBlockersCriterion(dossier: Phase1CandidateDossier): ExitCriterionReport {
+function normalizeAuditStatus(status: CandidateEvidenceAuditReport["summary"]["status"]): CriterionStatus {
+  return status === "failed" ? "fail" : status === "warning" ? "pending" : "pass";
+}
+
+function buildKnownBlockersCriterion(
+  dossier: Phase1CandidateDossier,
+  evidenceAudit: CandidateEvidenceAuditReport
+): ExitCriterionReport {
   const gate = dossier.phase1ExitEvidenceGate;
+  const relevantBlockingSections = gate.blockingSections.filter((section) => section !== "Release gate summary");
+  const relevantPendingSections = gate.pendingSections.filter((section) => section !== "Release gate summary");
+  const relevantAcceptedRiskSections = gate.acceptedRiskSections.filter((section) => section !== "Release gate summary");
+  const gateStatus: CriterionStatus =
+    relevantBlockingSections.length > 0 ? "fail" : relevantPendingSections.length > 0 ? "pending" : "pass";
+  const evidenceAuditStatus = normalizeAuditStatus(evidenceAudit.summary.status);
   const status: CriterionStatus =
-    gate.result === "failed" ? "fail" : gate.result === "pending" ? "pending" : "pass";
+    gateStatus === "fail" || evidenceAuditStatus === "fail"
+      ? "fail"
+      : gateStatus === "pending" || evidenceAuditStatus === "pending"
+        ? "pending"
+        : "pass";
+  const leadEvidenceFindings = [...evidenceAudit.triage.blockers, ...evidenceAudit.triage.warnings]
+    .slice(0, 5)
+    .map((finding) => `${finding.code}: ${finding.summary}`);
   const details = [
-    `blockingSections=${gate.blockingSections.length > 0 ? gate.blockingSections.join(", ") : "none"}`,
-    `pendingSections=${gate.pendingSections.length > 0 ? gate.pendingSections.join(", ") : "none"}`,
-    `acceptedRiskSections=${gate.acceptedRiskSections.length > 0 ? gate.acceptedRiskSections.join(", ") : "none"}`,
-    `acceptedRiskCount=${dossier.acceptedRisks.length}`
+    `blockingSections=${relevantBlockingSections.length > 0 ? relevantBlockingSections.join(", ") : "none"}`,
+    `pendingSections=${relevantPendingSections.length > 0 ? relevantPendingSections.join(", ") : "none"}`,
+    `acceptedRiskSections=${relevantAcceptedRiskSections.length > 0 ? relevantAcceptedRiskSections.join(", ") : "none"}`,
+    `acceptedRiskCount=${dossier.acceptedRisks.length}`,
+    `candidateEvidenceAudit=${evidenceAudit.summary.status}`,
+    `candidateEvidenceBlockers=${evidenceAudit.summary.blockerCount}`,
+    `candidateEvidenceWarnings=${evidenceAudit.summary.warningCount}`,
+    ...leadEvidenceFindings
   ];
   const summary =
     status === "fail"
-      ? `Known Phase 1 blockers remain open: ${gate.blockingSections.join(", ")}.`
+      ? gateStatus === "fail"
+        ? `Known Phase 1 blockers remain open: ${relevantBlockingSections.join(", ")}.`
+        : `Candidate evidence remains blocked: ${evidenceAudit.summary.summary}`
       : status === "pending"
-        ? `Known Phase 1 evidence is still pending for: ${gate.pendingSections.join(", ")}.`
+        ? gateStatus === "pending"
+          ? `Known Phase 1 evidence is still pending for: ${relevantPendingSections.join(", ")}.`
+          : `Candidate evidence still has unresolved warnings: ${evidenceAudit.summary.summary}`
         : dossier.acceptedRisks.length > 0
           ? "Known Phase 1 blockers are either closed or explicitly accepted with recorded waiver context."
           : "No open Phase 1 blocker state remains in the candidate-level evidence gate.";
 
   const blockingArtifacts = dossier.sections
-    .filter((section) => gate.blockingSections.includes(section.label) || gate.pendingSections.includes(section.label) || gate.acceptedRiskSections.includes(section.label))
+    .filter(
+      (section) =>
+        relevantBlockingSections.includes(section.label) ||
+        relevantPendingSections.includes(section.label) ||
+        relevantAcceptedRiskSections.includes(section.label)
+    )
     .flatMap((section) => sectionSourceArtifacts(section));
 
   return {
@@ -849,6 +960,32 @@ function buildKnownBlockersCriterion(dossier: Phase1CandidateDossier): ExitCrite
       ...blockingArtifacts,
       { label: "Phase 1 maturity scorecard", path: SCORECARD_DOC_PATH },
       { label: "Cocos Phase 1 presentation sign-off baseline", path: COCOS_PRESENTATION_SIGNOFF_DOC_PATH },
+      ...(evidenceAudit.inputs.releaseGateSummaryPath
+        ? [{ label: "Release gate summary", path: evidenceAudit.inputs.releaseGateSummaryPath }]
+        : []),
+      ...(evidenceAudit.inputs.cocosRcBundlePath
+        ? [{ label: "Candidate-level Cocos RC bundle", path: evidenceAudit.inputs.cocosRcBundlePath }]
+        : []),
+      ...(evidenceAudit.inputs.runtimeObservabilityEvidencePath
+        ? [{ label: "Runtime observability evidence", path: evidenceAudit.inputs.runtimeObservabilityEvidencePath }]
+        : []),
+      ...(evidenceAudit.inputs.runtimeObservabilityGatePath
+        ? [{ label: "Runtime observability gate", path: evidenceAudit.inputs.runtimeObservabilityGatePath }]
+        : []),
+      ...(evidenceAudit.inputs.manualEvidenceLedgerPath
+        ? [{ label: "Manual evidence owner ledger", path: evidenceAudit.inputs.manualEvidenceLedgerPath }]
+        : []),
+      ...evidenceAudit.artifactFamilies.flatMap((family) =>
+        family.findings.length > 0 && family.artifactPath
+          ? [{ label: family.label, path: family.artifactPath }]
+          : []
+      ),
+      ...evidenceAudit.manualEvidenceContract.requiredFamilies.flatMap((family) =>
+        family.artifactPaths.map((artifactPath) => ({
+          label: family.label,
+          path: artifactPath
+        }))
+      ),
       ...dossier.acceptedRisks.flatMap((risk) =>
         risk.artifactPath ? [{ label: risk.label, path: risk.artifactPath }] : []
       )
@@ -858,6 +995,20 @@ function buildKnownBlockersCriterion(dossier: Phase1CandidateDossier): ExitCrite
 
 export async function buildPhase1ExitAudit(args: Args): Promise<Phase1ExitAuditReport> {
   const dossier = (await buildPhase1CandidateDossier(args)) as Phase1CandidateDossier;
+  const evidenceAudit = buildSameCandidateEvidenceAuditReport({
+    candidate: dossier.candidate.name,
+    candidateRevision: dossier.candidate.revision,
+    targetSurface: dossier.candidate.targetSurface,
+    ...(args.snapshotPath ? { snapshotPath: args.snapshotPath } : {}),
+    ...(args.releaseGateSummaryPath ? { releaseGateSummaryPath: args.releaseGateSummaryPath } : {}),
+    ...(args.cocosBundlePath ? { cocosRcBundlePath: args.cocosBundlePath } : {}),
+    ...(args.runtimeObservabilityEvidencePath ? { runtimeObservabilityEvidencePath: args.runtimeObservabilityEvidencePath } : {}),
+    ...(args.runtimeObservabilityGatePath ? { runtimeObservabilityGatePath: args.runtimeObservabilityGatePath } : {}),
+    ...(args.manualEvidenceLedgerPath ? { manualEvidenceLedgerPath: args.manualEvidenceLedgerPath } : {}),
+    ...(args.wechatArtifactsDir ? { wechatArtifactsDir: args.wechatArtifactsDir } : {}),
+    ...(args.wechatCandidateSummaryPath ? { wechatCandidateSummaryPath: args.wechatCandidateSummaryPath } : {}),
+    maxAgeHours: args.maxEvidenceAgeHours
+  }) as CandidateEvidenceAuditReport;
   const snapshotSection = getSection(dossier, "release-readiness");
   const cocosSection = getSection(dossier, "cocos-rc-bundle");
   const wechatSection = getSection(dossier, "wechat-release");
@@ -893,7 +1044,7 @@ export async function buildPhase1ExitAudit(args: Args): Promise<Phase1ExitAuditR
     buildWechatCriterion(dossier, wechatSection, wechatSummary),
     buildRuntimeCriterion(dossier, runtimeSection),
     buildPersistenceCriterion(persistenceSection, persistenceReport),
-    buildKnownBlockersCriterion(dossier)
+    buildKnownBlockersCriterion(dossier, evidenceAudit)
   ];
 
   const blockedCriteria = criteria.filter((entry) => entry.status === "fail").map((entry) => `${entry.number}. ${entry.title}`);
@@ -920,6 +1071,12 @@ export async function buildPhase1ExitAudit(args: Args): Promise<Phase1ExitAuditR
     inputs: dossier.inputs,
     phase1ExitEvidenceGate: dossier.phase1ExitEvidenceGate,
     acceptedRisks: dossier.acceptedRisks,
+    candidateEvidenceAudit: {
+      status: normalizeAuditStatus(evidenceAudit.summary.status),
+      blockerCount: evidenceAudit.summary.blockerCount,
+      warningCount: evidenceAudit.summary.warningCount,
+      summary: evidenceAudit.summary.summary
+    },
     criteria
   };
 }
@@ -948,6 +1105,12 @@ export function renderMarkdown(report: Phase1ExitAuditReport): string {
   lines.push(`- Runtime observability gate: \`${report.inputs.runtimeObservabilityGatePath ?? report.inputs.serverUrl ?? "<missing>"}\``);
   lines.push(`- Reconnect soak: \`${report.inputs.reconnectSoakPath ?? "<missing>"}\``);
   lines.push(`- Phase 1 persistence: \`${report.inputs.persistencePath ?? "<missing>"}\``, "");
+
+  lines.push("## Candidate Evidence Audit", "");
+  lines.push(`- Status: \`${report.candidateEvidenceAudit.status}\``);
+  lines.push(`- Blocking findings: ${report.candidateEvidenceAudit.blockerCount}`);
+  lines.push(`- Advisory warnings: ${report.candidateEvidenceAudit.warningCount}`);
+  lines.push(`- Summary: ${report.candidateEvidenceAudit.summary}`, "");
 
   lines.push("## Exit Criteria", "");
   for (const criterion of report.criteria) {
