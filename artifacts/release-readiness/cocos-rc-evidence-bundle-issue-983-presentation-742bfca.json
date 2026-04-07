@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "bundle": {
+    "generatedAt": "2026-04-07T09:38:00.000Z",
+    "outputDir": "artifacts/release-readiness",
+    "candidate": "issue-983-presentation",
+    "buildSurface": "creator_preview",
+    "branch": "main",
+    "commit": "742bfcaeb2f57148aa4733f5b686f1dec560411a",
+    "shortCommit": "742bfca",
+    "overallStatus": "hold",
+    "owner": "codex",
+    "summary": "Presentation checklist completed for the reviewed origin/main candidate. Placeholder pixel art and animation fallback remain blockers; mixed audio is accepted for controlled internal testing."
+  },
+  "artifacts": {
+    "snapshot": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-rc-snapshot-issue-696-proof-a12008a.json",
+    "checklistMarkdown": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-rc-checklist-issue-983-presentation-742bfca.md",
+    "blockersMarkdown": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-rc-blockers-issue-983-presentation-742bfca.md",
+    "presentationSignoff": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-presentation-signoff-issue-983-presentation-742bfca.json",
+    "presentationSignoffMarkdown": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-presentation-signoff-issue-983-presentation-742bfca.md"
+  },
+  "journey": [
+    {
+      "id": "lobby-entry",
+      "title": "Lobby entry",
+      "status": "passed"
+    },
+    {
+      "id": "room-join",
+      "title": "Room join",
+      "status": "passed"
+    },
+    {
+      "id": "battle-settlement",
+      "title": "Battle settlement",
+      "status": "passed"
+    }
+  ],
+  "requiredEvidence": [
+    {
+      "id": "presentationSignoff",
+      "label": "Presentation sign-off",
+      "filled": true
+    },
+    {
+      "id": "fallbackInventory",
+      "label": "Fallback asset inventory",
+      "filled": true
+    }
+  ],
+  "review": {
+    "phase1Gate": "Phase 1 exit criterion 8: known presentation blockers must be closed or explicitly accepted.",
+    "presentationSignoff": {
+      "status": "hold",
+      "summary": "Checklist completed; placeholder art and animation fallback are blockers, while mixed audio remains an accepted controlled-test gap."
+    }
+  }
+}

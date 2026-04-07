@@ -1,0 +1,239 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-07T07:47:38.536Z",
+  "candidate": {
+    "name": "issue-983-presentation",
+    "revision": "742bfcaeb2f57148aa4733f5b686f1dec560411a",
+    "shortRevision": "742bfca",
+    "branch": "codex/issue-983-cocos-presentation-checklist",
+    "dirty": true,
+    "targetSurface": "h5"
+  },
+  "summary": {
+    "status": "fail",
+    "blockedCriteria": [
+      "2. Core automated gates are green.",
+      "3. Release snapshot status is not blocked by required failures or pending required checks.",
+      "6. Runtime observability is proven in the target environment.",
+      "7. Phase 1 data and persistence are verified on the intended storage path.",
+      "8. Known Phase 1 blockers are closed or explicitly accepted."
+    ],
+    "pendingCriteria": [],
+    "acceptedRiskCount": 0,
+    "summary": "Phase 1 exit is blocked for issue-983-presentation: 2. Core automated gates are green.; 3. Release snapshot status is not blocked by required failures or pending required checks.; 6. Runtime observability is proven in the target environment.; 7. Phase 1 data and persistence are verified on the intended storage path.; 8. Known Phase 1 blockers are closed or explicitly accepted."
+  },
+  "inputs": {
+    "reconnectSoakPath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/colyseus-reconnect-soak-summary.json",
+    "cocosBundlePath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-rc-evidence-bundle-issue-983-presentation-742bfca.json",
+    "persistencePath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/phase1-release-persistence-regression-stonewatch.json",
+    "coverageSummaryPath": "/home/gpt/project/ProjectVeil/.coverage/summary.json"
+  },
+  "phase1ExitEvidenceGate": {
+    "result": "failed",
+    "summary": "Candidate-level Phase 1 exit evidence is blocked by Reconnect soak evidence, Phase 1 persistence/content-pack validation, Release gate summary.",
+    "blockingSections": [
+      "Reconnect soak evidence",
+      "Phase 1 persistence/content-pack validation",
+      "Release gate summary"
+    ],
+    "pendingSections": [
+      "Release readiness snapshot"
+    ],
+    "acceptedRiskSections": []
+  },
+  "acceptedRisks": [],
+  "criteria": [
+    {
+      "number": 1,
+      "id": "bounded-scope",
+      "title": "Bounded scope remains intact.",
+      "status": "pass",
+      "summary": "Phase 1 scope stays anchored to the documented lobby/world/battle/settlement loop. This criterion is inferred from the current repo documentation rather than a candidate-specific automation artifact.",
+      "details": [
+        "Inference: README.md, docs/phase1-design.md, and docs/phase1-maturity-scorecard.md still describe the bounded Phase 1 loop.",
+        "targetSurface=h5"
+      ],
+      "sourceArtifacts": [
+        {
+          "label": "Repository overview",
+          "path": "/home/gpt/project/ProjectVeil/README.md"
+        },
+        {
+          "label": "Phase 1 design",
+          "path": "/home/gpt/project/ProjectVeil/docs/phase1-design.md"
+        },
+        {
+          "label": "Phase 1 maturity scorecard",
+          "path": "/home/gpt/project/ProjectVeil/docs/phase1-maturity-scorecard.md"
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "id": "core-automated-gates",
+      "title": "Core automated gates are green.",
+      "status": "fail",
+      "summary": "Release readiness snapshot is missing, so the required Phase 1 automated gate set cannot be verified.",
+      "details": [
+        "Missing release readiness snapshot input."
+      ],
+      "sourceArtifacts": []
+    },
+    {
+      "number": 3,
+      "id": "release-readiness-snapshot",
+      "title": "Release snapshot status is not blocked by required failures or pending required checks.",
+      "status": "fail",
+      "summary": "Release readiness snapshot artifact is missing, so this required exit criterion cannot be verified.",
+      "details": [
+        "snapshotStatus=missing",
+        "requiredFailed=0",
+        "requiredPending=0",
+        "freshness=unknown"
+      ],
+      "sourceArtifacts": []
+    },
+    {
+      "number": 4,
+      "id": "cocos-primary-client-evidence",
+      "title": "Cocos primary-client evidence is current.",
+      "status": "pass",
+      "summary": "Candidate-specific Cocos RC evidence is current and the linked main-journey bundle is ready for Phase 1 review.",
+      "details": [
+        "bundleStatus=hold",
+        "phase1Gate=Phase 1 exit criterion 8: known presentation blockers must be closed or explicitly accepted.",
+        "journeyPassed=3/3",
+        "requiredEvidenceFilled=2/2",
+        "freshness=fresh"
+      ],
+      "sourceArtifacts": [
+        {
+          "label": "Cocos RC bundle",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-rc-evidence-bundle-issue-983-presentation-742bfca.json"
+        },
+        {
+          "label": "Cocos RC bundle manifest",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-rc-evidence-bundle-issue-983-presentation-742bfca.json"
+        },
+        {
+          "label": "Cocos RC snapshot",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-rc-snapshot-issue-696-proof-a12008a.json"
+        },
+        {
+          "label": "Cocos RC checklist",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-rc-checklist-issue-983-presentation-742bfca.md"
+        },
+        {
+          "label": "Cocos RC blockers",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-rc-blockers-issue-983-presentation-742bfca.md"
+        },
+        {
+          "label": "Cocos presentation sign-off checklist",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-presentation-signoff-issue-983-presentation-742bfca.md"
+        },
+        {
+          "label": "Cocos presentation sign-off",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/cocos-presentation-signoff-issue-983-presentation-742bfca.json"
+        },
+        {
+          "label": "Cocos Phase 1 presentation sign-off baseline",
+          "path": "/home/gpt/project/ProjectVeil/docs/cocos-phase1-presentation-signoff.md"
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "id": "wechat-release-evidence",
+      "title": "WeChat release evidence is current when WeChat is the target surface.",
+      "status": "pass",
+      "summary": "This candidate targets H5, so WeChat-specific release evidence is not required for the Phase 1 exit call.",
+      "details": [
+        "targetSurface=h5"
+      ],
+      "sourceArtifacts": [
+        {
+          "label": "WeChat release contract",
+          "path": "/home/gpt/project/ProjectVeil/docs/wechat-minigame-release.md"
+        }
+      ]
+    },
+    {
+      "number": 6,
+      "id": "runtime-observability",
+      "title": "Runtime observability is proven in the target environment.",
+      "status": "fail",
+      "summary": "Runtime observability evidence is missing or blocking for the selected candidate revision.",
+      "details": [
+        "runtimeSource=missing",
+        "freshness=unknown",
+        "No --server-url was provided; dossier relies on packaged-artifact and reconnect-soak evidence for this target surface."
+      ],
+      "sourceArtifacts": []
+    },
+    {
+      "number": 7,
+      "id": "phase1-data-persistence",
+      "title": "Phase 1 data and persistence are verified on the intended storage path.",
+      "status": "fail",
+      "summary": "Phase 1 persistence or shipped-content evidence is missing or blocking for the selected candidate revision.",
+      "details": [
+        "summaryStatus=passed",
+        "verifiedStorage=memory",
+        "requestedStorage=auto",
+        "contentValid=true",
+        "assertions=6",
+        "mapPack=stonewatch-fork",
+        "freshness=stale"
+      ],
+      "sourceArtifacts": [
+        {
+          "label": "Phase 1 persistence/content-pack validation",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/phase1-release-persistence-regression-stonewatch.json"
+        },
+        {
+          "label": "Phase 1 persistence regression",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/phase1-release-persistence-regression-stonewatch.json"
+        }
+      ]
+    },
+    {
+      "number": 8,
+      "id": "known-blockers",
+      "title": "Known Phase 1 blockers are closed or explicitly accepted.",
+      "status": "fail",
+      "summary": "Known Phase 1 blockers remain open: Reconnect soak evidence, Phase 1 persistence/content-pack validation, Release gate summary.",
+      "details": [
+        "blockingSections=Reconnect soak evidence, Phase 1 persistence/content-pack validation, Release gate summary",
+        "pendingSections=Release readiness snapshot",
+        "acceptedRiskSections=none",
+        "acceptedRiskCount=0"
+      ],
+      "sourceArtifacts": [
+        {
+          "label": "Reconnect soak evidence",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/colyseus-reconnect-soak-summary.json"
+        },
+        {
+          "label": "Reconnect soak summary",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/colyseus-reconnect-soak-summary.json"
+        },
+        {
+          "label": "Phase 1 persistence/content-pack validation",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/phase1-release-persistence-regression-stonewatch.json"
+        },
+        {
+          "label": "Phase 1 persistence regression",
+          "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/phase1-release-persistence-regression-stonewatch.json"
+        },
+        {
+          "label": "Phase 1 maturity scorecard",
+          "path": "/home/gpt/project/ProjectVeil/docs/phase1-maturity-scorecard.md"
+        },
+        {
+          "label": "Cocos Phase 1 presentation sign-off baseline",
+          "path": "/home/gpt/project/ProjectVeil/docs/cocos-phase1-presentation-signoff.md"
+        }
+      ]
+    }
+  ]
+}
