@@ -98,6 +98,7 @@ function mapGuildError(error: unknown): { status: number; code: string; message:
   const message = error instanceof Error ? error.message : String(error);
 
   if (
+    error instanceof SyntaxError ||
     /guild_create_.*required|guild_join_player_required|guild_leave_player_required|payload_too_large|Unexpected token/.test(
       message
     )

@@ -144,3 +144,175 @@ test("guild routes support join and leave, including disband on last member leav
   const notFound = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}`);
   assert.equal(notFound.status, 404);
 });
+
+test("guild routes reject unauthorized and banned create requests", async (t) => {
+  resetGuestAuthSessions();
+  const store = createMemoryRoomSnapshotStore();
+  await store.ensurePlayerAccount({ playerId: "banned-founder", displayName: "Banned Founder" });
+  await store.savePlayerBan("banned-founder", {
+    banStatus: "temporary",
+    banReason: "Chargeback abuse",
+    banExpiry: "2026-05-05T00:00:00.000Z"
+  });
+  const port = 44100 + Math.floor(Math.random() * 1000);
+  const server = await startGuildRouteServer(store, port);
+  const bannedSession = issueGuestAuthSession({ playerId: "banned-founder", displayName: "Banned Founder" });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const unauthorized = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      name: "Nightwatch",
+      tag: "NITE"
+    })
+  });
+  const unauthorizedPayload = (await unauthorized.json()) as { error: { code: string } };
+  assert.equal(unauthorized.status, 401);
+  assert.equal(unauthorizedPayload.error.code, "unauthorized");
+
+  const banned = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bannedSession.token}`
+    },
+    body: JSON.stringify({
+      name: "Nightwatch",
+      tag: "NITE"
+    })
+  });
+  const bannedPayload = (await banned.json()) as { error: { code: string; reason: string; expiry?: string } };
+  assert.equal(banned.status, 403);
+  assert.equal(bannedPayload.error.code, "account_banned");
+  assert.equal(bannedPayload.error.reason, "Chargeback abuse");
+  assert.equal(bannedPayload.error.expiry, "2026-05-05T00:00:00.000Z");
+});
+
+test("guild routes map malformed payloads and store outages to actionable errors", async (t) => {
+  resetGuestAuthSessions();
+  const store = createMemoryRoomSnapshotStore();
+  const port = 44200 + Math.floor(Math.random() * 1000);
+  const server = await startGuildRouteServer(store, port);
+  const founderSession = issueGuestAuthSession({ playerId: "founder-invalid", displayName: "Founder Invalid" });
+
+  const unavailablePort = 44300 + Math.floor(Math.random() * 1000);
+  const unavailableServer = await startGuildRouteServer(null, unavailablePort);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+    await unavailableServer.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const malformed = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: "{"
+  });
+  const malformedPayload = (await malformed.json()) as { error: { code: string; message: string } };
+  assert.equal(malformed.status, 400);
+  assert.equal(malformedPayload.error.code, "invalid_request");
+  assert.equal(typeof malformedPayload.error.message, "string");
+  assert.ok(malformedPayload.error.message.length > 0);
+
+  const unavailable = await fetch(`http://127.0.0.1:${unavailablePort}/api/guilds`);
+  const unavailablePayload = (await unavailable.json()) as { error: { code: string } };
+  assert.equal(unavailable.status, 503);
+  assert.equal(unavailablePayload.error.code, "guild_store_unavailable");
+});
+
+test("guild routes reject duplicate tags, invalid joins, and invalid leaves", async (t) => {
+  resetGuestAuthSessions();
+  const store = createMemoryRoomSnapshotStore();
+  const port = 44400 + Math.floor(Math.random() * 1000);
+  const server = await startGuildRouteServer(store, port);
+  const founderSession = issueGuestAuthSession({ playerId: "founder-dup", displayName: "Founder Dup" });
+  const secondFounderSession = issueGuestAuthSession({ playerId: "founder-other", displayName: "Founder Other" });
+  const recruitSession = issueGuestAuthSession({ playerId: "recruit-dup", displayName: "Recruit Dup" });
+  const outsiderSession = issueGuestAuthSession({ playerId: "outsider-dup", displayName: "Outsider Dup" });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const createdOne = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({
+      name: "Nightwatch",
+      tag: "nite"
+    })
+  });
+  const createdOnePayload = (await createdOne.json()) as { guild: { guildId: string } };
+  assert.equal(createdOne.status, 201);
+
+  const duplicateTag = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${secondFounderSession.token}`
+    },
+    body: JSON.stringify({
+      name: "Nightwatch Again",
+      tag: "NITE"
+    })
+  });
+  const duplicateTagPayload = (await duplicateTag.json()) as { error: { code: string } };
+  assert.equal(duplicateTag.status, 409);
+  assert.equal(duplicateTagPayload.error.code, "guild_conflict");
+
+  const joinMissingGuild = await fetch(`http://127.0.0.1:${port}/api/guilds/missing-guild/join`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${recruitSession.token}`
+    }
+  });
+  const joinMissingGuildPayload = (await joinMissingGuild.json()) as { error: { code: string } };
+  assert.equal(joinMissingGuild.status, 404);
+  assert.equal(joinMissingGuildPayload.error.code, "guild_not_found");
+
+  const joined = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdOnePayload.guild.guildId}/join`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${recruitSession.token}`
+    }
+  });
+  assert.equal(joined.status, 200);
+
+  const joinAgain = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdOnePayload.guild.guildId}/join`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${recruitSession.token}`
+    }
+  });
+  const joinAgainPayload = (await joinAgain.json()) as { error: { code: string } };
+  assert.equal(joinAgain.status, 409);
+  assert.equal(joinAgainPayload.error.code, "guild_conflict");
+
+  const outsiderLeave = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdOnePayload.guild.guildId}/leave`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${outsiderSession.token}`
+    }
+  });
+  const outsiderLeavePayload = (await outsiderLeave.json()) as { error: { code: string } };
+  assert.equal(outsiderLeave.status, 409);
+  assert.equal(outsiderLeavePayload.error.code, "guild_membership_invalid");
+});

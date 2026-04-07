@@ -261,6 +261,123 @@ test("wechat pay create route creates a pending order and returns JSAPI payment 
   });
 });
 
+test("wechat pay create route rejects missing WeChat binding and malformed product requests", async () => {
+  const app = new TestApp();
+  const store = new MemoryRoomSnapshotStore();
+  const runtimeConfig = createWechatPayConfig();
+  registerWechatPayRoutes(app as never, store, {
+    products: TEST_PRODUCTS,
+    runtimeConfig
+  });
+  const session = issueWechatSession();
+
+  const missingOpenId = await app.invoke("/api/payments/wechat/create", {
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "gem-pack-premium"
+    })
+  });
+  const missingOpenIdPayload = missingOpenId.json as { error: { code: string } };
+  assert.equal(missingOpenId.statusCode, 400);
+  assert.equal(missingOpenIdPayload.error.code, "wechat_open_id_required");
+
+  const invalidProduct = await app.invoke("/api/payments/wechat/create", {
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "missing-product"
+    })
+  });
+  const invalidProductPayload = invalidProduct.json as { error: { message: string } };
+  assert.equal(invalidProduct.statusCode, 400);
+  assert.equal(invalidProductPayload.error.message, "product_not_found");
+
+  const malformedJson = await app.invoke("/api/payments/wechat/create", {
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`
+    },
+    body: "{"
+  });
+  assert.equal(malformedJson.statusCode, 400);
+});
+
+test("wechat pay create route surfaces missing configuration and upstream order creation failures", async () => {
+  const session = issueWechatSession();
+
+  const configMissingApp = new TestApp();
+  const verifiedStore = await createVerifiedTestStore();
+  registerWechatPayRoutes(configMissingApp as never, verifiedStore, {
+    products: TEST_PRODUCTS,
+    runtimeConfig: null
+  });
+  const missingConfig = await configMissingApp.invoke("/api/payments/wechat/create", {
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "gem-pack-premium"
+    })
+  });
+  const missingConfigPayload = missingConfig.json as { error: { code: string } };
+  assert.equal(missingConfig.statusCode, 503);
+  assert.equal(missingConfigPayload.error.code, "wechat_pay_not_configured");
+
+  const upstreamFailureApp = new TestApp();
+  registerWechatPayRoutes(upstreamFailureApp as never, verifiedStore, {
+    products: TEST_PRODUCTS,
+    runtimeConfig: createWechatPayConfig(),
+    fetchImpl: async () =>
+      new Response("gateway exploded", {
+        status: 502
+      })
+  });
+  const upstreamFailure = await upstreamFailureApp.invoke("/api/payments/wechat/create", {
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "gem-pack-premium"
+    })
+  });
+  const upstreamFailurePayload = upstreamFailure.json as { error: { code: string; message: string } };
+  assert.equal(upstreamFailure.statusCode, 502);
+  assert.equal(upstreamFailurePayload.error.code, "wechat_order_create_failed");
+  assert.equal(upstreamFailurePayload.error.message, "gateway exploded");
+
+  const invalidResponseApp = new TestApp();
+  registerWechatPayRoutes(invalidResponseApp as never, verifiedStore, {
+    products: TEST_PRODUCTS,
+    runtimeConfig: createWechatPayConfig(),
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ prepay_id: " " }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      })
+  });
+  const invalidResponse = await invalidResponseApp.invoke("/api/payments/wechat/create", {
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "gem-pack-premium"
+    })
+  });
+  const invalidResponsePayload = invalidResponse.json as { error: { code: string } };
+  assert.equal(invalidResponse.statusCode, 502);
+  assert.equal(invalidResponsePayload.error.code, "wechat_order_create_invalid_response");
+});
+
 test("wechat pay verify route grants a successful verified payment and stores the receipt", async () => {
   const app = new TestApp();
   const store = await createVerifiedTestStore();
@@ -467,6 +584,89 @@ test("wechat pay verify route rejects payer openid mismatches without granting r
   assert.equal(receipt, null);
 });
 
+test("wechat pay verify route validates order ownership, player bindings, and runtime config", async () => {
+  const session = issueWechatSession();
+
+  const missingConfigApp = new TestApp();
+  const readyStore = await createVerifiedTestStore();
+  registerWechatPayRoutes(missingConfigApp as never, readyStore, {
+    products: TEST_PRODUCTS,
+    runtimeConfig: null
+  });
+  const missingConfig = await missingConfigApp.invoke("/api/payments/wechat/verify", {
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      orderId: "wechat-order-1"
+    })
+  });
+  const missingConfigPayload = missingConfig.json as { error: { code: string } };
+  assert.equal(missingConfig.statusCode, 503);
+  assert.equal(missingConfigPayload.error.code, "wechat_pay_not_configured");
+
+  const runtimeConfig = createWechatPayConfig();
+  const invalidOrderApp = new TestApp();
+  registerWechatPayRoutes(invalidOrderApp as never, readyStore, {
+    products: TEST_PRODUCTS,
+    runtimeConfig,
+    fetchImpl: buildVerifyFetch({})
+  });
+  const invalidOrder = await invalidOrderApp.invoke("/api/payments/wechat/verify", {
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({})
+  });
+  const invalidOrderPayload = invalidOrder.json as { error: { code: string } };
+  assert.equal(invalidOrder.statusCode, 400);
+  assert.equal(invalidOrderPayload.error.code, "invalid_order_id");
+
+  const notFound = await invalidOrderApp.invoke("/api/payments/wechat/verify", {
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      orderId: "missing-order"
+    })
+  });
+  const notFoundPayload = notFound.json as { error: { code: string } };
+  assert.equal(notFound.statusCode, 404);
+  assert.equal(notFoundPayload.error.code, "payment_order_not_found");
+
+  const noBindingApp = new TestApp();
+  const noBindingStore = new MemoryRoomSnapshotStore();
+  const order = await noBindingStore.createPaymentOrder({
+    orderId: "wechat-order-no-openid",
+    playerId: "wechat-player",
+    productId: "gem-pack-premium",
+    amount: 600,
+    gemAmount: 120
+  });
+  registerWechatPayRoutes(noBindingApp as never, noBindingStore, {
+    products: TEST_PRODUCTS,
+    runtimeConfig,
+    fetchImpl: buildVerifyFetch({
+      out_trade_no: order.orderId
+    })
+  });
+  const noBinding = await noBindingApp.invoke("/api/payments/wechat/verify", {
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      orderId: order.orderId
+    })
+  });
+  const noBindingPayload = noBinding.json as { error: { code: string } };
+  assert.equal(noBinding.statusCode, 400);
+  assert.equal(noBindingPayload.error.code, "wechat_open_id_required");
+});
+
 test("wechat pay callback verifies, credits once, and ignores duplicate notifications", async () => {
   const app = new TestApp();
   const store = await createVerifiedTestStore();
@@ -639,4 +839,274 @@ test("wechat pay callback rejects invalid signatures", async () => {
   assert.equal(response.statusCode, 401);
   assert.equal(payload.code, "FAIL");
   assert.match(payload.message, /signature verification failed/);
+});
+
+test("wechat pay callback rejects unsupported trade states", async () => {
+  const store = new MemoryRoomSnapshotStore();
+  const runtimeConfig = createWechatPayConfig();
+  const callbackApp = new TestApp();
+  registerWechatPayRoutes(callbackApp as never, store, {
+    products: TEST_PRODUCTS,
+    runtimeConfig,
+    fetchImpl: buildVerifyFetch({})
+  });
+
+  const unsupportedTradeStateTransaction = {
+    appid: runtimeConfig.appId,
+    mchid: runtimeConfig.merchantId,
+    out_trade_no: "wechat-order-unsupported",
+    transaction_id: "wechat-transaction-unsupported",
+    trade_state: "USERPAYING",
+    amount: {
+      total: 600
+    },
+    payer: {
+      openid: "wx-openid-player"
+    }
+  };
+  const unsupportedTradeStateResource = encryptWechatCallbackResourceForTest(
+    runtimeConfig.apiV3Key,
+    JSON.stringify(unsupportedTradeStateTransaction),
+    "callback-nonce-unsupported"
+  );
+  const unsupportedTradeStateBody = JSON.stringify({
+    id: "evt-unsupported",
+    event_type: "TRANSACTION.SUCCESS",
+    resource_type: "encrypt-resource",
+    resource: unsupportedTradeStateResource
+  });
+  const unsupportedTradeStateTimestamp = "1712197202";
+  const unsupportedTradeStateNonce = "signature-nonce-unsupported";
+  const unsupportedTradeStateSignature = signWechatCallbackForTest(
+    runtimeConfig.platformPrivateKey,
+    unsupportedTradeStateTimestamp,
+    unsupportedTradeStateNonce,
+    unsupportedTradeStateBody
+  );
+  const unsupportedTradeState = await callbackApp.invoke("/api/payments/wechat/callback", {
+    headers: {
+      "content-type": "application/json",
+      "wechatpay-timestamp": unsupportedTradeStateTimestamp,
+      "wechatpay-nonce": unsupportedTradeStateNonce,
+      "wechatpay-serial": runtimeConfig.platformCertificateSerial,
+      "wechatpay-signature": unsupportedTradeStateSignature
+    },
+    body: unsupportedTradeStateBody
+  });
+  const unsupportedTradeStatePayload = unsupportedTradeState.json as { message: string };
+  assert.equal(unsupportedTradeState.statusCode, 400);
+  assert.equal(unsupportedTradeStatePayload.message, "unsupported trade state");
+});
+
+test("wechat pay callback rejects merchant mismatches", async () => {
+  const store = new MemoryRoomSnapshotStore();
+  const runtimeConfig = createWechatPayConfig();
+  const callbackApp = new TestApp();
+  registerWechatPayRoutes(callbackApp as never, store, {
+    products: TEST_PRODUCTS,
+    runtimeConfig,
+    fetchImpl: buildVerifyFetch({})
+  });
+
+  const merchantMismatchTransaction = {
+    appid: "wrong-app",
+    mchid: runtimeConfig.merchantId,
+    out_trade_no: "wechat-order-mismatch",
+    transaction_id: "wechat-transaction-mismatch",
+    trade_state: "SUCCESS",
+    amount: {
+      total: 600
+    },
+    payer: {
+      openid: "wx-openid-player"
+    }
+  };
+  const merchantMismatchResource = encryptWechatCallbackResourceForTest(
+    runtimeConfig.apiV3Key,
+    JSON.stringify(merchantMismatchTransaction),
+    "callback-nonce-merchant"
+  );
+  const merchantMismatchBody = JSON.stringify({
+    id: "evt-merchant",
+    event_type: "TRANSACTION.SUCCESS",
+    resource_type: "encrypt-resource",
+    resource: merchantMismatchResource
+  });
+  const merchantMismatchTimestamp = "1712197203";
+  const merchantMismatchNonce = "signature-nonce-merchant";
+  const merchantMismatchSignature = signWechatCallbackForTest(
+    runtimeConfig.platformPrivateKey,
+    merchantMismatchTimestamp,
+    merchantMismatchNonce,
+    merchantMismatchBody
+  );
+  const merchantMismatch = await callbackApp.invoke("/api/payments/wechat/callback", {
+    headers: {
+      "content-type": "application/json",
+      "wechatpay-timestamp": merchantMismatchTimestamp,
+      "wechatpay-nonce": merchantMismatchNonce,
+      "wechatpay-serial": runtimeConfig.platformCertificateSerial,
+      "wechatpay-signature": merchantMismatchSignature
+    },
+    body: merchantMismatchBody
+  });
+  const merchantMismatchPayload = merchantMismatch.json as { message: string };
+  assert.equal(merchantMismatch.statusCode, 400);
+  assert.equal(merchantMismatchPayload.message, "merchant validation failed");
+});
+
+test("wechat pay callback rejects missing order ids, missing orders, and missing payer bindings", async () => {
+  const runtimeConfig = createWechatPayConfig();
+  const callbackApp = new TestApp();
+  const store = new MemoryRoomSnapshotStore();
+  registerWechatPayRoutes(callbackApp as never, store, {
+    products: TEST_PRODUCTS,
+    runtimeConfig,
+    fetchImpl: buildVerifyFetch({})
+  });
+
+  const missingOrderIdTransaction = {
+    appid: runtimeConfig.appId,
+    mchid: runtimeConfig.merchantId,
+    out_trade_no: " ",
+    transaction_id: "wechat-transaction-no-order",
+    trade_state: "SUCCESS",
+    amount: {
+      total: 600
+    },
+    payer: {
+      openid: "wx-openid-player"
+    }
+  };
+  const missingOrderIdResource = encryptWechatCallbackResourceForTest(
+    runtimeConfig.apiV3Key,
+    JSON.stringify(missingOrderIdTransaction),
+    "callback-nonce-order-id"
+  );
+  const missingOrderIdBody = JSON.stringify({
+    id: "evt-missing-order-id",
+    event_type: "TRANSACTION.SUCCESS",
+    resource_type: "encrypt-resource",
+    resource: missingOrderIdResource
+  });
+  const missingOrderIdTimestamp = "1712197204";
+  const missingOrderIdNonce = "signature-nonce-order-id";
+  const missingOrderIdSignature = signWechatCallbackForTest(
+    runtimeConfig.platformPrivateKey,
+    missingOrderIdTimestamp,
+    missingOrderIdNonce,
+    missingOrderIdBody
+  );
+  const missingOrderId = await callbackApp.invoke("/api/payments/wechat/callback", {
+    headers: {
+      "content-type": "application/json",
+      "wechatpay-timestamp": missingOrderIdTimestamp,
+      "wechatpay-nonce": missingOrderIdNonce,
+      "wechatpay-serial": runtimeConfig.platformCertificateSerial,
+      "wechatpay-signature": missingOrderIdSignature
+    },
+    body: missingOrderIdBody
+  });
+  const missingOrderIdPayload = missingOrderId.json as { message: string };
+  assert.equal(missingOrderId.statusCode, 400);
+  assert.equal(missingOrderIdPayload.message, "order identifiers are missing");
+
+  const missingOrderTransaction = {
+    appid: runtimeConfig.appId,
+    mchid: runtimeConfig.merchantId,
+    out_trade_no: "wechat-order-missing",
+    transaction_id: "wechat-transaction-missing",
+    trade_state: "SUCCESS",
+    amount: {
+      total: 600
+    },
+    payer: {
+      openid: "wx-openid-player"
+    }
+  };
+  const missingOrderResource = encryptWechatCallbackResourceForTest(
+    runtimeConfig.apiV3Key,
+    JSON.stringify(missingOrderTransaction),
+    "callback-nonce-missing-order"
+  );
+  const missingOrderBody = JSON.stringify({
+    id: "evt-missing-order",
+    event_type: "TRANSACTION.SUCCESS",
+    resource_type: "encrypt-resource",
+    resource: missingOrderResource
+  });
+  const missingOrderTimestamp = "1712197205";
+  const missingOrderNonce = "signature-nonce-missing-order";
+  const missingOrderSignature = signWechatCallbackForTest(
+    runtimeConfig.platformPrivateKey,
+    missingOrderTimestamp,
+    missingOrderNonce,
+    missingOrderBody
+  );
+  const missingOrder = await callbackApp.invoke("/api/payments/wechat/callback", {
+    headers: {
+      "content-type": "application/json",
+      "wechatpay-timestamp": missingOrderTimestamp,
+      "wechatpay-nonce": missingOrderNonce,
+      "wechatpay-serial": runtimeConfig.platformCertificateSerial,
+      "wechatpay-signature": missingOrderSignature
+    },
+    body: missingOrderBody
+  });
+  const missingOrderPayload = missingOrder.json as { message: string };
+  assert.equal(missingOrder.statusCode, 404);
+  assert.equal(missingOrderPayload.message, "payment order not found");
+
+  const orderWithoutBinding = await store.createPaymentOrder({
+    orderId: "wechat-order-no-binding",
+    playerId: "wechat-player",
+    productId: "gem-pack-premium",
+    amount: 600,
+    gemAmount: 120
+  });
+  const missingBindingTransaction = {
+    appid: runtimeConfig.appId,
+    mchid: runtimeConfig.merchantId,
+    out_trade_no: orderWithoutBinding.orderId,
+    transaction_id: "wechat-transaction-no-binding",
+    trade_state: "SUCCESS",
+    amount: {
+      total: 600
+    },
+    payer: {
+      openid: "wx-openid-player"
+    }
+  };
+  const missingBindingResource = encryptWechatCallbackResourceForTest(
+    runtimeConfig.apiV3Key,
+    JSON.stringify(missingBindingTransaction),
+    "callback-nonce-no-binding"
+  );
+  const missingBindingBody = JSON.stringify({
+    id: "evt-no-binding",
+    event_type: "TRANSACTION.SUCCESS",
+    resource_type: "encrypt-resource",
+    resource: missingBindingResource
+  });
+  const missingBindingTimestamp = "1712197206";
+  const missingBindingNonce = "signature-nonce-no-binding";
+  const missingBindingSignature = signWechatCallbackForTest(
+    runtimeConfig.platformPrivateKey,
+    missingBindingTimestamp,
+    missingBindingNonce,
+    missingBindingBody
+  );
+  const missingBinding = await callbackApp.invoke("/api/payments/wechat/callback", {
+    headers: {
+      "content-type": "application/json",
+      "wechatpay-timestamp": missingBindingTimestamp,
+      "wechatpay-nonce": missingBindingNonce,
+      "wechatpay-serial": runtimeConfig.platformCertificateSerial,
+      "wechatpay-signature": missingBindingSignature
+    },
+    body: missingBindingBody
+  });
+  const missingBindingPayload = missingBinding.json as { message: string };
+  assert.equal(missingBinding.statusCode, 400);
+  assert.equal(missingBindingPayload.message, "payer validation failed");
 });
