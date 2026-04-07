@@ -1,0 +1,375 @@
+{
+  "missions": [
+    {
+      "id": "chapter5-crownless-watch",
+      "chapterId": "chapter5",
+      "order": 28,
+      "mapId": "frontier-basin",
+      "name": "Crownless Watch",
+      "description": "Push beyond the shattered throne and secure the watch posts where loyalist officers are trying to re-form the court.",
+      "recommendedHeroLevel": 26,
+      "enemyArmyTemplateId": "crown_field_chaplain",
+      "enemyArmyCount": 64,
+      "enemyStatMultiplier": 4.98,
+      "introDialogue": [
+        {
+          "id": "c5m1-intro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Breaking the throne was the easy part. What follows a broken throne is every opportunist with a banner.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c5m1-outro-1",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "The watch posts are ours. The loyalists are organized, but not organized enough.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c5m1-secure-watchfires",
+          "description": "Secure the crownless watchfires",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 3
+        },
+        {
+          "id": "c5m1-break-rally",
+          "description": "Break the loyalist rally around the basin road",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 70, "resources": { "gold": 1200, "wood": 26, "ore": 48 } }
+    },
+    {
+      "id": "chapter5-ember-ledger",
+      "chapterId": "chapter5",
+      "order": 29,
+      "mapId": "highland-reach",
+      "name": "Ember Ledger",
+      "description": "Seize the court's tax ledgers before fleeing quartermasters can buy a second war with hidden stockpiles.",
+      "recommendedHeroLevel": 27,
+      "enemyArmyTemplateId": "crown_crossbowman",
+      "enemyArmyCount": 66,
+      "enemyStatMultiplier": 5.14,
+      "unlockMissionId": "chapter5-crownless-watch",
+      "introDialogue": [
+        {
+          "id": "c5m2-intro-1",
+          "speakerId": "quartermaster-ren",
+          "speakerName": "Quartermaster Ren",
+          "text": "A kingdom can lose its ruler and still keep its books. Burn the wrong one and we lose the grain with the bribes.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c5m2-outro-1",
+          "speakerId": "quartermaster-ren",
+          "speakerName": "Quartermaster Ren",
+          "text": "Ledgers secured. I dislike the parts where their corruption is more organized than our repair work.",
+          "mood": "grim"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c5m2-secure-ledgers",
+          "description": "Secure the ember ledgers before they burn",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 2
+        },
+        {
+          "id": "c5m2-hold-granary",
+          "description": "Hold the granary square against the quartermaster guard",
+          "kind": "hold",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 72, "resources": { "gold": 1240, "wood": 36, "ore": 50 } }
+    },
+    {
+      "id": "chapter5-shroud-harbor",
+      "chapterId": "chapter5",
+      "order": 30,
+      "mapId": "murkveil-delta",
+      "name": "Shroud Harbor",
+      "description": "Clear the delta harbor where court remnants are funneling officers, relics, and prisoners into the fog.",
+      "recommendedHeroLevel": 28,
+      "enemyArmyTemplateId": "shadow_hexer",
+      "enemyArmyCount": 68,
+      "enemyStatMultiplier": 5.3,
+      "unlockMissionId": "chapter5-ember-ledger",
+      "introDialogue": [
+        {
+          "id": "c5m3-intro-1",
+          "speakerId": "scout-serin",
+          "speakerName": "Scout Serin",
+          "text": "They are not retreating. They are selecting what survives the fall and hiding it in the tide fog.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c5m3-outro-1",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "The fog here carries commands, not weather. Someone farther inland is still giving orders.",
+          "mood": "urgent"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c5m3-clear-piers",
+          "description": "Clear the shrouded harbor piers",
+          "kind": "defeat",
+          "gate": "start"
+        },
+        {
+          "id": "c5m3-free-prisoners",
+          "description": "Free the prisoners marked for transfer",
+          "kind": "secure",
+          "gate": "mid",
+          "targetCount": 3
+        }
+      ],
+      "reward": { "gems": 74, "resources": { "gold": 1280, "ore": 52 } }
+    },
+    {
+      "id": "chapter5-iron-oathbreakers",
+      "chapterId": "chapter5",
+      "order": 31,
+      "mapId": "ironpass-gorge",
+      "name": "Iron Oathbreakers",
+      "description": "Destroy the forge lines arming oathbreaker companies that refuse the war's end unless forced to see it.",
+      "recommendedHeroLevel": 29,
+      "enemyArmyTemplateId": "iron_walker",
+      "enemyArmyCount": 70,
+      "enemyStatMultiplier": 5.46,
+      "unlockMissionId": "chapter5-shroud-harbor",
+      "introDialogue": [
+        {
+          "id": "c5m4-intro-1",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "They swore to the court, then to the regent, and now to whoever still pays in steel. Loyal men are easier to mourn than hired ones.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c5m4-outro-1",
+          "speakerId": "guildmaster-oren",
+          "speakerName": "Guildmaster Oren",
+          "text": "Oathbreakers routed. Their forges can either heat homes or cool forever.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c5m4-break-anvils",
+          "description": "Break the oathbreaker forge anvils",
+          "kind": "secure",
+          "gate": "start",
+          "targetCount": 2
+        },
+        {
+          "id": "c5m4-clear-companies",
+          "description": "Clear the oathbreaker companies in the gorge",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 76, "resources": { "gold": 1320, "wood": 24, "ore": 56 } }
+    },
+    {
+      "id": "chapter5-rift-cartographers",
+      "chapterId": "chapter5",
+      "order": 32,
+      "mapId": "splitrock-canyon",
+      "name": "Rift Cartographers",
+      "description": "Escort survey crews into the faulted passes and recover the maps hiding the court's evacuation corridors.",
+      "recommendedHeroLevel": 30,
+      "enemyArmyTemplateId": "wild_hawk_rider",
+      "enemyArmyCount": 72,
+      "enemyStatMultiplier": 5.62,
+      "unlockMissionId": "chapter5-iron-oathbreakers",
+      "introDialogue": [
+        {
+          "id": "c5m5-intro-1",
+          "speakerId": "engineer-toma",
+          "speakerName": "Engineer Toma",
+          "text": "If we do not map the rifts, we inherit every ambush route the court built for its own escape.",
+          "mood": "urgent"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c5m5-outro-1",
+          "speakerId": "engineer-toma",
+          "speakerName": "Engineer Toma",
+          "text": "Routes confirmed. The last safe road they thought they owned is now just another road.",
+          "mood": "hopeful"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c5m5-escort-surveyors",
+          "description": "Escort the surveyors through the rift line",
+          "kind": "escort",
+          "gate": "start"
+        },
+        {
+          "id": "c5m5-recover-maps",
+          "description": "Recover the sealed evacuation maps",
+          "kind": "secure",
+          "gate": "mid",
+          "targetCount": 2
+        }
+      ],
+      "reward": { "gems": 78, "resources": { "gold": 1360, "wood": 30, "ore": 58 } }
+    },
+    {
+      "id": "chapter5-black-banner-keep",
+      "chapterId": "chapter5",
+      "order": 33,
+      "mapId": "stonewatch-fork",
+      "name": "Black Banner Keep",
+      "description": "Storm the keep where the surviving nobles are gathering black-banner companies for a counterclaim.",
+      "recommendedHeroLevel": 31,
+      "enemyArmyTemplateId": "crown_heavy_cavalry",
+      "enemyArmyCount": 74,
+      "enemyStatMultiplier": 5.78,
+      "unlockMissionId": "chapter5-rift-cartographers",
+      "introDialogue": [
+        {
+          "id": "c5m6-intro-1",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "A dead court breeds live pretenders. Black banners mean they have already chosen who gets fed to the rumor mill first.",
+          "mood": "grim"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c5m6-outro-1",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "The keep is open. Whoever still thinks the throne can be reassembled is out of excuses and walls.",
+          "mood": "defiant"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c5m6-breach-keep",
+          "description": "Breach Black Banner Keep",
+          "kind": "secure",
+          "gate": "start"
+        },
+        {
+          "id": "c5m6-break-cavalry",
+          "description": "Break the black-banner cavalry reserve",
+          "kind": "defeat",
+          "gate": "mid"
+        }
+      ],
+      "reward": { "gems": 80, "resources": { "gold": 1400, "ore": 60 } }
+    },
+    {
+      "id": "chapter5-ashen-regency",
+      "chapterId": "chapter5",
+      "order": 34,
+      "mapId": "ashpeak-ascent",
+      "name": "Ashen Regency",
+      "description": "Defeat the regent of the surviving loyalist council before the court's remnants can crown a war of succession.",
+      "recommendedHeroLevel": 32,
+      "enemyArmyTemplateId": "shadow_wraith",
+      "enemyArmyCount": 78,
+      "enemyStatMultiplier": 6.02,
+      "bossEncounterName": "Chancellor Morvane",
+      "bossTemplateId": "boss-shadow-warden",
+      "unlockMissionId": "chapter5-black-banner-keep",
+      "introDialogue": [
+        {
+          "id": "c5m7-intro-1",
+          "speakerId": "chancellor-morvane",
+          "speakerName": "Chancellor Morvane",
+          "text": "You broke a throne and mistook collapse for victory. Power is a habit, and habits outlive furniture.",
+          "mood": "defiant"
+        },
+        {
+          "id": "c5m7-intro-2",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Then let us correct the habit before it learns our names.",
+          "mood": "grim"
+        }
+      ],
+      "midDialogue": [
+        {
+          "id": "c5m7-mid-1",
+          "speakerId": "chancellor-morvane",
+          "speakerName": "Chancellor Morvane",
+          "text": "The court does not need a sovereign. It only needs enough frightened people to believe one is coming.",
+          "mood": "grim"
+        },
+        {
+          "id": "c5m7-mid-2",
+          "speakerId": "seer-elan",
+          "speakerName": "Seer Elan",
+          "text": "His ward lattice is borrowing strength from the old regency seals. Tear the marks down now.",
+          "mood": "urgent"
+        },
+        {
+          "id": "c5m7-mid-3",
+          "speakerId": "warden-hale",
+          "speakerName": "Warden Hale",
+          "text": "Then we break the story first and the man second.",
+          "mood": "defiant"
+        }
+      ],
+      "outroDialogue": [
+        {
+          "id": "c5m7-outro-1",
+          "speakerId": "narrator",
+          "speakerName": "Narrator",
+          "text": "Morvane falls across the cracked regency dais, and the last organized claim to the court scatters into smoke and ash.",
+          "mood": "hopeful"
+        },
+        {
+          "id": "c5m7-outro-2",
+          "speakerId": "marshal-lyra",
+          "speakerName": "Marshal Lyra",
+          "text": "Chapter 6 begins where ambition ends. Now we hunt the machine that taught all of them how to survive defeat.",
+          "mood": "grim"
+        }
+      ],
+      "objectives": [
+        {
+          "id": "c5m7-break-regency-seals",
+          "description": "Break the regency seals around Chancellor Morvane",
+          "kind": "secure",
+          "gate": "start"
+        },
+        {
+          "id": "c5m7-hold-dais",
+          "description": "Hold the regency dais while the lattice collapses",
+          "kind": "hold",
+          "gate": "mid"
+        },
+        {
+          "id": "c5m7-defeat-morvane",
+          "description": "Defeat Chancellor Morvane",
+          "kind": "defeat",
+          "gate": "end"
+        }
+      ],
+      "reward": { "gems": 92, "resources": { "gold": 1560, "ore": 66 }, "cosmeticId": "recolor-crownless-vanguard" }
+    }
+  ]
+}

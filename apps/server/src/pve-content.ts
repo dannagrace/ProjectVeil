@@ -3,6 +3,8 @@ import campaignDocument from "../../../configs/campaign-chapter1.json";
 import campaignChapter2Document from "../../../configs/campaign-chapter2.json";
 import campaignChapter3Document from "../../../configs/campaign-chapter3.json";
 import campaignChapter4Document from "../../../configs/campaign-chapter4.json";
+import campaignChapter5Document from "../../../configs/campaign-chapter5.json";
+import campaignChapter6Document from "../../../configs/campaign-chapter6.json";
 import dailyDungeonsDocument from "../../../configs/daily-dungeons.json";
 import type {
   CampaignMission,
@@ -21,6 +23,7 @@ import type {
 } from "../../../packages/shared/src/index";
 import {
   getDefaultBossEncounterTemplateCatalog,
+  getDivisionLabel,
   getRankDivisionIndex,
   resolveCosmeticCatalog,
   validateDailyDungeonConfigDocument
@@ -70,18 +73,30 @@ const DEFAULT_CAMPAIGN_DOCUMENTS: CampaignConfigDocument[] = [
   campaignDocument as CampaignConfigDocument,
   campaignChapter2Document as CampaignConfigDocument,
   campaignChapter3Document as CampaignConfigDocument,
-  campaignChapter4Document as CampaignConfigDocument
+  campaignChapter4Document as CampaignConfigDocument,
+  campaignChapter5Document as CampaignConfigDocument,
+  campaignChapter6Document as CampaignConfigDocument
 ];
 
 const BASIC_CAMPAIGN_ENEMY_TEMPLATES = new Set(["wolf_pack", "hero_guard_basic"]);
+const CHAPTER_SEQUENCE = ["chapter1", "chapter2", "chapter3", "chapter4", "chapter5", "chapter6"] as const;
 const CHAPTER_FINAL_MISSION_IDS: Record<string, string> = {
   chapter1: "chapter1-defend-bridge",
   chapter2: "chapter2-break-the-ring",
   chapter3: "chapter3-tempest-crown",
-  chapter4: "chapter4-veilfall-throne"
+  chapter4: "chapter4-veilfall-throne",
+  chapter5: "chapter5-ashen-regency",
+  chapter6: "chapter6-blackgate-dawn"
+};
+const CHAPTER_MINIMUM_HERO_LEVEL: Partial<Record<string, number>> = {
+  chapter3: 15,
+  chapter5: 22,
+  chapter6: 28
 };
 const CHAPTER_MINIMUM_RANK: Partial<Record<string, RankDivisionId>> = {
-  chapter4: "silver_i"
+  chapter4: "silver_i",
+  chapter5: "gold_i",
+  chapter6: "platinum_i"
 };
 
 function resolveCampaignDocuments(document: CampaignConfigDocument | CampaignConfigDocument[]): CampaignConfigDocument[] {
@@ -283,7 +298,7 @@ export function resolveCampaignConfig(
   for (const mission of missions) {
     missionsByChapter.set(mission.chapterId, [...(missionsByChapter.get(mission.chapterId) ?? []), mission]);
   }
-  for (const chapterId of ["chapter2", "chapter3", "chapter4"]) {
+  for (const chapterId of ["chapter2", "chapter3", "chapter4", "chapter5", "chapter6"]) {
     const chapterMissions = missionsByChapter.get(chapterId) ?? [];
     if (chapterMissions.length < 6 || chapterMissions.length > 8) {
       throw new Error(`${chapterId} must define 6-8 missions`);
@@ -328,14 +343,9 @@ function getChapterUnlockRequirements(
     });
   }
 
-  const previousChapterFinalMissionId =
-    mission.chapterId === "chapter2"
-      ? CHAPTER_FINAL_MISSION_IDS.chapter1
-      : mission.chapterId === "chapter3"
-        ? CHAPTER_FINAL_MISSION_IDS.chapter2
-        : mission.chapterId === "chapter4"
-          ? CHAPTER_FINAL_MISSION_IDS.chapter3
-          : undefined;
+  const chapterIndex = CHAPTER_SEQUENCE.indexOf(mission.chapterId as (typeof CHAPTER_SEQUENCE)[number]);
+  const previousChapterId = chapterIndex > 0 ? CHAPTER_SEQUENCE[chapterIndex - 1] : undefined;
+  const previousChapterFinalMissionId = previousChapterId ? CHAPTER_FINAL_MISSION_IDS[previousChapterId] : undefined;
   if (previousChapterFinalMissionId) {
     requirements.push({
       type: "mission_complete",
@@ -346,12 +356,13 @@ function getChapterUnlockRequirements(
     });
   }
 
-  if (mission.chapterId === "chapter3") {
+  const minimumHeroLevel = CHAPTER_MINIMUM_HERO_LEVEL[mission.chapterId];
+  if (minimumHeroLevel) {
     requirements.push({
       type: "hero_level",
-      description: "Reach hero level 15.",
-      satisfied: Math.max(1, Math.floor(accessContext?.highestHeroLevel ?? 1)) >= 15,
-      minimumHeroLevel: 15,
+      description: `Reach hero level ${minimumHeroLevel}.`,
+      satisfied: Math.max(1, Math.floor(accessContext?.highestHeroLevel ?? 1)) >= minimumHeroLevel,
+      minimumHeroLevel,
       chapterId: mission.chapterId
     });
   }
@@ -361,7 +372,7 @@ function getChapterUnlockRequirements(
     const currentRankDivision = accessContext?.rankDivision ?? "bronze_i";
     requirements.push({
       type: "rank_division",
-      description: "Reach Silver rank or higher.",
+      description: `Reach ${getDivisionLabel(minimumRankDivision)} rank or higher.`,
       satisfied: getRankDivisionIndex(currentRankDivision) >= getRankDivisionIndex(minimumRankDivision),
       minimumRankDivision,
       chapterId: mission.chapterId

@@ -129,6 +129,26 @@
       "price": 0,
       "unlockCondition": "campaign_reward",
       "previewAsset": "borders/veilfall-throne"
+    },
+    {
+      "id": "recolor-crownless-vanguard",
+      "name": "Crownless Vanguard Trim",
+      "category": "unit_recolor",
+      "rarity": "legendary",
+      "description": "A smoke-and-ember recolor awarded for ending the regency war behind the fallen throne.",
+      "price": 0,
+      "unlockCondition": "campaign_reward",
+      "previewAsset": "units/crownless-vanguard"
+    },
+    {
+      "id": "border-dawnwatch-paragon",
+      "name": "Dawnwatch Paragon Border",
+      "category": "profile_border",
+      "rarity": "legendary",
+      "description": "A sunrise-forged border granted to commanders who ended the Blackgate command lattice for good.",
+      "price": 0,
+      "unlockCondition": "campaign_reward",
+      "previewAsset": "borders/dawnwatch-paragon"
     }
   ]
 }

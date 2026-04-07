@@ -18,25 +18,33 @@ test("campaign config exposes a 6-mission chapter 1 arc with dialogue and sequen
   const chapter2 = missions.filter((mission) => mission.chapterId === "chapter2");
   const chapter3 = missions.filter((mission) => mission.chapterId === "chapter3");
   const chapter4 = missions.filter((mission) => mission.chapterId === "chapter4");
+  const chapter5 = missions.filter((mission) => mission.chapterId === "chapter5");
+  const chapter6 = missions.filter((mission) => mission.chapterId === "chapter6");
 
-  assert.equal(missions.length, 27);
+  assert.equal(missions.length, 41);
   assert.equal(chapter1.length, 6);
   assert.equal(chapter2.length, 7);
   assert.equal(chapter3.length, 7);
   assert.equal(chapter4.length, 7);
+  assert.equal(chapter5.length, 7);
+  assert.equal(chapter6.length, 7);
   assert.equal(missions[0]?.introDialogue?.length, 2);
   assert.equal(chapter2.at(-1)?.bossEncounterName, "Captain Veyr, Ringbreaker");
   assert.equal(chapter2.at(-1)?.bossTemplateId, "boss-shadow-warden");
   assert.equal(chapter3.at(-1)?.midDialogue?.length, 3);
   assert.equal(chapter4.at(-1)?.reward.cosmeticId, "border-veilfall-throne");
+  assert.equal(chapter5.at(-1)?.bossEncounterName, "Chancellor Morvane");
+  assert.equal(chapter6.at(-1)?.reward.cosmeticId, "border-dawnwatch-paragon");
   assert.equal(missions[0]?.objectives[0]?.id, "c1m1-clear-patrol");
   assert.equal(states[0]?.status, "available");
   assert.equal(states[1]?.unlockMissionId, states[0]?.id);
   assert.equal(states[1]?.status, "locked");
   assert.equal(states.find((mission) => mission.id === "chapter2-highland-muster")?.status, "locked");
+  assert.equal(states.find((mission) => mission.id === "chapter5-crownless-watch")?.status, "locked");
+  assert.equal(states.find((mission) => mission.id === "chapter6-glassfront-march")?.status, "locked");
 });
 
-test("campaign chapter gates require prior chapter clears, hero level 15, and silver rank", () => {
+test("campaign chapter gates require prior chapter clears, hero level thresholds, and ranked progression", () => {
   const missions = resolveCampaignConfig();
   const chapter2Mission = buildCampaignMissionStates(missions, {
     missions: [{ missionId: "chapter1-defend-bridge", attempts: 1, completedAt: "2026-04-05T00:00:00.000Z" }]
@@ -69,6 +77,48 @@ test("campaign chapter gates require prior chapter clears, hero level 15, and si
     },
     { highestHeroLevel: 18, rankDivision: "silver_i" }
   ).find((mission) => mission.id === "chapter4-basin-breach");
+  const chapter5LockedByHeroLevel = buildCampaignMissionStates(
+    missions,
+    {
+      missions: [{ missionId: "chapter4-veilfall-throne", attempts: 1, completedAt: "2026-04-05T00:00:00.000Z" }]
+    },
+    { highestHeroLevel: 21, rankDivision: "gold_i" }
+  ).find((mission) => mission.id === "chapter5-crownless-watch");
+  const chapter5LockedByRank = buildCampaignMissionStates(
+    missions,
+    {
+      missions: [{ missionId: "chapter4-veilfall-throne", attempts: 1, completedAt: "2026-04-05T00:00:00.000Z" }]
+    },
+    { highestHeroLevel: 22, rankDivision: "silver_iii" }
+  ).find((mission) => mission.id === "chapter5-crownless-watch");
+  const chapter5Unlocked = buildCampaignMissionStates(
+    missions,
+    {
+      missions: [{ missionId: "chapter4-veilfall-throne", attempts: 1, completedAt: "2026-04-05T00:00:00.000Z" }]
+    },
+    { highestHeroLevel: 22, rankDivision: "gold_i" }
+  ).find((mission) => mission.id === "chapter5-crownless-watch");
+  const chapter6LockedByHeroLevel = buildCampaignMissionStates(
+    missions,
+    {
+      missions: [{ missionId: "chapter5-ashen-regency", attempts: 1, completedAt: "2026-04-05T00:00:00.000Z" }]
+    },
+    { highestHeroLevel: 27, rankDivision: "platinum_i" }
+  ).find((mission) => mission.id === "chapter6-glassfront-march");
+  const chapter6LockedByRank = buildCampaignMissionStates(
+    missions,
+    {
+      missions: [{ missionId: "chapter5-ashen-regency", attempts: 1, completedAt: "2026-04-05T00:00:00.000Z" }]
+    },
+    { highestHeroLevel: 28, rankDivision: "gold_iii" }
+  ).find((mission) => mission.id === "chapter6-glassfront-march");
+  const chapter6Unlocked = buildCampaignMissionStates(
+    missions,
+    {
+      missions: [{ missionId: "chapter5-ashen-regency", attempts: 1, completedAt: "2026-04-05T00:00:00.000Z" }]
+    },
+    { highestHeroLevel: 28, rankDivision: "platinum_i" }
+  ).find((mission) => mission.id === "chapter6-glassfront-march");
 
   assert.equal(chapter2Mission?.status, "available");
   assert.equal(chapter3Locked?.status, "locked");
@@ -77,6 +127,16 @@ test("campaign chapter gates require prior chapter clears, hero level 15, and si
   assert.equal(chapter4Locked?.status, "locked");
   assert.equal(chapter4Locked?.unlockRequirements?.find((requirement) => requirement.type === "rank_division")?.satisfied, false);
   assert.equal(chapter4Unlocked?.status, "available");
+  assert.equal(chapter5LockedByHeroLevel?.status, "locked");
+  assert.equal(chapter5LockedByHeroLevel?.unlockRequirements?.find((requirement) => requirement.type === "hero_level")?.minimumHeroLevel, 22);
+  assert.equal(chapter5LockedByRank?.status, "locked");
+  assert.equal(chapter5LockedByRank?.unlockRequirements?.find((requirement) => requirement.type === "rank_division")?.minimumRankDivision, "gold_i");
+  assert.equal(chapter5Unlocked?.status, "available");
+  assert.equal(chapter6LockedByHeroLevel?.status, "locked");
+  assert.equal(chapter6LockedByHeroLevel?.unlockRequirements?.find((requirement) => requirement.type === "hero_level")?.minimumHeroLevel, 28);
+  assert.equal(chapter6LockedByRank?.status, "locked");
+  assert.equal(chapter6LockedByRank?.unlockRequirements?.find((requirement) => requirement.type === "rank_division")?.minimumRankDivision, "platinum_i");
+  assert.equal(chapter6Unlocked?.status, "available");
 });
 
 test("daily dungeon state resets by date key and enforces one-time reward claims per run", () => {
