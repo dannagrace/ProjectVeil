@@ -11,6 +11,7 @@ import {
   planHeroMovement,
   validateWorldAction,
   resolveCosmeticCatalog,
+  type ActionValidationFailure,
   type PlayerWorldView,
   type PlayerBattleReplaySummary,
   type ClientMessage,
@@ -487,9 +488,21 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
       const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
       const result = this.worldRoom.dispatch(playerId, message.action);
-      if (result.ok) {
-        this.afterSuccessfulWorldAction(playerId, message.action);
+      if (!result.ok) {
+        sendMessage(client, "session.state", {
+          requestId: message.requestId,
+          delivery: "reply",
+          payload: this.buildStatePayload(playerId, {
+            events: [],
+            movementPlan: null,
+            ...(result.reason ? { reason: result.reason } : {}),
+            ...(result.rejection ? { rejection: result.rejection } : {})
+          })
+        });
+        return;
       }
+
+      this.afterSuccessfulWorldAction(playerId, message.action);
       try {
         await this.persistRoomState();
       } catch {
@@ -509,7 +522,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         payload: this.buildStatePayload(playerId, {
           events: result.events ?? [],
           movementPlan: result.movementPlan ?? null,
-          ...(result.reason ? { reason: result.reason } : {})
+          ...(result.reason ? { reason: result.reason } : {}),
+          ...(result.rejection ? { rejection: result.rejection } : {})
         })
       });
       this.broadcastState(client, {
@@ -538,9 +552,21 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
       const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
       const result = this.worldRoom.dispatchBattle(playerId, message.action);
-      if (result.ok) {
-        this.afterSuccessfulBattleAction(playerId);
+      if (!result.ok) {
+        sendMessage(client, "session.state", {
+          requestId: message.requestId,
+          delivery: "reply",
+          payload: this.buildStatePayload(playerId, {
+            events: [],
+            movementPlan: null,
+            ...(result.reason ? { reason: result.reason } : {}),
+            ...(result.rejection ? { rejection: result.rejection } : {})
+          })
+        });
+        return;
       }
+
+      this.afterSuccessfulBattleAction(playerId);
       try {
         await this.persistRoomState();
       } catch {
@@ -560,7 +586,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         payload: this.buildStatePayload(playerId, {
           events: result.events ?? [],
           movementPlan: null,
-          ...(result.reason ? { reason: result.reason } : {})
+          ...(result.reason ? { reason: result.reason } : {}),
+          ...(result.rejection ? { rejection: result.rejection } : {})
         })
       });
       this.broadcastState(client, {
@@ -1544,6 +1571,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     events?: WorldEvent[];
     movementPlan?: MovementPlan | null;
     reason?: string;
+    rejection?: ActionValidationFailure;
   }): void {
     for (const client of this.clients) {
       const playerId = this.getPlayerId(client);
@@ -1611,6 +1639,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       events?: WorldEvent[];
       movementPlan?: MovementPlan | null;
       reason?: string;
+      rejection?: ActionValidationFailure;
     },
     options?: {
       mapBounds?: {
@@ -1638,7 +1667,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       movementPlan: extras?.movementPlan ?? null,
       reachableTiles: heroId && !battle ? listReachableTiles(this.worldRoom.getInternalState(), heroId) : [],
       featureFlags: this.resolvePlayerFeatureFlags(playerId),
-      ...(extras?.reason ? { reason: extras.reason } : {})
+      ...(extras?.reason ? { reason: extras.reason } : {}),
+      ...(extras?.rejection ? { rejection: extras.rejection } : {})
     };
   }
 
@@ -1683,6 +1713,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       events?: WorldEvent[];
       movementPlan?: MovementPlan | null;
       reason?: string;
+      rejection?: ActionValidationFailure;
     }
   ): void {
     for (const client of this.clients) {

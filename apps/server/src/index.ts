@@ -1,6 +1,7 @@
 import {
   applyBattleAction,
   applyBattleOutcomeToWorld,
+  createActionValidationFailure,
   createHeroBattleState,
   createNeutralBattleState,
   filterWorldEventsForPlayer,
@@ -9,9 +10,10 @@ import {
   getBattleOutcome,
   normalizeHeroState,
   pickAutomatedBattleAction,
+  precheckBattleAction,
+  precheckWorldAction,
   resolveWorldAction,
-  validateWorldAction,
-  validateBattleAction,
+  type ActionValidationFailure,
   type BattleState,
   type MovementPlan,
   type PlayerWorldView,
@@ -38,6 +40,7 @@ export interface RoomSnapshot {
 export interface DispatchResult {
   ok: boolean;
   reason?: string;
+  rejection?: ActionValidationFailure;
   snapshot: RoomSnapshot;
   events?: WorldEvent[];
   movementPlan?: MovementPlan;
@@ -47,6 +50,7 @@ export interface DispatchResult {
 export interface BattleDispatchResult {
   ok: boolean;
   reason?: string;
+  rejection?: ActionValidationFailure;
   battle?: BattleState;
   snapshot: RoomSnapshot;
   events?: WorldEvent[];
@@ -328,36 +332,49 @@ export class AuthoritativeWorldRoom {
     if ("heroId" in action) {
       const hero = this.state.heroes.find((item) => item.id === action.heroId);
       if (!hero || hero.playerId !== playerId) {
-        authoritativeRoomTelemetry.recordActionValidationFailure("world", "hero_not_owned_by_player");
+        const rejection = createActionValidationFailure("world", action, {
+          valid: false,
+          reason: "hero_not_owned_by_player"
+        })!;
+        authoritativeRoomTelemetry.recordActionValidationFailure("world", rejection.reason);
         return {
           ok: false,
-          reason: "hero_not_owned_by_player",
+          reason: rejection.reason,
+          rejection,
           snapshot: this.getSnapshot(playerId)
         };
       }
 
       if (this.getBattleIdForHero(hero.id)) {
-        authoritativeRoomTelemetry.recordActionValidationFailure("world", "hero_in_battle");
+        const rejection = createActionValidationFailure("world", action, {
+          valid: false,
+          reason: "hero_in_battle"
+        })!;
+        authoritativeRoomTelemetry.recordActionValidationFailure("world", rejection.reason);
         return {
           ok: false,
-          reason: "hero_in_battle",
+          reason: rejection.reason,
+          rejection,
           snapshot: this.getSnapshot(playerId),
           ...(this.getBattleForPlayer(playerId) ? { battle: this.getBattleForPlayer(playerId)! } : {})
         };
       }
     }
 
-    const validation = validateWorldAction(this.state, action, playerId);
-    if (!validation.valid) {
-      authoritativeRoomTelemetry.recordActionValidationFailure("world", validation.reason ?? "world_action_invalid");
+    const precheck = precheckWorldAction(this.state, action, playerId);
+    if (!precheck.validation.valid) {
+      authoritativeRoomTelemetry.recordActionValidationFailure(
+        "world",
+        precheck.rejection?.reason ?? "world_action_invalid"
+      );
       return {
         ok: false,
-        ...(validation.reason ? { reason: validation.reason } : {}),
+        ...(precheck.rejection ? { reason: precheck.rejection.reason, rejection: precheck.rejection } : {}),
         snapshot: this.getSnapshot(playerId)
       };
     }
 
-    const outcome = resolveWorldAction(this.state, action);
+    const outcome = resolveWorldAction(precheck.state, action);
     this.state = outcome.state;
 
     const startedBattleIds: string[] = [];
@@ -417,20 +434,30 @@ export class AuthoritativeWorldRoom {
   dispatchBattle(playerId: string, action: BattleAction): BattleDispatchResult {
     const activeBattle = this.getBattleForPlayer(playerId);
     if (!activeBattle) {
-      authoritativeRoomTelemetry.recordActionValidationFailure("battle", "battle_not_active");
+      const rejection = createActionValidationFailure("battle", action, {
+        valid: false,
+        reason: "battle_not_active"
+      })!;
+      authoritativeRoomTelemetry.recordActionValidationFailure("battle", rejection.reason);
       return {
         ok: false,
-        reason: "battle_not_active",
+        reason: rejection.reason,
+        rejection,
         snapshot: this.getSnapshot(playerId)
       };
     }
 
     const controllingCamp = this.getControllingCamp(playerId, activeBattle);
     if (!controllingCamp) {
-      authoritativeRoomTelemetry.recordActionValidationFailure("battle", "battle_not_owned_by_player");
+      const rejection = createActionValidationFailure("battle", action, {
+        valid: false,
+        reason: "battle_not_owned_by_player"
+      })!;
+      authoritativeRoomTelemetry.recordActionValidationFailure("battle", rejection.reason);
       return {
         ok: false,
-        reason: "battle_not_owned_by_player",
+        reason: rejection.reason,
+        rejection,
         snapshot: this.getSnapshot(playerId)
       };
     }
@@ -438,28 +465,36 @@ export class AuthoritativeWorldRoom {
     const actingUnitId = action.type === "battle.attack" ? action.attackerId : action.unitId;
     const actingUnit = activeBattle.units[actingUnitId];
     if (!actingUnit || actingUnit.camp !== controllingCamp) {
-      authoritativeRoomTelemetry.recordActionValidationFailure("battle", "unit_not_player_controlled");
+      const rejection = createActionValidationFailure("battle", action, {
+        valid: false,
+        reason: "unit_not_player_controlled"
+      })!;
+      authoritativeRoomTelemetry.recordActionValidationFailure("battle", rejection.reason);
       return {
         ok: false,
-        reason: "unit_not_player_controlled",
+        reason: rejection.reason,
+        rejection,
         battle: activeBattle,
         snapshot: this.getSnapshot(playerId)
       };
     }
 
-    const validation = validateBattleAction(activeBattle, action);
-    if (!validation.valid) {
-      authoritativeRoomTelemetry.recordActionValidationFailure("battle", validation.reason ?? "battle_action_invalid");
+    const precheck = precheckBattleAction(activeBattle, action);
+    if (!precheck.validation.valid) {
+      authoritativeRoomTelemetry.recordActionValidationFailure(
+        "battle",
+        precheck.rejection?.reason ?? "battle_action_invalid"
+      );
       return {
         ok: false,
-        ...(validation.reason ? { reason: validation.reason } : {}),
+        ...(precheck.rejection ? { reason: precheck.rejection.reason, rejection: precheck.rejection } : {}),
         battle: activeBattle,
         snapshot: this.getSnapshot(playerId)
       };
     }
 
     this.trackBattleAction(activeBattle.id, action, "player");
-    const nextBattle = applyBattleAction(activeBattle, action);
+    const nextBattle = applyBattleAction(precheck.state, action);
     this.setBattle(nextBattle);
     const automatedEvents = this.resolveAutomatedBattleTurns(nextBattle.id);
     const playerBattle = this.getBattleForPlayer(playerId);

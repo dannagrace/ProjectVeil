@@ -28,7 +28,11 @@ import type {
   WorldResourceLedger,
   WorldState
 } from "./models.ts";
-import { validateAction } from "./action-precheck.ts";
+import {
+  createActionValidationFailure,
+  validateAction,
+  type ActionPrecheckResult
+} from "./action-precheck.ts";
 import { applyHeroSkillSelection, validateHeroSkillSelection } from "./hero-skills.ts";
 import {
   applyHeroEquipmentChange,
@@ -47,6 +51,8 @@ import {
   validateMapObjectsConfig,
   validateWorldConfig
 } from "./world-config.ts";
+
+export type WorldActionPrecheckResult = ActionPrecheckResult<WorldState>;
 
 function makeRng(seed: number): () => number {
   let value = seed >>> 0;
@@ -2329,6 +2335,21 @@ export function validateWorldAction(
   return { valid: true };
 }
 
+export function precheckWorldAction(
+  state: WorldState,
+  action: WorldAction,
+  requestingPlayerId?: string
+): WorldActionPrecheckResult {
+  const result = validateAction(state, action, (inputState, nextAction) =>
+    validateWorldAction(inputState, nextAction, requestingPlayerId)
+  );
+  const rejection = createActionValidationFailure("world", action, result.validation);
+  return {
+    ...result,
+    ...(rejection ? { rejection } : {})
+  };
+}
+
 export function createPlayerWorldView(state: WorldState, playerId: string): PlayerWorldView {
   const visibility = state.visibilityByPlayer[playerId] ?? new Array<FogState>(state.map.tiles.length).fill("hidden");
   const tiles: PlayerTileView[] = state.map.tiles.map((tile, index) => {
@@ -2864,12 +2885,12 @@ export function resolveWorldAction(state: WorldState, action: WorldAction): Worl
 }
 
 export function applyWorldAction(state: WorldState, action: WorldAction): WorldState {
-  const { validation } = validateAction(state, action, validateWorldAction);
+  const { state: nextState, validation } = precheckWorldAction(state, action);
   if (!validation.valid) {
-    return state;
+    return nextState;
   }
 
-  return resolveWorldAction(state, action).state;
+  return resolveWorldAction(nextState, action).state;
 }
 
 export function filterWorldEventsForPlayer(
