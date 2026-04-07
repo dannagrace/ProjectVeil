@@ -452,7 +452,7 @@ Relevant scripts: 41
 ## `validate:quickstart:contract`
 
 - Family: `validate`
-- Command: `node --import tsx ./scripts/contributor-quickstart-contract.ts`
+- Command: `node ./scripts/run-contributor-quickstart-contract.mjs`
 - Purpose: Audit the contributor quickstart contract by checking README/package alignment, then running the documented doctor and quickstart validator commands.
 - Required inputs:
   - A repo checkout with `README.md`, `package.json`, the quickstart validator script, and a bootable local dev environment unless `--skip-runtime` is used.
