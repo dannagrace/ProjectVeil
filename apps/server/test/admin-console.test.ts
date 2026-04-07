@@ -437,8 +437,31 @@ test("POST /api/admin/players/:id/resources adds and clamps resources and syncs 
     battle: { turn: 1 }
   };
   const sentMessages: Array<{ type: string; payload: unknown }> = [];
+  const buildStatePayloadCalls: string[] = [];
 
   getActiveRoomInstances().set("room-alpha", {
+    getPlayerId(client: { sessionId?: string }) {
+      return client.sessionId === "session-player-2" ? "player-2" : "player-1";
+    },
+    buildStatePayload(playerId: string) {
+      buildStatePayloadCalls.push(playerId);
+      return {
+        world: {
+          playerId,
+          resources: { gold: 0, wood: 7, ore: 3 }
+        },
+        battle: null,
+        events: [{ type: "system.announcement", text: "资源已更新", tone: "system" }],
+        movementPlan: null,
+        reachableTiles: [],
+        featureFlags: {
+          quest_system_enabled: false,
+          battle_pass_enabled: false,
+          pve_enabled: true,
+          tutorial_enabled: false
+        }
+      };
+    },
     worldRoom: {
       getInternalState() {
         return internalState;
@@ -450,6 +473,13 @@ test("POST /api/admin/players/:id/resources adds and clamps resources and syncs 
     },
     clients: [
       {
+        sessionId: "session-player-1",
+        send(type: string, payload: unknown) {
+          sentMessages.push({ type, payload });
+        }
+      },
+      {
+        sessionId: "session-player-2",
         send(type: string, payload: unknown) {
           sentMessages.push({ type, payload });
         }
@@ -485,7 +515,8 @@ test("POST /api/admin/players/:id/resources adds and clamps resources and syncs 
   assert.deepEqual(internalState.resources["player-1"], { gold: 0, wood: 7, ore: 3 });
   assert.deepEqual(internalState.playerResources["player-1"], { gold: 0, wood: 7, ore: 3 });
   assert.deepEqual(snapshot.state.resources, { gold: 0, wood: 7, ore: 3 });
-  assert.equal(sentMessages.length, 1);
+  assert.deepEqual(buildStatePayloadCalls, ["player-1", "player-2"]);
+  assert.equal(sentMessages.length, 2);
   assert.equal(sentMessages[0]?.type, "session.state");
 });
 
@@ -643,7 +674,7 @@ test("POST /api/admin/players/:id/ban bans the player and POST /unban clears it"
       },
       body: JSON.stringify({
         banStatus: "temporary",
-        banExpiry: "2026-04-05T00:00:00.000Z",
+        banExpiry: "2026-05-05T00:00:00.000Z",
         banReason: "Chargeback abuse"
       })
     }),
@@ -658,7 +689,7 @@ test("POST /api/admin/players/:id/ban bans the player and POST /unban clears it"
   };
   assert.equal(banPayload.ok, true);
   assert.equal(banPayload.account.banStatus, "temporary");
-  assert.equal(banPayload.account.banExpiry, "2026-04-05T00:00:00.000Z");
+  assert.equal(banPayload.account.banExpiry, "2026-05-05T00:00:00.000Z");
   assert.equal(banPayload.account.banReason, "Chargeback abuse");
   assert.equal(banPayload.disconnectedClients, 0);
 

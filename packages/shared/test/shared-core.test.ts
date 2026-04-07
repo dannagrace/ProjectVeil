@@ -318,6 +318,58 @@ test("typed-array world map payload can emit Uint8Array grids for Colyseus trans
   assert.deepEqual(decodePlayerWorldView(encoded), view);
 });
 
+test("typed-array world map payload redacts hidden and explored overlays before serialization", () => {
+  const view = createLargePlayerWorldView();
+  const hiddenIndex = view.map.tiles.findIndex((tile) => tile.fog === "hidden");
+  const exploredIndex = view.map.tiles.findIndex((tile) => tile.fog === "explored");
+
+  assert.ok(hiddenIndex >= 0);
+  assert.ok(exploredIndex >= 0);
+
+  view.map.tiles[hiddenIndex] = {
+    ...view.map.tiles[hiddenIndex]!,
+    terrain: "grass",
+    walkable: true,
+    resource: { kind: "gold", amount: 500 },
+    occupant: { kind: "hero", refId: "hero-2" },
+    building: {
+      id: "watchtower-hidden",
+      kind: "watchtower",
+      label: "Hidden Watchtower"
+    }
+  };
+  view.map.tiles[exploredIndex] = {
+    ...view.map.tiles[exploredIndex]!,
+    resource: { kind: "wood", amount: 5 },
+    occupant: { kind: "neutral", refId: "neutral-1" },
+    building: {
+      id: "watchtower-explored",
+      kind: "watchtower",
+      label: "Explored Watchtower"
+    }
+  };
+
+  const decoded = decodePlayerWorldView(encodePlayerWorldView(view));
+  const hiddenTile = decoded.map.tiles[hiddenIndex]!;
+  const exploredTile = decoded.map.tiles[exploredIndex]!;
+
+  assert.equal(hiddenTile.fog, "hidden");
+  assert.equal(hiddenTile.terrain, "unknown");
+  assert.equal(hiddenTile.walkable, false);
+  assert.equal(hiddenTile.resource, undefined);
+  assert.equal(hiddenTile.occupant, undefined);
+  assert.equal(hiddenTile.building, undefined);
+
+  assert.equal(exploredTile.fog, "explored");
+  assert.equal(exploredTile.resource, undefined);
+  assert.equal(exploredTile.occupant, undefined);
+  assert.deepEqual(exploredTile.building, {
+    id: "watchtower-explored",
+    kind: "watchtower",
+    label: "Explored Watchtower"
+  });
+});
+
 test("asset config passes schema validation", () => {
   assert.deepEqual(getAssetConfigValidationErrors(assetConfig), []);
 });

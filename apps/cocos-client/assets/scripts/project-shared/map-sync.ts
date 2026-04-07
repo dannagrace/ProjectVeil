@@ -109,6 +109,34 @@ function tileIndex(width: number, x: number, y: number): number {
   return y * width + x;
 }
 
+function sanitizeTileForSync(tile: PlayerTileView): PlayerTileView {
+  if (tile.fog === "hidden") {
+    return {
+      position: tile.position,
+      fog: tile.fog,
+      terrain: "unknown",
+      walkable: false,
+      resource: undefined,
+      occupant: undefined,
+      building: undefined
+    };
+  }
+
+  if (tile.fog === "explored") {
+    return {
+      position: tile.position,
+      fog: tile.fog,
+      terrain: tile.terrain,
+      walkable: tile.walkable,
+      resource: undefined,
+      occupant: undefined,
+      building: tile.building
+    };
+  }
+
+  return tile;
+}
+
 function createPatchedTile(
   view: PlayerWorldViewPayload | PlayerWorldView,
   bounds: EncodedPlayerMapBounds,
@@ -149,7 +177,7 @@ export function encodePlayerWorldView(
   let localIndex = 0;
   for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
     for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
-      const tile = view.map.tiles[tileIndex(view.map.width, x, y)]!;
+      const tile = sanitizeTileForSync(view.map.tiles[tileIndex(view.map.width, x, y)]!);
       terrain[localIndex] = TERRAIN_CODES[tile.terrain];
       fog[localIndex] = FOG_CODES[tile.fog];
       walkable[localIndex] = tile.walkable ? 1 : 0;

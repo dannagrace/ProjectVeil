@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
-import { applyEloMatchResult } from "../../../packages/shared/src/index";
+import { applyEloMatchResult, decodePlayerWorldView } from "../../../packages/shared/src/index";
 import type { BattleState, ServerMessage, WorldEvent } from "../../../packages/shared/src/index";
 import { resolveBattlePassConfig } from "../src/battle-pass";
 import {
@@ -334,6 +334,41 @@ test("room creation and connect reflect one connected player in room state", asy
 
   assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 1);
   assert.equal(lastSessionState(client, "reply").payload.world.ownHeroes[0]?.playerId, "player-1");
+});
+
+test("session.state redacts fog-hidden enemy occupants from serialized player snapshots", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-fog-redaction-${Date.now()}`);
+  const attackerClient = createFakeClient("session-fog-player-1");
+  const defenderClient = createFakeClient("session-fog-player-2");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, attackerClient, "player-1", "connect-player-1");
+  await connectPlayer(room, defenderClient, "player-2", "connect-player-2");
+
+  const attackerWorld = decodePlayerWorldView(lastSessionState(attackerClient, "reply").payload.world);
+  const defenderWorld = decodePlayerWorldView(lastSessionState(defenderClient, "reply").payload.world);
+  const defenderPosition = defenderWorld.ownHeroes[0]?.position;
+
+  assert.ok(defenderPosition, "expected player-2 own hero position");
+  const hiddenTile = attackerWorld.map.tiles.find(
+    (tile) => tile.position.x === defenderPosition.x && tile.position.y === defenderPosition.y
+  );
+
+  assert.ok(hiddenTile, "expected player-1 snapshot tile for player-2 position");
+  assert.equal(hiddenTile.fog, "hidden");
+  assert.equal(hiddenTile.terrain, "unknown");
+  assert.equal(hiddenTile.walkable, false);
+  assert.equal(hiddenTile.occupant, undefined);
+  assert.equal(hiddenTile.resource, undefined);
+  assert.equal(hiddenTile.building, undefined);
+  assert.equal(attackerWorld.visibleHeroes.some((hero) => hero.playerId === "player-2"), false);
 });
 
 test("persisted room bootstrap rebinds the default slot to the joining player and hydrates the saved state", async (t) => {

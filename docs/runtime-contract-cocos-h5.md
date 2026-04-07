@@ -37,6 +37,13 @@ Use these rules when deciding where new work belongs:
 - Any fix that only "works in H5" while leaving the primary Cocos runtime broken.
 - Any release checklist that treats H5 success as proof that the shipped client is ready.
 
+### Authoritative fog-of-war rule
+
+- `session.state` and any other room-driven world snapshot must be redacted on the server before network serialization, not just hidden by client rendering.
+- Hidden fog tiles must serialize as `terrain: "unknown"`, `walkable: false`, and no `resource`, `occupant`, or `building` payload.
+- Explored fog tiles may keep terrain/building memory, but they must not serialize live `resource` or `occupant` data.
+- H5 and Cocos should both treat these payloads as already-authoritative; client code may further hide presentation details, but it must not rely on the UI layer as the anti-cheat boundary.
+
 ## Journey Split
 
 Treat the following journeys as the default routing guide.
