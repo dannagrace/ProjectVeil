@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ResourceLedger, WorldState } from "../../../packages/shared/src/index";
+import type { ResourceLedger, ServerMessage, WorldState } from "../../../packages/shared/src/index";
 import type { PlayerReportResolveInput, PlayerReportStatus, RoomSnapshotStore } from "./persistence";
 import { listLobbyRooms, getActiveRoomInstances } from "./colyseus-room";
 
@@ -318,6 +318,17 @@ export function registerAdminRoutes(
 
       for (const [roomId, vRoom] of activeRooms) {
         if (vRoom.worldRoom) {
+          const roomInternals = vRoom as unknown as {
+            getPlayerId(client: { sessionId?: string }, fallback?: string): string | undefined;
+            buildStatePayload(
+              playerId: string,
+              extras?: {
+                events?: Array<{ type: "system.announcement"; text: string; tone: "system" }>;
+                movementPlan?: null;
+                reason?: string;
+              }
+            ): ServerMessage extends { type: "session.state"; payload: infer T } ? T : never;
+          };
           const internalState = vRoom.worldRoom.getInternalState() as WorldState & {
             playerResources?: Record<string, ResourceLedger>;
           };
@@ -336,15 +347,14 @@ export function registerAdminRoutes(
           snapshot.state.resources = { ...nextResources };
 
           for (const client of vRoom.clients) {
+            const clientPlayerId = roomInternals.getPlayerId(client, playerId) ?? playerId;
             client.send("session.state", {
+              requestId: "push",
               delivery: "push",
-              payload: {
-                world: snapshot.state,
-                battle: null,
+              payload: roomInternals.buildStatePayload(clientPlayerId, {
                 events: [{ type: "system.announcement", text: "资源已更新", tone: "system" }],
-                movementPlan: null,
-                reachableTiles: []
-              }
+                movementPlan: null
+              })
             });
           }
 
