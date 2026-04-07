@@ -163,6 +163,7 @@ interface CocosRcBundleManifest {
     checklistMarkdown?: string;
     blockersMarkdown?: string;
     presentationSignoff?: string;
+    presentationSignoffMarkdown?: string;
   };
 }
 
@@ -698,6 +699,9 @@ function buildCocosCriterion(section: DossierSection, manifest: CocosRcBundleMan
       manifest?.artifacts?.snapshot ? { label: "Cocos RC snapshot", path: manifest.artifacts.snapshot } : undefined,
       manifest?.artifacts?.checklistMarkdown ? { label: "Cocos RC checklist", path: manifest.artifacts.checklistMarkdown } : undefined,
       manifest?.artifacts?.blockersMarkdown ? { label: "Cocos RC blockers", path: manifest.artifacts.blockersMarkdown } : undefined,
+      manifest?.artifacts?.presentationSignoffMarkdown
+        ? { label: "Cocos presentation sign-off checklist", path: manifest.artifacts.presentationSignoffMarkdown }
+        : undefined,
       manifest?.artifacts?.presentationSignoff ? { label: "Cocos presentation sign-off", path: manifest.artifacts.presentationSignoff } : undefined,
       { label: "Cocos Phase 1 presentation sign-off baseline", path: COCOS_PRESENTATION_SIGNOFF_DOC_PATH }
     ])

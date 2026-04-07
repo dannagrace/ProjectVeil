@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "candidate": {
+    "name": "issue-983-presentation",
+    "buildSurface": "creator_preview",
+    "branch": "main",
+    "commit": "742bfcaeb2f57148aa4733f5b686f1dec560411a",
+    "shortCommit": "742bfca"
+  },
+  "generatedAt": "2026-04-07T09:30:00.000Z",
+  "reviewer": {
+    "owner": "codex",
+    "reviewDate": "2026-04-07"
+  },
+  "linkedEvidence": {
+    "snapshot": "artifacts/release-readiness/cocos-rc-snapshot-issue-696-proof-a12008a.json",
+    "checklist": "artifacts/release-readiness/cocos-rc-checklist-issue-983-presentation-742bfca.md",
+    "blockers": "artifacts/release-readiness/cocos-rc-blockers-issue-983-presentation-742bfca.md",
+    "canonicalDoc": "docs/cocos-phase1-presentation-signoff.md"
+  },
+  "fallbackInventory": [
+    {
+      "id": "placeholder-pixel-art",
+      "item": "Placeholder pixel art mixed with formal assets",
+      "owner": "client-lead",
+      "status": "open-blocker",
+      "targetResolutionPhase": "Before Phase 1 exit"
+    },
+    {
+      "id": "mixed-audio-packs",
+      "item": "Mixed audio packs",
+      "owner": "audio-lead",
+      "status": "accepted-controlled-test-debt",
+      "targetResolutionPhase": "Phase 1 controlled-test follow-up"
+    },
+    {
+      "id": "animation-fallback-delivery",
+      "item": "Animation fallback delivery modes",
+      "owner": "client-lead",
+      "status": "open-blocker",
+      "targetResolutionPhase": "Before Phase 1 exit"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "placeholder-pixel-art",
+      "decision": "BLOCK",
+      "status": "fail",
+      "owner": "client-lead",
+      "targetResolutionPhase": "Before Phase 1 exit",
+      "rationale": "cocos-presentation-readiness still reports placeholder terrain, hero, unit, and building art, so the candidate is not presentation-ready for broader external review."
+    },
+    {
+      "id": "mixed-audio-packs",
+      "decision": "ACCEPT",
+      "status": "waived-controlled-test",
+      "owner": "audio-lead",
+      "targetResolutionPhase": "Phase 1 controlled-test follow-up",
+      "rationale": "The remaining mixed cues do not hide release-required state, but the debt is acceptable only for controlled internal testing."
+    },
+    {
+      "id": "animation-fallback-delivery",
+      "decision": "BLOCK",
+      "status": "fail",
+      "owner": "client-lead",
+      "targetResolutionPhase": "Before Phase 1 exit",
+      "rationale": "hero_guard_basic and wolf_pack still rely on fallback delivery, so the battle presentation path still carries non-final motion delivery."
+    }
+  ],
+  "signoff": {
+    "status": "hold",
+    "summary": "Placeholder pixel art and animation fallback delivery remain Phase 1 blockers. Mixed audio packs are accepted only for controlled internal testing.",
+    "blockingItems": [
+      "Placeholder pixel art",
+      "Animation fallback delivery modes"
+    ],
+    "controlledTestGaps": [
+      "Mixed audio packs"
+    ]
+  }
+}

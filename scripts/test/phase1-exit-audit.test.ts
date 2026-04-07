@@ -181,7 +181,9 @@ function writePassingArtifacts(workspace: string, revision: string): {
     artifacts: {
       snapshot: path.join(artifactsDir, "cocos-rc-snapshot-phase1-rc.json"),
       checklistMarkdown: path.join(artifactsDir, "cocos-rc-checklist-phase1-rc.md"),
-      blockersMarkdown: path.join(artifactsDir, "cocos-rc-blockers-phase1-rc.md")
+      blockersMarkdown: path.join(artifactsDir, "cocos-rc-blockers-phase1-rc.md"),
+      presentationSignoff: path.join(artifactsDir, "cocos-presentation-signoff-phase1-rc.json"),
+      presentationSignoffMarkdown: path.join(artifactsDir, "cocos-presentation-signoff-phase1-rc.md")
     },
     review: {
       phase1Gate: "passed"
@@ -260,6 +262,12 @@ test("phase1 exit audit maps the scorecard criteria into one passing report", as
   assert.equal(report.criteria.find((entry) => entry.id === "phase1-data-persistence")?.status, "pass");
   assert.equal(report.criteria.find((entry) => entry.id === "known-blockers")?.status, "pass");
   assert.equal(report.criteria.every((entry) => entry.sourceArtifacts.length > 0), true);
+  assert.equal(
+    report.criteria
+      .find((entry) => entry.id === "cocos-primary-client-evidence")
+      ?.sourceArtifacts.some((artifact) => artifact.label === "Cocos presentation sign-off checklist"),
+    true
+  );
 
   const markdown = renderMarkdown(report);
   assert.match(markdown, /# Phase 1 Exit Audit/);
@@ -267,6 +275,7 @@ test("phase1 exit audit maps the scorecard criteria into one passing report", as
   assert.match(markdown, /### 2\. Core automated gates are green\./);
   assert.match(markdown, /npm run check:cocos-release-readiness: passed/);
   assert.match(markdown, /### 8\. Known Phase 1 blockers are closed or explicitly accepted\./);
+  assert.match(markdown, /Cocos presentation sign-off checklist:/);
 });
 
 test("phase1 exit audit distinguishes blocking failures from stale pending evidence", async () => {
