@@ -1,0 +1,7 @@
+MAILTO=ops@example.com
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Check every 20 minutes for suspect validation jobs in this repo family.
+# The command exits non-zero when a suspect job is present so cron mail or a wrapper can alert.
+*/20 * * * * cd /srv/ProjectVeil && /usr/bin/env npm run ops:run-watchdog -- list --suspect-only --fail-on-suspect >> /var/log/project-veil/run-watchdog.log 2>&1

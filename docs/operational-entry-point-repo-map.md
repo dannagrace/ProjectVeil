@@ -14,6 +14,7 @@ For detailed release sequencing, keep [`docs/same-revision-release-evidence-runb
 | Confirm the current primary client surface | `npm run client:primary` | [`README.md`](../README.md), [`docs/cocos-primary-client-delivery.md`](./cocos-primary-client-delivery.md) |
 | Confirm the runtime boundary between the primary client and the H5 shell | [`docs/runtime-contract-cocos-h5.md`](./runtime-contract-cocos-h5.md) | [`docs/runtime-contract-cocos-h5.md`](./runtime-contract-cocos-h5.md), [`README.md`](../README.md) |
 | Audit Codex automation branches | `npm run ops:codex-branches` | [`docs/codex-automation-branch-maintenance.md`](./codex-automation-branch-maintenance.md) |
+| Detect long-running Codex/Claude validation jobs | `npm run ops:run-watchdog -- list` | [`docs/codex-run-watchdog.md`](./codex-run-watchdog.md) |
 
 ## Common Artifact Homes
 
