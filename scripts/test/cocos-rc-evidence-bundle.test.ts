@@ -234,11 +234,21 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
 
   const checklistMarkdown = fs.readFileSync(path.join(outputDir, checklistFile!), "utf8");
   assert.match(checklistMarkdown, /Candidate: `rc-issue-507`/);
+  assert.match(checklistMarkdown, /Recorded at: `2026-/);
   assert.match(checklistMarkdown, /cocos-rc-snapshot-rc-issue-507-/);
+  assert.match(checklistMarkdown, /## Auto-Filled Main-Journey Evidence/);
+  assert.match(checklistMarkdown, /Canonical regeneration command: `npm run release:cocos-rc:bundle -- --candidate rc-issue-507 --build-surface wechat_preview`/);
+  assert.match(checklistMarkdown, /### Canonical Journey Snapshot/);
+  assert.match(checklistMarkdown, /### Required Evidence Snapshot/);
+  assert.doesNotMatch(checklistMarkdown, /<YYYY-MM-DDTHH:MM:SSZ>|<recorded-at>|<short-sha>/);
 
   const blockersMarkdown = fs.readFileSync(path.join(outputDir, blockersFile!), "utf8");
   assert.match(blockersMarkdown, /Candidate: `rc-issue-507`/);
   assert.match(blockersMarkdown, /cocos-rc-snapshot-rc-issue-507-/);
+  assert.match(blockersMarkdown, /## Auto-Filled Candidate Scope/);
+  assert.match(blockersMarkdown, /## Auto-Filled Current Blockers/);
+  assert.match(blockersMarkdown, /presentation-pixel-art-scene-visuals/);
+  assert.doesNotMatch(blockersMarkdown, /<short-sha>/);
 
   const mainJourneyReplayGate = JSON.parse(fs.readFileSync(path.join(outputDir, mainJourneyReplayGateFile!), "utf8")) as {
     summary: { status: string; presentationBlockerCount: number };
