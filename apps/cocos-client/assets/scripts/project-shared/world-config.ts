@@ -32,6 +32,11 @@ import stonewatchForkWorldConfig from "../../../../../configs/phase1-world-stone
 import thornwallDivideWorldConfig from "../../../../../configs/phase1-world-thornwall-divide.json";
 import ridgewayCrossingWorldConfig from "../../../../../configs/phase1-world-ridgeway-crossing.json";
 import defaultWorldConfig from "../../../../../configs/phase1-world.json";
+import {
+  assertNoCrossFileConfigIssues,
+  validateHeroSkillTreeCrossReferences,
+  validateWorldHeroSkillReferences
+} from "./config-cross-file-validation.ts";
 import type {
   BattleSkillCatalogConfig,
   BattleBalanceConfig,
@@ -100,6 +105,7 @@ export interface RuntimeConfigBundle {
   units: UnitCatalogConfig;
   battleSkills: BattleSkillCatalogConfig;
   battleBalance?: BattleBalanceConfig;
+  heroSkills?: HeroSkillTreeConfig;
 }
 
 export interface RoomRuntimeConfigBundle extends RuntimeConfigBundle {
@@ -437,89 +443,7 @@ export function validateHeroSkillTreeConfig(
   config: HeroSkillTreeConfig,
   battleSkillCatalog: BattleSkillCatalogConfig = runtimeBattleSkillCatalog
 ): void {
-  if (!Array.isArray(config.branches) || !Array.isArray(config.skills)) {
-    throw new Error("Hero skill tree config must contain branches and skills arrays");
-  }
-
-  const branchIds = new Set<string>();
-  for (const branch of config.branches) {
-    if (!isNonEmptyString(branch.id)) {
-      throw new Error("Hero skill branch id must be a non-empty string");
-    }
-    if (branchIds.has(branch.id)) {
-      throw new Error(`Duplicate hero skill branch id: ${branch.id}`);
-    }
-    if (!isNonEmptyString(branch.name)) {
-      throw new Error(`Hero skill branch ${branch.id} must define a name`);
-    }
-    if (!isNonEmptyString(branch.description)) {
-      throw new Error(`Hero skill branch ${branch.id} must define a description`);
-    }
-    branchIds.add(branch.id);
-  }
-
-  const battleSkillIds = new Set(battleSkillCatalog.skills.map((skill) => skill.id));
-  const skillIds = new Set<string>();
-  for (const skill of config.skills) {
-    if (!isNonEmptyString(skill.id)) {
-      throw new Error("Hero skill id must be a non-empty string");
-    }
-    if (skillIds.has(skill.id)) {
-      throw new Error(`Duplicate hero skill id: ${skill.id}`);
-    }
-    if (!branchIds.has(skill.branchId)) {
-      throw new Error(`Hero skill ${skill.id} references unknown branch: ${skill.branchId}`);
-    }
-    if (!isNonEmptyString(skill.name)) {
-      throw new Error(`Hero skill ${skill.id} must define a name`);
-    }
-    if (!isNonEmptyString(skill.description)) {
-      throw new Error(`Hero skill ${skill.id} must define a description`);
-    }
-    if (!Number.isInteger(skill.requiredLevel) || skill.requiredLevel < 1) {
-      throw new Error(`Hero skill ${skill.id} requiredLevel must be a positive integer`);
-    }
-    if (!Number.isInteger(skill.maxRank) || skill.maxRank < 1) {
-      throw new Error(`Hero skill ${skill.id} maxRank must be a positive integer`);
-    }
-    if (!Array.isArray(skill.ranks) || skill.ranks.length !== skill.maxRank) {
-      throw new Error(`Hero skill ${skill.id} must define exactly ${skill.maxRank} rank entries`);
-    }
-
-    const rankIds = new Set<number>();
-    for (const rank of skill.ranks) {
-      if (!Number.isInteger(rank.rank) || rank.rank < 1 || rank.rank > skill.maxRank) {
-        throw new Error(`Hero skill ${skill.id} has invalid rank entry: ${String(rank.rank)}`);
-      }
-      if (rankIds.has(rank.rank)) {
-        throw new Error(`Hero skill ${skill.id} has duplicate rank entry: ${rank.rank}`);
-      }
-      if (!isNonEmptyString(rank.description)) {
-        throw new Error(`Hero skill ${skill.id} rank ${rank.rank} must define a description`);
-      }
-
-      for (const battleSkillId of rank.battleSkillIds ?? []) {
-        if (!battleSkillIds.has(battleSkillId)) {
-          throw new Error(`Hero skill ${skill.id} rank ${rank.rank} references unknown battle skill: ${battleSkillId}`);
-        }
-      }
-
-      rankIds.add(rank.rank);
-    }
-
-    skillIds.add(skill.id);
-  }
-
-  for (const skill of config.skills) {
-    for (const prerequisite of skill.prerequisites ?? []) {
-      if (!skillIds.has(prerequisite)) {
-        throw new Error(`Hero skill ${skill.id} references unknown prerequisite: ${prerequisite}`);
-      }
-      if (prerequisite === skill.id) {
-        throw new Error(`Hero skill ${skill.id} cannot depend on itself`);
-      }
-    }
-  }
+  assertNoCrossFileConfigIssues(validateHeroSkillTreeCrossReferences(config, battleSkillCatalog));
 }
 
 export function validateWorldConfig(config: WorldGenerationConfig): void {
@@ -998,6 +922,7 @@ export function getRuntimeConfigBundleForRoom(roomId: string, seed = 1001): Room
 export function setWorldConfig(config: WorldGenerationConfig): void {
   const nextConfig = cloneWorldConfig(config);
   validateWorldConfig(nextConfig);
+  assertNoCrossFileConfigIssues(validateWorldHeroSkillReferences(nextConfig, runtimeHeroSkillTree));
   validateMapObjectsConfig(runtimeMapObjectsConfig, nextConfig, runtimeUnitCatalog);
   runtimeWorldConfig = nextConfig;
 }
@@ -1032,7 +957,8 @@ export function setBattleBalanceConfig(config: BattleBalanceConfig): void {
 
 export function setHeroSkillTreeConfig(config: HeroSkillTreeConfig): void {
   const nextConfig = cloneHeroSkillTreeConfig(config);
-  validateHeroSkillTreeConfig(nextConfig);
+  validateHeroSkillTreeConfig(nextConfig, runtimeBattleSkillCatalog);
+  assertNoCrossFileConfigIssues(validateWorldHeroSkillReferences(runtimeWorldConfig, nextConfig));
   runtimeHeroSkillTree = nextConfig;
 }
 
@@ -1042,18 +968,22 @@ export function replaceRuntimeConfigs(configs: RuntimeConfigBundle): void {
   const nextUnits = cloneUnitCatalog(configs.units);
   const nextBattleSkills = cloneBattleSkillCatalog(configs.battleSkills);
   const nextBattleBalance = cloneBattleBalanceConfig(configs.battleBalance ?? runtimeBattleBalanceConfig);
+  const nextHeroSkills = cloneHeroSkillTreeConfig(configs.heroSkills ?? runtimeHeroSkillTree);
 
   validateWorldConfig(nextWorld);
   validateBattleSkillCatalog(nextBattleSkills);
   validateUnitCatalog(nextUnits, nextBattleSkills);
   validateMapObjectsConfig(nextMapObjects, nextWorld, nextUnits);
   validateBattleBalanceConfig(nextBattleBalance, nextBattleSkills);
+  validateHeroSkillTreeConfig(nextHeroSkills, nextBattleSkills);
+  assertNoCrossFileConfigIssues(validateWorldHeroSkillReferences(nextWorld, nextHeroSkills));
 
   runtimeWorldConfig = nextWorld;
   runtimeMapObjectsConfig = nextMapObjects;
   runtimeUnitCatalog = nextUnits;
   runtimeBattleSkillCatalog = nextBattleSkills;
   runtimeBattleBalanceConfig = nextBattleBalance;
+  runtimeHeroSkillTree = nextHeroSkills;
 }
 
 export function resetRuntimeConfigs(): void {

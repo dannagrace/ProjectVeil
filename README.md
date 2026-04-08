@@ -168,6 +168,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 
 - 安装依赖：`npm ci --no-audit --no-fund`
 - 快速校验首条贡献路径：`npm run validate:quickstart`
+- 提交配置相关 PR 前先跑跨文件配置校验：`npm run validate:content-pack:all`
 - 本地 WebSocket 服务：`npm run dev:server`
 - 仓库级 Node 单测入口：`npm test`
 - 配置中心编辑器回归：`npm run test:client:config-center`

@@ -5,6 +5,7 @@ export * from "./battle.ts";
 export * from "./battle-report.ts";
 export * from "./battle-replay.ts";
 export * from "./cosmetics.ts";
+export * from "./config-cross-file-validation.ts";
 export * from "./deterministic-rng.ts";
 export * from "./equipment.ts";
 export * from "./event-log.ts";
