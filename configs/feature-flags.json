@@ -3,8 +3,8 @@
   "flags": {
     "quest_system_enabled": {
       "type": "boolean",
-      "value": false,
-      "defaultValue": false,
+      "value": true,
+      "defaultValue": true,
       "enabled": true,
       "rollout": 1
     },

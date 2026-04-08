@@ -2,6 +2,11 @@
 
 Issue #893 adds a minimal experiment layer on top of `configs/feature-flags.json`.
 
+## Current Flag Status
+
+- `quest_system_enabled`: enabled by default as of 2026-04-08. Daily quest board, UTC daily rotation, progress tracking, and reward claims are live in the default config.
+- Roll back `quest_system_enabled` by setting `value: false` in `configs/feature-flags.json`, or use `VEIL_FEATURE_FLAGS_JSON` / `VEIL_DAILY_QUESTS_ENABLED=off` as an emergency override while investigating.
+
 ## Config Shape
 
 Experiments live beside `flags` in the same config document:
