@@ -28,6 +28,9 @@ export class VeilUnitAnimator extends Component {
   fallbackPrefix = "Hero";
 
   @property
+  deliveryMode = "fallback";
+
+  @property
   spineIdleName = "";
 
   @property
@@ -88,6 +91,7 @@ export class VeilUnitAnimator extends Component {
     this.templateId = templateId;
     const pixelFallbackReady = this.hasPixelFallback(templateId);
     this.fallbackPrefix = profile.fallbackPrefix;
+    this.deliveryMode = profile.deliveryMode;
     this.spinePrefix = profile.spinePrefix;
     this.clipPrefix = profile.clipPrefix;
     this.spineIdleName = profile.spineNames.idle;
@@ -144,16 +148,39 @@ export class VeilUnitAnimator extends Component {
   private renderCurrentState(): void {
     this.pixelSequenceToken += 1;
     this.clearPixelSequenceTimeout();
-    if (
-      !this.playSpine(this.currentState)
-      && !this.playTimeline(this.currentState)
-      && !this.playPixelSequence(this.currentState)
-      && !this.playPixelFallback(this.currentState)
-    ) {
+    const rendered = this.tryRenderPreferredMode(this.currentState)
+      || this.tryRenderSecondaryModes(this.currentState);
+    if (!rendered) {
       const label = this.node.getComponent(Label);
       if (label) {
         label.string = `${this.fallbackPrefix}\n[${this.currentState.toUpperCase()}]`;
       }
+    }
+  }
+
+  private tryRenderPreferredMode(state: UnitAnimationState): boolean {
+    switch (this.deliveryMode) {
+      case "spine":
+        return this.playSpine(state);
+      case "clip":
+        return this.playTimeline(state);
+      case "sequence":
+        return this.playPixelSequence(state);
+      default:
+        return this.playPixelFallback(state);
+    }
+  }
+
+  private tryRenderSecondaryModes(state: UnitAnimationState): boolean {
+    switch (this.deliveryMode) {
+      case "spine":
+        return this.playTimeline(state) || this.playPixelSequence(state) || this.playPixelFallback(state);
+      case "clip":
+        return this.playSpine(state) || this.playPixelSequence(state) || this.playPixelFallback(state);
+      case "sequence":
+        return this.playSpine(state) || this.playTimeline(state) || this.playPixelFallback(state);
+      default:
+        return this.playPixelSequence(state) || this.playSpine(state) || this.playTimeline(state);
     }
   }
 

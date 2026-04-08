@@ -4,7 +4,7 @@
       "fallbackPrefix": "Guard",
       "spinePrefix": "hero_guard_basic_",
       "clipPrefix": "hero_guard_basic_",
-      "deliveryMode": "fallback",
+      "deliveryMode": "sequence",
       "assetStage": "production",
       "spineNames": {
         "idle": "idle",
@@ -34,7 +34,7 @@
       "fallbackPrefix": "Wolf",
       "spinePrefix": "wolf_pack_",
       "clipPrefix": "wolf_pack_",
-      "deliveryMode": "fallback",
+      "deliveryMode": "sequence",
       "assetStage": "production",
       "spineNames": {
         "idle": "idle",

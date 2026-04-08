@@ -55,9 +55,9 @@ When the sign-off conclusion changes, mirror the same owner, revision, timestamp
 
 This table is the single maintained inventory of Cocos presentation fallbacks still allowed during Phase 1 hardening. The current repo-backed baseline remains:
 
-- `cocos-presentation-readiness`: `像素 占位`, `音频 混合 2/8`, `动画 回退 2/2`
+- `cocos-presentation-readiness`: `像素 占位`, `音频 混合 7/8`, `动画 序列 2/2`
 - `cocos-presentation-readiness`: `战斗流程 正式 4/4`，表示 battle journey 的 `进场 / 指令 / 受击 / 结算` 已在状态/copy 层正式化，剩余 debt 继续按资产 fallback 管理
-- `configs/cocos-presentation.json`: `explore` / `battle` music plus `attack` / `skill` / `hit` / `level_up` cues are still `placeholder`, while `hero_guard_basic` and `wolf_pack` still ship as `deliveryMode: fallback`
+- `configs/cocos-presentation.json`: `explore` / `battle` music plus `attack` / `skill` / `hit` / `level_up` cues are still `placeholder`, while `hero_guard_basic` and `wolf_pack` now ship as `deliveryMode: sequence` backed by multi-frame portrait sequences
 
 Unless a candidate-specific artifact proves otherwise, treat every row below as `waived-controlled-test`.
 
@@ -68,7 +68,6 @@ Unless a candidate-specific artifact proves otherwise, treat every row below as 
 | Settlement shell / authoritative handoff | The pending handoff shell (`结果回写中` / `PVP 结果回写中`) is intentionally kept as a neutral fallback state while authority resolves the final result; it is acceptable only if the same review also captures the final victory/defeat settlement. | `waived-controlled-test` | `ACCEPT` | `client-lead` | `Phase 1 controlled-test only` | Keep paired pending-handoff and final-settlement evidence in the candidate artifact; do not sign off a candidate that only shows the neutral shell. |
 | Placeholder art | `cocos-presentation-readiness` still reports pixel art as `placeholder`, so terrain / hero / unit / building presentation remains a controlled-test placeholder surface rather than production art. | `waived-controlled-test` | `BLOCK` | `client-lead` | `Before Phase 1 exit` | Re-run `npm run check:cocos-release-readiness`, attach the updated readiness summary, and only close this row when the readiness output is no longer placeholder. |
 | Audio substitutions | Audio remains mixed: `victory` and `defeat` are production, while `explore`, `battle`, `attack`, `skill`, `hit`, and `level_up` still use placeholder asset/synth substitution paths. | `waived-controlled-test` | `ACCEPT` | `client-lead` | `Phase 1 controlled-test follow-up` | Keep device or preview notes on audible substitutions in the candidate sign-off and update `configs/cocos-presentation.json` as cues are replaced with production assets. |
-| Animation fallback modes | Animation delivery is still fallback-only for `hero_guard_basic` and `wolf_pack`; no current profile ships as `clip` or `spine`. | `waived-controlled-test` | `BLOCK` | `client-lead` | `Before Phase 1 exit` | Track each template conversion in the candidate sign-off and only close this row after the config moves the shipped profiles off `deliveryMode: fallback`. |
 
 ## Blocking Vs Controlled-Test Gaps
 

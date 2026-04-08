@@ -75,6 +75,7 @@
   - 有时间轴动画时可走 `Animation`
   - 没有正式动画资源时，现已优先退回到像素 portrait 帧，而不再只是 `[IDLE] / [ATTACK]` 文字
   - 当前会优先读取 `units/*`，其次 `showcaseUnits/*`，最后才退回到单帧 hero portrait
+  - `hero_guard_basic / wolf_pack` 现已把多帧像素 portrait 序列正式登记到 `deliveryMode: sequence`，单帧 portrait / 文字态只作为兜底降级
   - 支持在 Inspector 里分别配置 `idle / move / attack / hit / victory / defeat` 的 Spine 名称或 Clip 名称
   - 支持为 `attack / hit / victory / defeat` 配置单次播放后自动回到 `idle` 的时长
   - 没有资源时自动退化成文字态占位
@@ -86,7 +87,7 @@
   - 负责汇总像素图、资源音频和动画交付状态
   - 当前会统一输出 `表现 像素 ... · 音频 ... · 动画 ...` 这条摘要，供 Lobby 画册和 HUD 状态卡复用
   - 同时会把 `战斗流程 正式 4/4` 作为 battle journey 基线写入 readiness，明确 `进场 / 指令 / 受击 / 结算` 已在 copy/state 层正式化，剩余风险只继续记在资产层
-  - 也会给出 `战斗流程 正式 4/4 · 待替换 正式像素美术 / 真实 BGM-SFX / Spine Skeleton` 这类后续收口提示
+  - 也会给出 `战斗流程 正式 4/4 · 待替换 正式像素美术 / 真实 BGM-SFX` 这类后续收口提示
   - 发布门禁可通过 `npm run check:cocos-release-readiness` 强制要求表现资源达到 release-ready，再串接微信小游戏构建校验
 - `assets/scripts/cocos-audio-runtime.ts`
   - 轻量合成音频运行时
