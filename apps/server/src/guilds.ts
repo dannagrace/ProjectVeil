@@ -7,6 +7,7 @@ import {
   joinGuild,
   leaveGuild,
   type GuildCreateAction,
+  type GuildMembershipEvent,
   type GuildState
 } from "../../../packages/shared/src/index";
 import { validateAuthSessionFromRequest } from "./auth";
@@ -232,8 +233,8 @@ class GuildService {
 
   async leaveGuildForPlayer(authSession: { playerId: string; displayName: string }, guildId: string): Promise<{
     guild: GuildState;
-    events: ReturnType<typeof leaveGuild>["events"];
     deleted: boolean;
+    events: GuildMembershipEvent[];
   }> {
     const store = this.requireStore();
     const guild = await store.loadGuild(guildId);
