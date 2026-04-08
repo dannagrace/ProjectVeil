@@ -31,6 +31,7 @@ import {
   loadCocosCampaignSummary,
   claimCocosSeasonTier,
   claimCocosDailyDungeonRunReward,
+  claimCocosDailyQuest,
   claimAllCocosMailboxMessages,
   claimCocosMailboxMessage,
   type CocosCampaignMissionCompleteResult,
@@ -273,6 +274,7 @@ interface VeilRootRuntime {
   loadShopProducts: typeof VeilCocosSession.fetchShopProducts;
   purchaseShopProduct: typeof VeilCocosSession.purchaseShopProduct;
   equipShopCosmetic: typeof VeilCocosSession.equipShopCosmetic;
+  claimDailyQuest: typeof claimCocosDailyQuest;
 }
 
 const defaultVeilRootRuntime: VeilRootRuntime = {
@@ -308,7 +310,8 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   deletePlayerAccount: (...args) => deleteCurrentCocosPlayerAccount(...args),
   loadShopProducts: (...args) => VeilCocosSession.fetchShopProducts(...args),
   purchaseShopProduct: (...args) => VeilCocosSession.purchaseShopProduct(...args),
-  equipShopCosmetic: (...args) => VeilCocosSession.equipShopCosmetic(...args)
+  equipShopCosmetic: (...args) => VeilCocosSession.equipShopCosmetic(...args),
+  claimDailyQuest: (...args) => claimCocosDailyQuest(...args)
 };
 
 let testVeilRootRuntimeOverrides: Partial<VeilRootRuntime> | null = null;
@@ -426,6 +429,7 @@ export class VeilRoot extends Component {
   private pendingSeasonalEventBattleIds = new Set<string>();
   private pendingSeasonClaimTier: number | null = null;
   private seasonPremiumPurchaseInFlight = false;
+  private dailyQuestClaimingId: string | null = null;
   private mailboxClaimingMessageId: string | null = null;
   private mailboxClaimAllInFlight = false;
   private lobbyAccountReviewState: CocosAccountReviewState = createCocosAccountReviewState(this.lobbyAccountProfile);
@@ -1080,6 +1084,9 @@ export class VeilRoot extends Component {
       onPurchaseShopProduct: (productId) => {
         void this.purchaseLobbyShopProduct(productId);
       },
+      onClaimDailyQuest: (questId) => {
+        void this.claimLobbyDailyQuest(questId);
+      },
       onClaimMailboxMessage: (messageId) => {
         void this.claimLobbyMailboxMessage(messageId);
       },
@@ -1474,6 +1481,7 @@ export class VeilRoot extends Component {
         }),
         shopStatus: this.lobbyShopStatus,
         shopLoading: this.lobbyShopLoading,
+        dailyQuestClaimingId: this.dailyQuestClaimingId,
         mailboxClaimingMessageId: this.mailboxClaimingMessageId,
         mailboxClaimAllBusy: this.mailboxClaimAllInFlight
       });
@@ -1903,6 +1911,40 @@ export class VeilRoot extends Component {
       this.lobbyStatus = error instanceof Error ? error.message : "mailbox_claim_failed";
     } finally {
       this.mailboxClaimingMessageId = null;
+      this.renderView();
+    }
+  }
+
+  private async claimLobbyDailyQuest(questId: string): Promise<void> {
+    const storage = this.readWebStorage();
+    const authSession = readStoredCocosAuthSession(storage);
+    if (!authSession?.token) {
+      this.lobbyStatus = "每日任务领取需要先登录云端账号或游客会话。";
+      this.renderView();
+      return;
+    }
+
+    this.dailyQuestClaimingId = questId;
+    this.lobbyStatus = "正在领取每日任务奖励...";
+    this.renderView();
+    try {
+      const payload = await resolveVeilRootRuntime().claimDailyQuest(this.remoteUrl, questId, {
+        authSession,
+        storage
+      });
+      this.lobbyStatus =
+        payload.claimed
+          ? "每日任务奖励已领取，正在同步任务板。"
+          : payload.reason === "already_claimed"
+            ? "该每日任务奖励已经领取过。"
+            : payload.reason === "quest_incomplete"
+              ? "任务尚未完成，暂时无法领取奖励。"
+              : "每日任务领取失败，请稍后重试。";
+      await this.refreshLobbyAccountProfile();
+    } catch (error) {
+      this.lobbyStatus = error instanceof Error ? error.message : "daily_quest_claim_failed";
+    } finally {
+      this.dailyQuestClaimingId = null;
       this.renderView();
     }
   }

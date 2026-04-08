@@ -152,6 +152,17 @@ interface PlayerMailboxApiPayload {
   reason?: string;
 }
 
+interface DailyQuestClaimApiPayload {
+  claimed?: boolean;
+  reason?: string;
+  questId?: string;
+  reward?: {
+    gems?: number;
+    gold?: number;
+  };
+  dailyQuestBoard?: PlayerAccountReadModel["dailyQuestBoard"];
+}
+
 interface DailyClaimApiPayload {
   claimed?: boolean;
   reason?: string;
@@ -1060,6 +1071,29 @@ export async function claimCocosMailboxMessage(
       ...(options.storage !== undefined ? { storage: options.storage } : {})
     }
   )) as PlayerMailboxApiPayload;
+}
+
+export async function claimCocosDailyQuest(
+  remoteUrl: string,
+  questId: string,
+  options: {
+    authSession: CocosStoredAuthSession;
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "removeItem"> | null;
+  }
+): Promise<DailyQuestClaimApiPayload> {
+  return (await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/daily-quests/${encodeURIComponent(questId)}/claim`,
+    {
+      method: "POST"
+    },
+    options.authSession,
+    {
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.storage !== undefined ? { storage: options.storage } : {})
+    }
+  )) as DailyQuestClaimApiPayload;
 }
 
 export async function claimAllCocosMailboxMessages(

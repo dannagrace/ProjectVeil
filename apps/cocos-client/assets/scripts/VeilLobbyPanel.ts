@@ -11,6 +11,7 @@ import type { CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-l
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildCocosBattleReplayTimelineView } from "./cocos-battle-replay-timeline.ts";
+import { buildCocosDailyQuestPanelView } from "./cocos-daily-quest-panel.ts";
 import { buildCocosShopPanelView, type CocosShopPanelView } from "./cocos-shop-panel.ts";
 import {
   buildCocosBattleReplayCenterView,
@@ -154,6 +155,7 @@ export interface VeilLobbyRenderState {
   shop: CocosShopPanelView;
   shopStatus: string;
   shopLoading?: boolean;
+  dailyQuestClaimingId?: string | null;
   mailboxClaimingMessageId?: string | null;
   mailboxClaimAllBusy?: boolean;
 }
@@ -188,6 +190,7 @@ export interface VeilLobbyPanelOptions {
   onCloseLobbySkillPanel?: () => void;
   onLearnLobbySkill?: (skillId: string) => void;
   onPurchaseShopProduct?: (productId: string) => void;
+  onClaimDailyQuest?: (questId: string) => void;
   onClaimMailboxMessage?: (messageId: string) => void;
   onClaimAllMailbox?: () => void;
 }
@@ -234,6 +237,7 @@ export class VeilLobbyPanel extends Component {
   private onCloseLobbySkillPanel: (() => void) | undefined;
   private onLearnLobbySkill: ((skillId: string) => void) | undefined;
   private onPurchaseShopProduct: ((productId: string) => void) | undefined;
+  private onClaimDailyQuest: ((questId: string) => void) | undefined;
   private onClaimMailboxMessage: ((messageId: string) => void) | undefined;
   private onClaimAllMailbox: (() => void) | undefined;
   private replayPlayback: BattleReplayPlaybackState | null = null;
@@ -241,6 +245,7 @@ export class VeilLobbyPanel extends Component {
   private replayPlaybackStatus = "选择一场最近战斗，即可查看逐步回放。";
   private replayPlaybackTimer: ReturnType<typeof setInterval> | null = null;
   private showSkillPanel = false;
+  private showDailyQuestPanel = false;
 
   onDestroy(): void {
     this.stopReplayPlaybackLoop();
@@ -277,6 +282,7 @@ export class VeilLobbyPanel extends Component {
     this.onCloseLobbySkillPanel = options.onCloseLobbySkillPanel;
     this.onLearnLobbySkill = options.onLearnLobbySkill;
     this.onPurchaseShopProduct = options.onPurchaseShopProduct;
+    this.onClaimDailyQuest = options.onClaimDailyQuest;
     this.onClaimMailboxMessage = options.onClaimMailboxMessage;
     this.onClaimAllMailbox = options.onClaimAllMailbox;
   }
@@ -633,9 +639,11 @@ export class VeilLobbyPanel extends Component {
 
     if (this.showAccountReview) {
       this.showSkillPanel = false;
+      this.showDailyQuestPanel = false;
       this.hideAccountFlowPanel();
       this.hideHeroSection();
       this.hideSkillPanelModal();
+      this.hideDailyQuestPanelModal();
       const review = state.accountReview;
       const hasBattleReplays = state.battleReplayItems.length > 0;
       const unlockedCount = state.account.achievements.filter((achievement) => achievement.unlocked).length;
@@ -772,18 +780,21 @@ export class VeilLobbyPanel extends Component {
       this.hideLeaderboardCards();
     } else if (state.accountFlow) {
       this.showSkillPanel = false;
+      this.showDailyQuestPanel = false;
       this.hideAccountReviewCards();
       this.hideBattleReplayTimelineCard();
       this.hideLobbyRooms();
       this.hideLeaderboardCards();
       this.hideHeroSection();
       this.hideSkillPanelModal();
+      this.hideDailyQuestPanelModal();
       this.renderAccountFlowPanel(rightX, rightCursorY, rightWidth, state.accountFlow, state.entering);
     } else {
       this.hideAccountFlowPanel();
       this.hideAccountReviewCards();
       this.hideBattleReplayTimelineCard();
       rightCursorY = this.renderHeroSection(rightX, rightCursorY, rightWidth, state, skillPanelBusy);
+      rightCursorY = this.renderDailyQuestSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderMailboxSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderLeaderboardSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderShopSection(rightX, rightCursorY, rightWidth, state);
@@ -872,6 +883,71 @@ export class VeilLobbyPanel extends Component {
     } else {
       this.hideSkillPanelModal();
     }
+
+    if (this.showDailyQuestPanel) {
+      this.renderDailyQuestPanelModal(width, height, state);
+    } else {
+      this.hideDailyQuestPanelModal();
+    }
+  }
+
+  private renderDailyQuestSection(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
+    const board = state.account.dailyQuestBoard;
+    const pendingRewards = board?.pendingRewards ?? { gems: 0, gold: 0 };
+    const pendingRewardLabel =
+      pendingRewards.gems > 0 || pendingRewards.gold > 0
+        ? [
+            pendingRewards.gems > 0 ? `宝石 x${pendingRewards.gems}` : null,
+            pendingRewards.gold > 0 ? `金币 x${pendingRewards.gold}` : null
+          ]
+            .filter((entry): entry is string => Boolean(entry))
+            .join(" · ")
+        : "暂无待领取奖励";
+    const nextY = this.renderCard(
+      "LobbyDailyQuestSummary",
+      centerX,
+      topY,
+      width,
+      84,
+      [
+        "每日任务",
+        board?.enabled ? `可领取 ${board.availableClaims} · 今日任务 ${board.quests.length}` : "任务板暂未开启",
+        board?.enabled ? pendingRewardLabel : "完成或跳过引导后，这里会显示今日任务。"
+      ],
+      {
+        fill: new Color(54, 72, 96, 190),
+        stroke: new Color(230, 238, 252, 68),
+        accent: board?.availableClaims ? new Color(238, 184, 94, 220) : new Color(124, 176, 226, 204)
+      },
+      null,
+      13,
+      17
+    );
+
+    this.renderActionButton(
+      "LobbyDailyQuestOpen",
+      centerX,
+      nextY - 16,
+      width,
+      28,
+      board?.availableClaims ? `打开任务板 · ${board.availableClaims} 项可领取` : "打开任务板",
+      {
+        fill: board?.availableClaims ? ACTION_ACCOUNT_REVIEW_ACTIVE : ACTION_ACCOUNT,
+        stroke: new Color(228, 236, 248, 120),
+        accent: new Color(220, 230, 244, 112)
+      },
+      state.entering
+        ? null
+        : () => {
+            this.showSkillPanel = false;
+            this.showDailyQuestPanel = true;
+            if (this.currentState) {
+              this.render(this.currentState);
+            }
+          }
+    );
+
+    return nextY - 50;
   }
 
   private renderShopSection(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
@@ -1193,7 +1269,7 @@ export class VeilLobbyPanel extends Component {
   }
 
   private hideHeroSection(): void {
-    for (const name of ["LobbyHeroSummary", "LobbyHeroSkillButton"]) {
+    for (const name of ["LobbyHeroSummary", "LobbyHeroSkillButton", "LobbyDailyQuestSummary", "LobbyDailyQuestOpen"]) {
       const node = this.node.getChildByName(name);
       if (node) {
         node.active = false;
@@ -1254,7 +1330,13 @@ export class VeilLobbyPanel extends Component {
     const modalCenterX = 0;
     let topY = height / 2 - 54;
 
-    this.renderBackdrop("LobbySkillPanelBackdrop", width, height);
+    this.renderBackdrop("LobbySkillPanelBackdrop", width, height, () => {
+      this.showSkillPanel = false;
+      this.onCloseLobbySkillPanel?.();
+      if (this.currentState) {
+        this.render(this.currentState);
+      }
+    });
     topY = this.renderCard(
       "LobbySkillPanelHeader",
       modalCenterX,
@@ -1351,7 +1433,131 @@ export class VeilLobbyPanel extends Component {
     );
   }
 
-  private renderBackdrop(name: string, width: number, height: number): void {
+  private renderDailyQuestPanelModal(width: number, height: number, state: VeilLobbyRenderState): void {
+    const modalWidth = Math.min(620, width - 48);
+    const modalCenterX = 0;
+    let topY = height / 2 - 54;
+    const view = buildCocosDailyQuestPanelView({
+      board: state.account.dailyQuestBoard ?? null,
+      pendingQuestId: state.dailyQuestClaimingId ?? null
+    });
+
+    this.renderBackdrop("LobbyDailyQuestBackdrop", width, height, () => {
+      this.showDailyQuestPanel = false;
+      if (this.currentState) {
+        this.render(this.currentState);
+      }
+    });
+    topY = this.renderCard(
+      "LobbyDailyQuestHeader",
+      modalCenterX,
+      topY,
+      modalWidth,
+      96,
+      [view.title, `${view.subtitle} · ${view.claimableCountLabel}`, `${view.pendingRewardsLabel} · ${view.resetLabel}`],
+      {
+        fill: TITLE_FILL,
+        stroke: new Color(236, 228, 198, 72),
+        accent: new Color(214, 175, 112, 194)
+      },
+      null,
+      13,
+      17
+    );
+
+    if (view.emptyLabel) {
+      topY = this.renderCard(
+        "LobbyDailyQuestEmpty",
+        modalCenterX,
+        topY,
+        modalWidth,
+        86,
+        ["今日任务", view.emptyLabel, "刷新账号资料后将同步最新任务板。"],
+        {
+          fill: MUTED_FILL,
+          stroke: new Color(214, 224, 238, 42),
+          accent: new Color(128, 146, 170, 156)
+        },
+        null,
+        13,
+        17
+      );
+      this.hideExtraCards("LobbyDailyQuestQuest-", 0);
+      this.hideExtraCards("LobbyDailyQuestClaim-", 0);
+    } else {
+      const emptyNode = this.node.getChildByName("LobbyDailyQuestEmpty");
+      if (emptyNode) {
+        emptyNode.active = false;
+      }
+
+      view.quests.slice(0, 4).forEach((quest, index) => {
+        topY = this.renderCard(
+          `LobbyDailyQuestQuest-${index}`,
+          modalCenterX,
+          topY,
+          modalWidth,
+          94,
+          [
+            `${quest.title} · ${quest.stateLabel}`,
+            `${quest.detail} · 进度 ${quest.progressLabel}`,
+            quest.rewardLabel
+          ],
+          {
+            fill: quest.action?.enabled ? new Color(52, 76, 84, 190) : ROOM_FILL,
+            stroke: new Color(220, 232, 244, 52),
+            accent:
+              quest.stateLabel === "可领取"
+                ? new Color(238, 184, 94, 220)
+                : quest.stateLabel === "已领取"
+                  ? new Color(132, 186, 142, 186)
+                  : new Color(132, 168, 214, 186)
+          },
+          null,
+          13,
+          17
+        );
+        this.renderActionButton(
+          `LobbyDailyQuestClaim-${index}`,
+          modalCenterX,
+          topY + 18,
+          modalWidth,
+          28,
+          quest.action?.label ?? `${quest.stateLabel} · ${quest.progressLabel}`,
+          {
+            fill: quest.action?.enabled ? ACTION_ACCOUNT_REVIEW_ACTIVE : MUTED_FILL,
+            stroke: new Color(228, 244, 229, 124),
+            accent: new Color(226, 244, 230, 116)
+          },
+          quest.action?.enabled ? () => this.onClaimDailyQuest?.(quest.questId) : null
+        );
+        topY -= 28;
+      });
+      this.hideExtraCards("LobbyDailyQuestQuest-", Math.min(4, view.quests.length));
+      this.hideExtraCards("LobbyDailyQuestClaim-", Math.min(4, view.quests.length));
+    }
+
+    this.renderActionButton(
+      "LobbyDailyQuestClose",
+      modalCenterX,
+      topY - 8,
+      modalWidth,
+      28,
+      "收起任务板",
+      {
+        fill: ACTION_LOGOUT,
+        stroke: new Color(247, 232, 226, 118),
+        accent: new Color(250, 234, 228, 110)
+      },
+      () => {
+        this.showDailyQuestPanel = false;
+        if (this.currentState) {
+          this.render(this.currentState);
+        }
+      }
+    );
+  }
+
+  private renderBackdrop(name: string, width: number, height: number, onPress: (() => void) | null): void {
     let backdrop = this.node.getChildByName(name);
     if (!backdrop) {
       backdrop = new Node(name);
@@ -1367,13 +1573,7 @@ export class VeilLobbyPanel extends Component {
     graphics.fillColor = new Color(4, 7, 12, 184);
     graphics.rect(-width / 2, -height / 2, width, height);
     graphics.fill();
-    this.bindPress(backdrop, () => {
-      this.showSkillPanel = false;
-      this.onCloseLobbySkillPanel?.();
-      if (this.currentState) {
-        this.render(this.currentState);
-      }
-    });
+    this.bindPress(backdrop, onPress);
   }
 
   private hideExtraSkillBranchCards(visibleCount: number): void {
@@ -1403,6 +1603,17 @@ export class VeilLobbyPanel extends Component {
     }
     this.hideExtraSkillBranchCards(0);
     this.hideExtraSkillActionButtons(0);
+  }
+
+  private hideDailyQuestPanelModal(): void {
+    for (const name of ["LobbyDailyQuestBackdrop", "LobbyDailyQuestHeader", "LobbyDailyQuestEmpty", "LobbyDailyQuestClose"]) {
+      const node = this.node.getChildByName(name);
+      if (node) {
+        node.active = false;
+      }
+    }
+    this.hideExtraCards("LobbyDailyQuestQuest-", 0);
+    this.hideExtraCards("LobbyDailyQuestClaim-", 0);
   }
 
   private renderCard(

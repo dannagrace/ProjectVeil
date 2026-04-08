@@ -3595,6 +3595,25 @@ test("daily quest claim grants rewards once and returns already_claimed on repea
   assert.equal(repeatPayload.reason, "already_claimed");
   assert.equal(repeatPayload.dailyQuestBoard.availableClaims, claimPayload.dailyQuestBoard.availableClaims);
 
+  const refreshedBoardResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/daily-quests`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const refreshedBoardPayload = (await refreshedBoardResponse.json()) as {
+    dailyQuestBoard: {
+      availableClaims: number;
+      quests: Array<{ id: string; claimed: boolean }>;
+    };
+  };
+
+  assert.equal(refreshedBoardResponse.status, 200);
+  assert.equal(refreshedBoardPayload.dailyQuestBoard.availableClaims, claimPayload.dailyQuestBoard.availableClaims);
+  assert.equal(
+    refreshedBoardPayload.dailyQuestBoard.quests.find((quest) => quest.id === claimableQuest.id)?.claimed,
+    true
+  );
+
   const account = await store.loadPlayerAccount("daily-quest-claim");
   const questState = await store.loadPlayerQuestState("daily-quest-claim");
   assert.equal(account?.gems, claimableQuest.reward.gems);
