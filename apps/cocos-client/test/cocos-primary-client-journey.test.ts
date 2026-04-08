@@ -992,6 +992,10 @@ test("primary cocos client journey closes the loot, inventory, and equip loop af
 
   const inventoryTextBeforeEquip = readNodeLabel(findNode(rootNode, "EquipmentPanelInventory")?.getChildByName("Label"));
   const lootTextBeforeEquip = readNodeLabel(findNode(rootNode, "EquipmentPanelLoot")?.getChildByName("Label"));
+  const spotlightTextBeforeEquip = readNodeLabel(findNode(rootNode, "EquipmentPanelLootSpotlight")?.getChildByName("Label"));
+  assert.match(String(spotlightTextBeforeEquip), /战斗结算 获得新装备/);
+  assert.match(String(spotlightTextBeforeEquip), /斥候罗盘/);
+  assert.match(String(inventoryTextBeforeEquip), /筛选 全部 · 排序 槽位/);
   assert.match(String(inventoryTextBeforeEquip), /斥候罗盘/);
   assert.match(String(lootTextBeforeEquip), /斥候罗盘/);
 
