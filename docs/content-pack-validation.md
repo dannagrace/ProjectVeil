@@ -1,6 +1,6 @@
 # Content Pack Validation
 
-`npm run validate:content-pack` validates the shipped default content pack, and `npm run validate:content-pack:all` extends the same checks across the additional shipped map-pack presets.
+`npm run validate:content-pack` validates the shipped default content pack, and `npm run validate:content-pack:all` first runs the Phase 1 map-object visual coverage precheck before extending the same content-pack checks across the additional shipped map-pack presets.
 
 The validator is intended to fail before runtime when authored config would otherwise be silently normalized or only break after archive hydration, equipment reconciliation, or reward application.
 
@@ -20,6 +20,12 @@ Run every shipped bundle:
 npm run validate:content-pack:all
 ```
 
+Run just the Phase 1 map-object visual coverage audit:
+
+```bash
+npm run validate:map-object-visuals
+```
+
 Write a machine-readable report artifact:
 
 ```bash
@@ -33,6 +39,8 @@ npm run validate:content-pack -- --map-pack ridgeway-crossing
 ```
 
 The CLI prints the document path, issue code, human-readable failure, and a suggested fix for each failing entry.
+
+`validate:map-object-visuals` treats missing or mismatched coverage entries in `configs/object-visuals.json` as errors, while stale extra node mappings only surface as warnings so authors can clean them up without blocking unrelated pack validation.
 
 ## CI Workflow
 

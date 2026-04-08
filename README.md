@@ -168,7 +168,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 
 - 安装依赖：`npm ci --no-audit --no-fund`
 - 快速校验首条贡献路径：`npm run validate:quickstart`
-- 提交配置相关 PR 前先跑跨文件配置校验：`npm run validate:content-pack:all`
+- 提交配置相关 PR 前先跑跨文件配置校验：`npm run validate:content-pack:all`（会先检查 13 个 Phase 1 地图包的对象视觉覆盖，再跑内容包一致性校验）
 - 本地 WebSocket 服务：`npm run dev:server`
 - 仓库级 Node 单测入口：`npm test`
 - 配置中心编辑器回归：`npm run test:client:config-center`
@@ -229,7 +229,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 并发房间压测：`npm run stress:rooms -- --rooms=120 --connect-concurrency=24 --action-concurrency=24`
 - 并发房间压测启动后，也可直接查看同进程观测面：`/api/runtime/health`、`/api/runtime/auth-readiness` 与 `/api/runtime/metrics`
 - 战斗平衡验证：`npm run validate:battle -- --count=1000 --scenario=all --skill-config=configs/battle-skills-v1.1.json`
-- 内容包一致性验证：`npm run validate:content-pack:all -- --report-path artifacts/content-pack-validation-report.json`（覆盖 `phase1`、`frontier-basin`、`stonewatch-fork`、`ridgeway-crossing`、`phase2`）
+- 内容包一致性验证：`npm run validate:content-pack:all -- --report-path artifacts/content-pack-validation-report.json`（会先跑 `validate:map-object-visuals`，随后覆盖 `phase1`、全部 12 个额外 Phase 1 地图包，以及 `phase2` 的内容包校验）
 - Boss encounter 模板作者指南：`docs/boss-encounter-template-authoring.md`
 - Phase 1 持久化 + shipped content 回归：`npm run test:phase1-release-persistence`
 - Frontier Basin Phase 1 内容包专项回归：`npm run test:phase1-release-persistence:frontier`

@@ -286,7 +286,12 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
       };
   }
 
-  if (script === "validate:assets" || script === "validate:content-smoke" || script.startsWith("validate:content-pack")) {
+  if (
+    script === "validate:assets" ||
+    script === "validate:content-smoke" ||
+    script === "validate:map-object-visuals" ||
+    script.startsWith("validate:content-pack")
+  ) {
     return {
       owner: "candidate owner",
       scope: "candidate-level",

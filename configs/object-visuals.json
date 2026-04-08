@@ -68,5 +68,280 @@
       "interactionType": "pickup",
       "rarity": "common"
     }
+  },
+  "phase1MapPackCoverage": {
+    "default": {
+      "neutralArmies": {
+        "neutral-1": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "shrine-attack-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine"
+      },
+      "resources": {
+        "wood@2,1": "wood"
+      }
+    },
+    "frontier-basin": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "shrine-attack-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine",
+        "recruit-post-2": "recruitment_post",
+        "shrine-knowledge-1": "attribute_shrine",
+        "mine-ore-1": "resource_mine"
+      },
+      "resources": {
+        "wood@2,1": "wood",
+        "ore@6,5": "ore"
+      }
+    },
+    "stonewatch-fork": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "recruit-post-2": "recruitment_post",
+        "shrine-defense-1": "attribute_shrine",
+        "shrine-power-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine",
+        "mine-ore-1": "resource_mine"
+      },
+      "resources": {
+        "wood@1,4": "wood",
+        "ore@4,6": "ore",
+        "gold@6,1": "gold"
+      }
+    },
+    "ridgeway-crossing": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "shrine-attack-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine",
+        "recruit-post-2": "recruitment_post",
+        "shrine-defense-1": "attribute_shrine",
+        "mine-ore-1": "resource_mine"
+      },
+      "resources": {
+        "wood@2,1": "wood",
+        "ore@1,5": "ore",
+        "gold@6,2": "gold"
+      }
+    },
+    "highland-reach": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "recruit-post-2": "recruitment_post",
+        "shrine-attack-1": "attribute_shrine",
+        "shrine-defense-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine",
+        "mine-ore-1": "resource_mine"
+      },
+      "resources": {
+        "wood@1,2": "wood",
+        "ore@8,7": "ore",
+        "gold@2,7": "gold",
+        "gold@7,2": "gold"
+      }
+    },
+    "amber-fields": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "recruit-post-2": "recruitment_post",
+        "shrine-power-1": "attribute_shrine",
+        "shrine-knowledge-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine",
+        "mine-ore-1": "resource_mine"
+      },
+      "resources": {
+        "wood@2,2": "wood",
+        "ore@7,7": "ore",
+        "gold@2,7": "gold",
+        "gold@7,2": "gold"
+      }
+    },
+    "ironpass-gorge": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "recruit-post-2": "recruitment_post",
+        "shrine-defense-1": "attribute_shrine",
+        "shrine-attack-1": "attribute_shrine",
+        "mine-ore-1": "resource_mine",
+        "mine-wood-1": "resource_mine"
+      },
+      "resources": {
+        "wood@2,2": "wood",
+        "ore@9,7": "ore",
+        "gold@5,2": "gold",
+        "gold@6,7": "gold"
+      }
+    },
+    "splitrock-canyon": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "recruit-post-2": "recruitment_post",
+        "shrine-power-1": "attribute_shrine",
+        "shrine-defense-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine",
+        "mine-ore-1": "resource_mine"
+      },
+      "resources": {
+        "wood@1,5": "wood",
+        "gold@5,1": "gold",
+        "ore@6,8": "ore",
+        "gold@10,4": "gold"
+      }
+    },
+    "bogfen-crossing": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "recruit-post-2": "recruitment_post",
+        "shrine-defense-1": "attribute_shrine",
+        "shrine-attack-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine",
+        "mine-ore-1": "resource_mine"
+      },
+      "resources": {
+        "wood@1,3": "wood",
+        "ore@10,8": "ore",
+        "gold@4,6": "gold",
+        "gold@7,5": "gold"
+      }
+    },
+    "murkveil-delta": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "recruit-post-2": "recruitment_post",
+        "shrine-power-1": "attribute_shrine",
+        "shrine-defense-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine",
+        "mine-ore-1": "resource_mine"
+      },
+      "resources": {
+        "wood@1,1": "wood",
+        "ore@8,10": "ore",
+        "gold@4,7": "gold",
+        "gold@6,5": "gold"
+      }
+    },
+    "frostwatch-ridge": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "recruit-post-2": "recruitment_post",
+        "shrine-attack-1": "attribute_shrine",
+        "shrine-defense-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine",
+        "mine-ore-1": "resource_mine"
+      },
+      "resources": {
+        "wood@2,2": "wood",
+        "ore@11,7": "ore",
+        "gold@6,4": "gold",
+        "gold@7,5": "gold"
+      }
+    },
+    "ashpeak-ascent": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "recruit-post-2": "recruitment_post",
+        "shrine-defense-1": "attribute_shrine",
+        "shrine-attack-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine",
+        "mine-ore-1": "resource_mine"
+      },
+      "resources": {
+        "wood@1,6": "wood",
+        "ore@10,2": "ore",
+        "gold@6,6": "gold",
+        "gold@9,3": "gold"
+      }
+    },
+    "thornwall-divide": {
+      "neutralArmies": {
+        "neutral-1": "neutral",
+        "neutral-2": "neutral",
+        "neutral-3": "neutral",
+        "neutral-4": "neutral"
+      },
+      "buildings": {
+        "recruit-post-1": "recruitment_post",
+        "recruit-post-2": "recruitment_post",
+        "shrine-power-1": "attribute_shrine",
+        "shrine-defense-1": "attribute_shrine",
+        "mine-wood-1": "resource_mine",
+        "mine-ore-1": "resource_mine"
+      },
+      "resources": {
+        "wood@1,1": "wood",
+        "gold@2,2": "gold",
+        "ore@9,10": "ore",
+        "gold@8,9": "gold"
+      }
+    }
   }
 }
