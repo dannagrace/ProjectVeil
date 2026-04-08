@@ -323,6 +323,115 @@ test("VeilLobbyPanel opens the lobby skill modal and wires skill selections", ()
   component.onDestroy();
 });
 
+test("VeilLobbyPanel opens the daily quest board panel and wires quest claims", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const claimedQuestIds: string[] = [];
+
+  component.configure({
+    onClaimDailyQuest: (questId) => {
+      claimedQuestIds.push(questId);
+    }
+  });
+  component.scheduleOnce = () => undefined;
+  component.render(
+    createLobbyState({
+      account: createLobbyPanelTestAccount({
+        dailyQuestBoard: {
+          enabled: true,
+          cycleKey: "2026-04-08",
+          resetAt: "2026-04-08T23:59:59.999Z",
+          availableClaims: 1,
+          pendingRewards: {
+            gems: 8,
+            gold: 50
+          },
+          quests: [
+            {
+              id: "quest-progress",
+              title: "巡视边境",
+              description: "移动英雄 3 次。",
+              target: 3,
+              current: 1,
+              completed: false,
+              claimed: false,
+              reward: {
+                gems: 2,
+                gold: 0
+              }
+            },
+            {
+              id: "quest-claimable",
+              title: "补给征收",
+              description: "收集资源 2 次。",
+              target: 2,
+              current: 2,
+              completed: true,
+              claimed: false,
+              reward: {
+                gems: 8,
+                gold: 50
+              }
+            },
+            {
+              id: "quest-claimed",
+              title: "压制前线",
+              description: "赢得 1 场战斗。",
+              target: 1,
+              current: 1,
+              completed: true,
+              claimed: true,
+              reward: {
+                gems: 5,
+                gold: 20
+              }
+            }
+          ]
+        }
+      })
+    })
+  );
+
+  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /可领取 1 · 今日任务 3/);
+  pressNode(findNode(node, "LobbyDailyQuestOpen"));
+  assert.match(readCardLabel(node, "LobbyDailyQuestHeader"), /每日任务板/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestQuest-0"), /巡视边境 · 进行中/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestQuest-1"), /补给征收 · 可领取/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestQuest-2"), /压制前线 · 已领取/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestClaim-1"), /领取奖励/);
+
+  pressNode(findNode(node, "LobbyDailyQuestClaim-1"));
+  assert.deepEqual(claimedQuestIds, ["quest-claimable"]);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel renders the daily quest board empty state when no quests are available", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+
+  component.configure({});
+  component.scheduleOnce = () => undefined;
+  component.render(
+    createLobbyState({
+      account: createLobbyPanelTestAccount({
+        dailyQuestBoard: {
+          enabled: true,
+          cycleKey: "2026-04-08",
+          resetAt: "2026-04-08T23:59:59.999Z",
+          availableClaims: 0,
+          pendingRewards: {
+            gems: 0,
+            gold: 0
+          },
+          quests: []
+        }
+      })
+    })
+  );
+
+  pressNode(findNode(node, "LobbyDailyQuestOpen"));
+  assert.match(readCardLabel(node, "LobbyDailyQuestEmpty"), /今日任务暂未开放或尚未下发/);
+  component.onDestroy();
+});
+
 test("VeilLobbyPanel renders mailbox compensation copy and wires claim actions", () => {
   const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
   const claimedMessageIds: string[] = [];

@@ -86,6 +86,7 @@ export function createLobbyPanelTestAccount(
     recentEventLog: overrides.recentEventLog ?? [],
     recentBattleReplays: overrides.recentBattleReplays ?? [],
     source: overrides.source ?? "local",
+    ...(overrides.dailyQuestBoard ? { dailyQuestBoard: overrides.dailyQuestBoard } : {}),
     ...(overrides.battleReportCenter ? { battleReportCenter: overrides.battleReportCenter } : {}),
     ...(overrides.avatarUrl ? { avatarUrl: overrides.avatarUrl } : {}),
     ...(overrides.mailbox ? { mailbox: overrides.mailbox } : {}),
