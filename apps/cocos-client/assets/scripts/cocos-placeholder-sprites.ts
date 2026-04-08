@@ -1,6 +1,7 @@
 import { ImageAsset, SpriteFrame, resources } from "cc";
 import {
   ALL_PLACEHOLDER_SCOPES,
+  PLACEHOLDER_FOG_MASK_PATHS,
   normalizePlaceholderScopes,
   PLACEHOLDER_ICON_PATHS,
   PLACEHOLDER_SCOPE_PATHS,
@@ -33,8 +34,14 @@ export interface PlaceholderIconSprites {
   timeline: SpriteFrame | null;
 }
 
+export interface PlaceholderFogMaskSprites {
+  hidden: Array<SpriteFrame | null>;
+  explored: Array<SpriteFrame | null>;
+}
+
 export interface PlaceholderSpriteAssets {
   tiles: PlaceholderTileSprites;
+  fogMasks: PlaceholderFogMaskSprites;
   icons: PlaceholderIconSprites;
 }
 
@@ -84,6 +91,10 @@ function createEmptyPlaceholderSpriteAssets(): PlaceholderSpriteAssets {
       unknown: PLACEHOLDER_TILE_PATHS.unknown.map(() => null),
       hidden: PLACEHOLDER_TILE_PATHS.hidden.map(() => null)
     },
+    fogMasks: {
+      hidden: PLACEHOLDER_FOG_MASK_PATHS.hidden.map(() => null),
+      explored: PLACEHOLDER_FOG_MASK_PATHS.explored.map(() => null)
+    },
     icons: {
       wood: null,
       gold: null,
@@ -107,6 +118,11 @@ function buildPlaceholderSpriteAssetsSnapshot(): PlaceholderSpriteAssets {
   >) {
     assets.tiles[kind] = paths.map((path) => loadedFramesByPath.get(path) ?? null);
   }
+  for (const [kind, paths] of Object.entries(PLACEHOLDER_FOG_MASK_PATHS) as Array<
+    [keyof PlaceholderFogMaskSprites, readonly string[]]
+  >) {
+    assets.fogMasks[kind] = paths.map((path) => loadedFramesByPath.get(path) ?? null);
+  }
   for (const [kind, path] of Object.entries(PLACEHOLDER_ICON_PATHS) as Array<
     [keyof PlaceholderIconSprites, string]
   >) {
@@ -118,6 +134,7 @@ function buildPlaceholderSpriteAssetsSnapshot(): PlaceholderSpriteAssets {
 function hasLoadedPlaceholderAssets(assets: PlaceholderSpriteAssets): boolean {
   return (
     Object.values(assets.tiles).some((items) => items.some((frame: SpriteFrame | null) => frame !== null))
+    || Object.values(assets.fogMasks).some((items) => items.some((frame: SpriteFrame | null) => frame !== null))
     || Object.values(assets.icons).some((frame: SpriteFrame | null) => frame !== null)
   );
 }

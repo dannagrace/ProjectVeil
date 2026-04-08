@@ -1,4 +1,4 @@
-import type { PlayerTileView, SessionUpdate, Vec2 } from "./VeilCocosSession.ts";
+import type { FogState, PlayerTileView, SessionUpdate, Vec2 } from "./VeilCocosSession.ts";
 import { resolveMapBoardFeedbackLabel } from "./cocos-map-board-model.ts";
 
 const NORTH_BIT = 1;
@@ -24,14 +24,22 @@ export interface TileFeedbackEntry {
   durationSeconds: number;
 }
 
-export interface FogOverlayStyle {
-  text: string;
-  opacity: number;
-  edgeOpacity: number;
-  labelOpacity: number;
-  tone: "hidden" | "explored";
+export type FogTileState = Exclude<FogState, "visible">;
+
+export interface FogTileStyle {
+  frameKey: string;
+  fogState: FogTileState;
   featherMask: number;
 }
+
+export type FogTileStyleLookup = Record<FogTileState, Record<number, string>>;
+
+export const FOG_TILE_STATES: FogTileState[] = ["hidden", "explored"];
+
+export const FOG_TILE_STYLE_LOOKUP: FogTileStyleLookup = {
+  hidden: createFogTileStyleEntries("hidden"),
+  explored: createFogTileStyleEntries("explored")
+};
 
 export interface ObjectPulseEntry {
   position: Vec2;
@@ -110,38 +118,31 @@ export function fogEdgeMarkerForTile(
   return " ";
 }
 
-export function buildFogOverlayStyle(
-  tile: PlayerTileView,
-  tileLookup: Map<string, PlayerTileView>,
-  phase = 0
-): FogOverlayStyle | null {
+export function buildFogTileStyle(tile: PlayerTileView, tileLookup: Map<string, PlayerTileView>): FogTileStyle | null {
   if (tile.fog === "hidden") {
     const featherMask = fogMaskAgainst(tile.position, tileLookup, ["explored", "visible"]);
-    const frontier = featherMask > 0;
     return {
-      text: "",
-      opacity: frontier ? (phase % 2 === 1 ? 176 : 192) : phase % 2 === 1 ? 204 : 220,
-      edgeOpacity: frontier ? (phase % 2 === 1 ? 62 : 78) : phase % 2 === 1 ? 184 : 198,
-      labelOpacity: 0,
-      tone: "hidden",
+      frameKey: resolveFogTileFrameKey("hidden", featherMask),
+      fogState: "hidden",
       featherMask
     };
   }
 
   if (tile.fog === "explored") {
     const featherMask = fogMaskAgainst(tile.position, tileLookup, ["visible"]);
-    const frontier = featherMask > 0;
     return {
-      text: "",
-      opacity: frontier ? (phase % 2 === 1 ? 78 : 92) : phase % 2 === 1 ? 92 : 108,
-      edgeOpacity: frontier ? (phase % 2 === 1 ? 24 : 34) : phase % 2 === 1 ? 72 : 82,
-      labelOpacity: 0,
-      tone: "explored",
+      frameKey: resolveFogTileFrameKey("explored", featherMask),
+      fogState: "explored",
       featherMask
     };
   }
 
   return null;
+}
+
+export function resolveFogTileFrameKey(fogState: FogTileState, featherMask: number): string {
+  const normalizedMask = normalizeFogFeatherMask(featherMask);
+  return FOG_TILE_STYLE_LOOKUP[fogState][normalizedMask] ?? `placeholder/fog/${fogState}-${normalizedMask}`;
 }
 
 export function buildMapFeedbackEntriesFromUpdate(update: SessionUpdate, heroId?: string): TileFeedbackEntry[] {
@@ -354,6 +355,18 @@ function didHeroWin(
   }
 
   return event.defenderHeroId === heroId;
+}
+
+function createFogTileStyleEntries(fogState: FogTileState): Record<number, string> {
+  const entries: Record<number, string> = {};
+  for (let featherMask = 0; featherMask < 16; featherMask += 1) {
+    entries[featherMask] = `placeholder/fog/${fogState}-${featherMask}`;
+  }
+  return entries;
+}
+
+function normalizeFogFeatherMask(featherMask: number): number {
+  return Math.max(0, Math.min(15, featherMask | 0));
 }
 
 function fogMaskAgainst(
