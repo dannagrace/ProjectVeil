@@ -56,7 +56,7 @@ npm run validate:content-pack:all
 npm run test:phase1-release-persistence:frontier
 ```
 
-若 reviewer 关注石岗分叉或岭桥布局，则改为 `npm run test:phase1-release-persistence:stonewatch` 或 `npm run test:phase1-release-persistence:ridgeway`；这些产出的 JSON 都应与同一份 candidate evidence bundle 一起归档。
+若 reviewer 关注石岗分叉、岭桥或高地布局，则改为 `npm run test:phase1-release-persistence:stonewatch`、`npm run test:phase1-release-persistence:ridgeway` 或 `npm run test:phase1-release-persistence:highland`；这些产出的 JSON 都应与同一份 candidate evidence bundle 一起归档。
 
 2. 直接生成 candidate-level Cocos RC evidence bundle。该命令会自动先跑 primary journey evidence，再汇总成 RC snapshot：
 

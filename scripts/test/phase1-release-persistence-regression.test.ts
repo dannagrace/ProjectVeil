@@ -4,20 +4,22 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { runPhase1ReleasePersistenceRegression } from "../phase1-release-persistence-regression.ts";
+import { DEFAULT_CONTENT_PACK_MAP_PACK, EXTRA_CONTENT_PACK_MAP_PACKS } from "../content-pack-map-packs.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const expectedContentBundleCount = 1 + EXTRA_CONTENT_PACK_MAP_PACKS.length;
 
 test("phase1 release persistence regression validates shipped content and persistence carryover in memory mode", async () => {
   const report = await runPhase1ReleasePersistenceRegression({
     storageMode: "memory",
     configsRoot: path.join(repoRoot, "configs"),
-    mapPackId: "default"
+    mapPackId: DEFAULT_CONTENT_PACK_MAP_PACK.id
   });
 
   assert.equal(report.summary.status, "passed");
   assert.equal(report.effectiveStorageMode, "memory");
   assert.equal(report.contentValidation.valid, true);
-  assert.equal(report.contentValidation.bundleCount, 5);
+  assert.equal(report.contentValidation.bundleCount, expectedContentBundleCount);
   assert.equal(report.persistenceRegression.playerId, "release-gate-player-1");
   assert.equal(report.persistenceRegression.heroId, "release-gate-hero-1");
   assert.equal(report.persistenceRegression.assertions.length >= 6, true);
@@ -36,7 +38,7 @@ test("phase1 release persistence regression can exercise the stonewatch fork pac
 
   assert.equal(report.summary.status, "passed");
   assert.equal(report.persistenceRegression.mapPackId, "stonewatch-fork");
-  assert.equal(report.contentValidation.bundleCount, 5);
+  assert.equal(report.contentValidation.bundleCount, expectedContentBundleCount);
   assert.equal(report.persistenceRegression.assertions.length >= 6, true);
 });
 
@@ -49,7 +51,7 @@ test("phase1 release persistence regression can exercise the frontier basin pack
 
   assert.equal(report.summary.status, "passed");
   assert.equal(report.persistenceRegression.mapPackId, "frontier-basin");
-  assert.equal(report.contentValidation.bundleCount, 5);
+  assert.equal(report.contentValidation.bundleCount, expectedContentBundleCount);
   assert.equal(report.persistenceRegression.assertions.length >= 6, true);
 });
 
@@ -62,6 +64,19 @@ test("phase1 release persistence regression can exercise the ridgeway crossing p
 
   assert.equal(report.summary.status, "passed");
   assert.equal(report.persistenceRegression.mapPackId, "ridgeway-crossing");
-  assert.equal(report.contentValidation.bundleCount, 5);
+  assert.equal(report.contentValidation.bundleCount, expectedContentBundleCount);
+  assert.equal(report.persistenceRegression.assertions.length >= 6, true);
+});
+
+test("phase1 release persistence regression can exercise the highland reach pack in memory mode", async () => {
+  const report = await runPhase1ReleasePersistenceRegression({
+    storageMode: "memory",
+    configsRoot: path.join(repoRoot, "configs"),
+    mapPackId: "highland-reach"
+  });
+
+  assert.equal(report.summary.status, "passed");
+  assert.equal(report.persistenceRegression.mapPackId, "highland-reach");
+  assert.equal(report.contentValidation.bundleCount, expectedContentBundleCount);
   assert.equal(report.persistenceRegression.assertions.length >= 6, true);
 });

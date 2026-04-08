@@ -38,6 +38,15 @@ Target an alternate preset while editing one pack:
 npm run validate:content-pack -- --map-pack ridgeway-crossing
 ```
 
+For the shipped `highland-reach` Phase 1 pack:
+
+```bash
+npm run validate:content-pack -- --map-pack highland-reach
+npm run test:phase1-release-persistence:highland
+```
+
+`highland-reach` is the wider 10x10 Phase 1 variant with mirrored gold pockets, dual recruitment posts, and a denser four-neutral midline, so reviewers should expect slower first contact and more meaningful routing choices than the default baseline pack.
+
 The CLI prints the document path, issue code, human-readable failure, and a suggested fix for each failing entry.
 
 `validate:map-object-visuals` treats missing or mismatched coverage entries in `configs/object-visuals.json` as errors, while stale extra node mappings only surface as warnings so authors can clean them up without blocking unrelated pack validation.

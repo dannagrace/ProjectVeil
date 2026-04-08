@@ -268,6 +268,7 @@ Use the Phase 1 release regression when you need one bounded proof that MySQL pe
 - Additional Phase 1 pack (`frontier-basin`): `npm run test:phase1-release-persistence:frontier`
 - Additional Phase 1 pack (`stonewatch-fork`): `npm run test:phase1-release-persistence:stonewatch`
 - Second Phase 1 pack (`ridgeway-crossing`): `npm run test:phase1-release-persistence:ridgeway`
+- Additional shipped Phase 1 pack (`highland-reach`): `npm run test:phase1-release-persistence:highland`
 - Release-target MySQL mode: `npm run test:phase1-release-persistence -- --storage mysql`
 
-The command writes a JSON artifact under `artifacts/release-readiness/`, validates the shipped Phase 1 content packs, saves representative player/account/world progression through the persistence store, and verifies fresh-room hydration still restores long-term account + hero data while resetting room-local position/readiness. Pass `--map-pack frontier-basin`, `--map-pack stonewatch-fork`, or `--map-pack ridgeway-crossing` when you need the persistence proof on one of the alternate Phase 1 layouts without changing the validation bundle.
+The command writes a JSON artifact under `artifacts/release-readiness/`, validates the shipped Phase 1 content packs, saves representative player/account/world progression through the persistence store, and verifies fresh-room hydration still restores long-term account + hero data while resetting room-local position/readiness. Pass `--map-pack frontier-basin`, `--map-pack stonewatch-fork`, `--map-pack ridgeway-crossing`, or `--map-pack highland-reach` when you need the persistence proof on one of the alternate Phase 1 layouts without changing the validation bundle.
