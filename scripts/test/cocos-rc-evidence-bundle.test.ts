@@ -89,6 +89,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   const snapshotFile = files.find((entry) => entry.startsWith("cocos-rc-snapshot-") && entry.endsWith(".json"));
   const mainJourneyManifestFile = files.find((entry) => entry.startsWith("cocos-main-journey-manifest-") && entry.endsWith(".json"));
   const mainJourneyManifestMarkdownFile = files.find((entry) => entry.startsWith("cocos-main-journey-manifest-") && entry.endsWith(".md"));
+  const mainJourneyReplayGateFile = files.find((entry) => entry.startsWith("cocos-main-journey-replay-gate-") && entry.endsWith(".json"));
+  const mainJourneyReplayGateMarkdownFile = files.find((entry) => entry.startsWith("cocos-main-journey-replay-gate-") && entry.endsWith(".md"));
   const presentationSignoffFile = files.find((entry) => entry.startsWith("cocos-presentation-signoff-") && entry.endsWith(".json"));
   const presentationSignoffMarkdownFile = files.find((entry) => entry.startsWith("cocos-presentation-signoff-") && entry.endsWith(".md"));
   const checklistFile = files.find((entry) => entry.startsWith("cocos-rc-checklist-") && entry.endsWith(".md"));
@@ -101,6 +103,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.ok(snapshotFile);
   assert.ok(mainJourneyManifestFile);
   assert.ok(mainJourneyManifestMarkdownFile);
+  assert.ok(mainJourneyReplayGateFile);
+  assert.ok(mainJourneyReplayGateMarkdownFile);
   assert.ok(presentationSignoffFile);
   assert.ok(presentationSignoffMarkdownFile);
   assert.ok(checklistFile);
@@ -121,6 +125,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
       primaryJourneyEvidenceMarkdown: string;
       mainJourneyManifest: string;
       mainJourneyManifestMarkdown: string;
+      mainJourneyReplayGate: string;
+      mainJourneyReplayGateMarkdown: string;
       snapshot: string;
       summaryMarkdown: string;
       presentationSignoff: string;
@@ -130,6 +136,7 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
     };
     review: {
       functionalEvidence: { status: string; summary: string };
+      mainJourneyReplayGate: { status: string; summary: string; presentationStatus: string };
       presentationSignoff: { status: string; summary: string };
     };
     journey: Array<{ id: string; status: string }>;
@@ -146,6 +153,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.equal(path.basename(manifest.artifacts.primaryJourneyEvidenceMarkdown), primaryJourneyMarkdownFile);
   assert.equal(path.basename(manifest.artifacts.mainJourneyManifest), mainJourneyManifestFile);
   assert.equal(path.basename(manifest.artifacts.mainJourneyManifestMarkdown), mainJourneyManifestMarkdownFile);
+  assert.equal(path.basename(manifest.artifacts.mainJourneyReplayGate), mainJourneyReplayGateFile);
+  assert.equal(path.basename(manifest.artifacts.mainJourneyReplayGateMarkdown), mainJourneyReplayGateMarkdownFile);
   assert.equal(manifest.journey.find((entry) => entry.id === "lobby-entry")?.status, "passed");
   assert.equal(manifest.checkpointLedger?.entryCount, 7);
   assert.ok((manifest.checkpointLedger?.entries.find((entry) => entry.id === "battle-settlement")?.telemetryCheckpointCount ?? -1) >= 0);
@@ -159,6 +168,9 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.equal(path.basename(manifest.artifacts.blockersMarkdown), blockersFile);
   assert.equal(manifest.review.functionalEvidence.status, "passed");
   assert.match(manifest.review.functionalEvidence.summary, /lobby, room, and reconnect/);
+  assert.equal(manifest.review.mainJourneyReplayGate.status, "passed");
+  assert.equal(manifest.review.mainJourneyReplayGate.presentationStatus, "hold");
+  assert.match(manifest.review.mainJourneyReplayGate.summary, /presentation blockers remain tracked separately/);
   assert.equal(manifest.review.presentationSignoff.status, "hold");
   assert.match(manifest.review.presentationSignoff.summary, /presentation sign-off remains on hold/);
   assert.equal(manifest.failureSummary.summary, "No regressions or evidence gaps recorded.");
@@ -172,6 +184,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.match(summaryMarkdown, /Overall status: `passed`/);
   assert.match(summaryMarkdown, /Primary journey evidence:/);
   assert.match(summaryMarkdown, /Main-journey manifest:/);
+  assert.match(summaryMarkdown, /Main-journey replay gate JSON:/);
+  assert.match(summaryMarkdown, /Main-journey replay gate markdown:/);
   assert.match(summaryMarkdown, /Presentation sign-off JSON:/);
   assert.match(summaryMarkdown, /Presentation sign-off markdown:/);
   assert.match(summaryMarkdown, /Functional evidence status: `passed`/);
@@ -225,4 +239,18 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   const blockersMarkdown = fs.readFileSync(path.join(outputDir, blockersFile!), "utf8");
   assert.match(blockersMarkdown, /Candidate: `rc-issue-507`/);
   assert.match(blockersMarkdown, /cocos-rc-snapshot-rc-issue-507-/);
+
+  const mainJourneyReplayGate = JSON.parse(fs.readFileSync(path.join(outputDir, mainJourneyReplayGateFile!), "utf8")) as {
+    summary: { status: string; presentationBlockerCount: number };
+    triage: { presentationStatus: string; presentationBlockers: string[]; infrastructureFailures: unknown[] };
+  };
+  assert.equal(mainJourneyReplayGate.summary.status, "passed");
+  assert.ok(mainJourneyReplayGate.summary.presentationBlockerCount >= 1);
+  assert.equal(mainJourneyReplayGate.triage.presentationStatus, "hold");
+  assert.equal(mainJourneyReplayGate.triage.infrastructureFailures.length, 0);
+  assert.ok(mainJourneyReplayGate.triage.presentationBlockers.includes("Pixel art / scene visuals"));
+
+  const mainJourneyReplayGateMarkdown = fs.readFileSync(path.join(outputDir, mainJourneyReplayGateMarkdownFile!), "utf8");
+  assert.match(mainJourneyReplayGateMarkdown, /# Cocos Main-Journey Replay Gate/);
+  assert.match(mainJourneyReplayGateMarkdown, /Reviewer Workflow/);
 });

@@ -103,7 +103,7 @@ Relevant scripts: 45
 - Required inputs:
   - Pass `--candidate`; optionally supply build-surface, snapshot inputs, and WeChat smoke/report paths when bundling non-default evidence.
 - Produced artifacts:
-  - Bundle files under `artifacts/release-readiness/`, including `cocos-rc-evidence-bundle-<candidate>-<short-sha>.json` and companion Markdown/checklist/blocker artifacts.
+  - Bundle files under `artifacts/release-readiness/`, including `cocos-rc-evidence-bundle-<candidate>-<short-sha>.json`, `cocos-main-journey-replay-gate-<candidate>-<short-sha>.json`, and companion Markdown/checklist/blocker artifacts.
 
 ## `release:cocos-rc:snapshot`
 
@@ -136,6 +136,17 @@ Relevant scripts: 45
 - Produced artifacts:
   - `artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.json`
   - `artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.md`
+
+## `release:cocos:main-journey-replay-gate`
+
+- Family: `release`
+- Command: `node --import tsx ./scripts/cocos-main-journey-replay-gate.ts`
+- Purpose: Validate that the primary-client main-journey evidence covers the required candidate-scoped steps and that the RC snapshot, bundle, checklist, and blocker log still point at the same candidate revision.
+- Required inputs:
+  - Pass `--candidate`; optionally pin the journey evidence, RC snapshot, bundle manifest, presentation sign-off, checklist, and blocker paths.
+- Produced artifacts:
+  - `artifacts/release-readiness/cocos-main-journey-replay-gate-<candidate>-<short-sha>.json`
+  - `artifacts/release-readiness/cocos-main-journey-replay-gate-<candidate>-<short-sha>.md`
 
 ## `release:evidence:index`
 

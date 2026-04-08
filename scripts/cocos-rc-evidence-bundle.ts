@@ -187,6 +187,8 @@ interface BundleManifest {
     primaryJourneyEvidenceMarkdown: string;
     mainJourneyManifest: string;
     mainJourneyManifestMarkdown: string;
+    mainJourneyReplayGate: string;
+    mainJourneyReplayGateMarkdown: string;
     snapshot: string;
     summaryMarkdown: string;
     presentationSignoff: string;
@@ -226,6 +228,11 @@ interface BundleManifest {
       status: SnapshotResult;
       summary: string;
     };
+    mainJourneyReplayGate: {
+      status: "passed" | "failed";
+      summary: string;
+      presentationStatus: "approved" | "approved-for-controlled-test" | "hold" | "missing";
+    };
     presentationSignoff: {
       status: PresentationSignoffStatus;
       summary: string;
@@ -243,6 +250,16 @@ interface PresentationChecklistItem {
   evidence: string[];
   owner: string;
   followUp: string;
+}
+
+interface MainJourneyReplayGateReport {
+  summary: {
+    status: "passed" | "failed";
+    summary: string;
+  };
+  triage: {
+    presentationStatus: "approved" | "approved-for-controlled-test" | "hold" | "missing";
+  };
 }
 
 interface PresentationSignoffArtifact {
@@ -518,6 +535,55 @@ function runPrimaryJourneyEvidenceCommand(args: Args, outputPath: string, markdo
   }
 }
 
+function runMainJourneyReplayGateCommand(
+  args: Args,
+  artifacts: Pick<
+    BundleManifest["artifacts"],
+    "primaryJourneyEvidence" | "snapshot" | "presentationSignoff" | "checklistMarkdown" | "blockersMarkdown"
+  >,
+  bundleManifestPath: string,
+  outputPath: string,
+  markdownOutputPath: string
+): MainJourneyReplayGateReport {
+  const commandArgs = [
+    "--import",
+    "tsx",
+    "./scripts/cocos-main-journey-replay-gate.ts",
+    "--candidate",
+    args.candidate,
+    "--expected-revision",
+    getGitValue(["rev-parse", "HEAD"]),
+    "--primary-journey-evidence",
+    artifacts.primaryJourneyEvidence,
+    "--cocos-rc-snapshot",
+    artifacts.snapshot,
+    "--cocos-rc-bundle",
+    bundleManifestPath,
+    "--presentation-signoff",
+    artifacts.presentationSignoff,
+    "--checklist",
+    artifacts.checklistMarkdown,
+    "--blockers",
+    artifacts.blockersMarkdown,
+    "--output",
+    outputPath,
+    "--markdown-output",
+    markdownOutputPath
+  ];
+
+  const result = spawnSync(process.execPath, commandArgs, {
+    cwd: process.cwd(),
+    encoding: "utf8"
+  });
+  if (result.status !== 0 && result.status !== 1) {
+    fail(result.stderr.trim() || result.stdout.trim() || "Failed to generate main-journey replay gate.");
+  }
+  if (!fs.existsSync(outputPath)) {
+    fail("Main-journey replay gate did not write the expected JSON output.");
+  }
+  return readJsonFile<MainJourneyReplayGateReport>(outputPath);
+}
+
 function readJsonFile<T>(filePath: string): T {
   return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
 }
@@ -633,6 +699,8 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
   lines.push(`- Primary journey markdown: \`${toRepoRelative(artifacts.primaryJourneyEvidenceMarkdown)}\``);
   lines.push(`- Main-journey manifest: \`${toRepoRelative(artifacts.mainJourneyManifest)}\``);
   lines.push(`- Main-journey manifest markdown: \`${toRepoRelative(artifacts.mainJourneyManifestMarkdown)}\``);
+  lines.push(`- Main-journey replay gate JSON: \`${toRepoRelative(artifacts.mainJourneyReplayGate)}\``);
+  lines.push(`- Main-journey replay gate markdown: \`${toRepoRelative(artifacts.mainJourneyReplayGateMarkdown)}\``);
   lines.push(`- Snapshot: \`${toRepoRelative(artifacts.snapshot)}\``);
   lines.push(`- Presentation sign-off JSON: \`${toRepoRelative(artifacts.presentationSignoff)}\``);
   lines.push(`- Presentation sign-off markdown: \`${toRepoRelative(artifacts.presentationSignoffMarkdown)}\``);
@@ -722,6 +790,16 @@ function buildFunctionalEvidenceReview(snapshot: CocosReleaseCandidateSnapshot):
   return {
     status: snapshot.execution.overallStatus,
     summary: snapshot.execution.summary
+  };
+}
+
+function buildMainJourneyReplayGateReview(
+  report: Pick<MainJourneyReplayGateReport, "summary" | "triage">
+): BundleManifest["review"]["mainJourneyReplayGate"] {
+  return {
+    status: report.summary.status,
+    summary: report.summary.summary,
+    presentationStatus: report.triage.presentationStatus
   };
 }
 
@@ -967,7 +1045,12 @@ function toRepoRelative(filePath: string): string {
   return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
 }
 
-function buildManifest(snapshot: CocosReleaseCandidateSnapshot, artifacts: BundleManifest["artifacts"], outputDir: string): BundleManifest {
+function buildManifest(
+  snapshot: CocosReleaseCandidateSnapshot,
+  artifacts: BundleManifest["artifacts"],
+  outputDir: string,
+  mainJourneyReplayGate: Pick<MainJourneyReplayGateReport, "summary" | "triage">
+): BundleManifest {
   return {
     schemaVersion: 1,
     bundle: {
@@ -1017,6 +1100,7 @@ function buildManifest(snapshot: CocosReleaseCandidateSnapshot, artifacts: Bundl
       attachHint:
         "Attach the markdown bundle summary and presentation sign-off summary to CI artifacts or PR comments, and keep the JSON manifest alongside the snapshot.",
       functionalEvidence: buildFunctionalEvidenceReview(snapshot),
+      mainJourneyReplayGate: buildMainJourneyReplayGateReview(mainJourneyReplayGate),
       presentationSignoff: buildPresentationSignoffReview(snapshot)
     },
     failureSummary: snapshot.failureSummary
@@ -1037,6 +1121,8 @@ function main(): void {
   const manifestPath = path.join(outputDir, `cocos-rc-evidence-bundle-${baseName}.json`);
   const mainJourneyManifestPath = path.join(outputDir, `cocos-main-journey-manifest-${baseName}.json`);
   const mainJourneyManifestMarkdownPath = path.join(outputDir, `cocos-main-journey-manifest-${baseName}.md`);
+  const mainJourneyReplayGatePath = path.join(outputDir, `cocos-main-journey-replay-gate-${baseName}.json`);
+  const mainJourneyReplayGateMarkdownPath = path.join(outputDir, `cocos-main-journey-replay-gate-${baseName}.md`);
   const presentationSignoffPath = path.join(outputDir, `cocos-presentation-signoff-${baseName}.json`);
   const presentationSignoffSummaryPath = path.join(outputDir, `cocos-presentation-signoff-${baseName}.md`);
   const checklistPath = path.join(outputDir, `cocos-rc-checklist-${baseName}.md`);
@@ -1055,6 +1141,8 @@ function main(): void {
     primaryJourneyEvidenceMarkdown: path.resolve(primaryJourneyEvidenceMarkdownPath),
     mainJourneyManifest: path.resolve(mainJourneyManifestPath),
     mainJourneyManifestMarkdown: path.resolve(mainJourneyManifestMarkdownPath),
+    mainJourneyReplayGate: path.resolve(mainJourneyReplayGatePath),
+    mainJourneyReplayGateMarkdown: path.resolve(mainJourneyReplayGateMarkdownPath),
     snapshot: path.resolve(snapshotPath),
     summaryMarkdown: path.resolve(summaryMarkdownPath),
     presentationSignoff: path.resolve(presentationSignoffPath),
@@ -1067,12 +1155,33 @@ function main(): void {
 
   writeJsonFile(mainJourneyManifestPath, mainJourneyManifest, args.force);
   writeTextFile(mainJourneyManifestMarkdownPath, renderMainJourneyManifestMarkdown(mainJourneyManifest), args.force);
-  writeTextFile(summaryMarkdownPath, renderBundleMarkdown(snapshot, artifacts), args.force);
   writeJsonFile(presentationSignoffPath, presentationSignoff, args.force);
   writeTextFile(presentationSignoffSummaryPath, renderPresentationSignoffSummary(snapshot, artifacts), args.force);
   writeTextFile(checklistPath, renderChecklist(snapshot, artifacts), args.force);
   writeTextFile(blockersPath, renderBlockers(snapshot, artifacts), args.force);
-  writeJsonFile(manifestPath, buildManifest(snapshot, artifacts, outputDir), args.force);
+  writeJsonFile(
+    manifestPath,
+    buildManifest(snapshot, artifacts, outputDir, {
+      summary: { status: "passed", summary: "Main-journey replay gate pending." },
+      triage: { presentationStatus: "missing" }
+    }),
+    args.force
+  );
+  const mainJourneyReplayGate = runMainJourneyReplayGateCommand(
+    args,
+    {
+      primaryJourneyEvidence: artifacts.primaryJourneyEvidence,
+      snapshot: artifacts.snapshot,
+      presentationSignoff: artifacts.presentationSignoff,
+      checklistMarkdown: artifacts.checklistMarkdown,
+      blockersMarkdown: artifacts.blockersMarkdown
+    },
+    manifestPath,
+    mainJourneyReplayGatePath,
+    mainJourneyReplayGateMarkdownPath
+  );
+  writeTextFile(summaryMarkdownPath, renderBundleMarkdown(snapshot, artifacts), args.force);
+  writeJsonFile(manifestPath, buildManifest(snapshot, artifacts, outputDir, mainJourneyReplayGate), true);
 
   console.log(`Wrote Cocos RC evidence bundle: ${toRepoRelative(manifestPath)}`);
   console.log(`  Candidate: ${snapshot.candidate.name}`);
