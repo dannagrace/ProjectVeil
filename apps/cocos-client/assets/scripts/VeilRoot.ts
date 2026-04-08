@@ -5921,6 +5921,11 @@ export class VeilRoot extends Component {
     }
     this.syncSelectedBattleTarget();
     this.renderView();
+    if (presentation.pauseDurationMs) {
+      await new Promise<void>((resolve) => {
+        globalThis.setTimeout(resolve, presentation.pauseDurationMs ?? 0);
+      });
+    }
     this.playMapFeedbackForUpdate(update);
     this.maybeShowHeroProgressNotice(update);
     this.setBattleFeedback(presentation.feedback, presentation.feedbackDurationMs ?? BATTLE_FEEDBACK_DURATION_MS);

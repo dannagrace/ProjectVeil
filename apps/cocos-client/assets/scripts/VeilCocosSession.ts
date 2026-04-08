@@ -382,6 +382,14 @@ export interface BattleState {
   neutralArmyId?: string;
   defenderHeroId?: string;
   encounterPosition?: Vec2;
+  battlefieldTerrain?: TerrainType;
+  bossEncounter?: {
+    templateId: string;
+    bossUnitId: string;
+    activePhaseId: string;
+    maxBossHp: number;
+    triggeredAbilityKeys: string[];
+  };
 }
 
 export interface MovementPlan {

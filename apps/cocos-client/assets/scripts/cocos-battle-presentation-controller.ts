@@ -1,5 +1,6 @@
 import type { CocosBattleFeedbackTone } from "./project-shared/index.ts";
 import type { BattleAction, BattleState, SessionUpdate } from "./VeilCocosSession.ts";
+import type { CocosBossPhaseTransitionEvent } from "./cocos-boss-phase-ui.ts";
 import {
   buildBattleActionPresentation,
   buildBattlePresentationPlan,
@@ -17,6 +18,7 @@ export interface CocosBattlePresentationState {
   tone: CocosBattleFeedbackTone;
   result: "victory" | "defeat" | null;
   summaryLines: string[];
+  phaseTransitionEvent: CocosBossPhaseTransitionEvent | null;
   feedbackLayer: {
     animation: CocosBattlePresentationPlan["animation"];
     cue: CocosBattlePresentationPlan["cue"];
@@ -26,6 +28,7 @@ export interface CocosBattlePresentationState {
         : null
       : null;
     durationMs: number | null;
+    pauseDurationMs: number | null;
   };
 }
 
@@ -46,11 +49,13 @@ const IDLE_STATE: CocosBattlePresentationState = {
   tone: "neutral",
   result: null,
   summaryLines: [],
+  phaseTransitionEvent: null,
   feedbackLayer: {
     animation: "idle",
     cue: null,
     transition: null,
-    durationMs: null
+    durationMs: null,
+    pauseDurationMs: null
   }
 };
 

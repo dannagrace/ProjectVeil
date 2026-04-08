@@ -14,6 +14,45 @@ function createBattleUpdate(): SessionUpdate {
   return createBattleUpdateFixture();
 }
 
+function createBossBattleUpdate(): SessionUpdate {
+  const update = createBattleUpdateFixture();
+  if (!update.battle) {
+    return update;
+  }
+
+  update.battle.units["neutral-1-stack"] = {
+    ...update.battle.units["neutral-1-stack"]!,
+    templateId: "shadow_hexer",
+    stackName: "Shadow Warden",
+    currentHp: 5,
+    maxHp: 10
+  };
+  update.battle.bossEncounter = {
+    templateId: "boss-shadow-warden",
+    bossUnitId: "neutral-1-stack",
+    activePhaseId: "phase-2-warden-grip",
+    maxBossHp: 10,
+    triggeredAbilityKeys: []
+  };
+  update.battle.environment = [
+    {
+      id: "phase-2-snare",
+      lane: 0,
+      kind: "trap",
+      effect: "slow",
+      name: "Veil Snare",
+      description: "Mist-woven chains drag the front line down.",
+      damage: 0,
+      charges: 2,
+      revealed: true,
+      triggered: false,
+      grantedStatusId: "slowed",
+      triggeredByCamp: "attacker"
+    }
+  ];
+  return update;
+}
+
 test("buildBattlePanelSections groups ally, enemy and queue rows from a battle state", () => {
   const sections = buildBattlePanelSections({
     update: createBattleUpdate(),
@@ -49,6 +88,57 @@ test("battle panel stage banner derives the PVE terrain title from the encounter
     subtitle: "坐标 (1,1) · 无额外障碍",
     badge: "PVE"
   });
+});
+
+test("battle panel exposes boss phase banner and hp threshold markers", () => {
+  const sections = buildBattlePanelSections({
+    update: createBossBattleUpdate(),
+    timelineEntries: [],
+    controlledCamp: "attacker",
+    selectedTargetId: "neutral-1-stack",
+    actionPending: false,
+    feedback: null,
+    presentationState: {
+      battleId: "battle-1",
+      phase: "impact",
+      moment: "impact_hit",
+      label: "首领阶段切换",
+      detail: "血线跌破 55% · Mist-woven chains drag the front line down.",
+      badge: "P2",
+      tone: "skill",
+      result: null,
+      summaryLines: ["首领阶段切换：阶段 1 · Veil -> 阶段 2 · Warden Grip"],
+      phaseTransitionEvent: {
+        key: "battle-1:phase-1-veil->phase-2-warden-grip",
+        templateId: "boss-shadow-warden",
+        bossUnitId: "neutral-1-stack",
+        bossName: "Shadow Warden",
+        previousPhaseId: "phase-1-veil",
+        previousPhaseLabel: "阶段 1 · Veil",
+        nextPhaseId: "phase-2-warden-grip",
+        nextPhaseLabel: "阶段 2 · Warden Grip",
+        nextPhaseIndex: 1,
+        totalPhases: 3,
+        thresholdPercent: 55,
+        bannerTitle: "Shadow Warden · 阶段 2 · Warden Grip",
+        bannerDetail: "血线跌破 55% · Mist-woven chains drag the front line down.",
+        summaryLines: ["首领阶段切换：阶段 1 · Veil -> 阶段 2 · Warden Grip"]
+      },
+      feedbackLayer: {
+        animation: "hit",
+        cue: "hit",
+        transition: null,
+        durationMs: null,
+        pauseDurationMs: 900
+      }
+    }
+  });
+
+  assert.equal(sections.phaseBanner?.badge, "P2");
+  assert.match(sections.phaseBanner?.title ?? "", /Warden Grip/);
+  assert.equal(sections.bossPhaseTracker?.markers.length, 3);
+  assert.equal(sections.bossPhaseTracker?.markers[1]?.active, true);
+  assert.equal(sections.bossPhaseTracker?.markers[2]?.thresholdPercent, 25);
 });
 
 test("battle panel actions disable when it is not the controlled camp's turn", () => {
@@ -116,11 +206,13 @@ test("VeilBattlePanel preserves settlement feedback after battle resolution", ()
           "播报：PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 0 队 · 战利品：金币 +12 · 准备返回世界地图",
           "战利品：金币 +12"
         ],
+        phaseTransitionEvent: null,
         feedbackLayer: {
           animation: "victory",
           cue: "victory",
           transition: "exit",
-          durationMs: 4200
+          durationMs: 4200,
+          pauseDurationMs: null
         }
       }
     })
@@ -151,5 +243,61 @@ test("VeilBattlePanel rerenders from an active turn into a pending-resolution st
   component.render(createBattlePanelState({ actionPending: true }));
 
   assert.match(String((statefulComponent.summaryLabel as { string: string } | null)?.string ?? ""), /阶段：正在结算行动/);
+  component.onDestroy();
+});
+
+test("VeilBattlePanel renders the transient boss phase banner and threshold tracker", () => {
+  const { component } = createComponentHarness(VeilBattlePanel, { name: "BattlePanelRoot", width: 272, height: 560 });
+
+  component.configure({});
+  component.render(
+    createBattlePanelState({
+      update: createBossBattleUpdate(),
+      presentationState: {
+        battleId: "battle-1",
+        phase: "impact",
+        moment: "impact_hit",
+        label: "首领阶段切换",
+        detail: "血线跌破 55% · Mist-woven chains drag the front line down.",
+        badge: "P2",
+        tone: "skill",
+        result: null,
+        summaryLines: ["首领阶段：阶段 2 · Warden Grip · 阈值 55% HP"],
+        phaseTransitionEvent: {
+          key: "battle-1:phase-1-veil->phase-2-warden-grip",
+          templateId: "boss-shadow-warden",
+          bossUnitId: "neutral-1-stack",
+          bossName: "Shadow Warden",
+          previousPhaseId: "phase-1-veil",
+          previousPhaseLabel: "阶段 1 · Veil",
+          nextPhaseId: "phase-2-warden-grip",
+          nextPhaseLabel: "阶段 2 · Warden Grip",
+          nextPhaseIndex: 1,
+          totalPhases: 3,
+          thresholdPercent: 55,
+          bannerTitle: "Shadow Warden · 阶段 2 · Warden Grip",
+          bannerDetail: "血线跌破 55% · Mist-woven chains drag the front line down.",
+          summaryLines: ["首领阶段切换：阶段 1 · Veil -> 阶段 2 · Warden Grip"]
+        },
+        feedbackLayer: {
+          animation: "hit",
+          cue: "hit",
+          transition: null,
+          durationMs: null,
+          pauseDurationMs: 900
+        }
+      }
+    })
+  );
+
+  const statefulComponent = component as VeilBattlePanel & Record<string, unknown>;
+  const phaseBanner = statefulComponent.phaseBanner as { title: { string: string }; meta: { string: string }; badge: { string: string } } | null;
+  const phaseTracker = statefulComponent.phaseTracker as { title: { string: string }; meta: { string: string } } | null;
+
+  assert.match(String(phaseBanner?.title.string ?? ""), /Warden Grip/);
+  assert.match(String(phaseBanner?.meta.string ?? ""), /55%/);
+  assert.equal(String(phaseBanner?.badge.string ?? ""), "P2");
+  assert.match(String(phaseTracker?.title.string ?? ""), /Shadow Warden/);
+  assert.match(String(phaseTracker?.meta.string ?? ""), /当前血量 5\/10 HP/);
   component.onDestroy();
 });
