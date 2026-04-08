@@ -207,7 +207,7 @@ interface ReleaseGateArtifactReference {
 interface ReleaseGateTriageEntry {
   id: string;
   severity: "blocker" | "warning";
-  gateId: GateResult["id"] | "config-change-risk";
+  gateId: GateResult["id"] | "config-change-risk" | "manual-evidence-ledger";
   title: string;
   impactedSurface: TargetSurface;
   summary: string;
@@ -286,6 +286,23 @@ interface ManualEvidenceOwnerLedgerMetadata {
   targetRevision?: string;
   lastUpdated?: string;
   linkedReadinessSnapshot?: string;
+  releaseOwner?: string;
+}
+
+interface ManualEvidenceOwnerLedgerRow {
+  evidenceType: string;
+  candidate?: string;
+  revision?: string;
+  owner?: string;
+  status?: string;
+  lastUpdated?: string;
+  artifactPath?: string;
+  notes?: string;
+}
+
+interface ManualEvidenceOwnerLedger {
+  metadata: ManualEvidenceOwnerLedgerMetadata;
+  rows: ManualEvidenceOwnerLedgerRow[];
 }
 
 interface ConfigRiskChangeSummary {
@@ -358,6 +375,7 @@ const DEFAULT_CONFIG_CENTER_LIBRARY_PATH = path.resolve("configs", ".config-cent
 const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
 const MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS = 1000 * 60 * 60 * 72;
 const MAX_TARGET_SURFACE_REVIEW_AGE_MS = 1000 * 60 * 60 * 72;
+const LEDGER_PENDING_STATUSES = new Set(["pending", "in-review"]);
 const RISK_PRIORITY: Record<ConfigRiskLevel, number> = {
   low: 1,
   medium: 2,
@@ -1120,7 +1138,7 @@ function evaluateFreshness(timestamp: string | undefined, maxAgeMs: number): Evi
   return Date.now() - timestampMs > maxAgeMs ? "stale" : "fresh";
 }
 
-function parseManualEvidenceOwnerLedger(filePath: string): ManualEvidenceOwnerLedgerMetadata {
+function parseManualEvidenceOwnerLedger(filePath: string): ManualEvidenceOwnerLedger {
   const content = fs.readFileSync(filePath, "utf8");
   const capture = (label: string): string | undefined => {
     const match = content.match(new RegExp(`^- ${label}:\\s+\`([^\\n\`]+)\``, "m"));
@@ -1128,10 +1146,38 @@ function parseManualEvidenceOwnerLedger(filePath: string): ManualEvidenceOwnerLe
   };
 
   return {
-    candidate: capture("Candidate"),
-    targetRevision: capture("Target revision"),
-    lastUpdated: capture("Last updated"),
-    linkedReadinessSnapshot: capture("Linked readiness snapshot")
+    metadata: {
+      candidate: capture("Candidate"),
+      targetRevision: capture("Target revision"),
+      releaseOwner: capture("Release owner"),
+      lastUpdated: capture("Last updated"),
+      linkedReadinessSnapshot: capture("Linked readiness snapshot")
+    },
+    rows: content
+      .split(/\r?\n/)
+      .filter((line) => line.trim().startsWith("|"))
+      .map((line) =>
+        line
+          .split("|")
+          .slice(1, -1)
+          .map((entry) => entry.trim())
+      )
+      .filter(
+        (columns) =>
+          columns.length === 8 &&
+          columns[0] !== "Evidence type" &&
+          !columns.every((entry) => /^-+$/.test(entry.replace(/\s+/g, "")))
+      )
+      .map((columns) => ({
+        evidenceType: columns[0].replace(/^`|`$/g, ""),
+        candidate: columns[1].replace(/^`|`$/g, ""),
+        revision: columns[2].replace(/^`|`$/g, ""),
+        owner: columns[3].replace(/^`|`$/g, ""),
+        status: columns[4].replace(/^`|`$/g, ""),
+        lastUpdated: columns[5].replace(/^`|`$/g, ""),
+        artifactPath: columns[6].replace(/^`|`$/g, ""),
+        notes: columns[7]
+      }))
   };
 }
 
@@ -1165,13 +1211,139 @@ function createSurfaceEvidenceItem(input: {
   };
 }
 
+function summarizeLedgerRow(
+  row: ManualEvidenceOwnerLedgerRow,
+  candidateRevision: string
+): Pick<ReleaseSurfaceEvidenceItem, "status" | "summary" | "freshness"> {
+  const status = (row.status ?? "").trim().toLowerCase();
+  const freshness = evaluateFreshness(row.lastUpdated, MAX_TARGET_SURFACE_REVIEW_AGE_MS);
+  const failures: string[] = [];
+
+  if (!row.owner?.trim()) {
+    failures.push("owner missing");
+  }
+  if (!commitsMatch(row.revision, candidateRevision)) {
+    failures.push(`revision ${row.revision?.trim() || "<missing>"} != ${candidateRevision}`);
+  }
+  if (freshness !== "fresh") {
+    failures.push(`freshness=${freshness}`);
+  }
+
+  if (status === "waived") {
+    return {
+      status: "passed",
+      summary: row.notes?.trim() ? `Waived: ${row.notes.trim()}` : "Ledger row is waived for this candidate.",
+      freshness
+    };
+  }
+
+  if (failures.length > 0) {
+    return {
+      status: "failed",
+      summary: `Ledger row requires follow-up: ${failures.join(", ")}.`,
+      freshness
+    };
+  }
+
+  if (LEDGER_PENDING_STATUSES.has(status)) {
+    return {
+      status: "pending",
+      summary: `Ledger row is still ${status}.`,
+      freshness
+    };
+  }
+
+  if (status === "done") {
+    return {
+      status: "passed",
+      summary: "Ledger row is assigned and current for this candidate.",
+      freshness
+    };
+  }
+
+  return {
+    status: "failed",
+    summary: `Ledger row has unsupported status ${JSON.stringify(row.status ?? "missing")}.`,
+    freshness
+  };
+}
+
+function buildManualEvidenceLedgerItems(
+  manualEvidenceLedgerPath: string,
+  candidateRevision: string
+): ReleaseSurfaceEvidenceItem[] {
+  const ledger = parseManualEvidenceOwnerLedger(manualEvidenceLedgerPath);
+  const rowItems = ledger.rows.map((row) => {
+    const rowSummary = summarizeLedgerRow(row, candidateRevision);
+    return createSurfaceEvidenceItem({
+      id: `manual-ledger:${row.evidenceType}`,
+      label: `Ledger: ${row.evidenceType}`,
+      required: (row.status ?? "").trim().toLowerCase() !== "waived",
+      status: rowSummary.status,
+      summary: rowSummary.summary,
+      freshness: rowSummary.freshness,
+      observedAt: row.lastUpdated,
+      owner: row.owner?.trim() || undefined,
+      revision: row.revision?.trim() || undefined,
+      artifactPath: row.artifactPath?.trim() || manualEvidenceLedgerPath,
+      blockerIds: [],
+      waiverReason: (row.status ?? "").trim().toLowerCase() === "waived" ? row.notes?.trim() || undefined : undefined
+    });
+  });
+
+  const blockingRows = rowItems.filter((entry) => entry.required && entry.status === "failed");
+  const pendingRows = rowItems.filter((entry) => entry.required && entry.status === "pending");
+  const ledgerFreshness = evaluateFreshness(ledger.metadata.lastUpdated, MAX_TARGET_SURFACE_REVIEW_AGE_MS);
+  const headerFailures: string[] = [];
+  if (!commitsMatch(ledger.metadata.targetRevision, candidateRevision)) {
+    headerFailures.push(`revision ${ledger.metadata.targetRevision?.trim() || "<missing>"} != ${candidateRevision}`);
+  }
+  if (!ledger.metadata.releaseOwner?.trim()) {
+    headerFailures.push("release owner missing");
+  }
+  if (ledgerFreshness !== "fresh") {
+    headerFailures.push(`freshness=${ledgerFreshness}`);
+  }
+
+  const ledgerStatus: ReleaseSurfaceEvidenceStatus =
+    headerFailures.length > 0 || blockingRows.length > 0 ? "failed" : pendingRows.length > 0 ? "pending" : "passed";
+  const ledgerSummary =
+    headerFailures.length > 0
+      ? `Ledger metadata requires follow-up: ${headerFailures.join(", ")}.`
+      : blockingRows.length > 0
+        ? `Ledger has ${blockingRows.length} blocking row(s) needing ownership or freshness updates.`
+        : pendingRows.length > 0
+          ? `Ledger still has ${pendingRows.length} pending manual evidence row(s).`
+          : ledger.rows.length > 0
+            ? `Ledger rows are current for candidate ${candidateRevision}.`
+            : "Ledger header is present, but no candidate rows were recorded.";
+
+  return [
+    createSurfaceEvidenceItem({
+      id: "manual-evidence-ledger",
+      label: "Manual evidence owner ledger",
+      required: true,
+      status: ledgerStatus,
+      summary: ledgerSummary,
+      freshness: ledgerFreshness,
+      observedAt: ledger.metadata.lastUpdated,
+      owner: ledger.metadata.releaseOwner?.trim() || undefined,
+      revision: ledger.metadata.targetRevision?.trim() || undefined,
+      artifactPath: manualEvidenceLedgerPath,
+      blockerIds: []
+    }),
+    ...rowItems
+  ];
+}
+
 function buildReleaseSurfaceContract(
   targetSurface: TargetSurface,
   candidateRevision: string,
   snapshotPath: string | undefined,
   h5SmokePath: string | undefined,
   reconnectSoakPath: string | undefined,
-  wechatCandidateSummaryPath: string | undefined
+  wechatCandidateSummaryPath: string | undefined,
+  manualEvidenceLedgerPath: string | undefined
 ): ReleaseSurfaceContract {
   const evidence: ReleaseSurfaceEvidenceItem[] = [];
 
@@ -1221,6 +1393,10 @@ function buildReleaseSurfaceContract(
       artifactPath: reconnectSoakPath
     })
   );
+
+  if (manualEvidenceLedgerPath && fs.existsSync(manualEvidenceLedgerPath)) {
+    evidence.push(...buildManualEvidenceLedgerItems(manualEvidenceLedgerPath, candidateRevision));
+  }
 
   if (targetSurface === "wechat") {
     if (!wechatCandidateSummaryPath || !fs.existsSync(wechatCandidateSummaryPath)) {
@@ -1509,9 +1685,9 @@ function collectPhase1EvidenceReferences(
         kind: "manual-evidence-owner-ledger",
         path: manualEvidenceLedgerPath
       },
-      commit: ledger.targetRevision,
-      generatedAt: ledger.lastUpdated,
-      candidateHint: deriveCandidateHint(manualEvidenceLedgerPath, ledger.targetRevision)
+      commit: ledger.metadata.targetRevision,
+      generatedAt: ledger.metadata.lastUpdated,
+      candidateHint: deriveCandidateHint(manualEvidenceLedgerPath, ledger.metadata.targetRevision)
     });
   }
 
@@ -1787,13 +1963,24 @@ function buildReleaseGateNextStep(gate: GateResult, targetSurface: TargetSurface
   return `${sourceInstruction}, refresh the release evidence for one candidate revision, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
 }
 
+function buildManualEvidenceNextStep(
+  evidence: ReleaseSurfaceEvidenceItem,
+  inputs: ReleaseGateSummaryReport["inputs"],
+  targetSurface: TargetSurface
+): string {
+  const ledgerPath = evidence.id === "manual-evidence-ledger" ? inputs.manualEvidenceLedgerPath : evidence.artifactPath ?? inputs.manualEvidenceLedgerPath;
+  const sourceInstruction = ledgerPath ? `Open \`${relativeReportPath(ledgerPath)}\`` : "Open the candidate manual evidence owner ledger";
+  return `${sourceInstruction}, update the owner/status/timestamp for the candidate rows, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+}
+
 function buildReleaseGateTriage(
   gates: GateResult[],
   inputs: ReleaseGateSummaryReport["inputs"],
   targetSurface: TargetSurface,
+  releaseSurface: ReleaseSurfaceContract,
   configChangeRisk: ConfigChangeRiskSummary
 ): ReleaseGateSummaryReport["triage"] {
-  const blockers = gates
+  const gateBlockers = gates
     .filter((gate) => gate.required && gate.status === "failed")
     .map((gate) => ({
       id: `gate:${gate.id}`,
@@ -1805,6 +1992,33 @@ function buildReleaseGateTriage(
       nextStep: buildReleaseGateNextStep(gate, targetSurface),
       artifacts: buildGateTriageArtifacts(gate, inputs)
     }));
+
+  const manualEvidenceBlockers = releaseSurface.evidence
+    .filter(
+      (entry) =>
+        entry.required &&
+        (entry.id === "manual-evidence-ledger" || entry.id.startsWith("manual-ledger:")) &&
+        (entry.status === "failed" ||
+          entry.status === "pending" ||
+          entry.freshness === "stale" ||
+          entry.freshness === "missing_timestamp" ||
+          entry.freshness === "invalid_timestamp")
+    )
+    .map((entry) => ({
+      id: `manual-evidence:${entry.id}`,
+      severity: "blocker" as const,
+      gateId: "manual-evidence-ledger" as const,
+      title: entry.label,
+      impactedSurface: targetSurface,
+      summary: `${entry.label} blocked ${targetSurface}: ${entry.summary}`,
+      nextStep: buildManualEvidenceNextStep(entry, inputs, targetSurface),
+      artifacts: [
+        ...createTriageArtifactReference("Manual evidence owner ledger", inputs.manualEvidenceLedgerPath),
+        ...createTriageArtifactReference(entry.label, entry.artifactPath)
+      ].filter((artifact, index, entries) => entries.findIndex((candidate) => candidate.path === artifact.path) === index)
+    }));
+
+  const blockers = [...gateBlockers, ...manualEvidenceBlockers];
 
   const warnings: ReleaseGateTriageEntry[] =
     configChangeRisk.status === "available" &&
@@ -1850,7 +2064,8 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     snapshotPath,
     h5SmokePath,
     reconnectSoakPath,
-    wechatCandidateSummaryPath
+    wechatCandidateSummaryPath,
+    manualEvidenceLedgerPath
   );
 
   const gates = [
@@ -1897,7 +2112,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
       failedGateIds: failedGates.map((gate) => gate.id)
     },
     inputs,
-    triage: buildReleaseGateTriage(gates, inputs, args.targetSurface, configChangeRisk),
+    triage: buildReleaseGateTriage(gates, inputs, args.targetSurface, releaseSurface, configChangeRisk),
     gates,
     releaseSurface,
     configChangeRisk
@@ -1905,7 +2120,9 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
 }
 
 export function renderMarkdown(report: ReleaseGateSummaryReport): string {
-  const manualEvidence = report.releaseSurface.evidence.filter((entry) => entry.id.startsWith("manual:"));
+  const manualEvidence = report.releaseSurface.evidence.filter(
+    (entry) => entry.id === "manual-evidence-ledger" || entry.id.startsWith("manual:") || entry.id.startsWith("manual-ledger:")
+  );
   const lines = [
     "# Release Gate Summary",
     "",

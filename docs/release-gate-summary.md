@@ -113,7 +113,17 @@ The report now includes a `Target Surface Contract` section with:
 - `releaseSurface.evidence[*]`
   - exact evidence item, freshness, owner, revision, waiver, and artifact path
 - Markdown `Manual Evidence Ownership`
-  - a reviewer-facing rollup of each required manual evidence item with owner, freshness, recorded timestamp, revision, blocker ids, and artifact path so pending sign-offs are visible without expanding the full evidence list
+  - a reviewer-facing rollup of the candidate ledger plus each required manual evidence item with owner, freshness, recorded timestamp, revision, blocker ids, and artifact path so stale or unowned ledger rows are visible without expanding the full evidence list
+
+When `--manual-evidence-ledger` is present, the summary now parses the ledger table itself instead of only the header metadata. That means one `release:gate:summary` run will surface:
+
+- a stale ledger header
+- missing release owner metadata
+- required ledger rows still marked `pending` or `in-review`
+- row-level ownership gaps such as missing `Owner`
+- row-level freshness or revision drift for the current candidate
+
+Those row-level findings are promoted into both the `Target Surface Contract` and the top-level `Triage Summary`, so reviewers can tell from the generated gate summary whether the candidate still has manual evidence handoff work outstanding before the release call.
 
 For `wechat`, the required surface evidence is:
 
