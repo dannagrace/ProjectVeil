@@ -42,7 +42,9 @@ async function seedContentPackRoot(tempDir: string): Promise<void> {
       "battle-skills.json",
       "battle-balance.json",
       "hero-skills.json",
-      "hero-skill-trees-full.json"
+      "hero-skill-trees-full.json",
+      "daily-dungeons.json",
+      "boss-encounter-templates.json"
     ].map((fileName) => copyConfigFixture(tempDir, fileName))
   );
 }
@@ -224,7 +226,40 @@ test("validate-content-pack fails on unknown hero skill battle-skill references"
       assert.equal(error.code, 1);
       assert.match(error.stdout ?? "", /Authoring config validation: 1 issue\(s\)/);
       assert.match(error.stdout ?? "", /\[heroSkills\] hero-skill-trees-full\.json/);
-      assert.match(error.stdout ?? "", /references unknown battle skill: missing_skill/);
+      assert.match(error.stdout ?? "", /references unknown battle skill missing_skill/);
+      return true;
+    }
+  );
+});
+
+test("validate-content-pack uses the authored hero skill tree for world cross-file validation", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "veil-content-pack-"));
+  await seedContentPackRoot(tempDir);
+
+  const worldPath = join(tempDir, "phase1-world.json");
+  const world = JSON.parse(await readFile(worldPath, "utf8")) as {
+    heroes: Array<{ learnedSkills?: Array<{ skillId: string; rank: number }> }>;
+  };
+  world.heroes[0] = {
+    ...world.heroes[0]!,
+    learnedSkills: [{ skillId: "war_banner", rank: 1 }]
+  };
+  await writeFile(worldPath, `${JSON.stringify(world, null, 2)}\n`, "utf8");
+
+  const heroSkillsPath = join(tempDir, "hero-skill-trees-full.json");
+  const heroSkills = JSON.parse(await readFile(heroSkillsPath, "utf8")) as {
+    skills: Array<{ id: string }>;
+  };
+
+  heroSkills.skills = heroSkills.skills.filter((skill) => skill.id !== "war_banner");
+  await writeFile(heroSkillsPath, `${JSON.stringify(heroSkills, null, 2)}\n`, "utf8");
+
+  await assert.rejects(
+    execFileAsync("node", ["--import", "tsx", scriptPath, "--root-dir", tempDir], { cwd: repoRoot }),
+    (error: NodeJS.ErrnoException & { stdout?: string }) => {
+      assert.equal(error.code, 1);
+      assert.match(error.stdout ?? "", /\[world\] heroes\[0\]\.learnedSkills\[0\]\.skillId/);
+      assert.match(error.stdout ?? "", /references unknown hero skill war_banner/);
       return true;
     }
   );

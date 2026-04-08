@@ -1,5 +1,8 @@
 import { getEquipmentDefinition, HERO_EQUIPMENT_INVENTORY_CAPACITY } from "./equipment.ts";
 import {
+  validateWorldHeroSkillReferences
+} from "./config-cross-file-validation.ts";
+import {
   getDefaultHeroSkillTreeConfig
 } from "./world-config.ts";
 import {
@@ -8,7 +11,7 @@ import {
   BattleSkillCatalogConfig,
   EquipmentType,
   HeroConfig,
-  HeroLearnedSkillState,
+  HeroSkillTreeConfig,
   MapObjectsConfig,
   UnitCatalogConfig,
   WorldGenerationConfig
@@ -117,8 +120,9 @@ function heroPath(heroIndex: number, suffix: string): string {
   return `heroes[${heroIndex}]${suffix}`;
 }
 
-function buildHeroSkillIndex(): Map<string, { requiredLevel: number; maxRank: number; prerequisites: string[] }> {
-  const config = getDefaultHeroSkillTreeConfig();
+function buildHeroSkillIndex(
+  config: HeroSkillTreeConfig
+): Map<string, { requiredLevel: number; maxRank: number; prerequisites: string[] }> {
   return new Map(
     config.skills.map((skill) => [
       skill.id,
@@ -200,15 +204,11 @@ function validateHeroProgression(
 
   const learnedSkills = hero.learnedSkills ?? [];
   let spentSkillPoints = 0;
-  const learnedSkillRanks = new Map<string, number>();
-
-  for (const [skillIndex, learnedSkill] of learnedSkills.entries()) {
-    if (!validateLearnedHeroSkill(hero, heroIndex, skillIndex, learnedSkill, heroSkillIndex, issues)) {
+  for (const learnedSkill of learnedSkills) {
+    if (!isPositiveInteger(learnedSkill?.rank) || !heroSkillIndex.has(learnedSkill?.skillId)) {
       continue;
     }
-
     spentSkillPoints += learnedSkill.rank;
-    learnedSkillRanks.set(learnedSkill.skillId, learnedSkill.rank);
   }
 
   if (isNonNegativeInteger(level) && isNonNegativeInteger(skillPoints)) {
@@ -223,90 +223,6 @@ function validateHeroProgression(
       });
     }
   }
-
-  for (const [skillIndex, learnedSkill] of learnedSkills.entries()) {
-    const skill = heroSkillIndex.get(learnedSkill.skillId);
-    if (!skill) {
-      continue;
-    }
-
-    const missingPrerequisite = skill.prerequisites.find((prerequisite) => (learnedSkillRanks.get(prerequisite) ?? 0) <= 0);
-    if (missingPrerequisite) {
-      pushIssue(issues, {
-        documentId: "world",
-        path: heroPath(heroIndex, `.learnedSkills[${skillIndex}].skillId`),
-        code: "hero_skill_prerequisite_missing",
-        message: `Hero ${hero.id} learns ${learnedSkill.skillId} without prerequisite ${missingPrerequisite}.`,
-        suggestion: "Add the prerequisite skill to learnedSkills or remove the dependent skill from the authored hero archive."
-      });
-    }
-  }
-}
-
-function validateLearnedHeroSkill(
-  hero: HeroConfig,
-  heroIndex: number,
-  skillIndex: number,
-  learnedSkill: HeroLearnedSkillState,
-  heroSkillIndex: Map<string, { requiredLevel: number; maxRank: number; prerequisites: string[] }>,
-  issues: ContentPackValidationIssue[]
-): learnedSkill is HeroLearnedSkillState & { skillId: string; rank: number } {
-  const skillId = learnedSkill?.skillId?.trim();
-  if (!skillId) {
-    pushIssue(issues, {
-      documentId: "world",
-      path: heroPath(heroIndex, `.learnedSkills[${skillIndex}].skillId`),
-      code: "hero_skill_id_missing",
-      message: `Hero ${hero.id} learnedSkills[${skillIndex}] is missing a skill id.`,
-      suggestion: "Set the skillId to a valid hero skill or remove the empty entry."
-    });
-    return false;
-  }
-
-  if (!isPositiveInteger(learnedSkill.rank)) {
-    pushIssue(issues, {
-      documentId: "world",
-      path: heroPath(heroIndex, `.learnedSkills[${skillIndex}].rank`),
-      code: "hero_skill_rank_invalid",
-      message: `Hero ${hero.id} learned skill ${skillId} rank must be a positive integer.`,
-      suggestion: "Use a whole-number rank between 1 and the skill's maxRank."
-    });
-    return false;
-  }
-
-  const skill = heroSkillIndex.get(skillId);
-  if (!skill) {
-    pushIssue(issues, {
-      documentId: "world",
-      path: heroPath(heroIndex, `.learnedSkills[${skillIndex}].skillId`),
-      code: "hero_skill_missing",
-      message: `Hero ${hero.id} references unknown hero skill ${skillId}.`,
-      suggestion: "Use a skill from hero-skill-trees-full.json or remove the stale learnedSkills entry."
-    });
-    return false;
-  }
-
-  if (learnedSkill.rank > skill.maxRank) {
-    pushIssue(issues, {
-      documentId: "world",
-      path: heroPath(heroIndex, `.learnedSkills[${skillIndex}].rank`),
-      code: "hero_skill_rank_exceeds_max",
-      message: `Hero ${hero.id} sets ${skillId} to rank ${learnedSkill.rank}, but the skill only supports rank ${skill.maxRank}.`,
-      suggestion: "Lower the authored rank so it stays within the skill tree definition."
-    });
-  }
-
-  if ((hero.progression?.level ?? 1) < skill.requiredLevel) {
-    pushIssue(issues, {
-      documentId: "world",
-      path: heroPath(heroIndex, `.learnedSkills[${skillIndex}]`),
-      code: "hero_skill_level_too_low",
-      message: `Hero ${hero.id} is level ${hero.progression?.level ?? 1} but ${skillId} requires level ${skill.requiredLevel}.`,
-      suggestion: "Raise the hero level or remove the learned skill until the prerequisite level is reached."
-    });
-  }
-
-  return true;
 }
 
 function validateHeroEquipmentLoadout(hero: HeroConfig, heroIndex: number, issues: ContentPackValidationIssue[]): void {
@@ -640,7 +556,18 @@ function buildSummary(issueCount: number): string {
 
 export function validateContentPackConsistency(bundle: RuntimeConfigBundle): ContentPackValidationReport {
   const issues: ContentPackValidationIssue[] = [];
-  const heroSkillIndex = buildHeroSkillIndex();
+  const heroSkills = bundle.heroSkills ?? getDefaultHeroSkillTreeConfig();
+  const heroSkillIndex = buildHeroSkillIndex(heroSkills);
+
+  for (const issue of validateWorldHeroSkillReferences(bundle.world, heroSkills)) {
+    pushIssue(issues, {
+      documentId: "world",
+      path: issue.path,
+      code: issue.code,
+      message: issue.message,
+      suggestion: "Update phase1-world hero progression so it matches the authored hero skill tree."
+    });
+  }
 
   validateWorldReferences(bundle.world, bundle.units, issues);
   bundle.world.heroes.forEach((hero, heroIndex) => {

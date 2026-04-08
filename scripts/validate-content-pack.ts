@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  CrossFileConfigValidationError,
   getDefaultEquipmentCatalog,
   getDefaultBattleBalanceConfig,
   validateBattleBalanceConfig,
@@ -134,11 +135,19 @@ function validateDocuments(bundleId: string, bundle: RuntimeConfigBundle): Docum
     try {
       callback();
     } catch (error) {
+      const precisePath =
+        error instanceof CrossFileConfigValidationError ? `${path}.${error.issue.path}` : path;
+      const message =
+        error instanceof CrossFileConfigValidationError
+          ? error.issue.message
+          : error instanceof Error
+            ? error.message
+            : "Unknown validation error";
       issues.push({
         bundleId,
         documentId,
-        path,
-        message: error instanceof Error ? error.message : "Unknown validation error"
+        path: precisePath,
+        message
       });
     }
   };
@@ -172,12 +181,13 @@ function printIssues(
 }
 
 async function loadBundle(rootDir: string, definition: ContentPackMapPackDefinition): Promise<RuntimeConfigBundle> {
-  const [world, mapObjects, units, battleSkills, battleBalance] = await Promise.all([
+  const [world, mapObjects, units, battleSkills, battleBalance, heroSkills] = await Promise.all([
     readJsonConfig<WorldGenerationConfig>(rootDir, definition.worldFileName),
     readJsonConfig<MapObjectsConfig>(rootDir, definition.mapObjectsFileName),
     readJsonConfig<UnitCatalogConfig>(rootDir, "units.json"),
     readJsonConfig<BattleSkillCatalogConfig>(rootDir, "battle-skills.json"),
-    readJsonConfig<BattleBalanceConfig>(rootDir, "battle-balance.json")
+    readJsonConfig<BattleBalanceConfig>(rootDir, "battle-balance.json"),
+    readJsonConfig<HeroSkillTreeConfig>(rootDir, "hero-skill-trees-full.json")
   ]);
 
   return {
@@ -185,7 +195,8 @@ async function loadBundle(rootDir: string, definition: ContentPackMapPackDefinit
     mapObjects,
     units,
     battleSkills,
-    battleBalance
+    battleBalance,
+    heroSkills
   };
 }
 
@@ -198,11 +209,19 @@ async function validateAuthoringConfigs(
     try {
       callback();
     } catch (error) {
+      const precisePath =
+        error instanceof CrossFileConfigValidationError ? `${path}.${error.issue.path}` : path;
+      const message =
+        error instanceof CrossFileConfigValidationError
+          ? error.issue.message
+          : error instanceof Error
+            ? error.message
+            : "Unknown validation error";
       issues.push({
         bundleId: "global",
         documentId,
-        path,
-        message: error instanceof Error ? error.message : "Unknown validation error"
+        path: precisePath,
+        message
       });
     }
   };
