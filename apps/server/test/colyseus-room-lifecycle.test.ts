@@ -928,6 +928,138 @@ test("battle replay persistence runs once at settlement and is drained from the 
   assert.deepEqual(internalRoom.worldRoom.consumeCompletedBattleReplays(), []);
 });
 
+test("invalid world actions return a structured rejection only to the originating client", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-world-rejection-${Date.now()}`);
+  const sourceClient = createFakeClient("session-world-rejection-source");
+  const observerClient = createFakeClient("session-world-rejection-observer");
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: {
+      getInternalState(): {
+        heroes: Array<{
+          id: string;
+          playerId: string;
+          move: { total: number; remaining: number };
+        }>;
+      };
+    };
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, sourceClient, "player-1", "connect-world-rejection-source");
+  await connectPlayer(room, observerClient, "player-2", "connect-world-rejection-observer");
+
+  const sourceHero = internalRoom.worldRoom.getInternalState().heroes.find((hero) => hero.playerId === "player-1");
+  assert.ok(sourceHero);
+  sourceHero.move.remaining = 1;
+
+  const observerPushCountBefore = observerClient.sent.filter(
+    (message) => message.type === "session.state" && message.delivery === "push"
+  ).length;
+
+  await emitRoomMessage(room, "world.action", sourceClient, {
+    type: "world.action",
+    requestId: "world-rejection",
+    action: {
+      type: "hero.move",
+      heroId: sourceHero.id,
+      destination: { x: 5, y: 4 }
+    }
+  });
+
+  const reply = lastSessionState(sourceClient, "reply");
+  const observerPushCountAfter = observerClient.sent.filter(
+    (message) => message.type === "session.state" && message.delivery === "push"
+  ).length;
+
+  assert.equal(reply.requestId, "world-rejection");
+  assert.equal(reply.payload.reason, "not_enough_move_points");
+  assert.deepEqual(reply.payload.rejection, {
+    scope: "world",
+    actionType: "hero.move",
+    reason: "not_enough_move_points"
+  });
+  assert.equal(reply.payload.events.length, 0);
+  assert.equal(observerPushCountAfter, observerPushCountBefore);
+});
+
+test("invalid battle actions return a structured rejection only to the originating client", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-battle-rejection-${Date.now()}`);
+  const sourceClient = createFakeClient("session-battle-rejection-source");
+  const observerClient = createFakeClient("session-battle-rejection-observer");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, sourceClient, "player-1", "connect-battle-rejection-source");
+  await connectPlayer(room, observerClient, "player-2", "connect-battle-rejection-observer");
+
+  await emitRoomMessage(room, "world.action", sourceClient, {
+    type: "world.action",
+    requestId: "battle-rejection-start",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 5, y: 4 }
+    }
+  });
+
+  const battle = getBattleForPlayer(room, "player-1");
+  assert.ok(battle);
+  const playerUnit = Object.values(battle.units).find((unit) => unit.camp === "attacker");
+  const opposingUnit = Object.values(battle.units).find((unit) => unit.camp === "defender");
+  assert.ok(playerUnit);
+  assert.ok(opposingUnit);
+
+  battle.activeUnitId = playerUnit.id;
+  battle.turnOrder = [playerUnit.id, opposingUnit.id];
+  battle.unitCooldowns[playerUnit.id] = {
+    ...battle.unitCooldowns[playerUnit.id],
+    power_shot: 1
+  };
+
+  const observerPushCountBefore = observerClient.sent.filter(
+    (message) => message.type === "session.state" && message.delivery === "push"
+  ).length;
+
+  await emitRoomMessage(room, "battle.action", sourceClient, {
+    type: "battle.action",
+    requestId: "battle-rejection",
+    action: {
+      type: "battle.skill",
+      unitId: playerUnit.id,
+      skillId: "power_shot",
+      targetId: opposingUnit.id
+    }
+  });
+
+  const reply = lastSessionState(sourceClient, "reply");
+  const observerPushCountAfter = observerClient.sent.filter(
+    (message) => message.type === "session.state" && message.delivery === "push"
+  ).length;
+
+  assert.equal(reply.requestId, "battle-rejection");
+  assert.equal(reply.payload.reason, "skill_on_cooldown");
+  assert.deepEqual(reply.payload.rejection, {
+    scope: "battle",
+    actionType: "battle.skill",
+    reason: "skill_on_cooldown"
+  });
+  assert.equal(reply.payload.events.length, 0);
+  assert.equal(observerPushCountAfter, observerPushCountBefore);
+});
+
 test("battle settlement grants configured season XP to the settled player account", async (t) => {
   resetLobbyRoomRegistry();
   const store = new InstrumentedRoomSnapshotStore();

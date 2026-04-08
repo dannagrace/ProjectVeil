@@ -8,6 +8,7 @@ import {
   replaceRuntimeConfigs
 } from "../../../packages/shared/src/index";
 import type {
+  ActionValidationFailure,
   BattleAction,
   BattleState,
   ClientMessage,
@@ -31,6 +32,7 @@ export interface SessionUpdate {
   reachableTiles: Vec2[];
   featureFlags?: FeatureFlags;
   reason?: string;
+  rejection?: ActionValidationFailure;
 }
 
 export type ConnectionEvent = "reconnecting" | "reconnected" | "reconnect_failed";
@@ -90,7 +92,8 @@ function fromPayload(payload: SessionStatePayload, previousWorld?: PlayerWorldVi
     movementPlan: payload.movementPlan,
     reachableTiles: payload.reachableTiles,
     featureFlags: normalizeFeatureFlags(payload.featureFlags),
-    ...(payload.reason ? { reason: payload.reason } : {})
+    ...(payload.reason ? { reason: payload.reason } : {}),
+    ...(payload.rejection ? { rejection: payload.rejection } : {})
   };
 }
 

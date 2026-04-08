@@ -8,6 +8,7 @@ import type {
   WorldAction,
   WorldEvent
 } from "./models.ts";
+import type { ActionValidationFailure } from "./action-precheck.ts";
 import type { FeatureFlags } from "./feature-flags.ts";
 import type { GuildRosterView, GuildSummaryView } from "./guilds.ts";
 import type { PlayerWorldViewPayload } from "./map-sync.ts";
@@ -41,6 +42,7 @@ export interface SessionStatePayload {
   reachableTiles: Vec2[];
   featureFlags: FeatureFlags;
   reason?: SessionStateReason;
+  rejection?: ActionValidationFailure;
 }
 
 export type PlayerReportReason = "cheating" | "harassment" | "afk";

@@ -18,7 +18,11 @@ import type {
   ValidationResult,
   WorldState
 } from "./models.ts";
-import { validateAction } from "./action-precheck.ts";
+import {
+  createActionValidationFailure,
+  validateAction,
+  type ActionPrecheckResult
+} from "./action-precheck.ts";
 import { nextDeterministicRandom } from "./deterministic-rng.ts";
 import { createHeroEquipmentBonusSummary } from "./equipment.ts";
 import { grantedHeroBattleSkillIds } from "./hero-skills.ts";
@@ -29,6 +33,8 @@ interface ContactResolutionResult {
   state: BattleState;
   intercepted: boolean;
 }
+
+export type BattleActionPrecheckResult = ActionPrecheckResult<BattleState>;
 
 interface BattleCatalogIndex {
   skillById: Map<BattleSkillId, BattleSkillConfig>;
@@ -1529,6 +1535,15 @@ export function validateBattleAction(state: BattleState, action: BattleAction): 
   return { valid: true };
 }
 
+export function precheckBattleAction(state: BattleState, action: BattleAction): BattleActionPrecheckResult {
+  const result = validateAction(state, action, validateBattleAction, normalizeBattleState);
+  const rejection = createActionValidationFailure("battle", action, result.validation);
+  return {
+    ...result,
+    ...(rejection ? { rejection } : {})
+  };
+}
+
 export function createEmptyBattleState(): BattleState {
   return {
     id: "battle-empty",
@@ -1846,20 +1861,7 @@ export function getBattleOutcome(state: BattleState): BattleOutcome {
   };
 }
 
-export function applyBattleAction(state: BattleState, action: BattleAction): BattleState {
-  const { state: normalizedState, validation } = validateAction(
-    state,
-    action,
-    validateBattleAction,
-    normalizeBattleState
-  );
-  if (!validation.valid) {
-    return {
-      ...normalizedState,
-      log: normalizedState.log.concat(`Action rejected: ${validation.reason}`)
-    };
-  }
-
+function applyBattleActionUnchecked(normalizedState: BattleState, action: BattleAction): BattleState {
   if (action.type === "battle.wait") {
     return advanceTurn(
       {
@@ -1909,6 +1911,18 @@ export function applyBattleAction(state: BattleState, action: BattleAction): Bat
   }
 
   return applyAttackSequence(normalizedState, action.attackerId, action.defenderId);
+}
+
+export function applyBattleAction(state: BattleState, action: BattleAction): BattleState {
+  const { state: normalizedState, validation, rejection } = precheckBattleAction(state, action);
+  if (!validation.valid) {
+    return {
+      ...normalizedState,
+      log: normalizedState.log.concat(`Action rejected: ${rejection?.reason ?? "battle_action_invalid"}`)
+    };
+  }
+
+  return applyBattleActionUnchecked(normalizedState, action);
 }
 
 function visibleEnvironmentLog(environment: BattleHazardState[], catalogIndex: BattleCatalogIndex): string[] {

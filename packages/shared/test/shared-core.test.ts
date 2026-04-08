@@ -92,6 +92,8 @@ import {
   normalizePlayerBattleReplaySummaries,
   pauseBattleReplayPlayback,
   pickAutomatedBattleAction,
+  precheckBattleAction,
+  precheckWorldAction,
   planHeroMovement,
   planPlayerViewMovement,
   playBattleReplayPlayback,
@@ -6544,6 +6546,142 @@ test("applyWorldAction rejects invalid movement before mutating world state", ()
   assert.equal(next, initial);
   assert.deepEqual(next.heroes[0]?.position, { x: 0, y: 0 });
   assert.equal(next.heroes[0]?.move.remaining, 1);
+});
+
+test("precheckWorldAction returns structured rejection for out-of-range movement", () => {
+  const hero = createHero({
+    id: "hero-blocked",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 0 },
+    move: { total: 6, remaining: 1 }
+  });
+  const initial = createWorldState({
+    width: 3,
+    height: 1,
+    heroes: [hero],
+    tiles: [createTile(0, 0), createTile(1, 0), createTile(2, 0)]
+  });
+
+  const result = precheckWorldAction(initial, {
+    type: "hero.move",
+    heroId: "hero-blocked",
+    destination: { x: 2, y: 0 }
+  });
+
+  assert.equal(result.state, initial);
+  assert.deepEqual(result.validation, {
+    valid: false,
+    reason: "not_enough_move_points"
+  });
+  assert.deepEqual(result.rejection, {
+    scope: "world",
+    actionType: "hero.move",
+    reason: "not_enough_move_points"
+  });
+});
+
+test("precheckWorldAction returns structured rejection for insufficient gold recruitment", () => {
+  const hero = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 1, y: 1 }
+  });
+  const state = createWorldState({
+    width: 3,
+    height: 2,
+    heroes: [hero],
+    resources: {
+      "player-1": {
+        gold: 0,
+        wood: 0,
+        ore: 0
+      }
+    },
+    buildings: {
+      "recruit-post-1": {
+        id: "recruit-post-1",
+        kind: "recruitment_post",
+        position: { x: 1, y: 1 },
+        label: "前线招募所",
+        unitTemplateId: "hero_guard_basic",
+        recruitCount: 4,
+        availableCount: 4,
+        cost: {
+          gold: 240,
+          wood: 0,
+          ore: 0
+        }
+      }
+    },
+    tiles: [
+      createTile(0, 0),
+      createTile(1, 0),
+      createTile(2, 0),
+      createTile(0, 1),
+      createTile(1, 1, {
+        building: {
+          id: "recruit-post-1",
+          kind: "recruitment_post",
+          position: { x: 1, y: 1 },
+          label: "前线招募所",
+          unitTemplateId: "hero_guard_basic",
+          recruitCount: 4,
+          availableCount: 4,
+          cost: {
+            gold: 240,
+            wood: 0,
+            ore: 0
+          }
+        }
+      }),
+      createTile(2, 1)
+    ]
+  });
+
+  const result = precheckWorldAction(state, {
+    type: "hero.recruit",
+    heroId: "hero-1",
+    buildingId: "recruit-post-1"
+  });
+
+  assert.deepEqual(result.validation, {
+    valid: false,
+    reason: "not_enough_resources"
+  });
+  assert.deepEqual(result.rejection, {
+    scope: "world",
+    actionType: "hero.recruit",
+    reason: "not_enough_resources"
+  });
+});
+
+test("precheckBattleAction returns structured rejection for active cooldowns", () => {
+  const initial = createDemoBattleState();
+  initial.activeUnitId = "pikeman-a";
+  initial.turnOrder = ["pikeman-a", "wolf-d"];
+  initial.unitCooldowns["pikeman-a"] = {
+    ...initial.unitCooldowns["pikeman-a"],
+    power_shot: 1
+  };
+
+  const result = precheckBattleAction(initial, {
+    type: "battle.skill",
+    unitId: "pikeman-a",
+    skillId: "power_shot",
+    targetId: "wolf-d"
+  });
+
+  assert.deepEqual(result.validation, {
+    valid: false,
+    reason: "skill_on_cooldown"
+  });
+  assert.deepEqual(result.rejection, {
+    scope: "battle",
+    actionType: "battle.skill",
+    reason: "skill_on_cooldown"
+  });
 });
 
 test("applyBattleAction resolves wait plus turn-start poison death and cooldown ticking", () => {
