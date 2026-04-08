@@ -325,7 +325,7 @@
     }
   ],
   "featureFlags": {
-    "quest_system_enabled": false,
+    "quest_system_enabled": true,
     "battle_pass_enabled": false,
     "pve_enabled": false,
     "tutorial_enabled": true

@@ -12,6 +12,7 @@ import {
   deliverPlayerMailboxMessage,
   normalizePlayerMailboxMessage
 } from "../src/player-mailbox";
+import { loadDailyQuestBoard } from "../src/daily-quests";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import { loadDailyQuestConfig } from "../src/daily-quest-config";
 import { rotateDailyQuests } from "../src/event-engine";
@@ -53,6 +54,52 @@ function getRelativeDailyRewardDateKey(baseDateKey: string, deltaDays: number): 
   const parsed = new Date(`${baseDateKey}T00:00:00.000Z`);
   parsed.setUTCDate(parsed.getUTCDate() + deltaDays);
   return parsed.toISOString().slice(0, 10);
+}
+
+function createDailyQuestProgressEvents(
+  playerId: string,
+  dateKey: string,
+  quest: { metric: "hero_moves" | "battle_wins" | "resource_collections"; target: number }
+): PlayerAccountSnapshot["recentEventLog"] {
+  return Array.from({ length: quest.target }, (_, index) => {
+    const minute = String(index).padStart(2, "0");
+    if (quest.metric === "hero_moves") {
+      return {
+        id: `${playerId}:${dateKey}T08:${minute}:00.000Z:hero.moved:${index + 1}`,
+        timestamp: `${dateKey}T08:${minute}:00.000Z`,
+        roomId: "room-alpha",
+        playerId,
+        category: "movement" as const,
+        description: "今日探索移动。",
+        worldEventType: "hero.moved" as const,
+        rewards: []
+      };
+    }
+
+    if (quest.metric === "battle_wins") {
+      return {
+        id: `${playerId}:${dateKey}T09:${minute}:00.000Z:battle.resolved:${index + 1}`,
+        timestamp: `${dateKey}T09:${minute}:00.000Z`,
+        roomId: "room-alpha",
+        playerId,
+        category: "battle" as const,
+        description: "战斗胜利。",
+        worldEventType: "battle.resolved" as const,
+        rewards: []
+      };
+    }
+
+    return {
+      id: `${playerId}:${dateKey}T10:${minute}:00.000Z:hero.collected:${index + 1}`,
+      timestamp: `${dateKey}T10:${minute}:00.000Z`,
+      roomId: "room-alpha",
+      playerId,
+      category: "building" as const,
+      description: "今日收集资源。",
+      worldEventType: "hero.collected" as const,
+      rewards: [{ type: "resource" as const, label: "gold", amount: 20 + index }]
+    };
+  });
 }
 
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
@@ -3626,6 +3673,176 @@ test("daily quest claim grants rewards once and returns already_claimed on repea
   assert.deepEqual(
     questState?.rotations.find((entry) => entry.dateKey === questState?.currentDateKey)?.claimedQuestIds.includes(claimableQuest.id),
     true
+  );
+});
+
+test("daily quests are enabled by default and complete the rotation, progress, and reward flow end-to-end", async (t) => {
+  const port = 44933 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  const today = getDailyRewardDateKey();
+  const nextDay = getRelativeDailyRewardDateKey(today, 1);
+  const originalDailyQuestOverride = process.env.VEIL_DAILY_QUESTS_ENABLED;
+  const originalFeatureFlagOverride = process.env.VEIL_FEATURE_FLAGS_JSON;
+  delete process.env.VEIL_DAILY_QUESTS_ENABLED;
+  delete process.env.VEIL_FEATURE_FLAGS_JSON;
+  t.after(() => {
+    if (originalDailyQuestOverride === undefined) {
+      delete process.env.VEIL_DAILY_QUESTS_ENABLED;
+    } else {
+      process.env.VEIL_DAILY_QUESTS_ENABLED = originalDailyQuestOverride;
+    }
+
+    if (originalFeatureFlagOverride === undefined) {
+      delete process.env.VEIL_FEATURE_FLAGS_JSON;
+    } else {
+      process.env.VEIL_FEATURE_FLAGS_JSON = originalFeatureFlagOverride;
+    }
+  });
+  await store.ensurePlayerAccount({
+    playerId: "daily-quest-e2e",
+    displayName: "晨雾执行官"
+  });
+  await store.savePlayerAccountProgress("daily-quest-e2e", {
+    tutorialStep: null
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "daily-quest-e2e",
+    displayName: "晨雾执行官"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const profileResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const profilePayload = (await profileResponse.json()) as {
+    account: {
+      dailyQuestBoard?: {
+        enabled: boolean;
+        cycleKey: string;
+        quests: Array<{ id: string }>;
+      };
+    };
+  };
+
+  assert.equal(profileResponse.status, 200);
+  assert.equal(profilePayload.account.dailyQuestBoard?.enabled, true);
+  assert.equal(profilePayload.account.dailyQuestBoard?.cycleKey, today);
+  assert.equal(profilePayload.account.dailyQuestBoard?.quests.length, 3);
+
+  const dayOneQuestState = await store.loadPlayerQuestState("daily-quest-e2e");
+  const dayOneRotation = rotateDailyQuests({
+    playerId: "daily-quest-e2e",
+    dateKey: today,
+    questPool: loadDailyQuestConfig().quests,
+    questState: dayOneQuestState
+  });
+  const claimableDefinition = dayOneRotation.quests[0];
+  assert.ok(claimableDefinition);
+  store.seedEventHistory(
+    "daily-quest-e2e",
+    createDailyQuestProgressEvents("daily-quest-e2e", today, claimableDefinition)
+  );
+
+  const progressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/daily-quests`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const progressPayload = (await progressResponse.json()) as {
+    dailyQuestBoard: {
+      cycleKey: string;
+      availableClaims: number;
+      pendingRewards: { gems: number; gold: number };
+      quests: Array<{ id: string; current: number; completed: boolean; claimed: boolean }>;
+    };
+  };
+  const progressedQuest = progressPayload.dailyQuestBoard.quests.find((quest) => quest.id === claimableDefinition.id);
+  const claimableQuestCount = progressPayload.dailyQuestBoard.quests.filter((quest) => quest.completed && !quest.claimed).length;
+
+  assert.equal(progressResponse.status, 200);
+  assert.equal(progressPayload.dailyQuestBoard.cycleKey, today);
+  assert.equal(progressedQuest?.current, claimableDefinition.target);
+  assert.equal(progressedQuest?.completed, true);
+  assert.equal(progressedQuest?.claimed, false);
+  assert.ok(claimableQuestCount >= 1);
+  assert.equal(progressPayload.dailyQuestBoard.availableClaims, claimableQuestCount);
+  assert.ok(progressPayload.dailyQuestBoard.pendingRewards.gems >= claimableDefinition.reward.gems);
+  assert.ok(progressPayload.dailyQuestBoard.pendingRewards.gold >= claimableDefinition.reward.gold);
+
+  const claimResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/daily-quests/${claimableDefinition.id}/claim`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const claimPayload = (await claimResponse.json()) as {
+    claimed: boolean;
+    reward: { gems: number; gold: number };
+    dailyQuestBoard: {
+      cycleKey: string;
+      availableClaims: number;
+      quests: Array<{ id: string; claimed: boolean }>;
+    };
+  };
+
+  assert.equal(claimResponse.status, 200);
+  assert.equal(claimPayload.claimed, true);
+  assert.deepEqual(claimPayload.reward, claimableDefinition.reward);
+  assert.equal(claimPayload.dailyQuestBoard.cycleKey, today);
+  assert.equal(claimPayload.dailyQuestBoard.availableClaims, claimableQuestCount - 1);
+  assert.equal(claimPayload.dailyQuestBoard.quests.find((quest) => quest.id === claimableDefinition.id)?.claimed, true);
+
+  const claimedAccount = await store.loadPlayerAccount("daily-quest-e2e");
+  const claimedQuestState = await store.loadPlayerQuestState("daily-quest-e2e");
+  assert.equal(claimedAccount?.gems, claimableDefinition.reward.gems);
+  assert.equal(claimedAccount?.globalResources.gold, claimableDefinition.reward.gold);
+  assert.match(claimedAccount?.recentEventLog[0]?.description ?? "", /领取每日任务：/);
+  assert.equal(
+    claimedQuestState?.rotations.find((entry) => entry.dateKey === today)?.claimedQuestIds.includes(claimableDefinition.id),
+    true
+  );
+
+  const nextDayQuestState = await store.loadPlayerQuestState("daily-quest-e2e");
+  const nextDayRotation = rotateDailyQuests({
+    playerId: "daily-quest-e2e",
+    dateKey: nextDay,
+    questPool: loadDailyQuestConfig().quests,
+    questState: nextDayQuestState
+  });
+  const nextDayBoard = await loadDailyQuestBoard(
+    store,
+    claimedAccount ?? (await store.loadPlayerAccount("daily-quest-e2e"))!,
+    new Date(`${nextDay}T00:00:01.000Z`),
+    true
+  );
+
+  assert.equal(nextDayBoard.enabled, true);
+  assert.equal(nextDayBoard.cycleKey, nextDay);
+  assert.equal(nextDayBoard.availableClaims, 0);
+  assert.deepEqual(
+    nextDayBoard.quests.map((quest) => quest.id),
+    nextDayRotation.quests.map((quest) => quest.id)
+  );
+  assert.deepEqual(
+    nextDayBoard.quests.map((quest) => ({
+      current: quest.current,
+      completed: quest.completed,
+      claimed: quest.claimed
+    })),
+    nextDayRotation.quests.map(() => ({
+      current: 0,
+      completed: false,
+      claimed: false
+    }))
   );
 });
 
