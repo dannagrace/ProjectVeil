@@ -50,6 +50,13 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 两个节点能读取到同一个匹配结果
 - 同一个房间 ID 会返回给双方玩家
 
+针对当前 Ranked PvP 匹配烟测，也可以直接跑下面两条定向验证：
+
+```bash
+node --import tsx --test apps/server/test/matchmaking-routes.test.ts
+npx playwright test tests/e2e/pvp-matchmaking-lifecycle.spec.ts --config=playwright.multiplayer.config.ts
+```
+
 ## 部署建议
 
 - `REDIS_URL` 指向可被所有游戏节点访问的同一 Redis 实例或集群
