@@ -197,6 +197,16 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "`artifacts/release-readiness/runtime-observability-evidence-<candidate-or-short-sha>-<short-sha>.md`",
     ],
   },
+  "release:runtime-observability:bundle": {
+    purpose:
+      "Capture one deployed-environment runtime observability review bundle that stages core evidence, gate verdicts, and optional room-lifecycle proof for candidate review.",
+    requiredInputs: [
+      "Pass `--candidate`, `--candidate-revision`, and `--server-url`; optionally set `--target-surface`, `--target-environment`, `--include-room-lifecycle`, and output overrides.",
+    ],
+    producedArtifacts: [
+      "Bundle directory under `artifacts/release-readiness/runtime-observability-bundle-<candidate-or-short-sha>-<short-sha>/` containing `runtime-observability-bundle.json/.md` plus staged runtime evidence and gate artifacts.",
+    ],
+  },
   "release:pr-summary": {
     purpose: "Render the Markdown snippet used for release-oriented PR comments from gate and health artifacts.",
     requiredInputs: [

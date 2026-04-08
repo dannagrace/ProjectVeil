@@ -10,8 +10,7 @@ It keeps the implementation narrow by reusing the existing evidence commands ins
 - `npm run validate:wechat-rc`
 - `npm run smoke:client:release-candidate`
 - `npm run release:cocos-rc:bundle`
-- `npm run release:runtime-observability:evidence`
-- `npm run release:runtime-observability:gate`
+- `npm run release:runtime-observability:bundle`
 - `npm run release:gate:summary`
 - `npm run ci:trend-summary`
 - `npm run release:health:summary`
@@ -33,12 +32,13 @@ The bundle contains:
 
 - stable copied inputs such as `client-release-candidate-smoke-phase1-mainline-<short-sha>.json`
 - stable generated summaries such as `release-gate-summary-phase1-mainline-<short-sha>.json`
+- one reviewer-facing runtime observability bundle directory with the staged evidence and gate files for the target environment
 - the candidate-scoped Cocos RC bundle and Phase 1 dossier
 - `SUMMARY.md`, which is also appended to `GITHUB_STEP_SUMMARY`
 
 The workflow fails when an evidence-generation stage regresses or when a required rehearsal artifact is missing from the final bundle.
 
-The workflow does not treat an otherwise valid dossier `pending` result as a generation failure. That pending state is expected when automation intentionally omits live runtime sampling or WeChat manual-review evidence. When `--server-url` is supplied, the rehearsal first writes a stable runtime observability evidence JSON/Markdown pair, then derives the runtime observability gate from that captured artifact and feeds the gate into the candidate dossier instead of resampling the environment.
+The workflow does not treat an otherwise valid dossier `pending` result as a generation failure. That pending state is expected when automation intentionally omits live runtime sampling or WeChat manual-review evidence. When `--server-url` is supplied, the rehearsal writes one stable runtime observability bundle directory, stages the raw runtime evidence and gate outputs inside it, and then feeds the staged gate into the candidate dossier instead of resampling the environment.
 
 ## Local Rerun
 
@@ -51,8 +51,7 @@ npm run stress:rooms:reconnect-soak -- --artifact-path artifacts/release-readine
 npm run package:wechat-release -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir artifacts/wechat-release-local --expect-exported-runtime --source-revision "$(git rev-parse HEAD)"
 npm run validate:wechat-rc -- --artifacts-dir artifacts/wechat-release-local --expected-revision "$(git rev-parse HEAD)"
 npm run smoke:client:release-candidate -- --output artifacts/release-readiness/client-release-candidate-smoke-local.json
-npm run release:runtime-observability:evidence -- --candidate phase1-mainline --candidate-revision "$(git rev-parse HEAD)" --target-surface h5 --target-environment local --server-url http://127.0.0.1:2567
-npm run release:runtime-observability:gate -- --candidate phase1-mainline --candidate-revision "$(git rev-parse HEAD)" --target-surface h5 --target-environment local --capture-report artifacts/release-readiness/runtime-observability-evidence-phase1-mainline-$(git rev-parse --short HEAD).json
+npm run release:runtime-observability:bundle -- --candidate phase1-mainline --candidate-revision "$(git rev-parse HEAD)" --target-surface h5 --target-environment local --server-url http://127.0.0.1:2567 --include-room-lifecycle
 ```
 
 Then run the orchestration command that the workflow uses:

@@ -159,6 +159,15 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
           "Raw runtime capture that feeds the runtime observability gate. Required whenever live health, auth-readiness, or metrics evidence is part of the release call.",
         reviewTreatment: "release blocker",
       };
+    case "release:runtime-observability:bundle":
+      return {
+        owner: "runtime owner",
+        scope: "runtime",
+        decisionRole: "required evidence",
+        blockingSemantics:
+          "Candidate and environment-scoped runtime review packet. Use it as the reviewer-facing wrapper around core runtime evidence and gate verdicts, including optional room lifecycle proof when requested.",
+        reviewTreatment: "release blocker",
+      };
     case "release:runtime:slo-summary":
       return {
         owner: "runtime owner",

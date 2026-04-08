@@ -48,6 +48,8 @@ interface RehearsalArtifacts {
   stableH5SmokePath?: string;
   stableReconnectSoakPath?: string;
   stableRuntimeReportPath?: string;
+  runtimeObservabilityBundlePath?: string;
+  runtimeObservabilityBundleMarkdownPath?: string;
   runtimeObservabilityEvidencePath?: string;
   runtimeObservabilityEvidenceMarkdownPath?: string;
   runtimeObservabilityGatePath?: string;
@@ -420,10 +422,25 @@ function main(): void {
   const stableH5SmokePath = path.join(outputDir, `client-release-candidate-smoke-${candidateSlug}-${revision.shortCommit}.json`);
   const stableReconnectSoakPath = path.join(outputDir, `colyseus-reconnect-soak-summary-${candidateSlug}-${revision.shortCommit}.json`);
   const stableRuntimeReportPath = path.join(outputDir, `runtime-regression-report-${candidateSlug}-${revision.shortCommit}.json`);
-  const runtimeObservabilityEvidencePath = path.join(outputDir, `runtime-observability-evidence-${candidateSlug}-${revision.shortCommit}.json`);
-  const runtimeObservabilityEvidenceMarkdownPath = path.join(outputDir, `runtime-observability-evidence-${candidateSlug}-${revision.shortCommit}.md`);
-  const runtimeObservabilityGatePath = path.join(outputDir, `runtime-observability-gate-${candidateSlug}-${revision.shortCommit}.json`);
-  const runtimeObservabilityGateMarkdownPath = path.join(outputDir, `runtime-observability-gate-${candidateSlug}-${revision.shortCommit}.md`);
+  const runtimeObservabilityBundleDir = path.join(outputDir, `runtime-observability-bundle-${candidateSlug}-${revision.shortCommit}`);
+  const runtimeObservabilityBundlePath = path.join(runtimeObservabilityBundleDir, "runtime-observability-bundle.json");
+  const runtimeObservabilityBundleMarkdownPath = path.join(runtimeObservabilityBundleDir, "runtime-observability-bundle.md");
+  const runtimeObservabilityEvidencePath = path.join(
+    runtimeObservabilityBundleDir,
+    `runtime-observability-evidence-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const runtimeObservabilityEvidenceMarkdownPath = path.join(
+    runtimeObservabilityBundleDir,
+    `runtime-observability-evidence-${candidateSlug}-${revision.shortCommit}.md`
+  );
+  const runtimeObservabilityGatePath = path.join(
+    runtimeObservabilityBundleDir,
+    `runtime-observability-gate-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const runtimeObservabilityGateMarkdownPath = path.join(
+    runtimeObservabilityBundleDir,
+    `runtime-observability-gate-${candidateSlug}-${revision.shortCommit}.md`
+  );
   const stableWechatArtifactsDir = path.join(outputDir, `wechat-release-${candidateSlug}-${revision.shortCommit}`);
   const releaseReadinessSnapshotPath = path.join(outputDir, `release-readiness-${candidateSlug}-${revision.shortCommit}.json`);
   const persistencePath = path.join(outputDir, `phase1-release-persistence-regression-${candidateSlug}-${revision.shortCommit}.json`);
@@ -440,6 +457,8 @@ function main(): void {
 
   artifacts.releaseReadinessSnapshotPath = toRelative(releaseReadinessSnapshotPath);
   artifacts.persistencePath = toRelative(persistencePath);
+  artifacts.runtimeObservabilityBundlePath = toRelative(runtimeObservabilityBundlePath);
+  artifacts.runtimeObservabilityBundleMarkdownPath = toRelative(runtimeObservabilityBundleMarkdownPath);
   artifacts.runtimeObservabilityEvidencePath = toRelative(runtimeObservabilityEvidencePath);
   artifacts.runtimeObservabilityEvidenceMarkdownPath = toRelative(runtimeObservabilityEvidenceMarkdownPath);
   artifacts.runtimeObservabilityGatePath = toRelative(runtimeObservabilityGatePath);
@@ -588,23 +607,23 @@ function main(): void {
       }
     },
     {
-      id: "runtime-observability-evidence",
-      title: "Capture runtime observability evidence",
+      id: "runtime-observability-bundle",
+      title: "Capture runtime observability bundle",
       run: () => {
         if (!args.serverUrl) {
           return {
-            id: "runtime-observability-evidence",
-            title: "Capture runtime observability evidence",
+            id: "runtime-observability-bundle",
+            title: "Capture runtime observability bundle",
             status: "skipped",
-            summary: "No --server-url was provided, so target-environment runtime evidence capture was skipped."
+            summary: "No --server-url was provided, so the target-environment runtime observability bundle was skipped."
           };
         }
 
-        return runCommandStage("runtime-observability-evidence", "Capture runtime observability evidence", [
+        return runCommandStage("runtime-observability-bundle", "Capture runtime observability bundle", [
           nodeExec,
           "--import",
           "tsx",
-          "./scripts/runtime-observability-evidence.ts",
+          "./scripts/runtime-observability-bundle.ts",
           "--candidate",
           args.candidate,
           "--candidate-revision",
@@ -615,46 +634,20 @@ function main(): void {
           args.targetSurface,
           "--server-url",
           args.serverUrl,
+          "--output-dir",
+          runtimeObservabilityBundleDir,
           "--output",
-          runtimeObservabilityEvidencePath,
+          runtimeObservabilityBundlePath,
           "--markdown-output",
-          runtimeObservabilityEvidenceMarkdownPath
-        ], [runtimeObservabilityEvidencePath, runtimeObservabilityEvidenceMarkdownPath]);
-      }
-    },
-    {
-      id: "runtime-observability-gate",
-      title: "Build runtime observability gate",
-      run: () => {
-        if (!args.serverUrl) {
-          return {
-            id: "runtime-observability-gate",
-            title: "Build runtime observability gate",
-            status: "skipped",
-            summary: "No --server-url was provided, so the target-environment runtime gate was skipped."
-          };
-        }
-
-        return runCommandStage("runtime-observability-gate", "Build runtime observability gate", [
-          nodeExec,
-          "--import",
-          "tsx",
-          "./scripts/runtime-observability-gate.ts",
-          "--candidate",
-          args.candidate,
-          "--candidate-revision",
-          revision.commit,
-          "--capture-report",
+          runtimeObservabilityBundleMarkdownPath
+        ], [
+          runtimeObservabilityBundlePath,
+          runtimeObservabilityBundleMarkdownPath,
           runtimeObservabilityEvidencePath,
-          "--target-surface",
-          args.targetSurface,
-          "--target-environment",
-          args.targetSurface,
-          "--output",
+          runtimeObservabilityEvidenceMarkdownPath,
           runtimeObservabilityGatePath,
-          "--markdown-output",
           runtimeObservabilityGateMarkdownPath
-        ], [runtimeObservabilityGatePath, runtimeObservabilityGateMarkdownPath]);
+        ]);
       }
     },
     {
@@ -816,6 +809,7 @@ function main(): void {
     phase1CandidateDossierMarkdownPath
   ];
   if (args.serverUrl) {
+    requiredArtifacts.push(runtimeObservabilityBundlePath, runtimeObservabilityBundleMarkdownPath);
     requiredArtifacts.push(runtimeObservabilityEvidencePath, runtimeObservabilityEvidenceMarkdownPath);
     requiredArtifacts.push(runtimeObservabilityGatePath, runtimeObservabilityGateMarkdownPath);
   }
