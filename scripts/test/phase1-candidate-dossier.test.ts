@@ -286,13 +286,13 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
         checks: [
           {
             id: "wechat-devtools-export-review",
-            title: "Real WeChat export imported and launched in Developer Tools",
+            title: "Candidate-scoped WeChat package install/launch verification recorded",
             required: true,
             status: "passed",
             owner: "release-oncall",
             recordedAt: "2026-04-05T08:39:00.000Z",
             revision,
-            artifactPath: path.join(wechatDir, "devtools-export-review.json")
+            artifactPath: path.join(wechatDir, "codex.wechat.install-launch-evidence.json")
           },
           {
             id: "wechat-device-runtime-review",
@@ -527,7 +527,7 @@ test("phase1 candidate dossier fails the single exit evidence gate when the rele
             owner: "release-oncall",
             recordedAt: "2026-04-05T08:39:00.000Z",
             revision,
-            artifactPath: path.join(wechatDir, "devtools-export-review.json")
+            artifactPath: path.join(wechatDir, "codex.wechat.install-launch-evidence.json")
           },
           {
             id: "wechat-device-runtime-review",
@@ -757,16 +757,21 @@ test("phase1 candidate dossier blocks Phase 1 sign-off when required WeChat manu
         checks: [
           {
             id: "wechat-devtools-export-review",
-            title: "Real WeChat export imported and launched in Developer Tools",
+            title: "Candidate-scoped WeChat package install/launch verification recorded",
             required: true,
             status: "pending",
             notes: "Import the packaged candidate into WeChat Developer Tools.",
-            artifactPath: path.join(wechatDir, "devtools-export-review.json")
+            artifactPath: path.join(wechatDir, "codex.wechat.install-launch-evidence.json")
           }
         ]
       }
     },
-    blockers: [{ id: "manual:wechat-devtools-export-review", summary: "Manual review pending: Real WeChat export imported and launched in Developer Tools." }]
+    blockers: [
+      {
+        id: "manual:wechat-devtools-export-review",
+        summary: "Manual review pending: Candidate-scoped WeChat package install/launch verification recorded."
+      }
+    ]
   });
   writeJson(persistencePath, {
     generatedAt: "2026-04-05T08:41:00.000Z",

@@ -52,6 +52,10 @@ function hashFileSha256(filePath: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
+function isoHoursAgo(hoursAgo: number): string {
+  return new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
+}
+
 function packageFixtureArtifact(): PackagedArtifact {
   const artifactsDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-wechat-release-artifacts-"));
 
@@ -109,7 +113,7 @@ function writePassingSmokeReport(metadataPath: string, reportPath: string): void
       tester: "codex",
       device: "iPhone 15 / WeChat 8.0.x",
       clientVersion: "1.0.155",
-      executedAt: "2026-04-02T09:00:00+08:00",
+      executedAt: isoHoursAgo(1),
       result: "passed",
       summary: "All required smoke cases passed."
     },
@@ -433,6 +437,64 @@ test("validate:wechat-rc requires an upload receipt when version validation is r
   );
 });
 
+test("release:wechat:install-launch-evidence writes candidate-scoped JSON and markdown artifacts", () => {
+  const artifact = packageFixtureArtifact();
+  const output = execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/wechat-package-install-launch-evidence.ts",
+      "--artifacts-dir",
+      artifact.artifactsDir,
+      "--candidate",
+      "phase1-wechat-rc",
+      "--environment",
+      "wechat-devtools",
+      "--operator",
+      "release-oncall",
+      "--status",
+      "passed",
+      "--summary",
+      "Imported and launched the packaged candidate in WeChat Developer Tools.",
+      "--evidence",
+      "startup.png",
+      "--evidence",
+      "console.log"
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: "pipe"
+    }
+  );
+
+  const reportPath = path.join(artifact.artifactsDir, "codex.wechat.install-launch-evidence.json");
+  const markdownPath = path.join(artifact.artifactsDir, "codex.wechat.install-launch-evidence.md");
+  const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as {
+    candidate: { name: string; revision: string };
+    verification: {
+      environment: string;
+      operator: string;
+      status: string;
+      packageInstall: { status: string };
+      firstLaunch: { status: string };
+      evidence: string[];
+    };
+  };
+
+  assert.match(output, /Wrote WeChat install\/launch evidence:/);
+  assert.equal(report.candidate.name, "phase1-wechat-rc");
+  assert.equal(report.candidate.revision, sourceRevision);
+  assert.equal(report.verification.environment, "wechat-devtools");
+  assert.equal(report.verification.operator, "release-oncall");
+  assert.equal(report.verification.status, "passed");
+  assert.equal(report.verification.packageInstall.status, "passed");
+  assert.equal(report.verification.firstLaunch.status, "passed");
+  assert.deepEqual(report.verification.evidence, ["startup.png", "console.log"]);
+  assert.match(fs.readFileSync(markdownPath, "utf8"), /WeChat Package Install\/Launch Verification/);
+});
+
 test("validate:wechat-rc marks the candidate ready when smoke evidence and manual review are complete", () => {
   const artifact = packageFixtureArtifact();
   const smokeReportPath = path.join(artifact.artifactsDir, "codex.wechat.smoke-report.json");
@@ -443,15 +505,15 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
   writeManualChecks(manualChecksPath, [
     {
       id: "wechat-devtools-export-review",
-      title: "Real WeChat export imported and launched in Developer Tools",
+      title: "Candidate-scoped WeChat package install/launch verification recorded",
       status: "passed",
       required: true,
-      notes: "Imported the packaged export into WeChat Developer Tools and captured startup evidence for the same revision.",
-      evidence: ["devtools-startup.png", "devtools-console.log"],
+      notes: "Generated the install/launch verification artifact for the same revision.",
+      evidence: ["artifacts/wechat-release/codex.wechat.install-launch-evidence.json"],
       owner: "release-oncall",
-      recordedAt: "2026-04-02T08:10:00.000Z",
+      recordedAt: isoHoursAgo(2),
       revision: sourceRevision,
-      artifactPath: "artifacts/wechat-release/devtools-export-review.json"
+      artifactPath: "artifacts/wechat-release/codex.wechat.install-launch-evidence.json"
     },
     {
       id: "wechat-device-runtime-review",
@@ -461,7 +523,7 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
       notes: "Attached the smoke report and capture set from the device validation pass for the same revision.",
       evidence: ["artifacts/wechat-release/codex.wechat.smoke-report.json", "device-runtime.mp4"],
       owner: "release-oncall",
-      recordedAt: "2026-04-02T08:12:00.000Z",
+      recordedAt: isoHoursAgo(2),
       revision: sourceRevision,
       artifactPath: "artifacts/wechat-release/device-runtime-review.json"
     },
@@ -477,7 +539,7 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
         "/api/runtime/metrics scrape"
       ],
       owner: "release-oncall",
-      recordedAt: "2026-04-02T08:14:00.000Z",
+      recordedAt: isoHoursAgo(2),
       revision: sourceRevision,
       artifactPath: "artifacts/wechat-release/runtime-observability-signoff.json"
     },
@@ -492,7 +554,7 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
         "docs/release-evidence/cocos-wechat-rc-blockers.template.md"
       ],
       owner: "release-oncall",
-      recordedAt: "2026-04-02T08:15:00.000Z",
+      recordedAt: isoHoursAgo(2),
       revision: sourceRevision,
       artifactPath: "artifacts/wechat-release/checklist-review.json"
     }
@@ -580,13 +642,13 @@ test("validate:wechat-rc blocks stale device runtime evidence in the candidate s
   writeManualChecks(manualChecksPath, [
     {
       id: "wechat-devtools-export-review",
-      title: "Real WeChat export imported and launched in Developer Tools",
+      title: "Candidate-scoped WeChat package install/launch verification recorded",
       status: "passed",
       required: true,
       notes: "ok",
-      evidence: ["devtools-startup.png"],
+      evidence: ["artifacts/wechat-release/codex.wechat.install-launch-evidence.json"],
       owner: "release-oncall",
-      recordedAt: "2026-04-02T08:10:00.000Z",
+      recordedAt: isoHoursAgo(2),
       revision: sourceRevision
     },
     {
@@ -597,7 +659,7 @@ test("validate:wechat-rc blocks stale device runtime evidence in the candidate s
       notes: "ok",
       evidence: ["artifacts/wechat-release/codex.wechat.smoke-report.json", "device-runtime.mp4"],
       owner: "release-oncall",
-      recordedAt: "2026-04-02T08:12:00.000Z",
+      recordedAt: isoHoursAgo(2),
       revision: sourceRevision
     },
     {
@@ -608,7 +670,7 @@ test("validate:wechat-rc blocks stale device runtime evidence in the candidate s
       notes: "ok",
       evidence: ["/api/runtime/health payload"],
       owner: "release-oncall",
-      recordedAt: "2026-04-02T08:14:00.000Z",
+      recordedAt: isoHoursAgo(2),
       revision: sourceRevision
     },
     {
@@ -619,7 +681,7 @@ test("validate:wechat-rc blocks stale device runtime evidence in the candidate s
       notes: "ok",
       evidence: ["docs/release-evidence/cocos-wechat-rc-checklist.template.md"],
       owner: "release-oncall",
-      recordedAt: "2026-04-02T08:15:00.000Z",
+      recordedAt: isoHoursAgo(2),
       revision: sourceRevision
     }
   ]);

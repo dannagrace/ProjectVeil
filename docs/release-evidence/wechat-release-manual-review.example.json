@@ -1,18 +1,17 @@
 [
   {
     "id": "wechat-devtools-export-review",
-    "title": "Real WeChat export imported and launched in Developer Tools",
+    "title": "Candidate-scoped WeChat package install/launch verification recorded",
     "status": "pending",
     "required": true,
-    "notes": "Import the packaged candidate's real wechatgame export into WeChat Developer Tools and capture startup/runtime evidence for the same revision. This is target-surface evidence for WeChat and cannot be replaced by H5 or Creator-only validation.",
+    "notes": "Generate the candidate-scoped install/launch evidence artifact for the same revision. Keep this check pending while the proof is missing, and set it to failed if package import/install or first launch regressed.",
     "owner": "<release-owner>",
     "recordedAt": "<2026-04-02T08:10:00.000Z>",
     "revision": "<git-sha>",
-    "artifactPath": "artifacts/wechat-release/devtools-export-review.json",
+    "artifactPath": "artifacts/wechat-release/codex.wechat.install-launch-evidence.json",
     "evidence": [
-      "WeChat Developer Tools startup screenshot",
-      "WeChat Developer Tools console log",
-      "Imported wechatgame project path or package manifest reference"
+      "artifacts/wechat-release/codex.wechat.install-launch-evidence.json",
+      "artifacts/wechat-release/codex.wechat.install-launch-evidence.md"
     ]
   },
   {

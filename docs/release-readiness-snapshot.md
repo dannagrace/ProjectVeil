@@ -49,7 +49,7 @@ npm run smoke:client:release-candidate
 
 That flow rebuilds `apps/client/dist`, serves the packaged artifact instead of the dev shell, exercises guest login plus cached-session room boot, and writes machine-readable evidence under `artifacts/release-readiness/`. Pass `--output <path>` when CI or a reviewer needs a stable artifact filename.
 
-The snapshot also supports manual gates, so the same file can carry pending or completed human checks such as WeChat Developer Tools export review, reconnect evidence, device smoke acceptance, or RC blocker review.
+The snapshot also supports manual gates, so the same file can carry pending or completed human checks such as WeChat package install/launch verification, reconnect evidence, device smoke acceptance, or RC blocker review.
 
 For candidate-scoped target-environment runtime evidence, capture the endpoints once and keep that artifact attached to the same candidate revision:
 

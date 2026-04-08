@@ -241,11 +241,15 @@ const MANUAL_REVIEW_MAX_AGE_MS = 1000 * 60 * 60 * 24;
 const DEFAULT_MANUAL_CHECKS: ManualReviewCheck[] = [
   {
     id: "wechat-devtools-export-review",
-    title: "Real WeChat export imported and launched in Developer Tools",
+    title: "Candidate-scoped WeChat package install/launch verification recorded",
     required: true,
     status: "pending",
-    notes: "Import the packaged candidate's real wechatgame export into WeChat Developer Tools and capture startup/runtime evidence for the same revision.",
-    evidence: ["artifacts/wechat-release/devtools-export-review.json", "WeChat Developer Tools startup screenshot or console log"],
+    notes:
+      "Generate and attach the candidate-scoped WeChat package install/launch verification artifact for the same revision. Keep this check pending while evidence is missing, and mark it failed if install/import or first launch regressed.",
+    evidence: [
+      "artifacts/wechat-release/codex.wechat.install-launch-evidence.json",
+      "artifacts/wechat-release/codex.wechat.install-launch-evidence.md"
+    ],
     source: "default"
   },
   {
