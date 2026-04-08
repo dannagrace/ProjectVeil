@@ -439,6 +439,74 @@ test("VeilRoot connect promotes cached replay boot state into an authoritative l
   assert.equal(root.predictionStatus, "");
 });
 
+test("VeilRoot connect starts a fresh session and adopts the authoritative snapshot", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-live";
+  root.playerId = "account-player";
+  root.seed = 2024;
+  root.authMode = "account";
+  root.authToken = "live.token";
+  root.sessionSource = "remote";
+  root.applySessionUpdate = VeilRoot.prototype.applySessionUpdate.bind(root);
+  root.syncWechatShareBridge = () => ({
+    available: false,
+    menuEnabled: false,
+    handlerRegistered: false,
+    canShareDirectly: false,
+    immediateShared: false,
+    payload: null,
+    message: "disabled"
+  });
+
+  const liveUpdate = createSessionUpdate(4, "room-live", "account-player");
+  const freshSession = {
+    async snapshot() {
+      return liveUpdate;
+    },
+    async dispose() {}
+  };
+  const createCalls: Array<{
+    roomId: string;
+    playerId: string;
+    seed: number;
+    authToken: string | null;
+  }> = [];
+  let gameplayProfileRefreshes = 0;
+  root.refreshGameplayAccountProfile = async () => {
+    gameplayProfileRefreshes += 1;
+  };
+
+  installVeilRootRuntime({
+    createSession: async (roomId, playerId, seed, options) => {
+      createCalls.push({
+        roomId,
+        playerId,
+        seed,
+        authToken: options.getAuthToken?.() ?? null
+      });
+      return freshSession as never;
+    }
+  });
+
+  await root.connect();
+  await flushMicrotasks();
+
+  assert.equal(root.session, freshSession);
+  assert.equal(root.lastUpdate?.world.meta.day, 4);
+  assert.equal(root.diagnosticsConnectionStatus, "connected");
+  assert.equal(root.lastRoomUpdateSource, "session");
+  assert.equal(root.lastRoomUpdateReason, "snapshot");
+  assert.deepEqual(createCalls, [
+    {
+      roomId: "room-live",
+      playerId: "account-player",
+      seed: 2024,
+      authToken: "live.token"
+    }
+  ]);
+  assert.equal(gameplayProfileRefreshes, 1);
+});
+
 test("VeilRoot memory warnings request GC and surface the warning in HUD state", () => {
   const root = createVeilRootHarness();
   let memoryWarningHandler: ((payload?: { level?: number } | null) => void) | null = null;
@@ -461,6 +529,34 @@ test("VeilRoot memory warnings request GC and surface the warning in HUD state",
   assert.equal(root.runtimeMemoryNotice, "收到内存告警 L2，已请求 GC");
   assert.equal(root.logLines[0], "收到内存告警 L2，已请求 GC");
   assert.match(String(root.describeRuntimeMemoryHealth()), /收到内存告警 L2，已请求 GC/);
+});
+
+test("VeilRoot prediction rollback restores the last authoritative snapshot", () => {
+  const root = createVeilRootHarness();
+  const authoritativeUpdate = createSessionUpdate(3, "room-prediction", "player-1");
+  root.lastUpdate = authoritativeUpdate;
+
+  root.applyPrediction(
+    {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 1, y: 0 }
+    },
+    "正在预测移动..."
+  );
+
+  assert.deepEqual(root.lastUpdate?.world.ownHeroes[0]?.position, { x: 1, y: 0 });
+  assert.equal(root.predictionStatus, "正在预测移动...");
+  assert.ok(root.pendingPrediction);
+
+  root.rollbackPrediction("移动失败。");
+
+  assert.deepEqual(root.lastUpdate?.world.ownHeroes[0]?.position, { x: 0, y: 0 });
+  assert.equal(root.lastUpdate?.world.meta.roomId, authoritativeUpdate.world.meta.roomId);
+  assert.equal(root.lastUpdate?.world.meta.day, authoritativeUpdate.world.meta.day);
+  assert.equal(root.pendingPrediction, null);
+  assert.equal(root.predictionStatus, "");
+  assert.equal(root.logLines[0], "移动失败。");
 });
 
 test("VeilRoot reconnect failure updates the lobby-facing error status", () => {
@@ -757,4 +853,26 @@ test("VeilRoot onDestroy stops matchmaking polling to avoid timer leaks", () => 
 
   assert.equal(pollStops, 1);
   assert.equal(root.matchmakingPollController, null);
+});
+
+test("VeilRoot onDestroy disposes the active session and unregisters runtime memory warnings", () => {
+  const root = createVeilRootHarness();
+  let disposeCalls = 0;
+  let stopMemoryWarningCalls = 0;
+
+  root.session = {
+    async dispose() {
+      disposeCalls += 1;
+    }
+  } as never;
+  root.stopRuntimeMemoryWarnings = () => {
+    stopMemoryWarningCalls += 1;
+  };
+
+  root.onDestroy();
+
+  assert.equal(root.session, null);
+  assert.equal(root.stopRuntimeMemoryWarnings, null);
+  assert.equal(disposeCalls, 1);
+  assert.equal(stopMemoryWarningCalls, 1);
 });

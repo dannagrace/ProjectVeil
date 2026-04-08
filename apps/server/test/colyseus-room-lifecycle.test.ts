@@ -664,6 +664,35 @@ test("failed reconnect cleanup removes only the expired session and preserves ot
   assert.equal(lastSessionState(steadyClient, "reply").payload.world.ownHeroes[0]?.playerId, "player-steady");
 });
 
+test("player leave keeps the disconnected timestamp for the departed player and preserves connected peers", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-leave-bookkeeping-${Date.now()}`);
+  const leavingClient = createFakeClient("session-leave-bookkeeping");
+  const steadyClient = createFakeClient("session-leave-steady");
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+    disconnectedAtByPlayerId: Map<string, string>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, leavingClient, "player-leaving", "connect-leaving");
+  await connectPlayer(room, steadyClient, "player-steady", "connect-steady");
+
+  room.onLeave(leavingClient);
+
+  assert.equal(internalRoom.playerIdBySessionId.has("session-leave-bookkeeping"), false);
+  assert.equal(internalRoom.playerIdBySessionId.get("session-leave-steady"), "player-steady");
+  assert.ok(internalRoom.disconnectedAtByPlayerId.get("player-leaving"));
+  assert.equal(internalRoom.disconnectedAtByPlayerId.has("player-steady"), false);
+  assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 1);
+});
+
 test("room disposal after the last client leaves removes it from the active room list", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
@@ -1664,6 +1693,42 @@ test("surrender settles the room with the surrendering player as loser and persi
   assert.equal(winnerPush.payload.reason, "surrender");
   assert.equal(loserAccount?.eloRating, expectedRatings.loserRating);
   assert.equal(winnerAccount?.eloRating, expectedRatings.winnerRating);
+  assert.equal(await store.load(room.roomId), null);
+});
+
+test("pvp settlement cleanup retires the room and clears connected player session state", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-pvp-settlement-cleanup-${Date.now()}`);
+  const surrenderingClient = createFakeClient("session-pvp-cleanup-loser");
+  const opponentClient = createFakeClient("session-pvp-cleanup-winner");
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, surrenderingClient, "player-1", "connect-pvp-cleanup-loser");
+  await connectPlayer(room, opponentClient, "player-2", "connect-pvp-cleanup-winner");
+
+  await emitRoomMessage(room, "world.action", surrenderingClient, {
+    type: "world.action",
+    requestId: "surrender-pvp-cleanup",
+    action: {
+      type: "world.surrender",
+      heroId: "hero-1"
+    }
+  });
+
+  assert.equal(internalRoom.playerIdBySessionId.size, 0);
+  assert.equal(room.clients.length, 0);
+  assert.equal(listLobbyRooms().some((entry) => entry.roomId === room.roomId), false);
+  assert.equal(getActiveRoomInstances().has(room.roomId), false);
   assert.equal(await store.load(room.roomId), null);
 });
 
