@@ -79,3 +79,25 @@ test("unit animation sequence returns none when the template has no art", () => 
     source: "none"
   });
 });
+
+test("unit animation sequence keeps defeat on a downed pose instead of snapping back to idle", () => {
+  const sequence = resolveUnitAnimationFrameSequence("hero_guard_basic", "defeat", {
+    heroes: {},
+    units: {
+      hero_guard_basic: {
+        idle: "idle",
+        selected: "selected",
+        hit: "hit",
+        frame: "frame"
+      }
+    },
+    showcaseUnits: {}
+  });
+
+  assert.deepEqual(sequence, {
+    frames: ["hit", "frame", "hit"],
+    frameDurationSeconds: 0.2,
+    loop: false,
+    source: "unit"
+  });
+});

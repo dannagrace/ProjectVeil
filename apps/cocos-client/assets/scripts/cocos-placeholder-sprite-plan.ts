@@ -1,4 +1,4 @@
-export type PlaceholderSpriteScope = "map" | "hud" | "battle" | "timeline";
+export type PlaceholderSpriteScope = "map" | "hud" | "timeline";
 
 export const PLACEHOLDER_TILE_PATHS = {
   grass: ["placeholder/tiles/grass-1", "placeholder/tiles/grass-2", "placeholder/tiles/grass-3"],
@@ -50,7 +50,6 @@ export const PLACEHOLDER_SCOPE_PATHS = {
     PLACEHOLDER_ICON_PATHS.mine
   ],
   hud: [PLACEHOLDER_ICON_PATHS.hud, PLACEHOLDER_ICON_PATHS.hero],
-  battle: [PLACEHOLDER_ICON_PATHS.battle],
   timeline: [PLACEHOLDER_ICON_PATHS.timeline]
 } as const satisfies Record<PlaceholderSpriteScope, readonly string[]>;
 

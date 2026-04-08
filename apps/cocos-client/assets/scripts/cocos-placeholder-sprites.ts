@@ -267,7 +267,6 @@ export function getPlaceholderSpriteAssetUsageSummary(): PlaceholderSpriteUsageS
     referenceCounts: {
       map: retainedScopeCounts.get("map") ?? 0,
       hud: retainedScopeCounts.get("hud") ?? 0,
-      battle: retainedScopeCounts.get("battle") ?? 0,
       timeline: retainedScopeCounts.get("timeline") ?? 0
     }
   };

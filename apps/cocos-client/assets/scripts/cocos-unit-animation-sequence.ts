@@ -92,7 +92,7 @@ function buildStateSequence<Frame>(
     case "victory":
       return compactFrames([spriteSet.selected, spriteSet.frame, spriteSet.idle]);
     case "defeat":
-      return compactFrames([spriteSet.hit, spriteSet.frame, spriteSet.idle]);
+      return compactFrames([spriteSet.hit, spriteSet.frame, spriteSet.hit]);
     default:
       return compactFrames([spriteSet.idle]);
   }
