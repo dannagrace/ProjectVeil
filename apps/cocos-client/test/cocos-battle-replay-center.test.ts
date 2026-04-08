@@ -8,6 +8,7 @@ import {
   restoreBattleReplayPlaybackState,
   stepBattleReplayPlayback
 } from "../assets/scripts/project-shared/battle-replay";
+import type { PlayerBattleReportSummary } from "../assets/scripts/project-shared/index";
 import { createBattleReplaySummary } from "./helpers/cocos-panel-harness";
 
 test("buildCocosBattleReplayCenterView renders loading and error transport states without controls", () => {
@@ -92,9 +93,29 @@ test("buildCocosBattleReplayCenterView derives ready-state summary lines and tar
       }
     }
   ];
+  const report: PlayerBattleReportSummary = {
+    id: replay.id,
+    replayId: replay.id,
+    roomId: replay.roomId,
+    playerId: replay.playerId,
+    battleId: replay.battleId,
+    battleKind: replay.battleKind,
+    playerCamp: replay.playerCamp,
+    heroId: replay.heroId,
+    opponentHeroId: replay.opponentHeroId,
+    neutralArmyId: replay.neutralArmyId,
+    startedAt: replay.startedAt,
+    completedAt: replay.completedAt,
+    result: "victory",
+    turnCount: 1,
+    actionCount: replay.steps.length,
+    rewards: [{ type: "resource", label: "金币", amount: 40 }],
+    evidence: { replay: "available", rewards: "available" }
+  };
 
   const view = buildCocosBattleReplayCenterView({
     replays: [replay],
+    battleReports: { latestReportId: report.id, items: [report] },
     selectedReplayId: replay.id,
     playback: createBattleReplayPlaybackState(replay),
     status: "ready"
@@ -115,6 +136,9 @@ test("buildCocosBattleReplayCenterView derives ready-state summary lines and tar
   assert.equal(view.detailLines[8], "我方编队：Guard x12");
   assert.equal(view.detailLines[9], "目标摘要：Wolf x8");
   assert.match(view.detailLines[10] ?? "", /1/);
+  assert.match(view.detailLines[11] ?? "", /战报摘要：胜利 · PVE · 守军 neutral-1 · 1T\/2A/);
+  assert.equal(view.detailLines[12], "证据：回放可用 · 奖励可用");
+  assert.equal(view.detailLines[13], "战后收益：金币 +40");
   assert.deepEqual(
     view.controls.map((control) => [control.action, control.enabled]),
     [
@@ -129,7 +153,6 @@ test("buildCocosBattleReplayCenterView derives ready-state summary lines and tar
       ["reset", false]
     ]
   );
-
 });
 
 test("buildCocosBattleReplayCenterView surfaces battle report evidence and rewards when available", () => {
