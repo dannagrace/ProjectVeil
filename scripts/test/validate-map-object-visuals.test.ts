@@ -35,17 +35,19 @@ async function seedMapObjectVisualRoot(tempDir: string): Promise<void> {
       "phase1-map-objects-murkveil-delta.json",
       "phase1-map-objects-frostwatch-ridge.json",
       "phase1-map-objects-ashpeak-ascent.json",
-      "phase1-map-objects-thornwall-divide.json"
+      "phase1-map-objects-thornwall-divide.json",
+      "phase2-map-objects-contested-basin.json",
+      "phase2-map-objects-frontier-expanded.json"
     ].map((fileName) => copyConfigFixture(tempDir, fileName))
   );
 }
 
-test("validate-map-object-visuals covers the shipped 13 Phase 1 map packs", async () => {
+test("validate-map-object-visuals covers the shipped Phase 1 and Phase 2 map packs", async () => {
   const report = await buildMapObjectVisualCoverageReport({
     rootDir: configsDir
   });
 
-  assert.equal(report.mapPackCount, 13);
+  assert.equal(report.mapPackCount, 15);
   assert.equal(report.valid, true);
   assert.equal(report.errorCount, 0);
   assert.equal(report.warningCount, 0);
@@ -97,4 +99,28 @@ test("validate-map-object-visuals warns on extra coverage without failing", asyn
   assert.match(stdout, /Warnings: 1 issue\(s\)/);
   assert.match(stdout, /coverage_node_extra/);
   assert.match(stdout, /gold@99,99/);
+});
+
+test("validate-map-object-visuals fails when a shipped Phase 2 pack loses coverage", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "veil-map-object-visuals-"));
+  await seedMapObjectVisualRoot(tempDir);
+
+  const objectVisualsPath = join(tempDir, "object-visuals.json");
+  const objectVisuals = JSON.parse(await readFile(objectVisualsPath, "utf8")) as {
+    phase2MapPackCoverage: Record<string, { buildings: Record<string, string> }>;
+  };
+
+  delete objectVisuals.phase2MapPackCoverage["phase2-frontier-expanded"]!.buildings["watchtower-frontier-expanded-1"];
+  await writeFile(objectVisualsPath, `${JSON.stringify(objectVisuals, null, 2)}\n`, "utf8");
+
+  await assert.rejects(
+    execFileAsync("node", ["--import", "tsx", scriptPath, "--root-dir", tempDir], { cwd: repoRoot }),
+    (error: NodeJS.ErrnoException & { stdout?: string }) => {
+      assert.equal(error.code, 1);
+      assert.match(error.stdout ?? "", /Result: FAIL/);
+      assert.match(error.stdout ?? "", /coverage_node_missing/);
+      assert.match(error.stdout ?? "", /phase2-frontier-expanded node watchtower-frontier-expanded-1/);
+      return true;
+    }
+  );
 });

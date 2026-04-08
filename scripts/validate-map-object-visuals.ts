@@ -19,6 +19,7 @@ interface ObjectVisualsConfig {
   buildings?: Partial<Record<BuildingKind, object>>;
   resources?: Partial<Record<ResourceKind, object>>;
   phase1MapPackCoverage?: Record<string, MapPackCoverage>;
+  phase2MapPackCoverage?: Record<string, MapPackCoverage>;
 }
 
 export interface MapObjectVisualCoverageIssue {
@@ -75,8 +76,16 @@ function parseArgs(argv: string[]): {
   return { rootDir, objectVisualsPath, reportPath };
 }
 
-function getPhase1MapPackDefinitions() {
-  return [DEFAULT_CONTENT_PACK_MAP_PACK, ...EXTRA_CONTENT_PACK_MAP_PACKS.filter((definition) => definition.phase === "phase1")];
+function getMapPackDefinitions() {
+  return [DEFAULT_CONTENT_PACK_MAP_PACK, ...EXTRA_CONTENT_PACK_MAP_PACKS];
+}
+
+function getCoverageRoot(config: ObjectVisualsConfig, phase: "phase1" | "phase2"): Record<string, MapPackCoverage> {
+  return phase === "phase2" ? config.phase2MapPackCoverage ?? {} : config.phase1MapPackCoverage ?? {};
+}
+
+function getCoverageRootPath(phase: "phase1" | "phase2"): "phase1MapPackCoverage" | "phase2MapPackCoverage" {
+  return phase === "phase2" ? "phase2MapPackCoverage" : "phase1MapPackCoverage";
 }
 
 async function readJson<T>(filePath: string): Promise<T> {
@@ -91,7 +100,8 @@ export function buildGuaranteedResourceCoverageId(resource: {
 }
 
 function issuePath(mapPackId: string, category: Exclude<CoverageCategory, "mapPacks">, nodeId: string): string {
-  return `phase1MapPackCoverage.${mapPackId}.${category}.${nodeId}`;
+  const phase = mapPackId.startsWith("phase2") ? "phase2" : "phase1";
+  return `${getCoverageRootPath(phase)}.${mapPackId}.${category}.${nodeId}`;
 }
 
 function validateExpectedCoverage(options: {
@@ -102,6 +112,8 @@ function validateExpectedCoverage(options: {
 }): MapObjectVisualCoverageIssue[] {
   const { mapPackId, expected, actual, objectVisuals } = options;
   const issues: MapObjectVisualCoverageIssue[] = [];
+  const phase = mapPackId.startsWith("phase2") ? "phase2" : "phase1";
+  const coverageRootPath = getCoverageRootPath(phase);
 
   if (!actual) {
     issues.push({
@@ -109,8 +121,8 @@ function validateExpectedCoverage(options: {
       code: "coverage_pack_missing",
       mapPackId,
       category: "mapPacks",
-      path: `phase1MapPackCoverage.${mapPackId}`,
-      message: `Missing Phase 1 map-pack object visual coverage for ${mapPackId}.`
+      path: `${coverageRootPath}.${mapPackId}`,
+      message: `Missing ${phase === "phase2" ? "Phase 2" : "Phase 1"} map-pack object visual coverage for ${mapPackId}.`
     });
     return issues;
   }
@@ -190,8 +202,7 @@ export async function buildMapObjectVisualCoverageReport(options: {
   const rootDir = options.rootDir ?? resolve(process.cwd(), "configs");
   const objectVisualsPath = options.objectVisualsPath ?? resolve(rootDir, "object-visuals.json");
   const objectVisuals = await readJson<ObjectVisualsConfig>(objectVisualsPath);
-  const coverage = objectVisuals.phase1MapPackCoverage ?? {};
-  const mapPackDefinitions = getPhase1MapPackDefinitions();
+  const mapPackDefinitions = getMapPackDefinitions();
   const expectedMapPacks = new Map<string, MapPackCoverage>();
 
   for (const definition of mapPackDefinitions) {
@@ -210,24 +221,33 @@ export async function buildMapObjectVisualCoverageReport(options: {
     validateExpectedCoverage({
       mapPackId,
       expected,
-      actual: coverage[mapPackId],
+      actual: getCoverageRoot(
+        objectVisuals,
+        mapPackId.startsWith("phase2") ? "phase2" : "phase1"
+      )[mapPackId],
       objectVisuals
     })
   );
 
-  for (const mapPackId of Object.keys(coverage)) {
-    if (expectedMapPacks.has(mapPackId)) {
-      continue;
-    }
+  for (const phase of ["phase1", "phase2"] as const) {
+    const coverage = getCoverageRoot(objectVisuals, phase);
+    for (const mapPackId of Object.keys(coverage)) {
+      if (expectedMapPacks.has(mapPackId)) {
+        continue;
+      }
 
-    issues.push({
-      severity: "warning",
-      code: "coverage_pack_extra",
-      mapPackId,
-      category: "mapPacks",
-      path: `phase1MapPackCoverage.${mapPackId}`,
-      message: `Phase 1 map-pack object visual coverage includes extra map pack ${mapPackId} that is not part of the 13 shipped Phase 1 packs.`
-    });
+      issues.push({
+        severity: "warning",
+        code: "coverage_pack_extra",
+        mapPackId,
+        category: "mapPacks",
+        path: `${getCoverageRootPath(phase)}.${mapPackId}`,
+        message:
+          phase === "phase2"
+            ? `Phase 2 map-pack object visual coverage includes extra map pack ${mapPackId} that is not part of the shipped Phase 2 packs.`
+            : `Phase 1 map-pack object visual coverage includes extra map pack ${mapPackId} that is not part of the shipped Phase 1 packs.`
+      });
+    }
   }
 
   const errorCount = issues.filter((issue) => issue.severity === "error").length;
@@ -266,7 +286,7 @@ async function main(): Promise<void> {
   console.log("Project Veil map-object visual coverage validation");
   console.log(`Root: ${report.rootDir}`);
   console.log(`Object visuals: ${report.objectVisualsPath}`);
-  console.log(`Phase 1 map packs: ${report.mapPackCount}`);
+  console.log(`Map packs: ${report.mapPackCount}`);
   console.log(`Result: ${report.valid ? "PASS" : "FAIL"}`);
   printIssues("Errors", errors);
   printIssues("Warnings", warnings);
