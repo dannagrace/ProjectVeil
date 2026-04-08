@@ -86,9 +86,17 @@ Keep these manual items short and attach evidence through the existing release e
 3. Run `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface <surface>` and keep the generated `cocos-presentation-signoff-<candidate>-<short-sha>.json/.md` with the rest of the candidate bundle.
    Review that artifact using [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md), starting from the maintained Phase 1 fallback inventory there, and classify each presentation row as `pass`, `waived-controlled-test`, or `fail` so reviewers can distinguish functional RC pass from presentation risk.
    The same candidate evidence should explicitly show one polished battle journey covering encounter entry, at least one command/impact beat, and a stable victory or defeat settlement state before reconnect review.
+   The bundle now also emits `cocos-main-journey-replay-gate-<candidate>-<short-sha>.json/.md`; use that gate as the reviewer-facing proof that the primary-client journey evidence, RC snapshot, bundle manifest, checklist, and blocker log still point at the same candidate revision.
 4. Copy and fill the RC checklist/template files in [`docs/release-evidence`](./release-evidence/), reusing the generated presentation sign-off artifact instead of free-form PR notes.
 5. Record any open risk in the blocker template before sign-off.
 6. Confirm the release candidate still matches the intended commit/revision.
+
+Reviewer workflow for the candidate packet:
+
+1. Open the generated `cocos-main-journey-replay-gate-<candidate>-<short-sha>.md` first.
+2. Treat `Infrastructure Failures` or `Evidence Drift` there as a stop-ship signal for the candidate revision.
+3. Treat `Presentation Blockers` there as a separate sign-off track, then continue into [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) for the visual/debt decision.
+4. If the gate passes, use the linked bundle summary, checkpoint ledger, checklist, and blocker log for the full reviewer packet.
 
 ## Related Commands
 

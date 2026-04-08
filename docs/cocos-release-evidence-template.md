@@ -27,14 +27,18 @@
    - 同一 bundle 的人类可读摘要，直接列出主链路 pass/fail/pending 状态
 5. `artifacts/release-readiness/cocos-rc-snapshot-<candidate>-<short-sha>.json`
    - `npm run release:cocos-rc:snapshot` 生成并回填的结构化 RC 证据
-6. `artifacts/release-readiness/cocos-rc-checklist-<candidate>-<short-sha>.md`
+6. `artifacts/release-readiness/cocos-main-journey-replay-gate-<candidate>-<short-sha>.json`
+   - candidate-scoped main-journey evidence gate，固定校验 primary journey evidence、RC snapshot、bundle manifest、checklist、blockers 是否仍绑定同一 revision，并把 presentation blockers 与 infrastructure failures 分开汇总
+7. `artifacts/release-readiness/cocos-main-journey-replay-gate-<candidate>-<short-sha>.md`
+   - 对应 gate 的 reviewer 摘要，默认包含 `Reviewer Workflow`，用于在 PR / release issue 中快速判定这份 packet 是否还能作为主客户端主链路证据
+8. `artifacts/release-readiness/cocos-rc-checklist-<candidate>-<short-sha>.md`
    - 从模板复制并预填 candidate / revision 的人工检查清单
-7. `artifacts/release-readiness/cocos-rc-blockers-<candidate>-<short-sha>.md`
+9. `artifacts/release-readiness/cocos-rc-blockers-<candidate>-<short-sha>.md`
    - 从模板复制并预填 candidate / revision 的 blocker 记录
 
-其中 5 是权威 machine-readable RC 记录，1/2 则是自动化 primary journey 的原始证据面，3/4/6/7 是 reviewer / release owner 快速扫读和留档的补充视图。不要为同一个 RC 另外发明独立格式。
+其中 5 是权威 machine-readable RC 记录，1/2 则是自动化 primary journey 的原始证据面，6/7 是 candidate-scoped main-journey 守门摘要，3/4/8/9 是 reviewer / release owner 快速扫读和留档的补充视图。不要为同一个 RC 另外发明独立格式。
 
-在 release review 中，先读 primary journey Markdown 里的 `Blocker Drill-Down`，再按 `Checkpoint Ledger` 打开对应 milestone JSON。只有当 reviewer 需要跨 surface 或同 candidate 聚合视图时，才继续展开 RC bundle / snapshot / checklist / blockers。
+在 release review 中，先读 `cocos-main-journey-replay-gate-<candidate>-<short-sha>.md` 里的 `Infrastructure Failures` / `Evidence Drift` / `Presentation Blockers`，再按需要展开 primary journey Markdown 的 `Blocker Drill-Down` 与 `Checkpoint Ledger`。只有当 reviewer 需要跨 surface 或同 candidate 聚合视图时，才继续展开 RC bundle / snapshot / checklist / blockers。
 
 ## 标准流程
 

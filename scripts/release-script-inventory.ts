@@ -36,7 +36,7 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "Pass `--candidate`; optionally supply build-surface, snapshot inputs, and WeChat smoke/report paths when bundling non-default evidence.",
     ],
     producedArtifacts: [
-      "Bundle files under `artifacts/release-readiness/`, including `cocos-rc-evidence-bundle-<candidate>-<short-sha>.json` and companion Markdown/checklist/blocker artifacts.",
+      "Bundle files under `artifacts/release-readiness/`, including `cocos-rc-evidence-bundle-<candidate>-<short-sha>.json`, `cocos-main-journey-replay-gate-<candidate>-<short-sha>.json`, and companion Markdown/checklist/blocker artifacts.",
     ],
   },
   "release:cocos-rc:snapshot": {
@@ -66,6 +66,16 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     producedArtifacts: [
       "`artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.json`",
       "`artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.md`",
+    ],
+  },
+  "release:cocos:main-journey-replay-gate": {
+    purpose: "Validate candidate-scoped main-journey coverage and same-revision linkage across the Cocos RC packet.",
+    requiredInputs: [
+      "Pass `--candidate`; optionally pin the journey evidence, RC snapshot, bundle manifest, presentation sign-off, checklist, and blocker paths.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/cocos-main-journey-replay-gate-<candidate>-<short-sha>.json`",
+      "`artifacts/release-readiness/cocos-main-journey-replay-gate-<candidate>-<short-sha>.md`",
     ],
   },
   "release:evidence:index": {

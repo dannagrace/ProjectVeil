@@ -88,6 +88,7 @@
     "release:cocos-rc:snapshot": "node --import tsx ./scripts/cocos-release-candidate-snapshot.ts",
     "release:cocos-rc:bundle": "node --import tsx ./scripts/cocos-rc-evidence-bundle.ts",
     "release:cocos:primary-journey-evidence": "node --import tsx ./scripts/cocos-primary-client-journey-evidence.ts",
+    "release:cocos:main-journey-replay-gate": "node --import tsx ./scripts/cocos-main-journey-replay-gate.ts",
     "smoke:cocos:canonical-journey": "node --import tsx ./scripts/cocos-primary-client-journey-evidence.ts",
     "release:cocos:primary-diagnostics": "node --import tsx ./scripts/cocos-primary-client-diagnostic-snapshots.ts",
     "audit:cocos-primary-delivery": "node --import tsx ./scripts/audit-cocos-primary-delivery.ts",
