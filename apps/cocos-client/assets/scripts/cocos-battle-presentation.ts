@@ -168,7 +168,7 @@ export function buildBattlePresentationPlan(
     const moment = defeatedUnitDetected ? "impact_death" : impactDetected ? "impact_hit" : skillDetected ? "active_skill" : "active";
     const phase = defeatedUnitDetected || impactDetected ? "impact" : "active";
     const cue = defeatedUnitDetected || impactDetected ? "hit" : skillDetected || phaseTransitionEvent ? "skill" : null;
-    const animation = defeatedUnitDetected || impactDetected ? "hit" : "idle";
+    const animation = defeatedUnitDetected ? "defeat" : impactDetected ? "hit" : skillDetected ? "attack" : "idle";
     const feedback = phaseTransitionEvent
       ? buildBossPhaseTransitionFeedback(phaseTransitionEvent)
       : buildBattleProgressFeedback(previousBattle, nextBattle);

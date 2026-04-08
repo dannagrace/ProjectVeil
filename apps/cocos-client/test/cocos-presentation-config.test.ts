@@ -7,7 +7,7 @@ test("presentation config exposes animation profiles and load budget", () => {
   assert.equal(guardProfile.fallbackPrefix, "Guard");
   assert.equal(guardProfile.spinePrefix, "hero_guard_basic_");
   assert.equal(guardProfile.deliveryMode, "fallback");
-  assert.equal(guardProfile.assetStage, "placeholder");
+  assert.equal(guardProfile.assetStage, "production");
   assert.equal(guardProfile.returnTimings.attack, 0.42);
 
   assert.equal(cocosPresentationConfig.loadingBudget.targetMs, 1800);
@@ -33,12 +33,14 @@ test("unknown animation template falls back to the guard profile", () => {
 test("audio cue sequences are normalized from config", () => {
   assert.equal(cocosPresentationConfig.audio.music.explore.waveform, "triangle");
   assert.equal(cocosPresentationConfig.audio.music.explore.assetPath, "audio/explore-loop");
-  assert.equal(cocosPresentationConfig.audio.music.explore.assetStage, "placeholder");
+  assert.equal(cocosPresentationConfig.audio.music.explore.assetStage, "production");
   assert.equal(cocosPresentationConfig.audio.music.battle.notes.length, 6);
   assert.equal(cocosPresentationConfig.audio.music.battle.assetVolume, 0.58);
   assert.equal(cocosPresentationConfig.audio.cues.attack.notes.length, 2);
+  assert.equal(cocosPresentationConfig.audio.cues.attack.assetStage, "production");
   assert.equal(cocosPresentationConfig.audio.cues.skill.assetPath, "audio/skill");
-  assert.equal(cocosPresentationConfig.audio.cues.skill.assetStage, "placeholder");
+  assert.equal(cocosPresentationConfig.audio.cues.skill.assetStage, "production");
+  assert.equal(cocosPresentationConfig.audio.cues.hit.assetStage, "production");
   assert.equal(cocosPresentationConfig.audio.cues.victory.assetPath, "audio/victory-fanfare");
   assert.equal(cocosPresentationConfig.audio.cues.victory.assetStage, "production");
   assert.equal(cocosPresentationConfig.audio.cues.defeat.assetPath, "audio/defeat-sting");
