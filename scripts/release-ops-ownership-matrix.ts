@@ -85,6 +85,15 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
           "Reviewer-facing Phase 1 exit call. Treat failed or stale criteria as blocking for Phase 1 candidate promotion and exit review.",
         reviewTreatment: "release blocker",
       };
+    case "release:phase1:exit-dossier-freshness-gate":
+      return {
+        owner: "release ops",
+        scope: "same-revision",
+        decisionRole: "authoritative gate",
+        blockingSemantics:
+          "Cross-checks the Phase 1 dossier, exit audit, snapshot, release gate summary, and owner ledger as one same-revision packet. Any drift, stale evidence, or missing link is a release blocker.",
+        reviewTreatment: "release blocker",
+      };
     case "release:readiness:snapshot":
       return {
         owner: "release ops",
@@ -187,6 +196,7 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
         reviewTreatment: "release blocker",
       };
     case "smoke:wechat-release":
+    case "release:wechat:install-launch-evidence":
       return {
         owner: "wechat release owner",
         scope: "wechat-release",

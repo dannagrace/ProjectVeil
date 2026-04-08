@@ -128,4 +128,6 @@ The dossier surfaces:
 
 The JSON artifact is intended for CI/automation, and the Markdown artifact is intended for PR/release review so reviewers do not need to stitch Phase 1 exit evidence together by hand.
 
+After writing the dossier and the paired exit audit, use `npm run release:phase1:exit-dossier-freshness-gate` to prove the dossier, exit audit, release snapshot, release gate summary, and manual owner ledger still point at the same candidate revision before posting the packet to CI or the release PR.
+
 For the scheduled and `main`-branch automation that refreshes this dossier together with its prerequisite artifact set, see [`docs/phase1-candidate-rehearsal.md`](./phase1-candidate-rehearsal.md).

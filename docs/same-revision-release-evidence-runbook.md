@@ -260,9 +260,24 @@ npm run release:readiness:dashboard -- \
   --wechat-artifacts-dir artifacts/wechat-release
 ```
 
+11. Run the dedicated Phase 1 dossier freshness gate before attaching the packet to CI or the release PR.
+
+```bash
+npm run release:phase1:exit-dossier-freshness-gate -- \
+  --candidate <candidate-name> \
+  --candidate-revision <git-sha> \
+  --dossier <phase1-candidate-dossier-json> \
+  --exit-audit <phase1-exit-audit-json> \
+  --snapshot <snapshot-json> \
+  --release-gate-summary <release-gate-summary-json> \
+  --manual-evidence-ledger <owner-ledger-md>
+```
+
+This step is intentionally narrow and PR-friendly: it checks that the dossier, exit audit, snapshot, gate summary, and owner ledger still form one same-revision packet, and it emits one JSON + Markdown verdict that can be attached directly to CI logs or the review thread.
+
 Add `--server-url <url>` when you want the dashboard to probe the live candidate environment in the same pass.
 
-11. Build the maintainer-facing decision packet when the underlying evidence is coherent.
+12. Build the maintainer-facing decision packet when the underlying evidence is coherent.
 
 ```bash
 npm run release:go-no-go-packet -- \
@@ -272,7 +287,7 @@ npm run release:go-no-go-packet -- \
 
 Use the packet as the final reviewer attachment. If it still reports blockers, fix the upstream artifact set and rerun the packet instead of editing the packet by hand.
 
-12. Refresh the packet index and comparison notes.
+13. Refresh the packet index and comparison notes.
 
 Before closing the release call:
 

@@ -66,6 +66,23 @@ If `--output-dir` is set, the command writes:
 - `phase1-exit-audit.json`
 - `phase1-exit-audit.md`
 
+## Same-Revision Dossier Gate
+
+When the release packet also includes the Phase 1 candidate dossier, run the dedicated same-revision gate immediately after both artifacts exist:
+
+```bash
+npm run release:phase1:exit-dossier-freshness-gate -- \
+  --candidate phase1-wechat-rc \
+  --candidate-revision abc1234 \
+  --dossier artifacts/release-readiness/phase1-candidate-dossier-phase1-wechat-rc-abc1234/phase1-candidate-dossier.json \
+  --exit-audit artifacts/release-readiness/phase1-exit-audit-phase1-wechat-rc-abc1234.json \
+  --snapshot artifacts/release-readiness/release-readiness-abc1234.json \
+  --release-gate-summary artifacts/release-readiness/release-gate-summary-abc1234.json \
+  --manual-evidence-ledger artifacts/release-readiness/manual-release-evidence-owner-ledger-phase1-wechat-rc-abc1234.md
+```
+
+That gate fails closed on missing artifacts, stale timestamps, mixed revisions, mismatched linked snapshot/gate/ledger references, or drift between the dossier's embedded Phase 1 exit gate and the exit-audit copy of that same gate.
+
 ## Decision Model
 
 - `fail`: the candidate is blocked on one or more required exit criteria
