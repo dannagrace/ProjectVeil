@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { createRequire } from "node:module";
 
 import {
   buildBranchAuditReport,
@@ -16,7 +17,8 @@ import {
 const NOW = Date.parse("2026-04-02T00:00:00.000Z");
 const repoRoot = path.resolve(__dirname, "../..");
 const auditScriptPath = path.join(repoRoot, "scripts", "audit-codex-automation-branches.ts");
-const tsxLoaderPath = path.join(repoRoot, "node_modules", "tsx", "dist", "loader.mjs");
+const require = createRequire(import.meta.url);
+const tsxLoaderPath = path.join(path.dirname(require.resolve("tsx/package.json")), "dist", "loader.mjs");
 
 interface BranchFixture {
   workspace: string;
@@ -26,7 +28,13 @@ interface BranchFixture {
     current: string;
     safeRemote: string;
     openPrRemote: string;
+    draftPrRemote: string;
     staleLocal: string;
+    dirtyMerged: string;
+  };
+  worktrees: {
+    safeLocalPath: string;
+    dirtyMergedPath: string;
   };
 }
 
@@ -41,10 +49,14 @@ function makeEntry(overrides: Partial<BranchAuditEntry>): BranchAuditEntry {
     upstream: "origin/codex/issue-1-sample",
     upstreamStatus: "up-to-date",
     merged: true,
+    pullRequestState: "none",
     openPr: null,
+    hygieneState: "merged",
     classification: "safe-to-delete",
     nextAction: "eligible for local prune",
     reasons: ["merged into main"],
+    worktrees: [],
+    hasDirtyWorktree: false,
     ...overrides
   };
 }
@@ -95,12 +107,16 @@ function createBranchFixture(): BranchFixture {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-codex-branches-"));
   const remoteDir = path.join(workspace, "origin.git");
   const repoDir = path.join(workspace, "repo");
+  const safeLocalPath = path.join(workspace, "wt-safe-local");
+  const dirtyMergedPath = path.join(workspace, "wt-dirty-merged");
   const branches = {
     safeLocal: "codex/issue-200-safe-local",
     current: "codex/issue-201-current-branch",
     safeRemote: "codex/issue-202-safe-remote",
     openPrRemote: "codex/issue-203-open-pr",
-    staleLocal: "codex/issue-204-stale-local"
+    draftPrRemote: "codex/issue-205-draft-pr",
+    staleLocal: "codex/issue-204-stale-local",
+    dirtyMerged: "codex/issue-206-dirty-merged"
   };
 
   git(workspace, ["init", "--bare", remoteDir]);
@@ -117,6 +133,7 @@ function createBranchFixture(): BranchFixture {
   git(repoDir, ["checkout", "main"]);
   git(repoDir, ["merge", "--ff-only", branches.safeLocal]);
   git(repoDir, ["push", "origin", "main"]);
+  git(repoDir, ["worktree", "add", safeLocalPath, branches.safeLocal]);
 
   git(repoDir, ["checkout", "-b", branches.safeRemote, "main"]);
   git(repoDir, ["push", "-u", "origin", branches.safeRemote]);
@@ -128,9 +145,22 @@ function createBranchFixture(): BranchFixture {
   git(repoDir, ["checkout", "main"]);
   git(repoDir, ["branch", "-D", branches.openPrRemote]);
 
+  git(repoDir, ["checkout", "-b", branches.draftPrRemote, "main"]);
+  git(repoDir, ["push", "-u", "origin", branches.draftPrRemote]);
+  git(repoDir, ["checkout", "main"]);
+  git(repoDir, ["branch", "-D", branches.draftPrRemote]);
+
   git(repoDir, ["checkout", "-b", branches.staleLocal, "main"]);
   commitFile(repoDir, "stale-local.txt", "stale local commit", "2024-01-15T00:00:00.000Z");
   git(repoDir, ["checkout", "main"]);
+
+  git(repoDir, ["checkout", "-b", branches.dirtyMerged, "main"]);
+  commitFile(repoDir, "dirty-merged.txt", "dirty merged commit", "2024-02-02T00:00:00.000Z");
+  git(repoDir, ["checkout", "main"]);
+  git(repoDir, ["merge", "--ff-only", branches.dirtyMerged]);
+  git(repoDir, ["push", "origin", "main"]);
+  git(repoDir, ["worktree", "add", dirtyMergedPath, branches.dirtyMerged]);
+  fs.writeFileSync(path.join(dirtyMergedPath, "dirty-merged.txt"), "dirty change\n", "utf8");
 
   git(repoDir, ["checkout", "-b", branches.current, "main"]);
   git(repoDir, ["fetch", "origin"]);
@@ -138,11 +168,19 @@ function createBranchFixture(): BranchFixture {
   return {
     workspace,
     repoDir,
-    branches
+    branches,
+    worktrees: {
+      safeLocalPath,
+      dirtyMergedPath
+    }
   };
 }
 
-function runAudit(repoDir: string, args: string[], openPrBranches: string[]): SpawnSyncReturns<string> {
+function runAudit(
+  repoDir: string,
+  args: string[],
+  openPrBranches: Array<{ branch: string; isDraft?: boolean }>
+): SpawnSyncReturns<string> {
   const toolsDir = path.join(path.dirname(repoDir), "tools");
   fs.mkdirSync(toolsDir, { recursive: true });
   writeExecutable(
@@ -169,7 +207,8 @@ process.exit(1);
         openPrBranches.map((branch, index) => ({
           number: 900 + index,
           url: `https://example.test/pr/${900 + index}`,
-          headRefName: branch
+          headRefName: branch.branch,
+          isDraft: Boolean(branch.isDraft)
         }))
       )
     }
@@ -193,7 +232,7 @@ function parseJsonOutput(stdout: string): unknown {
   return JSON.parse(json.trim());
 }
 
-test("buildBranchAuditReport marks merged branches without open PRs as safe prune candidates after retention", () => {
+test("buildBranchAuditReport marks merged branches without PRs as cleanup candidates after retention", () => {
   const report = buildBranchAuditReport({
     branches: [
       {
@@ -208,6 +247,17 @@ test("buildBranchAuditReport marks merged branches without open PRs as safe prun
     ],
     mergedRefs: new Set(["refs/heads/codex/issue-100-cleanup"]),
     openPrsByBranch: new Map(),
+    worktrees: [
+      {
+        path: "/tmp/veil-cleanup",
+        head: "1111111",
+        branchRef: "refs/heads/codex/issue-100-cleanup",
+        lockedReason: null,
+        prunableReason: null,
+        isCurrent: false,
+        dirty: false
+      }
+    ],
     base: "main",
     currentBranch: "codex/issue-576-prune-stale-automation-branches",
     nowMs: NOW,
@@ -215,11 +265,12 @@ test("buildBranchAuditReport marks merged branches without open PRs as safe prun
     abandonedReviewDays: 30
   });
 
+  assert.equal(report[0]?.hygieneState, "merged");
   assert.equal(report[0]?.classification, "safe-to-delete");
-  assert.equal(report[0]?.nextAction, "eligible for local prune");
+  assert.equal(report[0]?.nextAction, "eligible for worktree + local prune");
 });
 
-test("buildBranchAuditReport keeps branches with open PRs active even when merged", () => {
+test("buildBranchAuditReport distinguishes draft PR branches from open PR branches", () => {
   const report = buildBranchAuditReport({
     branches: [
       {
@@ -230,19 +281,39 @@ test("buildBranchAuditReport keeps branches with open PRs active even when merge
         updatedAt: "2026-03-01T00:00:00.000Z",
         upstream: null,
         upstreamTrack: null
+      },
+      {
+        scope: "remote",
+        refName: "refs/remotes/origin/codex/issue-102-pr-draft",
+        shortName: "codex/issue-102-pr-draft",
+        sha: "3333333",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+        upstream: null,
+        upstreamTrack: null
       }
     ],
-    mergedRefs: new Set(["refs/remotes/origin/codex/issue-101-pr-open"]),
+    mergedRefs: new Set(),
     openPrsByBranch: new Map([
       [
         "codex/issue-101-pr-open",
         {
           number: 901,
           url: "https://example.test/pr/901",
-          headRefName: "codex/issue-101-pr-open"
+          headRefName: "codex/issue-101-pr-open",
+          isDraft: false
+        }
+      ],
+      [
+        "codex/issue-102-pr-draft",
+        {
+          number: 902,
+          url: "https://example.test/pr/902",
+          headRefName: "codex/issue-102-pr-draft",
+          isDraft: true
         }
       ]
     ]),
+    worktrees: [],
     base: "main",
     currentBranch: "codex/issue-576-prune-stale-automation-branches",
     nowMs: NOW,
@@ -250,25 +321,28 @@ test("buildBranchAuditReport keeps branches with open PRs active even when merge
     abandonedReviewDays: 30
   });
 
-  assert.equal(report[0]?.classification, "active");
-  assert.match(report[0]?.nextAction ?? "", /PR #901/);
+  assert.equal(report[0]?.hygieneState, "open-pr");
+  assert.equal(report[0]?.pullRequestState, "open-pr");
+  assert.equal(report[1]?.hygieneState, "draft-pr");
+  assert.equal(report[1]?.pullRequestState, "draft-pr");
 });
 
-test("buildBranchAuditReport sends old unmerged branches to manual review instead of auto prune", () => {
+test("buildBranchAuditReport sends orphaned branches to manual review", () => {
   const report = buildBranchAuditReport({
     branches: [
       {
         scope: "local",
-        refName: "refs/heads/codex/issue-102-stale",
-        shortName: "codex/issue-102-stale",
-        sha: "3333333",
+        refName: "refs/heads/codex/issue-103-orphaned",
+        shortName: "codex/issue-103-orphaned",
+        sha: "4444444",
         updatedAt: "2026-02-01T00:00:00.000Z",
-        upstream: "origin/codex/issue-102-stale",
+        upstream: "origin/codex/issue-103-orphaned",
         upstreamTrack: "[gone]"
       }
     ],
     mergedRefs: new Set(),
     openPrsByBranch: new Map(),
+    worktrees: [],
     base: "main",
     currentBranch: "codex/issue-576-prune-stale-automation-branches",
     nowMs: NOW,
@@ -276,28 +350,35 @@ test("buildBranchAuditReport sends old unmerged branches to manual review instea
     abandonedReviewDays: 30
   });
 
+  assert.equal(report[0]?.hygieneState, "orphaned");
   assert.equal(report[0]?.classification, "manual-review");
   assert.match((report[0]?.reasons ?? []).join("\n"), /tracked remote branch is gone/);
 });
 
-test("selectPruneCandidates leaves remote refs alone unless remote deletion is explicitly enabled", () => {
+test("selectPruneCandidates refuses merged local branches with dirty attached worktrees", () => {
   const entries = [
-    makeEntry({ scope: "local", branch: "codex/issue-103-local", refName: "refs/heads/codex/issue-103-local" }),
     makeEntry({
-      scope: "remote",
-      branch: "codex/issue-103-remote",
-      refName: "refs/remotes/origin/codex/issue-103-remote",
-      nextAction: "eligible for remote prune"
-    })
+      branch: "codex/issue-103-dirty",
+      refName: "refs/heads/codex/issue-103-dirty",
+      worktrees: [
+        {
+          path: "/tmp/veil-dirty",
+          dirty: true,
+          isCurrent: false,
+          locked: false,
+          lockedReason: null,
+          prunable: false,
+          prunableReason: null
+        }
+      ],
+      hasDirtyWorktree: true
+    }),
+    makeEntry({ scope: "remote", branch: "codex/issue-103-remote", refName: "refs/remotes/origin/codex/issue-103-remote" })
   ];
 
   assert.deepEqual(
-    selectPruneCandidates(entries, false).map((entry) => `${entry.scope}:${entry.branch}`),
-    ["local:codex/issue-103-local"]
-  );
-  assert.deepEqual(
     selectPruneCandidates(entries, true).map((entry) => `${entry.scope}:${entry.branch}`),
-    ["local:codex/issue-103-local", "remote:codex/issue-103-remote"]
+    ["remote:codex/issue-103-remote"]
   );
 });
 
@@ -365,25 +446,33 @@ test("withSerializedWorktreeExecution times out with owner details when the work
   );
 });
 
-test("ops:codex-branches fixture dry-run only lists explicit prune candidates", () => {
+test("ops:branch-hygiene fixture dry-run only lists explicit cleanup candidates", () => {
   const fixture = createBranchFixture();
 
-  const result = runAudit(fixture.repoDir, ["prune", "--format", "json"], [fixture.branches.openPrRemote]);
+  const result = runAudit(fixture.repoDir, ["prune", "--format", "json"], [
+    { branch: fixture.branches.openPrRemote },
+    { branch: fixture.branches.draftPrRemote, isDraft: true }
+  ]);
 
   assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
   const payload = parseJsonOutput(result.stdout) as {
     entries: Array<{ scope: string; branch: string }>;
+    summary: { merged: number; openPr: number; draftPr: number };
+    worktrees: Array<{ path: string; state: string }>;
   };
   assert.deepEqual(
     payload.entries.map((entry) => ({ scope: entry.scope, branch: entry.branch })),
     [{ scope: "local", branch: fixture.branches.safeLocal }]
   );
+  assert.equal(payload.summary.openPr, 1);
+  assert.equal(payload.summary.draftPr, 1);
+  assert.ok(payload.worktrees.some((worktree) => worktree.path === fixture.worktrees.safeLocalPath && worktree.state === "merged"));
+  assert.ok(payload.worktrees.some((worktree) => worktree.path === fixture.worktrees.dirtyMergedPath && worktree.state === "dirty"));
 
-  const remoteEnabledResult = runAudit(
-    fixture.repoDir,
-    ["prune", "--format", "json", "--delete-remote"],
-    [fixture.branches.openPrRemote]
-  );
+  const remoteEnabledResult = runAudit(fixture.repoDir, ["prune", "--format", "json", "--delete-remote"], [
+    { branch: fixture.branches.openPrRemote },
+    { branch: fixture.branches.draftPrRemote, isDraft: true }
+  ]);
 
   assert.equal(remoteEnabledResult.status, 0, `stdout=${remoteEnabledResult.stdout}\nstderr=${remoteEnabledResult.stderr}`);
   const remoteEnabledPayload = parseJsonOutput(remoteEnabledResult.stdout) as {
@@ -398,25 +487,38 @@ test("ops:codex-branches fixture dry-run only lists explicit prune candidates", 
   );
 });
 
-test("ops:codex-branches fixture apply mode preserves safety rails while pruning eligible refs", () => {
+test("ops:branch-hygiene apply mode removes clean merged worktrees and preserves blocked refs", () => {
   const fixture = createBranchFixture();
 
-  const localApplyResult = runAudit(fixture.repoDir, ["prune", "--apply"], [fixture.branches.openPrRemote]);
+  const localApplyResult = runAudit(fixture.repoDir, ["prune", "--apply"], [
+    { branch: fixture.branches.openPrRemote },
+    { branch: fixture.branches.draftPrRemote, isDraft: true }
+  ]);
 
   assert.equal(localApplyResult.status, 0, `stdout=${localApplyResult.stdout}\nstderr=${localApplyResult.stderr}`);
-  assert.match(localApplyResult.stdout, new RegExp(`Deleted local branch ${fixture.branches.safeLocal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  assert.match(
+    localApplyResult.stdout,
+    new RegExp(`Removed worktree ${fixture.worktrees.safeLocalPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
+  );
+  assert.match(
+    localApplyResult.stdout,
+    new RegExp(`Deleted local branch ${fixture.branches.safeLocal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
+  );
   assert.match(localApplyResult.stdout, /Pruned 1 branch ref\(s\)\./);
   assert.equal(branchExists(fixture.repoDir, `refs/heads/${fixture.branches.safeLocal}`), false);
+  assert.equal(fs.existsSync(fixture.worktrees.safeLocalPath), false);
   assert.equal(branchExists(fixture.repoDir, `refs/heads/${fixture.branches.current}`), true);
   assert.equal(branchExists(fixture.repoDir, `refs/heads/${fixture.branches.staleLocal}`), true);
+  assert.equal(branchExists(fixture.repoDir, `refs/heads/${fixture.branches.dirtyMerged}`), true);
+  assert.equal(fs.existsSync(fixture.worktrees.dirtyMergedPath), true);
   assert.equal(remoteBranchExists(fixture.repoDir, fixture.branches.safeRemote), true);
   assert.equal(remoteBranchExists(fixture.repoDir, fixture.branches.openPrRemote), true);
+  assert.equal(remoteBranchExists(fixture.repoDir, fixture.branches.draftPrRemote), true);
 
-  const remoteApplyResult = runAudit(
-    fixture.repoDir,
-    ["prune", "--apply", "--delete-remote"],
-    [fixture.branches.openPrRemote]
-  );
+  const remoteApplyResult = runAudit(fixture.repoDir, ["prune", "--apply", "--delete-remote"], [
+    { branch: fixture.branches.openPrRemote },
+    { branch: fixture.branches.draftPrRemote, isDraft: true }
+  ]);
 
   assert.equal(remoteApplyResult.status, 0, `stdout=${remoteApplyResult.stdout}\nstderr=${remoteApplyResult.stderr}`);
   assert.match(
@@ -426,4 +528,5 @@ test("ops:codex-branches fixture apply mode preserves safety rails while pruning
   assert.match(remoteApplyResult.stdout, /Pruned 1 branch ref\(s\)\./);
   assert.equal(remoteBranchExists(fixture.repoDir, fixture.branches.safeRemote), false);
   assert.equal(remoteBranchExists(fixture.repoDir, fixture.branches.openPrRemote), true);
+  assert.equal(remoteBranchExists(fixture.repoDir, fixture.branches.draftPrRemote), true);
 });
