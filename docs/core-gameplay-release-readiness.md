@@ -139,8 +139,8 @@
 
 `P0 blocker`
 
-- [ ] `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics` 在候选包对应环境可访问。
-- [ ] 至少能看到活跃房间数、连接数、世界 / 战斗 action 计数，以及鉴权会话摘要。
+- [ ] `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics`、`/api/runtime/room-lifecycle-summary` 在候选包对应环境可访问。
+- [ ] 至少能看到活跃房间数、连接数、世界 / 战斗 action 计数、房间 create/dispose、reconnect success/failure、battle completion/abort，以及鉴权会话摘要。
 - [ ] 日志或接口输出足以区分登录失败、进房失败、同步失败和资源 / 配置失败。
 - [ ] WeChat release candidate / shipping candidate 已回填 candidate-scoped runtime observability sign-off，并记录 reviewer、`recordedAt`、target revision 与结论。
 
@@ -157,6 +157,7 @@
 - 手动抓取：`GET /api/runtime/health`
 - 手动抓取：`GET /api/runtime/auth-readiness`
 - 手动抓取：`GET /api/runtime/metrics`
+- 手动抓取：`GET /api/runtime/room-lifecycle-summary?format=text`
 - `docs/release-evidence/wechat-runtime-observability-signoff.template.md`
 
 ## 当前顶级发布风险

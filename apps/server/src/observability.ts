@@ -112,6 +112,30 @@ interface ReconnectObservabilityCounters {
   failuresTotal: number;
 }
 
+interface RoomLifecycleObservabilityCounters {
+  roomCreatesTotal: number;
+  roomDisposalsTotal: number;
+  battleCompletionsTotal: number;
+  battleAbortsTotal: number;
+}
+
+type RoomLifecycleEventKind =
+  | "room.created"
+  | "room.disposed"
+  | "reconnect.succeeded"
+  | "reconnect.failed"
+  | "battle.completed"
+  | "battle.aborted";
+
+export interface RoomLifecycleEvent {
+  timestamp: string;
+  kind: RoomLifecycleEventKind;
+  roomId: string;
+  playerId?: string;
+  battleId?: string;
+  reason?: string;
+}
+
 interface RuntimeObservabilityState {
   startedAt: number;
   rooms: Map<string, RuntimeRoomSnapshot>;
@@ -126,6 +150,10 @@ interface RuntimeObservabilityState {
   reconnect: {
     pendingWindowCount: number;
     counters: ReconnectObservabilityCounters;
+  };
+  roomLifecycle: {
+    counters: RoomLifecycleObservabilityCounters;
+    recentEvents: RoomLifecycleEvent[];
   };
   matchmaking: {
     counters: MatchmakingObservabilityCounters;
@@ -180,6 +208,10 @@ interface RuntimeHealthPayload {
         failureReasons: Record<AuthTokenDeliveryFailureReason, number>;
       };
     };
+    roomLifecycle: {
+      counters: RoomLifecycleObservabilityCounters;
+      recentEventsTracked: number;
+    };
     matchmaking: {
       counters: MatchmakingObservabilityCounters;
     };
@@ -211,7 +243,22 @@ interface AuthTokenDeliveryPayload {
   };
 }
 
+export interface RoomLifecycleSummaryPayload {
+  status: "ok" | "warn";
+  service: string;
+  checkedAt: string;
+  headline: string;
+  alerts: string[];
+  summary: {
+    activeRoomCount: number;
+    pendingReconnectCount: number;
+    counters: RoomLifecycleObservabilityCounters;
+    recentEvents: RoomLifecycleEvent[];
+  };
+}
+
 const RECENT_TOKEN_DELIVERY_ATTEMPTS_LIMIT = 25;
+const RECENT_ROOM_LIFECYCLE_EVENTS_LIMIT = 25;
 const BATTLE_DURATION_SECONDS_BUCKETS = [1, 5, 10, 30, 60, 120, 300, 600];
 const HTTP_REQUEST_DURATION_SECONDS_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5];
 
@@ -295,12 +342,28 @@ const runtimeObservability: RuntimeObservabilityState = {
       failuresTotal: 0
     }
   },
+  roomLifecycle: {
+    counters: {
+      roomCreatesTotal: 0,
+      roomDisposalsTotal: 0,
+      battleCompletionsTotal: 0,
+      battleAbortsTotal: 0
+    },
+    recentEvents: []
+  },
   matchmaking: {
     counters: {
       rateLimitedTotal: 0
     }
   }
 };
+
+function pushRoomLifecycleEvent(event: RoomLifecycleEvent): void {
+  runtimeObservability.roomLifecycle.recentEvents.unshift(event);
+  if (runtimeObservability.roomLifecycle.recentEvents.length > RECENT_ROOM_LIFECYCLE_EVENTS_LIMIT) {
+    runtimeObservability.roomLifecycle.recentEvents.length = RECENT_ROOM_LIFECYCLE_EVENTS_LIMIT;
+  }
+}
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -423,6 +486,10 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
           failureReasons: { ...runtimeObservability.auth.tokenDeliveryFailureReasons }
         }
       },
+      roomLifecycle: {
+        counters: { ...runtimeObservability.roomLifecycle.counters },
+        recentEventsTracked: runtimeObservability.roomLifecycle.recentEvents.length
+      },
       matchmaking: {
         counters: { ...runtimeObservability.matchmaking.counters }
       }
@@ -514,6 +581,67 @@ function buildAuthTokenDeliveryPayload(service = "project-veil-server"): AuthTok
       recentAttempts
     }
   };
+}
+
+export function buildRoomLifecycleSummaryPayload(service = "project-veil-server"): RoomLifecycleSummaryPayload {
+  const health = buildHealthPayload(service);
+  const recentEvents = runtimeObservability.roomLifecycle.recentEvents.map((event) => ({ ...event }));
+  const alerts: string[] = [];
+
+  if (health.runtime.auth.reconnect.pendingWindowCount > 0) {
+    alerts.push(`${health.runtime.auth.reconnect.pendingWindowCount} reconnect window(s) still pending`);
+  }
+
+  const recentBattleAbort = recentEvents.find((event) => event.kind === "battle.aborted");
+  if (recentBattleAbort) {
+    alerts.push(`recent battle abort recorded for room ${recentBattleAbort.roomId}`);
+  }
+
+  return {
+    status: alerts.length > 0 ? "warn" : "ok",
+    service,
+    checkedAt: health.checkedAt,
+    headline:
+      `rooms=${health.runtime.activeRoomCount} ` +
+      `reconnectPending=${health.runtime.auth.reconnect.pendingWindowCount} ` +
+      `created=${health.runtime.roomLifecycle.counters.roomCreatesTotal} ` +
+      `disposed=${health.runtime.roomLifecycle.counters.roomDisposalsTotal} ` +
+      `battleCompleted=${health.runtime.roomLifecycle.counters.battleCompletionsTotal} ` +
+      `battleAborted=${health.runtime.roomLifecycle.counters.battleAbortsTotal}`,
+    alerts,
+    summary: {
+      activeRoomCount: health.runtime.activeRoomCount,
+      pendingReconnectCount: health.runtime.auth.reconnect.pendingWindowCount,
+      counters: { ...health.runtime.roomLifecycle.counters },
+      recentEvents
+    }
+  };
+}
+
+export function renderRoomLifecycleSummaryText(report: RoomLifecycleSummaryPayload): string {
+  const header =
+    `room_lifecycle status=${report.status}` +
+    ` | rooms=${report.summary.activeRoomCount}` +
+    ` | reconnect_pending=${report.summary.pendingReconnectCount}` +
+    ` | room_creates=${report.summary.counters.roomCreatesTotal}` +
+    ` | room_disposals=${report.summary.counters.roomDisposalsTotal}` +
+    ` | battle_completed=${report.summary.counters.battleCompletionsTotal}` +
+    ` | battle_aborted=${report.summary.counters.battleAbortsTotal}`;
+  const eventLines = report.summary.recentEvents.map((event) => {
+    const parts = [`${event.timestamp}`, event.kind, `room=${event.roomId}`];
+    if (event.playerId) {
+      parts.push(`player=${event.playerId}`);
+    }
+    if (event.battleId) {
+      parts.push(`battle=${event.battleId}`);
+    }
+    if (event.reason) {
+      parts.push(`reason=${event.reason}`);
+    }
+    return parts.join(" | ");
+  });
+
+  return `${[header, ...eventLines].join("\n")}\n`;
 }
 
 function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): RuntimeDiagnosticsSnapshot {
@@ -678,6 +806,18 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_reconnect_failures_total Total reconnect windows that expired or failed.",
     "# TYPE veil_reconnect_failures_total counter",
     `veil_reconnect_failures_total ${health.runtime.auth.reconnect.counters.failuresTotal}`,
+    "# HELP veil_room_creates_total Total logical room instances created successfully.",
+    "# TYPE veil_room_creates_total counter",
+    `veil_room_creates_total ${health.runtime.roomLifecycle.counters.roomCreatesTotal}`,
+    "# HELP veil_room_disposals_total Total logical room instances retired or disposed.",
+    "# TYPE veil_room_disposals_total counter",
+    `veil_room_disposals_total ${health.runtime.roomLifecycle.counters.roomDisposalsTotal}`,
+    "# HELP veil_battle_completions_total Total battles that resolved to a gameplay outcome.",
+    "# TYPE veil_battle_completions_total counter",
+    `veil_battle_completions_total ${health.runtime.roomLifecycle.counters.battleCompletionsTotal}`,
+    "# HELP veil_battle_aborts_total Total battles aborted because a room was retired before resolution.",
+    "# TYPE veil_battle_aborts_total counter",
+    `veil_battle_aborts_total ${health.runtime.roomLifecycle.counters.battleAbortsTotal}`,
     "# HELP veil_auth_guest_sessions Active guest auth sessions tracked by this process.",
     "# TYPE veil_auth_guest_sessions gauge",
     `veil_auth_guest_sessions ${health.runtime.auth.activeGuestSessionCount}`,
@@ -1153,6 +1293,46 @@ export function recordBattleDuration(durationSeconds: number): void {
   observeHistogram(runtimeObservability.prometheus.battleDurationSeconds, durationSeconds);
 }
 
+export function recordRoomCreated(roomId: string): void {
+  runtimeObservability.roomLifecycle.counters.roomCreatesTotal += 1;
+  pushRoomLifecycleEvent({
+    timestamp: new Date().toISOString(),
+    kind: "room.created",
+    roomId
+  });
+}
+
+export function recordRoomDisposed(roomId: string, reason = "dispose"): void {
+  runtimeObservability.roomLifecycle.counters.roomDisposalsTotal += 1;
+  pushRoomLifecycleEvent({
+    timestamp: new Date().toISOString(),
+    kind: "room.disposed",
+    roomId,
+    reason
+  });
+}
+
+export function recordBattleLifecycleResolved(input: {
+  roomId: string;
+  battleId: string;
+  outcome: "completed" | "aborted";
+  reason?: string;
+}): void {
+  if (input.outcome === "completed") {
+    runtimeObservability.roomLifecycle.counters.battleCompletionsTotal += 1;
+  } else {
+    runtimeObservability.roomLifecycle.counters.battleAbortsTotal += 1;
+  }
+
+  pushRoomLifecycleEvent({
+    timestamp: new Date().toISOString(),
+    kind: input.outcome === "completed" ? "battle.completed" : "battle.aborted",
+    roomId: input.roomId,
+    battleId: input.battleId,
+    ...(input.reason ? { reason: input.reason } : {})
+  });
+}
+
 export function recordActionValidationFailure(scope: ActionValidationScope, reason: string): void {
   const normalizedReason = reason.trim() || "unknown";
   const key = `${scope}::${normalizedReason}`;
@@ -1164,6 +1344,7 @@ export function recordActionValidationFailure(scope: ActionValidationScope, reas
 
 configureAuthoritativeRoomTelemetry({
   recordBattleDuration,
+  recordBattleResolved: recordBattleLifecycleResolved,
   recordActionValidationFailure
 });
 
@@ -1341,13 +1522,30 @@ export function recordReconnectWindowOpened(): void {
   runtimeObservability.reconnect.counters.attemptsTotal += 1;
 }
 
-export function recordReconnectWindowResolved(outcome: "success" | "failure"): void {
+export function recordReconnectWindowResolved(
+  outcome: "success" | "failure",
+  details?: {
+    roomId?: string;
+    playerId?: string;
+    reason?: string;
+  }
+): void {
   runtimeObservability.reconnect.pendingWindowCount = Math.max(0, runtimeObservability.reconnect.pendingWindowCount - 1);
   if (outcome === "success") {
     runtimeObservability.reconnect.counters.successesTotal += 1;
-    return;
+  } else {
+    runtimeObservability.reconnect.counters.failuresTotal += 1;
   }
-  runtimeObservability.reconnect.counters.failuresTotal += 1;
+
+  if (details?.roomId) {
+    pushRoomLifecycleEvent({
+      timestamp: new Date().toISOString(),
+      kind: outcome === "success" ? "reconnect.succeeded" : "reconnect.failed",
+      roomId: details.roomId,
+      ...(details.playerId ? { playerId: details.playerId } : {}),
+      ...(details.reason ? { reason: details.reason } : {})
+    });
+  }
 }
 
 export function resetRuntimeObservability(): void {
@@ -1404,6 +1602,11 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.reconnect.counters.attemptsTotal = 0;
   runtimeObservability.reconnect.counters.successesTotal = 0;
   runtimeObservability.reconnect.counters.failuresTotal = 0;
+  runtimeObservability.roomLifecycle.counters.roomCreatesTotal = 0;
+  runtimeObservability.roomLifecycle.counters.roomDisposalsTotal = 0;
+  runtimeObservability.roomLifecycle.counters.battleCompletionsTotal = 0;
+  runtimeObservability.roomLifecycle.counters.battleAbortsTotal = 0;
+  runtimeObservability.roomLifecycle.recentEvents.length = 0;
   runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
 }
 
@@ -1448,6 +1651,24 @@ export function registerRuntimeObservabilityRoutes(
       response.statusCode = 200;
       response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
       response.end(`${buildPrometheusMetricsDocument()}\n`);
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/runtime/room-lifecycle-summary", async (request, response) => {
+    try {
+      const summary = buildRoomLifecycleSummaryPayload(serviceName);
+      const url = new URL(request.url ?? "/api/runtime/room-lifecycle-summary", "http://runtime.local");
+
+      if (url.searchParams.get("format") === "text") {
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "text/plain; charset=utf-8");
+        response.end(renderRoomLifecycleSummaryText(summary));
+        return;
+      }
+
+      sendJson(response, 200, summary);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

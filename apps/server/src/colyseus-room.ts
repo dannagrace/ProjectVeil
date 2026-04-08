@@ -45,7 +45,10 @@ import { resolveGuestAuthSession } from "./auth";
 import { deriveMinorProtectionState, readMinorProtectionConfig } from "./minor-protection";
 import {
   recordBattleActionMessage,
+  recordBattleLifecycleResolved,
   recordConnectMessage,
+  recordRoomCreated,
+  recordRoomDisposed,
   recordReconnectWindowOpened,
   recordReconnectWindowResolved,
   recordRuntimeRoom,
@@ -319,6 +322,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   private turnTimerHandle: RoomTimerHandle | null = null;
   private turnOwnerPlayerId: string | null = null;
   private turnTimerTickInFlight = false;
+  private roomRetired = false;
 
   async onCreate(options: JoinOptions): Promise<void> {
     const logicalRoomId = options.logicalRoomId ?? "room-alpha";
@@ -354,6 +358,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
     await this.persistRoomState();
     this.publishLobbyRoomSummary();
+    recordRoomCreated(logicalRoomId);
     this.ensureTurnTimerLoop();
 
     this.unsubscribeConfigUpdate = registerConfigUpdateListener((bundle) => {
@@ -724,7 +729,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       recordReconnectWindowOpened();
       reconnectWindowOpen = true;
       const reconnectedClient = await this.allowReconnection(client, RECONNECTION_WINDOW_SECONDS);
-      recordReconnectWindowResolved("success");
+      recordReconnectWindowResolved("success", {
+        roomId: this.metadata.logicalRoomId,
+        playerId
+      });
       reconnectWindowOpen = false;
       if (configuredRoomSnapshotStore?.loadPlayerBan) {
         const ban = await configuredRoomSnapshotStore.loadPlayerBan(playerId);
@@ -753,7 +761,11 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       });
     } catch {
       if (reconnectWindowOpen) {
-        recordReconnectWindowResolved("failure");
+        recordReconnectWindowResolved("failure", {
+          roomId: this.metadata.logicalRoomId,
+          playerId,
+          reason: "reconnect_window_expired"
+        });
       }
       this.playerIdBySessionId.delete(client.sessionId);
       this.ensureTurnTimerState();
@@ -784,10 +796,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       return;
     }
 
-    lobbyRoomOwnerTokens.delete(this.metadata.logicalRoomId);
-    lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
-    activeRoomInstances.delete(this.metadata.logicalRoomId);
-    removeRuntimeRoom(this.metadata.logicalRoomId);
+    this.retireRoom("dispose");
   }
 
   private restoreWorldRoom(snapshot: RoomPersistenceSnapshot): void {
@@ -1469,8 +1478,30 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       }
     }
     this.clients.splice(0, this.clients.length);
+    this.retireRoom(reason);
+  }
+
+  private retireRoom(reason: string): void {
+    if (this.roomRetired) {
+      return;
+    }
+
+    this.roomRetired = true;
+
+    for (const battle of this.worldRoom.getActiveBattles()) {
+      recordBattleLifecycleResolved({
+        roomId: this.metadata.logicalRoomId,
+        battleId: battle.id,
+        outcome: "aborted",
+        reason
+      });
+    }
+
+    recordRoomDisposed(this.metadata.logicalRoomId, reason);
+    lobbyRoomOwnerTokens.delete(this.metadata.logicalRoomId);
     lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
     activeRoomInstances.delete(this.metadata.logicalRoomId);
+    removeRuntimeRoom(this.metadata.logicalRoomId);
   }
 
   private resolveReportTargetPlayerId(playerId: string, requestedTargetPlayerId: string): string | null {

@@ -265,10 +265,57 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(metricsText, /^veil_connect_messages_total 1$/m);
   assert.match(metricsText, /^veil_world_actions_total 1$/m);
   assert.match(metricsText, /^veil_gameplay_action_messages_total 1$/m);
+  assert.match(metricsText, /^veil_room_creates_total 1$/m);
+  assert.match(metricsText, /^veil_room_disposals_total 0$/m);
+  assert.match(metricsText, /^veil_battle_completions_total 0$/m);
+  assert.match(metricsText, /^veil_battle_aborts_total 0$/m);
   assert.match(metricsText, /^veil_auth_guest_sessions 0$/m);
   assert.match(metricsText, /^veil_auth_account_sessions 0$/m);
   assert.match(metricsText, /^veil_auth_session_checks_total 0$/m);
   assert.match(metricsText, /^veil_matchmaking_rate_limited_total 2$/m);
+
+  const roomLifecycleResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/room-lifecycle-summary`);
+  const roomLifecyclePayload = (await roomLifecycleResponse.json()) as {
+    status: string;
+    headline: string;
+    summary: {
+      activeRoomCount: number;
+      pendingReconnectCount: number;
+      counters: {
+        roomCreatesTotal: number;
+        roomDisposalsTotal: number;
+        battleCompletionsTotal: number;
+        battleAbortsTotal: number;
+      };
+      recentEvents: Array<{
+        kind: string;
+        roomId: string;
+      }>;
+    };
+  };
+
+  assert.equal(roomLifecycleResponse.status, 200);
+  assert.equal(roomLifecyclePayload.status, "ok");
+  assert.match(roomLifecyclePayload.headline, /created=1/);
+  assert.equal(roomLifecyclePayload.summary.activeRoomCount, 1);
+  assert.equal(roomLifecyclePayload.summary.pendingReconnectCount, 0);
+  assert.equal(roomLifecyclePayload.summary.counters.roomCreatesTotal, 1);
+  assert.equal(roomLifecyclePayload.summary.counters.roomDisposalsTotal, 0);
+  assert.equal(roomLifecyclePayload.summary.counters.battleCompletionsTotal, 0);
+  assert.equal(roomLifecyclePayload.summary.counters.battleAbortsTotal, 0);
+  assert.equal(roomLifecyclePayload.summary.recentEvents[0]?.kind, "room.created");
+  assert.equal(roomLifecyclePayload.summary.recentEvents[0]?.roomId, "room-observability-alpha");
+
+  const roomLifecycleTextResponse = await fetch(
+    `http://127.0.0.1:${port}/api/runtime/room-lifecycle-summary?format=text`
+  );
+  const roomLifecycleText = await roomLifecycleTextResponse.text();
+
+  assert.equal(roomLifecycleTextResponse.status, 200);
+  assert.match(roomLifecycleTextResponse.headers.get("content-type") ?? "", /^text\/plain/);
+  assert.match(roomLifecycleText, /^room_lifecycle status=ok/m);
+  assert.match(roomLifecycleText, /room_creates=1/);
+  assert.match(roomLifecycleText, /room\.created/);
 
   const prometheusResponse = await fetch(`http://127.0.0.1:${port}/metrics`);
   const prometheusText = await prometheusResponse.text();
