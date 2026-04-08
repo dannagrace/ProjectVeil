@@ -168,7 +168,8 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.equal(report.stages.find((stage) => stage.id === "release-readiness-snapshot")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "wechat-candidate-summary")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "cocos-rc-bundle")?.status, "passed");
-  assert.equal(report.stages.find((stage) => stage.id === "runtime-observability-gate")?.status, "skipped");
+  assert.equal(report.stages.find((stage) => stage.id === "runtime-observability-bundle")?.status, "skipped");
+  assert.match(report.artifacts.runtimeObservabilityBundlePath ?? "", /runtime-observability-bundle-phase1-mainline-/);
   assert.equal(report.stages.find((stage) => stage.id === "phase1-candidate-dossier")?.status, "passed");
   assert.match(report.artifacts.releaseReadinessSnapshotPath ?? "", /release-readiness-phase1-mainline-/);
   assert.match(report.artifacts.runtimeObservabilityGatePath ?? "", /runtime-observability-gate-phase1-mainline-/);

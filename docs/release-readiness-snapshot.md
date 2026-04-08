@@ -51,18 +51,19 @@ That flow rebuilds `apps/client/dist`, serves the packaged artifact instead of t
 
 The snapshot also supports manual gates, so the same file can carry pending or completed human checks such as WeChat package install/launch verification, reconnect evidence, device smoke acceptance, or RC blocker review.
 
-For candidate-scoped target-environment runtime evidence, capture the endpoints once and keep that artifact attached to the same candidate revision:
+For candidate-scoped target-environment runtime review, prefer the bundle capture flow so reviewers get one environment packet with the staged evidence and gate verdicts:
 
 ```bash
-npm run release:runtime-observability:evidence -- \
+npm run release:runtime-observability:bundle -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
   --target-surface <h5|wechat> \
   --target-environment <env-name> \
-  --server-url <base-url>
+  --server-url <base-url> \
+  [--include-room-lifecycle]
 ```
 
-That command writes candidate+revision-scoped JSON and Markdown under `artifacts/release-readiness/`, including the raw `/api/runtime/health`, `/api/runtime/auth-readiness`, and `/api/runtime/metrics` captures plus freshness metadata. Feed the resulting JSON into `npm run release:runtime-observability:gate -- --capture-report <json>` when the release gate or candidate dossier needs a pass/fail verdict without re-sampling the environment.
+That command writes a candidate+revision-scoped bundle directory under `artifacts/release-readiness/`, including `runtime-observability-bundle.json/.md` plus staged runtime evidence and gate artifacts for `/api/runtime/health`, `/api/runtime/auth-readiness`, and `/api/runtime/metrics`. Add `--include-room-lifecycle` when reviewers also need `/api/runtime/room-lifecycle-summary` for battle or reconnect triage. The underlying `release:runtime-observability:evidence` and `release:runtime-observability:gate` commands remain available when downstream tooling needs just the raw capture or just the gate.
 
 When a candidate has more than one manual sign-off in flight, track ownership in [`docs/release-evidence/manual-release-evidence-owner-ledger.template.md`](./release-evidence/manual-release-evidence-owner-ledger.template.md) and keep the candidate copy under `artifacts/release-readiness/manual-release-evidence-owner-ledger-<candidate>-<short-sha>.md`; [`artifacts/release-readiness/manual-release-evidence-owner-ledger-phase1-rc-abc1234.md`](../artifacts/release-readiness/manual-release-evidence-owner-ledger-phase1-rc-abc1234.md) is the reviewer-facing example.
 
