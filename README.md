@@ -236,6 +236,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - Frontier Basin Phase 1 内容包专项回归：`npm run test:phase1-release-persistence:frontier`
 - Stonewatch Fork Phase 1 内容包专项回归：`npm run test:phase1-release-persistence:stonewatch`
 - Ridgeway Crossing Phase 1 内容包专项回归：`npm run test:phase1-release-persistence:ridgeway`
+- Highland Reach Phase 1 内容包专项回归：`npm run test:phase1-release-persistence:highland`
 - 覆盖率 CI 同款校验：`npm run test:coverage:ci`
 - 覆盖率摘要：`.coverage/summary.md`
 - `npm test` 会通过 `git ls-files` 自动发现所有已检入仓库的 `*.test.ts` Node 测试文件并统一执行；新增此类测试时不需要手动维护根脚本列表。

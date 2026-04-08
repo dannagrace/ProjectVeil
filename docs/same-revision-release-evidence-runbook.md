@@ -146,7 +146,7 @@ npm run test:phase1-release-persistence -- \
   --output artifacts/release-readiness/phase1-release-persistence-regression.json
 ```
 
-When the candidate ships `frontier-basin`, `stonewatch-fork`, or `ridgeway-crossing`, also run the matching pack-specific persistence regression or equivalent `--map-pack` form described in [`docs/release-readiness-snapshot.md`](./release-readiness-snapshot.md).
+When the candidate ships `frontier-basin`, `stonewatch-fork`, `ridgeway-crossing`, or `highland-reach`, also run the matching pack-specific persistence regression or equivalent `--map-pack` form described in [`docs/release-readiness-snapshot.md`](./release-readiness-snapshot.md).
 
 5. Generate the Cocos primary-client candidate bundle for the same revision.
 

@@ -121,6 +121,7 @@
     "test:phase1-release-persistence:frontier": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack frontier-basin",
     "test:phase1-release-persistence:stonewatch": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack stonewatch-fork",
     "test:phase1-release-persistence:ridgeway": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack ridgeway-crossing",
+    "test:phase1-release-persistence:highland": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack highland-reach",
     "test:release-gate-summary": "node --import tsx --test ./scripts/test/release-gate-summary.test.ts",
     "test:release-go-no-go-packet": "node --import tsx --test ./scripts/test/release-go-no-go-decision-packet.test.ts",
     "test:release-candidate-reconnect-soak": "node --import tsx --test ./scripts/test/release-candidate-reconnect-soak.test.ts",
