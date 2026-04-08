@@ -1,0 +1,131 @@
+{
+  "width": 32,
+  "height": 32,
+  "heroes": [
+    {
+      "id": "hero-1",
+      "playerId": "player-1",
+      "name": "凯琳",
+      "position": {
+        "x": 2,
+        "y": 2
+      },
+      "vision": 3,
+      "move": {
+        "total": 8,
+        "remaining": 8
+      },
+      "stats": {
+        "attack": 2,
+        "defense": 2,
+        "power": 1,
+        "knowledge": 1,
+        "hp": 30,
+        "maxHp": 30
+      },
+      "progression": {
+        "level": 1,
+        "experience": 0,
+        "battlesWon": 0,
+        "neutralBattlesWon": 0,
+        "pvpBattlesWon": 0
+      },
+      "loadout": {
+        "inventory": [
+          "militia_pike",
+          "vanguard_blade",
+          "padded_gambeson",
+          "scout_compass"
+        ]
+      },
+      "armyTemplateId": "hero_guard_basic",
+      "armyCount": 12
+    },
+    {
+      "id": "hero-2",
+      "playerId": "player-2",
+      "name": "罗安",
+      "position": {
+        "x": 29,
+        "y": 29
+      },
+      "vision": 3,
+      "move": {
+        "total": 8,
+        "remaining": 8
+      },
+      "stats": {
+        "attack": 2,
+        "defense": 2,
+        "power": 1,
+        "knowledge": 1,
+        "hp": 30,
+        "maxHp": 30
+      },
+      "progression": {
+        "level": 1,
+        "experience": 0,
+        "battlesWon": 0,
+        "neutralBattlesWon": 0,
+        "pvpBattlesWon": 0
+      },
+      "loadout": {
+        "inventory": [
+          "oak_longbow",
+          "tower_shield_mail",
+          "scribe_charm",
+          "captains_insignia"
+        ]
+      },
+      "armyTemplateId": "hero_guard_basic",
+      "armyCount": 10
+    }
+  ],
+  "resourceSpawn": {
+    "goldChance": 0.03,
+    "woodChance": 0.04,
+    "oreChance": 0.04
+  },
+  "terrainOverrides": [
+    { "position": { "x": 7, "y": 6 }, "terrain": "sand" },
+    { "position": { "x": 8, "y": 6 }, "terrain": "sand" },
+    { "position": { "x": 9, "y": 6 }, "terrain": "sand" },
+    { "position": { "x": 10, "y": 6 }, "terrain": "sand" },
+    { "position": { "x": 22, "y": 7 }, "terrain": "swamp" },
+    { "position": { "x": 23, "y": 7 }, "terrain": "swamp" },
+    { "position": { "x": 24, "y": 7 }, "terrain": "swamp" },
+    { "position": { "x": 15, "y": 8 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 9 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 10 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 11 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 12 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 13 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 14 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 17 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 18 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 19 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 20 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 21 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 22 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 23 }, "terrain": "water" },
+    { "position": { "x": 15, "y": 24 }, "terrain": "water" },
+    { "position": { "x": 11, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 12, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 13, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 14, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 16, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 17, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 18, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 19, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 20, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 21, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 22, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 23, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 24, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 25, "y": 15 }, "terrain": "swamp" },
+    { "position": { "x": 16, "y": 24 }, "terrain": "sand" },
+    { "position": { "x": 17, "y": 24 }, "terrain": "sand" },
+    { "position": { "x": 18, "y": 24 }, "terrain": "sand" },
+    { "position": { "x": 19, "y": 24 }, "terrain": "sand" }
+  ]
+}

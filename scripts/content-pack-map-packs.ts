@@ -105,6 +105,13 @@ export const EXTRA_CONTENT_PACK_MAP_PACKS: ContentPackMapPackDefinition[] = [
     mapObjectsFileName: "phase2-map-objects-contested-basin.json",
     phase: "phase2",
     aliases: ["contested-basin", "contested_basin", "phase2-contested-basin"]
+  },
+  {
+    id: "phase2-frontier-expanded",
+    worldFileName: "phase2-frontier-expanded.json",
+    mapObjectsFileName: "phase2-map-objects-frontier-expanded.json",
+    phase: "phase2",
+    aliases: ["phase2_frontier_expanded", "frontier-expanded", "frontier_expanded"]
   }
 ];
 

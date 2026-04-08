@@ -39,7 +39,7 @@
     "validate:content-smoke": "node --import tsx ./scripts/content-smoke-gate.ts",
     "validate:content-pack": "node --import tsx ./scripts/validate-content-pack.ts",
     "validate:map-object-visuals": "node --import tsx ./scripts/validate-map-object-visuals.ts",
-    "validate:content-pack:all": "npm run validate:map-object-visuals && node --import tsx ./scripts/validate-content-pack.ts --map-pack frontier-basin --map-pack stonewatch-fork --map-pack ridgeway-crossing --map-pack highland-reach --map-pack amber-fields --map-pack ironpass-gorge --map-pack splitrock-canyon --map-pack bogfen-crossing --map-pack murkveil-delta --map-pack frostwatch-ridge --map-pack ashpeak-ascent --map-pack thornwall-divide --map-pack phase2",
+    "validate:content-pack:all": "npm run validate:map-object-visuals && node --import tsx ./scripts/validate-content-pack.ts --map-pack frontier-basin --map-pack stonewatch-fork --map-pack ridgeway-crossing --map-pack highland-reach --map-pack amber-fields --map-pack ironpass-gorge --map-pack splitrock-canyon --map-pack bogfen-crossing --map-pack murkveil-delta --map-pack frostwatch-ridge --map-pack ashpeak-ascent --map-pack thornwall-divide --map-pack phase2 --map-pack phase2-frontier-expanded",
     "validate:analytics-schema": "node --import tsx ./scripts/validate-analytics-schema.ts",
     "validate:quickstart:contract": "node ./scripts/run-contributor-quickstart-contract.mjs",
     "analytics:onboarding:funnel": "node --import tsx ./scripts/onboarding-funnel-report.ts",

@@ -1610,10 +1610,16 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         continue;
       }
 
+      const snapshot = this.worldRoom.getSnapshot(playerId).state;
+      const mapBounds = resolveFocusedMapBounds(snapshot);
+
       sendMessage(client, "session.state", {
         requestId: "push",
         delivery: "push",
-        payload: this.buildStatePayload(playerId, extras)
+        payload: this.buildStatePayload(playerId, extras, {
+          mapBounds,
+          snapshot
+        })
       });
     }
   }

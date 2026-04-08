@@ -745,10 +745,18 @@ function getPlayerNeighbors(view: PlayerWorldView, position: Vec2): Vec2[] {
   return candidates.filter((item) => item.x >= 0 && item.y >= 0 && item.x < view.map.width && item.y < view.map.height);
 }
 
-function isBlockedForPlayerView(view: PlayerWorldView, heroId: string, position: Vec2, destination: Vec2): boolean {
+function isBlockedForPlayerView(
+  view: PlayerWorldView,
+  heroId: string,
+  position: Vec2,
+  destination: Vec2,
+  hero?: Pick<HeroState, "id" | "armyTemplateId" | "position">,
+  canFly?: boolean
+): boolean {
   const tile = findPlayerTile(view, position);
-  const hero = view.ownHeroes.find((item) => item.id === heroId);
-  if (!tile || !hero || tile.fog === "hidden" || !isTraversableTile(tile, heroCanFlyOverWater(hero))) {
+  const effectiveHero = hero ?? view.ownHeroes.find((item) => item.id === heroId);
+  const effectiveCanFly = canFly ?? (effectiveHero ? heroCanFlyOverWater(effectiveHero) : false);
+  if (!tile || !effectiveHero || tile.fog === "hidden" || !isTraversableTile(tile, effectiveCanFly)) {
     return true;
   }
 
@@ -850,6 +858,25 @@ function reconstructPath(cameFrom: Map<string, Vec2>, current: Vec2): Vec2[] {
   return path;
 }
 
+function popLowestScoreNode(openSet: Vec2[], fScore: Map<string, number>): Vec2 | undefined {
+  if (openSet.length === 0) {
+    return undefined;
+  }
+
+  let bestIndex = 0;
+  let bestScore = fScore.get(tileKey(openSet[0]!)) ?? Number.POSITIVE_INFINITY;
+  for (let index = 1; index < openSet.length; index += 1) {
+    const candidate = openSet[index]!;
+    const candidateScore = fScore.get(tileKey(candidate)) ?? Number.POSITIVE_INFINITY;
+    if (candidateScore < bestScore) {
+      bestIndex = index;
+      bestScore = candidateScore;
+    }
+  }
+
+  return openSet.splice(bestIndex, 1)[0];
+}
+
 function getNeighbors(map: WorldMapState, position: Vec2): Vec2[] {
   const candidates = [
     { x: position.x + 1, y: position.y },
@@ -861,10 +888,18 @@ function getNeighbors(map: WorldMapState, position: Vec2): Vec2[] {
   return candidates.filter((item) => inBounds(map, item));
 }
 
-function isBlockedForHero(state: WorldState, heroId: string, position: Vec2, destination: Vec2): boolean {
+function isBlockedForHero(
+  state: WorldState,
+  heroId: string,
+  position: Vec2,
+  destination: Vec2,
+  hero?: HeroState,
+  canFly?: boolean
+): boolean {
   const tile = findTile(state.map, position);
-  const hero = findHero(state, heroId);
-  if (!tile || !hero || !isTraversableTile(tile, heroCanFlyOverWater(hero))) {
+  const effectiveHero = hero ?? findHero(state, heroId);
+  const effectiveCanFly = canFly ?? (effectiveHero ? heroCanFlyOverWater(effectiveHero) : false);
+  if (!tile || !effectiveHero || !isTraversableTile(tile, effectiveCanFly)) {
     return true;
   }
 
@@ -950,17 +985,14 @@ function getNeutralMovementPath(
   }
 
   const openSet: Vec2[] = [start];
+  const openSetKeys = new Set<string>([tileKey(start)]);
   const cameFrom = new Map<string, Vec2>();
   const gScore = new Map<string, number>([[tileKey(start), 0]]);
   const fScore = new Map<string, number>([[tileKey(start), distance(start, destination)]]);
 
   while (openSet.length > 0) {
-    openSet.sort(
-      (a, b) =>
-        (fScore.get(tileKey(a)) ?? Number.POSITIVE_INFINITY) -
-        (fScore.get(tileKey(b)) ?? Number.POSITIVE_INFINITY)
-    );
-    const current = openSet.shift()!;
+    const current = popLowestScoreNode(openSet, fScore)!;
+    openSetKeys.delete(tileKey(current));
     if (samePosition(current, destination)) {
       return reconstructPath(cameFrom, current);
     }
@@ -975,11 +1007,13 @@ function getNeutralMovementPath(
         continue;
       }
 
-      cameFrom.set(tileKey(neighbor), current);
-      gScore.set(tileKey(neighbor), tentative);
-      fScore.set(tileKey(neighbor), tentative + distance(neighbor, destination));
-      if (!openSet.some((item) => samePosition(item, neighbor))) {
+      const neighborKey = tileKey(neighbor);
+      cameFrom.set(neighborKey, current);
+      gScore.set(neighborKey, tentative);
+      fScore.set(neighborKey, tentative + distance(neighbor, destination));
+      if (!openSetKeys.has(neighborKey)) {
         openSet.push(neighbor);
+        openSetKeys.add(neighborKey);
       }
     }
   }
@@ -1005,14 +1039,16 @@ function getMovementPlan(state: WorldState, heroId: string, destination: Vec2): 
       };
   }
 
+  const canFly = heroCanFlyOverWater(hero);
   const openSet: Vec2[] = [hero.position];
+  const openSetKeys = new Set<string>([tileKey(hero.position)]);
   const cameFrom = new Map<string, Vec2>();
   const gScore = new Map<string, number>([[tileKey(hero.position), 0]]);
   const fScore = new Map<string, number>([[tileKey(hero.position), distance(hero.position, destination)]]);
 
   while (openSet.length > 0) {
-    openSet.sort((a, b) => (fScore.get(tileKey(a)) ?? Number.POSITIVE_INFINITY) - (fScore.get(tileKey(b)) ?? Number.POSITIVE_INFINITY));
-    const current = openSet.shift()!;
+    const current = popLowestScoreNode(openSet, fScore)!;
+    openSetKeys.delete(tileKey(current));
     if (samePosition(current, destination)) {
       const path = reconstructPath(cameFrom, current);
       const destinationTile = findTile(state.map, destination);
@@ -1041,22 +1077,27 @@ function getMovementPlan(state: WorldState, heroId: string, destination: Vec2): 
     }
 
     for (const neighbor of getNeighbors(state.map, current)) {
-      if (isBlockedForHero(state, heroId, neighbor, destination)) {
+      const tile = findTile(state.map, neighbor);
+      if (!tile || !isTraversableTile(tile, canFly)) {
+        continue;
+      }
+      if (isBlockedForHero(state, heroId, neighbor, destination, hero, canFly)) {
         continue;
       }
 
-      const neighborTile = findTile(state.map, neighbor);
       const tentative =
-        (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + terrainMoveCost(neighborTile?.terrain ?? "grass");
+        (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + terrainMoveCost(tile.terrain);
       if (tentative >= (gScore.get(tileKey(neighbor)) ?? Number.POSITIVE_INFINITY)) {
         continue;
       }
 
-      cameFrom.set(tileKey(neighbor), current);
-      gScore.set(tileKey(neighbor), tentative);
-      fScore.set(tileKey(neighbor), tentative + distance(neighbor, destination));
-      if (!openSet.some((item) => samePosition(item, neighbor))) {
+      const neighborKey = tileKey(neighbor);
+      cameFrom.set(neighborKey, current);
+      gScore.set(neighborKey, tentative);
+      fScore.set(neighborKey, tentative + distance(neighbor, destination));
+      if (!openSetKeys.has(neighborKey)) {
         openSet.push(neighbor);
+        openSetKeys.add(neighborKey);
       }
     }
   }
@@ -1369,14 +1410,16 @@ export function planPlayerViewMovement(
     return undefined;
   }
 
+  const canFly = heroCanFlyOverWater(hero);
   const openSet: Vec2[] = [hero.position];
+  const openSetKeys = new Set<string>([tileKey(hero.position)]);
   const cameFrom = new Map<string, Vec2>();
   const gScore = new Map<string, number>([[tileKey(hero.position), 0]]);
   const fScore = new Map<string, number>([[tileKey(hero.position), distance(hero.position, destination)]]);
 
   while (openSet.length > 0) {
-    openSet.sort((a, b) => (fScore.get(tileKey(a)) ?? Number.POSITIVE_INFINITY) - (fScore.get(tileKey(b)) ?? Number.POSITIVE_INFINITY));
-    const current = openSet.shift()!;
+    const current = popLowestScoreNode(openSet, fScore)!;
+    openSetKeys.delete(tileKey(current));
     if (samePosition(current, destination)) {
       const path = reconstructPath(cameFrom, current);
       const encounterKind =
@@ -1404,22 +1447,27 @@ export function planPlayerViewMovement(
     }
 
     for (const neighbor of getPlayerNeighbors(view, current)) {
-      if (isBlockedForPlayerView(view, heroId, neighbor, destination)) {
+      const tile = findPlayerTile(view, neighbor);
+      if (!tile || tile.fog === "hidden" || !isTraversableTile(tile, canFly)) {
+        continue;
+      }
+      if (isBlockedForPlayerView(view, heroId, neighbor, destination, hero, canFly)) {
         continue;
       }
 
-      const neighborTile = findPlayerTile(view, neighbor);
       const tentative =
-        (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + terrainMoveCost(neighborTile?.terrain ?? "grass");
+        (gScore.get(tileKey(current)) ?? Number.POSITIVE_INFINITY) + terrainMoveCost(tile.terrain);
       if (tentative >= (gScore.get(tileKey(neighbor)) ?? Number.POSITIVE_INFINITY)) {
         continue;
       }
 
-      cameFrom.set(tileKey(neighbor), current);
-      gScore.set(tileKey(neighbor), tentative);
-      fScore.set(tileKey(neighbor), tentative + distance(neighbor, destination));
-      if (!openSet.some((item) => samePosition(item, neighbor))) {
+      const neighborKey = tileKey(neighbor);
+      cameFrom.set(neighborKey, current);
+      gScore.set(neighborKey, tentative);
+      fScore.set(neighborKey, tentative + distance(neighbor, destination));
+      if (!openSetKeys.has(neighborKey)) {
         openSet.push(neighbor);
+        openSetKeys.add(neighborKey);
       }
     }
   }
