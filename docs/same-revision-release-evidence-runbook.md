@@ -125,7 +125,7 @@ At minimum, create rows for:
 - Cocos / WeChat RC checklist review
 - Cocos / WeChat blocker-register review
 - Cocos presentation sign-off when presentation review applies
-- WeChat Developer Tools export review when WeChat is the target surface
+- WeChat package install/launch verification when WeChat is the target surface
 - WeChat device/runtime smoke when WeChat is the target surface
 - reconnect follow-up when reconnect evidence still needs a human call
 

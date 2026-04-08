@@ -20,7 +20,7 @@ Create one copy per candidate under `artifacts/release-readiness/` or attach the
 | `cocos-rc-blockers-review` | `rc-YYYY-MM-DD` | `abc123def456` | `release-owner` | `in-review` | `2026-04-02T09:41:00Z` | `artifacts/release-readiness/cocos-rc-blockers-rc-YYYY-MM-DD-abc123d.md` | Blocker register updated after smoke follow-up; confirm no open P0 remains. |
 | `cocos-presentation-signoff` | `rc-YYYY-MM-DD` | `abc123def456` | `client-lead` | `pending` | `2026-04-02T09:42:00Z` | `artifacts/release-readiness/cocos-presentation-signoff-rc-YYYY-MM-DD-abc123d.md` | Refresh world-map capture after the latest fallback UI fix. |
 | `runtime-observability-review` | `rc-YYYY-MM-DD` | `abc123def456` | `oncall-ops` | `pending` | `2026-04-02T09:45:00Z` | `artifacts/wechat-release/runtime-observability-signoff-rc-YYYY-MM-DD-abc123d.md` | Capture `/api/runtime/health`, `/api/runtime/auth-readiness`, and `/api/runtime/metrics` in the release environment. |
-| `wechat-devtools-export-review` | `rc-YYYY-MM-DD` | `abc123def456` | `qa-release` | `done` | `2026-04-02T09:52:00Z` | `artifacts/wechat-release/codex.wechat.release-candidate-summary.json` | Real export opened in WeChat Developer Tools for the same revision. Use `waived` only when WeChat is not the target surface. |
+| `wechat-devtools-export-review` | `rc-YYYY-MM-DD` | `abc123def456` | `qa-release` | `done` | `2026-04-02T09:52:00Z` | `artifacts/wechat-release/codex.wechat.install-launch-evidence.json` | Candidate-scoped WeChat package install/import and first-launch verification is recorded for the same revision. Use `waived` only when WeChat is not the target surface. |
 | `wechat-device-runtime-smoke` | `rc-YYYY-MM-DD` | `abc123def456` | `qa-release` | `done` | `2026-04-02T09:55:00Z` | `artifacts/wechat-release/codex.wechat.smoke-report.json` | Device runtime smoke evidence is current for the same candidate and revision. Use `waived` only when WeChat is not the target surface. |
 | `reconnect-release-followup` | `rc-YYYY-MM-DD` | `abc123def456` | `server-oncall` | `pending` | `2026-04-02T09:58:00Z` | `artifacts/release-readiness/colyseus-reconnect-soak-summary-rc-YYYY-MM-DD-abc123d.md` | Human review still needed on the reconnect warning before release call. |
 
@@ -49,7 +49,7 @@ Update the ledger at the same moments maintainers already touch the candidate pa
 1. Right after generating or refreshing `release:readiness:snapshot`, create the candidate ledger and pre-fill the required manual evidence rows.
 2. After editing the Cocos / WeChat RC checklist or blocker register, update the matching ledger row with owner, status, timestamp, and artifact path.
 3. After reviewing or regenerating the Cocos presentation sign-off, update the `cocos-presentation-signoff` row.
-4. After completing WeChat Developer Tools export review, device runtime smoke, or runtime observability sign-off, update those rows immediately instead of waiting for the final release call.
+4. After completing WeChat package install/launch verification, device runtime smoke, or runtime observability sign-off, update those rows immediately instead of waiting for the final release call.
 5. When a manual item becomes stale, blocked, waived, or complete, update the row in the same commit or PR comment that records the new evidence state.
 
 ## Minimal Operating Flow

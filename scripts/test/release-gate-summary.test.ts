@@ -148,13 +148,13 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
         checks: [
           {
             id: "wechat-devtools-export-review",
-            title: "Real WeChat export imported and launched in Developer Tools",
+            title: "Candidate-scoped WeChat package install/launch verification recorded",
             required: true,
             status: "passed",
             owner: "release-oncall",
             recordedAt: isoHoursAgo(3),
             revision: "abc123",
-            artifactPath: "artifacts/wechat-release/devtools-export-review.json"
+            artifactPath: "artifacts/wechat-release/codex.wechat.install-launch-evidence.json"
           },
           {
             id: "wechat-device-runtime-review",
@@ -599,15 +599,20 @@ test("buildReleaseGateSummaryReport marks pending candidate-level WeChat evidenc
         checks: [
           {
             id: "wechat-devtools-export-review",
-            title: "Real WeChat export imported and launched in Developer Tools",
+            title: "Candidate-scoped WeChat package install/launch verification recorded",
             required: true,
             status: "pending",
-            artifactPath: "artifacts/wechat-release/devtools-export-review.json"
+            artifactPath: "artifacts/wechat-release/codex.wechat.install-launch-evidence.json"
           }
         ]
       }
     },
-    blockers: [{ id: "manual:wechat-devtools-export-review", summary: "Manual review pending: Real WeChat export imported and launched in Developer Tools." }]
+    blockers: [
+      {
+        id: "manual:wechat-devtools-export-review",
+        summary: "Manual review pending: Candidate-scoped WeChat package install/launch verification recorded."
+      }
+    ]
   });
 
   const report = buildReleaseGateSummaryReport(
@@ -633,7 +638,7 @@ test("buildReleaseGateSummaryReport marks pending candidate-level WeChat evidenc
   assert.equal(report.releaseSurface.evidence.find((entry) => entry.id === "manual:wechat-devtools-export-review")?.status, "pending");
   assert.match(renderMarkdown(report), /WeChat candidate summary is blocked pending required candidate-level package\/verify\/smoke\/manual evidence/);
   assert.match(renderMarkdown(report), /WeChat smoke evidence: Smoke report not present\. \[required=yes status=pending/);
-  assert.match(renderMarkdown(report), /Real WeChat export imported and launched in Developer Tools: "pending"/);
+  assert.match(renderMarkdown(report), /Candidate-scoped WeChat package install\/launch verification recorded: "pending"/);
 });
 
 test("evaluateWechatGate prefers RC validation and falls back to smoke report", () => {
