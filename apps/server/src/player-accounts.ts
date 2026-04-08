@@ -17,6 +17,7 @@ import {
   queryAchievementProgress,
   queryEventLogEntries,
   summarizePlayerMailbox,
+  type BattleReplayPlaybackCommand,
   type PlayerBattleReplaySummary,
   type SeasonalEventState,
   type TutorialProgressAction
@@ -408,33 +409,112 @@ function normalizeTutorialProgressAction(input: unknown, currentStep?: number | 
 
 function toReplayDetailResponse(
   account: PlayerAccountSnapshot,
-  replayId?: string | null
+  replayLookup?: string | null
 ): { replay: NonNullable<PlayerAccountSnapshot["recentBattleReplays"]>[number] } | null {
-  const replay = findPlayerBattleReplaySummary(account.recentBattleReplays, replayId);
+  const replay = findReplaySummaryByLookup(account, replayLookup);
   return replay ? { replay } : null;
+}
+
+function findReplaySummaryByLookup(
+  account: PlayerAccountSnapshot,
+  replayLookup?: string | null
+): NonNullable<PlayerAccountSnapshot["recentBattleReplays"]>[number] | null {
+  const normalizedReplayLookup = replayLookup?.trim();
+  if (!normalizedReplayLookup) {
+    return null;
+  }
+
+  const replayById = findPlayerBattleReplaySummary(account.recentBattleReplays, normalizedReplayLookup);
+  if (replayById) {
+    return replayById;
+  }
+
+  return (
+    queryPlayerBattleReplaySummaries(account.recentBattleReplays, {
+      battleId: normalizedReplayLookup,
+      limit: 1
+    })[0] ?? null
+  );
+}
+
+function normalizeReplayPlaybackAction(
+  action?: string | null
+): BattleReplayPlaybackCommand["action"] | undefined {
+  switch (action?.trim()) {
+    case "play":
+    case "pause":
+    case "step":
+    case "tick":
+    case "reset":
+    case "step-back":
+      return action;
+    case "step-forward":
+      return "step";
+    default:
+      return undefined;
+  }
+}
+
+function readFiniteNumberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function toReplayPlaybackCommandPayload(payload: unknown): BattleReplayPlaybackCommand {
+  if (!payload || typeof payload !== "object") {
+    return {};
+  }
+
+  const commandPayload = payload as Record<string, unknown>;
+  const status = commandPayload.status === "paused" || commandPayload.status === "playing" ? commandPayload.status : undefined;
+  const action = normalizeReplayPlaybackAction(
+    typeof commandPayload.command === "string"
+      ? commandPayload.command
+      : typeof commandPayload.action === "string"
+        ? commandPayload.action
+        : undefined
+  );
+  const currentStepIndex = readFiniteNumberValue(commandPayload.currentStepIndex);
+  const targetTurn = readFiniteNumberValue(commandPayload.targetTurn);
+  const speed = readFiniteNumberValue(commandPayload.speed);
+  const repeat = readFiniteNumberValue(commandPayload.repeat);
+
+  return {
+    ...(currentStepIndex != null ? { currentStepIndex } : {}),
+    ...(targetTurn != null ? { targetTurn } : {}),
+    ...(status ? { status } : {}),
+    ...(speed != null ? { speed } : {}),
+    ...(action ? { action } : {}),
+    ...(repeat != null ? { repeat } : {})
+  };
 }
 
 function toReplayPlaybackResponse(
   account: PlayerAccountSnapshot,
-  request: IncomingMessage,
-  replayId?: string | null
+  request: IncomingMessage | null,
+  replayLookup?: string | null,
+  commandOverrides: BattleReplayPlaybackCommand = {}
 ) {
-  const replay = findPlayerBattleReplaySummary(account.recentBattleReplays, replayId);
+  const replay = findReplaySummaryByLookup(account, replayLookup);
   if (!replay) {
     return null;
   }
 
-  const currentStepIndex = parseNumberQueryParam(request, "currentStepIndex");
-  const status = parseOptionalQueryParam(request, "status") as "paused" | "playing" | undefined;
-  const action = parseOptionalQueryParam(request, "action") as "play" | "pause" | "step" | "tick" | "reset" | undefined;
-  const repeat = parseNumberQueryParam(request, "repeat");
+  const currentStepIndex = request ? parseNumberQueryParam(request, "currentStepIndex") : undefined;
+  const status = request ? (parseOptionalQueryParam(request, "status") as "paused" | "playing" | undefined) : undefined;
+  const action = request ? normalizeReplayPlaybackAction(parseOptionalQueryParam(request, "action")) : undefined;
+  const repeat = request ? parseNumberQueryParam(request, "repeat") : undefined;
+  const targetTurn = request ? parseNumberQueryParam(request, "targetTurn") : undefined;
+  const speed = request ? parseNumberQueryParam(request, "speed") : undefined;
 
   return {
     playback: applyBattleReplayPlaybackCommand(replay, {
       ...(currentStepIndex != null ? { currentStepIndex } : {}),
+      ...(targetTurn != null ? { targetTurn } : {}),
       ...(status ? { status } : {}),
+      ...(speed != null ? { speed } : {}),
       ...(action ? { action } : {}),
-      ...(repeat != null ? { repeat } : {})
+      ...(repeat != null ? { repeat } : {}),
+      ...commandOverrides
     })
   };
 }
@@ -2456,6 +2536,52 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.post("/api/player-accounts/me/battle-replays/:replayId/playback", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    const replayId = request.params.replayId?.trim();
+    if (!replayId) {
+      sendNotFound(response);
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 404, {
+        error: {
+          code: "player_battle_replay_not_found",
+          message: `Player battle replay not found: ${replayId}`
+        }
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      const playback = toReplayPlaybackResponse(account, null, replayId, toReplayPlaybackCommandPayload(await readJsonBody(request)));
+      if (!playback) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_battle_replay_not_found",
+            message: `Player battle replay not found: ${replayId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, playback);
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
   app.get("/api/player-accounts/me/event-log", async (request, response) => {
     const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
@@ -2877,6 +3003,63 @@ export function registerPlayerAccountRoutes(
       }
 
       const playback = toReplayPlaybackResponse(account, request, replayId);
+      if (!playback) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_battle_replay_not_found",
+            message: `Player battle replay not found: ${replayId}`
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, playback);
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player-accounts/:playerId/battle-replays/:replayId/playback", async (request, response) => {
+    const playerId = request.params.playerId?.trim();
+    const replayId = request.params.replayId?.trim();
+    if (!playerId || !replayId) {
+      sendNotFound(response);
+      return;
+    }
+
+    const authSession = await requireAuthorizedPlayerScope(request, response, store, playerId);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store) {
+      sendJson(response, 404, {
+        error: {
+          code: "player_battle_replay_not_found",
+          message: `Player battle replay not found: ${replayId}`
+        }
+      });
+      return;
+    }
+
+    try {
+      const account =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      if (!account) {
+        sendJson(response, 404, {
+          error: {
+            code: "player_battle_replay_not_found",
+            message: `Player battle replay not found: ${replayId}`
+          }
+        });
+        return;
+      }
+
+      const playback = toReplayPlaybackResponse(account, null, replayId, toReplayPlaybackCommandPayload(await readJsonBody(request)));
       if (!playback) {
         sendJson(response, 404, {
           error: {
