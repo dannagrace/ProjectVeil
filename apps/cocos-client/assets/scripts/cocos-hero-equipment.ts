@@ -16,10 +16,22 @@ export interface CocosEquipmentInventoryItem {
   itemId: string;
   slot: EquipmentType;
   name: string;
+  rarity: EquipmentRarity;
   rarityLabel: string;
   bonusSummary: string;
   description: string;
   count: number;
+}
+
+export type CocosEquipmentInventoryFilter = "all" | EquipmentType;
+export type CocosEquipmentInventorySort = "slot" | "rarity" | "name";
+
+export interface CocosEquipmentInventoryView {
+  filter: CocosEquipmentInventoryFilter;
+  sort: CocosEquipmentInventorySort;
+  totalCount: number;
+  visibleKinds: number;
+  lines: string[];
 }
 
 export interface CocosEquipmentActionRow {
@@ -143,9 +155,11 @@ export function formatEquipmentSlotLabel(slot: EquipmentType): string {
 }
 
 function compareInventoryItems(left: CocosEquipmentInventoryItem, right: CocosEquipmentInventoryItem): number {
+  const rarityOrder: Record<EquipmentRarity, number> = { epic: 0, rare: 1, common: 2 };
   const slotOrder = { weapon: 0, armor: 1, accessory: 2 };
   return (
     slotOrder[left.slot] - slotOrder[right.slot] ||
+    rarityOrder[left.rarity] - rarityOrder[right.rarity] ||
     left.name.localeCompare(right.name, "zh-Hans-CN")
   );
 }
@@ -176,6 +190,7 @@ function buildInventoryItems(
         itemId,
         slot: definition.type,
         name: definition.name,
+        rarity: definition.rarity,
         rarityLabel: formatEquipmentRarityLabel(definition.rarity),
         bonusSummary: formatEquipmentBonusSummary(definition.bonuses),
         description: definition.description,
@@ -192,6 +207,47 @@ export function inventoryItemsForSlot(hero: HeroView, slot: EquipmentType): Coco
 
 export function inventoryItemsForHero(hero: HeroView): CocosEquipmentInventoryItem[] {
   return buildInventoryItems(hero);
+}
+
+function compareInventoryItemsByRarity(left: CocosEquipmentInventoryItem, right: CocosEquipmentInventoryItem): number {
+  const rarityOrder: Record<EquipmentRarity, number> = { epic: 0, rare: 1, common: 2 };
+  const slotOrder = { weapon: 0, armor: 1, accessory: 2 };
+  return (
+    rarityOrder[left.rarity] - rarityOrder[right.rarity] ||
+    slotOrder[left.slot] - slotOrder[right.slot] ||
+    left.name.localeCompare(right.name, "zh-Hans-CN")
+  );
+}
+
+function compareInventoryItemsByName(left: CocosEquipmentInventoryItem, right: CocosEquipmentInventoryItem): number {
+  const rarityOrder: Record<EquipmentRarity, number> = { epic: 0, rare: 1, common: 2 };
+  const slotOrder = { weapon: 0, armor: 1, accessory: 2 };
+  return (
+    left.name.localeCompare(right.name, "zh-Hans-CN") ||
+    rarityOrder[left.rarity] - rarityOrder[right.rarity] ||
+    slotOrder[left.slot] - slotOrder[right.slot]
+  );
+}
+
+function formatInventoryFilterLabel(filter: CocosEquipmentInventoryFilter): string {
+  return filter === "all" ? "全部" : formatEquipmentSlotLabel(filter);
+}
+
+function formatInventorySortLabel(sort: CocosEquipmentInventorySort): string {
+  return sort === "slot" ? "槽位" : sort === "rarity" ? "稀有度" : "名称";
+}
+
+function sortInventoryItems(
+  items: CocosEquipmentInventoryItem[],
+  sort: CocosEquipmentInventorySort
+): CocosEquipmentInventoryItem[] {
+  const comparator =
+    sort === "rarity"
+      ? compareInventoryItemsByRarity
+      : sort === "name"
+        ? compareInventoryItemsByName
+        : compareInventoryItems;
+  return [...items].sort(comparator);
 }
 
 export function buildEquipmentInspectItems(hero: HeroView | null): CocosEquipmentInspectItem[] {
@@ -268,33 +324,93 @@ export function formatEquipmentInspectLines(item: CocosEquipmentInspectItem | nu
   ];
 }
 
-export function formatInventorySummaryLines(hero: HeroView | null): string[] {
+export function buildInventorySummaryView(
+  hero: HeroView | null,
+  options?: {
+    filter?: CocosEquipmentInventoryFilter;
+    sort?: CocosEquipmentInventorySort;
+  }
+): CocosEquipmentInventoryView {
   if (!hero) {
-    return ["背包 等待房间状态..."];
+    return {
+      filter: options?.filter ?? "all",
+      sort: options?.sort ?? "slot",
+      totalCount: 0,
+      visibleKinds: 0,
+      lines: ["背包 等待房间状态..."]
+    };
   }
 
+  const filter = options?.filter ?? "all";
+  const sort = options?.sort ?? "slot";
   const items = inventoryItemsForHero(hero);
   const totalCount = hero.loadout.inventory.length;
+  const visibleItems = sortInventoryItems(
+    items.filter((item) => filter === "all" || item.slot === filter),
+    sort
+  );
+  const summaryPrefix = `筛选 ${formatInventoryFilterLabel(filter)} · 排序 ${formatInventorySortLabel(sort)}`;
+
   if (items.length === 0) {
-    return totalCount >= HERO_EQUIPMENT_INVENTORY_CAPACITY
-      ? [
-          `背包 ${totalCount}/${HERO_EQUIPMENT_INVENTORY_CAPACITY} 件`,
-          "背包已满，新的战利品会溢出",
-          "暂无可装备物品"
-        ]
-      : ["背包 暂无可装备物品"];
+    return {
+      filter,
+      sort,
+      totalCount,
+      visibleKinds: 0,
+      lines:
+        totalCount >= HERO_EQUIPMENT_INVENTORY_CAPACITY
+          ? [
+              summaryPrefix,
+              `背包 ${totalCount}/${HERO_EQUIPMENT_INVENTORY_CAPACITY} 件`,
+              "背包已满，新的战利品会溢出",
+              "暂无可装备物品"
+            ]
+          : [summaryPrefix, "背包 暂无可装备物品"]
+    };
   }
 
-  const detailLines = items.map((item) => {
+  if (visibleItems.length === 0) {
+    return {
+      filter,
+      sort,
+      totalCount,
+      visibleKinds: 0,
+      lines: [
+        summaryPrefix,
+        `背包 ${totalCount}/${HERO_EQUIPMENT_INVENTORY_CAPACITY} 件（0 类）`,
+        `当前筛选下暂无${formatInventoryFilterLabel(filter)}装备`
+      ]
+    };
+  }
+
+  const detailLines = visibleItems.map((item) => {
     const countLabel = item.count > 1 ? ` x${item.count}` : "";
     return `${formatEquipmentSlotLabel(item.slot)} ${item.rarityLabel} ${item.name}${countLabel} · ${item.bonusSummary}`;
   });
 
-  return [
-    `背包 ${totalCount}/${HERO_EQUIPMENT_INVENTORY_CAPACITY} 件（${items.length} 类）`,
-    ...(totalCount >= HERO_EQUIPMENT_INVENTORY_CAPACITY ? ["背包已满，新的战利品会溢出"] : []),
-    ...detailLines
-  ];
+  return {
+    filter,
+    sort,
+    totalCount,
+    visibleKinds: visibleItems.length,
+    lines: [
+      summaryPrefix,
+      `背包 ${totalCount}/${HERO_EQUIPMENT_INVENTORY_CAPACITY} 件`,
+      ...(filter === "all" ? [`已展开 ${visibleItems.length} 类物品`] : [`当前筛选 ${visibleItems.length} 类物品`]),
+      ...(totalCount >= HERO_EQUIPMENT_INVENTORY_CAPACITY ? ["背包已满，新的战利品会溢出"] : []),
+      ...detailLines
+    ]
+  };
+}
+
+export function formatInventorySummaryLines(
+  hero: HeroView | null,
+  options?: {
+    filter?: CocosEquipmentInventoryFilter;
+    sort?: CocosEquipmentInventorySort;
+  }
+): string[] {
+  return buildInventorySummaryView(hero, options).lines;
 }
 
 export function formatEquipmentStatSummary(hero: HeroView | null): CocosEquipmentStatSummaryLine[] {
@@ -390,6 +506,28 @@ export function formatRecentLootLines(
   }
 
   return [`战利品 最近 ${mergedDescriptions.length} 条`, ...visibleEntries];
+}
+
+export function formatLootSpotlightLines(
+  recentSessionEvents: CocosRecentLootEvent[],
+  heroId?: string | null,
+  heroName?: string
+): string[] {
+  const normalizedHeroId = heroId?.trim();
+  const ownedLoot = recentSessionEvents.filter(
+    (event) => event.type === "hero.equipmentFound" && (!normalizedHeroId || event.heroId === normalizedHeroId)
+  );
+  if (ownedLoot.length === 0) {
+    return ["战斗结算 暂无新的装备掉落"];
+  }
+
+  const latestEvent = ownedLoot[0]!;
+  const headline = latestEvent.overflowed ? "战斗结算 背包已满" : "战斗结算 获得新装备";
+  return [
+    headline,
+    formatSessionLootDescription(latestEvent, heroName),
+    ...(ownedLoot.length > 1 ? [`本次结算共记录 ${ownedLoot.length} 条掉落。`] : [])
+  ];
 }
 
 export function buildHeroEquipmentActionRows(hero: HeroView | null): CocosEquipmentActionRow[] {

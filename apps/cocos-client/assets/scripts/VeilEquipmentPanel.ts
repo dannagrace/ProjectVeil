@@ -3,12 +3,16 @@ import type { EventLogEntry } from "./project-shared/index.ts";
 import type { HeroView } from "./VeilCocosSession.ts";
 import {
   buildEquipmentInspectItems,
+  buildInventorySummaryView,
   buildHeroEquipmentActionRows,
   formatEquipmentInspectLines,
+  formatEquipmentSlotLabel,
+  formatLootSpotlightLines,
   formatEquipmentOverviewLines,
   formatEquipmentStatSummary,
-  formatInventorySummaryLines,
   formatRecentLootLines,
+  type CocosEquipmentInventoryFilter,
+  type CocosEquipmentInventorySort,
   type CocosEquipmentActionRow,
   type CocosEquipmentInspectItem
 } from "./cocos-hero-equipment.ts";
@@ -108,6 +112,8 @@ export class VeilEquipmentPanel extends Component {
   private currentState: VeilEquipmentPanelRenderState | null = null;
   private inspectedItemId: string | null = null;
   private inspectedItemSource: CocosEquipmentInspectItem["source"] | null = null;
+  private inventoryFilter: CocosEquipmentInventoryFilter = "all";
+  private inventorySort: CocosEquipmentInventorySort = "slot";
 
   configure(options: VeilEquipmentPanelOptions): void {
     this.onClose = options.onClose;
@@ -125,6 +131,10 @@ export class VeilEquipmentPanel extends Component {
     const rows = buildHeroEquipmentActionRows(hero);
     const inspectItems = buildEquipmentInspectItems(hero);
     const selectedInspectItem = this.resolveInspectedItem(inspectItems);
+    const inventoryView = buildInventorySummaryView(hero, {
+      filter: this.inventoryFilter,
+      sort: this.inventorySort
+    });
     const buttons = buildActionButtons(
       inspectItems,
       rows,
@@ -134,8 +144,13 @@ export class VeilEquipmentPanel extends Component {
     );
     const bonusSummary = formatEquipmentStatSummary(hero);
     const loadoutLines = formatEquipmentOverviewLines(hero);
-    const inventoryLines = formatInventorySummaryLines(hero);
+    const inventoryLines = inventoryView.lines;
     const inspectLines = formatEquipmentInspectLines(selectedInspectItem);
+    const spotlightLines = formatLootSpotlightLines(
+      state.recentSessionEvents ?? [],
+      hero?.id,
+      hero?.name
+    );
     const lootLines = formatRecentLootLines(
       state.recentEventLog,
       hero?.id,
@@ -184,6 +199,47 @@ export class VeilEquipmentPanel extends Component {
     );
 
     cursorY = this.renderCard(
+      "EquipmentPanelControls",
+      0,
+      cursorY,
+      contentWidth,
+      60,
+      [
+        "筛选与排序",
+        `筛选 当前 ${this.describeInventoryFilter(this.inventoryFilter)} · 排序 当前 ${this.describeInventorySort(this.inventorySort)}`
+      ],
+      {
+        fill: CARD_FILL,
+        stroke: new Color(220, 230, 244, 56)
+      },
+      null,
+      12,
+      15
+    );
+
+    this.renderInventoryControlButtons(contentWidth, cursorY + 4);
+
+    cursorY -= 44;
+
+    if ((state.recentSessionEvents?.length ?? 0) > 0) {
+      cursorY = this.renderCard(
+        "EquipmentPanelLootSpotlight",
+        0,
+        cursorY,
+        contentWidth,
+        76,
+        spotlightLines,
+        {
+          fill: CARD_HIGHLIGHT_FILL,
+          stroke: new Color(244, 236, 208, 82)
+        },
+        null,
+        12,
+        16
+      );
+    }
+
+    cursorY = this.renderCard(
       "EquipmentPanelLoadout",
       0,
       cursorY,
@@ -204,7 +260,7 @@ export class VeilEquipmentPanel extends Component {
       0,
       cursorY,
       contentWidth,
-      Math.max(110, 34 + inventoryLines.length * 16),
+      Math.max(122, 34 + inventoryLines.length * 16),
       ["背包清单", ...inventoryLines],
       {
         fill: CARD_FILL,
@@ -258,6 +314,20 @@ export class VeilEquipmentPanel extends Component {
     }
   }
 
+  private setInventoryFilter(filter: CocosEquipmentInventoryFilter): void {
+    this.inventoryFilter = filter;
+    if (this.currentState) {
+      this.render(this.currentState);
+    }
+  }
+
+  private setInventorySort(sort: CocosEquipmentInventorySort): void {
+    this.inventorySort = sort;
+    if (this.currentState) {
+      this.render(this.currentState);
+    }
+  }
+
   private resolveInspectedItem(items: CocosEquipmentInspectItem[]): CocosEquipmentInspectItem | null {
     const matchedItem = items.find(
       (item) => item.itemId === this.inspectedItemId && item.source === this.inspectedItemSource
@@ -270,6 +340,14 @@ export class VeilEquipmentPanel extends Component {
     this.inspectedItemId = nextItem?.itemId ?? null;
     this.inspectedItemSource = nextItem?.source ?? null;
     return nextItem ?? null;
+  }
+
+  private describeInventoryFilter(filter: CocosEquipmentInventoryFilter): string {
+    return filter === "all" ? "全部" : formatEquipmentSlotLabel(filter);
+  }
+
+  private describeInventorySort(sort: CocosEquipmentInventorySort): string {
+    return sort === "slot" ? "槽位" : sort === "rarity" ? "稀有度" : "名称";
   }
 
   private syncChrome(width: number, height: number): void {
@@ -454,6 +532,64 @@ export class VeilEquipmentPanel extends Component {
       if (
         (child.name.startsWith("EquipmentPanelAction-") || child.name.startsWith("EquipmentPanelInspect-")) &&
         !actionButtons.some((button) => button.name === child.name)
+      ) {
+        child.active = false;
+      }
+    }
+  }
+
+  private renderInventoryControlButtons(contentWidth: number, centerY: number): void {
+    const buttonWidth = Math.floor((contentWidth - 18) / 4);
+    const buttonHeight = 20;
+    const gap = 6;
+    const filterButtons: Array<{ name: string; label: string; filter: CocosEquipmentInventoryFilter }> = [
+      { name: "EquipmentPanelFilter-all", label: "全部", filter: "all" },
+      { name: "EquipmentPanelFilter-weapon", label: "武器", filter: "weapon" },
+      { name: "EquipmentPanelFilter-armor", label: "护甲", filter: "armor" },
+      { name: "EquipmentPanelFilter-accessory", label: "饰品", filter: "accessory" }
+    ];
+    filterButtons.forEach((button, index) => {
+      this.renderButton(
+        button.name,
+        -contentWidth / 2 + buttonWidth / 2 + index * (buttonWidth + gap),
+        centerY,
+        buttonWidth,
+        buttonHeight,
+        button.label,
+        {
+          fill: this.inventoryFilter === button.filter ? CARD_HIGHLIGHT_FILL : BUTTON_FILL,
+          stroke: new Color(230, 238, 246, 106)
+        },
+        () => this.setInventoryFilter(button.filter)
+      );
+    });
+
+    const sortButtons: Array<{ name: string; label: string; sort: CocosEquipmentInventorySort }> = [
+      { name: "EquipmentPanelSort-slot", label: "槽位", sort: "slot" },
+      { name: "EquipmentPanelSort-rarity", label: "稀有", sort: "rarity" },
+      { name: "EquipmentPanelSort-name", label: "名称", sort: "name" }
+    ];
+    sortButtons.forEach((button, index) => {
+      this.renderButton(
+        button.name,
+        -contentWidth / 2 + buttonWidth / 2 + index * (buttonWidth + gap),
+        centerY - 24,
+        buttonWidth,
+        buttonHeight,
+        button.label,
+        {
+          fill: this.inventorySort === button.sort ? CARD_HIGHLIGHT_FILL : BUTTON_FILL,
+          stroke: new Color(230, 238, 246, 106)
+        },
+        () => this.setInventorySort(button.sort)
+      );
+    });
+
+    for (const child of this.node.children) {
+      if (
+        (child.name.startsWith("EquipmentPanelFilter-") || child.name.startsWith("EquipmentPanelSort-")) &&
+        !filterButtons.some((button) => button.name === child.name) &&
+        !sortButtons.some((button) => button.name === child.name)
       ) {
         child.active = false;
       }

@@ -8,7 +8,7 @@
 - Cocos session layer: `apps/cocos-client/assets/scripts/VeilCocosSession.ts` already sends `hero.equip` / `hero.unequip` requests and caches the returned `SessionUpdate`.
 - Cocos prediction/HUD layer: `apps/cocos-client/assets/scripts/cocos-prediction.ts`, `apps/cocos-client/assets/scripts/cocos-hero-equipment.ts`, and `apps/cocos-client/assets/scripts/VeilHudPanel.ts` present hero loadout state, grouped inventory choices, recent loot, and visible stat changes inside the primary runtime.
 
-## Implemented Slice For #683
+## Implemented Slice For #1018
 
 - Runtime entry points for this loop:
   - `apps/cocos-client/assets/scripts/VeilRoot.ts`: opens/closes the gameplay equipment panel, routes equip/unequip actions, and feeds recent session loot plus account event log state into the panel.
@@ -24,8 +24,11 @@
   - recent loot lines from the Cocos-visible account event log
 - Primary client `装备背包` panel now provides a dedicated runtime surface for the same loop:
   - open it from the left HUD chrome without leaving the main scene
+  - highlight the latest authoritative combat drop in a dedicated `战斗结算` loot spotlight card as soon as settlement lands
   - inspect one concrete equipped or backpack item at a time from a dedicated `物品详情` card
   - inspect equipped slots, grouped backpack contents, and recent loot in one place
+  - filter the backpack by `全部 / 武器 / 护甲 / 饰品`
+  - sort the backpack by `槽位 / 稀有度 / 名称`
   - execute equip / unequip actions from the panel and reuse the existing prediction plus authoritative reconciliation path
 - Existing equip/unequip buttons remain the interaction surface and continue to drive prediction plus server reconciliation.
 - The hero summary card now renders equipment-adjusted totals from shared progression math, so stat changes are visible during prediction and after reconciliation instead of only after a secondary refresh path.
@@ -46,14 +49,16 @@
 3. Enter a room and move until you trigger at least one neutral battle.
 4. Win a battle that grants equipment.
 5. Click `装备背包` in the left HUD chrome and confirm the dedicated panel opens.
-6. Confirm the panel `最近战利品` section shows the new drop and the `背包清单` section shows the item with rarity and stat summary.
-7. Click a `查看 ...` button in the panel and confirm the `物品详情` card updates to show the selected item's rarity, source, stat bonuses, and description.
-8. Fill the inventory to 6 items and trigger another equipment drop.
-9. Confirm the panel, HUD, and event log clearly state the backpack was full and the overflowed drop was not picked up.
-10. While the backpack is full, try to unequip an item and confirm the action is rejected with a full-inventory message.
-11. Free one slot, then click an equip action button inside the `装备背包` panel.
-12. Confirm the hero stat lines in the HUD update immediately after prediction/reconciliation.
-13. Click the matching unequip action in the same panel and confirm the item returns to inventory and the stat gain line rolls back.
+6. Confirm the panel `战斗结算` 卡片会高亮展示刚掉落的装备，并且 `最近战利品` / `背包清单` 同时包含该物品。
+7. 切换 `全部 / 武器 / 护甲 / 饰品` 过滤按钮，并确认 `背包清单` 只显示对应分类。
+8. 切换 `槽位 / 稀有度 / 名称` 排序按钮，并确认 `背包清单` 顺序立即变化。
+9. Click a `查看 ...` button in the panel and confirm the `物品详情` card updates to show the selected item's rarity, source, stat bonuses, and description.
+10. Fill the inventory to 6 items and trigger another equipment drop.
+11. Confirm the panel, HUD, and event log clearly state the backpack was full and the overflowed drop was not picked up.
+12. While the backpack is full, try to unequip an item and confirm the action is rejected with a full-inventory message.
+13. Free one slot, then click an equip action button inside the `装备背包` panel.
+14. Confirm the hero stat lines in the HUD update immediately after prediction/reconciliation.
+15. Click the matching unequip action in the same panel and confirm the item returns to inventory and the stat gain line rolls back.
 
 ## Temporary Assumptions
 
