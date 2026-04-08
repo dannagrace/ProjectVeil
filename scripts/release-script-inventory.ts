@@ -156,6 +156,17 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "`artifacts/release-readiness/phase1-exit-audit-<candidate>-<short-sha>.md`",
     ],
   },
+  "release:phase1:exit-dossier-freshness-gate": {
+    purpose:
+      "Fail closed when the Phase 1 dossier, exit audit, release snapshot, release gate summary, and owner ledger drift off the same candidate revision or freshness window.",
+    requiredInputs: [
+      "Pass `--candidate` and `--candidate-revision`; optionally pin dossier, exit-audit, snapshot, release-gate-summary, and manual-evidence-ledger paths.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/phase1-exit-dossier-freshness-gate-<candidate>-<short-sha>.json`",
+      "`artifacts/release-readiness/phase1-exit-dossier-freshness-gate-<candidate>-<short-sha>.md`",
+    ],
+  },
   "release:phase1:same-revision-evidence-bundle": {
     purpose: "Generate the same-revision Phase 1 evidence bundle for a single candidate revision, including snapshot, dashboard, gate, and ledger scaffolding.",
     requiredInputs: [
@@ -163,6 +174,17 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     ],
     producedArtifacts: [
       "Output directory under `artifacts/release-readiness/phase1-same-revision-evidence-bundle-<candidate>-<short-sha>/` containing `phase1-same-revision-evidence-bundle-manifest.json`, `phase1-same-revision-evidence-bundle.md`, and staged evidence artifacts.",
+    ],
+  },
+  "release:wechat:install-launch-evidence": {
+    purpose:
+      "Record the candidate-scoped WeChat install/launch verification artifact used by manual review, validate:wechat-rc, and top-level release gate summaries.",
+    requiredInputs: [
+      "Pass `--artifacts-dir`, `--candidate`, `--environment`, `--operator`, and `--status`; optionally pin `--candidate-revision`, `--summary`, and `--evidence`.",
+    ],
+    producedArtifacts: [
+      "`codex.wechat.install-launch-evidence.json` in the selected artifacts directory.",
+      "`codex.wechat.install-launch-evidence.md` in the selected artifacts directory.",
     ],
   },
   "release:runtime-observability:evidence": {

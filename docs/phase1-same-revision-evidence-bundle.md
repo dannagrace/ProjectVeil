@@ -70,8 +70,9 @@ The JSON manifest is the CI/operator integration point. It contains:
 1. Pin the candidate name and git revision.
 2. Run the bundle command with either explicit artifact paths or enough inputs for the command to generate them.
 3. Open `phase1-same-revision-evidence-bundle.md` for the reviewer summary.
-4. If the manifest reports `stale`, `missing`, or `revision_mismatch`, refresh the upstream artifact named in the finding instead of editing the manifest.
-5. Update the generated manual evidence owner ledger and, for WeChat, the runtime observability placeholder as reviewers complete manual sign-off.
+4. Generate or refresh `npm run release:phase1:candidate-dossier` and `npm run release:phase1:exit-audit` from the staged packet, then run `npm run release:phase1:exit-dossier-freshness-gate` against those outputs before attaching the packet to CI or the release PR.
+5. If either report surfaces `stale`, `missing`, `revision_mismatch`, or linked-artifact drift, refresh the upstream artifact named in the finding instead of editing the report.
+6. Update the generated manual evidence owner ledger and, for WeChat, the runtime observability placeholder as reviewers complete manual sign-off.
 
 ## Notes
 

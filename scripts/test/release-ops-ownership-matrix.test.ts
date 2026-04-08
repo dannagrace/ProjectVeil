@@ -30,6 +30,7 @@ test("release-ops ownership matrix marks authoritative gate owners for key relea
   assert.equal(entries.get("release:gate:summary")?.decisionRole, "authoritative gate");
 
   assert.equal(entries.get("release:phase1:same-revision-evidence-bundle")?.scope, "same-revision");
+  assert.equal(entries.get("release:phase1:exit-dossier-freshness-gate")?.scope, "same-revision");
   assert.equal(entries.get("release:candidate:evidence-audit")?.scope, "same-candidate");
   assert.equal(entries.get("release:runtime-observability:gate")?.scope, "runtime");
   assert.equal(entries.get("validate:wechat-rc")?.scope, "wechat-release");
