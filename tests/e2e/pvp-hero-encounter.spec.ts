@@ -1,6 +1,41 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectHeroMoveSpent } from "./smoke-helpers";
 
+function extractUnitSnapshot(text: string) {
+  const countMatch = text.match(/x(\d+)/);
+  const hpMatch = text.match(/HP (\d+)\/(\d+)/);
+
+  return {
+    count: Number(countMatch?.[1] ?? -1),
+    currentHp: Number(hpMatch?.[1] ?? -1),
+    maxHp: Number(hpMatch?.[2] ?? -1),
+    dead: text.includes("已阵亡")
+  };
+}
+
+async function readBattleSnapshot(page: Page) {
+  const [log, heroOne, heroTwo] = await Promise.all([
+    page.getByTestId("battle-log").innerText(),
+    page.getByTestId("battle-unit-hero-1-stack").innerText(),
+    page.getByTestId("battle-unit-hero-2-stack").innerText()
+  ]);
+
+  return {
+    log: log.trim(),
+    units: {
+      "hero-1-stack": extractUnitSnapshot(heroOne),
+      "hero-2-stack": extractUnitSnapshot(heroTwo)
+    }
+  };
+}
+
+async function expectSynchronizedBattleDamage(pageOne: Page, pageTwo: Page): Promise<void> {
+  await expect.poll(async () => {
+    const [first, second] = await Promise.all([readBattleSnapshot(pageOne), readBattleSnapshot(pageTwo)]);
+    return first.log === second.log && JSON.stringify(first.units) === JSON.stringify(second.units);
+  }).toBe(true);
+}
+
 async function pressTile(page: Page, x: number, y: number): Promise<void> {
   await page.locator(`[data-x="${x}"][data-y="${y}"]`).dispatchEvent("pointerdown", {
     button: 0
@@ -51,21 +86,27 @@ test("two players can enter a hero-vs-hero battle and resolve it with correct tu
   await expect(playerTwoPage.getByTestId("room-next-action")).toHaveAttribute("data-tone", "action");
   await expect(playerTwoPage.getByTestId("battle-attack")).toBeVisible();
   await expect(playerOnePage.getByTestId("battle-actions")).toContainText("等待对手操作");
+  await expectSynchronizedBattleDamage(playerOnePage, playerTwoPage);
 
   await attackOnce(playerTwoPage);
   await expect(playerOnePage.getByTestId("battle-attack")).toBeVisible();
   await expect(playerTwoPage.getByTestId("battle-actions")).toContainText("等待对手操作");
+  await expectSynchronizedBattleDamage(playerOnePage, playerTwoPage);
 
   await attackOnce(playerOnePage);
   await expect(playerTwoPage.getByTestId("battle-attack")).toBeVisible();
+  await expectSynchronizedBattleDamage(playerOnePage, playerTwoPage);
 
   await attackOnce(playerTwoPage);
   await expect(playerOnePage.getByTestId("battle-attack")).toBeVisible();
+  await expectSynchronizedBattleDamage(playerOnePage, playerTwoPage);
 
   await attackOnce(playerOnePage);
   await expect(playerTwoPage.getByTestId("battle-attack")).toBeVisible();
+  await expectSynchronizedBattleDamage(playerOnePage, playerTwoPage);
 
   await attackOnce(playerTwoPage);
+  await expectSynchronizedBattleDamage(playerOnePage, playerTwoPage);
 
   await expect(playerOnePage.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
   await expect(playerOnePage.getByTestId("battle-modal-body")).toContainText("你已击败敌方英雄");
