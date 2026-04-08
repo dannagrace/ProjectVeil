@@ -1,112 +1,86 @@
-# Codex Automation Branch Maintenance Runbook
+# Codex Branch And Worktree Hygiene Runbook
 
-This runbook is for operators auditing and pruning stale `codex/issue-*` automation branches in `dannagrace/ProjectVeil`.
+This runbook is for maintainers auditing and pruning stale `codex/issue-*` branches and attached worktrees in `dannagrace/ProjectVeil`.
 
-`npm run ops:codex-branches` inspects local refs and `origin/codex/issue-*` refs in the current repository, then combines Git state with current open-PR data from `gh`. It does not touch unrelated files or worktrees, `prune` is dry-run by default, and runs are serialized per repository worktree so two Codex automation invocations cannot mutate the same worktree concurrently.
+`npm run ops:branch-hygiene -- list` is the single entry point. It inspects local refs, `origin/codex/issue-*` refs, and attached Git worktrees in the current repository, then combines Git state with current PR state from `gh`.
 
-## When To Run It
+The report is machine-readable in JSON mode and safe by default:
 
-Run this workflow when codex automation branches have accumulated and you need to confirm which ones are still active, which need manual follow-up, and which merged branches are old enough to prune.
+- it distinguishes `merged`, `open-pr`, `draft-pr`, and `orphaned` branch hygiene states
+- cleanup is dry-run by default
+- cleanup refuses to remove anything with an open or draft PR
+- cleanup refuses to remove a local branch when its attached worktree has uncommitted changes
+- cleanup removes clean attached worktrees before deleting the corresponding merged local branch
 
-Use it before doing any manual branch cleanup in GitHub or locally. The script is the source of truth for the audit classification.
-
-## Safety Checks Before Any Cleanup
-
-Confirm all of the following before acting on a prune result:
-
-- You are in the `ProjectVeil` repo and have fetched the latest remote refs.
-- Your local `main` is current with `origin/main`.
-- `gh auth status` succeeds for the GitHub account that can read PR state for this repo.
-- You are not currently checked out on a branch you expect to prune.
-- You have reviewed the dry-run output from `prune` in the same repo state you plan to act on.
-
-Recommended prep:
-
-```bash
-git checkout main
-git pull --ff-only origin main
-git fetch --prune origin
-gh auth status
-```
-
-If another Codex automation run is already using the same worktree, the command waits for that worktree-local lock to clear before continuing. Independent Git worktrees keep separate locks and do not block each other.
-
-## Audit Workflow
+## Operator Workflow
 
 Start with a read-only audit:
 
 ```bash
-npm run ops:codex-branches -- list
+npm run ops:branch-hygiene -- list
 ```
 
-Use JSON output if you want to save or diff the report:
+Write a machine-readable report for maintainers or automation:
 
 ```bash
-npm run ops:codex-branches -- list --format json
+npm run ops:branch-hygiene -- list --format json > artifacts/branch-hygiene-report.json
 ```
 
-Each row reports:
-
-- age in days since the latest commit
-- upstream tracking status for local branches
-- whether the branch tip is already merged into `main`
-- whether an open PR still exists for that branch name
-- a classification of `active`, `safe-to-delete`, or `manual-review`
-- the suggested next action for that branch
-
-## Classification And Explicit Exclusions
-
-The audit intentionally excludes the following branches from automatic pruning:
-
-- Open PR branches: any branch with an open pull request stays `active`, even if already merged.
-- Active branches: the currently checked-out branch and recent unmerged work stay out of automatic deletion.
-- Manual-review branches: stale unmerged branches and branches whose tracked upstream is already gone require human review and are never auto-pruned.
-
-Retention policy:
-
-- Active branches: keep any branch with an open PR, the currently checked-out branch, or unmerged work updated within the last 30 days.
-- Merged branches: keep merged branches for 7 days after their latest commit so recent automation work remains visible while review and post-merge checks settle.
-- Abandoned branches: treat unmerged branches older than 30 days and branches whose tracked upstream is already gone as `manual-review`.
-
-Only one class is eligible for automatic pruning:
-
-- Safe-to-delete: merged into `main`, no open PR, older than the 7-day merged retention window, and not the currently checked-out branch.
-
-## Dry-Run-First Prune Workflow
-
-Always preview prune candidates before deletion:
+Preview cleanup candidates only:
 
 ```bash
-npm run ops:codex-branches -- prune
+npm run ops:branch-hygiene -- prune
 ```
 
-That command only prints `safe-to-delete` rows. It does not delete anything until `--apply` is present.
-
-If the dry run looks correct, delete eligible local branches:
+Apply local cleanup for already-merged branches and clean attached worktrees:
 
 ```bash
-npm run ops:codex-branches -- prune --apply
+npm run ops:branch-hygiene -- prune --apply
 ```
 
-Delete remote branches only after confirming the dry-run set still looks correct and you explicitly want to remove `origin/*` refs too:
+Delete merged remote refs too, but only when you explicitly intend to remove `origin/*` branches:
 
 ```bash
-npm run ops:codex-branches -- prune --apply --delete-remote
+npm run ops:branch-hygiene -- prune --apply --delete-remote
 ```
+
+The legacy alias `npm run ops:codex-branches -- ...` still works, but `ops:branch-hygiene` is the canonical command.
+
+## Reading The Report
+
+Each branch entry includes:
+
+- `hygieneState`: `merged`, `open-pr`, `draft-pr`, `orphaned`, `stale`, or `active`
+- `classification`: whether the branch is retained, requires manual review, or is safe to delete
+- `pullRequestState`: `none`, `open-pr`, or `draft-pr`
+- `worktrees`: attached worktree metadata, including `dirty`, `prunable`, and `isCurrent`
+
+The JSON payload also includes a top-level `worktrees` section so maintainers can inspect worktree hygiene directly.
+
+## Guardrails
+
+Confirm all of the following before any applied cleanup:
+
+- you are in the intended `ProjectVeil` repository
+- `git fetch --prune origin` has been run recently
+- `gh auth status` succeeds for an account that can read PR state for the repo
+- you have reviewed the dry-run output from the same repository state you plan to prune
+
+Script-enforced guardrails:
+
+- no deletion happens unless `--apply` is present
+- remote branch deletion is disabled unless `--delete-remote` is present
+- branches with an open PR or draft PR are never removed
+- local branches with dirty attached worktrees are never removed
+- the currently checked-out branch or current worktree is never auto-pruned
+- orphaned and stale unmerged branches stay in manual review
+- only one hygiene run can operate in a repository worktree at a time
 
 ## Post-Run Verification
 
 After any applied prune:
 
-- Re-run `npm run ops:codex-branches -- list` to confirm the remaining branch set.
-- Check that any expected open PR branches still appear as `active`.
-- If you deleted remote refs, verify GitHub no longer shows those fully merged, no-PR branches as active heads.
-
-## Guardrails Enforced By The Script
-
-- No deletion happens unless `--apply` is present.
-- Remote branch deletion is disabled unless `--delete-remote` is present.
-- Only one `ops:codex-branches` run can execute at a time per repository worktree.
-- Branches with open PRs are never pruned.
-- Unmerged stale branches stay in `manual-review`; the tool does not auto-delete them.
-- The currently checked-out branch is never pruned, even if it would otherwise qualify.
+- rerun `npm run ops:branch-hygiene -- list`
+- confirm expected open and draft PR branches still appear in the report
+- confirm any deleted local worktree paths are gone
+- if you removed remote refs, verify GitHub no longer shows those merged heads as active branches

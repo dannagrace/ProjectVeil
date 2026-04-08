@@ -8,6 +8,9 @@ type Command = "list" | "prune";
 type Scope = "local" | "remote";
 type Classification = "active" | "safe-to-delete" | "manual-review";
 type OutputFormat = "table" | "json";
+type PullRequestState = "none" | "open-pr" | "draft-pr";
+type HygieneState = "merged" | "open-pr" | "draft-pr" | "orphaned" | "stale" | "active";
+type WorktreeState = "merged" | "open-pr" | "draft-pr" | "orphaned" | "dirty" | "active";
 
 interface Args {
   command: Command;
@@ -29,10 +32,31 @@ interface BranchSnapshot {
   upstreamTrack: string | null;
 }
 
-interface OpenPullRequestInfo {
+interface WorktreeSnapshot {
+  path: string;
+  head: string | null;
+  branchRef: string | null;
+  lockedReason: string | null;
+  prunableReason: string | null;
+  isCurrent: boolean;
+  dirty: boolean;
+}
+
+export interface OpenPullRequestInfo {
   number: number;
   url: string;
   headRefName: string;
+  isDraft: boolean;
+}
+
+interface BranchWorktreeInfo {
+  path: string;
+  dirty: boolean;
+  isCurrent: boolean;
+  locked: boolean;
+  lockedReason: string | null;
+  prunable: boolean;
+  prunableReason: string | null;
 }
 
 export interface BranchAuditEntry {
@@ -45,9 +69,27 @@ export interface BranchAuditEntry {
   upstream: string | null;
   upstreamStatus: string;
   merged: boolean;
+  pullRequestState: PullRequestState;
   openPr: OpenPullRequestInfo | null;
+  hygieneState: HygieneState;
   classification: Classification;
   nextAction: string;
+  reasons: string[];
+  worktrees: BranchWorktreeInfo[];
+  hasDirtyWorktree: boolean;
+}
+
+export interface WorktreeAuditEntry {
+  path: string;
+  branch: string | null;
+  refName: string | null;
+  head: string | null;
+  isCurrent: boolean;
+  dirty: boolean;
+  locked: boolean;
+  prunable: boolean;
+  state: WorktreeState;
+  cleanupEligible: boolean;
   reasons: string[];
 }
 
@@ -55,6 +97,7 @@ interface BuildReportArgs {
   branches: BranchSnapshot[];
   mergedRefs: Set<string>;
   openPrsByBranch: Map<string, OpenPullRequestInfo>;
+  worktrees: WorktreeSnapshot[];
   base: string;
   currentBranch: string;
   nowMs: number;
@@ -77,15 +120,16 @@ function fail(message: string): never {
 
 function printUsage(): void {
   console.log("Usage:");
-  console.log("  npm run ops:codex-branches -- list");
-  console.log("  npm run ops:codex-branches -- list --format json");
-  console.log("  npm run ops:codex-branches -- prune");
-  console.log("  npm run ops:codex-branches -- prune --apply");
-  console.log("  npm run ops:codex-branches -- prune --apply --delete-remote");
+  console.log("  npm run ops:branch-hygiene -- list");
+  console.log("  npm run ops:branch-hygiene -- list --format json");
+  console.log("  npm run ops:branch-hygiene -- prune");
+  console.log("  npm run ops:branch-hygiene -- prune --apply");
+  console.log("  npm run ops:branch-hygiene -- prune --apply --delete-remote");
   console.log("");
   console.log("Notes:");
-  console.log(`- Audits local and origin/${BRANCH_PREFIX}* branches in the current repo only.`);
-  console.log(`- Safe prune candidates must be merged into ${DEFAULT_BASE_BRANCH}, have no open PR, and be older than ${DEFAULT_MERGED_RETENTION_DAYS} day(s).`);
+  console.log(`- Audits local and origin/${BRANCH_PREFIX}* branches plus attached worktrees in the current repo only.`);
+  console.log(`- Cleanup candidates must be merged into ${DEFAULT_BASE_BRANCH}, have no open or draft PR, and be older than ${DEFAULT_MERGED_RETENTION_DAYS} day(s).`);
+  console.log("- Cleanup refuses to remove local branches when the attached worktree is dirty.");
 }
 
 function parsePositiveInteger(rawValue: string, flag: string): number {
@@ -163,9 +207,9 @@ function parseArgs(argv: string[]): Args {
   };
 }
 
-function runCommand(command: string, args: string[], allowFailure = false): string {
+function runCommand(command: string, args: string[], allowFailure = false, cwd = process.cwd()): string {
   const result = spawnSync(command, args, {
-    cwd: process.cwd(),
+    cwd,
     encoding: "utf8"
   });
 
@@ -261,7 +305,7 @@ function readOpenPullRequests(): Map<string, OpenPullRequestInfo> {
     "--limit",
     "500",
     "--json",
-    "number,url,headRefName"
+    "number,url,headRefName,isDraft"
   ]);
 
   const pullRequests = JSON.parse(output || "[]") as OpenPullRequestInfo[];
@@ -270,6 +314,84 @@ function readOpenPullRequests(): Map<string, OpenPullRequestInfo> {
       .filter((pullRequest) => pullRequest.headRefName.startsWith(BRANCH_PREFIX))
       .map((pullRequest) => [pullRequest.headRefName, pullRequest])
   );
+}
+
+function parseWorktreeBlock(block: string): Omit<WorktreeSnapshot, "dirty" | "isCurrent"> {
+  let worktreePath: string | null = null;
+  let head: string | null = null;
+  let branchRef: string | null = null;
+  let lockedReason: string | null = null;
+  let prunableReason: string | null = null;
+
+  for (const rawLine of block.split("\n")) {
+    const line = rawLine.trimEnd();
+    if (!line) {
+      continue;
+    }
+    if (line.startsWith("worktree ")) {
+      worktreePath = line.slice("worktree ".length);
+      continue;
+    }
+    if (line.startsWith("HEAD ")) {
+      head = line.slice("HEAD ".length);
+      continue;
+    }
+    if (line.startsWith("branch ")) {
+      branchRef = line.slice("branch ".length);
+      continue;
+    }
+    if (line.startsWith("locked")) {
+      const reason = line.slice("locked".length).trim();
+      lockedReason = reason || "locked";
+      continue;
+    }
+    if (line.startsWith("prunable")) {
+      const reason = line.slice("prunable".length).trim();
+      prunableReason = reason || "prunable";
+    }
+  }
+
+  if (!worktreePath) {
+    fail(`Unexpected git worktree list --porcelain block:\n${block}`);
+  }
+
+  return {
+    path: worktreePath,
+    head,
+    branchRef,
+    lockedReason,
+    prunableReason
+  };
+}
+
+function readWorktreeSnapshots(): WorktreeSnapshot[] {
+  const output = runCommand("git", ["worktree", "list", "--porcelain"], true);
+  if (!output) {
+    return [];
+  }
+
+  const currentCwd = fs.realpathSync.native(process.cwd());
+
+  return output
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => {
+      const parsed = parseWorktreeBlock(block);
+      const isCurrent = fs.existsSync(parsed.path) && fs.realpathSync.native(parsed.path) === currentCwd;
+      let dirty = false;
+
+      if (!parsed.prunableReason && parsed.branchRef?.startsWith(`refs/heads/${BRANCH_PREFIX}`) && fs.existsSync(parsed.path)) {
+        dirty = runCommand("git", ["status", "--porcelain"], false, parsed.path).length > 0;
+      }
+
+      return {
+        ...parsed,
+        isCurrent,
+        dirty
+      };
+    })
+    .filter((worktree) => worktree.branchRef?.startsWith(`refs/heads/${BRANCH_PREFIX}`) ?? false);
 }
 
 function formatUpstreamStatus(branch: BranchSnapshot): string {
@@ -282,16 +404,54 @@ function formatUpstreamStatus(branch: BranchSnapshot): string {
   return branch.upstreamTrack?.replace(/^\[(.*)\]$/, "$1") ?? "up-to-date";
 }
 
+function pullRequestStateFor(openPr: OpenPullRequestInfo | null): PullRequestState {
+  if (!openPr) {
+    return "none";
+  }
+  return openPr.isDraft ? "draft-pr" : "open-pr";
+}
+
+function isOrphanedBranch(branch: BranchSnapshot, merged: boolean): boolean {
+  return branch.scope === "local" && branch.upstreamTrack === "[gone]" && !merged;
+}
+
+function describeLocalCleanupTarget(worktrees: BranchWorktreeInfo[]): string {
+  if (worktrees.length === 0) {
+    return "eligible for local prune";
+  }
+  return "eligible for worktree + local prune";
+}
+
 export function buildBranchAuditReport({
   branches,
   mergedRefs,
   openPrsByBranch,
+  worktrees,
   base,
   currentBranch,
   nowMs,
   mergedRetentionDays,
   abandonedReviewDays
 }: BuildReportArgs): BranchAuditEntry[] {
+  const worktreesByBranch = new Map<string, BranchWorktreeInfo[]>();
+  for (const worktree of worktrees) {
+    if (!worktree.branchRef) {
+      continue;
+    }
+    const branch = worktree.branchRef.replace(/^refs\/heads\//, "");
+    const existing = worktreesByBranch.get(branch) ?? [];
+    existing.push({
+      path: worktree.path,
+      dirty: worktree.dirty,
+      isCurrent: worktree.isCurrent,
+      locked: Boolean(worktree.lockedReason),
+      lockedReason: worktree.lockedReason,
+      prunable: Boolean(worktree.prunableReason),
+      prunableReason: worktree.prunableReason
+    });
+    worktreesByBranch.set(branch, existing);
+  }
+
   return [...branches]
     .sort((left, right) => left.shortName.localeCompare(right.shortName) || left.scope.localeCompare(right.scope))
     .map((branch) => {
@@ -299,39 +459,64 @@ export function buildBranchAuditReport({
       const ageDays = Number.isFinite(updatedMs) ? Math.max(0, Math.floor((nowMs - updatedMs) / 86_400_000)) : -1;
       const merged = mergedRefs.has(branch.refName);
       const openPr = openPrsByBranch.get(branch.shortName) ?? null;
+      const pullRequestState = pullRequestStateFor(openPr);
+      const branchWorktrees = branch.scope === "local" ? (worktreesByBranch.get(branch.shortName) ?? []) : [];
+      const hasDirtyWorktree = branchWorktrees.some((worktree) => worktree.dirty);
+      const hasCurrentWorktree = branchWorktrees.some((worktree) => worktree.isCurrent);
       const reasons: string[] = [];
+      let hygieneState: HygieneState = "active";
       let classification: Classification = "active";
       let nextAction = "keep";
 
-      if (branch.shortName === currentBranch) {
+      if (pullRequestState === "draft-pr") {
+        hygieneState = "draft-pr";
+        classification = "active";
+        nextAction = `keep until draft PR #${openPr?.number} closes`;
+        reasons.push(`draft PR #${openPr?.number}`);
+      } else if (pullRequestState === "open-pr") {
+        hygieneState = "open-pr";
+        classification = "active";
+        nextAction = `keep until PR #${openPr?.number} closes`;
+        reasons.push(`open PR #${openPr?.number}`);
+      } else if (isOrphanedBranch(branch, merged)) {
+        hygieneState = "orphaned";
         classification = "manual-review";
-        nextAction = "checked out locally";
-        reasons.push("current branch");
-      } else if (openPr) {
-        classification = "active";
-        nextAction = `keep until PR #${openPr.number} closes`;
-        reasons.push(`open PR #${openPr.number}`);
-      } else if (merged && ageDays >= mergedRetentionDays) {
-        classification = "safe-to-delete";
-        nextAction = branch.scope === "remote" ? "eligible for remote prune" : "eligible for local prune";
-        reasons.push(`merged into ${base}`);
-        reasons.push(`older than ${mergedRetentionDays}d retention`);
+        nextAction = "review orphaned branch before any deletion";
+        reasons.push("tracked remote branch is gone");
       } else if (merged) {
-        classification = "active";
-        nextAction = `keep until ${mergedRetentionDays}d retention expires`;
-        reasons.push(`merged recently (${ageDays}d old)`);
+        hygieneState = "merged";
+        reasons.push(`merged into ${base}`);
+        if (branch.shortName === currentBranch || hasCurrentWorktree) {
+          classification = "manual-review";
+          nextAction = "checked out locally";
+          reasons.push("current branch");
+        } else if (hasDirtyWorktree) {
+          classification = "manual-review";
+          nextAction = "refuse cleanup until attached worktree is clean";
+          reasons.push("attached worktree has uncommitted changes");
+        } else if (ageDays >= mergedRetentionDays) {
+          classification = "safe-to-delete";
+          nextAction = branch.scope === "remote" ? "eligible for remote prune" : describeLocalCleanupTarget(branchWorktrees);
+          reasons.push(`older than ${mergedRetentionDays}d retention`);
+        } else {
+          classification = "active";
+          nextAction = `keep until ${mergedRetentionDays}d retention expires`;
+          reasons.push(`merged recently (${ageDays}d old)`);
+        }
       } else if (ageDays >= abandonedReviewDays) {
+        hygieneState = "stale";
         classification = "manual-review";
         nextAction = "review before any deletion";
         reasons.push("stale unmerged branch");
         reasons.push(`older than ${abandonedReviewDays}d review threshold`);
       } else {
+        hygieneState = "active";
         classification = "active";
         nextAction = "keep";
         reasons.push("recent unmerged work");
       }
 
-      if (branch.scope === "local" && branch.upstreamTrack === "[gone]") {
+      if (branch.scope === "local" && branch.upstreamTrack === "[gone]" && !reasons.includes("tracked remote branch is gone")) {
         reasons.push("tracked remote branch is gone");
       }
 
@@ -345,9 +530,68 @@ export function buildBranchAuditReport({
         upstream: branch.upstream,
         upstreamStatus: formatUpstreamStatus(branch),
         merged,
+        pullRequestState,
         openPr,
+        hygieneState,
         classification,
         nextAction,
+        reasons,
+        worktrees: branchWorktrees,
+        hasDirtyWorktree
+      };
+    });
+}
+
+export function buildWorktreeAuditReport(worktrees: WorktreeSnapshot[], entries: BranchAuditEntry[]): WorktreeAuditEntry[] {
+  const branchesByRef = new Map(entries.map((entry) => [`refs/heads/${entry.branch}`, entry]));
+
+  return [...worktrees]
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .map((worktree) => {
+      const branchEntry = worktree.branchRef ? branchesByRef.get(worktree.branchRef) ?? null : null;
+      const reasons: string[] = [];
+      let state: WorktreeState = "active";
+      let cleanupEligible = false;
+
+      if (worktree.prunableReason) {
+        state = "orphaned";
+        reasons.push(worktree.prunableReason);
+      } else if (worktree.dirty) {
+        state = "dirty";
+        reasons.push("worktree has uncommitted changes");
+      } else if (branchEntry?.pullRequestState === "draft-pr") {
+        state = "draft-pr";
+        reasons.push(`branch has draft PR #${branchEntry.openPr?.number}`);
+      } else if (branchEntry?.pullRequestState === "open-pr") {
+        state = "open-pr";
+        reasons.push(`branch has open PR #${branchEntry.openPr?.number}`);
+      } else if (branchEntry?.merged) {
+        state = "merged";
+        cleanupEligible = branchEntry.classification === "safe-to-delete";
+        reasons.push(`branch ${branchEntry.branch} merged`);
+      } else {
+        state = "active";
+        reasons.push("attached to active branch");
+      }
+
+      if (worktree.isCurrent) {
+        reasons.push("current worktree");
+      }
+      if (worktree.lockedReason) {
+        reasons.push(worktree.lockedReason);
+      }
+
+      return {
+        path: worktree.path,
+        branch: worktree.branchRef ? worktree.branchRef.replace(/^refs\/heads\//, "") : null,
+        refName: worktree.branchRef,
+        head: worktree.head,
+        isCurrent: worktree.isCurrent,
+        dirty: worktree.dirty,
+        locked: Boolean(worktree.lockedReason),
+        prunable: Boolean(worktree.prunableReason),
+        state,
+        cleanupEligible,
         reasons
       };
     });
@@ -359,6 +603,12 @@ export function selectPruneCandidates(entries: BranchAuditEntry[], deleteRemote:
       return false;
     }
     if (entry.scope === "remote" && !deleteRemote) {
+      return false;
+    }
+    if (entry.pullRequestState !== "none") {
+      return false;
+    }
+    if (entry.hasDirtyWorktree) {
       return false;
     }
     return true;
@@ -375,8 +625,11 @@ function renderTable(entries: BranchAuditEntry[]): void {
       upstream: entry.upstream ?? "-",
       upstreamStatus: entry.upstreamStatus,
       merged: entry.merged ? "yes" : "no",
-      openPr: entry.openPr ? `#${entry.openPr.number}` : "-",
+      pr: entry.openPr ? `${entry.pullRequestState === "draft-pr" ? "draft" : "open"} #${entry.openPr.number}` : "-",
+      hygieneState: entry.hygieneState,
       classification: entry.classification,
+      worktrees: entry.worktrees.length,
+      dirtyWorktree: entry.hasDirtyWorktree ? "yes" : "no",
       nextAction: entry.nextAction
     }))
   );
@@ -386,29 +639,58 @@ function renderJson(payload: unknown): void {
   console.log(JSON.stringify(payload, null, 2));
 }
 
-function buildSummary(entries: BranchAuditEntry[], pruneCandidates: BranchAuditEntry[]): Record<string, number> {
+function buildSummary(entries: BranchAuditEntry[], pruneCandidates: BranchAuditEntry[], worktrees: WorktreeAuditEntry[]): Record<string, number> {
   return {
-    audited: entries.length,
-    safeToDelete: pruneCandidates.length,
+    auditedBranches: entries.length,
+    auditedWorktrees: worktrees.length,
+    cleanupCandidates: pruneCandidates.length,
+    merged: entries.filter((entry) => entry.hygieneState === "merged").length,
+    openPr: entries.filter((entry) => entry.hygieneState === "open-pr").length,
+    draftPr: entries.filter((entry) => entry.hygieneState === "draft-pr").length,
+    orphaned: entries.filter((entry) => entry.hygieneState === "orphaned").length,
     manualReview: entries.filter((entry) => entry.classification === "manual-review").length,
-    active: entries.filter((entry) => entry.classification === "active").length
+    active: entries.filter((entry) => entry.classification === "active").length,
+    dirtyWorktrees: worktrees.filter((worktree) => worktree.dirty).length
   };
 }
 
-function printSummary(entries: BranchAuditEntry[], pruneCandidates: BranchAuditEntry[]): void {
-  const summary = buildSummary(entries, pruneCandidates);
+function printSummary(entries: BranchAuditEntry[], pruneCandidates: BranchAuditEntry[], worktrees: WorktreeAuditEntry[]): void {
+  const summary = buildSummary(entries, pruneCandidates, worktrees);
   console.log(
     [
-      `Audited ${summary.audited} codex automation branch ref(s).`,
-      `Safe prune candidates: ${summary.safeToDelete}.`,
+      `Audited ${summary.auditedBranches} codex automation branch ref(s) and ${summary.auditedWorktrees} worktree(s).`,
+      `Cleanup candidates: ${summary.cleanupCandidates}.`,
+      `Merged: ${summary.merged}.`,
+      `Open PR: ${summary.openPr}.`,
+      `Draft PR: ${summary.draftPr}.`,
+      `Orphaned: ${summary.orphaned}.`,
+      `Dirty worktrees: ${summary.dirtyWorktrees}.`,
       `Manual review: ${summary.manualReview}.`,
       `Active/retained: ${summary.active}.`
     ].join(" ")
   );
 }
 
+function ensureDeletionIsSafe(entry: BranchAuditEntry): void {
+  if (entry.pullRequestState !== "none") {
+    fail(`Refusing to remove ${entry.branch}: branch still has ${entry.pullRequestState}.`);
+  }
+  if (entry.hasDirtyWorktree) {
+    fail(`Refusing to remove ${entry.branch}: attached worktree has uncommitted changes.`);
+  }
+}
+
 function deleteBranch(entry: BranchAuditEntry): void {
+  ensureDeletionIsSafe(entry);
+
   if (entry.scope === "local") {
+    for (const worktree of entry.worktrees) {
+      if (worktree.prunable) {
+        continue;
+      }
+      runCommand("git", ["worktree", "remove", worktree.path]);
+      console.log(`Removed worktree ${worktree.path}`);
+    }
     runCommand("git", ["branch", "-D", entry.branch]);
     console.log(`Deleted local branch ${entry.branch}`);
     return;
@@ -500,31 +782,38 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv);
   ensureBaseBranchExists(args.base);
   await withSerializedWorktreeExecution(readCurrentWorktreeGitDir(), async () => {
-    const entries = buildBranchAuditReport({
+    const branchEntries = buildBranchAuditReport({
       branches: readBranchSnapshots(),
       mergedRefs: readMergedRefs(args.base),
       openPrsByBranch: readOpenPullRequests(),
+      worktrees: readWorktreeSnapshots(),
       base: args.base,
       currentBranch: readCurrentBranch(),
       nowMs: Date.now(),
       mergedRetentionDays: args.mergedRetentionDays,
       abandonedReviewDays: args.abandonedReviewDays
     });
-    const pruneCandidates = selectPruneCandidates(entries, args.deleteRemote);
+    const worktreeEntries = buildWorktreeAuditReport(readWorktreeSnapshots(), branchEntries);
+    const pruneCandidates = selectPruneCandidates(branchEntries, args.deleteRemote);
 
     if (args.format === "json") {
       renderJson({
-        entries: args.command === "prune" ? pruneCandidates : entries,
-        summary: buildSummary(entries, pruneCandidates)
+        generatedAt: new Date().toISOString(),
+        repositoryRoot: process.cwd(),
+        baseBranch: args.base,
+        mode: args.command,
+        entries: args.command === "prune" ? pruneCandidates : branchEntries,
+        worktrees: worktreeEntries,
+        summary: buildSummary(branchEntries, pruneCandidates, worktreeEntries)
       });
     } else if (args.command === "prune") {
       renderTable(pruneCandidates);
     } else {
-      renderTable(entries);
+      renderTable(branchEntries);
     }
 
     if (args.format !== "json") {
-      printSummary(entries, pruneCandidates);
+      printSummary(branchEntries, pruneCandidates, worktreeEntries);
     }
 
     if (args.command !== "prune") {
@@ -538,6 +827,8 @@ async function main(): Promise<void> {
       }
       return;
     }
+
+    runCommand("git", ["worktree", "prune"], true);
 
     for (const entry of pruneCandidates) {
       deleteBranch(entry);
