@@ -232,6 +232,7 @@ class GuildService {
 
   async leaveGuildForPlayer(authSession: { playerId: string; displayName: string }, guildId: string): Promise<{
     guild: GuildState;
+    events: ReturnType<typeof leaveGuild>["events"];
     deleted: boolean;
   }> {
     const store = this.requireStore();
@@ -249,11 +250,12 @@ class GuildService {
     });
     if (result.deleted) {
       await store.deleteGuild(guild.id);
-      return { guild: result.guild, deleted: true };
+      return { guild: result.guild, events: result.events, deleted: true };
     }
 
     return {
       guild: await store.saveGuild(result.guild),
+      events: result.events,
       deleted: false
     };
   }
@@ -374,11 +376,13 @@ export function registerGuildRoutes(
         result.deleted
           ? {
               guildId,
+              events: result.events,
               deleted: true
             }
           : {
               guild: createGuildSummaryView(result.guild),
               roster: createGuildRosterView(result.guild),
+              events: result.events,
               deleted: false
             }
       );
