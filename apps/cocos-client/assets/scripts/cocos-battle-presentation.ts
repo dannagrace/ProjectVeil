@@ -4,12 +4,14 @@ import { buildBattleEnterCopy, buildBattleExitCopy, type BattleTransitionCopy } 
 import {
   analyzeBattleProgress,
   buildBattleActionFeedback,
+  buildBossPhaseTransitionFeedback,
   buildBattleSettlementLines,
   buildBattleProgressFeedback,
   buildBattleTransitionFeedback,
   type CocosBattleFeedbackView
 } from "./cocos-battle-feedback.ts";
 import type { CocosBattlePresentationState } from "./cocos-battle-presentation-controller.ts";
+import { buildBossPhaseTransitionEvent, type CocosBossPhaseTransitionEvent } from "./cocos-boss-phase-ui.ts";
 
 export type CocosBattlePresentationPhase = "idle" | "command" | "enter" | "impact" | "active" | "resolution";
 export type CocosBattlePresentationAnimation = "idle" | "attack" | "hit" | "victory" | "defeat";
@@ -37,14 +39,17 @@ export interface CocosBattlePresentationPlan {
   phase: CocosBattlePresentationPhase;
   feedback: CocosBattleFeedbackView | null;
   feedbackDurationMs: number | null;
+  pauseDurationMs: number | null;
   cue: CocosAudioCue | null;
   animation: CocosBattlePresentationAnimation;
   transition: CocosBattlePresentationTransition | null;
   moment: CocosBattlePresentationMoment;
+  phaseTransitionEvent: CocosBossPhaseTransitionEvent | null;
   state: CocosBattlePresentationState;
 }
 
 const RESOLUTION_FEEDBACK_DURATION_MS = 4200;
+const BOSS_PHASE_TRANSITION_PAUSE_MS = 900;
 
 export function buildBattleActionPresentation(
   action: BattleAction,
@@ -63,6 +68,7 @@ export function buildBattleActionPresentation(
     phase: "command",
     feedback,
     feedbackDurationMs: null,
+    pauseDurationMs: null,
     cue: action.type === "battle.attack" ? "attack" : action.type === "battle.skill" ? "skill" : null,
     animation:
       action.type === "battle.attack" || (action.type === "battle.skill" && action.targetId && action.targetId !== action.unitId)
@@ -70,6 +76,7 @@ export function buildBattleActionPresentation(
         : "idle",
     transition: null,
     moment,
+    phaseTransitionEvent: null,
     state: buildPresentationState("command", moment, battle?.id ?? null, feedback, null, {
       cue: action.type === "battle.attack" ? "attack" : action.type === "battle.skill" ? "skill" : null,
       animation:
@@ -78,6 +85,8 @@ export function buildBattleActionPresentation(
           : "idle",
       transition: null,
       durationMs: null,
+      pauseDurationMs: null,
+      phaseTransitionEvent: null,
       summaryLines: []
     })
   };
@@ -96,6 +105,7 @@ export function buildBattlePresentationPlan(
       phase: "enter",
       feedback,
       feedbackDurationMs: null,
+      pauseDurationMs: null,
       cue: null,
       animation: "attack",
       transition: {
@@ -103,11 +113,14 @@ export function buildBattlePresentationPlan(
         copy: buildBattleEnterCopy(update)
       },
       moment: "battle_enter",
+      phaseTransitionEvent: null,
       state: buildPresentationState("enter", "battle_enter", nextBattle.id, feedback, null, {
         cue: null,
         animation: "attack",
         transition: "enter",
         durationMs: null,
+        pauseDurationMs: null,
+        phaseTransitionEvent: null,
         summaryLines: []
       })
     };
@@ -125,6 +138,7 @@ export function buildBattlePresentationPlan(
       phase: "resolution",
       feedback,
       feedbackDurationMs: RESOLUTION_FEEDBACK_DURATION_MS,
+      pauseDurationMs: null,
       cue,
       animation,
       transition: resolution === null ? null : {
@@ -132,11 +146,14 @@ export function buildBattlePresentationPlan(
         copy: buildBattleExitCopy(previousBattle, update, resolution === "victory")
       },
       moment,
+      phaseTransitionEvent: null,
       state: buildPresentationState("resolution", moment, previousBattle.id, feedback, result, {
         cue,
         animation,
         transition: resolution === null ? null : "exit",
         durationMs: RESOLUTION_FEEDBACK_DURATION_MS,
+        pauseDurationMs: null,
+        phaseTransitionEvent: null,
         summaryLines: buildBattleSettlementLines(previousBattle, update, heroId)
       })
     };
@@ -144,28 +161,35 @@ export function buildBattlePresentationPlan(
 
   if (previousBattle && nextBattle) {
     const analysis = analyzeBattleProgress(previousBattle, nextBattle);
+    const phaseTransitionEvent = buildBossPhaseTransitionEvent(previousBattle, nextBattle);
     const impactDetected = detectBattleImpact(previousBattle, nextBattle);
     const defeatedUnitDetected = Boolean(analysis && analysis.defeatedUnits.length > 0);
     const skillDetected = Boolean(analysis?.skillTriggered);
     const moment = defeatedUnitDetected ? "impact_death" : impactDetected ? "impact_hit" : skillDetected ? "active_skill" : "active";
     const phase = defeatedUnitDetected || impactDetected ? "impact" : "active";
-    const cue = defeatedUnitDetected || impactDetected ? "hit" : skillDetected ? "skill" : null;
+    const cue = defeatedUnitDetected || impactDetected ? "hit" : skillDetected || phaseTransitionEvent ? "skill" : null;
     const animation = defeatedUnitDetected || impactDetected ? "hit" : "idle";
-    const feedback = buildBattleProgressFeedback(previousBattle, nextBattle);
+    const feedback = phaseTransitionEvent
+      ? buildBossPhaseTransitionFeedback(phaseTransitionEvent)
+      : buildBattleProgressFeedback(previousBattle, nextBattle);
     return {
       phase,
       feedback,
       feedbackDurationMs: null,
+      pauseDurationMs: phaseTransitionEvent ? BOSS_PHASE_TRANSITION_PAUSE_MS : null,
       cue,
       animation,
       transition: null,
       moment,
+      phaseTransitionEvent,
       state: buildPresentationState(phase, moment, nextBattle.id, feedback, null, {
         cue,
         animation,
         transition: null,
         durationMs: null,
-        summaryLines: []
+        pauseDurationMs: phaseTransitionEvent ? BOSS_PHASE_TRANSITION_PAUSE_MS : null,
+        phaseTransitionEvent,
+        summaryLines: phaseTransitionEvent ? phaseTransitionEvent.summaryLines : []
       })
     };
   }
@@ -174,15 +198,19 @@ export function buildBattlePresentationPlan(
     phase: "idle",
     feedback: null,
     feedbackDurationMs: null,
+    pauseDurationMs: null,
     cue: null,
     animation: "idle",
     transition: null,
     moment: "idle",
+    phaseTransitionEvent: null,
     state: buildPresentationState("idle", "idle", null, null, null, {
       cue: null,
       animation: "idle",
       transition: null,
       durationMs: null,
+      pauseDurationMs: null,
+      phaseTransitionEvent: null,
       summaryLines: []
     })
   };
@@ -226,7 +254,10 @@ function buildPresentationState(
   battleId: string | null,
   feedback: CocosBattleFeedbackView | null,
   result: CocosBattlePresentationState["result"],
-  feedbackLayer: CocosBattlePresentationState["feedbackLayer"] & { summaryLines: string[] }
+  feedbackLayer: CocosBattlePresentationState["feedbackLayer"] & {
+    summaryLines: string[];
+    phaseTransitionEvent: CocosBossPhaseTransitionEvent | null;
+  }
 ): CocosBattlePresentationState {
   if (!feedback) {
     return {
@@ -239,6 +270,7 @@ function buildPresentationState(
       tone: phase === "idle" ? "neutral" : "action",
       result,
       summaryLines: buildPresentationSummaryLines(null, feedbackLayer),
+      phaseTransitionEvent: feedbackLayer.phaseTransitionEvent,
       feedbackLayer
     };
   }
@@ -253,13 +285,17 @@ function buildPresentationState(
     tone: feedback.tone,
     result,
     summaryLines: buildPresentationSummaryLines(feedback, feedbackLayer),
+    phaseTransitionEvent: feedbackLayer.phaseTransitionEvent,
     feedbackLayer
   };
 }
 
 function buildPresentationSummaryLines(
   feedback: CocosBattleFeedbackView | null,
-  feedbackLayer: CocosBattlePresentationState["feedbackLayer"] & { summaryLines: string[] }
+  feedbackLayer: CocosBattlePresentationState["feedbackLayer"] & {
+    summaryLines: string[];
+    phaseTransitionEvent: CocosBossPhaseTransitionEvent | null;
+  }
 ): string[] {
   const lines: string[] = [];
   const layerParts = [`动画 ${formatAnimationLabel(feedbackLayer.animation)}`];

@@ -5,6 +5,7 @@ import {
   type BattlePanelActionView,
   type BattlePanelInput,
   type BattleCamp,
+  type BattlePanelPhaseBannerView,
   type BattlePanelStageView
 } from "./cocos-battle-panel-model.ts";
 import type { CocosBattleFeedbackTone } from "./project-shared/index.ts";
@@ -52,6 +53,8 @@ const IDLE_HINT_NODE_NAME = "BattleIdleHint";
 const IDLE_BADGE_NODE_NAME = "BattleIdleBadge";
 const SECTION_CARD_PREFIX = "BattleSectionCard";
 const STAGE_BANNER_NODE_NAME = "BattleStageBanner";
+const PHASE_BANNER_NODE_NAME = "BattlePhaseBanner";
+const PHASE_TRACKER_NODE_NAME = "BattlePhaseTracker";
 const BADGE_BACKGROUND_SUFFIX = "-Background";
 const UNIT_ART_SIZE = 34;
 const UNIT_FRAME_SIZE = 38;
@@ -88,6 +91,19 @@ interface BattleStageBannerNodes {
   terrainOpacity: UIOpacity;
 }
 
+interface BattlePhaseBannerNodes {
+  node: Node;
+  title: Label;
+  meta: Label;
+  badge: Label;
+}
+
+interface BattlePhaseTrackerNodes {
+  node: Node;
+  title: Label;
+  meta: Label;
+}
+
 export interface VeilBattlePanelState extends BattlePanelInput {}
 
 export interface VeilBattlePanelOptions {
@@ -113,7 +129,12 @@ export class VeilBattlePanel extends Component {
   private headerIconSprite: Sprite | null = null;
   private headerIconOpacity: UIOpacity | null = null;
   private stageBanner: BattleStageBannerNodes | null = null;
+  private phaseBanner: BattlePhaseBannerNodes | null = null;
+  private phaseTracker: BattlePhaseTrackerNodes | null = null;
   private currentState: VeilBattlePanelState | null = null;
+  private activePhaseBanner: BattlePanelPhaseBannerView | null = null;
+  private phaseBannerTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private phaseBannerExpiresAtMs = 0;
   private requestedIcons = false;
   private requestedStageTerrain = false;
   private onSelectTarget: ((unitId: string) => void) | undefined;
@@ -128,6 +149,10 @@ export class VeilBattlePanel extends Component {
   }
 
   onDestroy(): void {
+    if (this.phaseBannerTimeoutId) {
+      clearTimeout(this.phaseBannerTimeoutId);
+      this.phaseBannerTimeoutId = null;
+    }
     if (this.placeholderAssetsRetained) {
       releasePlaceholderSpriteAssets("battle");
       this.placeholderAssetsRetained = false;
@@ -153,6 +178,8 @@ export class VeilBattlePanel extends Component {
 
     if (model.idle) {
       this.hideStageBanner();
+      this.hidePhaseBanner();
+      this.hidePhaseTracker();
       cursorY = this.renderBattleFeedback(model.feedback, cursorY - 4);
       cursorY = this.renderCardTextBlock(
         this.summaryLabel,
@@ -180,7 +207,9 @@ export class VeilBattlePanel extends Component {
 
     this.syncIdleBadge(false, 0, "");
     cursorY = this.renderBattleFeedback(model.feedback, cursorY - 4);
+    cursorY = this.renderPhaseBanner(model.phaseBanner, cursorY - 2);
     cursorY = this.renderStageBanner(model.stage, cursorY - 2);
+    cursorY = this.renderPhaseTracker(model.bossPhaseTracker, cursorY - 2);
     cursorY = this.renderCardTextBlock(this.summaryLabel, "Summary", model.summaryLines, cursorY, 14, 18, 14);
     cursorY = this.renderTextBlock(this.orderLabel, ["行动顺序"], cursorY, 14, 18, 6);
     cursorY = this.renderOrderItems(model.orderItems, cursorY);
@@ -203,6 +232,8 @@ export class VeilBattlePanel extends Component {
       ENEMY_HEADER_NODE_NAME,
       ACTION_HEADER_NODE_NAME,
       STAGE_BANNER_NODE_NAME,
+      PHASE_BANNER_NODE_NAME,
+      PHASE_TRACKER_NODE_NAME,
       HEADER_ICON_NODE_NAME,
       WATERMARK_NODE_NAME,
       IDLE_HINT_NODE_NAME,
@@ -731,6 +762,66 @@ export class VeilBattlePanel extends Component {
     return topY - height - gap;
   }
 
+  private renderPhaseBanner(banner: BattlePanelPhaseBannerView | null, topY: number): number {
+    if (banner && banner.key !== this.activePhaseBanner?.key) {
+      this.activePhaseBanner = banner;
+      this.phaseBannerExpiresAtMs = Date.now() + 2000;
+      if (this.phaseBannerTimeoutId) {
+        clearTimeout(this.phaseBannerTimeoutId);
+      }
+      this.phaseBannerTimeoutId = setTimeout(() => {
+        this.phaseBannerTimeoutId = null;
+        if (this.currentState) {
+          this.render(this.currentState);
+        }
+      }, 2000);
+    }
+
+    if (!this.activePhaseBanner || Date.now() >= this.phaseBannerExpiresAtMs) {
+      this.hidePhaseBanner();
+      return topY;
+    }
+
+    const phaseBanner = this.ensurePhaseBanner();
+    const height = 60;
+    const gap = 10;
+    const transform = phaseBanner.node.getComponent(UITransform) ?? phaseBanner.node.addComponent(UITransform);
+    transform.setContentSize(PANEL_CONTENT_WIDTH, height);
+    phaseBanner.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, topY - height / 2, 0.38);
+    phaseBanner.node.active = true;
+    phaseBanner.title.string = this.activePhaseBanner.title;
+    phaseBanner.meta.string = this.activePhaseBanner.detail;
+    phaseBanner.badge.string = this.activePhaseBanner.badge;
+    this.stylePhaseBanner(phaseBanner.node, phaseBanner.title, phaseBanner.meta, phaseBanner.badge);
+    return topY - height - gap;
+  }
+
+  private renderPhaseTracker(
+    tracker: {
+      title: string;
+      detail: string;
+      markers: Array<{ label: string; thresholdPercent: number; active: boolean; reached: boolean }>;
+    } | null,
+    topY: number
+  ): number {
+    if (!tracker) {
+      this.hidePhaseTracker();
+      return topY;
+    }
+
+    const phaseTracker = this.ensurePhaseTracker();
+    const height = 54;
+    const gap = 10;
+    const transform = phaseTracker.node.getComponent(UITransform) ?? phaseTracker.node.addComponent(UITransform);
+    transform.setContentSize(PANEL_CONTENT_WIDTH, height);
+    phaseTracker.node.setPosition(-PANEL_WIDTH / 2 + PANEL_PADDING + PANEL_CONTENT_WIDTH / 2, topY - height / 2, 0.34);
+    phaseTracker.node.active = true;
+    phaseTracker.title.string = tracker.title;
+    phaseTracker.meta.string = tracker.detail;
+    this.stylePhaseTracker(phaseTracker.node, phaseTracker.title, phaseTracker.meta, tracker.markers);
+    return topY - height - gap;
+  }
+
   private hideStageBanner(): void {
     if (!this.stageBanner) {
       return;
@@ -747,6 +838,27 @@ export class VeilBattlePanel extends Component {
       null,
       0
     );
+  }
+
+  private hidePhaseBanner(): void {
+    if (!this.phaseBanner) {
+      return;
+    }
+
+    this.phaseBanner.node.active = false;
+    this.phaseBanner.title.string = "";
+    this.phaseBanner.meta.string = "";
+    this.phaseBanner.badge.string = "";
+  }
+
+  private hidePhaseTracker(): void {
+    if (!this.phaseTracker) {
+      return;
+    }
+
+    this.phaseTracker.node.active = false;
+    this.phaseTracker.title.string = "";
+    this.phaseTracker.meta.string = "";
   }
 
   private ensureStageBanner(): BattleStageBannerNodes {
@@ -826,6 +938,120 @@ export class VeilBattlePanel extends Component {
     return this.stageBanner;
   }
 
+  private ensurePhaseBanner(): BattlePhaseBannerNodes {
+    if (this.phaseBanner) {
+      return this.phaseBanner;
+    }
+
+    const node = new Node(PHASE_BANNER_NODE_NAME);
+    node.parent = this.node;
+    assignUiLayer(node);
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(PANEL_CONTENT_WIDTH, 60);
+
+    const titleNode = new Node(`${PHASE_BANNER_NODE_NAME}-title`);
+    titleNode.parent = node;
+    assignUiLayer(titleNode);
+    const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform);
+    titleTransform.setContentSize(PANEL_CONTENT_WIDTH - 86, 18);
+    titleNode.setPosition(-20, 12, 1);
+    const title = titleNode.getComponent(Label) ?? titleNode.addComponent(Label);
+    title.fontSize = 13;
+    title.lineHeight = 16;
+    title.horizontalAlign = H_ALIGN_LEFT;
+    title.verticalAlign = V_ALIGN_CENTER;
+    title.overflow = OVERFLOW_RESIZE_HEIGHT;
+    title.enableWrapText = false;
+    title.string = "";
+
+    const metaNode = new Node(`${PHASE_BANNER_NODE_NAME}-meta`);
+    metaNode.parent = node;
+    assignUiLayer(metaNode);
+    const metaTransform = metaNode.getComponent(UITransform) ?? metaNode.addComponent(UITransform);
+    metaTransform.setContentSize(PANEL_CONTENT_WIDTH - 34, 16);
+    metaNode.setPosition(0, -12, 1);
+    const meta = metaNode.getComponent(Label) ?? metaNode.addComponent(Label);
+    meta.fontSize = 10;
+    meta.lineHeight = 12;
+    meta.horizontalAlign = H_ALIGN_LEFT;
+    meta.verticalAlign = V_ALIGN_CENTER;
+    meta.overflow = OVERFLOW_RESIZE_HEIGHT;
+    meta.enableWrapText = false;
+    meta.string = "";
+
+    const badgeNode = new Node(`${PHASE_BANNER_NODE_NAME}-badge`);
+    badgeNode.parent = node;
+    assignUiLayer(badgeNode);
+    const badgeTransform = badgeNode.getComponent(UITransform) ?? badgeNode.addComponent(UITransform);
+    badgeTransform.setContentSize(38, 22);
+    badgeNode.setPosition(PANEL_CONTENT_WIDTH / 2 - 30, 12, 1);
+    const badge = badgeNode.getComponent(Label) ?? badgeNode.addComponent(Label);
+    badge.fontSize = 10;
+    badge.lineHeight = 12;
+    badge.horizontalAlign = H_ALIGN_CENTER;
+    badge.verticalAlign = V_ALIGN_CENTER;
+    badge.overflow = OVERFLOW_RESIZE_HEIGHT;
+    badge.enableWrapText = false;
+    badge.string = "";
+
+    this.phaseBanner = {
+      node,
+      title,
+      meta,
+      badge
+    };
+    return this.phaseBanner;
+  }
+
+  private ensurePhaseTracker(): BattlePhaseTrackerNodes {
+    if (this.phaseTracker) {
+      return this.phaseTracker;
+    }
+
+    const node = new Node(PHASE_TRACKER_NODE_NAME);
+    node.parent = this.node;
+    assignUiLayer(node);
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(PANEL_CONTENT_WIDTH, 54);
+
+    const titleNode = new Node(`${PHASE_TRACKER_NODE_NAME}-title`);
+    titleNode.parent = node;
+    assignUiLayer(titleNode);
+    const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform);
+    titleTransform.setContentSize(PANEL_CONTENT_WIDTH - 24, 18);
+    titleNode.setPosition(0, 12, 1);
+    const title = titleNode.getComponent(Label) ?? titleNode.addComponent(Label);
+    title.fontSize = 12;
+    title.lineHeight = 14;
+    title.horizontalAlign = H_ALIGN_LEFT;
+    title.verticalAlign = V_ALIGN_CENTER;
+    title.overflow = OVERFLOW_RESIZE_HEIGHT;
+    title.enableWrapText = false;
+    title.string = "";
+
+    const metaNode = new Node(`${PHASE_TRACKER_NODE_NAME}-meta`);
+    metaNode.parent = node;
+    assignUiLayer(metaNode);
+    const metaTransform = metaNode.getComponent(UITransform) ?? metaNode.addComponent(UITransform);
+    metaTransform.setContentSize(PANEL_CONTENT_WIDTH - 24, 16);
+    metaNode.setPosition(0, -12, 1);
+    const meta = metaNode.getComponent(Label) ?? metaNode.addComponent(Label);
+    meta.fontSize = 10;
+    meta.lineHeight = 12;
+    meta.horizontalAlign = H_ALIGN_LEFT;
+    meta.verticalAlign = V_ALIGN_CENTER;
+    meta.overflow = OVERFLOW_RESIZE_HEIGHT;
+    meta.enableWrapText = false;
+    meta.string = "";
+
+    this.phaseTracker = {
+      node,
+      title,
+      meta
+    };
+    return this.phaseTracker;
+  }
+
   private resolveStageTerrainFrame(terrain: BattlePanelStageView["terrain"]): Sprite["spriteFrame"] {
     const terrainFrames = getPixelSpriteAssets()?.tiles[terrain] ?? [];
     const frame = terrainFrames.find((entry) => Boolean(entry)) ?? null;
@@ -874,6 +1100,63 @@ export class VeilBattlePanel extends Component {
     meta.color = new Color(201, 214, 229, 220);
     badge.color = new Color(36, 28, 14, 255);
     this.styleBadgeNode(badge.node, new Color(accent.r, accent.g, accent.b, 224));
+  }
+
+  private stylePhaseBanner(node: Node, title: Label, meta: Label, badge: Label): void {
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    const width = transform.width;
+    const height = transform.height;
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(78, 34, 26, 214);
+    graphics.strokeColor = new Color(244, 176, 113, 240);
+    graphics.lineWidth = 2;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 16);
+    graphics.fill();
+    graphics.stroke();
+    graphics.fillColor = new Color(255, 244, 221, 30);
+    graphics.roundRect(-width / 2 + 10, height / 2 - 16, width - 20, 5, 3);
+    graphics.fill();
+    title.color = new Color(255, 238, 214, 255);
+    meta.color = new Color(255, 221, 188, 224);
+    badge.color = new Color(69, 34, 17, 255);
+    this.styleBadgeNode(badge.node, new Color(245, 184, 116, 236));
+  }
+
+  private stylePhaseTracker(
+    node: Node,
+    title: Label,
+    meta: Label,
+    markers: Array<{ label: string; thresholdPercent: number; active: boolean; reached: boolean }>
+  ): void {
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    const width = transform.width;
+    const height = transform.height;
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    graphics.clear();
+    graphics.fillColor = new Color(34, 42, 58, 152);
+    graphics.strokeColor = new Color(143, 166, 196, 136);
+    graphics.lineWidth = 1.5;
+    graphics.roundRect(-width / 2, -height / 2, width, height, 12);
+    graphics.fill();
+    graphics.stroke();
+    const stripY = height / 2 - 22;
+    graphics.fillColor = new Color(73, 87, 110, 168);
+    graphics.roundRect(-width / 2 + 12, stripY - 4, width - 24, 8, 4);
+    graphics.fill();
+    const stripWidth = width - 24;
+    markers.forEach((marker) => {
+      const markerX = -width / 2 + 12 + stripWidth * (1 - marker.thresholdPercent / 100);
+      graphics.fillColor = marker.active
+        ? new Color(240, 188, 109, 255)
+        : marker.reached
+          ? new Color(173, 206, 235, 224)
+          : new Color(103, 115, 136, 192);
+      graphics.roundRect(markerX - 2, stripY - 7, 4, 14, 2);
+      graphics.fill();
+    });
+    title.color = new Color(232, 239, 247, 255);
+    meta.color = new Color(193, 205, 221, 224);
   }
 
   private ensureLabelNode(name: string, fontSize: number, lineHeight: number, height: number): Label {

@@ -2,6 +2,12 @@ import type { CocosBattleFeedbackTone } from "./project-shared/index.ts";
 import type { BattleAction, BattleState, SessionUpdate, TerrainType, Vec2 } from "./VeilCocosSession.ts";
 import type { CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
 import type { CocosBattlePresentationState } from "./cocos-battle-presentation-controller.ts";
+import {
+  buildBossPhaseDescriptor,
+  buildBossPhaseTracker,
+  type CocosBossPhaseTrackerView,
+  type CocosBossPhaseTransitionEvent
+} from "./cocos-boss-phase-ui.ts";
 
 export type BattleCamp = "attacker" | "defender";
 
@@ -64,9 +70,18 @@ export interface BattlePanelStageView {
   badge: string;
 }
 
+export interface BattlePanelPhaseBannerView {
+  key: string;
+  title: string;
+  detail: string;
+  badge: string;
+}
+
 export interface BattlePanelViewModel {
   title: string;
   stage: BattlePanelStageView | null;
+  phaseBanner: BattlePanelPhaseBannerView | null;
+  bossPhaseTracker: CocosBossPhaseTrackerView | null;
   feedback: CocosBattleFeedbackView | null;
   summaryLines: string[];
   orderLines: string[];
@@ -80,6 +95,8 @@ export interface BattlePanelViewModel {
 
 export interface BattlePanelSections {
   stage: BattlePanelStageView | null;
+  phaseBanner: BattlePanelPhaseBannerView | null;
+  bossPhaseTracker: CocosBossPhaseTrackerView | null;
   orderItems: BattlePanelOrderItem[];
   friendlyItems: BattlePanelFriendlyItem[];
   enemyTargets: BattlePanelUnitView[];
@@ -102,6 +119,8 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     return {
       title: state.recovery ? "结算恢复" : state.presentationState?.phase === "resolution" ? "战斗结算" : "战斗面板",
       stage: null,
+      phaseBanner: null,
+      bossPhaseTracker: null,
       feedback: state.recovery
         ? {
             title: state.recovery.title,
@@ -190,15 +209,26 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
   const skillSummaryLines = activeUnit ? buildSkillSummaryLines(activeUnit) : [];
   const statusSummary = activeUnit ? buildStatusSummary(activeUnit) : "无异常";
   const stage = buildBattleStageView(state.update, battle);
+  const phaseBanner = buildPhaseBannerView(state.presentationState?.phaseTransitionEvent ?? null);
+  const bossPhaseTracker = buildBossPhaseTracker(battle);
+  const bossPhaseDescriptor = buildBossPhaseDescriptor(battle);
   const presentationLines = buildBattlePresentationContextLines(state.update, battle, state.presentationState, canAct, state.actionPending);
 
   return {
     title: resolveBattlePanelTitle(state.presentationState),
     stage,
+    phaseBanner,
+    bossPhaseTracker,
     feedback: state.feedback,
     summaryLines: [
       `${battle.id} · 第 ${battle.round} 回合`,
       ...presentationLines,
+      ...(bossPhaseDescriptor
+        ? [
+            `首领阶段：${bossPhaseDescriptor.phaseLabel} · 阈值 ${bossPhaseDescriptor.thresholdPercent}% HP`,
+            `阶段提示：${bossPhaseDescriptor.detail}`
+          ]
+        : []),
       ...(state.presentationState?.summaryLines ?? []),
       `阵营：${controlLabel}`,
       `阶段：${turnLabel}`,
@@ -236,11 +266,26 @@ export function buildBattlePanelSections(state: BattlePanelInput): BattlePanelSe
   const model = buildBattlePanelViewModel(state);
   return {
     stage: model.stage,
+    phaseBanner: model.phaseBanner,
+    bossPhaseTracker: model.bossPhaseTracker,
     orderItems: model.orderItems,
     friendlyItems: model.friendlyItems,
     enemyTargets: model.enemyTargets,
     actions: model.actions,
     idle: model.idle
+  };
+}
+
+function buildPhaseBannerView(event: CocosBossPhaseTransitionEvent | null): BattlePanelPhaseBannerView | null {
+  if (!event) {
+    return null;
+  }
+
+  return {
+    key: event.key,
+    title: event.bannerTitle,
+    detail: event.bannerDetail,
+    badge: `P${event.nextPhaseIndex + 1}`
   };
 }
 

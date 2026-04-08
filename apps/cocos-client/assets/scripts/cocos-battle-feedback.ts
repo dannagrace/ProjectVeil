@@ -1,5 +1,6 @@
 import type { CocosBattleFeedbackTone } from "./project-shared/index.ts";
 import type { BattleAction, BattleState, SessionUpdate } from "./VeilCocosSession.ts";
+import type { CocosBossPhaseTransitionEvent } from "./cocos-boss-phase-ui.ts";
 
 export interface CocosBattleFeedbackView {
   title: string;
@@ -184,6 +185,15 @@ export function buildBattleProgressFeedback(
         tone: "neutral"
       }
     : null;
+}
+
+export function buildBossPhaseTransitionFeedback(event: CocosBossPhaseTransitionEvent): CocosBattleFeedbackView {
+  return {
+    title: `${event.bossName} 进入 ${event.nextPhaseLabel}`,
+    detail: event.bannerDetail,
+    badge: `P${event.nextPhaseIndex + 1}`,
+    tone: "skill"
+  };
 }
 
 export function analyzeBattleProgress(

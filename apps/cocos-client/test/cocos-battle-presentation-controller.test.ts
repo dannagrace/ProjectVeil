@@ -73,6 +73,29 @@ function createBattleState(): BattleState {
   };
 }
 
+function createBossBattleState(): BattleState {
+  return {
+    ...createBattleState(),
+    units: {
+      ...createBattleState().units,
+      "neutral-1-stack": {
+        ...createBattleState().units["neutral-1-stack"]!,
+        templateId: "shadow_hexer",
+        stackName: "Shadow Warden",
+        currentHp: 10,
+        maxHp: 10
+      }
+    },
+    bossEncounter: {
+      templateId: "boss-shadow-warden",
+      bossUnitId: "neutral-1-stack",
+      activePhaseId: "phase-1-veil",
+      maxBossHp: 10,
+      triggeredAbilityKeys: []
+    }
+  };
+}
+
 function createUpdate(battle: BattleState | null, events: SessionUpdate["events"] = []): SessionUpdate {
   return {
     world: {
@@ -262,4 +285,50 @@ test("battle presentation controller formalizes command, casualty, and result fl
   });
   assert.equal(controller.getState().badge, "SETTLE");
   assert.equal(controller.getState().feedbackLayer.transition, null);
+});
+
+test("battle presentation controller inserts a boss phase transition pause when the active phase changes", () => {
+  const controller = createCocosBattlePresentationController();
+  const opening = createBossBattleState();
+  const phaseTwo: BattleState = {
+    ...opening,
+    units: {
+      ...opening.units,
+      "neutral-1-stack": {
+        ...opening.units["neutral-1-stack"]!,
+        currentHp: 5
+      }
+    },
+    bossEncounter: {
+      ...opening.bossEncounter!,
+      activePhaseId: "phase-2-warden-grip"
+    },
+    environment: [
+      {
+        id: "phase-2-snare",
+        lane: 0,
+        kind: "trap",
+        name: "Veil Snare",
+        revealed: true,
+        remainingTurns: 2,
+        effect: "slow",
+        damage: 0,
+        charges: 2,
+        grantedStatusId: "slowed",
+        triggeredByCamp: "attacker",
+        sourceUnitId: "neutral-1-stack"
+      }
+    ],
+    log: opening.log.concat("Shadow Warden 进入 phase-2-warden-grip")
+  };
+
+  const plan = controller.applyUpdate(opening, createUpdate(phaseTwo), "hero-1");
+
+  assert.equal(plan.pauseDurationMs, 900);
+  assert.equal(plan.phaseTransitionEvent?.previousPhaseId, "phase-1-veil");
+  assert.equal(plan.phaseTransitionEvent?.nextPhaseId, "phase-2-warden-grip");
+  assert.equal(plan.feedback?.badge, "P2");
+  assert.equal(controller.getState().phaseTransitionEvent?.nextPhaseLabel, "阶段 2 · Warden Grip");
+  assert.equal(controller.getState().feedbackLayer.pauseDurationMs, 900);
+  assert.equal(controller.getState().summaryLines.some((line) => /阶段 2 · Warden Grip/.test(line)), true);
 });
