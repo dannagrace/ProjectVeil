@@ -368,7 +368,9 @@ function captureJourneyArtifact(options: {
       rooms: root.lobbyRooms?.map((room: Record<string, unknown>) => ({
         roomId: room.roomId,
         day: room.day,
-        connectedPlayers: room.connectedPlayers
+        connectedPlayers: room.connectedPlayers,
+        disconnectedPlayers: room.disconnectedPlayers,
+        statusLabel: room.statusLabel
       })) ?? []
     },
     room: {
@@ -457,8 +459,10 @@ test("primary cocos client journey reuses an account session from lobby bootstra
         seed: 1001,
         day: 4,
         connectedPlayers: 1,
+        disconnectedPlayers: 0,
         heroCount: 1,
         activeBattles: 0,
+        statusLabel: "探索中",
         updatedAt: "2026-03-31T08:22:00.000Z"
       }
     ],
@@ -571,8 +575,10 @@ test("primary cocos client journey gates lobby entry, world exploration, battle 
         seed: 1001,
         day: 4,
         connectedPlayers: 1,
+        disconnectedPlayers: 0,
         heroCount: 1,
         activeBattles: 0,
+        statusLabel: "探索中",
         updatedAt: "2026-04-02T09:00:00.000Z"
       }
     ],
@@ -812,8 +818,10 @@ test("primary cocos client journey renders actionable HUD and battle-panel contr
         seed: 1001,
         day: 4,
         connectedPlayers: 1,
+        disconnectedPlayers: 0,
         heroCount: 1,
         activeBattles: 0,
+        statusLabel: "探索中",
         updatedAt: "2026-04-02T09:30:00.000Z"
       }
     ],
@@ -940,8 +948,10 @@ test("primary cocos client journey closes the loot, inventory, and equip loop af
         seed: 1001,
         day: 4,
         connectedPlayers: 1,
+        disconnectedPlayers: 0,
         heroCount: 1,
         activeBattles: 0,
+        statusLabel: "探索中",
         updatedAt: "2026-04-03T08:30:00.000Z"
       }
     ],
@@ -1083,8 +1093,10 @@ test("primary cocos client journey resumes interrupted loot settlement and conve
         seed: 1001,
         day: 4,
         connectedPlayers: 1,
+        disconnectedPlayers: 0,
         heroCount: 1,
         activeBattles: 0,
+        statusLabel: "探索中",
         updatedAt: "2026-04-03T08:30:00.000Z"
       }
     ],

@@ -1571,7 +1571,9 @@ export class VeilRoot extends Component {
       actionPending: this.battleActionInFlight,
       feedback: this.battleFeedback,
       presentationState: this.battlePresentation.getState(),
-      recovery: this.buildBattleSettlementRecoveryState()
+      recovery: this.buildBattleSettlementRecoveryState(),
+      connectionStatus: this.diagnosticsConnectionStatus,
+      predictionStatus: this.predictionStatus
     });
     this.timelinePanel?.render({
       entries: this.timelineEntries

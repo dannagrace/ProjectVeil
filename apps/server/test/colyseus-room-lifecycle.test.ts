@@ -1474,6 +1474,93 @@ test("pvp replay persistence captures both attacker and defender accounts from r
   );
 });
 
+test("pvp room summary reports battle-active state before settlement cleanup", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-pvp-room-state-${Date.now()}`);
+  const attackerClient = createFakeClient("session-pvp-room-state-attacker");
+  const defenderClient = createFakeClient("session-pvp-room-state-defender");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, attackerClient, "player-1", "connect-pvp-room-state-attacker");
+  await connectPlayer(room, defenderClient, "player-2", "connect-pvp-room-state-defender");
+
+  await emitRoomMessage(room, "world.action", attackerClient, {
+    type: "world.action",
+    requestId: "move-pvp-room-state-attacker",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 3, y: 4 }
+    }
+  });
+  await emitRoomMessage(room, "world.action", defenderClient, {
+    type: "world.action",
+    requestId: "move-pvp-room-state-defender",
+    action: {
+      type: "hero.move",
+      heroId: "hero-2",
+      destination: { x: 3, y: 4 }
+    }
+  });
+
+  const activeSummary = listLobbyRooms().find((entry) => entry.roomId === room.roomId);
+  assert.equal(activeSummary?.activeBattles, 1);
+  assert.equal(activeSummary?.disconnectedPlayers, 0);
+  assert.equal(activeSummary?.statusLabel, "PVP 进行中");
+
+});
+
+test("pvp room summary flips to reconnect recovery while a battle participant is disconnected", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-pvp-room-reconnect-${Date.now()}`);
+  const attackerClient = createFakeClient("session-pvp-room-reconnect-attacker");
+  const defenderClient = createFakeClient("session-pvp-room-reconnect-defender");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, attackerClient, "player-1", "connect-pvp-room-reconnect-attacker");
+  await connectPlayer(room, defenderClient, "player-2", "connect-pvp-room-reconnect-defender");
+
+  await emitRoomMessage(room, "world.action", attackerClient, {
+    type: "world.action",
+    requestId: "move-pvp-room-reconnect-attacker",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 3, y: 4 }
+    }
+  });
+  await emitRoomMessage(room, "world.action", defenderClient, {
+    type: "world.action",
+    requestId: "move-pvp-room-reconnect-defender",
+    action: {
+      type: "hero.move",
+      heroId: "hero-2",
+      destination: { x: 3, y: 4 }
+    }
+  });
+
+  room.onLeave(defenderClient);
+
+  const reconnectSummary = listLobbyRooms().find((entry) => entry.roomId === room.roomId);
+  assert.equal(reconnectSummary?.activeBattles, 1);
+  assert.equal(reconnectSummary?.disconnectedPlayers, 1);
+  assert.equal(reconnectSummary?.statusLabel, "恢复中");
+});
+
 test("turn timer auto-applies end day on expiry and pushes countdown state", async (t) => {
   resetLobbyRoomRegistry();
   const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));

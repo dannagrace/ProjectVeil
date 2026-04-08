@@ -106,8 +106,10 @@ test("loadCocosLobbyRooms queries the lobby api from the resolved remote host", 
               seed: 1001,
               day: 3,
               connectedPlayers: 1,
+              disconnectedPlayers: 0,
               heroCount: 1,
               activeBattles: 0,
+              statusLabel: "探索中",
               updatedAt: "2026-03-25T12:00:00.000Z"
             }
           ]

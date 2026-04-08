@@ -13,6 +13,7 @@ test("Cocos runtime diagnostics reuse the shared snapshot shape for HUD triage",
       id: "hero-2",
       playerId: "player-2",
       name: "敌方先锋",
+      level: 4,
       position: { x: 1, y: 0 }
     }
   ];

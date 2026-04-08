@@ -20,6 +20,8 @@ export interface BattlePanelInput {
   feedback: CocosBattleFeedbackView | null;
   presentationState: CocosBattlePresentationState | null;
   recovery?: BattlePanelRecoveryView | null;
+  connectionStatus?: "connecting" | "connected" | "reconnecting" | "reconnect_failed";
+  predictionStatus?: string;
 }
 
 export interface BattlePanelRecoveryView {
@@ -110,12 +112,13 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     const presentationSummary = state.recovery
       ? state.recovery.summaryLines
       : state.presentationState
-        ? [
-            state.presentationState.label,
-            ...buildBattleResultContextLines(state.presentationState),
-            ...state.presentationState.summaryLines
-          ]
-        : ["当前没有战斗。"];
+      ? [
+          state.presentationState.label,
+          ...buildBattleResultContextLines(state.presentationState),
+          ...buildIdleRoomContextLines(state),
+          ...state.presentationState.summaryLines
+        ]
+      : ["当前没有战斗。", ...buildIdleRoomContextLines(state)];
     return {
       title: state.recovery ? "结算恢复" : state.presentationState?.phase === "resolution" ? "战斗结算" : "战斗面板",
       stage: null,
@@ -213,6 +216,7 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
   const bossPhaseTracker = buildBossPhaseTracker(battle);
   const bossPhaseDescriptor = buildBossPhaseDescriptor(battle);
   const presentationLines = buildBattlePresentationContextLines(state.update, battle, state.presentationState, canAct, state.actionPending);
+  const roomContextLines = buildBattleRoomContextLines(state, battle);
 
   return {
     title: resolveBattlePanelTitle(state.presentationState),
@@ -222,6 +226,7 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
     feedback: state.feedback,
     summaryLines: [
       `${battle.id} · 第 ${battle.round} 回合`,
+      ...roomContextLines,
       ...presentationLines,
       ...(bossPhaseDescriptor
         ? [
@@ -260,6 +265,81 @@ function resolveBattlePanelTitle(presentationState: CocosBattlePresentationState
     default:
       return "战斗面板";
   }
+}
+
+function buildIdleRoomContextLines(state: BattlePanelInput): string[] {
+  if (state.connectionStatus === "reconnecting") {
+    return ["房间态：恢复中（等待权威同步）", "下一步：等待权威房间完成重连与状态校正"];
+  }
+
+  if (state.connectionStatus === "reconnect_failed") {
+    return ["房间态：快照回补中", "下一步：等待服务端快照回补最终胜负与房间状态"];
+  }
+
+  if (state.predictionStatus?.includes("回放")) {
+    return [`房间态：${state.predictionStatus}`];
+  }
+
+  return [];
+}
+
+function buildBattleRoomContextLines(state: BattlePanelInput, battle: BattleState): string[] {
+  const update = state.update;
+  if (!update) {
+    return [];
+  }
+
+  const lines = [
+    `遭遇会话：${update.world.meta.roomId}/${battle.id}`,
+    `房间态：${resolveBattleRoomPhaseLabel(state, battle)}`
+  ];
+  const opponentSummary = buildOpponentSummary(update, battle);
+  if (opponentSummary) {
+    lines.push(opponentSummary);
+  }
+  return lines;
+}
+
+function resolveBattleRoomPhaseLabel(state: BattlePanelInput, battle: BattleState): string {
+  if (state.connectionStatus === "reconnecting") {
+    return "恢复中（等待权威同步）";
+  }
+  if (state.connectionStatus === "reconnect_failed") {
+    return "快照回补中";
+  }
+  if (state.predictionStatus?.includes("回放")) {
+    return "缓存已回放，等待校正";
+  }
+  return battle.defenderHeroId ? "PVP 对抗中" : "遭遇战进行中";
+}
+
+function buildOpponentSummary(update: SessionUpdate, battle: BattleState): string | null {
+  if (!battle.defenderHeroId) {
+    return null;
+  }
+
+  const opponentHeroId = resolveOpposingHeroId(update, battle);
+  const opponent =
+    update.world.ownHeroes.find((hero) => hero.id === opponentHeroId) ??
+    update.world.visibleHeroes.find((hero) => hero.id === opponentHeroId) ??
+    null;
+  const level = opponent
+    ? "progression" in opponent
+      ? opponent.progression.level
+      : opponent.level
+    : null;
+  const heroLabel = opponent?.name?.trim() || opponentHeroId || "未知英雄";
+  const playerLabel = opponent?.playerId ?? "unknown";
+
+  return `对手：玩家 ${playerLabel} · 英雄 ${heroLabel}${level ? ` · Lv ${level}` : ""}`;
+}
+
+function resolveOpposingHeroId(update: SessionUpdate, battle: BattleState): string | null {
+  const ownHeroIds = new Set(update.world.ownHeroes.map((hero) => hero.id));
+  if (ownHeroIds.has(battle.worldHeroId ?? "")) {
+    return battle.defenderHeroId ?? null;
+  }
+  return battle.worldHeroId ?? battle.defenderHeroId ?? null;
 }
 
 export function buildBattlePanelSections(state: BattlePanelInput): BattlePanelSections {

@@ -35,8 +35,10 @@ test("lobby panel room cards render active room summaries from the server respon
       seed: 1001,
       day: 3,
       connectedPlayers: 1,
+      disconnectedPlayers: 0,
       heroCount: 2,
       activeBattles: 1,
+      statusLabel: "PVP 进行中",
       updatedAt: "2026-03-29T12:00:00.000Z"
     }
   ]);
@@ -45,7 +47,7 @@ test("lobby panel room cards render active room summaries from the server respon
     {
       roomId: "room-alpha",
       title: "room-alpha",
-      meta: "Day 3 · Seed 1001 · 玩家 1 · 英雄 2 · 战斗 1"
+      meta: "Day 3 · Seed 1001 · PVP 进行中 · 玩家 1 · 英雄 2 · 战斗 1"
     }
   ]);
 });
@@ -177,8 +179,10 @@ test("VeilLobbyPanel retains the loading lobby snapshot and creates base panel c
         seed: 1001,
         day: 3,
         connectedPlayers: 1,
+        disconnectedPlayers: 0,
         heroCount: 2,
         activeBattles: 1,
+        statusLabel: "PVP 进行中",
         updatedAt: "2026-03-29T12:00:00.000Z"
       }
     ]

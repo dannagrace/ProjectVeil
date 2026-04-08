@@ -178,6 +178,7 @@ export interface PlayerWorldView {
     id: string;
     playerId: string;
     name: string;
+    level: number;
     position: Vec2;
   }>;
   resources: ResourceLedger;
