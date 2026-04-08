@@ -228,8 +228,8 @@ function validateCocosPresentationAnimationProfiles(errors: string[]): void {
     : {};
   for (const [templateId, entry] of Object.entries(animationProfiles)) {
     const deliveryMode = typeof entry?.deliveryMode === "string" ? entry.deliveryMode : "";
-    if (!["fallback", "clip", "spine"].includes(deliveryMode)) {
-      errors.push(`cocos presentation animationProfiles.${templateId}.deliveryMode must be fallback|clip|spine`);
+    if (!["fallback", "sequence", "clip", "spine"].includes(deliveryMode)) {
+      errors.push(`cocos presentation animationProfiles.${templateId}.deliveryMode must be fallback|sequence|clip|spine`);
     }
     const assetStage = typeof entry?.assetStage === "string" ? entry.assetStage : "";
     if (!["placeholder", "production"].includes(assetStage)) {

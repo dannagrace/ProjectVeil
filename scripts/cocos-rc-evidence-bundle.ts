@@ -830,16 +830,16 @@ function buildPresentationChecklist(snapshot: CocosReleaseCandidateSnapshot): Pr
     {
       id: "animation-transitions",
       area: "Animation / transitions",
-      status: releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("Spine Skeleton") ? "fail" : "pass",
+      status: releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("动画回退交付") ? "fail" : "pass",
       blockingPolicy:
-        releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("Spine Skeleton")
+        releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("动画回退交付")
           ? "blocking"
           : "acceptable-controlled-test-gap",
       detail: `${cocosPresentationReadiness.animation.headline}; ${cocosPresentationReadiness.animation.detail}`,
       evidence: ["cocos-presentation-readiness", "primary journey evidence", "battle diagnostics markdown"],
       owner,
       followUp:
-        releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("Spine Skeleton")
+        releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("动画回退交付")
           ? "Close fallback animation delivery before broader external review."
           : "none"
     },

@@ -220,7 +220,7 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.equal(presentationSignoff.functionalEvidence.status, "passed");
   assert.equal(presentationSignoff.signoff.status, "hold");
   assert.ok(presentationSignoff.checklist.some((entry) => entry.area === "Audio" && entry.status === "waived-controlled-test"));
-  assert.ok(presentationSignoff.checklist.some((entry) => entry.area === "Animation / transitions" && entry.blockingPolicy === "blocking"));
+  assert.ok(presentationSignoff.checklist.some((entry) => entry.area === "Animation / transitions" && entry.status === "pass"));
   assert.ok(presentationSignoff.signoff.blockingItems.includes("Pixel art / scene visuals"));
   assert.ok(presentationSignoff.signoff.controlledTestGaps.includes("Audio"));
 

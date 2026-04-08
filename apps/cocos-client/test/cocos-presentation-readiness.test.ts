@@ -7,27 +7,28 @@ import {
   getCocosPresentationReleaseGate
 } from "../assets/scripts/cocos-presentation-readiness";
 
-test("presentation readiness summarizes placeholder pixel, audio and fallback animation coverage", () => {
+test("presentation readiness summarizes placeholder pixel, audio and sequence animation coverage", () => {
   const readiness = buildCocosPresentationReadiness();
   assert.equal(readiness.battleJourney.stage, "production");
   assert.deepEqual(readiness.battleJourney.verifiedStages, ["entry", "command", "impact", "resolution"]);
   assert.match(readiness.battleJourney.detail, /中性结算回写壳/);
   assert.equal(readiness.pixel.stage, "placeholder");
-  assert.match(readiness.pixel.headline, /5 地形 \/ 4 英雄 \/ 18 单位 \/ 5 建筑/);
+  assert.match(readiness.pixel.headline, /5 地形 \/ 4 英雄 \/ 22 单位 \/ 5 建筑/);
   assert.equal(readiness.audio.stage, "mixed");
   assert.match(readiness.audio.headline, /2 首 BGM \/ 6 组 SFX/);
-  assert.match(readiness.audio.detail, /2 正式 \/ 6 占位/);
-  assert.equal(readiness.animation.deliveryModes.fallback, 2);
+  assert.match(readiness.audio.detail, /7 正式 \/ 1 占位/);
+  assert.equal(readiness.animation.deliveryModes.fallback, 0);
+  assert.equal(readiness.animation.deliveryModes.sequence, 2);
   assert.equal(readiness.animation.deliveryModes.spine, 0);
   assert.match(readiness.nextStep, /战斗流程 正式 4\/4/);
   assert.match(readiness.nextStep, /正式像素美术/);
-  assert.match(readiness.nextStep, /Spine Skeleton/);
+  assert.doesNotMatch(readiness.nextStep, /动画回退交付/);
   assert.deepEqual(getCocosPresentationReleaseGate(readiness), {
     ready: false,
-    blockers: ["正式像素美术", "真实 BGM/SFX", "正式动画资产", "Spine Skeleton"]
+    blockers: ["正式像素美术", "真实 BGM/SFX"]
   });
 });
 
 test("presentation readiness summary stays concise for Lobby and HUD surfaces", () => {
-  assert.match(formatPresentationReadinessSummary(cocosPresentationReadiness), /^像素 占位 0\/\d+ · 音频 混合 2\/8 · 动画 回退 2\/2$/);
+  assert.match(formatPresentationReadinessSummary(cocosPresentationReadiness), /^像素 占位 0\/\d+ · 音频 混合 7\/8 · 动画 序列 2\/2$/);
 });
