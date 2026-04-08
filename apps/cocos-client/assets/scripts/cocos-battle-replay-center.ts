@@ -126,6 +126,9 @@ export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterI
   }
 
   const playback = input.playback;
+  const rewardSummaryLine = selectedReport ? formatBattleReportRewardLine(selectedReport) : null;
+  const evidenceSummaryLine = selectedReport ? formatBattleReportEvidenceLine(selectedReport) : null;
+  const reportHeadlineLine = selectedReport ? formatBattleReportHeadline(selectedReport) : null;
   const timeline = buildCocosBattleReplayTimelineView(replay, { limit: 2 });
   const turnSummary = buildReplayTurnSummary(replay, playback);
   const battlePanel = buildBattlePanelViewModel({
@@ -156,7 +159,10 @@ export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterI
       activeUnitLine,
       `我方编队：${battlePanel.friendlyItems.map((item) => item.title).join(" / ") || "暂无可视编队"}`,
       `目标摘要：${battlePanel.enemyTargets.map((item) => item.title).join(" / ") || "暂无敌方目标"}`,
-      `时间线：${timeline.entries.map((entry) => `${entry.stepLabel} ${entry.actionLabel}`).join(" · ") || timeline.emptyMessage || "暂无时间线"}`
+      `时间线：${timeline.entries.map((entry) => `${entry.stepLabel} ${entry.actionLabel}`).join(" · ") || timeline.emptyMessage || "暂无时间线"}`,
+      ...(reportHeadlineLine ? [reportHeadlineLine] : []),
+      ...(evidenceSummaryLine ? [evidenceSummaryLine] : []),
+      ...(rewardSummaryLine ? [rewardSummaryLine] : [])
     ],
     controls: [
       { action: "play", label: "播放", enabled: playback.status !== "playing" && playback.status !== "completed" },
@@ -356,4 +362,47 @@ function formatReplayTimestamp(value: string): string {
   const hour = `${date.getUTCHours()}`.padStart(2, "0");
   const minute = `${date.getUTCMinutes()}`.padStart(2, "0");
   return `${month}-${day} ${hour}:${minute}`;
+}
+
+
+function formatBattleReportHeadline(report: PlayerBattleReportSummary): string {
+  const resultLabel = formatBattleReportResultLabel(report);
+  const kindLabel = report.battleKind === "hero" ? "PVP" : "PVE";
+  const encounterLabel = formatReplayEncounterLabel(report);
+  return `战报摘要：${resultLabel} · ${kindLabel} · ${encounterLabel} · ${report.turnCount}T/${report.actionCount}A`;
+}
+
+function formatBattleReportEvidenceLine(report: PlayerBattleReportSummary): string {
+  const replayEvidence = report.evidence.replay === "available" ? "可用" : "缺失";
+  const rewardEvidence = report.evidence.rewards === "available" ? "可用" : "缺失";
+  return `证据：回放${replayEvidence} · 奖励${rewardEvidence}`;
+}
+
+function formatBattleReportRewardLine(report: PlayerBattleReportSummary): string {
+  if (report.rewards.length > 0) {
+    const chips = report.rewards.map((reward) => formatBattleReportRewardChip(reward)).filter(Boolean);
+    return chips.length > 0 ? `战后收益：${chips.join(" / ")}` : "战后收益：暂无额外奖励";
+  }
+
+  return `战后收益：${report.evidence.rewards === "available" ? "收益同步中" : "暂无额外奖励记录"}`;
+}
+
+function formatBattleReportRewardChip(reward: PlayerBattleReportSummary["rewards"][number]): string {
+  if (reward.type === "experience") {
+    return reward.amount != null ? `经验 +${reward.amount}` : "经验";
+  }
+
+  if (reward.type === "skill_point") {
+    return reward.amount != null ? `技能点 +${reward.amount}` : "技能点";
+  }
+
+  if (reward.type === "resource") {
+    return reward.amount != null ? `${reward.label} +${reward.amount}` : reward.label;
+  }
+
+  return reward.amount != null ? `${reward.label} +${reward.amount}` : reward.label;
+}
+
+function formatBattleReportResultLabel(report: PlayerBattleReportSummary): string {
+  return report.result === "victory" ? "胜利" : "失利";
 }

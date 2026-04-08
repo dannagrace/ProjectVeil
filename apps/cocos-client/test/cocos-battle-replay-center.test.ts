@@ -129,6 +129,43 @@ test("buildCocosBattleReplayCenterView derives ready-state summary lines and tar
       ["reset", false]
     ]
   );
+
+});
+
+test("buildCocosBattleReplayCenterView surfaces battle report evidence and rewards when available", () => {
+  const replay = createBattleReplaySummary();
+  const report: PlayerBattleReportSummary = {
+    id: replay.id,
+    replayId: replay.id,
+    roomId: replay.roomId,
+    playerId: replay.playerId,
+    battleId: replay.battleId,
+    battleKind: replay.battleKind,
+    playerCamp: replay.playerCamp,
+    heroId: replay.heroId,
+    opponentHeroId: replay.opponentHeroId,
+    neutralArmyId: replay.neutralArmyId,
+    startedAt: replay.startedAt,
+    completedAt: replay.completedAt,
+    result: "victory",
+    turnCount: 1,
+    actionCount: replay.steps.length,
+    rewards: [{ type: "resource", label: "金币", amount: 20 }],
+    evidence: { replay: "available", rewards: "available" }
+  };
+
+  const view = buildCocosBattleReplayCenterView({
+    replays: [replay],
+    battleReports: { latestReportId: report.id, items: [report] },
+    selectedReplayId: replay.id,
+    playback: createBattleReplayPlaybackState(replay),
+    status: "ready"
+  });
+
+  const [headline, evidence, rewards] = view.detailLines.slice(-3);
+  assert.match(headline ?? "", /战报摘要：胜利 ·/);
+  assert.equal(evidence, "证据：回放可用 · 奖励可用");
+  assert.equal(rewards, "战后收益：金币 +20");
 });
 
 test("buildCocosBattleReplayCenterView updates controls across playing, stepped, completed and reset playback states", () => {
