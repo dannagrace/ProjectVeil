@@ -32,9 +32,9 @@
 7. `artifacts/release-readiness/cocos-main-journey-replay-gate-<candidate>-<short-sha>.md`
    - 对应 gate 的 reviewer 摘要，默认包含 `Reviewer Workflow`，用于在 PR / release issue 中快速判定这份 packet 是否还能作为主客户端主链路证据
 8. `artifacts/release-readiness/cocos-rc-checklist-<candidate>-<short-sha>.md`
-   - 从模板复制并预填 candidate / revision 的人工检查清单
+   - 从模板复制并预填 candidate / revision / recordedAt / linked artifact 路径，并附上自动生成的 canonical journey status、required evidence 值与 canonical regeneration command
 9. `artifacts/release-readiness/cocos-rc-blockers-<candidate>-<short-sha>.md`
-   - 从模板复制并预填 candidate / revision 的 blocker 记录
+   - 从模板复制并预填 candidate / revision / linked artifact 路径，并附上自动汇总的 current blockers 表，明确缺失或未通过的 journey / required evidence / presentation blockers
 
 其中 5 是权威 machine-readable RC 记录，1/2 则是自动化 primary journey 的原始证据面，6/7 是 candidate-scoped main-journey 守门摘要，3/4/8/9 是 reviewer / release owner 快速扫读和留档的补充视图。不要为同一个 RC 另外发明独立格式。
 
@@ -84,7 +84,7 @@ npm run release:cocos-rc:snapshot -- \
   --check
 ```
 
-5. 将 bundle 的 Markdown 摘要、checklist 与 blockers 文件附到 PR、release issue 或 CI artifact；它们已经由同一条命令生成，不需要额外复制模板。
+5. 将 bundle 的 Markdown 摘要、`cocos-main-journey-replay-gate-<candidate>-<short-sha>.md`、checklist 与 blockers 文件附到 PR、release issue 或 CI artifact；它们已经由同一条命令生成，不需要额外复制模板。
 
 ## 快照结构
 
