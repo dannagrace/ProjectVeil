@@ -364,10 +364,19 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "Optional JSON report at the requested `--report-path`; otherwise this is an exit-code-only validation step.",
     ],
   },
-  "validate:content-pack:all": {
-    purpose: "Validate all shipped content-pack variants as a release-readiness sweep.",
+  "validate:map-object-visuals": {
+    purpose: "Cross-check the 13 shipped Phase 1 map-object packs against `configs/object-visuals.json` coverage entries.",
     requiredInputs: [
-      "Repo config pack definitions; optional `--report-path` if a consolidated JSON report is desired.",
+      "Phase 1 map-object config files plus `configs/object-visuals.json`; optional `--root-dir`, `--object-visuals`, and `--report-path`.",
+    ],
+    producedArtifacts: [
+      "Optional JSON report at the requested `--report-path`; otherwise this is an exit-code-only validation step with warnings printed to stdout.",
+    ],
+  },
+  "validate:content-pack:all": {
+    purpose: "Run the Phase 1 object-visual coverage precheck, then validate all shipped content-pack variants as a release-readiness sweep.",
+    requiredInputs: [
+      "Repo config pack definitions plus `configs/object-visuals.json`; optional `--report-path` if a consolidated JSON report is desired for the content-pack step.",
     ],
     producedArtifacts: [
       "Optional JSON report at the requested `--report-path`; otherwise this is an exit-code-only validation step.",
