@@ -850,13 +850,14 @@ export class VeilLobbyPanel extends Component {
           this.renderCard(
             `LobbyRoom-${index}`,
             rightX,
-            rightCursorY - index * 78,
+            rightCursorY - index * 92,
             rightWidth,
-            68,
+            82,
             [
               room.roomId,
-              `Day ${room.day} · Seed ${room.seed}`,
-              `玩家 ${room.connectedPlayers} · 英雄 ${room.heroCount} · 战斗 ${room.activeBattles} · ${updatedAt}`
+              `Day ${room.day} · Seed ${room.seed} · ${room.statusLabel}`,
+              `玩家 ${room.connectedPlayers}${room.disconnectedPlayers > 0 ? ` · 掉线 ${room.disconnectedPlayers}` : ""} · 英雄 ${room.heroCount} · 战斗 ${room.activeBattles}`,
+              `最近刷新 ${updatedAt}`
             ],
             {
               fill: ROOM_FILL,
@@ -872,7 +873,7 @@ export class VeilLobbyPanel extends Component {
         });
 
         this.hideExtraRoomCards(visibleRooms.length);
-        showcaseTopY = rightCursorY - visibleRooms.length * 78;
+        showcaseTopY = rightCursorY - visibleRooms.length * 92;
       }
 
       this.renderPixelShowcase(rightX, showcaseTopY, rightWidth);

@@ -363,7 +363,7 @@ export function createRuntimeDiagnosticsSnapshotFixture(): RuntimeDiagnosticsSna
           pvpBattlesWon: 0
         }
       },
-      visibleHeroes: [{ id: "hero-2", playerId: "player-2", position: { x: 2, y: 1 } }]
+      visibleHeroes: [{ id: "hero-2", playerId: "player-2", name: "敌方先锋", level: 3, position: { x: 2, y: 1 } }]
     },
     battle: {
       id: "battle-demo",

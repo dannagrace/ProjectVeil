@@ -66,7 +66,7 @@ function createRuntimeDiagnosticsSnapshot(): RuntimeDiagnosticsSnapshot {
           pvpBattlesWon: 0
         }
       },
-      visibleHeroes: [{ id: "hero-2", playerId: "player-2", position: { x: 1, y: 0 } }]
+      visibleHeroes: [{ id: "hero-2", playerId: "player-2", name: "敌方先锋", level: 3, position: { x: 1, y: 0 } }]
     },
     battle: null,
     account: {

@@ -1889,6 +1889,7 @@ test("createPlayerWorldView respects fog-of-war visibility rules", () => {
       id: "hero-3",
       playerId: "player-2",
       name: "萨恩",
+      level: 1,
       position: { x: 0, y: 1 }
     }
   ]);
