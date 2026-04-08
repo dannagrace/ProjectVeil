@@ -1,0 +1,176 @@
+{
+  "neutralArmies": [
+    {
+      "id": "neutral-frontier-gate",
+      "position": {
+        "x": 12,
+        "y": 14
+      },
+      "reward": {
+        "kind": "gold",
+        "amount": 280
+      },
+      "stacks": [
+        {
+          "templateId": "wolf_pack",
+          "count": 6
+        },
+        {
+          "templateId": "moss_stalker",
+          "count": 4
+        }
+      ],
+      "behavior": {
+        "mode": "guard",
+        "detectionRadius": 3,
+        "chaseDistance": 5,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-river-watch",
+      "position": {
+        "x": 18,
+        "y": 16
+      },
+      "reward": {
+        "kind": "ore",
+        "amount": 7
+      },
+      "stacks": [
+        {
+          "templateId": "iron_walker",
+          "count": 4
+        },
+        {
+          "templateId": "hero_guard_basic",
+          "count": 4
+        }
+      ],
+      "behavior": {
+        "mode": "patrol",
+        "patrolPath": [
+          { "x": 18, "y": 16 },
+          { "x": 19, "y": 16 },
+          { "x": 19, "y": 17 },
+          { "x": 18, "y": 17 }
+        ],
+        "detectionRadius": 4,
+        "chaseDistance": 6,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-southern-pickets",
+      "position": {
+        "x": 24,
+        "y": 26
+      },
+      "reward": {
+        "kind": "wood",
+        "amount": 9
+      },
+      "stacks": [
+        {
+          "templateId": "moss_stalker",
+          "count": 5
+        }
+      ],
+      "behavior": {
+        "mode": "patrol",
+        "patrolRadius": 1,
+        "detectionRadius": 3,
+        "chaseDistance": 4,
+        "speed": 1
+      }
+    }
+  ],
+  "guaranteedResources": [
+    {
+      "position": {
+        "x": 6,
+        "y": 4
+      },
+      "resource": {
+        "kind": "wood",
+        "amount": 7
+      }
+    },
+    {
+      "position": {
+        "x": 14,
+        "y": 16
+      },
+      "resource": {
+        "kind": "gold",
+        "amount": 240
+      }
+    },
+    {
+      "position": {
+        "x": 26,
+        "y": 27
+      },
+      "resource": {
+        "kind": "ore",
+        "amount": 5
+      }
+    }
+  ],
+  "buildings": [
+    {
+      "id": "recruit-post-frontier-expanded-1",
+      "kind": "recruitment_post",
+      "position": {
+        "x": 4,
+        "y": 8
+      },
+      "label": "前沿募兵站",
+      "unitTemplateId": "wild_hawk_rider",
+      "recruitCount": 4,
+      "cost": {
+        "gold": 220,
+        "wood": 1,
+        "ore": 0
+      },
+      "maxTier": 3
+    },
+    {
+      "id": "shrine-frontier-expanded-1",
+      "kind": "attribute_shrine",
+      "position": {
+        "x": 10,
+        "y": 11
+      },
+      "label": "远拓圣坛",
+      "bonus": {
+        "attack": 1,
+        "defense": 0,
+        "power": 1,
+        "knowledge": 0
+      }
+    },
+    {
+      "id": "mine-frontier-expanded-1",
+      "kind": "resource_mine",
+      "position": {
+        "x": 20,
+        "y": 20
+      },
+      "label": "峡口矿脉",
+      "resourceKind": "ore",
+      "income": 4,
+      "maxTier": 2
+    },
+    {
+      "id": "watchtower-frontier-expanded-1",
+      "kind": "watchtower",
+      "position": {
+        "x": 27,
+        "y": 23
+      },
+      "label": "边境瞭望塔",
+      "visionBonus": 2
+    }
+  ]
+}

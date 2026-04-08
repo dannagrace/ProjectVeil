@@ -38,6 +38,8 @@ async function seedContentPackRoot(tempDir: string): Promise<void> {
       "phase1-map-objects-splitrock-canyon.json",
       "phase2-contested-basin.json",
       "phase2-map-objects-contested-basin.json",
+      "phase2-frontier-expanded.json",
+      "phase2-map-objects-frontier-expanded.json",
       "units.json",
       "battle-skills.json",
       "battle-balance.json",
@@ -73,12 +75,14 @@ test("validate-content-pack validates all shipped map packs with CLI presets", a
       "--map-pack",
       "splitrock-canyon",
       "--map-pack",
-      "phase2"
+      "phase2",
+      "--map-pack",
+      "phase2-frontier-expanded"
     ],
     { cwd: repoRoot }
   );
 
-  assert.match(stdout, /Bundles: 9/);
+  assert.match(stdout, /Bundles: 10/);
   assert.match(stdout, /Bundle: frontier-basin/);
   assert.match(stdout, /Bundle: stonewatch-fork/);
   assert.match(stdout, /Bundle: ridgeway-crossing/);
@@ -87,6 +91,7 @@ test("validate-content-pack validates all shipped map packs with CLI presets", a
   assert.match(stdout, /Bundle: ironpass-gorge/);
   assert.match(stdout, /Bundle: splitrock-canyon/);
   assert.match(stdout, /Bundle: phase2/);
+  assert.match(stdout, /Bundle: phase2-frontier-expanded/);
   assert.match(stdout, /Result: PASS/);
 });
 
