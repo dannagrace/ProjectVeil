@@ -16,6 +16,7 @@ import {
 } from "../src/colyseus-room";
 import { createRoom, type RoomPersistenceSnapshot } from "../src/index";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
+import { buildRoomLifecycleSummaryPayload, resetRuntimeObservability } from "../src/observability";
 import type { PlayerAccountEnsureInput, PlayerAccountProgressPatch, PlayerAccountSnapshot } from "../src/persistence";
 
 interface FakeClient extends Client {
@@ -459,6 +460,7 @@ test("connect logs player account initialization failures instead of silently sw
 test("client reconnect within the window restores room state and records reconnectedAt", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
+  resetRuntimeObservability();
   const room = await createTestRoom(`lifecycle-reconnect-${Date.now()}`);
   const originalClient = createFakeClient("session-original");
   const reconnectedClient = createFakeClient("session-reconnected");
@@ -475,6 +477,7 @@ test("client reconnect within the window restores room state and records reconne
     cleanupRoom(room);
     resetLobbyRoomRegistry();
     configureRoomSnapshotStore(null);
+    resetRuntimeObservability();
   });
 
   room.clients.push(originalClient);
@@ -507,6 +510,15 @@ test("client reconnect within the window restores room state and records reconne
   const reconnectedAt = internalRoom.reconnectedAtByPlayerId.get("player-1");
   assert.ok(reconnectedAt);
   assert.equal(new Date(reconnectedAt).toISOString(), reconnectedAt);
+
+  const summary = buildRoomLifecycleSummaryPayload();
+  assert.equal(summary.summary.counters.roomCreatesTotal, 1);
+  assert.equal(summary.summary.counters.roomDisposalsTotal, 0);
+  assert.equal(summary.summary.recentEvents.some((event) => event.kind === "reconnect.succeeded"), true);
+  assert.equal(
+    summary.summary.recentEvents.find((event) => event.kind === "reconnect.succeeded")?.playerId,
+    "player-1"
+  );
 });
 
 test("reconnect preserves lobby registration counts while other players stay connected", async (t) => {
@@ -577,6 +589,7 @@ test("stale leave after a successful reconnect does not clear the resumed player
 test("client that misses the reconnect window is cleaned up from the player slot map", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
+  resetRuntimeObservability();
   const room = await createTestRoom(`lifecycle-reconnect-timeout-${Date.now()}`);
   const client = createFakeClient("session-timeout");
   const internalRoom = room as VeilColyseusRoom & {
@@ -588,6 +601,7 @@ test("client that misses the reconnect window is cleaned up from the player slot
     cleanupRoom(room);
     resetLobbyRoomRegistry();
     configureRoomSnapshotStore(null);
+    resetRuntimeObservability();
   });
 
   room.clients.push(client);
@@ -607,6 +621,14 @@ test("client that misses the reconnect window is cleaned up from the player slot
 
   assert.equal(internalRoom.playerIdBySessionId.has("session-timeout"), false);
   assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 0);
+
+  const summary = buildRoomLifecycleSummaryPayload();
+  assert.equal(summary.summary.counters.roomCreatesTotal, 1);
+  assert.equal(summary.summary.recentEvents.some((event) => event.kind === "reconnect.failed"), true);
+  assert.equal(
+    summary.summary.recentEvents.find((event) => event.kind === "reconnect.failed")?.reason,
+    "reconnect_window_expired"
+  );
 });
 
 test("failed reconnect cleanup removes only the expired session and preserves other connected players", async (t) => {
@@ -645,6 +667,7 @@ test("failed reconnect cleanup removes only the expired session and preserves ot
 test("room disposal after the last client leaves removes it from the active room list", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
+  resetRuntimeObservability();
   const room = await createTestRoom(`lifecycle-dispose-${Date.now()}`);
   const client = createFakeClient("session-dispose");
 
@@ -652,6 +675,7 @@ test("room disposal after the last client leaves removes it from the active room
     cleanupRoom(room);
     resetLobbyRoomRegistry();
     configureRoomSnapshotStore(null);
+    resetRuntimeObservability();
   });
 
   room.clients.push(client);
@@ -660,6 +684,12 @@ test("room disposal after the last client leaves removes it from the active room
   room.onDispose();
 
   assert.equal(listLobbyRooms().some((entry) => entry.roomId === room.roomId), false);
+
+  const summary = buildRoomLifecycleSummaryPayload();
+  assert.equal(summary.summary.counters.roomCreatesTotal, 1);
+  assert.equal(summary.summary.counters.roomDisposalsTotal, 1);
+  assert.equal(summary.summary.recentEvents[0]?.kind, "room.disposed");
+  assert.equal(summary.summary.recentEvents[0]?.reason, "dispose");
 });
 
 test("stale room disposal cannot unregister a replacement room with the same logical id", async (t) => {
@@ -926,6 +956,81 @@ test("battle replay persistence runs once at settlement and is drained from the 
   assert.equal(replaySaves.length, 1);
   assert.equal(replaySaves[0]?.patch.recentBattleReplays?.[0]?.id, replay?.id);
   assert.deepEqual(internalRoom.worldRoom.consumeCompletedBattleReplays(), []);
+});
+
+test("battle settlement increments lifecycle completion metrics", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  resetRuntimeObservability();
+  const room = await createTestRoom(`lifecycle-battle-metrics-${Date.now()}`);
+  const client = createFakeClient("session-battle-metrics");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+    resetRuntimeObservability();
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-battle-metrics");
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: "move-battle-metrics",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 5, y: 4 }
+    }
+  });
+
+  const steps = await resolveBattleThroughRoom(room, client, "player-1");
+  const summary = buildRoomLifecycleSummaryPayload();
+
+  assert.ok(steps > 0);
+  assert.equal(summary.summary.counters.battleCompletionsTotal, 1);
+  assert.equal(summary.summary.counters.battleAbortsTotal, 0);
+  assert.equal(summary.summary.recentEvents.some((event) => event.kind === "battle.completed"), true);
+  assert.equal(
+    summary.summary.recentEvents.find((event) => event.kind === "battle.completed")?.roomId,
+    room.roomId
+  );
+});
+
+test("disposing a room with an active battle records a battle abort", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  resetRuntimeObservability();
+  const room = await createTestRoom(`lifecycle-battle-abort-${Date.now()}`);
+  const client = createFakeClient("session-battle-abort");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+    resetRuntimeObservability();
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-battle-abort");
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: "move-battle-abort",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 5, y: 4 }
+    }
+  });
+
+  assert.ok(getBattleForPlayer(room, "player-1"));
+  room.onDispose();
+
+  const summary = buildRoomLifecycleSummaryPayload();
+  assert.equal(summary.summary.counters.battleCompletionsTotal, 0);
+  assert.equal(summary.summary.counters.battleAbortsTotal, 1);
+  assert.equal(summary.summary.counters.roomDisposalsTotal, 1);
+  assert.equal(summary.summary.recentEvents[0]?.kind, "room.disposed");
+  assert.equal(summary.summary.recentEvents[1]?.kind, "battle.aborted");
+  assert.equal(summary.summary.recentEvents[1]?.reason, "dispose");
 });
 
 test("invalid world actions return a structured rejection only to the originating client", async (t) => {

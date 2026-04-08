@@ -63,11 +63,18 @@ export interface RoomPersistenceSnapshot {
 
 interface AuthoritativeRoomTelemetry {
   recordBattleDuration(durationSeconds: number): void;
+  recordBattleResolved(input: {
+    roomId: string;
+    battleId: string;
+    outcome: "completed" | "aborted";
+    reason?: string;
+  }): void;
   recordActionValidationFailure(scope: "world" | "battle", reason: string): void;
 }
 
 const defaultAuthoritativeRoomTelemetry: AuthoritativeRoomTelemetry = {
   recordBattleDuration: () => {},
+  recordBattleResolved: () => {},
   recordActionValidationFailure: () => {}
 };
 
@@ -296,6 +303,12 @@ export class AuthoritativeWorldRoom {
       if (outcome.status !== "in_progress") {
         this.finalizeBattleReplay(battle, outcome);
         this.recordCompletedBattleDuration(battle.id);
+        authoritativeRoomTelemetry.recordBattleResolved({
+          roomId: this.state.meta.roomId,
+          battleId: battle.id,
+          outcome: "completed",
+          reason: outcome.status
+        });
         if (battle.worldHeroId) {
           const worldOutcome = applyBattleOutcomeToWorld(
             this.state,

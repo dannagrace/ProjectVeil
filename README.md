@@ -174,6 +174,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 运行时健康检查：`GET http://127.0.0.1:2567/api/runtime/health`
 - 鉴权就绪摘要：`GET http://127.0.0.1:2567/api/runtime/auth-readiness`
 - 运行时指标抓取：`GET http://127.0.0.1:2567/api/runtime/metrics`
+- 房间 / 重连 / 战斗生命周期摘要：`GET http://127.0.0.1:2567/api/runtime/room-lifecycle-summary`（可加 `?format=text` 输出适合告警或 artifact 留档的紧凑文本）
 - 终端逻辑演示：`npm run demo:flow`
 - 主客户端入口说明：`npm run client:primary`
 - Cocos 主客户端类型检查：`npm run typecheck:client`
@@ -185,7 +186,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - Same-revision 发布证据组装 runbook：`docs/same-revision-release-evidence-runbook.md`
 - Candidate-level 发布证据 freshness / consistency audit：`npm run release:candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <auto|h5|wechat>`（输出 candidate-scoped JSON / Markdown 审计，汇总 blocking vs warning 结论，并校验 revision mismatch、artifact staleness、runtime observability evidence / gate、WeChat manual checks、owner ledger freshness；兼容旧别名 `release:same-candidate:evidence-audit`）
 - 统一发布门禁汇总：`npm run release:gate:summary`
-- Candidate-scoped runtime observability evidence：`npm run release:runtime-observability:evidence -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>`（抓取 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics` 的同一候选包证据，并在 `artifacts/release-readiness/` 输出 candidate+revision 命名的 JSON / Markdown）
+- Candidate-scoped runtime observability evidence：`npm run release:runtime-observability:evidence -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>`（抓取 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics`，必要时补抓 `/api/runtime/room-lifecycle-summary` 作为 battle / reconnect triage companion evidence，并在 `artifacts/release-readiness/` 输出 candidate+revision 命名的 JSON / Markdown）
 - Candidate-scoped runtime observability gate：`npm run release:runtime-observability:gate -- --candidate <candidate-name> --candidate-revision <git-sha> --capture-report <runtime-observability-evidence.json>`（基于已捕获的 runtime evidence 生成 pass/fail gate；也可直接传 `--server-url` 让 gate 即时采样）
 - Candidate-level reconnect soak：`npm run release:reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>`（输出 candidate+revision 命名的 reconnect soak JSON / Markdown，并供 release gate / dossier 直接引用）
 - 发布健康度聚合摘要：`npm run release:health:summary`
