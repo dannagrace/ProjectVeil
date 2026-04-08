@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   ALL_PLACEHOLDER_SCOPES,
   normalizePlaceholderScopes,
+  PLACEHOLDER_FOG_MASK_PATHS,
   PLACEHOLDER_ICON_PATHS,
   PLACEHOLDER_SCOPE_PATHS,
   PLACEHOLDER_TILE_PATHS,
@@ -16,6 +17,9 @@ test("placeholder scope plan exposes the expected scope order and asset groups",
     "placeholder/tiles/hidden-2",
     "placeholder/tiles/hidden-3"
   ]);
+  assert.equal(PLACEHOLDER_FOG_MASK_PATHS.hidden.length, 16);
+  assert.equal(PLACEHOLDER_FOG_MASK_PATHS.hidden[0], "placeholder/fog/hidden-0");
+  assert.equal(PLACEHOLDER_FOG_MASK_PATHS.explored[15], "placeholder/fog/explored-15");
   assert.equal(PLACEHOLDER_SCOPE_PATHS.map.at(-1), PLACEHOLDER_ICON_PATHS.mine);
   assert.deepEqual(PLACEHOLDER_SCOPE_PATHS.hud, [PLACEHOLDER_ICON_PATHS.hud, PLACEHOLDER_ICON_PATHS.hero]);
   assert.deepEqual(PLACEHOLDER_SCOPE_PATHS.battle, [PLACEHOLDER_ICON_PATHS.battle]);
@@ -39,6 +43,8 @@ test("resolvePlaceholderSpritePathsForScopes defaults to all scopes in stable or
   assert.ok(paths.includes(PLACEHOLDER_ICON_PATHS.hud));
   assert.ok(paths.includes(PLACEHOLDER_ICON_PATHS.battle));
   assert.ok(paths.includes(PLACEHOLDER_ICON_PATHS.timeline));
+  assert.ok(paths.includes(PLACEHOLDER_FOG_MASK_PATHS.hidden[0]));
+  assert.ok(paths.includes(PLACEHOLDER_FOG_MASK_PATHS.explored[15]));
   assert.equal(paths.filter((path) => path === PLACEHOLDER_ICON_PATHS.hero).length, 1);
   assert.equal(paths.at(-1), PLACEHOLDER_ICON_PATHS.timeline);
 });

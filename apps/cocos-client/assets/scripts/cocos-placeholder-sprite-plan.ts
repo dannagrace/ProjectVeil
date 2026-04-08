@@ -10,6 +10,11 @@ export const PLACEHOLDER_TILE_PATHS = {
   hidden: ["placeholder/tiles/hidden-1", "placeholder/tiles/hidden-2", "placeholder/tiles/hidden-3"]
 } as const;
 
+export const PLACEHOLDER_FOG_MASK_PATHS = {
+  hidden: Array.from({ length: 16 }, (_unused, featherMask) => `placeholder/fog/hidden-${featherMask}`),
+  explored: Array.from({ length: 16 }, (_unused, featherMask) => `placeholder/fog/explored-${featherMask}`)
+} as const;
+
 export const PLACEHOLDER_ICON_PATHS = {
   wood: "placeholder/icons/wood",
   gold: "placeholder/icons/gold",
@@ -33,6 +38,8 @@ export const PLACEHOLDER_SCOPE_PATHS = {
     ...PLACEHOLDER_TILE_PATHS.swamp,
     ...PLACEHOLDER_TILE_PATHS.unknown,
     ...PLACEHOLDER_TILE_PATHS.hidden,
+    ...PLACEHOLDER_FOG_MASK_PATHS.hidden,
+    ...PLACEHOLDER_FOG_MASK_PATHS.explored,
     PLACEHOLDER_ICON_PATHS.wood,
     PLACEHOLDER_ICON_PATHS.gold,
     PLACEHOLDER_ICON_PATHS.ore,

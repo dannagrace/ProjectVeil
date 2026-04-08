@@ -1,6 +1,6 @@
 import { _decorator, Color, Component, EventMouse, EventTouch, Graphics, input, Input, Label, Node, Sprite, SpriteFrame, UIOpacity, UITransform, v3, view } from "cc";
 import type { PlayerTileView, SessionUpdate, Vec2 } from "./VeilCocosSession.ts";
-import { buildFogOverlayStyle, createTileLookup, fogEdgeMarkerForTile } from "./cocos-map-visuals.ts";
+import { buildFogTileStyle, createTileLookup, FOG_TILE_STATES, fogEdgeMarkerForTile, resolveFogTileFrameKey } from "./cocos-map-visuals.ts";
 import { resolveCocosTileMarkerVisual, type CocosTileMarkerVisual } from "./cocos-object-visuals.ts";
 import { VeilFogOverlay } from "./VeilFogOverlay.ts";
 import { VeilTilemapRenderer } from "./VeilTilemapRenderer.ts";
@@ -164,6 +164,7 @@ export class VeilMapBoard extends Component {
         reachableKeys: new Set((update.reachableTiles ?? []).map((node) => this.tileKey(node)))
       }) ?? false;
     const tileLookup = createTileLookup(world.map.tiles);
+    const fogOverlayFrameLookup = this.buildFogOverlayFrameLookup();
 
     const usedKeys = new Set<string>();
     world.map.tiles.forEach((tile) => {
@@ -185,7 +186,8 @@ export class VeilMapBoard extends Component {
       this.syncTileSprite(tileView, tile, usesTilemapRenderer);
       this.paintTileChrome(tileView.graphics, tile, isReachable, isHeroTile);
       tileView.label.string = usesTilemapRenderer ? "" : this.tileText(tile, tileLookup, isReachable, isHeroTile);
-      tileView.fogOverlay.render(buildFogOverlayStyle(tile, tileLookup, this.fogPulsePhase), true);
+      tileView.fogOverlay.configure(this.tileSize, fogOverlayFrameLookup);
+      tileView.fogOverlay.render(buildFogTileStyle(tile, tileLookup), true);
       this.renderObjectMarker(tile, width, height, usesTilemapRenderer);
     });
 
@@ -402,7 +404,7 @@ export class VeilMapBoard extends Component {
     }
     assignUiLayer(fogOverlayNode);
     const fogOverlay = fogOverlayNode.getComponent(VeilFogOverlay) ?? fogOverlayNode.addComponent(VeilFogOverlay);
-    fogOverlay.configure(this.tileSize);
+    fogOverlay.configure(this.tileSize, new Map<string, SpriteFrame | null>());
 
     const created = { node: tileNode, label, fogOverlay, graphics, spriteNode, sprite, spriteOpacity };
     this.tileNodes.set(key, created);
@@ -634,6 +636,23 @@ export class VeilMapBoard extends Component {
 
     releasePlaceholderSpriteAssets("map");
     this.placeholderAssetsRetained = false;
+  }
+
+  private buildFogOverlayFrameLookup(): Map<string, SpriteFrame | null> {
+    const lookup = new Map<string, SpriteFrame | null>();
+    const assets = getPlaceholderSpriteAssets();
+    if (!assets) {
+      return lookup;
+    }
+
+    for (const fogState of FOG_TILE_STATES) {
+      const frames = assets.fogMasks[fogState];
+      for (let featherMask = 0; featherMask < frames.length; featherMask += 1) {
+        lookup.set(resolveFogTileFrameKey(fogState, featherMask), frames[featherMask] ?? null);
+      }
+    }
+
+    return lookup;
   }
 
   private handleBoardTouch(event: EventTouch | EventMouse | undefined): void {
