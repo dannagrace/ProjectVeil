@@ -278,6 +278,7 @@ function isRecoverableSessionError(error: unknown): boolean {
 interface RemoteConnectOptions {
   useStoredToken?: boolean;
   connectTimeoutMs?: number;
+  createClient?: (url: string) => Pick<ColyseusClient, "reconnect" | "joinOrCreate">;
 }
 
 interface LocalSessionRuntime {
@@ -947,7 +948,7 @@ async function connectRemoteGameSession(
   const storage = getReconnectionStorage();
   const useStoredToken = connectOptions?.useStoredToken ?? true;
   const reconnectionToken = useStoredToken && storage ? readReconnectionToken(storage, roomId, playerId) : null;
-  const client = new ColyseusClient(remoteUrl);
+  const client = connectOptions?.createClient?.(remoteUrl) ?? new ColyseusClient(remoteUrl);
   let recoveredFromStoredToken = false;
 
   const room = await new Promise<ColyseusRoom>((resolve, reject) => {
@@ -1192,9 +1193,13 @@ async function createGameSessionWithRuntime(
   options?: GameSessionOptions,
   runtime: LocalSessionRuntime = defaultLocalSessionRuntime
 ): Promise<GameSession> {
-  // 强制尝试创建远程连接
-  console.log(`[Network] FORCING Remote Session for ${playerId}...`);
-  return await RecoverableRemoteGameSession.create(roomId, playerId, seed, options, runtime);
+  console.log(`[Network] Attempting remote session bootstrap for ${playerId}...`);
+  try {
+    return await RecoverableRemoteGameSession.create(roomId, playerId, seed, options, runtime);
+  } catch (error) {
+    console.warn("[Network] Remote session bootstrap unavailable, falling back to local session.", error);
+    return runtime.createLocalSession(roomId, playerId, seed);
+  }
 }
 
 export async function createGameSession(
@@ -1207,6 +1212,15 @@ export async function createGameSession(
 }
 
 export const localSessionTestHooks = {
+  connectRemoteGameSession(
+    roomId: string,
+    playerId: string,
+    seed = 1001,
+    options?: GameSessionOptions,
+    connectOptions?: RemoteConnectOptions
+  ): Promise<{ session: GameSession; recoveredFromStoredToken: boolean }> {
+    return connectRemoteGameSession(roomId, playerId, seed, options, connectOptions);
+  },
   createGameSessionWithRuntime(
     roomId: string,
     playerId: string,
