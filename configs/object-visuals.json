@@ -343,5 +343,43 @@
         "gold@8,9": "gold"
       }
     }
+  },
+  "phase2MapPackCoverage": {
+    "phase2": {
+      "neutralArmies": {
+        "neutral-reed-patrol": "neutral",
+        "neutral-watch-guard": "neutral",
+        "neutral-ford-scouts": "neutral"
+      },
+      "buildings": {
+        "recruit-post-basin-1": "recruitment_post",
+        "shrine-knowledge-basin-1": "attribute_shrine",
+        "mine-ore-basin-1": "resource_mine",
+        "watchtower-basin-1": "watchtower"
+      },
+      "resources": {
+        "wood@2,1": "wood",
+        "ore@7,6": "ore",
+        "gold@4,6": "gold"
+      }
+    },
+    "phase2-frontier-expanded": {
+      "neutralArmies": {
+        "neutral-frontier-gate": "neutral",
+        "neutral-river-watch": "neutral",
+        "neutral-southern-pickets": "neutral"
+      },
+      "buildings": {
+        "recruit-post-frontier-expanded-1": "recruitment_post",
+        "shrine-frontier-expanded-1": "attribute_shrine",
+        "mine-frontier-expanded-1": "resource_mine",
+        "watchtower-frontier-expanded-1": "watchtower"
+      },
+      "resources": {
+        "wood@6,4": "wood",
+        "gold@14,16": "gold",
+        "ore@26,27": "ore"
+      }
+    }
   }
 }
