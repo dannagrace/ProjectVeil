@@ -375,6 +375,7 @@ export function renderReleaseOpsOwnershipMarkdown(entries: ReleaseOpsOwnershipEn
     "## How To Use This Matrix",
     "",
     "- Open this page when reviewers ask which command or artifact is authoritative for a release/readiness question.",
+    "- For live runtime alert response, pair this ownership map with [`docs/alerting-runbook.md`](./alerting-runbook.md) so the responder can move from the owning role to the per-alert triage steps quickly.",
     "- `Decision role` distinguishes the canonical gate from supporting evidence and reviewer-facing diagnostics.",
     "- `Review treatment` makes the blocker boundary explicit: use `merge/release blocker` for changes that can stop both PR approval and candidate promotion, `release blocker` for candidate-only proof, and `review aid` for summaries that should not override the owning gate.",
     "",
