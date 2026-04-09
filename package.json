@@ -108,6 +108,7 @@
     "test:e2e:golden-path": "npm run validate:e2e:fixtures && playwright test ./tests/e2e/golden-path-player-journey.spec.ts --config=playwright.smoke.config.ts",
     "test:e2e:smoke": "npm run validate:e2e:fixtures && playwright test --config=playwright.smoke.config.ts",
     "test:e2e:h5:connectivity": "npm run validate:e2e:fixtures && playwright test --config=playwright.h5-connectivity.config.ts",
+    "smoke:client:boot-room": "node --import tsx ./scripts/client-boot-room-smoke.ts",
     "test:e2e:multiplayer": "npm run validate:e2e:fixtures && playwright test --config=playwright.multiplayer.config.ts",
     "test:e2e:multiplayer:smoke": "npm run validate:e2e:fixtures && playwright test --config=playwright.multiplayer.smoke.config.ts",
     "test:e2e:multiplayer:headed": "npm run validate:e2e:fixtures && playwright test --config=playwright.multiplayer.config.ts --headed",

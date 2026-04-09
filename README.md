@@ -92,6 +92,7 @@ npm run validate:quickstart
 
 - `npm run doctor`：先看本机 prerequisites / 可选服务 / env 提示是否齐全
 - `npm run validate:quickstart`：在依赖装好后，真正验证仓库的最小 build + boot 路径
+- `npm run smoke:client:boot-room`：启动本地 server + H5 调试壳，确认客户端能完成 Lobby boot 并成功进入一个房间；适合本地冒烟或 CI 快速 sanity check
 
 本地 Codex 会话如果把元数据写在仓库内，默认只允许落在仓库根目录的 `.codex`、`.codex-last-*.txt` 和 `.codex-runs/`。这些路径是本机临时产物，已被 `.gitignore` 排除，不应加入提交或作为发布证据目录使用。
 
@@ -215,6 +216,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
   `window.export_diagnostic_snapshot()` 返回稳定 JSON；
   `window.render_diagnostic_snapshot_to_text()` 返回与面板一致的紧凑文本摘要，便于自动化留档
 - H5 连接性 CI 冒烟：`npm run test:e2e:h5:connectivity`
+- 单命令客户端 boot + room join 冒烟：`npm run smoke:client:boot-room`
 - H5 Playwright 冒烟：`npm run test:e2e:smoke`
   当前覆盖 Lobby 入口与 reconnect predicted-state -> authoritative convergence canonical smoke
 - 打包 H5 客户端 RC 冒烟会把结构化结果写入 `artifacts/release-readiness/`
