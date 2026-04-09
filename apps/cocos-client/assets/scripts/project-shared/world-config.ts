@@ -720,6 +720,13 @@ export function validateUnitCatalog(
       throw new Error(`Invalid rarity for unit template: ${template.id}`);
     }
 
+    if (
+      template.attackRange !== undefined &&
+      (!Number.isInteger(template.attackRange) || template.attackRange < 1)
+    ) {
+      throw new Error(`Invalid attackRange for unit template: ${template.id}`);
+    }
+
     if (ids.has(template.id)) {
       throw new Error(`Duplicate unit template id: ${template.id}`);
     }

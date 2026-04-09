@@ -683,6 +683,7 @@ export interface UnitStack {
   defense: number;
   minDamage: number;
   maxDamage: number;
+  attackRange?: number;
   count: number;
   currentHp: number;
   maxHp: number;
@@ -1290,6 +1291,7 @@ export interface UnitTemplateConfig {
   defense: number;
   minDamage: number;
   maxDamage: number;
+  attackRange?: number;
   maxHp: number;
   battleSkills?: BattleSkillId[];
 }

@@ -5490,6 +5490,98 @@ test("applyBattleAction uses deterministic damage and retaliation flow", () => {
   ]);
 });
 
+test("applyBattleAction allows melee defenders to retaliate once per round", () => {
+  const initial = createDemoBattleState();
+
+  const next = applyBattleAction(initial, {
+    type: "battle.attack",
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  });
+
+  assert.equal(next.units["pikeman-a"]?.hasRetaliated, true);
+  assert.match(next.log.join("\n"), /枪兵 反击 恶狼/);
+});
+
+test("applyBattleAction does not allow a second retaliation in the same round", () => {
+  const initial = createDemoBattleState();
+  initial.activeUnitId = "pikeman-a";
+  initial.turnOrder = ["pikeman-a", "wolf-d"];
+  initial.units["wolf-d"] = {
+    ...initial.units["wolf-d"]!,
+    hasRetaliated: true
+  };
+
+  const next = applyBattleAction(initial, {
+    type: "battle.attack",
+    attackerId: "pikeman-a",
+    defenderId: "wolf-d"
+  });
+
+  assert.equal(next.units["wolf-d"]?.hasRetaliated, true);
+  assert.ok(!next.log.some((entry) => entry.includes("恶狼 反击")));
+});
+
+test("applyBattleAction skips retaliation when the attacker is ranged", () => {
+  const initial = createDemoBattleState();
+  initial.units["wolf-d"] = {
+    ...initial.units["wolf-d"]!,
+    attackRange: 2
+  };
+
+  const next = applyBattleAction(initial, {
+    type: "battle.attack",
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  });
+
+  assert.equal(next.units["pikeman-a"]?.hasRetaliated, false);
+  assert.equal(next.rng.cursor, 1);
+  assert.ok(!next.log.some((entry) => entry.includes("反击")));
+});
+
+test("applyBattleAction skips retaliation when the defender is ranged", () => {
+  const initial = createDemoBattleState();
+  initial.activeUnitId = "pikeman-a";
+  initial.turnOrder = ["pikeman-a", "wolf-d"];
+  initial.units["wolf-d"] = {
+    ...initial.units["wolf-d"]!,
+    attackRange: 2
+  };
+
+  const next = applyBattleAction(initial, {
+    type: "battle.attack",
+    attackerId: "pikeman-a",
+    defenderId: "wolf-d"
+  });
+
+  assert.equal(next.units["wolf-d"]?.hasRetaliated, false);
+  assert.equal(next.rng.cursor, 1);
+  assert.ok(!next.log.some((entry) => entry.includes("反击")));
+});
+
+test("applyBattleAction skips retaliation when the defender dies", () => {
+  const initial = createDemoBattleState();
+  initial.activeUnitId = "pikeman-a";
+  initial.turnOrder = ["pikeman-a", "wolf-d"];
+  initial.units["wolf-d"] = {
+    ...initial.units["wolf-d"]!,
+    count: 1,
+    currentHp: 1,
+    statusEffects: []
+  };
+
+  const next = applyBattleAction(initial, {
+    type: "battle.attack",
+    attackerId: "pikeman-a",
+    defenderId: "wolf-d"
+  });
+
+  assert.equal(next.units["wolf-d"]?.count, 0);
+  assert.equal(next.units["wolf-d"]?.hasRetaliated, false);
+  assert.ok(!next.log.some((entry) => entry.includes("反击")));
+});
+
 test("nextDeterministicRandom is repeatable for the same seed", () => {
   const firstRun = [
     nextDeterministicRandom(4242),

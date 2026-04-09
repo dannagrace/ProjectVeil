@@ -285,6 +285,7 @@ export interface UnitStack {
   defense: number;
   minDamage: number;
   maxDamage: number;
+  attackRange?: number;
   count: number;
   currentHp: number;
   maxHp: number;
