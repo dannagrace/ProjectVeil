@@ -229,7 +229,7 @@ test("connectRemoteGameSession clears a stale stored token and falls back to a f
   const calls: string[] = [];
 
   try {
-    const { session, recoveredFromStoredToken } = await localSessionTestHooks.connectRemoteGameSession(
+    const { session, recoveredFromStoredToken, resumeFailureReason } = await localSessionTestHooks.connectRemoteGameSession(
       "room-alpha",
       "player-1",
       1001,
@@ -249,12 +249,57 @@ test("connectRemoteGameSession clears a stale stored token and falls back to a f
     );
 
     assert.equal(recoveredFromStoredToken, false);
+    assert.equal(resumeFailureReason, "transport_lost");
     assert.deepEqual(calls, [
       "reconnect:ws://127.0.0.1:2567:stale-token",
       'joinOrCreate:ws://127.0.0.1:2567:veil:{"logicalRoomId":"room-alpha","playerId":"player-1","seed":1001}'
     ]);
     assert.ok(session);
     assert.equal(readReconnectionToken(storage, "room-alpha", "player-1"), "fresh-token");
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("connectRemoteGameSession classifies stored-token resume auth failures for assertions and logs", { concurrency: false }, async () => {
+  const storage = createMemoryStorage([[getReconnectionStorageKey("room-alpha", "player-1"), "stale-token"] as const]);
+  const restoreWindow = installWindow(storage);
+
+  try {
+    const { resumeFailureReason } = await localSessionTestHooks.connectRemoteGameSession("room-alpha", "player-1", 1001, undefined, {
+      createClient: () => ({
+        async reconnect() {
+          throw new Error("session_revoked");
+        },
+        async joinOrCreate() {
+          return new FakeRoom("fresh-token") as unknown as ColyseusRoom;
+        }
+      })
+    });
+
+    assert.equal(resumeFailureReason, "auth_invalid");
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("connectRemoteGameSession classifies stored-token resume version mismatches for assertions and logs", { concurrency: false }, async () => {
+  const storage = createMemoryStorage([[getReconnectionStorageKey("room-alpha", "player-1"), "stale-token"] as const]);
+  const restoreWindow = installWindow(storage);
+
+  try {
+    const { resumeFailureReason } = await localSessionTestHooks.connectRemoteGameSession("room-alpha", "player-1", 1001, undefined, {
+      createClient: () => ({
+        async reconnect() {
+          throw new Error("client protocol version mismatch");
+        },
+        async joinOrCreate() {
+          return new FakeRoom("fresh-token") as unknown as ColyseusRoom;
+        }
+      })
+    });
+
+    assert.equal(resumeFailureReason, "version_mismatch");
   } finally {
     restoreWindow();
   }

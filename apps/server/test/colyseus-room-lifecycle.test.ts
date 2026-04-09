@@ -659,10 +659,9 @@ test("client that misses the reconnect window is cleaned up from the player slot
   const summary = buildRoomLifecycleSummaryPayload();
   assert.equal(summary.summary.counters.roomCreatesTotal, 1);
   assert.equal(summary.summary.recentEvents.some((event) => event.kind === "reconnect.failed"), true);
-  assert.equal(
-    summary.summary.recentEvents.find((event) => event.kind === "reconnect.failed")?.reason,
-    "reconnect_window_expired"
-  );
+  const reconnectFailure = summary.summary.recentEvents.find((event) => event.kind === "reconnect.failed");
+  assert.equal(reconnectFailure?.reason, "reconnect_window_expired");
+  assert.equal(reconnectFailure?.failureReason, "reconnect_window_expired");
 });
 
 test("reconnect rejects a player who becomes banned before the resumed session is restored", async (t) => {
@@ -701,6 +700,9 @@ test("reconnect rejects a player who becomes banned before the resumed session i
   assert.equal(summary?.connectedPlayers, 0);
   assert.equal(summary?.disconnectedPlayers, 1);
   assert.equal(summary?.statusLabel, "等待重连");
+  const lifecycle = buildRoomLifecycleSummaryPayload();
+  const reconnectFailure = lifecycle.summary.recentEvents.find((event) => event.kind === "reconnect.failed");
+  assert.equal(reconnectFailure?.failureReason, "auth_invalid");
 });
 
 test("failed reconnect cleanup removes only the expired session and preserves other connected players", async (t) => {

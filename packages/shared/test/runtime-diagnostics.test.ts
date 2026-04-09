@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  classifyReconnectFailure,
   buildRuntimeDiagnosticsErrorEvent,
   buildRuntimeDiagnosticsTriageView,
   buildRuntimeDiagnosticsSummaryLines,
@@ -8,6 +9,14 @@ import {
   renderRuntimeDiagnosticsSnapshotText,
   type RuntimeDiagnosticsSnapshot
 } from "../src/index";
+
+test("classifyReconnectFailure normalizes representative reconnect and resume failure causes", () => {
+  assert.equal(classifyReconnectFailure({ error: new Error("connect_timeout") }), "timeout");
+  assert.equal(classifyReconnectFailure({ error: new Error("session_revoked") }), "auth_invalid");
+  assert.equal(classifyReconnectFailure({ error: new Error("client protocol version mismatch") }), "version_mismatch");
+  assert.equal(classifyReconnectFailure({ error: new Error("socket disconnected during reconnect") }), "transport_lost");
+  assert.equal(classifyReconnectFailure({ error: new Error("reconnect window expired") }), "reconnect_window_expired");
+});
 
 function createRuntimeDiagnosticsSnapshot(): RuntimeDiagnosticsSnapshot {
   return {

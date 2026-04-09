@@ -3,6 +3,7 @@ import {
   buildRuntimeDiagnosticsErrorEvent,
   renderRuntimeDiagnosticsSnapshotText,
   summarizeRuntimeDiagnosticsErrors,
+  type ReconnectFailureReason,
   type RuntimeDiagnosticsErrorEvent,
   type RuntimeDiagnosticsSnapshot
 } from "../../../packages/shared/src/index";
@@ -134,6 +135,7 @@ export interface RoomLifecycleEvent {
   playerId?: string;
   battleId?: string;
   reason?: string;
+  failureReason?: ReconnectFailureReason;
 }
 
 interface RuntimeObservabilityState {
@@ -637,6 +639,9 @@ export function renderRoomLifecycleSummaryText(report: RoomLifecycleSummaryPaylo
     }
     if (event.reason) {
       parts.push(`reason=${event.reason}`);
+    }
+    if (event.failureReason) {
+      parts.push(`failure_reason=${event.failureReason}`);
     }
     return parts.join(" | ");
   });
@@ -1527,7 +1532,7 @@ export function recordReconnectWindowResolved(
   details?: {
     roomId?: string;
     playerId?: string;
-    reason?: string;
+    reason?: ReconnectFailureReason;
   }
 ): void {
   runtimeObservability.reconnect.pendingWindowCount = Math.max(0, runtimeObservability.reconnect.pendingWindowCount - 1);
@@ -1543,7 +1548,7 @@ export function recordReconnectWindowResolved(
       kind: outcome === "success" ? "reconnect.succeeded" : "reconnect.failed",
       roomId: details.roomId,
       ...(details.playerId ? { playerId: details.playerId } : {}),
-      ...(details.reason ? { reason: details.reason } : {})
+      ...(details.reason ? { reason: details.reason, failureReason: details.reason } : {})
     });
   }
 }
