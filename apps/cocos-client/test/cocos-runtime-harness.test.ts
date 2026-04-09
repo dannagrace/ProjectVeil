@@ -40,6 +40,10 @@ function encodeBytes(values: number[]): Uint8Array {
   return Uint8Array.from(values);
 }
 
+function acceptPrivacyConsent(root: { privacyConsentAccepted: boolean }): void {
+  root.privacyConsentAccepted = true;
+}
+
 function createEncodedStatePayload(day: number, roomId: string, playerId: string) {
   const update = createSessionUpdate(day, roomId, playerId);
   return {
@@ -77,6 +81,7 @@ test("Cocos runtime harness boots VeilRoot from lobby handoff into the first liv
   harness.root.playerId = "guest-338";
   harness.root.displayName = "Guest 338";
   harness.root.syncBrowserRoomQuery = () => undefined;
+  acceptPrivacyConsent(harness.root as typeof harness.root & { privacyConsentAccepted: boolean });
 
   await harness.root.enterLobbyRoom();
 
@@ -415,6 +420,7 @@ test("Cocos lifecycle harness hands lobby auth off into a live VeilRoot session"
   harness.root.readLaunchSearch = () => "";
   harness.root.syncBrowserRoomQuery = () => undefined;
   harness.root.hydrateLaunchIdentity();
+  acceptPrivacyConsent(harness.root as typeof harness.root & { privacyConsentAccepted: boolean });
   await harness.root.enterLobbyRoom("room-lobby");
 
   assert.equal(harness.root.showLobby, false);
@@ -435,6 +441,41 @@ test("Cocos lifecycle harness hands lobby auth off into a live VeilRoot session"
       }
     }
   ]);
+});
+
+test("Cocos lifecycle harness rejects stale synced account auth and returns VeilRoot to lobby mode", async () => {
+  const storage = createMemoryStorage();
+  writeStoredCocosAuthSession(storage, {
+    token: "expired.account.token",
+    playerId: "account-player",
+    displayName: "暮潮守望",
+    authMode: "account",
+    provider: "account-password",
+    loginId: "veil-ranger",
+    source: "remote"
+  });
+  const room = new FakeColyseusRoom([createSessionUpdate(6, "room-lobby", "account-player")], "unused-token");
+  const harness = createVeilRootSessionLifecycleHarness({
+    storage,
+    joinRooms: [room],
+    syncedAuthSession: null
+  });
+
+  harness.root.readLaunchSearch = () => "";
+  harness.root.syncBrowserRoomQuery = () => undefined;
+  harness.root.hydrateLaunchIdentity();
+  acceptPrivacyConsent(harness.root as typeof harness.root & { privacyConsentAccepted: boolean });
+  await harness.root.enterLobbyRoom("room-lobby");
+
+  assert.equal(harness.root.showLobby, true);
+  assert.equal(harness.root.session, null);
+  assert.equal(harness.root.authToken, null);
+  assert.equal(harness.root.authMode, "guest");
+  assert.equal(harness.root.sessionSource, "none");
+  assert.equal(harness.storage.getItem("project-veil:auth-session"), null);
+  assert.equal(harness.root.lastUpdate, null);
+  assert.equal(room.sentMessages.length, 0);
+  assert.match(String(harness.root.lobbyStatus), /账号会话已失效/);
 });
 
 test("Cocos lifecycle harness tears down the active VeilRoot session on destroy", async () => {
