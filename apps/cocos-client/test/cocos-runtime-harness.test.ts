@@ -92,6 +92,53 @@ test("Cocos runtime harness boots VeilRoot from lobby handoff into the first liv
   assert.equal(harness.root.sessionSource, "remote");
 });
 
+test("Cocos lifecycle harness cold-boots VeilRoot into the lobby before guest room handoff", async () => {
+  const room = new FakeColyseusRoom([createSessionUpdate(4, "room-issue-1077", "guest-1077")], "guest-1077-token");
+  const harness = createVeilRootSessionLifecycleHarness({
+    joinRooms: [room],
+    guestAuthToken: "guest.issue-1077.token"
+  });
+  let bootstrapCalls = 0;
+
+  harness.root.readLaunchSearch = () => "";
+  harness.root.syncBrowserRoomQuery = () => undefined;
+  harness.root.syncLobbyBootstrap = async () => {
+    bootstrapCalls += 1;
+  };
+
+  harness.root.hydrateLaunchIdentity();
+  harness.root.start();
+
+  assert.equal(harness.root.showLobby, true);
+  assert.equal(harness.root.autoConnect, false);
+  assert.equal(harness.root.session, null);
+  assert.equal(bootstrapCalls, 1);
+
+  const bootPlayerId = harness.root.playerId;
+  acceptPrivacyConsent(harness.root as typeof harness.root & { privacyConsentAccepted: boolean });
+  await harness.root.enterLobbyRoom("room-issue-1077");
+
+  assert.equal(harness.root.showLobby, false);
+  assert.equal(harness.root.authMode, "guest");
+  assert.equal(harness.root.sessionSource, "remote");
+  assert.equal(harness.root.authToken, "guest.issue-1077.token");
+  assert.equal(harness.root.lastUpdate?.world.meta.day, 4);
+  assert.equal(harness.root.lastUpdate?.world.meta.roomId, "room-issue-1077");
+  assert.deepEqual(room.sentMessages, [
+    {
+      type: "connect",
+      payload: {
+        type: "connect",
+        requestId: "cocos-req-1",
+        roomId: "room-issue-1077",
+        playerId: bootPlayerId,
+        displayName: bootPlayerId,
+        authToken: "guest.issue-1077.token"
+      }
+    }
+  ]);
+});
+
 test("Cocos runtime harness replays cached VeilRoot state before reconnect recovery converges", async () => {
   const replayedUpdate = createSessionUpdate(2, "room-issue-338", "player-338");
   replayedUpdate.events = [
@@ -343,6 +390,7 @@ test("Cocos lifecycle harness recovers VeilRoot through VeilCocosSession reconne
 
   assert.deepEqual(order, ["replay:2", "live:3", "live:5"]);
   assert.equal(harness.root.session, connectedSession);
+  assert.equal(harness.root.showLobby, false);
   assert.equal(harness.root.lastUpdate?.world.meta.day, 5);
   assert.equal(harness.root.diagnosticsConnectionStatus, "connected");
   assert.deepEqual(harness.joinedOptions, [
