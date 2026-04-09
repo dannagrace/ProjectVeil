@@ -40,6 +40,7 @@ import type {
   CocosAccountLifecyclePanelView,
   CocosAccountReadinessStatus
 } from "./cocos-account-lifecycle.ts";
+import type { CocosAccountRegistrationPanelView } from "./cocos-account-registration.ts";
 import {
   createBattleReplayPlaybackState,
   findPlayerBattleReplaySummary,
@@ -112,6 +113,12 @@ function formatAccountReadinessStatus(status: CocosAccountReadinessStatus): stri
   return "MISSING";
 }
 
+function isRegistrationFlowView(
+  flow: CocosAccountLifecyclePanelView | CocosAccountRegistrationPanelView
+): flow is CocosAccountRegistrationPanelView {
+  return Array.isArray((flow as CocosAccountRegistrationPanelView).identities);
+}
+
 export interface VeilLobbyRenderState {
   playerId: string;
   displayName: string;
@@ -146,7 +153,7 @@ export interface VeilLobbyRenderState {
   matchmakingSearching?: boolean;
   matchmakingBusy?: boolean;
   rooms: CocosLobbyRoomSummary[];
-  accountFlow: CocosAccountLifecyclePanelView | null;
+  accountFlow: CocosAccountLifecyclePanelView | CocosAccountRegistrationPanelView | null;
   presentationReadiness: CocosPresentationReadiness;
   activeHero: HeroView | null;
   lobbySkillPanel: LobbySkillPanelView | null;
@@ -176,6 +183,8 @@ export interface VeilLobbyPanelOptions {
   onEditAccountFlowField?: (field: CocosAccountLifecycleFieldView["key"]) => void;
   onRequestAccountFlow?: () => void;
   onConfirmAccountFlow?: () => void;
+  onToggleAccountMinorProtection?: () => void;
+  onBindWechatAccount?: () => void;
   onCancelAccountFlow?: () => void;
   onOpenCampaign?: () => void;
   onOpenConfigCenter?: () => void;
@@ -223,6 +232,8 @@ export class VeilLobbyPanel extends Component {
   private onEditAccountFlowField: ((field: CocosAccountLifecycleFieldView["key"]) => void) | undefined;
   private onRequestAccountFlow: (() => void) | undefined;
   private onConfirmAccountFlow: (() => void) | undefined;
+  private onToggleAccountMinorProtection: (() => void) | undefined;
+  private onBindWechatAccount: (() => void) | undefined;
   private onCancelAccountFlow: (() => void) | undefined;
   private onOpenCampaign: (() => void) | undefined;
   private onOpenConfigCenter: (() => void) | undefined;
@@ -268,6 +279,8 @@ export class VeilLobbyPanel extends Component {
     this.onEditAccountFlowField = options.onEditAccountFlowField;
     this.onRequestAccountFlow = options.onRequestAccountFlow;
     this.onConfirmAccountFlow = options.onConfirmAccountFlow;
+    this.onToggleAccountMinorProtection = options.onToggleAccountMinorProtection;
+    this.onBindWechatAccount = options.onBindWechatAccount;
     this.onCancelAccountFlow = options.onCancelAccountFlow;
     this.onOpenCampaign = options.onOpenCampaign;
     this.onOpenConfigCenter = options.onOpenConfigCenter;
@@ -2227,20 +2240,22 @@ export class VeilLobbyPanel extends Component {
     centerX: number,
     topY: number,
     width: number,
-    flow: CocosAccountLifecyclePanelView,
+    flow: CocosAccountLifecyclePanelView | CocosAccountRegistrationPanelView,
     entering: boolean
   ): void {
+    const registrationFlow = isRegistrationFlowView(flow) ? flow : null;
     let cursorY = this.renderCard(
       "LobbyAccountFlowHeader",
       centerX,
       topY,
       width,
-      118,
+      registrationFlow?.status ? 142 : 118,
       [
         flow.title,
         flow.intro,
         `就绪状态 ${formatAccountReadinessStatus(flow.readiness.status)} · ${flow.readiness.summary}`,
-        `${flow.readiness.detail} ${flow.deliveryHint}`.trim()
+        `${flow.readiness.detail} ${flow.deliveryHint}`.trim(),
+        ...(registrationFlow?.status ? [registrationFlow.status.message] : [])
       ],
       {
         fill: TITLE_FILL,
@@ -2275,6 +2290,82 @@ export class VeilLobbyPanel extends Component {
       );
     });
 
+    if (registrationFlow) {
+      registrationFlow.identities.forEach((identity, index) => {
+        cursorY = this.renderCard(
+          `LobbyAccountFlowIdentity-${index}`,
+          centerX,
+          cursorY,
+          width,
+          70,
+          [identity.label, identity.status.toUpperCase(), identity.detail],
+          {
+            fill: FIELD_FILL,
+            stroke: new Color(224, 235, 246, 52),
+            accent:
+              identity.status === "bound"
+                ? new Color(128, 192, 152, 204)
+                : identity.status === "available"
+                  ? new Color(118, 164, 224, 204)
+                  : new Color(176, 142, 108, 196)
+          },
+          null,
+          13,
+          17
+        );
+      });
+      this.hideExtraCards("LobbyAccountFlowIdentity-", registrationFlow.identities.length);
+
+      if (registrationFlow.minorProtection) {
+        cursorY = this.renderCard(
+          "LobbyAccountFlowMinorProtection",
+          centerX,
+          cursorY,
+          width,
+          70,
+          [
+            registrationFlow.minorProtection.label,
+            registrationFlow.minorProtection.value,
+            registrationFlow.minorProtection.detail
+          ],
+          {
+            fill: FIELD_FILL,
+            stroke: new Color(224, 235, 246, 52),
+            accent: new Color(132, 180, 162, 204)
+          },
+          entering ? null : this.onToggleAccountMinorProtection ?? null,
+          13,
+          17
+        );
+
+        this.renderActionButton(
+          "LobbyAccountFlowMinorProtectionToggle",
+          centerX,
+          cursorY - 16,
+          width,
+          28,
+          registrationFlow.minorProtectionAction?.label ?? "切换年龄声明",
+          {
+            fill: ACTION_ACCOUNT,
+            stroke: new Color(228, 236, 248, 120),
+            accent: new Color(220, 230, 244, 112)
+          },
+          entering ? null : this.onToggleAccountMinorProtection ?? null
+        );
+        cursorY -= 50;
+      }
+    } else {
+      this.hideExtraCards("LobbyAccountFlowIdentity-", 0);
+      const minorProtectionNode = this.node.getChildByName("LobbyAccountFlowMinorProtection");
+      if (minorProtectionNode) {
+        minorProtectionNode.active = false;
+      }
+      const minorProtectionToggleNode = this.node.getChildByName("LobbyAccountFlowMinorProtectionToggle");
+      if (minorProtectionToggleNode) {
+        minorProtectionToggleNode.active = false;
+      }
+    }
+
     this.renderActionButton(
       "LobbyAccountFlowRequest",
       centerX,
@@ -2304,9 +2395,23 @@ export class VeilLobbyPanel extends Component {
       entering ? null : this.onConfirmAccountFlow ?? null
     );
     this.renderActionButton(
-      "LobbyAccountFlowCancel",
+      "LobbyAccountFlowBindWechat",
       centerX,
       cursorY - 84,
+      width,
+      28,
+      registrationFlow ? registrationFlow.bindWechatAction.label : "当前流程不支持微信绑定",
+      {
+        fill: ACTION_ACCOUNT_REVIEW_ACTIVE,
+        stroke: new Color(228, 244, 229, 124),
+        accent: new Color(226, 244, 230, 116)
+      },
+      registrationFlow && !entering && registrationFlow.bindWechatAction.enabled ? this.onBindWechatAccount ?? null : null
+    );
+    this.renderActionButton(
+      "LobbyAccountFlowCancel",
+      centerX,
+      cursorY - 118,
       width,
       28,
       "收起流程面板",
@@ -2324,11 +2429,16 @@ export class VeilLobbyPanel extends Component {
       "LobbyAccountFlowHeader",
       "LobbyAccountFlowRequest",
       "LobbyAccountFlowConfirm",
+      "LobbyAccountFlowBindWechat",
       "LobbyAccountFlowCancel",
+      "LobbyAccountFlowMinorProtection",
+      "LobbyAccountFlowMinorProtectionToggle",
       "LobbyAccountFlowField-loginId",
       "LobbyAccountFlowField-displayName",
       "LobbyAccountFlowField-token",
-      "LobbyAccountFlowField-password"
+      "LobbyAccountFlowField-password",
+      "LobbyAccountFlowIdentity-0",
+      "LobbyAccountFlowIdentity-1"
     ];
     names.forEach((name) => {
       const node = this.node.getChildByName(name);

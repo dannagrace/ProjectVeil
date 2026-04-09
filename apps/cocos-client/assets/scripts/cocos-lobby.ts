@@ -2054,6 +2054,9 @@ export async function loginCocosWechatAuthSession(
     mockCode?: string;
     authToken?: string | null;
     privacyConsentAccepted?: boolean;
+    minorProtection?: {
+      isAdult: boolean;
+    };
   }
 ): Promise<CocosStoredAuthSession> {
   const normalizedPlayerId = normalizePlayerId(playerId) || createCocosGuestPlayerId();
@@ -2088,7 +2091,8 @@ export async function loginCocosWechatAuthSession(
         playerId: normalizedPlayerId,
         displayName: profile.displayName,
         ...(profile.avatarUrl ? { avatarUrl: profile.avatarUrl } : {}),
-        ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {})
+        ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {}),
+        ...(options?.minorProtection ? { isAdult: options.minorProtection.isAdult } : {})
       })
     },
     options?.fetchImpl
