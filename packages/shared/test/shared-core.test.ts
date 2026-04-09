@@ -5158,6 +5158,62 @@ test("validateWorldAction allows surrender only for the requesting player's hero
   });
 });
 
+test("validateWorldAction blocks moves into fog-hidden tiles for the requesting player", () => {
+  const heroOne = createHero({
+    id: "hero-1",
+    playerId: "player-1",
+    name: "凯琳",
+    position: { x: 0, y: 0 },
+    move: { total: 2, remaining: 2 }
+  });
+  const heroTwo = createHero({
+    id: "hero-2",
+    playerId: "player-2",
+    name: "维恩",
+    position: { x: 2, y: 0 },
+    move: { total: 2, remaining: 2 }
+  });
+  const state = createWorldState({
+    width: 3,
+    height: 1,
+    heroes: [heroOne, heroTwo],
+    tiles: [
+      createTile(0, 0, { occupant: { kind: "hero", refId: "hero-1" } }),
+      createTile(1, 0),
+      createTile(2, 0, { occupant: { kind: "hero", refId: "hero-2" } })
+    ],
+    visibilityByPlayer: {
+      "player-1": ["visible", "visible", "hidden"],
+      "player-2": ["hidden", "visible", "visible"]
+    }
+  });
+
+  assert.deepEqual(
+    validateWorldAction(
+      state,
+      {
+        type: "hero.move",
+        heroId: "hero-1",
+        destination: { x: 2, y: 0 }
+      },
+      "player-1"
+    ),
+    {
+      valid: false,
+      reason: "destination_blocked"
+    }
+  );
+
+  assert.equal(
+    validateWorldAction(state, {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 2, y: 0 }
+    }).valid,
+    true
+  );
+});
+
 test("predictPlayerWorldAction updates the player view immediately for move and collect", () => {
   const hero = createHero({
     id: "hero-1",

@@ -3,12 +3,13 @@ import { Room, type Client as ColyseusClient } from "colyseus";
 import {
   applyEloMatchResult,
   createInitialWorldState,
+  createPlayerWorldView,
   encodePlayerWorldView,
   filterWorldEventsForPlayer,
   getBattleBalanceConfig,
-  listReachableTiles,
+  listReachableTilesInPlayerView,
   normalizeEloRating,
-  planHeroMovement,
+  planPlayerViewMovement,
   validateWorldAction,
   resolveCosmeticCatalog,
   type ActionValidationFailure,
@@ -456,10 +457,11 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
         return;
       }
+      const snapshot = createPlayerWorldView(this.worldRoom.getInternalState(), playerId);
 
       sendMessage(client, "world.preview", {
         requestId: message.requestId,
-        movementPlan: planHeroMovement(this.worldRoom.getInternalState(), message.heroId, message.destination) ?? null
+        movementPlan: planPlayerViewMovement(snapshot, message.heroId, message.destination) ?? null
       });
     });
 
@@ -469,10 +471,11 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
         return;
       }
+      const snapshot = createPlayerWorldView(this.worldRoom.getInternalState(), playerId);
 
       sendMessage(client, "world.reachable", {
         requestId: message.requestId,
-        reachableTiles: listReachableTiles(this.worldRoom.getInternalState(), message.heroId)
+        reachableTiles: listReachableTilesInPlayerView(snapshot, message.heroId)
       });
     });
 
@@ -1730,7 +1733,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       battle,
       events,
       movementPlan: extras?.movementPlan ?? null,
-      reachableTiles: heroId && !battle ? listReachableTiles(this.worldRoom.getInternalState(), heroId) : [],
+      reachableTiles: heroId && !battle ? listReachableTilesInPlayerView(snapshot, heroId) : [],
       featureFlags: this.resolvePlayerFeatureFlags(playerId),
       ...(extras?.reason ? { reason: extras.reason } : {}),
       ...(extras?.rejection ? { rejection: extras.rejection } : {})
