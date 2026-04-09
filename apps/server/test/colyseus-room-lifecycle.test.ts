@@ -21,6 +21,7 @@ import type { PlayerAccountEnsureInput, PlayerAccountProgressPatch, PlayerAccoun
 
 interface FakeClient extends Client {
   sent: ServerMessage[];
+  leaveCalls: Array<{ code?: number; reason?: string }>;
 }
 
 class InstrumentedRoomSnapshotStore extends MemoryRoomSnapshotStore {
@@ -59,6 +60,7 @@ function createFakeClient(sessionId: string): FakeClient {
     sessionId,
     state: ClientState.JOINED,
     sent: [],
+    leaveCalls: [],
     ref: {
       removeAllListeners() {},
       removeListener() {},
@@ -67,7 +69,9 @@ function createFakeClient(sessionId: string): FakeClient {
     send(type: string | number, payload?: unknown) {
       this.sent.push({ type, ...(payload as object) } as ServerMessage);
     },
-    leave() {},
+    leave(code?: number, reason?: string) {
+      this.leaveCalls.push({ code, reason });
+    },
     enqueueRaw() {},
     raw() {}
   } as FakeClient;
@@ -335,6 +339,36 @@ test("room creation and connect reflect one connected player in room state", asy
 
   assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 1);
   assert.equal(lastSessionState(client, "reply").payload.world.ownHeroes[0]?.playerId, "player-1");
+});
+
+test("room creation registers the active instance and publishes an idle lobby summary before joins", async (t) => {
+  resetLobbyRoomRegistry();
+  resetRuntimeObservability();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-create-registration-${Date.now()}`, 2222);
+
+  t.after(() => {
+    cleanupRoom(room);
+    getActiveRoomInstances().clear();
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+    resetRuntimeObservability();
+  });
+
+  const summary = listLobbyRooms().find((entry) => entry.roomId === room.roomId);
+  const lifecycle = buildRoomLifecycleSummaryPayload();
+
+  assert.equal(getActiveRoomInstances().get(room.roomId), room);
+  assert.ok(summary);
+  assert.equal(summary.seed, 2222);
+  assert.equal(summary.connectedPlayers, 0);
+  assert.equal(summary.disconnectedPlayers, 0);
+  assert.equal(summary.activeBattles, 0);
+  assert.equal(summary.statusLabel, "探索中");
+  assert.equal(lifecycle.summary.activeRoomCount, 1);
+  assert.equal(lifecycle.summary.counters.roomCreatesTotal, 1);
+  assert.equal(lifecycle.summary.recentEvents[0]?.kind, "room.created");
+  assert.equal(lifecycle.summary.recentEvents[0]?.roomId, room.roomId);
 });
 
 test("session.state redacts fog-hidden enemy occupants from serialized player snapshots", async (t) => {
@@ -629,6 +663,44 @@ test("client that misses the reconnect window is cleaned up from the player slot
     summary.summary.recentEvents.find((event) => event.kind === "reconnect.failed")?.reason,
     "reconnect_window_expired"
   );
+});
+
+test("reconnect rejects a player who becomes banned before the resumed session is restored", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-reconnect-banned-${Date.now()}`);
+  const originalClient = createFakeClient("session-reconnect-banned-original");
+  const reconnectedClient = createFakeClient("session-reconnect-banned-resumed");
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+    allowReconnection(client: Client, seconds: number): Promise<Client>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, originalClient, "player-banned-mid-reconnect", "connect-reconnect-banned");
+  await store.savePlayerBan("player-banned-mid-reconnect", {
+    banStatus: "temporary",
+    banExpiry: "2026-04-10T00:00:00.000Z",
+    banReason: "Reconnect ban"
+  });
+
+  internalRoom.allowReconnection = async () => reconnectedClient;
+  await room.onDrop(originalClient);
+
+  const summary = listLobbyRooms().find((entry) => entry.roomId === room.roomId);
+  assert.equal(internalRoom.playerIdBySessionId.has(originalClient.sessionId), false);
+  assert.equal(internalRoom.playerIdBySessionId.has(reconnectedClient.sessionId), false);
+  assert.equal(reconnectedClient.leaveCalls.at(-1)?.reason, "account_banned");
+  assert.equal(reconnectedClient.sent.some((message) => message.type === "session.state"), false);
+  assert.equal(summary?.connectedPlayers, 0);
+  assert.equal(summary?.disconnectedPlayers, 1);
+  assert.equal(summary?.statusLabel, "等待重连");
 });
 
 test("failed reconnect cleanup removes only the expired session and preserves other connected players", async (t) => {
@@ -1883,6 +1955,34 @@ test("room report player flow persists one report per room target pair and rejec
   assert.equal((await store.listPlayerReports({ status: "pending" })).length, 1);
 });
 
+test("room report player returns reporting_unavailable when no report store is configured", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-report-unavailable-${Date.now()}`);
+  const reporterClient = createFakeClient("session-report-unavailable");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, reporterClient, "player-1", "connect-report-unavailable");
+  await emitRoomMessage(room, "report.player", reporterClient, {
+    type: "report.player",
+    requestId: "report-unavailable",
+    targetPlayerId: "player-2",
+    reason: "cheating"
+  });
+
+  assert.equal(
+    reporterClient.sent.some(
+      (message) => message.type === "error" && message.requestId === "report-unavailable" && message.reason === "reporting_unavailable"
+    ),
+    true
+  );
+});
+
 test("room battle emotes reply to the sender and broadcast to other participants", async (t) => {
   resetLobbyRoomRegistry();
   const store = new MemoryRoomSnapshotStore();
@@ -2014,4 +2114,41 @@ test("room player reports are persisted once per target within the same room", a
     ),
     true
   );
+});
+
+test("room report player rejects unavailable targets after they leave outside an active battle", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`report-target-unavailable-${Date.now()}`);
+  const reporterClient = createFakeClient("reporter-target-unavailable");
+  const targetClient = createFakeClient("target-target-unavailable");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, reporterClient, "player-1", "connect-reporter-target-unavailable");
+  await connectPlayer(room, targetClient, "player-2", "connect-target-target-unavailable");
+  room.onLeave(targetClient);
+
+  await emitRoomMessage(room, "report.player", reporterClient, {
+    type: "report.player",
+    requestId: "report-target-unavailable",
+    targetPlayerId: "player-2",
+    reason: "afk"
+  });
+
+  assert.equal(
+    reporterClient.sent.some(
+      (message) =>
+        message.type === "error" &&
+        message.requestId === "report-target-unavailable" &&
+        message.reason === "report_target_unavailable"
+    ),
+    true
+  );
+  assert.equal((await store.listPlayerReports({ status: "pending" })).length, 0);
 });
