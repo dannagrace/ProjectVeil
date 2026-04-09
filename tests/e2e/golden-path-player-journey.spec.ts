@@ -1,4 +1,6 @@
 import { expect, test } from "./fixtures";
+import { ANALYTICS_EVENT_CATALOG } from "../../packages/shared/src/analytics-events";
+import { pollForAnalyticsEvent } from "./analytics-helpers";
 import {
   getHeroMoveTotal,
   getMineClaimLogText,
@@ -18,7 +20,7 @@ import {
 } from "./smoke-helpers";
 
 test("golden path player journey stays stable from lobby entry through world progress and battle reward", async (
-  { page },
+  { page, request },
   testInfo
 ) => {
   const roomId = buildRoomId("e2e-golden-path");
@@ -37,6 +39,14 @@ test("golden path player journey stays stable from lobby entry through world pro
       await expectHeroMove(page, getHeroMoveTotal());
       await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*0/);
       await expect(page.getByTestId("stat-gold")).toHaveText(/Gold\s*0/);
+
+      const sessionStartEvent = await pollForAnalyticsEvent(
+        request,
+        "session_start",
+        (event) => event.roomId === roomId && event.payload.roomId === roomId && event.payload.authMode === "guest"
+      );
+      expect(sessionStartEvent.payload.authMode).toBe("guest");
+      expect(typeof sessionStartEvent.payload.platform).toBe(typeof ANALYTICS_EVENT_CATALOG.session_start.samplePayload.platform);
     });
 
     await test.step("world: collect wood and claim the mine", async () => {

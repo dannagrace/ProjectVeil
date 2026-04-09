@@ -58,6 +58,9 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload", a
   let middleware:
     | ((request: never, response: TestResponse, next: () => void) => void)
     | undefined;
+  let getHandler:
+    | ((request: never, response: TestResponse) => void | Promise<void>)
+    | undefined;
   let handler:
     | ((request: never, response: TestResponse) => void | Promise<void>)
     | undefined;
@@ -73,6 +76,10 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload", a
     use(nextMiddleware) {
       middleware = nextMiddleware as never;
     },
+    get(path, nextHandler) {
+      assert.equal(path, "/api/test/analytics/events");
+      getHandler = nextHandler as never;
+    },
     post(path, nextHandler) {
       assert.equal(path, "/api/analytics/events");
       handler = nextHandler as never;
@@ -80,6 +87,7 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload", a
   });
 
   assert(middleware);
+  assert(getHandler);
   assert(handler);
 
   const requestBody = JSON.stringify({
@@ -104,6 +112,14 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload", a
   assert.deepEqual(JSON.parse(response.body), { accepted: 2 });
   assert.equal(logs.length, 1);
   assert.match(logs[0] ?? "", /"shop_open"/);
+
+  const getResponse = createResponse();
+  await getHandler(createRequest("GET") as never, getResponse);
+
+  assert.equal(getResponse.statusCode, 200);
+  assert.deepEqual(JSON.parse(getResponse.body), {
+    events: [{ name: "shop_open" }, { name: "battle_start" }]
+  });
 });
 
 test("registerAnalyticsRoutes rejects malformed analytics payloads", async () => {
@@ -113,6 +129,7 @@ test("registerAnalyticsRoutes rejects malformed analytics payloads", async () =>
 
   registerAnalyticsRoutes({
     use() {},
+    get() {},
     post(_path, nextHandler) {
       handler = nextHandler as never;
     }

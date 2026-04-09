@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
+import { pollForAnalyticsEvent } from "./analytics-helpers";
 import { buildRoomId, expectHeroMoveSpent, pressTile, waitForLobbyReady, withSmokeDiagnostics } from "./smoke-helpers";
 
 const QUEST_ID = "smoke_resource_pickup";
@@ -167,6 +168,14 @@ test("daily quest claim smoke settles the reward and records the event log entry
       expect(profileAfterClaim.account?.gems).toBe(gemsBeforeClaim + QUEST_REWARD.gems);
       expect(profileAfterClaim.account?.globalResources?.gold).toBe(goldBeforeClaim + QUEST_REWARD.gold);
       expect(getQuest(profileAfterClaim.account?.dailyQuestBoard).claimed).toBe(true);
+
+      const questCompleteEvent = await pollForAnalyticsEvent(
+        request,
+        "quest_complete",
+        (event) => event.payload.questId === QUEST_ID
+      );
+      expect(questCompleteEvent.payload.questId).toBe(QUEST_ID);
+      expect((questCompleteEvent.payload.reward.gems ?? 0) + (questCompleteEvent.payload.reward.gold ?? 0)).toBeGreaterThan(0);
     });
 
     await test.step("api: event log includes the daily quest claim entry", async () => {

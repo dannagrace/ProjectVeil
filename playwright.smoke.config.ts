@@ -73,6 +73,7 @@ export default defineConfig({
       command: "npm run dev:server",
       env: {
         ...process.env,
+        ANALYTICS_ENDPOINT: "http://127.0.0.1:2567/api/analytics/events",
         VEIL_DAILY_QUESTS_ENABLED: "1",
         VEIL_DAILY_QUEST_ROTATIONS_JSON: DAILY_QUEST_SMOKE_ROTATIONS
       },

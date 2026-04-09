@@ -27,6 +27,7 @@ const defaultAnalyticsRuntimeDependencies: AnalyticsRuntimeDependencies = {
 let analyticsRuntimeDependencies = defaultAnalyticsRuntimeDependencies;
 let pendingEvents: AnalyticsEvent[] = [];
 let flushTimer: NodeJS.Timeout | null = null;
+let capturedAnalyticsEvents: AnalyticsEvent[] = [];
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -85,10 +86,19 @@ export function configureAnalyticsRuntimeDependencies(overrides: Partial<Analyti
 export function resetAnalyticsRuntimeDependencies(): void {
   analyticsRuntimeDependencies = defaultAnalyticsRuntimeDependencies;
   pendingEvents = [];
+  capturedAnalyticsEvents = [];
   if (flushTimer) {
     analyticsRuntimeDependencies.clearTimeout(flushTimer);
   }
   flushTimer = null;
+}
+
+export function resetCapturedAnalyticsEventsForTest(): void {
+  capturedAnalyticsEvents = [];
+}
+
+export function getCapturedAnalyticsEventsForTest(): AnalyticsEvent[] {
+  return capturedAnalyticsEvents.map((event) => structuredClone(event));
 }
 
 async function flushEvents(env: NodeJS.ProcessEnv = process.env): Promise<void> {
@@ -167,6 +177,7 @@ export function flushAnalyticsEventsForTest(env: NodeJS.ProcessEnv = process.env
 export function registerAnalyticsRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
+    get: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
     post: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
   }
 ): void {
@@ -184,14 +195,22 @@ export function registerAnalyticsRoutes(
     next();
   });
 
+  app.get("/api/test/analytics/events", async (_request, response) => {
+    sendJson(response, 200, {
+      events: getCapturedAnalyticsEventsForTest()
+    });
+  });
+
   app.post("/api/analytics/events", async (request, response) => {
     try {
       const payload = await readJsonBody(request);
+      const events = Array.isArray((payload as { events?: unknown[] } | null)?.events)
+        ? ((payload as { events: AnalyticsEvent[] }).events ?? [])
+        : [];
+      capturedAnalyticsEvents.push(...events);
       analyticsRuntimeDependencies.log(`[Analytics] ${JSON.stringify(payload)}`);
       sendJson(response, 202, {
-        accepted: Array.isArray((payload as { events?: unknown[] } | null)?.events)
-          ? (payload as { events: unknown[] }).events.length
-          : 0
+        accepted: events.length
       });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
