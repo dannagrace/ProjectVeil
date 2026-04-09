@@ -320,6 +320,39 @@ interface CandidateOwnerReminderReport {
   items: OwnerReminderEntry[];
 }
 
+interface CandidateEvidenceFreshnessHistoryEntry {
+  auditTimestamp: string;
+  candidateRevision: string;
+  targetSurface: Exclude<TargetSurface, "auto"> | "auto";
+  overallStatus: AuditStatus;
+  blockerCount: number;
+  warningCount: number;
+  findingCount: number;
+  summary: string;
+  blockingFindings: AuditTriageEntry[];
+  warnings: AuditTriageEntry[];
+  artifactFamilies: Array<{
+    id: ArtifactFamilyReport["id"];
+    label: string;
+    status: FamilyStatus;
+    freshness: FreshnessStatus;
+    generatedAt?: string;
+    revision?: string;
+    candidate?: string;
+    artifactPath?: string;
+    findingCodes: FindingCode[];
+  }>;
+}
+
+interface CandidateEvidenceFreshnessHistoryReport {
+  schemaVersion: 1;
+  candidate: {
+    name: string;
+  };
+  generatedAt: string;
+  entries: CandidateEvidenceFreshnessHistoryEntry[];
+}
+
 interface ManualEvidenceSource {
   label: string;
   candidate?: string;
@@ -1320,6 +1353,81 @@ function buildOwnerReminderReport(
   };
 }
 
+function defaultFreshnessHistoryOutputPath(args: Args): string {
+  const baseDir = args.outputPath
+    ? path.dirname(path.resolve(args.outputPath))
+    : args.markdownOutputPath
+      ? path.dirname(path.resolve(args.markdownOutputPath))
+      : DEFAULT_RELEASE_READINESS_DIR;
+  return path.resolve(baseDir, `candidate-evidence-freshness-history-${slugifyCandidate(args.candidate)}.json`);
+}
+
+function toHistoryEntry(report: CandidateEvidenceAuditReport): CandidateEvidenceFreshnessHistoryEntry {
+  return {
+    auditTimestamp: report.generatedAt,
+    candidateRevision: report.candidate.revision,
+    targetSurface: report.candidate.targetSurface,
+    overallStatus: report.summary.status,
+    blockerCount: report.summary.blockerCount,
+    warningCount: report.summary.warningCount,
+    findingCount: report.summary.findingCount,
+    summary: report.summary.summary,
+    blockingFindings: report.triage.blockers,
+    warnings: report.triage.warnings,
+    artifactFamilies: report.artifactFamilies.map((family) => ({
+      id: family.id,
+      label: family.label,
+      status: family.status,
+      freshness: family.freshness,
+      ...(family.generatedAt ? { generatedAt: family.generatedAt } : {}),
+      ...(family.revision ? { revision: family.revision } : {}),
+      ...(family.candidate ? { candidate: family.candidate } : {}),
+      ...(family.artifactPath ? { artifactPath: family.artifactPath } : {}),
+      findingCodes: family.findings.map((finding) => finding.code)
+    }))
+  };
+}
+
+function readFreshnessHistory(filePath: string, candidate: string): CandidateEvidenceFreshnessHistoryReport {
+  if (!fs.existsSync(filePath)) {
+    return {
+      schemaVersion: 1,
+      candidate: {
+        name: candidate
+      },
+      generatedAt: new Date(0).toISOString(),
+      entries: []
+    };
+  }
+
+  const parsed = readJsonFile<CandidateEvidenceFreshnessHistoryReport>(filePath);
+  return {
+    schemaVersion: 1,
+    candidate: {
+      name: parsed.candidate?.name || candidate
+    },
+    generatedAt: parsed.generatedAt ?? new Date(0).toISOString(),
+    entries: Array.isArray(parsed.entries) ? parsed.entries : []
+  };
+}
+
+function appendFreshnessHistory(
+  historyPath: string,
+  report: CandidateEvidenceAuditReport
+): CandidateEvidenceFreshnessHistoryReport {
+  const history = readFreshnessHistory(historyPath, report.candidate.name);
+  const nextHistory: CandidateEvidenceFreshnessHistoryReport = {
+    schemaVersion: 1,
+    candidate: {
+      name: report.candidate.name
+    },
+    generatedAt: report.generatedAt,
+    entries: [...history.entries, toHistoryEntry(report)]
+  };
+  writeJsonFile(historyPath, nextHistory);
+  return nextHistory;
+}
+
 export function buildSameCandidateEvidenceAuditReport(args: Args): CandidateEvidenceAuditReport {
   const snapshotPath = resolveSnapshotPath(args);
   const releaseGateSummaryPath = resolveReleaseGateSummaryPath(args);
@@ -2091,6 +2199,7 @@ export function runSameCandidateEvidenceAuditCli(
   const markdownOutputPath = defaultMarkdownOutputPath(args, options?.outputBaseName);
   const ownerReminderOutputPath = defaultOwnerReminderOutputPath(args);
   const ownerReminderMarkdownOutputPath = defaultOwnerReminderMarkdownOutputPath(args);
+  const freshnessHistoryOutputPath = defaultFreshnessHistoryOutputPath(args);
   const logLabel = options?.logLabel ?? "candidate evidence audit";
   const parsedLedger =
     report.inputs.manualEvidenceLedgerPath && fs.existsSync(report.inputs.manualEvidenceLedgerPath)
@@ -2102,11 +2211,13 @@ export function runSameCandidateEvidenceAuditCli(
   writeFile(markdownOutputPath, renderMarkdown(report));
   writeJsonFile(ownerReminderOutputPath, ownerReminderReport);
   writeFile(ownerReminderMarkdownOutputPath, renderOwnerReminderMarkdown(ownerReminderReport));
+  appendFreshnessHistory(freshnessHistoryOutputPath, report);
 
   console.log(`Wrote ${logLabel} JSON: ${toRelativePath(outputPath)}`);
   console.log(`Wrote ${logLabel} Markdown: ${toRelativePath(markdownOutputPath)}`);
   console.log(`Wrote owner reminder JSON: ${toRelativePath(ownerReminderOutputPath)}`);
   console.log(`Wrote owner reminder Markdown: ${toRelativePath(ownerReminderMarkdownOutputPath)}`);
+  console.log(`Wrote freshness history JSON: ${toRelativePath(freshnessHistoryOutputPath)}`);
 
   if (report.summary.status === "failed") {
     process.exitCode = 1;

@@ -85,6 +85,7 @@ Relevant scripts: 48
 - Produced artifacts:
   - `artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.json`
   - `artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.md`
+  - `artifacts/release-readiness/candidate-evidence-freshness-history-<candidate>.json`
 
 ## `release:candidate:evidence:freshness-guard`
 
