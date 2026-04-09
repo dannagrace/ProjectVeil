@@ -39,7 +39,9 @@ const CAMPAIGN_CHAPTER_FILES = [
   "campaign-chapter1.json",
   "campaign-chapter2.json",
   "campaign-chapter3.json",
-  "campaign-chapter4.json"
+  "campaign-chapter4.json",
+  "campaign-chapter5.json",
+  "campaign-chapter6.json"
 ] as const;
 
 function parseArgs(argv: string[]): { rootDir: string; reportPath: string | null } {
