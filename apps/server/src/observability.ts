@@ -7,6 +7,7 @@ import {
   type RuntimeDiagnosticsErrorEvent,
   type RuntimeDiagnosticsSnapshot
 } from "../../../packages/shared/src/index";
+import { resetCapturedAnalyticsEventsForTest } from "./analytics";
 import { resetGuestAuthSessions } from "./auth";
 import { configureAuthoritativeRoomTelemetry } from "./index";
 
@@ -1743,6 +1744,7 @@ export function registerRuntimeObservabilityRoutes(
     try {
       if (store?.clearAll) {
         store.clearAll();
+        resetCapturedAnalyticsEventsForTest();
         // Also reset guest auth sessions to clear cached tokens/sessions
         // that were persisted in module-level maps in auth.ts
         resetGuestAuthSessions();
