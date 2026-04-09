@@ -67,6 +67,10 @@ interface RehearsalArtifacts {
   ciTrendMarkdownPath?: string;
   releaseHealthSummaryPath?: string;
   releaseHealthMarkdownPath?: string;
+  sameRevisionEvidenceBundleManifestPath?: string;
+  sameRevisionEvidenceBundleMarkdownPath?: string;
+  phase1ReleaseEvidenceDriftGatePath?: string;
+  phase1ReleaseEvidenceDriftGateMarkdownPath?: string;
   phase1CandidateDossierPath?: string;
   phase1CandidateDossierMarkdownPath?: string;
   summaryPath?: string;
@@ -248,6 +252,39 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
+function writeSyntheticReleaseReadinessDashboard(
+  filePath: string,
+  input: {
+    candidate: string;
+    candidateRevision: string;
+    snapshotPath: string;
+    cocosBundlePath: string;
+    reconnectPath: string;
+    persistencePath: string;
+  }
+): void {
+  writeJsonFile(filePath, {
+    generatedAt: new Date().toISOString(),
+    overallStatus: "warning",
+    inputs: {
+      candidate: input.candidate,
+      candidateRevision: input.candidateRevision,
+      snapshotPath: input.snapshotPath,
+      cocosRcPath: input.cocosBundlePath,
+      reconnectSoakPath: input.reconnectPath,
+      persistencePath: input.persistencePath
+    },
+    goNoGo: {
+      decision: "needs-review",
+      summary: "Synthetic candidate-rehearsal dashboard used to pin same-revision evidence inputs for the drift gate.",
+      candidateRevision: input.candidateRevision,
+      revisionStatus: "aligned",
+      requiredFailed: 0,
+      requiredPending: 0
+    }
+  });
+}
+
 function toRelative(filePath: string): string {
   return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
 }
@@ -339,6 +376,10 @@ function readOptionalJson(filePath: string | undefined): any {
     return undefined;
   }
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function readRequiredJson<T>(filePath: string): T {
+  return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
 }
 
 function findFirstMatching(outputDir: string, prefix: string, suffix: string): string | undefined {
@@ -450,6 +491,21 @@ function main(): void {
   const ciTrendMarkdownPath = path.join(outputDir, `ci-trend-summary-${candidateSlug}-${revision.shortCommit}.md`);
   const releaseHealthSummaryPath = path.join(outputDir, `release-health-summary-${candidateSlug}-${revision.shortCommit}.json`);
   const releaseHealthMarkdownPath = path.join(outputDir, `release-health-summary-${candidateSlug}-${revision.shortCommit}.md`);
+  const syntheticDashboardPath = path.join(outputDir, `release-readiness-dashboard-${candidateSlug}-${revision.shortCommit}.json`);
+  const sameRevisionEvidenceBundleDir = path.join(outputDir, `phase1-same-revision-evidence-bundle-${candidateSlug}-${revision.shortCommit}`);
+  const sameRevisionEvidenceBundleManifestPath = path.join(
+    sameRevisionEvidenceBundleDir,
+    "phase1-same-revision-evidence-bundle-manifest.json"
+  );
+  const sameRevisionEvidenceBundleMarkdownPath = path.join(sameRevisionEvidenceBundleDir, "phase1-same-revision-evidence-bundle.md");
+  const phase1ReleaseEvidenceDriftGatePath = path.join(
+    outputDir,
+    `phase1-release-evidence-drift-gate-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const phase1ReleaseEvidenceDriftGateMarkdownPath = path.join(
+    outputDir,
+    `phase1-release-evidence-drift-gate-${candidateSlug}-${revision.shortCommit}.md`
+  );
   const phase1CandidateDossierPath = path.join(outputDir, `phase1-candidate-dossier-${candidateSlug}-${revision.shortCommit}.json`);
   const phase1CandidateDossierMarkdownPath = path.join(outputDir, `phase1-candidate-dossier-${candidateSlug}-${revision.shortCommit}.md`);
   const summaryPath = path.join(outputDir, `phase1-candidate-rehearsal-${candidateSlug}-${revision.shortCommit}.json`);
@@ -469,6 +525,10 @@ function main(): void {
   artifacts.ciTrendMarkdownPath = toRelative(ciTrendMarkdownPath);
   artifacts.releaseHealthSummaryPath = toRelative(releaseHealthSummaryPath);
   artifacts.releaseHealthMarkdownPath = toRelative(releaseHealthMarkdownPath);
+  artifacts.sameRevisionEvidenceBundleManifestPath = toRelative(sameRevisionEvidenceBundleManifestPath);
+  artifacts.sameRevisionEvidenceBundleMarkdownPath = toRelative(sameRevisionEvidenceBundleMarkdownPath);
+  artifacts.phase1ReleaseEvidenceDriftGatePath = toRelative(phase1ReleaseEvidenceDriftGatePath);
+  artifacts.phase1ReleaseEvidenceDriftGateMarkdownPath = toRelative(phase1ReleaseEvidenceDriftGateMarkdownPath);
   artifacts.phase1CandidateDossierPath = toRelative(phase1CandidateDossierPath);
   artifacts.phase1CandidateDossierMarkdownPath = toRelative(phase1CandidateDossierMarkdownPath);
   artifacts.summaryPath = toRelative(summaryPath);
@@ -730,6 +790,95 @@ function main(): void {
         ], [releaseHealthSummaryPath, releaseHealthMarkdownPath])
     },
     {
+      id: "phase1-same-revision-evidence-bundle",
+      title: "Build Phase 1 same-revision evidence bundle",
+      run: () => {
+        const cocosBundlePath =
+          findFirstMatching(outputDir, "cocos-rc-evidence-bundle-", ".json") ?? path.join(outputDir, "missing-cocos-bundle.json");
+        const cocosBundle = fs.existsSync(cocosBundlePath)
+          ? readRequiredJson<{ artifacts?: { snapshot?: string } }>(cocosBundlePath)
+          : undefined;
+        const reconnectPath = artifacts.stableReconnectSoakPath ? stableReconnectSoakPath : path.join(outputDir, "missing-reconnect-soak.json");
+        writeSyntheticReleaseReadinessDashboard(syntheticDashboardPath, {
+          candidate: args.candidate,
+          candidateRevision: revision.commit,
+          snapshotPath: releaseReadinessSnapshotPath,
+          cocosBundlePath: cocosBundle?.artifacts?.snapshot ? path.resolve(cocosBundle.artifacts.snapshot) : cocosBundlePath,
+          reconnectPath,
+          persistencePath
+        });
+
+        const command = [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/phase1-same-revision-evidence-bundle.ts",
+          "--candidate",
+          args.candidate,
+          "--candidate-revision",
+          revision.commit,
+          "--target-surface",
+          args.targetSurface,
+          "--output-dir",
+          sameRevisionEvidenceBundleDir,
+          "--snapshot",
+          releaseReadinessSnapshotPath,
+          "--reconnect-soak",
+          reconnectPath,
+          "--phase1-persistence",
+          persistencePath,
+          "--cocos-rc-bundle",
+          cocosBundlePath,
+          "--release-gate-summary",
+          releaseGateSummaryPath,
+          "--dashboard",
+          syntheticDashboardPath
+        ];
+        if (artifacts.stableH5SmokePath) {
+          command.push("--h5-smoke", stableH5SmokePath);
+        }
+        if (artifacts.stableWechatArtifactsDir) {
+          command.push("--wechat-artifacts-dir", stableWechatArtifactsDir);
+        }
+        return runCommandStage("phase1-same-revision-evidence-bundle", "Build Phase 1 same-revision evidence bundle", command, [
+          sameRevisionEvidenceBundleManifestPath,
+          sameRevisionEvidenceBundleMarkdownPath
+        ]);
+      }
+    },
+    {
+      id: "phase1-release-evidence-drift-gate",
+      title: "Run Phase 1 release evidence drift gate",
+      run: () => {
+        const command = [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/phase1-release-evidence-drift-gate.ts",
+          "--candidate",
+          args.candidate,
+          "--candidate-revision",
+          revision.commit,
+          "--same-revision-bundle-manifest",
+          sameRevisionEvidenceBundleManifestPath,
+          "--output",
+          phase1ReleaseEvidenceDriftGatePath,
+          "--markdown-output",
+          phase1ReleaseEvidenceDriftGateMarkdownPath
+        ];
+        if (fs.existsSync(runtimeObservabilityGatePath)) {
+          command.push("--runtime-observability-gate", runtimeObservabilityGatePath);
+        }
+        if (fs.existsSync(runtimeObservabilityEvidencePath)) {
+          command.push("--runtime-observability-evidence", runtimeObservabilityEvidencePath);
+        }
+        return runCommandStage("phase1-release-evidence-drift-gate", "Run Phase 1 release evidence drift gate", command, [
+          phase1ReleaseEvidenceDriftGatePath,
+          phase1ReleaseEvidenceDriftGateMarkdownPath
+        ]);
+      }
+    },
+    {
       id: "phase1-candidate-dossier",
       title: "Build Phase 1 candidate dossier",
       run: () => {
@@ -805,6 +954,10 @@ function main(): void {
     ciTrendMarkdownPath,
     releaseHealthSummaryPath,
     releaseHealthMarkdownPath,
+    sameRevisionEvidenceBundleManifestPath,
+    sameRevisionEvidenceBundleMarkdownPath,
+    phase1ReleaseEvidenceDriftGatePath,
+    phase1ReleaseEvidenceDriftGateMarkdownPath,
     phase1CandidateDossierPath,
     phase1CandidateDossierMarkdownPath
   ];

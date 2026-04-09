@@ -169,10 +169,14 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.equal(report.stages.find((stage) => stage.id === "wechat-candidate-summary")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "cocos-rc-bundle")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "runtime-observability-bundle")?.status, "skipped");
+  assert.equal(report.stages.find((stage) => stage.id === "phase1-same-revision-evidence-bundle")?.status, "passed");
+  assert.equal(report.stages.find((stage) => stage.id === "phase1-release-evidence-drift-gate")?.status, "passed");
   assert.match(report.artifacts.runtimeObservabilityBundlePath ?? "", /runtime-observability-bundle-phase1-mainline-/);
   assert.equal(report.stages.find((stage) => stage.id === "phase1-candidate-dossier")?.status, "passed");
   assert.match(report.artifacts.releaseReadinessSnapshotPath ?? "", /release-readiness-phase1-mainline-/);
   assert.match(report.artifacts.runtimeObservabilityGatePath ?? "", /runtime-observability-gate-phase1-mainline-/);
+  assert.match(report.artifacts.sameRevisionEvidenceBundleManifestPath ?? "", /phase1-same-revision-evidence-bundle-phase1-mainline-/);
+  assert.match(report.artifacts.phase1ReleaseEvidenceDriftGatePath ?? "", /phase1-release-evidence-drift-gate-phase1-mainline-/);
   assert.match(report.artifacts.phase1CandidateDossierPath ?? "", /phase1-candidate-dossier-phase1-mainline-/);
   assert.match(report.artifacts.stableWechatArtifactsDir ?? "", /wechat-release-phase1-mainline-/);
 

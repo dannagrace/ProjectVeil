@@ -65,6 +65,8 @@ The JSON manifest is the CI/operator integration point. It contains:
 - downstream status from the release gate summary, dashboard, and Cocos RC bundle
 - same-revision validation findings with explicit failure codes
 
+Use [`docs/phase1-release-evidence-drift-gate.md`](./phase1-release-evidence-drift-gate.md) when GitHub Actions should consume this manifest and fail non-interactively on blocking candidate/revision drift.
+
 ## Operator Flow
 
 1. Pin the candidate name and git revision.

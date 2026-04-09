@@ -12,6 +12,8 @@ It keeps the implementation narrow by reusing the existing evidence commands ins
 - `npm run release:cocos-rc:bundle`
 - `npm run release:runtime-observability:bundle`
 - `npm run release:gate:summary`
+- `npm run release:phase1:same-revision-evidence-bundle`
+- `npm run release:phase1:evidence-drift-gate`
 - `npm run ci:trend-summary`
 - `npm run release:health:summary`
 - `npm run release:phase1:candidate-dossier`
@@ -32,11 +34,12 @@ The bundle contains:
 
 - stable copied inputs such as `client-release-candidate-smoke-phase1-mainline-<short-sha>.json`
 - stable generated summaries such as `release-gate-summary-phase1-mainline-<short-sha>.json`
+- one same-revision evidence bundle manifest plus the paired drift-gate JSON / Markdown
 - one reviewer-facing runtime observability bundle directory with the staged evidence and gate files for the target environment
 - the candidate-scoped Cocos RC bundle and Phase 1 dossier
 - `SUMMARY.md`, which is also appended to `GITHUB_STEP_SUMMARY`
 
-The workflow fails when an evidence-generation stage regresses or when a required rehearsal artifact is missing from the final bundle.
+The workflow fails when an evidence-generation stage regresses, when a required rehearsal artifact is missing from the final bundle, or when the same-revision drift gate reports candidate/revision mismatch across the assembled packet.
 
 The workflow does not treat an otherwise valid dossier `pending` result as a generation failure. That pending state is expected when automation intentionally omits live runtime sampling or WeChat manual-review evidence. When `--server-url` is supplied, the rehearsal writes one stable runtime observability bundle directory, stages the raw runtime evidence and gate outputs inside it, and then feeds the staged gate into the candidate dossier instead of resampling the environment.
 
@@ -71,3 +74,5 @@ npm run release:phase1:candidate-rehearsal -- \
 ```
 
 Open `artifacts/release-readiness/phase1-candidate-rehearsal-local/SUMMARY.md` first. That file links the stable artifact paths used for the rehearsal and records the release gate, release health, and dossier outcomes for the candidate revision.
+
+For the standalone CI guard and explicit GitHub Actions inputs, see [`docs/phase1-release-evidence-drift-gate.md`](./phase1-release-evidence-drift-gate.md).
