@@ -245,3 +245,86 @@ test("GET /api/admin/minor-protection/preview honors at and dailyPlayMinutes ove
     reason: "minor_restricted_hours"
   });
 });
+
+test("GET /api/admin/minor-protection/preview returns pass-through and allowed states", async (t) => {
+  const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
+  process.env.VEIL_ADMIN_TOKEN = "preview-token";
+  t.after(() => {
+    if (originalAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+      return;
+    }
+    process.env.VEIL_ADMIN_TOKEN = originalAdminToken;
+  });
+
+  const store = {
+    async loadPlayerAccount(playerId: string) {
+      if (playerId === "adult-player") {
+        return {
+          playerId,
+          isMinor: false,
+          dailyPlayMinutes: 500,
+          lastPlayDate: "2026-04-03"
+        };
+      }
+
+      return {
+        playerId,
+        isMinor: true,
+        dailyPlayMinutes: 45,
+        lastPlayDate: "2026-04-03"
+      };
+    }
+  } as Pick<RoomSnapshotStore, "loadPlayerAccount"> as RoomSnapshotStore;
+
+  const { app, gets } = createTestApp();
+  registerMinorProtectionPreviewRoutes(app, store);
+  const handler = gets.get("/api/admin/minor-protection/preview");
+  assert.ok(handler);
+
+  const adultResponse = createResponse();
+  await handler(
+    createRequest({
+      headers: {
+        "x-veil-admin-token": "preview-token"
+      },
+      url: "/api/admin/minor-protection/preview?playerId=adult-player&at=2026-04-03T14:30:00.000Z"
+    }),
+    adultResponse
+  );
+
+  assert.equal(adultResponse.statusCode, 200);
+  assert.deepEqual(JSON.parse(adultResponse.body), {
+    enforced: false,
+    localDate: "2026-04-03",
+    normalizedDailyPlayMinutes: 500,
+    dailyLimitMinutes: 90,
+    restrictedHours: true,
+    dailyLimitReached: true,
+    wouldBlock: false,
+    reason: null
+  });
+
+  const allowedResponse = createResponse();
+  await handler(
+    createRequest({
+      headers: {
+        "x-veil-admin-token": "preview-token"
+      },
+      url: "/api/admin/minor-protection/preview?playerId=minor-player&at=2026-04-03T01:00:00.000Z"
+    }),
+    allowedResponse
+  );
+
+  assert.equal(allowedResponse.statusCode, 200);
+  assert.deepEqual(JSON.parse(allowedResponse.body), {
+    enforced: true,
+    localDate: "2026-04-03",
+    normalizedDailyPlayMinutes: 45,
+    dailyLimitMinutes: 90,
+    restrictedHours: false,
+    dailyLimitReached: false,
+    wouldBlock: false,
+    reason: null
+  });
+});
