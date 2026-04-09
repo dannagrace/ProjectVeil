@@ -57,8 +57,10 @@ export interface CocosLobbyRoomSummary {
   seed: number;
   day: number;
   connectedPlayers: number;
+  disconnectedPlayers: number;
   heroCount: number;
   activeBattles: number;
+  statusLabel: string;
   updatedAt: string;
 }
 

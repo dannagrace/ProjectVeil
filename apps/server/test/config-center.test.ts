@@ -531,13 +531,21 @@ test("config center exposes built-in layout presets for the additional map varia
   assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_splitrock_canyon"));
   assert.ok(worldPresets.some((preset) => preset.id === "layout_contested_basin"));
   assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_contested_basin"));
+  assert.ok(worldPresets.some((preset) => preset.id === "layout_phase2_frontier_expanded"));
+  assert.ok(mapObjectPresets.some((preset) => preset.id === "layout_phase2_frontier_expanded"));
 
   const highlandWorldDocument = await store.applyPreset("world", "layout_highland_reach");
   const highlandMapObjectsDocument = await store.applyPreset("mapObjects", "layout_highland_reach");
+  const frontierExpandedWorldDocument = await store.applyPreset("world", "layout_phase2_frontier_expanded");
+  const frontierExpandedMapObjectsDocument = await store.applyPreset("mapObjects", "layout_phase2_frontier_expanded");
 
   assert.match(highlandWorldDocument.content, /"width": 10/);
   assert.match(highlandWorldDocument.content, /"position": \{\s+"x": 1,\s+"y": 4/s);
   assert.match(highlandMapObjectsDocument.content, /"id": "mine-ore-1"/);
+  assert.match(frontierExpandedWorldDocument.content, /"width": 32/);
+  assert.match(frontierExpandedWorldDocument.content, /"height": 32/);
+  assert.match(frontierExpandedMapObjectsDocument.content, /"id": "watchtower-frontier-expanded-1"/);
+  assert.match(frontierExpandedMapObjectsDocument.content, /"id": "neutral-river-watch"/);
 });
 
 test("config center diff classifies added, removed, and type changes", async () => {

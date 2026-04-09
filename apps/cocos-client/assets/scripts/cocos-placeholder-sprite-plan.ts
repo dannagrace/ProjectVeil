@@ -1,4 +1,4 @@
-export type PlaceholderSpriteScope = "map" | "hud" | "battle" | "timeline";
+export type PlaceholderSpriteScope = "map" | "hud" | "timeline";
 
 export const PLACEHOLDER_TILE_PATHS = {
   grass: ["placeholder/tiles/grass-1", "placeholder/tiles/grass-2", "placeholder/tiles/grass-3"],
@@ -8,6 +8,11 @@ export const PLACEHOLDER_TILE_PATHS = {
   swamp: ["placeholder/tiles/dirt-1", "placeholder/tiles/dirt-2", "placeholder/tiles/dirt-3"],
   unknown: ["placeholder/tiles/unknown-1"],
   hidden: ["placeholder/tiles/hidden-1", "placeholder/tiles/hidden-2", "placeholder/tiles/hidden-3"]
+} as const;
+
+export const PLACEHOLDER_FOG_MASK_PATHS = {
+  hidden: Array.from({ length: 16 }, (_unused, featherMask) => `placeholder/fog/hidden-${featherMask}`),
+  explored: Array.from({ length: 16 }, (_unused, featherMask) => `placeholder/fog/explored-${featherMask}`)
 } as const;
 
 export const PLACEHOLDER_ICON_PATHS = {
@@ -33,6 +38,8 @@ export const PLACEHOLDER_SCOPE_PATHS = {
     ...PLACEHOLDER_TILE_PATHS.swamp,
     ...PLACEHOLDER_TILE_PATHS.unknown,
     ...PLACEHOLDER_TILE_PATHS.hidden,
+    ...PLACEHOLDER_FOG_MASK_PATHS.hidden,
+    ...PLACEHOLDER_FOG_MASK_PATHS.explored,
     PLACEHOLDER_ICON_PATHS.wood,
     PLACEHOLDER_ICON_PATHS.gold,
     PLACEHOLDER_ICON_PATHS.ore,
@@ -43,7 +50,6 @@ export const PLACEHOLDER_SCOPE_PATHS = {
     PLACEHOLDER_ICON_PATHS.mine
   ],
   hud: [PLACEHOLDER_ICON_PATHS.hud, PLACEHOLDER_ICON_PATHS.hero],
-  battle: [PLACEHOLDER_ICON_PATHS.battle],
   timeline: [PLACEHOLDER_ICON_PATHS.timeline]
 } as const satisfies Record<PlaceholderSpriteScope, readonly string[]>;
 

@@ -27,13 +27,23 @@ test("VeilEquipmentPanel renders loadout, inventory, and recent loot in a dedica
         worldEventType: "hero.equipmentFound",
         heroId: "hero-1"
       }
+    ],
+    recentSessionEvents: [
+      {
+        type: "hero.equipmentFound",
+        heroId: "hero-1",
+        equipmentName: "斥候罗盘",
+        rarity: "common"
+      }
     ]
   });
 
   assert.match(readCardLabel(node, "EquipmentPanelHeader"), /凯琳 的装备背包/);
+  assert.match(readCardLabel(node, "EquipmentPanelLootSpotlight"), /战斗结算 获得新装备/);
   assert.match(readCardLabel(node, "EquipmentPanelLoadout"), /武器 先锋战刃/);
+  assert.match(readCardLabel(node, "EquipmentPanelInventory"), /筛选 全部 · 排序 槽位/);
   assert.match(readCardLabel(node, "EquipmentPanelInventory"), /背包 2\/6 件/);
-  assert.match(readCardLabel(node, "EquipmentPanelLoot"), /战利品 最近 1 条/);
+  assert.match(readCardLabel(node, "EquipmentPanelLoot"), /战利品 最近 2 条/);
 });
 
 test("VeilEquipmentPanel routes close and equip actions through rendered buttons", () => {
@@ -96,4 +106,28 @@ test("VeilEquipmentPanel supports inspecting equipped and bag items in a dedicat
   assert.match(readCardLabel(node, "EquipmentPanelInspect"), /来源 背包中 2 件/);
   assert.match(readCardLabel(node, "EquipmentPanelInspect"), /扩大战术容错/);
   assert.match(readCardLabel(node, "EquipmentPanelInspect"), /说明 帮助英雄更快判断战场破绽/);
+});
+
+test("VeilEquipmentPanel lets the player filter and sort bag entries from the dedicated controls", () => {
+  const { component, node } = createComponentHarness(VeilEquipmentPanel, {
+    name: "EquipmentPanelRoot",
+    width: 420,
+    height: 520
+  });
+  const update = createSessionUpdate();
+  const hero = update.world.ownHeroes[0]!;
+  hero.loadout.inventory = ["militia_pike", "sun_medallion", "scout_compass", "tower_shield_mail"];
+
+  component.render({
+    hero,
+    recentEventLog: []
+  });
+
+  pressNode(findNode(node, "EquipmentPanelFilter-accessory"));
+  pressNode(findNode(node, "EquipmentPanelSort-rarity"));
+
+  const inventoryLabel = readCardLabel(node, "EquipmentPanelInventory");
+  assert.match(inventoryLabel, /筛选 饰品 · 排序 稀有度/);
+  assert.match(inventoryLabel, /曜日勋章/);
+  assert.doesNotMatch(inventoryLabel, /民兵长枪/);
 });

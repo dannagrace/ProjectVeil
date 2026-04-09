@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildEquipmentInspectItems,
+  buildInventorySummaryView,
   buildHeroEquipmentActionRows,
   formatEquipmentActionReason,
   formatEquipmentInspectLines,
   formatEquipmentOverviewLines,
   formatInventorySummaryLines,
+  formatLootSpotlightLines,
   formatRecentLootLines,
   inventoryItemsForSlot
 } from "../assets/scripts/cocos-hero-equipment";
@@ -142,7 +144,9 @@ test("formatInventorySummaryLines exposes the current backpack as grouped readab
       })
     ),
     [
-      "背包 4/6 件（3 类）",
+      "筛选 全部 · 排序 槽位",
+      "背包 4/6 件",
+      "已展开 3 类物品",
       "武器 普通 民兵长枪 x2 · 攻击 +6%",
       "护甲 普通 厚绗布甲 · 防御 +6% / 生命上限 +2",
       "饰品 普通 斥候罗盘 · 攻击 +3% / 知识 +1"
@@ -171,14 +175,43 @@ test("formatInventorySummaryLines warns when the backpack has reached capacity",
       })
     ),
     [
-      "背包 6/6 件（6 类）",
+      "筛选 全部 · 排序 槽位",
+      "背包 6/6 件",
+      "已展开 6 类物品",
       "背包已满，新的战利品会溢出",
       "武器 普通 民兵长枪 · 攻击 +6%",
       "武器 普通 橡木长弓 · 攻击 +4% / 知识 +1",
       "护甲 普通 厚绗布甲 · 防御 +6% / 生命上限 +2",
       "护甲 普通 塔盾链甲 · 防御 +8%",
-      "饰品 普通 斥候罗盘 · 攻击 +3% / 知识 +1",
-      "饰品 史诗 曜日勋章 · 攻击 +8% / 防御 +8% / 力量 +1"
+      "饰品 史诗 曜日勋章 · 攻击 +8% / 防御 +8% / 力量 +1",
+      "饰品 普通 斥候罗盘 · 攻击 +3% / 知识 +1"
+    ]
+  );
+});
+
+test("buildInventorySummaryView supports slot filtering and rarity sorting for the Cocos bag panel", () => {
+  assert.deepEqual(
+    buildInventorySummaryView(
+      createHero({
+        loadout: {
+          learnedSkills: [],
+          equipment: {
+            trinketIds: []
+          },
+          inventory: ["militia_pike", "sun_medallion", "scout_compass", "tower_shield_mail"]
+        }
+      }),
+      {
+        filter: "accessory",
+        sort: "rarity"
+      }
+    ).lines,
+    [
+      "筛选 饰品 · 排序 稀有度",
+      "背包 4/6 件",
+      "当前筛选 2 类物品",
+      "饰品 史诗 曜日勋章 · 攻击 +8% / 防御 +8% / 力量 +1",
+      "饰品 普通 斥候罗盘 · 攻击 +3% / 知识 +1"
     ]
   );
 });
@@ -379,6 +412,31 @@ test("formatRecentLootLines prioritizes authoritative session loot before accoun
       "战利品 最近 2 条",
       "凯琳 在战斗后发现了史诗装备 守誓圣铠，但背包已满，未能拾取。",
       "凯琳在战斗后获得了普通装备 塔盾链甲。"
+    ]
+  );
+});
+
+test("formatLootSpotlightLines highlights the newest owned loot settlement for the equipment panel", () => {
+  assert.deepEqual(
+    formatLootSpotlightLines(
+      [
+        {
+          type: "hero.equipmentFound",
+          heroId: "hero-1",
+          battleId: "battle-1",
+          battleKind: "neutral",
+          equipmentId: "warden_aegis",
+          equipmentName: "守誓圣铠",
+          rarity: "epic",
+          overflowed: true
+        }
+      ],
+      "hero-1",
+      "凯琳"
+    ),
+    [
+      "战斗结算 背包已满",
+      "凯琳 在战斗后发现了史诗装备 守誓圣铠，但背包已满，未能拾取。"
     ]
   );
 });

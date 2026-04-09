@@ -111,6 +111,7 @@ test("predictPlayerWorldAction rejects destinations blocked by owned heroes or v
           id: "enemy-1",
           playerId: "player-2",
           name: "Invader",
+          level: 3,
           position: { x: 1, y: 0 }
         }
       ]

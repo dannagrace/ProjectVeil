@@ -2450,6 +2450,7 @@ export function createPlayerWorldView(state: WorldState, playerId: string): Play
         id: hero.id,
         playerId: hero.playerId,
         name: hero.name,
+        level: hero.progression.level,
         position: hero.position
       })),
     resources: getPlayerResources(state.resources, playerId),

@@ -9,7 +9,7 @@ export type CocosPresentationWaveform = "sine" | "square" | "sawtooth" | "triang
 export type CocosMusicScene = "explore" | "battle";
 export type CocosAudioCue = "attack" | "skill" | "hit" | "victory" | "defeat" | "level_up";
 export type CocosPresentationAssetStage = "placeholder" | "production";
-export type CocosAnimationDeliveryMode = "fallback" | "clip" | "spine";
+export type CocosAnimationDeliveryMode = "fallback" | "sequence" | "clip" | "spine";
 
 export interface CocosPresentationNote {
   frequency: number;
@@ -74,7 +74,7 @@ function normalizeAssetStage(value: unknown, fallback: CocosPresentationAssetSta
 }
 
 function normalizeAnimationDeliveryMode(value: unknown, fallback: CocosAnimationDeliveryMode): CocosAnimationDeliveryMode {
-  return value === "fallback" || value === "clip" || value === "spine" ? value : fallback;
+  return value === "fallback" || value === "sequence" || value === "clip" || value === "spine" ? value : fallback;
 }
 
 function normalizeNotes(value: unknown, fallbackFrequency: number): CocosPresentationNote[] {

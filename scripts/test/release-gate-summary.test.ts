@@ -342,6 +342,142 @@ test("buildReleaseGateSummaryReport marks reconnect soak evidence stale when the
   assert.equal(reconnectEvidence?.freshness, "stale");
 });
 
+test("buildReleaseGateSummaryReport surfaces stale manual evidence ledger ownership before the release call", () => {
+  const workspace = createTempWorkspace();
+  const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
+  const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
+  const manualEvidenceLedgerPath = path.join(
+    workspace,
+    "artifacts",
+    "release-readiness",
+    "manual-release-evidence-owner-ledger-abc123.md"
+  );
+
+  writeJson(snapshotPath, {
+    generatedAt: isoHoursAgo(2),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    summary: {
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
+    },
+    checks: [{ id: "npm-test", required: true, status: "passed" }]
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: isoHoursAgo(2),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    execution: {
+      status: "passed",
+      exitCode: 0
+    },
+    summary: {
+      total: 1,
+      passed: 1,
+      failed: 0
+    }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: isoHoursAgo(2),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 12,
+      invariantChecks: 12
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+
+  fs.mkdirSync(path.dirname(manualEvidenceLedgerPath), { recursive: true });
+  fs.writeFileSync(
+    manualEvidenceLedgerPath,
+    `# Manual Release Evidence Owner Ledger
+
+## Candidate
+
+- Candidate: \`phase1-rc\`
+- Target revision: \`abc123\`
+- Release owner: \`release-oncall\`
+- Last updated: \`${isoHoursAgo(2)}\`
+- Linked readiness snapshot: \`artifacts/release-readiness/release-readiness-pass.json\`
+
+## Ledger
+
+| Evidence type | Candidate | Revision | Owner | Status | Last updated | Artifact path / link | Notes / blocker context |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| \`runtime-observability-review\` | \`phase1-rc\` | \`abc123\` | \`\` | \`pending\` | \`${isoHoursAgo(80)}\` | \`artifacts/wechat-release/runtime-observability-signoff.json\` | Waiting on release-environment captures. |
+`,
+    "utf8"
+  );
+
+  const report = buildReleaseGateSummaryReport(
+    {
+      snapshotPath,
+      h5SmokePath,
+      reconnectSoakPath,
+      manualEvidenceLedgerPath,
+      targetSurface: "h5"
+    },
+    {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    }
+  );
+
+  assert.equal(report.summary.status, "failed");
+  assert.equal(report.triage.blockers.length, 2);
+  assert.deepEqual(
+    report.triage.blockers.map((entry) => entry.gateId),
+    ["manual-evidence-ledger", "manual-evidence-ledger"]
+  );
+  assert.match(report.triage.blockers[0]?.summary ?? "", /blocking row/);
+  assert.match(report.triage.blockers[1]?.summary ?? "", /runtime-observability-review/);
+  assert.match(report.triage.blockers[1]?.summary ?? "", /owner missing/);
+  assert.match(report.triage.blockers[1]?.summary ?? "", /freshness=stale/);
+  const ledgerRollup = report.releaseSurface.evidence.find((entry) => entry.id === "manual-evidence-ledger");
+  assert.equal(ledgerRollup?.status, "failed");
+  assert.match(ledgerRollup?.summary ?? "", /blocking row/);
+  const ledgerRow = report.releaseSurface.evidence.find((entry) => entry.id === "manual-ledger:runtime-observability-review");
+  assert.equal(ledgerRow?.status, "failed");
+  assert.match(ledgerRow?.summary ?? "", /owner missing/);
+  assert.match(ledgerRow?.summary ?? "", /freshness=stale/);
+  const markdown = renderMarkdown(report);
+  assert.match(markdown, /Manual evidence owner ledger blocked h5/);
+  assert.match(markdown, /Ledger: runtime-observability-review blocked h5/);
+  assert.match(markdown, /owner=<missing>/);
+  assert.match(markdown, /freshness=stale/);
+});
+
 test("buildReleaseGateSummaryReport marks reconnect soak evidence failing when the candidate verdict failed", () => {
   const workspace = createTempWorkspace();
   const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-fail.json");

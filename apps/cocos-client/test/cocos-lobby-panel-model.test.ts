@@ -23,8 +23,10 @@ function createRoom(index: number): CocosLobbyRoomSummary {
     seed: 1000 + index,
     day: index,
     connectedPlayers: index + 1,
+    disconnectedPlayers: 0,
     heroCount: index + 2,
     activeBattles: index + 3,
+    statusLabel: index % 2 === 0 ? "探索中" : "PVP 进行中",
     updatedAt: `2026-03-${String(index).padStart(2, "0")}T12:00:00.000Z`
   };
 }
@@ -60,8 +62,10 @@ test("buildLobbyRoomCards formats the title and meta fields from room details", 
       seed: 1001,
       day: 3,
       connectedPlayers: 2,
+      disconnectedPlayers: 1,
       heroCount: 4,
       activeBattles: 1,
+      statusLabel: "恢复中",
       updatedAt: "2026-03-29T12:00:00.000Z"
     }
   ]);
@@ -69,7 +73,7 @@ test("buildLobbyRoomCards formats the title and meta fields from room details", 
   assert.deepEqual(card, {
     roomId: "room-alpha",
     title: "room-alpha",
-    meta: "Day 3 · Seed 1001 · 玩家 2 · 英雄 4 · 战斗 1"
+    meta: "Day 3 · Seed 1001 · 恢复中 · 玩家 2（掉线 1） · 英雄 4 · 战斗 1"
   });
 });
 

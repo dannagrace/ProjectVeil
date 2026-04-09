@@ -24,6 +24,6 @@ test("validate:assets strict mode fails when cocos presentation is not release-r
         encoding: "utf8",
         stdio: "pipe"
       }),
-    /Cocos primary client is not release-ready: 正式像素美术, 真实 BGM\/SFX, 正式动画资产, Spine Skeleton/
+    /Cocos primary client is not release-ready: 正式像素美术, 真实 BGM\/SFX/
   );
 });

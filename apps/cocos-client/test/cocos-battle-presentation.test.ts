@@ -210,6 +210,54 @@ test("battle presentation plan formalizes command, enter, impact, and resolution
   assert.equal(impactPlan.animation, "hit");
   assert.equal(impactPlan.feedback?.badge, "HIT");
 
+  const skillPlan = buildBattlePresentationPlan(
+    battle,
+    {
+      ...enterUpdate,
+      battle: {
+        ...battle,
+        units: {
+          ...battle.units,
+          "neutral-1-stack": {
+            ...battle.units["neutral-1-stack"]!,
+            currentHp: 9
+          }
+        },
+        log: battle.log.concat("Guard 施放 投矛射击，对 Orc 造成 4 伤害")
+      },
+      events: []
+    },
+    "hero-1"
+  );
+  assert.equal(skillPlan.phase, "active");
+  assert.equal(skillPlan.cue, "skill");
+  assert.equal(skillPlan.animation, "attack");
+  assert.equal(skillPlan.moment, "active_skill");
+
+  const defeatPlan = buildBattlePresentationPlan(
+    battle,
+    {
+      ...enterUpdate,
+      battle: {
+        ...battle,
+        units: {
+          ...battle.units,
+          "neutral-1-stack": {
+            ...battle.units["neutral-1-stack"]!,
+            count: 0,
+            currentHp: 0
+          }
+        }
+      },
+      events: []
+    },
+    "hero-1"
+  );
+  assert.equal(defeatPlan.phase, "impact");
+  assert.equal(defeatPlan.cue, "hit");
+  assert.equal(defeatPlan.animation, "defeat");
+  assert.equal(defeatPlan.moment, "impact_death");
+
   const resolutionPlan = buildBattlePresentationPlan(battle, createResolvedUpdate("attacker_victory"), "hero-1");
   assert.equal(resolutionPlan.phase, "resolution");
   assert.equal(resolutionPlan.cue, "victory");

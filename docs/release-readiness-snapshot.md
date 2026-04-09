@@ -21,7 +21,7 @@ The default automated checks are:
 
 The Phase 1 persistence regression intentionally keeps config/content validation tied to the same release-hardening story:
 
-- it validates the shipped `phase1`, `frontier-basin`, `stonewatch-fork`, `ridgeway-crossing`, and `phase2` content packs
+- it validates the shipped default `phase1` pack, all 12 additional Phase 1 presets, and both `phase2` validation presets
 - it exercises persistence-backed player/account/world carryover with representative resources, hero growth, replay history, and event history
 
 For candidate review of the additional Phase 1 packs:
@@ -38,6 +38,13 @@ For candidate review of the ridgeway Phase 1 pack:
 - in Config Center, apply `layout_ridgeway_crossing` to both `world` and `mapObjects`
 - for runtime/manual room checks, join a room whose id includes `[map:ridgeway_crossing]`
 - for scripted verification, run `npm run validate:content-pack:all` and `npm run test:phase1-release-persistence:ridgeway`
+
+For candidate review of the highland Phase 1 pack:
+
+- in Config Center, apply `layout_highland_reach` to both `world` and `mapObjects`
+- for runtime/manual room checks, join a room whose id includes `[map:highland_reach]`
+- for scripted verification, run `npm run validate:content-pack:all` and `npm run test:phase1-release-persistence:highland`
+- expect materially different pacing from the baseline pack: `highland-reach` expands to a 10x10 board, mirrors gold pickups across both flanks, and puts four neutral contests around the central dirt corridor so scouting and route commitment matter earlier
 
 When `VEIL_MYSQL_*` is configured, the regression automatically targets MySQL. Without MySQL env it falls back to the in-memory store so contributors can still run the same flow locally, but release verification should expect the generated report to show `Storage: mysql`.
 

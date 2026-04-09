@@ -334,6 +334,26 @@ test("player account battle replay playback routes derive stateless playback con
   assert.equal(mePayload.playback.status, "paused");
   assert.equal(mePayload.playback.nextStep?.index, 2);
 
+  const postResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/battle-replays/battle-1/playback`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        command: "step-forward"
+      })
+    }
+  );
+  const postPayload = (await postResponse.json()) as { playback: BattleReplayPlaybackState };
+  assert.equal(postResponse.status, 200);
+  assert.equal(postPayload.playback.replay.id, "replay-playback");
+  assert.equal(postPayload.playback.replay.battleId, "battle-1");
+  assert.equal(postPayload.playback.currentStepIndex, 1);
+  assert.equal(postPayload.playback.currentStep?.index, 1);
+
   const crossAccountResponse = await fetch(
     `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays/replay-playback/playback`,
     {

@@ -7,6 +7,7 @@ import {
   joinGuild,
   leaveGuild,
   type GuildCreateAction,
+  type GuildMembershipEvent,
   type GuildState
 } from "../../../packages/shared/src/index";
 import { validateAuthSessionFromRequest } from "./auth";
@@ -233,6 +234,7 @@ class GuildService {
   async leaveGuildForPlayer(authSession: { playerId: string; displayName: string }, guildId: string): Promise<{
     guild: GuildState;
     deleted: boolean;
+    events: GuildMembershipEvent[];
   }> {
     const store = this.requireStore();
     const guild = await store.loadGuild(guildId);
@@ -249,11 +251,12 @@ class GuildService {
     });
     if (result.deleted) {
       await store.deleteGuild(guild.id);
-      return { guild: result.guild, deleted: true };
+      return { guild: result.guild, events: result.events, deleted: true };
     }
 
     return {
       guild: await store.saveGuild(result.guild),
+      events: result.events,
       deleted: false
     };
   }
@@ -374,11 +377,13 @@ export function registerGuildRoutes(
         result.deleted
           ? {
               guildId,
+              events: result.events,
               deleted: true
             }
           : {
               guild: createGuildSummaryView(result.guild),
               roster: createGuildRosterView(result.guild),
+              events: result.events,
               deleted: false
             }
       );

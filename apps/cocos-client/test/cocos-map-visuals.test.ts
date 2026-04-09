@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  buildFogOverlayStyle,
+  buildFogTileStyle,
+  FOG_TILE_STYLE_LOOKUP,
   buildMapFeedbackEntriesFromUpdate,
   buildObjectPulseEntriesFromUpdate,
   createTileLookup,
   fogEdgeGidForTile,
   fogEdgeMarkerForTile,
+  resolveFogTileFrameKey,
   resolveFogEdgePulseGid,
   resolveFogPulseGid
 } from "../assets/scripts/cocos-map-visuals";
@@ -125,7 +127,7 @@ test("fog pulse helpers switch to alternate gids on odd phases only", () => {
   assert.equal(resolveFogEdgePulseGid(0, 16, 1), 0);
 });
 
-test("buildFogOverlayStyle emits quiet overlay chrome for hidden and explored fog", () => {
+test("buildFogTileStyle maps hidden and explored fog to the configured sprite-frame keys", () => {
   const tiles = [
     createTile({ x: 1, y: 1 }, "hidden"),
     createTile({ x: 1, y: 0 }, "visible"),
@@ -135,42 +137,20 @@ test("buildFogOverlayStyle emits quiet overlay chrome for hidden and explored fo
   ];
   const lookup = createTileLookup(tiles);
 
-  assert.deepEqual(buildFogOverlayStyle(tiles[0]!, lookup, 0), {
-    text: "",
-    opacity: 192,
-    edgeOpacity: 78,
-    labelOpacity: 0,
-    tone: "hidden",
+  assert.deepEqual(buildFogTileStyle(tiles[0]!, lookup), {
+    frameKey: "placeholder/fog/hidden-3",
+    fogState: "hidden",
     featherMask: 3
   });
-  assert.deepEqual(buildFogOverlayStyle(tiles[0]!, lookup, 1), {
-    text: "",
-    opacity: 176,
-    edgeOpacity: 62,
-    labelOpacity: 0,
-    tone: "hidden",
-    featherMask: 3
-  });
-  assert.deepEqual(buildFogOverlayStyle(tiles[2]!, lookup, 0), {
-    text: "",
-    opacity: 92,
-    edgeOpacity: 34,
-    labelOpacity: 0,
-    tone: "explored",
+  assert.deepEqual(buildFogTileStyle(tiles[2]!, lookup), {
+    frameKey: "placeholder/fog/explored-1",
+    fogState: "explored",
     featherMask: 1
   });
-  assert.deepEqual(buildFogOverlayStyle(tiles[2]!, lookup, 1), {
-    text: "",
-    opacity: 78,
-    edgeOpacity: 24,
-    labelOpacity: 0,
-    tone: "explored",
-    featherMask: 1
-  });
-  assert.equal(buildFogOverlayStyle(tiles[4]!, lookup, 0), null);
+  assert.equal(buildFogTileStyle(tiles[4]!, lookup), null);
 });
 
-test("buildFogOverlayStyle keeps interior fog tiles alpha-blended even without a frontier", () => {
+test("buildFogTileStyle keeps interior fog tiles on the zero-mask frame", () => {
   const hiddenTiles = [
     createTile({ x: 0, y: 0 }, "hidden"),
     createTile({ x: 1, y: 0 }, "hidden"),
@@ -184,22 +164,25 @@ test("buildFogOverlayStyle keeps interior fog tiles alpha-blended even without a
     createTile({ x: 1, y: 1 }, "explored")
   ];
 
-  assert.deepEqual(buildFogOverlayStyle(hiddenTiles[0]!, createTileLookup(hiddenTiles), 0), {
-    text: "",
-    opacity: 220,
-    edgeOpacity: 198,
-    labelOpacity: 0,
-    tone: "hidden",
+  assert.deepEqual(buildFogTileStyle(hiddenTiles[0]!, createTileLookup(hiddenTiles)), {
+    frameKey: "placeholder/fog/hidden-0",
+    fogState: "hidden",
     featherMask: 0
   });
-  assert.deepEqual(buildFogOverlayStyle(exploredTiles[2]!, createTileLookup(exploredTiles), 0), {
-    text: "",
-    opacity: 108,
-    edgeOpacity: 82,
-    labelOpacity: 0,
-    tone: "explored",
+  assert.deepEqual(buildFogTileStyle(exploredTiles[2]!, createTileLookup(exploredTiles)), {
+    frameKey: "placeholder/fog/explored-0",
+    fogState: "explored",
     featherMask: 0
   });
+});
+
+test("fog tile style lookup exposes all 16 mask variants per fog state", () => {
+  assert.equal(Object.keys(FOG_TILE_STYLE_LOOKUP.hidden).length, 16);
+  assert.equal(Object.keys(FOG_TILE_STYLE_LOOKUP.explored).length, 16);
+  assert.equal(resolveFogTileFrameKey("hidden", 15), "placeholder/fog/hidden-15");
+  assert.equal(resolveFogTileFrameKey("explored", 15), "placeholder/fog/explored-15");
+  assert.equal(resolveFogTileFrameKey("hidden", -10), "placeholder/fog/hidden-0");
+  assert.equal(resolveFogTileFrameKey("explored", 99), "placeholder/fog/explored-15");
 });
 
 test("buildMapFeedbackEntriesFromUpdate creates tile callouts for move, collect, xp and battle results", () => {

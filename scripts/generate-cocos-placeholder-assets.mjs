@@ -5,11 +5,14 @@ import zlib from "node:zlib";
 
 const root = process.cwd();
 const tilesDir = path.join(root, "apps/cocos-client/assets/resources/placeholder/tiles");
+const fogDir = path.join(root, "apps/cocos-client/assets/resources/placeholder/fog");
 const iconsDir = path.join(root, "apps/cocos-client/assets/resources/placeholder/icons");
 fs.mkdirSync(tilesDir, { recursive: true });
+fs.mkdirSync(fogDir, { recursive: true });
 fs.mkdirSync(iconsDir, { recursive: true });
 
 const TILE = 72;
+const FOG_TILE = 84;
 const ICON = 48;
 
 generateTileSeries("grass", 3, drawGrassVariant);
@@ -18,6 +21,8 @@ generateTileSeries("sand", 2, drawSandVariant);
 generateTileSeries("water", 2, drawWaterVariant);
 generateTileSeries("unknown", 1, drawUnknownVariant);
 generateTileSeries("hidden", 3, drawHiddenVariant);
+generateFogMaskSeries("hidden");
+generateFogMaskSeries("explored");
 
 generateIcon("wood", drawWoodIcon);
 generateIcon("gold", drawGoldIcon);
@@ -43,6 +48,14 @@ function generateIcon(name, painter) {
   const filepath = path.join(iconsDir, `${name}.png`);
   writePng(filepath, ICON, ICON, painter);
   ensureImageMeta(filepath);
+}
+
+function generateFogMaskSeries(fogState) {
+  for (let featherMask = 0; featherMask < 16; featherMask += 1) {
+    const filepath = path.join(fogDir, `${fogState}-${featherMask}.png`);
+    writePng(filepath, FOG_TILE, FOG_TILE, (x, y, width, height) => drawFogMaskVariant(fogState, featherMask, x, y, width, height));
+    ensureImageMeta(filepath);
+  }
 }
 
 function writePng(filepath, width, height, painter) {
@@ -256,6 +269,49 @@ function drawHiddenVariant(variant, x, y, width, height) {
   return color;
 }
 
+function drawFogMaskVariant(fogState, featherMask, x, y, width, height) {
+  const palette = fogState === "hidden"
+    ? {
+        core: [16, 24, 36],
+        glow: [34, 49, 72],
+        alpha: 232
+      }
+    : {
+        core: [48, 64, 86],
+        glow: [78, 101, 129],
+        alpha: 168
+      };
+  const inset = 4;
+  const radius = 18;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const withinShape = alphaRoundedRect(x, y, width, height, inset, radius);
+  if (withinShape <= 0) {
+    return rgb(0, 0, 0, 0);
+  }
+
+  const featherDepth = 20;
+  const northFade = (featherMask & 1) === 0 ? 1 : smoothstep((y - inset) / featherDepth);
+  const eastFade = (featherMask & 2) === 0 ? 1 : smoothstep((width - inset - x) / featherDepth);
+  const southFade = (featherMask & 4) === 0 ? 1 : smoothstep((height - inset - y) / featherDepth);
+  const westFade = (featherMask & 8) === 0 ? 1 : smoothstep((x - inset) / featherDepth);
+  const featherAlpha = Math.min(northFade, eastFade, southFade, westFade);
+  const radial = Math.max(0, 1 - Math.sqrt(((x - centerX) / (width * 0.48)) ** 2 + ((y - centerY) / (height * 0.48)) ** 2));
+  const tint = 0.28 + radial * 0.72;
+  const sparkle = Math.max(
+    blob(x, y, width * 0.28, height * 0.3, 11),
+    blob(x, y, width * 0.72, height * 0.38, 12),
+    blob(x, y, width * 0.52, height * 0.7, 14)
+  ) * 0.18;
+  const color = rgb(
+    mix(palette.core[0], palette.glow[0], tint + sparkle),
+    mix(palette.core[1], palette.glow[1], tint + sparkle),
+    mix(palette.core[2], palette.glow[2], tint + sparkle),
+    palette.alpha * withinShape * featherAlpha
+  );
+  return color;
+}
+
 function drawWoodIcon(x, y, width, height) {
   if (outsideCircle(x, y, width, height, 0.46)) return rgb(0, 0, 0, 0);
   let color = rgb(78, 54, 34);
@@ -370,6 +426,30 @@ function drawTimelineIcon(x, y, width, height) {
   if (isRoundedRect(x, y, width, height, 0.36, 0.56, 0.36, 0.06, 3)) color = rgb(222, 234, 247);
   if (isRoundedRect(x, y, width, height, 0.36, 0.68, 0.22, 0.06, 3)) color = rgb(198, 214, 230);
   return color;
+}
+
+function alphaRoundedRect(x, y, width, height, inset, radius) {
+  const left = inset;
+  const top = inset;
+  const right = width - inset;
+  const bottom = height - inset;
+  const clampedX = Math.min(Math.max(x, left + radius), right - radius);
+  const clampedY = Math.min(Math.max(y, top + radius), bottom - radius);
+  const dx = x - clampedX;
+  const dy = y - clampedY;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  if (distance >= radius + 1.5) {
+    return 0;
+  }
+  if (distance <= Math.max(0, radius - 1.5)) {
+    return 1;
+  }
+  return 1 - smoothstep((distance - (radius - 1.5)) / 3);
+}
+
+function smoothstep(value) {
+  const t = Math.max(0, Math.min(1, value));
+  return t * t * (3 - 2 * t);
 }
 
 function blob(x, y, cx, cy, radius) {

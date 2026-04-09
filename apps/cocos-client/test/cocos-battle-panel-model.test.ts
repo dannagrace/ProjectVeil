@@ -331,11 +331,96 @@ test("buildBattlePanelViewModel surfaces reviewer-facing session and next-step c
   assert.equal(view.title, "战斗反馈");
   assert.deepEqual(view.summaryLines.slice(0, 4), [
     "battle-1 · 第 2 回合",
-    "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 受击反馈",
-    "会话：room-battle/battle-1 · 中立遭遇",
-    "表现：HIT · 命中反馈"
+    "遭遇会话：room-battle/battle-1",
+    "房间态：遭遇战进行中",
+    "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 受击反馈"
   ]);
-  assert.equal(view.summaryLines[4], "下一步：确认受击结果后继续选择目标或技能");
+  assert.equal(view.summaryLines[4], "会话：room-battle/battle-1 · 中立遭遇");
+  assert.equal(view.summaryLines[5], "表现：HIT · 命中反馈");
+  assert.equal(view.summaryLines[6], "下一步：确认受击结果后继续选择目标或技能");
+});
+
+test("buildBattlePanelViewModel shows PvP opponent identity, level, and recovery room state", () => {
+  const update = createBaseUpdate();
+  update.world.meta.roomId = "room-pvp";
+  update.world.visibleHeroes = [
+    {
+      id: "hero-2",
+      playerId: "player-2",
+      name: "Selene",
+      level: 6,
+      position: { x: 1, y: 0 }
+    }
+  ];
+  update.battle = {
+    id: "battle-hero-1-vs-hero-2",
+    round: 1,
+    lanes: 1,
+    activeUnitId: "hero-1-stack",
+    turnOrder: ["hero-1-stack", "hero-2-stack"],
+    units: {
+      "hero-1-stack": {
+        id: "hero-1-stack",
+        templateId: "hero_guard_basic",
+        camp: "attacker",
+        lane: 0,
+        stackName: "Guard",
+        initiative: 7,
+        attack: 4,
+        defense: 4,
+        currentHp: 10,
+        maxHp: 10,
+        count: 10,
+        statusEffects: [],
+        abilities: [],
+        skills: [],
+        hasRetaliated: false,
+        defending: false
+      },
+      "hero-2-stack": {
+        id: "hero-2-stack",
+        templateId: "orc_warrior",
+        camp: "defender",
+        lane: 0,
+        stackName: "Orc",
+        initiative: 5,
+        attack: 3,
+        defense: 2,
+        currentHp: 8,
+        maxHp: 8,
+        count: 8,
+        statusEffects: [],
+        abilities: [],
+        skills: [],
+        hasRetaliated: false,
+        defending: false
+      }
+    },
+    environment: [],
+    log: ["PVP 对抗开始"],
+    rng: { seed: 1, calls: 0 },
+    worldHeroId: "hero-1",
+    defenderHeroId: "hero-2",
+    encounterPosition: { x: 1, y: 0 },
+    battlefieldTerrain: "grass"
+  };
+
+  const view = buildBattlePanelViewModel({
+    update,
+    timelineEntries: [],
+    controlledCamp: "attacker",
+    selectedTargetId: "hero-2-stack",
+    actionPending: false,
+    feedback: null,
+    presentationState: null,
+    connectionStatus: "reconnecting",
+    predictionStatus: ""
+  });
+
+  assert.equal(view.idle, false);
+  assert.equal(view.summaryLines[1], "遭遇会话：room-pvp/battle-hero-1-vs-hero-2");
+  assert.equal(view.summaryLines[2], "房间态：恢复中（等待权威同步）");
+  assert.equal(view.summaryLines[3], "对手：玩家 player-2 · 英雄 Selene · Lv 6");
 });
 
 test("buildBattlePanelViewModel enables attack actions on the player's turn", () => {
@@ -448,15 +533,17 @@ test("buildBattlePanelViewModel enables attack actions on the player's turn", ()
     subtitle: "坐标 (0,0) · 1 陷阱",
     badge: "PVE"
   });
-  assert.equal(view.summaryLines[1], "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 现场回合");
-  assert.equal(view.summaryLines[2], "会话：room-alpha/battle-hero-1-vs-neutral-1 · 中立遭遇");
-  assert.equal(view.summaryLines[3], "表现：LIVE · 战斗进行中");
-  assert.equal(view.summaryLines[4], "下一步：选择目标并下达指令");
-  assert.equal(view.summaryLines[5], "阵营：我方先攻");
-  assert.equal(view.summaryLines[6], "阶段：轮到我方");
-  assert.equal(view.summaryLines[8], "技能1：投矛射击[敌/就绪] / 护甲术[自/就绪]");
-  assert.equal(view.summaryLines[9], "状态：无异常");
-  assert.equal(view.summaryLines[10], "环境1：1线 捕兽夹陷阱 · 2伤 · 1次");
+  assert.equal(view.summaryLines[1], "遭遇会话：room-alpha/battle-hero-1-vs-neutral-1");
+  assert.equal(view.summaryLines[2], "房间态：遭遇战进行中");
+  assert.equal(view.summaryLines[3], "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 现场回合");
+  assert.equal(view.summaryLines[4], "会话：room-alpha/battle-hero-1-vs-neutral-1 · 中立遭遇");
+  assert.equal(view.summaryLines[5], "表现：LIVE · 战斗进行中");
+  assert.equal(view.summaryLines[6], "下一步：选择目标并下达指令");
+  assert.equal(view.summaryLines[7], "阵营：我方先攻");
+  assert.equal(view.summaryLines[8], "阶段：轮到我方");
+  assert.equal(view.summaryLines[10], "技能1：投矛射击[敌/就绪] / 护甲术[自/就绪]");
+  assert.equal(view.summaryLines[11], "状态：无异常");
+  assert.equal(view.summaryLines[12], "环境1：1线 捕兽夹陷阱 · 2伤 · 1次");
   assert.equal(view.orderLines[0], "行动顺序");
   assert.equal(view.orderLines[1], "> Guard x12");
   assert.equal(view.orderLines[2], "2. Orc x8 (DEF/RET)");
@@ -579,14 +666,17 @@ test("buildBattlePanelViewModel disables commands during enemy turns", () => {
     subtitle: "坐标 (0,0) · 无额外障碍",
     badge: "PVP"
   });
-  assert.equal(view.summaryLines[1], "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 现场回合");
-  assert.equal(view.summaryLines[2], "会话：room-alpha/battle-hero-1-vs-hero-2 · 英雄对决");
-  assert.equal(view.summaryLines[3], "表现：LIVE · 战斗进行中");
-  assert.equal(view.summaryLines[4], "下一步：等待对方行动或权威同步");
-  assert.equal(view.summaryLines[5], "阵营：我方先攻");
-  assert.equal(view.summaryLines[6], "阶段：轮到对方");
-  assert.equal(view.summaryLines[8], "技能：普通攻击");
-  assert.equal(view.summaryLines[9], "状态：无异常");
+  assert.equal(view.summaryLines[1], "遭遇会话：room-alpha/battle-hero-1-vs-hero-2");
+  assert.equal(view.summaryLines[2], "房间态：PVP 对抗中");
+  assert.equal(view.summaryLines[3], "对手：玩家 unknown · 英雄 hero-2");
+  assert.equal(view.summaryLines[4], "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 现场回合");
+  assert.equal(view.summaryLines[5], "会话：room-alpha/battle-hero-1-vs-hero-2 · 英雄对决");
+  assert.equal(view.summaryLines[6], "表现：LIVE · 战斗进行中");
+  assert.equal(view.summaryLines[7], "下一步：等待对方行动或权威同步");
+  assert.equal(view.summaryLines[8], "阵营：我方先攻");
+  assert.equal(view.summaryLines[9], "阶段：轮到对方");
+  assert.equal(view.summaryLines[11], "技能：普通攻击");
+  assert.equal(view.summaryLines[12], "状态：无异常");
   assert.equal(view.orderLines[1], "> Raider x11");
   assert.equal(view.orderItems[0]!.badge, "行动中");
   assert.equal(view.orderItems[1]!.badge, "2");

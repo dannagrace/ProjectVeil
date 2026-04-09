@@ -135,8 +135,10 @@ export interface LobbyRoomSummary {
   seed: number;
   day: number;
   connectedPlayers: number;
+  disconnectedPlayers: number;
   heroCount: number;
   activeBattles: number;
+  statusLabel: string;
   updatedAt: string;
 }
 
@@ -1535,13 +1537,27 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     const internalState = this.worldRoom.getInternalState();
+    const connectedPlayerIds = new Set(this.getConnectedPlayerIds());
+    const disconnectedPlayers = Array.from(this.disconnectedAtByPlayerId.keys()).filter(
+      (playerId) => !connectedPlayerIds.has(playerId)
+    ).length;
+    const activeBattles = this.worldRoom.getActiveBattles().length;
     const summary = {
       roomId: this.metadata.logicalRoomId,
       seed: internalState.meta.seed,
       day: internalState.meta.day,
       connectedPlayers: this.playerIdBySessionId.size,
+      disconnectedPlayers,
       heroCount: internalState.heroes.length,
-      activeBattles: this.worldRoom.getActiveBattles().length,
+      activeBattles,
+      statusLabel:
+        activeBattles > 0
+          ? disconnectedPlayers > 0
+            ? "恢复中"
+            : "PVP 进行中"
+          : disconnectedPlayers > 0
+            ? "等待重连"
+            : "探索中",
       updatedAt: new Date().toISOString()
     };
     lobbyRoomSummaries.set(this.metadata.logicalRoomId, summary);

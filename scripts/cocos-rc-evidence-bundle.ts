@@ -830,16 +830,16 @@ function buildPresentationChecklist(snapshot: CocosReleaseCandidateSnapshot): Pr
     {
       id: "animation-transitions",
       area: "Animation / transitions",
-      status: releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("Spine Skeleton") ? "fail" : "pass",
+      status: releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("动画回退交付") ? "fail" : "pass",
       blockingPolicy:
-        releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("Spine Skeleton")
+        releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("动画回退交付")
           ? "blocking"
           : "acceptable-controlled-test-gap",
       detail: `${cocosPresentationReadiness.animation.headline}; ${cocosPresentationReadiness.animation.detail}`,
       evidence: ["cocos-presentation-readiness", "primary journey evidence", "battle diagnostics markdown"],
       owner,
       followUp:
-        releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("Spine Skeleton")
+        releaseGate.blockers.includes("正式动画资产") || releaseGate.blockers.includes("动画回退交付")
           ? "Close fallback animation delivery before broader external review."
           : "none"
     },
@@ -1018,27 +1018,114 @@ function renderPresentationSignoffSummary(
 
 function renderChecklist(snapshot: CocosReleaseCandidateSnapshot, artifactPaths: BundleManifest["artifacts"]): string {
   const template = fs.readFileSync(CHECKLIST_TEMPLATE_PATH, "utf8");
-  const date = (snapshot.execution.executedAt || new Date().toISOString()).slice(0, 10);
-  return template
-    .replace("rc-YYYY-MM-DD", snapshot.candidate.name)
-    .replace("creator_preview | wechat_preview | wechat_upload_candidate", snapshot.candidate.buildSurface)
-    .replace("<git-sha>", snapshot.candidate.commit)
-    .replace("<name>", snapshot.execution.owner || "<name>")
-    .replace("<YYYY-MM-DD>", date)
-    .replace("artifacts/release-readiness/<candidate>.json", toRepoRelative(artifactPaths.summaryMarkdown).replace(/\.md$/, ".json"))
-    .replace("artifacts/release-evidence/<candidate>.<surface>.json", toRepoRelative(artifactPaths.snapshot));
+  const recordedAt = snapshot.execution.executedAt || new Date().toISOString();
+  const date = recordedAt.slice(0, 10);
+  const signoff = summarizePresentationSignoff(snapshot, buildPresentationChecklist(snapshot));
+  const releaseReadinessSnapshotPath = snapshot.linkedEvidence.releaseReadinessSnapshot?.path
+    ? toRepoRelative(snapshot.linkedEvidence.releaseReadinessSnapshot.path)
+    : "_not linked in this bundle_";
+  const releaseGateSummaryPath = `artifacts/release-readiness/release-gate-summary-${snapshot.candidate.shortCommit}.json`;
+  const ownerLedgerPath = `artifacts/release-readiness/manual-release-evidence-owner-ledger-${slugifyCandidate(snapshot.candidate.name)}-${snapshot.candidate.shortCommit}.md`;
+  const canonicalJourneySteps = snapshot.journey.filter((step) => step.id !== "return-to-world");
+  const autoFilled = [
+    "",
+    "## Auto-Filled Main-Journey Evidence",
+    "",
+    `- Canonical regeneration command: \`npm run release:cocos-rc:bundle -- --candidate ${snapshot.candidate.name} --build-surface ${snapshot.candidate.buildSurface}\``,
+    `- Bundle manifest: \`${toRepoRelative(artifactPaths.summaryMarkdown).replace(/\.md$/, ".json")}\``,
+    `- Primary journey evidence JSON: \`${toRepoRelative(artifactPaths.primaryJourneyEvidence)}\``,
+    `- Primary journey evidence Markdown: \`${toRepoRelative(artifactPaths.primaryJourneyEvidenceMarkdown)}\``,
+    `- Main-journey replay gate JSON: \`${toRepoRelative(artifactPaths.mainJourneyReplayGate)}\``,
+    `- Main-journey replay gate Markdown: \`${toRepoRelative(artifactPaths.mainJourneyReplayGateMarkdown)}\``,
+    `- Automated functional status: \`${snapshot.execution.overallStatus}\``,
+    `- Presentation sign-off status: \`${signoff.status}\``,
+    "",
+    "### Canonical Journey Snapshot",
+    "",
+    "| Step | Status | Evidence | Notes |",
+    "| --- | --- | --- | --- |",
+    ...canonicalJourneySteps.map((step) => {
+      const notes = step.notes || "_none_";
+      return `| ${step.title} | \`${step.status}\` | ${step.evidence.length > 0 ? step.evidence.map((entry) => `\`${entry}\``).join("<br>") : "_none_"} | ${notes} |`;
+    }),
+    "",
+    "### Required Evidence Snapshot",
+    "",
+    "| Field | Value | Evidence |",
+    "| --- | --- | --- |",
+    ...snapshot.requiredEvidence.map((field) => {
+      const value = field.value.trim() ? `\`${field.value}\`` : "_missing_";
+      const evidence = field.evidence.length > 0 ? field.evidence.map((entry) => `\`${entry}\``).join("<br>") : "_none_";
+      return `| \`${field.id}\` | ${value} | ${evidence} |`;
+    }),
+    "",
+    "### Automated Gate Call",
+    "",
+    snapshot.failureSummary.summary,
+    ""
+  ].join("\n");
+
+  return `${template
+    .replaceAll("rc-YYYY-MM-DD", snapshot.candidate.name)
+    .replaceAll("creator_preview | wechat_preview | wechat_upload_candidate", snapshot.candidate.buildSurface)
+    .replaceAll("<git-sha>", snapshot.candidate.commit)
+    .replaceAll("<name>", snapshot.execution.owner || "<name>")
+    .replaceAll("<YYYY-MM-DDTHH:MM:SSZ>", recordedAt)
+    .replaceAll("<YYYY-MM-DD>", date)
+    .replaceAll("<recorded-at>", recordedAt)
+    .replaceAll("artifacts/release-readiness/<candidate>.json", releaseReadinessSnapshotPath)
+    .replaceAll("artifacts/release-readiness/release-gate-summary-<short-sha>.json", releaseGateSummaryPath)
+    .replaceAll("artifacts/release-readiness/manual-release-evidence-owner-ledger-<short-sha>.md", ownerLedgerPath)
+    .replaceAll("artifacts/release-evidence/<candidate>.<surface>.json", toRepoRelative(artifactPaths.snapshot))
+    }${autoFilled}\n`;
 }
 
 function renderBlockers(snapshot: CocosReleaseCandidateSnapshot, artifactPaths: BundleManifest["artifacts"]): string {
   const template = fs.readFileSync(BLOCKERS_TEMPLATE_PATH, "utf8");
   const lastUpdated = snapshot.execution.executedAt || new Date().toISOString();
-  return template
-    .replace("rc-YYYY-MM-DD", snapshot.candidate.name)
-    .replace("creator_preview | wechat_preview | wechat_upload_candidate", snapshot.candidate.buildSurface)
-    .replace("<git-sha>", snapshot.candidate.commit)
-    .replace("<name>", snapshot.execution.owner || "<name>")
-    .replace("<YYYY-MM-DD HH:mm TZ>", lastUpdated)
-    .replace("artifacts/release-evidence/<candidate>.<surface>.json", toRepoRelative(artifactPaths.snapshot));
+  const signoff = summarizePresentationSignoff(snapshot, buildPresentationChecklist(snapshot));
+  const automatedFindings = [
+    ...snapshot.failureSummary.regressedJourneySegments.map((entry) => `| journey-${entry.id} | P0 | Canonical journey | ${entry.id} | ${entry.reason} | \`${toRepoRelative(artifactPaths.primaryJourneyEvidence)}\` | ${snapshot.execution.owner || "<name>"} | Re-run the candidate-scoped primary journey evidence and close the regression on the same revision. | ${lastUpdated} | open |`),
+    ...snapshot.failureSummary.blockedJourneySegments.map((entry) => `| journey-${entry.id} | P0 | Canonical journey | ${entry.id} | ${entry.reason} | \`${toRepoRelative(artifactPaths.primaryJourneyEvidence)}\` | ${snapshot.execution.owner || "<name>"} | Re-run the candidate-scoped primary journey evidence and close the blocker on the same revision. | ${lastUpdated} | open |`),
+    ...snapshot.failureSummary.lackingJourneyEvidence.map((entry) => `| journey-${entry.id} | P0 | Canonical journey | ${entry.id} | ${entry.reason} | \`${toRepoRelative(artifactPaths.primaryJourneyEvidence)}\` | ${snapshot.execution.owner || "<name>"} | Re-run \`release:cocos-rc:bundle\` so the missing step is regenerated for this candidate revision. | ${lastUpdated} | open |`),
+    ...snapshot.failureSummary.lackingRequiredEvidence.map((entry) => `| required-${entry.id} | P0 | Required evidence | ${entry.id} | ${entry.reason} | \`${toRepoRelative(artifactPaths.primaryJourneyEvidence)}\` | ${snapshot.execution.owner || "<name>"} | Regenerate the canonical primary-journey evidence until the required field is populated for this candidate revision. | ${lastUpdated} | open |`),
+    ...signoff.blockingItems.map((entry) => `| presentation-${slugifyCandidate(entry)} | P1 | Presentation sign-off | presentation-signoff | ${entry} remains on hold in the generated presentation sign-off. | \`${toRepoRelative(artifactPaths.presentationSignoff)}\` | ${snapshot.execution.owner || "<name>"} | Resolve the presentation blocker or record an explicit waiver before widening release review. | ${lastUpdated} | open |`)
+  ];
+  const autoFilled = [
+    "",
+    "## Auto-Filled Candidate Scope",
+    "",
+    `- Canonical regeneration command: \`npm run release:cocos-rc:bundle -- --candidate ${snapshot.candidate.name} --build-surface ${snapshot.candidate.buildSurface}\``,
+    `- Snapshot: \`${toRepoRelative(artifactPaths.snapshot)}\``,
+    `- Primary journey evidence: \`${toRepoRelative(artifactPaths.primaryJourneyEvidence)}\``,
+    `- Main-journey replay gate: \`${toRepoRelative(artifactPaths.mainJourneyReplayGate)}\``,
+    `- Presentation sign-off: \`${toRepoRelative(artifactPaths.presentationSignoff)}\``,
+    `- Automated functional status: \`${snapshot.execution.overallStatus}\``,
+    `- Automated gate summary: ${snapshot.failureSummary.summary}`,
+    `- Presentation sign-off summary: ${signoff.summary}`,
+    "",
+    "## Auto-Filled Current Blockers",
+    "",
+    "| ID | Severity | Area | Surface Evidence ID | Summary | Evidence | Owner | Exit Criteria | Next Update | Status |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ...(automatedFindings.length > 0
+      ? automatedFindings
+      : [`| none | n/a | n/a | n/a | No open automated journey or required-evidence blockers for this candidate revision. | \`${toRepoRelative(artifactPaths.primaryJourneyEvidence)}\` | ${snapshot.execution.owner || "<name>"} | n/a | ${lastUpdated} | closed |`]),
+    ""
+  ].join("\n");
+
+  return `${template
+    .replaceAll("rc-YYYY-MM-DD", snapshot.candidate.name)
+    .replaceAll("creator_preview | wechat_preview | wechat_upload_candidate", snapshot.candidate.buildSurface)
+    .replaceAll("<git-sha>", snapshot.candidate.commit)
+    .replaceAll("<name>", snapshot.execution.owner || "<name>")
+    .replaceAll("<YYYY-MM-DD HH:mm TZ>", lastUpdated)
+    .replaceAll("artifacts/release-readiness/release-gate-summary-<short-sha>.json", `artifacts/release-readiness/release-gate-summary-${snapshot.candidate.shortCommit}.json`)
+    .replaceAll(
+      "artifacts/release-readiness/manual-release-evidence-owner-ledger-<short-sha>.md",
+      `artifacts/release-readiness/manual-release-evidence-owner-ledger-${slugifyCandidate(snapshot.candidate.name)}-${snapshot.candidate.shortCommit}.md`
+    )
+    .replaceAll("artifacts/release-evidence/<candidate>.<surface>.json", toRepoRelative(artifactPaths.snapshot))}${autoFilled}\n`;
 }
 
 function toRepoRelative(filePath: string): string {

@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ImageAsset, Sprite, SpriteFrame, UIOpacity } from "cc";
+import { Sprite, UIOpacity } from "cc";
 import { VeilBattleTransition } from "../assets/scripts/VeilBattleTransition.ts";
-import {
-  loadPlaceholderSpriteAssets,
-  resetPlaceholderSpriteAssetsForTests,
-  setPlaceholderSpriteRuntimeForTests
-} from "../assets/scripts/cocos-placeholder-sprites.ts";
+import { loadPixelSpriteAssets } from "../assets/scripts/cocos-pixel-sprites.ts";
 import { createComponentHarness, findNode, readLabelString } from "./helpers/cocos-panel-harness.ts";
+import { useCcSpriteResourceDoubles } from "./helpers/cc-sprite-resources.ts";
 
 function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => {
@@ -15,30 +12,9 @@ function flushMicrotasks(): Promise<void> {
   });
 }
 
-test("VeilBattleTransition uses placeholder terrain frames when pixel battle art is unavailable", async (t) => {
-  setPlaceholderSpriteRuntimeForTests({
-    loader: {
-      load(path, _type, callback) {
-        const asset = new ImageAsset();
-        asset.name = path;
-        callback(null, asset);
-      },
-      release() {}
-    },
-    spriteFrameFactory: {
-      createWithImage(imageAsset: ImageAsset) {
-        const frame = new SpriteFrame();
-        frame.name = imageAsset.name;
-        frame.texture = imageAsset;
-        return frame;
-      }
-    }
-  });
-  t.after(() => {
-    resetPlaceholderSpriteAssetsForTests();
-  });
-
-  await loadPlaceholderSpriteAssets("map");
+test("VeilBattleTransition uses pixel terrain frames for the formal battle overlay", async (t) => {
+  useCcSpriteResourceDoubles(t);
+  await loadPixelSpriteAssets("boot");
 
   const { component, node } = createComponentHarness(VeilBattleTransition, {
     name: "BattleTransitionRoot",
@@ -75,7 +51,7 @@ test("VeilBattleTransition uses placeholder terrain frames when pixel battle art
   assert.equal(readLabelString(findNode(node, "ProjectVeilBattleOverlayTitle")), "遭遇中立守军");
   assert.equal(readLabelString(findNode(node, "ProjectVeilBattleOverlaySubtitle")), "切入战斗场景");
   assert.equal(terrainNode?.active, true);
-  assert.equal(terrainSprite?.spriteFrame?.name, "placeholder/tiles/sand-1");
+  assert.equal(terrainSprite?.spriteFrame?.name, "pixel/terrain/sand-tile");
   assert.equal(terrainOpacity?.opacity, 246);
   assert.equal(findNode(node, "ProjectVeilBattleOverlayChips")?.active, true);
   assert.equal(overlayNode?.active, false);
@@ -95,6 +71,4 @@ test("VeilBattleTransition uses placeholder terrain frames when pixel battle art
   assert.equal(terrainSprite?.spriteFrame, null);
   assert.equal(terrainOpacity?.opacity, 0);
   assert.equal(findNode(node, "ProjectVeilBattleOverlayChips")?.active, false);
-
-  component.onDestroy();
 });

@@ -39,7 +39,11 @@ export function buildLobbyRoomCards(rooms: CocosLobbyRoomSummary[]): LobbyRoomCa
   return rooms.slice(0, 4).map((room) => ({
     roomId: room.roomId,
     title: room.roomId,
-    meta: `Day ${room.day} · Seed ${room.seed} · 玩家 ${room.connectedPlayers} · 英雄 ${room.heroCount} · 战斗 ${room.activeBattles}`
+    meta:
+      `Day ${room.day} · Seed ${room.seed} · ${room.statusLabel}` +
+      ` · 玩家 ${room.connectedPlayers}` +
+      (room.disconnectedPlayers > 0 ? `（掉线 ${room.disconnectedPlayers}）` : "") +
+      ` · 英雄 ${room.heroCount} · 战斗 ${room.activeBattles}`
   }));
 }
 

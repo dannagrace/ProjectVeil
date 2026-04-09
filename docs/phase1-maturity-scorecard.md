@@ -75,7 +75,7 @@ The candidate has current package/verify/smoke evidence, and the required report
 `/api/runtime/health`, `/api/runtime/auth-readiness`, and `/api/runtime/metrics` are reachable for the candidate environment and reviewed as part of release evidence.
 
 7. `Phase 1 data and persistence are verified on the intended storage path.`
-The shipped config/content pack validates cleanly, and `npm run test:phase1-release-persistence` has completed at least one current regression on the intended storage mode. When the candidate is reviewing the `frontier-basin`, `stonewatch-fork`, or `ridgeway-crossing` Phase 1 packs, include `npm run test:phase1-release-persistence:frontier`, `npm run test:phase1-release-persistence:stonewatch`, `npm run test:phase1-release-persistence:ridgeway`, or the equivalent `--map-pack` form in the evidence set as well. For release candidates with `VEIL_MYSQL_*` enabled, that means the generated report should show `Storage: mysql` while still proving player/account/world data flows hold.
+The shipped config/content pack validates cleanly, and `npm run test:phase1-release-persistence` has completed at least one current regression on the intended storage mode. When the candidate is reviewing the `frontier-basin`, `stonewatch-fork`, `ridgeway-crossing`, or `highland-reach` Phase 1 packs, include `npm run test:phase1-release-persistence:frontier`, `npm run test:phase1-release-persistence:stonewatch`, `npm run test:phase1-release-persistence:ridgeway`, `npm run test:phase1-release-persistence:highland`, or the equivalent `--map-pack` form in the evidence set as well. For release candidates with `VEIL_MYSQL_*` enabled, that means the generated report should show `Storage: mysql` while still proving player/account/world data flows hold.
 
 8. `Known Phase 1 blockers are closed or explicitly accepted.`
 Any remaining Cocos presentation fallback, reconnect risk, multiplayer divergence risk, or release-process blocker is either fixed or recorded as a conscious non-blocking acceptance with owner and rationale.
@@ -93,7 +93,7 @@ For the primary Cocos client battle path, the following now count as `production
 
 The following are still considered `non-blocking fallback` for Phase 1 hardening and should stay tracked through [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) plus the surrounding presentation-readiness / RC evidence rather than battle-loop copy logic:
 
-- placeholder pixel art, mixed audio packs, and animation fallback delivery modes
+- placeholder pixel art and mixed audio packs
 - any remaining asset substitutions already reported by `cocos-presentation-readiness`
 
 ## What Advancing Beyond Phase 1 Means Here

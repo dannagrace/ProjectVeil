@@ -19,6 +19,8 @@ import ridgewayCrossingMapObjectsConfig from "../../../configs/phase1-map-object
 import ridgewayCrossingWorldConfig from "../../../configs/phase1-world-ridgeway-crossing.json";
 import contestedBasinMapObjectsConfig from "../../../configs/phase2-map-objects-contested-basin.json";
 import contestedBasinWorldConfig from "../../../configs/phase2-contested-basin.json";
+import frontierExpandedMapObjectsConfig from "../../../configs/phase2-map-objects-frontier-expanded.json";
+import frontierExpandedWorldConfig from "../../../configs/phase2-frontier-expanded.json";
 import {
   getBattleBalanceConfig,
   createWorldStateFromConfigs,
@@ -473,7 +475,8 @@ const BUILTIN_WORLD_LAYOUT_PRESETS = [
   "layout_amber_fields",
   "layout_ironpass_gorge",
   "layout_splitrock_canyon",
-  "layout_contested_basin"
+  "layout_contested_basin",
+  "layout_phase2_frontier_expanded"
 ] as const;
 const BUILTIN_MAP_OBJECT_LAYOUT_PRESETS = [
   "layout_phase1",
@@ -484,7 +487,8 @@ const BUILTIN_MAP_OBJECT_LAYOUT_PRESETS = [
   "layout_amber_fields",
   "layout_ironpass_gorge",
   "layout_splitrock_canyon",
-  "layout_contested_basin"
+  "layout_contested_basin",
+  "layout_phase2_frontier_expanded"
 ] as const;
 const CONFIG_SCHEMA_VERSION = "2026-03-26";
 const BASE_VALUE_IMPACT = ["配置台编辑器"];
@@ -1839,6 +1843,8 @@ function buildLayoutPresetSummary(id: typeof BUILTIN_WORLD_LAYOUT_PRESETS[number
         ? "Splitrock Canyon"
       : id === "layout_contested_basin"
         ? "Contested Basin"
+      : id === "layout_phase2_frontier_expanded"
+        ? "Phase 2 Frontier Expanded"
         : "Phase 1";
   const description =
     id === "layout_frontier_basin"
@@ -1857,6 +1863,8 @@ function buildLayoutPresetSummary(id: typeof BUILTIN_WORLD_LAYOUT_PRESETS[number
         ? "切换为裂岩峡谷布局，适合验证非对称出生点与双线路径压迫。"
       : id === "layout_contested_basin"
         ? "切换为争夺盆地布局，包含新巡逻守军与瞭望塔。"
+      : id === "layout_phase2_frontier_expanded"
+        ? "切换为 Phase 2 Frontier Expanded 32×32 布局，适合验证大地图分块渲染、Boss 阶段切换与新建筑/中立怪组合。"
         : "恢复默认 Phase 1 地图布局。";
 
   return {
@@ -1916,6 +1924,9 @@ function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: strin
     if (presetId === "layout_contested_basin") {
       return normalizeJsonContent(contestedBasinWorldConfig as WorldGenerationConfig);
     }
+    if (presetId === "layout_phase2_frontier_expanded") {
+      return normalizeJsonContent(frontierExpandedWorldConfig as WorldGenerationConfig);
+    }
   }
 
   if (id === "mapObjects") {
@@ -1945,6 +1956,9 @@ function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: strin
     }
     if (presetId === "layout_contested_basin") {
       return normalizeJsonContent(contestedBasinMapObjectsConfig as MapObjectsConfig);
+    }
+    if (presetId === "layout_phase2_frontier_expanded") {
+      return normalizeJsonContent(frontierExpandedMapObjectsConfig as MapObjectsConfig);
     }
   }
 

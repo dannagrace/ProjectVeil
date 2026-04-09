@@ -114,6 +114,7 @@ function buildAnimationReadiness(): CocosAnimationReadinessSection {
   const profiles = Object.values(cocosPresentationConfig.animationProfiles);
   const deliveryModes: Record<CocosAnimationDeliveryMode, number> = {
     fallback: 0,
+    sequence: 0,
     clip: 0,
     spine: 0
   };
@@ -124,13 +125,15 @@ function buildAnimationReadiness(): CocosAnimationReadinessSection {
   return {
     label: "动画",
     stage: stageSummary.stage,
-    headline: `动画 ${profiles.length} 模板 · Spine ${deliveryModes.spine} / Clip ${deliveryModes.clip} / 回退 ${deliveryModes.fallback}`,
+    headline: `动画 ${profiles.length} 模板 · Spine ${deliveryModes.spine} / Clip ${deliveryModes.clip} / 序列 ${deliveryModes.sequence} / 回退 ${deliveryModes.fallback}`,
     detail: `${stageSummary.production} 正式 / ${stageSummary.placeholder} 占位 · idle / attack / hit / victory / defeat 命名已收口`,
     shortLabel: deliveryModes.spine > 0
       ? `动画 Spine ${deliveryModes.spine}/${profiles.length}`
       : deliveryModes.clip > 0
         ? `动画 Clip ${deliveryModes.clip}/${profiles.length}`
-        : `动画 回退 ${deliveryModes.fallback}/${profiles.length}`,
+        : deliveryModes.sequence > 0
+          ? `动画 序列 ${deliveryModes.sequence}/${profiles.length}`
+          : `动画 回退 ${deliveryModes.fallback}/${profiles.length}`,
     deliveryModes
   };
 }
@@ -195,8 +198,8 @@ export function getCocosPresentationReleaseGate(
   if (readiness.animation.stage !== "production") {
     blockers.push("正式动画资产");
   }
-  if (readiness.animation.deliveryModes.spine < Object.keys(cocosPresentationConfig.animationProfiles).length) {
-    blockers.push("Spine Skeleton");
+  if (readiness.animation.deliveryModes.fallback > 0) {
+    blockers.push("动画回退交付");
   }
 
   return {
