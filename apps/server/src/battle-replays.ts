@@ -1,5 +1,6 @@
 import {
   appendPlayerBattleReplaySummaries,
+  type ActionValidationFailure,
   type BattleAction,
   type BattleOutcome,
   type BattleReplayCamp,
@@ -56,14 +57,16 @@ export function createBattleReplayCapture(
 export function appendBattleReplayStep(
   replay: OngoingBattleReplayCapture,
   action: BattleAction,
-  source: BattleReplayStep["source"]
+  source: BattleReplayStep["source"],
+  rejection?: ActionValidationFailure
 ): OngoingBattleReplayCapture {
   return {
     ...replay,
     steps: replay.steps.concat({
       index: replay.steps.length + 1,
       source,
-      action: structuredClone(action)
+      action: structuredClone(action),
+      ...(rejection ? { rejection: structuredClone(rejection) } : {})
     })
   };
 }

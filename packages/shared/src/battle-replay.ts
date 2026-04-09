@@ -1,4 +1,5 @@
 import { applyBattleAction, normalizeBattleState } from "./battle.ts";
+import type { ActionValidationFailure } from "./action-precheck.ts";
 import type { BattleAction, BattleState } from "./models.ts";
 import { getBattleOutcome } from "./battle.ts";
 import type { BattleOutcome, UnitStack } from "./models.ts";
@@ -11,6 +12,7 @@ export interface BattleReplayStep {
   index: number;
   source: BattleReplaySource;
   action: BattleAction;
+  rejection?: ActionValidationFailure;
 }
 
 export interface PlayerBattleReplaySummary {
@@ -404,7 +406,19 @@ function normalizeBattleReplayStep(step: Partial<BattleReplayStep> | null | unde
   return {
     index: Math.max(0, Math.floor(step?.index ?? fallbackIndex)),
     source: step?.source === "automated" ? "automated" : "player",
-    action: structuredClone(action as BattleAction)
+    action: structuredClone(action as BattleAction),
+    ...(step?.rejection &&
+    (step.rejection.scope === "battle" || step.rejection.scope === "world") &&
+    typeof step.rejection.actionType === "string" &&
+    typeof step.rejection.reason === "string"
+      ? {
+          rejection: {
+            scope: step.rejection.scope,
+            actionType: step.rejection.actionType,
+            reason: step.rejection.reason
+          }
+        }
+      : {})
   };
 }
 

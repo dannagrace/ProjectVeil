@@ -236,13 +236,18 @@ export class AuthoritativeWorldRoom {
     }
   }
 
-  private trackBattleAction(battleId: string, action: BattleAction, source: "player" | "automated"): void {
+  private trackBattleAction(
+    battleId: string,
+    action: BattleAction,
+    source: "player" | "automated",
+    rejection?: ActionValidationFailure
+  ): void {
     const existing = this.battleReplayByBattleId.get(battleId);
     if (!existing) {
       return;
     }
 
-    this.battleReplayByBattleId.set(battleId, appendBattleReplayStep(existing, action, source));
+    this.battleReplayByBattleId.set(battleId, appendBattleReplayStep(existing, action, source, rejection));
   }
 
   private finalizeBattleReplay(battle: BattleState, outcome: BattleOutcome): void {
@@ -467,6 +472,7 @@ export class AuthoritativeWorldRoom {
         reason: "battle_not_owned_by_player"
       })!;
       authoritativeRoomTelemetry.recordActionValidationFailure("battle", rejection.reason);
+      this.trackBattleAction(activeBattle.id, action, "player", rejection);
       return {
         ok: false,
         reason: rejection.reason,
@@ -483,6 +489,7 @@ export class AuthoritativeWorldRoom {
         reason: "unit_not_player_controlled"
       })!;
       authoritativeRoomTelemetry.recordActionValidationFailure("battle", rejection.reason);
+      this.trackBattleAction(activeBattle.id, action, "player", rejection);
       return {
         ok: false,
         reason: rejection.reason,
@@ -498,6 +505,9 @@ export class AuthoritativeWorldRoom {
         "battle",
         precheck.rejection?.reason ?? "battle_action_invalid"
       );
+      if (precheck.rejection) {
+        this.trackBattleAction(activeBattle.id, action, "player", precheck.rejection);
+      }
       return {
         ok: false,
         ...(precheck.rejection ? { reason: precheck.rejection.reason, rejection: precheck.rejection } : {}),
